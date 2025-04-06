@@ -1,0 +1,5 @@
+#!/bin/sh
+# a bit crappy. pdp1 should be able to handle multiple lines
+while IFS= read -r line; do
+	echo "$line" | ncat -w 1 localhost 1234
+done

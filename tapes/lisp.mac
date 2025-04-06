@@ -1,0 +1,2078 @@
+/lisp 3-23-64 : 1 field
+
+/// Null Macro
+define		extend
+	termin
+
+/// sign extend B and deposit at A - never used!
+define		1load A,B
+	law B
+	dac A
+	termin
+
+/// sign extend B and deposit address part into A - why?
+define		init A,B
+	law B
+	dap A
+	termin
+
+///  A=A+1,  A!=B -> JMP C
+define		index A,B,C
+	idx A
+	sas B
+	jmp C
+	termin
+
+define		step A,B,C
+	index A,(B,C
+	termin
+
+define		setup A,B
+	law i B
+	dac A
+	termin
+
+define		exit R	/**
+	jmp R
+	termin
+
+/// only used in load
+define		move A,B
+	lac A
+	dac B
+	termin
+
+define		load A,B
+ 	move (B,A
+	termin
+
+define		count A,B
+	isp A
+	jmp B
+	termin
+
+define		test K,P
+	sad (K
+	jmp P
+	termin
+
+/// decrease (some number) by one
+define		undex A
+/// load AC with -1, add A to it, and write it back
+	law i 1
+	add A
+	dac A
+	termin
+
+/// swap AC & IO
+define		swap
+	rcl 9s
+	rcl 9s
+	termin
+
+	smi=spi i
+	szm=sza sma-szf
+	spq=szm i
+	xy=0
+	xx=hlt
+	clo=spa sma szo i-szf-szf
+	mul=540000
+	div=560000
+
+start
+/Lisp interpreter 3-20-64, part 1
+
+4/
+	/go
+go,	hlt+cla+cli+7-opr-opr
+	stf 6
+/// does nothing
+	extend
+	dzm 77
+	law 77
+	dap avx
+
+/// beginning
+beg,	law pdo-1
+	dac pdl
+	lac n
+	dac ar2
+	cal rin
+	cal evo
+	cal pnt
+	jmp beg
+
+/// temporary storage, sub zero
+t0,	0
+
+/// temporary storage, sub one
+t1,	0
+
+/// garbage collector, temporary storage, sub zero
+g0,	0
+
+/// garbage collector, temporary storage, sub one
+g1,	0
+hi,	0
+csi,	72
+cso,	72
+ffi,	0
+
+/// garbage collector, argument one
+ga1,	0
+	0
+
+/// input string initial (points to a string of characters just read in)
+isi,	isi-1
+
+/// table for symbol generator
+gst,	repeat 5,20
+
+/// Argument sub 0
+a0,	0
+
+/// Argument sub 1
+a1,	0
+a2,	0
+
+/// push word on list (append word to push-down list)
+/append word to pdl
+pwl,	0
+/// put return address into jmp instruction
+	dap pwx
+/// next position on push-down list
+	idx pdl
+	sad bfw
+/// ran into bfw
+	jmp qg2
+/// restore accumulator
+	lac pwl
+/// put it onto list
+	dac i pdl
+/// push word exit
+pwx,	exit
+
+/retrieve word from pdl
+	/unsave word; retrieve word from push down list
+	/unsave word from list
+uw,	0
+uwl,	dap uwx
+	lio i pdl
+/// subtract 1 from pdl
+	undex pdl
+/// unsave word, exit
+uwx,	exit
+
+/// buffer
+buf,
+77/	0
+
+/// This is where cal goes!
+/// This is the eval interpreter, duh-head!
+/// so... where >is< rx?  A fair question, methinks.
+	0
+/// save return address
+	dap rx
+/// get address of original cal instruction
+	sub (1
+/// put it into next instruction
+	dap .+1
+/// get what was at that address
+	lac xy
+/// make that the return adddress from the interpreter
+	dap ave+1
+/// get return address back and push on stack
+	lac rx
+	jda pwl
+/// advance, end
+/// restore AC
+ave,	lac 100
+	exit
+
+/create number
+crn,	lio (jmp
+	rcl 2s
+	rar 2s
+	dac 100
+	jmp cpf
+
+/print or punch character
+pc,	and (77
+	sad (76
+	jmp x
+	ior (ral
+	dac pcc
+	sad (ral 77
+	jmp pcc-3
+	isp pch
+	jmp pcc-1
+	law 277
+	cal out
+	law i 100
+	dac pch
+	law 252
+
+/// punch character, computer correct parity for punching
+pcc,	xx
+	and (200
+	ior pcc
+	dac 100
+	stf 2
+	jmp out
+
+/// punch charater count, producing carriage return (generated after 64
+/// (decimal) characters)
+pch,	-100
+
+/get numeric value
+vag,	lio i 100
+	cla
+	rcl 2s
+	sas (3
+	jmp qi3
+	idx 100
+	lac i 100
+	rcl 8s
+	rcl 8s
+	jmp x
+ 
+/get two values
+vad,	dio a1
+	cal vag
+	dac a0
+	lac a1
+	cal vag
+	dac a1
+	jmp x
+
+/// output character
+/pack character onto end of buffer
+oc,	rar 6s
+	lio i isi
+	rcl 6s
+	sad (76
+	jmp oc1
+	lac 100
+	ior (767600
+	cal cf
+	lio t0
+	idx t0
+	idx isi
+	dac a1
+	dio isi
+	lac i a1
+	dac i t0
+	dio i a1
+	jmp x
+
+/// output character, sub one
+oc1,	dio i isi
+	jmp x
+
+/output routine
+out,	lio 100
+	szs 36
+	ppa
+	szs i 66
+	tyo
+	jmp x
+
+/error printout
+err,	clf 6
+	dap erx
+	lac i erx
+	dac ern
+	law erm
+	cal pra
+	stf 6
+	idx erx
+
+/// error exit
+erx,	exit
+
+/// error message
+erm,	357776
+	.+1
+
+/// error name
+ern,	0
+	.+1
+	347776
+
+/// NIL (register containing)
+n,fro,	nil
+
+define	error F
+	jsp	err
+	F
+	termin
+
+/garbage collector, non-compacting
+gc,	dap gcx
+	dio ga1
+	dio gfr
+	lac gfr
+	sar 2s
+	sza
+	jsp gfr+1
+	lac ffi
+	sza i
+	jmp gco
+	lac 100
+	jda gfr
+gco,	lac i 1ob
+	jda gfr
+	lac isi
+	sas (isi-1
+	jmp gci
+	law pdl+1
+	dac g1
+
+/// garbage collector, push-down
+gcp,	lac i g1
+	jda gfr
+	idx g1
+	sub (1
+	sad pdl
+	jmp g2e
+	jmp gcp
+
+/// garbage, free; (not returned to free storage)
+/mark one list
+gfr,	0
+	dap gfx
+	lac gfr
+	ral 1s
+	spq
+	jmp gfx
+/// push pdl on stack
+	lac pdl
+	jda pwl
+
+/// garbage, free, next
+gfn,	lio i gfr
+	idx gfr
+	lac i gfr
+	spa
+	jmp gfu
+	ior (add
+	dac i gfr
+	spi
+/// push gfd on stack
+	jmp gfd
+	jda pwl
+	dio gfr
+	jmp gfn
+gfd,	ril 1s
+	spi i
+	jmp gfa
+
+ /// garbage, free, unsave
+gfu,	jsp uwl
+	dio gfr
+	sas gfr
+	jmp gfn
+/// garbage, free, exit
+gfx,	exit
+
+gfa,	rir 1s
+	dio g0
+	dac gfr
+gfl,	idx g0
+	lac i g0
+	spa
+	jmp gfn
+	ior (add
+	dac i g0
+	dac g0
+	xor (add
+	sas n
+	jmp gfl
+	jmp gfn
+
+/// garbage collector, part 2, entry
+/ garbage collector, linear sweep phase
+g2e,	lac fro
+	dac g0
+
+/// garbage collector, part 2, next
+g2n,	idx g0
+	lio i g0
+	smi
+	jmp g2f
+	ril 1s
+	sir 1s
+
+/// garbage collector, part 2, advance
+g2a,	dio i g0
+	idx g0
+	sas hi
+	jmp g2n
+
+/// garbage collector, part 2, exit
+g2x,	lio ga1
+
+/// garbage collector, exit
+gcx,	exit
+
+/// garbage collector, part 2, free
+g2f,	lio fre
+	sub (1
+	dac fre
+	jmp g2a
+
+gci,	sad n
+	jmp gcp-2
+	dac gfr
+	dac g0
+/// push pdl on stack
+	lac pdl
+	jda pwl
+	law gcp-2
+	dap gfx
+	jmp gfl
+
+/// ASSOC origin
+/SASSOC
+aso,	cal asc
+	jmp ase
+	jmp x
+/// ASSOC entry
+ase,	lac a2
+	cal cns-1
+	jmp evo
+
+asr,	lio ar2		/**
+asc,	dio a1
+	lac a1
+
+as1,	sad n
+	jmp x
+	lac i a1
+	dac t0
+	lac i t0
+	sad 100
+	jmp as2
+	idx a1
+	lac i a1
+	dac a1
+	jmp as1
+
+/// ASSOC sub 2
+as2,	idx i pdl
+	lac t0
+	jmp x
+
+/program feature
+
+/PROG
+/// push pa3 on stack
+pgm,	lac pa3
+	jda pwl
+/// push pa4 on stack
+	lac pa4
+	jda pwl
+	dzm pa4
+	dio ar2
+	lio i 100
+	idx 100
+	lac i 100
+	dac pa3
+	dio ar1
+
+/append program variables
+
+	lac ar1
+
+pg5,	sad n
+	jmp pg6
+	lac i ar1
+	cal cns-1
+	lio ar2
+	cal cns
+	dac ar2
+	idx ar1
+	lac i ar1
+	dac ar1
+	jmp pg5
+
+/expand go-list (on a-list)
+
+pg6,	lac pa3
+
+pg7,	dac ar1
+	sad n
+	jmp pg0
+	lac i ar1
+	cal car
+	sma
+	jmp pg9
+	lac ar1
+	lio ar2
+	cal cns
+	dac ar2
+
+pg9,	idx ar1
+	lac i ar1
+	jmp pg7
+
+/// program feature, sub zero
+/process program
+pg0,	lac pa3
+/// program feature, sub one
+pg1,	sad n
+	jmp pg2
+	lac i pa3
+	cal car
+	spa
+	jmp pg3
+/// push ar2 on stack
+	lac ar2
+	jda pwl
+	lac 100
+	cal evo
+	jsp uwl
+	dio ar2
+	cla
+	sas pa4
+	jmp pg4
+
+pg3,	idx pa3
+	lac i pa3
+	dac pa3
+	jmp pg1
+
+/terminate program
+
+pg4,	lac pa4
+/// program feature, sub 2
+pg2,	jda uw
+	dio pa4
+	jsp uwl
+	dio pa3
+	lac uw
+	jmp x
+
+/RETURN
+ret,	dac pa4
+	jmp x
+
+/// GOE (lengthened)
+/GO
+goe,	lio 100
+	lac n
+	cal cns
+	dac pa3
+	jmp prx
+
+/SETQ
+stq,	dac ar1
+	dio t1
+	lac i ar1
+	cal asc
+/// push qa4 on stack
+	jmp qa4
+	jda pwl
+	lac ar1
+	cal cdr
+	cal car
+	lio t1
+	cal evl
+	jda uw
+	dio t0
+	idx t0
+	lac uw
+	dac i t0
+	jmp x
+
+/// (Contents of Decrement Register)
+/CDR
+cdr,	idx 100
+
+/// (Contents of Address Register)
+/CAR
+car,	lac i 100
+/// exit from machine language LISP functions
+x,	jda uw
+	dio rx
+	lac uw
+/// return to calling sequence of a subroutine
+rx,	exit
+
+/ATOM
+atm,	lac i 100
+	sma
+	jmp fal
+
+/// true
+tru,	lac tr
+	jmp x
+
+/NULL
+nul,	lio n
+
+/// entry point of EQ (lengthened)
+/EQ
+eqq,	dio a1
+	sad a1
+	jmp tru
+	lac i a1
+	and i 100
+	and (jmp
+	sas (jmp
+	jmp fal
+	lac 100
+	cal vad
+	sad a0
+	jmp tru
+	jmp fal
+
+/RPLACD
+rdc,	idx 100
+	sub (1
+
+/RPLACA
+rda,	dio i 100
+	jmp x
+
+/create atom
+mka,	ior (add
+	dac 100
+	lio n
+
+/CONS
+cns,	idx ffi
+
+cnc,	lac fre
+	sad n
+	jmp gcs
+
+/// CONS, sub a
+cna,	dac t0
+	lac 100
+	dac i fre
+	idx fre
+	lac i fre
+	dio i fre
+	dac fre
+	lac t0
+	jmp x
+
+/PLUS
+pls,	cal elc
+	lio (add a0
+/// plus, zero sum storage register
+plz,	dzm a0
+/// plus, sub one
+pl1,	dio plo
+/// plus, sub two
+pl2,	sad n
+	jmp ple
+	dac a1
+	lac i a1
+	cal vag
+/// plus, operation
+plo,	0
+	dac a0
+	lac a1
+	cal cdr
+	jmp pl2
+/// plus, exit
+ple,	lac a0
+	jmp crn
+
+/LOGAND, LOGOR, TIMES
+/// LOGAND
+lga,	cal elc
+	lio (-0
+	dio a0
+	lio (and a0
+	jmp pl1
+
+/// LOGOR
+lgo,	cal elc
+	lio (ior a0
+	jmp plz
+
+/// TIMES
+tim,	cal elc
+	lio (1
+	dio a0
+	lio (jmp tic
+	jmp pl1
+
+/// times, complete
+tic,	mul a0
+	scr 1s
+	dio 100
+	add 100
+	jmp plo+1
+
+/// garbage collector, step
+gcs,	jsp gc
+	lac fre
+	sas n
+	jmp cna
+	jmp qg1
+
+/// make a carriage return, TERPRI (terminate printing)
+/TERPRI
+tpr,	law 77
+	cal pc
+	jmp prx
+
+/PRIN1
+pr1,	lac i 100
+	sma
+	jmp qp1
+	sub (lac
+	spa
+	jmp prn
+	and (-jmp
+
+pra,	sad n
+	jmp x
+	dac a0
+	lac i a0
+	ral 6s
+	cal pc
+	lac i a0
+	rar 6s
+	cal pc
+	lac i a0 
+	cal pc
+	idx a0
+	lac i a0
+	jmp pra
+
+prn,	lac 100
+	cal vag
+	dac t1
+	clf 2
+	setup t0,6
+
+prv,	lio t1
+	sad (-1
+	stf 2
+	cla
+	rcl 3s
+	dio t1
+	sza i
+	law 20
+	sad (20
+	szf 2
+	cal pc
+	isp t0
+	jmp prv
+	jmp prx
+
+/// ("is a number")
+/NUMBERP
+nmp,	lac i 100
+	and (jmp
+	sad (jmp
+	jmp tru
+	jmp fal
+
+/do a CONS into full word space
+cf,	lio n
+
+/// CONS pair in full word space
+cpf,	dzm ffi
+	jmp cnc
+
+/MINUS
+min,	cal vag
+	cma
+	jmp crn
+
+/XEQ
+
+xeq,	cal vad
+	lac tr
+	dac t1
+	lac a2
+	cal vag
+	lio a0
+	dio xei
+	lac a1
+	lio uw
+xei,	0
+	jmp xen
+	dio a2
+xer,	cal crn
+	dac ar1
+	lac a2
+	cal crn
+	dac ar2
+	lac t1
+	cal cns-1
+	lio ar2
+	cal efc
+	lio ar1
+	dac 100
+	jmp efc
+xen,	dio a2
+	lio n
+	dio t1
+	jmp xer
+ 
+/GENSYM
+/// gensym, entry
+gsm,	law gst
+	dac t0
+/// gensym, index
+gsi,	idx i t0
+	sad (12
+	jmp gsn
+	sad (21
+	law 1
+	dac i t0
+/// gensym, produce
+gsp,	lac gst+2
+	ral 6s
+	ior gst+1
+	ral 6s
+	ior gst
+	cal cf
+	law 6700
+	ior gst+4
+	ral 6s
+	ior gst+3
+	lio t0	
+	cal cpf
+	cal mka
+	jmp x
+/// gensym, next
+gsn,	law 20
+	dac i t0
+	idx t0
+	sas (gst+5
+	jmp gsi
+	jmp gsp
+ 
+/QUOTIENT
+
+qot,	cal vad
+	lio a0
+	cla
+	spi
+	clc
+	rcl 1s
+	div a1
+	jmp qi4
+	jmp crn
+
+/COND
+cnd,	dio ar2
+/// COND sub one
+cd1,	dac ar1
+	sad n
+/// push qa3 on stack
+	jmp qa3
+	jda pwl
+/// push ar2 on stack
+	lac ar2
+	jda pwl
+	lac i ar1
+	cal car
+	cal evo
+	jda uw
+	dio ar2
+	jsp uwl
+	dio ar1
+	lac uw
+	sas n
+	jmp cdy
+	idx ar1
+	lac i ar1
+	jmp cd1
+/// COND sub y
+cdy,	lac i ar1
+	cal cdr
+	cal car
+	jmp evo
+
+/STOP
+stp,	cal vag
+	hlt+cli-opr
+	jmp prx
+
+/GREATERP
+/// (is greater than)
+grp,	cal vad
+	clo
+	sub a0
+	szo
+	lac a1
+	sma
+	jmp fal
+	jmp tru
+
+/get a character 
+/// get a character, advance
+ava,	szs 50
+	jmp avi
+	cli
+/// advance, index
+avx,	lac 77
+	sza i
+	jmp avr
+	rcl 9s
+	dio i avx
+	ral 2s
+	spq
+	jmp ava
+	ral 7s
+	ior (rar
+	dac avc
+	law 525
+/// advance, compute parity
+avc,	xx
+	sma
+	jmp qc3
+/// advance, truncate (to 6 bits from reader);
+/// also, detect upper or lower case in sign bit.
+avt,	law 77
+	and avc
+	sas (72
+	sad (74
+	dac csi
+	sad csi
+	jmp ava
+	jmp x
+/// advance, reader
+avr,	index avx,ave,avx
+/// address of buf into avx
+	init avx,buf
+	dap avs
+/// advance, next
+avn,	rpa
+	rcr 9s
+	rpa
+	rcl 9s
+/// advance, store
+avs,	dio xy
+	step avs,dio 100,avn
+	jmp ava
+/// advance, in from typewriter
+avi,	szf i 1
+	jmp ava
+	tyi
+	clf 1
+	dio avc
+	jmp avt
+
+/terminate a print name
+/// terminate print name, and make name
+mkn,	law 72
+	sas cso
+	cal oc
+	idx isi
+	dac t0
+	lio n
+	dio isi
+	lac i t0
+	dio i t0
+	jmp x
+ 
+/pack character into print name
+pak,	dap pk1
+	lac csi
+	sad cso
+	jmp pk1
+	dac cso
+	cal oc
+/// pack character into print name, sub one
+pk1,	law
+	dac 100
+	jmp oc
+ 
+start
+/Lisp interpreter 3-20-64, part 2
+
+/PRINT
+pnt,	dac a0
+	dac a1
+	cal tpr
+/// print, sub one
+pn1,	lio i a0
+	spi 
+	jmp pn2
+	law 57
+
+pn5,	cal pc
+	lac a0
+	cal cdr
+/// push result on stack
+	jda pwl
+	lio i a0
+	dio a0
+	jmp pn1
+/// print, sub two
+pn2,	lac a0
+	cal pr1
+
+pn6,	jsp uwl
+	cla
+	dio a0
+	spi
+	jmp pn7
+	lio i a0
+	spi i
+	jmp pn5
+	lac a0
+	sad n
+	jmp pn3
+	law 73
+	cal pc
+	lac a0
+	cal pr1
+
+pn3,	law 55
+	cal pc
+	jmp pn6
+
+pn7,	cal pc
+	lac a1
+	jmp a0
+
+/READ
+
+ri8,	0
+ri9,	0
+/// READ in
+rin,	lac rx
+	dac ar1
+	dzm ri9
+/// read ins symbol
+ris,	jsp rhe
+	sza i
+	jmp ric
+	sad (57
+	jmp ria
+	sad (55
+	jmp rib
+
+/.
+/// read in, dot
+rid,	spi
+	jmp ri2
+/// read in, sub q
+riq,	idx ar1
+	lac i ar1
+	dio i ar1
+	dac ri9
+	jsp rhe
+	jmp rix
+/// read in, sub 3
+ri3,	dac ri9
+	jmp ri3-2
+
+/// push this on stack
+ri2,	lac (jmp ri3
+	jda pwl
+	law ric
+
+/read symbol and terminator
+/// read in, entry;
+/// (a "terminator" is a left parenthesis, period, space,
+/// comma, or tab) (mnemonic: h precedes i)
+rhe,	dap rhx
+	clf 5
+	dzm t1
+	law isi-1
+	dac isi
+	dzm isi-1
+	law 72
+	dac cso
+/// read symbol and terminator, next
+rhn,	cal ava
+	dac 100
+	lio csi
+	rir 3s
+	spi
+	jmp rhb
+	sad (33
+	cla
+	sas (57
+	sad (55
+	jmp rye
+	sad (73
+	jmp rye		/**
+rhb,	sad (56
+	jmp ryo
+	sad (77
+	jmp rhn
+	sad (36
+	cla
+	sza i
+	jmp rye
+	sad (75
+	jmp rhe+1
+	law i 7
+	and 100
+	sza i
+	jmp ryn
+	lac 100
+	sad (20
+	jmp ryn
+/// symbol lookup, pack
+ryp,	stf 5
+	cal pak
+	jmp rhn
+/// symbol lookup, sub j
+ryj,	lac t1
+	cal crn
+	jmp rhr
+/// symbol lookup, sub o
+ryo,	cal ava
+	jmp ryp
+
+/symbol lookup
+/// search for symbol in object list and
+/// if not found, put at beginning
+rye,	dac ri8
+	cal mkn
+	dac a0
+	sad n
+	jmp ryy
+	szf i 5
+	jmp ryj
+	lac i 1ob
+/// symbol lookup, search for symbol
+rys,	dac t0
+	sad n
+	jmp ryc
+	lac i t0
+	dac t1
+	lac i t1
+	dac t1
+	lac a0
+/// symbol lookup, search for word
+ryw,	dac a1
+	sas n
+	jmp ryt
+	sad t1
+	jmp rhh
+/// symbol lookup, index
+ryd,	idx t0
+	lac i t0
+	jmp rys
+/// symbol lookup, test
+ryt,	lac t1
+	sad n
+	jmp ryd
+	lac i a1
+	sas i t1
+	jmp ryd
+	idx t1
+	lac i t1
+	dac t1
+	idx a1
+	lac i a1
+	jmp ryw
+/// symbol lookupm create (creating what is necessary to
+/// put something on the OBLIST
+ryc,	lac a0
+	cal mka
+	lio i 1ob
+	cal cns
+	dac i 1ob
+rhh,	lac i t0
+	jmp rhr
+/// symbol lookup, number
+ryn,	lio 100
+	lac t1
+	rir 3s
+	rcl 3s
+	dac t1
+	lac 100
+	jmp ryp+1
+/// symbol lookup, exit
+ryy,	clc
+	lio (isi-1
+	dio isi
+/// read symbol and terminator, sub r
+rhr,	dac t0
+	lac ri9
+	lio ri8
+	dio ri9
+	lio t0
+/// read symbol and terminator, exit
+rhx,	exit
+
+/, space tab
+/// read in, comma
+ric,	lac ar1
+	spi
+	jmp ris
+	spa
+	jmp ri4
+/// read in, sub o
+rio,	dio t0
+	cal cdr
+	lio t0
+/// read in, sub e
+rie,	swap
+/// swap AC & IO
+	cal cns
+	idx ar1
+	lac t0
+	dac i ar1
+	dac ar1
+	jmp ris
+/// read in, sub 4
+ri4,	lac t0
+	jmp ar1
+
+/(
+/// read in, left parenthesis
+ria,	dio t0
+/// push ar1 on stack
+	lac ar1
+	jda pwl
+	lac t0
+	spa
+	jmp riz
+/// read in, sub y
+riy,	cal cns-1
+	dac ar1
+	lio ar1
+	cal rdc
+	jmp ris
+/// read in, zeroing
+riz,	dzm ar1
+	jmp ris
+
+/)
+/// read in, right parenthesis
+rib,	idx ar1
+	lac i ar1
+	lio n
+	dio i ar1
+/// read in, exit
+rix,	jda uw
+	dio ar1
+	ril 1s
+	lac uw
+	spi
+	jmp ar1
+	lio uw
+	lac ar1
+	sza
+	jmp rio
+	lac uw
+	jmp riy
+
+/EVAL
+evl,	dio ar2
+/// EVAL, old
+evo,	dac ar1
+
+/evaluate current expression
+/// evaluate current expression, sub 2
+ev2,	lac ar1
+	szs 10
+	cal pnt
+	lac i ar1
+	spa
+	jmp e1
+	dac t0
+	lac i t0
+	spa
+	jmp e2
+
+/car[x] not atomic
+
+	sad 1la
+	jmp e3
+/// push ar2 on stack
+	lac ar2
+	jda pwl
+/// push ar1 on stack
+	lac ar1
+	jda pwl
+	lac i ar1
+	cal evo
+	jsp uwl
+	dio ar1
+	jsp uwl
+	dio ar2
+	jmp evc
+
+/evaluate function name and try again
+/// evaluate, sub 3
+ev3,	lac i ar1
+	cal asr
+	jmp qa8
+	cal cdr
+/// evaluate, construct
+evc,	idx ar1
+	lio i ar1
+	lac uw
+	dzm ar1
+	cal cns
+	jmp evo
+
+/x is atomic : search a-list,
+/  then p-list
+/// evaluate, sub one
+e1,	ral 1s
+	spa
+	jmp en1
+	lac ar1
+	cal asr
+	jmp ev5
+	cal cdr
+	jmp ex
+
+ev5,	lac ar1
+/// evaluate, sub 4
+ev4,	cal cdr
+	sad n
+	jmp qa8
+	dac t0
+	lac i t0
+	sad 1ap
+	jmp ev6
+	idx t0
+	lac i t0
+	jmp ev4
+
+ev6,	idx t0
+	lac i t0
+	cal car
+	jmp ex
+/// evaluate, number, sub one
+en1,	lac ar1
+
+/exit from EVAL
+ex,	szs 10
+	jmp pnt
+	jmp x
+
+/car[x] is atomic : search
+/  its p-list
+/// evaluate, sub 2; CAR X is atomic, search its P-list
+e2,	lac t0
+
+ev8,	cal cdr
+	sad n
+	jmp ev3
+	lac i uw
+	sad 1fs
+	jmp efs
+	sad 1sb
+	jmp esb
+	sad 1xp
+	jmp exp
+	sad 1fx
+	jmp efx
+	idx t1
+	lac i t1
+	jmp ev8
+
+/function is FSUBR
+efs,	idx uw
+	lac i uw
+	cal car
+	cal vag
+	dac exx
+	idx ar1
+	lac i ar1
+	lio ar2
+
+exy,	dac 100
+	dzm ar1
+/// evaluate, exit, execute
+exx,	0
+	jmp ex
+
+/function is FEXPR
+efx,	idx uw
+	lac i uw
+	cal car
+/// push result on stack
+	jda pwl
+	lac ar1
+	cal cdr
+	cal efq
+	jda pwl
+	lac ar2
+	cal efq
+	cal cns-1
+	jsp uwl
+	cal efc
+	jsp uwl
+	cal efc
+	dac ar1
+	jmp ev2
+/// evaluate, function sub q
+efq,	cal cns-1
+	lio t0
+	lac 1qu
+	dac 100
+	jmp cns
+/// evaluate, function sub c
+efc,	dio 100
+	lio t0
+	jmp cns
+
+/function is EXPR
+exp,	idx uw
+	lac i uw
+	dac a1
+	idx ar1
+	lio i ar1
+	dzm ar1
+	lac i a1		/**
+	cal cns
+	jmp evo
+
+/function is SUBR
+esb,	idx uw
+	lac i uw
+	cal car
+	jda pwl
+	lac ar1
+	cal cdr
+	lio ar2
+	cal elc
+	jmp els
+
+/evaluate argument list : also LIST
+/// evaluate, argument is a list; also LIST
+elc,	sad n
+	jmp x
+	dac ar1
+	dio ar2
+	lac ar2
+	jda pwl
+	lac ar1
+	dzm ar1
+/// evaluate, list, entry
+ele,	lio i pdl
+	dac t0
+	jda pwl
+	lac ar1
+	jda pwl
+	lac i t0
+	cal evl
+	cal cns-1
+	jsp uwl
+	dio ar1
+	lio t0
+	lac ar1
+	sza i
+	dio ar1
+	idx ar1
+	sub (1
+	sas t0
+	lio i ar1
+	lac t0
+	dac i ar1
+	dac ar1
+	idx t0
+	dio i t0
+	jsp uwl
+/// swap AC & IO
+	swap
+	cal cdr
+	sas n
+	jmp ele
+	jsp uwl
+	dio ar2
+	idx ar1
+	lac i ar1
+	lio n 
+	dio i ar1
+	dac ar1
+	szs 10
+	cal pnt
+	lac ar1
+	jmp x
+/// evaluate, list, subroutine
+els,	dac ar1
+	jsp uwl
+/// swap AC & IO
+	swap
+	cal vag
+	dac exx
+/// address of a0-1 into esa
+	init esa,a0-1
+
+/store arguments for subroutine
+
+	lac ar1
+/// entry, deposit argument
+/// (store arguments for subroutine)
+eda,	sad n 
+	jmp exs
+	idx esa
+	sad (dac a2+1
+	jmp qa7
+	lac i ar1
+/// evaluate, store argument
+esa,	dac xy
+	idx ar1
+	lac i ar1
+	dac ar1
+	jmp eda
+/// eval, exit, subroutine
+exs,	lac a0
+	lio a1
+	jmp exy
+
+/caar[x] = LAMBDA
+/// evaluate, sub 3; CAAR X equals LAMBDA
+e3,	lac ar1
+	jda pwl
+	lac ar2
+	jda pwl
+	lac i ar1
+	cal cdr
+	cal car
+	jda pwl
+	lac ar1
+	cal cdr
+	lio ar2
+	cal elc
+	dac ar1
+	jsp uwl
+	dio a0
+	jsp uwl
+	dio ar2
+/// evaluate, pair, sub one
+ep1,	lac a0
+	sad n
+	jmp ep2
+	lac ar1
+	sad n
+	jmp qf3
+	lac i a0
+	lio i ar1
+	cal cns
+	lio ar2
+	cal cns
+	dac ar2
+	idx a0
+	lac i a0
+	dac a0
+	idx ar1
+	lac i ar1
+	dac ar1
+	jmp ep1
+/// evaluate, pair, sub two
+ep2,	sas ar1
+	jmp qf2
+	jsp uwl
+	dio ar1
+	lac i ar1
+	cal cdr
+	cal cdr
+	cal car
+	jmp evo
+
+/error halt entries
+/// error halt, illegal COND ; icd
+qa3,	lac n
+	sas pa3
+	jmp x
+	error flex icd		/illegal COND
+	lac n
+	jmp x
+/// error halt, undefined atom in SETQ; uss
+qa4,	error flex uss		/undefined atom in SETQ
+	jmp prx
+/// error halt, too many arguments; tma
+qa7,	error flex tma		/too many args
+	jmp exs
+/// error halt, unbound atomic symbol; uas
+qa8,	error flex uas		/unbound atomic symbol
+	clf 6
+	lac ar1
+	cal pnt
+	cal tpr
+	jmp go
+/// error halt, illegal parity; ilp
+qc3,	error flex ilp		/illegal parity
+	law 377
+	and avc
+	hlt+cli-opr+1
+	jmp ava
+/// error halt, LAMBDA list too short; lts
+qf2,	error flex lts		/LAMBDA list too short
+	jmp go
+/// error halt, argument list too short; ats
+qf3,	error flex ats		/arglist too short
+	jmp go
+/// error halt, pushdown capacity exceeded; pce
+qg2,	error flex pce		/pushdown cap. exc.
+	jmp go
+/// error halt, storage capacity exceeded; sce
+qg1,	error flex sce		/storage cap. exc.
+	jmp go
+/// error halt, nonnumeric argument for arithmetic; nna
+qi3,	lac 100
+	dac a2
+	error flex nna		/non-numeric arg for arith.
+	clf 6
+	lac a2
+	cal pnt
+	cal tpr
+	jmp qix
+/// error halt, overflow; ovf
+qi4,	error flex ovf		/overflow
+/// error halt, exit
+qix,	cla 16
+	jmp crn
+/// error halt, argument non-atom for PRIN1
+qp1,	error flex ana		/arg non-atom for PRIN1
+/// false (value is NIL)
+/// print, exit after finishing print
+prx,fal,	lac n
+	jmp x
+
+start
+
+/lisp storage 3-23-64
+
+constants
+
+/special symbols
+
+ssy,
+
+1qu,	quo
+1la,	lam
+1ap,	apv
+1ob,	obl
+1sb,	sbr
+1fs,	fsb
+1xp,	xpr
+1fx,	fxp
+/// pointer to beginning of the free storage
+fre,	nil
+/// beginning of full words (end of push down list)
+bfw,	frs-4
+tr,	t
+/// push down list
+pdl,	pdo-1
+/// Argument one
+ar1,	nil
+ar2,	nil
+/// PROG argument, sub 3
+pa3,	nil
+/// PROG argument, sub 4
+pa4,	0
+/// push down list, origin
+pdo,
+
+/load storage parameters
+	lio mz
+	clc+hlt-opr
+	lat+cli-opr
+	and ad
+	dac hi1
+	hlt
+	lat
+	and ad
+	dac lp1
+
+	law i end
+	add hi1
+	spa
+	jmp pdo
+	law i frs-pdo
+	add lp1
+	spa
+	jmp pdo
+	law i pdo+end-frs
+	add hi1
+	sub lp1
+	spa
+	jmp pdo
+
+/set up registers
+
+stu,	law pdo
+	add lp1
+	dac fro
+	lio hi1
+	rcr 1s
+	ril 1s
+	dio hi
+	law end
+	dac t0
+
+/relocate storage
+
+rrs,	law i 1
+	add t0
+	dac t0
+	law i 4
+	add i t0
+	sma
+	jsp rrl
+	jsp mvs
+	law i 1
+	add t0
+	dac t0
+	sub frl
+	spa
+	jsp rrl
+	jsp mvs
+	lac t0
+	sas ofs
+	jmp rrs
+	law ssy
+	dac t0
+
+/relocate special registers
+
+rss,	jsp rrl
+	idx t0
+	sas esy
+	jmp rss
+	lac i 1ob
+	jda gfr
+	law go
+	dap gcx
+	jmp g2e
+
+/relocate 1 word, move 1 word
+
+rrl,	dap rrx
+	lac i t0
+	and ad
+	sub ofr
+	spa
+	jmp rrx
+	lac i t0
+	add fro
+	sub ofs
+	dac i t0
+rrx,	jmp .
+
+mvs,	dap mvx
+	lac t0
+	add fro
+	sub ofs
+	dac t1
+	lac i t0
+	dac i t1
+
+mvx,	jmp .
+
+/constants etc.
+
+ad,	177777
+lp1,	0
+hi1,	0
+mz,	-0
+ofs,	frs
+frl,	fws
+esy,	pdo
+ofr,	pdo
+
+define		item X
+	.+2
+	.+3
+	add X
+	nil
+	termin
+
+define		next A
+	A
+	.+1
+	termin
+
+define		subr F
+	.+2
+	.+7
+	add F+2
+	.+1
+	sbr
+	.+1
+	F
+	nil
+	termin
+
+define 		fsubr F
+	.+2
+	.+7
+	add F+2
+	.+1
+	fsb
+	.+1
+	F
+	nil
+	termin
+
+define		apval A
+	apv
+	.+1
+	A
+	nil
+	termin
+/// origin of free storage
+frs,
+
+nil,	add f38
+	kz
+
+t,	add f37
+	kt
+/// property list for NIL
+kz,	apval nil
+/// property list for T
+kt,	apval t
+/// location of atom OBLIST
+obj,	add fb0
+	.+1
+	apv
+	.+1
+obl,	ols
+	nil
+
+/object list
+/// location of OBLIST
+ols,	subr f2
+
+	subr f3
+
+	subr f4
+
+	fsubr f6
+
+	subr f7
+
+	subr f8
+
+	subr f12
+
+	subr f13
+
+	fsubr f14
+
+	subr f18
+
+	subr f21
+
+	subr f24
+
+	subr f26
+
+	subr f27
+
+	subr f32
+
+	subr f33
+
+	subr f34
+
+	fsubr f50
+
+	subr f51
+
+	subr f52
+
+	fsubr f53
+
+	subr f54
+
+	fsubr f60
+
+	fsubr f61
+
+	fsubr f62
+
+	fsubr f63
+
+	subr f00
+
+	subr f01
+
+	subr fa3
+
+	quo=. 2		/**
+	fsubr fb5
+
+	lam=. 2		/**
+	item f40
+
+	apv=. 2		/**
+	item f42
+
+	sbr=. 2		/**
+	item f43
+
+	xpr=. 2		/**
+	item f44
+
+	fsb=. 2		/**
+	item f45
+
+	fxp=. 2		/**
+	item f46
+
+	next t
+	next obj
+
+	subr fb2
+
+	subr fb3
+
+	subr fb4
+
+	nil
+	nil
+/// full word space
+fws,	
+
+define		loca A
+	opr A
+	0
+	termin
+
+define 		nam1 X
+	X
+	nil
+	termin
+ 
+define		nam2 X,Y
+	X
+	.+1
+	nam1 Y
+	termin
+
+define 		nam3 X,Y,Z
+	X
+	.+1
+	nam2 Y,Z
+	termin
+
+/SUBRs and FSUBRs
+
+f2,	loca atm
+	nam2 flex ato,767644
+
+f3,	loca car
+	nam1 flex car
+
+f4,	loca cdr
+	nam1 flex cdr
+
+f6,	loca cnd
+	nam2 flex con,767664
+
+f7,	loca cns
+	nam2 flex con,767622
+
+f8,	loca eqq
+	nam1 766550
+
+f12,	loca gsm
+	nam2 flex gen,flex sym
+
+f13,	loca grp
+	nam3 flex gre,flex ate,765147
+
+f14,	loca elc
+	nam2 flex lis,767623
+
+f18,	loca min
+	nam2 flex min,762422
+
+f21,	loca nmp
+	nam3 flex num,flex ber,767647
+
+f24,	loca stp
+	nam2 flex sto,767647
+
+f26,	loca pr1
+	nam2 flex pri,764501
+
+f27,	loca qot
+	nam3 flex quo,flex tie,764523
+
+f32,	loca rda
+	nam2 flex rpl,flex aca
+
+f33,	loca rdc
+	nam2 flex rpl,flex acd
+
+f00,	loca xeq
+	nam1 flex xeq
+
+f01,	loca crn
+	nam1 flex loc
+
+f34,	loca tpr
+	nam2 flex ter,flex pri
+
+f50,	loca pgm
+	nam2 flex pro,767667
+
+f51,	loca ret
+	nam2 flex ret,flex urn
+
+f52,	loca goe
+	nam1 766746
+
+f53,	loca stq
+	nam2 flex set,767650
+
+f54,	loca aso
+	nam2 flex sas,flex soc
+
+fb2,	loca rin
+	nam2 flex rea,767664
+
+fb3,	loca evl
+	nam2 flex eva,767643
+
+fb4,	loca pnt
+	nam2 flex pri,764523
+
+fb5,	loca car		/**
+	nam2 flex quo,762365
+
+fa3,	loca nul
+	nam2 flex nul,767643
+
+f60,	loca pls
+	nam2 flex plu,767622
+
+f61,	loca tim
+	nam2 flex tim,766522
+
+f62,	loca lga
+	nam2 flex log,flex and
+
+f63,	loca lgo
+	nam2 flex log,764651
+
+/miscellany
+
+f38,	nam1 flex nil
+
+f40,	nam2 flex lam,flex bda
+
+f42,	nam2 flex apv,766143
+
+f43,	nam2 flex sub,767651
+
+f44,	nam2 flex exp,767651
+
+f45,	nam2 flex fsu,766251
+
+f46,	nam2 flex fex,764751
+
+fb0,	nam2 flex obl,flex ist
+
+f37,	nam1 767623
+
+end,
+start pdo

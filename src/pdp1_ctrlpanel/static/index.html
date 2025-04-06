@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PDP-1 Control Panel</title>
+    <style>
+        body {
+            font-family: monospace;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+        .section {
+            border: 1px solid #ccc;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        button {
+            margin: 5px;
+            padding: 5px 10px;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f0f0f0;
+            min-height: 1.2em;
+        }
+        .toggle-switch {
+            display: inline-block;
+            vertical-align: middle;
+            margin: 0 10px;
+        }
+    </style>
+    <script src="control_panel.js"></script>
+</head>
+<body>
+    <h1>PDP-1 Control Panel</h1>
+
+    <div class="section">
+        <h2>Reader</h2>
+        <input type="file" id="tapeFile">
+        <button onclick="mountTape()">Mount</button>
+        <button onclick="unmountTape()">Unmount</button>
+        <div id="readerStatus" class="status"></div>
+    </div>
+
+    <div class="section">
+        <h2>Punch</h2>
+        <button onclick="initPunch()">Init New Tape</button>
+        <button onclick="getPunchedTape()">Get Punched Tape</button>
+        <div id="punchStatus" class="status"></div>
+    </div>
+
+    <div class="section">
+        <h2>Hardware Options</h2>
+        <div>
+            Multiply/Divide Unit: 
+            <label class="toggle-switch">
+                <input type="checkbox" id="muldivToggle" onchange="toggleMulDiv()">
+                <span id="muldivStatus"></span>
+            </label>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Assembler</h2>
+        <input type="file" id="sourceFile" accept=".mac">
+        <button onclick="assembleFile()">Assemble</button>
+        <div id="assembleStatus" class="status"></div>
+        <div id="assembleOutput" style="white-space: pre; font-family: monospace; margin-top: 10px;"></div>
+        <div id="assembleResults" style="display: none; margin-top: 10px;">
+            <a id="lstLink" href="#" style="margin-right: 10px;">View Listing</a>
+            <a id="rimLink" href="#" style="margin-right: 10px;">Download RIM</a>
+            <button onclick="mountRim()">Mount RIM in Reader</button>
+        </div>
+    </div>
+</body>
+</html>

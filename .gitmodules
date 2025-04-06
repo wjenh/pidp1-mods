@@ -1,0 +1,3 @@
+[submodule "src/blincolnlights"]
+	path = src/blincolnlights
+	url = https://github.com/aap/blincolnlights.git

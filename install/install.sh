@@ -157,7 +157,7 @@ else
 		case $yhn in
 		      [Yy]* ) 
 			mkdir -p ~/.config/autostart
-			cp /opt/pidp11/install/pdp11startup.desktop ~/.config/autostart
+			cp /opt/pidp1/install/pdp1startup.desktop ~/.config/autostart
 			echo
 			echo Autostart via .desktop file for GUI setup
 			break
@@ -191,14 +191,12 @@ fi
 # =============================================================================
 while true; do
     echo
-    read -p "Add VT-52 desktop icon and desktop settings? " prxn
+    read -p "Add desktop icons and desktop settings? " prxn
     case $prxn in
         [Yy]* ) 
-            #cp /opt/pidp11/install/vt52.desktop /home/pi/Desktop/
-            #cp /opt/pidp11/install/vt52fullscreen.desktop /home/pi/Desktop/
             cp /opt/pidp1/install/tty.desktop /home/pi/Desktop/
-            #cp /opt/pidp11/install/tek.desktop /home/pi/Desktop/
             cp /opt/pidp1/install/pdp1control.desktop /home/pi/Desktop/
+            cp /opt/pidp1/install/type30.desktop /home/pi/Desktop/
 
             #make pcmanf run on double click, change its config file
             config_file="/home/pi/.config/libfm/libfm.conf"
@@ -214,9 +212,7 @@ while true; do
             fi
         
             # wallpaper
-            echo $XDG_RUNTIME_DIR
-            echo ==========================
-            pcmanfm --set-wallpaper /opt/pidp1/install/wallpaper.png--wallpaper-mode=fit
+            pcmanfm --set-wallpaper /opt/pidp1/install/wallpaper.png --wallpaper-mode=fit
 
             #echo
             #echo "Installing Teletype font..."

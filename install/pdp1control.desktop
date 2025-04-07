@@ -4,6 +4,6 @@ Comment=Start up PiDP-1
 Exec=/usr/bin/lxterminal -e "/opt/pidp1/bin/pdp1control.sh"
 Terminal=false
 Type=Application
-Icon=/opt/pidp1/install/pdp1control.svg
+Icon=/opt/pidp1/install/pdp1icon2.svg
 Categories=X-PDP1;
 StartupNotify=true

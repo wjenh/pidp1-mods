@@ -4,6 +4,6 @@ Comment=Teletype for PiDP-1
 Exec=/opt/pidp11/bin/sty bash pdp1
 Terminal=false
 Type=Application
-Icon=/opt/pidp11/install/tty.svg
+Icon=/opt/pidp1/install/soroban-icon2.svg
 Categories=X-PDP1;
 StartupNotify=false

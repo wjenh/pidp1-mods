@@ -6,6 +6,7 @@ argc=$#
 pidp1="/opt/pidp1/bin/pdp1"
 pidp_dir=`dirname $pidp1`
 pidp_bin=`basename $pidp1`
+cd /opt/pidp1	# superfluous except for autostart
 
 # Requires screen utility for detached pidp1 console functionality.
 #
@@ -49,7 +50,7 @@ do_start() {
 	/opt/pidp1/bin/scanpf
 	sw=$?
 
-	#sw="${2:-$sw}"
+	sw="${2:-$sw}"
 	echo switches set to $sw
 
 	echo start pidp1 in screen
@@ -62,7 +63,7 @@ do_start() {
 
 	echo "Configuring PiDP-1 for boot number $sw"
 	cd /opt/pidp1	# superfluous
-	cat "/opt/pidp1/bootcfg/${sw}.cfg" | source /opt/pidp1/bin/pdp1ctl
+	cat "/opt/pidp1/bootcfg/${sw}.cfg" | /opt/pidp1/bin/pdp1ctl
 
 
 	return $status
@@ -75,7 +76,8 @@ do_stop() {
 	    status=1
 	else
 	    echo "Stopping PiDP-1"
-	    screen -S pidp1 -X quit
+	    #screen -S pidp1 -X quit
+	    pkill -2 pdp1
 	    status=$?
 	fi
     	sleep 1

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Type 30
+Comment=Type 30 for PiDP-1
+Exec=/opt/pidp1/bin/p7simES localhost
+Terminal=false
+Type=Application
+Icon=/opt/pidp1/install/tty.svg
+Categories=X-PDP1;
+StartupNotify=false

@@ -43,23 +43,27 @@ do_start() {
 	cd $pidp_dir
 
 	echo start panel driver
-	sudo /opt/pidp1/bin/panel_pidp1 &
+	/opt/pidp1/bin/panel_pidp1 &
 
 	echo read boot config from sense switches
-	sw=/opt/pidp1/bin/scanpf
+	/opt/pidp1/bin/scanpf
+	sw=$?
 
-	sw="${2:-$sw}"
+	#sw="${2:-$sw}"
+	echo switches set to $sw
 
 	echo start pidp1 in screen
-	screen -dmS pidp1 $pdp1
+	screen -dmS pidp1 /opt/pidp1/bin/pdp1
 	status=$?
 
 	sleep 1
 	echo start p7simES
-	/opt/pidp1/bin/p7simES localhost
-	
+	/opt/pidp1/bin/p7simES localhost&
+
 	echo "Configuring PiDP-1 for boot number $sw"
-	cat /opt/pidp1/bootcfg/$sw
+	cd /opt/pidp1	# superfluous
+	cat "/opt/pidp1/bootcfg/${sw}.cfg" | source /opt/pidp1/bin/pdp1ctl
+
 
 	return $status
 }
@@ -73,13 +77,13 @@ do_stop() {
 	    echo "Stopping PiDP-1"
 	    screen -S pidp1 -X quit
 	    status=$?
-	    sleep 1
-	    sudo pkill panel_pidp1
-	    pkill p7simES
-	    sleep 1
-	    sudo pkill panel_pidp1
-	    pkill p7simES
 	fi
+    	sleep 1
+    	pkill panel_pidp1
+    	pkill p7simES
+    	sleep 1
+    	pkill panel_pidp1
+    	pkill p7simES
 	return $status
 }
 

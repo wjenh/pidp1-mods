@@ -33,11 +33,28 @@ echo
 echo
 
 # make required binaries
-make -C /opt/pidp1/src/blincolnlights/pinctrl 	# pinctrl functions
-make -C /opt/pidp1/src/blincolnlights/panel_pidp1 	# panel driver
-make -C /opt/pidp1/src/blincolnlights/pdp1 	# simulator
-make -C /opt/pidp1/src/scanpf 			# returns sense switches
-make -C /opt/pidp1/src/blincolnlights/pidp1_test 	# hardware test program
+# =============================================================================
+
+while true; do
+    echo
+    read -p "Make required PiDP-1 binaries? " yn
+    case $yn in
+        [Yy]* )
+		make -C /opt/pidp1/src/blincolnlights/pinctrl 	# pinctrl functions
+		make -C /opt/pidp1/src/blincolnlights/panel_pidp1 	# panel driver
+		make -C /opt/pidp1/src/blincolnlights/pdp1 	# simulator
+		make -C /opt/pidp1/src/scanpf 			# returns sense switches
+		make -C /opt/pidp1/src/blincolnlights/pidp1_test 	# hardware test program
+		break
+		;;
+        [Nn]* ) 
+            echo Did not compile PiDP-1 programs.
+	    break
+            ;;
+        * ) echo "Please answer yes or no.";;
+    esac
+done
+
 
 # Set required access privileges to pidp1 simulator
 # =============================================================================
@@ -58,7 +75,7 @@ while true; do
             # to access GPIO with root privileges:
             sudo chmod +s /opt/pidp1/src/blincolnlights/panel_pidp1
             # to run as a RT thread:
-            sudo setcap cap_sys_nice+ep /opt/pidp1/src/blincolnlights/panel_pidp1
+            sudo setcap cap_sys_nice+ep /opt/pidp1/src/blincolnlights/panel_pidp1/panel_pidp1
 	    echo Done.
 	    break
             ;;
@@ -111,6 +128,8 @@ while true; do
             sudo ln -f -s /opt/pidp1/etc/pdp1.sh /usr/local/bin/pdp1
             # put pdp1control script into /usr/local
             sudo ln -f -s /opt/pidp1/bin/pdp1control.sh /usr/local/bin/pdp1control
+	    break
+	    ;;
         [Nn]* ) 
             echo Skipped software install
             break
@@ -122,66 +141,51 @@ done
 
 # Install autostart at boot
 # =============================================================================
-while true; do
-    echo
-    read -p "Boot PiDP-1 at start up? " prxn
-    case $prxn in
-        [Yy]* ) 
-            if [ "$ARCH" = "amd64" ]; then
-                echo skipping autostart, because this is not a Raspberry Pi
-                echo Not a problem: start manually by typing 
-                echo pdp1control start x
-                echo ...where x is the tape number normally set on the front panel.
-                echo 
-                echo Access the PDP-1 terminal by typing pdp1 afterwards.
-                echo
-                echo "But that is all in the manual..."
-                echo
-                echo copying modified pidp1.sh for Amd64...
-                cp /opt/pidp1/bin/backupAmd64-binaries/pidp1.sh /opt/pidp11/bin/pidp1.sh
-            else
-                # enable rpcbind
-                #sudo systemctl enable rpcbind
-                #sudo systemctl start rpcbind
-                #echo please check that rpcbind is up:
-                #sudo systemctl status rpcbind
-                echo
-                echo
-                echo "Autostart the PDP-1 using the GUI(Y) or .profile (H)?"
-                    read -p "-- Y recommended, H is autostart for headless Pis without GUI, N is no autostart:" yhn
-                case $yhn in
-                      [Yy]* ) 
-                        mkdir -p ~/.config/autostart
-                        cp /opt/pidp11/install/pdp11startup.desktop ~/.config/autostart
+if [ "$ARCH" = "amd64" ]; then
+	echo skipping autostart, because this is not a Raspberry Pi
+	echo start manually by typing 
+	echo pdp1control start x
+	echo ...where x is the tape number normally set on the front panel.
+	echo 
+	echo "But that is all in the manual..."
+	echo
+else
+	while true; do
+	    echo
+	    echo 
+		read -p "Autostart the PDP-1 using the GUI(Y), or using .profile for (H)eadless Pis, or (N)ot at all?" yhn
+		case $yhn in
+		      [Yy]* ) 
+			mkdir -p ~/.config/autostart
+			cp /opt/pidp11/install/pdp11startup.desktop ~/.config/autostart
 			echo
 			echo Autostart via .desktop file for GUI setup
-                        break
+			break
 			;;
-                      [Hh]* ) 
-                        # add pdp11 to the end of pi's .profile to let a new login 
-                        # grab the terminal automatically
-                        #   first, make backup .foo copy...
-                        test ! -f /home/pi/profile.foo && cp -p /home/pi/.profile /home/pi/profile.foo
-                        #   add the line to .profile if not there yet
-                        if grep -xq "pdp11 # autostart" /home/pi/.profile
-                        then
-                            echo .profile already contains pdp11 for autostart, OK.
-                        else
-                            sed -e "\$apdp11 # autostart" -i /home/pi/.profile
-                        fi
+		      [Hh]* ) 
+			# add pdp11 to the end of pi's .profile to let a new login 
+			# grab the terminal automatically
+			#   first, make backup .foo copy...
+			test ! -f /home/pi/profile.foo && cp -p /home/pi/.profile /home/pi/profile.foo
+			#   add the line to .profile if not there yet
+			if grep -xq "pdp11 # autostart" /home/pi/.profile
+			then
+			    echo .profile already contains pdp11 for autostart, OK.
+			else
+			    sed -e "\$apdp11 # autostart" -i /home/pi/.profile
+			fi
 			echo
 			echo autostart via .profile for headless use without GUI
-                        break
+			break
 			;;
-                      [Nn]* ) 
+		      [Nn]* ) 
 			echo No autostart
-                      * ) echo "Please answer Y, H or N.";;
-                    esac
-            fi
-            break
-	    ;;
-
-
+			break
+			;;
+		      * ) echo "Please answer Y, H or N.";;
+	    esac
+	done	
+fi
 
 # 20241126 Add desktop icons etc
 # =============================================================================
@@ -191,10 +195,10 @@ while true; do
     case $prxn in
         [Yy]* ) 
             #cp /opt/pidp11/install/vt52.desktop /home/pi/Desktop/
-            cp /opt/pidp11/install/vt52fullscreen.desktop /home/pi/Desktop/
-            cp /opt/pidp11/install/tty.desktop /home/pi/Desktop/
+            #cp /opt/pidp11/install/vt52fullscreen.desktop /home/pi/Desktop/
+            cp /opt/pidp1/install/tty.desktop /home/pi/Desktop/
             #cp /opt/pidp11/install/tek.desktop /home/pi/Desktop/
-            cp /opt/pidp11/install/pdp11control.desktop /home/pi/Desktop/
+            cp /opt/pidp1/install/pdp1control.desktop /home/pi/Desktop/
 
             #make pcmanf run on double click, change its config file
             config_file="/home/pi/.config/libfm/libfm.conf"
@@ -212,14 +216,14 @@ while true; do
             # wallpaper
             echo $XDG_RUNTIME_DIR
             echo ==========================
-            pcmanfm --set-wallpaper /opt/pidp11/install/wallpaper.jpeg --wallpaper-mode=fit
+            pcmanfm --set-wallpaper /opt/pidp1/install/wallpaper.png--wallpaper-mode=fit
 
-            echo
-            echo "Installing Teletype font..."
-            echo
-            mkdir ~/.fonts
-                cp /opt/pidp11/install/TTY33MAlc-Book.ttf ~/.fonts/
-            fc-cache -v -f
+            #echo
+            #echo "Installing Teletype font..."
+            #echo
+            #mkdir ~/.fonts
+            #    cp /opt/pidp1/install/TTY33MAlc-Book.ttf ~/.fonts/
+            #fc-cache -v -f
 
 
             echo "Desktop updated."
@@ -233,10 +237,8 @@ while true; do
         * ) echo "Please answer Y or N.";;
     esac
 done
-echo
 
 
-done
 echo
 echo Done. Please do a sudo reboot and the front panel will come to life.
 echo Rerun this script if you want to do any install modifications.

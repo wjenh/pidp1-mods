@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=pidp1-startup
+Comment=Start up PiDP-1
+Exec=bash pdp1control start
+Terminal=false
+Type=Application
+Icon=/opt/pidp1/install/pdp1control.svg
+Categories=X-PDP1;
+StartupNotify=true

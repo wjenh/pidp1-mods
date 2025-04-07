@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=-Load Paper Tape Reader
+Comment=PTR for PiDP-1
+Exec=/opt/pidp1/bin/sty bash pdp1
+Terminal=false
+Type=Application
+Icon=/opt/pidp1/install/ptr-icon.svg
+Categories=X-PDP1;
+StartupNotify=false

@@ -197,6 +197,8 @@ while true; do
             cp /opt/pidp1/install/tty.desktop /home/pi/Desktop/
             cp /opt/pidp1/install/pdp1control.desktop /home/pi/Desktop/
             cp /opt/pidp1/install/type30.desktop /home/pi/Desktop/
+            cp /opt/pidp1/install/ptr.desktop /home/pi/Desktop/
+            cp /opt/pidp1/install/ptp.desktop /home/pi/Desktop/
 
             #make pcmanf run on double click, change its config file
             config_file="/home/pi/.config/libfm/libfm.conf"

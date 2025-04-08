@@ -5,7 +5,9 @@ Main web sites:
 - https://obsolescence.wixsite.com/obsolescence/pidp1 - Further details
 - https://groups.google.com/g/pidp-1 - User group
 
-<img src="https://obsolescence.dev/images/pidp1/proto1/c2.jpg" align="center" /> 
+<img src="https://github.com/user-attachments/assets/1a70370a-108c-4edd-a603-930143352812" align="center" />
+
+img src="https://obsolescence.dev/images/pidp1/proto1/c2.jpg" align="center" /> 
 
 Credits: Simulation written by Angelo Papenhoff (https://github.com/aap), hardware Oscar Vermeulen
 

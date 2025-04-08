@@ -34,6 +34,7 @@ echo
 
 usr=$(whoami)
 usrgroup=$(id -g -n)
+cd /opt/pidp1
 
 # give pidp1 user owner after the sudo git clone command
 # =============================================================================

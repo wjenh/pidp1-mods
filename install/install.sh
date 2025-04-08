@@ -32,6 +32,30 @@ echo Just say Yes to everything.
 echo
 echo
 
+usr=$(whoami)
+usrgroup=$(id -g -n)
+
+# give pidp1 user owner after the sudo git clone command
+# =============================================================================
+
+while true; do
+    echo
+    read -p "Set owner of PiDP-1 directory? " yn
+    case $yn in
+        [Yy]* )
+            # make sure that the directory does not have root ownership
+            sudo chown -R $usr:$usrgroup /opt/pidp1
+	    break
+	    ;;
+        [Nn]* ) 
+            echo Left ownership of PiDP directory unchanged
+	    break
+            ;;
+        * ) echo "Please answer yes or no.";;
+    esac
+done
+
+
 # pull in git submodules (for pdp1 sim itself, and the p7sim Type 30 display)
 # =============================================================================
 
@@ -65,7 +89,7 @@ while true; do
 		make -C /opt/pidp1/src/blincolnlights/panel_pidp1 	# panel driver
 		make -C /opt/pidp1/src/blincolnlights/pdp1 	# simulator
 		make -C /opt/pidp1/src/scanpf 			# returns sense switches
-		make -C /opt/pidp1/src/blincolnlights/pidp1_test 	# hardware test program
+		make -C /opt/pidp1/src//pidp1_test 	# hardware test program
 		break
 		;;
         [Nn]* ) 
@@ -85,13 +109,6 @@ while true; do
     read -p "Set required access privileges to pidp1 simulator? " yn
     case $yn in
         [Yy]* )
-            # make sure that the directory does not have root ownership
-            # (in case the user did a simple git clone instead of 
-            #  sudo -u pi git clone...)
-            myusername=$(whoami)
-            mygroup=$(id -g -n)
-            sudo chown -R $myusername:$mygroup /opt/pidp1
-
             # make sure pidp1 panel driver has the right privileges
             # to access GPIO with root privileges:
             sudo chmod +s /opt/pidp1/src/blincolnlights/panel_pidp1
@@ -187,13 +204,13 @@ else
 			# add pdp11 to the end of pi's .profile to let a new login 
 			# grab the terminal automatically
 			#   first, make backup .foo copy...
-			test ! -f /home/pi/profile.foo && cp -p /home/pi/.profile /home/pi/profile.foo
+			test ! -f /home/$usr/profile.foo && cp -p /home/$usr/.profile /home/$usr/profile.foo
 			#   add the line to .profile if not there yet
-			if grep -xq "pdp11 # autostart" /home/pi/.profile
+			if grep -xq "pdp11 # autostart" /home/$usr/.profile
 			then
 			    echo .profile already contains pdp11 for autostart, OK.
 			else
-			    sed -e "\$apdp11 # autostart" -i /home/pi/.profile
+			    sed -e "\$apdp11 # autostart" -i /home/$usr/.profile
 			fi
 			echo
 			echo autostart via .profile for headless use without GUI
@@ -215,14 +232,14 @@ while true; do
     read -p "Add desktop icons and desktop settings? " prxn
     case $prxn in
         [Yy]* ) 
-            cp /opt/pidp1/install/tty.desktop /home/pi/Desktop/
-            cp /opt/pidp1/install/pdp1control.desktop /home/pi/Desktop/
-            cp /opt/pidp1/install/type30.desktop /home/pi/Desktop/
-            cp /opt/pidp1/install/ptr.desktop /home/pi/Desktop/
-            cp /opt/pidp1/install/ptp.desktop /home/pi/Desktop/
+            cp /opt/pidp1/install/tty.desktop /home/$usr/Desktop/
+            cp /opt/pidp1/install/pdp1control.desktop /home/$usr/Desktop/
+            cp /opt/pidp1/install/type30.desktop /home/$usr/Desktop/
+            cp /opt/pidp1/install/ptr.desktop /home/$usr/Desktop/
+            cp /opt/pidp1/install/ptp.desktop /home/$usr/Desktop/
 
             #make pcmanf run on double click, change its config file
-            config_file="/home/pi/.config/libfm/libfm.conf"
+            config_file="/home/$usr/.config/libfm/libfm.conf"
             # Create the directory if it doesn't exist
             mkdir -p "$(dirname "$config_file")"
             # Add or update the quick_exec setting

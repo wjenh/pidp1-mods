@@ -45,7 +45,7 @@ do_start() {
 
 	echo start panel driver
 	/opt/pidp1/bin/panel_pidp1 &
-
+sleep 1
 	echo read boot config from sense switches
 	/opt/pidp1/bin/scanpf
 	sw=$?

@@ -89,6 +89,7 @@ while true; do
 		make -C /opt/pidp1/src/blincolnlights/pinctrl 	# pinctrl functions
 		make -C /opt/pidp1/src/blincolnlights/panel_pidp1 	# panel driver
 		make -C /opt/pidp1/src/blincolnlights/pdp1 	# simulator
+		make -C /opt/pidp1/src/p7sim			# returns sense switches
 		make -C /opt/pidp1/src/scanpf 			# returns sense switches
 		make -C /opt/pidp1/src//pidp1_test 	# hardware test program
 		break

@@ -78,6 +78,35 @@ while true; do
 done
 
 
+# Install required dependencies
+# =============================================================================
+while true; do
+    echo
+    read -p "Install the required dependencies? " prxn
+    case $prxn in
+        [Yy]* ) 
+            sudo apt update
+            #Install SDL2, optionally used for PDP-11 graphics terminal emulation
+            sudo apt install -y libsdl2-dev
+	    #Install SDL2-image. Strictly speaking, only needed for virtual panel, not PiDP-1
+	    sudo apt install -y libsdl2-image-dev
+            #Install ncat
+            sudo apt install -y ncat
+            #Install readline, used for command-line editing in simh
+            #sudo apt install -y libreadline-dev
+            # Install screen
+            sudo apt install -y screen
+            break
+	    ;;
+        [Nn]* ) 
+            echo Skipped install of dependencies - OK if you installed them already
+            break
+	    ;;
+        * ) echo "Please answer Y or N.";;
+    esac
+done
+
+
 # make required binaries
 # =============================================================================
 
@@ -126,35 +155,6 @@ while true; do
         * ) echo "Please answer yes or no.";;
     esac
 done
-
-# Install required dependencies
-# =============================================================================
-while true; do
-    echo
-    read -p "Install the required dependencies? " prxn
-    case $prxn in
-        [Yy]* ) 
-            sudo apt update
-            #Install SDL2, optionally used for PDP-11 graphics terminal emulation
-            sudo apt install -y libsdl2-dev
-            #Install ncat
-            sudo apt install -y ncat
-            #Install readline, used for command-line editing in simh
-            #sudo apt install -y libreadline-dev
-            # Install screen
-            sudo apt install -y screen
-            break
-	    ;;
-        [Nn]* ) 
-            echo Skipped install of dependencies - OK if you installed them already
-            break
-	    ;;
-        * ) echo "Please answer Y or N.";;
-    esac
-done
-
-pidpath=/opt/pidp11
-
 
 
 # Install pidp1 commands

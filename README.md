@@ -3,7 +3,7 @@
 Main web sites:
 - https://obsolescence.dev/pdp1 - Overview & context
 - https://obsolescence.wixsite.com/obsolescence/pidp1 - Further details
-- https://groups.google.com/g/pidp-1 - User group
+- [https://groups.google.com/g/pidp-1](https://groups.google.com/g/pidp1) - User group
 
 <img src="https://github.com/user-attachments/assets/8e383528-861b-4829-8799-4ecbf265fde4" align="center" />
 Credits: Simulation written by Angelo Papenhoff (https://github.com/aap), hardware: Oscar Vermeulen

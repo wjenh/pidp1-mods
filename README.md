@@ -7,9 +7,7 @@ Main web sites:
 
 <img src="https://github.com/user-attachments/assets/1a70370a-108c-4edd-a603-930143352812" align="center" />
 
-img src="https://obsolescence.dev/images/pidp1/proto1/c2.jpg" align="center" /> 
-
-Credits: Simulation written by Angelo Papenhoff (https://github.com/aap), hardware Oscar Vermeulen
+Credits: Simulation written by Angelo Papenhoff (https://github.com/aap), hardware: Oscar Vermeulen
 
 # Install instructions
 

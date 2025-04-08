@@ -43,14 +43,12 @@ Depending on your preferenes, you can run the PiDP-1 headless from your laptop, 
 - `pdp1 ptr' loads an existing paper tape into the paper tape reader
 - `pdp1 sim` drops you into the PDP-1 simulator program, which you'll not normally need to do
 
-**How to use from the Web Control Panel
+**How to use from the Web Control Panel:
+
 If you want to run your PiDP-1 headless (i.e., without monitor and keyboard), the above functionality is also accessible through the Web-based control panel. Just go to **http://pidp1.local:1234**
 The Web Control Panel offers some more creature comforts for developing code, integrating a cross assembler etc
 
-**How to use PiDP-1 devices headless
+**How to use PiDP-1 devices headless:
+
 The Type 30 simulator as well as the Soroban Typewriter and the High Speed Paper Tape Reader & Punch connect over TCP/IP, so you can run these just as well on your laptop as on your local Pi itself. This makes it possible to leave the PiDP-1 itself completely headless.
 <a rdpd1control and rpdp1 script will make this comfortable - WIP>
-
-
-
-  <img src="https://github.com/user-attachments/assets/b7ba9f3f-6eac-4df2-badf-35c045355a78" align="left" />

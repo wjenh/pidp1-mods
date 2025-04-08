@@ -1,0 +1,93 @@
+Ironic Computer Space Simulator for the PDP-1
+vers. 1.2, Norbert Landsteiner Nov 13 2016
+
+
+Requires a DEC PDP-1 with the automatic multiply/divide option (mul/div).
+
+Source format: Unix new lines, tabs set to 8 spaces (like browsers, etc).
+
+
+The program is in the public domain as long as the name of the author (me)
+and the date of the program (2016, not 1962) are preserved.
+
+
+Start address 4: control boxes (iot 11)
+Start address 5: testword controls (lat)
+
+
+Sense Switch Options
+
+SSW 1 ...  Parallax effect
+             off - Stars roll continuously to the left.
+             on  - Background stars move relatively to rocket ship.
+SSW 2 ...  Parallax Effect Etrength (together with SSW 1)
+             off - Subtle effect.
+             on  - Stronger effect.
+SSW 3 ...  Torpedo Agility (steering)
+             off - Normal.
+             on  - Agile.
+SSW 4 ...  Saucer Motion
+             off - Diagonals are horizontally stretched.
+                   (conforms more to the overall impression of CS)
+             on  - Geometrical diagonals.
+SSW 5 ...  Saucer Piloting, which saucer is shooting?
+             off - Always the same one (as in original CS).
+             on  - Random select.
+SSW 6 ...  Scoring Mode
+             off - Original: single digit, truncated with wrap-around,
+                   player in hex (wraps at 16), saucer decimal (wraps at 10).
+             on  - No wrap-around, both scores display as a single hex digit,
+                   each extra play has to be won separately in order to continue.
+
+
+Note on scoring and extra play:
+
+By default, the scoring mechanism of the original arcade machine is simulated,
+where the player's score is truncated to a single hexadecimal digit (wrapping
+at 16) and the saucers' score is truncated to a decimal single-digit value
+(wrapping at 10). Since, with this method, the actual score values are truncated
+and wrapped, the player wins even on a wrap-around. Scores are preserved for the
+extra play ('Hyperspace Mode') and the game continues with accumulating scores.
+
+With sense switch 6 active, the scores are maintained internally and truncated
+to a single-digit hexadecimal figure for the display only. Since the full values
+are maintained internally, any visual wrapping doesn't account for the decision
+on the winner. While scores are preserved, as above, each extra play has to be
+won separately in order to continue. (This is to prevent the player from
+accumulating a substantial lead for a nearly unlimited number of consecutive
+extra plays. Thus, every game remains a challenge.)
+
+
+
+Version History
+
+Vers. 1.2, Nov 23, 2016: Refined alternate scoring method.
+             (No reset, evaluation of winner per play.)
+Vers. 1.1, Nov 12, 2016: Added timeout for onscreen display to prevent burn-in.
+             Minor adjustments to saucer positioning on respawn.
+             Scores are now reset at the start of an extra play, when the
+             optional scoring method (sense switch 6) is active.
+Vers. 1.0, Nov 10, 2016: Release version.
+             Adjusted pace and parameters (now 60 fps!).
+             New option to disable the original scoring bug.
+             Otherwise, player wraps at 16, saucers at 10.
+             Torpedoes now always follow the turn of the ship.
+Vers. 0.9.4/5, Nov 5, 2016: All new saucer explosion.
+Vers. 0.9.3, Nov 3, 2016: Minor adaptations.
+Vers. 0.9.2, Nov 3, 2016: Added a tiny animation as an indicator for
+             'Hyperspace Mode' (extra play, in the original in reverse video).
+Vers. 0.9.1, Nov 1, 2016: Minor adaptations.
+Vers. 0.9.0, Oct 31, 2016: First release, beta
+             (final version as for RetroChallenge 2016/10).
+Vers. 0.0.1, Oct 12, 2016: Start of project.
+
+
+
+Online emulation and latest code: http://www.masswerk.at/icss/
+
+
+
+Norbert Landsteiner
+Contact: see www.masswerk.at
+
+Vienna, Nov 12, 2016

@@ -66,7 +66,9 @@ do_start() {
 	echo "Configuring PiDP-1 for boot number $sw"
 	cd /opt/pidp1	# superfluous
 	cat "/opt/pidp1/bootcfg/${sw}.cfg" | /opt/pidp1/bin/pdp1ctl
-
+sleep 1
+	echo start tapevis
+	/opt/pidp1/bin/tapevis /opt/pidp1/tapes/dpys5.rim
 
 	return $status
 }
@@ -85,9 +87,11 @@ do_stop() {
     	sleep 1
     	pkill -2 panel_pidp1
     	pkill -2 p7simES
-    	sleep 1
+	pkill -2 tapevis    
+	sleep 1
     	pkill -2 panel_pidp1
     	pkill -2 p7simES
+	pkill -2 tapevis
 	return $status
 }
 

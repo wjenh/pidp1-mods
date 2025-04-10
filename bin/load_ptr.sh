@@ -31,6 +31,6 @@ select FILE in "${FILES[@]}"; do
         echo "Invalid selection. Try again."
     fi
 done
-
+echo "r $FILE" 
 echo "r $FILE" | ncat -w 1 localhost 1050
 

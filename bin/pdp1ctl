@@ -3,5 +3,5 @@
 PDP1_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 # a bit crappy. pdp1 should be able to handle multiple lines
 while IFS= read -r line; do
-	echo "$line" | sed "s:PDP1_DIR:${PDP1_DIR}:g" | ncat -w 1 localhost 1234
+	echo "$line" | sed "s:PDP1_DIR:${PDP1_DIR}:g" | ncat -w 1 localhost 1040 
 done

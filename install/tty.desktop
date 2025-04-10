@@ -1,7 +1,7 @@
 [Desktop Entry]
-Name=Teletype
-Comment=Teletype for PiDP-1
-Exec=/opt/pidp11/bin/sty bash pdp1
+Name=Typewriter
+Comment=Typewriter for PiDP-1
+Exec=lxterminal -e "/opt/pidp1/bin/load_ptr.sh"
 Terminal=false
 Type=Application
 Icon=/opt/pidp1/install/soroban-icon2.svg

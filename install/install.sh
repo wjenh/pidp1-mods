@@ -120,6 +120,7 @@ while true; do
 		make -C /opt/pidp1/src/blincolnlights/pdp1 	# simulator
 		make -C /opt/pidp1/src/p7sim			# returns sense switches
 		make -C /opt/pidp1/src/scanpf 			# returns sense switches
+		make -C /opt/pidp1/src/blincolnlights/tapevis	# returns sense switches
 		make -C /opt/pidp1/src//pidp1_test 	# hardware test program
 		
 		# this makes the virtual pdp-1 panel, used if no PiDP-1 hardware is attached:

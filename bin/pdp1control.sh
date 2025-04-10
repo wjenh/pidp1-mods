@@ -4,9 +4,7 @@
 
 argc=$#
 pidp1="/opt/pidp1/bin/pdp1"
-pidp_dir=`dirname $pidp1`
-pidp_bin=`basename $pidp1`
-cd /opt/pidp1	# superfluous except for autostart
+cd /opt/pidp1
 
 # Requires screen utility for detached pidp1 console functionality.
 #
@@ -41,39 +39,40 @@ do_start() {
 	    exit 0
 	fi
 	
-	cd $pidp_dir
-
 	echo start panel driver
-	/opt/pidp1/bin/panel_pidp1 &
+	bin/panel_pidp1 &
 
 	sleep 1 # only needed for autoboot at startup
 
 	echo read boot config from sense switches
-	/opt/pidp1/bin/scanpf
+	bin/scanpf
 	sw=$?
 
 	sw="${2:-$sw}"
 	echo switches set to $sw
 
 	echo start pidp1 in screen
-	screen -dmS pidp1 /opt/pidp1/bin/pdp1
+	screen -dmS pidp1 bin/pdp1
 	status=$?
 
 	sleep 1
 	echo start p7simES
-	/opt/pidp1/bin/p7simES localhost&
-
-	echo "Configuring PiDP-1 for boot number $sw"
-	cd /opt/pidp1	# superfluous
-	cat "/opt/pidp1/bootcfg/${sw}.cfg" | /opt/pidp1/bin/pdp1ctl
-sleep 1
+	bin/p7simES localhost &
+	sleep 1
 	echo start tapevis
-	/opt/pidp1/bin/tapevis /opt/pidp1/tapes/dpys5.rim
+	bin/tapevis &
+
+	sleep 0.3
+	echo "Configuring PiDP-1 for boot number $sw"
+	cat "bootcfg/${sw}.cfg" | bin/pdp1ctl
 
 	return $status
 }
 
 do_stop() {
+	pkill tapevis
+    	pkill p7simES
+	sleep 0.5
 	is_running
 	if [ $? -eq 0 ]; then
 	    echo "PiDP-1 is already stopped." >&2
@@ -81,17 +80,10 @@ do_stop() {
 	else
 	    echo "Stopping PiDP-1"
 	    #screen -S pidp1 -X quit
-	    pkill -2 pdp1
+	    pkill 'pdp1$'
 	    status=$?
 	fi
-    	sleep 1
-    	pkill -2 panel_pidp1
-    	pkill -2 p7simES
-	pkill -2 tapevis    
-	sleep 1
-    	pkill -2 panel_pidp1
-    	pkill -2 p7simES
-	pkill -2 tapevis
+    	pkill panel_pidp1
 	return $status
 }
 

@@ -10,7 +10,7 @@ if [[ ! -d "$SUBDIR" ]]; then
 fi
 
 # Get list of files (non-hidden) in the subdirectory
-FILES=("$SUBDIR"/*.rim)
+FILES=("$SUBDIR"/*.rim "$SUBDIR"/*.bin)
 
 # Check if any files found
 if [[ ${#FILES[@]} -eq 0 ]]; then

@@ -96,7 +96,11 @@ while true; do
             #sudo apt install -y libreadline-dev
             # Install screen
             sudo apt install -y screen
-            break
+
+	    # not needed for Pi OS but for generic Linux
+	    sudo apt install lxterminal
+
+	    break
 	    ;;
         [Nn]* ) 
             echo Skipped install of dependencies - OK if you installed them already
@@ -124,7 +128,7 @@ while true; do
 		make -C /opt/pidp1/src//pidp1_test 	# hardware test program
 		
 		# this makes the virtual pdp-1 panel, used if no PiDP-1 hardware is attached:
-		make -C /opt/pidp1/src/blincolnlights/panel_pidp1 	# panel driver
+		make -C /opt/pidp1/src/blincolnlights/vpanel_pdp1 	# panel driver
             
 		echo Setting required access privileges to pidp1 simulator
 		# make sure pidp1 panel driver has the right privileges

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 BASE_DIR="/opt/pidp1"
-DEFAULT_NAME="newfile"
+DEFAULT_NAME="new_tape"
 
 # Launch zenity save dialog, starting in /opt/pidp1
 ABS_FILE=$(zenity --file-selection --save --confirm-overwrite \

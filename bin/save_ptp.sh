@@ -1,23 +1,22 @@
 #!/bin/bash
 
-DEFAULT_DIR="/opt/pidp1/tapes"
-echo "Default directory is: $DEFAULT_DIR"
+BASE_DIR="/opt/pidp1"
+DEFAULT_NAME="newfile"
 
-# Prompt the user for a filename (can be just a name or full path)
-read -p "Enter filename (just name or full path): " INPUT
+# Launch zenity save dialog, starting in /opt/pidp1
+ABS_FILE=$(zenity --file-selection --save --confirm-overwrite \
+                  --title="Save As" \
+                  --filename="${BASE_DIR}/tapes/${DEFAULT_NAME}")
 
-BASENAME="${INPUT##*/}"
-DEFAULT_PATH="$DEFAULT_DIR/$BASENAME"
-
-if [[ -f "$DEFAULT_PATH" ]]; then
-    echo save in tapes
-    FILE="$BASENAME"
-    echo "p tapes/YYYYYYY" | ncat -w 1 localhost 1050
-else
-    echo save in custom path
-    FILE="${INPUT/#\~/$HOME}"
-    echo "p $FILE" | ncat -w 1 localhost 1050
+# Handle cancel
+if [ $? -ne 0 ]; then
+    echo "User cancelled."
+    exit 1
 fi
 
-#echo "p $FILE" | ncat -w 1 localhost 1050
+# Convert absolute path to relative (from BASE_DIR)
+REL_FILE="${ABS_FILE#$BASE_DIR/}"
+
+echo "Relative path: $REL_FILE"
+    echo "p $REL_FILE" | ncat -w 1 localhost 1050
 

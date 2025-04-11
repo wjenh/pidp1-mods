@@ -16,7 +16,7 @@ import (
 const (
     readerPath = "/tmp/reader"
     punchPath  = "/tmp/punch"
-    emulatorPort = "1234"
+    emulatorPort = "1040"
 )
 
 // Common response writer for JSON responses

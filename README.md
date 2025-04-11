@@ -25,11 +25,11 @@ With the virtual front panel, this will ALSO run fine on regular Linux (tested o
 
 # Operating the PiDP-1
 
-Depending on your preferenes, you can run the PiDP-1 headless from your laptop, or from the Pi GUI with monitor & keyboard.
+Depending on your preferences, you can run the PiDP-1 headless from your laptop, or from the Pi GUI with monitor & keyboard.
 
 ![image](https://github.com/user-attachments/assets/e80a1c29-a8c9-4a50-a3a8-43e7163490fb)
 
-**How to use from the Pi GUI:
+**How to use from the Pi GUI or command line:
 
 **pdp1control** is the command to control the (simulated) PDP-11. You can use the pdp1control desktop icon, or use the Linux command line:
 

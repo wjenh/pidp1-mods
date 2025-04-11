@@ -66,7 +66,7 @@ while true; do
     case $yn in
         [Yy]* )
 		git submodule init
-		git submodule update --remote
+		git submodule update --remote --force
 		break
 		;;
         [Nn]* ) 
@@ -125,6 +125,14 @@ while true; do
 		
 		# this makes the virtual pdp-1 panel, used if no PiDP-1 hardware is attached:
 		make -C /opt/pidp1/src/blincolnlights/panel_pidp1 	# panel driver
+            
+		echo Setting required access privileges to pidp1 simulator
+		# make sure pidp1 panel driver has the right privileges
+            	# to access GPIO with root privileges:
+            	sudo chmod +s /opt/pidp1/src/blincolnlights/panel_pidp1
+            	# to run as a RT thread:
+            	sudo setcap cap_sys_nice+ep /opt/pidp1/src/blincolnlights/panel_pidp1/panel_pidp1
+	    	echo Done.
 		break
 		;;
         [Nn]* ) 
@@ -136,24 +144,21 @@ while true; do
 done
 
 
-# Set required access privileges to pidp1 simulator
+# Use virtual panel or PiDP hardware panel
 # =============================================================================
 
 while true; do
     echo
-    read -p "Set required access privileges to pidp1 simulator? " yn
+    read -p "Use PiDP hardware front panel (Y) or on-screen virtual panel (V)? " yn
     case $yn in
         [Yy]* )
-            # make sure pidp1 panel driver has the right privileges
-            # to access GPIO with root privileges:
-            sudo chmod +s /opt/pidp1/src/blincolnlights/panel_pidp1
-            # to run as a RT thread:
-            sudo setcap cap_sys_nice+ep /opt/pidp1/src/blincolnlights/panel_pidp1/panel_pidp1
-	    echo Done.
+	    echo Activated PiDP hardware front panel
+	    ln -sfn /opt/pidp1/src/blincolnlights/panel_pidp1/panel_pidp1 /opt/pidp1/bin/panel_pidp1
 	    break
             ;;
-        [Nn]* ) 
-            echo Skipped the setting of access privileges.
+        [Vv]* ) 
+            echo Activated virtual front panel - PiDP hardware deactivated
+	    ln -sfn /opt/pidp1/src/blincolnlights/vpanel_pdp1/panel_pdp1 /opt/pidp1/bin/panel_pidp1
 	    break
             ;;
         * ) echo "Please answer yes or no.";;

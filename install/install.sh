@@ -178,7 +178,7 @@ while true; do
     case $prxn in
         [Yy]* ) 
             # put pdp1 command into /usr/local
-            sudo ln -f -s /opt/pidp1/etc/pdp1.sh /usr/local/bin/pdp1
+            sudo ln -f -s /opt/pidp1/bin/pdp1.sh /usr/local/bin/pdp1
             # put pdp1control script into /usr/local
             sudo ln -f -s /opt/pidp1/bin/pdp1control.sh /usr/local/bin/pdp1control
 	    break

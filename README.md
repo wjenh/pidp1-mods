@@ -23,7 +23,7 @@ This will run on any Pi. Without PiDP-1 front panel hardware, you can use the on
 
 With the virtual front panel, this will ALSO run fine on regular Linux (tested on Ubuntu 24.10) and presumably, Windows 11 with WSL2 subsystem (although untested). Just in case you want to have a mobile PDP-1 to develop on the go.
 
-# Operating the PiDP-11
+# Operating the PiDP-1
 
 Depending on your preferenes, you can run the PiDP-1 headless from your laptop, or from the Pi GUI with monitor & keyboard.
 

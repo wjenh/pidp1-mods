@@ -17,7 +17,7 @@ WARNING: PROJECT NOT READY YET, TO AVOID FRUSTRATION PLS USE AFTER APRIL 18TH :-
     sudo git clone https://github.com/obsolescence/pidp1.git
     /opt/pidp1/install/install.sh
 
-Note that you do not necessarily need to have the PiDP-11 hardware. 
+Note that you do not necessarily need to have the PiDP-1 hardware. 
 
 This will run on any Pi. Without PiDP-1 front panel hardware, you can use the on-screen virtual front panel. See the manual for a how-to: <PiDP-1_Manual.pdf>
 

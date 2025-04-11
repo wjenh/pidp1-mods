@@ -10,13 +10,14 @@ BASENAME="${INPUT##*/}"
 DEFAULT_PATH="$DEFAULT_DIR/$BASENAME"
 
 if [[ -f "$DEFAULT_PATH" ]]; then
+    echo save in tapes
     FILE="$BASENAME"
+    echo "p tapes/YYYYYYY" | ncat -w 1 localhost 1050
 else
-    FILE="$INPUT"
+    echo save in custom path
+    FILE="${INPUT/#\~/$HOME}"
+    echo "p $FILE" | ncat -w 1 localhost 1050
 fi
 
-echo "Saving as $FILE"
-
-echo "p $FILE" | ncat -w 1 localhost 1050
-
+#echo "p $FILE" | ncat -w 1 localhost 1050
 

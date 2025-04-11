@@ -1,0 +1,41 @@
+User-agent: Bytedance
+Disallow: /
+
+User-agent: Bytespider
+Disallow: /
+
+User-agent: GPTBot
+Disallow: /
+
+User-agent: msnbot
+Disallow: /
+
+User-agent: Amazonbot               # Amazon's user agent
+Disallow: /
+
+User-agent: SemrushBot
+Disallow: /
+
+User-agent: The Knowledge AI
+Disallow: /
+
+User-agent: AhrefsBot
+Disallow: /
+
+User-agent: Linespider
+Disallow: /
+
+User-agent: dotbot
+Disallow: /
+
+User-agent: CCbot
+Disallow: /
+
+User-agent: Yandex
+Disallow: /
+
+User-agent: PetalBot
+Disallow: /
+
+User-agent: *
+Crawl-delay: 3600

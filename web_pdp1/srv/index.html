@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PiDP-1 Control Panel</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600;700&display=swap');
+        :root {
+            --cream: #e5dac3;
+            --slate: #5b6d7a;
+            --dark-slate: #445561;
+            --grey-slate: #888888;
+            --burgundy: #8c1515;
+            --dark-text: #293238;
+            --light-text: #f2ebd5;
+            --tape-background: #606060;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Jost', sans-serif;
+            background-color: var(--slate);
+            color: var(--dark-text);
+            line-height: 1.4;
+            padding: 15px;
+            font-size: 14px;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            grid-template-rows: auto 1fr auto;
+            grid-template-areas:
+                "header header"
+                "sidebar main-content"
+                "sidebar tape-content"
+                "sidebar misc-content";
+            gap: 8px;
+            max-width: 90%;
+            margin: 0 auto;
+        }
+
+        .header {
+            grid-area: header;
+            display: grid;
+            grid-template-columns: 300px 1fr;
+        }
+
+        .logo-container {
+            background-color: var(--slate);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 15px;
+        }
+
+        .logo {
+            font-size: 70px;
+            font-weight: 700;
+            color: var(--cream);
+            letter-spacing: 3px;
+            line-height: 1;
+            text-align: center;
+        }
+
+        .title-container {
+            background-color: var(--cream);
+            padding: 15px 25px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            margin-left: 8px;
+        }
+
+        .title {
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--slate);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            line-height: 1.2;
+        }
+        .title-small {
+            font-size: 18px;
+        }
+
+        .sidebar {
+            grid-area: sidebar;
+            background-color: var(--cream);
+            padding: 15px;
+            border-radius: 12px 0 0 0;
+        }
+
+        .settings-header {
+            background-color: var(--slate);
+            color: var(--cream);
+            padding: 10px 15px;
+            font-size: 18px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .setting-group {
+            margin-bottom: 20px;
+        }
+
+        .setting-label {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--slate);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+
+        /* Custom checkbox styling */
+        .checkbox-group {
+            margin-bottom: 10px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--slate);
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            position: absolute;
+            opacity: 0;
+            cursor: pointer;
+            height: 0;
+            width: 0;
+        }
+
+        .checkmark {
+            height: 18px;
+            width: 18px;
+            background-color: var(--cream);
+            border: 2px solid var(--slate);
+            margin-right: 10px;
+            position: relative;
+            display: inline-block;
+        }
+
+        .checkbox-label input:checked ~ .checkmark {
+            background-color: var(--slate);
+        }
+
+        .checkmark:after {
+            content: "";
+            position: absolute;
+            display: none;
+        }
+
+        .checkbox-label input:checked ~ .checkmark:after {
+            display: block;
+        }
+
+        .checkbox-label .checkmark:after {
+            left: 5px;
+            top: 0px;
+            width: 4px;
+            height: 10px;
+            border: solid var(--cream);
+            border-width: 0 2px 2px 0;
+            -webkit-transform: rotate(45deg);
+            -ms-transform: rotate(45deg);
+            transform: rotate(45deg);
+        }
+
+        .button {
+            display: inline-block;
+            padding: 6px 12px;
+            background: none;
+            border: 2px solid var(--slate);
+            font-family: 'Jost', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--slate);
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        .button:hover {
+            background-color: var(--slate);
+            color: var(--cream);
+        }
+
+        .button.primary {
+            background-color: var(--slate);
+            color: var(--cream);
+        }
+
+        .button.primary:hover {
+            background-color: var(--dark-slate);
+        }
+
+        .button:disabled, .button:disabled:hover,
+        .button.primary:disabled, .button.primary:disabled:hover {
+            background: none;
+            border-color: var(--slate);
+            color: var(--grey-slate);
+        }
+
+
+        .button.burgundy:hover {
+            background-color: var(--burgundy);
+            color: var(--cream);
+        }
+
+        .button.full-width {
+            display: block;
+            width: 100%;
+            margin-right: 0;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        /* Improved file selection UI */
+        .file-input {
+            display: none;
+        }
+
+        .file-label {
+            display: inline-block;
+            padding: 6px 12px;
+            /*background: none;
+            color: var(--slate);*/
+            background-color: var(--slate);
+            color: var(--cream);
+            border: 2px solid var(--slate);
+            font-family: 'Jost', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            text-transform: uppercase;
+            width: 100%;
+            text-align: center;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-label:hover {
+            background-color: var(--dark-slate);
+            color: var(--cream);
+        }
+
+        .file-label .default-text {
+            display: inline;
+        }
+
+        .file-label .file-name-text {
+            display: none;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .file-label.has-file .default-text {
+            display: none;
+        }
+
+        .file-label.has-file .file-name-text {
+            display: inline;
+        }
+
+        .main-content {
+            grid-area: main-content;
+            display: grid;
+            grid-template-columns: 1fr 1fr; /* Default to two columns */
+            gap: 8px;
+        }
+
+        /* Class to toggle when display is large */
+        .large-display .main-content {
+            grid-template-columns: 1fr; /* Switch to single column */
+        }
+
+        .misc-content {
+            grid-area: misc-content;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+        }
+
+        .tape-content {
+            grid-area: tape-content;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .panel {
+            background-color: var(--cream);
+            padding: 12px;
+            overflow: hidden;
+/*
+            display: flex;
+            flex-direction: column;
+*/
+        }
+
+        .panel-header {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--slate);
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        /* Type 30 Display */
+        #display-container {
+            margin: auto;
+            display: flex;
+            justify-content: center;
+        }
+
+        .display {
+            border: 2px solid var(--slate);
+        }
+
+        /* Paper Tape */
+        .tape-canvas {
+            background-color: var(--tape-background);
+            border: 1px solid var(--slate);
+            width: 100%;
+            height: 100px;
+	}
+
+        /* Typewriter */
+        .typewriter {
+            background-color: var(--cream);
+            overflow: hidden;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .typewriter-paper {
+            margin: 8px;
+            padding: 4px;
+            height: 440px;	/* this sucks */
+            background-color: #fffff0;
+            border: 1px solid var(--slate);
+            overflow-y: auto;
+            color: #000000;
+            font-size: 14px;
+        }
+
+        .typewriter-controls {
+            display: flex;
+            padding: 8px;
+            background-color: var(--cream);
+            justify-content: right;
+        }
+
+	.red {
+		color: #CC0000;
+	}
+	.black {
+		color: #000000;
+	}
+
+        /* Responsive adjustments */
+        @media (max-width: 1550px) {
+            .main-content, .tape-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 1000px) {
+            .container {
+                grid-template-columns: 1fr;
+                grid-template-areas:
+                    "header"
+                    "sidebar"
+                    "main-content"
+                    "tape-content"
+                    "misc-content";
+            }
+
+            .header {
+                grid-template-columns: 1fr;
+            }
+
+            .logo-container {
+                padding: 8px;
+            }
+
+            .logo {
+                font-size: 40px;
+            }
+
+            .title {
+                font-size: 18px;
+            }
+
+            .title-container {
+                margin-left: 0;
+            }
+
+            .sidebar {
+                border-radius: 8px;
+            }
+
+            .main-content {
+                grid-template-columns: 1fr; /* Always single column on mobile */
+            }
+        }
+
+        /* Fullscreen mode for display */
+        .fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1000;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .fullscreen canvas {
+            max-width: 95vw;
+            max-height: 95vh;
+        }
+
+        .fullscreen-exit {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: var(--slate);
+            color: var(--cream);
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            z-index: 1001;
+            font-family: 'Jost', sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="main-container">
+        <div class="header">
+            <div class="logo-container">
+                <div class="logo">PDP-1</div>
+            </div>
+            <div class="title-container">
+                <div class="title">Digital Equipment Corporation</div>
+                <div class="title title-small">Maynard, Massachusetts</div>
+            </div>
+        </div>
+
+        <div class="sidebar">
+            <div class="settings-header">Controls</div>
+
+            <div class="setting-group">
+                <div class="setting-label">Options</div>
+
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" checked id="mul-div" onchange="emuoption('muldiv', this.checked);">
+                        <span class="checkmark"></span>
+                        Multiply-Divide Option
+                    </label>
+                </div>
+
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="audio-output" onchange="emuoption('audio', this.checked);">
+                        <span class="checkmark"></span>
+                        Audio Output
+                    </label>
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <div class="setting-label">Assembly</div>
+
+                <div>
+                    <input type="file" id="assembly-file" class="file-input" accept=".asm,.mac,.txt" onchange="asmFileChanged()">
+                    <label for="assembly-file" class="file-label" id="assembly-file-label">
+                        <span class="default-text">Select Source File</span>
+                        <span class="file-name-text"></span>
+                    </label>
+                    <button onclick="assemble()" class="button primary full-width" id="asm-btn">Assemble</button>
+                    <button onclick="mountAssembly()" class="button full-width" id="mount-asm-btn">Mount in Reader</button>
+                    <button class="button full-width" id="listing-asm-btn">Listing</button>
+                    <button onclick="saveAssembly()" class="button full-width" id="save-asm-btn">Save RIM</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <!-- Type 30 Display Panel -->
+            <div class="panel">
+                <div class="panel-header">
+                    Display
+                    <div class="header-controls">
+		        <button onclick="connectDisplay()" class="button" id="connectBtn">Connect</button>
+                        <button class="button" id="size-512">512px</button>
+                        <button class="button" id="size-1024">1024px</button>
+                        <button class="button" id="fullscreen-button">Fullscreen</button>
+                    </div>
+                </div>
+                <div id="display-container">
+                    <canvas id="display" width="512" height="512"></canvas>
+                </div>
+            </div>
+
+            <!-- Typewriter Panel -->
+            <div class="panel">
+                <div class="panel-header">
+                    Typewriter
+                </div>
+                <div class="typewriter">
+                    <div id="typewriter" class="typewriter-paper" tabindex="0">
+                        <pre id="typewriter-output"></pre>
+                    </div>
+                    <div class="typewriter-controls">
+                        <button onclick="typewriter.clear()" class="button" id="clear-typewriter">Clear</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tape-content">
+            <!-- Paper Tape Reader Panel -->
+            <div class="panel">
+                <div class="panel-header">
+                    Paper Tape Reader
+                    <div class="header-controls">
+                        <input type="file" id="tape-file" class="file-input">
+                        <label for="tape-file" class="file-label" id="tape-file-label">
+                            <span class="default-text">Browse</span>
+                            <span class="file-name-text"></span>
+                        </label>
+                        <button onclick="mountReader()" class="button" id="mount-tape">Mount</button>
+                        <button onclick="unmountReader()" class="button" id="unmount-tape">Unmount</button>
+                    </div>
+                </div>
+                <canvas id="readerCanvas" class="tape-canvas"></canvas>
+            </div>
+
+            <!-- Paper Tape Punch Panel -->
+            <div class="panel">
+                <div class="panel-header">
+                    Paper Tape Punch
+                    <div class="header-controls">
+                        <button onclick="savePunch()" class="button primary" id="save-tape">Save</button>
+                        <button onclick="clearPunch()" class="button" id="clear-tape">Clear</button>
+                    </div>
+                </div>
+                <canvas id="punchCanvas" class="tape-canvas"></canvas>
+            </div>
+        </div>
+
+        <div class="misc-content">
+            <div class="panel">
+                <div class="panel-header">
+                    Messages
+                </div>
+		<div id="messages"></div>
+	    </div>
+        </div>
+    </div>
+
+    <!-- Fullscreen container (hidden by default) -->
+    <div id="fullscreen-container" style="display: none;">
+        <!-- Content will be moved here when fullscreen is activated -->
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const assemblyFileInput = document.getElementById('assembly-file');
+            const assemblyFileLabel = document.getElementById('assembly-file-label');
+            const assemblyFileName = assemblyFileLabel.querySelector('.file-name-text');
+
+            const tapeFileInput = document.getElementById('tape-file');
+            const tapeFileLabel = document.getElementById('tape-file-label');
+            const tapeFileName = tapeFileLabel.querySelector('.file-name-text');
+
+            // Assembly file selection
+            assemblyFileInput.addEventListener('change', function() {
+                if (this.files.length > 0) {
+                    assemblyFileName.textContent = this.files[0].name;
+                    assemblyFileLabel.classList.add('has-file');
+                } else {
+                    assemblyFileName.textContent = '';
+                    assemblyFileLabel.classList.remove('has-file');
+                }
+            });
+
+            // Tape file selection
+            tapeFileInput.addEventListener('change', function() {
+                if (this.files.length > 0) {
+                    tapeFileName.textContent = this.files[0].name;
+                    tapeFileLabel.classList.add('has-file');
+                } else {
+                    tapeFileName.textContent = '';
+                    tapeFileLabel.classList.remove('has-file');
+                }
+            });
+
+            // Container for layout adjustment
+            const container = document.getElementById('main-container');
+
+            // Display size handling
+            const display = document.getElementById('display');
+            const size512Button = document.getElementById('size-512');
+            const size1024Button = document.getElementById('size-1024');
+
+            size512Button.addEventListener('click', function() {
+                // Set canvas dimensions
+                display.width = 512;
+                display.height = 512;
+
+                // Update styles to ensure container adapts
+                display.style.width = '512px';
+                display.style.height = '512px';
+
+                // Remove large display class to return to 2-column layout
+                container.classList.remove('large-display');
+            });
+
+            size1024Button.addEventListener('click', function() {
+                // Set canvas dimensions
+                display.width = 1024;
+                display.height = 1024;
+
+                // Update styles to ensure container adapts
+                display.style.width = '1024px';
+                display.style.height = '1024px';
+
+                // Add large display class to switch to 1-column layout
+                container.classList.add('large-display');
+            });
+
+            // Fullscreen handling
+            const fullscreenButton = document.getElementById('fullscreen-button');
+            const fullscreenContainer = document.getElementById('fullscreen-container');
+            const displayContainer = document.getElementById('display-container');
+
+            fullscreenButton.addEventListener('click', function() {
+                // Clear and prepare the fullscreen container
+                fullscreenContainer.innerHTML = '';
+                fullscreenContainer.classList.add('fullscreen');
+
+                // Add exit button
+                const exitButton = document.createElement('button');
+                exitButton.textContent = 'Exit Fullscreen';
+                exitButton.classList.add('fullscreen-exit');
+                exitButton.addEventListener('click', function() {
+                    fullscreenContainer.style.display = 'none';
+		    displayContainer.appendChild(display);
+                });
+
+                // Add the display clone and exit button to the fullscreen container
+                fullscreenContainer.appendChild(display);
+                fullscreenContainer.appendChild(exitButton);
+
+                // Show the fullscreen container
+                fullscreenContainer.style.display = 'flex';
+            });
+        });
+    </script>
+    <script src="p7sim.js"></script>
+    <script src="typewriter.js"></script>
+    <script src="papertape.js"></script>
+
+    <script>
+const print = console.log
+
+let ws = null;
+
+let messages = document.getElementById('messages');
+let asmBtn = document.getElementById('asm-btn')
+let mountBtn = document.getElementById('mount-asm-btn')
+let listingBtn = document.getElementById('listing-asm-btn')
+let saveBtn = document.getElementById('save-asm-btn')
+function disableAsmOutput() {
+	mountBtn.style.display = "none";
+	listingBtn.style.display = "none";
+	saveBtn.style.display = "none";
+}
+function enableAsmOutput() {
+	mountBtn.style.display = "block";
+	listingBtn.style.display = "block";
+	saveBtn.style.display = "block";
+}
+
+asmBtn.disabled = true;
+disableAsmOutput();
+
+
+// display
+const connectBtn = document.getElementById('connectBtn');
+let dpy_connected = false;
+let display = null;
+
+let papertape = null;
+
+let typewriter = null;
+
+function connectWS() {
+	const wsUrl = `ws://${window.location.hostname}:8080/ws`;
+	console.log('Connecting to', wsUrl);
+	ws = new WebSocket(wsUrl);
+
+	ws.onopen = () => {
+		console.log('WebSocket connected');
+		emuoption('muldiv');
+		emuoption('audio');
+	};
+
+	ws.onmessage = (event) => {
+		const msg = JSON.parse(event.data);
+		handleMessage(msg);
+	};
+
+	ws.onclose = () => {
+		console.log('WebSocket closed - reconnecting');
+		setTimeout(connectWS, 1000);
+	};
+
+	ws.onerror = (error) => {
+		console.error('WebSocket error:', error);
+	};
+}
+
+let asmListing = "";
+let asmRIM;
+
+function openInNewTab(href) {
+  Object.assign(document.createElement('a'), {
+    target: '_blank',
+    rel: 'noopener noreferrer',
+    href: href,
+  }).click();
+}
+
+function handleMessage(msg) {
+	switch (msg.type) {
+	case 'dpy_connected':
+		if(!dpy_connected) {
+			dpy_connected = true;
+			connectBtn.textContent = "Disconnect";
+		}
+		break;
+	case 'dpy_disconnected':
+		if(dpy_connected) {
+			dpy_connected = false;
+			connectBtn.textContent = "Connect";
+		}
+		break;
+
+
+	case 'points':
+		display.processIncoming(msg.points);
+		break;
+
+	case 'reader_position':
+		papertape.setPos(msg.position || 0);
+		break;
+
+	case 'punch_data':
+		papertape.punchData(msg.value);
+		break;
+
+	case 'char':
+		processbyte(msg.value);
+		break;
+
+	case 'reply':
+		let state = msg.cmd.endsWith(' on') ? true : false;
+		if(msg.cmd.startsWith('audio now'))
+			document.getElementById('audio-output').checked = state;
+		else if(msg.cmd.startsWith('mul-div now'))
+			document.getElementById('mul-div').checked = state;
+		break;
+
+	case 'assembly':
+		if(msg.err != "") {
+			messages.innerHTML = "<pre>"+msg.err+"</pre>";
+			disableAsmOutput();
+		} else {
+			messages.innerHTML = "";
+			asmListing = msg.listing;
+			asmRIM = Uint8Array.fromBase64(msg.rim);
+			enableAsmOutput();
+
+			let blob = new Blob([asmListing], { type: 'text/plain' });
+			let blobUrl = URL.createObjectURL(blob);
+			listingBtn.onclick = () => openInNewTab(blobUrl);
+		}
+		break;
+
+	default:
+		print('unhandled message', msg);
+	}
+}
+
+function emuoption(opt, state) {
+	if(state == undefined)
+		state = '?';
+	else
+		state = state ? "on" : "off";
+	ws.send(JSON.stringify({
+		type: 'cmd',
+		cmd: opt + ' ' + state
+	}));
+}
+
+
+function mountReaderTape(data) {
+	ws.send(JSON.stringify({
+		type: 'mount_reader',
+		data: Array.from(data)
+	}));
+	papertape.setReader(data);
+}
+
+async function mountReader() {
+	const input = document.getElementById('tape-file');
+	const file = input.files[0];
+	if (!file) return;
+
+	let content = await file.arrayBuffer();
+	mountReaderTape(new Uint8Array(content));
+}
+
+function unmountReader() {
+	papertape.setReader(null);
+	ws.send(JSON.stringify({
+		type: 'unmount_reader'
+	}));
+}
+
+function savePunch() {
+	const blob = new Blob([new Uint8Array(papertape.ptpbuf)], { type: 'application/octet-stream' });
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = 'papertape.bin';
+	document.body.appendChild(a);
+	a.click();
+	document.body.removeChild(a);
+	URL.revokeObjectURL(url);
+}
+
+function clearPunch() {
+	papertape.clearPunch();
+}
+
+
+function connectDisplay() {
+	if(dpy_connected) {
+		ws.send(JSON.stringify({ type: 'disconnect_dpy' }));
+		dpy_connected = false;
+		connectBtn.textContent = "Connect";
+	} else {
+		ws.send(JSON.stringify({ type: 'connect_dpy' }));
+	}
+}
+
+function asmFileChanged() {
+	let fileBtn = document.getElementById('assembly-file');
+	asmBtn.disabled = false;
+}
+
+async function assemble() {
+	const input = document.getElementById('assembly-file');
+	const file = input.files[0];
+	if (!file) return;
+
+	let content = await file.text();
+	ws.send(JSON.stringify({
+		type: 'assemble',
+		source: content
+	}));
+}
+
+function mountAssembly() {
+	mountReaderTape(asmRIM);
+}
+
+function saveAssembly() {
+	const blob = new Blob([asmRIM], { type: 'application/octet-stream' });
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = 'tape.rim';
+	document.body.appendChild(a);
+	a.click();
+	document.body.removeChild(a);
+	URL.revokeObjectURL(url);
+}
+
+
+
+
+// TODO: only do this if stuff to draw
+function drawLoop() {
+	papertape.draw();
+	requestAnimationFrame(drawLoop);
+}
+
+
+
+
+let escstr = [];
+let utf8str = [];
+let utf8len = 0;
+let decoder = new TextDecoder();
+function leading0s(byte) {
+	let bit = 0200;
+	let n = 0;
+	while(bit & byte) {
+		n++;
+		bit >>= 1;
+	}
+	return n;
+}
+function processbyte(code) {
+	// dumb escape processing for colors
+	if(code == 033) {
+		escstr = "\033";
+		return;
+	}
+	if(escstr != "") {
+		escstr += String.fromCharCode(code);
+		if(escstr == "\033[31m") {
+			typewriter.red();
+			escstr = "";
+		} else if(escstr == "\033[39;49m") {
+			typewriter.black();
+			escstr = "";
+		}
+		return;
+	}
+
+	// we're also getting a line feed which we use
+	if(code == 015) return;
+
+	let nz = leading0s(code);
+	if(nz == 0) {
+		// TODO: check utf-8 state
+		typewriter.printchar(String.fromCharCode(code));
+	} else if(nz > 1) {
+		// TODO: check utf-8 state
+		utf8str = [code];
+		utf8len = nz-1;
+	} else if(nz == 1) {
+		utf8str.push(code);
+		utf8len--;
+		if(utf8len == 0)
+			typewriter.printchar(decoder.decode(new Uint8Array(utf8str)));
+	}
+}
+
+papertape = new Papertape(document.getElementById('readerCanvas'),
+		document.getElementById('punchCanvas'));
+
+typewriter = new Typewriter(document.getElementById('typewriter'),
+		document.getElementById('typewriter-output'));
+
+display = new p7sim(document.getElementById('display'));
+requestAnimationFrame(drawLoop);
+connectWS();
+    </script>
+</body>
+</html>

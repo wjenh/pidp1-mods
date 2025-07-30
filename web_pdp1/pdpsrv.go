@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -66,9 +67,9 @@ func NewServer(host string) *PeriphServer {
 }
 
 func assemble(src string) (string, []byte, string) {
-	fmt.Printf("src: <%s>\n", src)
+//	fmt.Printf("src: <%s>\n", src)
 
-	tmpDir, err := os.MkdirTemp("", "macro1_")
+	tmpDir, err := ioutil.TempDir("", "macro1_")
 	if err != nil {
 		return "", nil, fmt.Sprintf("couldn't create tmp dir: %v", err)
 	}
@@ -88,10 +89,10 @@ func assemble(src string) (string, []byte, string) {
 	}
 	outFile.Close()
 
-	cmd := exec.Command("/u/aap/macro1", sourcePath)
+	cmd := exec.Command("/usr/local/bin/macro1", sourcePath)
 	err = cmd.Run()
 
-	errf, errxx := os.ReadFile(fmt.Sprintf("%s/%s.err", tmpDir, baseName))
+	errf, errxx := ioutil.ReadFile(fmt.Sprintf("%s/%s.err", tmpDir, baseName))
 
 	if err != nil {
 		if errxx == nil {
@@ -101,12 +102,12 @@ func assemble(src string) (string, []byte, string) {
 		}
 	}
 
-	lst, err := os.ReadFile(fmt.Sprintf("%s/%s.lst", tmpDir, baseName))
+	lst, err := ioutil.ReadFile(fmt.Sprintf("%s/%s.lst", tmpDir, baseName))
 	if err != nil {
 		return "", nil, fmt.Sprintf("couldn't open listing: %v", err)
 	}
 
-	rim, err := os.ReadFile(fmt.Sprintf("%s/%s.rim", tmpDir, baseName))
+	rim, err := ioutil.ReadFile(fmt.Sprintf("%s/%s.rim", tmpDir, baseName))
 	if err != nil {
 		return "", nil, fmt.Sprintf("couldn't open RIM file: %v", err)
 	}

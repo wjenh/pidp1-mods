@@ -498,12 +498,14 @@ initGL(void)
 
 void resize(int w, int h);
 
+const char *confname = "pdp1_layout.txt";
+
 void
 saveLayout(void)
 {
-	FILE *f = fopen("pdp_layout.txt", "w");
+	FILE *f = fopen(confname, "w");
 	if(f == nil) {
-		fprintf(stderr, "couldn't open file 'pdp_layout.txt'\n");
+		fprintf(stderr, "couldn't open file '%s'\n", confname);
 		return;
 	}
 	const char *names[] = {
@@ -547,9 +549,9 @@ readRegion(char *line, Region *r)
 void
 readLayout(void)
 {
-	FILE *f = fopen("pdp_layout.txt", "r");
+	FILE *f = fopen(confname, "r");
 	if(f == nil) {
-		fprintf(stderr, "couldn't open file 'pdp_layout.txt'\n");
+		fprintf(stderr, "couldn't open file '%s'\n", confname);
 		return;
 	}
 	char line[1024];

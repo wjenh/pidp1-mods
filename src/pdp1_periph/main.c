@@ -818,8 +818,10 @@ main(int argc, char *argv[])
 	}ARGEND;
 
 	netfd = dial(host, port);
-	if(netfd < 0)
+	if(netfd < 0) {
+		fprintf(stderr, "couldn't connect to emulator %s:%d\n", host, port);
 		return 1;
+	}
 
 	SDL_Init(SDL_INIT_EVERYTHING);
 

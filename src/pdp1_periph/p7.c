@@ -388,8 +388,12 @@ realtime = realtime_start;
 	int esc = 0;
 for(;;){
 	nbytes = read(netfd, cmds, sizeof(cmds));
-if(nbytes <= 0) break;
-if((nbytes % 4) != 0) printf("yikes %d\n", nbytes), exit(1);
+	if(nbytes <= 0) {
+		// BUG: this can happen sometimes when it shouldn't
+		fprintf(stderr, "p7 got %d bytes\n", nbytes);
+		break;
+	}
+	if((nbytes % 4) != 0) printf("yikes %d\n", nbytes), exit(1);
 	ncmds = nbytes/4;
 
 	for(i = 0; i < ncmds; i++) {
@@ -440,6 +444,7 @@ signal_draw();
 		}
 	}
 }
+
 	exit(0);
 }
 

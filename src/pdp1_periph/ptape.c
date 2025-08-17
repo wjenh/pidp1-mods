@@ -144,8 +144,7 @@ drawPunch(Region *reg)
 	int fr = r/2 + 1;
 	if(fr == r) fr--;
 
-	int i = ptrpos - 10;
-	int c;
+	int i, c;
 
 	int punchpos = width-5*space;
 
@@ -153,7 +152,7 @@ drawPunch(Region *reg)
 	setColor(80, 80, 80, 255);
 	drawRectangle(0.0f, 0.0f, width, height);
 
-	if(ptrbuflen > 0) {
+	if(ptpfd >= 0) {
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 

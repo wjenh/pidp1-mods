@@ -22,7 +22,7 @@ glslheader
 "	v_uv = in_uv;\n"
 "	vec2 p = vec2(in_pos.x*2.0-1.0, -(in_pos.y*2.0-1.0));\n"
 "	gl_Position = vec4(p.x, p.y, -0.5, 1.0);\n"
-"	gl_PointSize = 2*u_size;\n"
+"	gl_PointSize = 2.0*u_size;\n"
 "}\n";
 
 const char *hole_fs_src = 

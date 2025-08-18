@@ -11,7 +11,7 @@ Credits: Simulation written by Angelo Papenhoff (https://github.com/aap), hardwa
 
 # Install instructions
 
-WARNING: PROJECT NOT READY YET, TO AVOID FRUSTRATION PLS USE AFTER APRIL 18TH :-)
+WARNING: PROJECT NOT FINAL YET, TO AVOID FRUSTRATION PLS USE AFTER AUGUST 25th :-)
 
     cd /opt
     sudo git clone https://github.com/obsolescence/pidp1.git
@@ -47,7 +47,7 @@ Depending on your preferences, you can run the PiDP-1 headless from your laptop,
 
 **How to use from the Web Control Panel:
 
-If you want to run your PiDP-1 headless (i.e., without monitor and keyboard), the above functionality is also accessible through the Web-based control panel. Just go to **http://pidp1.local:1234**
+If you want to run your PiDP-1 headless (i.e., without monitor and keyboard), the above functionality is also accessible through the Web-based control panel. Just go to **http://pidp1.local:8080**
 The Web Control Panel offers some more creature comforts for developing code, integrating a cross assembler etc
 
 **How to use PiDP-1 devices headless:

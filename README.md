@@ -48,20 +48,20 @@ There are two **configuration** options:
 - `pdp1 ptr` loads an existing paper tape into the paper tape reader
 - `pdp1 sim` drops you into the PDP-1 simulator program, which you'll not normally need to do
 
-**How to use the web browser interface:
+#How to use the web browser interface:
 
 If you want to run your PiDP-1 headless (i.e., without monitor and keyboard), enable the PiDP-1 web server (`pdp1control set web`). Then use your web browser to go to **http://pidp1.local:8080**, where pidp1.local assumes your Pi's name is indeed pidp1 of course.
 The Web interface offers some creature comforts for developing code, integrating a cross assembler etc
 
-**How to use PiDP-1 devices headless, without the web browser:
+#How to use PiDP-1 devices headless, without the web browser:
 
 (Forthcoming, undergoing changes 20250821)<br>
 The Type 30 simulator as well as the Soroban Typewriter and the High Speed Paper Tape Reader & Punch connect over TCP/IP, so you can run these on your laptop just as well as on your local PiDP-1 itself. This makes it possible to leave the PiDP-1 completely headless. Good for repurposing older, slow Raspberry Pis!<br>
 <a rdpd1control and rpdp1 script will make this comfortable - WIP>
 
-**Two quick examples to test everything:
+#Two quick examples to test everything:
 
-Use `pdp1control set` and `pdp1control panel` to configure to your preferences.<br>
+Use `pdp1control set gui` (this example assumes the GUI setup) and `pdp1control panel` to configure to your preferences.<br>
 Then, to test the Type 30 display:<br>
 `pdp1control start 1`. The Type 30 should light up with Snowflake.<br>
 Then, to test the DDT debugger in action:<br>

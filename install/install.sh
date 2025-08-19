@@ -110,6 +110,23 @@ while true; do
     esac
 done
 
+while true; do
+    echo
+    read -p "Install required dependencies for the web server? " prxn
+    case $prxn in
+        [Yy]* ) 
+            sudo apt update
+            sudo apt install golang
+	    break
+	    ;;
+        [Nn]* ) 
+            echo Skipped install of web server dependencies
+            break
+	    ;;
+        * ) echo "Please answer Y or N.";;
+    esac
+done
+
 
 # make required binaries
 # =============================================================================
@@ -125,7 +142,8 @@ while true; do
 		make -C /opt/pidp1/src/p7sim			# returns sense switches
 		make -C /opt/pidp1/src/scanpf 			# returns sense switches
 		make -C /opt/pidp1/src/blincolnlights/tapevis	# returns sense switches
-		make -C /opt/pidp1/src//pidp1_test 	# hardware test program
+		make -C /opt/pidp1/src/pidp1_test 		# hardware test program
+		make -C /opt/pidp1/src/pdp1_periph		# hardware test program
 		
 		# this makes the virtual pdp-1 panel, used if no PiDP-1 hardware is attached:
 		make -C /opt/pidp1/src/blincolnlights/vpanel_pdp1 	# panel driver

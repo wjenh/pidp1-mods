@@ -37,6 +37,11 @@ Depending on your preferences, you can run the PiDP-1 headless from your laptop,
 - `pdp1control start`, `pdp1control restart`: (re)start the PDP-1
 - `pdp1control start x` or `pdp11control restart x` can be used if you are without the PiDP-1 hardware. `x` is the boot number you want to run.
 
+There are two **configuration** options:
+
+- `pdp1control set gui` or `pdp11control set web` switch between the gui setup (HMDI/keyboard on the Pi) and the web server (http://pidp1.local:8080/).
+- `pdp1control panel pidp` or `pdp11control panel virtual` switch between the PiDP-1 hardware front panel or a virtual on-screen front panel.
+
 **pdp1** is the simple way to get access to the PDP-1 peripherals. Or, you can use its equivalent collection of desktop icons:
 
 - `pdp1 type30` will open the Type 30 graphics display. Resize to your liking, F11 makes it full-screen
@@ -45,12 +50,21 @@ Depending on your preferences, you can run the PiDP-1 headless from your laptop,
 - `pdp1 ptr` loads an existing paper tape into the paper tape reader
 - `pdp1 sim` drops you into the PDP-1 simulator program, which you'll not normally need to do
 
-**How to use from the Web Control Panel:
+**How to use the web browser interface:
 
-If you want to run your PiDP-1 headless (i.e., without monitor and keyboard), the above functionality is also accessible through the Web-based control panel. Just go to **http://pidp1.local:8080**
-The Web Control Panel offers some more creature comforts for developing code, integrating a cross assembler etc
+If you want to run your PiDP-1 headless (i.e., without monitor and keyboard), enable the PiDP-1 web server (`pdp1control set web`). Then use your web browser to go to **http://pidp1.local:8080**
+The Web interface offers some creature comforts for developing code, integrating a cross assembler etc
 
-**How to use PiDP-1 devices headless:
-
+**How to use PiDP-1 devices headless, without the web browser:
+(Forthcoming, undergoing changes 20250821)
 The Type 30 simulator as well as the Soroban Typewriter and the High Speed Paper Tape Reader & Punch connect over TCP/IP, so you can run these on your laptop just as well as on your local PiDP-1 itself. This makes it possible to leave the PiDP-1 completely headless. Good for repurposing older, slow Raspberry Pis!
 <a rdpd1control and rpdp1 script will make this comfortable - WIP>
+
+**Two quick examples to test everything:
+
+Use `pdp1control set` and `pdp1control panel` to configure to your preferences.
+Then, to test the Type 30 display:
+`pdp1control start 1`. The Type 30 should light up with Snowflake.
+Then, to test the DDT debugger in action:
+`pdp1 ptr` , load /opt/pidp1/tapes/ddt.rim. Press the READ IN switch on the front panel. After the paper tape has been read, DDT is up and running.
+Do `pdp1 soroban` to connect a terminal. Press L (Shift-L) and type HELLO WORLD. You'll see the paper tape punch outputting this. Hit return and from there on, read the DDT manual :-)

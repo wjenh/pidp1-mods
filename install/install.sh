@@ -100,6 +100,9 @@ while true; do
 	    # not needed for Pi OS but for generic Linux
 	    sudo apt install lxterminal
 
+	    # telnet is no longer part of standard linux...
+	    sudo apt install telnet
+
 	    break
 	    ;;
         [Nn]* ) 
@@ -192,18 +195,16 @@ done
 
 while true; do
     echo
-    read -p "Use PiDP hardware front panel (Y) or on-screen virtual panel (V)? " yn
-    case $yn in
+    read -p "Use PiDP hardware front panel (Y) or on-screen virtual panel (V)? " yv
+    case $yv in
         [Yy]* )
 	    echo Activated PiDP hardware front panel
-	    #ln -sfn /opt/pidp1/src/blincolnlights/panel_pidp1/panel_pidp1 /opt/pidp1/bin/panel_pidp1
-	    /opt/pdp1control panel pidp
+	    /opt/pidp1/bin/pdp1control.sh panel pidp
 	    break
             ;;
         [Vv]* ) 
             echo Activated virtual front panel - PiDP hardware deactivated
-	    #ln -sfn /opt/pidp1/src/blincolnlights/vpanel_pdp1/panel_pdp1 /opt/pidp1/bin/panel_pidp1
-	    /opt/pdp1control panel virtual
+	    /opt/pidp1/bin/pdp1control.sh panel virtual
 	    break
             ;;
         * ) echo "Please answer yes or no.";;
@@ -219,20 +220,20 @@ echo "NOTE - change this choice anytime through the 'pdp1control panel' command"
 while true; do
     echo
     read -p "Use the Pi's GUI (Y), the Web (W) or the Apps (A)? " ywa
-    case $yn in
+    case $ywa in
         [Yy]* )
 	    echo Activated GUI user interface
-	    /opt/pdp1control set gui
+	    /opt/pidp1/bin/pdp1control.sh set gui
 	    break
             ;;
         [Ww]* ) 
             echo Activated Web interface
-	    /opt/pdp1control set gui
+	    /opt/pidp1/bin/pdp1control.sh set web
 	    break
             ;;
         [Aa]* ) 
             echo Activated Apps interface
-	    /opt/pdp1control set apps
+	    /opt/pidp1/bin/pdp1control.sh set apps
 	    break
             ;;
         * ) echo "Please answer Y, W, or A.";;

@@ -26,9 +26,12 @@ else
 		type30)
 			nohup /opt/pidp1/bin/p7simES localhost > /dev/null 2>&1 &
 			;;
+		tape)
+			nohup /opt/pidp1/bin/tapevis > /dev/null 2>&1 &
+			;;
 		*)
 			echo options are: 
-			echo  [soroban ptr ptp type30]
+			echo  [soroban ptr ptp type30 tape]
 			echo when run without options, 
 			echo  pdp1 brings you into the simulator - Ctrl-A d to leave
 			;;

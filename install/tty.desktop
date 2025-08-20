@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=Typewriter
+Name=Soroban
 Comment=Typewriter for PiDP-1
 Exec=lxterminal -e "telnet localhost 1041"
 Terminal=false

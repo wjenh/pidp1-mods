@@ -6,7 +6,7 @@
 interface="web"
 
 # Front panel setting - can be 'pidp' or 'virtual'
-frontpanel="virtual"
+frontpanel="pidp"
 
 argc=$#
 pidp1="/opt/pidp1/bin/pdp1"
@@ -48,13 +48,13 @@ do_start() {
 	echo start panel driver, either virtual or real, depends on the symlink
 	if [ "$frontpanel" = "pidp" ]; then
 		echo starting PiDP-1 hardware front panel driver
-	        bin/panel_pidp1 &
+	        nohup bin/panel_pidp1 &
 	elif [ "$frontpanel" = "virtual" ]; then
 		echo starting on-screen virtual front panel, not PiDP-1 hardware
 		echo use
 		echo    pdp1control panel pidp
 		echo to change that, if you have a PiDP-1!
-	        bin/vpanel_pdp1 &
+	        nohup bin/vpanel_pdp1 &
 	else
                 echo ERROR: NO VALID FRONT PANEL DRIVER, fix with
 		echo    pdp1control panel
@@ -77,20 +77,20 @@ do_start() {
 	if [ "$interface" = "gui" ]; then
 		echo start gui peripherals
 		sleep 2
-		bin/pdp1_periphES &
+		nohup bin/pdp1_periphES &
 	elif [ "$interface" = "web" ]; then
 		echo start web server
 		cd /opt/pidp1/web_pdp1
-		go run /opt/pidp1/web_pdp1/pdpsrv.go &
+		nohup go run /opt/pidp1/web_pdp1/pdpsrv.go &
 		cd /opt/pidp1
 	elif [ "$interface" = "apps" ]; then
 		echo start apps
 		sleep 1
 		echo start p7simES
-		bin/p7simES localhost &
+		nohup bin/p7simES localhost &
 		sleep 1
 		echo start tapevis
-		bin/tapevis &
+		nohup bin/tapevis &
 	fi
 
 	sleep 1 # 0.3

@@ -11,6 +11,8 @@ int ptpfd = -1;
  
 int ptrpos;
 
+int tapeUpdated;
+
 const char *hole_vs_src =
 glslheader
 "VSIN vec2 in_pos;\n"
@@ -47,15 +49,6 @@ initReader(void)
 	hole_program = linkprogram(hole_fs, hole_vs);
 
 	glGenBuffers(1, &immVbo);
-
-/*
-	for(int i = 0; i < ptrbuflen; i++)
-		ptrbuf[i] = rand();
-	for(int i = 0; i < nelem(ptpbuf); i++)
-		ptpbuf[i] = -1;
-	for(int i = 0; i < ptpbuflen; i++)
-		ptpbuf[i] = rand();
-*/
 }
 
 void
@@ -389,6 +382,7 @@ tapethread(void *arg)
 			if(n < sizeof(line))
 				line[n] = '\0';
 			cli(line, n);
+			tapeUpdated = 1;
 		}
 
 		// handle cli
@@ -403,6 +397,7 @@ tapethread(void *arg)
 			if(n < sizeof(line))
 				line[n] = '\0';
 			cli(line, n);
+			tapeUpdated = 1;
 		}
 
 		// handle reader
@@ -414,6 +409,7 @@ tapethread(void *arg)
 				ptrpos++;
 				ptrsend(pfds[1].fd);
 			}
+			tapeUpdated = 1;
 		}
 
 		// handle punch
@@ -427,8 +423,17 @@ tapethread(void *arg)
 			memcpy(ptpbuf+1, ptpbuf, (ptpbuflen-1)*sizeof(*ptpbuf));
 			ptpbuf[0] = c&0377;
 			write(ptpfd, &c, 1);
+			tapeUpdated = 1;
 		}
 	}
+}
+
+int
+doDrawTape(void)
+{
+	int d = tapeUpdated;
+	tapeUpdated = 0;
+	return d;
 }
 
 #endif

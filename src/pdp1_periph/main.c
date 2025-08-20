@@ -951,8 +951,7 @@ main(int argc, char *argv[])
 			if(cursortimer > 0 && --cursortimer == 0)
 				SDL_ShowCursor(SDL_DISABLE);
 		}
-		// TODO: check if reader or punch need redraw
-		show = 1;
+		show |= doDrawTape();
 		if(show) {
 			Layout *l = &layouts[lay];
 			drawW = winW;

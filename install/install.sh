@@ -165,29 +165,6 @@ while true; do
     esac
 done
 
-
-# Use virtual panel or PiDP hardware panel
-# =============================================================================
-
-while true; do
-    echo
-    read -p "Use PiDP hardware front panel (Y) or on-screen virtual panel (V)? " yn
-    case $yn in
-        [Yy]* )
-	    echo Activated PiDP hardware front panel
-	    ln -sfn /opt/pidp1/src/blincolnlights/panel_pidp1/panel_pidp1 /opt/pidp1/bin/panel_pidp1
-	    break
-            ;;
-        [Vv]* ) 
-            echo Activated virtual front panel - PiDP hardware deactivated
-	    ln -sfn /opt/pidp1/src/blincolnlights/vpanel_pdp1/panel_pdp1 /opt/pidp1/bin/panel_pidp1
-	    break
-            ;;
-        * ) echo "Please answer yes or no.";;
-    esac
-done
-
-
 # Install pidp1 commands
 # =============================================================================
 while true; do
@@ -208,6 +185,61 @@ while true; do
         * ) echo "Please answer Y or N.";;
     esac
 done
+
+
+# Use virtual panel or PiDP hardware panel
+# =============================================================================
+
+while true; do
+    echo
+    read -p "Use PiDP hardware front panel (Y) or on-screen virtual panel (V)? " yn
+    case $yn in
+        [Yy]* )
+	    echo Activated PiDP hardware front panel
+	    #ln -sfn /opt/pidp1/src/blincolnlights/panel_pidp1/panel_pidp1 /opt/pidp1/bin/panel_pidp1
+	    /opt/pdp1control panel pidp
+	    break
+            ;;
+        [Vv]* ) 
+            echo Activated virtual front panel - PiDP hardware deactivated
+	    #ln -sfn /opt/pidp1/src/blincolnlights/vpanel_pdp1/panel_pdp1 /opt/pidp1/bin/panel_pidp1
+	    /opt/pdp1control panel virtual
+	    break
+            ;;
+        * ) echo "Please answer yes or no.";;
+    esac
+done
+echo
+echo "NOTE - change this choice anytime through the 'pdp1control panel' command"
+
+
+# Use GUI or Web user interface
+# =============================================================================
+
+while true; do
+    echo
+    read -p "Use the Pi's GUI (Y), the Web (W) or the Apps (A)? " ywa
+    case $yn in
+        [Yy]* )
+	    echo Activated GUI user interface
+	    /opt/pdp1control set gui
+	    break
+            ;;
+        [Ww]* ) 
+            echo Activated Web interface
+	    /opt/pdp1control set gui
+	    break
+            ;;
+        [Aa]* ) 
+            echo Activated Apps interface
+	    /opt/pdp1control set apps
+	    break
+            ;;
+        * ) echo "Please answer Y, W, or A.";;
+    esac
+done
+echo
+echo "NOTE - change this choice anytime through the 'pdp1control set' command"
 
 
 # Install autostart at boot

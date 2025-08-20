@@ -3,10 +3,10 @@
 # start script for pidp1.  
 
 # Interface setting - can be 'gui', 'web', or 'apps'
-interface="gui"
+interface="web"
 
 # Front panel setting - can be 'pidp' or 'virtual'
-frontpanel="pidp"
+frontpanel="virtual"
 
 argc=$#
 pidp1="/opt/pidp1/bin/pdp1"

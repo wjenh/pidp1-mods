@@ -276,7 +276,7 @@ else
 			then
 			    echo .profile already contains pdp11 for autostart, OK.
 			else
-			    sed -e "\$apdp11 # autostart" -i /home/$usr/.profile
+			    sed -e "\$apdp1control start # autostart" -i /home/$usr/.profile
 			fi
 			echo
 			echo autostart via .profile for headless use without GUI

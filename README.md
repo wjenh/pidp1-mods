@@ -29,7 +29,7 @@ Depending on your preferences, you can run the PiDP-1 headless from your laptop,
 
 **How to use from the Pi GUI or command line:
 
-**pdp1control** is the command to control the (simulated) PDP-11. You can use the pdp1control desktop icon, or use the Linux command line:
+**pdp1control** is the command to control the (simulated) PDP-1. You can use the pdp1control desktop icon, or use the Linux command line:
 
 - `pdp1control stop`, `pdp11control status` or `pdp1control stat` rather do what you'd expect.
 - `pdp1control start`, `pdp1control restart`: (re)start the PDP-1

@@ -17,6 +17,7 @@ Press 'F1' to go into layout mode, here you can rearrange
 the three regions, left mouse button moves, right button resizes.
 Cycling with tab and using the arrow keys also works.
 Use ctrl to resize and shift for more precise movement.
+Space bar hides and unhides windows.
 
 Create a new layout with 'F2' and cycle through layouts with space.
 

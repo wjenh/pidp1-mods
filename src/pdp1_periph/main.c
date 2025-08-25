@@ -69,6 +69,7 @@ typedef struct {
 	float x, y;
 	float w, h;
 	int iscircle;
+	int hidden;
 } Region;
 
 typedef struct {
@@ -92,10 +93,10 @@ typedef struct {
 } Layout;
 int nlayouts = 1;
 Layout layouts[10] = {
-	{ { { 595, 155, 330, 330, 1 },
-	    { 15,  45, 480, 80, 0 },
-	    { 15, 155, 480, 80, 0 },
-	    { 15, 275, 480, 300, 0 },
+	{ { { 595, 155, 330, 330, 1, 0 },
+	    { 15,  45, 480, 80, 0, 0 },
+	    { 15, 155, 480, 80, 0, 0 },
+	    { 15, 275, 480, 300, 0, 0 },
 	  },
 	  1024, 640, 0,
 	  { 0x6e, 0x8b, 0x8e, 255 } }
@@ -617,6 +618,8 @@ saveLayout(void)
 			fprintf(f, "%s %g %g %g %g\n", names[j],
 					r->x, r->y,
 					r->w, r->h);
+			if(r->hidden)
+				fprintf(f, "hidden\n");
 		}
 	}
 	fclose(f);
@@ -629,6 +632,7 @@ readRegion(char *line, Region *r)
 {
 	char dummy[64];
 	sscanf(line, "%s %g %g %g %g", dummy, &r->x, &r->y, &r->w, &r->h);
+	r->hidden = 0;
 }
 
 void
@@ -642,6 +646,7 @@ readLayout(void)
 	char line[1024];
 	char cmd[64];
 	nlayouts = 0;
+	Region *r = nil;
 	while(fgets(line, sizeof(line)-1, f) != nil) {
 		Layout *l = &layouts[nlayouts-1];
 		sscanf(line, "%s", cmd);
@@ -663,17 +668,24 @@ readLayout(void)
 			l->bgcol.b = (c>>0) & 0xFF;
 			l->bgcol.a = 0xFF;
 		} else if(strcmp(cmd, "display") == 0) {
-			readRegion(line, &l->regions[ID_DISP]);
-			l->regions[ID_DISP].iscircle = 1;
+			r = &l->regions[ID_DISP];
+			r->iscircle = 1;
+			readRegion(line, r);
 		} else if(strcmp(cmd, "reader") == 0) {
-			readRegion(line, &l->regions[ID_READER]);
-			l->regions[ID_READER].iscircle = 0;
+			r = &l->regions[ID_READER];
+			r->iscircle = 0;
+			readRegion(line, r);
 		} else if(strcmp(cmd, "punch") == 0) {
-			readRegion(line, &l->regions[ID_PUNCH]);
-			l->regions[ID_PUNCH].iscircle = 0;
+			r = &l->regions[ID_PUNCH];
+			r->iscircle = 0;
+			readRegion(line, r);
 		} else if(strcmp(cmd, "typewriter") == 0) {
-			readRegion(line, &l->regions[ID_TYPEWRITER]);
-			l->regions[ID_TYPEWRITER].iscircle = 0;
+			r = &l->regions[ID_TYPEWRITER];
+			r->iscircle = 0;
+			readRegion(line, r);
+		} else if(strcmp(cmd, "hidden") == 0) {
+			if(r)
+				r->hidden = 1;
 		}
 	}
 	fclose(f);
@@ -775,6 +787,10 @@ keydown(SDL_Keysym keysym)
 		nlayouts %= nelem(layouts);
 		break;
 
+	case SDL_SCANCODE_SPACE:
+		if(layoutmode)
+			layouts[lay].regions[reg].hidden ^= 1;
+		break;
 	case SDL_SCANCODE_TAB:
 		if(layoutmode)
 			reg = (reg+1)%NUM_REGIONS;
@@ -1110,18 +1126,23 @@ show |= 1;	// TODO: typewriter
 				col = l->bgcol;
 				drawRectangle(0, 0, drawW, drawH);
 
-				Region *r = &layouts[lay].regions[ID_DISP];
-				setColor(0,0,0,255);
-				Circle c = getCircle(r);
-				glEnable(GL_BLEND);
-				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-				drawCircle(c.x, c.y, c.r);
-				glDisable(GL_BLEND);
+				if(!l->regions[ID_DISP].hidden) {
+					Region *r = &layouts[lay].regions[ID_DISP];
+					setColor(0,0,0,255);
+					Circle c = getCircle(r);
+					glEnable(GL_BLEND);
+					glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+					drawCircle(c.x, c.y, c.r);
+					glDisable(GL_BLEND);
 
-				drawDisplay(&l->regions[ID_DISP]);
-				drawReader(&l->regions[ID_READER]);
-				drawPunch(&l->regions[ID_PUNCH]);
-				drawTypewriter(&l->regions[ID_TYPEWRITER]);
+					drawDisplay(&l->regions[ID_DISP]);
+				}
+				if(!l->regions[ID_READER].hidden)
+					drawReader(&l->regions[ID_READER]);
+				if(!l->regions[ID_PUNCH].hidden)
+					drawPunch(&l->regions[ID_PUNCH]);
+				if(!l->regions[ID_TYPEWRITER].hidden)
+					drawTypewriter(&l->regions[ID_TYPEWRITER]);
 			}
 			SDL_GL_SwapWindow(window);
 		}

@@ -772,16 +772,16 @@ keydown(SDL_Keysym keysym)
 		}
 		break;
 
-	case SDL_SCANCODE_F11:
+	case SDL_SCANCODE_F1:
 		lay = (lay+1)%nlayouts;
 		setFullscreen(layouts[lay].fullscreen);
 		break;
 
-	case SDL_SCANCODE_F1:
+	case SDL_SCANCODE_F2:
 		layoutmode = !layoutmode;
 		break;
 
-	case SDL_SCANCODE_F2:
+	case SDL_SCANCODE_F3:
 		layouts[nlayouts] = layouts[nlayouts-1];
 		nlayouts++;
 		nlayouts %= nelem(layouts);

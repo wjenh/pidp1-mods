@@ -788,6 +788,12 @@ function handleMessage(msg) {
 		papertape.setPos(msg.position || 0);
 		break;
 
+	case 'reader_mounted':
+		let data = Uint8Array.fromBase64(msg.data);
+		papertape.setReader(data);
+		papertape.setPos(msg.position || 0);
+		break;
+
 	case 'punch_data':
 		papertape.punchData(msg.value);
 		break;

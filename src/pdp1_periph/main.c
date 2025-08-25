@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <ctype.h>
 
+#include <limits.h>
+#include <libgen.h>
 #include <unistd.h>
 #include <sys/types.h>
 
@@ -901,6 +903,19 @@ usage(void)
 	exit(0);
 }
 
+
+char*
+bindir()
+{
+	char path[PATH_MAX];
+	ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+	if (len != -1) {
+		path[len] = '\0';
+		return strdup(dirname(path));
+	}
+	return nil;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -928,7 +943,6 @@ main(int argc, char *argv[])
 		return 1;
 	}
 	typfd = dial(host, 1041);
-//	typfd = dial(host, 5000);
 	if(typfd < 0) {
 		fprintf(stderr, "couldn't connect to typewriter %s:%d\n", host, 1041);
 		return 1;
@@ -936,7 +950,10 @@ main(int argc, char *argv[])
 
 	SDL_Init(SDL_INIT_EVERYTHING);
 	TTF_Init();
-	font = TTF_OpenFont("/usr/share/fonts/TTF/DejaVuSansMono.ttf", 16);
+	char *dir = bindir();
+	char fontpath[PATH_MAX];
+	snprintf(fontpath, sizeof(fontpath), "%s/DejaVuSansMono.ttf", dir);
+	font = TTF_OpenFont(fontpath, 16);
 	if(font == nil) {
 		fprintf(stderr, "couldn't open font\n");
 		return 1;

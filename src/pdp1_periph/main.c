@@ -993,10 +993,6 @@ main(int argc, char *argv[])
 	initptp();
 
 	initTypewriter();
-	typeString("hello there\n");
-	typeString("abcdefghijklmnopqrstuvwxyz\n");
-	typeString("ABCDEFGHIJKLMNOPQRSTUVWXYZ\n");
-	typeString("0123456789`~!@#$%^&*()_+-=[]\\{}|;',./<>?\n");
 
 	init_synch();
 	pthread_create(&th, nil, dispthread, nil);

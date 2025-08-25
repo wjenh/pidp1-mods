@@ -2,7 +2,6 @@
 
 GLuint pvbo;
 GLint point_program, excite_program, combine_program;
-GLuint gltex;	// TODO: what is this?
 GLuint whiteTex, yellowTex[2];
 GLuint whiteFBO, yellowFBO[2];
 
@@ -109,20 +108,6 @@ glslheader
 "	gl_Position = vec4(in_pos.x, in_pos.y, -0.5, 1.0);\n"
 "}\n";
 
-/*
-const char *fs_src = 
-glslheader
-outcolor
-"FSIN vec2 v_uv;\n"
-"uniform sampler2D tex0;\n"
-"void main()\n"
-"{\n"
-"	vec2 uv = vec2(v_uv.x, 1.0-v_uv.y);\n"
-"	vec4 color = texture2D(tex0, uv);\n"
-output
-"}\n";
-*/
-
 const char *point_vs_src =
 glslheader
 "VSIN vec2 in_pos;\n"
@@ -209,10 +194,6 @@ initDisplay(void)
 	point_program = linkprogram(point_fs, point_vs);
 	excite_program = linkprogram(excite_fs, vs);
 	combine_program = linkprogram(combine_fs, vs);
-
-	glGenTextures(1, &gltex);
-	glBindTexture(GL_TEXTURE_2D, gltex);
-	texDefaults();
 
 	makeFBO(&whiteFBO, &whiteTex);
 	makeFBO(&yellowFBO[0], &yellowTex[0]);
@@ -363,7 +344,7 @@ process(int frmtime)
 //#define SAVELIST
 
 void*
-readthread(void *args)
+dispthread(void *args)
 {
 	uint32 cmd;
 	uint32 cmds[128];
@@ -387,7 +368,7 @@ realtime = realtime_start;
 	time = 0;
 	int esc = 0;
 for(;;){
-	nbytes = read(netfd, cmds, sizeof(cmds));
+	nbytes = read(dpyfd, cmds, sizeof(cmds));
 	if(nbytes <= 0) {
 		// BUG: this can happen sometimes when it shouldn't
 		fprintf(stderr, "p7 got %d bytes\n", nbytes);
@@ -461,7 +442,7 @@ updatepen(void)
 // TODO: scaling
 	cmd |= penx << 10;
 	cmd |= 1023-peny;
-	write(netfd, &cmd, 4);
+	write(dpyfd, &cmd, 4);
 //	printf("%d %d %d\n", penx, peny, pendown);
 }
 

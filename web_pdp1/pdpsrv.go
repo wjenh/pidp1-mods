@@ -50,6 +50,9 @@ type PeriphServer struct {
 	dpyCtl     chan int
 	typData    chan byte
 
+	ptrbuf []byte
+	ptrpos int
+
 	// active connection is stored in channel
 	// for synchronization
 	wsConn chan *websocket.Conn
@@ -63,6 +66,7 @@ func NewServer(host string) *PeriphServer {
 		dpyCtl:     make(chan int, 1),
 		typData:    make(chan byte, 1),
 		wsConn:     make(chan *websocket.Conn, 1),
+		ptrbuf:     nil,
 	}
 }
 
@@ -166,22 +170,21 @@ func (s *PeriphServer) readLoop(conn net.Conn, data []byte, startPos int) {
 }
 
 func (s *PeriphServer) handleReader() {
-	var data []byte
 	var conn net.Conn
 	var err error
 
 	for {
 		select {
-		case data = <-s.readerData:
+		case s.ptrbuf = <-s.readerData:
 			if conn != nil {
 				conn.Close()
 			}
-			if data == nil {
+			if s.ptrbuf == nil {
 				log.Printf("Reader unmounted")
 				continue
 			}
 
-			log.Printf("Reader mounted with %d bytes", len(data))
+			log.Printf("Reader mounted with %d bytes", len(s.ptrbuf))
 
 			conn, err = net.Dial("tcp", fmt.Sprintf("%s:1042", s.host))
 			if err != nil {
@@ -190,20 +193,20 @@ func (s *PeriphServer) handleReader() {
 			}
 			log.Printf("Connected to reader port 1042")
 
-			// find beginning
-			pos := 0
-			for pos < len(data) && data[pos] == 0 {
-				pos++
+			s.ptrpos = 0
+			for s.ptrpos < len(s.ptrbuf) && s.ptrbuf[s.ptrpos] == 0 {
+				s.ptrpos++
 			}
-			if pos > 20 {
-				pos -= 10
+			if s.ptrpos > 20 {
+				s.ptrpos -= 10
 			}
 			s.sendToWeb(Message{
-				Type:     "reader_position",
-				Position: pos,
+				Type:     "reader_mounted",
+				Position: s.ptrpos,
+				Data: s.ptrbuf,
 			})
 
-			go s.readLoop(conn, data, pos)
+			go s.readLoop(conn, s.ptrbuf, s.ptrpos)
 		}
 	}
 }
@@ -377,9 +380,17 @@ func (s *PeriphServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		<-s.wsConn
 
-		s.readerData <- nil
+		//s.readerData <- nil
 		s.dpyCtl <- 0
 	}()
+
+	if s.ptrbuf != nil {
+		s.sendToWeb(Message{
+			Type:     "reader_mounted",
+			Position: s.ptrpos,
+			Data: s.ptrbuf,
+		})
+	}
 
 	for {
 		var msg Message
@@ -430,6 +441,89 @@ func (s *PeriphServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// do we really have to do this manually?
+func tokenize(input string) []string {
+	var tokens []string
+	remaining := strings.TrimSpace(input)
+
+	for len(remaining) > 0 {
+		quoteIdx := strings.IndexAny(remaining, `"'`)
+
+		if quoteIdx == -1 {
+			tokens = append(tokens, strings.Fields(remaining)...)
+			break
+		}
+
+		if quoteIdx > 0 {
+			before := remaining[:quoteIdx]
+			tokens = append(tokens, strings.Fields(before)...)
+		}
+
+		quoteChar := remaining[quoteIdx]
+		closeIdx := strings.Index(remaining[quoteIdx+1:], string(quoteChar))
+		if closeIdx == -1 {
+			tokens = append(tokens, remaining[quoteIdx+1:])
+			break
+		}
+
+		quotedContent := remaining[quoteIdx+1 : quoteIdx+1+closeIdx]
+		tokens = append(tokens, quotedContent)
+
+		remaining = strings.TrimSpace(remaining[quoteIdx+1+closeIdx+1:])
+	}
+
+	return tokens
+}
+
+func (s *PeriphServer) doCLI(conn net.Conn) {
+	defer conn.Close()
+
+	scanner := bufio.NewScanner(conn)
+	fmt.Printf("waiting for input\n")
+	for scanner.Scan() {
+		line := scanner.Text()
+		toks := tokenize(line)
+		fmt.Printf("tokens: %d %v\n", len(toks), toks)
+		switch toks[0] {
+		case "r":
+			if len(toks) < 2 {
+				s.readerData <- nil
+				break
+			}
+			content, err := ioutil.ReadFile(toks[1])
+			if err != nil {
+				log.Println("Error reading file:", err)
+				s.readerData <- nil
+			} else {
+				fmt.Printf("File size: %d bytes\n", len(content))
+				s.readerData <- content
+			}
+
+		case "p":
+			fmt.Printf("file %s\n", toks[1])
+		}
+	}
+	fmt.Printf("ending connection\n")
+}
+
+func (s *PeriphServer) handleCLI() {
+	listener, err := net.Listen("tcp", ":1050")
+	if err != nil {
+		log.Fatal("Failed to listen on port 1050:", err)
+	}
+	defer listener.Close()
+
+	for {
+	fmt.Printf("accepting connection\n")
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Println("Failed to accept connection:", err)
+			continue
+		}
+		s.doCLI(conn)
+	}
+}
+
 func main() {
 	server := NewServer("localhost")
 
@@ -437,6 +531,7 @@ func main() {
 	go server.handlePunch()
 	go server.handleDisplay()
 	go server.handleTypewriter()
+	go server.handleCLI()
 
 	http.HandleFunc("/ws", server.handleWebSocket)
 	http.Handle("/", http.FileServer(http.Dir("srv")))

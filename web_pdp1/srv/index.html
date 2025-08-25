@@ -937,7 +937,7 @@ let escstr = [];
 let utf8str = [];
 let utf8len = 0;
 let decoder = new TextDecoder();
-function leading0s(byte) {
+function leading1s(byte) {
 	let bit = 0200;
 	let n = 0;
 	while(bit & byte) {
@@ -967,7 +967,7 @@ function processbyte(code) {
 	// we're also getting a line feed which we use
 	if(code == 015) return;
 
-	let nz = leading0s(code);
+	let nz = leading1s(code);
 	if(nz == 0) {
 		// TODO: check utf-8 state
 		typewriter.printchar(String.fromCharCode(code));

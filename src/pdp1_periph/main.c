@@ -19,6 +19,7 @@
 #include <pthread.h>      
 
 #include <SDL.h>
+#include <SDL_ttf.h>
 #include "glad/glad.h"
 
 #include <common.h>
@@ -53,8 +54,10 @@ int fullscreen;
 int realW, realH;	// non-fullscreen, what a pain to keep track of
 int winW, winH;
 const char *host = "localhost";
-int netfd;
+int dpyfd, typfd;
 int dbgflag;
+
+TTF_Font *font;
 
 typedef struct {
 	int r, g, b, a;
@@ -75,6 +78,7 @@ enum {
 	ID_DISP,
 	ID_READER,
 	ID_PUNCH,
+	ID_TYPEWRITER,
 	NUM_REGIONS
 };
 
@@ -87,11 +91,20 @@ typedef struct {
 int nlayouts = 1;
 Layout layouts[10] = {
 	{ { { 595, 155, 330, 330, 1 },
-	    { 15, 225, 480, 80, 0 },
-	    { 15, 335, 480, 80, 0 } },
+	    { 15,  45, 480, 80, 0 },
+	    { 15, 155, 480, 80, 0 },
+	    { 15, 275, 480, 300, 0 },
+	  },
 	  1024, 640, 0,
 	  { 0x6e, 0x8b, 0x8e, 255 } }
 };
+
+typedef struct {
+	int minx, maxx, miny, maxy, advance;
+	int w, h;
+	GLuint tex;
+} Glyph;
+Glyph glyphs[128];
 
 int reg = ID_READER; 
 int hover = -1;
@@ -230,13 +243,26 @@ glslheader
 "	gl_Position = vec4(p.x, p.y, -0.5, 1.0);\n"
 "}\n";
 
-const char *color_fs_src = 
+const char *color_fs_src =
 glslheader
 outcolor
 "uniform vec4 u_color;\n"
 "void main()\n"
 "{\n"
 "	vec4 color = u_color;\n"
+output
+"}\n";
+
+const char *tex_fs_src = 
+glslheader
+outcolor
+"FSIN vec2 v_uv;\n"
+"uniform vec4 u_color;\n"
+"uniform sampler2D tex0;\n"
+"void main()\n"
+"{\n"
+"	vec2 uv = vec2(v_uv.x, 1.0-v_uv.y);\n"
+"	vec4 color = u_color*texture2D(tex0, uv);\n"
 output
 "}\n";
 
@@ -365,7 +391,7 @@ setColor(int r, int g, int b, int a)
 	col.a = a;
 }
 
-GLint color_program, circle_program;
+GLint color_program, tex_program, circle_program;
 GLuint immVbo;
 
 void
@@ -478,6 +504,57 @@ drawOutline(Region *r, int hover, int select, Color c)
 #define UNITY_BUILD
 #include "p7.c"
 #include "ptape.c"
+#include "typewriter.c"
+
+void
+initGlyph(int c, Glyph *g)
+{
+	static SDL_Color white = {255, 255, 255, 255};
+
+	SDL_Surface *surf = TTF_RenderGlyph_Blended(font, c, white);
+	g->w = surf->w;
+	g->h = surf->h;
+	TTF_GlyphMetrics(font, c, &g->minx, &g->maxx, &g->miny, &g->maxy, &g->advance);
+//printf("%d %p %c %d %d %d %d %d    ", c, surf, i, g->minx, g->maxx, g->miny, g->maxy, g->advance);
+
+	glGenTextures(1, &g->tex);
+	glBindTexture(GL_TEXTURE_2D, g->tex);
+	texDefaults();
+
+	SDL_Surface *srgb = SDL_ConvertSurfaceFormat(surf, SDL_PIXELFORMAT_RGBA32, 0);
+//printf("%d %d\n", srgb->w, srgb->h);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+		srgb->w, srgb->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, srgb->pixels);
+
+	SDL_FreeSurface(surf);
+	SDL_FreeSurface(srgb);
+}
+
+void
+initFont(void)
+{
+/*
+	case 0x00B7:	//	·	middle dot
+	case 0x203E:	//	‾	overline
+	case 0x2192:	//	→	right arrow
+	case 0x2283:	//	⊃	superset
+	case 0x2228:	//	∨	or
+	case 0x2227:	//	∧	and
+	case 0x2191:	//	↑	up arrow
+	case 0x00D7:	//	×	times
+*/
+	for(int i = 1; i < 128; i++)
+		initGlyph(i, &glyphs[i]);
+	initGlyph(0x00B7, &glyphs[020]);
+	initGlyph(0x203E, &glyphs[021]);
+	initGlyph(0x2192, &glyphs[022]);
+	initGlyph(0x2283, &glyphs[023]);
+	initGlyph(0x2228, &glyphs[024]);
+	initGlyph(0x2227, &glyphs[025]);
+	initGlyph(0x2191, &glyphs[026]);
+	initGlyph(0x00D7, &glyphs[027]);
+	glBindTexture(GL_TEXTURE_2D, 0);
+}
 
 void
 initGL(void)
@@ -489,11 +566,16 @@ initGL(void)
 
 	GLint vs = compileshader(GL_VERTEX_SHADER, color_vs_src);
 	GLint fs = compileshader(GL_FRAGMENT_SHADER, color_fs_src);
-	color_program = linkprogram(fs, vs);
+	color_program = linkprogram(vs, fs);
+
+	GLint tex_fs = compileshader(GL_FRAGMENT_SHADER, tex_fs_src);
+	tex_program = linkprogram(vs, tex_fs);
 
 	GLint color_vs = compileshader(GL_VERTEX_SHADER, color_vs_src);
 	GLint circle_fs = compileshader(GL_FRAGMENT_SHADER, circle_fs_src);
-	circle_program = linkprogram(circle_fs, color_vs);
+	circle_program = linkprogram(color_vs, circle_fs);
+
+	initFont();
 }
 
 void resize(int w, int h);
@@ -512,6 +594,7 @@ saveLayout(void)
 		[ID_DISP] "display",
 		[ID_READER] "reader",
 		[ID_PUNCH] "punch",
+		[ID_TYPEWRITER] "typewriter",
 	};
 	int oldW = winW;
 	int oldH = winH;
@@ -586,6 +669,9 @@ readLayout(void)
 		} else if(strcmp(cmd, "punch") == 0) {
 			readRegion(line, &l->regions[ID_PUNCH]);
 			l->regions[ID_PUNCH].iscircle = 0;
+		} else if(strcmp(cmd, "typewriter") == 0) {
+			readRegion(line, &l->regions[ID_TYPEWRITER]);
+			l->regions[ID_TYPEWRITER].iscircle = 0;
 		}
 	}
 	fclose(f);
@@ -602,6 +688,15 @@ setFullscreen(int f)
 }
 
 int shift, ctrl;
+
+void
+textinput(char *text)
+{
+	if(layoutmode) return;
+	int c = text[0];
+	if(c < 128)
+		strikeChar(c);
+}
 
 void
 keydown(SDL_Keysym keysym)
@@ -663,29 +758,39 @@ keydown(SDL_Keysym keysym)
 		}
 		break;
 
-	case SDL_SCANCODE_TAB:
-		reg = (reg+1)%NUM_REGIONS;
-		break;
-
-	case SDL_SCANCODE_SPACE:
+	case SDL_SCANCODE_F11:
 		lay = (lay+1)%nlayouts;
 		setFullscreen(layouts[lay].fullscreen);
 		break;
 
-	case SDL_SCANCODE_L:
-		layoutmode = !layoutmode;
-		break;
-
-	case SDL_SCANCODE_R:
-		readLayout();
-		break;
-	case SDL_SCANCODE_S:
-		saveLayout();
-		break;
-	case SDL_SCANCODE_EQUALS:
+	case SDL_SCANCODE_F1:
 		layouts[nlayouts] = layouts[nlayouts-1];
 		nlayouts++;
 		nlayouts %= nelem(layouts);
+		break;
+
+	case SDL_SCANCODE_F2:
+		layoutmode = !layoutmode;
+		break;
+
+	case SDL_SCANCODE_TAB:
+		if(layoutmode)
+			reg = (reg+1)%NUM_REGIONS;
+		else
+			strikeChar('\t');
+		break;
+	case SDL_SCANCODE_BACKSPACE:
+		strikeChar('\b');
+		break;
+	case SDL_SCANCODE_RETURN:
+		strikeChar('\n');
+		break;
+
+	case SDL_SCANCODE_F5:
+		readLayout();
+		break;
+	case SDL_SCANCODE_F6:
+		saveLayout();
 		break;
 
 	default:
@@ -817,13 +922,25 @@ main(int argc, char *argv[])
 		break;
 	}ARGEND;
 
-	netfd = dial(host, port);
-	if(netfd < 0) {
-		fprintf(stderr, "couldn't connect to emulator %s:%d\n", host, port);
+	dpyfd = dial(host, port);
+	if(dpyfd < 0) {
+		fprintf(stderr, "couldn't connect to display %s:%d\n", host, port);
+		return 1;
+	}
+	typfd = dial(host, 1041);
+//	typfd = dial(host, 5000);
+	if(typfd < 0) {
+		fprintf(stderr, "couldn't connect to typewriter %s:%d\n", host, 1041);
 		return 1;
 	}
 
 	SDL_Init(SDL_INIT_EVERYTHING);
+	TTF_Init();
+	font = TTF_OpenFont("/usr/share/fonts/TTF/DejaVuSansMono.ttf", 16);
+	if(font == nil) {
+		fprintf(stderr, "couldn't open font\n");
+		return 1;
+	}
 
 #ifdef GLES
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
@@ -875,10 +992,16 @@ main(int argc, char *argv[])
 		mountptr(argv[0]);
 	initptp();
 
+	initTypewriter();
+	typeString("hello there\n");
+	typeString("abcdefghijklmnopqrstuvwxyz\n");
+	typeString("ABCDEFGHIJKLMNOPQRSTUVWXYZ\n");
+	typeString("0123456789`~!@#$%^&*()_+-=[]\\{}|;',./<>?\n");
 
 	init_synch();
-	pthread_create(&th, nil, readthread, nil);
+	pthread_create(&th, nil, dispthread, nil);
 	pthread_create(&th, nil, tapethread, nil);
+	pthread_create(&th, nil, typthread, nil);
 
 //dispRegion.x += 200; dispRegion.w /= 2;
 	running = 1;
@@ -886,13 +1009,15 @@ main(int argc, char *argv[])
 	while(running){
 		while(SDL_PollEvent(&event)) {
 			switch(event.type) {
-			case SDL_TEXTINPUT:
-				break;
 			case SDL_KEYDOWN:
 				keydown(event.key.keysym);
 				break;
 			case SDL_KEYUP:
 				keyup(event.key.keysym);
+				break;
+
+			case SDL_TEXTINPUT:
+				textinput(event.text.text);
 				break;
 
 			case SDL_MOUSEMOTION:
@@ -952,6 +1077,7 @@ main(int argc, char *argv[])
 				SDL_ShowCursor(SDL_DISABLE);
 		}
 		show |= doDrawTape();
+show |= 1;	// TODO: typewriter
 		if(show) {
 			Layout *l = &layouts[lay];
 			drawW = winW;
@@ -982,6 +1108,7 @@ main(int argc, char *argv[])
 				drawDisplay(&l->regions[ID_DISP]);
 				drawReader(&l->regions[ID_READER]);
 				drawPunch(&l->regions[ID_PUNCH]);
+				drawTypewriter(&l->regions[ID_TYPEWRITER]);
 			}
 			SDL_GL_SwapWindow(window);
 		}

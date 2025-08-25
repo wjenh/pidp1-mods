@@ -764,13 +764,13 @@ keydown(SDL_Keysym keysym)
 		break;
 
 	case SDL_SCANCODE_F1:
-		layouts[nlayouts] = layouts[nlayouts-1];
-		nlayouts++;
-		nlayouts %= nelem(layouts);
+		layoutmode = !layoutmode;
 		break;
 
 	case SDL_SCANCODE_F2:
-		layoutmode = !layoutmode;
+		layouts[nlayouts] = layouts[nlayouts-1];
+		nlayouts++;
+		nlayouts %= nelem(layouts);
 		break;
 
 	case SDL_SCANCODE_TAB:

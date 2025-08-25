@@ -13,13 +13,13 @@ Admittedly this behaviour should be better documented :)
 
 Press 'F11' to switch between windows and fullscreen mode.
 
-Press 'F1' to go into layout mode, here you can rearrange
+Press 'F2' to go into layout mode, here you can rearrange
 the three regions, left mouse button moves, right button resizes.
 Cycling with tab and using the arrow keys also works.
 Use ctrl to resize and shift for more precise movement.
 Space bar hides and unhides windows.
 
-Create a new layout with 'F2' and cycle through layouts with space.
+Create a new layout with 'F3' and cycle through layouts with 'F1'.
 
 Save the current configuration with 'F6' and re-read it with 'F5'.
 

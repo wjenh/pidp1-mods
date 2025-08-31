@@ -88,7 +88,8 @@ while true; do
             sudo apt update
             #Install SDL2, optionally used for PDP-11 graphics terminal emulation
             sudo apt install -y libsdl2-dev
-	    #Install SDL2-image. Strictly speaking, only needed for virtual panel, not PiDP-1
+	    sudo apt install -y libsdl2-ttf-dev
+            #Install SDL2-image. Strictly speaking, only needed for virtual panel, not PiDP-1
 	    sudo apt install -y libsdl2-image-dev
             #Install ncat
             sudo apt install -y ncat

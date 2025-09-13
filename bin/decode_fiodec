@@ -5,8 +5,8 @@
 # Usage: decode_fiodec <input_file> <output_file>
 #
 
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the directory where this script is actually located (follow symlinks)
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 # Path to the Python decoder
 DECODER="$SCRIPT_DIR/decode_fiodec.py"

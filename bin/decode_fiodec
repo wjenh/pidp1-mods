@@ -1,0 +1,35 @@
+#!/bin/bash
+#
+# decode_fiodec - Convert PDP-1 FIODEC paper tape format to ASCII text
+#
+# Usage: decode_fiodec <input_file> <output_file>
+#
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Path to the Python decoder
+DECODER="$SCRIPT_DIR/decode_fiodec.py"
+
+# Check if the decoder exists
+if [[ ! -f "$DECODER" ]]; then
+    echo "Error: decode_fiodec.py not found in $SCRIPT_DIR" >&2
+    exit 1
+fi
+
+# Check if Python 3 is available
+if ! command -v python3 &> /dev/null; then
+    echo "Error: python3 is required but not found" >&2
+    exit 1
+fi
+
+# Validate arguments
+if [[ $# -ne 2 ]]; then
+    echo "Usage: decode_fiodec <input_file> <output_file>" >&2
+    echo "" >&2
+    echo "Convert PDP-1 FIODEC paper tape format to ASCII text" >&2
+    exit 1
+fi
+
+# Pass arguments to the Python script
+exec python3 "$DECODER" "$@"

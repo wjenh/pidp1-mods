@@ -46,12 +46,14 @@ class Typewriter {
 		this.line += '<span class="red">';
 		this.endline += '</span>';
 		this.isred = true;
+		this.update(this.line + "_");
 	}
 
 	black() {
 		this.line += '<span class="black">';
 		this.endline += '</span>';
 		this.isred = false;
+		this.update(this.line + "_");
 	}
 
 	isspacing(c) {
@@ -95,8 +97,8 @@ class Typewriter {
 			if(this.isred)
 				this.red();
 		}
-		this.update(this.line + "_");
 		if(!this.isspacing(c))
 			this.printchar('\b');
+		this.update(this.line + "_");
 	}
 }

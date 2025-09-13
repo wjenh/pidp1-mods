@@ -97,6 +97,7 @@ enum {
 char typ_lines[NUMLINES][LINELEN];
 int nlines;
 int curline;
+int red = 0;
 
 void
 drawTypewriter(Region *r)
@@ -119,7 +120,10 @@ drawTypewriter(Region *r)
 	int lx;
 	for(int i = nlines-1; i >= 0; i--)
 		lx = drawString(typ_lines[(curline+NUMLINES-i)%NUMLINES], x, y-i*spacing);
-	setColor(128,128,128,255);
+	if(red)
+		setColor(170,0,0,255);
+	else
+		setColor(128,128,128,255);
 	drawGlyph('_', x+lx, y);
 
 	glDisable(GL_SCISSOR_TEST);
@@ -155,7 +159,7 @@ mapchar(int r)
 void
 typeChar(int c)
 {
-	if(c == '\n') {
+	if((c&0177) == '\n') {
 		curline = (curline+1)%NUMLINES;
 		typ_lines[curline][0] = 0;
 		if(nlines < NUMLINES)
@@ -178,7 +182,6 @@ typeString(const char *s)
 
 char escstr[20];
 int escp = 0;
-int red = 0;
 
 int
 leading1s(int byte) {

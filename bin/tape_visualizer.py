@@ -51,7 +51,7 @@ class TapeData:
         result = []
         shift_state = "lower"
         
-        for byte_val in self.raw_bytes:
+        for i, byte_val in enumerate(self.raw_bytes):
             # Remove parity bit for FIODEC lookup
             fiodec_code = byte_val & 0x7F
             
@@ -111,6 +111,10 @@ class TapeVisualizer:
                 tape_bytes = f.read()
             self.tape_data = TapeData(tape_bytes)
             self.tape_width = len(tape_bytes)
+            
+            # Set initial scroll position to skip leading empty lines
+            self.scroll_pos = self._find_initial_display_position()
+            
             return True
         except FileNotFoundError:
             print(f"Error: Cannot open {self.tape_file}")
@@ -119,15 +123,36 @@ class TapeVisualizer:
             print(f"Error loading tape: {e}")
             return False
     
+    def _find_initial_display_position(self):
+        """Find the initial display position, skipping leading empty lines but keeping 5"""
+        if not self.tape_data or not self.tape_data.raw_bytes:
+            return 0
+        
+        # Count leading null bytes (empty lines)
+        leading_nulls = 0
+        for byte_val in self.tape_data.raw_bytes:
+            if byte_val == 0:
+                leading_nulls += 1
+            else:
+                break
+        
+        # If we have more than 5 leading nulls, skip all but the last 5
+        if leading_nulls > 5:
+            return leading_nulls - 5
+        else:
+            # If 5 or fewer leading nulls, start at the beginning
+            return 0
+    
     def format_9_hole_display(self, byte_val: int) -> List[str]:
         """Format byte as 9-hole paper tape display (vertical)
         Returns list of 9 strings, one for each hole row
-        Bit layout (top to bottom): [7 6 5 4 sync 3 2 1 0]
+        Bit layout (top to bottom): [0 1 2 sync 3 4 5 6 7] (code bits)
+        Display labels (top to bottom): [1 2 3 sync 4 5 6 7 8] (convention)
         """
         holes = []
         
-        # Data holes 7-4 (top part)
-        for bit in range(7, 3, -1):
+        # Data holes 0-2 (first three bits)
+        for bit in range(0, 3):
             if byte_val & (1 << bit):
                 holes.append('●')  # Punched hole
             else:
@@ -136,8 +161,8 @@ class TapeVisualizer:
         # Sync hole (always punched, represented as dot)
         holes.append('.')
         
-        # Data holes 3-0 (bottom part) 
-        for bit in range(3, -1, -1):
+        # Data holes 3-7 (remaining five bits) 
+        for bit in range(3, 8):
             if byte_val & (1 << bit):
                 holes.append('●')  # Punched hole
             else:
@@ -152,8 +177,10 @@ class TapeVisualizer:
         
         height, screen_width = stdscr.getmaxyx()
         
-        # Calculate visible range
-        end_pos = min(start_col + width, self.tape_width)
+        # Calculate visible range with bounds checking
+        max_data_len = len(self.tape_data.decoded_data)
+        start_col = max(0, min(start_col, max_data_len - 1))
+        end_pos = min(start_col + width, max_data_len)
         visible_data = self.tape_data.decoded_data[start_col:end_pos]
         
         if not visible_data:
@@ -181,24 +208,25 @@ class TapeVisualizer:
             
             # FIODEC octal vertically (3 digits stacked)
             fiodec_oct = f"{byte_val:03o}"
-            for i, digit in enumerate(fiodec_oct):
-                fiodec_rows[i] += f"{digit} "
+            for fiodec_i, digit in enumerate(fiodec_oct):
+                fiodec_rows[fiodec_i] += f"{digit} "
             
             # FIODEC character vertically (max 3 chars stacked)
             char_display = fiodec_display[:3] if fiodec_display else "?"
             # Pad with spaces to ensure we have exactly 3 characters
             char_display = f"{char_display:<3}"
-            for i, char in enumerate(char_display):
-                if i < 3:  # Only use first 3 characters
-                    char_rows[i] += f"{char if char.strip() else ' '} "
+            for char_i, char in enumerate(char_display):
+                if char_i < 3:  # Only use first 3 characters
+                    char_rows[char_i] += f"{char if char.strip() else ' '} "
             
             # Unicode octal vertically (3 digits stacked)
             if unicode_code > 0:
-                unicode_oct = f"{unicode_code:03o}"
+                # Limit to 3 octal digits maximum (0-777 octal = 0-511 decimal)
+                unicode_oct = f"{unicode_code:03o}"[-3:]  # Take only last 3 digits
             else:
                 unicode_oct = "---"
-            for i, digit in enumerate(unicode_oct):
-                unicode_rows[i] += f"{digit} "
+            for unicode_i, digit in enumerate(unicode_oct):
+                unicode_rows[unicode_i] += f"{digit} "
             
             # Unicode character (1 char)
             display_unicode = unicode_char if unicode_char.isprintable() and unicode_char not in '\n\t\b' else '·'
@@ -213,7 +241,7 @@ class TapeVisualizer:
             stdscr.addstr(1, 0, "Use ←→ arrows to scroll, Home/End to jump, Page Up/Down for fast scroll, Q to quit")
             
             # Vertical tape visualization (9 rows for holes)
-            bit_labels = ["7", "6", "5", "4", "s", "3", "2", "1", "0"]  # s = sync
+            bit_labels = ["1", "2", "3", "s", "4", "5", "6", "7", "8"]  # s = sync
             row_num = 3
             for i, (tape_row, label) in enumerate(zip(tape_rows, bit_labels)):
                 stdscr.addstr(row_num + i, 0, f"{label}: " + tape_row[:screen_width-3])
@@ -291,14 +319,16 @@ class TapeVisualizer:
                 if new_pos != self.scroll_pos:
                     self.scroll_pos = new_pos
             elif key == curses.KEY_RIGHT:
-                new_pos = min(self.tape_width - 1, self.scroll_pos + 1)
+                max_pos = max(0, len(self.tape_data.decoded_data) - 1)
+                new_pos = min(max_pos, self.scroll_pos + 1)
                 if new_pos != self.scroll_pos:
                     self.scroll_pos = new_pos
             elif key == curses.KEY_HOME:
                 if self.scroll_pos != 0:
                     self.scroll_pos = 0
             elif key == curses.KEY_END:
-                new_pos = max(0, self.tape_width - visible_bytes)
+                max_pos = max(0, len(self.tape_data.decoded_data) - visible_bytes)
+                new_pos = max(0, max_pos)
                 if new_pos != self.scroll_pos:
                     self.scroll_pos = new_pos
             elif key == curses.KEY_PPAGE:  # Page Up
@@ -306,7 +336,8 @@ class TapeVisualizer:
                 if new_pos != self.scroll_pos:
                     self.scroll_pos = new_pos
             elif key == curses.KEY_NPAGE:  # Page Down
-                new_pos = min(self.tape_width - visible_bytes, self.scroll_pos + visible_bytes)
+                max_pos = max(0, len(self.tape_data.decoded_data) - visible_bytes)
+                new_pos = min(max_pos, self.scroll_pos + visible_bytes)
                 if new_pos != self.scroll_pos:
                     self.scroll_pos = new_pos
 
@@ -318,10 +349,13 @@ def test_mode(tape_file: str, width: int = 8):
         return
     
     print(f"Paper Tape: {tape_file} | Total: {visualizer.tape_width} lines")
+    print(f"Starting at position {visualizer.scroll_pos} (skipped {visualizer.scroll_pos} leading empty lines)")
     print("=" * 80)
     
-    # Show first few bytes
-    visible_data = visualizer.tape_data.decoded_data[:width]
+    # Show bytes starting from the calculated initial position
+    start_pos = visualizer.scroll_pos
+    end_pos = min(start_pos + width, len(visualizer.tape_data.decoded_data))
+    visible_data = visualizer.tape_data.decoded_data[start_pos:end_pos]
     
     # Build vertical tape display
     tape_rows = [""] * 9  # 9 hole rows
@@ -338,24 +372,25 @@ def test_mode(tape_file: str, width: int = 8):
         
         # FIODEC octal vertically (3 digits stacked)
         fiodec_oct = f"{byte_val:03o}"
-        for i, digit in enumerate(fiodec_oct):
-            fiodec_rows[i] += f"{digit} "
+        for fiodec_i, digit in enumerate(fiodec_oct):
+            fiodec_rows[fiodec_i] += f"{digit} "
         
         # FIODEC character vertically (max 3 chars stacked)
         char_display = fiodec_display[:3] if fiodec_display else "?"
         # Pad with spaces to ensure we have exactly 3 characters
         char_display = f"{char_display:<3}"
-        for i, char in enumerate(char_display):
-            if i < 3:  # Only use first 3 characters
-                char_rows[i] += f"{char if char.strip() else ' '} "
+        for char_i, char in enumerate(char_display):
+            if char_i < 3:  # Only use first 3 characters
+                char_rows[char_i] += f"{char if char.strip() else ' '} "
         
         # Unicode octal vertically (3 digits stacked)
         if unicode_code > 0:
-            unicode_oct = f"{unicode_code:03o}"
+            # Limit to 3 octal digits maximum (0-777 octal = 0-511 decimal)
+            unicode_oct = f"{unicode_code:03o}"[-3:]  # Take only last 3 digits
         else:
             unicode_oct = "---"
-        for i, digit in enumerate(unicode_oct):
-            unicode_rows[i] += f"{digit} "
+        for unicode_i, digit in enumerate(unicode_oct):
+            unicode_rows[unicode_i] += f"{digit} "
         
         # Unicode character (1 char)
         display_unicode = unicode_char if unicode_char.isprintable() and unicode_char not in '\n\t\b' else '·'
@@ -364,7 +399,7 @@ def test_mode(tape_file: str, width: int = 8):
         ascii_rows[0] += f"{display_unicode} "
     
     # Print vertical tape display
-    bit_labels = ["7", "6", "5", "4", "s", "3", "2", "1", "0"]  # s = sync
+    bit_labels = ["1", "2", "3", "s", "4", "5", "6", "7", "8"]  # s = sync
     for tape_row, label in zip(tape_rows, bit_labels):
         print(f"{label}: {tape_row}")
     

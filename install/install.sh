@@ -180,6 +180,12 @@ while true; do
             sudo ln -f -s /opt/pidp1/bin/pdp1.sh /usr/local/bin/pdp1
             # put pdp1control script into /usr/local
             sudo ln -f -s /opt/pidp1/bin/pdp1control.sh /usr/local/bin/pdp1control
+	    #
+	    #
+	    sudo ln -sf /opt/pidp1/bin/encode_fiodec /usr/local/bin/encode_fiodec
+            sudo ln -sf /opt/pidp1/bin/decode_fiodec /usr/local/bin/decode_fiodec
+	    sudo ln -sf /opt/pidp1/bin/tape_visualizer /usr/local/bin/tape_visualizer
+
 	    break
 	    ;;
         [Nn]* ) 

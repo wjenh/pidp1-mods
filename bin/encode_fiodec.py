@@ -43,7 +43,7 @@ ASCII_FALLBACKS = {
     # Add more as needed based on your assembly source conventions
 }
 
-def encode_pdp1_fiodec(input_file, output_file, add_leader=True, leader_length=50):
+def encode_pdp1_fiodec(input_file, output_file, add_leader=True, leader_length=5, add_stop_code=None):
     try:
         with open(input_file, "r", encoding="utf-8") as f:
             text = f.read()
@@ -151,6 +151,26 @@ def encode_pdp1_fiodec(input_file, output_file, add_leader=True, leader_length=5
         print(f"Unmapped characters found: {sorted(unmapped_chars)}")
         print("Consider adding ASCII fallback mappings for these characters.")
 
+    # Handle stop code addition
+    if add_stop_code is None:
+        # Ask user interactively
+        try:
+            response = input("Add a stop code to the end of the tape (y/n)? ").lower().strip()
+            add_stop_code = response in ['y', 'yes']
+        except (EOFError, KeyboardInterrupt):
+            # Handle Ctrl+C or EOF gracefully
+            print("\nNo stop code added.")
+            add_stop_code = False
+    
+    if add_stop_code:
+        # Add 10 empty lines (nulls)
+        output.extend([0x00] * 10)
+        # Add stop code (octal 013)
+        output.append(0o13)
+        # Add 5 more empty lines (nulls)
+        output.extend([0x00] * 5)
+        print("Added stop code sequence: 10 nulls + STOP (013) + 5 nulls")
+
     # Add parity bits (8th hole) - odd parity for paper tape
     # BUT: leader/trailer nulls (0x00) should remain 0x00 (no parity)
     parity_output = []
@@ -174,8 +194,15 @@ def encode_pdp1_fiodec(input_file, output_file, add_leader=True, leader_length=5
             byte_data = bytes(parity_output)
             out.write(byte_data)
         
-        content_chars = len(output) - (2 * leader_length if add_leader else 0)
-        print(f"Encoding complete. {content_chars} content + {2 * leader_length if add_leader else 0} leader/trailer = {len(output)} total bytes written to {output_file}")
+        # Calculate content vs leader/trailer for reporting
+        leader_trailer_count = (2 * leader_length if add_leader else 0)
+        stop_code_count = 16 if add_stop_code else 0  # 10 + 1 + 5
+        content_chars = len(output) - leader_trailer_count - stop_code_count
+        
+        if add_stop_code:
+            print(f"Encoding complete. {content_chars} content + {leader_trailer_count} leader/trailer + {stop_code_count} stop sequence = {len(output)} total bytes written to {output_file}")
+        else:
+            print(f"Encoding complete. {content_chars} content + {leader_trailer_count} leader/trailer = {len(output)} total bytes written to {output_file}")
         
     except Exception as e:
         print(f"Error writing output file: {e}")
@@ -210,16 +237,29 @@ if __name__ == "__main__":
         show_mapping_table()
         sys.exit(0)
         
-    if len(sys.argv) < 3 or len(sys.argv) > 4:
-        print(f"Usage: {sys.argv[0]} <input_file> <output_file> [--no-leader]")
+    if len(sys.argv) < 3:
+        print(f"Usage: {sys.argv[0]} <input_file> <output_file> [options]")
         print(f"       {sys.argv[0]} --table    (show encoding table)")
         print(f"")
         print(f"Options:")
-        print(f"  --no-leader    Don't add leader/trailer null bytes (for direct content)")
+        print(f"  --no-leader    Don't add leader/trailer null bytes")
+        print(f"  --stop         Add stop code sequence automatically (no prompt)")
+        print(f"  --no-stop      Don't add stop code sequence (no prompt)")
         sys.exit(1)
     
+    # Parse options
     add_leader = True
-    if len(sys.argv) == 4 and sys.argv[3] == "--no-leader":
-        add_leader = False
+    add_stop_code = None  # None = ask user, True = add, False = don't add
+    
+    for arg in sys.argv[3:]:
+        if arg == "--no-leader":
+            add_leader = False
+        elif arg == "--stop":
+            add_stop_code = True
+        elif arg == "--no-stop":
+            add_stop_code = False
+        else:
+            print(f"Unknown option: {arg}")
+            sys.exit(1)
 
-    encode_pdp1_fiodec(sys.argv[1], sys.argv[2], add_leader)
+    encode_pdp1_fiodec(sys.argv[1], sys.argv[2], add_leader, 5, add_stop_code)

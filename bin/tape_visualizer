@@ -1,0 +1,45 @@
+#!/bin/bash
+#
+# tape_visualizer - PDP-1 Paper Tape Visualizer
+#
+# Usage: tape_visualizer <tape_file>
+#
+
+# Get the directory where this script is actually located (follow symlinks)
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
+# Path to the Python visualizer
+VISUALIZER="$SCRIPT_DIR/tape_visualizer.py"
+
+# Check if the visualizer exists
+if [[ ! -f "$VISUALIZER" ]]; then
+    echo "Error: tape_visualizer.py not found in $SCRIPT_DIR" >&2
+    exit 1
+fi
+
+# Check if Python 3 is available
+if ! command -v python3 &> /dev/null; then
+    echo "Error: python3 is required but not found" >&2
+    exit 1
+fi
+
+# Validate arguments
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+    echo "Usage: tape_visualizer <tape_file> [--test]" >&2
+    echo "" >&2
+    echo "PDP-1 Paper Tape Visualizer" >&2
+    echo "Shows 9-hole paper tape format with FIODEC decoding" >&2
+    echo "" >&2
+    echo "Options:" >&2
+    echo "  --test       Print visualization to stdout (non-interactive)" >&2
+    echo "" >&2
+    echo "TUI Controls:" >&2
+    echo "  ←→ arrows    Scroll through tape" >&2
+    echo "  Home/End     Jump to beginning/end" >&2
+    echo "  Page Up/Down Fast scroll" >&2
+    echo "  Q/ESC        Quit" >&2
+    exit 1
+fi
+
+# Pass arguments to the Python script
+exec python3 "$VISUALIZER" "$@"

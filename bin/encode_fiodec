@@ -6,8 +6,8 @@
 #        encode_fiodec --table
 #
 
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the directory where this script is actually located (follow symlinks)
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 # Path to the Python encoder
 ENCODER="$SCRIPT_DIR/encode_fiodec.py"

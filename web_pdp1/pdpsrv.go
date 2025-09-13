@@ -213,6 +213,8 @@ func (s *PeriphServer) handleReader() {
 
 func (s *PeriphServer) handlePunch() {
 	buf := make([]byte, 1)
+	// TODO: we should only connect to the emulator
+	// when the websocket is connected
 	for {
 		conn, err := net.Dial("tcp", fmt.Sprintf("%s:1043", s.host))
 		if err != nil {
@@ -310,6 +312,8 @@ func (s *PeriphServer) handleTypewriter() {
 	buf := make([]byte, 1)
 	dataChan := make(chan byte, 1)
 	errChan := make(chan error, 1)
+	// TODO: we should only connect to the emulator
+	// when the websocket is connected
 	for {
 		conn, err := net.Dial("tcp", fmt.Sprintf("%s:1041", s.host))
 		if err != nil {

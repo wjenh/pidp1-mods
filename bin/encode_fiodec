@@ -1,0 +1,28 @@
+#!/bin/bash
+#
+# encode_fiodec - Convert ASCII text files to PDP-1 FIODEC paper tape format
+#
+# Usage: encode_fiodec <input_file> <output_file> [--no-leader]
+#        encode_fiodec --table
+#
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Path to the Python encoder
+ENCODER="$SCRIPT_DIR/encode_fiodec.py"
+
+# Check if the encoder exists
+if [[ ! -f "$ENCODER" ]]; then
+    echo "Error: encode_fiodec.py not found in $SCRIPT_DIR" >&2
+    exit 1
+fi
+
+# Check if Python 3 is available
+if ! command -v python3 &> /dev/null; then
+    echo "Error: python3 is required but not found" >&2
+    exit 1
+fi
+
+# Pass all arguments directly to the Python script
+exec python3 "$ENCODER" "$@"

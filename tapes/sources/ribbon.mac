@@ -1,0 +1,224 @@
+RIBBON III 1.1 --- 12 Nov 1984 by jmg
+
+100/
+caf=760007
+dimension tbu(100)
+
+rib,	lio (77	/cr
+	tyo
+	lio (72	/lower case
+	tyo
+	lio (34	/and black
+	tyo
+	cli caf-opr
+	lac (tbu
+	dac ‾tbp	/reset buffer pointer
+
+chr,	clf 1
+	szf 1 i	/pf1 set?
+	jmp .-1	/no
+	tyi
+	dio i tbp	/store char
+	lac i tbp
+	sas (74	/upper case code?
+	jmp tlc	/no
+	stf 2	/yes. set flag
+	jmp chr	/and suppress the char
+tlc,	sas (72	/lower case code?
+	jmp tcr	/no
+	clf 2	/yes. clear pf2
+	jmp chr
+tcr,	sad (77	/cr?
+	jmp pun	/yes
+	szf 2 i	/pf2 set?
+	jmp nex	/no
+	xor (400000	/yes. add case bit
+	dac i tbp	/and store again
+nex,	idx tbp	/next char.
+	jmp chr
+
+pun,	caf
+	lac (tbu
+	dac tbp	/reset pointer
+	lac (-140
+	dac ‾fix
+	cli
+fd,	ppa	/feed blank tape
+	isp fix
+	jmp fd
+pch,	lac i tbp	/get char
+	sad (77	/cr?
+	jmp end	/yes
+	caf
+	spa	/case bit set?
+	stf 2	/yes. set flag for subroutine
+	and (77
+	jda tp	/punch it
+	idx tbp
+	jmp pch
+
+end,	szs 10	/ss1 set?
+	jmp pun	/yes. keep punching
+	hlt	/no
+	jmp rib
+
+/fancy title punch subroutine  · prs, /26/63
+
+
+
+/call by jda tp, with Concise code in right 6 bits of AC
+/ (other bits must = 0), and case in flag 2 (on=upper).
+
+
+
+tp,	0
+	dap tpf
+	cli
+	ppa
+	law tpt
+	szf 2
+	law tpu
+
+tpl,	dap tpa
+	law i 1
+	sub tp
+	dac t‾p1
+
+tpa,	lac
+	sma
+	jmp tpb	/left byte begins char.
+tpy,	and (400
+	sza i
+	jmp tpc	/right byte begins char.
+tpd,	idx tpa
+	jmp tpa
+
+
+tpb,	isp t‾p1
+	jmp tpz
+	lio i tpa
+	jmp tpm
+
+tpz,	lac i tpa
+	jmp tpy
+
+
+tpc,	isp t‾p1
+	jmp tpd
+	lio i tpa
+	jmp tpn
+
+tpg,	lio i tpa
+	spi i
+tpf,	jmp
+tpm,	ril 9s
+	ppa
+	spi i
+	jmp tpf
+	ril 9s
+tpn,	ppa
+	idx tpa
+	jmp tpg
+
+tpt,	000400	400400	400042	/space, 1
+	477440
+	042461	451446	/2
+	021445	447431	/3
+	010414	412477	410027	/4,5
+	445445	431036	/6
+	445445	431001	/7
+	471405	403032	/8
+	445445	432046	/9
+	451451	436000
+	000000	000000	000036	/0
+	441441	436040	//
+	420410	404402	401044	/s
+	452452	422004	/t
+	436444	420036	/u
+	440440	436440
+	016420	440420	416016	/v,w
+	420440	420410	420440	420416
+	042424	410424	442116	/x,y
+	520520	476042	/z
+	462452	446442
+	000120	460000	000000	/, red, black
+	000014	414040	/j
+	504475
+	077414	422440	/k
+	041477	440002	/l,m
+	474402	402474	402402	474002	/n
+	474402	402474
+	034442	442442	434176	/o,p
+	422422	414014	/q
+	422422	576500
+	042474	442402	404066	/r, ·.
+	466126	/·,
+	466010	410410	410410	/-
+	041436	/)
+	001401	401401	401036	/‾,(
+	441000
+	022452	452474	440077	/a,b
+	444444	430034	/c
+	442442	444030	/d
+	444444	477034	/e
+	452452	454050	/f
+	476451	401402
+	114522	523455	/g
+	077404	404470	/h
+	044475	440000	/i
+	060460	/.
+	000000	000000
+
+tpu,	000400	400400	400000	/space, "
+	407400	407400
+	000407	400010	/' ~
+	404404	410420	420410
+	042442	442442	434003	/∨ ∧
+	414460	500460	414403
+	140430	406401	406430	540010	/<
+	424442	501101	/>
+	442424	410004	/↑
+	402577	402404
+	000000	000000	000000
+	010410	410410	452434	410002	/→ ?
+	401531	411406
+	022445	445445	430001	/S T
+	401477	401401
+	037440	440440	437017	/U V
+	420440	420417
+	017420	440430	440420	417061	/W X
+	412404	412461
+	001402	474402	401041	/Y Z
+	461451	445443	441000
+	024424	424424	424424	/=
+	000000	000000	100500	/_
+	500500	500040	/J
+	500500	477077	/K
+	404412	421440
+	077440	440440	/L
+	077402	404402	477077	/M N
+	402404	410477
+	036441	441441	436077	/O P
+	411411	406036	/Q
+	441461	441536	500077	/R
+	411431	446000
+	000010	410476	410410	/+
+	041441	477177	/] |
+	077441	441000	/[
+	074412	411412	474077	/A B
+	445445	432036	/C
+	441441	441422
+	077441	441436	/D
+	077445	445441	/E
+	077405	405401	/F
+	036441	441451	472077	/G H
+	404404	477041	/I
+	477441
+	000101	442424	410424	442501	/×
+	000000	000000
+
+constants
+variables
+
+start rib
+

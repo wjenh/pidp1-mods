@@ -1,0 +1,2 @@
+See the source code - only a few instructions to draw a circle on the Type 30 display.
+A nice demo of integer algorithms for graphics, see https://www.onirom.fr/ica.html

@@ -1,0 +1,933 @@
+expensive typewriter  8 november 1962
+
+lap,cla 100
+ioh,iot i
+clo,651600
+spq,650500
+szm,640500
+
+define
+	senseswitch a
+	repeat 3, A=  a,a-a
+	szs Za
+	term
+
+define
+	initialize a, b
+	law b
+	dap a
+	term
+
+define
+	index a, b, c
+	idx a
+	sas b
+	jmp c
+	term
+
+define
+	listen
+	cla-cli-clf 1-opr-opr
+	szf i 1
+	jmp .-1
+	tyi
+	term
+
+define
+	swap
+	rcl 9s
+	rcl 9s
+	term
+
+define
+	load a, Bb
+	lio (b
+	dio a
+	term
+
+define
+	setup a, b
+	law i b
+	dac a
+	term
+
+define
+	count a, b
+	isp a
+	jmp b
+	term
+
+define
+	move a, b
+	lio a
+	dio b
+	term
+
+define
+	clear a, b
+	init .-2, a
+	dzm
+	index .-1, (dzm b-1, .-1
+	term
+
+
+
+define	write a
+	law a
+	jda txp
+	terminate
+
+100/	dzm fo
+	idx .-1
+	sad (dzm 7751
+	jmp 7751
+	jmp 100
+constants
+fo,	0
+start 100
+
+
+
+
+expensive typewriter 2· part one nov. 16,1961
+
+100/	load con-1,szf i 1
+	lio (7235
+	tyo
+	rir 6s
+	tyo
+	jmp bet
+
+txt,	lio (34
+	tyo
+	dzm syl
+	dzm lcc
+	dzm lnc
+	law i 3
+	dac chc
+	stf 5
+
+txc,	cla-cli-clf-1-opr-opr
+	sense 1
+	jmp ent
+	szf i 1
+	jmp .-3
+	tyi
+	jsp pic
+	jmp txc
+
+pic,	dap pix
+	cla
+	rcr 6s
+	sad (770000
+	jmp crt
+	sad (750000
+	jmp bks
+	jmp pia-1
+pia,	lac dpt
+	lio syl
+	rcl 6s
+	dio syl
+	idx lnc
+	isp chc
+pix,	jmp .
+	dio i b
+	idx b
+	jmp psx-1
+
+crt,	dzm lnc
+	clf 5
+	lio syl
+	rcl 6s
+	idx lcc
+	isp chc
+	jmp fbw
+
+clt,	dio i b
+	lac lcc
+	sub qvl
+	sma
+	jmp qnt
+	idx b
+	add (130001
+	dac i b
+	idx b
+	add (-z-100
+	sma i
+	jmp psx
+
+
+	iot i
+	dio lsy
+	lio (35
+	tyo
+	write bf1
+	text -
+buffer is full.  please punch out.
+-
+bf1,	jmp apr-2
+
+fbw,	rcl 6s
+	jmp clt-2
+
+bks,	dac dpt
+	lac pix
+	sad (jmp rlt 2
+	jmp pia
+	szs 30
+	jmp pia
+	law i 1
+	add lnc
+	dac lnc
+	spa
+	jmp ibs
+	law i 1
+	add chc
+	dac chc
+	sas (-4
+	jmp bkr
+	add (3
+	dac chc
+	law i 1
+	add b
+	dac b
+	lio i b
+	jmp bkr-1
+
+bkr,	lio syl
+	cla
+	rcr 6s
+	dio syl
+	jmp pix
+
+ibs,	cli
+	tyo
+
+psx,	dzm lnc
+	law i 3
+	dac chc
+	jmp pix
+
+rea,	jsp lcr
+	jsp sln
+	law i 1
+	add b
+	dac b
+	add (130000
+	dac i lo1
+	dzm syl
+	law i 3
+	dac chc
+	lio lsy
+	jmp rel-3
+
+
+rel,	cla 2
+	iot i
+	dio lsy
+	rpa-4000
+	rcr 7s
+	sma i
+	jmp rel
+	lio (252525
+	lac lsy
+	sad (277		/check for parity with carr. ret.
+	stf 2
+	sad (77		/check for carr. ret. without parity
+	stf 2
+	sad (13
+	jmp apr
+	add (ril
+	dac  .-1
+	xx
+	spi i
+	jmp rer
+
+rlt,	lio lsy
+	jsp pic
+	szf i 2
+	jmp rel
+	law z
+	sub b
+	sal 1s
+	sub b
+	add (a
+	sma i
+	jmp apr
+	jmp rel
+
+rer,	sense 1
+	jmp rlt
+	lac lsy
+	sza i
+	jmp rel
+	iot i
+	dio lsy
+	dac los
+	lac chc
+	dac tmp
+	lio (34
+	tyo
+	write re1
+	text -
+parity error.	line,-
+re1,	law 1
+	add lcc
+	jda dpt
+	write re2
+	text -	character,-
+re2,	lac los
+	jda ocp
+	lio (3577
+
+	tyo
+	rir 6s
+	tyo
+	cli 2
+	lac tmp
+	dac chc
+	jsp pic
+	cla
+	jmp rel-2
+
+typ,	jsp lcr
+	lac num
+	cma
+	dac rpc
+	load con-1,jmp ty1
+	law ty1-1
+	dap ty1-1
+
+ty1,	idx .-1
+	jmp .
+	jmp beg
+	jmp rea-1
+	jmp prt-1
+	lio (13
+	tyo
+	isp rpc
+	jmp ty1-2
+	jmp txp-3
+
+
+ent,	lio (7235
+	tyo
+	rir 6s
+	tyo
+	szf i 5
+	jmp end
+	lio (77
+	jsp pic
+	stf 5
+	jmp end
+
+xyz,	szf 4
+	jmp bet
+	jmp 102
+
+
+
+/expensive typewriter 2· part 2
+
+define	dispatch a,b
+	sad (b	jmp a	terminate
+
+define	feed a
+	law i a	jda fee	terminate
+
+beg,	law a-2
+	dac b
+	dzm poi
+	dzm lcc
+	load a,jfd i a-1
+	load a-1,jfd
+
+bes,	lio (35
+	tyo
+bet,	load mod,tyo
+	dzm lo1
+	dzm lo2
+	dzm sy2
+	dzm num
+	load sgn,opr
+	dzm syl
+
+con,	cla 4007
+	szf i 1
+	jmp .-1
+	tyi
+	rcr 6s
+	dac chc
+	law opt
+	dap dsr
+
+dsr,	lac .
+	dap dsx
+	and (770000
+	sad chc
+
+dsx,	jmp .
+	idx dsr
+	sas (lac ope-1
+	jmp dsr
+	cla
+	lio chc
+	rcl 6s
+	dispatch cla-jmp,char r0
+	rcr 4s
+	sza i
+	jmp evl
+	lac (742772
+	jda tys
+	jmp con
+
+tys,	0
+	dap tyx
+	lio tys
+	law i 3
+
+	dac chc
+	cla
+	rcl 6s
+	dispatch pcr,77
+
+ty2,	isp chc
+	jmp tys-5
+	law i 3
+	dac chc
+	cla
+	lio tys
+	rcl 6s
+	dio tys
+	lio (252525
+	add (ril
+	dac .-1
+	xx
+	sub (ril
+	sad (12
+	jmp tcr
+	spi i
+	add (200
+	swap
+mod,	xx
+	isp chc
+	jmp ty2-4
+tyx,	jmp .
+
+app,	jsp lcr
+	jsp sln
+	law i 1
+	add b
+	dac b
+	add (130000
+	dac i lo1
+	jsp ene
+	jmp apr-2
+
+apr,	iot i
+	dio lsy
+	clf 3
+	lac (120000
+	dac i b
+	idx b
+	jsp sln
+	law i 1
+	add lnc
+	dac num
+	dzm sy2
+	szf i 5
+	jmp bes
+	law bes
+	dap dex
+	jmp del-2
+
+kll,	jsp lcr
+	jmp beg
+
+evl,	lac syl
+	sal 2s
+	add syl
+	sal 1s
+	dac syl
+	cla
+	rcl 4s
+	add syl
+	dac syl
+	jmp con
+
+
+pcr,	law 4
+	add chc
+	cma
+	jmp ty2-3
+
+end,	jmp .
+ene,	dap end
+	jmp txt
+
+prt,	jsp lcr
+	clf 4
+	lio (34
+	tyo
+	dzm foo
+
+pr2,	law a
+	dap num
+	idx foo
+prr,	sense 1
+	jmp ct
+	lio i num
+	cla
+	rcl 6s
+	dispatch nxl,13
+	dispatch xyz,12
+	lac i num
+	jda tys
+	idx num
+	jmp prr
+
+sln,	dap slx
+	dzm lnc
+	law a
+	dap lo1
+	dap lo2
+	lio i lo2
+	cla
+	rcl 6s
+	dispatch eln,13
+	sad (12
+slx,	jmp .
+	idx lo2
+	jmp sln-5
+
+eln,	move lo2,lo1
+	idx lnc
+	lac i lo2
+	jmp sln-4
+
+nxl,	szs i 20
+	jmp err-2
+	szf 4
+	jmp err-2
+	lac foo
+	jda dpt
+	lio (36
+	tyo
+	lac i num
+	jmp pr2-1
+
+err,	dap erx
+	lac (flex /
+	lio (34
+	tyo
+	jda tys
+	lio (35
+	tyo
+erx,	jmp .
+
+
+lcr,	dap lcx
+	jsp dlm
+	listen
+	swap
+	dispatch int,77
+	dispatch int,36
+	dispatch tcr,40
+	jsp err
+	jmp lcr-2
+
+int,	move num,poi
+lcx,	jmp .
+
+tcr,	jsp err
+
+ct,	lio (77
+	tyo
+	jmp bes
+
+per,	jsp dlm
+	lac poi
+	sza i
+	law 1
+	dac syl
+	jsp dlm
+	jmp con-3
+
+flf,	law a
+	dap lo1
+	dap lo2
+	jmp flx
+
+fln,	0
+	clf 6
+	dap flx
+	lac fln
+	spq
+	jmp tcr
+	sza i
+	jmp flf
+	cma
+	dac chc
+	law a
+
+flb,	dap lo1
+	dap lo2
+	lio i lo2
+	cla
+	rcl 6s
+	dispatch ilc,13
+	dispatch stf 6-jmp,12
+	idx lo2
+	szf 6
+	jmp qst
+	jmp flb-2
+
+ilc,	isp chc
+	jmp .-2
+
+
+flx,	jmp .
+	lac i lo2
+	jmp flb
+
+qst,	isp chc
+	jmp tcr
+	jmp flx
+
+chn,	jsp del
+	lac sy2
+	sza
+	dac num
+	jmp ins-1
+
+dlt,	jsp del
+	jmp bet-2
+
+lin,	jsp lcr
+	idx sy2
+	sad (1
+	add num
+	dac sy2
+	dac fln
+	sub (2
+	sad num
+	jmp bet-2
+	jsp fln-1
+
+lir,	cla
+	sense 1
+	jmp ct
+	lio i lo1
+	rcl 6s
+	dispatch lin-1,13
+	lac i lo1
+	jda tys
+	idx lo1
+	jmp lir
+
+ins,	jsp lcr
+	lac num
+	jda fln
+	move i lo2,lo3
+	lac lo3
+	dap .-1
+	lac .
+	xct .-5
+	jmp app-1
+	lac lo2
+	dap .-1
+	lac .
+	sad (120000
+	jmp tcr
+	lac b
+	add (130000
+	dac i lo2
+
+	jsp ene
+	law i 1
+	add b
+	dac b
+	lac lo3
+	dac i b
+	idx b
+	jmp apr-2
+
+del,	dap dex
+	jsp lcr
+	lac sy2
+	sza i
+	add num
+	jda fln
+	move lo2,lo3
+	lac num
+	sub sy2
+	sma i
+	jmp tcr
+	add sy2
+	add (2
+
+de1,	jda fln
+	lac lo1
+	add (130000
+	dac i lo3
+	jsp sln
+	law i 1
+	add lnc
+	dac lcc
+dex,	jmp .
+
+min,	jsp dlm
+	lio (cma
+	jmp con-2
+
+cmm,	jsp dlm
+	move num,sy2
+	jmp con-4
+
+spc,	jsp dlm
+	jmp con-3
+
+bar,	jsp sln
+	jsp dlm
+	law i 1
+	add lnc
+	jmp per-4
+
+pun,	jsp lcr
+	load mod,ppa
+	cli
+	xct mod		/start punch
+	stf 4
+	jmp pr2-1
+
+sop,	jsp lcr
+	sense 1
+	jmp bet
+	feed 12
+	lio (13
+	ppa
+	feed 100
+	jmp bet
+
+
+fed,	jsp lcr
+	lac syl
+	and (377
+	cma
+	jda fee
+	jmp ct
+
+dlm,	dap dlx
+	lac syl
+
+sgn,	opr
+	add num
+	dac num
+
+dlx,	jmp .
+
+fee,	0
+	dap fex
+	cli
+	ppa
+	isp fee
+	jmp .-2
+
+fex,	jmp .
+
+onl,	idx poi
+	dac num
+	jmp lin-1
+
+qan,	jsp lcr
+	stf 3
+	lac num
+	dac qvl
+	jsp sln
+	law i 1
+	add lnc
+	dac lcc
+	jmp rea-1
+qnt,	szf i 3
+	jmp clt-5
+	idx b
+	add (130001
+	dac i b
+	idx b
+	jmp apr
+
+equ,	jsp dlm
+	jda dpt
+	cli
+	tyo
+	jmp con-3
+
+rep,	jsp lcr
+	lac num
+	cma
+	dac rpc
+	load con-1,jmp rp1
+	law rp1-1
+	dap rp1-1
+
+rp1,	idx .-1
+	jmp .
+
+	jmp beg
+	jmp rea-1
+	jmp pun-1
+	jmp sop-1
+	isp rpc
+	jmp rp1-2
+	load con-1,szf i 1
+	jmp beg
+
+txp,	0
+	dap txu
+txu,	lio .
+	ril 6s
+	tyo
+	ril 6s
+	tyo
+	ril 6s
+	tyo
+	idx txu
+	sub (lio
+	sas txp
+	jmp txu
+	jmp i txp
+
+ocp,	0
+	dap opx
+	lio (100000
+	lac ocp
+	clf 1
+op1,	rcr 9s
+	rcr 6s
+	sza
+	jmp op2
+	law 20
+op3,	swap
+	szf 1
+	tyo
+	sad (100000
+	stf 1
+	cli
+	sas (100000
+	jmp op1
+opx,	jmp .
+op2,	stf 1
+	jmp op3
+
+dpt,	0
+	dap dpx
+	law ddv
+	dap dpd
+	lac dpt
+	sma
+	jmp dp1
+	cma
+	dac dpt
+	lio (char r-
+	tyo
+dp1,	clf 1
+dpl,	dzm ocp
+dpa,	lac dpt
+
+dpd,	sub .
+	spa
+	jmp dpp
+	dac dpt
+	idx ocp
+	jmp dpa
+dpp,	lac ocp
+	lio ocp
+	sza i
+	jmp dpz
+dpq,	tyo
+	stf 1
+dpr,	idx dpd
+	sad (sub ddv-5
+	stf 1
+	sas (sub ddv-6
+	jmp dpl
+dpx,	jmp .
+dpz,	lio (20
+	szf 1
+	jmp dpq
+	jmp dpr
+ddv,	decimal	100000
+	10000
+	1000
+	100
+	10
+	1
+octal
+
+prn,	listen
+	swap
+	sas (char r)
+	jmp prn
+	jmp con
+
+define	operator a,b
+	repeat 14,b,b-b
+	a-b
+	terminate
+
+opt,	oper spc,0
+	oper con-4,77
+	oper con-4,36
+	oper bar,char r/
+	oper tcr,char r·
+	oper qan,char rq
+	oper pun,char rp
+	oper prt,char rw
+	oper ins,char ri
+	oper lin,char rl
+	oper dlt,char rd
+	oper kll,char rk
+	oper app,char ra
+	oper rea,char rr
+	oper fed,char rf
+	oper sop,char rs
+	oper chn,char rc
+	oper equ,char re
+	oper rep,char rt
+
+	oper typ,char ry
+	oper cmm,char r,
+	oper min,char r-
+	oper per,char r.
+	oper prn,char r(
+ope,	oper onl,75
+
+foo,	0
+qvl,	0
+lcc,	0
+rpc,	0
+lsy,	0
+tmp,	0
+los,	0
+num,	0
+syl,	0
+sy2,	0
+lnc,	0
+poi,	0
+chc,	0
+lo1,	0
+lo2,	0
+lo3,	0
+b,	0
+
+constants
+
+a,	0
+
+7750/	z,	0
+
+
+start beg
+
+
+?0o337!< F1'mym'1'mym'1'mym'1?0o314!

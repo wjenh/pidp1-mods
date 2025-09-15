@@ -1,0 +1,115 @@
+/FLASH-1 v01.  FLASH THE PDP-1 LAMPS.  MIKE HILL 10-APR-2025
+
+	///////////////////////////////////////////////////////////////////
+	/                                                                 /
+	/  Flash most of the PDP-1 front-panel lamps according to the TW  /
+	/                                                                 /
+	/     P A R T   O F   T H E   B L I N K Y - 1   P R O J E C T     /
+	/   F O R   T H E   P i D P - 1   ( O R )   A   R E A L   O N E   /
+	/                                                                 /
+	/  Mike Hill                                         10-Apr-2025  /
+	/                                                                 /
+	///////////////////////////////////////////////////////////////////
+
+/ Goal:
+/
+/	Small but 'useful' proof of concept for BLINKY-1 using extended memory.
+/
+/ Synopsis:
+/
+/	FLASH-1 has been designed to run on all PDP-1 models from the PDP-1A to
+/	the PDP-1D.  If a MEMORY EXTENSION CONTROL (TYPE 15) is installed, it
+/	will automatically be detected and used.  To avoid a spurious halt on
+/	the PDP-1A, you may choose to turn SS2 ON.  If not, simply press
+/	CONTINUE if we halt.
+/
+/	FLASH-1 may be run from any frame but will only work in 'normal' mode
+/	(SS3=ON) if loaded into an even-numbered frame (00,02,04,06, etc.)
+/
+/ Notes:
+/
+/	PDP-1A and PDP-1B are not documented as putting the OV flag
+/	into the AC when using 'jsp'.  PDP-1C and PDP-1D do document this.
+/
+/	We do NOT use the Memory Field Control (Type 13) or (Type 14) of the
+/	PDP-1B (such memory is completely ignored).
+/
+/ Instructions:
+/
+/	1a) Turn OFF all the Test Word (TW) switches
+/	1b) Turn OFF all the Sense Switches (SS)
+/	1c) Turn OFF EXTEND mode
+/	2a) RIM-load the FLASH-1 paper tape into any frame ...
+/	2b) ... even-numbered frames are recommended (00,02,04,06,10,12,14,16)
+/	3)  Unless SS1 is ON, FLASH-1 will start 'flashing' immediately
+/	4a) Turn ON TW15 then TW14 then TW13 etc. ...
+/	4b) Observe that the flashing slows down
+/	4c) When TW6-17 are all ON we ought to flash around once every 40 secs.
+/	4d) Turn TW0 ON and observe that the TW is echoed in the AC (and IO=0)
+/	4e) Choose a value for TW6-17 then turn TW0 OFF
+/	5)  Get a cup of tea or coffee ... (the lamps will flash for ever)
+/	6a) Press STOP
+/	6b) Turn EXTEND OFF (if not already OFF)
+/	6c) Don't bother with (6d) if we are loaded into an odd-numbered frame
+/	6d) START from xx3000 (where xx is the frame we are loaded in)
+/
+/ Sense Switches (SS) when FLASH-1 is [re-]started:
+/
+/	SS1 = ON: Halt immediately after the paper tape RIM-load completes
+/	SS2 = ON: Use 'jmp' instead of 'xct' on the tick-ladder (on the PDP-1A)
+/	SS3 = ON: Do not enable EXTEND mode automatically (*)
+/
+/	* EXTEND mode will be used if already ON or if the frame number is odd
+/
+/ Test Word (TW) switches:
+/
+/	TW0    = ON: Pauses flashing and echos the TW state in the AC
+/	TW6-17 = How many 1/100s to wait when changing the state of the lamps
+/	         If TW6-17 = 0000 then the default of 50 (1/2 second) is used
+
+///////////////////////////////////////////////////////////////////////////////
+/                           M E M O R Y   U S A G E                           /
+///////////////////////////////////////////////////////////////////////////////
+
+/0000-0077/  oooo............................ooooooooooooooooooo.............
+/0100-0177/  ................................................................
+/    :
+/1300-1377/  ................................................................
+/1400-1477/  ooxxXxxxox......................................................
+/1500-1577/  ................................................................
+/    :
+/2600-2677/  ................................................................
+/2700-2777/  ...........................................................ooooo
+/3000-3077/  ooooooooooooooooooooooxoxoxoxo0ooooooooooooooooooooooooooooooooo
+/3100-3177/  oooooooooooooooooooooooooooooooooo..............................
+/3200-3277/  ................................................................
+/    :
+/7700-7777/  ................................................................
+/ Legend: /  . = Empty,  0 = 0,  X = -0,  o = Opcode,  f = FIODEC,  x = Other
+
+///////////////////////////////////////////////////////////////////////////////
+/                             O C T A L   C O D E                             /
+///////////////////////////////////////////////////////////////////////////////
+
+0000/	643777	442270	220001	622777
+0040/	762200	522202	603041	462200	607777	717777	242200	700056
+0050/	641000	700054	260044	600044	764207	611402	200057	400057
+0060/	221404	761217	611403
+1400/	104030	604030	007777	007776	777777	007777	000062	000001
+1410/	617750	000040
+2773/				442270	714343	700001	640010	760400
+3000/	201400	201401	650020	103000	242204	623006	661037	640200
+3010/	724074	764207	242201	301403	650030	760300	640100	724074
+3020/	623021	301411	661001	640400	603035	623051	000017	623051
+3030/	000007	623051	000003	623051	000001	623051	000000	623110
+3040/	766200	640200	603040	242202	021405	650100	201406	260045
+3050/	600045	263065	263054	443065	207777	263066	671077	302203
+3060/	707776	262203	623077	432203	640100	607777	707777	640100
+3070/	603073	623077	603065	202203	302201	301403	603035	263107
+3100/	202204	252203	202203	401407	262203	201410	252203	607777
+3110/	263141	713717	242210	202204	242205	704030	242206	242207
+3120/	202201	302207	442205	252206	252207	442206	442207	462210
+3130/	603122	201410	252206	252207	442206	442207	201411	252206
+3140/	252207	607777
+
+start 2775

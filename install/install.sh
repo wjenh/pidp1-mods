@@ -151,6 +151,9 @@ while true; do
 		
 		# this makes the virtual pdp-1 panel, used if no PiDP-1 hardware is attached:
 		make -C /opt/pidp1/src/blincolnlights/vpanel_pdp1 	# panel driver
+
+		# the macro1_1 cross-compiler:
+		gcc /opt/pidp1/src/macro/macro1_1.c -o /opt/pidp1/src/macro/macro1_1
             
 		echo Setting required access privileges to pidp1 simulator
 		# make sure pidp1 panel driver has the right privileges
@@ -185,7 +188,8 @@ while true; do
 	    sudo ln -sf /opt/pidp1/bin/encode_fiodec /usr/local/bin/encode_fiodec
             sudo ln -sf /opt/pidp1/bin/decode_fiodec /usr/local/bin/decode_fiodec
 	    sudo ln -sf /opt/pidp1/bin/tape_visualizer /usr/local/bin/tape_visualizer
-
+	    #
+	    sudo ln -sf /opt/pidp1/bin/macro1_1 /usr/local/bin/macro1_1
 	    break
 	    ;;
         [Nn]* ) 

@@ -1,0 +1,3614 @@
+
+                                                                          Page 1
+
+
+    1                   
+    2                   ////ironic computer space  0.01  nl 2016-10-12
+    3                   
+    4                   define initialize A,B
+    5                   	law B
+    6                   	dap A
+    7                   	term
+    8                   
+    9                   define index A,B,C
+   10                   	idx A
+   11                   	sas B
+   12                   	jmp C
+   13                   	term
+   14                   
+   15                   define swap
+   16                   	rcl 9s
+   17                   	rcl 9s
+   18                   	term
+   19                   
+   20                   define load A,B
+   21                   	lio (B
+   22                   	dio A
+   23                   	term
+   24                   
+   25                   define setup A,B
+   26                   	law i B
+   27                   	dac A
+   28                   	term
+   29                   
+   30                   define count A,B
+   31                   	isp A
+   32                   	jmp B
+   33                   	term
+   34                   
+   35                   define random
+   36                   	lac ran
+   37                   	dac oldRan
+   38                   	rar 1s
+   39                   	xor (355670
+   40                   	add (355670
+   41                   	dac ran
+   42                   	term
+   43                   
+   44 00003             3/		jmp sbf				     // ignore seq. break
+      00003 600005
+   45 00004 600707      		jmp titScr				// start addr (4), jump to title screen
+   46                   
+   47                   
+   48                   //routine to flush sequence breaks, if they occur.
+   49                   
+   50 00005 720004      sbf,	tyi
+   51 00006 220002      		lio 2
+   52 00007 200000      		lac 0
+   53 00010 720054      		lsm
+   54 00011 610001      		jmp i 1
+   55                   
+   56       000670      mxri=670
+
+      ////ironic computer space  0.01  nl 2016-10-12                      Page 2
+
+
+   57       777007      mxli=-770
+   58       000730      mxtp=730
+   59       000550      mxht=550
+   60       000017      shipPt=17
+   61       000017      sh2Pt=17
+   62                   
+   63       777020      startY=-757
+   64       000004      bulPt=4
+   65       777741      startX=-36
+   66       000001      true=1
+   67       000000      false=0
+   68                   
+   69       000002      numPts=2
+   70       000004      bbSpd=4
+   71       000007      txtfl=7
+   72       000001      title=1
+   73       000000      game=0
+   74                   
+   75                   
+   76                   decimal
+   77                   
+   78       000000      ZERO=0
+   79       000001      ONE=1
+   80       000002      TWO=2
+   81       000003      THREE=3
+   82       000004      FOUR=4
+   83       000005      FIVE=5
+   84       000006      SIX=6
+   85       000007      SEVEN=7
+   86       000010      EIGHT=8
+   87       000011      NINE=9
+   88       000012      A=10
+   89       000013      B=11
+   90       000014      C=12
+   91       000015      D=13
+   92       000016      E=14
+   93       000017      F=15
+   94       000020      G=16
+   95       000021      H=17
+   96       000022      I=18
+   97       000023      J=19
+   98       000024      K=20
+   99       000025      L=21
+  100       000026      M=22
+  101       000027      N=23
+  102       000030      O=24
+  103       000031      P=25
+  104       000032      Q=26
+  105       000033      R=27
+  106       000034      S=28
+  107       000035      T=29
+  108       000036      U=30
+  109       000037      V=31
+  110       000040      W=32
+  111       000041      X=33
+  112       000042      Y=34
+  113       000043      Z=35
+
+      ////ironic computer space  0.01  nl 2016-10-12                      Page 3
+
+
+  114       000062      Spc=50
+  115       000044      Dash=36
+  116       000045      Equ=37
+  117                   
+  118                   octal
+  119                   
+  120                   
+  121 00012 000000      ran,		0			// random number
+  122 00013 000030      oldRan,		30			// previous random number
+  123                   
+  124 00014 777747      xPos,	    -30			// P1 X position
+  125 00015 000030      yPos,		30			// P1 Y position
+  126                   
+  127 00016 000000      xPos2,		0 			// P2 X position
+  128 00017 000000      yPos2,		0   		// P2 Y position
+  129                   
+  130 00020 000000      countr,		0 			// Frame counter
+  131                   
+  132 00021 000000      bulXpo,		0 			// P1 bullet X pos
+  133 00022 000000      bulX2,		0 		    // P2 bullet X pos
+  134                   
+  135 00023 000000      bulYpo,		0 			// P1 bullet Y pos
+  136 00024 000000      bulY2,		0 			// P2 bullet Y pos
+  137                   
+  138 00025 000001      bulHide, 	1 			// P1 bullet hide flag
+  139 00026 000001      bulHd2,		1 		    // P2 bullet hide flag
+  140                   
+  141 00027 000001      shipRgt,	1 			// P1 ship direction, 1=right, 0=elft
+  142 00030 000000      shipR2,		0 			// P2 ship direction
+  143                   
+  144                   
+  145 00031 000000      debo,		0 			// Debounce timer
+  146 00032 000000      aiOff,		0          
+  147                   					    // P2 AI shooting
+  148 00033 000000      invXpo,		0 			// Invader X pos
+  149 00034 000000      invYpo,		0 			// Invader Y pos
+  150                   
+  151 00035 000000      didFire,	0 			// Did P1 press fire this frame
+  152 00036 000000      didF2,		0    		// Did P2 press fire
+  153                   
+  154 00037 000000      invFr,		0   		// Invader frame number
+  155 00040 000000      anmT,		0 		    // Invader anim timer
+  156 00041 000003      invSpd,		3 			// Invader speed
+  157                   
+  158                   
+  159 00042 000001      invRgt,		1 			// Invader direction, 1=right
+  160 00043 000001      invRow,		1 			// Invader row on screen
+  161                   
+  162 00044 000000      tmp1,		0 			// Temp variables for various calcs
+  163 00045 000000      tmp2,		0
+  164 00046 000000      tmp3,		0
+  165 00047 000000      tmp4,		0
+  166                     	
+  167 00050 000000      gmMode,		0 			// Current game mode (0=game, 1=title)
+  168 00051 000000      txtX,		0 			// X position for text to draw
+  169 00052 000000      txtY,		0 			// Y position for text to draw
+  170 00053 000000      txtId,		0 			// Character id to draw
+
+      ////ironic computer space  0.01  nl 2016-10-12                      Page 4
+
+
+  171 00054 000000      txtCn,		0 			// Count of pixels to draw in char
+  172 00055 000000      numCn,		0 			// Count of chars to draw in string
+  173 00056 000000      txtSp,		0 			// Distance between text chars
+  174 00057 000000      flsh,		0  			// Title screen flash timerr
+  175 00060 000000      carry,		0 			// Carry flag for score calcs
+  176 00061 000000      hitCt,		0 			// Total hit count
+  177 00062 000000      spdAd,		0 			// Speed add to end game
+  178                   
+  179 00063 000000      scrP1,		0 			// Three digits for P1 score
+  180 00064 000000      			0
+  181 00065 000000      			0
+  182                   
+  183                   scrP2,	
+  184 00066 000000      			0 			// Three digits for P2 score
+  185 00067 000000      			0
+  186 00070 000000      			0
+  187                   
+  188                   
+  189                   
+  190                   
+  191                   // come here after pressing fire on title screen
+  192                   
+  193 00071 204200      rstrt,	lac (0)
+  194 00072 240050      		dac gmMode
+  195 00073 240037      		dac invFr
+  196                   
+  197 00074 600075      		jmp play
+  198                   
+  199                   
+  200                   // come here upon startup and game over
+  201                   
+  202                   play,
+  203                   
+  204                   		// set player ship start positions
+  205                   
+  206 00075 204201      		lac (startY)
+  207 00076 240015      		dac yPos
+  208 00077 240017      		dac yPos2
+  209                   
+  210 00100 204202      		lac (startX-170)
+  211 00101 240014      		dac xPos
+  212 00102 204203      		lac (startX+170)
+  213 00103 240016      		dac xPos2
+  214                   
+  215                   
+  216                   		// hide the bullets
+  217                   
+  218 00104 204204      		lac (true)
+  219 00105 240025      		dac bulHide
+  220 00106 240026      		dac bulHd2
+  221                   
+  222                   		// set p2 and invader to go right
+  223                   
+  224 00107 204204      		lac (1)
+  225 00110 240042      		dac invRgt		
+  226 00111 240030      		dac shipR2
+  227                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                      Page 5
+
+
+  228                   		// reset score, various other things
+  229                   
+  230 00112 204200      		lac (0)
+  231 00113 240027      		dac shipRgt
+  232 00114 240043      		dac invRow
+  233 00115 240063      		dac scrP1
+  234 00116 240064      		dac scrP1+1
+  235 00117 240065      		dac scrP1+2
+  236 00120 240067      		dac scrP2+1
+  237 00121 240070      		dac scrP2+2
+  238 00122 240066      		dac scrP2+0
+  239 00123 240033      		dac invXpo
+  240 00124 240037      		dac invFr
+  241 00125 240035      		dac didFire
+  242 00126 240036      		dac didF2
+  243 00127 240061      		dac hitCt
+  244 00130 240062      		dac spdAd
+  245                   
+  246                   		// get invader start speed
+  247                   
+  248 00131 701447      		law spdTbl
+  249 00132 260417      		dap GetSpdb
+  250                   
+  251 00133 100417      		xct GetSpd
+  252 00134 404205      		add (bbSpd)
+  253 00135 240041      		dac invSpd
+  254                   
+  255                   
+  256                   		// set invader start position
+  257                   
+  258 00136 204206      		lac (mxtp)
+  259 00137 424207      		sub (10)
+  260 00140 240034      		dac invYpo
+  261                   
+  262                   
+  263                   		// debounce so player who pressed start doesn't fire stray bullet
+  264                   
+  265 00141 204210      		lac (-20)
+  266 00142 240031      		dac debo
+  267                   	
+  268                   
+  269 00143 600200      		jmp main
+  270                   	
+  271                   
+  272 00200             200/
+  273                   //main loop
+  274                   main,	load \ict, -2		// initial instruction budget (delay)
+      00200 224211
+      00201 324471
+  275                   		
+  276                   		// check game mode
+  277                   
+  278 00202 200050      		lac gmMode
+  279 00203 640100      		sza
+  280 00204 600232      		jmp titl
+  281                   
+  282                   // playing game
+
+      ////ironic computer space  0.01  nl 2016-10-12                      Page 6
+
+
+  283                   
+  284                   		// move the player ships 
+  285                   
+  286 00205 621262      		jsp moveShip
+  287 00206 621312      		jsp moveS2
+  288                   
+  289                   		// check debounce flag, skip controls if not -1
+  290                   
+  291 00207 440031      		idx debo
+  292 00210 640100      		sza 
+  293 00211 600217      		jmp noFi
+  294                   
+  295                   doCon,	
+  296                   
+  297 00212 621640      		jsp controls
+  298 00213 204212      		lac (-1)
+  299 00214 240031      		dac debo
+  300                   		
+  301 00215 620304      		jsp checkFire
+  302 00216 620503      		jsp chckF2
+  303                   
+  304                   
+  305                   noFi,
+  306                   		// draw the player ships
+  307                   
+  308 00217 621246      		jsp drawShip				
+  309 00220 621276      		jsp drawS2
+  310                   
+  311 00221 621505      		jsp drawStar	// draw flickering stars
+  312 00222 621371      		jsp drawInv		// draw invader (and move)
+  313                   
+  314                   
+  315                   		// move any alive bullets
+  316                   
+  317 00223 620342      		jsp moveBullt
+  318 00224 620556      		jsp moveB2
+  319                   
+  320                   		// draw any alive bullets
+  321                   
+  322 00225 620265      		jsp drawBullet
+  323 00226 620434      		jsp drawB2
+  324                   
+  325                   		// check bullet to invader collisions
+  326                   
+  327 00227 620355      		jsp checkCol
+  328 00230 620571      		jsp chckC2
+  329                   
+  330                   		// go to end of main loop
+  331                   
+  332 00231 600261      		jmp endMn
+  333                   
+  334                   
+  335                   
+  336                   titl,
+  337                   		
+  338                   		// draw invader on title screen
+  339                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                      Page 7
+
+
+  340 00232 621371      		jsp drawInv
+  341                   
+  342                   		// check control debounce
+  343                   
+  344 00233 440031      		idx debo
+  345 00234 640100      		sza 
+  346 00235 600253      		jmp debou
+  347                   
+  348                   okay,	
+  349                   
+  350 00236 621640      		jsp controls
+  351                   		
+  352                   
+  353                   		// no debounce needed after first timer
+  354                   
+  355 00237 204212      		lac (-1)
+  356 00240 240031      		dac debo
+  357                   
+  358                   
+  359                   		// set ai to off as default
+  360                   
+  361 00241 204200      		lac (0)
+  362 00242 240032      		dac aiOff
+  363                   
+  364                   		// check P1 start pressed, jmp to rstrt if true
+  365                   
+  366 00243 200035      		lac didFire
+  367 00244 640100      		sza
+  368 00245 600071      		jmp rstrt
+  369                   
+  370                   		// ai will be on if 2P start
+  371                   
+  372 00246 204204      		lac (1)
+  373 00247 240032      		dac aiOff
+  374                   
+  375                   		// check P2 start pressed, jmp to rstrt if true
+  376 00250 200036      		lac didF2
+  377 00251 640100      		sza
+  378 00252 600071      		jmp rstrt
+  379                   
+  380                   debou,
+  381                   
+  382                   		// no button pressed, do we draw title this 'frame'?
+  383 00253 440057      		idx flsh
+  384 00254 640100      		sza
+  385 00255 600261      		jmp endMn
+  386                   
+  387 00256 204213      		lac (-txtfl)
+  388 00257 240057      		dac flsh
+  389                   
+  390 00260 620742      		jsp drwTi
+  391                   
+  392                   
+  393                   endMn,
+  394                   
+  395 00261 440020      		idx countr
+  396                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                      Page 8
+
+
+  397                   		count \ict, .			// use up rest of time of main loop
+      00262 464471
+      00263 600262
+  398 00264 600200      		jmp main				// next frame 
+  399                   
+  400                   
+  401                   
+  402                   drawBullet,	
+  403                   
+  404                   
+  405 00265 261550      			dap drawExit
+  406                   
+  407 00266 200025      			lac bulHide
+  408 00267 640100      			sza 
+  409 00270 601550      			jmp drawExit
+  410                   
+  411 00271 701772      			law bulltX
+  412 00272 261540      			dap currX
+  413                   
+  414 00273 701776      			law bulltY
+  415 00274 261533      			dap currY
+  416                   
+  417 00275 700021      			law bulXpo
+  418 00276 261541      			dap xPadd
+  419                   
+  420 00277 700023      			law bulYpo
+  421 00300 261535      			dap yPadd
+  422                   
+  423 00301 704214      			law (lac bulltX+bulPt)
+  424 00302 261546      			dap loopCh
+  425                   
+  426 00303 601533      			jmp drawSprt
+  427                   
+  428                   		
+  429                   
+  430                   checkFire,
+  431                   			
+  432 00304 260336      			dap checkExit
+  433                   
+  434 00305 200035      			lac didFire
+  435 00306 064204      			xor (1)
+  436 00307 640100      			sza
+  437 00310 600336      			jmp checkExit
+  438                   
+  439 00311 200025      			lac bulHide
+  440 00312 064204      			xor (1)
+  441 00313 640100      			sza
+  442 00314 600336      			jmp checkExit
+  443                   
+  444 00315 200027      			lac shipRgt
+  445 00316 640100      			sza
+  446 00317 600323      			jmp goRt
+  447                   
+  448                   goLt,
+  449 00320 204204      			lac (1)
+  450 00321 240027      			dac shipRgt
+  451                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                      Page 9
+
+
+  452 00322 600325      			jmp doneLR
+  453                   
+  454                   
+  455                   goRt,		
+  456 00323 204200      			lac (0)
+  457 00324 240027      			dac shipRgt
+  458                   			
+  459                   
+  460                   doneLR,
+  461 00325 200025      			lac bulHide
+  462 00326 424204      			sub (1)
+  463 00327 240025      			dac bulHide
+  464                   
+  465 00330 200015      			lac yPos
+  466 00331 404215      			add (30)
+  467 00332 240023      			dac bulYpo
+  468                   
+  469 00333 200014      			lac xPos
+  470 00334 404216      			add (36)
+  471 00335 240021      			dac bulXpo
+  472                   
+  473                   checkExit,	
+  474 00336 600336      			jmp .
+  475                   
+  476                   
+  477                   
+  478                   bulOff,
+  479                   
+  480 00337 260341      			dap bulOEx
+  481                   
+  482 00340 440025      			idx bulHide
+  483                   
+  484                   bulOEx,
+  485 00341 600341      			jmp .
+  486                   
+  487                   
+  488                   moveBullt,
+  489                   
+  490 00342 260354      			dap moveBEx
+  491                   
+  492 00343 200025      			lac bulHide
+  493 00344 640100      			sza
+  494 00345 600354      			jmp moveBEx
+  495                   
+  496 00346 200023      			lac bulYpo
+  497 00347 404207      			add (10)
+  498 00350 240023      			dac bulYpo
+  499 00351 424206      			sub (mxtp)
+  500 00352 640400      			sma
+  501                   
+  502 00353 620337      			jsp bulOff
+  503                   
+  504                   
+  505                   
+  506                   moveBEx,
+  507 00354 600354      			jmp .
+  508                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 10
+
+
+  509                   
+  510                   
+  511                   
+  512                   checkCol,
+  513                   
+  514 00355 260425      			dap colEx
+  515                   
+  516 00356 200025      			lac bulHide
+  517 00357 640100      			sza
+  518 00360 600425      			jmp colEx
+  519                   
+  520 00361 200033      			lac invXpo
+  521 00362 404217      			add (2000)
+  522 00363 404215      			add (30)
+  523 00364 240044      			dac tmp1
+  524                   
+  525 00365 200021      			lac bulXpo
+  526 00366 404217      			add (2000)
+  527 00367 240045      			dac tmp2
+  528                   
+  529 00370 200034      			lac invYpo
+  530 00371 404217      			add (2000)
+  531 00372 404215      			add (30)
+  532 00373 240046      			dac tmp3
+  533                   
+  534 00374 200023      			lac bulYpo
+  535 00375 404217      			add (2000)
+  536 00376 240047      			dac tmp4
+  537                   
+  538 00377 200044      			lac tmp1
+  539 00400 420045      			sub tmp2
+  540 00401 404220      			add (37)
+  541 00402 640200      			spa
+  542 00403 600425      			jmp colEx
+  543 00404 424221      			sub (77)
+  544 00405 640400      			sma
+  545 00406 600425      			jmp colEx
+  546                   
+  547                   PossX,
+  548                   
+  549 00407 200046      			lac tmp3
+  550                   			//sub (14)
+  551 00410 420047      			sub tmp4
+  552 00411 404215      			add (30)
+  553 00412 640200      			spa
+  554 00413 600425      			jmp colEx
+  555 00414 424222      			sub (60)
+  556 00415 640400      			sma
+  557 00416 600425      			jmp colEx
+  558                   
+  559                   
+  560                   
+  561 00417 200000      GetSpd,		lac	.
+      00420 000420
+  562                   
+  563                   
+  564                   Hit,
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 11
+
+
+  565                   			
+  566 00421 620640      			jsp HitIt
+  567                   
+  568                   
+  569 00422 204204      			lac (1)
+  570 00423 240025      			dac bulHide 
+  571                   
+  572 00424 621150      			jsp Incr1
+  573                   
+  574                   colEx,
+  575 00425 600425      			jmp .
+  576                   
+  577                   
+  578                   invOff,
+  579                   			
+  580                   
+  581 00426 204206      			lac (mxtp)
+  582 00427 424207      			sub (10)
+  583 00430 240034      			dac invYpo
+  584                   
+  585 00431 701447      			law spdTbl
+  586 00432 260417      			dap GetSpd
+  587                   
+  588 00433 600677      			jmp invDone
+  589                   
+  590                   
+  591                   
+  592                   drawB2,	
+  593                   
+  594                   
+  595 00434 261550      			dap drawExit
+  596                   
+  597 00435 200026      			lac bulHd2
+  598 00436 640100      			sza 
+  599 00437 601550      			jmp drawExit
+  600                   
+  601 00440 701772      			law bulltX
+  602 00441 261540      			dap currX
+  603                   
+  604 00442 701776      			law bulltY
+  605 00443 261533      			dap currY
+  606                   
+  607 00444 700022      			law bulX2
+  608 00445 261541      			dap xPadd
+  609                   
+  610 00446 700024      			law bulY2
+  611 00447 261535      			dap yPadd
+  612                   
+  613 00450 704214      			law (lac bulltX+bulPt)
+  614 00451 261546      			dap loopCh
+  615                   
+  616 00452 601533      			jmp drawSprt
+  617                   
+  618                   
+  619                   TryAI,
+  620 00453 260502      			dap AIEx
+  621                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 12
+
+
+  622 00454 200016      			lac xPos2
+  623 00455 404217      			add (2000)
+  624 00456 240044      			dac tmp1
+  625                   
+  626 00457 200033      			lac invXpo
+  627 00460 404217      			add (2000)
+  628 00461 240045      			dac tmp2
+  629                   
+  630                   			random
+      00462 200012
+      00463 240013
+      00464 671001
+      00465 064223
+      00466 404223
+      00467 240012
+  631 00470 024224      			and (177)
+  632 00471 400044      			add tmp1
+  633 00472 420045      			sub tmp2
+  634 00473 404225      			add (226)
+  635 00474 424226      			sub (454)
+  636 00475 640200      			spa
+  637 00476 600502      			jmp AIEx
+  638 00477 424226      			sub (454)
+  639 00500 640200      			spa
+  640 00501 600525      			jmp doFir2
+  641                   
+  642                   
+  643                   AIEx,
+  644 00502 600502      			jmp .
+  645                   		
+  646                   
+  647                   chckF2,
+  648                   			
+  649 00503 260552      			dap chckE2
+  650                   
+  651 00504 200032      			lac aiOff
+  652 00505 640100      			sza
+  653 00506 600521      			jmp noAI
+  654                   
+  655                   			random
+      00507 200012
+      00510 240013
+      00511 671001
+      00512 064223
+      00513 404223
+      00514 240012
+  656 00515 024227      			and (377)
+  657 00516 424230      			sub (15)
+  658 00517 640200      			spa
+  659 00520 620453      			jsp TryAI
+  660                   
+  661                   
+  662                   noAI,
+  663                   
+  664 00521 200036      			lac didF2
+  665 00522 064204      			xor (1)
+  666 00523 640100      			sza
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 13
+
+
+  667 00524 600552      			jmp chckE2
+  668                   
+  669                   
+  670                   doFir2,
+  671 00525 200026      			lac bulHd2
+  672 00526 064204      			xor (1)
+  673 00527 640100      			sza
+  674 00530 600552      			jmp chckE2
+  675                   
+  676 00531 200030      			lac shipR2
+  677 00532 640100      			sza
+  678 00533 600537      			jmp goRt2
+  679                   
+  680                   goLt2,
+  681 00534 204204      			lac (1)
+  682 00535 240030      			dac shipR2
+  683                   
+  684 00536 600541      			jmp dneLR2
+  685                   
+  686                   
+  687                   goRt2,		
+  688 00537 204200      			lac (0)
+  689 00540 240027      			dac shipRgt
+  690                   			
+  691                   
+  692                   dneLR2,
+  693 00541 200026      			lac bulHd2
+  694 00542 424204      			sub (1)
+  695 00543 240026      			dac bulHd2
+  696                   
+  697 00544 200017      			lac yPos2
+  698 00545 404215      			add (30)
+  699 00546 240024      			dac bulY2
+  700                   
+  701 00547 200016      			lac xPos2
+  702 00550 404216      			add (36)
+  703 00551 240022      			dac bulX2
+  704                   
+  705                   chckE2,	
+  706 00552 600552      			jmp .
+  707                   
+  708                   
+  709                   
+  710                   bulO2,
+  711                   
+  712 00553 260555      			dap bulOE2
+  713                   
+  714 00554 440026      			idx bulHd2bb
+  715                   
+  716                   bulOE2,
+  717 00555 600555      			jmp .
+  718                   
+  719                   
+  720                   moveB2,
+  721                   
+  722 00556 260570      			dap mveBE2
+  723                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 14
+
+
+  724 00557 200026      			lac bulHd2
+  725 00560 640100      			sza
+  726 00561 600570      			jmp mveBE2
+  727                   
+  728 00562 200024      			lac bulY2
+  729 00563 404207      			add (10)
+  730 00564 240024      			dac bulY2
+  731 00565 424206      			sub (mxtp)
+  732 00566 640400      			sma
+  733                   
+  734 00567 620553      			jsp bulO2
+  735                   
+  736                   
+  737                   
+  738                   mveBE2,
+  739 00570 600570      			jmp .
+  740                   
+  741                   
+  742                   
+  743                   
+  744                   chckC2,
+  745                   
+  746 00571 260637      			dap colEx2
+  747                   
+  748 00572 200026      			lac bulHd2
+  749 00573 640100      			sza
+  750 00574 600637      			jmp colEx2
+  751                   
+  752 00575 200033      			lac invXpo
+  753 00576 404217      			add (2000)
+  754 00577 404215      			add (30)
+  755 00600 240044      			dac tmp1
+  756                   
+  757 00601 200022      			lac bulX2
+  758 00602 404217      			add (2000)
+  759 00603 240045      			dac tmp2
+  760                   
+  761 00604 200034      			lac invYpo
+  762 00605 404217      			add (2000)
+  763 00606 404215      			add (30)
+  764 00607 240046      			dac tmp3
+  765                   
+  766 00610 200024      			lac bulY2
+  767 00611 404217      			add (2000)
+  768 00612 240047      			dac tmp4
+  769                   
+  770 00613 200044      			lac tmp1
+  771 00614 420045      			sub tmp2
+  772 00615 404220      			add (37)
+  773 00616 640200      			spa
+  774 00617 600637      			jmp colEx2
+  775 00620 424221      			sub (77)
+  776 00621 640400      			sma
+  777 00622 600637      			jmp colEx2
+  778                   
+  779                   PossX2,
+  780                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 15
+
+
+  781 00623 200046      			lac tmp3
+  782                   			//sub (14)
+  783 00624 420047      			sub tmp4
+  784 00625 404215      			add (30)
+  785 00626 640200      			spa
+  786 00627 600637      			jmp colEx2
+  787 00630 424222      			sub (60)
+  788 00631 640400      			sma
+  789 00632 600637      			jmp colEx2
+  790                   
+  791                   
+  792                   
+  793                   
+  794                   Hit2,
+  795                   			
+  796 00633 620640      			jsp HitIt
+  797                   
+  798 00634 204204      			lac (1)
+  799 00635 240026      			dac bulHd2 
+  800                   
+  801 00636 621207      			jsp Incr2
+  802                   
+  803                   colEx2,
+  804 00637 600637      			jmp .
+  805                   
+  806                   
+  807                   HitIt,
+  808                   
+  809 00640 260706      			dap HitEx
+  810                   
+  811                   			random
+      00641 200012
+      00642 240013
+      00643 671001
+      00644 064223
+      00645 404223
+      00646 240012
+  812 00647 024204      			and (1)
+  813 00650 240042      			dac invRgt
+  814                   
+  815                   			random
+      00651 200012
+      00652 240013
+      00653 671001
+      00654 064223
+      00655 404223
+      00656 240012
+  816 00657 024231      			and (1777)
+  817 00660 424232      			sub (777)
+  818 00661 240033      			dac invXpo
+  819                   
+  820                   
+  821 00662 200034      			lac invYpo
+  822 00663 424233      			sub (mxht)
+  823 00664 640400      			sma
+  824 00665 600426      			jmp invOff
+  825                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 16
+
+
+  826                   	
+  827                   		
+  828                   
+  829 00666 200034      			lac invYpo
+  830 00667 404234      			add (165)
+  831 00670 240034      			dac invYpo
+  832                   
+  833 00671 200417      			lac GetSpd
+  834 00672 424235      			sub (3)
+  835 00673 240417      			dac GetSpd
+  836                   
+  837 00674 200043      			lac invRow
+  838 00675 424235      			sub (3)
+  839 00676 240043      			dac invRow
+  840                   
+  841                   invDone,	
+  842                   			
+  843 00677 440061      			idx hitCt
+  844 00700 675003      			sar 2s
+  845 00701 240062      			dac spdAd
+  846                   
+  847 00702 100417      			xct GetSpd
+  848 00703 404205      			add (bbSpd)
+  849 00704 400062      			add spdAd
+  850 00705 240041      			dac invSpd
+  851                   
+  852                   
+  853                   
+  854                   HitEx,
+  855                   
+  856 00706 600706      			jmp .
+  857                   
+  858                   
+  859                   titScr,
+  860                   
+  861                   		// position the two player ships for the title screen
+  862                   
+  863 00707 204236      		lac (-600)
+  864 00710 240014      		dac xPos
+  865                   
+  866 00711 404207      		add (10)
+  867 00712 240016      		dac xPos2
+  868                   
+  869 00713 204237      		lac (-50)
+  870 00714 240015      		dac yPos
+  871                   
+  872 00715 204240      		lac (-200)
+  873 00716 240017      		dac yPos2
+  874                   
+  875                   		// reset invader variables
+  876                   
+  877 00717 204200      		lac (0)
+  878 00720 240033      		dac invXpo
+  879 00721 240043      		dac invRow
+  880 00722 240037      		dac invFr
+  881                   
+  882                   		// set invader Y at top of screen
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 17
+
+
+  883 00723 204206      		lac (mxtp)
+  884 00724 424207      		sub (10)
+  885 00725 240034      		dac invYpo
+  886                   
+  887                   		// get invader initial speed
+  888                   
+  889 00726 701447      		law spdTbl
+  890 00727 260417      		dap GetSpdb
+  891                   
+  892 00730 100417      		xct GetSpd
+  893 00731 404205      		add (bbSpd)
+  894 00732 240041      		dac invSpd
+  895                   
+  896                   
+  897                   		// set game mode to title
+  898                   
+  899 00733 204204      		lac (title)
+  900 00734 240050      		dac gmMode
+  901                   
+  902                   		// setup title page flash interval
+  903                   
+  904 00735 204213      		lac (-txtfl)
+  905 00736 240057      		dac flsh
+  906                   
+  907                   		// setup fire debounce timer
+  908                   
+  909 00737 204241      		lac (-100)
+  910 00740 240031      		dac debo
+  911                   
+  912                   		// go to main loop
+  913                   
+  914 00741 600200      		jmp main
+  915                   
+  916                   
+  917                   drwTi,
+  918                   
+  919                   
+  920 00742 261123      		dap titEx
+  921                   
+  922 00743 204222      		lac (60)
+  923 00744 240056      		dac txtSp
+  924                   
+  925 00745 204242      		lac (-15)
+  926 00746 240055      		dac numCn
+  927                   
+  928 00747 704066      		law TgmNm
+  929                   		swap
+      00750 663777
+      00751 663777
+  930                   		
+  931 00752 204243      		lac (-430)
+  932 00753 240051      		dac txtX
+  933                   
+  934 00754 204244      		lac (600)
+  935 00755 240052      		dac txtY
+  936                   
+  937 00756 621124      		jsp drNum
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 18
+
+
+  938                   
+  939                   
+  940 00757 204242      		lac (-15)
+  941 00760 240055      		dac numCn
+  942                   
+  943 00761 704103      		law Tarl
+  944                   		swap
+      00762 663777
+      00763 663777
+  945                   
+  946 00764 204245      		lac (400)
+  947 00765 240052      		dac txtY
+  948                   
+  949                   
+  950 00766 204243      		lac (-430)
+  951 00767 240051      		dac txtX
+  952                   		
+  953 00770 621124      		jsp drNum
+  954                   
+  955                   
+  956 00771 204246      		lac (-6)
+  957 00772 240055      		dac numCn
+  958                   
+  959 00773 704120      		law Tscrs
+  960                   		swap
+      00774 663777
+      00775 663777
+  961                   
+  962 00776 204247      		lac (100)
+  963 00777 240052      		dac txtY
+  964                   
+  965                   
+  966 01000 204250      		lac (-170)
+  967 01001 240051      		dac txtX
+  968                   		
+  969 01002 621124      		jsp drNum
+  970                   		
+  971 01003 204246      		lac (-6)
+  972 01004 240055      		dac numCn
+  973                   
+  974 01005 704126      		law Tplyr
+  975                   		swap
+      01006 663777
+      01007 663777
+  976                   
+  977 01010 204237      		lac (-50)
+  978 01011 240052      		dac txtY
+  979                   
+  980                   
+  981 01012 204251      		lac (-340)
+  982 01013 240051      		dac txtX
+  983                   		
+  984 01014 621124      		jsp drNum
+  985                   
+  986                   
+  987 01015 204237      		lac (-50)
+  988 01016 240052      		dac txtY
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 19
+
+
+  989                   
+  990 01017 204252      		lac (130)
+  991 01020 240051      		dac txtX
+  992                   
+  993 01021 204204      		lac (1)
+  994 01022 240053      		dac txtId
+  995                   
+  996 01023 621572      		jsp drwDig
+  997                   
+  998                   
+  999 01024 204246      		lac (-6)
+ 1000 01025 240055      		dac numCn
+ 1001                   
+ 1002 01026 700063      		law scrP1
+ 1003                   		swap
+      01027 663777
+      01030 663777
+ 1004                   
+ 1005 01031 204237      		lac (-50)
+ 1006 01032 240052      		dac txtY
+ 1007                   
+ 1008 01033 204253      		lac (-3)
+ 1009 01034 240055      		dac numCn
+ 1010                   
+ 1011 01035 204254      		lac (340)
+ 1012 01036 240051      		dac txtX
+ 1013                   		
+ 1014 01037 621124      		jsp drNum
+ 1015                   
+ 1016                   
+ 1017                   
+ 1018 01040 204246      		lac (-6)
+ 1019 01041 240055      		dac numCn
+ 1020                   
+ 1021 01042 704126      		law Tplyr
+ 1022                   		swap
+      01043 663777
+      01044 663777
+ 1023                   
+ 1024 01045 204240      		lac (-200)
+ 1025 01046 240052      		dac txtY
+ 1026                   
+ 1027                   
+ 1028 01047 204251      		lac (-340)
+ 1029 01050 240051      		dac txtX
+ 1030                   		
+ 1031 01051 621124      		jsp drNum
+ 1032                   
+ 1033                   
+ 1034 01052 204240      		lac (-200)
+ 1035 01053 240052      		dac txtY
+ 1036                   
+ 1037 01054 204252      		lac (130)
+ 1038 01055 240051      		dac txtX
+ 1039                   
+ 1040 01056 204255      		lac (2)
+ 1041 01057 240053      		dac txtId
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 20
+
+
+ 1042                   
+ 1043 01060 621572      		jsp drwDig
+ 1044                   
+ 1045                   
+ 1046 01061 204246      		lac (-6)
+ 1047 01062 240055      		dac numCn
+ 1048                   
+ 1049 01063 700066      		law scrP2
+ 1050                   		swap
+      01064 663777
+      01065 663777
+ 1051                   
+ 1052 01066 204240      		lac (-200)
+ 1053 01067 240052      		dac txtY
+ 1054                   
+ 1055 01070 204253      		lac (-3)
+ 1056 01071 240055      		dac numCn
+ 1057                   
+ 1058 01072 204254      		lac (340)
+ 1059 01073 240051      		dac txtX
+ 1060                   		
+ 1061 01074 621124      		jsp drNum
+ 1062                   
+ 1063                   
+ 1064 01075 704134      		law TIn1
+ 1065                   		swap
+      01076 663777
+      01077 663777
+ 1066                   
+ 1067 01100 204256      		lac (-500)
+ 1068 01101 240052      		dac txtY
+ 1069                   
+ 1070 01102 204257      		lac (-22)
+ 1071 01103 240055      		dac numCn
+ 1072                   
+ 1073 01104 204260      		lac (-640)
+ 1074 01105 240051      		dac txtX
+ 1075                   		
+ 1076 01106 621124      		jsp drNum
+ 1077                   
+ 1078                   
+ 1079 01107 704156      		law TIn2
+ 1080                   		swap
+      01110 663777
+      01111 663777
+ 1081                   
+ 1082 01112 204261      		lac (-650)
+ 1083 01113 240052      		dac txtY
+ 1084                   
+ 1085 01114 204257      		lac (-22)
+ 1086 01115 240055      		dac numCn
+ 1087                   
+ 1088 01116 204260      		lac (-640)
+ 1089 01117 240051      		dac txtX
+ 1090                   		
+ 1091 01120 621124      		jsp drNum
+ 1092                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 21
+
+
+ 1093                   
+ 1094 01121 621246      		jsp drawShip
+ 1095 01122 621276      		jsp drawS2
+ 1096                   
+ 1097                   
+ 1098                   titEx,
+ 1099                   
+ 1100 01123 601123      		jmp .
+ 1101                   
+ 1102                   
+ 1103                   drNum,
+ 1104                   		
+ 1105 01124 261147      		dap digEx
+ 1106                   		swap
+      01125 663777
+      01126 663777
+ 1107 01127 261130      		dap digAd
+ 1108                   
+ 1109                   digAd,
+ 1110                   
+ 1111 01130 200000      		lac	.
+      01131 001131
+ 1112 01132 240053      		dac txtId
+ 1113                   
+ 1114 01133 424262      		sub (62)
+ 1115 01134 640100      		sza 
+ 1116 01135 601137      		jmp digDo
+ 1117 01136 601140      		jmp digSk
+ 1118                   
+ 1119                   digDo,	
+ 1120 01137 621572      		jsp drwDig
+ 1121                   
+ 1122                   
+ 1123                   digSk,
+ 1124 01140 200051      		lac txtX
+ 1125 01141 400056      		add txtSp
+ 1126 01142 240051      		dac txtX
+ 1127                   
+ 1128 01143 441130      		idx digAd
+ 1129 01144 440055      		idx numCn
+ 1130                   
+ 1131 01145 640100      		sza 
+ 1132 01146 601130      		jmp digAd
+ 1133                   
+ 1134                   
+ 1135                   
+ 1136                   
+ 1137                   digEx,
+ 1138                   
+ 1139 01147 601147      		jmp .
+ 1140                   
+ 1141                   
+ 1142                   
+ 1143                   
+ 1144                   Incr1,
+ 1145                   			
+ 1146 01150 261206      			dap IncEx
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 22
+
+
+ 1147                   
+ 1148 01151 204200      			lac (0)
+ 1149 01152 240060      			dac carry
+ 1150                   
+ 1151 01153 200065      			lac scrP1+2
+ 1152 01154 400060      			add carry
+ 1153 01155 404204      			add (1)
+ 1154 01156 240065      			dac scrP1+2
+ 1155 01157 424263      			sub (12)
+ 1156 01160 640200      			spa
+ 1157 01161 601166      			jmp NoWr1
+ 1158                   
+ 1159 01162 200065      			lac scrP1+2
+ 1160 01163 424263      			sub (12)
+ 1161 01164 240065      			dac scrP1+2
+ 1162                   
+ 1163 01165 440060      			idx carry
+ 1164                   
+ 1165                   NoWr1,
+ 1166 01166 200064      			lac scrP1+1
+ 1167 01167 400060      			add carry
+ 1168 01170 240064      			dac scrP1+1
+ 1169                   
+ 1170 01171 204200      			lac (0)
+ 1171 01172 240060      			dac carry
+ 1172                   
+ 1173 01173 200064      			lac scrP1+1
+ 1174 01174 424263      			sub (12)
+ 1175 01175 640200      			spa
+ 1176 01176 601203      			jmp NoWr2
+ 1177                   
+ 1178 01177 200064      			lac scrP1+1
+ 1179 01200 424263      			sub (12)
+ 1180 01201 240064      			dac scrP1+1
+ 1181                   
+ 1182 01202 440060      			idx carry
+ 1183                   
+ 1184                   NoWr2,
+ 1185 01203 200063      			lac scrP1+0
+ 1186 01204 400060      			add carry
+ 1187 01205 240063      			dac scrP1+0
+ 1188                   
+ 1189                   			
+ 1190                   
+ 1191                   NoWr3,
+ 1192                   
+ 1193                   IncEx,
+ 1194                   
+ 1195 01206 601206      		jmp .		
+ 1196                   
+ 1197                   
+ 1198                   
+ 1199                   Incr2,
+ 1200                   			
+ 1201 01207 261245      			dap IncE2
+ 1202                   
+ 1203 01210 204200      			lac (0)
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 23
+
+
+ 1204 01211 240060      			dac carry
+ 1205                   
+ 1206 01212 200070      			lac scrP2+2
+ 1207 01213 400060      			add carry
+ 1208 01214 404204      			add (1)
+ 1209 01215 240070      			dac scrP2+2
+ 1210 01216 424263      			sub (12)
+ 1211 01217 640200      			spa
+ 1212 01220 601225      			jmp NoW12
+ 1213                   
+ 1214 01221 200070      			lac scrP2+2
+ 1215 01222 424263      			sub (12)
+ 1216 01223 240070      			dac scrP2+2
+ 1217                   
+ 1218 01224 440060      			idx carry
+ 1219                   
+ 1220                   NoW12,
+ 1221 01225 200067      			lac scrP2+1
+ 1222 01226 400060      			add carry
+ 1223 01227 240067      			dac scrP2+1
+ 1224                   
+ 1225 01230 204200      			lac (0)
+ 1226 01231 240060      			dac carry
+ 1227                   
+ 1228 01232 200067      			lac scrP2+1
+ 1229 01233 424263      			sub (12)
+ 1230 01234 640200      			spa
+ 1231 01235 601242      			jmp NoW22
+ 1232                   
+ 1233 01236 200067      			lac scrP2+1
+ 1234 01237 424263      			sub (12)
+ 1235 01240 240067      			dac scrP2+1
+ 1236                   
+ 1237 01241 440060      			idx carry
+ 1238                   
+ 1239                   NoW22,
+ 1240 01242 200066      			lac scrP2+0
+ 1241 01243 400060      			add carry
+ 1242 01244 240066      			dac scrP2+0
+ 1243                   
+ 1244                   			
+ 1245                   IncE2,
+ 1246                   
+ 1247 01245 601245      		jmp .		
+ 1248                   drawShip,
+ 1249                   
+ 1250 01246 261550      			dap drawExit
+ 1251                   
+ 1252 01247 701676      			law shipX
+ 1253 01250 261540      			dap currX
+ 1254                   
+ 1255 01251 701715      			law shipY
+ 1256 01252 261533      			dap currY
+ 1257                   
+ 1258 01253 700014      			law xPos
+ 1259 01254 261541      			dap xPadd
+ 1260                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 24
+
+
+ 1261 01255 700015      			law yPos
+ 1262 01256 261535      			dap yPadd
+ 1263                   
+ 1264 01257 704264      			law (lac shipX+shipPt)
+ 1265 01260 261546      			dap loopCh
+ 1266                   
+ 1267 01261 601533      			jmp drawSprt
+ 1268                   
+ 1269                   
+ 1270                   
+ 1271                   moveShip,
+ 1272                   			
+ 1273 01262 261275      			dap moveEx
+ 1274                   
+ 1275 01263 200027      			lac shipRgt
+ 1276 01264 640100      			sza
+ 1277 01265 601272      			jmp shRight
+ 1278                   
+ 1279                   shLeft,		
+ 1280                   	
+ 1281 01266 200014      			lac xPos
+ 1282 01267 424255      			sub (2)
+ 1283 01270 240014      			dac xPos
+ 1284                   
+ 1285 01271 601275      			jmp moveEx
+ 1286                   
+ 1287                   shRight,
+ 1288                   
+ 1289 01272 200014      			lac xPos
+ 1290 01273 404255      			add (2)
+ 1291 01274 240014      			dac xPos
+ 1292                   
+ 1293                   		
+ 1294                   moveEx,	
+ 1295 01275 601275      			jmp .	
+ 1296                   
+ 1297                   
+ 1298                   
+ 1299                   
+ 1300                   drawS2,
+ 1301                   
+ 1302 01276 261550      			dap drawExit
+ 1303                   
+ 1304 01277 701753      			law shipX2
+ 1305 01300 261540      			dap currX
+ 1306                   
+ 1307 01301 701734      			law shipY2
+ 1308 01302 261533      			dap currY
+ 1309                   
+ 1310 01303 700016      			law xPos2
+ 1311 01304 261541      			dap xPadd
+ 1312                   
+ 1313 01305 700017      			law yPos2
+ 1314 01306 261535      			dap yPadd
+ 1315                   
+ 1316 01307 704265      			law (lac shipX2+sh2Pt)
+ 1317 01310 261546      			dap loopCh
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 25
+
+
+ 1318                   
+ 1319 01311 601533      			jmp drawSprt
+ 1320                   
+ 1321                   
+ 1322                   
+ 1323                   moveS2,
+ 1324                   			
+ 1325 01312 261325      			dap moveE2
+ 1326                   
+ 1327 01313 200030      			lac shipR2
+ 1328 01314 640100      			sza
+ 1329 01315 601322      			jmp shR2
+ 1330                   
+ 1331                   shL2,		
+ 1332                   	
+ 1333 01316 200016      			lac xPos2
+ 1334 01317 424255      			sub (2)
+ 1335 01320 240016      			dac xPos2
+ 1336                   
+ 1337 01321 601325      			jmp moveE2
+ 1338                   
+ 1339                   shR2,
+ 1340                   
+ 1341 01322 200016      			lac xPos2
+ 1342 01323 404255      			add (2)
+ 1343 01324 240016      			dac xPos2
+ 1344                   
+ 1345                   		
+ 1346                   moveE2,	
+ 1347 01325 601325      			jmp .	
+ 1348                   
+ 1349                   gmOver,
+ 1350                   			
+ 1351 01326 200050      			lac gmMode
+ 1352 01327 640100      			sza
+ 1353 01330 601352      			jmp downEx
+ 1354                   
+ 1355 01331 204204      			lac (1)
+ 1356 01332 240050      			dac gmMode
+ 1357 01333 600707      			jmp titScr
+ 1358                   
+ 1359                   
+ 1360                   
+ 1361                   moveDn,
+ 1362                   
+ 1363 01334 261352      			dap downEx
+ 1364                   
+ 1365 01335 200034      			lac invYpo
+ 1366 01336 424266      			sub (47)
+ 1367 01337 240034      			dac invYpo
+ 1368                   
+ 1369 01340 440043      			idx invRow
+ 1370 01341 200043      			lac invRow
+ 1371 01342 424267      			sub (33)
+ 1372 01343 640400      			sma 
+ 1373 01344 601326      			jmp gmOver
+ 1374                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 26
+
+
+ 1375 01345 440417      			idx GetSpd
+ 1376 01346 100417      			xct GetSpd
+ 1377 01347 404205      			add (bbSpd)
+ 1378 01350 400062      			add spdAd
+ 1379 01351 240041      			dac invSpd
+ 1380                   
+ 1381                   
+ 1382                   downEx,
+ 1383                   
+ 1384 01352 601352      			jmp .
+ 1385                   
+ 1386                   
+ 1387                   rightTn,
+ 1388                   			
+ 1389 01353 261361      			dap rtEx
+ 1390                   
+ 1391 01354 204200      			lac (0)
+ 1392 01355 240042      			dac invRgt
+ 1393                   			
+ 1394 01356 204270      			lac (mxri)
+ 1395 01357 240033      			dac invXpo
+ 1396                   
+ 1397 01360 621334      			jsp moveDn
+ 1398                   
+ 1399                   			
+ 1400                   rtEx,	
+ 1401 01361 601361      			jmp .
+ 1402                   
+ 1403                   
+ 1404                   leftTn,
+ 1405                   			
+ 1406 01362 261370      			dap ltEx
+ 1407                   
+ 1408                   			
+ 1409 01363 204204      			lac (1)
+ 1410 01364 240042      			dac invRgt
+ 1411                   
+ 1412                   
+ 1413 01365 204271      			lac (mxli)
+ 1414 01366 240033      			dac invXpo
+ 1415                   
+ 1416 01367 621334      			jsp moveDn
+ 1417                   
+ 1418                   ltEx,	
+ 1419 01370 601370      			jmp .
+ 1420                   
+ 1421                   
+ 1422                   
+ 1423                   drawInv,
+ 1424                   			
+ 1425 01371 261550      			dap drawExit
+ 1426                   
+ 1427 01372 200042      			lac invRgt
+ 1428 01373 640100      			sza
+ 1429 01374 601404      			jmp goRight
+ 1430                   
+ 1431                   goLeft,
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 27
+
+
+ 1432 01375 200033      			lac invXpo
+ 1433 01376 420041      			sub invSpd
+ 1434 01377 240033      			dac invXpo
+ 1435                   
+ 1436 01400 424271      			sub (mxli)
+ 1437 01401 640200      			spa
+ 1438 01402 621362      			jsp leftTn
+ 1439 01403 601412      			jmp nowDrIn
+ 1440                   
+ 1441                   
+ 1442                   goRight,
+ 1443                   
+ 1444 01404 200033      			lac invXpo
+ 1445 01405 400041      			add invSpd
+ 1446 01406 240033      			dac invXpo
+ 1447                   
+ 1448 01407 424270      			sub (mxri)
+ 1449 01410 640400      			sma 
+ 1450 01411 621353      			jsp rightTn
+ 1451                   
+ 1452                   
+ 1453                   nowDrIn,
+ 1454                   			
+ 1455 01412 440040      			idx anmT
+ 1456 01413 641515      			sza flp
+ 1457                   
+ 1458 01414 601422      			jmp noflp
+ 1459                   
+ 1460                   flp,
+ 1461                   			
+ 1462 01415 204272      			lac (-100000)
+ 1463 01416 240040      			dac anmT
+ 1464                   
+ 1465 01417 200037      			lac invFr
+ 1466 01420 064204      			xor (1)
+ 1467 01421 240037      			dac invFr
+ 1468                   
+ 1469                   noflp,
+ 1470 01422 200037      			lac invFr
+ 1471 01423 640100      			sza 
+ 1472 01424 601434      			jmp fra2
+ 1473                   
+ 1474 01425 702002      			law invadX
+ 1475 01426 261540      			dap currX
+ 1476                   
+ 1477 01427 702047      			law invadY
+ 1478 01430 261533      			dap currY
+ 1479                   
+ 1480 01431 704273      			law (lac invadX+invPt)
+ 1481 01432 261546      			dap loopCh
+ 1482                   
+ 1483 01433 601442      			jmp nowXY
+ 1484                   
+ 1485                   fra2,		
+ 1486                   	
+ 1487 01434 702114      			law inXD2
+ 1488 01435 261540      			dap currX
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 28
+
+
+ 1489                   
+ 1490 01436 702161      			law inYD2
+ 1491 01437 261533      			dap currY
+ 1492                   
+ 1493 01440 704274      			law (lac inXD2+invPt)
+ 1494 01441 261546      			dap loopCh
+ 1495                   
+ 1496                   nowXY,
+ 1497 01442 700033      			law invXpo
+ 1498 01443 261541      			dap xPadd
+ 1499                   
+ 1500 01444 700034      			law invYpo
+ 1501 01445 261535      			dap yPadd
+ 1502                   
+ 1503                   		
+ 1504 01446 601533      			jmp drawSprt
+ 1505                   
+ 1506                   
+ 1507                   
+ 1508                   decimal
+ 1509                   
+ 1510                   
+ 1511                   spdTbl,
+ 1512 01447 000002      			2
+ 1513 01450 000003      			3
+ 1514 01451 000003      			3
+ 1515 01452 000003      			3
+ 1516 01453 000004      			4
+ 1517 01454 000004      			4
+ 1518 01455 000004      			4
+ 1519 01456 000005      			5
+ 1520 01457 000005      			5
+ 1521 01460 000005      			5
+ 1522 01461 000005      			5
+ 1523 01462 000006      			6
+ 1524 01463 000006      			6
+ 1525 01464 000006      			6
+ 1526 01465 000006      			6
+ 1527 01466 000007      			7
+ 1528 01467 000007      			7
+ 1529 01470 000007      			7
+ 1530 01471 000007      			7
+ 1531 01472 000010      			8
+ 1532 01473 000010      			8
+ 1533 01474 000010      			8
+ 1534 01475 000010      			8
+ 1535 01476 000011      			9
+ 1536 01477 000011      			9
+ 1537 01500 000012      			10
+ 1538 01501 000012      			10
+ 1539 01502 000012      			10
+ 1540 01503 000012      			10
+ 1541 01504 000012      			10
+ 1542                   			
+ 1543                   
+ 1544                   
+ 1545                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 29
+
+
+ 1546                   octal
+ 1547                   
+ 1548                   drawStar,
+ 1549                   			
+ 1550 01505 261550      			dap drawExit
+ 1551                   
+ 1552 01506 200020      			lac countr
+ 1553 01507 024230      			and (15)
+ 1554 01510 640100      			sza
+ 1555 01511 601550      			jmp drawExit
+ 1556                   
+ 1557 01512 701676      			law shipX
+ 1558 01513 261540      			dap currX
+ 1559                   
+ 1560 01514 701676      			law shipX
+ 1561 01515 261533      			dap currY
+ 1562                   
+ 1563                   				random
+      01516 200012
+      01517 240013
+      01520 671001
+      01521 064223
+      01522 404223
+      01523 240012
+ 1564                   
+ 1565 01524 700013      			law oldRan
+ 1566 01525 261541      			dap xPadd
+ 1567                   
+ 1568 01526 700012      			law ran
+ 1569 01527 261535      			dap yPadd
+ 1570                   
+ 1571                   			//law	xPos
+ 1572                   			//dap xPadd
+ 1573                   
+ 1574                   			//law yPos
+ 1575                   			//dap yPadd
+ 1576                   
+ 1577 01530 704275      			law (lac shipX+true)
+ 1578 01531 261546      			dap loopCh
+ 1579                   
+ 1580 01532 601533      			jmp drawSprt
+ 1581                   
+ 1582                   
+ 1583                   drawSprt,
+ 1584                   
+ 1585 01533 200000      currY,		lac	.
+      01534 001534
+ 1586                   
+ 1587 01535 401535      yPadd,		add .
+ 1588 01536 677777      			scr 9s
+ 1589 01537 677001      			scr 1s
+ 1590                   
+ 1591 01540 201540      currX,		lac .	
+ 1592 01541 401541      xPadd,		add .
+ 1593                   
+ 1594 01542 665377      			sal 8s
+ 1595                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 30
+
+
+ 1596 01543 720007      			dpy-i
+ 1597                   
+ 1598 01544 441533      			idx currY
+ 1599 01545 441540      			idx currX
+ 1600 01546 521546      loopCh,		sas .
+ 1601 01547 601533      			jmp currY
+ 1602                   
+ 1603                   
+ 1604                   drawExit,
+ 1605 01550 601550      			jmp .
+ 1606                   
+ 1607                   
+ 1608                   
+ 1609                   
+ 1610                   
+ 1611                   drawComb,
+ 1612                   
+ 1613 01551 200000      crrY,		lac	.
+      01552 001552
+ 1614                   
+ 1615 01553 400052      yPad,		add txtY
+ 1616 01554 677777      			scr 9s
+ 1617 01555 677001      			scr 1s
+ 1618                   
+ 1619 01556 441560      			idx crrX
+ 1620 01557 441551      			idx crrY
+ 1621                   
+ 1622 01560 201560      crrX,		lac .	
+ 1623 01561 400051      xPad,		add txtX
+ 1624                   
+ 1625 01562 665377      			sal 8s
+ 1626                   
+ 1627 01563 720007      			dpy-i
+ 1628                   
+ 1629 01564 441551      			idx crrY
+ 1630 01565 441560      			idx crrX
+ 1631 01566 440054      lopCh,		idx txtCn
+ 1632 01567 640100      			sza
+ 1633 01570 601551      			jmp crrY
+ 1634                   
+ 1635                   
+ 1636                   drawE,
+ 1637 01571 601571      			jmp .
+ 1638                   
+ 1639                   
+ 1640                   drwDig,
+ 1641                   
+ 1642 01572 261571      			dap drawE
+ 1643                   
+ 1644                   
+ 1645 01573 702550      			law digDt
+ 1646 01574 400053      			add txtId
+ 1647 01575 261601      			dap getAdr
+ 1648                   
+ 1649                   			//dap crrX
+ 1650                   			//dap crrY
+ 1651                   			
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 31
+
+
+ 1652                   
+ 1653 01576 702616      			law digLn
+ 1654 01577 400053      			add txtId
+ 1655 01600 261604      			dap getDigs
+ 1656                   
+ 1657                   getAdr,		
+ 1658 01601 201601      			lac . 
+ 1659 01602 261560      			dap crrX
+ 1660 01603 261551      			dap crrY
+ 1661                   
+ 1662                   getDigs,
+ 1663 01604 201604      			lac .
+ 1664 01605 761000      			cma
+ 1665 01606 240054      			dac txtCn
+ 1666                   
+ 1667                   			//lac (-14)
+ 1668                   			//dac txtCn
+ 1669                   
+ 1670 01607 601551      			jmp drawComb
+ 1671                   
+ 1672                   
+ 1673                   rightMax,
+ 1674                   			
+ 1675 01610 261615      			dap maxExit
+ 1676                   
+ 1677 01611 204270      			lac (mxri)
+ 1678 01612 240014      			dac xPos
+ 1679                   
+ 1680 01613 204200      			lac (0)
+ 1681 01614 240027      			dac shipRgt
+ 1682                   
+ 1683                   maxExit,
+ 1684 01615 601615      			jmp .
+ 1685                   
+ 1686                   
+ 1687                   
+ 1688                   leftMax,
+ 1689                   			
+ 1690 01616 261623      			dap leftExit
+ 1691                   
+ 1692 01617 204271      			lac (mxli)
+ 1693 01620 240014      			dac xPos
+ 1694                   
+ 1695 01621 204204      			lac (1)
+ 1696 01622 240027      			dac shipRgt
+ 1697                   
+ 1698                   leftExit,
+ 1699 01623 601623      			jmp .
+ 1700                   
+ 1701                   
+ 1702                   
+ 1703                   
+ 1704                   righM2,
+ 1705                   			
+ 1706 01624 261631      			dap maxEx2
+ 1707                   
+ 1708 01625 204270      			lac (mxri)
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 32
+
+
+ 1709 01626 240016      			dac xPos2
+ 1710                   
+ 1711 01627 204200      			lac (0)
+ 1712 01630 240030      			dac shipR2
+ 1713                   
+ 1714                   maxEx2,
+ 1715 01631 601631      			jmp .
+ 1716                   
+ 1717                   
+ 1718                   
+ 1719                   leftM2,
+ 1720                   			
+ 1721 01632 261637      			dap leftE2
+ 1722                   
+ 1723 01633 204271      			lac (mxli)
+ 1724 01634 240016      			dac xPos2
+ 1725                   
+ 1726 01635 204204      			lac (1)
+ 1727 01636 240030      			dac shipR2
+ 1728                   
+ 1729                   leftE2,
+ 1730 01637 601637      			jmp .
+ 1731                   
+ 1732                   
+ 1733                   
+ 1734                   
+ 1735                   
+ 1736                   controls,
+ 1737 01640 261675      			dap contExit
+ 1738                   
+ 1739                   			//dzm didFire
+ 1740                   
+ 1741 01641 764000      			cli
+ 1742 01642 720011      			iot 11
+ 1743                   
+ 1744                   
+ 1745 01643 760200      			cla
+ 1746 01644 662003      			ril 2s
+ 1747 01645 642000      			spi
+ 1748 01646 404204      			add (1)
+ 1749 01647 240036      			dac didF2
+ 1750                   			
+ 1751 01650 760200      			cla
+ 1752 01651 662001      			ril 1s
+ 1753 01652 642000      			spi
+ 1754 01653 404204      			add (1)
+ 1755 01654 240035      			dac didFire		
+ 1756                   
+ 1757 01655 200014      			lac xPos
+ 1758 01656 424270      			sub (mxri)
+ 1759 01657 640400      			sma 
+ 1760 01660 621610      			jsp rightMax
+ 1761                   
+ 1762 01661 200014      			lac xPos
+ 1763 01662 424271      			sub (mxli)
+ 1764 01663 640200      			spa
+ 1765                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 33
+
+
+ 1766 01664 621616      			jsp leftMax
+ 1767                   
+ 1768                   
+ 1769 01665 200016      			lac xPos2
+ 1770 01666 424270      			sub (mxri)
+ 1771 01667 640400      			sma 
+ 1772 01670 621624      			jsp righM2
+ 1773                   
+ 1774 01671 200016      			lac xPos2
+ 1775 01672 424271      			sub (mxli)
+ 1776 01673 640200      			spa
+ 1777                   
+ 1778 01674 621632      			jsp leftM2
+ 1779                   
+ 1780                   
+ 1781                   contExit,
+ 1782 01675 601675      			jmp .
+ 1783                   
+ 1784                   
+ 1785                   decimal
+ 1786                   
+ 1787                   
+ 1788                   // sprite definitions
+ 1789                   
+ 1790                   
+ 1791                   // ships use two separate tables for X/Y
+ 1792                   // numbers and letters use combined tables that go XYXYXY...
+ 1793                   
+ 1794                   shipX,	
+ 1795 01676 000000      0
+ 1796 01677 000000      0
+ 1797 01700 000004      4
+ 1798 01701 000014      12
+ 1799 01702 000030      24
+ 1800 01703 000040      32
+ 1801 01704 000050      40
+ 1802 01705 000064      52
+ 1803 01706 000074      60
+ 1804 01707 000100      64
+ 1805 01710 000100      64
+ 1806 01711 000064      52
+ 1807 01712 000050      40
+ 1808 01713 000030      24
+ 1809 01714 000014      12
+ 1810                   
+ 1811                   
+ 1812                   shipY,	
+ 1813 01715 000000      0
+ 1814 01716 000011      9
+ 1815 01717 000022      18
+ 1816 01720 000030      24
+ 1817 01721 000033      27
+ 1818 01722 000041      33
+ 1819 01723 000033      27
+ 1820 01724 000030      24
+ 1821 01725 000022      18
+ 1822 01726 000011      9
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 34
+
+
+ 1823 01727 000000      0
+ 1824 01730 000000      0
+ 1825 01731 000000      0
+ 1826 01732 000000      0
+ 1827 01733 000000      0
+ 1828                   
+ 1829                   
+ 1830                   
+ 1831                   decimal
+ 1832                   
+ 1833       000021      sh2Pt=17
+ 1834                   
+ 1835                   shipY2,
+ 1836 01734 000000      0
+ 1837 01735 000011      9
+ 1838 01736 000022      18
+ 1839 01737 000030      24
+ 1840 01740 000041      33
+ 1841 01741 000030      24
+ 1842 01742 000022      18
+ 1843 01743 000011      9
+ 1844 01744 000000      0
+ 1845 01745 000003      3
+ 1846 01746 000011      9
+ 1847 01747 000011      9
+ 1848 01750 000011      9
+ 1849 01751 000003      3
+ 1850 01752 000003      3
+ 1851                   
+ 1852                   
+ 1853                   
+ 1854                   
+ 1855                   shipX2,
+ 1856 01753 000000      0
+ 1857 01754 000006      6
+ 1858 01755 000014      12
+ 1859 01756 000022      18
+ 1860 01757 000025      21
+ 1861 01760 000030      24
+ 1862 01761 000036      30
+ 1863 01762 000044      36
+ 1864 01763 000052      42
+ 1865 01764 000041      33
+ 1866 01765 000033      27
+ 1867 01766 000025      21
+ 1868 01767 000017      15
+ 1869 01770 000011      9
+ 1870 01771 000025      21
+ 1871                   
+ 1872                   
+ 1873                   
+ 1874                   octal
+ 1875                   
+ 1876                   bulltX, 
+ 1877 01772 000000      0
+ 1878 01773 000003      3
+ 1879 01774 000000      0
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 35
+
+
+ 1880 01775 000003      3
+ 1881                   
+ 1882                   bulltY,
+ 1883 01776 000000      0
+ 1884 01777 000005      5
+ 1885 02000 000013      13
+ 1886 02001 000020      20
+ 1887                   
+ 1888                   
+ 1889                   decimal
+ 1890                   
+ 1891       000045      invPt=37
+ 1892                   
+ 1893                   invadX,
+ 1894                   
+ 1895 02002 000000      0
+ 1896 02003 000000      0
+ 1897 02004 000005      5
+ 1898 02005 000005      5
+ 1899 02006 000012      10
+ 1900 02007 000012      10
+ 1901                   
+ 1902 02010 000012      10
+ 1903 02011 000020      16
+ 1904 02012 000026      22
+ 1905 02013 000034      28
+ 1906 02014 000042      34
+ 1907 02015 000050      40
+ 1908 02016 000055      45
+ 1909                   
+ 1910 02017 000005      5
+ 1911 02020 000005      5
+ 1912 02021 000062      50
+ 1913 02022 000062      50
+ 1914                   
+ 1915 02023 000067      55
+ 1916 02024 000067      55
+ 1917 02025 000062      50
+ 1918 02026 000062      50
+ 1919 02027 000055      45
+ 1920 02030 000055      45
+ 1921                   
+ 1922                   
+ 1923 02031 000012      10
+ 1924 02032 000020      16
+ 1925 02033 000026      22
+ 1926 02034 000034      28
+ 1927 02035 000042      34
+ 1928 02036 000050      40
+ 1929 02037 000055      45
+ 1930                   
+ 1931 02040 000026      22
+ 1932 02041 000034      28
+ 1933 02042 000042      34
+ 1934                   
+ 1935 02043 000020      16
+ 1936 02044 000050      40
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 36
+
+
+ 1937 02045 000012      10
+ 1938 02046 000055      45
+ 1939                   
+ 1940                   
+ 1941                   invadY,
+ 1942                   
+ 1943 02047 000030      24
+ 1944 02050 000040      32
+ 1945 02051 000020      16
+ 1946 02052 000026      22
+ 1947 02053 000010      8
+ 1948 02054 000020      16
+ 1949                   
+ 1950 02055 000034      28
+ 1951 02056 000034      28
+ 1952 02057 000034      28
+ 1953 02060 000034      28
+ 1954 02061 000034      28
+ 1955 02062 000034      28
+ 1956 02063 000034      28
+ 1957                   
+ 1958 02064 000000      0
+ 1959 02065 000000      0
+ 1960 02066 000000      0
+ 1961 02067 000000      0
+ 1962                   
+ 1963 02070 000030      24
+ 1964 02071 000040      32
+ 1965 02072 000020      16
+ 1966 02073 000026      22
+ 1967 02074 000010      8
+ 1968 02075 000020      16
+ 1969                   
+ 1970 02076 000020      16
+ 1971 02077 000020      16
+ 1972 02100 000020      16
+ 1973 02101 000020      16
+ 1974 02102 000020      16
+ 1975 02103 000020      16
+ 1976 02104 000020      16
+ 1977                   
+ 1978 02105 000026      22
+ 1979 02106 000026      22
+ 1980 02107 000026      22
+ 1981                   
+ 1982 02110 000042      34
+ 1983 02111 000042      34
+ 1984 02112 000050      40
+ 1985 02113 000050      40
+ 1986                   
+ 1987                   
+ 1988                   
+ 1989                   inXD2,
+ 1990                   
+ 1991 02114 000000      0
+ 1992 02115 000000      0
+ 1993 02116 000005      5
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 37
+
+
+ 1994 02117 000005      5
+ 1995 02120 000012      10
+ 1996 02121 000012      10
+ 1997                   
+ 1998 02122 000012      10
+ 1999 02123 000020      16
+ 2000 02124 000026      22
+ 2001 02125 000034      28
+ 2002 02126 000042      34
+ 2003 02127 000050      40
+ 2004 02130 000055      45
+ 2005                   
+ 2006 02131 000020      16
+ 2007 02132 000026      22
+ 2008 02133 000042      34
+ 2009 02134 000050      40
+ 2010                   
+ 2011 02135 000067      55
+ 2012 02136 000067      55
+ 2013 02137 000062      50
+ 2014 02140 000062      50
+ 2015 02141 000055      45
+ 2016 02142 000055      45
+ 2017                   
+ 2018                   
+ 2019 02143 000012      10
+ 2020 02144 000020      16
+ 2021 02145 000026      22
+ 2022 02146 000034      28
+ 2023 02147 000042      34
+ 2024 02150 000050      40
+ 2025 02151 000055      45
+ 2026                   
+ 2027 02152 000026      22
+ 2028 02153 000034      28
+ 2029 02154 000042      34
+ 2030                   
+ 2031 02155 000020      16
+ 2032 02156 000050      40
+ 2033 02157 000012      10
+ 2034 02160 000055      45
+ 2035                   
+ 2036                   
+ 2037                   inYD2,
+ 2038                   
+ 2039 02161 000010      8
+ 2040 02162 000020      16
+ 2041 02163 000020      16
+ 2042 02164 000026      22
+ 2043 02165 000010      8
+ 2044 02166 000020      16
+ 2045                   
+ 2046 02167 000034      28
+ 2047 02170 000034      28
+ 2048 02171 000034      28
+ 2049 02172 000034      28
+ 2050 02173 000034      28
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 38
+
+
+ 2051 02174 000034      28
+ 2052 02175 000034      28
+ 2053                   
+ 2054 02176 000000      0
+ 2055 02177 000000      0
+ 2056 02200 000000      0
+ 2057 02201 000000      0
+ 2058                   
+ 2059 02202 000010      8
+ 2060 02203 000020      16
+ 2061 02204 000020      16
+ 2062 02205 000026      22
+ 2063 02206 000010      8
+ 2064 02207 000020      16
+ 2065                   
+ 2066 02210 000020      16
+ 2067 02211 000020      16
+ 2068 02212 000020      16
+ 2069 02213 000020      16
+ 2070 02214 000020      16
+ 2071 02215 000020      16
+ 2072 02216 000020      16
+ 2073                   
+ 2074 02217 000026      22
+ 2075 02220 000026      22
+ 2076 02221 000026      22
+ 2077                   
+ 2078 02222 000042      34
+ 2079 02223 000042      34
+ 2080 02224 000050      40
+ 2081 02225 000050      40
+ 2082                   
+ 2083                   
+ 2084                   dig1,
+ 2085 02226 000050      40
+ 2086 02227 000000      0
+ 2087 02230 000060      48
+ 2088 02231 000010      8
+ 2089 02232 000050      40
+ 2090 02233 000010      8
+ 2091 02234 000040      32
+ 2092 02235 000010      8
+ 2093 02236 000030      24
+ 2094 02237 000010      8
+ 2095 02240 000020      16
+ 2096 02241 000010      8
+ 2097 02242 000010      8
+ 2098 02243 000010      8
+ 2099 02244 000000      0
+ 2100 02245 000010      8
+ 2101                   
+ 2102                   
+ 2103                   dig2,
+ 2104 02246 000060      48
+ 2105 02247 000000      0
+ 2106 02250 000060      48
+ 2107 02251 000010      8
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 39
+
+
+ 2108 02252 000050      40
+ 2109 02253 000020      16
+ 2110 02254 000040      32
+ 2111 02255 000020      16
+ 2112 02256 000030      24
+ 2113 02257 000010      8
+ 2114 02260 000020      16
+ 2115 02261 000000      0
+ 2116 02262 000010      8
+ 2117 02263 000000      0
+ 2118 02264 000000      0
+ 2119 02265 000020      16
+ 2120 02266 000000      0
+ 2121 02267 000010      8
+ 2122 02270 000000      0
+ 2123 02271 000000      0
+ 2124                   
+ 2125                   
+ 2126                   
+ 2127                   
+ 2128                   dig3,
+ 2129 02272 000060      48
+ 2130 02273 000000      0
+ 2131 02274 000060      48
+ 2132 02275 000010      8
+ 2133 02276 000050      40
+ 2134 02277 000020      16
+ 2135 02300 000040      32
+ 2136 02301 000020      16
+ 2137 02302 000030      24
+ 2138 02303 000000      0
+ 2139 02304 000030      24
+ 2140 02305 000010      8
+ 2141 02306 000020      16
+ 2142 02307 000020      16
+ 2143 02310 000010      8
+ 2144 02311 000020      16
+ 2145 02312 000000      0
+ 2146 02313 000010      8
+ 2147 02314 000000      0
+ 2148 02315 000000      0
+ 2149                   
+ 2150                   dig4,
+ 2151 02316 000060      48
+ 2152 02317 000000      0
+ 2153 02320 000050      40
+ 2154 02321 000000      0
+ 2155 02322 000040      32
+ 2156 02323 000000      0
+ 2157 02324 000030      24
+ 2158 02325 000000      0
+ 2159 02326 000030      24
+ 2160 02327 000010      8
+ 2161 02330 000060      48
+ 2162 02331 000020      16
+ 2163 02332 000050      40
+ 2164 02333 000020      16
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 40
+
+
+ 2165 02334 000040      32
+ 2166 02335 000020      16
+ 2167 02336 000030      24
+ 2168 02337 000020      16
+ 2169 02340 000020      16
+ 2170 02341 000020      16
+ 2171 02342 000010      8
+ 2172 02343 000020      16
+ 2173 02344 000000      0
+ 2174 02345 000020      16
+ 2175                   
+ 2176                   
+ 2177                   
+ 2178                   dig5,
+ 2179 02346 000060      48
+ 2180 02347 000020      16
+ 2181 02350 000060      48
+ 2182 02351 000010      8
+ 2183 02352 000060      48
+ 2184 02353 000000      0
+ 2185 02354 000050      40
+ 2186 02355 000000      0
+ 2187 02356 000040      32
+ 2188 02357 000000      0
+ 2189 02360 000030      24
+ 2190 02361 000000      0
+ 2191 02362 000030      24
+ 2192 02363 000010      8
+ 2193 02364 000020      16
+ 2194 02365 000020      16
+ 2195 02366 000010      8
+ 2196 02367 000020      16
+ 2197 02370 000000      0
+ 2198 02371 000010      8
+ 2199 02372 000000      0
+ 2200 02373 000000      0
+ 2201                   
+ 2202                   
+ 2203                   dig6,
+ 2204 02374 000030      24
+ 2205 02375 000010      8
+ 2206 02376 000050      40
+ 2207 02377 000020      16
+ 2208 02400 000060      48
+ 2209 02401 000010      8
+ 2210 02402 000050      40
+ 2211 02403 000000      0
+ 2212 02404 000040      32
+ 2213 02405 000000      0
+ 2214 02406 000030      24
+ 2215 02407 000000      0
+ 2216 02410 000020      16
+ 2217 02411 000020      16
+ 2218 02412 000020      16
+ 2219 02413 000000      0
+ 2220 02414 000010      8
+ 2221 02415 000020      16
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 41
+
+
+ 2222 02416 000010      8
+ 2223 02417 000000      0
+ 2224 02420 000000      0
+ 2225 02421 000010      8
+ 2226                   
+ 2227                   
+ 2228                   dig8,
+ 2229 02422 000060      48
+ 2230 02423 000010      8
+ 2231 02424 000050      40
+ 2232 02425 000020      16
+ 2233 02426 000050      40
+ 2234 02427 000000      0
+ 2235 02430 000040      32
+ 2236 02431 000020      16
+ 2237 02432 000040      32
+ 2238 02433 000000      0
+ 2239 02434 000030      24
+ 2240 02435 000010      8
+ 2241 02436 000020      16
+ 2242 02437 000020      16
+ 2243 02440 000020      16
+ 2244 02441 000000      0
+ 2245 02442 000010      8
+ 2246 02443 000020      16
+ 2247 02444 000010      8
+ 2248 02445 000000      0
+ 2249 02446 000000      0
+ 2250 02447 000010      8
+ 2251                   
+ 2252                   
+ 2253                   dig7,
+ 2254 02450 000060      48
+ 2255 02451 000000      0
+ 2256 02452 000060      48
+ 2257 02453 000010      8
+ 2258 02454 000060      48
+ 2259 02455 000020      16
+ 2260 02456 000050      40
+ 2261 02457 000020      16
+ 2262 02460 000040      32
+ 2263 02461 000020      16
+ 2264 02462 000030      24
+ 2265 02463 000010      8
+ 2266 02464 000020      16
+ 2267 02465 000010      8
+ 2268 02466 000010      8
+ 2269 02467 000010      8
+ 2270 02470 000000      0
+ 2271 02471 000010      8
+ 2272                   
+ 2273                   
+ 2274                   dig0,
+ 2275 02472 000060      48
+ 2276 02473 000010      8
+ 2277 02474 000050      40
+ 2278 02475 000020      16
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 42
+
+
+ 2279 02476 000050      40
+ 2280 02477 000000      0
+ 2281 02500 000040      32
+ 2282 02501 000020      16
+ 2283 02502 000040      32
+ 2284 02503 000000      0
+ 2285 02504 000030      24
+ 2286 02505 000020      16
+ 2287 02506 000030      24
+ 2288 02507 000000      0
+ 2289 02510 000020      16
+ 2290 02511 000020      16
+ 2291 02512 000020      16
+ 2292 02513 000000      0
+ 2293 02514 000010      8
+ 2294 02515 000020      16
+ 2295 02516 000010      8
+ 2296 02517 000000      0
+ 2297 02520 000000      0
+ 2298 02521 000010      8
+ 2299                   
+ 2300                   
+ 2301                   
+ 2302                   
+ 2303                   dig9,
+ 2304 02522 000060      48
+ 2305 02523 000010      8
+ 2306 02524 000050      40
+ 2307 02525 000000      0
+ 2308 02526 000040      32
+ 2309 02527 000000      0
+ 2310 02530 000030      24
+ 2311 02531 000010      8
+ 2312 02532 000050      40
+ 2313 02533 000020      16
+ 2314 02534 000040      32
+ 2315 02535 000020      16
+ 2316 02536 000030      24
+ 2317 02537 000020      16
+ 2318 02540 000020      16
+ 2319 02541 000020      16
+ 2320 02542 000010      8
+ 2321 02543 000020      16
+ 2322 02544 000000      0
+ 2323 02545 000010      8
+ 2324 02546 000000      0
+ 2325 02547 000000      0
+ 2326                   
+ 2327                   
+ 2328                   digDt,
+ 2329 02550 002472      	dig0
+ 2330 02551 002226      	dig1
+ 2331 02552 002246      	dig2
+ 2332 02553 002272      	dig3
+ 2333 02554 002316      	dig4
+ 2334 02555 002346      	dig5
+ 2335 02556 002374      	dig6
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 43
+
+
+ 2336 02557 002450      	dig7
+ 2337 02560 002422      	dig8
+ 2338 02561 002522      	dig9
+ 2339 02562 002664      	digA
+ 2340 02563 002720      	digB
+ 2341 02564 002754      	digC
+ 2342 02565 002776      	digD
+ 2343 02566 003032      	digE
+ 2344 02567 003062      	digF
+ 2345 02570 003106      	digG
+ 2346 02571 003136      	digH
+ 2347 02572 003174      	digI
+ 2348 02573 003222      	digJ
+ 2349 02574 003244      	digK
+ 2350 02575 003300      	digL
+ 2351 02576 003322      	digM
+ 2352 02577 003360      	digN
+ 2353 02600 003414      	digO
+ 2354 02601 003444      	digP
+ 2355 02602 003472      	digQ
+ 2356 02603 003520      	digR
+ 2357 02604 003554      	digS
+ 2358 02605 003576      	digT
+ 2359 02606 003620      	digU
+ 2360 02607 003652      	digV
+ 2361 02610 003702      	digW
+ 2362 02611 003740      	digX
+ 2363 02612 003772      	digY
+ 2364 02613 004016      	digZ
+ 2365 02614 004044      	digDs
+ 2366 02615 004052      	digEq
+ 2367                   
+ 2368                   digLn,
+ 2369 02616 000014      	12
+ 2370 02617 000010      	8
+ 2371 02620 000012      	10
+ 2372 02621 000012      	10
+ 2373 02622 000014      	12
+ 2374 02623 000013      	11
+ 2375 02624 000013      	11
+ 2376 02625 000011      	9
+ 2377 02626 000013      	11
+ 2378 02627 000013      	11
+ 2379 02630 000016      	14 
+ 2380 02631 000016      	14
+ 2381 02632 000011      	9
+ 2382 02633 000016      	14
+ 2383 02634 000014      	12
+ 2384 02635 000012      	10
+ 2385 02636 000014      	12
+ 2386 02637 000017      	15
+ 2387 02640 000013      	11
+ 2388 02641 000011      	9
+ 2389 02642 000016      	14
+ 2390 02643 000011      	9
+ 2391 02644 000017      	15
+ 2392 02645 000016      	14
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 44
+
+
+ 2393 02646 000014      	12
+ 2394 02647 000013      	11
+ 2395 02650 000013      	11
+ 2396 02651 000016      	14
+ 2397 02652 000011      	9
+ 2398 02653 000011      	9
+ 2399 02654 000015      	13
+ 2400 02655 000014      	12
+ 2401 02656 000017      	15
+ 2402 02657 000015      	13
+ 2403 02660 000012      	10
+ 2404 02661 000013      	11
+ 2405 02662 000003      	3
+ 2406 02663 000006      	6
+ 2407                   
+ 2408                   
+ 2409                   digA,
+ 2410 02664 000030      24
+ 2411 02665 000010      8
+ 2412 02666 000000      0
+ 2413 02667 000020      16
+ 2414 02670 000010      8
+ 2415 02671 000020      16
+ 2416 02672 000020      16
+ 2417 02673 000020      16
+ 2418 02674 000030      24
+ 2419 02675 000020      16
+ 2420 02676 000040      32
+ 2421 02677 000020      16
+ 2422 02700 000050      40
+ 2423 02701 000020      16
+ 2424 02702 000060      48
+ 2425 02703 000010      8
+ 2426 02704 000050      40
+ 2427 02705 000000      0
+ 2428 02706 000040      32
+ 2429 02707 000000      0
+ 2430 02710 000030      24
+ 2431 02711 000000      0
+ 2432 02712 000020      16
+ 2433 02713 000000      0
+ 2434 02714 000010      8
+ 2435 02715 000000      0
+ 2436 02716 000000      0
+ 2437 02717 000000      0
+ 2438                   
+ 2439                   digB,
+ 2440 02720 000030      24
+ 2441 02721 000010      8
+ 2442 02722 000000      0
+ 2443 02723 000010      8
+ 2444 02724 000010      8
+ 2445 02725 000020      16
+ 2446 02726 000020      16
+ 2447 02727 000020      16
+ 2448 02730 000040      32
+ 2449 02731 000020      16
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 45
+
+
+ 2450 02732 000050      40
+ 2451 02733 000020      16
+ 2452 02734 000060      48
+ 2453 02735 000010      8
+ 2454 02736 000060      48
+ 2455 02737 000000      0
+ 2456 02740 000050      40
+ 2457 02741 000000      0
+ 2458 02742 000040      32
+ 2459 02743 000000      0
+ 2460 02744 000030      24
+ 2461 02745 000000      0
+ 2462 02746 000020      16
+ 2463 02747 000000      0
+ 2464 02750 000010      8
+ 2465 02751 000000      0
+ 2466 02752 000000      0
+ 2467 02753 000000      0
+ 2468                   
+ 2469                   digC,
+ 2470                   
+ 2471 02754 000060      48
+ 2472 02755 000020      16
+ 2473 02756 000060      48
+ 2474 02757 000010      8
+ 2475 02760 000050      40
+ 2476 02761 000000      0
+ 2477 02762 000040      32
+ 2478 02763 000000      0
+ 2479 02764 000030      24
+ 2480 02765 000000      0
+ 2481 02766 000020      16
+ 2482 02767 000000      0
+ 2483 02770 000010      8
+ 2484 02771 000000      0
+ 2485 02772 000000      0
+ 2486 02773 000020      16
+ 2487 02774 000000      0
+ 2488 02775 000010      8
+ 2489                   
+ 2490                   digD,
+ 2491                   
+ 2492 02776 000010      8
+ 2493 02777 000000      0
+ 2494 03000 000020      16
+ 2495 03001 000000      0
+ 2496 03002 000030      24
+ 2497 03003 000000      0
+ 2498 03004 000040      32
+ 2499 03005 000000      0
+ 2500 03006 000050      40
+ 2501 03007 000000      0
+ 2502 03010 000060      48
+ 2503 03011 000000      0
+ 2504 03012 000060      48
+ 2505 03013 000010      8
+ 2506 03014 000050      40
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 46
+
+
+ 2507 03015 000020      16
+ 2508 03016 000040      32
+ 2509 03017 000020      16
+ 2510 03020 000030      24
+ 2511 03021 000020      16
+ 2512 03022 000020      16
+ 2513 03023 000020      16
+ 2514 03024 000010      8
+ 2515 03025 000020      16
+ 2516 03026 000000      0
+ 2517 03027 000010      8
+ 2518 03030 000000      0
+ 2519 03031 000000      0
+ 2520                   
+ 2521                   
+ 2522                   
+ 2523                   digE,
+ 2524                   
+ 2525 03032 000060      48
+ 2526 03033 000020      16
+ 2527 03034 000060      48
+ 2528 03035 000010      8
+ 2529 03036 000060      48
+ 2530 03037 000000      0
+ 2531 03040 000050      40
+ 2532 03041 000000      0
+ 2533 03042 000040      32
+ 2534 03043 000000      0
+ 2535 03044 000030      24
+ 2536 03045 000010      8
+ 2537 03046 000030      24
+ 2538 03047 000000      0
+ 2539 03050 000020      16
+ 2540 03051 000000      0
+ 2541 03052 000010      8
+ 2542 03053 000000      0
+ 2543 03054 000000      0
+ 2544 03055 000020      16
+ 2545 03056 000000      0
+ 2546 03057 000010      8
+ 2547 03060 000000      0
+ 2548 03061 000000      0
+ 2549                   
+ 2550                   digF,
+ 2551                   
+ 2552 03062 000060      48
+ 2553 03063 000020      16
+ 2554 03064 000060      48
+ 2555 03065 000010      8
+ 2556 03066 000060      48
+ 2557 03067 000000      0
+ 2558 03070 000050      40
+ 2559 03071 000000      0
+ 2560 03072 000040      32
+ 2561 03073 000000      0
+ 2562 03074 000030      24
+ 2563 03075 000010      8
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 47
+
+
+ 2564 03076 000030      24
+ 2565 03077 000000      0
+ 2566 03100 000020      16
+ 2567 03101 000000      0
+ 2568 03102 000010      8
+ 2569 03103 000000      0
+ 2570 03104 000000      0
+ 2571 03105 000000      0
+ 2572                   
+ 2573                   
+ 2574                   digG,
+ 2575                   
+ 2576 03106 000060      48
+ 2577 03107 000020      16
+ 2578 03110 000060      48
+ 2579 03111 000010      8
+ 2580 03112 000050      40
+ 2581 03113 000000      0
+ 2582 03114 000040      32
+ 2583 03115 000000      0
+ 2584 03116 000030      24
+ 2585 03117 000000      0
+ 2586 03120 000020      16
+ 2587 03121 000000      0
+ 2588 03122 000010      8
+ 2589 03123 000000      0
+ 2590 03124 000030      24
+ 2591 03125 000020      16
+ 2592 03126 000020      16
+ 2593 03127 000020      16
+ 2594 03130 000010      8
+ 2595 03131 000020      16
+ 2596 03132 000000      0
+ 2597 03133 000020      16
+ 2598 03134 000000      0
+ 2599 03135 000010      8
+ 2600                   
+ 2601                   digH,
+ 2602 03136 000060      48
+ 2603 03137 000020      16
+ 2604 03140 000060      48
+ 2605 03141 000000      0
+ 2606 03142 000050      40
+ 2607 03143 000020      16
+ 2608 03144 000050      40
+ 2609 03145 000000      0
+ 2610 03146 000040      32
+ 2611 03147 000020      16
+ 2612 03150 000040      32
+ 2613 03151 000000      0
+ 2614 03152 000030      24
+ 2615 03153 000020      16
+ 2616 03154 000030      24
+ 2617 03155 000010      8
+ 2618 03156 000030      24
+ 2619 03157 000000      0
+ 2620 03160 000020      16
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 48
+
+
+ 2621 03161 000020      16
+ 2622 03162 000020      16
+ 2623 03163 000000      0
+ 2624 03164 000010      8
+ 2625 03165 000020      16
+ 2626 03166 000010      8
+ 2627 03167 000000      0
+ 2628 03170 000000      0
+ 2629 03171 000020      16
+ 2630 03172 000000      0
+ 2631 03173 000000      0
+ 2632                   
+ 2633                   
+ 2634                   digI,
+ 2635                   
+ 2636 03174 000060      48
+ 2637 03175 000020      16
+ 2638 03176 000060      48
+ 2639 03177 000010      8
+ 2640 03200 000060      48
+ 2641 03201 000000      0
+ 2642 03202 000050      40
+ 2643 03203 000010      8
+ 2644 03204 000040      32
+ 2645 03205 000010      8
+ 2646 03206 000030      24
+ 2647 03207 000010      8
+ 2648 03210 000020      16
+ 2649 03211 000010      8
+ 2650 03212 000010      8
+ 2651 03213 000010      8
+ 2652 03214 000000      0
+ 2653 03215 000020      16
+ 2654 03216 000000      0
+ 2655 03217 000010      8
+ 2656 03220 000000      0
+ 2657 03221 000000      0
+ 2658                   
+ 2659                   digJ,
+ 2660 03222 000060      48
+ 2661 03223 000020      16
+ 2662 03224 000060      48
+ 2663 03225 000010      8
+ 2664 03226 000060      48
+ 2665 03227 000000      0
+ 2666 03230 000050      40
+ 2667 03231 000010      8
+ 2668 03232 000040      32
+ 2669 03233 000010      8
+ 2670 03234 000030      24
+ 2671 03235 000010      8
+ 2672 03236 000020      16
+ 2673 03237 000010      8
+ 2674 03240 000010      8
+ 2675 03241 000010      8
+ 2676 03242 000000      0
+ 2677 03243 000000      0
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 49
+
+
+ 2678                   
+ 2679                   
+ 2680                   
+ 2681                   digK,
+ 2682 03244 000020      16
+ 2683 03245 000020      16
+ 2684 03246 000010      8
+ 2685 03247 000020      16
+ 2686 03250 000000      0
+ 2687 03251 000020      16
+ 2688 03252 000050      40
+ 2689 03253 000020      16
+ 2690 03254 000060      48
+ 2691 03255 000020      16
+ 2692 03256 000040      32
+ 2693 03257 000010      8
+ 2694 03260 000030      24
+ 2695 03261 000010      8
+ 2696 03262 000060      48
+ 2697 03263 000000      0
+ 2698 03264 000050      40
+ 2699 03265 000000      0
+ 2700 03266 000040      32
+ 2701 03267 000000      0
+ 2702 03270 000030      24
+ 2703 03271 000000      0
+ 2704 03272 000020      16
+ 2705 03273 000000      0
+ 2706 03274 000010      8
+ 2707 03275 000000      0
+ 2708 03276 000000      0
+ 2709 03277 000000      0
+ 2710                   
+ 2711                   digL,
+ 2712 03300 000000      0
+ 2713 03301 000020      16
+ 2714 03302 000000      0
+ 2715 03303 000010      8
+ 2716 03304 000060      48
+ 2717 03305 000000      0
+ 2718 03306 000050      40
+ 2719 03307 000000      0
+ 2720 03310 000040      32
+ 2721 03311 000000      0
+ 2722 03312 000030      24
+ 2723 03313 000000      0
+ 2724 03314 000020      16
+ 2725 03315 000000      0
+ 2726 03316 000010      8
+ 2727 03317 000000      0
+ 2728 03320 000000      0
+ 2729 03321 000000      0
+ 2730                   
+ 2731                   
+ 2732                   digM,
+ 2733 03322 000050      40
+ 2734 03323 000010      8
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 50
+
+
+ 2735 03324 000060      48
+ 2736 03325 000020      16
+ 2737 03326 000050      40
+ 2738 03327 000020      16
+ 2739 03330 000040      32
+ 2740 03331 000020      16
+ 2741 03332 000030      24
+ 2742 03333 000020      16
+ 2743 03334 000020      16
+ 2744 03335 000020      16
+ 2745 03336 000010      8
+ 2746 03337 000020      16
+ 2747 03340 000000      0
+ 2748 03341 000020      16
+ 2749 03342 000060      48
+ 2750 03343 000000      0
+ 2751 03344 000050      40
+ 2752 03345 000000      0
+ 2753 03346 000040      32
+ 2754 03347 000000      0
+ 2755 03350 000030      24
+ 2756 03351 000000      0
+ 2757 03352 000020      16
+ 2758 03353 000000      0
+ 2759 03354 000010      8
+ 2760 03355 000000      0
+ 2761 03356 000000      0
+ 2762 03357 000000      0
+ 2763                   
+ 2764                   
+ 2765                   digN,
+ 2766                   
+ 2767 03360 000060      48
+ 2768 03361 000010      8
+ 2769 03362 000050      40
+ 2770 03363 000020      16
+ 2771 03364 000040      32
+ 2772 03365 000020      16
+ 2773 03366 000030      24
+ 2774 03367 000020      16
+ 2775 03370 000020      16
+ 2776 03371 000020      16
+ 2777 03372 000010      8
+ 2778 03373 000020      16
+ 2779 03374 000000      0
+ 2780 03375 000020      16
+ 2781 03376 000060      48
+ 2782 03377 000000      0
+ 2783 03400 000050      40
+ 2784 03401 000000      0
+ 2785 03402 000040      32
+ 2786 03403 000000      0
+ 2787 03404 000030      24
+ 2788 03405 000000      0
+ 2789 03406 000020      16
+ 2790 03407 000000      0
+ 2791 03410 000010      8
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 51
+
+
+ 2792 03411 000000      0
+ 2793 03412 000000      0
+ 2794 03413 000000      0
+ 2795                   
+ 2796                   digO,
+ 2797 03414 000060      48
+ 2798 03415 000010      8
+ 2799 03416 000050      40
+ 2800 03417 000020      16
+ 2801 03420 000050      40
+ 2802 03421 000000      0
+ 2803 03422 000040      32
+ 2804 03423 000020      16
+ 2805 03424 000040      32
+ 2806 03425 000000      0
+ 2807 03426 000030      24
+ 2808 03427 000020      16
+ 2809 03430 000030      24
+ 2810 03431 000000      0
+ 2811 03432 000020      16
+ 2812 03433 000020      16
+ 2813 03434 000020      16
+ 2814 03435 000000      0
+ 2815 03436 000010      8
+ 2816 03437 000020      16
+ 2817 03440 000010      8
+ 2818 03441 000000      0
+ 2819 03442 000000      0
+ 2820 03443 000010      8
+ 2821                   
+ 2822                   digP,
+ 2823                   
+ 2824 03444 000030      24
+ 2825 03445 000010      8
+ 2826 03446 000040      32
+ 2827 03447 000020      16
+ 2828 03450 000050      40
+ 2829 03451 000020      16
+ 2830 03452 000060      48
+ 2831 03453 000010      8
+ 2832 03454 000060      48
+ 2833 03455 000000      0
+ 2834 03456 000050      40
+ 2835 03457 000000      0
+ 2836 03460 000040      32
+ 2837 03461 000000      0
+ 2838 03462 000030      24
+ 2839 03463 000000      0
+ 2840 03464 000020      16
+ 2841 03465 000000      0
+ 2842 03466 000010      8
+ 2843 03467 000000      0
+ 2844 03470 000000      0
+ 2845 03471 000000      0
+ 2846                   
+ 2847                   digQ,
+ 2848                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 52
+
+
+ 2849 03472 000060      48
+ 2850 03473 000010      8
+ 2851 03474 000050      40
+ 2852 03475 000020      16
+ 2853 03476 000050      40
+ 2854 03477 000000      0
+ 2855 03500 000040      32
+ 2856 03501 000020      16
+ 2857 03502 000040      32
+ 2858 03503 000000      0
+ 2859 03504 000030      24
+ 2860 03505 000020      16
+ 2861 03506 000030      24
+ 2862 03507 000000      0
+ 2863 03510 000020      16
+ 2864 03511 000020      16
+ 2865 03512 000020      16
+ 2866 03513 000000      0
+ 2867 03514 000010      8
+ 2868 03515 000010      8
+ 2869 03516 000000      0
+ 2870 03517 000020      16
+ 2871                   
+ 2872                   digR,
+ 2873                   
+ 2874 03520 000030      24
+ 2875 03521 000010      8
+ 2876 03522 000060      48
+ 2877 03523 000010      8
+ 2878 03524 000050      40
+ 2879 03525 000020      16
+ 2880 03526 000040      32
+ 2881 03527 000020      16
+ 2882 03530 000020      16
+ 2883 03531 000020      16
+ 2884 03532 000010      8
+ 2885 03533 000020      16
+ 2886 03534 000000      0
+ 2887 03535 000020      16
+ 2888 03536 000060      48
+ 2889 03537 000000      0
+ 2890 03540 000050      40
+ 2891 03541 000000      0
+ 2892 03542 000040      32
+ 2893 03543 000000      0
+ 2894 03544 000030      24
+ 2895 03545 000000      0
+ 2896 03546 000020      16
+ 2897 03547 000000      0
+ 2898 03550 000010      8
+ 2899 03551 000000      0
+ 2900 03552 000000      0
+ 2901 03553 000000      0
+ 2902                   
+ 2903                   
+ 2904                   digS,
+ 2905                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 53
+
+
+ 2906 03554 000060      48
+ 2907 03555 000010      8
+ 2908 03556 000050      40
+ 2909 03557 000020      16
+ 2910 03560 000050      40
+ 2911 03561 000000      0
+ 2912 03562 000040      32
+ 2913 03563 000000      0
+ 2914 03564 000030      24
+ 2915 03565 000010      8
+ 2916 03566 000020      16
+ 2917 03567 000020      16
+ 2918 03570 000010      8
+ 2919 03571 000020      16
+ 2920 03572 000010      8
+ 2921 03573 000000      0
+ 2922 03574 000000      0
+ 2923 03575 000010      8
+ 2924                   
+ 2925                   digT,
+ 2926                   
+ 2927 03576 000060      48
+ 2928 03577 000020      16
+ 2929 03600 000060      48
+ 2930 03601 000000      0
+ 2931 03602 000060      48
+ 2932 03603 000010      8
+ 2933 03604 000050      40
+ 2934 03605 000010      8
+ 2935 03606 000040      32
+ 2936 03607 000010      8
+ 2937 03610 000030      24
+ 2938 03611 000010      8
+ 2939 03612 000020      16
+ 2940 03613 000010      8
+ 2941 03614 000010      8
+ 2942 03615 000010      8
+ 2943 03616 000000      0
+ 2944 03617 000010      8
+ 2945                   
+ 2946                   
+ 2947                   
+ 2948                   digU,
+ 2949                   
+ 2950                   
+ 2951 03620 000000      0
+ 2952 03621 000010      8
+ 2953 03622 000060      48
+ 2954 03623 000020      16
+ 2955 03624 000050      40
+ 2956 03625 000020      16
+ 2957 03626 000040      32
+ 2958 03627 000020      16
+ 2959 03630 000030      24
+ 2960 03631 000020      16
+ 2961 03632 000020      16
+ 2962 03633 000020      16
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 54
+
+
+ 2963 03634 000010      8
+ 2964 03635 000020      16
+ 2965 03636 000060      48
+ 2966 03637 000000      0
+ 2967 03640 000050      40
+ 2968 03641 000000      0
+ 2969 03642 000040      32
+ 2970 03643 000000      0
+ 2971 03644 000030      24
+ 2972 03645 000000      0
+ 2973 03646 000020      16
+ 2974 03647 000000      0
+ 2975 03650 000010      8
+ 2976 03651 000000      0
+ 2977                   
+ 2978                   digV,
+ 2979                   
+ 2980 03652 000060      48
+ 2981 03653 000020      16
+ 2982 03654 000050      40
+ 2983 03655 000020      16
+ 2984 03656 000040      32
+ 2985 03657 000020      16
+ 2986 03660 000030      24
+ 2987 03661 000020      16
+ 2988 03662 000020      16
+ 2989 03663 000020      16
+ 2990 03664 000060      48
+ 2991 03665 000000      0
+ 2992 03666 000050      40
+ 2993 03667 000000      0
+ 2994 03670 000040      32
+ 2995 03671 000000      0
+ 2996 03672 000030      24
+ 2997 03673 000000      0
+ 2998 03674 000020      16
+ 2999 03675 000000      0
+ 3000 03676 000010      8
+ 3001 03677 000010      8
+ 3002 03700 000000      0
+ 3003 03701 000010      8
+ 3004                   
+ 3005                   digW,
+ 3006                   
+ 3007 03702 000000      0
+ 3008 03703 000020      16
+ 3009 03704 000000      0
+ 3010 03705 000000      0
+ 3011 03706 000010      8
+ 3012 03707 000010      8
+ 3013 03710 000060      48
+ 3014 03711 000020      16
+ 3015 03712 000050      40
+ 3016 03713 000020      16
+ 3017 03714 000040      32
+ 3018 03715 000020      16
+ 3019 03716 000030      24
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 55
+
+
+ 3020 03717 000020      16
+ 3021 03720 000020      16
+ 3022 03721 000020      16
+ 3023 03722 000010      8
+ 3024 03723 000020      16
+ 3025 03724 000060      48
+ 3026 03725 000000      0
+ 3027 03726 000050      40
+ 3028 03727 000000      0
+ 3029 03730 000040      32
+ 3030 03731 000000      0
+ 3031 03732 000030      24
+ 3032 03733 000000      0
+ 3033 03734 000020      16
+ 3034 03735 000000      0
+ 3035 03736 000010      8
+ 3036 03737 000000      0
+ 3037                   
+ 3038                   digX,
+ 3039                   
+ 3040 03740 000030      24
+ 3041 03741 000010      8
+ 3042 03742 000060      48
+ 3043 03743 000020      16
+ 3044 03744 000050      40
+ 3045 03745 000020      16
+ 3046 03746 000040      32
+ 3047 03747 000020      16
+ 3048 03750 000020      16
+ 3049 03751 000020      16
+ 3050 03752 000010      8
+ 3051 03753 000020      16
+ 3052 03754 000000      0
+ 3053 03755 000020      16
+ 3054 03756 000060      48
+ 3055 03757 000000      0
+ 3056 03760 000050      40
+ 3057 03761 000000      0
+ 3058 03762 000040      32
+ 3059 03763 000000      0
+ 3060 03764 000020      16
+ 3061 03765 000000      0
+ 3062 03766 000010      8
+ 3063 03767 000000      0
+ 3064 03770 000000      0
+ 3065 03771 000000      0
+ 3066                   
+ 3067                   digY,
+ 3068                   
+ 3069 03772 000060      48
+ 3070 03773 000020      16
+ 3071 03774 000050      40
+ 3072 03775 000020      16
+ 3073 03776 000040      32
+ 3074 03777 000020      16
+ 3075 04000 000060      48
+ 3076 04001 000000      0
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 56
+
+
+ 3077 04002 000050      40
+ 3078 04003 000000      0
+ 3079 04004 000040      32
+ 3080 04005 000000      0
+ 3081 04006 000030      24
+ 3082 04007 000010      8
+ 3083 04010 000020      16
+ 3084 04011 000010      8
+ 3085 04012 000010      8
+ 3086 04013 000010      8
+ 3087 04014 000000      0
+ 3088 04015 000010      8
+ 3089                   
+ 3090                   digZ,
+ 3091                   
+ 3092                   
+ 3093 04016 000060      48
+ 3094 04017 000000      0
+ 3095 04020 000060      48
+ 3096 04021 000010      8
+ 3097 04022 000060      48
+ 3098 04023 000020      16
+ 3099 04024 000050      40
+ 3100 04025 000020      16
+ 3101 04026 000040      32
+ 3102 04027 000020      16
+ 3103 04030 000030      24
+ 3104 04031 000010      8
+ 3105 04032 000020      16
+ 3106 04033 000000      0
+ 3107 04034 000010      8
+ 3108 04035 000000      0
+ 3109 04036 000000      0
+ 3110 04037 000020      16
+ 3111 04040 000000      0
+ 3112 04041 000010      8
+ 3113 04042 000000      0
+ 3114 04043 000000      0
+ 3115                   
+ 3116                   digDs,
+ 3117 04044 000030      24
+ 3118 04045 000020      16
+ 3119 04046 000030      24
+ 3120 04047 000010      8
+ 3121 04050 000030      24
+ 3122 04051 000000      0
+ 3123                   
+ 3124                   digEq,
+ 3125 04052 000040      32
+ 3126 04053 000020      16
+ 3127 04054 000040      32
+ 3128 04055 000010      8
+ 3129 04056 000040      32
+ 3130 04057 000000      0
+ 3131 04060 000020      16
+ 3132 04061 000020      16
+ 3133 04062 000020      16
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 57
+
+
+ 3134 04063 000010      8
+ 3135 04064 000020      16
+ 3136 04065 000000      0
+ 3137                   
+ 3138                   
+ 3139                   
+ 3140                   
+ 3141                   
+ 3142                   octal
+ 3143                   
+ 3144                   // text strings
+ 3145                   
+ 3146                   TgmNm,		
+ 3147                   			
+ 3148 04066 000001      ONE
+ 3149 04067 000027      N
+ 3150 04070 000037      V
+ 3151 04071 000012      A
+ 3152 04072 000015      D
+ 3153 04073 000016      E
+ 3154 04074 000033      R
+ 3155 04075 000062      Spc
+ 3156 04076 000031      P
+ 3157 04077 000015      D
+ 3158 04100 000031      P
+ 3159 04101 000044      Dash
+ 3160 04102 000001      ONE
+ 3161                   
+ 3162                   
+ 3163                   Tarl,
+ 3164                   
+ 3165 04103 000012      A
+ 3166 04104 000033      R
+ 3167 04105 000025      L
+ 3168 04106 000012      A
+ 3169 04107 000034      S
+ 3170 04110 000030      O
+ 3171 04111 000017      F
+ 3172 04112 000035      T
+ 3173 04113 000062      Spc
+ 3174 04114 000002      TWO
+ 3175 04115 000000      ZERO
+ 3176 04116 000002      TWO
+ 3177 04117 000003      THREE
+ 3178                   
+ 3179                   
+ 3180                   Tscrs,
+ 3181                   
+ 3182 04120 000034      S
+ 3183 04121 000014      C
+ 3184 04122 000030      O
+ 3185 04123 000033      R
+ 3186 04124 000016      E
+ 3187 04125 000034      S
+ 3188                   
+ 3189                   Tplyr,
+ 3190                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 58
+
+
+ 3191 04126 000031      P
+ 3192 04127 000025      L
+ 3193 04130 000012      A
+ 3194 04131 000042      Y
+ 3195 04132 000016      E
+ 3196 04133 000033      R
+ 3197                   
+ 3198                   
+ 3199                   
+ 3200                   TIn1,
+ 3201                   
+ 3202 04134 000043      Z
+ 3203 04135 000045      Equ
+ 3204 04136 000031      P
+ 3205 04137 000001      ONE
+ 3206 04140 000062      Spc
+ 3207 04141 000017      F
+ 3208 04142 000022      I
+ 3209 04143 000033      R
+ 3210 04144 000016      E
+ 3211 04145 000062      Spc
+ 3212 04146 000062      Spc
+ 3213 04147 000001      ONE
+ 3214 04150 000031      P
+ 3215 04151 000062      Spc
+ 3216 04152 000020      G
+ 3217 04153 000012      A
+ 3218 04154 000026      M
+ 3219 04155 000016      E
+ 3220                   
+ 3221                   TIn2,
+ 3222                   
+ 3223 04156 000026      M
+ 3224 04157 000045      Equ
+ 3225 04160 000031      P
+ 3226 04161 000002      TWO
+ 3227 04162 000062      Spc
+ 3228 04163 000017      F
+ 3229 04164 000022      I
+ 3230 04165 000033      R
+ 3231 04166 000016      E
+ 3232 04167 000062      Spc
+ 3233 04170 000062      Spc
+ 3234 04171 000002      TWO
+ 3235 04172 000031      P
+ 3236 04173 000062      Spc
+ 3237 04174 000020      G
+ 3238 04175 000012      A
+ 3239 04176 000026      M
+ 3240 04177 000016      E
+ 3241                   
+ 3242                   
+ 3243                   
+ 3244                   
+ 3245                   
+ 3246                   
+ 3247                   
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 59
+
+
+ 3248                   
+ 3249 04200 000000      	constants
+      04201 777020
+      04202 777551
+      04203 000132
+      04204 000001
+      04205 000004
+      04206 000730
+      04207 000010
+      04210 777757
+      04211 777775
+      04212 777776
+      04213 777770
+      04214 201776
+      04215 000030
+      04216 000036
+      04217 002000
+      04220 000037
+      04221 000077
+      04222 000060
+      04223 355670
+      04224 000177
+      04225 000226
+      04226 000454
+      04227 000377
+      04230 000015
+      04231 001777
+      04232 000777
+      04233 000550
+      04234 000165
+      04235 000003
+      04236 777177
+      04237 777727
+      04240 777577
+      04241 777677
+      04242 777762
+      04243 777347
+      04244 000600
+      04245 000400
+      04246 777771
+      04247 000100
+      04250 777607
+      04251 777437
+      04252 000130
+      04253 777774
+      04254 000340
+      04255 000002
+      04256 777277
+      04257 777755
+      04260 777137
+      04261 777127
+      04262 000062
+      04263 000012
+      04264 201715
+      04265 201772
+      04266 000047
+      04267 000033
+
+      ////ironic computer space  0.01  nl 2016-10-12                     Page 60
+
+
+      04270 000670
+      04271 777007
+      04272 677777
+      04273 202047
+      04274 202161
+      04275 201677
+ 3250 04471             	variables
+      04472
+ 3251                   
+ 3252       000004      	start 4
+      No errors detected

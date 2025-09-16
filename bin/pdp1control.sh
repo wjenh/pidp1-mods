@@ -3,10 +3,13 @@
 # start script for pidp1.  
 
 # Interface setting - can be 'gui', 'web', or 'apps'
-interface="web"
+interface="gui"
 
 # Front panel setting - can be 'pidp' or 'virtual'
 frontpanel="pidp"
+
+# Use USB ports for paper tape reader/punch
+usb_paper_tape="y"
 
 argc=$#
 pidp1="/opt/pidp1/bin/pdp1"
@@ -48,13 +51,13 @@ do_start() {
 	echo start panel driver, either virtual or real, depends on the symlink
 	if [ "$frontpanel" = "pidp" ]; then
 		echo starting PiDP-1 hardware front panel driver
-	        nohup bin/panel_pidp1 &
+	        nohup bin/panel_pidp1 > /dev/null 2>&1 &
 	elif [ "$frontpanel" = "virtual" ]; then
 		echo starting on-screen virtual front panel, not PiDP-1 hardware
 		echo use
 		echo    pdp1control panel pidp
 		echo to change that, if you have a PiDP-1!
-	        nohup bin/vpanel_pdp1 &
+	        nohup bin/vpanel_pdp1 > /dev/null 2>&1 &
 	else
                 echo ERROR: NO VALID FRONT PANEL DRIVER, fix with
 		echo    pdp1control panel
@@ -78,25 +81,30 @@ do_start() {
 	if [ "$interface" = "gui" ]; then
 		echo start gui peripherals
 		sleep 2
-		nohup bin/pdp1_periphES &
+		nohup bin/pdp1_periphES > /dev/null 2>&1 &
 	elif [ "$interface" = "web" ]; then
 		echo start web server
 		cd /opt/pidp1/web_pdp1
-		nohup go run /opt/pidp1/web_pdp1/pdpsrv.go &
+		nohup go run /opt/pidp1/web_pdp1/pdpsrv.go > /dev/null 2>&1 &
 		cd /opt/pidp1
 	elif [ "$interface" = "apps" ]; then
 		echo start apps
 		sleep 1
 		echo start p7simES
-		nohup bin/p7simES localhost &
+		nohup bin/p7simES localhost > /dev/null 2>&1 &
 		sleep 1
 		echo start tapevis
-		nohup bin/tapevis &
+		nohup bin/tapevis > /dev/null 2>&1 &
 	fi
 
 	sleep 1 # 0.3
 	echo "Configuring PiDP-1 for boot number $sw"
 	cat "bootcfg/${sw}.cfg" | bin/pdp1ctl
+	
+	if [ "$usb_paper_tape" = "y" ]; then
+		echo start usb paper tape tool
+		nohup bin/pdp1_usb_monitor > /dev/null 2>&1  &
+	fi
 
 	return $status
 }

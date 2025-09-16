@@ -1,0 +1,130 @@
+
+      David Mapes Hack                                                    Page 1
+
+
+    1                   David Mapes Hack
+    2                   
+    3                   / redacted by Norbert Landsteiner, 2017
+    4                   / compare: http://www.computer-history.info/Page2.dir/pages/Mapes.html
+    5                   
+    6                   / define a shorthand for the ioh instruction (wait for completion pulse)
+    7                   
+    8       730000      	ioh=iot i
+    9                   
+   10                   / a macro to swap the contents of AC and the IO register
+   11                   
+   12                   define swap
+   13                   	rcl 9s
+   14                   	rcl 9s
+   15                   	terminate
+   16                   
+   17                   / display macros
+   18                   
+   19                   define disp1			/ display a single dot
+   20                   	dpy -i			/ display point (x,y) on CRT: no need to wait
+   21                   	terminate
+   22                   
+   23                   define disp2			/ display two dots at (x,y) and (y,x)
+   24                   	dpy-4000		/ display (x,y), request completion pulse
+   25                   	swap
+   26                   	ioh			/ wait for completion pulse from display
+   27                   	dpy -i			/ display (y,x), no wait
+   28                   	terminate
+   29                   
+   30                   define disp8			/ displays 8 points
+   31                   	dpy-4000		/ display (x,y)
+   32                   	cma			/ complement AC (AC = -AC)
+   33                   	ioh
+   34                   	dpy-4000		/ display (-x,y)
+   35                   	swap
+   36                   	ioh
+   37                   	dpy-4000		/ display (y,-x)
+   38                   	cma
+   39                   	ioh
+   40                   	dpy-4000		/ display (-y,-x)
+   41                   	swap
+   42                   	ioh
+   43                   	dpy-4000		/ display (-x,-y)
+   44                   	cma
+   45                   	ioh
+   46                   	dpy-4000		/ display (x,-y)
+   47                   	swap
+   48                   	ioh
+   49                   	dpy-4000		/ display (-y,x)
+   50                   	cma
+   51                   	ioh
+   52                   	dpy-i			/ display (y,x), no wait
+   53                   	terminate
+   54                   
+   55                   
+   56                   / minimal prespan for sequence break system
+   57                   
+
+      David Mapes Hack                                                    Page 2
+
+
+   58 00000             0/	opr
+      00000 760000
+   59 00001 760000      	opr
+   60 00002 760000      	opr
+   61 00003 760000      	opr
+   62 00004 600100      	jmp loop
+   63                   
+   64                   / main
+   65                   
+   66 00100             100/
+   67 00100 200146      loop,	lac  y
+   68 00101 540147      	mul  c1
+   69 00102 400145      	add  x
+   70 00103 240145      	dac  x			/ x = x + y * c1
+   71 00104 540150      	mul  c2
+   72 00105 400146      	add  y
+   73 00106 240146      	dac  y			/ y = y + x * c2
+   74 00107 220146      	lio  y
+   75 00110 200145      	lac  x
+   76                   	disp8			/ macro for display (exchange this one)
+      00111 724007
+      00112 761000
+      00113 730000
+      00114 724007
+      00115 663777
+      00116 663777
+      00117 730000
+      00120 724007
+      00121 761000
+      00122 730000
+      00123 724007
+      00124 663777
+      00125 663777
+      00126 730000
+      00127 724007
+      00130 761000
+      00131 730000
+      00132 724007
+      00133 663777
+      00134 663777
+      00135 730000
+      00136 724007
+      00137 761000
+      00140 730000
+      00141 720007
+   77                   
+   78                   / for visual effect
+   79 00142 440147      	idx  c1			/ c1 ++
+   80 00143 440150      	idx  c2			/ c2 ++
+   81 00144 600100      	jmp  loop
+   82                   
+   83                   
+   84 00145 000000      x,	0
+   85 00146 040000      y,	040000			/ +32
+   86 00147 040000      c1,	040000			/ +1/8
+   87 00150 737777      c2,	737777			/ -1/8
+   88                   
+
+      David Mapes Hack                                                    Page 3
+
+
+   89                   
+   90       000100      	start 100
+
+      No errors detected

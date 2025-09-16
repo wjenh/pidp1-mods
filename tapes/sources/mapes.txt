@@ -1,0 +1,90 @@
+David Mapes Hack
+
+/ redacted by Norbert Landsteiner, 2017
+/ compare: http://www.computer-history.info/Page2.dir/pages/Mapes.html
+
+/ define a shorthand for the ioh instruction (wait for completion pulse)
+
+	ioh=iot i
+
+/ a macro to swap the contents of AC and the IO register
+
+define swap
+	rcl 9s
+	rcl 9s
+	terminate
+
+/ display macros
+
+define disp1			/ display a single dot
+	dpy -i			/ display point (x,y) on CRT: no need to wait
+	terminate
+
+define disp2			/ display two dots at (x,y) and (y,x)
+	dpy-4000		/ display (x,y), request completion pulse
+	swap
+	ioh			/ wait for completion pulse from display
+	dpy -i			/ display (y,x), no wait
+	terminate
+
+define disp8			/ displays 8 points
+	dpy-4000		/ display (x,y)
+	cma			/ complement AC (AC = -AC)
+	ioh
+	dpy-4000		/ display (-x,y)
+	swap
+	ioh
+	dpy-4000		/ display (y,-x)
+	cma
+	ioh
+	dpy-4000		/ display (-y,-x)
+	swap
+	ioh
+	dpy-4000		/ display (-x,-y)
+	cma
+	ioh
+	dpy-4000		/ display (x,-y)
+	swap
+	ioh
+	dpy-4000		/ display (-y,x)
+	cma
+	ioh
+	dpy-i			/ display (y,x), no wait
+	terminate
+
+
+/ minimal prespan for sequence break system
+
+0/	opr
+	opr
+	opr
+	opr
+	jmp loop
+
+/ main
+
+100/
+loop,	lac  y
+	mul  c1
+	add  x
+	dac  x			/ x = x + y * c1
+	mul  c2
+	add  y
+	dac  y			/ y = y + x * c2
+	lio  y
+	lac  x
+	disp8			/ macro for display (exchange this one)
+
+/ for visual effect
+	idx  c1			/ c1 ++
+	idx  c2			/ c2 ++
+	jmp  loop
+
+
+x,	0
+y,	040000			/ +32
+c1,	040000			/ +1/8
+c2,	737777			/ -1/8
+
+
+	start 100

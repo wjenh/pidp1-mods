@@ -1,0 +1,211 @@
+MINSKY
+
+/ source: http:/textfiles.com/bitsavers/bits/DEC/pdp1/from_peter_samson/dpys5.mac
+/ all additional annotations by me, Norbert Landsteiner, prefixed by "/".
+
+/ Code for PDP-1 Macro assembler
+/ PDP-1 characteristics:
+/ 18-bit words, 1's complement, deposit AC (dac) non-destructive, all values octal
+/ address parts of instructions in lower 12 bits - absolute address range (0..7777)
+/ opcodes in highest 2 nibbles of instruction word (bit 5 is defer bit "i", here unused)
+/ shift instructions are micro-coded, number of high bits give number of bit-positions
+/ as encoded in constants "s1" (1 = 1 hi-bit) .. "s9" (0777 = 9 hi-bits).
+/ AC and IO may be combined for shift instructions to form a temporary 36-bit register
+/ display instruction "dpy" displays a dot at x = AC, y = IO (only highest 10 bits used)
+/ display is -512..+512 with origin at center, -x = left, -y = top.
+/ "dpy-i" modifies the display instruction not to wait for the completion pulse from the
+/ display,normally triggered after 50 microseconds. Since the code takes longer to run
+/ in between display commands, there's no need to wait in this particular program.
+/ timing: memory cycle = 5 microseconds
+/ internal instruction = 1 mem-cycle, address-lookup adds another one (as would do a defer)
+/ i.e.: cla (clear AC, internal instr) = 5 us, lac addr (memory instr) = 10 us,
+/ see http:/www.masswerk.at/spacewar/inside/pdp1-instructions.html for details.
+
+/ The Minskytron interconnects 3 oscillators based on a code for displaying circles
+/ as discovered by Marvin Minsky:
+
+/ >  Here is an elegant way to draw almost circles on a point-plotting
+/ >  display:
+/ > 
+/ >  NEW X = OLD X – epsilon * OLD Y
+/ >  NEW Y = OLD Y + epsilon * NEW(!) X
+/ > 
+/ >  This makes a very round ellipse centered at the origin with its size
+/ >  determined by the initial point. epsilon determines the angular velocity
+/ >  of the circulating point, and slightly affects the eccentricity. If
+/ >  epsilon is a power of 2, then we don't even need multiplication, let
+/ >  alone square roots, sines, and cosines! The "circle" will be perfectly
+/ >  stable because the points soon become periodic.
+/ > 
+/ >  The circle algorithm was invented by mistake when I tried to save one
+/ >  register in a display hack! Ben Gurley had an amazing display hack using
+/ >  only about six or seven instructions, and it was a great wonder. But it
+/ >  was basically line-oriented. It occurred to me that it would be exciting
+/ >  to have curves, and I was trying to get a curve display hack with
+/ >  minimal instructions.
+
+/ "Item 149 (Minsky): Circle Algorithm" in HAKMEM,
+/ http:/www.inwap.com/pdp10/hbaker/hakmem/hacks.html
+
+
+
+/ start at 500 for Minskytron
+/ (uses TW)
+
+/ initially read the testword and swap contents into IO
+/ (IO will be unaffected by computations, so it serves here as an 18-bits store)
+
+500/  lat        / read testword (18 bits) into AC
+      rcl 9s     / two rotational shifts by 9 bits across combined AC and IO registers
+      rcl 9s     /   effect: swap AC and IO, testword contents now in IO
+
+/ assemble a shift instruction for every 3 bits of the contents of IO (from testword)
+
+m1,   jsp gsh    / call subroutine gsh to get first shift instruction (in AC)
+      dac sh0    / store it in address sh0 (osc. #1, x-factor)
+      jsp gsh    / get next shift
+      dac sh1    / store it in sh1 (osc. #1, y-factor)
+      jsp gsh    / get next
+      dac sh2    / store it in sh2 (osc. #2, x-factor)
+      jsp gsh    / get next
+      dac sh3    / store it in sh3 (osc. #2, y-factor)
+      jsp gsh    / get next
+      dac sh4    / store it in sh4 (osc. #3, x-factor)
+      jsp gsh    / get next
+      dac sh5    / store it in sh5 (osc. #3, y-factor)
+
+/ set up x/y values of oscillators from initial values table
+
+m2,   lac xa0    / load contents of xa0
+      dac xa     / store it in xa
+      lac xb0    / same for xb, xc, ya, yb, and yc
+      dac xb
+      lac xc0
+      dac xc
+      lac ya0
+      dac ya
+      lac yb0
+      dac yb
+      lac yc0
+      dac yc
+
+/ set up complete
+/ main loop, consisting of code to drive 3 interconnected oscillators
+
+m3a,  lac xa     / osc. #1, load contents of xa
+      add xb     / add contents of xb to it (x from osc. #2)
+      xct sh0    / execute shift instruction stored in sh0
+      add ya     / add contents of ya to it
+      dac ya     / deposit contents of AC in ya
+      sub yb     / subtract contents of yb  (y from osc #2)
+      xct sh1    / execute shift in sh1
+      cma        / complement AC
+      add xa     / add contents of xa
+      dac xa     / deposit contents of AC in address xa
+      lio ya     / load contents of ya into IO (y-coor for display)
+      dpy-i      / display a dot at x = xa, y = ya (only highest 10 bits significant)
+                 / range: -512 .. +512 (display 1024 x 1024, origin at center, -x left, -y: top)
+
+                 / so, we just calculated
+                 / ya += (xa + xb) >> sh0; xa -= (ya - yb) >> sh1;
+                 / and display it at ( xa >> 8 | ya >> 8 )
+
+
+m3b,  lac xb     / osc #2: yb += (xb - xc) >> sh2; xb -= (yb - yc) >> sh3;
+      sub xc     / here we subtract the x from osc #3 (is add above)!
+      xct sh2
+      add yb
+      dac yb
+      sub yc
+      xct sh3
+      cma
+      add xb
+      dac xb
+      lio yb
+      dpy-i       / display it at ( xb >> 8 | yb >> 8 )
+
+
+m3c,  lac xc      / osc #3: yc += (xc - xa) >> sh4; xc -= (yc - ya) >> sh5;
+      sub xa      / subtraction as in osc. #2
+      xct sh4
+      add yc
+      dac yc
+      sub ya
+      xct sh5
+      cma
+      add xc
+      dac xc
+      lio yc
+      dpy-i        / display it at ( xc >> 8 | yc >> 8 )
+
+      jmp m3a      / end of main loop, jump to osc. #1 and redo
+
+/ here we extract the next 3 bits from the testword contents (in IO)
+/ by rotating them into the 3 highest bits of a previously clean AC
+/ this serves as an offset to addr gst (stored in gsc), thus selecting
+/ an instruction for an arithmetic shift to the right by 1 to 8 bits,
+/ put in AC as we return from the subroutine
+
+gsh,  dap gsx      / (subroutine) deposit return address in address part of gsx
+      cla          / clear AC
+      rcl 3s       / rotate combined AC and IO right by 3 bits (get next 3 bits into AC)
+      add gsc      / add contents of gsc to it (result: addr of gst + offset 0..7)
+      dap .+1      / put it in address part of next location
+      lac .        / execute "load contents of address into AC" (get shift instr from table)
+gsx,  jmp .        / return
+
+gsc,  gst          / addr of table (starting directly below, used above)
+gst,  sar 1s       / here's a table of shift instructions to load
+      sar 2s       /   containing instr. for right shifts by 1 to 8 bits
+      sar 3s
+      sar 4s
+      sar 5s
+      sar 6s
+      sar 7s
+      sar 8s
+      sar 9s    / not used, but was in orig.
+
+/ end of shift-assembly routine
+
+/ constants for initial values for oscillators
+/ encoded as instructions, but used as numerical values.
+/ (this may be the result of a disassembly?)
+/
+/ these initial positions give the corners of an upright triangle
+/ with the base through the center origin of the screen (+):
+/
+/                  b  (0 | 0100)
+/
+/
+/  (-040 | 0)  a   +   c  (040 | 0)
+/
+/ (points in screen coordinates = 10 most significant bits of 18-bit words)
+
+xa0,  dpy i 17770  / (730007 + 10000) + 17770 = 757777 = -020000 (1's complement!)
+xb0,  0            / 0
+xc0,  and          / 020000
+ya0,  0            / 0
+yb0,  ior          / 040000
+yc0,  0            / 0
+
+/ and here are the addresses for these variables
+
+xa,   0
+xb,   0
+xc,   0
+ya,   0
+yb,   0
+yc,   0
+
+/ space for assembled shift instructions (x/y modifying factors)
+
+sh0,  xx           / values inserted by program at runtime
+sh1,  xx           / "xx" actually resolves to 760400, same as "hlt" (halt)
+sh2,  xx
+sh3,  xx
+sh4,  xx
+sh5,  xx
+
+      start 500    / end of program (not in original code)
+
+/ eof

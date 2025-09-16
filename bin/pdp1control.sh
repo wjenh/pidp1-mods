@@ -67,7 +67,8 @@ do_start() {
 	bin/scanpf
 	sw=$?
 
-	sw="${2:-$sw}"
+	#sw="${2:-$sw}"
+	sw=$(printf "%o" $sw)
 	echo switches set to $sw
 
 	echo start pidp1 in screen

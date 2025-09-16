@@ -6,7 +6,7 @@
 interface="gui"
 
 # Front panel setting - can be 'pidp' or 'virtual'
-frontpanel="pidp"
+frontpanel="virtual"
 
 # Use USB ports for paper tape reader/punch
 usb_paper_tape="y"
@@ -202,6 +202,39 @@ do_panel() {
 	esac
 }
 
+do_usbtape() {
+	if [ -z "$2" ]; then
+		echo "Error: No usbtape option specified. Use 'y' or 'n'." >&2
+		return 1
+	fi
+	
+	case "$2" in
+		y|n)
+			# Use specific temporary file path
+			temp_file="/opt/pidp1/bin/pdp1control.tmp"
+			
+			# Use sed to replace the frontpanel variable assignment
+			sed "s/^usb_paper_tape=\"[^\"]*\"/usb_paper_tape=\"$2\"/" "$0" > "$temp_file"
+			
+			# Replace the original script with the modified version
+			if cp "$temp_file" "$0" && rm -f "$temp_file"; then
+				chmod +x "$0"
+				echo "usb_paper_tape set to '$2'"
+				exit 0
+			else
+				echo "Error: Failed to update script" >&2
+				rm -f "$temp_file"
+				return 1
+			fi
+			;;
+		*)
+			echo "Error: Invalid usbtape option '$2'. Use 'y' or 'n'." >&2
+			return 1
+			;;
+	esac
+}
+
+
 case "$1" in
   start)
 	do_start $1 $2
@@ -221,6 +254,9 @@ case "$1" in
 	;;
   panel)
 	do_panel $1 $2
+	;;
+  usbtape)
+	do_usbtape $1 $2
 	;;
 
   status)

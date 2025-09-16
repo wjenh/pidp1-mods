@@ -256,6 +256,30 @@ echo
 echo "NOTE - change this choice anytime through the 'pdp1control set' command"
 
 
+# Use USB paper tape feature?
+# =============================================================================
+
+while true; do
+    echo
+    read -p "Use USB sticks as paper tapes (Y/N)? " yn
+    case $yn in
+        [Yy]* )
+	    echo Activated USB paper tape option
+	    /opt/pidp1/bin/pdp1control.sh usbtape y
+	    break
+            ;;
+        [Nn]* ) 
+            echo Activated Web interface
+	    /opt/pidp1/bin/pdp1control.sh usbtape n
+	    break
+            ;;
+        * ) echo "Please answer Y or N.";;
+    esac
+done
+echo
+echo "NOTE - change this choice anytime through the 'pdp1control usbtape' command"
+
+
 # Install autostart at boot
 # =============================================================================
 if [ "$ARCH" = "amd64" ]; then

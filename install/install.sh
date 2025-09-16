@@ -154,6 +154,8 @@ while true; do
 
 		# the macro1_1 cross-compiler:
 		gcc /opt/pidp1/src/macro/macro1_1.c -o /opt/pidp1/src/macro/macro1_1
+		# the usb_paper_tape tool:
+		make -C /opt/pidp1/src/usb_paper_tape
             
 		echo Setting required access privileges to pidp1 simulator
 		# make sure pidp1 panel driver has the right privileges

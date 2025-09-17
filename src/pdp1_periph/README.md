@@ -1,27 +1,41 @@
 # Description
 
-This is a combination of p7sim and tapevis.
-It simulates a type 30 display, and visually shows
-paper tape reader and punch.
+This is the peripheral interface for the PDP-1 emulator.
+It visually simulates the Type 30 display,
+paper tape reader and punch, and the typewriter.
 
-# Features
-
-It should behave just like p7sim and tapevis.
-Admittedly this behaviour should be better documented :)
+Mounting and saving tapes can be done via the keyboard.
+For file selection to work, you need
+`tkaskopenfile` and `tkaskopenfilewrite` in your PATH.
 
 # Usage
 
-Press 'F11' to switch between windows and fullscreen mode.
+| Key    | Action                     |
+| ------ | -------------------------- |
+| F7     | mount file in reader       |
+| F8     | remount last file          |
+| F9     | saved punched tape to file |
+| F10    | clear punch                |
+| ------ | -------------------------- |
+| F1     | cycle layouts              |
+| F2     | toggle layout mode         |
+| F3     | duplicate current layout   |
+| F5     | re-read pdp1_layout.txt    |
+| F6     | save pdp1_layout.txt       |
 
-Press 'F2' to go into layout mode, here you can rearrange
-the three regions, left mouse button moves, right button resizes.
+In layout mode you can rearrange
+the four regions:
+left mouse button moves, right button resizes.
 Cycling with tab and using the arrow keys also works.
 Use ctrl to resize and shift for more precise movement.
 Space bar hides and unhides windows.
 
-Create a new layout with 'F3' and cycle through layouts with 'F1'.
-
-Save the current configuration with 'F6' and re-read it with 'F5'.
-
 The background can currently only be set by editing the configuration,
 `pdp1_layout.txt` in the current directory.
+
+# TODO
+
+* Mouse controls for tape handling
+* Resize typewriter font
+* Light pen
+* ???

@@ -59,6 +59,8 @@ const char *host = "localhost";
 int dpyfd, typfd;
 int dbgflag;
 
+int clifd[2];
+
 TTF_Font *font;
 
 typedef struct {
@@ -712,6 +714,83 @@ textinput(char *text)
 		strikeChar(c);
 }
 
+char *lasttape;
+
+void
+mountTape(const char *filename)
+{
+	static char cmd[1024];
+	snprintf(cmd, sizeof(cmd), "r %s", filename);
+	printf("%s\n", cmd);
+	write(clifd[1], cmd, strlen(cmd));
+}
+
+void
+chomp(char *line)
+{
+	char *p;
+	if(p = strchr(line, '\r'), p) *p = '\0';
+	if(p = strchr(line, '\n'), p) *p = '\0';
+}
+
+void*
+openreaderthread(void *)
+{
+	FILE* pipe = popen("tkaskopenfile", "r");
+	if(pipe == nil) {
+		printf("Failed to run tkaskopenfile\n");
+		return nil;
+	}
+	static char line[1024];
+	if(fgets(line, sizeof(line), pipe) != nil) {
+		chomp(line);
+		if(*line) {
+			mountTape(line);
+			free(lasttape);
+			lasttape = strdup(line);
+		}
+	}
+	pclose(pipe);
+
+	return nil;
+}
+
+void*
+filepunchthread(void *)
+{
+	FILE* pipe = popen("tkaskopenfilewrite", "r");
+	if(pipe == nil) {
+		printf("Failed to run tkaskopenfilewrite\n");
+		return nil;
+	}
+	static char line[1024], cmd[1024];
+	if(fgets(line, sizeof(line), pipe) != nil) {
+		chomp(line);
+		if(*line) {
+			snprintf(cmd, sizeof(cmd), "p %s", line);
+	printf("%s\n", cmd);
+			write(clifd[1], cmd, strlen(cmd));
+		}
+	}
+	pclose(pipe);
+
+	return nil;
+}
+
+void
+chooseReader(void) {
+	pthread_t th;
+	pthread_create(&th, nil, openreaderthread, nil);
+}
+
+void
+filePunch(void)
+{
+	pthread_t th;
+	pthread_create(&th, nil, filepunchthread, nil);
+}
+
+
 void
 keydown(SDL_Keysym keysym)
 {
@@ -809,6 +888,20 @@ keydown(SDL_Keysym keysym)
 		break;
 	case SDL_SCANCODE_F6:
 		saveLayout();
+		break;
+
+	case SDL_SCANCODE_F7:
+		chooseReader();
+		break;
+	case SDL_SCANCODE_F8:
+		if(lasttape)
+			mountTape(lasttape);
+		break;
+	case SDL_SCANCODE_F9:
+		filePunch();
+		break;
+	case SDL_SCANCODE_F10:
+		write(clifd[1], "p", 1);
 		break;
 
 	default:
@@ -1003,6 +1096,8 @@ main(int argc, char *argv[])
 
 	for(int i = 0; i < 1024*1024; i++)
 		indices[i] = -1;
+
+	pipe(clifd);
 
 	readLayout();
 

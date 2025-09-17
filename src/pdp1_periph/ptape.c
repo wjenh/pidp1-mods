@@ -340,7 +340,7 @@ tapethread(void *arg)
 	char c;
 	memset(pfds, 0, sizeof(pfds));
 
-	pfds[0].fd = 0;
+	pfds[0].fd = clifd[0];
 	pfds[0].events = POLLIN;
 	pfds[1].fd = -1;
 	pfds[2].fd = -1;

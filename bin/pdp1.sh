@@ -26,6 +26,9 @@ else
 		type30)
 			nohup /opt/pidp1/bin/p7simES localhost > /dev/null 2>&1 &
 			;;
+		type30b)
+			nohup /opt/pidp1/bin/p7simES -p 3401 localhost > /dev/null 2>&1 &
+			;;
 		tape)
 			nohup /opt/pidp1/bin/tapevis > /dev/null 2>&1 &
 			;;

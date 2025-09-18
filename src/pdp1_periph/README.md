@@ -16,6 +16,8 @@ For file selection to work, you need
 | F8     | remount last file          |
 | F9     | saved punched tape to file |
 | F10    | clear punch                |
+| Ctl-+  | increase font size         |
+| Ctl--  | decrease font size         |
 | ------ | -------------------------- |
 | F1     | cycle layouts              |
 | F2     | toggle layout mode         |
@@ -23,8 +25,7 @@ For file selection to work, you need
 | F5     | re-read pdp1_layout.txt    |
 | F6     | save pdp1_layout.txt       |
 
-In layout mode you can rearrange
-the four regions:
+In layout mode you can rearrange the four regions:
 left mouse button moves, right button resizes.
 Cycling with tab and using the arrow keys also works.
 Use ctrl to resize and shift for more precise movement.
@@ -36,6 +37,5 @@ The background can currently only be set by editing the configuration,
 # TODO
 
 * Mouse controls for tape handling
-* Resize typewriter font
 * Light pen
 * ???

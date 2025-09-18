@@ -341,8 +341,6 @@ process(int frmtime)
 	nnewpoints = 0;
 }
 
-//#define SAVELIST
-
 void*
 dispthread(void *args)
 {
@@ -355,23 +353,18 @@ dispthread(void *args)
 	uint64 frmtime = 33333;
 	int x, y, intensity, dt;
 
-#ifdef SAVELIST
-	static uint32 displist[1024];
-	int ndisp = 0;
-	FILE *f = fopen("displist.dat", "wb");
-#endif
-
-uint64 realtime_start = SDL_GetPerformanceCounter();
-simtime = 0;
-realtime = realtime_start;
+	uint64 realtime_start = SDL_GetPerformanceCounter();
+	simtime = 0;
+	realtime = realtime_start;
 
 	time = 0;
 	int esc = 0;
 for(;;){
 	nbytes = read(dpyfd, cmds, sizeof(cmds));
 	if(nbytes <= 0) {
-		// BUG: this can happen sometimes when it shouldn't
-		fprintf(stderr, "p7 got %d bytes\n", nbytes);
+		// This seems to happen when the pdp1 isn't noticing the closed
+		// connection quickly enough. shouldn't be a huge issue in practice
+		fprintf(stderr, "dpy disconnected\n");
 		break;
 	}
 	if((nbytes % 4) != 0) printf("yikes %d\n", nbytes), exit(1);
@@ -392,14 +385,6 @@ for(;;){
 			y = cmd>>10 & 01777;
 			intensity = cmd>>20 & 7;
 			time += dt;
-
-#ifdef SAVELIST
-			displist[ndisp++] = cmd;
-			if(ndisp == 1024) {
-				fwrite(displist, 4, ndisp, f);
-				ndisp = 0;
-			}
-#endif
 
 			if(x || y) {
 				Point *np = &newpoints[nnewpoints++];
@@ -426,7 +411,8 @@ signal_draw();
 	}
 }
 
-	exit(0);
+	SDL_Event event = { SDL_QUIT };
+	SDL_PushEvent(&event);
 }
 
 int penx;

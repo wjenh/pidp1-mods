@@ -61,6 +61,7 @@ int dbgflag;
 
 int clifd[2];
 
+char fontpath[PATH_MAX];
 TTF_Font *font;
 
 typedef struct {
@@ -91,6 +92,7 @@ typedef struct {
 	Region regions[NUM_REGIONS];
 	int w, h;
 	int fullscreen;
+	int fontsize;
 	Color bgcol;
 } Layout;
 int nlayouts = 1;
@@ -100,7 +102,7 @@ Layout layouts[10] = {
 	    { 15, 155, 480, 80, 0, 0 },
 	    { 15, 275, 480, 300, 0, 0 },
 	  },
-	  1024, 640, 0,
+	  1024, 640, 0, 16,
 	  { 0x6e, 0x8b, 0x8e, 255 } }
 };
 
@@ -110,6 +112,7 @@ typedef struct {
 	GLuint tex;
 } Glyph;
 Glyph glyphs[128];
+int fontsize;
 
 int reg = ID_READER; 
 int hover = -1;
@@ -522,7 +525,8 @@ initGlyph(int c, Glyph *g)
 	TTF_GlyphMetrics(font, c, &g->minx, &g->maxx, &g->miny, &g->maxy, &g->advance);
 //printf("%d %p %c %d %d %d %d %d    ", c, surf, i, g->minx, g->maxx, g->miny, g->maxy, g->advance);
 
-	glGenTextures(1, &g->tex);
+	if(g->tex == 0)
+		glGenTextures(1, &g->tex);
 	glBindTexture(GL_TEXTURE_2D, g->tex);
 	texDefaults();
 
@@ -538,26 +542,16 @@ initGlyph(int c, Glyph *g)
 void
 initFont(void)
 {
-/*
-	case 0x00B7:	//	·	middle dot
-	case 0x203E:	//	‾	overline
-	case 0x2192:	//	→	right arrow
-	case 0x2283:	//	⊃	superset
-	case 0x2228:	//	∨	or
-	case 0x2227:	//	∧	and
-	case 0x2191:	//	↑	up arrow
-	case 0x00D7:	//	×	times
-*/
 	for(int i = 1; i < 128; i++)
 		initGlyph(i, &glyphs[i]);
-	initGlyph(0x00B7, &glyphs[020]);
-	initGlyph(0x203E, &glyphs[021]);
-	initGlyph(0x2192, &glyphs[022]);
-	initGlyph(0x2283, &glyphs[023]);
-	initGlyph(0x2228, &glyphs[024]);
-	initGlyph(0x2227, &glyphs[025]);
-	initGlyph(0x2191, &glyphs[026]);
-	initGlyph(0x00D7, &glyphs[027]);
+	initGlyph(0x00B7, &glyphs[020]);	//	·	middle dot
+	initGlyph(0x203E, &glyphs[021]);	//	‾	overline
+	initGlyph(0x2192, &glyphs[022]);	//	→	right arrow
+	initGlyph(0x2283, &glyphs[023]);	//	⊃	superset
+	initGlyph(0x2228, &glyphs[024]);	//	∨	or
+	initGlyph(0x2227, &glyphs[025]);	//	∧	and
+	initGlyph(0x2191, &glyphs[026]);	//	↑	up arrow
+	initGlyph(0x00D7, &glyphs[027]);	//	×	times
 	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -579,8 +573,6 @@ initGL(void)
 	GLint color_vs = compileshader(GL_VERTEX_SHADER, color_vs_src);
 	GLint circle_fs = compileshader(GL_FRAGMENT_SHADER, circle_fs_src);
 	circle_program = linkprogram(color_vs, circle_fs);
-
-	initFont();
 }
 
 void resize(int w, int h);
@@ -607,7 +599,7 @@ saveLayout(void)
 		resize(realW, realH);
 	for(int i = 0; i < nlayouts; i++) { 
 		Layout *l = &layouts[i];
-		fprintf(f, "layout %d %d ", winW, winH);
+		fprintf(f, "layout %d %d %d ", winW, winH, fontsize);
 		if(l->fullscreen) fprintf(f, "fullscreen ");
 		fprintf(f, "\n");
 		int c = 0;
@@ -657,7 +649,8 @@ readLayout(void)
 			nlayouts++;
 			l = &layouts[nlayouts-1];
 			l->fullscreen = strstr(line, "fullscreen") != nil;
-			sscanf(line, "%s %d %d", cmd, &l->w, &l->h);
+			l->fontsize = 16;
+			sscanf(line, "%s %d %d %d", cmd, &l->w, &l->h, &l->fontsize);
 			l->bgcol.r = 0x6e;
 			l->bgcol.g = 0x8b;
 			l->bgcol.b = 0x8e;
@@ -704,15 +697,6 @@ setFullscreen(int f)
 }
 
 int shift, ctrl;
-
-void
-textinput(char *text)
-{
-	if(layoutmode) return;
-	int c = text[0];
-	if(c < 128)
-		strikeChar(c);
-}
 
 char *lasttape;
 
@@ -790,6 +774,27 @@ filePunch(void)
 	pthread_create(&th, nil, filepunchthread, nil);
 }
 
+void
+setfontsize(int sz)
+{
+	if(sz < 2) sz = 2;
+	fontsize = sz;
+	font = TTF_OpenFont(fontpath, fontsize);
+	if(font == nil) {
+		fprintf(stderr, "couldn't open font\n");
+		return;
+	}
+	initFont();
+	TTF_CloseFont(font);
+}
+
+void
+setlayout(int l)
+{
+	lay = l;
+	setFullscreen(layouts[lay].fullscreen);
+	setfontsize(layouts[lay].fontsize);
+}
 
 void
 keydown(SDL_Keysym keysym)
@@ -818,6 +823,9 @@ keydown(SDL_Keysym keysym)
 		break;
 	case SDL_SCANCODE_RCTRL:
 		ctrl |= 2;
+		break;
+	case SDL_SCANCODE_CAPSLOCK:
+		ctrl |= 4;
 		break;
 
 	case SDL_SCANCODE_UP:
@@ -852,8 +860,7 @@ keydown(SDL_Keysym keysym)
 		break;
 
 	case SDL_SCANCODE_F1:
-		lay = (lay+1)%nlayouts;
-		setFullscreen(layouts[lay].fullscreen);
+		setlayout((lay+1)%nlayouts);
 		break;
 
 	case SDL_SCANCODE_F2:
@@ -885,6 +892,7 @@ keydown(SDL_Keysym keysym)
 
 	case SDL_SCANCODE_F5:
 		readLayout();
+		setlayout(lay);
 		break;
 	case SDL_SCANCODE_F6:
 		saveLayout();
@@ -925,9 +933,26 @@ keyup(SDL_Keysym keysym)
 	case SDL_SCANCODE_RCTRL:
 		ctrl &= ~2;
 		break;
+	case SDL_SCANCODE_CAPSLOCK:
+		ctrl &= ~4;
+		break;
 
 	default:
 	}
+}
+
+void
+textinput(char *text)
+{
+	if(layoutmode) return;
+	int c = text[0];
+	if(ctrl) {
+		if(c == '+' || c == '=')
+			setfontsize(fontsize+1);
+		if(c == '-' || c == '_')
+			setfontsize(fontsize-1);
+	} else if(c < 128)
+		strikeChar(c);
 }
 
 int mdown;
@@ -1060,13 +1085,7 @@ main(int argc, char *argv[])
 	SDL_Init(SDL_INIT_EVERYTHING);
 	TTF_Init();
 	char *dir = bindir();
-	char fontpath[PATH_MAX];
 	snprintf(fontpath, sizeof(fontpath), "%s/DejaVuSansMono.ttf", dir);
-	font = TTF_OpenFont(fontpath, 16);
-	if(font == nil) {
-		fprintf(stderr, "couldn't open font\n");
-		return 1;
-	}
 
 #ifdef GLES
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
@@ -1092,27 +1111,24 @@ main(int argc, char *argv[])
 	SDL_GLContext gl_context = SDL_GL_CreateContext(window);
 	SDL_GL_MakeCurrent(window, gl_context);
 	SDL_GL_SetSwapInterval(1); // vsynch (1 on, 0 off)
-	SDL_GetWindowSize(window, &winW, &winH);
 
 	for(int i = 0; i < 1024*1024; i++)
 		indices[i] = -1;
 
 	pipe(clifd);
 
-	readLayout();
-
-//	gladLoadGL();
 	gladLoadGLES2Loader((GLADloadproc)SDL_GL_GetProcAddress);
 
 	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
 	SDL_ShowCursor(SDL_DISABLE);
 
+	initGL();
+
+	readLayout();
 	winW = layouts[lay].w;
 	winH = layouts[lay].h;
 	SDL_SetWindowSize(window, winW, winH);
-	setFullscreen(layouts[lay].fullscreen);
-
-	initGL();
+	setlayout(lay);
 
 	ptpbuflen = 2000;
 	ptpbuf = malloc(ptpbuflen*sizeof(int));
@@ -1127,10 +1143,9 @@ main(int argc, char *argv[])
 	pthread_create(&th, nil, tapethread, nil);
 	pthread_create(&th, nil, typthread, nil);
 
-//dispRegion.x += 200; dispRegion.w /= 2;
 	running = 1;
 	int cursortimer = 0;
-	while(running){
+	while(running) {
 		while(SDL_PollEvent(&event)) {
 			switch(event.type) {
 			case SDL_KEYDOWN:

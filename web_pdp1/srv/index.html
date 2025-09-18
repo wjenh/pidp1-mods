@@ -431,24 +431,26 @@
         }
 
         /* Fullscreen mode for display */
-        .fullscreen {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 1000;
-            background-color: #000;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
+	.fullscreen {
+	    position: fixed;
+	    top: 0;
+	    left: 0;
+	    width: 100vw;
+	    height: 100vh;
+	    z-index: 1000;
+	    background-color: #000;
+	    display: flex;
+	    justify-content: center;
+	    align-items: center;
+	}
 
-        .fullscreen canvas {
-            max-width: 95vw;
-            max-height: 95vh;
-        }
-
+	.fullscreen canvas {
+	    width: auto;
+	    height: auto;
+	    max-width: 100vw;
+	    max-height: 100vh;
+	    object-fit: contain;
+	}
         .fullscreen-exit {
             position: absolute;
             top: 20px;
@@ -596,98 +598,120 @@
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const assemblyFileInput = document.getElementById('assembly-file');
-            const assemblyFileLabel = document.getElementById('assembly-file-label');
-            const assemblyFileName = assemblyFileLabel.querySelector('.file-name-text');
+	document.addEventListener('DOMContentLoaded', function() {
+		const assemblyFileInput = document.getElementById('assembly-file');
+		const assemblyFileLabel = document.getElementById('assembly-file-label');
+		const assemblyFileName = assemblyFileLabel.querySelector('.file-name-text');
 
-            const tapeFileInput = document.getElementById('tape-file');
-            const tapeFileLabel = document.getElementById('tape-file-label');
-            const tapeFileName = tapeFileLabel.querySelector('.file-name-text');
+		const tapeFileInput = document.getElementById('tape-file');
+		const tapeFileLabel = document.getElementById('tape-file-label');
+		const tapeFileName = tapeFileLabel.querySelector('.file-name-text');
 
-            // Assembly file selection
-            assemblyFileInput.addEventListener('change', function() {
-                if (this.files.length > 0) {
-                    assemblyFileName.textContent = this.files[0].name;
-                    assemblyFileLabel.classList.add('has-file');
-                } else {
-                    assemblyFileName.textContent = '';
-                    assemblyFileLabel.classList.remove('has-file');
-                }
-            });
+		// Assembly file selection
+		assemblyFileInput.addEventListener('change', function() {
+			if (this.files.length > 0) {
+				assemblyFileName.textContent = this.files[0].name;
+				assemblyFileLabel.classList.add('has-file');
+			} else {
+				assemblyFileName.textContent = '';
+				assemblyFileLabel.classList.remove('has-file');
+			}
+		});
 
-            // Tape file selection
-            tapeFileInput.addEventListener('change', function() {
-                if (this.files.length > 0) {
-                    tapeFileName.textContent = this.files[0].name;
-                    tapeFileLabel.classList.add('has-file');
-                } else {
-                    tapeFileName.textContent = '';
-                    tapeFileLabel.classList.remove('has-file');
-                }
-            });
+		// Tape file selection
+		tapeFileInput.addEventListener('change', function() {
+			if (this.files.length > 0) {
+				tapeFileName.textContent = this.files[0].name;
+				tapeFileLabel.classList.add('has-file');
+			} else {
+				tapeFileName.textContent = '';
+				tapeFileLabel.classList.remove('has-file');
+			}
+		});
 
-            // Container for layout adjustment
-            const container = document.getElementById('main-container');
+		// Container for layout adjustment
+		const container = document.getElementById('main-container');
 
-            // Display size handling
-            const display = document.getElementById('display');
-            const size512Button = document.getElementById('size-512');
-            const size1024Button = document.getElementById('size-1024');
+		// Display size handling
+		const display = document.getElementById('display');
+		const size512Button = document.getElementById('size-512');
+		const size1024Button = document.getElementById('size-1024');
 
-            size512Button.addEventListener('click', function() {
-                // Set canvas dimensions
-                display.width = 512;
-                display.height = 512;
+		function setSize(sz) {
+			display.width = sz;
+			display.height = sz;
+			display.style.width = sz + 'px';
+			display.style.height = sz + 'px';
+		}
 
-                // Update styles to ensure container adapts
-                display.style.width = '512px';
-                display.style.height = '512px';
+		size512Button.addEventListener('click', function() {
+			setSize(512);
+			container.classList.remove('large-display');
+		});
 
-                // Remove large display class to return to 2-column layout
-                container.classList.remove('large-display');
-            });
+		size1024Button.addEventListener('click', function() {
+			setSize(1024);
+			container.classList.add('large-display');
+		});
 
-            size1024Button.addEventListener('click', function() {
-                // Set canvas dimensions
-                display.width = 1024;
-                display.height = 1024;
+		// Fullscreen handling
+		const fullscreenButton = document.getElementById('fullscreen-button');
+		const fullscreenContainer = document.getElementById('fullscreen-container');
+		const displayContainer = document.getElementById('display-container');
 
-                // Update styles to ensure container adapts
-                display.style.width = '1024px';
-                display.style.height = '1024px';
+		function gofullscreen(container) {
+			container.style.display = 'flex';
+			if(container.requestFullscreen)
+				container.requestFullscreen();
+			else if(container.webkitRequestFullscreen)
+				container.webkitRequestFullscreen();
+			else if(container.msRequestFullscreen)
+				container.msRequestFullscreen();
+		}
 
-                // Add large display class to switch to 1-column layout
-                container.classList.add('large-display');
-            });
+		fullscreenButton.addEventListener('click', function() {
+			setSize(1024);
 
-            // Fullscreen handling
-            const fullscreenButton = document.getElementById('fullscreen-button');
-            const fullscreenContainer = document.getElementById('fullscreen-container');
-            const displayContainer = document.getElementById('display-container');
+			// Clear and prepare the fullscreen container
+			fullscreenContainer.innerHTML = '';
+			fullscreenContainer.classList.add('fullscreen');
 
-            fullscreenButton.addEventListener('click', function() {
-                // Clear and prepare the fullscreen container
-                fullscreenContainer.innerHTML = '';
-                fullscreenContainer.classList.add('fullscreen');
+			// Add exit button
+			const exitButton = document.createElement('button');
+			exitButton.textContent = 'Exit Fullscreen';
+			exitButton.classList.add('fullscreen-exit');
+			exitButton.addEventListener('click', function() {
+				// Exit browser fullscreen if active
+				if(document.fullscreenElement)
+					document.exitFullscreen();
 
-                // Add exit button
-                const exitButton = document.createElement('button');
-                exitButton.textContent = 'Exit Fullscreen';
-                exitButton.classList.add('fullscreen-exit');
-                exitButton.addEventListener('click', function() {
-                    fullscreenContainer.style.display = 'none';
-		    displayContainer.appendChild(display);
-                });
+				fullscreenContainer.style.display = 'none';
+				displayContainer.appendChild(display);
 
-                // Add the display clone and exit button to the fullscreen container
-                fullscreenContainer.appendChild(display);
-                fullscreenContainer.appendChild(exitButton);
+				// Restore previous display size
+				const is1024 = container.classList.contains('large-display');
+				setSize(is1024 ? 1024 : 512);
+			});
 
-                // Show the fullscreen container
-                fullscreenContainer.style.display = 'flex';
-            });
-        });
+			// Add the display and exit button to the fullscreen container
+			fullscreenContainer.appendChild(display);
+			fullscreenContainer.appendChild(exitButton);
+
+			gofullscreen(fullscreenContainer);
+		});
+
+		document.addEventListener('fullscreenchange', function() {
+			if (!document.fullscreenElement && fullscreenContainer.style.display === 'flex') {
+				// User pressed ESC or exited fullscreen another way
+				fullscreenContainer.style.display = 'none';
+				displayContainer.appendChild(display);
+
+				// Restore previous display size
+				const is1024 = container.classList.contains('large-display');
+				setSize(is1024 ? 1024 : 512);
+			}
+		});
+	});
     </script>
     <script src="p7sim.js"></script>
     <script src="typewriter.js"></script>

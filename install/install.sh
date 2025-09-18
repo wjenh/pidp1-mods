@@ -193,8 +193,8 @@ while true; do
 	    #
 	    sudo ln -sf /opt/pidp1/bin/macro1_1 /usr/local/bin/macro1_1
 	    #
-	    sudo ln -sf /opt/pidp1/bin/tkasopenfile /usr/local/bin/tkasopenfile
-	    sudo ln -sf /opt/pidp1/bin/tkasopenfilewrite /usr/local/bin/tkasopenfilewrite
+	    sudo ln -sf /opt/pidp1/bin/tkaskopenfile /usr/local/bin/tkaskopenfile
+	    sudo ln -sf /opt/pidp1/bin/tkaskopenfilewrite /usr/local/bin/tkaskopenfilewrite
 	    break
 	    ;;
         [Nn]* ) 

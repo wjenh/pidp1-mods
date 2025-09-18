@@ -114,7 +114,7 @@ drawTypewriter(Region *r)
 	glScissor(r->x, drawH-r->y-r->h, r->w, r->h);
 	glEnable(GL_SCISSOR_TEST);
 
-	int spacing = 17;
+	int spacing = fontsize+1;
 	int x = r->x + 5;
 	int y = r->y+r->h - 10 - spacing;
 	int lx;

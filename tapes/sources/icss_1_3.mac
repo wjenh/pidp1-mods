@@ -1,0 +1,1979 @@
+ironic computer space simulator  1.3  nl 2025-06-01
+
+	mul=mus			/instruction code for multiplication
+	div=dis			/instruction code for division
+	ioh=iot i		/wait for completion pulse (CRT display)
+	szm=sza sma-szf		/skip on ac zero or minus
+	spq=szm i		/skip on ac plus and not zero
+
+define initialize A,B
+	law B
+	dap A
+	term
+
+define index A,B,C
+	idx A
+	sas B
+	jmp C
+	term
+
+define swap
+	rcl 9s
+	rcl 9s
+	term
+
+define load A,B
+	lio (B
+	dio A
+	term
+
+define setup A,B
+	law i B
+	dac A
+	term
+
+define count A,B
+	isp A
+	jmp B
+	term
+
+/macros specific to the program
+
+define scale A,B,C
+	lac A
+	sar B
+	dac C
+	term
+
+define random
+	lac ran
+	rar 1s
+	xor (355671
+	add (355671
+	dac ran
+	term
+
+
+/ Computer Space
+/ Original arcade game by Nolan Bushnell and Ted Dabney,
+/ Syzygy Engineering / Nutting Associates, 1971.
+/ 'A simulated space battle that pits
+/  computer-guided saucers against
+/  a rocket ship that you control.'
+
+/ Ironic Computer Space Simulator for PDP-1, Norbert Landsteiner, 2016/2025
+/ initial release 2016-11-10, v. 1.3 2025-06-01
+
+/ vers. 1.3:
+/ - consolidated sense switch options to preferred defaults (all off)
+/ - reworked score display options (digital or hex for rocket and/or saucers)
+
+/ sense switch options
+/ SSW 1 ...  background effect
+/              off - parallax, background stars move relatively to rocket ship.
+/              on  - stars scroll continuously to the left.
+/ SSW 2 ...  torpedo agility (steering)
+/              off - normal.
+/              on  - agile.
+/ SSW 3 ...  saucer motion
+/              off - diagonals are horizontally stretched.
+/                    (conforms more to the overall impression of original CS)
+/              on  - geometrical diagonals.
+/ SSW 4 ...  saucer piloting, which saucer is shooting?
+/              off - always the same one (as in original CS).
+/              on  - random select.
+/ SSW 5 ...  score display rocket
+/              off - decimal (normal).
+/              on  - emulate garbled hex display bug.
+/ SSW 6 ...  score display saucer
+/              off - decimal (normal).
+/              on  - emulate garbled hex display bug.
+
+/ input / control word in io as follows (like spacewar),
+/ 'high order 4 bits, rotate ccw, rotate cw, ire rocket, and fire torpedo.
+/  Low order 4 bits, same for other ship.'
+
+
+3/	jmp sbf			/ ignore seq. break
+	jmp a0			/ start addr, use control boxes
+	jmp a1			/ alt. start addr, use testword controls
+
+
+/game parameters
+
+raa,  6,	1200		/ rocket angular acceleration
+rvl,  7,	sar 8s		/ scaling rocket velocity
+ras, 10,	law i 6		/ rocket acceleration sensitivity (skip)
+rad, 11,	law i 4		/ rocket acceleration damping (averaging)
+trv, 12,	sar 7s		/ scaling torpedo velocity
+tlf, 13,	law i 250	/ torpedo life
+rsd, 14,	60		/ rocket reset delay (frames)
+etl, 15,	law i 220	/ enemy torpedo life
+etd, 16,	law i 10	/ enemy torpedo cooling (frames)
+etf, 17,	law i 100	/ enemy first torpedo cooling (after score)
+ela, 20, 	sal 6s		/ scaling enemy torp look-ahead, far
+elb, 21, 	sal 4s		/ scaling enemy torp look-ahead, near
+eld, 22,	60000		/ min distance full look-ahead
+ete, 23,	14000		/ epsilon for enemy aiming
+etn, 24,	sal 3s		/ scaling noise for enemy torpedo aim
+efd, 25,	160000		/ min distance for loose aiming
+efp, 26,	7		/ probability of loose aiming
+efe, 27,	140000		/ epsilon for loose aiming
+rto, 30,	law i 450	/ game restart delay (frames blocking input)
+ran, 31,	0		/ random number
+
+
+/adjust these three parameters for timing
+
+ith, 32,	60		/ throttle (idle cycles / 3)
+ifs, 33, 	74		/ frames per second for time keeping
+isd, 34,	43120		/ onscreen score display timeout (5 x 60 x ifs = 5 min)
+
+/timing constants (avr. cycles / 3)
+
+irk,	310		/ rocket routine
+isc,	360		/ saucer routine
+isx,	440		/ saucer explosion
+idp,	 60		/ score display
+
+
+/saucer movement table (dy, dx), one screen loc = 0400
+
+/ horizontally streched diagonals, default (dy, dx)
+ut0,	 600		   0
+	-600		   0
+	   0		 600
+	   0		-600
+	 400		 600
+	-400		 600
+	 400		-600
+	-400		-600
+
+/ diagonals proper
+ut1,	 600		   0
+	-600		   0
+	   0		 600
+	   0		-600
+	 400		 400
+	-400		 400
+	 400		-400
+	-400		-400
+
+/saucer torpedo movement table (dy, dx)
+emt,	 2400		    0
+	-2400		    0
+	    0		 2400
+	    0		-2400
+	 1600		 1600
+	-1600		 1600
+	 1600		-1600
+	-1600		-1600
+
+
+/character display grid units (for character outline compiler)
+/ (display positions are derived automatically at start up)
+
+cgy,	 7000			/unit for character grid y
+cgx,	 5000			/unit for character grid x
+	. 3/			/reserve space for x-unit offsets 2..4
+
+
+/routine to flush sequence breaks, if they occur.
+
+sbf,	tyi
+	lio 2
+	lac 0
+	lsm
+	jmp i 1
+
+
+/sine-cosine subroutine - Adams associates 1961
+/calling sequence= number in AC, jda sin or jda cos.
+/argument is between +/- +2 pi, with binary point to right of bit 3.
+/answer has binary point to right of bit 0.  Time = 2.35-? ms.
+/changed for auto-multiply , ddp 1/19/63
+
+cos,	0
+	dap csx
+	lac (62210
+	add cos
+	dac sin
+	jmp .+4
+
+sin,	0
+	dap csx
+	lac sin
+	spa
+si1,	add (311040
+	sub (62210
+	sma
+	jmp si2
+	add (62210
+
+si3,	ral 2s
+	mul (242763
+	dac sin
+	mul sin
+	dac cos
+	mul (756103
+	add (121312
+	mul cos
+	add (532511
+	mul cos
+	add (144417
+	mul sin
+	scl 3s
+	dac cos
+	xor sin
+	sma
+	jmp csx-1
+	lac (377777
+	lio sin
+	spi
+	cma
+	jmp csx
+
+	lac cos
+csx,	jmp .
+
+si2,	cma
+	add (62210
+	sma
+	jmp si3
+	add (62210
+	spa
+	jmp .+3
+	sub (62210
+	jmp si3
+
+	sub (62210
+	jmp si1
+
+
+/character outline compiler
+
+/character outlines
+/ 7 rows at 5 dots, left to right, top down,
+/ 2 words per character, aligned left.
+cot,
+	350614	306134	/0
+	106041	020410	/1
+	350411	442076	/2
+	350411	406134	/3
+	451227	610204	/4
+	770207	406134	/5
+	350607	506134	/6
+	760421	041020	/7
+	350613	506134	/8
+	350613	604230	/9
+	000003	702036	/A
+	000007	404174	/B
+	010617	600000	/C
+	370203	600036	/D
+	010207	702036	/E
+	000000	000076	/F
+
+
+/ hex patterns as generated by the 7448 BCD-to-7-segment decoder:
+/ (compare sense switch options 5 and 6)
+/
+/     A (10)   B (11)   C (12)   D (13)   E (14)   F (15)
+/  
+/                                  –-  
+/                        |  |     |        |
+/      --       --        --       –-       –-
+/     |        |                           |
+/      --       --                 –-       --       --
+
+
+coa,	. 21/			/space for addresses of character object code
+
+/setup and compile digits 0-9, chars A-F
+ci,	dap cix
+	lac cgx			/set up grid units (1..4)
+	add cgx
+	dac cgx 1
+	add cgx
+	dac cgx 2
+	add cgx
+	dac cgx 3
+ci2,	dzm \t1			/compile outlines
+	law ctb
+	dap ci4
+	law coa
+	dap ci5
+	cla
+ci3,	dac . 4			/fix up character index
+ci4,	law .			/start address of compiled code (fixed up)
+ci5,	dac .			/store start address (fixed up)
+	jda cc
+	0			/character index (fixed up)
+	dap ci4
+	idx ci5
+	idx \t1
+	sas (21
+	jmp ci3
+cix,	jmp .
+
+/character outline compiler
+/ call  law addr, jda cc, char-index (see cot)
+/ returns next address in ac, compiled code will exit at cdx
+
+define comp A			/push instr. A to object code
+	lac A
+	dac i cc
+	idx cc
+	term
+
+define cadd A			/add instr. A to ac and push to object code
+	add A
+	dac i cc
+	idx cc
+	term
+
+cc,	0
+	dap ccx
+	lac i ccx		/get char-index
+	sal 1s
+	add (cot
+	dac \cwd		/addr. of first code word
+	idx ccx			/fix up return address
+	stf 6			/flag 6 for first dot
+	law i 22
+	dac \cbi		/bit counter
+	lio i \cwd		/get first code word to parse
+	comp (lio cy		/- reset y
+	dzm \cyi
+	comp (lac cx		/- reset x
+	dzm \cxp		/current x
+ccr,	dzm \cxi		/new row
+	spi i			/is there a dot?
+	jmp ccs			/no
+	lac \cxi		/get offset to last x
+	sub \cxp
+	sza i
+	jmp ccd
+	spa
+	jmp ccm
+	cadd (add cgx-1
+	jmp cca
+ccm,	cma
+	cadd (sub cgx-1
+cca,	lac \cxi
+	dac \cxp
+ccd,	szf 6
+	jmp cd1
+	comp (ioh		/- wait for display
+cd1,	comp (dpy -4000 100	/- display a dot
+	clf 6
+ccs,	ril 1s			/advance to next bit
+	isp \cbi
+	jmp cci
+	law i 22		/fetch next code word
+	dac \cbi
+	idx \cwd
+	lio i \cwd
+cci,	idx \cxi
+	sas (5			/end of a row?
+	jmp ccr 1		/no
+	idx \cyi		/next row
+	sad (7			/was it the last one?
+	jmp ccz			/trail and exit
+	comp (rcr 9s		/- swap
+	comp (rcr 9s
+	comp (sub cgy		/- increment pos y
+	comp (rcr 9s		/- swap
+	comp (rcr 9s
+	jmp ccr
+ccz,	szf 6
+	jmp cz1
+	comp (ioh
+cz1,	comp (jmp cdx
+ccx,	jmp .			/return
+
+cx,	0
+cy,	0
+
+/display a character
+/ call  law char-index, jda cd (coors in cx, cy)
+cdp,	0
+	dap cdx
+	law coa
+	add cdp
+	dap . 1
+	jmp i .
+cdx,	jmp .
+
+
+/subroutines for background display
+
+nos=77 	/number of stars
+
+/table of stars coors (nos words, 9 bits x and 9 bits y)
+bst,	. nos/
+
+/setup (nos random coors starting at bst)
+
+bsi,	dap bsx
+	init bsc, bst			/deposit first addr of bst in bsc
+bsl,	random				/new random number to repersent both coors
+bsc,	dac .				/store it in current loc of bst
+	index bsc, (dac bst+nos, bsl	/increment bsl, repeat at bgl for nos times
+	dzm bgh				/reset bg offsets
+	dzm bgv
+bsx,	jmp .				/return
+
+
+/display background stars (displays every 2nd frame only)
+
+bg,	dap bgx
+	lac \frc			/check frame conter
+	and (1
+	sza				/skip every second frame
+	jmp bgi				/jump to star display
+	lac \gms			/force slow movement in attract mode
+	spq
+	jmp bgd
+	szs 10				/sense switch 1 for parallax effect off (slow scrolling)
+	jmp bgd
+	lac \rdx
+	sar 1s
+	add \rdx
+	sar 3s
+	cma
+	add bgh
+	dac bgh
+	lac \rdy
+	sar 1s
+	add \rdy
+	sar 3s
+	cma
+	add bgv
+	dac bgv
+	jmp bgx				/return
+bgd,	lac \frc			/advance x offset slowly
+	and (177
+	sza
+	jmp bgx
+	law i 400
+	add bgh
+	dac bgh
+	jmp bgx				/return
+bgi,	init bgl, bst			/init bgl to first addr of stars table
+bgl,	lac .				/get coors of next star (x/y)
+	cli				/clear io
+	scr 9s				/shift low 9 bits in high 9 bits of io (x)
+	sal 9s				/move remaining 9 bits in ac in high part (y)
+	add bgv				/add vertical offset
+	swap				/swap contents of ac and io
+	add bgh				/add horizontal offset
+	dpy-i				/display a dot at coors in ac (x) and io (y)
+	index bgl, (lac bst+nos, bgl	/repeat the loop at bgl nos times
+bgx,	jmp .				/return
+
+bgh,	0
+bgv,	0
+
+/	start				/cut here for two source tapes
+
+
+/ironic computer space simulator  1.3   pt. 2   nl 2025-06-01
+
+/here from start
+
+a0,	law rcb			/configure to read control boxes (sa 4)
+	dap rcw
+	jmp a2
+
+a1,	law rtw			/configure to read testword (sa 5)
+	dap rcw
+
+/initial setup
+
+a2,	jsp ci			/run character outline compiler
+
+	lac cgx			/configure positions for score display
+	sal 3s
+	sub cgx
+	cma
+	dac \t1			/-7 x
+	add (377777		/right margin
+	dac \d0x		/right pos = margin - 7 x (2 x offset)
+	add \t1
+	dac \d1x		/left pos = margin - 14 x (2 x spacing)
+	lac cgy
+	sal 3s
+	sub cgy
+	sar 1s
+	dac \d1y		/vertical middle pos = 7/2 y (centered)
+	sal 2s
+	sub cgy
+	dac \d0y		/top pos = 13 y (3 y spacing)
+	cma
+	add \d1y
+	add \d1y
+	dac \d2y		/bottom pos = 6 (3 y spacing)
+
+	lac irk			/configure cycle count budget
+	add isc
+	add idp
+	add ith
+	cma
+	dac \ifr
+	lac isd			/get timeout for onscreen display in attract mode
+	cma
+	dac \scc		/counter for onscreen scores timeout
+	jsp a3			/setup rest of the game
+	dzm \gms		/game status to attract mode
+
+
+/main loop
+
+fr0,	lac \ifr 		/initial instruction budget (delay)
+	dac \ict
+	idx \frc		/increment frame counter (only least significant bits used)
+	clf 1			/flag 1 indicates active player's ship
+	clf 2
+	clf 3
+
+	jsp bg			/display background
+
+	lac \gms		/in attract mode?
+	spq
+	jmp at0			/yes
+
+	lac \hpm		/check hyperspace mode (extended play)
+	sma			/activated?
+	jmp ffg			/no
+	law 2000		/display moving dots at the bottom
+	add \hpc		/ as an indicator (in stead of reverse video)
+	dac \hpc
+	lio (-377000
+	dpy -4000		/display a dot
+	cma			/mirror x
+	ioh			/wait for the crt
+	dpy -i			/and display another one
+
+ffg,	jsp rkt			/rocket routine
+	jsp ufo
+	lac \trs
+	sza
+	jsp trp			/torpedo routine
+	lac \ets
+	sza
+	jsp etm			/enemy torpedo routine
+	jsp df			/check collisions
+
+	idx \fdc		/manage time
+	sas ifs
+	jmp fr2
+	dzm \fdc
+	idx \fd0
+	sas (12
+	jmp fr2
+	dzm \fd0
+	idx \fd1
+	sas (12			/overflow of second timer digit?
+	jmp fr2			/no
+
+ff0,	dzm \fd1		/game over, check scores
+	lac \sc1		/rocket score
+	sub \sc2		/saucer score
+	sub \sco		/subtract score offset
+	dac \t1			/and store new offset
+	szm			/winner?
+	jmp fng			/yes, continue
+	xct rto			/change to attract mode (get restart delay)
+	dac \gms
+	lac isd			/reset timeout for onscreen display
+	cma
+	dac \scc
+	lac \rks		/get rocket state
+	sza			/active?
+	jmp ff1			/yes, start a final spinning animation
+	add rsd			/check, if spinning
+	sma			/animation done?
+	dzm \rks		/yes, disable rocket
+	jmp fr1
+
+ff1,	law ff2			/fix up return address for df-routine
+	dap dfx			/ to setup a final spin of the rocket
+	stf 5			/set flag 5, do not respawn saucers
+	lac \sc2		/backup saucers' score
+	dac \t1
+	lac \ds2
+	dac \t2
+	jmp dxr			/reset rocket to spin
+ff2,	lac \t1			/undo score increment done in dxr
+	dac \sc2
+	lac \t2
+	dac \ds2
+	jmp fr1
+
+fng,	lac \hpm		/continue for a new game (extra play)
+	cma			/flip 'hyperspace mode'
+	dac \hpm
+	dzm \hpc		/reset counter for 'hyperspace' animation
+	lac \t1			/store current score offset
+	dac \sco
+	jmp fr2
+
+at0,				/attract mode
+	lac \rks		/check rocket state
+	sma			/spinning?
+	jmp . 5			/no
+	jsp rkt
+	lac \rks		/check again for setup delay
+	add rsd
+	sma			/spinning done?
+	dzm \rks		/yes, disable rocket
+	jsp i rcw		/new game on any input
+	dio \cw
+	random
+	isp \gms		/countup to prevent accidental restart
+	jmp at1
+	dzm \gms
+	lac \cw
+	xor \cwo
+	sza i
+	jmp at1
+	jsp a3			/restart
+	law i 20
+	dac \rks
+	law 1
+	dac \gms
+	jmp fr2
+at1,	jsp ufo
+
+fr1,	isp \scc		/increment score display counter
+	jmp fr2
+	dzm \scc		/prevent run around
+	spa
+fr2,	jsp scd			/display scores
+	lac \cw			/backup control input for comparison
+	dac \cwo
+
+fr3,	count \ict, .		/use up rest of time of main loop
+	jmp fr0			/next frame
+
+
+/score display
+
+scd,	dap scx
+	lac \d0x
+	dac cx
+	lac \d0y
+	dac cy
+	lac \sc1
+	and (17
+	szs i 50		/sense switch 5 for rocket hex display
+	lac \ds1
+	jda cdp
+	lac \d1y
+	dac cy
+	lac \sc2
+	and (17
+	szs i 60		/sense switch 6 for saucer hex display
+	lac \ds2
+	jda cdp
+	lac \d2y
+	dac cy
+	lac \fd0
+	jda cdp
+	lac \d1x
+	dac cx
+	lac \fd1
+	jda cdp
+	lac \ict
+	add idp
+	dac \ict
+scx,	jmp .
+
+
+/start a new game
+a3,	dap ax
+	jsp bsi			/setup bg-stars
+	dzm \fd0		/reset counters for time display
+	dzm \fd1
+	dzm \fdc
+	dzm \rks		/rocket status to inactive
+	dzm \hpm		/reset 'hyperspace mode'
+	dzm \sco		/reset score offset (for alternate scoring)
+
+/rocket setup
+ar,	lac (670000
+	dac \rth		/rotational angle
+	dac \th0
+	lac (-200000
+	dac \rpx		/pos x
+	cma
+	dac \rpy		/pos y
+	law 140
+	dac \rdx
+	law i 440
+	dac \rdy
+	dzm \rac		/acceleration skip counter
+	dzm \rxc		/reset center offset
+	dzm \ryc
+	dzm \sc1		/score
+	dzm \ds1
+	dzm \trs		/torpedo status counter
+	dzm \cwo		/old control word
+
+/saucer setup
+au,	random
+	dac \upy		/pos y
+	random
+	sar 4s
+	add (140000
+	dac \upx		/pos x
+	dzm \udc		/animation skip counter
+	law 1
+	dac \udd		/animation direction
+	dzm \umo		/direction code
+	dzm \udy		/delta y
+	dzm \udx		/delta x
+	law i 10
+	dac \ufc		/duration of movement
+	law 1
+	dac \uft		/speed of center animation (1,3)
+	dac \ufs		/state counter
+	law i 1
+	dac \umo
+	dzm \sc2
+	dzm \ds2
+	dzm \ets		/torpedo state
+	jsp etr			/get torpedo cooling (\etc)
+
+ax,	jmp .
+
+
+/collision / hit detection
+
+df,	dap dfx
+	lac \ufs		/check saucer state
+	spq			/skip on positive
+	jmp dfx
+	lac \rks		/check rocket state
+	spq
+	jmp dfx
+	clf 5
+
+	lac \rpx		/get rotational center of rocket
+	sub \rxc
+	dac \px
+	lac \rpy
+	add \ryc
+	dac \py
+
+	law \px			/set up rocket for comparison
+	dap mx1
+	law \py
+	dap my1
+
+	lac (21000		/set up collision radii (x 34, y 24) in screen locs
+	dac \dxe
+	sar 1s
+	dac \de2
+	lac (14000
+	dac \dye
+
+	law \upx		/first saucer
+	dap mx2
+	law \upy
+	dap my2
+	jsp dmf			/compare them
+	sza			/hit?
+	jmp dxr			/yes
+
+	lac \upy		/second saucer
+	sub (400000		/vertical offset
+	dac \vpy
+	law \vpy
+	dap my2
+	jsp dmf			/compare them
+	sza			/hit?
+	jmp dxr			/yes
+
+dft,	lac \trs		/torpedo active?
+	sma
+	jmp dfe
+	lac (12200		/setup hit box (x 21, y 10)
+	dac \dxe
+	sar 1s
+	dac \de2
+	lac (5000
+	dac \dfy
+	law \tpx		/set up torp as first object
+	dap mx1
+	law \tpy
+	dap my1
+	jsp dmf			/compare first saucer
+	sza
+	jmp dxu			/hit, respawn
+
+	law \upy		/second saucer
+	dap my2
+	jsp dmf			/compare them
+	sza			/hit?
+	jmp dxu
+
+dfe,	lac \ets		/enemy torpedo active?
+	sza i
+	jmp dfx
+	lac (11000
+	dac \dxe
+	dac \dye
+	law 6400
+	dac \de2
+	law \px
+	dap mx1
+	law \py
+	dap my1
+	law \epx
+	dap mx2
+	law \epy
+	dap my2
+	jsp dmf
+	sza i
+	jmp dfx
+	dzm \ets		/reset enemy torpedo
+	xct etf			/get initial topredo cooling
+	dac \etc		/and store it
+	lac
+	stf 5
+
+dxr,	law i 100		/set rocket state to collision
+	sub rsd			/additional delay before reset
+	dac \rks
+	dzm \rdx
+	dzm \rdy
+	dzm \trs
+	lac \rth
+	dac \th0
+	dzm \thc
+	law i 10
+	dac \thd
+	idx \sc2
+	idx \ds2
+	sub (12			/wrap score around at decimal 10
+	sma
+	dzm \ds2
+	szf 5			/was it a saucer-rocket collision?
+	jmp dfx			/no
+
+dxu,	dzm \trs		/set up saucer explosion, reset torpedoes
+	dzm \ets
+	lac i my2		/set up pos y
+	dac \upy
+	idx \sc1
+	idx \ds1
+	sub (12			/wrap score around at decimal 10
+	sma
+	dzm \ds1
+	jsp uxs
+
+dfx,	jmp .			/return
+
+
+/subroutine to compare object positions (from spacewar, mod n.l.)
+dmf,	dap dmx
+mx1,	lac .			/calc if collision
+mx2,	sub .			/delta x
+	spa			/take abs val
+	cma
+	dac \t1
+	sub \dxe		/ < epsilon x ?
+	sma
+	jmp dm0			/no
+my1,	lac .
+my2,	sub .
+	spa
+	cma
+	sub \dye		/ < epsilon y ?
+	sma
+	jmp dm0			/no
+	add \t1
+	sub \de2		/ < epsilon 2 ?
+	sma
+	jmp dm0
+	law 1			/return 1 (in ac) for hit
+	jmp dmx
+dm0,	cla			/return 0 for miss
+dmx,	jmp .
+
+
+/saucers
+
+ufo,	dap ufx
+	lac \ufs
+	spq
+	jmp uxe
+	clf 6
+
+	lac \upx		/update position
+	add \udx
+	dac \upx
+	dac \px
+	lac \upy
+	add \udy
+	dac \upy
+	dac \py
+	jsp sd			/display first saucer
+	lac \py
+	sub (400000		/half-screen vertical offset
+	dac \py
+	jsp sd			/display second saucer
+
+	isp \ufc		/increment leg counter
+	jmp uf1			/continue
+	lac \umo		/new direction
+	spa
+	jmp uza			/we're in a 3-steps stop (\umo: -3..-1)
+	sar 3s			/ 010 set for single step stop
+	sza
+	jmp uz1
+	random
+	sma
+	jmp uf2			/set up new leg
+
+	dzm \udx		/stop
+	dzm \udy
+	lac ran			/what kind of stop will it be?
+	ral 3s
+	spa
+	jmp uz0			/three-steps stop
+	law 10			/single-step stop, keep center animation
+	dac \umo
+	jmp uzb			/get delay and continue
+uz0,	law i 3			/first period of three-steps stop
+	dac \umo		/reuse \umo as step counter (negative)
+	law 3
+	dac \uft		/set animation to slow (3)
+uzb,	jsp utd			/get duration
+	sar 1s
+	dac \ufc
+	jmp eta			/continue for torpedo setup
+
+uza,	cma			/3-steps stop, dispatch on -\umo (-3..-1)
+	add (. 3
+	dap . 2
+	idx \umo
+	jmp .
+	jmp uz1
+	jmp uz2
+uz3,	dzm \udd		/3 - stop animation
+	jmp . 2
+uz2,	jsp ucd			/2 - still stopped, new animation direction
+	jsp utd
+	sar 1s
+	dac \ufc
+	jmp eta
+uz1,	stf 6			/1 - start over, but keep animation
+	random
+	jmp . 2
+
+uf2,	clf 6			/set up for a new leg (flag 6: keep anim. dir.)
+	and (7
+	dac \umo		/new motion code (0..7)
+	sal 1s			/read corresponding dx/dy form movement table
+	szs i 30		/sense switch 3 to select table (ut1 or ut0)
+	jmp . 3
+	add (ut1		/setup reference location for dy in \t1
+	jmp . 2
+	add (ut0		/select other table
+	dac \t1
+	lac i \t1		/load dy from addr. in \t1
+	dac \udy
+	idx \t1			/increment addr. in \t1
+	lac i \t1		/load dx from addr. in \t1
+	dac \udx
+	szf 6 i			/skip next on flag 6
+	jsp ucd			/set new direction for animation
+	jsp utd			/get delay
+	dac \ufc
+	lac \umo
+	sma
+	jmp . 4
+	lac \ufc		/shorter delay on stops
+	sar 1s
+	dac \ufc
+
+uf1,	lac \frc		/increment center animation
+	and \uft
+	sza
+	jmp eta
+	lac \udc		/udc = 0..5
+	sub \udd
+	dac \udc
+	sma
+	jmp . 4
+	law 5
+	dac \udc
+	jmp eta
+	sad (6
+	dzm \udc
+	jmp eta
+
+ufi,	lac \ict		/update instruction count
+	add isc
+	dac \ict
+
+ufx, jmp .
+
+
+ucd,	dap ucx			/subroutine to set center animation
+	lio ran
+	ril 1s
+	law 1
+	spi
+	cma
+	dac \udd
+	lac ran			/animation speed, favor faster
+	rar 9s
+	and (3
+	sza
+	jmp . 3
+	law 1
+	jmp . 2
+	law 3
+	dac \uft
+ucx,	jmp .
+
+utd,	dap utx			/subroutine to get random delay (leg length)
+	random
+	sar 9s
+	sar 3s
+	sub (270
+utx,	jmp .
+
+urs,	dap urx			/subroutine to respawn the saucers
+	lac ran			/pos x, get random number
+	sar 1s			/scale it to less than half a screen size
+	dac \upx
+	sar 3s
+	sub \upx
+	add \rpx		/add player's x position + half screen size
+	add (400000	
+	dac \upx		/x now nearly random, but not too close to the player
+	random			/random pos y
+	dac \upy
+	jsp ucd			/set up center animation
+	dac \udd
+	law i 40		/set up delay before next leg
+	dac \ufc
+	law i 1			/stopped (end of 3-steps stop)
+	dac \umo
+	jsp etr			/reset torpedo, get cooling
+	law 1			/set state to active
+	dac \ufs
+urx,	jmp .
+
+
+/saucer explosion
+
+/setup (compare saucer display at sd)
+
+upt,	. 64/			/table for particle coordinates (y, x)
+upd,	. 64/			/table for particle deltas (dy, dx)
+
+uxo,	 500	  200		/particle start offset coors (scaled saucer outline)
+	 340	  340
+	 340	  740
+	-500	  200
+	-340	  340
+	-340	  740
+	-500	 -200
+	-340	 -340
+	-340	 -740
+	 500	 -200
+	 340	 -340
+	 340	 -740
+	   0	 1240
+	   0	-1240
+	   0	  740
+	   0	  640
+	   0	  540
+	   0	  440
+	   0	  200
+	   0	  100
+	   0	 -100
+	   0	 -200
+	   0	 -440
+	   0	 -540
+	   0	 -640
+	   0	 -740
+
+uxs,	dap usx
+	law upt			/address of coors table
+	dac \upc
+	law uxo			/address of outline table
+	dac \uxc
+usp,	lac \upy		/set up pairs of coors
+	add i \uxc
+	dac i \upc
+	idx \uxc
+	idx \upc
+	lac \upx
+	add i \uxc
+	dac i \upc
+	idx \uxc
+	idx \upc
+	sas (upd
+	jmp usp
+
+	clf 5			/set up 4 x 3 pairs of directional deltas
+	clf 6			/ for the hull
+	law upd			/address of deltas table
+	dac \upc
+	law i 4
+	dac \sdc
+usi,	law i 3
+	dac \uxc
+usj,	random			/new random number
+	cli
+	rcr 9s			/split it
+	sal 2s
+	szf 6
+	cma
+	dac i \upc
+	idx \upc
+	cla
+	rcl 6s
+	szf 5
+	cma
+	dac i \upc
+	idx \upc
+	isp \uxc
+	jmp usj
+	
+	law us0			/dispatch on \sdc (-4..-1) for passes (set flags)
+	sub \sdc
+	dap us0
+	idx \sdc		/increment counter and jump
+us0,	jmp .
+	jmp us1
+	jmp us2
+	jmp us3
+	stf 6			/2nd pass
+	jmp usi
+us3,	stf 5			/3rd pass
+	jmp usi
+us2,	clf 6			/4th pass
+	jmp usi
+
+us1,	dzm i \upc		/done, set up rim sides
+	idx \upc
+	random
+	cli
+	rcr 9s
+	add (1000
+	dac i \upc
+	idx \upc
+	dzm i \upc
+	idx \upc
+	cla
+	rcl 9s
+	add (1000
+	cma
+	dac i \upc
+	idx \upc
+
+usk,	random			/set up remaining deltas (center rim)
+	cli
+	scr 9s
+	sar 1s
+	dac i \upc
+	idx \upc
+	cla
+	rcl 8s
+	sal 1s
+	spi
+	cma
+	dac i \upc
+	idx \upc
+	sas (uxo
+	jmp usk
+	
+	law i 27		/duration of explosion 
+	dac \ufs
+
+usx,	jmp .			/return
+
+/saucer explosion display
+/ jump here from inside ufo
+
+uxe,	isp \ufs
+	jmp . 3
+	jsp urs			/last iteration, respawn saucers
+	jmp ufx			/ and exit
+	law upt			/move and dsisplay particles
+	dac \upc
+	law upd
+	dac \uxc
+uxi,	clf 5
+	random
+	and (400001
+	sza
+	stf 5
+	lac i \uxc
+	add i \upc
+	dac i \upc
+	swap
+	idx \uxc
+	idx \upc
+	lac i \uxc
+	add i \upc
+	dac i \upc
+	szf 5
+	dpy -i 100
+	idx \uxc
+	idx \upc
+	sas (upd
+	jmp uxi
+	
+	lac \upy		/display other saucer
+	add (400000
+	dac \py
+	lac \upx
+	dac \px
+	jsp sd
+	
+	add \ict
+	lac isx
+	dac \ict
+	jmp ufx
+
+
+/saucer torpedo ai (setup)
+/ here from inside ufo
+
+eta,	lac \ets		/torpedo already active?
+	spa
+	jmp ufi
+	szf i 1			/rocket active?
+	jmp ufi
+	lac \ufs		/saucers active?
+	spq
+	jmp ufi
+	isp \etc		/count up cooling
+	jmp ufi
+	dzm \etc
+
+	lac \upx		/position of tubes
+	add (10400
+	dac \epx
+	lac \upy
+	sub (3400
+	dac \epy
+
+	random			/get random offset for targeting
+	cli
+	scr 9s			/split it into lower parts of ac and io
+	sir 9s
+	xct etn			/scale it
+	dac \exn		/store noise x
+	swap			/same for y
+	xct etn
+	dac \eyn
+
+
+	szs i 40		/sense switch 4 to select saucer at random
+	jmp et1			/ original shoots always from same saucer
+	random
+	sma			/which saucer
+	jmp et1
+	lac \epy
+	add (400000
+	dac \epy
+et1,
+	lac ete
+	dac \eps
+	lac \rpx		/get cumulated offsets
+	sub \epx
+	spa
+	cma
+	dac \t1
+	lac \rpy
+	sub \epy
+	spa
+	cma
+	add \t1
+	dac \t1
+	sub eld			/near?
+	spa
+	jmp . 3			/no
+	law elb
+	jmp . 2
+	law ela
+	dac \t2
+	
+	lac \rdx
+	xct i \t2		/look-ahead
+	add \rpx
+	sub \rxc
+	add \exn
+	sub \epx
+	dac \dx			/delta x
+	spa
+	cma
+	dac \adx		/abs delta x
+
+	lac \rdy		/same for y
+	xct i \t2
+	add \rpy
+	add \ryc
+	add \eyn
+	sub \epy
+	dac \dy
+	spa
+	cma
+	dac \ady
+
+	lac \umo		/check loose aiming conditions
+	and (7
+	spq			/moving?
+	jmp et2			/no
+	lac \t1
+	sub efd
+	spa			/big enough?
+	jmp et2			/no
+	random			/handle probabilty
+	spa
+	cma
+	sub efp
+	sma			/aim loosely?
+	jmp et2			/no
+	lac efe
+	dac \eps
+
+et2,	lac \ady
+	sub \eps
+	spa
+	jmp eah
+	lac \adx
+	sub \eps
+	spa
+	jmp eav
+
+	lac \adx
+	sub \ady
+	spa
+	cma
+	sub \eps
+	sma
+	jmp ufi
+ead,
+	law 4
+	lio \dy
+	spi
+	law 5
+	lio \dx
+	spi
+	add (2
+	jmp et3
+eah,
+	law 2
+	lio \dx
+	spi
+	law 3
+	jmp et3
+eav,
+	cla
+	lio \dy
+	spi
+	law 1
+et3,
+	sal 1s			/read corresponding dx/dy form movement table
+	add (emt		/setup reference location for dy in \t1
+	dac \t1
+	lac i \t1		/load dy from addr. in \t1
+	dac \edy
+	idx \t1			/increment addr. in \t1
+	lac i \t1		/load dx from addr. in \t1
+	dac \edx
+	xct etl
+	dac \ets
+
+eti,	jmp ufi			/return to ufo
+
+
+/saucer torpedo movement routine
+
+etm,	dap etx
+	isp \ets		/count up life
+	jmp . 2
+	jmp etr 1		/expired
+	lac \epy
+	add \edy
+	dac \epy
+	swap
+	lac \epx
+	add \edx
+	dac \epx
+	dpy -i 100
+etx,	jmp .			/return
+etr,	dap etx			/reset
+	dzm \ets
+	xct etd
+	dac \etc
+	jmp etx
+
+
+/player rocket routine
+
+rkt,	dap rkx
+	lac \rks		/check for collision state
+	sza i
+	jmp rkx
+	szm			/ < 0 ?
+	jmp rka			/no
+	isp \rks		/manage rocket hit state
+	jmp rke
+	idx \rks
+	lac \th0
+	dac \rth
+	jmp rcw
+rke,	add rsd
+	sma
+	jmp rkx
+
+rt1,	lac \thc		/animate collision, spin clockwise progressively
+	dac \thn
+	lio raa			/angular acceleration
+rt2,	sil 1s
+	isp \thn		/shift left \thd times
+	jmp rt2
+	isp \thd
+	jmp rt3
+	law i 20		/add another shift every 20 frames
+	dac \thd
+	lac \thc
+	sub (1
+	dac \thc
+rt3,	swap
+	cma cli -opr		/make it a clockwise spin, clear io
+	add \rth		/update rotational angle
+	jmp rkr
+
+rka,	stf 1			/start active rocket
+rcw,	jsp .			/read control word (ccw, cw, trust, fire)
+	dio \cw			/merge (or) spacewar player inputs
+	cla
+	rcr 4s
+	ior \cw
+	dac \cw
+
+	lio \cw			/parse and process rotation
+	lac \rth		/load angle
+	spi			/sign cleared in io?
+	add raa			/no, add angular acceleration
+	ril 1s			/next bit
+	spi
+	sub raa
+rkr,	sma			/normalize 0 >= angle >= 2Pi (0311040)
+	sub (311040
+	spa
+	add (311040
+	dac \rth		/update angle
+
+	ril 1s			/parse thrust input
+	spi
+	stf 2			/set flag 2 for thrust
+	ril 1s
+	spi			/check next bit for fire
+	stf 3			/set flag 3 for torp
+
+	jda sin			/get sin, store it in \sn
+	dac \sn
+	lac \rth
+	jda cos			/get cos, store it in \cs
+	dac \cs
+
+	szf i 2			/flag 2 set? update dx / dy
+	jmp rk0
+	lac \frc		/load frame counter
+	isp \rac		/sensitivity, frame skip
+	jmp rk1
+	xct ras			/reset counter
+	dac \rac
+	lac \sn			/dx
+	cma
+	xct rvl			/apply scaling for acceleration
+	swap			/swap result into io
+	xct rad			/damping, get loop count
+	dac \rdc
+rx0,	swap			/get intermediate value from io
+	add \rdx		/average with old dx
+	sar 1s
+	swap			/swap into io
+	isp \rdc		/increment loop
+	jmp rx0
+	dio \rdx		/store updated dx
+	lac \cs			/same for dy
+	xct rvl
+	swap
+	xct rad
+	dac \rdc
+ry0,	swap
+	add \rdy
+	sar 1s
+	swap
+	isp \rdc
+	jmp ry0
+	dio \rdy
+	jmp rk1
+
+rk0,	dzm \rac
+
+rk1,	scale \sn, 4s, \sn1	/get position of rocket tip
+	sar 2s			/offset x = (sin >> 4) - (sin >> 8)
+	cma
+	add \sn1
+	dac \sn1
+	scale \cs, 4s, \cn1	/offset y = (cos >> 4) - (cos >> 8)
+	sar 2s
+	cma
+	add \cn1
+	dac \cn1
+	lac \rpx		/update pos x (add dx)
+	add \rdx
+	dac \rpx
+	sub \sn1		/subtract offset for tip, store it in \px
+	dac \px
+	lac \rpy		/same for y
+	add \rdy
+	dac \rpy
+	add \cn1
+	dac \py
+
+	scale \sn1, 1s, \rxc	/store half-offset for hit detection
+	scale \cn1, 1s, \ryc
+
+	scale \sn, 6s, \sn8	/scaled sine, 8 steps
+	sar 1s
+	dac \sn4		/4 steps
+	sar 1s
+	dac \sn2		/2 steps
+	sar 1s
+	dac \sn1		/1 step
+	dac \sm1
+	add \sn2
+	dac \sn3		/3 steps
+	dac \sm3
+	add \sn2
+	dac \sn5		/5 steps
+	add \sn1
+	dac \sn6		/6 steps
+	dac \sm6
+
+	scale \cs, 6s, \cn8	/scaled cosine, 8 steps
+	sar 1s
+	dac \cn4		/4 steps
+	sar 1s
+	dac \cn2		/2 steps
+	sar 1s
+	dac \cn1		/1 step
+	dac \cm1
+	add \cn2
+	dac \cn3		/3 steps
+	dac \cm3
+	add \cn2
+	dac \cn5		/5 steps
+	add \cn1
+	dac \cn6		/6 steps
+	dac \cm6
+
+	jsp rod			/display it
+
+	szf i 3			/fire torpedo?
+	jmp rkq			/no
+	szf i 1			/are we active?
+	jmp rkq			/no
+	lac \trs
+	sza			/torpedo already active?
+	jmp rkq			/yes
+	lac \ufs
+	spq			/saucers active?
+	jmp rkq			/no
+	xct tlf			/set up torpedo
+	dac \trs
+	lac \rpx		/copy position
+	dac \tpx
+	lac \rpy
+	dac \tpy
+	lac \sn			/dx
+	cma
+	xct trv			/apply scaling for velocity
+	dac \tdx
+	lac \cs			/dy
+	xct trv
+	dac \tdy
+
+rkq,	szf i 2			/advance random on thrust
+	jmp rki			/ to prevent patterned behavior of saucers
+	random
+
+rki,	lac \ict		/update instruction count
+	add irk
+	dac \ict
+
+rkx,	jmp .
+
+
+/torpedo (rocket)
+
+trp,	dap trx
+	isp \trs		/count up status counter (zero = inactive)
+	jmp . 2
+trx,	jmp .
+	szf i 1
+	jmp tr1
+	lac \frc		/frame skip
+	and (3
+	szs 20			/sense switch 2 for agile torpedos (better respond)
+	and (1
+	sza
+	jmp tr1
+	lac \cs			/update with steering
+	xct trv			/scale cos of rocket
+	add \tdy		/average 3 times with current dy
+	sar 1s
+	add \tdy
+	sar 1s
+	dac \tdy		/store updated dy
+	add \tpy		/update pos y
+	dac \tpy
+	swap
+	lac \sn			/same for sine, dx and pos x
+	cma
+	xct trv
+	add \tdx
+	sar 1s
+	add \tdx
+	sar 1s
+	add \tdx
+	sar 1s
+	dac \tdx
+	add \tpx
+	dac \tpx
+	dpy -i			/display adot and jump to return
+	jmp trx
+tr1,	lac \tpy		/no steering, simple update
+	add \tdy
+	dac \tpy
+	swap
+	lac \tpx
+	add \tdx
+	dac \tpx
+	dpy -i
+	jmp trx
+
+/control word get routines
+
+/read control boxes
+rcb,	dap rcx
+	cli
+	iot 11
+rcx,	jmp .
+
+/read testword
+rtw,	dap rtx
+	lat
+	swap
+rtx,	jmp .
+
+
+/sprite routines
+
+/rocket display
+/ step rearwards -  x add \sn1, y sub \cn1
+/ step outwards  -  x add \cm1, y add \sm1
+/ step inwards   -  x sub \cm1, y sub \sm1
+
+define disp
+	dpy-i 100		/display a dot at brightness level +1
+	term
+
+rod, 	dap rox
+	stf 6			/set flag 6
+	lac \px
+	lio \py
+	disp
+
+rop,	swap			/y +4, x +6
+	sub \cn4
+	add \sm6
+	swap
+	add \sn4
+	add \cm6
+	disp
+
+	swap			/y +5, x +3
+	sub \cn5
+	add \sm3
+	swap
+	add \sn5
+	add \cm3
+	disp
+
+	swap			/y +6, x +1
+	sub \cn6
+	add \sm1
+	swap
+	add \sn6
+	add \cm1
+	disp
+
+	swap			/y +6, x -1
+	sub \cn6
+	sub \sm1
+	swap
+	add \sn6
+	sub \cm1
+	disp
+
+	swap			/y +8, x +6
+	sub \cn8
+	add \sm6
+	swap
+	add \sn8
+	add \cm6
+	disp
+
+	swap			/y 3, x -10
+	sub \cn3
+	sub \sm3
+	sub \sm6
+	sub \sm1
+	swap
+	add \sn3
+	sub \cm3
+	sub \cm6
+	sub \cm1
+	disp
+
+	swap			/y +7, x +6
+	sub \cn8
+	add \cn1
+	add \sm6
+	swap
+	add \sn8
+	sub \sn1
+	add \cm6
+	disp
+
+	szf i 6			/flag 6 set? (skip on not zero)
+	jmp rot
+	clf 6			/clear flag 6
+	lac \cm1		/invert unit vector components
+	cma
+	dac \cm1
+	lac \sm1
+	cma
+	dac \sm1
+	lac \cm3
+	cma
+	dac \cm3
+	lac \sm3
+	cma
+	dac \sm3
+	lac \cm6
+	cma
+	dac \cm6
+	lac \sm6
+	cma
+	dac \sm6
+	lac \px			/load first pos
+	lio \py
+	jmp rop			/second pass for other side
+
+rot,	szf i 2			/no, flag 2 set?
+rox,	jmp .			/no, return
+	swap			/draw exhaust flame
+	sub \sm6		/x -11
+	sub \sm6
+	add \sm1
+	swap
+	sub \cm6
+	sub \cm6
+	add \cm1
+	dac \px			/store position
+	dio \py
+	lac \frc		/load frame counter
+	and (4
+	sza			/is it zero? (state switch)
+	jmp ro2
+ro1,	lac \py			/state 1, display at y-1
+	add \cn1
+	swap
+	lac \px
+	sub \sn1
+	disp
+	jmp rox
+ro2,	lac \py			/state 2, display at y+5
+	sub \cn5
+	swap
+	lac \px
+	add \sn5
+	disp
+	jmp rox			/jump to return
+
+
+/saucer display
+
+define sdisp B			/display a dot (opt. brightness parameter)
+	dpy -4000 B		/ request completion pulse
+	term
+
+sd,	dap sdx
+	clf 5
+	clf 6
+	law i 4
+	dac \sdc
+
+sdl,	law 5000		/y +/- 10, x +/- 4
+	szf 6
+	cma
+	add \py
+	swap
+	law 2000
+	szf 5
+	cma
+	add \px
+	disp
+
+	law 3400		/y +/- 7, x +/- 7
+	szf 6
+	cma
+	add \py
+	swap
+	law 3400
+	szf 5
+	cma
+	add \px
+	disp
+
+	law 3400		/y +/- 7, x x+/- 15
+	szf 6
+	cma
+	add \py
+	swap
+	law 7400
+	szf 5
+	cma
+	add \px
+	disp
+
+	law sdd			/dispatch on \sdc (-4..-1) for passes (set flags)
+	sub \sdc
+	dap sdd
+	idx \sdc		/increment counter and jump
+sdd,	jmp .
+	jmp sd1
+	jmp sd2
+	jmp sd3
+	stf 6			/2nd pass
+	jmp sdl
+sd3,	stf 5			/3rd pass
+	jmp sdl
+sd2,	clf 6			/4th pass
+	jmp sdl
+sd1,	lio \py			/done, display outer dots
+	lac (12400		/y 0, x + 21 (right side)
+	add \px
+	sdisp 100
+	lac (-12400		/y 0, x - 21 (left side)
+	add \px
+	ioh
+	sdisp 100
+
+	add (1000
+	swap
+
+	lac \udc		/draw first group of dots at the left
+	sal 1s			/ dispatch on \udc x 3 (udc = 0..5) for clipping
+	add \udc
+	add (sd4 1
+	dap \sd4
+	swap
+	lio \py
+sd4, 	jmp .
+	add (1000		/0
+	nop
+	nop
+	add (1000		/1
+	ioh
+	sdisp
+	add (1000		/2
+	ioh
+	sdisp
+	add (1000		/3
+	ioh
+	sdisp
+	add (1000		/4
+	ioh
+	sdisp
+
+	add (3000		/5, display 4 dots
+	ioh
+	sdisp
+	add (1000
+	ioh
+	sdisp
+	add (1000
+	ioh
+	sdisp
+	add (1000
+	ioh
+	sdisp
+
+	add (3000		/display 4 dots
+	sdisp
+	add (1000
+	ioh
+	sdisp
+	add (1000
+	ioh
+	sdisp
+	add (1000
+	ioh
+	sdisp
+
+
+	add (3000		/draw group of remaining dots at the right
+	swap
+	lac \udc		/dispatch on \udc x 3 (udc = 0..5) for clipping
+	add (sd5 1
+	dap sd5
+	swap
+	lio \py
+sd5,	jmp .
+	jmp sd0
+	jmp sd0
+	jmp sd9
+	jmp sd8
+	jmp sd7
+	jmp sd6
+sd6,	ioh			/4 dots
+	sdisp
+	add (1000
+sd7,	ioh			/3 dots
+	sdisp
+	add (1000
+sd8,	ioh			/2 dots
+	sdisp
+	add (1000
+sd9,	ioh			/last dot
+	sdisp
+sd0,	ioh			/fetch and clear last completion pulse
+
+sdx,	jmp .			/return
+
+
+	constants
+	variables
+
+ctb,				/start address for code of outline compiler
+
+	start 4

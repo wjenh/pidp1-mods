@@ -1,0 +1,1943 @@
+spacewar 2b-m  nl, 8 mar 2016, 9 apr 2022
+
+// this is spacewar 2b  2 apr 62, including all patches
+// reconstructed from "spacewar2B_2apr62.bin", "spacewar_sa5.bin"
+// (differs from authentic listing of "spacewar 2b  25 mar 62" in polarity
+// of sense switch options only, see below.)
+// this is a code for a DEC PDP-1 with the automatic multiply/divide option
+// installed using the instructions 'mul' and 'div'.
+//
+// this source consits of
+// - spacewar 2b  2 apr 62, upgraded to hardware mul/div
+// - stars 1 - 3/13/62, prs.
+// - Hyperspace 85 by JMG / Hyperspace VIci, 2 May 1962 (inlined)
+// - spacewAutoRestartPatch (inlined and modified to catch an edge-case)
+// - a reconstruction of the lost scorer patch (based on Spacewar 3.1)
+//
+// all modifications are documented by comments.
+// comments with double slashes by me (n.l.)
+// macro-variables are marked-up by a leading back-slash (indicating an upper stroke)
+//
+// sense switches are used as follows
+//   SSW 1 UP  INERTIAL ROTATION
+//         DOWN  BERGENHOLM ROTATION
+//   SSW 2 UP  LIGHT GRAVITY
+//         DOWN  HEAVY GRAVITY
+//   SSW 3,4
+//         00  MOVING STARS, NORMAL
+//         01  MOVING STARS, FAST
+//         10  STATIONARY STARS
+//         11  NO STARS
+//   SSW 5 UP  HEAVY START TRAP
+//         DOWN  HEAVY STAR TO ANTIPOINT
+//   SSW 6 UP  NO HEAVY STAR
+//         DOWN  HEAVY STAR ON
+//
+// norbert landsteiner, www.masswerk.at, march 2016
+
+// common macro fio-dec definitions used by the program
+
+    szm=sza sma-szf
+    spq=szm i
+    clc=cma+cla-opr
+    ioh=iot i
+
+define initialize A,B
+    law B
+    dap A
+    term
+
+define index A,B,C
+    idx A
+    sas B
+    jmp C
+    term
+
+define swap
+    rcl 9s
+    rcl 9s
+    term
+
+define load A,B
+    lio (B
+    dio A
+    term
+
+define setup A,B
+    law i B
+    dac A
+    term
+
+define count A,B
+    isp A
+    jmp B
+    term
+
+define move A,B
+	lio A
+	dio B
+	term
+
+define clear A,B
+    init .+2, A
+    dzm
+    index .-1, (dzm B+1, .-1
+    term
+
+
+// dummy statement for macro1.c to make \ran known
+3/
+	lac \ran		// overwritten by next statement
+
+
+// start of spacewar 2b  2 apr 62
+
+3/
+	jmp sbf			/ ignore seq. break
+	jmp a
+	jmp a1			/ use test word for control, not iot 11 co
+sbf,	tyi
+	lio 2
+	lac 0
+	lsm
+	jmp i 1			/ enough of that
+
+	define
+xincr X,Y,INS
+	lac Y
+	INS \ssn
+	dac Y
+	lac X
+	INS \scn
+	dac X
+	term
+	
+	define
+yincr X,Y,INS
+	lac Y
+	INS \scn
+	dac Y
+	lac X
+	-INS+add+sub \ssn
+	dac X
+	term
+
+	define
+dispatch
+	add (. 3
+	dap . 1
+	jmp .
+	term
+
+	define
+dispt A,Y
+	lio Y
+	dpy-A
+	term
+
+	define
+scale A,B,C
+	lac A
+	sar B
+	dac C
+	term
+
+	define
+diff V,S,SF
+	add i V
+	dac i V
+	xct SF
+	add i S
+	dac i S
+	term
+
+	define
+random N
+	lac N					// loc ran in sw 3.1
+	rar 1s
+	xor (335671				// sw 3.1 is xor (355670
+	add (335671				// sw 3.1 is add (355670
+	dac N
+	term
+
+	define
+ranct N,S,SS,C
+	random N
+	S
+	SS
+	sma
+	cma
+	dac C
+	term
+
+
+mul=mus
+div=dis
+
+// additional macros for integer multiply and divide as
+// substitutes for BBN subroutines ipl and idv. (nl, 3/3/2016)
+
+	define
+imul A
+	mul A
+	rir 1s
+	rcr 9s
+	rcr 9s
+	term
+
+	define
+idiv A
+	scr 9s
+	scr 8s
+	div A
+	term
+
+
+/sine-cosine subroutine. Adams associates
+/calling sequence= number in AC, jda sin or jda cos.
+/argument is between .+2 pi, with binary point to right of bit 3.
+/answer has binary point to right of bit 0.  Time = 2.35 ms.
+//changed for auto-multiply, nl 3/3/2016
+//same as spacewar 4.0, ddp 1/19/63
+
+cos,	0
+	dap csx
+	lac (62210
+	add cos
+	dac sin
+	jmp .+4
+
+sin,	0
+	dap csx
+	lac sin
+	spa
+si1,	add (311040
+	sub (62210
+	sma
+	jmp si2
+	add (62210
+
+si3,	ral 2s
+	mul (242763
+	dac sin
+	mul sin
+	dac cos
+	mul (756103
+	add (121312
+	mul cos
+	add (532511
+	mul cos
+	add (144417
+	mul sin
+	scl 3s
+	dac cos
+	xor sin
+	sma
+	jmp csx-1
+	lac (377777
+	lio sin
+	spi
+	cma
+	jmp csx
+
+	lac cos
+csx,	jmp .
+
+si2,	cma
+	add (62210
+	sma
+	jmp si3
+	add (62210
+	spa
+	jmp .+3
+	sub (62210
+	jmp si3
+
+	sub (62210
+	jmp si1
+
+
+/integer square root
+/input in ac, binary point to right of bit 17, jda sqt
+/answer in ac with binary point between bits 8 and 9
+/largest input number = 177777
+
+sqt,	0
+	dap sqx
+	law i 23
+	dac sq1
+	dzm sq2
+	lio sqt
+	dzm sqt
+
+sq3,	isp sq1
+	jmp .+3
+	lac sq2
+sqx,	jmp .
+
+	lac sq2
+	sal 1s
+	dac sq2
+	lac sqt
+	rcl 2s
+	sza i
+	jmp sq3
+	dac sqt
+	lac sq2
+	sal 1s
+	add (1
+	sub sqt
+	sma+sza-skip
+	jmp sq3
+	spa
+	cma
+	dac sqt
+	idx sq2
+	jmp sq3
+
+sq1,	0
+sq2,	0
+
+///
+
+/outline compiler
+/ac=where to compile to, call   jda oc
+/ot=address of outline table
+
+define
+	plinst A
+	lac A
+	dac i oc
+	idx oc
+	terminate
+
+define
+	comtab A, B
+	plinst A
+	jsp ocs
+	lac B
+	jmp oce
+	terminate
+
+ocs,	dap ocz				/puts in swap
+	dio i oc
+	idx oc
+	dio i oc
+	idx oc
+ocz,	jmp .
+
+oc,	0				/outline compiler proper
+	dap ocx
+	lac i ocx
+	dap ocg
+	plinst (stf 5
+	dap ocm
+	idx ocx
+ock,	plinst (lac \sx1
+	plinst (lio \sy1
+	clf 6
+ocj,	setup \occ,6
+ocg,	lio .				/outline table
+och,	cla
+	rcl 3s
+	dio \oci
+	lio (rcl 9s
+	dispatch
+	opr
+	jmp oc1
+oco,	jmp oc2
+ocq,	jmp oc3
+ocp,	jmp oc4
+ocr,	jmp oc5
+	jmp oc6
+
+	plinst (szf 5			/7 code
+	add (4
+	dap ocn
+	plinst ocn
+	plinst (dac \sx1
+	plinst (dio \sy1
+	plinst (jmp sq6
+	plinst (clf 5
+	plinst (lac \scm
+	plinst (cma
+	plinst (dac \scm
+	plinst (lac \ssm
+	plinst (cma
+	plinst (dac \ssm
+	plinst (lac \csm
+	plinst (lio \ssd
+	plinst (dac \ssd
+	plinst (dio \csm
+	plinst (lac \ssc
+	plinst (lio \csn
+	plinst (dac \csn
+	plinst (dio \ssc
+	plinst ocm
+ocx,	jmp .
+
+ocm,	jmp .
+ocn,	jmp .
+
+oc1,	plinst (add \ssn
+	jsp ocs
+	lac (sub \scn
+oce,	dac i oc
+	idx oc
+	jsp ocs
+	plinst (ioh
+	lac (dpy-4000
+ocd,	dac i oc
+	idx oc
+	lio \oci
+	count \occ, och
+	idx ocg
+	jmp ocj
+
+oc2,	comtab (add \scm, (add \ssm
+oc3,	comtab (add \ssc, (sub \csm
+oc4,	comtab (sub \scm, (sub \ssm
+oc5,	comtab (add \csn, (sub \ssd
+oc6,	szf 6
+	jmp oc9
+	stf 6
+	plinst (dac \ssa
+	lac (dio \ssi
+	jmp ocd
+oc9,	clf 6
+	plinst (lac \ssa
+	lac (lio \ssi
+	jmp ocd
+
+
+/display a star
+
+define
+	starp
+	add \bx
+	swap
+	add \by
+	swap
+	ioh
+	dpy-4000
+	terminate
+
+blp,	dap blx				/star
+	szs 60				//skip on ss 6 zero
+	jmp blx
+	random \ran
+	rar 9s
+	and (add 340
+	spa
+	xor (377777
+	dac \bx
+	lac \ran
+	ral 4s
+	and (add 340
+	spa
+	xor (377777
+	dac \by
+	jsp bpt
+	ioh
+blx,	jmp .
+
+bpt,	dap bpx
+	random \ran
+	sar 9s
+	sar 5s
+	spa
+	cma
+	sal 3s
+	add (bds
+	dap bjm
+	cla cli clf 6-opr-opr
+	dpy-4000
+bjm,	jmp .
+bds,	repeat 20, starp
+	szf 6
+bpx,	jmp .
+	stf 6
+	cma
+	swap
+	cma
+	swap
+	jmp bjm
+
+
+/background display . 3/13/62, prs.
+
+	define
+dislis J, Q
+	dap fx+R
+	clf 5
+	lac flo+R
+	dap fpo+R
+fs,	dap fin+R
+	dap fyn+R
+	idx fyn+R
+
+fin,	lac				/lac X
+	sub fpr				/right margin
+	sma
+	jmp fgr+R
+	add (2000
+frr,	spq
+fou,	jmp fuu+R
+fie,	sub (1000
+	sal 8s
+fyn,	lio				/lio Y
+	dpy-i
+	stf 5
+fid,	idx fyn+R
+	sad (lio Q+2
+	jmp flp+R
+	sad fpo+R
+	jmp fx+R
+	dap fin+R
+	idx fyn+R
+	jmp fin+R
+
+fgr,	add (-20000+2000
+	jmp frr+R
+
+fuu,	szf 5
+fx,	jmp				/return
+	idx flo+R
+	idx flo+R
+	sas (Q+2
+	jmp fid+R
+	law J
+	dac flo+R
+	jmp fid+R
+
+flp,	lac (lio J
+	sad fpo+R
+	jmp fx+R
+	dap fin+R
+	law J+1
+	dap fyn+R
+	jmp fin+R
+
+fpo,	lio
+flo,	J
+	terminate
+
+///
+
+	define
+background
+	jsp bck
+	termin
+
+
+bck,	dap bcx
+	szs 30					// skip on ssw 3 zero
+	szs i 40			// skip on ssw 4 set
+	jmp bcs
+	jmp bcx
+
+bcs,	jsp 1m
+	idx \bcc
+	and (1
+	sza
+	jsp 3m
+	jsp 2m
+	lac \bcc
+	and (3
+	sza i
+	jsp 4m
+	jsp 1m
+
+	szs 30				// skip on ssw 3 zero
+bcx,	jmp				/ return
+
+	isp \bkc
+	jmp bcx
+	law i 40
+	szs 40				// skip on ssw 4 zero
+	law i 5
+	dac \bkc
+	law i 1
+	add fpr
+	spa
+	add (20000
+	dac fpr
+	jmp bcx
+
+1m,	dislis 1j,1q
+2m,	dislis 2j,2q
+3m,	dislis 3j,3q
+4m,	dislis 4j,4q
+fpr,	0				// start at left margin (sw 3.1 is 10000)
+
+
+
+/main control routine for spaceships
+
+nob=30					/total number of colliding objects
+
+ml0,	load \mtc, -4000		/delay for loop
+	init ml1, mtb			/loc of calc routines
+	add (nob
+	dap mx1				/ x
+nx1=mtb nob
+	add (nob
+	dap my1				/ y
+ny1=nx1 nob
+	add (nob
+	dap ma1				/ count for length of explosion or torp
+na1=ny1 nob
+	add (nob
+	dap mb1				/ count of instructions taken by calc routine
+nb1=na1 nob
+	add (nob
+	dac \mdx			/ dx
+ndx=nb1 nob
+	add (nob
+	dac \mdy			/ dy
+ndy=ndx nob
+	add (nob
+	dap mom				/ angular velocity
+nom=ndy nob
+	add (nob
+	dap mth				/ angle
+nth=nom nob
+	add (nob
+	dap mal				/ angular acceleration
+nal=nth nob
+	add (nob
+	dac \mas			/ acceleration
+nas=nal nob
+	add (nob
+	dac \mfu			/ fuel
+nfu=nas nob
+	add (nob
+	dac \mtr			/ no torps remaining
+ntr=nfu nob
+	add (nob
+	dap mot				/ outline of spaceship
+not=ntr nob
+	add (nob
+	dap mco				/ old control word
+nco=not nob
+	add (nob
+	dac \mh1
+nh1=nco nob
+	add (nob
+	dac \mh2
+nh2=nh1 nob
+	add (nob
+	dac \mh3
+nh3=nh2 nob
+nnn=nh3 nob
+// patched by hyperspace patch
+//	jmp ml1
+
+// inlined hyperspace patch (hml), Hypertable initialization, part 2
+	init hp1,th1
+	init hp2,th2
+	init hp3,th3
+	init hp4,th4
+	init hp5,th5
+	init hp6,th6
+// patched by auto-restart
+//	jmp ml1
+// end of inlined patch
+
+// auto-restart patch (from disassembly)
+rs0,	lac mtb			// control word of first spaceship
+	sza i			// is it not zero?
+	jmp rs1			// zero, restart
+	lac mtb 1		// check second spaceship
+	sza i
+	jmp rs1
+	lac ntr			// get sum of remaining torpedoes
+	add ntr 1
+	sza i			// any left?
+	jmp rs1			// no, restart
+	scr 2s			// (scr 440) operand 440 has 2 high bits
+	dac \rsc		// reset rsc to torps remaining / 4
+//	jmp ml1			// return to main
+
+// patch to limit number of consec. explosion frames (nl, 3/3/2016)
+	law mex
+	sas mtb
+	jmp rs3
+	sas mtb 1
+	jmp rs3
+	count \mec, ml1		// count up explosion frames
+rs2,	dzm mtb			// force spaceships to zero state
+	dzm mtb 1
+rs3,	law i 70		// reset max frames of exploding ships
+	dac \mec
+	jmp ml1
+// end of infinite explosions fix
+
+rs1,	count \rsc, ml1		/ count up on rsc
+// disabled for scoring
+//	jmp a3			// finished, start a new game
+// end of auto-restart patch
+
+// scoring (like spacewar 3.1)
+	stf 1				// flag 1 - spaceship 1 survived
+	stf 2				// flag 2 - spaceship 2 survived
+	lac mtb				// spaceship 1 alive?
+	sza i
+	clf 1
+	sza
+	idx \1sc
+	lac mtb 1			// spaceship 2 alive?
+	sza i
+	clf 2
+	sza
+	idx \2sc
+
+	lac \gct			// check match count, is it the last game?
+	sma
+	jmp sa5
+	count \gct, sa5
+	lac \1sc			// is it a draw?
+	sas \2sc
+	jmp sa4
+	law i 1				// do another game (tie-break)
+	dac \gct
+sa5,	lat				// is tw and 40 set? skip display else
+	and (40
+	sza i
+	jmp a3				// new game
+sa4,	lac \1sc			// display scores and halt
+	lio \2sc
+	hlt
+	lat				// clear scores on tw and 40 zero
+	and (40
+	sza
+	jmp a3
+	dzm \1sc
+	dzm \2sc
+sa6,	lat				// read match setup (number of games)
+	rar 6s
+	and (37
+	sza
+	cma
+	dac \gct
+	jmp a3
+// end of scoring
+
+
+a1,	law mg2				/ test word control
+	dac \cwg
+//	jmp a3
+	jmp sa6				// patched (nl, 3/3/2016)
+
+a,	law mg1				/ iot 11 console control
+	dac \cwg
+	jmp sa6				// patched (nl, 3/3/2016)
+
+a3,	clear mtb, nnn-1		/ clear out all tables
+	law ss1				/ set up spaceships
+	dac mtb
+	law ss2
+	dac mtb 1
+	lac (200000
+	dac nx1
+	dac ny1
+	cma
+	dac nx1 1
+	dac ny1 1
+	lac (144420
+	dac nth
+	law nnn				/ start of outline program
+	dac not
+	jda oc				/ compile outline
+	ot1
+	dac not 1
+	jda oc
+	ot2
+	law 10
+	dac nal
+	dac nal 1
+	law i 40			/ torpedo count
+	dac ntr
+	dac ntr 1
+	law 2000
+	dac nb1
+	dac nb1 1			// patch location for hyperspace (a3x)
+// inlined hyperspace patch (a4), Hypertable initialization, part 1
+	clear th1,th5 1
+	law 4 i
+	dac th1
+	dac th1 1		/counts tries
+	lac (opr
+	dac th4
+	dac th4 1		/recovery switch
+// end of inlined patch
+	jmp ml0
+
+/ control word get routines
+
+mg1,	dap mg3
+	cli
+	iot 11
+mg3,	jmp .
+
+mg2,	dap mg4
+	lat
+	swap
+mg4,	jmp .
+
+ml1,	lac .				/ 1st control word
+	sza i				/ zero if not active
+	jmp mq1				/ not active
+	law 1
+	add ml1
+	dap ml2
+	law 1
+	add mx1
+	dap mx2
+	law 1
+	add my1
+	dap my2
+	law 1
+	add ma1
+	dap ma2
+	law 1
+	add mb1
+	dap mb2
+mot,	lac .
+	dap sp5
+ml2,	lac .				/ 2nd control word
+	sza i				/ active ?
+	jmp mq2				/ no
+mx1,	lac .				/ calc if collision
+mx2,	sub .				/ delta x
+	spa				/ take abs val
+	cma
+	dac \mt1
+	sub me1				/ < EPSILON ?
+	sma
+	jmp mq2				/ no
+my1,	lac .
+my2,	sub .
+	spa
+	cma
+	sub me1				/ < epsilon ?
+	sma
+	jmp mq2				/ no
+	add \mt1
+	sub me2
+	sma
+	jmp mq2
+	lac (mex			/ yes, EXPLODE
+	dac i ml1			/ replace calc routine with explosion
+	dac i ml2
+	lac i mb1			/ duration of explosion
+mb2,	add .
+	cma
+	sar 9s
+	sar
+	add (1
+ma1,	dac .
+ma2,	dac .
+mq2,	idx mx2				/ end of comparison loop
+	idx my2
+	idx ma2
+	idx mb2
+	index ml2, (lac mtb nob, ml2
+
+
+mq4,	lac i ml1			/ routine for calculating spaceship
+	dap . 1				/ or other object and displaying it
+	jsp .
+mb1,	lac .				/ alter count of number of instructions
+	add \mtc
+	dac \mtc
+mq1,	idx mx1				/ end of comparison and display loop
+	idx my1
+	idx ma1
+	idx mb1
+	idx \mdx
+	idx \mdy
+	idx mom
+	idx mth
+	idx mal
+	idx \mas
+	idx \mfu
+	idx \mtr
+	idx mot
+	idx mco
+	idx \mh1
+	idx \mh2
+	idx \mh3
+// additional hyperspace properties (inlined patch, hq1)
+	idx hp1
+	idx hp2
+	idx hp3
+	idx hp4
+	idx hp5
+	idx hp6
+// end of inlined patch
+	index ml1, (lac mtb nob-1, ml1
+	lac i ml1			/ display and compute last point
+	sza i				/ if active
+	jmp mq3
+	dap . 1
+	jsp .
+	lac i mb1
+	add \mtc
+	dac \mtc
+mq3,	background			/ display stars of the heavens
+	jsp blp				/ display massive star
+	count \mtc, .			/ use up rest of time of main loop
+	jmp ml0				/ repeat whole works
+
+
+/ misc calculation routines
+
+/ crock explosion
+
+mex,	dap mxr
+	cla
+	diff \mdx, mx1, (sar 3s
+	cla
+	diff \mdy, my1, (sar 3s
+	law mst
+	dap msh
+	lac i mb1			/ time involved
+	cma cli-opr
+	sar 2s
+	dac \mxc
+ms1,	sub (500
+	sma
+	idx msh
+mz1,	random \ran
+	scr 9s
+	sir 9s
+msh,	xct .
+	add i my1
+	swap
+	add i mx1
+	dpy-i
+	count \mxc, mz1
+	count i ma1, mxr
+	dzm i ml1
+mxr,	jmp .
+
+mst,	scl 5s
+	scl 2s
+
+/ torpedo calc routine
+
+tcr,	dap trc
+	count i ma1, tc1
+	lac (mex
+	dac i ml1
+	law i 1
+	dac i ma1
+	jmp trc
+
+tc1,	cla
+	diff \mdy, my1, (sar 3s
+	cla
+	diff \mdx, mx1, (sar 3s
+	dispt i, i my1
+trc,	jmp .
+
+
+/ spaceship calc
+
+ss1,	dap srt				/ first spaceship
+	jsp i \cwg
+	dio \scw
+	jmp sr0
+
+ss2,	dap srt				/ second spaceship
+	jsp i \cwg
+	rir 4s
+	dio \scw
+
+sr0,
+sc1,	lio \scw			/control word
+	clf 6 cla-opr			/update angle
+	spi
+mal,	add .
+	ril 1s
+	spi
+	sub i mal
+mom,	add .
+	dac i mom
+	szs 10
+	jmp sr8
+	dzm i mom
+	ral 7s
+sr8,	ril 1s
+	spi
+	stf 6
+mth,	add .
+	sma
+	sub (311040
+	spa
+	add (311040
+	dac i mth
+	jda sin
+	dac \sn
+	dzm \bx
+	dzm \by
+	szs 60
+	jmp bsg
+
+	lac i mx1
+	sar 9s
+	sar 2s
+	dac \t1
+//adapted for auto-multiply, nl 3/3/2016
+//	jda imp
+//	lac \t1
+	imul \t1
+	dac \t2
+	lac i my1
+	sar 9s
+	sar 2s
+	dac \t1
+//adapted for auto-multiply, nl 3/3/2016
+//	jda imp
+//	lac \t1
+	imul \t1
+	add \t2
+	sub (1
+	sma i sza-skp
+	jmp pof
+	add (1
+	dac \t1
+	jda sqt
+	sar 9s
+//adapted for auto-multiply, nl 3/3/2016
+//	jda mpy
+//	lac \t1
+	mul \t1
+	scr 2s
+	szs i 20				/ switch 2 for light star
+	scr 2s
+	sza
+	jmp bsg
+	dio \t1
+	lac i mx1
+	cma
+//adapted for auto-divide, nl 3/3/2016
+//	jda idv
+//	lac \t1
+	idiv \t1
+	opr
+	dac \bx
+	lac i my1
+	cma
+//adapted for auto-divide, nl 3/3/2016
+//	jda idv
+//	lac \t1
+	idiv \t1
+	opr
+	dac \by
+//compensate for faster auto-multiply/divide, nl 3/3/2016
+	law i 400
+	dac \t1
+	count \t1, .
+//end of compensation loop
+	
+bsg,	lac i mth
+	jda cos
+	dac \cs
+	sar 9s
+	sar 4s
+	szf i 6
+	cla
+	add \by
+	diff \mdy, my1, (sar 3s
+	lac \sn
+	sar 9s
+	sar 4s
+	cma
+	szf i 6
+	cla
+	add \bx
+	diff \mdx, mx1, (sar 3s
+
+sp1,	scale \sn, 5s, \ssn
+sp2,	scale \cs, 5s, \scn
+	lac i mx1
+	sub \ssn
+	dac \sx1
+	sub \ssn
+	dac \stx
+	lac i my1
+	add \scn
+	dac \sy1
+	add \scn
+	dac \sty
+	scale \sn, 9s, \ssn
+	scale \cs, 9s, \scn
+	lac \ssn
+	dac \ssm
+	add \scn
+	dac \ssc
+	dac \ssd
+	lac \ssn
+	sub \scn
+	dac \csn
+	cma
+	dac \csm
+	lac \scn
+	dac \scm
+	cla cli-opr
+	dpy-4000
+
+sp5,	jmp .
+sq6,	ioh
+	ranct \ran, sar 9s, sar 4s, \src
+	lio i sc1
+	ril 2s
+	spi i				/ not blasting
+	jmp sq9				/ no tail
+sq7,	yincr \sx1, \sy1, sub
+	dispt i, \sy1
+	count \src, sq7
+sq9,	count i ma1, sr5		/ check if torp tube reloaded
+	dzm i ma1			/ prevent count around
+mco,	lac .				/ previous control word
+	cma
+	and \scw			/ present control word
+	ral 3s				/ torpedo bit to bit 0
+	sma
+	jmp sr5				/ no launch
+	count i \mtr, st1		/ check if torpedos exhausted
+	dzm i \mtr				/ prevent count around
+	jmp sr5
+st1,	init sr1, mtb			/ search for unused object
+sr1,	lac .
+	sza i				/ 0 if unused
+	jmp sr2
+	index sr1, (lac mtb nob, sr1
+	hlt				/ no space for new objects
+
+sr2,	lac (tcr			/ set up torpedo calc
+	dac i sr1
+	law nob
+	add sr1
+	dap ss3
+	lio \stx
+ss3,	dio .
+	add (nob
+	dap ss4
+	lio \sty
+ss4,	dio .
+	add (nob
+	dap sr6
+	add (nob
+	dap sr7
+	add (nob
+	dap sr3
+	add (nob
+	dap sr4
+	lac \sn
+	sar 5s
+	cma
+	add i \mdx
+sr3,	dac .
+	lac \cs
+	sar 5s
+	add i \mdy
+sr4,	dac .
+	law i 40
+	dac i ma1			/ permit torp tubes to cool
+trf,	law i 300				/ life of torpedo
+sr6,	dac .
+	law 20
+sr7,	dap .				/ length of torp calc.
+// patched for hyperspace
+//sr5,	move \scw, i mco	/ store as old control word
+// inlined patch vector (shx), expanding macro "move" for inlining
+sr5,	jmp srh
+	dio i mco
+// end of inlined patch
+srt,	jmp .
+
+
+/ here to handle spaceships dragged into star
+
+/ spaceship in star
+
+pof,	dzm i \mdx
+	dzm i \mdy
+	szs i 50
+	jmp po1
+	dzm i mx1
+	dzm i my1
+	lac i mb1
+	dac \ssn
+	count \ssn, .
+	jmp srt
+
+po1,	lac (377777			/ now go bang
+	dac i mx1
+	dac i my1
+	jmp srt
+
+me1,	10000				/ epsilon for collisions
+me2,	4000				/ epsilon over 2
+
+/ outlines of spaceships
+
+ot1,	111131
+	111111
+	111111
+	111163
+	311111
+	146111
+	111114
+	700000
+. 5/
+
+ot2,	013113
+	113111
+	116313
+	131111
+	161151
+	111633
+	365114
+	700000
+. 5/
+
+start
+
+
+HYPERSPACE 85
+
+/A new tape prepared by JMG, 26 Oct 1985
+/from the listing of Hyperspace VIci, 2 May 1962
+
+/Macros privy to Hyperspace
+
+define setx S,K
+	law K		dac S
+terminate
+
+define split
+	scr 9s	sal 9s
+terminate
+
+define pack X,Y,S
+	lac X		lio Y		sar 9s		scl 9s		dac S
+termin
+
+define marvin X1,Y1,X2,Y2,S,SS
+	lac X1		add X2		S		add Y1 		dac Y1
+	sub Y2		SS		cma		add X1		dac X1
+termi
+
+define dismin X,Y,XC,YC
+	lac Y		add YC		swap		lac X		add XC		dpn
+term
+
+define reset S,K
+	lac (K		dac S
+term
+
+// random is already defined in the main program
+
+// define random N
+// 	lac N		rar 1s		xor (335671			add (335671
+// 	dac N
+// term
+
+dpn=dpy-i
+
+
+/Symbols privy to SPACEWAR
+// rather reuse symbols from the main program
+// 
+// mh1=2665		mh2=2666		mh3=2667		mx1=1567
+// my1=1577		mq1=1642		ml1=1540		mb1=1637
+// srt=2343		ran=2654		nnn=4500		not=3573
+// scw=2673		oc=337			mco=2254		ot1=2365
+// ot2=2402		nb1=3243
+
+// dimension th1(2),th2(2),th3(2),th4(2),th5(2),th6(2)
+
+// macro1.c doesn't implement the pseudo-instruction "dimension",
+// have a similar definition inlined here
+
+th1,	0	0
+th2,	0	0
+th3,	0	0
+th4,	0	0
+th5,	0	0
+th6,	0	0
+
+/Patch location table
+// rather use labels than defined address symbols
+// also, some patch vectors are already inlined in main (mlx, a3x, mqx)
+// 
+// hyp=5240		a3x=1525		a4=5510
+// mlx=1456		hml=5530		shx=2341
+// srh=5545		mqx=1642		hq1=5570
+
+// the following patch code is already inlined
+
+// /Patches directly into SPACEWAR
+// 
+// a3x/	jda a4-1
+// 
+// /Hypertable initialization, part 1
+// 
+// a4/	dap a4x
+// 	lac .-2
+// 	dac nb1 1	/finish main program business
+// 	clear th1,th5 1
+// 	law 4 i
+// 	dac th1
+// 	dac th1 1		/counts tries
+// 	lac (opr
+// 	dac th4
+// 	dac th4 1		/recovery switch
+// a4x,	jmp .
+// 
+// mlx/	jmp hml
+// 
+// /Hypertable initialization, part 2
+// 
+// hml/	init hp1,th1
+// 	init hp2,th2
+// 	init hp3,th3
+// 	init hp4,th4
+// 	init hp5,th5
+// 	init hp6,th6
+// 	jmp ml1
+// 
+// shx/	jmp srh
+
+/Control word inspection sequence
+
+srh,
+hp4,	xct .			/th4 table (opr to start)
+	lac scw
+	cma
+// adaption for CHM-style control boxes
+// rather trigger on deploy than release, like spacewar 3.1 (nl, 3/3/2016)
+//	and mco i
+//	sma
+//	jmp sh1
+//	ral 1
+//	spa
+	ior i mco
+	and (600000
+	sza i
+// end of trigger code adaption
+	jsp hyp			/go for it
+sh1,	lio scw
+	jmp srt-1
+
+// the following patch code is already inlined
+
+// mqx/	jsp hq1
+// 
+// /Main loop table indexing
+// 
+// hq1/	dap hqx
+// 	idx mx1
+// 	idx hp1
+// 	idx hp2
+// 	idx hp3
+// 	idx hp4
+// 	idx hp5
+// 	idx hp6
+// hqx,	jmp .
+
+/Hyperspace calculation and Minskytron display
+
+hyp,	dap hxt
+hp1,	isp .			/(th1)OK to jum?
+	jmp hp2-1		/yes
+	dzm hp1 i
+	jmp hxt
+	lio mx1 i
+hp2,	dio .			/(th2)
+	lio my1 i
+hp3,	dio .			/(th3)
+	lac ml1 i
+hp6,	dap .			/(th6)
+	random \ran
+	add mx1 i		/diddle ship coordinates
+	dac mx1 i
+	add my1 i
+	dac my1 i
+
+	setx mb1 i,364
+	law 20 i
+hp5,	dac .			/(th5) loop counters
+	move xy1,mh1 i
+	move xy2,mh2 i
+	move xy3,mh3 i
+	init ml1 i,he1
+	jmp he1 3
+
+he1,	dap hxt
+	setx mb1 i,325
+	setx \hcl,4 i		/inner loop count
+	lac mh1 i		/unpack point coordinates
+	split
+	dac \hx1
+	dio \hy1
+	lac mh2 i
+	split
+	dac \hx2
+	dio \hy2
+	lac mh3 i
+	split
+	dac \hx3
+	dio \hy3
+
+
+/Here it is...
+h3,	marvin \hx1,\hy1,\hx2,\hy2,sar 5s,sar 5s
+	marvin \hx2,\hy2,\hx3,\hy3,sar 8s,sar 4s
+	dismin \hx2,\hy2,hp2 i,hp3 i
+	marvin \hx3,\hy3,\hx1,\hy1,sar 1s,sar 6s
+	dismin \hx3,\hy3,hp2 i,hp3 i
+
+h3a,	count \hcl,h3
+	pack \hx1,\hy1,mh1 i	/repack coordinates
+	pack \hx2,\hy2,mh2 i
+	pack \hx3,\hy3,mh3 i
+h3b,	count hp5 i,hxt
+	setx hp5 i,100 i	/delay timer
+	init ml1 i,he2		/delay entry
+	setx mb1 i,12
+
+hxt,	jmp .			/BACK TO THE FRAY...
+
+/Delay and recovery time count loops
+
+he2,	dap hxt
+	count hp5 i,hxt
+	lac hp6 i
+	dap ml1 i
+	setx mb1 i,2000
+	reset hp4 i,jmp hyj	/recovery gate
+	setx hp5 i,500 i
+	jmp hxt
+
+hyj,	count hp5 i,sh1
+	reset hp4 i,nop
+	jmp sh1
+
+xy1,	6
+xy2,	10765
+xy3,	767765
+
+
+// end of Hyperspace 85 (Hyperspace VIci)
+
+	constants
+	variables
+p,	. 200/				/ space for patches
+
+
+mtb,					/ table of objects and their properties 
+
+start
+
+
+
+stars by prs  for s/w 2b
+
+6077/
+
+/stars 1 _  3/13/62, prs.
+
+	decimal
+
+	define
+	mark X, Y
+	repeat 8, Y=Y+Y
+	8192-X	Y
+	terminate
+
+1j,	mark 1537, 371	/87 Taur, Aldebaran
+	mark 1762, -189	/19 Orio, Rigel
+	mark 1990, 168	/58 Orio, Betelgeuze
+	mark 2280, -377	/9 CMaj, Sirius
+	mark 2583, 125	/10 CMin, Procyon
+	mark 3431, 283	/32 Leon, Regulus
+	mark 4551, -242	/67 Virg, Spica
+	mark 4842, 448	/16 Boot, Arcturus
+1q,	mark 6747, 196	/53 Aqil, Altair
+
+2j,	mark 1819, 143	/24 Orio, Bellatrix
+	mark 1884, -29	/46 Orio
+	mark 1910, -46	/50 Orio
+	mark 1951, -221	/53 Orio
+	mark 2152, -407	/ 2 CMaj
+	mark 2230, 375	/24 Gemi
+	mark 3201, -187	/30 Hyda, Alphard
+	mark 4005, 344	/94 Leon, Denebola
+2q,	mark 5975, 288	/55 Ophi
+
+3j,	mark   46, 333	/88 Pegs, Algenib
+	mark  362, -244	/31 Ceti
+	mark  490, 338	/99 Pisc
+	mark  566, -375	/52 Ceti
+	mark  621, 462	/ 6 Arie
+	mark 764, -78	/68 Ceti, Mira
+	mark  900, 64	/86 Ceti
+	mark 1007, 84	/92 Ceti
+	mark 1243, -230	/23 Erid
+	mark 1328, -314	/34 Erid
+	mark 1495, 432	/74 Taur
+	mark 1496, 356	/78 Taur
+	mark 1618, 154	/ 1 Orio
+	mark 1644, 52	/ 8 Orio
+	mark 1723, -119	/67 Erid
+	mark 1755, -371	/ 5 Leps
+	mark 1779, -158	/20 Orio
+	mark 1817, -57	/28 Orio
+	mark 1843, -474	/ 9 Leps
+	mark 1860, -8	/34 Orio
+	mark 1868, -407	/11 Leps
+	mark 1875, 225	/39 Orio
+	mark 1880, -136	/44 Orio
+	mark 1887, 480	/123 Taur
+	mark 1948, -338	/14 Leps
+	mark 2274, 296	/31 Gemi
+	mark 2460, 380	/54 Gemi
+
+	mark 2470, 504	/55 Gemi
+	mark 2513, 193	/ 3 CMin
+	mark 2967, 154	/11 Hyda
+	mark 3016, 144	/16 Hyda
+	mark 3424, 393	/30 Leon
+	mark 3496, 463	/41 Leon, Algieba
+	mark 3668, -357	/nu Hyda
+	mark 3805, 479	/68 Leon
+	mark 3806, 364	/10 Leon
+	mark 4124, -502	/ 2 Corv
+	mark 4157, -387	/ 4 Corv
+	mark 4236, -363	/ 7 Corv
+	mark 4304, -21	/29 Virg
+	mark 4384, 90	/43 Virg
+	mark 4421, 262	/47 Virg
+	mark 4606, -2	/79 Virg
+	mark 4721, 430	/ 8 Boot
+	mark 5037, -356	/ 9 Libr
+	mark 5186, -205	/27 Libr
+	mark 5344, 153	/24 Serp
+	mark 5357, 358	/28 Serp
+	mark 5373, -71	/32 Serp
+	mark 5430, -508	/ 7 Scor
+	mark 5459, -445	/ 8 Scor
+	mark 5513, -78	/ 1 Ophi
+	mark 5536, -101	/ 2 Ophi
+	mark 5609, 494	/27 Herc
+	mark 5641, -236	/13 Ophi
+	mark 5828, -355	/35 Ophi
+	mark 5860, 330	/64 Herc
+	mark 5984, -349	/55 Serp
+	mark 6047, 63	/62 Ophi
+	mark 6107, -222	/64 Ophi
+	mark 6159, 217	/72 Ophi
+	mark 6236, -66	/58 Serp
+	mark 6439, -483	/37 Sgtr
+	mark 6490, 312	/17 Aqil
+	mark 6491, -115	/16 Aqil
+	mark 6507, -482	/41 Sgtr
+	mark 6602, 66	/30 Aqil
+	mark 6721, 236	/50 Aqil
+	mark 6794, 437	/12 Sgte
+	mark 6862, -25	/65 Aqil
+	mark 6914, -344	/ 9 Capr
+	mark 7014, 324	/ 6 Dlph
+	mark 7318, -137	/22 Aqar
+	mark 7391, 214	/ 8 Pegs
+	mark 7404, -377	/49 Capr
+	mark 7513, -18	/34 Aqar
+	mark 7539, 130	/26 Pegs
+	mark 7644, -12	/55 Aqar
+	mark 7717, 235	/42 Pegs
+	mark 7790, -372	/76 Aqar
+3q,	mark 7849, 334	/54 Pegs, Markab
+
+4j,	mark    1, -143	/33 Pisc
+	mark   54, 447	/89 Pegs
+	mark   54, -443	/ 7 Ceti
+	mark   82, -214	/ 8 Ceti
+	mark  223, -254	/17 Ceti
+	mark  248, 160	/63 Pisc
+	mark  273, -38	/20 Ceti
+	mark  329, 167	/71 Pisc
+	mark  376, 467	/84 Pisc
+	mark  450, -198	/45 Ceti
+	mark  548, 113	/106 Pisc
+	mark  570, 197	/110 Pisc
+	mark  595, -255	/53 Ceti
+	mark  606, -247	/55 Ceti
+	mark  615, 428	/ 5 Arie
+	mark  617, 61	/14 Pisc
+	mark  656, -491	/59 Ceti
+	mark  665, 52	/113 Pisc
+	mark  727, 191	/65 Ceti
+	mark  803, -290	/72 Ceti
+	mark  813, 182	/73 Ceti
+	mark  838, -357	/76 Ceti
+	mark  878, -2	/82 Ceti
+	mark  907, -340	/89 Ceti
+	mark  908, 221	/87 Ceti
+	mark  913, -432	/ 1 Erid
+	mark  947, -487	/ 2 Erid
+	mark  976, -212	/ 3 Erid
+	mark  992, 194	/91 Ceti
+	mark 1058, 440	/57 Arie
+	mark 1076, 470	/58 Arie
+	mark 1087, -209	/13 Erid
+	mark 1104, 68	/96 Ceti
+	mark 1110, -503	/16 Erid
+	mark 1135, 198	/ 1 Taur
+	mark 1148, 214	/ 2 Taur
+	mark 1168, 287	/ 5 Taur
+	mark 1170, -123	/17 Erid
+	mark 1185, -223	/18 Erid
+	mark 1191, -500	/19 Erid
+	mark 1205, 2	/10 Taur
+	mark 1260, -283	/26 Erid
+	mark 1304, -74	/32 Erid
+	mark 1338, 278	/35 Taur
+	mark 1353, 130	/38 Taur
+	mark 1358, 497	/37 Taur
+	mark 1405, -162	/38 Erid
+	mark 1414, 205	/47 Taur
+	mark 1423, 197	/49 Taur
+	mark 1426, -178	/40 Erid
+	mark 1430, 463	/50 Taur
+	mark 1446, 350	/54 Taur
+	mark 1463, 394	/61 Taur
+	mark 1470, 392	/64 Taur
+	mark 1476, 502	/65 Taur
+	mark 1477, 403	/68 Taur
+
+	mark 1483, 350	/71 Taur
+	mark 1485, 330	/73 Taur
+	mark 1495, 358	/77 Taur
+	mark 1507, 364	/
+	mark 1518, -6	/45 Erid
+	mark 1526, 333	/86 Taur
+	mark 1537, 226	/88 Taur
+	mark 1544, -81	/48 Erid
+	mark 1551, 280	/90 Taur
+	mark 1556, 358	/92 Taur
+	mark 1557, -330	/53 Erid
+	mark 1571, -452	/54 Erid
+	mark 1596, -78	/57 Erid
+	mark 1622, 199	/ 2 Orio
+	mark 1626, 124	/ 3 Orio
+	mark 1638, -128	/61 Erid
+	mark 1646, 228	/ 7 Orio
+	mark 1654, 304	/ 9 Orio
+	mark 1669, 36	/10 Orio
+	mark 1680, -289	/64 Erid
+	mark 1687, -167	/65 Erid
+	mark 1690, -460	/
+	mark 1690, 488	/102 Taur
+	mark 1700, 347	/11 Orio
+	mark 1729, 352	/15 Orio
+	mark 1732, -202	/69 Erid
+	mark 1750, -273	/ 3 Leps
+	mark 1753, 63	/17 Orio
+	mark 1756, -297	/ 4 Leps
+	mark 1792, -302	/ 6 Leps
+	mark 1799, -486	/
+	mark 1801, -11	/22 Orio
+	mark 1807, 79	/23 Orio
+	mark 1816, -180	/29 Orio
+	mark 1818, 40	/25 Orio
+	mark 1830, 497	/114 Taur
+	mark 1830, 69	/30 Orio
+	mark 1851, 134	/32 Orio
+	mark 1857, 421	/119 Taur
+	mark 1861, -168	/36 Orio
+	mark 1874, 214	/37 Orio
+	mark 1878, -138	/
+	mark 1880, -112	/42 Orio
+	mark 1885, 210	/40 Orio
+	mark 1899, -60	/48 Orio
+	mark 1900, 93	/47 Orio
+	mark 1900, -165	/49 Orio
+	mark 1909, 375	/126 Taur
+	mark 1936, -511	/13 Leps
+	mark 1957, 287	/134 Taur
+	mark 1974, -475	/15 Leps
+	mark 1982, 461	/54 Orio
+	mark 2002, -323	/16 Leps
+	mark 2020, -70	/
+	mark 2030, 220	/61 Orio
+
+	mark 2032, -241	/ 3 Mono
+	mark 2037, 458	/62 Orio
+	mark 2057, -340	/18 Leps
+	mark 2059, 336	/67 Orio
+	mark 2084, 368	/69 Orio
+	mark 2084, 324	/70 Orio
+	mark 2105, -142	/ 5 Mono
+	mark 2112, -311	/
+	mark 2153, 106	/ 8 Mono
+	mark 2179, 462	/18 Gemi
+	mark 2179, -107	/10 Mono
+	mark 2184, -159	/11 Mono
+	mark 2204, 168	/13 Mono
+	mark 2232, -436	/ 7 CMaj
+	mark 2239, -413	/ 8 CMaj
+	mark 2245, -320	/
+	mark 2250, 227	/15 Mono
+	mark 2266, 303	/30 Gemi
+	mark 2291, 57	/18 Mono
+	mark 2327, 303	/38 Gemi
+	mark 2328, -457	/15 CMaj
+	mark 2330, -271	/14 CMaj
+	mark 2340, -456	/19 CMaj
+	mark 2342, -385	/20 CMaj
+	mark 2378, -93	/19 Mono
+	mark 2379, 471	/43 Gemi
+	mark 2385, -352	/23 CMaj
+	mark 2428, -8	/22 Mono
+	mark 2491, -429	/
+	mark 2519, 208	/ 4 CMin
+	mark 2527, 278	/ 6 CMin
+	mark 2559, -503	/
+	mark 2597, -212	/26 Mono
+	mark 2704, -412	/
+	mark 2709, -25	/28 Mono
+	mark 2714, 60	/
+	mark 2751, -61	/29 Mono
+	mark 2757, -431	/16 Pupp
+	mark 2768, -288	/19 Pupp
+	mark 2794, 216	/17 Canc
+	mark 2848, -82	/
+	mark 2915, 138	/ 4 Hyda
+	mark 2921, 84	/ 5 Hyda
+	mark 2942, -355	/ 9 Hyda
+	mark 2944, 497	/43 Canc
+	mark 2947, 85	/ 7 Hyda
+	mark 2951, -156	/
+	mark 2953, 421	/47 Canc
+	mark 2968, -300	/12 Hyda
+	mark 2976, 141	/13 Hyda
+	mark 3032, 279	/65 Canc
+	mark 3124, 62	/22 Hyda
+	mark 3157, -263	/26 Hyda
+	mark 3161, -208	/27 Hyda
+	mark 3209, -53	/31 Hyda
+	mark 3225, -17	/32 Hyda
+	mark 3261, 116	/
+
+	mark 3270, -16	/35 Hyda
+	mark 3274, -316	/38 Hyda
+	mark 3276, 236	/14 Leon
+	mark 3338, -327	/39 Hyda
+	mark 3385, 194	/29 Leon
+	mark 3415, -286	/40 Hyda
+	mark 3428, 239	/31 Leon
+	mark 3429, 3	/15 Sext
+	mark 3446, -270	/41 Hyda
+	mark 3495, 455	/40 Leon
+	mark 3534, -372	/42 Hyda
+	mark 3557, -3	/30 Sext
+	mark 3570, 223	/47 Leon
+	mark 3726, -404	/al Crat
+	mark 3736, -44	/61 Leon
+	mark 3738, 471	/60 Leon
+	mark 3754, 179	/63 Leon
+	mark 3793, -507	/11 Crat
+	mark 3821, -71	/74 Leon
+	mark 3836, -324	/12 Crat
+	mark 3846, 150	/77 Leon
+	mark 3861, 252	/78 Leon
+	mark 3868, -390	/15 Crat
+	mark 3935, -211	/21 Crat
+	mark 3936, -6	/91 Leon
+	mark 3981, -405	/27 Crat
+	mark 3986, 161	/ 3 Virg
+	mark 3998, 473	/93 Leon
+	mark 4013, 53	/ 5 Virg
+	mark 4072, 163	/ 8 Virg
+	mark 4097, 211	/ 9 Virg
+	mark 4180, -3	/15 Virg
+	mark 4185, 418	/11 Coma
+	mark 4249, -356	/ 8 Corv
+	mark 4290, -170	/26 Virg
+	mark 4305, 245	/30 Virg
+	mark 4376, -205	/40 Virg
+	mark 4403, 409	/36 Coma
+	mark 4465, -114	/51 Virg
+	mark 4466, 411	/42 Coma
+	mark 4512, -404	/61 Virg
+	mark 4563, -352	/69 Virg
+	mark 4590, -131	/74 Virg
+	mark 4603, 95	/78 Virg
+	mark 4679, 409	/ 4 Boot
+	mark 4691, 371	/ 5 Boot
+	mark 4759, 46	/93 Virg
+	mark 4820, 66	/
+	mark 4822, -223	/98 Virg
+	mark 4840, -126	/99 Virg
+	mark 4857, -294	/100 Virg
+	mark 4864, 382	/20 Boot
+	mark 4910, -41	/105 Virg
+	mark 4984, 383	/29 Boot
+	mark 4986, 322	/30 Boot
+	mark 4994, -119	/107 Virg
+
+	mark 5009, 396	/35 Boot
+	mark 5013, 53	/109 Virg
+	mark 5045, 444	/37 Boot
+	mark 5074, -90	/16 Libr
+	mark 5108, 57	/110 Virg
+	mark 5157, -442	/24 Libr
+	mark 5283, -221	/37 Libr
+	mark 5290, -329	/38 Libr
+	mark 5291, 247	/13 Serp
+	mark 5326, -440	/43 Libr
+	mark 5331, 455	/21 Serp
+	mark 5357, 175	/27 Serp
+	mark 5372, 420	/35 Serp
+	mark 5381, 109	/37 Serp
+	mark 5387, 484	/38 Serp
+	mark 5394, -374	/46 Libr
+	mark 5415, 364	/41 Serp
+	mark 5419, -318	/48 Libr
+	mark 5455, -253	/xi Scor
+	mark 5467, -464	/ 9 Scor
+	mark 5470, -469	/10 Scor
+	mark 5497, -437	/14 Scor
+	mark 5499, -223	/15 Scor
+	mark 5558, 29	/50 Serp
+	mark 5561, 441	/20 Herc
+	mark 5565, -451	/ 4 Ophi
+	mark 5580, 325	/24 Herc
+	mark 5582, -415	/ 7 Ophi
+	mark 5589, -186	/ 3 Ophi
+	mark 5606, -373	/ 8 Ophi
+	mark 5609, 50	/10 Ophi
+	mark 5610, -484	/ 9 Ophi
+	mark 5620, 266	/29 Herc
+	mark 5713, -241	/20 Ophi
+	mark 5742, 235	/25 Ophi
+	mark 5763, 217	/27 Ophi
+	mark 5807, 293	/60 Herc
+	mark 5868, -8	/41 Ophi
+	mark 5888, -478	/40 Ophi
+	mark 5889, -290	/53 Serp
+	mark 5924, -114	/
+	mark 5925, 96	/49 Ophi
+	mark 5987, -183	/57 Ophi
+	mark 6006, -292	/56 Serp
+	mark 6016, -492	/58 Ophi
+	mark 6117, -84	/57 Serp
+	mark 6117, 99	/66 Ophi
+	mark 6119, 381	/93 Herc
+	mark 6119, 67	/67 Ophi
+	mark 6125, 30	/68 Ophi
+	mark 6146, 57	/70 Ophi
+	mark 6158, 198	/71 Ophi
+	mark 6170, 473	/102 Herc
+	mark 6188, -480	/13 Sgtr
+	mark 6234, 76	/74 Ophi
+	mark 6235, 499	/106 Herc
+
+	mark 6247, -204	/xi Scut
+	mark 6254, -469	/21 Sgtr
+	mark 6255, 494	/109 Herc
+	mark 6278, -333	/ga Scut
+	mark 6313, -189	/al Scut
+	mark 6379, 465	/110 Herc
+	mark 6382, -110	/be Scut
+	mark 6386, 411	/111 Herc
+	mark 6436, 93	/63 Serp
+	mark 6457, 340	/13 Aqil
+	mark 6465, -134	/12 Aqil
+	mark 6478, -498	/39 Sgtr
+	mark 6553, 483	/ 1 Vulp
+	mark 6576, -410	/44 Sgtr
+	mark 6576, -368	/46 Sgtr
+	mark 6607, 3	/32 Aqil
+	mark 6651, 163	/38 Aqil
+	mark 6657, 445	/ 9 Vulp
+	mark 6665, -35	/41 Aqil
+	mark 6688, 405	/ 5 Sgte
+	mark 6693, 393	/ 6 Sgte
+	mark 6730, 416	/ 7 Sgte
+	mark 6739, 430	/ 8 Sgte
+	mark 6755, 17	/55 Aqil
+	mark 6766, 187	/59 Aqil
+	mark 6772, 140	/60 Aqil
+	mark 6882, 339	/67 Aqil
+	mark 6896, -292	/ 5 Capr
+	mark 6898, -292	/ 6 Capr
+	mark 6913, -297	/ 8 Capr
+	mark 6958, -413	/11 Capr
+	mark 6988, 250	/ 2 Dlph
+	mark 7001, 326	/ 4 Dlph
+	mark 7015, -33	/71 Aqil
+	mark 7020, 475	/29 Vulp
+	mark 7026, 354	/ 9 Dlph
+	mark 7047, 335	/11 Dlph
+	mark 7066, 359	/12 Dlph
+	mark 7067, -225	/ 2 Aqar
+	mark 7068, -123	/ 3 Aqar
+	mark 7096, -213	/ 6 Aqar
+	mark 7161, -461	/22 Capr
+	mark 7170, -401	/23 Capr
+	mark 7192, -268	/13 Aqar
+	mark 7199, 222	/ 5 Equl
+	mark 7223, 219	/ 7 Equl
+	mark 7230, 110	/ 8 Equl
+	mark 7263, -393	/32 Capr
+	mark 7267, 441	/ 1 Pegs
+	mark 7299, -506	/36 Capr
+	mark 7347, -453	/39 Capr
+	mark 7353, -189	/23 Aqar
+	mark 7365, -390	/40 Capr
+	mark 7379, -440	/43 Capr
+	mark 7394, 384	/ 9 Pegs
+	mark 7499, -60	/31 Aqar
+	mark 7513, 104	/22 Pegs
+
+	mark 7515, -327	/33 Aqar
+	mark 7575, -189	/43 Aqar
+	mark 7603, -43	/48 Aqar
+	mark 7604, 266	/31 Pegs
+	mark 7624, 20	/52 Aqar
+	mark 7639, 96	/35 Pegs
+	mark 7654, -255	/57 Aqar
+	mark 7681, -14	/62 Aqar
+	mark 7727, -440	/66 Aqar
+	mark 7747, 266	/46 Pegs
+	mark 7761, -321	/71 Aqar
+	mark 7779, -185	/73 Aqar
+	mark 7795, 189	/50 Pegs
+	mark 7844, 75	/ 4 Pisc
+	mark 7862, 202	/55 Pegs
+	mark 7874, -494	/88 Aqar
+	mark 7903, -150	/90 Aqar
+	mark 7911, -219	/91 Aqar
+	mark 7919, 62	/ 6 Pisc
+	mark 7923, -222	/93 Aqar
+	mark 7952, -470	/98 Aqar
+	mark 7969, -482	/99 Aqar
+	mark 7975, 16	/ 8 Pisc
+	mark 7981, 133	/10 Pisc
+	mark 7988, 278	/70 Pegs
+	mark 8010, -489	/101 Aqar
+	mark 8049, 116	/17 Pisc
+	mark 8059, -418	/104 Aqar
+	mark 8061, 28	/18 Pisc
+	mark 8064, -344	/105 Aqar
+	mark 8159, 144	/28 Pisc
+	mark 8174, -149	/30 Pisc
+4q,	mark 8188, -407	/ 2 Ceti
+
+	start 4

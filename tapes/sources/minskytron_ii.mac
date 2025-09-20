@@ -1,0 +1,154 @@
+minskytron ii
+/ based on dpys5, pdp-1 display hacks
+
+/ start at 0 for minskytron
+/ (uses TW)
+
+0/	opr
+	opr
+	opr
+	opr
+	jmp m0
+
+
+
+/ start at 500 for Minskytron
+/ (uses TW)
+
+500/
+m0,	lat
+	rcl 9s
+	rcl 9s
+m1,	jsp gsh
+	dac sh0
+	jsp gsh
+	dac sh1
+	jsp gsh
+	dac sh2
+	jsp gsh
+	dac sh3
+	jsp gsh
+	dac sh4
+	jsp gsh
+	dac sh5
+m2,	lac xa0
+	dac xa
+	lac xb0
+	dac xb
+	lac xc0
+	dac xc
+	lac ya0
+	dac ya
+	lac yb0
+	dac yb
+	lac yc0
+	dac yc
+
+mss,	lac ops
+	szs 10		/ m3a: (add xb), if sense switch 1 set, else (sub xb)
+	lac opa
+	dip m3a+1
+	lac ops
+	szs 20		/ m3a: (add yb), if sense switch 2 set, else (sub yb)
+	lac opa
+	dip m3a+5
+	lac ops
+	szs 30		/ m3b: (add xc), if sense switch 3 set, else (sub xc)
+	lac opa
+	dip m3b+1
+	lac ops
+	szs 40		/ m3b: (add yc), if sense switch 4 set, else (sub yc)
+	lac opa
+	dip m3b+5
+	lac ops
+	szs 50		/ m3c: (add xa), if sense switch 5 set, else (sub xa)
+	lac opa
+	dip m3c+1
+	lac ops
+	szs 60		/ m3c: (add ya), if sense switch 6 set, else (sub ya)
+	lac opa
+	dip m3c+5
+
+m3a,	lac xa
+	add xb
+	xct sh0
+	add ya
+	dac ya
+	sub yb
+	xct sh1
+	cma
+	add xa
+	dac xa
+	lio ya
+	dpy-i
+m3b,	lac xb
+	sub xc
+	xct sh2
+	add yb
+	dac yb
+	sub yc
+	xct sh3
+	cma
+	add xb
+	dac xb
+	lio yb
+	dpy-i
+m3c,	lac xc
+	sub xa
+	xct sh4
+	add yc
+	dac yc
+	sub ya
+	xct sh5
+	cma
+	add xc
+	dac xc
+	lio yc
+	dpy-i
+	jmp m3a
+
+gsh,	dap gsx
+	cla
+	rcl 3s
+	add gsc
+	dap .+1
+	lac .
+gsx,	jmp .
+
+gsc,	gst
+gst,	sar 1s
+	sar 2s
+	sar 3s
+	sar 4s
+	sar 5s
+	sar 6s
+	sar 7s
+	sar 8s
+	sar 9s	/ not used, but was in orig.
+
+xa0,	dpy i 17770
+xb0,	0
+xc0,	and
+ya0,	0
+yb0,	ior
+yc0,	0
+
+xa,	0
+xb,	0
+xc,	0
+ya,	0
+yb,	0
+yc,	0
+
+sh0,	xx
+sh1,	xx
+sh2,	xx
+sh3,	xx
+sh4,	xx
+sh5,	xx
+
+opa,    add
+ops,	sub
+
+
+start 500

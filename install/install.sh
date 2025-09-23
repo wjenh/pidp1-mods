@@ -156,6 +156,8 @@ while true; do
 		gcc /opt/pidp1/src/macro/macro1_1.c -o /opt/pidp1/src/macro/macro1_1
 		# the usb_paper_tape tool:
 		make -C /opt/pidp1/src/usb_paper_tape
+		# Bill Ezell's tape disassembler:
+		cc /opt/pidp1/src/disassembler/disassemble_tape.c -o /opt/pidp1/src/disassembler/disassemble_tape
             
 		echo Setting required access privileges to pidp1 simulator
 		# make sure pidp1 panel driver has the right privileges
@@ -193,6 +195,7 @@ while true; do
 	    #
 	    sudo ln -sf /opt/pidp1/bin/macro1_1 /usr/local/bin/macro1_1
 	    sudo ln -sf /opt/pidp1/bin/macro1_1 /usr/local/bin/macro1
+	    sudo ln -sf /opt/pidp1/bin/disassemble_tape /usr/local/bin/disassemble_tape
 	    #
 	    sudo ln -sf /opt/pidp1/bin/tkaskopenfile /usr/local/bin/tkaskopenfile
 	    sudo ln -sf /opt/pidp1/bin/tkaskopenfilewrite /usr/local/bin/tkaskopenfilewrite

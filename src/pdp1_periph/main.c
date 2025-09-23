@@ -1132,8 +1132,10 @@ main(int argc, char *argv[])
 
 	ptpbuflen = 2000;
 	ptpbuf = malloc(ptpbuflen*sizeof(int));
-	if(argc > 0)
-		mountptr(argv[0]);
+	if(argc > 0) {
+		lasttape = strdup(argv[0]);
+		mountptr(lasttape);
+	}
 	initptp();
 
 	initTypewriter();

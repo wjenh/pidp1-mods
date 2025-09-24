@@ -4,6 +4,6 @@
 [submodule "src/p7sim"]
 	path = src/p7sim
 	url = https://github.com/aap/p7sim.git
-[submodule "src/path/to/folder"]
-	path = src/path/to/folder
+[submodule "src/disassembler"]
+	path = src/disassembler
 	url = https://github.com/wjenh/PDP-1-Disassembler.git

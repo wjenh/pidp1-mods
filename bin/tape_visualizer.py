@@ -94,7 +94,7 @@ class TapeData:
     def _detect_binary_format(self, words: List[Tuple[int, int]]) -> dict:
         """Deterministically detect RIM vs BIN format by parsing block structures
 
-        Returns dict mapping line_index -> LineType (RIM or BIN)
+        Returns dict mapping line_index -> (LineType, is_bold, is_checksum)
         """
         if len(words) < 2:
             return {}
@@ -110,11 +110,33 @@ class TapeData:
             bin_length = self._try_parse_bin_block(remaining_words)
             if bin_length > 0:
                 # Classify this BIN block
+                # First 2 words are addresses (6 lines), then data words (3 lines each)
+                # Last word is checksum - should not be bold, but marked as checksum
                 for i in range(word_idx, min(word_idx + bin_length, len(words))):
                     line_idx, _ = words[i]
-                    line_classifications[line_idx] = LineType.BIN
-                    line_classifications[line_idx + 1] = LineType.BIN
-                    line_classifications[line_idx + 2] = LineType.BIN
+                    is_bold = False
+                    is_checksum = False
+
+                    # Check if this is the last word (checksum)
+                    is_last_word = (i == word_idx + bin_length - 1)
+
+                    if is_last_word:
+                        # This is the checksum word - mark all 3 lines as checksum
+                        line_classifications[line_idx] = (LineType.BIN, False, True)
+                        line_classifications[line_idx + 1] = (LineType.BIN, False, True)
+                        line_classifications[line_idx + 2] = (LineType.BIN, False, True)
+                    elif i >= word_idx + 2:
+                        # This is a data word (not address, not checksum)
+                        # Bold the 3rd line (line_idx + 2)
+                        line_classifications[line_idx] = (LineType.BIN, False, False)
+                        line_classifications[line_idx + 1] = (LineType.BIN, False, False)
+                        line_classifications[line_idx + 2] = (LineType.BIN, True, False)  # Bold
+                    else:
+                        # Address DIOs - no bold, no checksum
+                        line_classifications[line_idx] = (LineType.BIN, False, False)
+                        line_classifications[line_idx + 1] = (LineType.BIN, False, False)
+                        line_classifications[line_idx + 2] = (LineType.BIN, False, False)
+
                 word_idx += bin_length
                 continue
 
@@ -122,11 +144,36 @@ class TapeData:
             rim_length = self._try_parse_rim_block(remaining_words)
             if rim_length > 0:
                 # Classify this RIM block
+                # Pattern: DIO (3 lines), data (3 lines), DIO (3 lines), data (3 lines)...
+                # Last word is JMP (executed directly, not loaded) - don't bold
+                # Second-to-last word (if odd position) is data loaded by last DIO - DO bold
+                rim_start_word = word_idx
+                rim_end_word = word_idx + rim_length - 1
+
                 for i in range(word_idx, min(word_idx + rim_length, len(words))):
-                    line_idx, _ = words[i]
-                    line_classifications[line_idx] = LineType.RIM
-                    line_classifications[line_idx + 1] = LineType.RIM
-                    line_classifications[line_idx + 2] = LineType.RIM
+                    line_idx, word_val = words[i]
+
+                    # Check position within RIM block
+                    pos_in_rim = i - rim_start_word
+
+                    # Check if this is the very last word (JMP instruction)
+                    is_last_word = (i == rim_end_word)
+
+                    # Bold the last line of data words (odd word positions)
+                    # Data words are at positions 1, 3, 5, 7... (odd positions)
+                    # Exception: if this is the very last word of the block (JMP), don't bold
+                    # RIM blocks don't have checksums
+                    if pos_in_rim % 2 == 1 and not is_last_word:
+                        # This is a data word (not the final JMP) - bold the last line
+                        line_classifications[line_idx] = (LineType.RIM, False, False)
+                        line_classifications[line_idx + 1] = (LineType.RIM, False, False)
+                        line_classifications[line_idx + 2] = (LineType.RIM, True, False)  # Bold
+                    else:
+                        # DIO instruction or final JMP - no bold
+                        line_classifications[line_idx] = (LineType.RIM, False, False)
+                        line_classifications[line_idx + 1] = (LineType.RIM, False, False)
+                        line_classifications[line_idx + 2] = (LineType.RIM, False, False)
+
                 word_idx += rim_length
                 continue
 
@@ -243,12 +290,12 @@ class TapeData:
         # Default fallback
         return LineType.ALPHANUM
 
-    def _decode_tape(self) -> List[Tuple[int, str, str, int, str, LineType]]:
-        """Decode tape into (byte, fiodec_char, fiodec_display, unicode_code, unicode_char, line_type)
+    def _decode_tape(self) -> List[Tuple[int, str, str, int, str, LineType, bool, bool]]:
+        """Decode tape into (byte, fiodec_char, fiodec_display, unicode_code, unicode_char, line_type, is_bold, is_checksum)
 
         Uses three-pass approach:
         1. First pass: Analyze tape to determine if it's primarily alphanumeric or binary
-        2. Second pass: For binary sections, detect RIM vs BIN format
+        2. Second pass: For binary sections, detect RIM vs BIN format, mark bold lines, and mark checksums
         3. Third pass: Classify each byte with global context
         """
         result = []
@@ -301,14 +348,28 @@ class TapeData:
                 else:
                     i += 1
 
-        # THIRD PASS: Classify each byte with global context
+        # THIRD PASS: Classify each byte with global context and determine bold/checksum flags
         for i, byte_val in enumerate(self.raw_bytes):
             # Check if this line has a specific binary format classification
             if i in binary_format_map:
-                line_type = binary_format_map[i]
+                line_type, is_bold, is_checksum = binary_format_map[i]
             else:
                 # Use standard classification
                 line_type = self._classify_line_type(byte_val, global_alphanum_ratio)
+                # For generic BINARY, make every 3rd line bold
+                is_bold = False
+                is_checksum = False
+                if line_type == LineType.BINARY:
+                    # Find start of this binary section
+                    section_start = i
+                    for j in range(i - 1, -1, -1):
+                        if (self.raw_bytes[j] & 0x80) == 0x80:
+                            section_start = j
+                        else:
+                            break
+                    # Make every 3rd line bold (position % 3 == 2)
+                    if (i - section_start) % 3 == 2:
+                        is_bold = True
 
             # Remove parity bit for FIODEC lookup
             fiodec_code = byte_val & 0x7F
@@ -348,7 +409,7 @@ class TapeData:
                 unicode_char = display_char
                 unicode_code = ord(display_char) if len(display_char) == 1 else 0
 
-            result.append((byte_val, fiodec_char or "?", fiodec_display, unicode_code, unicode_char, line_type))
+            result.append((byte_val, fiodec_char or "?", fiodec_display, unicode_code, unicode_char, line_type, is_bold, is_checksum))
 
         return result
 
@@ -459,9 +520,15 @@ class TapeVisualizer:
         char_rows = [[] for _ in range(3)]  # 3 rows for FIODEC character
 
         # Track previous line type to detect block starts
-        prev_line_type = None
+        # Initialize from the byte just before the visible window to avoid false markers
+        if start_col > 0:
+            _, _, _, _, _, prev_line_type, _, _ = self.tape_data.decoded_data[start_col - 1]
+        else:
+            prev_line_type = None
 
-        for idx, (byte_val, fiodec_char, fiodec_display, unicode_code, unicode_char, line_type) in enumerate(visible_data):
+        for idx, (byte_val, fiodec_char, fiodec_display, unicode_code, unicode_char, line_type, is_bold, is_checksum) in enumerate(visible_data):
+            absolute_pos = start_col + idx
+
             # Determine color pair based on line type
             if line_type == LineType.LEADER:
                 color_pair = 1
@@ -477,16 +544,66 @@ class TapeVisualizer:
                 color_pair = 6
             else:
                 color_pair = 3  # Default to generic binary
+
+            # Apply bold flag
+            if is_bold:
+                color_pair = color_pair | curses.A_BOLD
             # Vertical 9-hole display (each byte gets 1 char wide + 1 space)
             hole_pattern = self.format_9_hole_display(byte_val)
             for i, hole in enumerate(hole_pattern):
                 tape_rows[i].append((f"{hole} ", color_pair))  # Store as (text, color) tuple
 
-            # Marker row - show 'R' at start of RIM block, 'B' at start of BIN block
-            if line_type == LineType.RIM and prev_line_type != LineType.RIM:
-                marker_row.append(("R ", curses.A_REVERSE))  # Inverted 'R'
-            elif line_type == LineType.BIN and prev_line_type != LineType.BIN:
-                marker_row.append(("B ", curses.A_REVERSE))  # Inverted 'B'
+            # Marker row - show 'Raa' pattern for RIM blocks, 'B'/'s'/'e' for BIN block, 'c' for checksum
+            if is_checksum:
+                marker_row.append(("c ", curses.A_REVERSE))  # Inverted 'c' for checksum
+            elif line_type == LineType.RIM:
+                # For RIM blocks, show 'R' 'a' 'a' pattern repeating every 3 lines
+                # Find the start of this RIM block
+                rim_start = absolute_pos
+                for j in range(absolute_pos - 1, -1, -1):
+                    if j < len(self.tape_data.decoded_data):
+                        _, _, _, _, _, j_type, _, _ = self.tape_data.decoded_data[j]
+                        if j_type == LineType.RIM:
+                            rim_start = j
+                        else:
+                            break
+
+                # Calculate position within RIM block
+                pos_in_rim = absolute_pos - rim_start
+
+                # Pattern: R a a (DIO) <space> <space> <space> (data) - repeating every 6 lines
+                pos_in_word = pos_in_rim % 6
+                if pos_in_word == 0:
+                    marker_row.append(("R ", curses.A_REVERSE))  # First line of DIO: 'R'
+                elif pos_in_word in [1, 2]:
+                    marker_row.append(("a ", curses.A_REVERSE))  # Lines 1-2 of DIO: 'a'
+                else:
+                    marker_row.append(("  ", 0))  # Lines 3-5 (data word): spaces
+            elif line_type == LineType.BIN:
+                # For BIN blocks, show 'B' on first line, 's' on lines 1-2 (start addr), 'e' on lines 3-5 (end addr)
+                # Find the start of this BIN block
+                bin_start = absolute_pos
+                for j in range(absolute_pos - 1, -1, -1):
+                    if j < len(self.tape_data.decoded_data):
+                        _, _, _, _, _, j_type, _, _ = self.tape_data.decoded_data[j]
+                        if j_type == LineType.BIN:
+                            bin_start = j
+                        else:
+                            break
+
+                # Calculate position within BIN block
+                pos_in_bin = absolute_pos - bin_start
+
+                if pos_in_bin == 0:
+                    marker_row.append(("B ", curses.A_REVERSE))  # Line 0: 'B'
+                elif pos_in_bin in [1, 2]:
+                    marker_row.append(("s ", curses.A_REVERSE))  # Lines 1-2: 's' (start address)
+                elif pos_in_bin == 3:
+                    marker_row.append(("B ", curses.A_REVERSE))  # Line 3: 'B' (separator)
+                elif pos_in_bin in [4, 5]:
+                    marker_row.append(("e ", curses.A_REVERSE))  # Lines 4-5: 'e' (end address)
+                else:
+                    marker_row.append(("  ", 0))  # Data words - no marker (unless checksum handles it)
             else:
                 marker_row.append(("  ", 0))  # Empty space
 
@@ -532,8 +649,12 @@ class TapeVisualizer:
             for i, (tape_row, label) in enumerate(zip(tape_rows, bit_labels)):
                 draw_colored_row(row_num + i, f"{label}: ", tape_row)
 
-            # FIODEC octal (3 rows)
+            # Marker row (RIM/BIN block starts)
             row_num += 10  # Skip past holes + 1 blank
+            draw_colored_row(row_num, "   ", marker_row)
+
+            # FIODEC octal (3 rows)
+            row_num += 1  # Skip past marker row
             draw_colored_row(row_num, "F: ", fiodec_rows[0])
             draw_colored_row(row_num + 1, "   ", fiodec_rows[1])
             draw_colored_row(row_num + 2, "   ", fiodec_rows[2])
@@ -649,34 +770,102 @@ def test_mode(tape_file: str, width: int = 8):
     
     # Build vertical tape display
     tape_rows = [""] * 9  # 9 hole rows
+    marker_row = ""  # Marker row for RIM/BIN block starts
     fiodec_rows = ["", "", ""]     # 3 rows for FIODEC octal digits
     char_rows = ["", "", ""]       # 3 rows for FIODEC character
 
-    for byte_val, fiodec_char, fiodec_display, unicode_code, unicode_char, line_type in visible_data:
+    # Track previous line type to detect block starts
+    # Initialize from the byte just before the visible window to avoid false markers
+    if start_pos > 0:
+        _, _, _, _, _, prev_line_type, _, _ = visualizer.tape_data.decoded_data[start_pos - 1]
+    else:
+        prev_line_type = None
+
+    for idx, (byte_val, fiodec_char, fiodec_display, unicode_code, unicode_char, line_type, is_bold, is_checksum) in enumerate(visible_data):
+        absolute_pos = start_pos + idx
+
         # Vertical 9-hole display (each byte gets 1 char wide + 1 space)
         hole_pattern = visualizer.format_9_hole_display(byte_val)
         for i, hole in enumerate(hole_pattern):
             tape_rows[i] += f"{hole} "  # Hole + 1 space
 
-        # FIODEC octal vertically (3 digits stacked)
+        # Marker row - show 'Raa' pattern for RIM blocks, 'B'/'s'/'e' for BIN block, 'c' for checksum
+        if is_checksum:
+            marker_row += "c "
+        elif line_type == LineType.RIM:
+            # For RIM blocks, show 'R' 'a' 'a' pattern repeating every 3 lines
+            # Find the start of this RIM block
+            rim_start = absolute_pos
+            for j in range(absolute_pos - 1, -1, -1):
+                if j < len(visualizer.tape_data.decoded_data):
+                    _, _, _, _, _, j_type, _, _ = visualizer.tape_data.decoded_data[j]
+                    if j_type == LineType.RIM:
+                        rim_start = j
+                    else:
+                        break
+
+            # Calculate position within RIM block
+            pos_in_rim = absolute_pos - rim_start
+
+            # Pattern: R a a (DIO) <space> <space> <space> (data) - repeating every 6 lines
+            pos_in_word = pos_in_rim % 6
+            if pos_in_word == 0:
+                marker_row += "R "  # First line of DIO: 'R'
+            elif pos_in_word in [1, 2]:
+                marker_row += "a "  # Lines 1-2 of DIO: 'a'
+            else:
+                marker_row += "  "  # Lines 3-5 (data word): spaces
+        elif line_type == LineType.BIN:
+            # Find the start of this BIN block
+            bin_start = absolute_pos
+            for j in range(absolute_pos - 1, -1, -1):
+                if j < len(visualizer.tape_data.decoded_data):
+                    _, _, _, _, _, j_type, _, _ = visualizer.tape_data.decoded_data[j]
+                    if j_type == LineType.BIN:
+                        bin_start = j
+                    else:
+                        break
+
+            # Calculate position within BIN block
+            pos_in_bin = absolute_pos - bin_start
+
+            if pos_in_bin == 0:
+                marker_row += "B "  # Line 0: 'B'
+            elif pos_in_bin in [1, 2]:
+                marker_row += "s "  # Lines 1-2: 's' (start address)
+            elif pos_in_bin == 3:
+                marker_row += "B "  # Line 3: 'B' (separator)
+            elif pos_in_bin in [4, 5]:
+                marker_row += "e "  # Lines 4-5: 'e' (end address)
+            else:
+                marker_row += "  "  # Data words - no marker
+        else:
+            marker_row += "  "
+
+        # FIODEC octal vertically (3 digits stacked) - use uppercase for bold in test mode
         fiodec_oct = f"{byte_val:03o}"
         for fiodec_i, digit in enumerate(fiodec_oct):
-            fiodec_rows[fiodec_i] += f"{digit} "
+            fiodec_rows[fiodec_i] += f"{digit.upper() if is_bold else digit} "
 
-        # FIODEC character vertically (max 3 chars stacked)
+        # FIODEC character vertically (max 3 chars stacked) - use uppercase for bold in test mode
         char_display = fiodec_display[:3] if fiodec_display else "?"
         # Pad with spaces to ensure we have exactly 3 characters
         char_display = f"{char_display:<3}"
+        if is_bold:
+            char_display = char_display.upper()
         for char_i, char in enumerate(char_display):
             if char_i < 3:  # Only use first 3 characters
                 char_rows[char_i] += f"{char if char.strip() else ' '} "
+
+        prev_line_type = line_type
     
     # Print vertical tape display
     bit_labels = ["1", "2", "3", "s", "4", "5", "6", "7", "8"]  # s = sync
     for tape_row, label in zip(tape_rows, bit_labels):
         print(f"{label}: {tape_row}")
-    
+
     print()  # Blank line
+    print("   " + marker_row)  # Marker row for RIM/BIN blocks
     print("F: " + fiodec_rows[0])
     print("   " + fiodec_rows[1])
     print("   " + fiodec_rows[2])

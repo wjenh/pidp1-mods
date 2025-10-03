@@ -23,6 +23,8 @@ enum {
 	LINEEDIT = 34,
 };
 
+int typewriterUpdated;
+
 void
 drawGlyph(int i, float x, float y)
 {
@@ -136,6 +138,7 @@ initTypewriter(void)
 	curline = 0;
 	typ_lines[curline][0] = 0;
 	nlines = 1;
+	typewriterUpdated = 1;
 }
 
 int
@@ -164,6 +167,7 @@ typeChar(int c)
 		typ_lines[curline][0] = 0;
 		if(nlines < NUMLINES)
 			nlines++;
+		typewriterUpdated = 1;
 		return;
 	}
 	char *line = typ_lines[curline];
@@ -171,6 +175,7 @@ typeChar(int c)
 	for(i = 0; line[i] != 0; i++);
 	line[i++] = c;
 	line[i] = 0;
+	typewriterUpdated = 1;
 }
 
 void
@@ -300,6 +305,14 @@ strikeChar(int c)
 	if(b == '\n')
 		b = '\r';
 	write(typfd, &b, 1);
+}
+
+int
+doDrawTypewriter(void)
+{
+	int d = typewriterUpdated;
+	typewriterUpdated = 0;
+	return d;
 }
 
 #endif

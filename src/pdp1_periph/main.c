@@ -37,14 +37,9 @@ typedef uint8_t uint8;
 #define void_offsetof (void*)(uintptr_t)offsetof
 
 
-#if 1
-#define WIDTH 1024
-#define HEIGHT 1024
-#else
-// testing
-#define WIDTH 512
-#define HEIGHT 512
-#endif
+int resolution = 1024;
+#define WIDTH resolution
+#define HEIGHT resolution
 #define BORDER 2
 #define BWIDTH (WIDTH+2*BORDER)
 #define BHEIGHT (HEIGHT+2*BORDER)
@@ -63,6 +58,9 @@ int clifd[2];
 
 char fontpath[PATH_MAX];
 TTF_Font *font;
+
+int audio;
+int muldiv;
 
 typedef struct {
 	int r, g, b, a;
@@ -137,6 +135,48 @@ readn(int fd, void *data, int n)
 		n -= m;
 	}
 	return 0;
+}
+
+char*
+emucmd(const char *cmd)
+{
+	static char reply[1024];
+
+	int emu = dial(host, 1040);
+	if(emu < 0) {
+		fprintf(stderr, "error: couldn't connct to %s:1040\n", host);
+		return nil;
+	}
+
+	int n = write(emu, cmd, strlen(cmd));
+	if(n <= 0) {
+		fprintf(stderr, "error: couldn't sent cmd to emulator"
+			" (%d bytes sent)\n", n);
+		close(emu);
+		return nil;
+	}
+
+	n = read(emu, reply, sizeof(reply)-1);
+	if(n <= 0) {
+		fprintf(stderr, "error: no reply from emulator\n");
+		close(emu);
+		return nil;
+	}
+
+	reply[n] = '\0';
+	close(emu);
+	return reply;
+}
+
+void
+emuoption(const char *name, int *opt, int val)
+{
+	char *r, cmd[64];
+	snprintf(cmd, sizeof(cmd)-1, "%s %s\n", name,
+		val < 0 ? "?" : val ? "on" : "off");
+	r = emucmd(cmd);
+	*opt = strstr(r, " on\n") != nil;
+	printf("%s: %d\n", name, *opt);
 }
 
 uint64 time_now;
@@ -860,11 +900,17 @@ keydown(SDL_Keysym keysym)
 		break;
 
 	case SDL_SCANCODE_F1:
-		setlayout((lay+1)%nlayouts);
+		if(ctrl)
+			emuoption("audio", &audio, !audio);
+		else
+			setlayout((lay+1)%nlayouts);
 		break;
 
 	case SDL_SCANCODE_F2:
-		layoutmode = !layoutmode;
+		if(ctrl)
+			emuoption("muldiv", &muldiv, !muldiv);
+		else
+			layoutmode = !layoutmode;
 		break;
 
 	case SDL_SCANCODE_F3:
@@ -1033,7 +1079,8 @@ resize(int w, int h)
 void
 usage(void)
 {
-	fprintf(stderr, "usage: %s [-d] [-p port] [server]\n", argv0);
+	// no need to mention -d here
+	fprintf(stderr, "usage: %s [-h host] [-p port] [-r resolution] [tapefile]\n", argv0);
 	exit(0);
 }
 
@@ -1069,7 +1116,11 @@ main(int argc, char *argv[])
 	case 'h':
 		host = EARGF(usage());
 		break;
+	case 'r':
+		resolution = atoi(EARGF(usage()));
+		break;
 	}ARGEND;
+	if(resolution < 128) resolution = 128;
 
 	dpyfd = dial(host, port);
 	if(dpyfd < 0) {
@@ -1081,11 +1132,19 @@ main(int argc, char *argv[])
 		fprintf(stderr, "couldn't connect to typewriter %s:%d\n", host, 1041);
 		return 1;
 	}
+	emuoption("audio", &audio, -1);
+	emuoption("muldiv", &muldiv, -1);
 
 	SDL_Init(SDL_INIT_EVERYTHING);
 	TTF_Init();
 	char *dir = bindir();
 	snprintf(fontpath, sizeof(fontpath), "%s/DejaVuSansMono.ttf", dir);
+	font = TTF_OpenFont(fontpath, 10);
+	if(font == nil) {
+		snprintf(fontpath, sizeof(fontpath), "/usr/share/fonts/TTF/DejaVuSansMono.ttf");
+		font = TTF_OpenFont(fontpath, 10);
+	}
+	TTF_CloseFont(font);
 
 #ifdef GLES
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
@@ -1110,7 +1169,7 @@ main(int argc, char *argv[])
 	}
 	SDL_GLContext gl_context = SDL_GL_CreateContext(window);
 	SDL_GL_MakeCurrent(window, gl_context);
-	SDL_GL_SetSwapInterval(1); // vsynch (1 on, 0 off)
+	SDL_GL_SetSwapInterval(0); // vsynch (1 on, 0 off)
 
 	for(int i = 0; i < 1024*1024; i++)
 		indices[i] = -1;
@@ -1209,6 +1268,7 @@ main(int argc, char *argv[])
 		SDL_GetWindowSize(window, &newW, &newH);
 		if(newW != winW || newH != winH)
 			resize(newW, newH);
+
 // THREAD: check for ready to draw, then draw
 		int show = 0;
 		if(candraw()) {
@@ -1218,7 +1278,8 @@ main(int argc, char *argv[])
 				SDL_ShowCursor(SDL_DISABLE);
 		}
 		show |= doDrawTape();
-show |= 1;	// TODO: typewriter
+		show |= doDrawTypewriter();
+
 		if(show) {
 			Layout *l = &layouts[lay];
 			drawW = winW;

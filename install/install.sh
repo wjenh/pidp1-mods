@@ -66,7 +66,8 @@ while true; do
     case $yn in
         [Yy]* )
 		git submodule init
-		git submodule update --remote --force
+		#git submodule update --remote --force
+		git submodule update --init --remote --recursive --force
 		break
 		;;
         [Nn]* ) 

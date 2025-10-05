@@ -18,36 +18,7 @@ Point newpoints[1024*1024];
 int nnewpoints;
 Point points[1024*1024];
 int npoints;
-
-float maxsz = 0.0055f;
-float minsz = 0.0018f;
-float maxbr = 1.00f;
-float minbr = 0.25f;
-
-typedef struct PVertex PVertex;
-struct PVertex {
-	float x, y;
-	float u, v;
-	float cx, cy;
-	float size, age;
-	float intensity;
-};
-PVertex pverts[6*10000];
-
-void
-setpvbo(void)
-{
-	glBindBuffer(GL_ARRAY_BUFFER, pvbo);
-	glEnableVertexAttribArray(0);
-	glEnableVertexAttribArray(1);
-	glEnableVertexAttribArray(2);
-	glEnableVertexAttribArray(3);
-	int stride = sizeof(PVertex);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, 0);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, void_offsetof(PVertex, u));
-        glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, void_offsetof(PVertex, cx));
-        glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, void_offsetof(PVertex, intensity));
-}
+float pverts[4*10000];
 
 struct {
 	pthread_mutex_t mutex;
@@ -110,35 +81,28 @@ glslheader
 
 const char *point_vs_src =
 glslheader
-"VSIN vec2 in_pos;\n"
-"VSIN vec2 in_uv;\n"
-"VSIN vec4 in_params1;\n"
-"VSIN float in_params2;\n"
-"VSOUT vec2 v_uv;\n"
+"VSIN vec4 in_pos;\n"
 "VSOUT float v_fade;\n"
 "VSOUT float v_intensity;\n"
-"#define coord in_params1.xy\n"
-"#define scl in_params1.z\n"
-"#define age in_params1.w\n"
-"#define intensity in_params2\n"
+"uniform float u_pointSize;\n"
 "void main()\n"
 "{\n"
-"	v_uv = in_uv;\n"
-"	v_intensity = intensity;\n"
-"	v_fade = pow(0.5, age);\n"
-"	gl_Position = vec4(in_pos.x*scl+coord.x, in_pos.y*scl+coord.y, -0.5, 1.0);\n"
+"	v_fade = pow(0.5, in_pos.z);\n"
+"	float sz = mix(0.0018, 0.0055, in_pos.w)*1024.0/2.0;\n"
+"	v_intensity = mix(0.25, 1.0, in_pos.w);\n"
+"	gl_Position = vec4((in_pos.xy / 512.0) - 1.0, 0, 1);\n"
+"	gl_PointSize = u_pointSize*sz;\n"
 "}\n";
 
 const char *point_fs_src = 
 glslheader
 outcolor
-"FSIN vec2 v_uv;\n"
 "FSIN float v_fade;\n"
 "FSIN float v_intensity;\n"
 "void main()\n"
 "{\n"
-"	float dist = pow(length(v_uv*2.0 - 1.0), 2.0);\n"
-"	float intens = clamp(1.0-dist, 0.0, 1.0)*v_intensity;\n"
+"	float dist = length(2.0*gl_PointCoord - vec2(1));\n"
+"	float intens = clamp(1.0 - dist*dist, 0.0, 1.0)*v_intensity;\n"
 "	vec4 color = vec4(0);\n"
 "	color.x = intens*v_fade;\n"
 "	color.y = intens;\n"
@@ -204,21 +168,17 @@ initDisplay(void)
 	makeQuad();
 
 	glGenBuffers(1, &pvbo);
-	glBindBuffer(GL_ARRAY_BUFFER, pvbo);
-	// fixed coordinates for the verts, beginning compatible with Vertex
-	for(int i = 0; i < nelem(pverts); i++)
-		memcpy(&pverts[i], &screenquad[i%6], sizeof(Vertex));
-	glBufferData(GL_ARRAY_BUFFER, sizeof(pverts), pverts, GL_DYNAMIC_DRAW);
 }
 
 void
 drawDisplayUpdate(void)
 {
-	float dt = getDeltaTime();
-	float st = simtime/1000000.0f;
-	float rt = (float)realtime/SDL_GetPerformanceFrequency();
-	if(dbgflag)
+	if(dbgflag) {
+		float dt = getDeltaTime();
+		float st = simtime/1000000.0f;
+		float rt = (float)realtime/SDL_GetPerformanceFrequency();
 		printf("%f %d. %.2f %.2f %.2f\n", dt, npoints, st, rt, rt-st);
+	}
 
 	glViewport(0, 0, BWIDTH, BHEIGHT);
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -233,38 +193,26 @@ drawDisplayUpdate(void)
 	glUseProgram(point_program);
 
 
-	PVertex *vp = pverts;
+	float pointSize = 2.0f * WIDTH/1024.0f;
+	glUniform1f(glGetUniformLocation(point_program, "u_pointSize"), pointSize);
+
 	int i;
 	for(i = 0; i < npoints; i++) {
-		if(vp >= &pverts[nelem(pverts)])
+		if(i >= nelem(pverts))
 			break;
-		float x = (points[i].x/1024.0f) + (float)BORDER/BWIDTH;
-		float y = (points[i].y/1024.0f) + (float)BORDER/BHEIGHT;
-// teco uses 3
-// spacewar uses 4
-// DDT uses 7
-		float sz = minsz + (maxsz-minsz)*(points[i].i/7.0f);
-		float br = minbr + (maxbr-minbr)*(points[i].i/7.0f);
-
-		PVertex *v = vp++;
-		// TODO: could also do that in shader
-		v->cx = x*2.0f-1.0f;
-		v->cy = y*2.0f-1.0f;
-		v->size = sz;
-		v->age = points[i].time/50000.0f;
-		v->intensity = br;
-		memcpy(&(vp++)->cx, &v->cx, sizeof(PVertex)-sizeof(Vertex));
-		memcpy(&(vp++)->cx, &v->cx, sizeof(PVertex)-sizeof(Vertex));
-		memcpy(&(vp++)->cx, &v->cx, sizeof(PVertex)-sizeof(Vertex));
-		memcpy(&(vp++)->cx, &v->cx, sizeof(PVertex)-sizeof(Vertex));
-		memcpy(&(vp++)->cx, &v->cx, sizeof(PVertex)-sizeof(Vertex));
+		pverts[i*4 + 0] = points[i].x;
+		pverts[i*4 + 1] = points[i].y;
+		pverts[i*4 + 2] = points[i].time/50000.0f;
+		pverts[i*4 + 3] = points[i].i/7.0f;
 	}
 // THREAD: signal ready to process
 signal_process();
-	setpvbo();
-	glBufferData(GL_ARRAY_BUFFER, i*6*sizeof(PVertex), pverts, GL_DYNAMIC_DRAW);
-	glDrawArrays(GL_TRIANGLES, 0, i*6);
-
+	int stride = sizeof(float[4]);
+	glBindBuffer(GL_ARRAY_BUFFER, pvbo);
+	glBufferData(GL_ARRAY_BUFFER, i*stride, pverts, GL_DYNAMIC_DRAW);
+	glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, stride, 0);
+	glDrawArrays(GL_POINTS, 0, i);
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glDisable(GL_BLEND);

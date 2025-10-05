@@ -1279,6 +1279,7 @@ main(int argc, char *argv[])
 		}
 		show |= doDrawTape();
 		show |= doDrawTypewriter();
+		show |= layoutmode;
 
 		if(show) {
 			Layout *l = &layouts[lay];
@@ -1318,9 +1319,8 @@ main(int argc, char *argv[])
 					drawTypewriter(&l->regions[ID_TYPEWRITER]);
 			}
 			SDL_GL_SwapWindow(window);
-		}
-//SDL_Delay(1);
-//usleep(30000);
+		} else
+			SDL_Delay(1);	// so we don't busy-wait like crazy
 	}
 
 	SDL_GL_DeleteContext(gl_context);

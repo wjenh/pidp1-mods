@@ -274,10 +274,23 @@ while true; do
         [Yy]* )
 	    echo Activated USB paper tape option
 	    /opt/pidp1/bin/pdp1control.sh usbtape y
+
+
+	    # Disable annoying popup when USB stick is inserted:
+	    CONFU="$HOME/.config/pcmanfm/default/pcmanfm.conf"
+	    # disable removable-media popup
+	    mkdir -p "$(dirname "$CONFU")"
+	    if grep -q '^autorun=' "$CONFU"; then
+	        sed -i 's/^autorun=.*/autorun=0/' "$CONFU"
+	    else
+	        echo 'autorun=0' >> "$CONFU"
+	    fi
+
+
 	    break
             ;;
         [Nn]* ) 
-            echo Activated Web interface
+            echo USB paper tape option NOT activated
 	    /opt/pidp1/bin/pdp1control.sh usbtape n
 	    break
             ;;

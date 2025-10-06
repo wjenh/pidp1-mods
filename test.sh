@@ -30,7 +30,7 @@ echo
 echo "          toggle each switch and see if it changes the output"
 echo "--> check that they do. Or, a quicker check is:"
 echo
-echo "          If all switches are set to UP and RIGHT,"
+echo "          If all switches are set to UP and LEFT,"
 echo "          and you leave the bottom 8 switches untouched, expect"
 echo "          777777 777777 776000 000000"
 echo "-->quick check for all small switches, but manually test the lower 8"

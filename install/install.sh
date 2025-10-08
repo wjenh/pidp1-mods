@@ -155,6 +155,8 @@ while true; do
 
 		# the macro1_1 cross-compiler:
 		gcc /opt/pidp1/src/macro/macro1_1.c -o /opt/pidp1/src/macro/macro1_1
+		# monas cross assembler:
+		make -C /opt/pidp1/src/monas
 		# the usb_paper_tape tool:
 		make -C /opt/pidp1/src/usb_paper_tape
 		# Bill Ezell's tape disassembler:
@@ -194,6 +196,7 @@ while true; do
             sudo ln -sf /opt/pidp1/bin/decode_fiodec /usr/local/bin/decode_fiodec
 	    sudo ln -sf /opt/pidp1/bin/tape_visualizer /usr/local/bin/tape_visualizer
 	    #
+	    sudo ln -sf /opt/pidp1/bin/monas /usr/local/bin/monas
 	    sudo ln -sf /opt/pidp1/bin/macro1_1 /usr/local/bin/macro1_1
 	    sudo ln -sf /opt/pidp1/bin/macro1_1 /usr/local/bin/macro1
 	    sudo ln -sf /opt/pidp1/bin/disassemble_tape /usr/local/bin/disassemble_tape

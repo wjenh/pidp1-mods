@@ -1207,6 +1207,7 @@ main(int argc, char *argv[])
 	running = 1;
 	int cursortimer = 0;
 	while(running) {
+		int show = 0;
 		while(SDL_PollEvent(&event)) {
 			switch(event.type) {
 			case SDL_KEYDOWN:
@@ -1262,6 +1263,7 @@ main(int argc, char *argv[])
 					break;
 				}
 			}
+			show = 1;
 		}
 
 		int newW, newH;
@@ -1270,7 +1272,6 @@ main(int argc, char *argv[])
 			resize(newW, newH);
 
 // THREAD: check for ready to draw, then draw
-		int show = 0;
 		if(candraw()) {
 			drawDisplayUpdate();
 			show = 1;

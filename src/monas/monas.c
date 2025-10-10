@@ -743,6 +743,7 @@ struct {
 	 { "octal", PsiOctal },
 	 { "decimal", PsiDecimal },
 	 { "character", PsiCharacter },
+	 { "char", PsiCharacter },
 	 { "flexo", PsiFlexo },
 	 { "text", PsiText },
 	 { "expunge", PsiExpunge },

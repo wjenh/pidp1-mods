@@ -1,0 +1,2368 @@
+/ FLAP - Forth and Lisp for the PDP-1
+/        needs extended memory
+
+changecom(`/')
+define(swap,
+`	rcl 9s
+	rcl 9s') dnl
+define(init,
+`	law $2
+	dap $1') dnl
+define(setup,
+`	law $2
+	dac $1') dnl
+define(load,
+`	lio ($2
+	dio $1') dnl
+
+tiblen=200
+
+100/
+go,	jmp forth+1
+
+ip,	0
+t,	0
+tt,	0
+
+forthX,	0	0
+	5	66	46	51	23	70
+forth,	.+1
+	load(sp,stack-1)
+	load(rsp,rstack-1)
+	load(ip,quit+1)
+	eem
+	jmp next
+
+/ data stack and return stack
+
+spX,	forthX	0
+	2	22	47
+	dovar
+sp,	0
+push,	dap push1
+	idx sp
+	dio i sp
+push1,	jmp .
+
+pop,	dap pop1
+	lio i sp
+	law i 1
+	add sp
+	dac sp
+pop1,	jmp .
+
+/ this sucks a bit
+popac,	dap popac1
+	jsp pop
+	swap
+popac1,	jmp .
+
+
+rspX,	spX	0
+	3	51	22	47
+	dovar
+rsp,	0
+rpush,	dap rpush1
+	idx rsp
+	dio i rsp
+rpush1,	jmp .
+
+rpop,	dap rpop1
+	lio i rsp
+	law i 1
+	add rsp
+	dac rsp
+rpop1,	jmp .
+
+
+next,	lio i ip	/ address of word
+	idx ip
+szs 10	hlt		/ single step forth words with pf1 up
+exct,	dio t		/ needed by docol &c.
+	lac i t		/ get address of code, i.e. docol
+	dac tt
+	jmp i tt	/ jump there
+
+docol,	lio ip		/ return address
+	jsp rpush
+	idx t
+szs 10	hlt		/ single step forth words with pf1 up
+	dac ip
+	jmp next
+
+exitX,	rspX	0
+	4	65	27	71	23
+exit,	.+1
+	jsp rpop
+	dio ip
+	jmp next
+
+/ execute word on stack
+execX,	exitX	0
+	4	65	27	65	63
+exec,	.+1
+	jsp pop
+	jmp exct
+
+dovar,	idx t
+	swap
+	jsp push
+	jmp next
+
+dobvar,	idx t
+	swap
+	sil 1s		/ to byte address
+	jsp push
+	jmp next
+
+docon,	idx t
+	lio i t
+	jsp push
+	jmp next
+
+lit,	.+1
+	lio i ip
+	jsp push
+	idx ip
+	jmp next
+
+slit,	docol
+	fromr		/ get str ptr
+	dup
+	count	plus	/ skip past str
+	tor
+	exit
+
+
+/ standard stack and memory operations
+
+torX,	execX	0
+	2	410	51
+tor,	.+1
+	jsp pop
+	jsp rpush
+	jmp next
+
+fromrX,	torX	0
+	2	51	410
+fromr,	.+1
+	jsp rpop
+	jsp push
+	jmp next
+
+ratX,	fromrX	0
+	2	51	406
+rat,	.+1
+	lio i rsp
+	jsp push
+	jmp next
+
+/ ^ ( addr -- n )
+fetchX,	ratX	0
+	1	406
+fetch,	.+1
+	lio i sp
+	dio t
+	lio i t
+	dio i sp
+	jmp next
+
+/ ^2 ( byte-addr -- b)
+bftchX,	fetchX	0
+	2	406	2
+bftch,	.+1
+	lac i sp
+	cli
+	rcr 1s		/ to word address
+	dac t
+	lac i t		/ get word
+	spi
+	rar 9s		/ swap bytes
+	and (777
+	dac i sp
+	jmp next
+
+/ NIB6 ( n wd -- nib )
+nib6X,	bftchX	0
+	4	45	71	62	6
+nib6,	.+1
+	jsp pop		/ get word
+	lac i sp	/ nibble address
+	rar 1s	spa	ril 3s	/ 1
+	rar 1s	spa	ril 6s	/ 2
+	rar 1s	spa	rir 6s	/ 4
+	cla	rcl 3s	/ nibble in AC
+	dac i sp
+	jmp next
+
+/ v ( n addr -- )
+storeX,	nib6X	0
+	1	405
+store,	.+1
+	jsp pop
+	dio t
+	jsp pop
+	dio i t
+	jmp next
+
+sstore,	docol
+	swapf	store
+	exit
+
+spat,	docol
+	sp-1	fetch	minus1
+	exit
+
+rspat,	docol
+	rsp-1	fetch	minus1
+	exit
+
+
+/ control flow
+
+br,	br1
+beq,	.+1
+	jsp popac
+	sza
+	jmp skip
+br1,	lio i ip
+	dio ip
+	jmp next
+skip,	idx ip
+	jmp next
+
+bne,	.+1
+	jsp popac
+	sza
+	jmp br1
+	jmp skip
+
+blt,	.+1
+	jsp popac
+	sma
+	jmp skip
+	jmp br1
+
+/ basic forth words
+dupX,	storeX	0
+	3	64	24	47
+dup,	.+1
+	lio i sp
+	jsp push
+	jmp next
+
+dup2X,	dupX	0
+	4	64	24	47	2
+dup2,	docol
+	over	over
+	exit
+
+nipX,	dup2X	0
+	3	45	71	47
+nip,	.+1
+	jsp pop
+	dio i sp
+	jmp next
+
+dropX,	nipX	0
+	4	64	51	46	47
+drop,	.+1
+	law i 1
+	add sp
+	dac sp
+	jmp next
+
+drop2X,	dropX	0
+	5	64	51	46	47	2
+drop2,	docol
+	drop	drop
+	exit
+
+rdropX,	drop2X	0
+	5	51	64	51	46	47
+rdrop,	.+1
+	law i 1
+	add rsp
+	dac rsp
+	jmp next
+
+swapX,	rdropX	0
+	4	22	26	61	47
+swapf,	.+1
+	jsp popac
+	lio i sp
+	dac i sp
+	jsp push
+	jmp next
+
+overX,	swapX	0
+	4	46	25	65	51
+over,	docol
+	tor	dup	fromr
+	swapf	exit
+
+/ ROT ( a b c -- b c a )
+/ commutator of >R and SWAP actually, interesting
+rotX,	overX	0
+	3	51	46	23
+rot,	docol
+	tor	swapf	fromr	swapf
+	exit
+
+/ -ROT ( a b c -- c a b )
+/ another commutator
+mrot,	docol
+	swapf	tor	swapf	fromr
+	exit
+
+/ TUCK ( a b -- b a b )
+tuck,	docol	swapf	over	exit
+
+/ DOP ( a b -- a a b)
+/ TODO: better name
+dop,	docol	over	swapf	exit
+
+/ REFL ( a b c -- c b a )
+refl,	docol	mrot	swapf	exit
+
+
+plusX,	rotX	0
+	1	454
+plus,	.+1
+	jsp popac
+	add i sp
+	dac i sp
+	jmp next
+
+minusX,	plusX	0
+	1	54
+minus,	.+1
+	jsp popac
+	cma
+	add i sp
+	dac i sp
+	jmp next
+
+plus1X,	minusX	0
+	2	1	454
+plus1,	.+1
+	idx i sp
+	jmp next
+
+min1X,	plus1X	0
+	2	1	54
+minus1, .+1
+	law i 1
+	add i sp
+	dac i sp
+	jmp next
+
+absX,	min1X	0
+	3	61	62	22
+abs,	.+1
+	lac i sp
+	spa
+	cma
+	dac i sp
+	jmp next
+
+negX,	absX	0
+	3	45	65	67
+neg,	.+1
+	lac i sp
+	cma
+	dac i sp
+	jmp next
+
+andX,	negX	0
+	3	61	45	64
+andf,	.+1
+	jsp popac
+	and i sp
+	dac i sp
+	jmp next
+
+orX,	andX	0
+	2	46	51
+orf,	.+1
+	jsp popac
+	ior i sp
+	dac i sp
+	jmp next
+
+xorX,	orX	0
+	3	27	46	51
+xorf,	.+1
+	jsp popac
+	xor i sp
+	dac i sp
+	jmp next
+
+dtimsX,	xorX	0
+	2	64	473
+dtimes,	.+1
+	jsp popac
+	cli
+	mul i sp
+	scr 1s
+	dac i sp
+	jsp push
+	jmp next
+
+divmdX,	dtimsX	0
+	4	21	44	46	64
+divmod,	.+1
+	jsp pop
+	dio t
+	cla
+	lio i sp
+	scl 1s
+	div t
+	opr
+	dio i sp
+	swap
+	jsp push
+	jmp next
+
+timesX,	divmdX	0
+	1	473
+times,	docol
+	dtimes	nip
+	exit
+
+divX,	timesX	0
+	1	21
+divd,	docol
+	divmod	nip	exit
+	
+modX,	divX	0
+	3	44	46	64
+mod,	docol
+	divmod	drop	exit
+
+cmpX,	modX	0
+	3	63	44	47
+cmp,	docol
+	eql	not	exit
+
+notX,	cmpX	0
+	3	45	46	23
+not,	docol	zero	eql	exit
+
+eqlX,	notX	0
+	1	433
+eq,	/ lisp name
+eql,	.+1
+	jsp popac
+	cli
+	sad i sp
+	lio (1
+	dio i sp
+	jmp next
+
+zero,
+false,	.+1
+false1,	cli
+	jsp push
+	jmp next
+
+one,
+true,	.+1
+true1,	lio (1
+	jsp push
+	jmp next
+
+mone,	.+1
+	lio (-1
+	jsp push
+	jmp next
+
+/ strings
+
+/ COUNT ( s -- a n)
+countX,	eqlX	0
+	5	63	46	24	45	23
+tcnt,	/ for tables. may be different later
+count,	docol
+	dup	plus1
+	swapf	fetch
+	exit
+
+/ TODO? write this in forth
+/ STREQ ( a1 n1 a2 n2 -- 0/1 )
+streqX,	countX	0
+	5	22	23	51	65	50
+streq,	.+1
+	jsp popac
+	cma
+	add (0		/ want negative length
+	dac n2
+	jsp pop
+	dio a2
+	jsp popac
+	cma
+	add (0		/ here too
+	dac n1
+	jsp pop
+	dio a1
+	lac n1
+streq1,	sas n2
+	jmp false1	/ different length
+	sza i
+	jmp true1	/ length 0
+	lac i a1
+	sas i a2
+	jmp false1	/ different chars
+	idx a2
+	idx a1
+	idx n2
+	idx n1
+	jmp streq1
+n1,	0
+n2,	0
+a1,	0
+a2,	0
+
+/ SSTREQ ( s1 s2 -- 0/1 )
+sstreX,	streqX	0
+	6	22	22	23	51	65	50
+sstreq,	docol
+	tor	count	fromr
+	count
+	streq	exit
+
+/ TYPE ( a n -- )
+typeX,	sstreX	0
+	4	23	30	47	65
+type,	docol
+	qbeq	type1	/ check n != 0
+	minus1	tor	/ decrement
+	dup	fetch	emit	/ emit char
+	plus1		/ advance addr
+	fromr		/ take back n
+	br	type+1
+type1,	drop
+	exit
+
+dotq,	docol
+	rat	count	type
+	fromr	count	plus	tor
+	exit
+
+qdotX,	typeX	0
+	2	401	73
+qdot,	docol
+	count	type
+	exit
+
+/ dictionary
+
+/ LOOK ( str dict -- 0 | wordX )
+lookX,	qdotX	0
+	4	43	46	46	42
+look,	docol
+	dup	beq	rnip
+	over	tor	/ str
+	dup	lit	2	plus	/ word name
+	fromr
+	sstreq
+	bne	rnip
+	fetch	/ no match, walk dictionary
+	br	look+1
+rnip,	nip	/ return dict
+	exit
+
+xtok,	docol
+	lit	2	plus
+	count	plus		/ TODO not quite right
+	exit
+
+tickX,	lookX	0
+	1	402
+tick,	docol
+	word	ctxt	look
+	exit
+
+findX,	tickX	0
+	4	66	71	45	64
+find,	docol
+	tick
+	dup	beq	rexit
+	xtok
+	exit
+
+/ ( w2 w1 a -- )
+store2,	docol
+	dup	tor
+	store
+	fromr	plus1	store
+	exit
+
+/ ( a -- w2 w1 )
+fetch2,	docol
+	dup	plus1
+	fetch	swapf	fetch
+	exit
+
+/ buffer pointer used by expect but otherwise
+/ usable too
+bufpX,	expctX	0
+	4	62	24	66	47
+bufp,	dovar
+	0
+	0
+
+/ not quite original, extra length returned
+/ EXPECT ( nz buf -- len )
+expctX,	findX	0
+	6	65	27	47	65	63	23
+expect,	docol
+expct1,	dup2	bufp	store2
+expct3,	key
+	match	77	expct2
+	match	404	expct4
+	bufp	addbuf
+	br	expct3
+expct2,	drop	bufp	plus1	fetch	minus
+	mone	bufp	addbuf
+	exit
+expct4,	cr	br	expct1
+
+rzero,	zero
+rexit,	exit
+rone,	one	exit
+
+/ +! ( n addr -- )
+pstrX,	bufpX	0
+	2	454	405
+pstor,	docol
+	swapf	over	/ addr n addr
+	fetch	plus	sstore
+	exit
+
+/ APPND	( w ptr -- )
+appndX,	pstrX	0
+	5	61	47	47	45	64
+appnd,	docol
+	dup	tor
+	fetch	store
+	fromr	inc
+	exit
+
+/ ADDBUF ( c buf -- )	doesn't overflow
+adbufX,	appndX	0
+	6	61	64	64	62	24	66
+addbuf,	docol
+	dup	plus1
+	dup	fetch	beq	adbuf1
+	dec	/ size--
+	appnd
+	exit
+adbuf1,	drop	drop2
+	exit
+
+inc,	docol
+	dup	fetch
+	plus1	swapf	store
+	exit
+
+dec,	docol
+	dup	fetch
+	minus1	swapf	store
+	exit
+
+rstin,	docol
+	zero	toin	store
+	zero	ntib	store
+	mone	tib	store
+	exit
+
+/ QUERY ( -- )
+queryX,	adbufX	0
+	5	50	24	65	51	30
+query,	docol
+	rstin
+	tibln	tib
+	expect
+	ntib	store
+	exit
+
+/ interpreter
+
+indx,	docol
+	plus	fetch
+	exit
+
+/ SKPWHL ( base i test -- base i+n )
+skpwhl,	docol
+	tor
+skpwh1,	dup2	indx
+	rat	
+	exec
+	beq	skpwh2
+	plus1
+	br	skpwh1
+skpwh2,	rdrop
+	exit
+
+iswht,	docol
+	bl	eql
+	exit
+
+isend,	docol
+	mone	eql
+	exit
+
+isqt,	docol
+	lit	401	eql
+	exit
+
+iswrd,	docol
+	dup	iswht	not	tor
+	isend	not	fromr
+	andf
+	exit
+
+notqt,	docol
+	dup	isqt	not	tor
+	isend	not	fromr
+	andf
+	exit
+
+/ SKPWHT ( base i -- base i+n )
+skpwht,	docol
+	lit	iswht
+	skpwhl
+	exit
+
+/ SKPWRD ( base i -- base i+n )
+skpwrd,	docol
+	lit	iswrd
+	skpwhl
+	exit
+
+skpstr,	docol
+	lit	notqt
+	skpwhl
+	exit
+
+pickX,	queryX	0
+	4	47	71	63	42
+nth,	docol
+	spat
+	swapf	minus
+	fetch
+	exit
+
+rnth,	docol
+	rspat
+	swapf	minus
+	fetch
+	exit
+
+depthX,	pickX	0
+	5	64	65	47	23	70
+depth,	docol
+	spat	stackc	minus
+	exit
+
+rdpthX,	depthX	0
+	6	51	64	65	47	23	70
+rdepth,	docol
+	rspat	rstckc	minus
+	exit
+
+/ TODO: take delim char as argument
+/ WORD ( -- addr )
+word,	docol
+	tib
+	toin	fetch
+	skpwht
+	dup	tor	/ remember start of word
+	skpwrd
+	fromr	swapf	/ ( base start end )
+	dup	toin	store	/ update >IN
+	substr
+	exit
+
+str,	docol
+	tib
+	toin	fetch
+	plus1		/ skip one space
+	dup	tor	/ remember start of word
+	skpstr
+	fromr	swapf	/ ( base start end )
+	dup	plus1	/ skip "
+	toin	store	/ update >IN
+	substr
+	exit
+
+/ SUBSTR ( base start end -- addr )
+/ put at 'here'
+substr,	docol
+	tor		/ end
+	dup	tor	/ start
+	plus		/ src addr
+	here	fetch	plus1	/ dst addr
+	fromr	fromr	/ start end
+	swapf	minus	/ len
+	dup	here	fetch	store
+	copy
+	here	fetch
+	exit
+
+ddot,	docol
+	dup	dot
+	exit
+
+ddot2,	docol
+	over	dot	ddot
+	exit
+
+/ COPY ( src dst n -- )
+copyX,	rdpthX	0
+	4	63	46	47	30
+copy,	docol
+copy2,
+	dup	beq	copy1
+	tor
+	over	fetch
+	over	store
+	swapf	plus1
+	swapf	plus1
+	fromr	minus1
+	br	copy2
+copy1,	drop	drop2
+	exit
+
+/ SCOPY ( dst src -- )
+scopy,	docol
+	swapf	over
+	count	nip	plus1
+	copy
+	exit
+
+	count	tor	/ ( dst src+1 )
+	swapf	dup	plus1	swapf	/ ( src+1 dst+1 dst )
+	rat	sstore	/ store length
+	fromr	/ ( src+1 dst+1 n )
+	copy		/ copy string content
+	exit
+
+/ STRDUP ( s1 -- s2 )
+strdpX,	copyX	0
+	6	22	23	51	64	24	47
+strdup,	docol
+	here	fetch	swapf
+	scopy
+	here	fetch
+	dup	count	plus
+	here	store
+	exit
+
+pchr,	420
+	404
+
+prompt,	docol
+	lit	pchr
+	state	fetch
+	indx	emit	space
+	exit
+
+quitX,	strdpX	0
+	4	50	24	71	23
+quit,	docol
+	lbrack
+quit1,	cr	tab	pstack
+	prompt
+	query
+	intprt
+	br	quit1
+
+intprt,	docol
+	word
+	dup	count	nip
+	beq	intpt1
+	doword
+	br	intprt+1
+intpt1,	drop
+	exit
+
+doword,	docol
+	dup	tor	/ remember word
+	ctxt	look
+	dup	beq	trynum
+	rdrop
+	xword
+	exit
+trynum,	drop	fromr	/ get word
+	numb	beq	nonum
+	xnum
+	exit
+nonum,	err	rstin
+	lbrack
+	exit
+
+err,	docol
+	dotq
+	5	0	65	51	51	0
+	fromr	dup	dot	tor
+	cr
+	exit
+
+commaX,	quitX	0
+	1	33
+comma,	docol
+	one	allot	store
+	exit
+
+/ return -1 if should compile
+compq,	docol
+	state	fetch	minus
+	exit
+
+/ handle word
+xwordX,	commaX	0
+	5	27	26	46	51	64
+xword,	docol
+	dup	plus1	fetch	/ imm flag
+	compq	blt	xwordc
+	xtok	exec	/ execute
+	exit
+xwordc,	xtok
+	comma	/ compile
+	exit
+
+/ handle number
+xnumX,	xwordX	0
+	4	27	45	24	44
+xnum,	docol
+	zero	compq	blt	xnumc
+	/ leave num on stack
+	exit
+xnumc,	litrl	/ compiler literal
+	exit
+
+/ ADVBUF ( a n -- a+1 n-1)
+advbuf,	docol
+	swapf	plus1
+	swapf	minus1
+	exit
+
+/ NUMBER ( s -- {n 1}/0 )
+numb,	docol
+	count		/ ( s n )
+	zero
+numb1,	over	beq	numb2
+	tor		/ acc
+	over	fetch	tor	/ get char
+	advbuf
+	fromr	fio2d
+	dup	blt	numb3
+	fromr	mulb	plus	/ accumulate
+	br	numb1
+numb2,	tor		/ return acc 1
+	drop2
+	fromr	one
+	exit
+numb3,	drop	drop2	rdrop	/ not a digit, return 0
+	zero
+	exit
+
+/ ADDR ( haystack needle -- addr / -1 )
+addr,	docol
+	tor
+	tcnt		/ ( hs -- adr sz )
+addr3,	dup	beq	addr1
+	swapf		/ ( sz adr -- )
+	dup	fetch	/ ( sz adr elt -- )
+	rat	cmp
+	beq	addr2	/ found
+	/ not found
+	plus1	swapf	/ inc address
+	minus1	/ dec sz
+	br	addr3	/ not found - try next
+addr2,	nip		/ found - return address
+	rdrop
+	exit
+addr1,	drop2		/ not found - return -1
+	rdrop
+	lit	-1
+	exit
+
+/ INDEX ( haystack needle -- index / -1 )
+indexX,	xnumX	0
+	5	71	45	64	65	27
+index,	docol
+	tor	dup	tor
+	tcnt	drop		/ first element
+	fromr	fromr
+	addr
+	dup	blt	rnip
+	swapf	minus		/ index
+	exit
+
+/ INSET ( set elt -- 0/1 )
+inset,	docol
+	addr
+	blt	inset1
+	one	/ found
+	exit
+inset1,	zero	/ not found
+	exit
+
+/ INSENS ( char -- 0/1 )
+insens,	docol
+	lit	inschr
+	swapf
+	inset
+	exit
+
+inschr,	10
+	72	/ lower
+	74	/ upper
+	00	/ space
+	75	/ backspace
+	36	/ tab
+	77	/ cr
+	35	/ red
+	34	/ black
+
+sbuf,	.+100/
+
+squotX,	indexX	1
+	2	22	401
+squot,	docol
+	state	fetch	beq	squot1
+	lit	slit	comma	/ compile string
+	str
+	count	plus
+	here	store
+	exit
+squot1,	lit	sbuf	dup	/ interpret string
+	str
+	scopy
+	exit
+
+dotqX,	squotX	1
+	2	73	401
+dotqq,	docol
+	state	fetch	beq	dotq1
+	lit	dotq	comma	/ compile dotq
+	str
+	count	plus
+	here	store
+	exit
+dotq1,	str			/ print
+	qdot
+	exit
+
+/ debugging
+
+brk,	.+1
+	lio ip
+	lac i sp
+szs 20	hlt	/ halt on break if pf2 on
+	jmp next
+
+halt,	.+1
+	cla cli
+	hlt
+	hlt
+
+/ print stack
+pstack,	docol
+	depth
+	dotq
+	4	22	23	42	0
+	spat	dot
+	lit	21	emit
+pstk2,	dup	beq	pstk1
+	dup	plus1	nth	dot
+	minus1
+	br	pstk2
+pstk1,	drop
+	cr
+	exit
+
+prtack,	docol
+	rdepth
+	dotq
+	4	51	23	42	0
+	rspat	dot
+	lit	21
+	emit
+rstk2,	dup	beq	rstk1
+	dup	plus1	rnth	dot
+	minus1
+	br	rstk2
+rstk1,	drop
+	cr
+	exit
+
+/ IO helpers
+
+/ ( a -- rem quot )
+divb,	docol
+	base	fetch	divmod
+	exit
+
+mulb,	docol
+	base	fetch	times
+	exit
+
+/ translate digit to FIODEC
+d2fio,	.+1
+	jsp popac
+	and (17
+	sza i
+	law 20
+	swap
+	jsp push
+	jmp next
+
+/ translate FIODEC to digit
+fio2d,	docol
+	lit	digits	swapf
+	index
+	exit
+
+digits,	12
+	20	1	2	3	4
+	5	6	7	10	11
+
+/ IO
+pdgt,	docol
+	d2fio
+	emit
+	exit
+
+xdot,	docol
+	divb
+	dup
+	beq	xdot1
+	xdot
+	pdgt
+	exit
+xdot1,	drop
+	pdgt
+	exit
+
+dotX,	dotqX	0
+	1	73
+dot,	docol
+	xdot
+	space
+	exit
+
+emitc,	.+1
+	jsp pop
+	tyo
+	jmp next
+
+rot9,	.+1
+	lac i sp
+	ral 9s
+	dac i sp
+	jmp next
+
+lc,	docol
+	lit	72
+	emitc
+	zero
+	case
+	store
+	exit
+
+uc,	docol
+	lit	74
+	emitc
+	lit	400
+	case
+	store
+	exit
+
+emitX,	dotX	0
+	4	65	44	71	23
+emit,	docol
+	dup
+	rot9	blt	emitu
+	/ emit lower case
+	case	fetch	beq	emit1
+	lc
+	br	emit1
+emitu,	/ emit upper case
+	case	fetch	bne	emit1
+	uc
+emit1,	emitc
+	exit
+
+keyc,	.+1
+	clf 1
+	szf i 1
+	jmp .-1
+	tyi
+	jsp push
+	jmp next
+
+keyX,	emitX	0
+	3	42	65	30
+key,	docol
+	keyc
+	dup
+	lit	72
+	cmp
+	beq	lcase
+	dup
+	lit	74
+	cmp
+	beq	ucase
+	dup	insens
+	bne	key1
+	case	fetch
+	plus
+key1,	exit
+
+lcase,	drop
+	zero	case	store
+	br	key+1
+
+ucase,	drop
+	lit	400	case	store
+	br	key+1
+
+/ 0 - lower case
+/ 400 - upper case
+case,	dovar
+	0
+
+spaceX,	keyX	0
+	5	22	47	61	63	65
+space,	docol
+	bl
+	emit
+	exit
+
+crX,	spaceX	0
+	2	63	51
+cr,	docol
+	lit	77
+	emit
+	exit
+
+tab,	docol
+	lit	36
+	emit
+	exit
+
+baseX,	crX	0
+	4	62	61	22	65
+base,	dovar
+	10
+
+/ blank, a bit useless
+blX,	baseX	0
+	2	62	43
+bl,	docon
+	0
+
+hereX,	blX	0
+	4	70	65	51	65
+here,	dovar
+	end
+
+allotX,	hereX	0
+	5	61	43	43	46	23
+allot,	docol
+	here	fetch
+	dup	tor
+	plus
+	here	store
+	fromr
+	exit
+
+tibX,	allotX	0
+	3	23	71	62
+tib,	docon
+	tibbuf
+
+tiblnX,	tibX	0
+	6	23	71	62	43	65	45
+tibln,	docon
+	tiblen
+
+ntibX,	tiblnX	0
+	4	45	23	71	62
+ntib,	dovar
+	0
+
+toinX,	ntibX	0
+	3	410	71	45
+toin,	dovar
+	0
+
+/ compiler
+
+
+stateX,	toinX	0
+	5	22	23	61	23	65
+state,	dovar
+	0
+
+lbrakX,	stateX	1
+	1	457
+lbrack,	docol
+	zero
+	state
+	store
+	exit
+
+rbrakX,	lbrakX	1
+	1	455
+rbrack,	docol
+	one	state	store
+	exit
+
+creatX,	rbrakX	1
+	6	63	51	65	61	23	65
+create,	docol
+	here	fetch	lstwrd	store
+	ctxt	fetch	comma
+	zero	comma
+	word
+	count	plus
+	here	store
+	exit
+
+litrlX,	creatX	1
+	7	43	71	23	65	51	61	43
+litrl,	docol
+	lit	lit	comma
+	comma
+	exit
+
+immedX,	litrlX	0
+	11	71	44	44	65	64
+		71	61	23	65
+immed,	docol
+	one
+	lstwrd	fetch	plus1	/ imm flag
+	store
+	exit
+
+colonX,	immedX	1
+	2	40	73
+	docol
+	create
+	lit	docol	comma
+	rbrack
+	exit
+
+enddef,	docol
+	lstwrd	fetch	ctxt	store
+	exit
+
+semiX,	colonX	1
+	2	40	33
+	docol
+	lbrack
+	lit	exit	comma
+	enddef
+	exit
+
+variX,	semiX	1
+	10	25	61	51	71	61	62	43	65
+	docol
+	create
+	lit	dovar	comma
+	zero	comma
+	enddef
+	exit
+
+constX,	variX	1
+	10	63	46	45	22	23	61	45	23
+	docol
+	create
+	lit	docon	comma
+	comma
+	enddef
+	exit
+
+resetX,	constX	0
+	5	51	65	22	65	23
+	docol
+	lit	end	here	store
+	lit	ctxtX	ctxt	store
+	exit
+
+stackc,	docon
+	stack-1
+rstckc,	docon
+	rstack-1
+
+lstwdX,	resetX	0
+	10	43	61	22	23	26	46	51	64
+lstwrd,	dovar
+	0
+
+wordsX,	lstwdX	0
+	5	26	46	51	64	22
+words,	docol
+	dup	beq	words1
+	dup	lit	2	plus
+	cr	count	type
+	fetch
+	br	words+1
+words1,	drop
+	exit
+
+
+trnslX,	wordsX	0
+	6	23	51	45	22	43	23
+trnslt,	docol
+	cr
+	key
+	dot
+	br	trnslt+1
+
+
+
+/ lisp stuff
+
+skpret,	docol
+	fromr	fromr	plus1	tor	tor
+	exit
+
+/ ( val -- [val] ) jump if val matches next word
+/ popped if jump is taken
+match,	docol
+	dup	fromr	dup	fetch
+	/ ( val val ret (ret @) -- )
+	swapf	plus1	tor
+	/ ( val val (ret @) -- (ret+1) )
+	/ nomatch would use qbne1 here
+	cmp	br	qbeq1
+
+
+qbeq,	docol
+	dup
+qbeq1,	bne	qbeq3
+qbeq2,	drop
+	fromr	fetch	tor
+	exit
+qbeq3,	skpret
+	exit
+
+qbne,	docol
+	dup
+qbne1,	bne	qbeq2
+	br	qbeq3
+
+
+/ TODO: we shouldn't need it that often
+/ but useful just to be sure
+fixnil, docol
+	zero	zero	store
+	zero	one	store
+	exit
+
+/ 0	nil
+/ 1	sym
+/ 2	num
+/ 3	cons
+typnum,	docol
+	fixnil
+	fetch		/ car
+	match	0	rzero
+	match	400000	typ1
+	match	400001	typ2
+	drop
+	lit	3	exit
+typ1,	one	exit
+typ2,	lit	2	exit
+
+tcase,	docol
+	typnum
+	fromr	plus	fetch	tor
+	exit
+
+carX,	trnslX	0
+	3	63	61	51
+car,	docol
+	fixnil
+	fetch	exit
+
+caar,	docol	car	car	exit
+cadr,	docol	cdr	car	exit
+
+cdrX,	carX	0
+	3	63	64	51
+cdr,	docol
+	fixnil
+	plus1	fetch	exit
+
+cdrcar,	docol
+	dup	cdr
+	swapf	car
+	exit
+
+carcdr,	docol
+	dup	car
+	swapf	cdr
+	exit
+
+/ CDRCAR2 ( x y -- (cdr x) (cdr y) (car x) (car y) )
+cdrar2,	docol
+	tor	cdrcar
+	fromr	cdrcar
+	tor	swapf	fromr
+	exit
+
+lbool,	docol	beq	rzero	lit	tS	exit
+
+/ ( lst - @lst ) unpack list onto stack
+unpk,	docol
+	qbeq	rexit
+	carcdr	br	unpk+1
+
+atomX,	cdrX	0
+	4	61	23	46	44
+atom,	docol
+	tcase	rone	rone	rone	rzero
+/ could just negate the atom?
+consp,	docol
+	tcase	rzero	rzero	rzero	rone
+
+/ car is value cell, cdr plist
+plist,	docol
+	lit	2	plus
+	exit
+
+/ GET ( plist ind -- (prop ...)/nil )
+getX,	atomX	0
+	3	67	65	23
+get,	docol
+	dup	tor	tor
+	dup	beq	get2
+	cdrcar	fromr
+	cmp	beq	get1
+	fromr	br	get+1
+get2,	rdrop		/ null plist
+get1,	rdrop		/ found
+	exit
+
+/ ( a x -- nil/pair )
+assqX,	getX	0
+	4	61	22	22	50
+assq,	docol
+	over	qbeq	assq1
+	caar	over	eq	bne	assq2
+	swapf	cdr	swapf
+	br	assq+1	/ try next
+assq1,	drop2	zero	/ not found - return nil
+	exit
+assq2,	drop	car	/ found - return pair
+	exit
+
+/ only handles proper symbols (not null)
+getsbX,	assqX	0
+	5	2	22	24	62	51	/ 2subr
+getsbr,	docol
+	plist	cdr
+	lit	subrS
+	get	car
+	exit
+
+/ execute subr of lisp atom
+app,	docol
+	dup	tcase	app1	app2	app1	app1
+app2,	getsbr
+	qbeq	app1
+	exec
+	exit
+app1,	err
+	pstack	drop
+	exit
+
+/ get value of lisp atom
+svalX,	getsbX	0
+	4	22	25	61	43
+sval,	docol
+	dup	tcase	sval1	sval2	sval1	sval1
+sval2,	lit	2	plus
+	fetch
+	exit
+sval1,	err
+	pstack	drop
+	exit
+
+/ ( val sym -- )
+setqX,	svalX	0
+	4	22	65	23	50
+setq,	docol
+	dup	tcase	sq1	sq2	sq1	sq1
+sq2,	lit	2	plus
+	store
+	exit
+sq1,	err
+	pstack	drop
+	exit
+
+/ get name of lisp atom
+snamX,	setqX	0
+	5	22	45	61	44	65
+snam,	docol
+	dup	tcase	snam1	snam2	snam1	snam1
+snam2,	plus1	fetch
+	exit
+snam1,	err
+	pstack	drop
+	exit
+
+
+/ allocating words
+
+consX,	snamX	0
+	4	63	46	45	22
+/ ( car cdr -- cons )
+cons,	docol
+	swapf	xcons	exit
+/ ( cdr car -- cons )
+xcons,	docol
+	here	fetch	tor
+	comma	comma
+	fromr
+	exit
+
+mknumX,	consX	0
+	5	44	42	45	24	44
+mknum,	docol
+	lit	400001
+	xcons
+	exit
+
+mksymX,	mknumX	0
+	5	44	42	22	30	44
+/ ( str -- sym )
+mksym,	docol
+	strdup
+	here	fetch	tor
+	lit	400000	comma	/ type
+	comma			/ pname
+	zero	comma		/ value
+	zero	comma		/ plist
+	fromr
+	exit
+
+/ end of allocating words
+
+oblisX,	mksymX	0
+oblisN,	5	46	62	43	71	22
+oblis,	docon
+	oblisS+2
+oblisS,	400000	oblisN
+	oblis1	0
+
+tN,	1	23
+tS,	400000	tN
+	tS	0
+
+subrS,	400000	.+3
+	0	0
+	4	22	24	62	51
+
+quotS,	400000	.+3
+	0	0
+	1	50	/402
+
+condS,	400000	.+3
+	0	0
+	4	63	46	45	64
+
+lambS,	400000	.+3
+	0	0
+	6	43	61	44	62	64	61
+
+lablS,	400000	.+3
+	0	0
+	5	43	61	62	65	43
+
+dgtN,	5	64	71	67	71	34
+dgtS,	400000	dgtN
+	0	0
+
+carS,	400000	carX+2
+	0	.+1
+	subrS	.+1
+	car	0
+
+cdrS,	400000	cdrX+2
+	0	.+1
+	subrS	.+1
+	cdr	0
+
+atomS,	400000	atomX+2
+	0	.+1
+	subrS	.+1
+	.+2	0
+	docol	atom	lbool	exit
+
+consS,	400000	consX+2
+	0	.+1
+	subrS	.+1
+	cons	0
+
+eqN,	2	65	50
+eqS,	400000	eqN
+	0	.+1
+	subrS	.+1
+	.+2	0
+	docol	eq	lbool	exit
+
+forthS,	400000	forthX+2
+	0	.+1
+	subrS	.+1
+	forth	0
+
+/ FSYM ( str list -- sym/nil )
+fsymX,	oblisX	0
+	4	66	22	30	44
+fsym,	docol
+fsym1,	qbeq	fsym3
+	over	over	car
+	snam	sstreq
+	bne	fsym2
+	cdr	br	fsym1
+fsym2,	nip	car
+	exit
+fsym3,	drop	zero
+	exit
+
+/ INTERN ( str -- sym )
+intrnX,	fsymX	0
+	6	71	45	23	65	51	45
+intern,	docol
+	dup	oblis	fetch
+	fsym	qbeq	intrn1
+	nip	exit
+intrn1,	mksym
+	dup	oblis	fetch	cons
+	oblis	store
+	exit
+
+/ TODO: type checking
+numval,	docol
+	plus1	fetch
+	exit
+
+plusS,	400000	plusX+2
+	0	.+1
+	subrS	.+1
+	.+2	0
+	docol
+	numval
+	swapf	numval
+	plus
+	mknum
+	exit
+
+/ LISP character input
+
+ibufX,	intrnX	0
+	4	71	62	24	66
+ibuf,	dovar
+	-1
+	.+117/
+
+/ LISP 1.5 charcount
+chrpsX,	ibufX	0
+	6	63	70	51	47	46	22
+chrpos,	dovar
+	0
+
+/ turn numeric char into LISP symbol
+chsymX,	chrpsX	0
+	6	63	70	51	22	30	44
+chrsym,	docol
+	dup	isend	bne	reol
+	lit	77	andf	/ tmp to get rid of upper case
+	lit	chrtab	plus
+	fetch
+	exit
+reol,	drop	lit	eolS
+	exit
+
+curchX,	chsymX	0
+	6	63	24	51	63	70	51
+curchr,	docol
+	ibuf	chrpos	fetch	indx
+	chrsym
+	exit
+
+/ LISP 1.5 startread
+nxtlnX,	curchX	0
+	10	45	65	27	23	43	71	45	65	
+nxtln,	docol
+	lit	120	ibuf
+	expect	drop
+	zero	chrpos	store
+	curchr
+	exit
+
+iseol,	docol
+	lit	eolS	eql
+	exit
+
+/ LISP 1.5 advance
+advchX,	nxtlnX	0
+	6	61	64	25	63	70	51
+advchr,	docol
+	curchr
+advch2,	iseol	bne	advch1
+	chrpos	inc
+	curchr
+	exit
+advch1,	nxtln	
+	exit
+
+/ LISP 1.5 endread
+endlnX,	advchX	0
+	7	65	45	64	43	71	45	65
+endlin,	docol
+endln1,	curchr	iseol	bne	rexit
+	chrpos	inc
+	br	endln1
+
+/ LISP char buffer
+
+obufX,	endlnX	0
+	4	46	62	24	66
+obuf,	dovar
+	0		/ length
+	.+170/
+obufp,	dovar
+	0
+	0
+
+clrbfX,	obufX	0
+	6	63	43	51	62	24	66
+clrbuf,	docol
+	lit	170	obuf	plus1
+	obufp	store2
+	exit
+
+packX,	clrbfX	0
+	4	47	61	63	42
+pack,	docol
+	snam			/ get sym name
+	count	drop	fetch	/ first char of name
+	obufp	addbuf
+	exit
+
+bfstrX,	packX	0
+	6	62	24	66	22	23	51
+bufstr,	docol
+	obufp	fetch
+	obuf	plus1	minus
+	obuf	store
+	obuf
+	exit
+
+/ LISP character symbols - unfortunately quite memory intensive
+/ and no uppcase yet even
+
+/ digits as numbers
+n0S,	400001	0
+n1S,	400001	1
+n2S,	400001	2
+n3S,	400001	3
+n4S,	400001	4
+n5S,	400001	5
+n6S,	400001	6
+n7S,	400001	7
+n8S,	400001	10
+n9S,	400001	11
+
+ng1S,	400001	-1
+
+eolS,	400000	.+3	0	0	3	65	46	43
+
+spcS,	400000	.+3	0	0	1	00
+d1S,	400000	.+3	0	0	1	01
+d2S,	400000	.+3	0	0	1	02
+d3S,	400000	.+3	0	0	1	03
+d4S,	400000	.+3	0	0	1	04
+d5S,	400000	.+3	0	0	1	05
+d6S,	400000	.+3	0	0	1	06
+d7S,	400000	.+3	0	0	1	07
+d8S,	400000	.+3	0	0	1	10
+d9S,	400000	.+3	0	0	1	11
+
+d0S,	400000	.+3	0	0	1	20
+slshS,	400000	.+3	0	0	1	21
+sS,	400000	.+3	0	0	1	22
+/tS,	400000	.+3	0	0	1	23
+uS,	400000	.+3	0	0	1	24
+vS,	400000	.+3	0	0	1	25
+wS,	400000	.+3	0	0	1	26
+xS,	400000	.+3	0	0	1	27
+yS,	400000	.+3	0	0	1	30
+zS,	400000	.+3	0	0	1	31
+comS,	400000	.+3	0	0	1	33
+blkS,	400000	.+3	0	0	1	34
+redS,	400000	.+3	0	0	1	35
+tabS,	400000	.+3	0	0	1	36
+
+midS,	400000	.+3	0	0	1	40
+jS,	400000	.+3	0	0	1	41
+kS,	400000	.+3	0	0	1	42
+lS,	400000	.+3	0	0	1	43
+mS,	400000	.+3	0	0	1	44
+nS,	400000	.+3	0	0	1	45
+oS,	400000	.+3	0	0	1	46
+pS,	400000	.+3	0	0	1	47
+qS,	400000	.+3	0	0	1	50
+rS,	400000	.+3	0	0	1	51
+dashS,	400000	.+3	0	0	1	54
+rparn,	400000	.+3	0	0	1	55
+lparn,	400000	.+3	0	0	1	57
+
+aS,	400000	.+3	0	0	1	61
+bS,	400000	.+3	0	0	1	62
+cS,	400000	.+3	0	0	1	63
+dS,	400000	.+3	0	0	1	64
+eS,	400000	.+3	0	0	1	65
+fS,	400000	.+3	0	0	1	66
+gS,	400000	.+3	0	0	1	67
+hS,	400000	.+3	0	0	1	70
+iS,	400000	.+3	0	0	1	71
+perdS,	400000	.+3	0	0	1	73
+crS,	400000	.+3	0	0	1	77
+
+	eolS	/ -1
+chrtab,	spcS	/ 00
+	d1S	/ 01
+	d2S	/ 02
+	d3S	/ 03
+	d4S	/ 04
+	d5S	/ 05
+	d6S	/ 06
+	d7S	/ 07
+	d8S	/ 10
+	d9S	/ 11
+	0	/ 12
+	0	/ 13
+	0	/ 14
+	0	/ 15
+	0	/ 16
+	0	/ 17
+	d0S	/ 20
+	slshS	/ 21
+	sS	/ 22
+	tS	/ 23
+	uS	/ 24
+	vS	/ 25
+	wS	/ 26
+	xS	/ 27
+	yS	/ 30
+	zS	/ 31
+	0	/ 32
+	comS	/ 33
+	blkS	/ 34
+	redS	/ 35
+	tabS	/ 36
+	0	/ 37
+	midS	/ 40
+	jS	/ 41
+	kS	/ 42
+	lS	/ 43
+	mS	/ 44
+	nS	/ 45
+	oS	/ 46
+	pS	/ 47
+	qS	/ 50
+	rS	/ 51
+	0	/ 52
+	0	/ 53
+	dashS	/ 54
+	rparn	/ 55
+	0	/ 56
+	lparn	/ 57
+	0	/ 60
+	aS	/ 61
+	bS	/ 62
+	cS	/ 63
+	dS	/ 64
+	eS	/ 65
+	fS	/ 66
+	gS	/ 67
+	hS	/ 70
+	iS	/ 71
+	0	/ 72
+	perdS	/ 73
+	0	/ 74
+	0	/ 75
+	0	/ 76
+	crS	/ 77
+
+/ initial oblist structure
+oblis1,	carS	.+1
+	cdrS	.+1
+	consS	.+1
+	atomS	.+1
+	eqS	.+1
+	forthS	.+1
+	subrS	.+1
+	quotS	.+1
+	condS	.+1
+	lambS	.+1
+	lablS	.+1
+	plusS	.+1
+	eolS	.+1
+	spcS	.+1
+	d1S	.+1
+	d2S	.+1
+	d3S	.+1
+	d4S	.+1
+	d5S	.+1
+	d6S	.+1
+	d7S	.+1
+	d8S	.+1
+	d9S	.+1
+
+	d0S	.+1
+	slshS	.+1
+	sS	.+1
+	tS	.+1
+	uS	.+1
+	vS	.+1
+	wS	.+1
+	xS	.+1
+	yS	.+1
+	zS	.+1
+	comS	.+1
+	redS	.+1
+	blkS	.+1	/ put black after red
+	tabS	.+1
+
+	midS	.+1
+	jS	.+1
+	kS	.+1
+	lS	.+1
+	mS	.+1
+	nS	.+1
+	oS	.+1
+	pS	.+1
+	qS	.+1
+	rS	.+1
+	dashS	.+1
+	rparn	.+1
+	lparn	.+1
+
+	aS	.+1
+	bS	.+1
+	cS	.+1
+	dS	.+1
+	eS	.+1
+	fS	.+1
+	gS	.+1
+	hS	.+1
+	iS	.+1
+	perdS	.+1
+	crS	0
+
+isspcX,	bfstrX	0
+	5	71	22	22	47	63
+isspc,	docol
+	match	eolS	rone
+	match	spcS	rone
+	match	tabS	rone
+	drop	zero
+	exit
+
+/ 0	illegal
+/ 1	special
+/ 2	letter
+/ 3	digit
+/ 4	white space
+/ 5	(
+/ 6	)
+/ 7	.
+ctabX,	isspcX	0
+	4	63	23	61	62
+ctab,	dovar
+	433333	/ 00 space
+	333300	/ 06 6
+	000031	/ 14 inv
+	222222	/ 22 s
+	220111	/ 30 y
+	401222	/ 36 tab
+	222222	/ 44 m
+	001605	/ 52 inv
+	022222	/ 60 inv
+	222207	/ 66 f
+	000400	/ 74 inv
+
+ctypeX,	ctabX	0
+	5	63	23	30	47	65
+ctype,	docol
+	lit	6	divmod
+	ctab	plus	fetch
+	nib6
+	exit
+
+/ a bit ugly like this
+jmpn,	docol
+	fromr	swapf
+	fromr	plus	fetch	tor
+	tor	exit
+
+ccase,	docol
+	dup	iseol	bne	ccase1
+	snam			/ get sym name
+	count	drop	fetch	/ first char of name
+	ctype	jmpn
+	exit
+ccase1,	drop	zero	jmpn	/ treat EOL and illegals the same
+	exit
+
+
+printX,	ctypeX	0
+	5	47	51	71	45	23
+print,	docol
+	dup
+	tcase	pnil	psym	pnum	pcons
+pnil,	dotq	3	45	71	43
+	drop	exit
+psym,	snam	qdot	exit
+pnum,	numval	xdot	exit
+pcons,	lit	57	emit
+pcons2,	cdrcar
+	print
+	qbeq	pcons1
+	dup	consp	beq	pcons3
+	space
+	br	pcons2
+pcons3,	dotq	3	0	73	0
+	print
+pcons1,	lit	55	emit
+	exit
+
+
+/ skip over any EOLs
+readX,	printX	0
+	4	51	65	61	64
+read,	docol
+	curchr
+read1,	dup	ccase	rdwht	rdspc	rdlet	rddgt	
+			rdwht	rdlp	rdrp	rddot
+rdwht,	drop	advchr	br	read1
+rdspc,	/ same as letter for now, rdatm agrees
+rdlet,	rdatm	exit
+rddgt,	rdatm	exit
+rdlp,	drop	advchr	rdlis	exit
+rdrp,	err	exit
+rddot,	err	exit
+
+/ read symbol or number into char buffer
+/ then interpret according to type
+/ first char still on stack
+rdatm,	docol
+	clrbuf
+	zero	nan	store
+rdatm1,	dup	ccase	raend	ralet	ralet	radgt
+			raend	raend	raend	raend
+ralet,	one	nan	store
+radgt,	pack	advchr
+	br	rdatm1
+raend,	drop
+	bufstr
+	nan	fetch	bne	rdsym
+	numb	beq	rzero	/ can't happen
+	mknum	exit
+rdsym,	intern	exit
+nan,	dovar
+	0
+
+/ read list
+/ next char still on stack
+rdlis,	docol
+	match	rparn	rlrp	/ ()
+	drop
+rlis,	read	rdcdr	cons
+	exit
+
+rdcdr,	docol
+	curchr
+rdcdr1,	ccase	rlerr	rlis	rlis	rlis
+		rlwht	rlis	rlrp	rldot
+rlwht,	advchr	br	rdcdr1
+rldot,	advchr	drop
+	read	/ cdr
+	curchr	match	rparn	rldot1
+	err	/ expected )
+	exit
+rldot1,	advchr	drop
+	exit
+rlrp,	advchr	drop
+	zero	/ nil
+	exit
+rlerr,	err	exit
+
+
+/ PAIRLIS ( x y a -- (((car x) . (car y)) . (pairlis (cdr x) (cdr y) a) )
+prlsX,	readX	0
+	7	47	61	71	51	43	71	22
+prlis,	docol
+prls2,	tor	qbeq	prls1
+	cdrar2
+	fromr	mrot
+	/ (cdr x) (cdr y) a (car x) (car y)
+	cons	xcons
+	br	prls2
+prls1,	drop	fromr		/ end - return a
+	exit
+
+/ APPLY ( a args fn -- val )
+applyX,	prlsX	0
+	5	61	47	47	43	30
+apply,	docol
+	dup	tcase	aerr	asym	aerr	acons
+aerr,	brk
+asym,	/ TODO: expr
+	dup	getsbr	qbeq	asym1
+asubr,	tor	drop	nip	unpk	/ unpack args
+	fromr	exec	exit
+asym1,	/ unknown symbol - eval fn and try again
+	drop	tor	over	fromr	eval
+	br	apply+1
+acons,	dup	car
+	match	lambS	alam
+	match	lablS	alab
+	/ TODO: FUNARG
+	err	brk		/ can't apply
+alam,	rot	tor		/ a >R
+	cdr	carcdr	car	/ unpack lambda: args params expr
+	refl	fromr		/ expr params args a
+	prlis			/ expr a'
+	swapf	br	eval+1
+alab,	rot	tor		/ a >R
+	cdr	carcdr	car	/ unpack label: args name fn
+	tuck	fromr	mrot	/ args fn a name fn
+	cons	xcons		/ args fn a'   a' = ((name . fn) . a)
+	mrot	br	apply+1
+
+/ EVAL ( a e -- val )
+evalX,	applyX	0
+	4	65	25	61	43
+eval,	docol
+	dup	tcase	eself	esym	eself	econs
+eself,	nip	exit
+	/ TODO: value cell
+esym,	assq	cdr	exit
+equot,	nip	cadr	exit
+econd,	cdr	evcon	exit
+econs,	dup	car	/ (car e)
+	match	quotS	equot
+	match	condS	econd
+	/ TODO: FUNCTION
+	/ TODO: PROG
+	/ TODO: subr/expr/fsubr/fexpr and alist lookup
+	/	actually only fsubr/fexpr should be enough, else default
+	/ default - evlis (cdr e) and apply fn
+	/ a e fn -- fn a a (cdr e)
+	mrot	cdr	dop
+	/ a args fn
+	evlis	rot
+	br	apply+1
+
+/ EVCON ( a c -- val )
+evcon,	docol
+	dup	beq	rnip
+	over	tor
+	cdrcar	carcdr	car	swapf	/ unpack: a rest result test
+	fromr	swapf	eval		/ eval test
+	bne	evcon1
+	drop	br	evcon+1		/ try rest
+evcon1,	nip	br	eval+1		/ eval result
+
+/ EVLIS ( a l -- el )
+evlis,	docol
+	dup	beq	rnip
+	carcdr	mrot	/ (cdr l) a (car l)
+	dop	eval	/ (cdr l) a v
+	refl	evlis	/ v el
+	cons	exit
+
+10000/
+
+/ LISP minimum
+/ car
+/ cdr
+/ cons
+/ atom
+/ eq
+/ *lambda
+/ *label
+/ *quote
+/ apply
+/ 	eval
+/ 	pairlis
+/ eval
+/ 	evcon
+/ 	evlis
+/ 	assoc	-> assq enough (alist only has symbols)
+/ 		equal
+/ 
+
+envX,	evalX	0
+	3	65	45	25
+env,	dovar
+	.+2	.+3	aS	xS
+	.+2	.+3	bS	yS
+	.+2	.+3	cS	zS
+	.+2	.+3	subrS	d1S
+	.+2	.+3	quotS	d2S
+	.+2	.+3	condS	d3S
+	.+2	.+3	lambS	d4S
+	.+2	0	lablS	d5S
+
+fooX,	envX	0
+	3	66	46	46
+	dovar
+fooS,	400001	112233
+
+barX,	fooX	0
+	3	62	61	51
+	dovar
+	carS	.+1
+	fooS	.+1
+	.+2	0
+	carS	fooS
+
+repX,	barX	0
+	3	char rr	char re	char rp
+	docol	env	read	eval	print	exit
+
+lispX,	repX	0
+	4	char rl	char ri	char rs	char rp
+lisp,	docol	
+	cr	lit	400+char r>	emit	space
+	env	read	eval	print
+	br	lisp+1
+
+/ context variable
+ctxtX,	lispX	0
+	7	63	46	45	23	65	27	23
+ctxt,	dovar
+	ctxtX
+
+constants
+
+rstack, .+100/
+stack, .+100/
+tibbuf,	.+tiblen/
+
+end,
+
+start go

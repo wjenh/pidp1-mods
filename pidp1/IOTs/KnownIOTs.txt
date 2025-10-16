@@ -1,0 +1,56 @@
+These are the IOTs DEC lists as used in the DEC PDP-1 Input Output Systems Manual F25.
+Note that only a few of these are implemented by the pidp1 emulator, and some are for fairly esoteric devices.
+Those marked with an asterisk are implemented in the pidp1 emulator and are reserved.
+
+01 * rpa
+02 * rpb
+03 * tyo
+04 * tyi
+05 * ppa
+06 * ppb
+07 * dpy
+
+11 * spacewar controllers
+
+21
+22
+
+24
+
+30 * rrb
+31
+32
+33 * cks
+34
+35
+36
+37
+
+41
+42
+43
+44
+45
+
+47
+50 * dsc
+51 * asc
+52 * isb
+53 * cac
+54 * lsm
+55 * esm
+56 * cbs
+
+61 NOTE 61, 62, 63 are for the Type 23 drum memory, an implementation is provided
+62
+63 
+
+66
+67
+70
+71
+72
+73
+74 * lem/eem
+75
+76

@@ -1,0 +1,92 @@
+You can add a handler for any IOT that isn't built in by implementing one or two functions, see the sample IOT_57.c,
+Once you have your IOT_nn.c, just type 'make'. That's it.
+Any IOT instruction that references device nn will cause your handler to be dynamically loaded and called.
+
+The main entrypoint is the iotHandler() function. It will be called twice for every IOT instruction executed.
+The first time is when the IOT instruction is executed, again when the current instruction cycle ends;
+Technically, pulse is 0 at PDP-1 clock TP7, 1 at TP10.
+
+It and several other functions are passed a PDP1 * argument. This is a pointer to the entire state of the emulator.
+It can be used to access various registers and even change the pc. But, use with care, don't set random things.
+
+The typically useful members are:
+
+ac - the accumulator
+io - the IO register
+mb - the memory buffer, usually the last word read from memory
+pc - the program counter
+ss - the sense switches
+pf - the program flags
+sbs16 - enable/disable the 16 chan break system
+
+The panel numbering of the sense switches and the program flags is reversed from the actual bit positions.
+That is, flag or switch 6 is the lsb, 01, 1 is 040.
+
+If you have any special initialization to do before your IOT is called, implement iotStart();
+It will be called whenever the pidp1 goes into run state, or after your IOT is loaded but before iotHandler() is called.
+
+If you have any special clenup to do, as the fclose() in the example IOT_57, implement iotStop().
+It will be called whenever the pidp1 is halted.
+
+A handler can reqest a sequence break by calling the builtin initiateBreak(int channel).
+This MUST be called when pulse is 0 to be effective.
+
+If the 16 channel break system is installed, the channel numbers are 0-15.
+The channel in question must have been enabled via the activate sequence break IOT asb, which has the format:
+72nn51 where nn is the channel number 0-15 decimal, 0-17 octal,
+Similarly, a channel can be disabled with the disable sequence break IOT dsb, 72nn50.
+
+If the standard one channel sbs is installed, any channel number is ignored and will always be treated as 0.
+IOTs asb, dsb are also ignored in this case.
+
+For either system, sequence break must be enabled in general via the enter system break mode IOT, esb, 72xx55.
+It can be disabled via the leave system break moode IOT, lsb, 72xx54.
+
+If the IOT being inmplemented should be processed by another IOT, just implement the iotAlias() function, which
+should return the IOT number of the handler to actually process it.
+That IOT will be loaded if it hasn't already been.
+No other functions need to be implemented, they will be ignored.
+
+If your code needs to be periodially activated, implement the iotPoll(PDP1 *contextP) function.
+If polling is enabled in your IOT via enablePolling(int onOff), 1 for on, 0 for off, then the emulator will call
+iotPoll() once every instruction cycle at the end of TP7, which is just after any IOT is processed.
+See IOT_40 for an example.
+
+If an IOT is called in 'wait' mode, i anc c, bits 5 and 6, are 1,0, then you MUST call IOCOMPLETE()
+at some point, either in the IOT or in a poll. The same applies for 'need complete', bits are 0,1.
+Until this is done, the IOT will be called on every cycle until the complete is done.
+
+However, if your IOT does not support this, call IOTNOWAIT() before returning from your handler.
+This should be done when the pulse argument is 0, false, to be effective.
+The state of these 2 is passed in the 'nac', need-a-complete argument to your handler.
+if it is 1, then bits 5 and 6 are either 1,0 or 0,1.
+
+This is consistent with the real PDP-1 behavior, a wait state does just that, waits before proceeding.
+
+A logging facility is provided:
+
+#define DOLOGGING
+#include Logger/iotLogger.h
+
+within your code:
+
+iotLog("format like printf", ....);
+
+iotClose() can be called if you have an iotStop() implemented, but it's not actually required.
+
+if DOLOGGING is not defined then any log statements are dropped.
+This allows debugging to be turned on and off.
+
+Note that the MACRO1 assembler only recognizes the 3 letter names for esm and lsm.
+You have to construct the instructions for asb and dsb and some others, typically with a define in the source.
+
+NOTE - as of this writing the 16 channel system is not enabled in the emulator, nor is there any way to do so
+other than via a dyamic IOT.
+IOT_60, included, is an example.
+
+IMPORTAINT - once loaded, a handler stays loaded until the pidp1 emulator is shut down and restarted. So, if you change your handler, restart or it won't work properly.
+
+Finally, remember that this is just an emulation of the hardware. There are no acutal electrical start or continue
+pulses going to anything. So,the emulator will be blocked until your iotHandler() function returns.
+If it takes too long, the following emulator cycle will be delayed.
+This will always happen if an IOT instruction is called with a wait condition on until a completion is issued.

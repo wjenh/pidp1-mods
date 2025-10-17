@@ -22,9 +22,14 @@ static int drumReadField;
 static int drumWriteField;
 static int drumAddr;
 static int transferCount;
+static int drumCount;
 static int readMode;
 static int writeMode;
+static int ioBusy;
+static int needBreak;
 static int errFlags;
+static u64 cmdStartTime;
+static u64 cmdCompletionTime;   // relative to pdp1->simtime
 
 static int memBank;
 static int memAddr;
@@ -48,23 +53,24 @@ Word readBuf[4096];                 // needed for read/write mode
         return(0);                 // sorry, some error with the drum file
     }
 
+    enablePolling(1);
+
     switch( dev )
     {
     case 061:            // dia, drum initial address, in the IO register, or dba, drum break address
         if( pdp1P->mb & 02000 )
         {
-            // dba, using the interrupt system. reqiest brea;
+            // dba, using the interrupt system. reqiest break
+            // THe break happens when the drumCount == the drumAddr
             IONOWAIT(pdp1P); // we don't want to hold for completion
-            initiateBreak(0);       // what chan to use if sbs16 is active? 0 is the highest priority
+            needBreak = 1;
         }
-        else
-        {
-            readMode = pdp1P->io & 0400000;
-            writeMode = 0;
-            drumReadField = (pdp1P->io >> 12) & 037;
-            drumAddr = pdp1P->io & 07777;
-            errFlags = 0;
-        }
+
+        readMode = pdp1P->io & 0400000;
+        writeMode = 0;
+        drumReadField = (pdp1P->io >> 12) & 037;
+        drumAddr = pdp1P->io & 07777;
+        errFlags = 0;
         break;
 
     case 062:            // dwc, drum word count or dra, drum request address
@@ -72,19 +78,24 @@ Word readBuf[4096];                 // needed for read/write mode
         {
             // dra, return current drum 'counter' in the IO register, along with status
             // Since we don't actually have a rotating drum, just return the next loc after the last operation
-            pdp1P->io = ((drumAddr + transferCount) % 4096) | errFlags;
             IONOWAIT(pdp1P); // we don't want to hold for completion
-            iotLog("062, issued NOWAIT\n");
+            pdp1P->io = drumCount | errFlags;
         }
         else
         {
             writeMode = pdp1P->io & 0400000;
             drumWriteField = (pdp1P->io >> 12) & 037;
             transferCount = pdp1P->io & 07777;
+
+            if( (drumAddr + transferCount) > 4096 )
+            {
+                errFlags = 0500000;     // Err TE
+                return(1);              // do nothing. Is this correct?
+            }
         }
         break;
 
-    case 063:            // dcl, drum core location or dra, drum request address
+    case 063:            // dcl, drum core location
         memBank = (pdp1P->io >> 14) & 03;
         memAddr = pdp1P->io & 017777;
 
@@ -98,7 +109,7 @@ Word readBuf[4096];                 // needed for read/write mode
             errFlags = 0;
         }
 
-        Word *memP = &pdp1P->core[(memBank * 4096) + (memAddr & 07777)];
+        Word *memP = &pdp1P->core[(memBank * 4096) + memAddr];
 
         // and away we go
         // We might have read/write mode, in which case we have to read the dagta first
@@ -144,7 +155,22 @@ Word readBuf[4096];                 // needed for read/write mode
         else
         {
             // hmm, not read or write. Do what?
+            return(1);
         }
+
+        ioBusy = 1;
+        cmdCompletionTime = transferCount;
+
+        if( drumAddr < drumCount )  // have to wait for it to come around again on the guitar
+        {
+            cmdCompletionTime += 4096 - drumCount + drumAddr;
+        }
+        else
+        {
+            cmdCompletionTime += drumCount - drumAddr;
+        }
+
+        cmdCompletionTime = pdp1P->simtime + cmdCompletionTime * 8500;
         break;
 
     default:
@@ -172,5 +198,29 @@ void iotStop()
     {
         close(drumFd);
         drumFd = -1;
+        iotLog("IOT 61 drumFd closed\n");
+    }
+}
+
+// Used to update drumCount, trigger a break,  determine the end of a transfer
+void iotPoll(PDP1 *pdp1P)
+{
+    if( ioBusy )
+    {
+        if( needBreak && (drumCount == drumAddr) )
+        {
+            needBreak = 0;
+            initiateBreak(0);           // no channel specified, what to use for sbs16? Is 0 correct??
+        }
+        else if( pdp1P->simtime >= cmdCompletionTime )
+        {
+            ioBusy = 0;
+            drumCount = drumAddr + transferCount;   // sync up the drum count to match the end of the transfer
+        }
+    }
+    else
+    {
+        drumCount++;
+        drumCount %= 4096;      // not quite correct, should be every 8.5 us
     }
 }

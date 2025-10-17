@@ -6,6 +6,9 @@ dcl=720063
 dba=722061
 dra=732062
 
+bsy=400000
+dun=000040
+
 100/
 / put a marker in mem 0
     lac (123456
@@ -23,6 +26,10 @@ dra=732062
     dcl
 / drum request address, status
     dra
+/ check the busy bit
+    jsp tst
+/ get the status again, bit 12 should be set
+    cks
     hlt
 
 / read same into 1000
@@ -35,8 +42,7 @@ dra=732062
 / drum core location, memory addr 1000
     lio (001000
     dcl
-/ status
-    dra
+    jsp tst
     hlt
 
 / read/write 8 words from 07751 to drum 0,0 and load 07751 with it
@@ -50,8 +56,7 @@ dra=732062
 / drum core location, memory addr 07751
     lio (7751
     dcl
-/ status
-    dra
+    jsp tst
     hlt
 
 / swap same back
@@ -64,9 +69,19 @@ dra=732062
 / drum core location, memory addr 07751
     lio (7751
     dcl
-/ status
-    dra
+    jsp tst
     hlt
+
+/ check the busy bit
+tst, dac rad
+lp1, cks
+     cla
+     rcl 1
+     sza
+     jmp lp1
+     jmp i rad
+
+rad, 0
 
 constants
 start 100

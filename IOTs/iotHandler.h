@@ -8,8 +8,9 @@
 int iotHandler(PDP1 *, int device,  int pulse, int completion);
 void iotStart(void);
 void iotStop(void);
-void iotStart(void);
 void iotPoll(PDP1 *);
+void initiateBreak(int chan);
+void enablePolling(int cycles);
 int iotIsAlias(void);
 
 // Hidden method and vars used for control, implemented here to hide details from handlers

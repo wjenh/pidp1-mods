@@ -34,6 +34,7 @@ static int writeMode;
 static int ioBusy;
 static int needBreak;
 static int errFlags;
+static u64 lastSimtime;         // used in the polling code for drumcount updates
 static u64 cmdCompletionTime;   // relative to pdp1->simtime
 
 static int memBank;
@@ -58,6 +59,7 @@ Word readBuf[4096];                 // needed for read/write mode
         return(0);                 // sorry, some error with the drum file
     }
 
+    lastSimtime = pdp1P->simtime;
     enablePolling(1);
 
     switch( dev )
@@ -218,8 +220,16 @@ void iotPoll(PDP1 *pdp1P)
     }
     else
     {
-        drumCount++;
-        drumCount %= 4096;      // not quite correct, should be every 8.5 us
+        // The original hardware updated this every 8.5us, be we aren't called with that timing.
+        // So the count is updated when simtime % 8500 is zero.
+        // This won't be exact, but the longer the time but the higher the count, the more accurate it will be.
+        // The worst case will be a 10us interval.
+
+        if( pdp1P->simtime >= (lastSimtime + 8500) )
+        {
+            lastSimtime = pdp1P->simtime;
+            drumCount = ++drumCount % 4096;
+        }
 
         if( needBreak && (drumCount == drumAddr) )
         {

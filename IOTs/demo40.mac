@@ -1,0 +1,10 @@
+DEMO OF A DYNAMIC IOT POLL
+/ Works with IOT 40
+100/
+    lac (1
+    iot 040
+/ Just loop forever
+l1, jmp l1
+
+constants
+start 100

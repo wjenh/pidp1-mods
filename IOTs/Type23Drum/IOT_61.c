@@ -69,7 +69,6 @@ Word readBuf[4096];                 // needed for read/write mode
         {
             // dba, using the interrupt system. reqiest break
             // The break happens when the drumCount == the drumAddr
-            IONOWAIT(pdp1P);    // we don't want to hold for completion
             needBreak = 1;
         }
 
@@ -87,10 +86,9 @@ Word readBuf[4096];                 // needed for read/write mode
         break;
 
     case 062:            // dwc, drum word count or dra, drum request address
-        if( (pdp1P->mb & 012000) == 012000 )
+        if( pdp1P->mb & 02000 )
         {
             // dra, return current drum 'counter' in the IO register, along with status
-            IONOWAIT(pdp1P); // we don't want to hold for completion
             pdp1P->io = drumCount | errFlags;
         }
         else

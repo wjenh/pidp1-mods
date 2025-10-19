@@ -78,10 +78,12 @@ Word readBuf[4096];                 // needed for read/write mode
 
         readMode = pdp1P->io & 0400000;
         writeMode = 0;
-        drumReadField = (pdp1P->io >> 12) & 037;
         drumAddr = pdp1P->io & 07777;
+        drumReadField = (pdp1P->io & 0370000) >> 12;
         errFlags = 0;
         pdp1P->cksflags &= ~CKS_DRP;     // not busy yet
+        
+        iotLog("dia done, read %d, rfield %d, daddr %d\n", readMode, drumReadField, drumAddr);
         break;
 
     case 062:            // dwc, drum word count or dra, drum request address
@@ -95,6 +97,7 @@ Word readBuf[4096];                 // needed for read/write mode
         {
             writeMode = pdp1P->io & 0400000;
             drumWriteField = (pdp1P->io >> 12) & 037;
+            drumWriteField = (pdp1P->io & 0370000) >> 12;
             transferCount = pdp1P->io & 07777;
 
             if( (drumAddr + transferCount) > 4096 )
@@ -103,6 +106,7 @@ Word readBuf[4096];                 // needed for read/write mode
                 return(1);              // do nothing. Is this correct?
             }
 
+            iotLog("dwc done, write %d, wfield %d, count %o\n", writeMode, drumWriteField, transferCount);
             pdp1P->cksflags &= ~CKS_DRM;    // not done now
         }
         break;
@@ -111,6 +115,7 @@ Word readBuf[4096];                 // needed for read/write mode
         memBank = (pdp1P->io >> 14) & 03;
         memAddr = pdp1P->io & 017777;
 
+        iotLog("dcl memBank %o memAddr %o\n", memBank, memAddr);
         if( (memAddr + transferCount) > 4096 )
         {
             errFlags = 0500000;     // Err TE
@@ -173,6 +178,7 @@ Word readBuf[4096];                 // needed for read/write mode
         }
 
         cmdCompletionTime = pdp1P->simtime + cmdCompletionTime * 8500;
+        iotLog("dcl done\n");
         break;
 
     default:

@@ -1,0 +1,49 @@
+A SPECIAL LOADER TO LOAD OR STORE PROGRAMS TO THE DRUM
+
+dia=720061
+dwc=720062
+dcl=720063
+dba=722061
+dra=732062
+
+bsy=400000
+dun=000040
+
+7744/
+/ The low 5 bits of the test word select the drum track, 00-37, 16 tracks
+    lat
+    ior (40
+    ral 6s
+    ral 6s
+    dac tmp
+/ If switch 1 is on save to drum, if off load from drum
+    szs 10
+    jmp wrt
+    lio tmp
+    dia
+    lio (7744
+str,
+    dwc
+    cli
+    dcl
+/ check the busy bit
+don, cks
+     cla
+     rcl 1
+     sza
+     jmp don
+     hlt
+
+wrt,
+    cli
+    dia
+    ior (7744
+    dac tmp
+    lio tmp
+    jmp str
+
+
+tmp, 0
+
+constants
+start 7745

@@ -12,4 +12,4 @@ Logger/iotLogger.o: Logger/iotLogger.c Logger/iotLogger.h
 	(cd Logger; make)
 
 clean:
-	rm *.o *.so
+	rm *.so

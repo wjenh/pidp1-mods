@@ -1,0 +1,297 @@
+/BLINKY-1c V04.  KINETIC POETRY FOR THE PDP-1.  MIKE HILL 04-OCT-2025
+
+	///////////////////////////////////////////////////////////////////////
+	/                                                                     /
+	/  B L I N K Y - 1   K i n e t i c   P o e t r y  for the  P D P - 1  /
+	/                                                                     /
+	/  B l i n k e n l i g h t s   u n d   K l i c k e n s w i t c h e n  /
+	/            u n d   v i e l e n   m a k e n   S p a s s e n          /
+	/                                                                     /
+	/       P A R T   O F   T H E   B L I N K Y - 1   P R O J E C T       /
+	/     F O R   T H E   P i D P - 1   ( O R )   A   R E A L   O N E     /
+	/                                                                     /
+	/  Mike Hill (V01)  Initial version (from FLASH-1 V03)   19-May-2025  /
+	/  Mike Hill (V01a) Preparation for V02 (binary = V01)   30-Jun-2025  /
+	/  Mike Hill (V01b) Preparation for V02 (binary = V01)   01-Jul-2025  /
+	/  Mike Hill (V02)  Cleaned up and improved V01b         08-Jul-2025  /
+	/  Mike Hill (V03)  Add LIGHT PEN & chaotic Easter egg   18-Sep-2025  /
+	/  Mike Hill (V04)  Add cloning & automate 'help' addon  04-Oct-2025  /
+	/                                                                     /
+	/  Copyright (c) 2025 Mike Hill                  All rights reserved  /
+	/                                                                     /
+	///////////////////////////////////////////////////////////////////////
+
+/ SENSE SWITCHES (SS)>
+/
+/    SS#         Sense Switch OFF                   Sense Switch ON
+/    ---  -----------------------------  --------------------------------------
+/    SS1  RIM-LOAD starts automatically  RIM-LOAD halts CPU after loading
+/    SS2* Changing the state of SS2 ...  ... will restart BLINKY-1
+/    SS3+ Auto-detect extended memory    Don't use extended memory (use NORMAL)
+/    SS4  (Do not display HELP text)     (Display HELP text after RIM-LOAD)
+/    SS5  TW0-5=77 'flash' or 'fixed'    Set tick (TK) speed using TW6-17
+/    SS6  TYPE 30 CRT DISPLAY disabled   TYPE 30 PRECISION CRT DISPLAY enabled
+/
+/    * = SS2 will only be scanned when at least one TW switch is also changed
+/    + = SS3 is only scanned when BLINKY-1 is started (or restarted)
+
+/ TEST WORD (TW)>
+/
+/    TW0>     *fun  *Special function
+/    TW1>      cAC   Complement AC
+/    TW2>      cIO   Complement IO
+/    TW3>      pPF   PF pattern (0,1)
+/    TW4>      pAC   AC pattern (0,1)
+/    TW5>      pIO   IO pattern (0,1)
+/    TW6-8>    sPF   PF speed (multiple of clock speed)
+/    TW9-11>   sAC   AC speed (multiple of clock speed)
+/    TW12-14>  sIO   IO speed (multiple of clock speed)
+/    TW15-17>  sCK   CK speed (basic clock speed)
+/
+/    * Special functions>
+/    TW0-17  ON = Fixed lamps (all lamps which can be driven will be ON)
+/    TW0-5   ON = Flash at the speed of TW6-17 (x 10ms)
+/    TW0     ON = Echo the TW in the AC when at least one of TW1-5 is OFF
+/    TW0-17 OFF = Run blinky with default settings
+/    TW0    OFF = Run blinky (after all, that's what you're here for)
+/
+/    The basic clock speed (sCK> TW15-17) is from 0=60ms - 7=480ms
+/    The other clock speeds (sPF,sAC,sIO) are multiples of sCK (0=1x - 7=8x)
+
+/ Quick reference of TW switches>
+/
+/       |000|000|000|011|111|111|
+/       |012|345|678|901|234|567|
+/   TW> |hai|PAI|PF |AC |IO |CK |
+/
+/        h=Hold
+/        a=Complement AC
+/        i=Complement IO
+/        P=PF pattern 0/1
+/        A=AC pattern 0/1
+/        I=IO pattern 0/1
+/       PF=PF blink-speed (multiple of CK)
+/       AC=AC blink-speed (multiple of CK)
+/       IO=IO blink-speed (multiple of CK)
+/       CK=Base clock speed
+
+			/////////////////////////////
+			/   S U G G E S T I O N S   /
+			/////////////////////////////
+
+/ If you have more than 4KW memory, try setting ADDRESS=010000 before RIM-LOAD
+/ Set SS1 = ON prior to RIM-LOADing the paper tape to HALT at the beginning
+/ Set SS3 = OFF (because you won't have a PDP-1A)
+/ Set SS6 = ON  (only if you have a TYPE 30 PRECISION CRT DISPLAY)
+/ Set TW  = 777777 (most lamps will stay permanently lit)
+/ Set TW  = 770077 (most lamps will flash on and off)
+
+/ Try the following TW settings>
+/
+/   330000  'big fast loop'
+/   070000  'fast rotation'
+/   010000  'reversal'
+/   000320  'bouncing'
+
+/ Easter egg #1> try the following TW setting (SS6=OFF)>
+/
+/   135037  Where BLINKY-1 will 'read' you it's own binary code
+/           You may turn SS6=ON once the blinking starts for a dotty display
+
+/ Easter egg #2, if you have SS6=ON, try the following TW settings>
+/
+/   135007  'rocket' (135xxx is needed to start the TYPE 30 Easter egg)
+/   131007  'rockets'
+/   133007  'satellites'
+/   132007  'missiles'
+/   136007  'missile'
+/   137007  'dots'
+/   127007  'sky streaks'
+/   126007  'fireworks'
+/   122007  'sky rockets'
+/   123007  'streak'
+/   121007  'streaks'
+/
+/   Note that only one switch is changed between each setting ... so easy!
+/   To EXIT from this Easter egg, either set TW0=ON and/or SS6=OFF.
+
+/ There is a nested Easter egg within Easter egg #2> Setting TW to xx0xxxx or
+/ xx4xxxx will start the CHAOTIC DISPLAY Easter egg.  Changing TW will change
+/ the chaotic behaviour.  Also, you may use the light pen (if you have one) to
+/ change the size of the displayed figures (left-right axis).  Try setting
+/ TW=000000 or 700000.  Setting SS6=OFF will EXIT back to BLINKY-1.
+
+/ Finally, just play with the switches ... what's the worst that can happen?
+
+///////////////////////////////////////////////////////////////////////////////
+
+			///////////////////////////////
+			/   M E M O R Y   U S A G E   /
+			///////////////////////////////
+
+/0000-0077/  ooooox..........................oooooooooooo....................
+/0100-0177/  xoooooooooooooooo................oooooooooooooooooooxx..........
+/0200-0277/  .................................ooooooooooooooooooooooxx.......
+/0300-0377/  ooooooooooooooooooooooooooooxooo......................oooooooo..
+/0500-0577/  .ooooooooooooooooooooooooooooooooooooooooox.....................
+/0700-0777/  ........................................ooooooooooooooooooo.....
+/2200-2277/  o...............................................................
+/2300-2377/  x...............................................................
+/2400-2477/  x...............................................................
+/2500-2577/  x...............................................................
+/2600-2677/  .oooooooooooof..................................................
+/2700-2777/  .oooooooooooof...................................ooooooooooooooo
+/3000-3077/  oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
+/3100-3177/  oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
+/3200-3277/  oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
+/3300-3377/  oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
+/3400-3477/  oooooooooooooooooooooooooooooooooooooooooooooooooooooof.........
+/3600-3677/  xxxxxxxxxXxoxxxxo00oooxfxxoooooofxx.............................
+/ Legend> /  . = Empty,  0 = 0,  X = -0,  o = Opcode,  f = FIODEC,  x = Other
+
+///////////////////////////////////////////////////////////////////////////////
+
+		///////////////////////////////////////////
+		/   H A R D W A R E   A D D R E S S E S   /
+		///////////////////////////////////////////
+
+/ Line  Addr	/* What> Where,             R e a s o n
+/ ----  ----    /* ----  ------- ------------------------------------
+/ 2408  0114    /* IOT>  DYdots, 'DPY' instruction executed
+/ 2503  0160    /* IOT>  DYinit, 'dpy' instruction executed
+/ 2652  0265    /* IOT>  DYrota, 'dpy' instruction executed
+/ 2748  0766    /* IOT>  DYnext, 'dpy' instruction executed
+/ 3002  0101    /* HALT> 0100,   Hardware test (analyze AC, IO, and PF)
+/ 3066  0305    /* IOT>  CLone,  'eem' instruction attempted
+/ 3141  0336    /* IOT>  CLlem,  'lem' instruction attempted
+/ 3286  2767    /* HALT> entry,  because SS1=ON (AC=Our version number)
+/ 3328  3000    /* HALT> die,    (AC=version or original PC at 'death')
+/ 3987  3305    /* lap>  XMinit, 'lap' operation executed
+/ 3995  3311    /* IOT>  XMinit, 'eem' instruction attempted
+/ 4023  3323    /* IOT>  XMleav, 'lem' instruction executed
+
+///////////////////////////////////////////////////////////////////////////////
+
+/ Unexpected interrupt catcher and start block
+
+0000/	700004	220000	643700	622776	602763	003777
+
+/ Tick completion routine and clock initialization
+
+0040/	762200	523702	603007	640060	600102	463700	600052	607714
+0050,	717714	243700	203704	613701
+
+/ Hardware-type determination
+
+0100/	775777	602777
+
+/ DY subsystem (PRECISION CRT DISPLAY TYPE 30)
+
+0102/			323706	440104	067714	500167	600116	220166
+0110,	063704	240166	673177	720307	223706	600045	702760	260104
+0120,	600107
+
+0141/		700147	260153	260104	200145	063466	240167	760003
+0150,	200163	640060	500164	607714	400165	243706	223706	720007
+0160,	650003	600151	600147	400000	377401	000400
+
+0241/		220163	323706	762207	640060	640200	603007	243702
+0250,	020266	040267	240263	020270	650100	600750	762217	523702
+0260,	600243	443706	223706	671000	720007	600256	677777	660000
+0270,	003000
+
+/ Clone Ourselves (CL)
+
+0300/	764217	247777	403612	247760	724074	620306	661001	640400
+0310,	620336	620312	023620	247776	207777	507776	600325	217777
+0320,	761000	257777	220322	517777	600366	207760	247777	403612
+0330,	247760	520337	600314	630334	000335	720074	602763	210000
+
+0366/							207777	260370
+0370,	220370	337777	447777	527760	600367	600325
+
+/ Pattern Generator (PG)
+
+0501/		260551	203711	300553	300552	702200	260553	210553
+0510,	650100	600545	710777	030553	240555	700777	030553	240556
+0520,	200553	240554	230553	440554	330554	200555	671001	240555
+0530,	200556	661001	240556	040555	510554	600525	240557	220557
+0540,	530553	600523	223466	440554	330554	700100	400553	520552
+0550,	600506	607714	002600
+
+/ DY Nested 'chaotic' Easter egg
+
+0750/	706777	760003	240772	240771	650060	603007	763000	675017
+0760,	400772	240772	220772	675017	400771	730007	650003	600753
+0770,	600751	720007	600753
+
+/ Pattern tables
+
+2200/	400001	/ Generate AC0
+2300/	770000	/ Generate AC1
+2400/	001400	/ Generate IO0
+2500/	000077	/ Generate IO1
+
+2601/		760007	760011	760012	760013	760014	760015	760017
+2610,	760006	760005	760004	760003	760002	654564	/ PF0
+
+2701/		760007	760011	760012	760013	760014	760015	760017
+2710,	760001	760002	760003	760004	760005	654564	/ PF1
+
+/ Preamble
+
+2761/		442270	714343	700004	220005	640010	760417	622770
+2770,	023620	640100	600300	204030	502761	624031	640010	760400
+
+/ 3000 is the restart enrry point (as is, usually, 0000)
+
+3000/	765217	263456	203016	240000	623303	620501	620142	651600
+3010,	766207	650020	603017	203011	063612	243011	603000	243702
+3020,	650100	203613	640400	603115	263615	523615	603010	640050
+3030,	603045	523611	603050	260050	703373	523714	623303	704030
+3040,	043621	243701	700050	260047	603102	263456	323714	603010
+3050,	503614	700062	260050	703433	523714	623303	703433	243714
+3060,	223634	203710	640100	223635	707777	243713	333713	707776
+3070,	043621	243713	333713	703075	260047	641000	603110	707776
+3100,	043621	243701	761217	243704	223611	203106	403106	600050
+3110,	707777	243701	764207	243704	600050	243700	673007	243705
+3120,	673007	243703	673007	243707	673377	700000	642000	701000
+3130,	263267	662001	700000	642000	701000	263254	662001	702601
+3140,	642000	702701	263300	662001	702201	642000	702301	263272
+3150,	662001	702401	642000	702501	263275	203700	023616	523617
+3160,	603166	640060	600241	702761	263272	263275	700007	023703
+3170,	263261	443261	700007	023705	263246	443246	700007	023707
+3200,	263234	443234	703465	243703	263264	243705	263251	243707
+3210,	263237	700007	023700	403600	263215	207714	260050	703373
+3220,	523714	623303	704030	043621	243701	703227	260047	203231
+3230,	651000	403231	463707	603244	717714	243707	443237	207714
+3240,	503466	603300	263243	760010	463705	603257	717714	243705
+3250,	443251	207714	503466	603275	767714	673777	673777	463703
+3260,	600050	717714	243703	443264	207714	503466	603272	767714
+3270,	243704	600050	707714	263264	603264	707714	263251	603251
+3300,	707714	263237	603237	263336	764307	640030	623320	640100
+3310,	724074	623312	661001	640400	603323	203620	243710	603324
+3320,	661001	640200	720074	323710	623325	023710	243711	303640
+3330,	703373	243714	703622	263334	207714	640200	607714	303630
+3340,	303631	243712	203637	253630	203640	253631	213630	523637
+3350,	603361	203630	303621	203710	650100	603336	203712	640100
+3360,	603336	443334	603334	023710	303713	704030	263713	323706
+3370,	203714	263372	607714	761200	243715	243716	203713	303715
+3400,	707776	263713	203715	253713	443713	203716	253713	704030
+3410,	263713	223632	623422	704031	263713	223633	623422	707747
+3420,	263713	603451	263432	711750	243720	333713	443713	443713
+3430,	463720	603425	607714	223611	203710	640100	223635	323717
+3440,	704030	263717	713717	243720	443717	253713	443713	463720
+3450,	603444	223636	333713	443713	700040	273713	707714	403641
+3460,	263713	423642	640200	333713	223706	600040	654564
+
+/ Constants and initialized variables
+
+3600/	003601	000003	000006	000011	000014	000017	000022	000025
+3610,	000030	777777	010000	031002	770000	777714	377000	135000
+3620,	170000	000000	000000	170000	070000	030000	010000	654564
+3630,	004030	007750	760000	037776	614030	104030	617750	637750
+3640,	003363	004030	007747
+
+noinput
+start 0004

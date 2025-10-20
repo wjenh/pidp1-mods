@@ -78,6 +78,8 @@ Word readBuf[4096];                 // needed for read/write mode
             // dba, using the interrupt system. reqiest break
             // The break happens when the drumCount == the drumAddr
             needBreak = 1;
+            drumAddr = pdp1P->io & 07777;
+            iotLog("dba, break on %o\n", drumAddr);
         }
 
         ioBusy = 0;             // just to be sure

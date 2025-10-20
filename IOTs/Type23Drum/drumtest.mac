@@ -21,7 +21,7 @@ dun=000040
     
 / write 512 words from address 0 to the drum field 0 location 0
     clf 7
-    stf 1
+    stf 6
 / drum initial address, field 0 address 0
     cli
     dia
@@ -56,7 +56,7 @@ dun=000040
 / read/write 8 words from 1000 to drum 0,0
 / this swaps the content, 1000 should end up with 123456 again
     clf 7
-    stf 2
+    stf 5
     lac (654321
     dac 1000
 / drum initial address, read, field 0 address 0
@@ -78,8 +78,8 @@ dun=000040
 / read/write 8 words from 1000 to drum 0,0
 / this swaps the content, 1000 should end up with 654321 this time
     clf 7
-    stf 1
-    stf 2
+    stf 5
+    stf 6
     lac (123456
     dac 1000
 / drum initial address, read, field 0 address 0
@@ -97,12 +97,12 @@ dun=000040
     lio 1000
     hlt
 
-/ last test, do a wraparound write to drum addr 4095 of data at 1000, 8 wds
+/ do a wraparound write to drum addr 4095 of data at 1000, 8 wds
 / 0 will have 123456 in it
 / then read back from drum 0,0 to 1000 and check the value
 
     clf 7
-    stf 3
+    stf 4
     lac (654321
     dac 1000
     lac (123456
@@ -139,6 +139,57 @@ dun=000040
     lio 1000
     hlt
 
+/ do a wraparound memory fetch from drum addr 7777 into mem addr 7777, 8 wds
+/ 7777 will have 654321 in it, 0 will have 123456 in it
+    clf 7
+    stf 4
+    stf 6
+    dzm 7777
+    dzm 0
+/ drum initial address, field 0 address 7777
+    lio (407777
+    dia
+/ drum word count, 00010, 8 dec 
+    lio (000010
+    dwc
+/ drum core location, read into memory addr 7777
+    lio (7777
+    dcl
+/ drum request address, status
+    dra
+/ check the busy bit
+    jsp tst
+/ 0000 should have the value 123456 because of the wraparound
+    lac (123456
+    lio 0000
+    hlt
+// 7777 should have the value 654321
+    clf 7
+    stf 4
+    stf 5
+    lac (654321
+    lio 7777
+    hlt
+
+// test break, chan 0. 1000 is set to nonzero. The break clears it.
+    clf 7
+    stf 4
+    stf 5
+    stf 6
+    law 1
+    dac 1000
+    lac (jmp isr
+    dac 3
+    esm
+    dba 777
+    lac 1000
+    sza
+    jmp .-2
+    lsm
+    lac (707070
+    lio (707070
+    hlt
+
 / end of test
     clf 7
     cli
@@ -155,6 +206,9 @@ lp1, cks
      jmp i rad
 
 rad, 0
+
+isr, dzm 1000
+     jmp i 1
 
 constants
 start 100

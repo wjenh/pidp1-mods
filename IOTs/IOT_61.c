@@ -5,7 +5,7 @@
 #include "pdp1.h"
 #include "iotHandler.h"
 
-// #define DOLOGGING
+#define DOLOGGING
 #include "Logger/iotLogger.h"
 
 // flags for busy, done for the cks instruction
@@ -33,17 +33,24 @@ static int readMode;
 static int writeMode;
 static int ioBusy;
 static int needBreak;
+static int inWait;
 static int errFlags;
 static u64 lastSimtime;         // used in the polling code for drumcount updates
-static u64 cmdCompletionTime;   // relative to pdp1->simtime
+static u64 cmdCompletionTime;   // relative to pdp1P->simtime
 
 static int memBank;
 static int memAddr;
+
+static void readDrumToBuffer(int, Word *, int, int, int);
+static void writeBufferToDrum(int, Word *, int, int, int);
+static void copyMemToBuffer(Word *, Word *, int, int);
+static void copyBufferToMem(Word *, Word *, int, int);
 
 int
 iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
 {
 int i;
+Word *memBaseP;
 Word readBuf[4096];                 // needed for read/write mode
 
     if( pulse )
@@ -61,6 +68,7 @@ Word readBuf[4096];                 // needed for read/write mode
 
     lastSimtime = pdp1P->simtime;
     enablePolling(1);
+    inWait = completion;            // if nonzero, we will be in IOT wait state
 
     switch( dev )
     {
@@ -81,6 +89,12 @@ Word readBuf[4096];                 // needed for read/write mode
         drumReadField = (pdp1P->io & 0370000) >> 12;
         errFlags = 0;
         pdp1P->cksflags &= ~CKS_DRP;     // not busy yet
+
+        if( inWait )                    // we don't want to be
+        {
+            inWait = 0;
+            IOCOMPLETE(pdp1P);
+        }
         
         iotLog("dia done, read %d, rfield %d, daddr %d\n", readMode, drumReadField, drumAddr);
         break;
@@ -107,6 +121,12 @@ Word readBuf[4096];                 // needed for read/write mode
             iotLog("dwc done, write %d, wfield %d, count %o\n", writeMode, drumWriteField, transferCount);
             pdp1P->cksflags &= ~CKS_DRM;    // not done now
         }
+
+        if( inWait )                    // we don't want to be
+        {
+            inWait = 0;
+            IOCOMPLETE(pdp1P);
+        }
         break;
 
     case 063:            // dcl, drum core location
@@ -114,47 +134,37 @@ Word readBuf[4096];                 // needed for read/write mode
         memAddr = pdp1P->io & 017777;
 
         iotLog("dcl memBank %o memAddr %o\n", memBank, memAddr);
-        if( (memAddr + transferCount) > 4096 )
-        {
-            errFlags = 0500000;     // Err TE
-            return(1);              // do nothing. Is this correct?
-        }
-        else
-        {
-            errFlags = 0;
-        }
+        errFlags = 0;
 
-        Word *memP = &pdp1P->core[(memBank * 4096) + memAddr];
+        memBaseP = &pdp1P->core[(memBank % 037) * 4096];
 
         // and away we go
-        // We might have read/write mode, in which case we have to read the dagta first
+        // We might have read/write mode, in which case we have to read the data first
+        // Both the drum address and the memory address can wrap around
+
         if( readMode && writeMode )
         {
-            // we have to read first, then write, then transfer to mem
-            lseek(drumFd, DRUMADDRTOSEEK(drumReadField, drumAddr), SEEK_SET);
-            // a read fail is ok, could be an uninitialized drum block
-            read(drumFd, readBuf, sizeof(Word) * transferCount);
-        }
+            // First we read the drum, but don't put it in memory yet
+            // we need 2 buffer, though
+            readDrumToBuffer(drumFd, readBuf, drumReadField, drumAddr, transferCount);
+            Word writeBuf[4096];
+            copyMemToBuffer(writeBuf, memBaseP, memAddr, transferCount);
+            writeBufferToDrum(drumFd, writeBuf, drumWriteField, drumAddr, transferCount);
 
-        if( readMode && !writeMode )            // just a regular read
+            // Now we can overwrite mem with the drum data
+
+            copyBufferToMem(readBuf, memBaseP, memAddr, transferCount);
+        }
+        else if( readMode )            // just a regular read
         {
-            lseek(drumFd, DRUMADDRTOSEEK(drumReadField, drumAddr), SEEK_SET);
-            // a read fail is ok, could be an uninitialized drum block
-            read(drumFd, memP, sizeof(Word) * transferCount);
+            readDrumToBuffer(drumFd, readBuf, drumReadField, drumAddr, transferCount);
+            copyBufferToMem(readBuf, memBaseP, memAddr, transferCount);
         }
         else if( writeMode )
         {
-            lseek(drumFd, DRUMADDRTOSEEK(drumWriteField, drumAddr), SEEK_SET);
-            if( write(drumFd, memP, sizeof(Word) * transferCount) < 0)
-            {
-                return(0);                  // sorry
-            }
-
-            if( readMode )
-            {
-                // now write the buffer to mem
-                memcpy(memP, readBuf, sizeof(Word) * transferCount);
-            }
+            // We can use readbuf for this
+            copyMemToBuffer(readBuf, memBaseP, memAddr, transferCount);
+            writeBufferToDrum(drumFd, readBuf, drumWriteField, drumAddr, transferCount);
         }
         else
         {
@@ -165,6 +175,8 @@ Word readBuf[4096];                 // needed for read/write mode
         ioBusy = 1;
         pdp1P->cksflags |= CKS_DRP;
         cmdCompletionTime = transferCount;
+
+        // We might be in IO wait, not sure if it's correct to actually wait, but we will.
 
         if( drumAddr < drumCount )  // have to wait for it to come around again on the guitar
         {
@@ -186,7 +198,8 @@ Word readBuf[4096];                 // needed for read/write mode
     return(1);
 }
 
-void iotStart()
+void
+iotStart()
 {
     iotLog("IOT 61 started\n");
     if( drumFd < 0 )
@@ -197,7 +210,8 @@ void iotStart()
     needBreak = 0;
 }
 
-void iotStop()
+void
+iotStop()
 {
     iotCloseLog();
 
@@ -209,7 +223,8 @@ void iotStop()
 }
 
 // Used to update drumCount, trigger a break,  determine the end of a transfer
-void iotPoll(PDP1 *pdp1P)
+void
+iotPoll(PDP1 *pdp1P)
 {
     if( ioBusy )
     {
@@ -219,6 +234,13 @@ void iotPoll(PDP1 *pdp1P)
             pdp1P->cksflags |= CKS_DRM;     // done
             pdp1P->cksflags &= ~CKS_DRP;    // and not busy
             drumCount = drumAddr + transferCount;   // sync up the drum count to match the end of the transfer
+
+            if( inWait )
+            {
+                inWait = 0;
+                IOCOMPLETE(pdp1P);
+            }
+
             iotLog("IOT 61 completed timeout.\n");
         }
     }
@@ -243,5 +265,112 @@ void iotPoll(PDP1 *pdp1P)
             initiateBreak(0);           // no channel specified, what to use for sbs16? Is 0 correct??
             iotLog("IOT 61 break initiated.\n");
         }
+    }
+}
+
+// Do a drum read handling drum wraparound
+static void
+readDrumToBuffer(
+    int drumFd,         // file descriptor for our 'drum'
+    Word *buffer,       // must be at least 4096, anything over is unused
+    int drumField,      // which 4K block on drum
+    int drumAddr,       // start point relative to drum index
+    int transferCount)  // number of words to transfer
+{
+int drumSplitCount = 0;
+int drumRemainderCount = 0;
+
+    if( (drumAddr + transferCount) > 4095 )
+    {
+        drumSplitCount = 4096 - drumAddr;   // we transfer this many before wraparound
+        drumRemainderCount = transferCount - drumSplitCount;
+    }
+    else
+    {
+        drumSplitCount = transferCount;
+        drumRemainderCount = 0;
+    }
+
+    iotLog("read drum to buffer, drumSplitCount %d, drumRemainderCount %d\n", drumSplitCount, drumRemainderCount);
+
+    lseek(drumFd, DRUMADDRTOSEEK(drumField, drumAddr), SEEK_SET);
+    // a read fail is ok, could be an uninitialized drum block. Mem gets buffer content.
+    read(drumFd, buffer, sizeof(Word) * drumSplitCount);
+    if( drumRemainderCount )
+    {
+        lseek(drumFd, DRUMADDRTOSEEK(drumField, 0), SEEK_SET);
+        read(drumFd, buffer + drumSplitCount, sizeof(Word) * drumRemainderCount);
+    }
+}
+
+// Do a drum write handling drum wraparound
+static void
+writeBufferToDrum(
+    int drumFd,         // file descriptor for our 'drum'
+    Word *buffer,       // must be at least 4096, anything over is unused
+    int drumField,      // which 4K block on drum
+    int drumAddr,       // start point relative to drum index
+    int transferCount)  // number of words to transfer
+{
+int drumSplitCount = 0;
+int drumRemainderCount = 0;
+
+    if( (drumAddr + transferCount) > 4095 )
+    {
+        drumSplitCount = 4096 - drumAddr;   // we transfer this many before wraparound
+        drumRemainderCount = transferCount - drumSplitCount;
+    }
+    else
+    {
+        drumSplitCount = transferCount;
+        drumRemainderCount = 0;
+    }
+
+    iotLog("write buffer to drum, drumSplitCount %d, drumRemainderCount %d\n", drumSplitCount, drumRemainderCount);
+
+    lseek(drumFd, DRUMADDRTOSEEK(drumField, drumAddr), SEEK_SET);
+    write(drumFd, buffer, sizeof(Word) * drumSplitCount);
+    if( drumRemainderCount )
+    {
+        iotLog("writing remainder from buffer location %d to disk offset %o\n", drumSplitCount,
+            DRUMADDRTOSEEK(drumField, 0));
+        lseek(drumFd, DRUMADDRTOSEEK(drumField, 0), SEEK_SET);
+        write(drumFd, buffer + drumSplitCount, sizeof(Word) * drumRemainderCount);
+    }
+}
+
+// Copy a buffer to memory handling memory wraparound
+static void
+copyBufferToMem(
+    Word *buffer,       // must be at least 4096, anything over is unused
+    Word *memBaseP,      // address addr 0 in desired bank
+    int memAddr,        // word offset in current bank
+    int transferCount)  // number of words to transfer
+{
+int i, j;
+
+    iotLog("copy buffer to mem, memAddr %d, transferCount %d\n", memAddr, transferCount);
+
+    for( i = memAddr, j = 0; transferCount--; i = (i + 1) % 4096 )
+    {
+        *(memBaseP + i) = *(buffer + j++);
+    }
+}
+
+// Copy memory to buffer handling memory wraparound
+static void
+copyMemToBuffer(
+    Word *buffer,       // must be at least 4096, anything over is unused
+    Word *memBaseP,      // address addr 0 in desired bank
+    int memAddr,        // word offset in current bank
+    int transferCount)  // number of words to transfer
+{
+int i, j;
+
+    iotLog("copy mem to buffer, memAddr %d, transferCount %d\n", memAddr, transferCount);
+
+    for( i = memAddr, j = 0; transferCount--; i = (i + 1) % 4096 )
+    {
+        *(buffer + j++) = *(memBaseP + i);
     }
 }

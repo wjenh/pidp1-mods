@@ -9,12 +9,19 @@ dra=722062
 bsy=400000
 dun=000040
 
+// This will periodically halt.
+// The program flags will show the test number starting from 1
+// When it does, the AC and IO regs should match.
+// When both are 0 and the flags are 0  the test is done.
+
 100/
 / put a marker in mem 0
     lac (123456
     dac 0
     
 / write 512 words from address 0 to the drum field 0 location 0
+    clf 7
+    stf 1
 / drum initial address, field 0 address 0
     cli
     dia
@@ -28,11 +35,9 @@ dun=000040
     dra
 / check the busy bit
     jsp tst
-/ get the status again, bit 12 should be set
-    cks
-    hlt
 
 / read same into 1000
+    dzm 1000
 / drum initial address, read field 0 address 0
     lio (400000
     dia
@@ -43,33 +48,101 @@ dun=000040
     lio (001000
     dcl
     jsp tst
+
+    lac (123456
+    lio 1000
     hlt
 
-/ read/write 8 words from 07751 to drum 0,0 and load 07751 with it
-/ this swaps the content
+/ read/write 8 words from 1000 to drum 0,0
+/ this swaps the content, 1000 should end up with 123456 again
+    clf 7
+    stf 2
+    lac (654321
+    dac 1000
 / drum initial address, read, field 0 address 0
     lio (400000
     dia
 / drum word count, write, 10, 8 dec
     lio (400010
     dwc
-/ drum core location, memory addr 07751
-    lio (7751
+/ drum core location, memory addr 1000
+    lio (1000
     dcl
     jsp tst
+
+    lac (123456
+    lio 1000
     hlt
 
 / swap same back
+/ read/write 8 words from 1000 to drum 0,0
+/ this swaps the content, 1000 should end up with 654321 this time
+    clf 7
+    stf 1
+    stf 2
+    lac (123456
+    dac 1000
 / drum initial address, read, field 0 address 0
     lio (400000
     dia
 / drum word count, write, 10, 8 dec
     lio (400010
     dwc
-/ drum core location, memory addr 07751
-    lio (7751
+/ drum core location, memory addr 1000
+    lio (1000
     dcl
     jsp tst
+
+    lac (654321
+    lio 1000
+    hlt
+
+/ last test, do a wraparound write to drum addr 4095 of data at 1000, 8 wds
+/ 0 will have 123456 in it
+/ then read back from drum 0,0 to 1000 and check the value
+
+    clf 7
+    stf 3
+    lac (654321
+    dac 1000
+    lac (123456
+    dac 1001
+/ drum initial address, field 0 address 7777
+    lio (7777
+    dia
+/ drum word count, write 00010, 8 dec 
+    lio (400010
+    dwc
+/ drum core location, memory addr 1000
+    lio (1000
+    dcl
+/ drum request address, status
+    dra
+/ check the busy bit
+    jsp tst
+
+/ read into 1000, we are skipping the first word written, it is at drum 4095
+    dzm 1000
+    dzm 1001
+/ drum initial address, read field 0 address 0
+    lio (400000
+    dia
+/ drum word count, 00010, 8 dec
+    lio (000010
+    dwc
+/ drum core location, memory addr 1000
+    lio (001000
+    dcl
+    jsp tst
+/ 1000 should have the value 123456 because of the wraparound
+    lac (123456
+    lio 1000
+    hlt
+
+/ end of test
+    clf 7
+    cli
+    cla
     hlt
 
 / check the busy bit

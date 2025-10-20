@@ -10,7 +10,11 @@ So, the count increments faster than the original. This might affect the timing 
 A transfer request is started immediately on execution of dcl, but the completion will appear to be delayed for
 the proper time, 8.5 us per drum location needed to reach the start address plus 8.5 us per word transferred.
 
-drumtest.mac exercises the drum
+drumtest.mac tests the drum implementation, covering all features and edge cases.
+When started, it will execute multiple tests, halting after each one.
+The program flags will show the test number, and the values in the AC and IO registers should match.
+Press continue to go on to the next test.
+When all tests have been done, the AC and IO will be zero and program flags will be off.
 
 drumloader.mac is a special loader that can save a core image to drum and later restore it.
 It resides in the same space as the default bin loader, except a few words bigger.

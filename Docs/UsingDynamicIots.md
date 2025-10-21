@@ -102,8 +102,7 @@ It can tell what IOT device code caused the invocation by looking at the `dev` p
 
 If your code needs to be periodially activated, implement the `iotPoll(PDP1 *hardwareP)` function.
 If polling is enabled in your IOT via `enablePolling()`, then the emulator will call
-iotPoll() once every specified number of instruction  cycles at the end of TP7,
-which is just after the IOT is processed.
+iotPoll() once every specified number of instruction cycles between the end of subclock TP10 and the start of TP0.
 See IOT_40 for an example.
 
 The `enablePolling(int value)` method disables polling for your IOT if `value` is 0.
@@ -115,8 +114,6 @@ If an IOT is called in 'wait' mode, i and c, bits 5 and 6, are 1,0, then you **m
 at some point, either in the IOT or in a poll. The same applies for 'need complete', bits are 0,1.
 Until this is done, the emulator will continuously call your IOT until the complete is issued.
 
-However, if your IOT does not support waiting, call `IOTNOWAIT()` before returning from your handler.
-This should be done when the pulse argument is 1 to be effective.
 The state of these 2 is passed in the `completion` argument to your handler.
 if it is 1, then bits 5 and 6 are either 1,0 or 0,1.
 This is consistent with the real PDP-1 behavior, a wait state does just that, waits before proceeding.

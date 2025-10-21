@@ -5,7 +5,7 @@
 #include "pdp1.h"
 #include "iotHandler.h"
 
-#define DOLOGGING
+// #define DOLOGGING
 #include "Logger/iotLogger.h"
 
 // flags for busy, done for the cks instruction
@@ -34,7 +34,6 @@ static int writeMode;
 static int ioBusy;
 static int needBreak;
 static int inWait;
-static int errFlags;
 static u64 lastSimtime;         // used in the polling code for drumcount updates
 static u64 cmdCompletionTime;   // relative to pdp1P->simtime
 
@@ -73,29 +72,26 @@ Word readBuf[4096];                 // needed for read/write mode
     switch( dev )
     {
     case 061:            // dia, drum initial address, in the IO register, or dba, drum break address
-        if( pdp1P->mb & 02000 )
-        {
-            // dba, using the interrupt system. reqiest break
-            // The break happens when the drumCount == the drumAddr
-            needBreak = 1;
-            drumAddr = pdp1P->io & 07777;
-            iotLog("dba, break on %o\n", drumAddr);
-        }
-
-        ioBusy = 0;             // just to be sure
+        needBreak = ioBusy = 0;             // just to be sure
         pdp1P->cksflags &= ~(CKS_DRP | CKS_DRM);    // and not busy or done
 
         readMode = pdp1P->io & 0400000;
         writeMode = 0;
         drumAddr = pdp1P->io & 07777;
         drumReadField = (pdp1P->io & 0370000) >> 12;
-        errFlags = 0;
-        pdp1P->cksflags &= ~CKS_DRP;     // not busy yet
 
         if( inWait )                    // we don't want to be
         {
             inWait = 0;
             IOCOMPLETE(pdp1P);
+        }
+
+        if( pdp1P->mb & 02000 )
+        {
+            // dba, using the interrupt system. reqiest break
+            // The break happens when the drumCount == the drumAddr
+            needBreak = 1;
+            iotLog("dba, break on %o\n", drumAddr);
         }
         
         iotLog("dia done, read %d, rfield %d, daddr %d\n", readMode, drumReadField, drumAddr);
@@ -105,7 +101,8 @@ Word readBuf[4096];                 // needed for read/write mode
         if( pdp1P->mb & 02000 )
         {
             // dra, return current drum 'counter' in the IO register, along with status
-            pdp1P->io = drumCount | errFlags;
+            pdp1P->io = drumCount;
+            iotLog("dra drum count %o\n", drumCount);
         }
         else
         {
@@ -113,12 +110,6 @@ Word readBuf[4096];                 // needed for read/write mode
             drumWriteField = (pdp1P->io >> 12) & 037;
             drumWriteField = (pdp1P->io & 0370000) >> 12;
             transferCount = pdp1P->io & 07777;
-
-            if( (drumAddr + transferCount) > 4096 )
-            {
-                errFlags = 0500000;     // Err TE
-                return(1);              // do nothing. Is this correct?
-            }
 
             iotLog("dwc done, write %d, wfield %d, count %o\n", writeMode, drumWriteField, transferCount);
             pdp1P->cksflags &= ~CKS_DRM;    // not done now
@@ -136,7 +127,6 @@ Word readBuf[4096];                 // needed for read/write mode
         memAddr = pdp1P->io & 017777;
 
         iotLog("dcl memBank %o memAddr %o\n", memBank, memAddr);
-        errFlags = 0;
 
         memBaseP = &pdp1P->core[(memBank % 037) * 4096];
 
@@ -209,7 +199,9 @@ iotStart()
         drumFd = open(DRUMFILE, O_RDWR + O_CREAT + O_SYNC, 0666);
         iotLog("IOT 61 drumFd = %d\n", drumFd);
     }
+
     needBreak = 0;
+    drumCount = 0;  // we don't really know where the hardware would have been, just use 0
 }
 
 void
@@ -235,7 +227,7 @@ iotPoll(PDP1 *pdp1P)
             ioBusy = 0;
             pdp1P->cksflags |= CKS_DRM;     // done
             pdp1P->cksflags &= ~CKS_DRP;    // and not busy
-            drumCount = drumAddr + transferCount;   // sync up the drum count to match the end of the transfer
+            drumCount = (drumAddr + transferCount) % 4096;   // sync up the drum count to match the end of the transfer
 
             if( inWait )
             {
@@ -265,7 +257,7 @@ iotPoll(PDP1 *pdp1P)
             pdp1P->cksflags |= CKS_DRM;     // done
             pdp1P->cksflags &= ~CKS_DRP;    // and not busy
             initiateBreak(0);           // no channel specified, what to use for sbs16? Is 0 correct??
-            iotLog("IOT 61 break initiated.\n");
+            iotLog("IOT 61 break initiated at drum count %o.\n", drumCount);
         }
     }
 }

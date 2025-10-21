@@ -6,8 +6,8 @@ dcl=720063
 dba=722061
 dra=722062
 
-bsy=400000
-dun=000040
+lia=760020
+lai=760040
 
 // This will periodically halt.
 // The program flags will show the test number starting from 1
@@ -31,8 +31,6 @@ dun=000040
 / drum core location, memory addr 0
     cli
     dcl
-/ drum request address, status
-    dra
 / check the busy bit
     jsp tst
 
@@ -116,8 +114,6 @@ dun=000040
 / drum core location, memory addr 1000
     lio (1000
     dcl
-/ drum request address, status
-    dra
 / check the busy bit
     jsp tst
 
@@ -155,8 +151,6 @@ dun=000040
 / drum core location, read into memory addr 7777
     lio (7777
     dcl
-/ drum request address, status
-    dra
 / check the busy bit
     jsp tst
 / 0000 should have the value 123456 because of the wraparound
@@ -181,13 +175,15 @@ dun=000040
     lac (jmp isr
     dac 3
     esm
-    dba 777
+    lio (777
+    dba
     lac 1000
     sza
     jmp .-2
     lsm
-    lac (707070
-    lio (707070
+/ get the current drum position and display as both values
+    dra
+    lai
     hlt
 
 / end of test

@@ -19,8 +19,12 @@ When all tests have been done, the AC and IO will be zero and program flags will
 drumloader.mac is a special loader that can save a core image to drum and later restore it.
 It resides in the same space as the default bin loader, except a few words bigger.
 
-Set the test word to the drum track to use, 0-37. Set sense swith 1 on for write to drum, 0 to load from drum.
-Typically you would have a program loaded already via the usual rim readin. Then, set up to write as just stated
-and rim load drumloader.mac. It will immediately execute and write all of the current 4096 words of memory to the drum.
+It will halt on readin.
+Set the test word to the drum block to use, 0-37 octal. Set sense switch 1 on for write to drum, 0 to load from drum.
+Typically you would have a program loaded already via the usual rim readin. Then, rim load drumloader.rim,
+set up to write as just stated.
+Press continue and it will execute and write all of the current memory up to 7751 to the drum and halt.
 As long as you are loading programs from the drum, there should be no need to reload drumloader, just set the
-proper track, turn ss1 off, and start at 7744.
+proper track, turn ss1 off, and start at 7751.
+It will load the image and halt. You can then set the start addr of the program and press start.
+If you load something via readin, this will get overwritten by the bin loader.

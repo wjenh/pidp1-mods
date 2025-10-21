@@ -5,7 +5,7 @@
 #include "pdp1.h"
 #include "iotHandler.h"
 
-// #define DOLOGGING
+#define DOLOGGING
 #include "Logger/iotLogger.h"
 
 // flags for busy, done for the cks instruction
@@ -72,14 +72,6 @@ Word readBuf[4096];                 // needed for read/write mode
     switch( dev )
     {
     case 061:            // dia, drum initial address, in the IO register, or dba, drum break address
-        if( pdp1P->mb & 02000 )
-        {
-            // dba, using the interrupt system. reqiest break
-            // The break happens when the drumCount == the drumAddr
-            needBreak = 1;
-            iotLog("dba, break on %o\n", drumAddr);
-        }
-
         needBreak = ioBusy = 0;             // just to be sure
         pdp1P->cksflags &= ~(CKS_DRP | CKS_DRM);    // and not busy or done
 
@@ -92,6 +84,14 @@ Word readBuf[4096];                 // needed for read/write mode
         {
             inWait = 0;
             IOCOMPLETE(pdp1P);
+        }
+
+        if( pdp1P->mb & 02000 )
+        {
+            // dba, using the interrupt system. reqiest break
+            // The break happens when the drumCount == the drumAddr
+            needBreak = 1;
+            iotLog("dba, break on %o\n", drumAddr);
         }
         
         iotLog("dia done, read %d, rfield %d, daddr %d\n", readMode, drumReadField, drumAddr);
@@ -199,7 +199,9 @@ iotStart()
         drumFd = open(DRUMFILE, O_RDWR + O_CREAT + O_SYNC, 0666);
         iotLog("IOT 61 drumFd = %d\n", drumFd);
     }
+
     needBreak = 0;
+    drumCount = 0;  // we don't really know where the hardware would have been, just use 0
 }
 
 void
@@ -225,7 +227,7 @@ iotPoll(PDP1 *pdp1P)
             ioBusy = 0;
             pdp1P->cksflags |= CKS_DRM;     // done
             pdp1P->cksflags &= ~CKS_DRP;    // and not busy
-            drumCount = drumAddr + transferCount;   // sync up the drum count to match the end of the transfer
+            drumCount = (drumAddr + transferCount) % 4096;   // sync up the drum count to match the end of the transfer
 
             if( inWait )
             {

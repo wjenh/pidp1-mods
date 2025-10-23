@@ -183,7 +183,8 @@ lai=760040
     lsm
 / get the current drum position and display as both values
     dra
-    lai
+    dio tmp
+    lac tmp
     hlt
 
 / end of test
@@ -193,15 +194,15 @@ lai=760040
     hlt
 
 / check the busy bit
-tst, dac rad
+tst, dac tmp
 lp1, cks
      cla
      rcl 1
      sza
      jmp lp1
-     jmp i rad
+     jmp i tmp
 
-rad, 0
+tmp, 0
 
 isr, dzm 1000
      jmp i 1

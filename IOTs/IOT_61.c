@@ -34,6 +34,7 @@ static int writeMode;
 static int ioBusy;
 static int needBreak;
 static int inWait;
+static int goFast;
 static u64 lastSimtime;         // used in the polling code for drumcount updates
 static u64 cmdCompletionTime;   // relative to pdp1P->simtime
 
@@ -50,7 +51,7 @@ iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
 {
 int i;
 Word *memBaseP;
-Word readBuf[4096];                 // needed for read/write mode
+Word buffer[4096];                 // needed for read/write mode
 
     if( pulse )
     {
@@ -75,10 +76,22 @@ Word readBuf[4096];                 // needed for read/write mode
         needBreak = ioBusy = 0;             // just to be sure
         pdp1P->cksflags &= ~(CKS_DRP | CKS_DRM);    // and not busy or done
 
+        if( pdp1P->mb & 0100 )      // turn on Faster-n-hell mode
+        {
+            goFast = 1;
+            return(1);
+        }
+
+        if( pdp1P->mb & 0200 )      // turn it off
+        {
+            goFast = 0;
+            return(1);
+        }
+
         readMode = pdp1P->io & 0400000;
         writeMode = 0;
         drumAddr = pdp1P->io & 07777;
-        drumReadField = (pdp1P->io & 0370000) >> 12;
+        drumReadField = (pdp1P->io >> 12) & 037;
 
         if( inWait )                    // we don't want to be
         {
@@ -108,8 +121,11 @@ Word readBuf[4096];                 // needed for read/write mode
         {
             writeMode = pdp1P->io & 0400000;
             drumWriteField = (pdp1P->io >> 12) & 037;
-            drumWriteField = (pdp1P->io & 0370000) >> 12;
             transferCount = pdp1P->io & 07777;
+            if( !transferCount )
+            {
+                transferCount = 4096;       // 0 means entire track
+            }
 
             iotLog("dwc done, write %d, wfield %d, count %o\n", writeMode, drumWriteField, transferCount);
             pdp1P->cksflags &= ~CKS_DRM;    // not done now
@@ -123,40 +139,44 @@ Word readBuf[4096];                 // needed for read/write mode
         break;
 
     case 063:            // dcl, drum core location
-        memBank = (pdp1P->io >> 14) & 03;
-        memAddr = pdp1P->io & 017777;
+        // The manual says bits 2, 3, but this isn't correct.
+        // The hardware description is.
+        // It's adtually bits 2-5 to support up to 16 memory modules.
+        memBank = (pdp1P->io >> 12) & 037;      // support large memory -1's
+        memAddr = pdp1P->io & 07777;
 
         iotLog("dcl memBank %o memAddr %o\n", memBank, memAddr);
 
-        memBaseP = &pdp1P->core[(memBank % 037) * 4096];
+        memBaseP = &pdp1P->core[memBank * 4096];
 
-        // and away we go
-        // We might have read/write mode, in which case we have to read the data first
+        // And away we go.
+        // For read-write mode, we read data first, then write.
+        // This is the sequence defined in the hardware description.
+        // Both the drum address and the memory address can wrap around.
         // Both the drum address and the memory address can wrap around
-
         if( readMode && writeMode )
         {
             // First we read the drum, but don't put it in memory yet
-            // we need 2 buffer, though
-            readDrumToBuffer(drumFd, readBuf, drumReadField, drumAddr, transferCount);
+            // we need 2 buffers, though
+            readDrumToBuffer(drumFd, buffer, drumReadField, drumAddr, transferCount);
             Word writeBuf[4096];
             copyMemToBuffer(writeBuf, memBaseP, memAddr, transferCount);
             writeBufferToDrum(drumFd, writeBuf, drumWriteField, drumAddr, transferCount);
 
             // Now we can overwrite mem with the drum data
 
-            copyBufferToMem(readBuf, memBaseP, memAddr, transferCount);
+            copyBufferToMem(buffer, memBaseP, memAddr, transferCount);
         }
         else if( readMode )            // just a regular read
         {
-            readDrumToBuffer(drumFd, readBuf, drumReadField, drumAddr, transferCount);
-            copyBufferToMem(readBuf, memBaseP, memAddr, transferCount);
+            readDrumToBuffer(drumFd, buffer, drumReadField, drumAddr, transferCount);
+            copyBufferToMem(buffer, memBaseP, memAddr, transferCount);
         }
         else if( writeMode )
         {
             // We can use readbuf for this
-            copyMemToBuffer(readBuf, memBaseP, memAddr, transferCount);
-            writeBufferToDrum(drumFd, readBuf, drumWriteField, drumAddr, transferCount);
+            copyMemToBuffer(buffer, memBaseP, memAddr, transferCount);
+            writeBufferToDrum(drumFd, buffer, drumWriteField, drumAddr, transferCount);
         }
         else
         {
@@ -222,7 +242,7 @@ iotPoll(PDP1 *pdp1P)
 {
     if( ioBusy )
     {
-        if( pdp1P->simtime >= cmdCompletionTime )
+        if( goFast || (pdp1P->simtime >= cmdCompletionTime) )
         {
             ioBusy = 0;
             pdp1P->cksflags |= CKS_DRM;     // done
@@ -245,7 +265,7 @@ iotPoll(PDP1 *pdp1P)
         // This won't be exact, but the longer the time but the higher the count, the more accurate it will be.
         // The worst case will be a 10us interval.
 
-        if( pdp1P->simtime >= (lastSimtime + 8500) )
+        if( goFast || (pdp1P->simtime >= (lastSimtime + 8500)) )
         {
             lastSimtime = pdp1P->simtime;
             drumCount = ++drumCount % 4096;
@@ -256,7 +276,7 @@ iotPoll(PDP1 *pdp1P)
             ioBusy = needBreak = 0;
             pdp1P->cksflags |= CKS_DRM;     // done
             pdp1P->cksflags &= ~CKS_DRP;    // and not busy
-            initiateBreak(0);           // no channel specified, what to use for sbs16? Is 0 correct??
+            initiateBreak(5);               // the DEC drum diagnostic seems to use channel 5
             iotLog("IOT 61 break initiated at drum count %o.\n", drumCount);
         }
     }

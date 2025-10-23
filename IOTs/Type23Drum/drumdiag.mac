@@ -1,0 +1,442 @@
+TYPE 23 DRUM DIAGNOSTICS
+/ drum
+         eem=724074
+         dzm t4
+         dzm cl
+         dzm cnt
+         dzm il
+         dzm wc
+
+         dia=720061
+         dba=722061
+         dwc=720062
+         dcl=720063
+         dra=722062
+
+define  count a,b
+        idx a
+        sza
+        jmp b
+        term
+
+define  swap
+        dio tm1
+        dac tm2
+        lio tm2
+        lac tm1
+        term
+
+define   busy a
+         cks
+         rir 1
+         spi
+         jmp a
+         term
+
+define   bank
+         lat
+         and (770000
+         sza i
+         hlt
+         dac cl
+         term
+
+define   update a
+         lac a
+         add (1001
+         dac a
+         term
+
+define   error
+         dra
+         dio t4
+         spi
+         jsp err
+         term
+
+define   space
+         cli
+         tyo
+         term
+
+define   return
+         lio (77
+         tyo
+         term
+
+define     typred
+           lio (35
+           tyo
+           term
+
+define     black
+           lio (34
+           tyo
+           term
+
+define     move a,B
+           lac a
+           dac B
+           term
+
+define     movec a,B
+           lac a
+           and (7777
+           sza i
+           ior (10000
+           cma
+           dac B
+           term
+
+define     fieldr
+           lac il
+           add (10000
+           dac il
+           term
+
+define     fieldw
+           lac wc
+           add (10000
+           dac wc
+           term
+
+/drum -1
+
+100/
+beg,   jmp ll
+       jmp sta
+stc,   iot 160			/ wje - enable sbs16 via dynamic IOT 60
+       iot 56			/clear break system
+       iot 55			/Enter seq mode
+       iot 53			/clear channels
+       iot 551
+       iot 4074			/set ext mode
+
+       dzm tem			/store jsp in break
+       lio (jsp sc2
+       dio i tem
+       idx tem
+       sas (100
+       jmp .-3
+
+sc1,   dzm tem
+       lac (700000
+       dac t2
+       lio tem
+       dba
+       count t2,.
+       iot 54
+       lac (flexo dba			/no seq break
+       return
+       jda tya
+       jmp stc
+
+sc2,   iot 54
+       and (7777
+       sad (30
+       jmp sc3
+       dac t4			/seq to wrong channel
+       lac (flexo seq
+       return
+       jda tya
+       space
+
+       law i 3
+       add t4
+       and (77
+       jda opt			/brint pc storage
+       jmp stc
+
+sc3,   iot 56
+       dra
+       dio t4
+       dra
+       swap
+       sas t4			/ok if diffirent
+       jmp sta
+
+       return
+       lac (flexo dra
+       jda tya
+       jmp stc			/dra failed
+
+sta,   eem			/enter extend mode
+       dzm tem
+       dzm t2
+       dzm t3
+       cla -opr clf 7
+       dac il
+       bank
+       dzm wc
+       dzm cnt			/initialize program
+
+st1,   jsp cou			/load core with counter
+       stf 6
+       jsp drm			/write
+
+st2,   error
+       busy st2
+       jsp com			/complement pattern
+       fieldw
+       stf 5
+       jsp drm			/read n, write n+1
+
+st3,   error
+       busy st3
+       clf 7
+       jsp chk			/check core for count
+
+       stf 5
+       fieldr
+       stf 4
+       jsp drm			/read n+1
+foo,   error
+       busy foo
+       jsp chk			/check comp count
+       update cnt
+       clf 7
+
+st4,   law i 7777
+       and il
+       sas (370000
+       jmp st1
+
+       return
+       lac (flexo all
+       jda tya
+       lac (flexo ok
+       jda tya
+       return
+       hlt
+
+ll,    eem
+       clf 7
+       dzm cnt
+       dzm wc
+       dzm il
+       bank
+       jsp cou			/load core with count
+
+       stf 6
+       jsp drm			/write core
+
+
+xk1,   error
+       busy xk1
+       jsp com
+       clf 6			/clear write
+       stf 5			/set read
+
+xk3,   idx wc			/inc word count, now 1
+       sad (4001
+       jmp xk4
+
+       jsp drm			/read, same addrs as last write
+xk2,   error
+       busy xk2
+       jsp chk			/check for errors
+       jmp xk3
+
+xk4,   dzm il			/test core location
+       law 1
+       dac wc
+       jsp com			/comp core
+xk6,   idx cl
+       and (7777
+       sad (7777			/test for last
+       jmp stc
+
+       jsp drm			/read 1 word
+xk5,   error
+       busy xk5
+
+       lac cnt
+/wje       sad i cnt			/test for error
+       sad i cl			/test for error
+       jmp xk6
+
+       lac (flexo cl
+       return
+       jda tya
+       lac cl
+       jda opt
+       jmp xk6			/core error
+
+drm,   dap dr			/drum subroutine
+       busy drm 1
+       lac il
+       szf 5
+       ior (400000
+       swap
+       dia			/drum initial address
+
+       lac wc
+       szf 6			/set for write
+       ior (400000
+       swap
+       dwc			/drum word count
+       lio cl
+       dcl
+dr,    jmp .
+
+com,   dap cm2			/complement core
+       movec wc,tem
+       move cl,t2
+cm1,   lac i t2
+       cma
+       dac i t2
+       idx t2
+       count tem,cm1
+cm2,   jmp .
+
+chk,   dap ck2			/check core
+       movec wc,tem
+       move cl,t2
+       move cnt,t3
+
+ck1,   lac i t2
+       szf 4
+       cma
+       sas t3
+       jsp er			/error routine
+       idx t2
+       update t3
+       count tem,ck1
+
+/memory matched test pattern
+       law 7777
+       and wc
+       sza i
+       jmp ck2
+       lac i t2
+       szf 4
+       cma
+       sas t3
+ck2,   jmp .
+       lac (flexo wce
+       jda tya
+       return
+       jmp ck2
+
+cou,   dap cu2			/core counter
+       movec wc,tem
+       move cl,t2
+       move cnt,t3
+cu,    lac t3
+       dac i t2
+       idx t2
+       update t3
+       count tem,cu
+cu2,  jmp .
+
+tya,   0			/type alpha
+       dap ta
+       lac tya
+       rcl 77
+       tyo
+       rcl 77
+       tyo
+       rcl 77
+       tyo
+       space
+ta,    jmp .
+
+
+err,   dap er2			/Error printer
+       szs 10
+       jmp er2			/reject errors
+       return
+
+       lio t4
+       ril 1
+       lac   (flexo par
+       spi
+       jda tya			/print par
+
+       lio t4
+       ril 3
+       lac (flexo tim
+       spi
+       jda  tya			/print tim
+
+       lac   (flexo rd
+       szf   5
+       jda tya
+       lac (flexo wr
+       szf 6
+       jda tya			/print read,write
+
+       lac t4
+       and (77777
+       jda opt
+er2,   jmp .			/print drum counter , exit
+
+er,    dap ee			/data error printer
+       szs 10
+       jmp ee
+       return
+       lac t2
+       jda opt			/print mem address
+       space
+      lac t3
+      szf 4
+      cma
+      jda opt			/print correct word
+      space
+
+      typred
+      lac i t2
+      jda opt			/pr1nt error word
+      space
+      black
+
+      law i 7777
+      and il
+      ral 77
+      jda opt			/print field
+      space
+
+      lac wc
+      jda opt
+ee,   jmp .			/print word count
+
+/octal print subroutine __ revised 2 june 62
+/unsigned,   leading zero eliminating. Call: number in ac,   jda opt
+
+opt,  0
+      dap opx
+      law i 6
+      dac op2
+      stf 1
+opi,  szf i 1
+opo,  tyo
+      lio opt
+      cla
+      rcl 3s
+      dio opt
+      sza
+      clf 1
+      sza i
+      law 20
+      rcl 9s
+      rcl 9s
+      isp op2
+      jmp opi
+      xct opo
+opx,  jmp   .
+
+op2,  0
+
+t2, 0
+t3, 0
+t4, 0
+cl, 0
+il, 0
+cnt, 0
+tem, 0
+wc, 0
+tm1, 0
+tm2, 0
+
+constants
+start 100

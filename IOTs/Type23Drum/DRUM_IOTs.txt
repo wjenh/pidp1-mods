@@ -1,0 +1,43 @@
+Each of three IOTs for the drum expect parameters in the IO register.
+The proper IOTs for the drum are:
+
+IOT 61 7  20x61, dia
+IOT 2061 722x61, dba same as dia except requests a break on channel 5 when the i/o is done
+   IO rfffffaaaaaaaaaaaa
+      r             1 if a read is requested else 0
+      fffff         the drum 'field' to read from, 0-037, 0-31 dec
+      aaaaaaaaaaaa  the drum address within the field to begin from
+
+IOT 62   72ox62, dwc
+   IO wfffffcccccccccccc
+      w             1 if a write is requested else 0
+      fffff         the drum 'field' to write to, 0-037, 0-31 dec
+      cccccccccccc  the number of 18 bit words to read and/or write, 0-07777, 0-4095 dec, 0 means 4096
+
+IOT 2062 722x62, dra
+   current drum address -> IO, 0-07777, 0-4095 dec
+
+IOT 63,  72xx63, dcl
+   IO 00bbbbaaaaaaaaaaaa
+      bbbb          the memory bank to read and/or write, 0-017, 0-15 dec
+      aaaaaaaaaaaa  the memory address within the bank to begin from
+
+The actual operation begins when dcl is executed.
+Both the drum and memory addresses wrap around if the tranfer count plus the starting address exceeds 4096.
+
+A simultaneous read/write can be done.
+For this, the read happens first then the write for each word.
+The implementation actually reads all the data, then writes all the data, then copies the read data into memory.
+The effect is the same, but see below.
+
+Bit 17 in cks is the busy flag, CKS_DRP, 000001.
+It is set when the drum is executing a read or write, cleared when done.
+
+The actual drum advances one word every 8.5 microseconds, which means the current drum address is incremented
+at that interval.  An effort is made to simualate this.
+A transfer will take (counts for drum to reach starting drum address + number of words to read/write) * 8.5 us.
+Because of the granularity of the simulator clock, the time to reach the starting address is slightly inaccurate,
+but the read/write time is exact to 4 us.
+
+However, all the data is actually transferred within the dcl IOT, it's only the busy or interrupt that is held
+until the simulated completion time. In practice, this should not have any effect on existing code.

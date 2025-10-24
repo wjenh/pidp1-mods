@@ -29,7 +29,7 @@ When all tests have been done, the AC and IO will be zero and program flags will
 
 Also included is the DEC-1-137M diagnostic test program painfully copied and fixed from the manual.
 Set the test switches to 02000 before you load it. That selects mem bank 2 for the test to use.
-No output on the typewriter is a good sign.  It will eventually finish.
+No output on the typewriter is a good sign.  It takes 5-6 minutes and will eventually finish.
 As it was, the test never ends, it loops forever on the final test. This is less than useful.
 The code has been changed to print a done message and halt.
 And yes, the implementation passes. Note that the break system test requires the sbs16 break system which needs

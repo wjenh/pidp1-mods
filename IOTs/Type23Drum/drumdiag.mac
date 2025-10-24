@@ -20,10 +20,8 @@ define  count a,b
         term
 
 define  swap
-        dio tm1
-        dac tm2
-        lio tm2
-        lac tm1
+        rcl 9s
+        rcl 9s
         term
 
 define   busy a
@@ -435,8 +433,6 @@ il, 0
 cnt, 0
 tem, 0
 wc, 0
-tm1, 0
-tm2, 0
 
 constants
 start 100

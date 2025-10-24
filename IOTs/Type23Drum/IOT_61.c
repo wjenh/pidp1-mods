@@ -9,10 +9,9 @@
 #include "Logger/iotLogger.h"
 
 // flags for busy, done for the cks instruction
-// DRP is busy, DRM is done
+// DRP is busy
 // from the simh PDP-1 drum implementation
-#define CKS_DRP 0400000
-#define CKS_DRM 0000040
+#define CKS_DRP 0000001
 
 /*
  * This is an implementation of the PDP-1 Type 23 Parallel Drum.
@@ -20,7 +19,7 @@
  * The drum also uses IOTs 62 and 63, so replicate into those.
  */
 
-#define DRUMFILE "/tmp/pdp23drum"
+#define DRUMFILE "/opt/pidp1/pdp23drum"
 #define DRUMADDRTOSEEK(field, offset) (((field * 4096) + (offset)) * sizeof(Word))
 
 static int drumFd = -1;
@@ -74,7 +73,7 @@ Word buffer[4096];                 // needed for read/write mode
     {
     case 061:            // dia, drum initial address, in the IO register, or dba, drum break address
         needBreak = ioBusy = 0;             // just to be sure
-        pdp1P->cksflags &= ~(CKS_DRP | CKS_DRM);    // and not busy or done
+        pdp1P->cksflags &= ~CKS_DRP;        // and not busy
 
         if( pdp1P->mb & 0100 )      // turn on Faster-n-hell mode
         {
@@ -128,7 +127,6 @@ Word buffer[4096];                 // needed for read/write mode
             }
 
             iotLog("dwc done, write %d, wfield %d, count %o\n", writeMode, drumWriteField, transferCount);
-            pdp1P->cksflags &= ~CKS_DRM;    // not done now
         }
 
         if( inWait )                    // we don't want to be
@@ -245,7 +243,6 @@ iotPoll(PDP1 *pdp1P)
         if( goFast || (pdp1P->simtime >= cmdCompletionTime) )
         {
             ioBusy = 0;
-            pdp1P->cksflags |= CKS_DRM;     // done
             pdp1P->cksflags &= ~CKS_DRP;    // and not busy
             drumCount = (drumAddr + transferCount) % 4096;   // sync up the drum count to match the end of the transfer
 
@@ -274,7 +271,6 @@ iotPoll(PDP1 *pdp1P)
         if( needBreak && (drumCount == drumAddr) )
         {
             ioBusy = needBreak = 0;
-            pdp1P->cksflags |= CKS_DRM;     // done
             pdp1P->cksflags &= ~CKS_DRP;    // and not busy
             initiateBreak(5);               // the DEC drum diagnostic seems to use channel 5
             iotLog("IOT 61 break initiated at drum count %o.\n", drumCount);

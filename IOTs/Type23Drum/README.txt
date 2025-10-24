@@ -36,14 +36,23 @@ And yes, the implementation passes. Note that the break system test requires the
 dynamic IOT_60 to enable.
 
 drumloader.mac is a special loader that can save a core image to drum and later restore it.
-It resides in the same space as the default bin loader, except a few words bigger.
-
+It resides in the same space as the default bin loader, 7751-7777.
 It will halt on readin.
-Set the test word to the drum block to use, 0-37 octal. Set sense switch 1 on for write to drum, 0 to load from drum.
-Typically you would have a program loaded already via the usual rim readin. Then, rim load drumloader.rim,
-set up to write as just stated.
-Press continue and it will execute and write all of the current memory up to 7751 to the drum and halt.
+The test switches 1-5 should be set to the drum track to use, 0-37. Switch 0 is unused.
+During writing to drum, if switches 6-17 are set, those are the starting address that will be jumped to
+when the image is loaded.
+If you don't know the start address for a program, use the disassembler and look at the 'start xxxx' at the end.
+If the starting address in the switches is 0, then the loader will just halt at location 7772 after loading.
+You can then set the start addr of the program and press start.
+
+Typically you would have a program loaded already via the usual rim readin.
+Then, rim load drumloader.rim, set up to write as just stated.
+Press continue and it will execute and write all of the current memory to the drum and halt.
 As long as you are loading programs from the drum, there should be no need to reload drumloader, just set the
-proper track, turn ss1 off, and start at 7751.
-It will load the image and halt. You can then set the start addr of the program and press start.
+proper track, turn ss1 off, and start at 7751 or 7752 if you don't want it to halt initially.
 If you load something via readin, this will get overwritten by the bin loader.
+
+Also note that some programs might overwrite this area. If so, you can't use this.
+
+IMPORTANT: the loader MUST be assembled with the -r switch to macro1 to make it a pure rim loader.
+If not, it will fail.

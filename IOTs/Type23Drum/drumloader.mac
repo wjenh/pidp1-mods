@@ -6,35 +6,47 @@ dcl=720063
 
 lia=760020
 lai=760040
+lsw=760060
 
 / Assemble with -r or it will fail
-/ Halts on readin done
-/ Set the drum track in the test word low 5 bits
-/ Set sense switch 1 on for write to drum, 0 for read from drum
-/ Press continue
+/ This is an extended version of the regular drumloader.
+/ Set sense switch 1 on for write to drum 0 for read from drum.
+/ The high 6 test word switches, 0-5, select the drum track, 0-37, to use.
+/ Switch 0 is ignored.
+/ If the low 12 bits of the test word switches are non-zero when storing they will be
+/ saved as the start address in location 7777 to jump to when storing or loading completes.
+/ It will halt when it starts so you can set the appropriate switches.
+/ Press continue to proceed.
+/ It has a starting address of 7751 if you want it to halt on start.
+/ Start at 7752 run without halting at the start.
+/ Note that if a program overwrites this, it won't work. Spacewar will do so.
 7751/
-     hlt
-/ The low 5 bits of the test word select the drum track, 00-37, 16 tracks
+go,  hlt
      lat
-     ior (40
-     ral 6s
-     ral 6s
+     dap adr
+     and (370000
      lia
-/ If semse switch 1 is on save to drum, if off load from drum
-     szs 10
-     cli
+     ior (400000
+/ ac has bank and read or write set, io has just the bank.
+/ If sense switch 1 is on, save to drum. If off, load from drum.
+     szs i 10
+     lsw
      dia
-str, lio (7750
+/ If we are reading, io now has bank and r/w, ac has just the bank, so we need to swap.
+/ If we are writing, we need to swap so io had bank and r/w
+     lsw
      dwc
      cli
      dcl
-/ check the busy bit
-cby, cks
-     cla
-     rcl 1
+/ No busy check because our impl will finish immediately. Won't work on the real drum.
+/ Don't autostart on write.
+     szf i 10
+     lac adr
      sza
-     jmp cby
+     jmp i adr
      hlt
 
+adr, 0
+
 constants
-start 7751
+start go

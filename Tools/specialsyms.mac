@@ -1,0 +1,23 @@
+DEFINE SYMBOLS NOT IN MACRO1
+/ ac to/from io
+lia=760020
+lai=760040
+
+/ Type 23 drum
+dia=720061
+dwc=720062
+dcl=720063
+dba=722061
+dra=722062
+/ nonstandard, drum busy, done bits in cks
+dby=400000
+ddn=000040
+
+/ sbs16 break system
+dsc=720050
+asc=720051
+isb=720052
+cac=720053
+cbs=720056
+
+start 0

@@ -54,5 +54,16 @@ If you load something via readin, this will get overwritten by the bin loader.
 
 Also note that some programs might overwrite this area. If so, you can't use this.
 
+Included here is a pdp23drum file. This is preloaded with 4 programs:
+0 - circle
+1 - pdp1m13 music player
+2 - snowflake
+3 - spacewar48
+
+Copy it to /opt/pidp1.
+Just readin drumloader.rim, set ss1 off, set the leftmost test switched to 000000, 000001, 000010, 000011.
+Set addr to 7752, start. Your program of choice will start. You can set the switches again at any time, start at 7752,
+and the new prgram will start.
+
 IMPORTANT: the loader MUST be assembled with the -r switch to macro1 to make it a pure rim loader.
 If not, it will fail.

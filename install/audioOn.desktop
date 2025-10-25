@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=PDP Audio on
+Comment=Enable audio on PiDP-1
+Exec=/home/wje/pdp1audio on
+Terminal=false
+Type=Application
+Icon=/opt/pidp1/install/pdp1icon2.svg
+Categories=X-PDP1;
+StartupNotify=false
+Path=~/home/wje
+Name[en_US]=PDP audioOn

@@ -161,6 +161,9 @@ while true; do
 		make -C /opt/pidp1/src/usb_paper_tape
 		# Bill Ezell's tape disassembler:
 		cc /opt/pidp1/src/disassembler/disassemble_tape.c -o /opt/pidp1/src/disassembler/disassemble_tape
+		cp /opt/pidp1/src/disassembler/disassemble_tape /opt/pidp1/bin
+		# Bill Ezell's audio control:
+		make -C /opt/pidp1/Tools install
             
 		echo Setting required access privileges to pidp1 simulator
 		# make sure pidp1 panel driver has the right privileges
@@ -203,6 +206,9 @@ while true; do
 	    #
 	    sudo ln -sf /opt/pidp1/bin/tkaskopenfile /usr/local/bin/tkaskopenfile
 	    sudo ln -sf /opt/pidp1/bin/tkaskopenfilewrite /usr/local/bin/tkaskopenfilewrite
+        #
+	    sudo ln -sf /opt/pidp1/bin/pdp1audio /usr/local/bin/pdp1audio
+
 	    break
 	    ;;
         [Nn]* ) 
@@ -364,6 +370,10 @@ while true; do
             cp /opt/pidp1/install/type30.desktop /home/$usr/Desktop/
             cp /opt/pidp1/install/ptr.desktop /home/$usr/Desktop/
             cp /opt/pidp1/install/ptp.desktop /home/$usr/Desktop/
+
+            # audio control app for new audio system
+            cp /opt/pidp1/install/audioOn.desktop /home/$usr/Desktop/
+            cp /opt/pidp1/install/audioOff.desktop /home/$usr/Desktop/
 
             #make pcmanf run on double click, change its config file
             config_file="/home/$usr/.config/libfm/libfm.conf"

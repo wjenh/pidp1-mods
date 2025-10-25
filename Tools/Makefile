@@ -7,5 +7,8 @@ specialsyms.sym: specialsyms.mac
 	../bin/macro1_1 -s specialsyms.mac
 	rm specialsyms.rim specialsyms.lst
 
+install: pdp1audio specialsyms.sym
+	cp pdp1audio ../bin
+
 clean:
 	rm *.o pdp1audio

@@ -1,2 +1,7 @@
 The important documentation on how to use dynamic IOTs is in the ../Docs directory.
 You really need to read it.
+
+Type32Drum has the implementation of the Type 32 Parallel Drum. It is also installed here.
+
+Clock has the implementation of the BBN timesharing clock. It is not installed by default, copy IOT_32.c
+here if you want to use it.

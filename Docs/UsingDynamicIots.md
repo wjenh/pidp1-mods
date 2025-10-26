@@ -20,7 +20,7 @@ IOTs are installed in the `opt/pidp1/IOTs` directory and must be named `IOT_nn.s
 ## How do I install one?
 
 If you have written one in **C**, just put the source \.c file in the above directory and type `make`.<br>
-You can see the required three includes in any of the examples, they are
+You can see the required three includes in any of the examples, they are:
 ```
 #include "common.h"
 #include "pdp1.h"
@@ -30,7 +30,8 @@ The Makefile properly adds the paths to those.
 
 ## How do I implement one?
 
-At a minimum, implement the `iotHandler(PDP1 *hardware, int device, int pulse, int completion)` function.
+At a minimum, implement the `iotHandler(PDP1 \*hardware, int device, int pulse, int completion)` function or
+if another IOT is going to also handle your new one, iotIsAlias(otherIOTnumber).
 This method is called twice for each time the corresponding IOT is executed.
 Why twice? This emulates the way the original hardware worked.
 The first call with the `pulse` argument being 1 mimics the first pulse that would have been sent
@@ -64,6 +65,19 @@ Some functions are defined to help with some of the more useful ones, see below.
 Note that the panel numbering of the sense switches and the program flags is reversed from the actual bit positions.
 That is, flag or switch 6 is the lsb, 01, 1 is 040.
 
+If an IOT is called in 'wait' mode, i and c, bits 5 and 6, are 1,0, then you **must** call `IOCOMPLETE()`
+or IOCOMPLETE_IFNEEDED() at some point, either in the IOT or in a poll.
+The same applies for 'need complete', bits are 0,1.
+Until this is done, the emulator will continuously call your IOT until the complete is issued.
+
+The state of these 2 is passed in the `completion` argument to your handler.
+if it is 1, then bits 5 and 6 are either 1,0 or 0,1.
+This is consistent with the real PDP-1 behavior, a wait state does just that, waits before proceeding.
+
+Finally, any IOT in the range of 030 - 037 *automatically* has the IO register cleared before it is called.
+This behavior can't be bypassed.
+This is again a strange real PDP-1 behavior. So, don't get caught by it if you're passing control information
+in the IO register and use an IOT in that range!
 ## Other common functions
 
 If you have any special initialization to do before your IOT is called, implement `iotStart()`.
@@ -110,14 +124,6 @@ Otherwise, you will be polled every `value` instruction cycles.
 One cycle is 5 microseconds, so the minimum granularity is that.
 If you don't need to be polled as frequently, set a longer poll interval to reduce processor loading.
 
-If an IOT is called in 'wait' mode, i and c, bits 5 and 6, are 1,0, then you **must** call `IOCOMPLETE()`
-at some point, either in the IOT or in a poll. The same applies for 'need complete', bits are 0,1.
-Until this is done, the emulator will continuously call your IOT until the complete is issued.
-
-The state of these 2 is passed in the `completion` argument to your handler.
-if it is 1, then bits 5 and 6 are either 1,0 or 0,1.
-This is consistent with the real PDP-1 behavior, a wait state does just that, waits before proceeding.
-
 ## Logging
 
 A logging facility is provided:
@@ -148,9 +154,9 @@ This allows debugging to be turned on and off.
 
 Defines
 
-- DEVICE(PDP1 \*hardwareP)     extract the device number directly from the memory buffer register
-- IOTNOWAIT(PDP1 \*hardwareP)  tell emulator to ignore the wait bits in the IOT instruction
+- IONOWAIT(PDP1 \*hardwareP)  tell emulator to ignore the wait bits in the IOT instruction
 - IOCOMPLETE(PDP1 \*hardwareP) tell the emulator the wait state is ended
+- IOCOMPLETE_IFNEEDED(PDP1 \*hardwareP, int complete) tell the emulator the wait state is ended if complete is not 0
 
 ## Final notes
 
@@ -161,7 +167,8 @@ As of this writing the 16 channel system is not enabled in the emulator, nor is 
 other than via a dyamic IOT.
 IOT_60, included, is an example of how to enable/disable it.
 
-IMPORTANT - once loaded, a handler stays loaded until the pidp1 emulator is shut down and restarted. So, if you change your handler, restart or it won't work properly.
+IMPORTANT - once loaded, a handler stays loaded until the pidp1 emulator is shut down and restarted.
+So, if you change your handler, restart or it won't work properly.
 
 Finally, remember that this is just an emulation of the hardware. There are no acutal electrical start or continue
 pulses going to anything. So,the emulator will be blocked until your `iotHandler()` function returns.

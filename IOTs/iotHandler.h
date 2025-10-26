@@ -1,8 +1,8 @@
 #include "dynamicIots.h"
 
-#define DEVICE(p) (p->mb & 077)
 #define IONOWAIT(p) (p->ioh = 0)
 #define IOCOMPLETE(p) (p->ios = 1)
+#define IOCOMPLETE_IFNEEDED(p, com) ((com)?IOCOMPLETE(p):0)
 
 // Include to be used by IOT handler implementations
 int iotHandler(PDP1 *, int device,  int pulse, int completion);

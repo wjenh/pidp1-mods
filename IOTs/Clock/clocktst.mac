@@ -1,0 +1,24 @@
+TEST OF TIMESHARING CLOCK
+
+clk=iot 32
+cls=iot 2032
+
+0/
+     0
+     0
+     0
+     jmp int
+
+100/
+go,  esm
+     lac (2400
+     cls
+     cla
+     clk
+     jmp .-1
+
+int, idx 0
+     jmp i 1
+
+constants
+start go

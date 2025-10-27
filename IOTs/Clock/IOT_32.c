@@ -10,7 +10,7 @@
 // IOT 32 with bit 7 set is an extension, set clock, IOT 20032:
 // AC register contains flags:
 // 000 000 0eI iMM MMm mmm
-// e enables the clock, 1 to enable, 0 is as a regular IOT 32, disabling also clears the interrup enables.
+// e enables the clock, 1 to enable, 0 is as a regular IOT 32, disabling also clears the interrupt enables.
 // I enables the 1 min interrupt. 1 enables, 0 disables.
 // i enables the 32 ms interrupt. 1 enables, 0 disables.
 // MMMM is the channel to use for the 1 min interrupt.

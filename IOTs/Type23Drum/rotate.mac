@@ -1,0 +1,164 @@
+ROTATE THRU THREE PROGRAMS ON THE DRUM
+
+/ This uses the IOT 32 clock 1 minute interrupt.
+/ This MUST be loaded in extended mem bank 1.
+/ When started, extend mode will be on.
+/ It sets up interrupt block 0 in mem bank 0 and overwrites some of the drumloader
+/ code at 7751 and configures the clock to interrupt every minute and return to this code.
+/ It then selects the program to load and jumps into the drumloader code to handle the rest.
+/ You will have to reload drumloader after using this.
+
+clk=iot 32
+cls=iot 2032
+
+dia=iot 61
+dwc=iot 62
+dcl=iot 63
+dba=iot 2061
+dra=iot 2062
+
+lia=760020
+lai=760040
+lsw=760060
+
+ldr=7751
+isr=7751
+go=7754
+rti=7757
+str=7773
+
+bk1=10000
+
+/ We start at 300 in bank 0
+/ From there, we copy 100-400 to bank 1
+/ and then tranfer here for initial setup
+/ read the test switches, save as pgm list
+/ halt so switches can be cleared
+100/
+    lat
+    dac pgm
+    hlt
+/ enable the clock
+     lac (3000
+     cls
+     esm
+
+/ control transfers here on every timeout
+/ we will already be in extended mode
+/ set up to read mem from pgm bank
+/ get the drum pgm to load, 3 sets of 6 bits, high bit ignored
+res,
+     lac pgm
+     lia
+     rar 6s
+     dac pgm
+/ IO has the original, mask to get pgm to load
+     lai
+     and (37
+     sal 6s
+     sal 6s
+     ior (400000
+     lia
+
+/ load bank 0 mem from drum
+     dia
+     cli
+     dwc
+     dcl
+
+/ bank 0 now has pgm loaded, update with our glue code
+     cla
+     dac adt
+     lac (b0a
+     ior (bk1
+     dac ads
+     law 4
+     jda cpy
+
+     lac (ldr
+     dac adt
+     lac (b0b
+     ior (bk1
+     dac ads
+     law 20
+     jda cpy
+/ and transfer back to bank 0, adr 0
+     jmp i b0s
+
+/ copy from one mem bank to another.
+/ ac has the count of words
+/ location ads has the location in the source bank to copy from
+/ location adt has the destination
+/ both can have extended addresses
+cpy, 0
+    dap cd
+    lac cpy
+    cma
+cl, add (1
+    lsw
+    lac i ads
+    dac i adt
+    idx ads
+    idx adt
+    lsw
+    sza
+    jmp cl
+cd, jmp .
+
+/ the channel 0 interrupt setup
+/ we execute a bit of code that will get
+/ overwritten but reloaded on pgm switch
+b0a, lem
+     jmp go
+     0
+     jmp isr
+
+/ the bank 0 control transfer back to bank 1
+/ resides in the usual loader area starting at 7751
+b0b,
+/ the clock interrupt comes here, isr, 7751
+/ we have to jump thru hoops jumping to rti
+/ because you can't enable extended mem while in
+/ the interrupt and have it stick
+     law rti
+     dac 1
+     jmp i 1
+
+/ we jump here, 7754 when control is transferred from bank 1
+/ if no start addr, go on to next pgm
+     lac str
+     sza
+     jmp i str
+/ the interrupt return jumps here, rti, 7757
+     law res
+     dac 2
+     law 4000
+     ral 1s
+     ior 2
+     dac 2
+     eem
+     jmp i 2
+
+/ we are loaded here in  bank 0, copy our stuff to bank 1
+/ and jump to 100 there
+300/
+    eem
+    law 100
+    dac ads
+    ior (bk1
+    dac adt
+    law 300
+    jda cpy
+    law 100
+    ior (bk1
+    dac ads
+    jmp i ads
+
+ads, 0
+adt, 0
+pgm, 0
+pgm2, 0
+b0s, 0
+
+constants
+start 300

@@ -21,6 +21,9 @@ IOT 261, DIA 200, turns that off.
 A transfer request is started immediately on execution of dcl, but the completion will appear to be delayed for
 the proper time, 8.5 us per drum location needed to reach the start address plus 8.5 us per word transferred.
 
+Some sample programs and tests are included.
+Just make to assemble them, make clean to clean up.
+
 drumtest.mac tests the drum implementation, covering all features and edge cases.
 When started, it will execute multiple tests, halting after each one.
 The program flags will show the test number, and the values in the AC and IO registers should match.
@@ -67,3 +70,17 @@ and the new prgram will start.
 
 IMPORTANT: the loader MUST be assembled with the -r switch to macro1 to make it a pure rim loader.
 If not, it will fail.
+
+rotate.mac is a fairly useless cute special loader that rotates thru up to 3 differnt programs from the drum,
+switching every minute.
+Readin the rim file. It will halt so you can set the test switches to the programs you want to run.
+Each 6 bits specify a drum track, 000000-011111, or 0 - 31. The high bit is ignored.
+So, switches 0-5 are one prog, 6-11 another, and 12-17 the last. The programs are actually cycled from low selection
+to high.
+Naturally, the selected program can't halt, although if it does it can be continued. However, that kind of spoils
+the effect.
+Press continue and it will cycle every minute.
+
+IMPORTANT: this also uses IOT_32, the timesharing clock, for the 1 minute interrupt.
+If not, it will fail.
+

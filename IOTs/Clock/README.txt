@@ -1,4 +1,4 @@
-This is an implementation of the BBN timesharing clock, possibly only available on one PDP-1D.
+This is an implementation of the BBN timesharing clock, only available on the PDP-1D.
 It provides a millisecond clock that can be read, as well as providing a 32 msed and 1 minute sbs interrupt.
 If sbs16 is enabled, a different channel can be assigned to each.
 
@@ -21,3 +21,4 @@ MMMM is the channel to use for the 1 min interrupt.
 mmmm is the channel to use for the 32 ms interrupt.
 Why AC? Because all IOTs 30-37 automatically clear the IO register!
 
+Another example of the use is in Type23Drum, rotate.mac.

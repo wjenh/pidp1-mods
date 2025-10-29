@@ -189,6 +189,7 @@ Word *memBaseP;
         // we assume we get it, manual says to check status before calling IOT_61.
         stat = HSC_request_channel(pdp1P, 1, chanFlags, transferCount, memBank, memAddr, readBuffer, writeBuffer);
         ioBusy = 1;
+        pdp1P->hsc = 1;     // since we're using immediate mode, we have to pretend we're not and turn the light on
         iotLog("HSC_request_channel returned %d\n", stat);
         break;
 
@@ -256,6 +257,7 @@ int hsStatus;
                 IOCOMPLETE(pdp1P);
             }
 
+            pdp1P->hsc = 0;     // and turn the light on
             iotLog("IOT 61 completed timeout.\n");
         }
     }

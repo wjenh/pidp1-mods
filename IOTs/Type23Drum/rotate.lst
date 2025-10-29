@@ -1,0 +1,185 @@
+
+      ROTATE THRU THREE PROGRAMS ON THE DRUM                              Page 1
+
+
+    1                   ROTATE THRU THREE PROGRAMS ON THE DRUM
+    2                   
+    3                   / This uses the IOT 32 clock 1 minute interrupt.
+    4                   / This MUST be loaded in extended mem bank 1.
+    5                   / When started, extend mode will be on.
+    6                   / It sets up interrupt block 0 in mem bank 0 and overwrites some of the drumloader
+    7                   / code at 7751 and configures the clock to interrupt every minute and return to this code.
+    8                   / It then selects the program to load and jumps into the drumloader code to handle the rest.
+    9                   / You will have to reload drumloader after using this.
+   10                   
+   11       720032      clk=iot 32
+   12       722032      cls=iot 2032
+   13                   
+   14       720061      dia=iot 61
+   15       720062      dwc=iot 62
+   16       720063      dcl=iot 63
+   17       722061      dba=iot 2061
+   18       722062      dra=iot 2062
+   19                   
+   20       760020      lia=760020
+   21       760040      lai=760040
+   22       760060      lsw=760060
+   23                   
+   24       007751      ldr=7751
+   25       007751      isr=7751
+   26       007754      go=7754
+   27       007757      rti=7757
+   28       007773      str=7773
+   29                   
+   30       010000      bk1=10000
+   31                   
+   32                   / We start at 300 in bank 0
+   33                   / From there, we copy 100-400 to bank 1
+   34                   / and then tranfer here for initial setup
+   35                   / read the test switches, save as pgm list
+   36                   / halt so switches can be cleared
+   37 00100             100/
+   38 00100 762200          lat
+   39 00101 240315          dac pgm
+   40 00102 760400          hlt
+   41                   / enable the clock
+   42 00103 200320           lac (3000
+   43 00104 722032           cls
+   44 00105 720055           esm
+   45                   
+   46                   / control transfers here on every timeout
+   47                   / we will already be in extended mode
+   48                   / set up to read mem from pgm bank
+   49                   / get the drum pgm to load, 3 sets of 6 bits, high bit ignored
+   50                   res,
+   51 00106 200315           lac pgm
+   52 00107 760020           lia
+   53 00110 671077           rar 6s
+   54 00111 240315           dac pgm
+   55                   / IO has the original, mask to get pgm to load
+   56 00112 760040           lai
+   57 00113 020321           and (37
+
+      ROTATE THRU THREE PROGRAMS ON THE DRUM                              Page 2
+
+
+   58 00114 665077           sal 6s
+   59 00115 665077           sal 6s
+   60 00116 040322           ior (400000
+   61 00117 760020           lia
+   62                   
+   63                   / load bank 0 mem from drum
+   64 00120 720061           dia
+   65 00121 764000           cli
+   66 00122 720062           dwc
+   67 00123 720063           dcl
+   68                   
+   69                   / bank 0 now has pgm loaded, update with our glue code
+   70 00124 760200           cla
+   71 00125 240314           dac adt
+   72 00126 200323           lac (b0a
+   73 00127 040324           ior (bk1
+   74 00130 240313           dac ads
+   75 00131 700004           law 4
+   76 00132 170143           jda cpy
+   77                   
+   78 00133 200325           lac (ldr
+   79 00134 240314           dac adt
+   80 00135 200326           lac (b0b
+   81 00136 040324           ior (bk1
+   82 00137 240313           dac ads
+   83 00140 700020           law 20
+   84 00141 170143           jda cpy
+   85                   / and transfer back to bank 0, adr 0
+   86 00142 610317           jmp i b0s
+   87                   
+   88                   / copy from one mem bank to another.
+   89                   / ac has the count of words
+   90                   / location ads has the location in the source bank to copy from
+   91                   / location adt has the destination
+   92                   / both can have extended addresses
+   93 00143 000000      cpy, 0
+   94 00144 260160          dap cd
+   95 00145 200143          lac cpy
+   96 00146 761000          cma
+   97 00147 400327      cl, add (1
+   98 00150 760060          lsw
+   99 00151 210313          lac i ads
+  100 00152 250314          dac i adt
+  101 00153 440313          idx ads
+  102 00154 440314          idx adt
+  103 00155 760060          lsw
+  104 00156 640100          sza
+  105 00157 600147          jmp cl
+  106 00160 600160      cd, jmp .
+  107                   
+  108                   / the channel 0 interrupt setup
+  109                   / we execute a bit of code that will get
+  110                   / overwritten but reloaded on pgm switch
+  111 00161 720074      b0a, lem
+  112 00162 607754           jmp go
+  113 00163 000000           0
+  114 00164 607751           jmp isr
+
+      ROTATE THRU THREE PROGRAMS ON THE DRUM                              Page 3
+
+
+  115                   
+  116                   / the bank 0 control transfer back to bank 1
+  117                   / resides in the usual loader area starting at 7751
+  118                   b0b,
+  119                   / the clock interrupt comes here, isr, 7751
+  120                   / we have to jump thru hoops jumping to rti
+  121                   / because you can't enable extended mem while in
+  122                   / the interrupt and have it stick
+  123 00165 707757           law rti
+  124 00166 240001           dac 1
+  125 00167 610001           jmp i 1
+  126                   
+  127                   / we jump here, 7754 when control is transferred from bank 1
+  128                   / if no start addr, go on to next pgm
+  129 00170 207773           lac str
+  130 00171 640100           sza
+  131 00172 617773           jmp i str
+  132                   / the interrupt return jumps here, rti, 7757
+  133 00173 700106           law res
+  134 00174 240002           dac 2
+  135 00175 704000           law 4000
+  136 00176 661001           ral 1s
+  137 00177 040002           ior 2
+  138 00200 240002           dac 2
+  139 00201 724074           eem
+  140 00202 610002           jmp i 2
+  141                   
+  142                   / we are loaded here in  bank 0, copy our stuff to bank 1
+  143                   / and jump to 100 there
+  144 00300             300/
+  145 00300 724074          eem
+  146 00301 700100          law 100
+  147 00302 240313          dac ads
+  148 00303 040324          ior (bk1
+  149 00304 240314          dac adt
+  150 00305 700300          law 300
+  151 00306 170143          jda cpy
+  152 00307 700100          law 100
+  153 00310 040324          ior (bk1
+  154 00311 240313          dac ads
+  155 00312 610313          jmp i ads
+  156                   
+  157 00313 000000      ads, 0
+  158 00314 000000      adt, 0
+  159 00315 000000      pgm, 0
+  160 00316 000000      pgm2, 0
+  161 00317 000000      b0s, 0
+  162                   
+  163 00320 003000      constants
+      00321 000037
+      00322 400000
+      00323 000161
+      00324 010000
+      00325 007751
+      00326 000165
+      00327 000001
+  164       000300      start 300
+
+      No errors detected

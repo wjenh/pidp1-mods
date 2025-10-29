@@ -14,16 +14,10 @@ void enablePolling(int cycles);
 int iotIsAlias(void);
 
 // Hidden method and vars used for control, implemented here to hide details from handlers
-typedef void (*IotSeqBreakP)(int);
-
-static IotSeqBreakP _breakCallback;
 static IotEntryP _iotControlBlockP;
+void dynamicIotProcessBreak(int);
 
 // Called by pdp1.c during setup of this handler, not for direct use in a handler
-void _setBreakCallback( IotSeqBreakP callback)
-{
-    _breakCallback = callback;
-}
 
 void _setIotControlBlock(IotEntryP cbP)
 {
@@ -32,10 +26,7 @@ void _setIotControlBlock(IotEntryP cbP)
 
 void initiateBreak(int chan)
 {
-    if( _breakCallback )
-    {
-        _breakCallback(chan);
-    }
+    dynamicIotProcessBreak(chan);
 }
 
 void enablePolling(int on)

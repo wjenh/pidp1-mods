@@ -195,12 +195,12 @@ lai=760040
 
 / check the busy bit
 tst, dac tmp
-lp1, cks
-     cla
-     rcl 1
+lp1, cla
+     cks
+     rcr 1
      sza
      jmp lp1
-     jmp i tmp
+lpr, jmp i tmp
 
 tmp, 0
 

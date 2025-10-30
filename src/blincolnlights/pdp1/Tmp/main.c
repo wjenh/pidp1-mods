@@ -1,10 +1,7 @@
 #include "common.h"
 #include "pdp1.h"
 #include "args.h"
-
-#define NOTIOTH
 #include "dynamicIots.h"
-#include "highSpeedChannels.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -24,7 +21,6 @@ Panel *getpanel(void);
 #define Edge(sw) (pdp->sw && !prev_##sw)
 
 int doaudio;
-PDP1 *visiblePDP1P;          // dynamic IOTS need this, but can't get it otherwise
 
 void
 emu(PDP1 *pdp, Panel *panel)
@@ -32,6 +28,7 @@ emu(PDP1 *pdp, Panel *panel)
 	pdp->panel = panel;
 
 	pwrclr(pdp);
+	//initaudio();
 
 	bool prev_start_sw;
 	bool prev_stop_sw;
@@ -62,7 +59,6 @@ emu(PDP1 *pdp, Panel *panel)
 				spec(pdp);
 				cycle(pdp);
 			}
-
 			if(Edge(stop_sw)) pdp->run_enable = 0;
 			if(Edge(readin_sw)) start_readin(pdp);
 
@@ -79,22 +75,10 @@ emu(PDP1 *pdp, Panel *panel)
 			}
 
 			if(pdp->run) {
-               if(doaudio)
+                if(doaudio)
                     svc_audio(pdp);
-               dynamicIotProcessorStart();
-
-               // A dma transfer can be in STEAL mode, in which case it effectively halts the processor
-               // and transfers all of its requested words at 5us/word. We fake this by just not cycling.
-               while( processHSChannels(pdp) )
-               {
-                   updatelights(pdp, panel);
-                   pdp->simtime += 5000;
-                   throttle(pdp);
-               }
-
                cycle(pdp);
             } else {
-               dynamicIotProcessorStop();
                updatelights(pdp, panel);
 			}
 			throttle(pdp);
@@ -117,6 +101,11 @@ emu(PDP1 *pdp, Panel *panel)
 		agedisplay(pdp, 0);
 		agedisplay(pdp, 1);
 		cli(pdp);
+
+        if( !pdp->run_enable )                  // we transitioned to halt, stop dynamic IOTs
+        {
+            dynamicIotProcessorStop();
+        }
 	}
 }
 
@@ -284,7 +273,6 @@ int
 main(int argc, char *argv[])
 {
 	PDP1 pdp1, *pdp = &pdp1;
-    visiblePDP1P = pdp;
 	pthread_t th;
 	const char *host;
 	int port;

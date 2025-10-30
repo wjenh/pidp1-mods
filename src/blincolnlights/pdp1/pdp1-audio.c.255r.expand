@@ -1,0 +1,5927 @@
+
+;; Function initaudio.part.0 (initaudio.part.0, funcdef_no=6525, decl_uid=45932, cgraph_uid=6536, symbol_order=6548)
+
+void initaudio.part.0 ()
+{
+  struct SDL_AudioSpec spec;
+  float alpha.1_1;
+  float alpha.2_2;
+  float alpha.3_3;
+  float alpha.4_4;
+  unsigned int _15;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  SDL_Init (16);
+  # DEBUG BEGIN_STMT
+  alpha.1_1 = alpha;
+  initializeFilter (&voice1, alpha.1_1, 0.0, -1.0e+0);
+  # DEBUG BEGIN_STMT
+  alpha.2_2 = alpha;
+  initializeFilter (&voice2, alpha.2_2, 0.0, -1.0e+0);
+  # DEBUG BEGIN_STMT
+  alpha.3_3 = alpha;
+  initializeFilter (&voice3, alpha.3_3, 0.0, -1.0e+0);
+  # DEBUG BEGIN_STMT
+  alpha.4_4 = alpha;
+  initializeFilter (&voice4, alpha.4_4, 0.0, -1.0e+0);
+  # DEBUG BEGIN_STMT
+  # DEBUG INLINE_ENTRY openAudio
+  # DEBUG BEGIN_STMT
+  # DEBUG BEGIN_STMT
+  # DEBUG __dest => &spec
+  # DEBUG __ch => 0
+  # DEBUG __len => 32
+  # DEBUG INLINE_ENTRY memset
+  # DEBUG BEGIN_STMT
+  __builtin_memset (&MEM <char> [(void *)&spec + 7B], 0, 25);
+  # DEBUG __dest => NULL
+  # DEBUG __ch => NULL
+  # DEBUG __len => NULL
+  # DEBUG BEGIN_STMT
+  spec.freq = 5714;
+  # DEBUG BEGIN_STMT
+  spec.format = 33056;
+  # DEBUG BEGIN_STMT
+  spec.channels = 2;
+  # DEBUG BEGIN_STMT
+  spec.samples = 1024;
+  # DEBUG BEGIN_STMT
+  # DEBUG BEGIN_STMT
+  _15 = SDL_OpenAudioDevice (0B, 0, &spec, 0B, 0);
+  dev = _15;
+  spec ={v} {CLOBBER(eol)};
+  # DEBUG BEGIN_STMT
+  isInitialized = 1;
+  # DEBUG BEGIN_STMT
+  isStopped = 1;
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 1 (alpha.1_1 - 1 )
+Partition 2 (alpha.2_2 - 2 )
+Partition 3 (alpha.3_3 - 3 )
+Partition 4 (alpha.4_4 - 4 )
+Partition 15 (_15 - 15 )
+
+
+Coalescible Partition map 
+
+
+After Coalescing:
+
+Partition map 
+
+Partition 0 (alpha.1_1 - 1 )
+Partition 1 (alpha.2_2 - 2 )
+Partition 2 (alpha.3_3 - 3 )
+Partition 3 (alpha.4_4 - 4 )
+Partition 4 (_15 - 15 )
+
+
+Replacing Expressions
+alpha.1_1 replace with --> alpha.1_1 = alpha;
+
+alpha.2_2 replace with --> alpha.2_2 = alpha;
+
+alpha.3_3 replace with --> alpha.3_3 = alpha;
+
+alpha.4_4 replace with --> alpha.4_4 = alpha;
+
+
+void initaudio.part.0 ()
+{
+  struct SDL_AudioSpec spec;
+  float alpha.1_1;
+  float alpha.2_2;
+  float alpha.3_3;
+  float alpha.4_4;
+  unsigned int _15;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  SDL_Init (16);
+  # DEBUG BEGIN_STMT
+  alpha.1_1 = alpha;
+  initializeFilter (&voice1, alpha.1_1, 0.0, -1.0e+0);
+  # DEBUG BEGIN_STMT
+  alpha.2_2 = alpha;
+  initializeFilter (&voice2, alpha.2_2, 0.0, -1.0e+0);
+  # DEBUG BEGIN_STMT
+  alpha.3_3 = alpha;
+  initializeFilter (&voice3, alpha.3_3, 0.0, -1.0e+0);
+  # DEBUG BEGIN_STMT
+  alpha.4_4 = alpha;
+  initializeFilter (&voice4, alpha.4_4, 0.0, -1.0e+0);
+  # DEBUG BEGIN_STMT
+  # DEBUG INLINE_ENTRY openAudio
+  # DEBUG BEGIN_STMT
+  # DEBUG BEGIN_STMT
+  # DEBUG __dest => &spec
+  # DEBUG __ch => 0
+  # DEBUG __len => 32
+  # DEBUG INLINE_ENTRY memset
+  # DEBUG BEGIN_STMT
+  __builtin_memset (&MEM <char> [(void *)&spec + 7B], 0, 25);
+  # DEBUG __dest => NULL
+  # DEBUG __ch => NULL
+  # DEBUG __len => NULL
+  # DEBUG BEGIN_STMT
+  spec.freq = 5714;
+  # DEBUG BEGIN_STMT
+  spec.format = 33056;
+  # DEBUG BEGIN_STMT
+  spec.channels = 2;
+  # DEBUG BEGIN_STMT
+  spec.samples = 1024;
+  # DEBUG BEGIN_STMT
+  # DEBUG BEGIN_STMT
+  _15 = SDL_OpenAudioDevice (0B, 0, &spec, 0B, 0);
+  dev = _15;
+  spec ={v} {CLOBBER(eol)};
+  # DEBUG BEGIN_STMT
+  isInitialized = 1;
+  # DEBUG BEGIN_STMT
+  isStopped = 1;
+  return;
+;;    succ:       EXIT
+
+}
+
+
+Partition 0: size 32 align 16
+	spec
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 7 6 0 (debug_marker) "audio.c":50:2 -1
+     (nil))
+;; SDL_Init (16);
+
+(insn 8 7 9 (set (reg:SI 5 di)
+        (const_int 16 [0x10])) "audio.c":50:2 -1
+     (nil))
+
+(call_insn 9 8 0 (set (reg:SI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("SDL_Init") [flags 0x41]  <function_decl 0x7e6482db0100 SDL_Init>) [0 SDL_Init S1 A8])
+            (const_int 0 [0]))) "audio.c":50:2 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_Init") [flags 0x41]  <function_decl 0x7e6482db0100 SDL_Init>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (nil)))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 10 9 0 (debug_marker) "audio.c":54:5 -1
+     (nil))
+;; initializeFilter (&voice1, alpha.1_1, 0.0, -1.0e+0);
+
+(insn 11 10 12 (set (reg:SF 88)
+        (mem/c:SF (symbol_ref:DI ("alpha") [flags 0x2]  <var_decl 0x7e6482db4090 alpha>) [6 alpha+0 S4 A32])) "audio.c":54:5 -1
+     (nil))
+
+(insn 12 11 13 (set (reg:SF 22 xmm2)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "audio.c":54:5 -1
+     (expr_list:REG_EQUAL (const_double:SF -1.0e+0 [-0x0.8p+1])
+        (nil)))
+
+(insn 13 12 14 (set (reg:SF 21 xmm1)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":54:5 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+
+(insn 14 13 15 (set (reg:SF 20 xmm0)
+        (reg:SF 88)) "audio.c":54:5 -1
+     (nil))
+
+(insn 15 14 16 (set (reg:DI 89)
+        (symbol_ref:DI ("voice1") [flags 0x2]  <var_decl 0x7e6482db4240 voice1>)) "audio.c":54:5 -1
+     (nil))
+
+(insn 16 15 17 (set (reg:DI 5 di)
+        (reg:DI 89)) "audio.c":54:5 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice1") [flags 0x2]  <var_decl 0x7e6482db4240 voice1>)
+        (nil)))
+
+(call_insn 17 16 0 (set (reg:DI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>) [0 initializeFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":54:5 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (expr_list:SF (use (reg:SF 21 xmm1))
+                (expr_list:SF (use (reg:SF 22 xmm2))
+                    (nil))))))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 18 17 0 (debug_marker) "audio.c":55:5 -1
+     (nil))
+;; initializeFilter (&voice2, alpha.2_2, 0.0, -1.0e+0);
+
+(insn 19 18 20 (set (reg:SF 90)
+        (mem/c:SF (symbol_ref:DI ("alpha") [flags 0x2]  <var_decl 0x7e6482db4090 alpha>) [6 alpha+0 S4 A32])) "audio.c":55:5 -1
+     (nil))
+
+(insn 20 19 21 (set (reg:SF 22 xmm2)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "audio.c":55:5 -1
+     (expr_list:REG_EQUAL (const_double:SF -1.0e+0 [-0x0.8p+1])
+        (nil)))
+
+(insn 21 20 22 (set (reg:SF 21 xmm1)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":55:5 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+
+(insn 22 21 23 (set (reg:SF 20 xmm0)
+        (reg:SF 90)) "audio.c":55:5 -1
+     (nil))
+
+(insn 23 22 24 (set (reg:DI 91)
+        (symbol_ref:DI ("voice2") [flags 0x2]  <var_decl 0x7e6482db42d0 voice2>)) "audio.c":55:5 -1
+     (nil))
+
+(insn 24 23 25 (set (reg:DI 5 di)
+        (reg:DI 91)) "audio.c":55:5 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice2") [flags 0x2]  <var_decl 0x7e6482db42d0 voice2>)
+        (nil)))
+
+(call_insn 25 24 0 (set (reg:DI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>) [0 initializeFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":55:5 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (expr_list:SF (use (reg:SF 21 xmm1))
+                (expr_list:SF (use (reg:SF 22 xmm2))
+                    (nil))))))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 26 25 0 (debug_marker) "audio.c":56:5 -1
+     (nil))
+;; initializeFilter (&voice3, alpha.3_3, 0.0, -1.0e+0);
+
+(insn 27 26 28 (set (reg:SF 92)
+        (mem/c:SF (symbol_ref:DI ("alpha") [flags 0x2]  <var_decl 0x7e6482db4090 alpha>) [6 alpha+0 S4 A32])) "audio.c":56:5 -1
+     (nil))
+
+(insn 28 27 29 (set (reg:SF 22 xmm2)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "audio.c":56:5 -1
+     (expr_list:REG_EQUAL (const_double:SF -1.0e+0 [-0x0.8p+1])
+        (nil)))
+
+(insn 29 28 30 (set (reg:SF 21 xmm1)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":56:5 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+
+(insn 30 29 31 (set (reg:SF 20 xmm0)
+        (reg:SF 92)) "audio.c":56:5 -1
+     (nil))
+
+(insn 31 30 32 (set (reg:DI 93)
+        (symbol_ref:DI ("voice3") [flags 0x2]  <var_decl 0x7e6482db4360 voice3>)) "audio.c":56:5 -1
+     (nil))
+
+(insn 32 31 33 (set (reg:DI 5 di)
+        (reg:DI 93)) "audio.c":56:5 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice3") [flags 0x2]  <var_decl 0x7e6482db4360 voice3>)
+        (nil)))
+
+(call_insn 33 32 0 (set (reg:DI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>) [0 initializeFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":56:5 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (expr_list:SF (use (reg:SF 21 xmm1))
+                (expr_list:SF (use (reg:SF 22 xmm2))
+                    (nil))))))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 34 33 0 (debug_marker) "audio.c":57:5 -1
+     (nil))
+;; initializeFilter (&voice4, alpha.4_4, 0.0, -1.0e+0);
+
+(insn 35 34 36 (set (reg:SF 94)
+        (mem/c:SF (symbol_ref:DI ("alpha") [flags 0x2]  <var_decl 0x7e6482db4090 alpha>) [6 alpha+0 S4 A32])) "audio.c":57:5 -1
+     (nil))
+
+(insn 36 35 37 (set (reg:SF 22 xmm2)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "audio.c":57:5 -1
+     (expr_list:REG_EQUAL (const_double:SF -1.0e+0 [-0x0.8p+1])
+        (nil)))
+
+(insn 37 36 38 (set (reg:SF 21 xmm1)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":57:5 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+
+(insn 38 37 39 (set (reg:SF 20 xmm0)
+        (reg:SF 94)) "audio.c":57:5 -1
+     (nil))
+
+(insn 39 38 40 (set (reg:DI 95)
+        (symbol_ref:DI ("voice4") [flags 0x2]  <var_decl 0x7e6482db43f0 voice4>)) "audio.c":57:5 -1
+     (nil))
+
+(insn 40 39 41 (set (reg:DI 5 di)
+        (reg:DI 95)) "audio.c":57:5 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice4") [flags 0x2]  <var_decl 0x7e6482db43f0 voice4>)
+        (nil)))
+
+(call_insn 41 40 0 (set (reg:DI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>) [0 initializeFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":57:5 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (expr_list:SF (use (reg:SF 21 xmm1))
+                (expr_list:SF (use (reg:SF 22 xmm2))
+                    (nil))))))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 42 41 0 (debug_marker) "audio.c":59:5 -1
+     (nil))
+;; # DEBUG INLINE_ENTRY openAudio
+
+(debug_insn 43 42 0 (debug_marker:BLK) "audio.c":66:1 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 44 43 0 (debug_marker) "audio.c":68:2 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 45 44 0 (debug_marker) "audio.c":70:2 -1
+     (nil))
+;; # DEBUG __dest => &spec
+
+(debug_insn 46 45 0 (var_location:DI __dest (const_int 0 [0])) "audio.c":70:2 -1
+     (nil))
+;; # DEBUG __ch => 0
+
+(debug_insn 47 46 0 (var_location:SI __ch (const_int 0 [0])) "audio.c":70:2 -1
+     (nil))
+;; # DEBUG __len => 32
+
+(debug_insn 48 47 0 (var_location:DI __len (const_int 0 [0])) "audio.c":70:2 -1
+     (nil))
+;; # DEBUG INLINE_ENTRY memset
+
+(debug_insn 49 48 0 (debug_marker:BLK) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":57:1 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 50 49 0 (debug_marker) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:3 -1
+     (nil))
+;; __builtin_memset (&MEM <char> [(void *)&spec + 7B], 0, 25);
+
+(insn 51 50 52 (parallel [
+            (set (reg:DI 96)
+                (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                    (const_int -48 [0xffffffffffffffd0])))
+            (clobber (reg:CC 17 flags))
+        ]) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:10 discrim 1 -1
+     (nil))
+
+(insn 52 51 53 (parallel [
+            (set (reg:DI 97)
+                (plus:DI (reg:DI 96)
+                    (const_int 7 [0x7])))
+            (clobber (reg:CC 17 flags))
+        ]) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:10 discrim 1 -1
+     (nil))
+
+(insn 53 52 54 (set (reg:DI 98 [ D.45955 ])
+        (reg:DI 97)) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:10 discrim 1 -1
+     (nil))
+
+(insn 54 53 55 (set (reg:V16QI 99)
+        (const_vector:V16QI [
+                (const_int 0 [0]) repeated x16
+            ])) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:10 discrim 1 -1
+     (nil))
+
+(insn 55 54 56 (set (mem/c:V16QI (reg:DI 98 [ D.45955 ]) [0 MEM <char[1:25]> [(void *)&spec + 7B]+0 S16 A8])
+        (reg:V16QI 99)) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:10 discrim 1 -1
+     (nil))
+
+(insn 56 55 0 (set (mem/c:V16QI (plus:DI (reg:DI 98 [ D.45955 ])
+                (const_int 9 [0x9])) [0 MEM <char[1:25]> [(void *)&spec + 7B]+9 S16 A8])
+        (reg:V16QI 99)) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:10 discrim 1 -1
+     (nil))
+
+;; # DEBUG __dest => NULL
+
+(debug_insn 57 56 0 (var_location:DI __dest (const_int 0 [0])) "audio.c":70:2 -1
+     (nil))
+;; # DEBUG __ch => NULL
+
+(debug_insn 58 57 0 (var_location:SI __ch (const_int 0 [0])) "audio.c":70:2 -1
+     (nil))
+;; # DEBUG __len => NULL
+
+(debug_insn 59 58 0 (var_location:DI __len (const_int 0 [0])) "audio.c":70:2 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 60 59 0 (debug_marker) "audio.c":71:2 -1
+     (nil))
+;; spec.freq = 5714;
+
+(insn 61 60 0 (set (mem/c:SI (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                (const_int -48 [0xffffffffffffffd0])) [1 spec.freq+0 S4 A128])
+        (const_int 5714 [0x1652])) "audio.c":71:12 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 62 61 0 (debug_marker) "audio.c":72:2 -1
+     (nil))
+;; spec.format = 33056;
+
+(insn 63 62 0 (set (mem/c:HI (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                (const_int -44 [0xffffffffffffffd4])) [3 spec.format+0 S2 A32])
+        (const_int -32480 [0xffffffffffff8120])) "audio.c":72:14 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 64 63 0 (debug_marker) "audio.c":73:2 -1
+     (nil))
+;; spec.channels = 2;
+
+(insn 65 64 0 (set (mem/c:QI (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                (const_int -42 [0xffffffffffffffd6])) [0 spec.channels+0 S1 A16])
+        (const_int 2 [0x2])) "audio.c":73:16 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 66 65 0 (debug_marker) "audio.c":74:2 -1
+     (nil))
+;; spec.samples = 1024;
+
+(insn 67 66 0 (set (mem/c:HI (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                (const_int -40 [0xffffffffffffffd8])) [3 spec.samples+0 S2 A64])
+        (const_int 1024 [0x400])) "audio.c":74:15 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 68 67 0 (debug_marker) "audio.c":75:2 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 69 68 0 (debug_marker) "audio.c":76:2 -1
+     (nil))
+;; _15 = SDL_OpenAudioDevice (0B, 0, &spec, 0B, 0);
+
+(insn 70 69 71 (parallel [
+            (set (reg:DI 100)
+                (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                    (const_int -48 [0xffffffffffffffd0])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":76:8 -1
+     (nil))
+
+(insn 71 70 72 (set (reg:SI 36 r8)
+        (const_int 0 [0])) "audio.c":76:8 -1
+     (nil))
+
+(insn 72 71 73 (set (reg:DI 2 cx)
+        (const_int 0 [0])) "audio.c":76:8 -1
+     (nil))
+
+(insn 73 72 74 (set (reg:DI 1 dx)
+        (reg:DI 100)) "audio.c":76:8 -1
+     (nil))
+
+(insn 74 73 75 (set (reg:SI 4 si)
+        (const_int 0 [0])) "audio.c":76:8 -1
+     (nil))
+
+(insn 75 74 76 (set (reg:DI 5 di)
+        (const_int 0 [0])) "audio.c":76:8 -1
+     (nil))
+
+(call_insn 76 75 77 (set (reg:SI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("SDL_OpenAudioDevice") [flags 0x41]  <function_decl 0x7e648795f900 SDL_OpenAudioDevice>) [0 SDL_OpenAudioDevice S1 A8])
+            (const_int 0 [0]))) "audio.c":76:8 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_OpenAudioDevice") [flags 0x41]  <function_decl 0x7e648795f900 SDL_OpenAudioDevice>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SI (use (reg:SI 4 si))
+            (expr_list:DI (use (reg:DI 1 dx))
+                (expr_list:DI (use (reg:DI 2 cx))
+                    (expr_list:SI (use (reg:SI 36 r8))
+                        (nil)))))))
+
+(insn 77 76 0 (set (reg:SI 86 [ _15 ])
+        (reg:SI 0 ax)) "audio.c":76:8 -1
+     (nil))
+
+;; dev = _15;
+
+(insn 78 77 0 (set (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])
+        (reg:SI 86 [ _15 ])) "audio.c":76:6 discrim 1 -1
+     (nil))
+
+;; spec ={v} {CLOBBER(eol)};
+
+(nil)
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 79 78 0 (debug_marker) "audio.c":61:5 -1
+     (nil))
+;; isInitialized = 1;
+
+(insn 80 79 0 (set (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+        (const_int 1 [0x1])) "audio.c":61:19 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 81 80 0 (debug_marker) "audio.c":62:5 -1
+     (nil))
+;; isStopped = 1;
+
+(insn 82 81 0 (set (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+        (const_int 1 [0x1])) "audio.c":62:15 -1
+     (nil))
+Predictions for insn 86 bb 4
+  first match heuristics: 99.96%  exec 1073741824 (estimated locally) hit 2147483640 (estimated locally) (200.0%)
+  combined heuristics: 99.96%  exec 1073741824 (estimated locally) hit 2147483640 (estimated locally) (200.0%)
+  noreturn call heuristics: 99.96%  exec 1073741824 (estimated locally) hit 2147483640 (estimated locally) (200.0%)
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Merging block 4 into block 2...
+Merged blocks 2 and 4.
+Merged 2 and 4 without moving.
+
+
+try_optimize_cfg iteration 2
+
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 5 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 5, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 5 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(note 2 5 3 2 NOTE_INSN_FUNCTION_BEG)
+(insn 3 2 4 2 (set (reg/f:DI 87)
+        (const_int 40 [0x28])) "audio.c":45:1 -1
+     (nil))
+(insn 4 3 7 2 (parallel [
+            (set (mem/v/f/c:DI (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                        (const_int -8 [0xfffffffffffffff8])) [5 D.45954+0 S8 A64])
+                (unspec:DI [
+                        (mem/v/f:DI (reg/f:DI 87) [7 MEM[(<address-space-1> long unsigned int *)40B]+0 S8 A64 AS1])
+                    ] UNSPEC_SP_SET))
+            (set (scratch:DI)
+                (const_int 0 [0]))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":45:1 -1
+     (nil))
+(debug_insn 7 4 8 2 (debug_marker) "audio.c":50:2 -1
+     (nil))
+(insn 8 7 9 2 (set (reg:SI 5 di)
+        (const_int 16 [0x10])) "audio.c":50:2 -1
+     (nil))
+(call_insn 9 8 10 2 (set (reg:SI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("SDL_Init") [flags 0x41]  <function_decl 0x7e6482db0100 SDL_Init>) [0 SDL_Init S1 A8])
+            (const_int 0 [0]))) "audio.c":50:2 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_Init") [flags 0x41]  <function_decl 0x7e6482db0100 SDL_Init>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (nil)))
+(debug_insn 10 9 11 2 (debug_marker) "audio.c":54:5 -1
+     (nil))
+(insn 11 10 12 2 (set (reg:SF 88)
+        (mem/c:SF (symbol_ref:DI ("alpha") [flags 0x2]  <var_decl 0x7e6482db4090 alpha>) [6 alpha+0 S4 A32])) "audio.c":54:5 -1
+     (nil))
+(insn 12 11 13 2 (set (reg:SF 22 xmm2)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "audio.c":54:5 -1
+     (expr_list:REG_EQUAL (const_double:SF -1.0e+0 [-0x0.8p+1])
+        (nil)))
+(insn 13 12 14 2 (set (reg:SF 21 xmm1)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":54:5 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+(insn 14 13 15 2 (set (reg:SF 20 xmm0)
+        (reg:SF 88)) "audio.c":54:5 -1
+     (nil))
+(insn 15 14 16 2 (set (reg:DI 89)
+        (symbol_ref:DI ("voice1") [flags 0x2]  <var_decl 0x7e6482db4240 voice1>)) "audio.c":54:5 -1
+     (nil))
+(insn 16 15 17 2 (set (reg:DI 5 di)
+        (reg:DI 89)) "audio.c":54:5 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice1") [flags 0x2]  <var_decl 0x7e6482db4240 voice1>)
+        (nil)))
+(call_insn 17 16 18 2 (set (reg:DI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>) [0 initializeFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":54:5 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (expr_list:SF (use (reg:SF 21 xmm1))
+                (expr_list:SF (use (reg:SF 22 xmm2))
+                    (nil))))))
+(debug_insn 18 17 19 2 (debug_marker) "audio.c":55:5 -1
+     (nil))
+(insn 19 18 20 2 (set (reg:SF 90)
+        (mem/c:SF (symbol_ref:DI ("alpha") [flags 0x2]  <var_decl 0x7e6482db4090 alpha>) [6 alpha+0 S4 A32])) "audio.c":55:5 -1
+     (nil))
+(insn 20 19 21 2 (set (reg:SF 22 xmm2)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "audio.c":55:5 -1
+     (expr_list:REG_EQUAL (const_double:SF -1.0e+0 [-0x0.8p+1])
+        (nil)))
+(insn 21 20 22 2 (set (reg:SF 21 xmm1)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":55:5 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+(insn 22 21 23 2 (set (reg:SF 20 xmm0)
+        (reg:SF 90)) "audio.c":55:5 -1
+     (nil))
+(insn 23 22 24 2 (set (reg:DI 91)
+        (symbol_ref:DI ("voice2") [flags 0x2]  <var_decl 0x7e6482db42d0 voice2>)) "audio.c":55:5 -1
+     (nil))
+(insn 24 23 25 2 (set (reg:DI 5 di)
+        (reg:DI 91)) "audio.c":55:5 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice2") [flags 0x2]  <var_decl 0x7e6482db42d0 voice2>)
+        (nil)))
+(call_insn 25 24 26 2 (set (reg:DI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>) [0 initializeFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":55:5 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (expr_list:SF (use (reg:SF 21 xmm1))
+                (expr_list:SF (use (reg:SF 22 xmm2))
+                    (nil))))))
+(debug_insn 26 25 27 2 (debug_marker) "audio.c":56:5 -1
+     (nil))
+(insn 27 26 28 2 (set (reg:SF 92)
+        (mem/c:SF (symbol_ref:DI ("alpha") [flags 0x2]  <var_decl 0x7e6482db4090 alpha>) [6 alpha+0 S4 A32])) "audio.c":56:5 -1
+     (nil))
+(insn 28 27 29 2 (set (reg:SF 22 xmm2)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "audio.c":56:5 -1
+     (expr_list:REG_EQUAL (const_double:SF -1.0e+0 [-0x0.8p+1])
+        (nil)))
+(insn 29 28 30 2 (set (reg:SF 21 xmm1)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":56:5 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+(insn 30 29 31 2 (set (reg:SF 20 xmm0)
+        (reg:SF 92)) "audio.c":56:5 -1
+     (nil))
+(insn 31 30 32 2 (set (reg:DI 93)
+        (symbol_ref:DI ("voice3") [flags 0x2]  <var_decl 0x7e6482db4360 voice3>)) "audio.c":56:5 -1
+     (nil))
+(insn 32 31 33 2 (set (reg:DI 5 di)
+        (reg:DI 93)) "audio.c":56:5 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice3") [flags 0x2]  <var_decl 0x7e6482db4360 voice3>)
+        (nil)))
+(call_insn 33 32 34 2 (set (reg:DI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>) [0 initializeFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":56:5 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (expr_list:SF (use (reg:SF 21 xmm1))
+                (expr_list:SF (use (reg:SF 22 xmm2))
+                    (nil))))))
+(debug_insn 34 33 35 2 (debug_marker) "audio.c":57:5 -1
+     (nil))
+(insn 35 34 36 2 (set (reg:SF 94)
+        (mem/c:SF (symbol_ref:DI ("alpha") [flags 0x2]  <var_decl 0x7e6482db4090 alpha>) [6 alpha+0 S4 A32])) "audio.c":57:5 -1
+     (nil))
+(insn 36 35 37 2 (set (reg:SF 22 xmm2)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "audio.c":57:5 -1
+     (expr_list:REG_EQUAL (const_double:SF -1.0e+0 [-0x0.8p+1])
+        (nil)))
+(insn 37 36 38 2 (set (reg:SF 21 xmm1)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":57:5 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+(insn 38 37 39 2 (set (reg:SF 20 xmm0)
+        (reg:SF 94)) "audio.c":57:5 -1
+     (nil))
+(insn 39 38 40 2 (set (reg:DI 95)
+        (symbol_ref:DI ("voice4") [flags 0x2]  <var_decl 0x7e6482db43f0 voice4>)) "audio.c":57:5 -1
+     (nil))
+(insn 40 39 41 2 (set (reg:DI 5 di)
+        (reg:DI 95)) "audio.c":57:5 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice4") [flags 0x2]  <var_decl 0x7e6482db43f0 voice4>)
+        (nil)))
+(call_insn 41 40 42 2 (set (reg:DI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>) [0 initializeFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":57:5 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("initializeFilter") [flags 0x41]  <function_decl 0x7e6487b5f000 initializeFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (expr_list:SF (use (reg:SF 21 xmm1))
+                (expr_list:SF (use (reg:SF 22 xmm2))
+                    (nil))))))
+(debug_insn 42 41 43 2 (debug_marker) "audio.c":59:5 -1
+     (nil))
+(debug_insn 43 42 44 2 (debug_marker:BLK) "audio.c":66:1 -1
+     (nil))
+(debug_insn 44 43 45 2 (debug_marker) "audio.c":68:2 -1
+     (nil))
+(debug_insn 45 44 46 2 (debug_marker) "audio.c":70:2 -1
+     (nil))
+(debug_insn 46 45 47 2 (var_location:DI __dest (plus:DI (reg/f:DI 77 virtual-stack-vars)
+        (const_int -48 [0xffffffffffffffd0]))) "audio.c":70:2 -1
+     (nil))
+(debug_insn 47 46 48 2 (var_location:SI __ch (const_int 0 [0])) "audio.c":70:2 -1
+     (nil))
+(debug_insn 48 47 49 2 (var_location:DI __len (const_int 32 [0x20])) "audio.c":70:2 -1
+     (nil))
+(debug_insn 49 48 50 2 (debug_marker:BLK) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":57:1 -1
+     (nil))
+(debug_insn 50 49 51 2 (debug_marker) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:3 -1
+     (nil))
+(insn 51 50 52 2 (parallel [
+            (set (reg:DI 96)
+                (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                    (const_int -48 [0xffffffffffffffd0])))
+            (clobber (reg:CC 17 flags))
+        ]) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:10 discrim 1 -1
+     (nil))
+(insn 52 51 53 2 (parallel [
+            (set (reg:DI 97)
+                (plus:DI (reg:DI 96)
+                    (const_int 7 [0x7])))
+            (clobber (reg:CC 17 flags))
+        ]) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:10 discrim 1 -1
+     (nil))
+(insn 53 52 54 2 (set (reg:DI 98 [ D.45955 ])
+        (reg:DI 97)) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:10 discrim 1 -1
+     (nil))
+(insn 54 53 55 2 (set (reg:V16QI 99)
+        (const_vector:V16QI [
+                (const_int 0 [0]) repeated x16
+            ])) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:10 discrim 1 -1
+     (nil))
+(insn 55 54 56 2 (set (mem/c:V16QI (reg:DI 98 [ D.45955 ]) [0 MEM <char[1:25]> [(void *)&spec + 7B]+0 S16 A8])
+        (reg:V16QI 99)) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:10 discrim 1 -1
+     (nil))
+(insn 56 55 57 2 (set (mem/c:V16QI (plus:DI (reg:DI 98 [ D.45955 ])
+                (const_int 9 [0x9])) [0 MEM <char[1:25]> [(void *)&spec + 7B]+9 S16 A8])
+        (reg:V16QI 99)) "/usr/include/x86_64-linux-gnu/bits/string_fortified.h":59:10 discrim 1 -1
+     (nil))
+(debug_insn 57 56 58 2 (var_location:DI __dest (clobber (const_int 0 [0]))) "audio.c":70:2 -1
+     (nil))
+(debug_insn 58 57 59 2 (var_location:SI __ch (clobber (const_int 0 [0]))) "audio.c":70:2 -1
+     (nil))
+(debug_insn 59 58 60 2 (var_location:DI __len (clobber (const_int 0 [0]))) "audio.c":70:2 -1
+     (nil))
+(debug_insn 60 59 61 2 (debug_marker) "audio.c":71:2 -1
+     (nil))
+(insn 61 60 62 2 (set (mem/c:SI (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                (const_int -48 [0xffffffffffffffd0])) [1 spec.freq+0 S4 A128])
+        (const_int 5714 [0x1652])) "audio.c":71:12 -1
+     (nil))
+(debug_insn 62 61 63 2 (debug_marker) "audio.c":72:2 -1
+     (nil))
+(insn 63 62 64 2 (set (mem/c:HI (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                (const_int -44 [0xffffffffffffffd4])) [3 spec.format+0 S2 A32])
+        (const_int -32480 [0xffffffffffff8120])) "audio.c":72:14 -1
+     (nil))
+(debug_insn 64 63 65 2 (debug_marker) "audio.c":73:2 -1
+     (nil))
+(insn 65 64 66 2 (set (mem/c:QI (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                (const_int -42 [0xffffffffffffffd6])) [0 spec.channels+0 S1 A16])
+        (const_int 2 [0x2])) "audio.c":73:16 -1
+     (nil))
+(debug_insn 66 65 67 2 (debug_marker) "audio.c":74:2 -1
+     (nil))
+(insn 67 66 68 2 (set (mem/c:HI (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                (const_int -40 [0xffffffffffffffd8])) [3 spec.samples+0 S2 A64])
+        (const_int 1024 [0x400])) "audio.c":74:15 -1
+     (nil))
+(debug_insn 68 67 69 2 (debug_marker) "audio.c":75:2 -1
+     (nil))
+(debug_insn 69 68 70 2 (debug_marker) "audio.c":76:2 -1
+     (nil))
+(insn 70 69 71 2 (parallel [
+            (set (reg:DI 100)
+                (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                    (const_int -48 [0xffffffffffffffd0])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":76:8 -1
+     (nil))
+(insn 71 70 72 2 (set (reg:SI 36 r8)
+        (const_int 0 [0])) "audio.c":76:8 -1
+     (nil))
+(insn 72 71 73 2 (set (reg:DI 2 cx)
+        (const_int 0 [0])) "audio.c":76:8 -1
+     (nil))
+(insn 73 72 74 2 (set (reg:DI 1 dx)
+        (reg:DI 100)) "audio.c":76:8 -1
+     (nil))
+(insn 74 73 75 2 (set (reg:SI 4 si)
+        (const_int 0 [0])) "audio.c":76:8 -1
+     (nil))
+(insn 75 74 76 2 (set (reg:DI 5 di)
+        (const_int 0 [0])) "audio.c":76:8 -1
+     (nil))
+(call_insn 76 75 77 2 (set (reg:SI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("SDL_OpenAudioDevice") [flags 0x41]  <function_decl 0x7e648795f900 SDL_OpenAudioDevice>) [0 SDL_OpenAudioDevice S1 A8])
+            (const_int 0 [0]))) "audio.c":76:8 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_OpenAudioDevice") [flags 0x41]  <function_decl 0x7e648795f900 SDL_OpenAudioDevice>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SI (use (reg:SI 4 si))
+            (expr_list:DI (use (reg:DI 1 dx))
+                (expr_list:DI (use (reg:DI 2 cx))
+                    (expr_list:SI (use (reg:SI 36 r8))
+                        (nil)))))))
+(insn 77 76 78 2 (set (reg:SI 86 [ _15 ])
+        (reg:SI 0 ax)) "audio.c":76:8 -1
+     (nil))
+(insn 78 77 79 2 (set (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])
+        (reg:SI 86 [ _15 ])) "audio.c":76:6 discrim 1 -1
+     (nil))
+(debug_insn 79 78 80 2 (debug_marker) "audio.c":61:5 -1
+     (nil))
+(insn 80 79 81 2 (set (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+        (const_int 1 [0x1])) "audio.c":61:19 -1
+     (nil))
+(debug_insn 81 80 82 2 (debug_marker) "audio.c":62:5 -1
+     (nil))
+(insn 82 81 84 2 (set (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+        (const_int 1 [0x1])) "audio.c":62:15 -1
+     (nil))
+(insn 84 82 85 2 (set (reg/f:DI 101)
+        (const_int 40 [0x28])) "audio.c":63:1 -1
+     (nil))
+(insn 85 84 86 2 (parallel [
+            (set (reg:CCZ 17 flags)
+                (unspec:CCZ [
+                        (mem/v/f/c:DI (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                                (const_int -8 [0xfffffffffffffff8])) [5 D.45954+0 S8 A64])
+                        (mem/v/f:DI (reg/f:DI 101) [7 MEM[(<address-space-1> long unsigned int *)40B]+0 S8 A64 AS1])
+                    ] UNSPEC_SP_TEST))
+            (clobber (scratch:DI))
+        ]) "audio.c":63:1 -1
+     (nil))
+(jump_insn 86 85 91 2 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 89)
+            (pc))) "audio.c":63:1 -1
+     (int_list:REG_BR_PROB 1073312332 (nil))
+ -> 89)
+;;  succ:       6 [100.0% (guessed)]  count:1073312328 (estimated locally)
+;;              5 [0.0% (guessed)]  count:429496 (estimated locally) (FALLTHRU)
+
+;; basic block 5, loop depth 0, count 429496 (estimated locally)
+;;  prev block 2, next block 6, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       2 [0.0% (guessed)]  count:429496 (estimated locally) (FALLTHRU)
+(note 91 86 87 5 [bb 5] NOTE_INSN_BASIC_BLOCK)
+(call_insn 87 91 88 5 (call (mem:QI (symbol_ref:DI ("__stack_chk_fail") [flags 0x41]  <function_decl 0x7e6482a01400 __stack_chk_fail>) [0 __stack_chk_fail S1 A8])
+        (const_int 0 [0])) "audio.c":63:1 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("__stack_chk_fail") [flags 0x41]  <function_decl 0x7e6482a01400 __stack_chk_fail>)
+        (expr_list:REG_ARGS_SIZE (const_int 0 [0])
+            (expr_list:REG_NORETURN (const_int 0 [0])
+                (expr_list:REG_EH_REGION (const_int 0 [0])
+                    (nil)))))
+    (nil))
+;;  succ:      
+
+(barrier 88 87 89)
+;; basic block 6, loop depth 0, count 1073312328 (estimated locally), maybe hot
+;;  prev block 5, next block 1, flags: (NEW, REACHABLE, RTL)
+;;  pred:       2 [100.0% (guessed)]  count:1073312328 (estimated locally)
+(code_label 89 88 92 6 2 (nil) [1 uses])
+(note 92 89 0 6 [bb 6] NOTE_INSN_BASIC_BLOCK)
+;;  succ:       EXIT [always]  count:1073312328 (estimated locally) (FALLTHRU)
+
+
+;; Function initaudio (initaudio, funcdef_no=6512, decl_uid=4554, cgraph_uid=6513, symbol_order=6525)
+
+void initaudio ()
+{
+  int isInitialized.0_1;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  isInitialized.0_1 = isInitialized;
+  if (isInitialized.0_1 != 0)
+    goto <bb 4>; [51.12%]
+  else
+    goto <bb 3>; [48.88%]
+;;    succ:       4
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  initaudio.part.0 (); [tail call]
+;;    succ:       4
+
+;;   basic block 4, loop depth 0
+;;    pred:       2
+;;                3
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 1 (isInitialized.0_1 - 1 )
+
+
+Coalescible Partition map 
+
+
+After Coalescing:
+
+Partition map 
+
+Partition 0 (isInitialized.0_1 - 1 )
+
+
+Replacing Expressions
+isInitialized.0_1 replace with --> isInitialized.0_1 = isInitialized;
+
+
+void initaudio ()
+{
+  int isInitialized.0_1;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  isInitialized.0_1 = isInitialized;
+  if (isInitialized.0_1 != 0)
+    goto <bb 4>; [51.12%]
+  else
+    goto <bb 3>; [48.88%]
+;;    succ:       4
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  initaudio.part.0 (); [tail call]
+;;    succ:       4
+
+;;   basic block 4, loop depth 0
+;;    pred:       2
+;;                3
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 5 4 0 (debug_marker) "audio.c":47:5 -1
+     (nil))
+;; if (isInitialized.0_1 != 0)
+
+(insn 6 5 7 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":47:7 -1
+     (nil))
+
+(jump_insn 7 6 0 (set (pc)
+        (if_then_else (ne (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":47:7 -1
+     (int_list:REG_BR_PROB 548896828 (nil)))
+
+;; Generating RTL for gimple basic block 3
+
+;; initaudio.part.0 (); [tail call]
+
+(call_insn/j 9 8 10 3 (call (mem:QI (symbol_ref:DI ("initaudio.part.0") [flags 0x3]  <function_decl 0x7e6482de6f00 initaudio.part.0>) [0 initaudio.part.0 S1 A8])
+        (const_int 0 [0])) -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("initaudio.part.0") [flags 0x3]  <function_decl 0x7e6482de6f00 initaudio.part.0>)
+        (expr_list:REG_EH_REGION (const_int 0 [0])
+            (nil)))
+    (nil))
+
+(barrier 10 9 0)
+
+;; Generating RTL for gimple basic block 4
+
+;; 
+
+(code_label 11 10 12 4 (nil) [0 uses])
+
+(note 12 11 0 NOTE_INSN_BASIC_BLOCK)
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Edge 2->5 redirected to 6
+deleting block 5
+
+
+try_optimize_cfg iteration 2
+
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 3 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 4, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 3 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(note 2 3 5 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 5 2 6 2 (debug_marker) "audio.c":47:5 -1
+     (nil))
+(insn 6 5 7 2 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":47:7 -1
+     (nil))
+(jump_insn 7 6 8 2 (set (pc)
+        (if_then_else (ne (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 13)
+            (pc))) "audio.c":47:7 995 {*jcc}
+     (int_list:REG_BR_PROB 548896828 (nil))
+ -> 13)
+;;  succ:       6 [51.1% (guessed)]  count:548896824 (estimated locally)
+;;              4 [48.9% (guessed)]  count:524845000 (estimated locally) (FALLTHRU)
+
+;; basic block 4, loop depth 0, count 524845000 (estimated locally), maybe hot
+;;  prev block 2, next block 6, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       2 [48.9% (guessed)]  count:524845000 (estimated locally) (FALLTHRU)
+(note 8 7 9 4 [bb 4] NOTE_INSN_BASIC_BLOCK)
+(call_insn/j 9 8 10 4 (call (mem:QI (symbol_ref:DI ("initaudio.part.0") [flags 0x3]  <function_decl 0x7e6482de6f00 initaudio.part.0>) [0 initaudio.part.0 S1 A8])
+        (const_int 0 [0])) -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("initaudio.part.0") [flags 0x3]  <function_decl 0x7e6482de6f00 initaudio.part.0>)
+        (expr_list:REG_EH_REGION (const_int 0 [0])
+            (nil)))
+    (nil))
+;;  succ:       EXIT [always]  count:524845000 (estimated locally) (ABNORMAL,SIBCALL)
+
+(barrier 10 9 13)
+;; basic block 6, loop depth 0, count 548896824 (estimated locally), maybe hot
+;;  prev block 4, next block 1, flags: (NEW, REACHABLE, RTL)
+;;  pred:       2 [51.1% (guessed)]  count:548896824 (estimated locally)
+(code_label 13 10 14 6 3 (nil) [1 uses])
+(note 14 13 0 6 [bb 6] NOTE_INSN_BASIC_BLOCK)
+;;  succ:       EXIT [always]  count:548896824 (estimated locally) (FALLTHRU)
+
+
+;; Function isAudioInitialized (isAudioInitialized, funcdef_no=6514, decl_uid=4556, cgraph_uid=6515, symbol_order=6527)
+
+int isAudioInitialized ()
+{
+  int _2;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  _2 = isInitialized;
+  return _2;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 2 (_2 - 2 )
+Partition 3 (_3(D) - 3 )
+
+
+Coalescible Partition map 
+
+Partition 0, base 0 (_2 - 2 3 )
+
+
+Partition map 
+
+Partition 0 (_2 - 2 )
+Partition 1 (_3(D) - 3 )
+
+
+Conflict graph:
+
+After sorting:
+Sorted Coalesce list:
+(10000, 0) _2 <-> _3(D)
+
+Partition map 
+
+Partition 0 (_2 - 2 )
+Partition 1 (_3(D) - 3 )
+
+Coalesce list: (2)_2 & (3)_3(D) [map: 0, 1] : Success -> 0
+After Coalescing:
+
+Partition map 
+
+Partition 0 (_2 - 2 3 )
+
+
+Replacing Expressions
+_2 replace with --> _2 = isInitialized;
+
+
+int isAudioInitialized ()
+{
+  int _2;
+  int _3(D);
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  _2 = isInitialized;
+  return _2;
+;;    succ:       EXIT
+
+}
+
+
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 5 4 0 (debug_marker) "audio.c":82:5 -1
+     (nil))
+;; return _2;
+
+(insn 6 5 7 (set (reg:SI 84)
+        (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])) "audio.c":82:11 discrim 1 -1
+     (nil))
+
+(insn 7 6 8 (set (reg:SI 82 [ <retval> ])
+        (reg:SI 84)) "audio.c":82:11 discrim 1 -1
+     (nil))
+
+(jump_insn 8 7 9 (set (pc)
+        (label_ref 0)) "audio.c":82:11 discrim 1 -1
+     (nil))
+
+(barrier 9 8 0)
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Removing jump 8.
+Merging block 4 into block 2...
+Merged blocks 2 and 4.
+Merged 2 and 4 without moving.
+
+
+try_optimize_cfg iteration 2
+
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 3 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 1, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 3 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(note 2 3 5 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 5 2 6 2 (debug_marker) "audio.c":82:5 -1
+     (nil))
+(insn 6 5 7 2 (set (reg:SI 84)
+        (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])) "audio.c":82:11 discrim 1 -1
+     (nil))
+(insn 7 6 11 2 (set (reg:SI 82 [ <retval> ])
+        (reg:SI 84)) "audio.c":82:11 discrim 1 -1
+     (nil))
+(insn 11 7 12 2 (set (reg/i:SI 0 ax)
+        (reg:SI 82 [ <retval> ])) "audio.c":83:1 -1
+     (nil))
+(insn 12 11 0 2 (use (reg/i:SI 0 ax)) "audio.c":83:1 -1
+     (nil))
+;;  succ:       EXIT [always]  count:1073741824 (estimated locally) (FALLTHRU)
+
+
+;; Function startaudio (startaudio, funcdef_no=6515, decl_uid=4560, cgraph_uid=6516, symbol_order=6528)
+
+void startaudio ()
+{
+  int _3;
+  unsigned int dev.10_6;
+  int isStopped.11_7;
+  int isInitialized.12_8;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  # DEBUG INLINE_ENTRY isAudioInitialized
+  # DEBUG BEGIN_STMT
+  _3 = isInitialized;
+  if (_3 == 0)
+    goto <bb 3>; [33.00%]
+  else
+    goto <bb 4>; [67.00%]
+;;    succ:       3
+;;                4
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  # DEBUG BEGIN_STMT
+  # DEBUG INLINE_ENTRY initaudio
+  # DEBUG BEGIN_STMT
+  initaudio.part.0 ();
+;;    succ:       4
+
+;;   basic block 4, loop depth 0
+;;    pred:       2
+;;                3
+  # DEBUG BEGIN_STMT
+  # DEBUG INLINE_ENTRY continueaudio
+  # DEBUG BEGIN_STMT
+  dev.10_6 = dev;
+  if (dev.10_6 == 0)
+    goto <bb 8>; [34.00%]
+  else
+    goto <bb 5>; [66.00%]
+;;    succ:       8
+;;                5
+
+;;   basic block 5, loop depth 0
+;;    pred:       4
+  isStopped.11_7 = isStopped;
+  if (isStopped.11_7 == 0)
+    goto <bb 8>; [34.00%]
+  else
+    goto <bb 6>; [66.00%]
+;;    succ:       8
+;;                6
+
+;;   basic block 6, loop depth 0
+;;    pred:       5
+  isInitialized.12_8 = isInitialized;
+  if (isInitialized.12_8 == 0)
+    goto <bb 8>; [51.12%]
+  else
+    goto <bb 7>; [48.88%]
+;;    succ:       8
+;;                7
+
+;;   basic block 7, loop depth 0
+;;    pred:       6
+  # DEBUG BEGIN_STMT
+  SDL_ClearQueuedAudio (dev.10_6);
+  # DEBUG BEGIN_STMT
+  nsamples = 0;
+  # DEBUG BEGIN_STMT
+  nexttime = 0;
+  # DEBUG BEGIN_STMT
+  isStopped = 0;
+;;    succ:       8
+
+;;   basic block 8, loop depth 0
+;;    pred:       5
+;;                7
+;;                4
+;;                6
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 3 (_3 - 3 )
+Partition 6 (dev.10_6 - 6 )
+Partition 7 (isStopped.11_7 - 7 )
+Partition 8 (isInitialized.12_8 - 8 )
+
+
+Coalescible Partition map 
+
+
+After Coalescing:
+
+Partition map 
+
+Partition 0 (_3 - 3 )
+Partition 1 (dev.10_6 - 6 )
+Partition 2 (isStopped.11_7 - 7 )
+Partition 3 (isInitialized.12_8 - 8 )
+
+
+Replacing Expressions
+_3 replace with --> _3 = isInitialized;
+
+isStopped.11_7 replace with --> isStopped.11_7 = isStopped;
+
+isInitialized.12_8 replace with --> isInitialized.12_8 = isInitialized;
+
+
+void startaudio ()
+{
+  int _3;
+  unsigned int dev.10_6;
+  int isStopped.11_7;
+  int isInitialized.12_8;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  # DEBUG INLINE_ENTRY isAudioInitialized
+  # DEBUG BEGIN_STMT
+  _3 = isInitialized;
+  if (_3 == 0)
+    goto <bb 3>; [33.00%]
+  else
+    goto <bb 4>; [67.00%]
+;;    succ:       3
+;;                4
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  # DEBUG BEGIN_STMT
+  # DEBUG INLINE_ENTRY initaudio
+  # DEBUG BEGIN_STMT
+  initaudio.part.0 ();
+;;    succ:       4
+
+;;   basic block 4, loop depth 0
+;;    pred:       2
+;;                3
+  # DEBUG BEGIN_STMT
+  # DEBUG INLINE_ENTRY continueaudio
+  # DEBUG BEGIN_STMT
+  dev.10_6 = dev;
+  if (dev.10_6 == 0)
+    goto <bb 8>; [34.00%]
+  else
+    goto <bb 5>; [66.00%]
+;;    succ:       8
+;;                5
+
+;;   basic block 5, loop depth 0
+;;    pred:       4
+  isStopped.11_7 = isStopped;
+  if (isStopped.11_7 == 0)
+    goto <bb 8>; [34.00%]
+  else
+    goto <bb 6>; [66.00%]
+;;    succ:       8
+;;                6
+
+;;   basic block 6, loop depth 0
+;;    pred:       5
+  isInitialized.12_8 = isInitialized;
+  if (isInitialized.12_8 == 0)
+    goto <bb 8>; [51.12%]
+  else
+    goto <bb 7>; [48.88%]
+;;    succ:       8
+;;                7
+
+;;   basic block 7, loop depth 0
+;;    pred:       6
+  # DEBUG BEGIN_STMT
+  SDL_ClearQueuedAudio (dev.10_6);
+  # DEBUG BEGIN_STMT
+  nsamples = 0;
+  # DEBUG BEGIN_STMT
+  nexttime = 0;
+  # DEBUG BEGIN_STMT
+  isStopped = 0;
+;;    succ:       8
+
+;;   basic block 8, loop depth 0
+;;    pred:       5
+;;                7
+;;                4
+;;                6
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 5 4 0 (debug_marker) "audio.c":88:5 -1
+     (nil))
+;; # DEBUG INLINE_ENTRY isAudioInitialized
+
+(debug_insn 6 5 0 (debug_marker:BLK) "audio.c":80:1 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 7 6 0 (debug_marker) "audio.c":82:5 -1
+     (nil))
+;; if (_3 == 0)
+
+(insn 8 7 9 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":88:7 discrim 1 -1
+     (nil))
+
+(jump_insn 9 8 0 (set (pc)
+        (if_then_else (ne (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":88:7 discrim 1 -1
+     (int_list:REG_BR_PROB 719407028 (nil)))
+
+;; Generating RTL for gimple basic block 3
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 11 10 0 (debug_marker) "audio.c":90:9 -1
+     (nil))
+;; # DEBUG INLINE_ENTRY initaudio
+
+(debug_insn 12 11 0 (debug_marker:BLK) "audio.c":45:1 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 13 12 0 (debug_marker) "audio.c":47:5 -1
+     (nil))
+;; initaudio.part.0 ();
+
+(call_insn 14 13 0 (call (mem:QI (symbol_ref:DI ("initaudio.part.0") [flags 0x3]  <function_decl 0x7e6482de6f00 initaudio.part.0>) [0 initaudio.part.0 S1 A8])
+        (const_int 0 [0])) -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("initaudio.part.0") [flags 0x3]  <function_decl 0x7e6482de6f00 initaudio.part.0>)
+        (expr_list:REG_EH_REGION (const_int 0 [0])
+            (nil)))
+    (nil))
+
+;; Generating RTL for gimple basic block 4
+
+;; 
+
+(code_label 15 14 16 7 (nil) [0 uses])
+
+(note 16 15 0 NOTE_INSN_BASIC_BLOCK)
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 17 16 0 (debug_marker) "audio.c":93:5 -1
+     (nil))
+;; # DEBUG INLINE_ENTRY continueaudio
+
+(debug_insn 18 17 0 (debug_marker:BLK) "audio.c":110:1 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 19 18 0 (debug_marker) "audio.c":112:2 -1
+     (nil))
+;; dev.10_6 = dev;
+
+(insn 20 19 0 (set (reg:SI 83 [ dev.10_6 ])
+        (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])) "audio.c":112:11 -1
+     (nil))
+
+;; if (dev.10_6 == 0)
+
+(insn 21 20 22 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 83 [ dev.10_6 ])
+            (const_int 0 [0]))) "audio.c":112:4 -1
+     (nil))
+
+(jump_insn 22 21 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":112:4 -1
+     (int_list:REG_BR_PROB 365072228 (nil)))
+
+;; Generating RTL for gimple basic block 5
+
+;; if (isStopped.11_7 == 0)
+
+(insn 24 23 25 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":112:17 discrim 1 -1
+     (nil))
+
+(jump_insn 25 24 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":112:17 discrim 1 -1
+     (int_list:REG_BR_PROB 365072228 (nil)))
+
+;; Generating RTL for gimple basic block 6
+
+;; if (isInitialized.12_8 == 0)
+
+(insn 27 26 28 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":112:31 discrim 2 -1
+     (nil))
+
+(jump_insn 28 27 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":112:31 discrim 2 -1
+     (int_list:REG_BR_PROB 548896828 (nil)))
+
+;; Generating RTL for gimple basic block 7
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 30 29 0 (debug_marker) "audio.c":115:2 -1
+     (nil))
+;; SDL_ClearQueuedAudio (dev.10_6);
+
+(insn 31 30 32 (set (reg:SI 5 di)
+        (reg:SI 83 [ dev.10_6 ])) "audio.c":115:2 -1
+     (nil))
+
+(call_insn 32 31 0 (call (mem:QI (symbol_ref:DI ("SDL_ClearQueuedAudio") [flags 0x41]  <function_decl 0x7e6487968e00 SDL_ClearQueuedAudio>) [0 SDL_ClearQueuedAudio S1 A8])
+        (const_int 0 [0])) "audio.c":115:2 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_ClearQueuedAudio") [flags 0x41]  <function_decl 0x7e6487968e00 SDL_ClearQueuedAudio>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (nil)))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 33 32 0 (debug_marker) "audio.c":116:2 -1
+     (nil))
+;; nsamples = 0;
+
+(insn 34 33 0 (set (mem/c:SI (symbol_ref:DI ("nsamples") [flags 0x2]  <var_decl 0x7e6482c4ed80 nsamples>) [1 nsamples+0 S4 A32])
+        (const_int 0 [0])) "audio.c":116:11 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 35 34 0 (debug_marker) "audio.c":117:2 -1
+     (nil))
+;; nexttime = 0;
+
+(insn 36 35 0 (set (mem/c:DI (symbol_ref:DI ("nexttime") [flags 0x2]  <var_decl 0x7e6482c4ee10 nexttime>) [7 nexttime+0 S8 A64])
+        (const_int 0 [0])) "audio.c":117:11 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 37 36 0 (debug_marker) "audio.c":118:5 -1
+     (nil))
+;; isStopped = 0;
+
+(insn 38 37 0 (set (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+        (const_int 0 [0])) "audio.c":118:15 -1
+     (nil))
+
+;; Generating RTL for gimple basic block 8
+
+;; 
+
+(code_label 39 38 40 8 (nil) [0 uses])
+
+(note 40 39 0 NOTE_INSN_BASIC_BLOCK)
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Edge 5->9 redirected to 10
+Edge 6->9 redirected to 10
+Edge 7->9 redirected to 10
+Merging block 9 into block 8...
+Merged blocks 8 and 9.
+Merged 8 and 9 without moving.
+
+
+try_optimize_cfg iteration 2
+
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 3 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 4, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 3 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(note 2 3 5 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 5 2 6 2 (debug_marker) "audio.c":88:5 -1
+     (nil))
+(debug_insn 6 5 7 2 (debug_marker:BLK) "audio.c":80:1 -1
+     (nil))
+(debug_insn 7 6 8 2 (debug_marker) "audio.c":82:5 -1
+     (nil))
+(insn 8 7 9 2 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":88:7 discrim 1 -1
+     (nil))
+(jump_insn 9 8 10 2 (set (pc)
+        (if_then_else (ne (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 15)
+            (pc))) "audio.c":88:7 discrim 1 -1
+     (int_list:REG_BR_PROB 719407028 (nil))
+ -> 15)
+;;  succ:       4 [33.0% (guessed)]  count:354334800 (estimated locally) (FALLTHRU)
+;;              5 [67.0% (guessed)]  count:719407024 (estimated locally)
+
+;; basic block 4, loop depth 0, count 354334800 (estimated locally), maybe hot
+;;  prev block 2, next block 5, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       2 [33.0% (guessed)]  count:354334800 (estimated locally) (FALLTHRU)
+(note 10 9 11 4 [bb 4] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 11 10 12 4 (debug_marker) "audio.c":90:9 -1
+     (nil))
+(debug_insn 12 11 13 4 (debug_marker:BLK) "audio.c":45:1 -1
+     (nil))
+(debug_insn 13 12 14 4 (debug_marker) "audio.c":47:5 -1
+     (nil))
+(call_insn 14 13 15 4 (call (mem:QI (symbol_ref:DI ("initaudio.part.0") [flags 0x3]  <function_decl 0x7e6482de6f00 initaudio.part.0>) [0 initaudio.part.0 S1 A8])
+        (const_int 0 [0])) -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("initaudio.part.0") [flags 0x3]  <function_decl 0x7e6482de6f00 initaudio.part.0>)
+        (expr_list:REG_EH_REGION (const_int 0 [0])
+            (nil)))
+    (nil))
+;;  succ:       5 [always]  count:354334800 (estimated locally) (FALLTHRU)
+
+;; basic block 5, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 4, next block 6, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       2 [67.0% (guessed)]  count:719407024 (estimated locally)
+;;              4 [always]  count:354334800 (estimated locally) (FALLTHRU)
+(code_label 15 14 16 5 7 (nil) [1 uses])
+(note 16 15 17 5 [bb 5] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 17 16 18 5 (debug_marker) "audio.c":93:5 -1
+     (nil))
+(debug_insn 18 17 19 5 (debug_marker:BLK) "audio.c":110:1 -1
+     (nil))
+(debug_insn 19 18 20 5 (debug_marker) "audio.c":112:2 -1
+     (nil))
+(insn 20 19 21 5 (set (reg:SI 83 [ dev.10_6 ])
+        (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])) "audio.c":112:11 -1
+     (nil))
+(insn 21 20 22 5 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 83 [ dev.10_6 ])
+            (const_int 0 [0]))) "audio.c":112:4 -1
+     (nil))
+(jump_insn 22 21 23 5 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 41)
+            (pc))) "audio.c":112:4 995 {*jcc}
+     (int_list:REG_BR_PROB 365072228 (nil))
+ -> 41)
+;;  succ:       10 [34.0% (guessed)]  count:365072224 (estimated locally)
+;;              6 [66.0% (guessed)]  count:708669600 (estimated locally) (FALLTHRU)
+
+;; basic block 6, loop depth 0, count 708669601 (estimated locally), maybe hot
+;;  prev block 5, next block 7, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       5 [66.0% (guessed)]  count:708669600 (estimated locally) (FALLTHRU)
+(note 23 22 24 6 [bb 6] NOTE_INSN_BASIC_BLOCK)
+(insn 24 23 25 6 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":112:17 discrim 1 -1
+     (nil))
+(jump_insn 25 24 26 6 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 41)
+            (pc))) "audio.c":112:17 discrim 1 995 {*jcc}
+     (int_list:REG_BR_PROB 365072228 (nil))
+ -> 41)
+;;  succ:       10 [34.0% (guessed)]  count:240947667 (estimated locally)
+;;              7 [66.0% (guessed)]  count:467721934 (estimated locally) (FALLTHRU)
+
+;; basic block 7, loop depth 0, count 467721933 (estimated locally), maybe hot
+;;  prev block 6, next block 8, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       6 [66.0% (guessed)]  count:467721934 (estimated locally) (FALLTHRU)
+(note 26 25 27 7 [bb 7] NOTE_INSN_BASIC_BLOCK)
+(insn 27 26 28 7 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":112:31 discrim 2 -1
+     (nil))
+(jump_insn 28 27 29 7 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 41)
+            (pc))) "audio.c":112:31 discrim 2 995 {*jcc}
+     (int_list:REG_BR_PROB 548896828 (nil))
+ -> 41)
+;;  succ:       10 [51.1% (guessed)]  count:239099454 (estimated locally)
+;;              8 [48.9% (guessed)]  count:228622479 (estimated locally) (FALLTHRU)
+
+;; basic block 8, loop depth 0, count 228622479 (estimated locally), maybe hot
+;;  prev block 7, next block 10, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       7 [48.9% (guessed)]  count:228622479 (estimated locally) (FALLTHRU)
+(note 29 28 30 8 [bb 8] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 30 29 31 8 (debug_marker) "audio.c":115:2 -1
+     (nil))
+(insn 31 30 32 8 (set (reg:SI 5 di)
+        (reg:SI 83 [ dev.10_6 ])) "audio.c":115:2 -1
+     (nil))
+(call_insn 32 31 33 8 (call (mem:QI (symbol_ref:DI ("SDL_ClearQueuedAudio") [flags 0x41]  <function_decl 0x7e6487968e00 SDL_ClearQueuedAudio>) [0 SDL_ClearQueuedAudio S1 A8])
+        (const_int 0 [0])) "audio.c":115:2 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_ClearQueuedAudio") [flags 0x41]  <function_decl 0x7e6487968e00 SDL_ClearQueuedAudio>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (nil)))
+(debug_insn 33 32 34 8 (debug_marker) "audio.c":116:2 -1
+     (nil))
+(insn 34 33 35 8 (set (mem/c:SI (symbol_ref:DI ("nsamples") [flags 0x2]  <var_decl 0x7e6482c4ed80 nsamples>) [1 nsamples+0 S4 A32])
+        (const_int 0 [0])) "audio.c":116:11 -1
+     (nil))
+(debug_insn 35 34 36 8 (debug_marker) "audio.c":117:2 -1
+     (nil))
+(insn 36 35 37 8 (set (mem/c:DI (symbol_ref:DI ("nexttime") [flags 0x2]  <var_decl 0x7e6482c4ee10 nexttime>) [7 nexttime+0 S8 A64])
+        (const_int 0 [0])) "audio.c":117:11 -1
+     (nil))
+(debug_insn 37 36 38 8 (debug_marker) "audio.c":118:5 -1
+     (nil))
+(insn 38 37 41 8 (set (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+        (const_int 0 [0])) "audio.c":118:15 -1
+     (nil))
+;;  succ:       10 [always]  count:228622479 (estimated locally) (FALLTHRU) audio.c:94:1
+
+;; basic block 10, loop depth 0, count 1073741825 (estimated locally), maybe hot
+;;  prev block 8, next block 1, flags: (NEW, REACHABLE, RTL)
+;;  pred:       8 [always]  count:228622479 (estimated locally) (FALLTHRU) audio.c:94:1
+;;              5 [34.0% (guessed)]  count:365072224 (estimated locally)
+;;              6 [34.0% (guessed)]  count:240947667 (estimated locally)
+;;              7 [51.1% (guessed)]  count:239099454 (estimated locally)
+(code_label 41 38 42 10 6 (nil) [3 uses])
+(note 42 41 0 10 [bb 10] NOTE_INSN_BASIC_BLOCK)
+;;  succ:       EXIT [always]  count:1073741825 (estimated locally) (FALLTHRU)
+
+
+;; Function stopaudio (stopaudio, funcdef_no=6516, decl_uid=4558, cgraph_uid=6517, symbol_order=6529)
+
+void stopaudio ()
+{
+  unsigned int dev.6_1;
+  int isInitialized.7_2;
+  unsigned int dev.9_3;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  dev.6_1 = dev;
+  if (dev.6_1 == 0)
+    goto <bb 5>; [34.00%]
+  else
+    goto <bb 3>; [66.00%]
+;;    succ:       5
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  isInitialized.7_2 = isInitialized;
+  if (isInitialized.7_2 == 0)
+    goto <bb 5>; [51.12%]
+  else
+    goto <bb 4>; [48.88%]
+;;    succ:       5
+;;                4
+
+;;   basic block 4, loop depth 0
+;;    pred:       3
+  # DEBUG BEGIN_STMT
+  SDL_PauseAudioDevice (dev.6_1, 1);
+  # DEBUG BEGIN_STMT
+  dev.9_3 = dev;
+  SDL_ClearQueuedAudio (dev.9_3);
+  # DEBUG BEGIN_STMT
+  nsamples = 0;
+  # DEBUG BEGIN_STMT
+  nexttime = 0;
+  # DEBUG BEGIN_STMT
+  isStopped = 1;
+;;    succ:       5
+
+;;   basic block 5, loop depth 0
+;;    pred:       3
+;;                4
+;;                2
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 1 (dev.6_1 - 1 )
+Partition 2 (isInitialized.7_2 - 2 )
+Partition 3 (dev.9_3 - 3 )
+
+
+Coalescible Partition map 
+
+
+After Coalescing:
+
+Partition map 
+
+Partition 0 (dev.6_1 - 1 )
+Partition 1 (isInitialized.7_2 - 2 )
+Partition 2 (dev.9_3 - 3 )
+
+
+Replacing Expressions
+isInitialized.7_2 replace with --> isInitialized.7_2 = isInitialized;
+
+dev.9_3 replace with --> dev.9_3 = dev;
+
+
+void stopaudio ()
+{
+  unsigned int dev.6_1;
+  int isInitialized.7_2;
+  unsigned int dev.9_3;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  dev.6_1 = dev;
+  if (dev.6_1 == 0)
+    goto <bb 5>; [34.00%]
+  else
+    goto <bb 3>; [66.00%]
+;;    succ:       5
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  isInitialized.7_2 = isInitialized;
+  if (isInitialized.7_2 == 0)
+    goto <bb 5>; [51.12%]
+  else
+    goto <bb 4>; [48.88%]
+;;    succ:       5
+;;                4
+
+;;   basic block 4, loop depth 0
+;;    pred:       3
+  # DEBUG BEGIN_STMT
+  SDL_PauseAudioDevice (dev.6_1, 1);
+  # DEBUG BEGIN_STMT
+  dev.9_3 = dev;
+  SDL_ClearQueuedAudio (dev.9_3);
+  # DEBUG BEGIN_STMT
+  nsamples = 0;
+  # DEBUG BEGIN_STMT
+  nexttime = 0;
+  # DEBUG BEGIN_STMT
+  isStopped = 1;
+;;    succ:       5
+
+;;   basic block 5, loop depth 0
+;;    pred:       3
+;;                4
+;;                2
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 5 4 0 (debug_marker) "audio.c":99:2 -1
+     (nil))
+;; dev.6_1 = dev;
+
+(insn 6 5 0 (set (reg:SI 82 [ dev.6_1 ])
+        (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])) "audio.c":99:11 -1
+     (nil))
+
+;; if (dev.6_1 == 0)
+
+(insn 7 6 8 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 82 [ dev.6_1 ])
+            (const_int 0 [0]))) "audio.c":99:4 -1
+     (nil))
+
+(jump_insn 8 7 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":99:4 -1
+     (int_list:REG_BR_PROB 365072228 (nil)))
+
+;; Generating RTL for gimple basic block 3
+
+;; if (isInitialized.7_2 == 0)
+
+(insn 10 9 11 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":99:17 discrim 1 -1
+     (nil))
+
+(jump_insn 11 10 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":99:17 discrim 1 -1
+     (int_list:REG_BR_PROB 548896828 (nil)))
+
+;; Generating RTL for gimple basic block 4
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 13 12 0 (debug_marker) "audio.c":102:2 -1
+     (nil))
+;; SDL_PauseAudioDevice (dev.6_1, 1);
+
+(insn 14 13 15 (set (reg:SI 4 si)
+        (const_int 1 [0x1])) "audio.c":102:2 -1
+     (nil))
+
+(insn 15 14 16 (set (reg:SI 5 di)
+        (reg:SI 82 [ dev.6_1 ])) "audio.c":102:2 -1
+     (nil))
+
+(call_insn 16 15 0 (call (mem:QI (symbol_ref:DI ("SDL_PauseAudioDevice") [flags 0x41]  <function_decl 0x7e648795fd00 SDL_PauseAudioDevice>) [0 SDL_PauseAudioDevice S1 A8])
+        (const_int 0 [0])) "audio.c":102:2 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_PauseAudioDevice") [flags 0x41]  <function_decl 0x7e648795fd00 SDL_PauseAudioDevice>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (expr_list:SI (use (reg:SI 4 si))
+            (nil))))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 17 16 0 (debug_marker) "audio.c":103:2 -1
+     (nil))
+;; SDL_ClearQueuedAudio (dev.9_3);
+
+(insn 18 17 19 (set (reg:SI 85)
+        (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])) "audio.c":103:2 -1
+     (nil))
+
+(insn 19 18 20 (set (reg:SI 5 di)
+        (reg:SI 85)) "audio.c":103:2 -1
+     (nil))
+
+(call_insn 20 19 0 (call (mem:QI (symbol_ref:DI ("SDL_ClearQueuedAudio") [flags 0x41]  <function_decl 0x7e6487968e00 SDL_ClearQueuedAudio>) [0 SDL_ClearQueuedAudio S1 A8])
+        (const_int 0 [0])) "audio.c":103:2 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_ClearQueuedAudio") [flags 0x41]  <function_decl 0x7e6487968e00 SDL_ClearQueuedAudio>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (nil)))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 21 20 0 (debug_marker) "audio.c":104:2 -1
+     (nil))
+;; nsamples = 0;
+
+(insn 22 21 0 (set (mem/c:SI (symbol_ref:DI ("nsamples") [flags 0x2]  <var_decl 0x7e6482c4ed80 nsamples>) [1 nsamples+0 S4 A32])
+        (const_int 0 [0])) "audio.c":104:11 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 23 22 0 (debug_marker) "audio.c":105:2 -1
+     (nil))
+;; nexttime = 0;
+
+(insn 24 23 0 (set (mem/c:DI (symbol_ref:DI ("nexttime") [flags 0x2]  <var_decl 0x7e6482c4ee10 nexttime>) [7 nexttime+0 S8 A64])
+        (const_int 0 [0])) "audio.c":105:11 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 25 24 0 (debug_marker) "audio.c":106:5 -1
+     (nil))
+;; isStopped = 1;
+
+(insn 26 25 0 (set (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+        (const_int 1 [0x1])) "audio.c":106:15 -1
+     (nil))
+
+;; Generating RTL for gimple basic block 5
+
+;; 
+
+(code_label 27 26 28 10 (nil) [0 uses])
+
+(note 28 27 0 NOTE_INSN_BASIC_BLOCK)
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Edge 2->6 redirected to 7
+Edge 4->6 redirected to 7
+Merging block 6 into block 5...
+Merged blocks 5 and 6.
+Merged 5 and 6 without moving.
+
+
+try_optimize_cfg iteration 2
+
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 3 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 4, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 3 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(note 2 3 5 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 5 2 6 2 (debug_marker) "audio.c":99:2 -1
+     (nil))
+(insn 6 5 7 2 (set (reg:SI 82 [ dev.6_1 ])
+        (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])) "audio.c":99:11 -1
+     (nil))
+(insn 7 6 8 2 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 82 [ dev.6_1 ])
+            (const_int 0 [0]))) "audio.c":99:4 -1
+     (nil))
+(jump_insn 8 7 9 2 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 29)
+            (pc))) "audio.c":99:4 995 {*jcc}
+     (int_list:REG_BR_PROB 365072228 (nil))
+ -> 29)
+;;  succ:       7 [34.0% (guessed)]  count:365072224 (estimated locally)
+;;              4 [66.0% (guessed)]  count:708669600 (estimated locally) (FALLTHRU)
+
+;; basic block 4, loop depth 0, count 708669601 (estimated locally), maybe hot
+;;  prev block 2, next block 5, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       2 [66.0% (guessed)]  count:708669600 (estimated locally) (FALLTHRU)
+(note 9 8 10 4 [bb 4] NOTE_INSN_BASIC_BLOCK)
+(insn 10 9 11 4 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":99:17 discrim 1 -1
+     (nil))
+(jump_insn 11 10 12 4 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 29)
+            (pc))) "audio.c":99:17 discrim 1 995 {*jcc}
+     (int_list:REG_BR_PROB 548896828 (nil))
+ -> 29)
+;;  succ:       7 [51.1% (guessed)]  count:362271902 (estimated locally)
+;;              5 [48.9% (guessed)]  count:346397699 (estimated locally) (FALLTHRU)
+
+;; basic block 5, loop depth 0, count 346397698 (estimated locally), maybe hot
+;;  prev block 4, next block 7, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       4 [48.9% (guessed)]  count:346397699 (estimated locally) (FALLTHRU)
+(note 12 11 13 5 [bb 5] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 13 12 14 5 (debug_marker) "audio.c":102:2 -1
+     (nil))
+(insn 14 13 15 5 (set (reg:SI 4 si)
+        (const_int 1 [0x1])) "audio.c":102:2 -1
+     (nil))
+(insn 15 14 16 5 (set (reg:SI 5 di)
+        (reg:SI 82 [ dev.6_1 ])) "audio.c":102:2 -1
+     (nil))
+(call_insn 16 15 17 5 (call (mem:QI (symbol_ref:DI ("SDL_PauseAudioDevice") [flags 0x41]  <function_decl 0x7e648795fd00 SDL_PauseAudioDevice>) [0 SDL_PauseAudioDevice S1 A8])
+        (const_int 0 [0])) "audio.c":102:2 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_PauseAudioDevice") [flags 0x41]  <function_decl 0x7e648795fd00 SDL_PauseAudioDevice>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (expr_list:SI (use (reg:SI 4 si))
+            (nil))))
+(debug_insn 17 16 18 5 (debug_marker) "audio.c":103:2 -1
+     (nil))
+(insn 18 17 19 5 (set (reg:SI 85)
+        (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])) "audio.c":103:2 -1
+     (nil))
+(insn 19 18 20 5 (set (reg:SI 5 di)
+        (reg:SI 85)) "audio.c":103:2 -1
+     (nil))
+(call_insn 20 19 21 5 (call (mem:QI (symbol_ref:DI ("SDL_ClearQueuedAudio") [flags 0x41]  <function_decl 0x7e6487968e00 SDL_ClearQueuedAudio>) [0 SDL_ClearQueuedAudio S1 A8])
+        (const_int 0 [0])) "audio.c":103:2 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_ClearQueuedAudio") [flags 0x41]  <function_decl 0x7e6487968e00 SDL_ClearQueuedAudio>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (nil)))
+(debug_insn 21 20 22 5 (debug_marker) "audio.c":104:2 -1
+     (nil))
+(insn 22 21 23 5 (set (mem/c:SI (symbol_ref:DI ("nsamples") [flags 0x2]  <var_decl 0x7e6482c4ed80 nsamples>) [1 nsamples+0 S4 A32])
+        (const_int 0 [0])) "audio.c":104:11 -1
+     (nil))
+(debug_insn 23 22 24 5 (debug_marker) "audio.c":105:2 -1
+     (nil))
+(insn 24 23 25 5 (set (mem/c:DI (symbol_ref:DI ("nexttime") [flags 0x2]  <var_decl 0x7e6482c4ee10 nexttime>) [7 nexttime+0 S8 A64])
+        (const_int 0 [0])) "audio.c":105:11 -1
+     (nil))
+(debug_insn 25 24 26 5 (debug_marker) "audio.c":106:5 -1
+     (nil))
+(insn 26 25 29 5 (set (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+        (const_int 1 [0x1])) "audio.c":106:15 -1
+     (nil))
+;;  succ:       7 [always]  count:346397698 (estimated locally) (FALLTHRU)
+
+;; basic block 7, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 5, next block 1, flags: (NEW, REACHABLE, RTL)
+;;  pred:       5 [always]  count:346397698 (estimated locally) (FALLTHRU)
+;;              2 [34.0% (guessed)]  count:365072224 (estimated locally)
+;;              4 [51.1% (guessed)]  count:362271902 (estimated locally)
+(code_label 29 26 30 7 9 (nil) [2 uses])
+(note 30 29 0 7 [bb 7] NOTE_INSN_BASIC_BLOCK)
+;;  succ:       EXIT [always]  count:1073741824 (estimated locally) (FALLTHRU)
+
+
+;; Function continueaudio (continueaudio, funcdef_no=6517, decl_uid=4562, cgraph_uid=6518, symbol_order=6530)
+
+void continueaudio ()
+{
+  unsigned int dev.10_1;
+  int isStopped.11_2;
+  int isInitialized.12_3;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  dev.10_1 = dev;
+  if (dev.10_1 == 0)
+    goto <bb 6>; [34.00%]
+  else
+    goto <bb 3>; [66.00%]
+;;    succ:       6
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  isStopped.11_2 = isStopped;
+  if (isStopped.11_2 == 0)
+    goto <bb 6>; [34.00%]
+  else
+    goto <bb 4>; [66.00%]
+;;    succ:       6
+;;                4
+
+;;   basic block 4, loop depth 0
+;;    pred:       3
+  isInitialized.12_3 = isInitialized;
+  if (isInitialized.12_3 == 0)
+    goto <bb 6>; [51.12%]
+  else
+    goto <bb 5>; [48.88%]
+;;    succ:       6
+;;                5
+
+;;   basic block 5, loop depth 0
+;;    pred:       4
+  # DEBUG BEGIN_STMT
+  SDL_ClearQueuedAudio (dev.10_1);
+  # DEBUG BEGIN_STMT
+  nsamples = 0;
+  # DEBUG BEGIN_STMT
+  nexttime = 0;
+  # DEBUG BEGIN_STMT
+  isStopped = 0;
+;;    succ:       6
+
+;;   basic block 6, loop depth 0
+;;    pred:       3
+;;                5
+;;                2
+;;                4
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 1 (dev.10_1 - 1 )
+Partition 2 (isStopped.11_2 - 2 )
+Partition 3 (isInitialized.12_3 - 3 )
+
+
+Coalescible Partition map 
+
+
+After Coalescing:
+
+Partition map 
+
+Partition 0 (dev.10_1 - 1 )
+Partition 1 (isStopped.11_2 - 2 )
+Partition 2 (isInitialized.12_3 - 3 )
+
+
+Replacing Expressions
+isStopped.11_2 replace with --> isStopped.11_2 = isStopped;
+
+isInitialized.12_3 replace with --> isInitialized.12_3 = isInitialized;
+
+
+void continueaudio ()
+{
+  unsigned int dev.10_1;
+  int isStopped.11_2;
+  int isInitialized.12_3;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  dev.10_1 = dev;
+  if (dev.10_1 == 0)
+    goto <bb 6>; [34.00%]
+  else
+    goto <bb 3>; [66.00%]
+;;    succ:       6
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  isStopped.11_2 = isStopped;
+  if (isStopped.11_2 == 0)
+    goto <bb 6>; [34.00%]
+  else
+    goto <bb 4>; [66.00%]
+;;    succ:       6
+;;                4
+
+;;   basic block 4, loop depth 0
+;;    pred:       3
+  isInitialized.12_3 = isInitialized;
+  if (isInitialized.12_3 == 0)
+    goto <bb 6>; [51.12%]
+  else
+    goto <bb 5>; [48.88%]
+;;    succ:       6
+;;                5
+
+;;   basic block 5, loop depth 0
+;;    pred:       4
+  # DEBUG BEGIN_STMT
+  SDL_ClearQueuedAudio (dev.10_1);
+  # DEBUG BEGIN_STMT
+  nsamples = 0;
+  # DEBUG BEGIN_STMT
+  nexttime = 0;
+  # DEBUG BEGIN_STMT
+  isStopped = 0;
+;;    succ:       6
+
+;;   basic block 6, loop depth 0
+;;    pred:       3
+;;                5
+;;                2
+;;                4
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 5 4 0 (debug_marker) "audio.c":112:2 -1
+     (nil))
+;; dev.10_1 = dev;
+
+(insn 6 5 0 (set (reg:SI 82 [ dev.10_1 ])
+        (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])) "audio.c":112:11 -1
+     (nil))
+
+;; if (dev.10_1 == 0)
+
+(insn 7 6 8 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 82 [ dev.10_1 ])
+            (const_int 0 [0]))) "audio.c":112:4 -1
+     (nil))
+
+(jump_insn 8 7 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":112:4 -1
+     (int_list:REG_BR_PROB 365072228 (nil)))
+
+;; Generating RTL for gimple basic block 3
+
+;; if (isStopped.11_2 == 0)
+
+(insn 10 9 11 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":112:17 discrim 1 -1
+     (nil))
+
+(jump_insn 11 10 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":112:17 discrim 1 -1
+     (int_list:REG_BR_PROB 365072228 (nil)))
+
+;; Generating RTL for gimple basic block 4
+
+;; if (isInitialized.12_3 == 0)
+
+(insn 13 12 14 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":112:31 discrim 2 -1
+     (nil))
+
+(jump_insn 14 13 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":112:31 discrim 2 -1
+     (int_list:REG_BR_PROB 548896828 (nil)))
+
+;; Generating RTL for gimple basic block 5
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 16 15 0 (debug_marker) "audio.c":115:2 -1
+     (nil))
+;; SDL_ClearQueuedAudio (dev.10_1);
+
+(insn 17 16 18 (set (reg:SI 5 di)
+        (reg:SI 82 [ dev.10_1 ])) "audio.c":115:2 -1
+     (nil))
+
+(call_insn 18 17 0 (call (mem:QI (symbol_ref:DI ("SDL_ClearQueuedAudio") [flags 0x41]  <function_decl 0x7e6487968e00 SDL_ClearQueuedAudio>) [0 SDL_ClearQueuedAudio S1 A8])
+        (const_int 0 [0])) "audio.c":115:2 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_ClearQueuedAudio") [flags 0x41]  <function_decl 0x7e6487968e00 SDL_ClearQueuedAudio>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (nil)))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 19 18 0 (debug_marker) "audio.c":116:2 -1
+     (nil))
+;; nsamples = 0;
+
+(insn 20 19 0 (set (mem/c:SI (symbol_ref:DI ("nsamples") [flags 0x2]  <var_decl 0x7e6482c4ed80 nsamples>) [1 nsamples+0 S4 A32])
+        (const_int 0 [0])) "audio.c":116:11 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 21 20 0 (debug_marker) "audio.c":117:2 -1
+     (nil))
+;; nexttime = 0;
+
+(insn 22 21 0 (set (mem/c:DI (symbol_ref:DI ("nexttime") [flags 0x2]  <var_decl 0x7e6482c4ee10 nexttime>) [7 nexttime+0 S8 A64])
+        (const_int 0 [0])) "audio.c":117:11 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 23 22 0 (debug_marker) "audio.c":118:5 -1
+     (nil))
+;; isStopped = 0;
+
+(insn 24 23 0 (set (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+        (const_int 0 [0])) "audio.c":118:15 -1
+     (nil))
+
+;; Generating RTL for gimple basic block 6
+
+;; 
+
+(code_label 25 24 26 12 (nil) [0 uses])
+
+(note 26 25 0 NOTE_INSN_BASIC_BLOCK)
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Edge 2->7 redirected to 8
+Edge 4->7 redirected to 8
+Edge 5->7 redirected to 8
+Merging block 7 into block 6...
+Merged blocks 6 and 7.
+Merged 6 and 7 without moving.
+
+
+try_optimize_cfg iteration 2
+
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 3 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741823 (estimated locally), maybe hot
+;;  prev block 0, next block 4, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       ENTRY [always]  count:1073741823 (estimated locally) (FALLTHRU)
+(note 3 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(note 2 3 5 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 5 2 6 2 (debug_marker) "audio.c":112:2 -1
+     (nil))
+(insn 6 5 7 2 (set (reg:SI 82 [ dev.10_1 ])
+        (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])) "audio.c":112:11 -1
+     (nil))
+(insn 7 6 8 2 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 82 [ dev.10_1 ])
+            (const_int 0 [0]))) "audio.c":112:4 -1
+     (nil))
+(jump_insn 8 7 9 2 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 27)
+            (pc))) "audio.c":112:4 995 {*jcc}
+     (int_list:REG_BR_PROB 365072228 (nil))
+ -> 27)
+;;  succ:       8 [34.0% (guessed)]  count:365072224 (estimated locally)
+;;              4 [66.0% (guessed)]  count:708669599 (estimated locally) (FALLTHRU)
+
+;; basic block 4, loop depth 0, count 708669600 (estimated locally), maybe hot
+;;  prev block 2, next block 5, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       2 [66.0% (guessed)]  count:708669599 (estimated locally) (FALLTHRU)
+(note 9 8 10 4 [bb 4] NOTE_INSN_BASIC_BLOCK)
+(insn 10 9 11 4 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":112:17 discrim 1 -1
+     (nil))
+(jump_insn 11 10 12 4 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 27)
+            (pc))) "audio.c":112:17 discrim 1 995 {*jcc}
+     (int_list:REG_BR_PROB 365072228 (nil))
+ -> 27)
+;;  succ:       8 [34.0% (guessed)]  count:240947667 (estimated locally)
+;;              5 [66.0% (guessed)]  count:467721933 (estimated locally) (FALLTHRU)
+
+;; basic block 5, loop depth 0, count 467721933 (estimated locally), maybe hot
+;;  prev block 4, next block 6, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       4 [66.0% (guessed)]  count:467721933 (estimated locally) (FALLTHRU)
+(note 12 11 13 5 [bb 5] NOTE_INSN_BASIC_BLOCK)
+(insn 13 12 14 5 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":112:31 discrim 2 -1
+     (nil))
+(jump_insn 14 13 15 5 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 27)
+            (pc))) "audio.c":112:31 discrim 2 995 {*jcc}
+     (int_list:REG_BR_PROB 548896828 (nil))
+ -> 27)
+;;  succ:       8 [51.1% (guessed)]  count:239099454 (estimated locally)
+;;              6 [48.9% (guessed)]  count:228622479 (estimated locally) (FALLTHRU)
+
+;; basic block 6, loop depth 0, count 228622479 (estimated locally), maybe hot
+;;  prev block 5, next block 8, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       5 [48.9% (guessed)]  count:228622479 (estimated locally) (FALLTHRU)
+(note 15 14 16 6 [bb 6] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 16 15 17 6 (debug_marker) "audio.c":115:2 -1
+     (nil))
+(insn 17 16 18 6 (set (reg:SI 5 di)
+        (reg:SI 82 [ dev.10_1 ])) "audio.c":115:2 -1
+     (nil))
+(call_insn 18 17 19 6 (call (mem:QI (symbol_ref:DI ("SDL_ClearQueuedAudio") [flags 0x41]  <function_decl 0x7e6487968e00 SDL_ClearQueuedAudio>) [0 SDL_ClearQueuedAudio S1 A8])
+        (const_int 0 [0])) "audio.c":115:2 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_ClearQueuedAudio") [flags 0x41]  <function_decl 0x7e6487968e00 SDL_ClearQueuedAudio>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (nil)))
+(debug_insn 19 18 20 6 (debug_marker) "audio.c":116:2 -1
+     (nil))
+(insn 20 19 21 6 (set (mem/c:SI (symbol_ref:DI ("nsamples") [flags 0x2]  <var_decl 0x7e6482c4ed80 nsamples>) [1 nsamples+0 S4 A32])
+        (const_int 0 [0])) "audio.c":116:11 -1
+     (nil))
+(debug_insn 21 20 22 6 (debug_marker) "audio.c":117:2 -1
+     (nil))
+(insn 22 21 23 6 (set (mem/c:DI (symbol_ref:DI ("nexttime") [flags 0x2]  <var_decl 0x7e6482c4ee10 nexttime>) [7 nexttime+0 S8 A64])
+        (const_int 0 [0])) "audio.c":117:11 -1
+     (nil))
+(debug_insn 23 22 24 6 (debug_marker) "audio.c":118:5 -1
+     (nil))
+(insn 24 23 27 6 (set (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+        (const_int 0 [0])) "audio.c":118:15 -1
+     (nil))
+;;  succ:       8 [always]  count:228622479 (estimated locally) (FALLTHRU)
+
+;; basic block 8, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 6, next block 1, flags: (NEW, REACHABLE, RTL)
+;;  pred:       6 [always]  count:228622479 (estimated locally) (FALLTHRU)
+;;              2 [34.0% (guessed)]  count:365072224 (estimated locally)
+;;              4 [34.0% (guessed)]  count:240947667 (estimated locally)
+;;              5 [51.1% (guessed)]  count:239099454 (estimated locally)
+(code_label 27 24 28 8 11 (nil) [3 uses])
+(note 28 27 0 8 [bb 8] NOTE_INSN_BASIC_BLOCK)
+;;  succ:       EXIT [always]  count:1073741824 (estimated locally) (FALLTHRU)
+
+
+;; Function svc_audio (svc_audio, funcdef_no=6518, decl_uid=4564, cgraph_uid=6519, symbol_order=6531)
+
+void svc_audio (struct PDP1 * pdp)
+{
+  vector(2) float vect__20.71;
+  float buffer[2];
+  float chan4;
+  float chan3;
+  float chan2;
+  float chan1;
+  unsigned int dev.14_1;
+  long unsigned int _2;
+  long unsigned int nexttime.15_3;
+  int isInitialized.16_4;
+  int isStopped.17_5;
+  long unsigned int _6;
+  long unsigned int _7;
+  int nsamples.20_8;
+  int _9;
+  int _10;
+  int _11;
+  int _12;
+  int _13;
+  int _14;
+  int _15;
+  int _16;
+  int _17;
+  float _18;
+  float mixerGain.27_19;
+  float _21;
+  unsigned int dev.29_23;
+  float iftmp.23_24;
+  float iftmp.24_25;
+  float iftmp.25_26;
+  float iftmp.26_27;
+  vector(2) float _48;
+  vector(2) float _49;
+  long unsigned int cstore_50;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  # DEBUG BEGIN_STMT
+  # DEBUG BEGIN_STMT
+  # DEBUG BEGIN_STMT
+  dev.14_1 = dev;
+  if (dev.14_1 == 0)
+    goto <bb 21>; [34.00%]
+  else
+    goto <bb 3>; [66.00%]
+;;    succ:       21
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  _2 = pdp_32(D)->simtime;
+  nexttime.15_3 = nexttime;
+  if (_2 <= nexttime.15_3)
+    goto <bb 21>; [34.00%]
+  else
+    goto <bb 4>; [66.00%]
+;;    succ:       21
+;;                4
+
+;;   basic block 4, loop depth 0
+;;    pred:       3
+  isInitialized.16_4 = isInitialized;
+  if (isInitialized.16_4 == 0)
+    goto <bb 21>; [34.00%]
+  else
+    goto <bb 5>; [66.00%]
+;;    succ:       21
+;;                5
+
+;;   basic block 5, loop depth 0
+;;    pred:       4
+  isStopped.17_5 = isStopped;
+  if (isStopped.17_5 != 0)
+    goto <bb 21>; [34.00%]
+  else
+    goto <bb 6>; [66.00%]
+;;    succ:       21
+;;                6
+
+;;   basic block 6, loop depth 0
+;;    pred:       5
+  # DEBUG BEGIN_STMT
+  if (nexttime.15_3 == 0)
+    goto <bb 7>; [50.00%]
+  else
+    goto <bb 8>; [50.00%]
+;;    succ:       7
+;;                8
+
+;;   basic block 7, loop depth 0
+;;    pred:       6
+  # DEBUG BEGIN_STMT
+  _6 = _2 + 175008;
+  goto <bb 9>; [100.00%]
+;;    succ:       9
+
+;;   basic block 8, loop depth 0
+;;    pred:       6
+  # DEBUG BEGIN_STMT
+  _7 = nexttime.15_3 + 175008;
+;;    succ:       9
+
+;;   basic block 9, loop depth 0
+;;    pred:       7
+;;                8
+  # cstore_50 = PHI <_6(7), _7(8)>
+  nexttime = cstore_50;
+  # DEBUG BEGIN_STMT
+  nsamples.20_8 = nsamples;
+  if (nsamples.20_8 <= 63)
+    goto <bb 10>; [67.00%]
+  else
+    goto <bb 11>; [33.00%]
+;;    succ:       10
+;;                11
+
+;;   basic block 10, loop depth 0
+;;    pred:       9
+  # DEBUG BEGIN_STMT
+  _9 = nsamples.20_8 + 1;
+  nsamples = _9;
+  goto <bb 12>; [100.00%]
+;;    succ:       12
+
+;;   basic block 11, loop depth 0
+;;    pred:       9
+  # DEBUG BEGIN_STMT
+  SDL_PauseAudioDevice (dev.14_1, 0);
+;;    succ:       12
+
+;;   basic block 12, loop depth 0
+;;    pred:       10
+;;                11
+  # DEBUG BEGIN_STMT
+  _10 = pdp_32(D)->pf;
+  _11 = _10 & 32;
+  if (_11 != 0)
+    goto <bb 13>; [50.00%]
+  else
+    goto <bb 14>; [50.00%]
+;;    succ:       13
+;;                14
+
+;;   basic block 13, loop depth 0
+;;    pred:       12
+;;    succ:       14
+
+;;   basic block 14, loop depth 0
+;;    pred:       13
+;;                12
+  # iftmp.23_24 = PHI <1.0e+0(13), -1.0e+0(12)>
+  chan1_38 = lowPassFilter (&voice1, iftmp.23_24);
+  # DEBUG chan1 => chan1_38
+  # DEBUG BEGIN_STMT
+  _12 = pdp_32(D)->pf;
+  _13 = _12 & 16;
+  if (_13 != 0)
+    goto <bb 15>; [50.00%]
+  else
+    goto <bb 16>; [50.00%]
+;;    succ:       15
+;;                16
+
+;;   basic block 15, loop depth 0
+;;    pred:       14
+;;    succ:       16
+
+;;   basic block 16, loop depth 0
+;;    pred:       15
+;;                14
+  # iftmp.24_25 = PHI <1.0e+0(15), -1.0e+0(14)>
+  chan2_40 = lowPassFilter (&voice2, iftmp.24_25);
+  # DEBUG chan2 => chan2_40
+  # DEBUG BEGIN_STMT
+  _14 = pdp_32(D)->pf;
+  _15 = _14 & 8;
+  if (_15 != 0)
+    goto <bb 17>; [50.00%]
+  else
+    goto <bb 18>; [50.00%]
+;;    succ:       17
+;;                18
+
+;;   basic block 17, loop depth 0
+;;    pred:       16
+;;    succ:       18
+
+;;   basic block 18, loop depth 0
+;;    pred:       17
+;;                16
+  # iftmp.25_26 = PHI <1.0e+0(17), -1.0e+0(16)>
+  chan3_42 = lowPassFilter (&voice3, iftmp.25_26);
+  # DEBUG chan3 => chan3_42
+  # DEBUG BEGIN_STMT
+  _16 = pdp_32(D)->pf;
+  _17 = _16 & 4;
+  if (_17 != 0)
+    goto <bb 19>; [50.00%]
+  else
+    goto <bb 20>; [50.00%]
+;;    succ:       19
+;;                20
+
+;;   basic block 19, loop depth 0
+;;    pred:       18
+;;    succ:       20
+
+;;   basic block 20, loop depth 0
+;;    pred:       19
+;;                18
+  # iftmp.26_27 = PHI <1.0e+0(19), -1.0e+0(18)>
+  chan4_44 = lowPassFilter (&voice4, iftmp.26_27);
+  # DEBUG chan4 => chan4_44
+  # DEBUG BEGIN_STMT
+  _18 = chan1_38 + chan2_40;
+  mixerGain.27_19 = mixerGain;
+  _48 = {mixerGain.27_19, mixerGain.27_19};
+  # DEBUG BEGIN_STMT
+  _21 = chan3_42 + chan4_44;
+  _49 = {_18, _21};
+  vect__20.71_33 = _48 * _49;
+  MEM <vector(2) float> [(float *)&buffer] = vect__20.71_33;
+  # DEBUG BEGIN_STMT
+  dev.29_23 = dev;
+  SDL_QueueAudio (dev.29_23, &buffer, 8);
+;;    succ:       21
+
+;;   basic block 21, loop depth 0
+;;    pred:       20
+;;                3
+;;                2
+;;                5
+;;                4
+  buffer ={v} {CLOBBER(eol)};
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 1 (dev.14_1 - 1 )
+Partition 2 (_2 - 2 )
+Partition 3 (nexttime.15_3 - 3 )
+Partition 4 (isInitialized.16_4 - 4 )
+Partition 5 (isStopped.17_5 - 5 )
+Partition 6 (_6 - 6 )
+Partition 7 (_7 - 7 )
+Partition 8 (nsamples.20_8 - 8 )
+Partition 9 (_9 - 9 )
+Partition 10 (_10 - 10 )
+Partition 11 (_11 - 11 )
+Partition 12 (_12 - 12 )
+Partition 13 (_13 - 13 )
+Partition 14 (_14 - 14 )
+Partition 15 (_15 - 15 )
+Partition 16 (_16 - 16 )
+Partition 17 (_17 - 17 )
+Partition 18 (_18 - 18 )
+Partition 19 (mixerGain.27_19 - 19 )
+Partition 21 (_21 - 21 )
+Partition 23 (dev.29_23 - 23 )
+Partition 24 (iftmp.23_24 - 24 )
+Partition 25 (iftmp.24_25 - 25 )
+Partition 26 (iftmp.25_26 - 26 )
+Partition 27 (iftmp.26_27 - 27 )
+Partition 32 (pdp_32(D) - 32 )
+Partition 33 (vect__20.71_33 - 33 )
+Partition 38 (chan1_38 - 38 )
+Partition 40 (chan2_40 - 40 )
+Partition 42 (chan3_42 - 42 )
+Partition 44 (chan4_44 - 44 )
+Partition 48 (_48 - 48 )
+Partition 49 (_49 - 49 )
+Partition 50 (cstore_50 - 50 )
+
+
+Coalescible Partition map 
+
+Partition 0, base 0 (_6 - 6 7 50 )
+Partition 2, base 1 (pdp_32(D) - 32 )
+
+
+Partition map 
+
+Partition 0 (_6 - 6 )
+Partition 1 (_7 - 7 )
+Partition 2 (pdp_32(D) - 32 )
+Partition 3 (cstore_50 - 50 )
+
+
+Conflict graph:
+
+After sorting:
+Sorted Coalesce list:
+(949, 0) _6 <-> cstore_50
+(949, 0) _7 <-> cstore_50
+
+Partition map 
+
+Partition 0 (_6 - 6 )
+Partition 1 (_7 - 7 )
+Partition 2 (pdp_32(D) - 32 )
+Partition 3 (cstore_50 - 50 )
+
+Coalesce list: (6)_6 & (50)cstore_50 [map: 0, 3] : Success -> 0
+Coalesce list: (7)_7 & (50)_6 [map: 1, 0] : Success -> 0
+After Coalescing:
+
+Partition map 
+
+Partition 0 (dev.14_1 - 1 )
+Partition 1 (_2 - 2 )
+Partition 2 (nexttime.15_3 - 3 )
+Partition 3 (isInitialized.16_4 - 4 )
+Partition 4 (isStopped.17_5 - 5 )
+Partition 5 (_6 - 6 7 50 )
+Partition 6 (nsamples.20_8 - 8 )
+Partition 7 (_9 - 9 )
+Partition 8 (_10 - 10 )
+Partition 9 (_11 - 11 )
+Partition 10 (_12 - 12 )
+Partition 11 (_13 - 13 )
+Partition 12 (_14 - 14 )
+Partition 13 (_15 - 15 )
+Partition 14 (_16 - 16 )
+Partition 15 (_17 - 17 )
+Partition 16 (_18 - 18 )
+Partition 17 (mixerGain.27_19 - 19 )
+Partition 18 (_21 - 21 )
+Partition 19 (dev.29_23 - 23 )
+Partition 20 (iftmp.23_24 - 24 )
+Partition 21 (iftmp.24_25 - 25 )
+Partition 22 (iftmp.25_26 - 26 )
+Partition 23 (iftmp.26_27 - 27 )
+Partition 24 (pdp_32(D) - 32 )
+Partition 25 (vect__20.71_33 - 33 )
+Partition 26 (chan1_38 - 38 )
+Partition 27 (chan2_40 - 40 )
+Partition 28 (chan3_42 - 42 )
+Partition 29 (chan4_44 - 44 )
+Partition 30 (_48 - 48 )
+Partition 31 (_49 - 49 )
+
+
+Replacing Expressions
+isInitialized.16_4 replace with --> isInitialized.16_4 = isInitialized;
+
+isStopped.17_5 replace with --> isStopped.17_5 = isStopped;
+
+_9 replace with --> _9 = nsamples.20_8 + 1;
+
+_10 replace with --> _10 = pdp_32(D)->pf;
+
+_11 replace with --> _11 = _10 & 32;
+
+_12 replace with --> _12 = pdp_32(D)->pf;
+
+_13 replace with --> _13 = _12 & 16;
+
+_14 replace with --> _14 = pdp_32(D)->pf;
+
+_15 replace with --> _15 = _14 & 8;
+
+_16 replace with --> _16 = pdp_32(D)->pf;
+
+_17 replace with --> _17 = _16 & 4;
+
+_18 replace with --> _18 = chan1_38 + chan2_40;
+
+_21 replace with --> _21 = chan3_42 + chan4_44;
+
+dev.29_23 replace with --> dev.29_23 = dev;
+
+vect__20.71_33 replace with --> vect__20.71_33 = _48 * _49;
+
+_48 replace with --> _48 = {mixerGain.27_19, mixerGain.27_19};
+
+_49 replace with --> _49 = {_18, _21};
+
+
+void svc_audio (struct PDP1 * pdp)
+{
+  vector(2) float vect__20.71;
+  float buffer[2];
+  float chan4;
+  float chan3;
+  float chan2;
+  float chan1;
+  unsigned int dev.14_1;
+  long unsigned int _2;
+  long unsigned int nexttime.15_3;
+  int isInitialized.16_4;
+  int isStopped.17_5;
+  long unsigned int _6;
+  long unsigned int _7;
+  int nsamples.20_8;
+  int _9;
+  int _10;
+  int _11;
+  int _12;
+  int _13;
+  int _14;
+  int _15;
+  int _16;
+  int _17;
+  float _18;
+  float mixerGain.27_19;
+  float _21;
+  unsigned int dev.29_23;
+  float iftmp.23_24;
+  float iftmp.24_25;
+  float iftmp.25_26;
+  float iftmp.26_27;
+  vector(2) float _48;
+  vector(2) float _49;
+  long unsigned int cstore_50;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  # DEBUG BEGIN_STMT
+  # DEBUG BEGIN_STMT
+  # DEBUG BEGIN_STMT
+  dev.14_1 = dev;
+  if (dev.14_1 == 0)
+    goto <bb 21>; [34.00%]
+  else
+    goto <bb 3>; [66.00%]
+;;    succ:       21
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  _2 = pdp_32(D)->simtime;
+  nexttime.15_3 = nexttime;
+  if (_2 <= nexttime.15_3)
+    goto <bb 21>; [34.00%]
+  else
+    goto <bb 4>; [66.00%]
+;;    succ:       21
+;;                4
+
+;;   basic block 4, loop depth 0
+;;    pred:       3
+  isInitialized.16_4 = isInitialized;
+  if (isInitialized.16_4 == 0)
+    goto <bb 21>; [34.00%]
+  else
+    goto <bb 5>; [66.00%]
+;;    succ:       21
+;;                5
+
+;;   basic block 5, loop depth 0
+;;    pred:       4
+  isStopped.17_5 = isStopped;
+  if (isStopped.17_5 != 0)
+    goto <bb 21>; [34.00%]
+  else
+    goto <bb 6>; [66.00%]
+;;    succ:       21
+;;                6
+
+;;   basic block 6, loop depth 0
+;;    pred:       5
+  # DEBUG BEGIN_STMT
+  if (nexttime.15_3 == 0)
+    goto <bb 7>; [50.00%]
+  else
+    goto <bb 8>; [50.00%]
+;;    succ:       7
+;;                8
+
+;;   basic block 7, loop depth 0
+;;    pred:       6
+  # DEBUG BEGIN_STMT
+  _6 = _2 + 175008;
+  goto <bb 9>; [100.00%]
+;;    succ:       9
+
+;;   basic block 8, loop depth 0
+;;    pred:       6
+  # DEBUG BEGIN_STMT
+  _7 = nexttime.15_3 + 175008;
+;;    succ:       9
+
+;;   basic block 9, loop depth 0
+;;    pred:       7
+;;                8
+  # cstore_50 = PHI <_6(7), _7(8)>
+  nexttime = cstore_50;
+  # DEBUG BEGIN_STMT
+  nsamples.20_8 = nsamples;
+  if (nsamples.20_8 <= 63)
+    goto <bb 10>; [67.00%]
+  else
+    goto <bb 11>; [33.00%]
+;;    succ:       10
+;;                11
+
+;;   basic block 10, loop depth 0
+;;    pred:       9
+  # DEBUG BEGIN_STMT
+  _9 = nsamples.20_8 + 1;
+  nsamples = _9;
+  goto <bb 12>; [100.00%]
+;;    succ:       12
+
+;;   basic block 11, loop depth 0
+;;    pred:       9
+  # DEBUG BEGIN_STMT
+  SDL_PauseAudioDevice (dev.14_1, 0);
+;;    succ:       12
+
+;;   basic block 12, loop depth 0
+;;    pred:       10
+;;                11
+  # DEBUG BEGIN_STMT
+  _10 = pdp_32(D)->pf;
+  _11 = _10 & 32;
+  if (_11 != 0)
+    goto <bb 13>; [50.00%]
+  else
+    goto <bb 14>; [50.00%]
+;;    succ:       13
+;;                14
+
+;;   basic block 13, loop depth 0
+;;    pred:       12
+;;    succ:       14
+
+;;   basic block 14, loop depth 0
+;;    pred:       13
+;;                12
+  # iftmp.23_24 = PHI <1.0e+0(13), -1.0e+0(12)>
+  chan1_38 = lowPassFilter (&voice1, iftmp.23_24);
+  # DEBUG chan1 => chan1_38
+  # DEBUG BEGIN_STMT
+  _12 = pdp_32(D)->pf;
+  _13 = _12 & 16;
+  if (_13 != 0)
+    goto <bb 15>; [50.00%]
+  else
+    goto <bb 16>; [50.00%]
+;;    succ:       15
+;;                16
+
+;;   basic block 15, loop depth 0
+;;    pred:       14
+;;    succ:       16
+
+;;   basic block 16, loop depth 0
+;;    pred:       15
+;;                14
+  # iftmp.24_25 = PHI <1.0e+0(15), -1.0e+0(14)>
+  chan2_40 = lowPassFilter (&voice2, iftmp.24_25);
+  # DEBUG chan2 => chan2_40
+  # DEBUG BEGIN_STMT
+  _14 = pdp_32(D)->pf;
+  _15 = _14 & 8;
+  if (_15 != 0)
+    goto <bb 17>; [50.00%]
+  else
+    goto <bb 18>; [50.00%]
+;;    succ:       17
+;;                18
+
+;;   basic block 17, loop depth 0
+;;    pred:       16
+;;    succ:       18
+
+;;   basic block 18, loop depth 0
+;;    pred:       17
+;;                16
+  # iftmp.25_26 = PHI <1.0e+0(17), -1.0e+0(16)>
+  chan3_42 = lowPassFilter (&voice3, iftmp.25_26);
+  # DEBUG chan3 => chan3_42
+  # DEBUG BEGIN_STMT
+  _16 = pdp_32(D)->pf;
+  _17 = _16 & 4;
+  if (_17 != 0)
+    goto <bb 19>; [50.00%]
+  else
+    goto <bb 20>; [50.00%]
+;;    succ:       19
+;;                20
+
+;;   basic block 19, loop depth 0
+;;    pred:       18
+;;    succ:       20
+
+;;   basic block 20, loop depth 0
+;;    pred:       19
+;;                18
+  # iftmp.26_27 = PHI <1.0e+0(19), -1.0e+0(18)>
+  chan4_44 = lowPassFilter (&voice4, iftmp.26_27);
+  # DEBUG chan4 => chan4_44
+  # DEBUG BEGIN_STMT
+  _18 = chan1_38 + chan2_40;
+  mixerGain.27_19 = mixerGain;
+  _48 = {mixerGain.27_19, mixerGain.27_19};
+  # DEBUG BEGIN_STMT
+  _21 = chan3_42 + chan4_44;
+  _49 = {_18, _21};
+  vect__20.71_33 = _48 * _49;
+  MEM <vector(2) float> [(float *)&buffer] = vect__20.71_33;
+  # DEBUG BEGIN_STMT
+  dev.29_23 = dev;
+  SDL_QueueAudio (dev.29_23, &buffer, 8);
+;;    succ:       21
+
+;;   basic block 21, loop depth 0
+;;    pred:       20
+;;                3
+;;                2
+;;                5
+;;                4
+  buffer ={v} {CLOBBER(eol)};
+  return;
+;;    succ:       EXIT
+
+}
+
+
+Partition 0: size 8 align 8
+	buffer
+Inserting a value copy on edge BB13->BB14 : PART.20 = 1.0e+0
+Inserting a value copy on edge BB12->BB14 : PART.20 = -1.0e+0
+Inserting a value copy on edge BB15->BB16 : PART.21 = 1.0e+0
+Inserting a value copy on edge BB14->BB16 : PART.21 = -1.0e+0
+Inserting a value copy on edge BB17->BB18 : PART.22 = 1.0e+0
+Inserting a value copy on edge BB16->BB18 : PART.22 = -1.0e+0
+Inserting a value copy on edge BB19->BB20 : PART.23 = 1.0e+0
+Inserting a value copy on edge BB18->BB20 : PART.23 = -1.0e+0
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 16 15 0 (debug_marker) "audio.c":124:1 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 17 16 0 (debug_marker) "audio.c":125:1 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 18 17 0 (debug_marker) "audio.c":127:2 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 19 18 0 (debug_marker) "audio.c":129:2 -1
+     (nil))
+;; dev.14_1 = dev;
+
+(insn 20 19 0 (set (reg:SI 82 [ dev.14_1 ])
+        (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])) "audio.c":129:11 -1
+     (nil))
+
+;; if (dev.14_1 == 0)
+
+(insn 21 20 22 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 82 [ dev.14_1 ])
+            (const_int 0 [0]))) "audio.c":129:4 -1
+     (nil))
+
+(jump_insn 22 21 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":129:4 -1
+     (int_list:REG_BR_PROB 365072228 (nil)))
+
+;; Generating RTL for gimple basic block 3
+
+;; _2 = pdp_32(D)->simtime;
+
+(insn 24 23 0 (set (reg:DI 83 [ _2 ])
+        (mem:DI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                (const_int 262360 [0x400d8])) [7 pdp_32(D)->simtime+0 S8 A64])) "audio.c":129:36 discrim 1 -1
+     (nil))
+
+;; nexttime.15_3 = nexttime;
+
+(insn 25 24 0 (set (reg:DI 84 [ nexttime.15_3 ])
+        (mem/c:DI (symbol_ref:DI ("nexttime") [flags 0x2]  <var_decl 0x7e6482c4ee10 nexttime>) [7 nexttime+0 S8 A64])) "audio.c":129:30 discrim 1 -1
+     (nil))
+
+;; if (_2 <= nexttime.15_3)
+
+(insn 26 25 27 (set (reg:CC 17 flags)
+        (compare:CC (reg:DI 84 [ nexttime.15_3 ])
+            (reg:DI 83 [ _2 ]))) "audio.c":129:17 discrim 1 -1
+     (nil))
+
+(jump_insn 27 26 0 (set (pc)
+        (if_then_else (geu (reg:CC 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":129:17 discrim 1 -1
+     (int_list:REG_BR_PROB 365072228 (nil)))
+
+;; Generating RTL for gimple basic block 4
+
+;; if (isInitialized.16_4 == 0)
+
+(insn 29 28 30 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":129:47 discrim 2 -1
+     (nil))
+
+(jump_insn 30 29 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":129:47 discrim 2 -1
+     (int_list:REG_BR_PROB 365072228 (nil)))
+
+;; Generating RTL for gimple basic block 5
+
+;; if (isStopped.17_5 != 0)
+
+(insn 32 31 33 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":129:65 discrim 3 -1
+     (nil))
+
+(jump_insn 33 32 0 (set (pc)
+        (if_then_else (ne (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":129:65 discrim 3 -1
+     (int_list:REG_BR_PROB 365072228 (nil)))
+
+;; Generating RTL for gimple basic block 6
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 35 34 0 (debug_marker) "audio.c":132:2 -1
+     (nil))
+;; if (nexttime.15_3 == 0)
+
+(insn 36 35 37 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:DI 84 [ nexttime.15_3 ])
+            (const_int 0 [0]))) "audio.c":132:4 -1
+     (nil))
+
+(jump_insn 37 36 0 (set (pc)
+        (if_then_else (ne (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":132:4 -1
+     (int_list:REG_BR_PROB 536870916 (nil)))
+
+;; Generating RTL for gimple basic block 7
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 39 38 0 (debug_marker) "audio.c":133:3 -1
+     (nil))
+;; _6 = _2 + 175008;
+
+(insn 40 39 0 (parallel [
+            (set (reg:DI 87 [ _6 ])
+                (plus:DI (reg:DI 83 [ _2 ])
+                    (const_int 175008 [0x2aba0])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":133:27 -1
+     (nil))
+
+;; Generating RTL for gimple basic block 8
+
+;; 
+
+(code_label 43 42 44 15 (nil) [0 uses])
+
+(note 44 43 0 NOTE_INSN_BASIC_BLOCK)
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 45 44 0 (debug_marker) "audio.c":135:3 -1
+     (nil))
+;; _7 = nexttime.15_3 + 175008;
+
+(insn 46 45 0 (parallel [
+            (set (reg:DI 87 [ _6 ])
+                (plus:DI (reg:DI 84 [ nexttime.15_3 ])
+                    (const_int 175008 [0x2aba0])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":135:12 -1
+     (nil))
+
+;; Generating RTL for gimple basic block 9
+
+;; 
+
+(code_label 47 46 48 16 (nil) [0 uses])
+
+(note 48 47 0 NOTE_INSN_BASIC_BLOCK)
+
+;; nexttime = cstore_50;
+
+(insn 49 48 0 (set (mem/c:DI (symbol_ref:DI ("nexttime") [flags 0x2]  <var_decl 0x7e6482c4ee10 nexttime>) [7 nexttime+0 S8 A64])
+        (reg:DI 87 [ _6 ])) -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 50 49 0 (debug_marker) "audio.c":138:2 -1
+     (nil))
+;; nsamples.20_8 = nsamples;
+
+(insn 51 50 0 (set (reg:SI 88 [ nsamples.20_8 ])
+        (mem/c:SI (symbol_ref:DI ("nsamples") [flags 0x2]  <var_decl 0x7e6482c4ed80 nsamples>) [1 nsamples+0 S4 A32])) "audio.c":138:14 -1
+     (nil))
+
+;; if (nsamples.20_8 <= 63)
+
+(insn 54 51 55 (set (reg:CCGC 17 flags)
+        (compare:CCGC (reg:SI 88 [ nsamples.20_8 ])
+            (const_int 63 [0x3f]))) "audio.c":138:4 -1
+     (nil))
+
+(jump_insn 55 54 0 (set (pc)
+        (if_then_else (gt (reg:CCGC 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":138:4 -1
+     (int_list:REG_BR_PROB 354334804 (nil)))
+
+;; Generating RTL for gimple basic block 10
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 57 56 0 (debug_marker) "audio.c":139:3 -1
+     (nil))
+;; nsamples = _9;
+
+(insn 58 57 59 (parallel [
+            (set (reg:SI 115)
+                (plus:SI (reg:SI 88 [ nsamples.20_8 ])
+                    (const_int 1 [0x1])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":139:11 -1
+     (nil))
+
+(insn 59 58 0 (set (mem/c:SI (symbol_ref:DI ("nsamples") [flags 0x2]  <var_decl 0x7e6482c4ed80 nsamples>) [1 nsamples+0 S4 A32])
+        (reg:SI 115)) "audio.c":139:11 -1
+     (nil))
+
+;; Generating RTL for gimple basic block 11
+
+;; 
+
+(code_label 62 61 63 17 (nil) [0 uses])
+
+(note 63 62 0 NOTE_INSN_BASIC_BLOCK)
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 64 63 0 (debug_marker) "audio.c":144:9 -1
+     (nil))
+;; SDL_PauseAudioDevice (dev.14_1, 0);
+
+(insn 65 64 66 (set (reg:SI 4 si)
+        (const_int 0 [0])) "audio.c":144:9 -1
+     (nil))
+
+(insn 66 65 67 (set (reg:SI 5 di)
+        (reg:SI 82 [ dev.14_1 ])) "audio.c":144:9 -1
+     (nil))
+
+(call_insn 67 66 0 (call (mem:QI (symbol_ref:DI ("SDL_PauseAudioDevice") [flags 0x41]  <function_decl 0x7e648795fd00 SDL_PauseAudioDevice>) [0 SDL_PauseAudioDevice S1 A8])
+        (const_int 0 [0])) "audio.c":144:9 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_PauseAudioDevice") [flags 0x41]  <function_decl 0x7e648795fd00 SDL_PauseAudioDevice>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (expr_list:SI (use (reg:SI 4 si))
+            (nil))))
+
+;; Generating RTL for gimple basic block 12
+
+;; 
+
+(code_label 68 67 69 18 (nil) [0 uses])
+
+(note 69 68 0 NOTE_INSN_BASIC_BLOCK)
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 70 69 0 (debug_marker) "audio.c":148:5 -1
+     (nil))
+;; if (_11 != 0)
+
+(insn 71 70 72 (set (reg:SI 117)
+        (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])) "audio.c":148:44 -1
+     (nil))
+
+(insn 72 71 73 (parallel [
+            (set (reg:SI 116)
+                (and:SI (reg:SI 117)
+                    (const_int 32 [0x20])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":148:44 -1
+     (expr_list:REG_EQUAL (and:SI (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                    (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])
+            (const_int 32 [0x20]))
+        (nil)))
+
+(insn 73 72 74 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 116)
+            (const_int 0 [0]))) "audio.c":148:13 -1
+     (nil))
+
+(jump_insn 74 73 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":148:13 -1
+     (int_list:REG_BR_PROB 536870916 (nil)))
+
+;; Generating RTL for gimple basic block 13
+
+;; Generating RTL for gimple basic block 14
+
+;; 
+
+(code_label 76 75 77 19 (nil) [0 uses])
+
+(note 77 76 0 NOTE_INSN_BASIC_BLOCK)
+
+;; chan1_38 = lowPassFilter (&voice1, iftmp.23_24);
+
+(insn 78 77 79 (set (reg:SF 20 xmm0)
+        (reg:SF 102 [ iftmp.23_24 ])) "audio.c":148:13 discrim 4 -1
+     (nil))
+
+(insn 79 78 80 (set (reg:DI 118)
+        (symbol_ref:DI ("voice1") [flags 0x2]  <var_decl 0x7e6482db4240 voice1>)) "audio.c":148:13 discrim 4 -1
+     (nil))
+
+(insn 80 79 81 (set (reg:DI 5 di)
+        (reg:DI 118)) "audio.c":148:13 discrim 4 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice1") [flags 0x2]  <var_decl 0x7e6482db4240 voice1>)
+        (nil)))
+
+(call_insn 81 80 82 (set (reg:SF 20 xmm0)
+        (call (mem:QI (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>) [0 lowPassFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":148:13 discrim 4 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (nil))))
+
+(insn 82 81 0 (set (reg/v:SF 107 [ chan1 ])
+        (reg:SF 20 xmm0)) "audio.c":148:13 discrim 4 -1
+     (nil))
+
+;; # DEBUG chan1 => chan1_38
+
+(debug_insn 83 82 0 (var_location:SF chan1 (const_int 0 [0])) "audio.c":148:13 discrim 4 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 84 83 0 (debug_marker) "audio.c":149:5 -1
+     (nil))
+;; if (_13 != 0)
+
+(insn 85 84 86 (set (reg:SI 120)
+        (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])) "audio.c":149:44 -1
+     (nil))
+
+(insn 86 85 87 (parallel [
+            (set (reg:SI 119)
+                (and:SI (reg:SI 120)
+                    (const_int 16 [0x10])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":149:44 -1
+     (expr_list:REG_EQUAL (and:SI (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                    (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])
+            (const_int 16 [0x10]))
+        (nil)))
+
+(insn 87 86 88 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 119)
+            (const_int 0 [0]))) "audio.c":149:13 -1
+     (nil))
+
+(jump_insn 88 87 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":149:13 -1
+     (int_list:REG_BR_PROB 536870916 (nil)))
+
+;; Generating RTL for gimple basic block 15
+
+;; Generating RTL for gimple basic block 16
+
+;; 
+
+(code_label 90 89 91 20 (nil) [0 uses])
+
+(note 91 90 0 NOTE_INSN_BASIC_BLOCK)
+
+;; chan2_40 = lowPassFilter (&voice2, iftmp.24_25);
+
+(insn 92 91 93 (set (reg:SF 20 xmm0)
+        (reg:SF 103 [ iftmp.24_25 ])) "audio.c":149:13 discrim 4 -1
+     (nil))
+
+(insn 93 92 94 (set (reg:DI 121)
+        (symbol_ref:DI ("voice2") [flags 0x2]  <var_decl 0x7e6482db42d0 voice2>)) "audio.c":149:13 discrim 4 -1
+     (nil))
+
+(insn 94 93 95 (set (reg:DI 5 di)
+        (reg:DI 121)) "audio.c":149:13 discrim 4 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice2") [flags 0x2]  <var_decl 0x7e6482db42d0 voice2>)
+        (nil)))
+
+(call_insn 95 94 96 (set (reg:SF 20 xmm0)
+        (call (mem:QI (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>) [0 lowPassFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":149:13 discrim 4 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (nil))))
+
+(insn 96 95 0 (set (reg/v:SF 108 [ chan2 ])
+        (reg:SF 20 xmm0)) "audio.c":149:13 discrim 4 -1
+     (nil))
+
+;; # DEBUG chan2 => chan2_40
+
+(debug_insn 97 96 0 (var_location:SF chan2 (const_int 0 [0])) "audio.c":149:13 discrim 4 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 98 97 0 (debug_marker) "audio.c":150:5 -1
+     (nil))
+;; if (_15 != 0)
+
+(insn 99 98 100 (set (reg:SI 123)
+        (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])) "audio.c":150:44 -1
+     (nil))
+
+(insn 100 99 101 (parallel [
+            (set (reg:SI 122)
+                (and:SI (reg:SI 123)
+                    (const_int 8 [0x8])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":150:44 -1
+     (expr_list:REG_EQUAL (and:SI (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                    (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])
+            (const_int 8 [0x8]))
+        (nil)))
+
+(insn 101 100 102 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 122)
+            (const_int 0 [0]))) "audio.c":150:13 -1
+     (nil))
+
+(jump_insn 102 101 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":150:13 -1
+     (int_list:REG_BR_PROB 536870916 (nil)))
+
+;; Generating RTL for gimple basic block 17
+
+;; Generating RTL for gimple basic block 18
+
+;; 
+
+(code_label 104 103 105 21 (nil) [0 uses])
+
+(note 105 104 0 NOTE_INSN_BASIC_BLOCK)
+
+;; chan3_42 = lowPassFilter (&voice3, iftmp.25_26);
+
+(insn 106 105 107 (set (reg:SF 20 xmm0)
+        (reg:SF 104 [ iftmp.25_26 ])) "audio.c":150:13 discrim 4 -1
+     (nil))
+
+(insn 107 106 108 (set (reg:DI 124)
+        (symbol_ref:DI ("voice3") [flags 0x2]  <var_decl 0x7e6482db4360 voice3>)) "audio.c":150:13 discrim 4 -1
+     (nil))
+
+(insn 108 107 109 (set (reg:DI 5 di)
+        (reg:DI 124)) "audio.c":150:13 discrim 4 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice3") [flags 0x2]  <var_decl 0x7e6482db4360 voice3>)
+        (nil)))
+
+(call_insn 109 108 110 (set (reg:SF 20 xmm0)
+        (call (mem:QI (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>) [0 lowPassFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":150:13 discrim 4 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (nil))))
+
+(insn 110 109 0 (set (reg/v:SF 109 [ chan3 ])
+        (reg:SF 20 xmm0)) "audio.c":150:13 discrim 4 -1
+     (nil))
+
+;; # DEBUG chan3 => chan3_42
+
+(debug_insn 111 110 0 (var_location:SF chan3 (const_int 0 [0])) "audio.c":150:13 discrim 4 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 112 111 0 (debug_marker) "audio.c":151:5 -1
+     (nil))
+;; if (_17 != 0)
+
+(insn 113 112 114 (set (reg:SI 126)
+        (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])) "audio.c":151:44 -1
+     (nil))
+
+(insn 114 113 115 (parallel [
+            (set (reg:SI 125)
+                (and:SI (reg:SI 126)
+                    (const_int 4 [0x4])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":151:44 -1
+     (expr_list:REG_EQUAL (and:SI (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                    (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])
+            (const_int 4 [0x4]))
+        (nil)))
+
+(insn 115 114 116 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 125)
+            (const_int 0 [0]))) "audio.c":151:13 -1
+     (nil))
+
+(jump_insn 116 115 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":151:13 -1
+     (int_list:REG_BR_PROB 536870916 (nil)))
+
+;; Generating RTL for gimple basic block 19
+
+;; Generating RTL for gimple basic block 20
+Swap operands in stmt:
+vect__20.71_33 = _48 * _49;
+Cost left opnd=0, right opnd=2
+
+;; 
+
+(code_label 118 117 119 22 (nil) [0 uses])
+
+(note 119 118 0 NOTE_INSN_BASIC_BLOCK)
+
+;; chan4_44 = lowPassFilter (&voice4, iftmp.26_27);
+
+(insn 120 119 121 (set (reg:SF 20 xmm0)
+        (reg:SF 105 [ iftmp.26_27 ])) "audio.c":151:13 discrim 4 -1
+     (nil))
+
+(insn 121 120 122 (set (reg:DI 127)
+        (symbol_ref:DI ("voice4") [flags 0x2]  <var_decl 0x7e6482db43f0 voice4>)) "audio.c":151:13 discrim 4 -1
+     (nil))
+
+(insn 122 121 123 (set (reg:DI 5 di)
+        (reg:DI 127)) "audio.c":151:13 discrim 4 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice4") [flags 0x2]  <var_decl 0x7e6482db43f0 voice4>)
+        (nil)))
+
+(call_insn 123 122 124 (set (reg:SF 20 xmm0)
+        (call (mem:QI (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>) [0 lowPassFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":151:13 discrim 4 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (nil))))
+
+(insn 124 123 0 (set (reg/v:SF 110 [ chan4 ])
+        (reg:SF 20 xmm0)) "audio.c":151:13 discrim 4 -1
+     (nil))
+
+;; # DEBUG chan4 => chan4_44
+
+(debug_insn 125 124 0 (var_location:SF chan4 (const_int 0 [0])) "audio.c":151:13 discrim 4 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 126 125 0 (debug_marker) "audio.c":153:5 -1
+     (nil))
+;; mixerGain.27_19 = mixerGain;
+
+(insn 127 126 0 (set (reg:SF 99 [ mixerGain.27_19 ])
+        (mem/c:SF (symbol_ref:DI ("mixerGain") [flags 0x2]  <var_decl 0x7e6482db4120 mixerGain>) [6 mixerGain+0 S4 A32])) "audio.c":153:17 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 128 127 0 (debug_marker) "audio.c":154:5 -1
+     (nil))
+;; MEM <vector(2) float> [(float *)&buffer] = vect__20.71_33;
+
+(insn 129 128 130 (set (reg:SF 129)
+        (plus:SF (reg/v:SF 107 [ chan1 ])
+            (reg/v:SF 108 [ chan2 ]))) "audio.c":153:17 -1
+     (nil))
+
+(insn 130 129 131 (set (reg:SF 130)
+        (plus:SF (reg/v:SF 109 [ chan3 ])
+            (reg/v:SF 110 [ chan4 ]))) "audio.c":154:17 -1
+     (nil))
+
+(insn 131 130 132 (set (reg:V2SF 128)
+        (vec_concat:V2SF (reg:SF 129)
+            (reg:SF 130))) "audio.c":153:17 -1
+     (nil))
+
+(insn 132 131 133 (set (reg:V2SF 131)
+        (vec_duplicate:V2SF (reg:SF 99 [ mixerGain.27_19 ]))) "audio.c":153:17 1588 {*vec_dupv2sf}
+     (nil))
+
+(insn 133 132 134 (set (reg:V2SF 132 [ vect__20.71 ])
+        (mult:V2SF (reg:V2SF 128)
+            (reg:V2SF 131))) "audio.c":153:17 -1
+     (nil))
+
+(insn 134 133 0 (set (mem/c:V2SF (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                (const_int -16 [0xfffffffffffffff0])) [6 MEM <vector(2) float> [(float *)&buffer]+0 S8 A64])
+        (reg:V2SF 132 [ vect__20.71 ])) "audio.c":153:15 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 135 134 0 (debug_marker) "audio.c":156:2 -1
+     (nil))
+;; SDL_QueueAudio (dev.29_23, &buffer, 8);
+
+(insn 136 135 137 (parallel [
+            (set (reg:DI 133)
+                (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                    (const_int -16 [0xfffffffffffffff0])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":156:2 -1
+     (nil))
+
+(insn 137 136 138 (set (reg:SI 134)
+        (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])) "audio.c":156:2 -1
+     (nil))
+
+(insn 138 137 139 (set (reg:SI 1 dx)
+        (const_int 8 [0x8])) "audio.c":156:2 -1
+     (nil))
+
+(insn 139 138 140 (set (reg:DI 4 si)
+        (reg:DI 133)) "audio.c":156:2 -1
+     (nil))
+
+(insn 140 139 141 (set (reg:SI 5 di)
+        (reg:SI 134)) "audio.c":156:2 -1
+     (nil))
+
+(call_insn 141 140 0 (set (reg:SI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("SDL_QueueAudio") [flags 0x41]  <function_decl 0x7e6487968b00 SDL_QueueAudio>) [0 SDL_QueueAudio S1 A8])
+            (const_int 0 [0]))) "audio.c":156:2 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_QueueAudio") [flags 0x41]  <function_decl 0x7e6487968b00 SDL_QueueAudio>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (expr_list:DI (use (reg:DI 4 si))
+            (expr_list:SI (use (reg:SI 1 dx))
+                (nil)))))
+
+;; Generating RTL for gimple basic block 21
+
+;; 
+
+(code_label 142 141 143 14 (nil) [0 uses])
+
+(note 143 142 0 NOTE_INSN_BASIC_BLOCK)
+
+;; buffer ={v} {CLOBBER(eol)};
+
+(nil)
+Edge 12->14 redirected to 24
+Edge 14->16 redirected to 25
+Edge 16->18 redirected to 26
+Edge 18->20 redirected to 27
+Predictions for insn 147 bb 23
+  first match heuristics: 99.96%  exec 1073741824 (estimated locally) hit 2147483640 (estimated locally) (200.0%)
+  combined heuristics: 99.96%  exec 1073741824 (estimated locally) hit 2147483640 (estimated locally) (200.0%)
+  noreturn call heuristics: 99.96%  exec 1073741824 (estimated locally) hit 2147483640 (estimated locally) (200.0%)
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Edge 2->26 redirected to 27
+Edge 4->26 redirected to 27
+Edge 5->26 redirected to 27
+Edge 6->26 redirected to 27
+Merging block 26 into block 25...
+Merged blocks 25 and 26.
+Merged 25 and 26 without moving.
+
+
+try_optimize_cfg iteration 2
+
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 14 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 4, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 14 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(insn 2 14 3 2 (set (reg/v/f:DI 113 [ pdp ])
+        (reg:DI 5 di [ pdp ])) "audio.c":123:1 -1
+     (nil))
+(note 3 2 4 2 NOTE_INSN_FUNCTION_BEG)
+(insn 4 3 5 2 (set (reg/f:DI 114)
+        (const_int 40 [0x28])) "audio.c":123:1 -1
+     (nil))
+(insn 5 4 16 2 (parallel [
+            (set (mem/v/f/c:DI (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                        (const_int -8 [0xfffffffffffffff8])) [5 D.45978+0 S8 A64])
+                (unspec:DI [
+                        (mem/v/f:DI (reg/f:DI 114) [7 MEM[(<address-space-1> long unsigned int *)40B]+0 S8 A64 AS1])
+                    ] UNSPEC_SP_SET))
+            (set (scratch:DI)
+                (const_int 0 [0]))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":123:1 -1
+     (nil))
+(debug_insn 16 5 17 2 (debug_marker) "audio.c":124:1 -1
+     (nil))
+(debug_insn 17 16 18 2 (debug_marker) "audio.c":125:1 -1
+     (nil))
+(debug_insn 18 17 19 2 (debug_marker) "audio.c":127:2 -1
+     (nil))
+(debug_insn 19 18 20 2 (debug_marker) "audio.c":129:2 -1
+     (nil))
+(insn 20 19 21 2 (set (reg:SI 82 [ dev.14_1 ])
+        (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])) "audio.c":129:11 -1
+     (nil))
+(insn 21 20 22 2 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 82 [ dev.14_1 ])
+            (const_int 0 [0]))) "audio.c":129:4 -1
+     (nil))
+(jump_insn 22 21 23 2 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 144)
+            (pc))) "audio.c":129:4 995 {*jcc}
+     (int_list:REG_BR_PROB 365072228 (nil))
+ -> 144)
+;;  succ:       27 [34.0% (guessed)]  count:365072224 (estimated locally)
+;;              4 [66.0% (guessed)]  count:708669600 (estimated locally) (FALLTHRU)
+
+;; basic block 4, loop depth 0, count 708669601 (estimated locally), maybe hot
+;;  prev block 2, next block 5, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       2 [66.0% (guessed)]  count:708669600 (estimated locally) (FALLTHRU)
+(note 23 22 24 4 [bb 4] NOTE_INSN_BASIC_BLOCK)
+(insn 24 23 25 4 (set (reg:DI 83 [ _2 ])
+        (mem:DI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                (const_int 262360 [0x400d8])) [7 pdp_32(D)->simtime+0 S8 A64])) "audio.c":129:36 discrim 1 -1
+     (nil))
+(insn 25 24 26 4 (set (reg:DI 84 [ nexttime.15_3 ])
+        (mem/c:DI (symbol_ref:DI ("nexttime") [flags 0x2]  <var_decl 0x7e6482c4ee10 nexttime>) [7 nexttime+0 S8 A64])) "audio.c":129:30 discrim 1 -1
+     (nil))
+(insn 26 25 27 4 (set (reg:CC 17 flags)
+        (compare:CC (reg:DI 84 [ nexttime.15_3 ])
+            (reg:DI 83 [ _2 ]))) "audio.c":129:17 discrim 1 -1
+     (nil))
+(jump_insn 27 26 28 4 (set (pc)
+        (if_then_else (geu (reg:CC 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 144)
+            (pc))) "audio.c":129:17 discrim 1 995 {*jcc}
+     (int_list:REG_BR_PROB 365072228 (nil))
+ -> 144)
+;;  succ:       27 [34.0% (guessed)]  count:240947667 (estimated locally)
+;;              5 [66.0% (guessed)]  count:467721934 (estimated locally) (FALLTHRU)
+
+;; basic block 5, loop depth 0, count 467721934 (estimated locally), maybe hot
+;;  prev block 4, next block 6, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       4 [66.0% (guessed)]  count:467721934 (estimated locally) (FALLTHRU)
+(note 28 27 29 5 [bb 5] NOTE_INSN_BASIC_BLOCK)
+(insn 29 28 30 5 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isInitialized") [flags 0x2]  <var_decl 0x7e6482c4ef30 isInitialized>) [1 isInitialized+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":129:47 discrim 2 -1
+     (nil))
+(jump_insn 30 29 31 5 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 144)
+            (pc))) "audio.c":129:47 discrim 2 995 {*jcc}
+     (int_list:REG_BR_PROB 365072228 (nil))
+ -> 144)
+;;  succ:       27 [34.0% (guessed)]  count:159025459 (estimated locally)
+;;              6 [66.0% (guessed)]  count:308696475 (estimated locally) (FALLTHRU)
+
+;; basic block 6, loop depth 0, count 308696475 (estimated locally), maybe hot
+;;  prev block 5, next block 7, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       5 [66.0% (guessed)]  count:308696475 (estimated locally) (FALLTHRU)
+(note 31 30 32 6 [bb 6] NOTE_INSN_BASIC_BLOCK)
+(insn 32 31 33 6 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem/c:SI (symbol_ref:DI ("isStopped") [flags 0x2]  <var_decl 0x7e6482c4eea0 isStopped>) [1 isStopped+0 S4 A32])
+            (const_int 0 [0]))) "audio.c":129:65 discrim 3 -1
+     (nil))
+(jump_insn 33 32 34 6 (set (pc)
+        (if_then_else (ne (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 144)
+            (pc))) "audio.c":129:65 discrim 3 995 {*jcc}
+     (int_list:REG_BR_PROB 365072228 (nil))
+ -> 144)
+;;  succ:       27 [34.0% (guessed)]  count:104956803 (estimated locally)
+;;              7 [66.0% (guessed)]  count:203739672 (estimated locally) (FALLTHRU)
+
+;; basic block 7, loop depth 0, count 203739672 (estimated locally), maybe hot
+;;  prev block 6, next block 8, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       6 [66.0% (guessed)]  count:203739672 (estimated locally) (FALLTHRU)
+(note 34 33 35 7 [bb 7] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 35 34 36 7 (debug_marker) "audio.c":132:2 -1
+     (nil))
+(insn 36 35 37 7 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:DI 84 [ nexttime.15_3 ])
+            (const_int 0 [0]))) "audio.c":132:4 -1
+     (nil))
+(jump_insn 37 36 38 7 (set (pc)
+        (if_then_else (ne (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 43)
+            (pc))) "audio.c":132:4 -1
+     (int_list:REG_BR_PROB 536870916 (nil))
+ -> 43)
+;;  succ:       8 [50.0% (guessed)]  count:101869836 (estimated locally) (FALLTHRU)
+;;              9 [50.0% (guessed)]  count:101869836 (estimated locally)
+
+;; basic block 8, loop depth 0, count 101869836 (estimated locally), maybe hot
+;;  prev block 7, next block 9, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       7 [50.0% (guessed)]  count:101869836 (estimated locally) (FALLTHRU)
+(note 38 37 39 8 [bb 8] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 39 38 40 8 (debug_marker) "audio.c":133:3 -1
+     (nil))
+(insn 40 39 41 8 (parallel [
+            (set (reg:DI 87 [ _6 ])
+                (plus:DI (reg:DI 83 [ _2 ])
+                    (const_int 175008 [0x2aba0])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":133:27 -1
+     (nil))
+(jump_insn 41 40 42 8 (set (pc)
+        (label_ref 47)) -1
+     (nil)
+ -> 47)
+;;  succ:       10 [always]  count:101869836 (estimated locally)
+
+(barrier 42 41 43)
+;; basic block 9, loop depth 0, count 101869836 (estimated locally), maybe hot
+;;  prev block 8, next block 10, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       7 [50.0% (guessed)]  count:101869836 (estimated locally)
+(code_label 43 42 44 9 15 (nil) [1 uses])
+(note 44 43 45 9 [bb 9] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 45 44 46 9 (debug_marker) "audio.c":135:3 -1
+     (nil))
+(insn 46 45 47 9 (parallel [
+            (set (reg:DI 87 [ _6 ])
+                (plus:DI (reg:DI 84 [ nexttime.15_3 ])
+                    (const_int 175008 [0x2aba0])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":135:12 -1
+     (nil))
+;;  succ:       10 [always]  count:101869836 (estimated locally) (FALLTHRU)
+
+;; basic block 10, loop depth 0, count 203739672 (estimated locally), maybe hot
+;;  prev block 9, next block 11, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       8 [always]  count:101869836 (estimated locally)
+;;              9 [always]  count:101869836 (estimated locally) (FALLTHRU)
+(code_label 47 46 48 10 16 (nil) [1 uses])
+(note 48 47 49 10 [bb 10] NOTE_INSN_BASIC_BLOCK)
+(insn 49 48 50 10 (set (mem/c:DI (symbol_ref:DI ("nexttime") [flags 0x2]  <var_decl 0x7e6482c4ee10 nexttime>) [7 nexttime+0 S8 A64])
+        (reg:DI 87 [ _6 ])) -1
+     (nil))
+(debug_insn 50 49 51 10 (debug_marker) "audio.c":138:2 -1
+     (nil))
+(insn 51 50 54 10 (set (reg:SI 88 [ nsamples.20_8 ])
+        (mem/c:SI (symbol_ref:DI ("nsamples") [flags 0x2]  <var_decl 0x7e6482c4ed80 nsamples>) [1 nsamples+0 S4 A32])) "audio.c":138:14 -1
+     (nil))
+(insn 54 51 55 10 (set (reg:CCGC 17 flags)
+        (compare:CCGC (reg:SI 88 [ nsamples.20_8 ])
+            (const_int 63 [0x3f]))) "audio.c":138:4 -1
+     (nil))
+(jump_insn 55 54 56 10 (set (pc)
+        (if_then_else (gt (reg:CCGC 17 flags)
+                (const_int 0 [0]))
+            (label_ref 62)
+            (pc))) "audio.c":138:4 -1
+     (int_list:REG_BR_PROB 354334804 (nil))
+ -> 62)
+;;  succ:       11 [67.0% (guessed)]  count:136505581 (estimated locally) (FALLTHRU)
+;;              12 [33.0% (guessed)]  count:67234091 (estimated locally)
+
+;; basic block 11, loop depth 0, count 136505581 (estimated locally), maybe hot
+;;  prev block 10, next block 12, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       10 [67.0% (guessed)]  count:136505581 (estimated locally) (FALLTHRU)
+(note 56 55 57 11 [bb 11] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 57 56 58 11 (debug_marker) "audio.c":139:3 -1
+     (nil))
+(insn 58 57 59 11 (parallel [
+            (set (reg:SI 115)
+                (plus:SI (reg:SI 88 [ nsamples.20_8 ])
+                    (const_int 1 [0x1])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":139:11 -1
+     (nil))
+(insn 59 58 60 11 (set (mem/c:SI (symbol_ref:DI ("nsamples") [flags 0x2]  <var_decl 0x7e6482c4ed80 nsamples>) [1 nsamples+0 S4 A32])
+        (reg:SI 115)) "audio.c":139:11 -1
+     (nil))
+(jump_insn 60 59 61 11 (set (pc)
+        (label_ref 68)) -1
+     (nil)
+ -> 68)
+;;  succ:       13 [always]  count:136505581 (estimated locally)
+
+(barrier 61 60 62)
+;; basic block 12, loop depth 0, count 67234091 (estimated locally), maybe hot
+;;  prev block 11, next block 13, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       10 [33.0% (guessed)]  count:67234091 (estimated locally)
+(code_label 62 61 63 12 17 (nil) [1 uses])
+(note 63 62 64 12 [bb 12] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 64 63 65 12 (debug_marker) "audio.c":144:9 -1
+     (nil))
+(insn 65 64 66 12 (set (reg:SI 4 si)
+        (const_int 0 [0])) "audio.c":144:9 -1
+     (nil))
+(insn 66 65 67 12 (set (reg:SI 5 di)
+        (reg:SI 82 [ dev.14_1 ])) "audio.c":144:9 -1
+     (nil))
+(call_insn 67 66 68 12 (call (mem:QI (symbol_ref:DI ("SDL_PauseAudioDevice") [flags 0x41]  <function_decl 0x7e648795fd00 SDL_PauseAudioDevice>) [0 SDL_PauseAudioDevice S1 A8])
+        (const_int 0 [0])) "audio.c":144:9 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_PauseAudioDevice") [flags 0x41]  <function_decl 0x7e648795fd00 SDL_PauseAudioDevice>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (expr_list:SI (use (reg:SI 4 si))
+            (nil))))
+;;  succ:       13 [always]  count:67234091 (estimated locally) (FALLTHRU)
+
+;; basic block 13, loop depth 0, count 203739672 (estimated locally), maybe hot
+;;  prev block 12, next block 14, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       11 [always]  count:136505581 (estimated locally)
+;;              12 [always]  count:67234091 (estimated locally) (FALLTHRU)
+(code_label 68 67 69 13 18 (nil) [1 uses])
+(note 69 68 70 13 [bb 13] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 70 69 71 13 (debug_marker) "audio.c":148:5 -1
+     (nil))
+(insn 71 70 72 13 (set (reg:SI 117)
+        (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])) "audio.c":148:44 -1
+     (nil))
+(insn 72 71 73 13 (parallel [
+            (set (reg:SI 116)
+                (and:SI (reg:SI 117)
+                    (const_int 32 [0x20])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":148:44 -1
+     (expr_list:REG_EQUAL (and:SI (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                    (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])
+            (const_int 32 [0x20]))
+        (nil)))
+(insn 73 72 74 13 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 116)
+            (const_int 0 [0]))) "audio.c":148:13 -1
+     (nil))
+(jump_insn 74 73 75 13 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 155)
+            (pc))) "audio.c":148:13 995 {*jcc}
+     (int_list:REG_BR_PROB 536870916 (nil))
+ -> 155)
+;;  succ:       14 [50.0% (guessed)]  count:101869836 (estimated locally) (FALLTHRU)
+;;              15 [50.0% (guessed)]  count:101869836 (estimated locally)
+
+;; basic block 14, loop depth 0, count 101869836 (estimated locally), maybe hot
+;;  prev block 13, next block 15, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       13 [50.0% (guessed)]  count:101869836 (estimated locally) (FALLTHRU)
+(note 75 74 6 14 [bb 14] NOTE_INSN_BASIC_BLOCK)
+(insn 6 75 152 14 (set (reg:SF 102 [ iftmp.23_24 ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC2") [flags 0x2]) [0  S4 A32])) "audio.c":148:13 discrim 1 -1
+     (expr_list:REG_EQUAL (const_double:SF 1.0e+0 [0x0.8p+1])
+        (nil)))
+(jump_insn 152 6 153 14 (set (pc)
+        (label_ref 76)) -1
+     (nil)
+ -> 76)
+;;  succ:       16 [always]  count:101869836 (estimated locally)
+
+(barrier 153 152 155)
+;; basic block 15, loop depth 0, count 101869836 (estimated locally), maybe hot
+;;  prev block 14, next block 16, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       13 [50.0% (guessed)]  count:101869836 (estimated locally)
+(code_label 155 153 154 15 24 (nil) [1 uses])
+(note 154 155 7 15 [bb 15] NOTE_INSN_BASIC_BLOCK)
+(insn 7 154 76 15 (set (reg:SF 102 [ iftmp.23_24 ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "audio.c":148:13 discrim 2 -1
+     (expr_list:REG_EQUAL (const_double:SF -1.0e+0 [-0x0.8p+1])
+        (nil)))
+;;  succ:       16 [always]  count:101869836 (estimated locally) (FALLTHRU)
+
+;; basic block 16, loop depth 0, count 203739672 (estimated locally), maybe hot
+;;  prev block 15, next block 17, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       15 [always]  count:101869836 (estimated locally) (FALLTHRU)
+;;              14 [always]  count:101869836 (estimated locally)
+(code_label 76 7 77 16 19 (nil) [1 uses])
+(note 77 76 78 16 [bb 16] NOTE_INSN_BASIC_BLOCK)
+(insn 78 77 79 16 (set (reg:SF 20 xmm0)
+        (reg:SF 102 [ iftmp.23_24 ])) "audio.c":148:13 discrim 4 -1
+     (nil))
+(insn 79 78 80 16 (set (reg:DI 118)
+        (symbol_ref:DI ("voice1") [flags 0x2]  <var_decl 0x7e6482db4240 voice1>)) "audio.c":148:13 discrim 4 -1
+     (nil))
+(insn 80 79 81 16 (set (reg:DI 5 di)
+        (reg:DI 118)) "audio.c":148:13 discrim 4 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice1") [flags 0x2]  <var_decl 0x7e6482db4240 voice1>)
+        (nil)))
+(call_insn 81 80 82 16 (set (reg:SF 20 xmm0)
+        (call (mem:QI (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>) [0 lowPassFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":148:13 discrim 4 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (nil))))
+(insn 82 81 83 16 (set (reg/v:SF 107 [ chan1 ])
+        (reg:SF 20 xmm0)) "audio.c":148:13 discrim 4 -1
+     (nil))
+(debug_insn 83 82 84 16 (var_location:SF chan1 (reg/v:SF 107 [ chan1 ])) "audio.c":148:13 discrim 4 -1
+     (nil))
+(debug_insn 84 83 85 16 (debug_marker) "audio.c":149:5 -1
+     (nil))
+(insn 85 84 86 16 (set (reg:SI 120)
+        (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])) "audio.c":149:44 -1
+     (nil))
+(insn 86 85 87 16 (parallel [
+            (set (reg:SI 119)
+                (and:SI (reg:SI 120)
+                    (const_int 16 [0x10])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":149:44 -1
+     (expr_list:REG_EQUAL (and:SI (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                    (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])
+            (const_int 16 [0x10]))
+        (nil)))
+(insn 87 86 88 16 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 119)
+            (const_int 0 [0]))) "audio.c":149:13 -1
+     (nil))
+(jump_insn 88 87 89 16 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 159)
+            (pc))) "audio.c":149:13 995 {*jcc}
+     (int_list:REG_BR_PROB 536870916 (nil))
+ -> 159)
+;;  succ:       17 [50.0% (guessed)]  count:101869836 (estimated locally) (FALLTHRU)
+;;              18 [50.0% (guessed)]  count:101869836 (estimated locally)
+
+;; basic block 17, loop depth 0, count 101869836 (estimated locally), maybe hot
+;;  prev block 16, next block 18, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       16 [50.0% (guessed)]  count:101869836 (estimated locally) (FALLTHRU)
+(note 89 88 8 17 [bb 17] NOTE_INSN_BASIC_BLOCK)
+(insn 8 89 156 17 (set (reg:SF 103 [ iftmp.24_25 ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC2") [flags 0x2]) [0  S4 A32])) "audio.c":149:13 discrim 1 -1
+     (expr_list:REG_EQUAL (const_double:SF 1.0e+0 [0x0.8p+1])
+        (nil)))
+(jump_insn 156 8 157 17 (set (pc)
+        (label_ref 90)) -1
+     (nil)
+ -> 90)
+;;  succ:       19 [always]  count:101869836 (estimated locally)
+
+(barrier 157 156 159)
+;; basic block 18, loop depth 0, count 101869836 (estimated locally), maybe hot
+;;  prev block 17, next block 19, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       16 [50.0% (guessed)]  count:101869836 (estimated locally)
+(code_label 159 157 158 18 25 (nil) [1 uses])
+(note 158 159 9 18 [bb 18] NOTE_INSN_BASIC_BLOCK)
+(insn 9 158 90 18 (set (reg:SF 103 [ iftmp.24_25 ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "audio.c":149:13 discrim 2 -1
+     (expr_list:REG_EQUAL (const_double:SF -1.0e+0 [-0x0.8p+1])
+        (nil)))
+;;  succ:       19 [always]  count:101869836 (estimated locally) (FALLTHRU)
+
+;; basic block 19, loop depth 0, count 203739672 (estimated locally), maybe hot
+;;  prev block 18, next block 20, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       18 [always]  count:101869836 (estimated locally) (FALLTHRU)
+;;              17 [always]  count:101869836 (estimated locally)
+(code_label 90 9 91 19 20 (nil) [1 uses])
+(note 91 90 92 19 [bb 19] NOTE_INSN_BASIC_BLOCK)
+(insn 92 91 93 19 (set (reg:SF 20 xmm0)
+        (reg:SF 103 [ iftmp.24_25 ])) "audio.c":149:13 discrim 4 -1
+     (nil))
+(insn 93 92 94 19 (set (reg:DI 121)
+        (symbol_ref:DI ("voice2") [flags 0x2]  <var_decl 0x7e6482db42d0 voice2>)) "audio.c":149:13 discrim 4 -1
+     (nil))
+(insn 94 93 95 19 (set (reg:DI 5 di)
+        (reg:DI 121)) "audio.c":149:13 discrim 4 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice2") [flags 0x2]  <var_decl 0x7e6482db42d0 voice2>)
+        (nil)))
+(call_insn 95 94 96 19 (set (reg:SF 20 xmm0)
+        (call (mem:QI (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>) [0 lowPassFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":149:13 discrim 4 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (nil))))
+(insn 96 95 97 19 (set (reg/v:SF 108 [ chan2 ])
+        (reg:SF 20 xmm0)) "audio.c":149:13 discrim 4 -1
+     (nil))
+(debug_insn 97 96 98 19 (var_location:SF chan2 (reg/v:SF 108 [ chan2 ])) "audio.c":149:13 discrim 4 -1
+     (nil))
+(debug_insn 98 97 99 19 (debug_marker) "audio.c":150:5 -1
+     (nil))
+(insn 99 98 100 19 (set (reg:SI 123)
+        (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])) "audio.c":150:44 -1
+     (nil))
+(insn 100 99 101 19 (parallel [
+            (set (reg:SI 122)
+                (and:SI (reg:SI 123)
+                    (const_int 8 [0x8])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":150:44 -1
+     (expr_list:REG_EQUAL (and:SI (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                    (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])
+            (const_int 8 [0x8]))
+        (nil)))
+(insn 101 100 102 19 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 122)
+            (const_int 0 [0]))) "audio.c":150:13 -1
+     (nil))
+(jump_insn 102 101 103 19 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 163)
+            (pc))) "audio.c":150:13 995 {*jcc}
+     (int_list:REG_BR_PROB 536870916 (nil))
+ -> 163)
+;;  succ:       20 [50.0% (guessed)]  count:101869836 (estimated locally) (FALLTHRU)
+;;              21 [50.0% (guessed)]  count:101869836 (estimated locally)
+
+;; basic block 20, loop depth 0, count 101869836 (estimated locally), maybe hot
+;;  prev block 19, next block 21, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       19 [50.0% (guessed)]  count:101869836 (estimated locally) (FALLTHRU)
+(note 103 102 10 20 [bb 20] NOTE_INSN_BASIC_BLOCK)
+(insn 10 103 160 20 (set (reg:SF 104 [ iftmp.25_26 ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC2") [flags 0x2]) [0  S4 A32])) "audio.c":150:13 discrim 1 -1
+     (expr_list:REG_EQUAL (const_double:SF 1.0e+0 [0x0.8p+1])
+        (nil)))
+(jump_insn 160 10 161 20 (set (pc)
+        (label_ref 104)) -1
+     (nil)
+ -> 104)
+;;  succ:       22 [always]  count:101869836 (estimated locally)
+
+(barrier 161 160 163)
+;; basic block 21, loop depth 0, count 101869836 (estimated locally), maybe hot
+;;  prev block 20, next block 22, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       19 [50.0% (guessed)]  count:101869836 (estimated locally)
+(code_label 163 161 162 21 26 (nil) [1 uses])
+(note 162 163 11 21 [bb 21] NOTE_INSN_BASIC_BLOCK)
+(insn 11 162 104 21 (set (reg:SF 104 [ iftmp.25_26 ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "audio.c":150:13 discrim 2 -1
+     (expr_list:REG_EQUAL (const_double:SF -1.0e+0 [-0x0.8p+1])
+        (nil)))
+;;  succ:       22 [always]  count:101869836 (estimated locally) (FALLTHRU)
+
+;; basic block 22, loop depth 0, count 203739672 (estimated locally), maybe hot
+;;  prev block 21, next block 23, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       21 [always]  count:101869836 (estimated locally) (FALLTHRU)
+;;              20 [always]  count:101869836 (estimated locally)
+(code_label 104 11 105 22 21 (nil) [1 uses])
+(note 105 104 106 22 [bb 22] NOTE_INSN_BASIC_BLOCK)
+(insn 106 105 107 22 (set (reg:SF 20 xmm0)
+        (reg:SF 104 [ iftmp.25_26 ])) "audio.c":150:13 discrim 4 -1
+     (nil))
+(insn 107 106 108 22 (set (reg:DI 124)
+        (symbol_ref:DI ("voice3") [flags 0x2]  <var_decl 0x7e6482db4360 voice3>)) "audio.c":150:13 discrim 4 -1
+     (nil))
+(insn 108 107 109 22 (set (reg:DI 5 di)
+        (reg:DI 124)) "audio.c":150:13 discrim 4 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice3") [flags 0x2]  <var_decl 0x7e6482db4360 voice3>)
+        (nil)))
+(call_insn 109 108 110 22 (set (reg:SF 20 xmm0)
+        (call (mem:QI (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>) [0 lowPassFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":150:13 discrim 4 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (nil))))
+(insn 110 109 111 22 (set (reg/v:SF 109 [ chan3 ])
+        (reg:SF 20 xmm0)) "audio.c":150:13 discrim 4 -1
+     (nil))
+(debug_insn 111 110 112 22 (var_location:SF chan3 (reg/v:SF 109 [ chan3 ])) "audio.c":150:13 discrim 4 -1
+     (nil))
+(debug_insn 112 111 113 22 (debug_marker) "audio.c":151:5 -1
+     (nil))
+(insn 113 112 114 22 (set (reg:SI 126)
+        (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])) "audio.c":151:44 -1
+     (nil))
+(insn 114 113 115 22 (parallel [
+            (set (reg:SI 125)
+                (and:SI (reg:SI 126)
+                    (const_int 4 [0x4])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":151:44 -1
+     (expr_list:REG_EQUAL (and:SI (mem:SI (plus:DI (reg/v/f:DI 113 [ pdp ])
+                    (const_int 262276 [0x40084])) [1 pdp_32(D)->pf+0 S4 A32])
+            (const_int 4 [0x4]))
+        (nil)))
+(insn 115 114 116 22 (set (reg:CCZ 17 flags)
+        (compare:CCZ (reg:SI 125)
+            (const_int 0 [0]))) "audio.c":151:13 -1
+     (nil))
+(jump_insn 116 115 117 22 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 167)
+            (pc))) "audio.c":151:13 995 {*jcc}
+     (int_list:REG_BR_PROB 536870916 (nil))
+ -> 167)
+;;  succ:       23 [50.0% (guessed)]  count:101869836 (estimated locally) (FALLTHRU)
+;;              24 [50.0% (guessed)]  count:101869836 (estimated locally)
+
+;; basic block 23, loop depth 0, count 101869836 (estimated locally), maybe hot
+;;  prev block 22, next block 24, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       22 [50.0% (guessed)]  count:101869836 (estimated locally) (FALLTHRU)
+(note 117 116 12 23 [bb 23] NOTE_INSN_BASIC_BLOCK)
+(insn 12 117 164 23 (set (reg:SF 105 [ iftmp.26_27 ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC2") [flags 0x2]) [0  S4 A32])) "audio.c":151:13 discrim 1 -1
+     (expr_list:REG_EQUAL (const_double:SF 1.0e+0 [0x0.8p+1])
+        (nil)))
+(jump_insn 164 12 165 23 (set (pc)
+        (label_ref 118)) -1
+     (nil)
+ -> 118)
+;;  succ:       25 [always]  count:101869836 (estimated locally)
+
+(barrier 165 164 167)
+;; basic block 24, loop depth 0, count 101869836 (estimated locally), maybe hot
+;;  prev block 23, next block 25, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       22 [50.0% (guessed)]  count:101869836 (estimated locally)
+(code_label 167 165 166 24 27 (nil) [1 uses])
+(note 166 167 13 24 [bb 24] NOTE_INSN_BASIC_BLOCK)
+(insn 13 166 118 24 (set (reg:SF 105 [ iftmp.26_27 ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "audio.c":151:13 discrim 2 -1
+     (expr_list:REG_EQUAL (const_double:SF -1.0e+0 [-0x0.8p+1])
+        (nil)))
+;;  succ:       25 [always]  count:101869836 (estimated locally) (FALLTHRU)
+
+;; basic block 25, loop depth 0, count 203739672 (estimated locally), maybe hot
+;;  prev block 24, next block 27, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       24 [always]  count:101869836 (estimated locally) (FALLTHRU)
+;;              23 [always]  count:101869836 (estimated locally)
+(code_label 118 13 119 25 22 (nil) [1 uses])
+(note 119 118 120 25 [bb 25] NOTE_INSN_BASIC_BLOCK)
+(insn 120 119 121 25 (set (reg:SF 20 xmm0)
+        (reg:SF 105 [ iftmp.26_27 ])) "audio.c":151:13 discrim 4 -1
+     (nil))
+(insn 121 120 122 25 (set (reg:DI 127)
+        (symbol_ref:DI ("voice4") [flags 0x2]  <var_decl 0x7e6482db43f0 voice4>)) "audio.c":151:13 discrim 4 -1
+     (nil))
+(insn 122 121 123 25 (set (reg:DI 5 di)
+        (reg:DI 127)) "audio.c":151:13 discrim 4 -1
+     (expr_list:REG_EQUAL (symbol_ref:DI ("voice4") [flags 0x2]  <var_decl 0x7e6482db43f0 voice4>)
+        (nil)))
+(call_insn 123 122 124 25 (set (reg:SF 20 xmm0)
+        (call (mem:QI (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>) [0 lowPassFilter S1 A8])
+            (const_int 0 [0]))) "audio.c":151:13 discrim 4 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("lowPassFilter") [flags 0x41]  <function_decl 0x7e6487b5f200 lowPassFilter>)
+        (nil))
+    (expr_list:DI (use (reg:DI 5 di))
+        (expr_list:SF (use (reg:SF 20 xmm0))
+            (nil))))
+(insn 124 123 125 25 (set (reg/v:SF 110 [ chan4 ])
+        (reg:SF 20 xmm0)) "audio.c":151:13 discrim 4 -1
+     (nil))
+(debug_insn 125 124 126 25 (var_location:SF chan4 (reg/v:SF 110 [ chan4 ])) "audio.c":151:13 discrim 4 -1
+     (nil))
+(debug_insn 126 125 127 25 (debug_marker) "audio.c":153:5 -1
+     (nil))
+(insn 127 126 128 25 (set (reg:SF 99 [ mixerGain.27_19 ])
+        (mem/c:SF (symbol_ref:DI ("mixerGain") [flags 0x2]  <var_decl 0x7e6482db4120 mixerGain>) [6 mixerGain+0 S4 A32])) "audio.c":153:17 -1
+     (nil))
+(debug_insn 128 127 129 25 (debug_marker) "audio.c":154:5 -1
+     (nil))
+(insn 129 128 130 25 (set (reg:SF 129)
+        (plus:SF (reg/v:SF 107 [ chan1 ])
+            (reg/v:SF 108 [ chan2 ]))) "audio.c":153:17 -1
+     (nil))
+(insn 130 129 131 25 (set (reg:SF 130)
+        (plus:SF (reg/v:SF 109 [ chan3 ])
+            (reg/v:SF 110 [ chan4 ]))) "audio.c":154:17 -1
+     (nil))
+(insn 131 130 132 25 (set (reg:V2SF 128)
+        (vec_concat:V2SF (reg:SF 129)
+            (reg:SF 130))) "audio.c":153:17 -1
+     (nil))
+(insn 132 131 133 25 (set (reg:V2SF 131)
+        (vec_duplicate:V2SF (reg:SF 99 [ mixerGain.27_19 ]))) "audio.c":153:17 1588 {*vec_dupv2sf}
+     (nil))
+(insn 133 132 134 25 (set (reg:V2SF 132 [ vect__20.71 ])
+        (mult:V2SF (reg:V2SF 128)
+            (reg:V2SF 131))) "audio.c":153:17 -1
+     (nil))
+(insn 134 133 135 25 (set (mem/c:V2SF (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                (const_int -16 [0xfffffffffffffff0])) [6 MEM <vector(2) float> [(float *)&buffer]+0 S8 A64])
+        (reg:V2SF 132 [ vect__20.71 ])) "audio.c":153:15 -1
+     (nil))
+(debug_insn 135 134 136 25 (debug_marker) "audio.c":156:2 -1
+     (nil))
+(insn 136 135 137 25 (parallel [
+            (set (reg:DI 133)
+                (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                    (const_int -16 [0xfffffffffffffff0])))
+            (clobber (reg:CC 17 flags))
+        ]) "audio.c":156:2 -1
+     (nil))
+(insn 137 136 138 25 (set (reg:SI 134)
+        (mem/c:SI (symbol_ref:DI ("dev") [flags 0x2]  <var_decl 0x7e6482c4ecf0 dev>) [1 dev+0 S4 A32])) "audio.c":156:2 -1
+     (nil))
+(insn 138 137 139 25 (set (reg:SI 1 dx)
+        (const_int 8 [0x8])) "audio.c":156:2 -1
+     (nil))
+(insn 139 138 140 25 (set (reg:DI 4 si)
+        (reg:DI 133)) "audio.c":156:2 -1
+     (nil))
+(insn 140 139 141 25 (set (reg:SI 5 di)
+        (reg:SI 134)) "audio.c":156:2 -1
+     (nil))
+(call_insn 141 140 144 25 (set (reg:SI 0 ax)
+        (call (mem:QI (symbol_ref:DI ("SDL_QueueAudio") [flags 0x41]  <function_decl 0x7e6487968b00 SDL_QueueAudio>) [0 SDL_QueueAudio S1 A8])
+            (const_int 0 [0]))) "audio.c":156:2 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("SDL_QueueAudio") [flags 0x41]  <function_decl 0x7e6487968b00 SDL_QueueAudio>)
+        (nil))
+    (expr_list:SI (use (reg:SI 5 di))
+        (expr_list:DI (use (reg:DI 4 si))
+            (expr_list:SI (use (reg:SI 1 dx))
+                (nil)))))
+;;  succ:       27 [always]  count:203739672 (estimated locally) (FALLTHRU)
+
+;; basic block 27, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 25, next block 28, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       25 [always]  count:203739672 (estimated locally) (FALLTHRU)
+;;              2 [34.0% (guessed)]  count:365072224 (estimated locally)
+;;              4 [34.0% (guessed)]  count:240947667 (estimated locally)
+;;              5 [34.0% (guessed)]  count:159025459 (estimated locally)
+;;              6 [34.0% (guessed)]  count:104956803 (estimated locally)
+(code_label 144 141 151 27 13 (nil) [4 uses])
+(note 151 144 145 27 [bb 27] NOTE_INSN_BASIC_BLOCK)
+(insn 145 151 146 27 (set (reg/f:DI 135)
+        (const_int 40 [0x28])) "audio.c":157:1 -1
+     (nil))
+(insn 146 145 147 27 (parallel [
+            (set (reg:CCZ 17 flags)
+                (unspec:CCZ [
+                        (mem/v/f/c:DI (plus:DI (reg/f:DI 77 virtual-stack-vars)
+                                (const_int -8 [0xfffffffffffffff8])) [5 D.45978+0 S8 A64])
+                        (mem/v/f:DI (reg/f:DI 135) [7 MEM[(<address-space-1> long unsigned int *)40B]+0 S8 A64 AS1])
+                    ] UNSPEC_SP_TEST))
+            (clobber (scratch:DI))
+        ]) "audio.c":157:1 -1
+     (nil))
+(jump_insn 147 146 168 27 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 150)
+            (pc))) "audio.c":157:1 -1
+     (int_list:REG_BR_PROB 1073312332 (nil))
+ -> 150)
+;;  succ:       29 [100.0% (guessed)]  count:1073312328 (estimated locally)
+;;              28 [0.0% (guessed)]  count:429496 (estimated locally) (FALLTHRU)
+
+;; basic block 28, loop depth 0, count 429496 (estimated locally)
+;;  prev block 27, next block 29, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       27 [0.0% (guessed)]  count:429496 (estimated locally) (FALLTHRU)
+(note 168 147 148 28 [bb 28] NOTE_INSN_BASIC_BLOCK)
+(call_insn 148 168 149 28 (call (mem:QI (symbol_ref:DI ("__stack_chk_fail") [flags 0x41]  <function_decl 0x7e6482a01400 __stack_chk_fail>) [0 __stack_chk_fail S1 A8])
+        (const_int 0 [0])) "audio.c":157:1 -1
+     (expr_list:REG_CALL_DECL (symbol_ref:DI ("__stack_chk_fail") [flags 0x41]  <function_decl 0x7e6482a01400 __stack_chk_fail>)
+        (expr_list:REG_ARGS_SIZE (const_int 0 [0])
+            (expr_list:REG_NORETURN (const_int 0 [0])
+                (expr_list:REG_EH_REGION (const_int 0 [0])
+                    (nil)))))
+    (nil))
+;;  succ:      
+
+(barrier 149 148 150)
+;; basic block 29, loop depth 0, count 1073312328 (estimated locally), maybe hot
+;;  prev block 28, next block 1, flags: (NEW, REACHABLE, RTL)
+;;  pred:       27 [100.0% (guessed)]  count:1073312328 (estimated locally)
+(code_label 150 149 169 29 23 (nil) [1 uses])
+(note 169 150 0 29 [bb 29] NOTE_INSN_BASIC_BLOCK)
+;;  succ:       EXIT [always]  count:1073312328 (estimated locally) (FALLTHRU)
+
+
+;; Function setFilterAlpha (setFilterAlpha, funcdef_no=6519, decl_uid=4566, cgraph_uid=6520, symbol_order=6532)
+
+void setFilterAlpha (float newAlpha)
+{
+  float iftmp.30_1;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  if (newAlpha_2(D) < 0.0)
+    goto <bb 5>; [41.00%]
+  else
+    goto <bb 3>; [59.00%]
+;;    succ:       5
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  if (newAlpha_2(D) > 1.0e+0)
+    goto <bb 4>; [59.00%]
+  else
+    goto <bb 5>; [41.00%]
+;;    succ:       4
+;;                5
+
+;;   basic block 4, loop depth 0
+;;    pred:       3
+;;    succ:       5
+
+;;   basic block 5, loop depth 0
+;;    pred:       2
+;;                3
+;;                4
+  # iftmp.30_1 = PHI <0.0(2), newAlpha_2(D)(3), 1.0e+0(4)>
+  alpha = iftmp.30_1;
+  # DEBUG BEGIN_STMT
+  voice1.alpha = iftmp.30_1;
+  # DEBUG BEGIN_STMT
+  voice2.alpha = iftmp.30_1;
+  # DEBUG BEGIN_STMT
+  voice3.alpha = iftmp.30_1;
+  # DEBUG BEGIN_STMT
+  voice4.alpha = iftmp.30_1;
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 1 (iftmp.30_1 - 1 )
+Partition 2 (newAlpha_2(D) - 2 )
+
+
+Coalescible Partition map 
+
+Partition 0, base 0 (iftmp.30_1 - 1 2 )
+
+
+Partition map 
+
+Partition 0 (iftmp.30_1 - 1 )
+Partition 1 (newAlpha_2(D) - 2 )
+
+
+Conflict graph:
+
+After sorting:
+Sorted Coalesce list:
+(4838, 0) iftmp.30_1 <-> newAlpha_2(D)
+
+Partition map 
+
+Partition 0 (iftmp.30_1 - 1 )
+Partition 1 (newAlpha_2(D) - 2 )
+
+Coalesce list: (1)iftmp.30_1 & (2)newAlpha_2(D) [map: 0, 1] : Success -> 0
+After Coalescing:
+
+Partition map 
+
+Partition 0 (iftmp.30_1 - 1 2 )
+
+void setFilterAlpha (float newAlpha)
+{
+  float iftmp.30_1;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  if (newAlpha_2(D) < 0.0)
+    goto <bb 5>; [41.00%]
+  else
+    goto <bb 3>; [59.00%]
+;;    succ:       5
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  if (newAlpha_2(D) > 1.0e+0)
+    goto <bb 4>; [59.00%]
+  else
+    goto <bb 5>; [41.00%]
+;;    succ:       4
+;;                5
+
+;;   basic block 4, loop depth 0
+;;    pred:       3
+;;    succ:       5
+
+;;   basic block 5, loop depth 0
+;;    pred:       2
+;;                3
+;;                4
+  # iftmp.30_1 = PHI <0.0(2), newAlpha_2(D)(3), 1.0e+0(4)>
+  alpha = iftmp.30_1;
+  # DEBUG BEGIN_STMT
+  voice1.alpha = iftmp.30_1;
+  # DEBUG BEGIN_STMT
+  voice2.alpha = iftmp.30_1;
+  # DEBUG BEGIN_STMT
+  voice3.alpha = iftmp.30_1;
+  # DEBUG BEGIN_STMT
+  voice4.alpha = iftmp.30_1;
+  return;
+;;    succ:       EXIT
+
+}
+
+
+Inserting a value copy on edge BB2->BB5 : PART.0 = 0.0
+Inserting a value copy on edge BB4->BB5 : PART.0 = 1.0e+0
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 8 7 0 (debug_marker) "audio.c":162:5 -1
+     (nil))
+;; if (newAlpha_2(D) < 0.0)
+
+(insn 9 8 10 (set (reg:SF 83)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":162:13 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+
+(insn 10 9 11 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg:SF 83)
+            (reg/v:SF 82 [ newAlpha ]))) "audio.c":162:13 -1
+     (nil))
+
+(jump_insn 11 10 0 (set (pc)
+        (if_then_else (gt (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":162:13 -1
+     (int_list:REG_BR_PROB 440234148 (nil)))
+
+;; Generating RTL for gimple basic block 3
+
+;; if (newAlpha_2(D) > 1.0e+0)
+
+(insn 13 12 14 (set (reg:SF 84)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC2") [flags 0x2]) [0  S4 A32])) "audio.c":162:13 discrim 2 -1
+     (expr_list:REG_EQUAL (const_double:SF 1.0e+0 [0x0.8p+1])
+        (nil)))
+
+(insn 14 13 15 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg/v:SF 82 [ newAlpha ])
+            (reg:SF 84))) "audio.c":162:13 discrim 2 -1
+     (nil))
+
+(jump_insn 15 14 16 (set (pc)
+        (if_then_else (gt (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref 18)
+            (pc))) "audio.c":162:13 discrim 2 -1
+     (int_list:REG_BR_PROB 633507684 (nil)))
+
+(jump_insn 16 15 17 (set (pc)
+        (label_ref 0)) "audio.c":162:13 discrim 2 -1
+     (nil))
+
+(barrier 17 16 18)
+
+(code_label 18 17 0 30 (nil) [0 uses])
+
+;; Generating RTL for gimple basic block 4
+
+;; Generating RTL for gimple basic block 5
+
+;; 
+
+(code_label 20 19 21 29 (nil) [0 uses])
+
+(note 21 20 0 NOTE_INSN_BASIC_BLOCK)
+
+;; alpha = iftmp.30_1;
+
+(insn 22 21 0 (set (mem/c:SF (symbol_ref:DI ("alpha") [flags 0x2]  <var_decl 0x7e6482db4090 alpha>) [6 alpha+0 S4 A32])
+        (reg/v:SF 82 [ newAlpha ])) "audio.c":162:11 discrim 8 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 23 22 0 (debug_marker) "audio.c":163:5 -1
+     (nil))
+;; voice1.alpha = iftmp.30_1;
+
+(insn 24 23 25 (set (reg/f:DI 85)
+        (symbol_ref:DI ("voice1") [flags 0x2]  <var_decl 0x7e6482db4240 voice1>)) "audio.c":163:18 -1
+     (nil))
+
+(insn 25 24 0 (set (mem/c:SF (reg/f:DI 85) [6 voice1.alpha+0 S4 A256])
+        (reg/v:SF 82 [ newAlpha ])) "audio.c":163:18 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 26 25 0 (debug_marker) "audio.c":164:5 -1
+     (nil))
+;; voice2.alpha = iftmp.30_1;
+
+(insn 27 26 28 (set (reg/f:DI 86)
+        (symbol_ref:DI ("voice2") [flags 0x2]  <var_decl 0x7e6482db42d0 voice2>)) "audio.c":164:18 -1
+     (nil))
+
+(insn 28 27 0 (set (mem/c:SF (reg/f:DI 86) [6 voice2.alpha+0 S4 A256])
+        (reg/v:SF 82 [ newAlpha ])) "audio.c":164:18 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 29 28 0 (debug_marker) "audio.c":165:5 -1
+     (nil))
+;; voice3.alpha = iftmp.30_1;
+
+(insn 30 29 31 (set (reg/f:DI 87)
+        (symbol_ref:DI ("voice3") [flags 0x2]  <var_decl 0x7e6482db4360 voice3>)) "audio.c":165:18 -1
+     (nil))
+
+(insn 31 30 0 (set (mem/c:SF (reg/f:DI 87) [6 voice3.alpha+0 S4 A256])
+        (reg/v:SF 82 [ newAlpha ])) "audio.c":165:18 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 32 31 0 (debug_marker) "audio.c":166:5 -1
+     (nil))
+;; voice4.alpha = iftmp.30_1;
+
+(insn 33 32 34 (set (reg/f:DI 88)
+        (symbol_ref:DI ("voice4") [flags 0x2]  <var_decl 0x7e6482db43f0 voice4>)) "audio.c":166:18 -1
+     (nil))
+
+(insn 34 33 0 (set (mem/c:SF (reg/f:DI 88) [6 voice4.alpha+0 S4 A256])
+        (reg/v:SF 82 [ newAlpha ])) "audio.c":166:18 -1
+     (nil))
+Edge 2->5 redirected to 8
+Purged non-fallthru edges from bb 10
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Edge 4->6 redirected to 7
+Forwarding edge 4->5 to 9 failed.
+Forwarding edge 4->5 to 9 failed.
+deleting block 6
+Merging block 10 into block 9...
+Merged blocks 9 and 10.
+Merged 9 and 10 without moving.
+
+
+try_optimize_cfg iteration 2
+
+Forwarding edge 4->5 to 9 failed.
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 6 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741823 (estimated locally), maybe hot
+;;  prev block 0, next block 4, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       ENTRY [always]  count:1073741823 (estimated locally) (FALLTHRU)
+(note 6 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(insn 2 6 3 2 (set (reg/v:SF 82 [ newAlpha ])
+        (reg:SF 20 xmm0 [ newAlpha ])) "audio.c":161:1 -1
+     (nil))
+(note 3 2 8 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 8 3 9 2 (debug_marker) "audio.c":162:5 -1
+     (nil))
+(insn 9 8 10 2 (set (reg:SF 83)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":162:13 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+(insn 10 9 11 2 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg:SF 83)
+            (reg/v:SF 82 [ newAlpha ]))) "audio.c":162:13 -1
+     (nil))
+(jump_insn 11 10 12 2 (set (pc)
+        (if_then_else (gt (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 40)
+            (pc))) "audio.c":162:13 995 {*jcc}
+     (int_list:REG_BR_PROB 440234148 (nil))
+ -> 40)
+;;  succ:       8 [41.0% (guessed)]  count:440234144 (estimated locally)
+;;              4 [59.0% (guessed)]  count:633507679 (estimated locally) (FALLTHRU)
+
+;; basic block 4, loop depth 0, count 633507680 (estimated locally), maybe hot
+;;  prev block 2, next block 5, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       2 [59.0% (guessed)]  count:633507679 (estimated locally) (FALLTHRU)
+(note 12 11 13 4 [bb 4] NOTE_INSN_BASIC_BLOCK)
+(insn 13 12 14 4 (set (reg:SF 84)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC2") [flags 0x2]) [0  S4 A32])) "audio.c":162:13 discrim 2 -1
+     (expr_list:REG_EQUAL (const_double:SF 1.0e+0 [0x0.8p+1])
+        (nil)))
+(insn 14 13 15 4 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg/v:SF 82 [ newAlpha ])
+            (reg:SF 84))) "audio.c":162:13 discrim 2 -1
+     (nil))
+(jump_insn 15 14 41 4 (set (pc)
+        (if_then_else (gt (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 43)
+            (pc))) "audio.c":162:13 discrim 2 995 {*jcc}
+     (int_list:REG_BR_PROB 633507684 (nil))
+ -> 43)
+;;  succ:       7 [59.0% (guessed)]  count:373769533 (estimated locally)
+;;              5 [41.0% (guessed)]  count:259738147 (estimated locally) (FALLTHRU)
+
+;; basic block 5, loop depth 0, count 259738147 (estimated locally), maybe hot
+;;  prev block 4, next block 7, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       4 [41.0% (guessed)]  count:259738147 (estimated locally) (FALLTHRU)
+(note 41 15 16 5 [bb 5] NOTE_INSN_BASIC_BLOCK)
+(jump_insn 16 41 17 5 (set (pc)
+        (label_ref 20)) "audio.c":162:13 discrim 2 -1
+     (nil)
+ -> 20)
+;;  succ:       9 [always]  count:259738147 (estimated locally)
+
+(barrier 17 16 43)
+;; basic block 7, loop depth 0, count 373769533 (estimated locally), maybe hot
+;;  prev block 5, next block 8, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       4 [59.0% (guessed)]  count:373769533 (estimated locally)
+(code_label 43 17 19 7 32 (nil) [1 uses])
+(note 19 43 5 7 [bb 7] NOTE_INSN_BASIC_BLOCK)
+(insn 5 19 37 7 (set (reg/v:SF 82 [ newAlpha ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC2") [flags 0x2]) [0  S4 A32])) "audio.c":162:13 discrim 4 -1
+     (expr_list:REG_EQUAL (const_double:SF 1.0e+0 [0x0.8p+1])
+        (nil)))
+(jump_insn 37 5 38 7 (set (pc)
+        (label_ref 20)) -1
+     (nil)
+ -> 20)
+;;  succ:       9 [always]  count:373769533 (estimated locally)
+
+(barrier 38 37 40)
+;; basic block 8, loop depth 0, count 440234144 (estimated locally), maybe hot
+;;  prev block 7, next block 9, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       2 [41.0% (guessed)]  count:440234144 (estimated locally)
+(code_label 40 38 39 8 31 (nil) [1 uses])
+(note 39 40 4 8 [bb 8] NOTE_INSN_BASIC_BLOCK)
+(insn 4 39 20 8 (set (reg/v:SF 82 [ newAlpha ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":162:13 discrim 1 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+;;  succ:       9 [always]  count:440234144 (estimated locally) (FALLTHRU)
+
+;; basic block 9, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 8, next block 1, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       8 [always]  count:440234144 (estimated locally) (FALLTHRU)
+;;              7 [always]  count:373769533 (estimated locally)
+;;              5 [always]  count:259738147 (estimated locally)
+(code_label 20 4 21 9 29 (nil) [2 uses])
+(note 21 20 22 9 [bb 9] NOTE_INSN_BASIC_BLOCK)
+(insn 22 21 23 9 (set (mem/c:SF (symbol_ref:DI ("alpha") [flags 0x2]  <var_decl 0x7e6482db4090 alpha>) [6 alpha+0 S4 A32])
+        (reg/v:SF 82 [ newAlpha ])) "audio.c":162:11 discrim 8 -1
+     (nil))
+(debug_insn 23 22 24 9 (debug_marker) "audio.c":163:5 -1
+     (nil))
+(insn 24 23 25 9 (set (reg/f:DI 85)
+        (symbol_ref:DI ("voice1") [flags 0x2]  <var_decl 0x7e6482db4240 voice1>)) "audio.c":163:18 -1
+     (nil))
+(insn 25 24 26 9 (set (mem/c:SF (reg/f:DI 85) [6 voice1.alpha+0 S4 A256])
+        (reg/v:SF 82 [ newAlpha ])) "audio.c":163:18 -1
+     (nil))
+(debug_insn 26 25 27 9 (debug_marker) "audio.c":164:5 -1
+     (nil))
+(insn 27 26 28 9 (set (reg/f:DI 86)
+        (symbol_ref:DI ("voice2") [flags 0x2]  <var_decl 0x7e6482db42d0 voice2>)) "audio.c":164:18 -1
+     (nil))
+(insn 28 27 29 9 (set (mem/c:SF (reg/f:DI 86) [6 voice2.alpha+0 S4 A256])
+        (reg/v:SF 82 [ newAlpha ])) "audio.c":164:18 -1
+     (nil))
+(debug_insn 29 28 30 9 (debug_marker) "audio.c":165:5 -1
+     (nil))
+(insn 30 29 31 9 (set (reg/f:DI 87)
+        (symbol_ref:DI ("voice3") [flags 0x2]  <var_decl 0x7e6482db4360 voice3>)) "audio.c":165:18 -1
+     (nil))
+(insn 31 30 32 9 (set (mem/c:SF (reg/f:DI 87) [6 voice3.alpha+0 S4 A256])
+        (reg/v:SF 82 [ newAlpha ])) "audio.c":165:18 -1
+     (nil))
+(debug_insn 32 31 33 9 (debug_marker) "audio.c":166:5 -1
+     (nil))
+(insn 33 32 34 9 (set (reg/f:DI 88)
+        (symbol_ref:DI ("voice4") [flags 0x2]  <var_decl 0x7e6482db43f0 voice4>)) "audio.c":166:18 -1
+     (nil))
+(insn 34 33 0 9 (set (mem/c:SF (reg/f:DI 88) [6 voice4.alpha+0 S4 A256])
+        (reg/v:SF 82 [ newAlpha ])) "audio.c":166:18 -1
+     (nil))
+;;  succ:       EXIT [always]  count:1073741824 (estimated locally) (FALLTHRU) audio.c:167:1
+
+
+;; Function getFilterAlpha (getFilterAlpha, funcdef_no=6520, decl_uid=4568, cgraph_uid=6521, symbol_order=6533)
+
+float getFilterAlpha ()
+{
+  float _2;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  _2 = alpha;
+  return _2;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 2 (_2 - 2 )
+Partition 3 (_3(D) - 3 )
+
+
+Coalescible Partition map 
+
+Partition 0, base 0 (_2 - 2 3 )
+
+
+Partition map 
+
+Partition 0 (_2 - 2 )
+Partition 1 (_3(D) - 3 )
+
+
+Conflict graph:
+
+After sorting:
+Sorted Coalesce list:
+(10000, 0) _2 <-> _3(D)
+
+Partition map 
+
+Partition 0 (_2 - 2 )
+Partition 1 (_3(D) - 3 )
+
+Coalesce list: (2)_2 & (3)_3(D) [map: 0, 1] : Success -> 0
+After Coalescing:
+
+Partition map 
+
+Partition 0 (_2 - 2 3 )
+
+
+Replacing Expressions
+_2 replace with --> _2 = alpha;
+
+
+float getFilterAlpha ()
+{
+  float _2;
+  float _3(D);
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  _2 = alpha;
+  return _2;
+;;    succ:       EXIT
+
+}
+
+
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 5 4 0 (debug_marker) "audio.c":172:5 -1
+     (nil))
+;; return _2;
+
+(insn 6 5 7 (set (reg:SF 84)
+        (mem/c:SF (symbol_ref:DI ("alpha") [flags 0x2]  <var_decl 0x7e6482db4090 alpha>) [6 alpha+0 S4 A32])) "audio.c":172:11 discrim 1 -1
+     (nil))
+
+(insn 7 6 8 (set (reg:SF 82 [ <retval> ])
+        (reg:SF 84)) "audio.c":172:11 discrim 1 -1
+     (nil))
+
+(jump_insn 8 7 9 (set (pc)
+        (label_ref 0)) "audio.c":172:11 discrim 1 -1
+     (nil))
+
+(barrier 9 8 0)
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Removing jump 8.
+Merging block 4 into block 2...
+Merged blocks 2 and 4.
+Merged 2 and 4 without moving.
+
+
+try_optimize_cfg iteration 2
+
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 3 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 1, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 3 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(note 2 3 5 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 5 2 6 2 (debug_marker) "audio.c":172:5 -1
+     (nil))
+(insn 6 5 7 2 (set (reg:SF 84)
+        (mem/c:SF (symbol_ref:DI ("alpha") [flags 0x2]  <var_decl 0x7e6482db4090 alpha>) [6 alpha+0 S4 A32])) "audio.c":172:11 discrim 1 -1
+     (nil))
+(insn 7 6 11 2 (set (reg:SF 82 [ <retval> ])
+        (reg:SF 84)) "audio.c":172:11 discrim 1 -1
+     (nil))
+(insn 11 7 12 2 (set (reg/i:SF 20 xmm0)
+        (reg:SF 82 [ <retval> ])) "audio.c":173:1 -1
+     (nil))
+(insn 12 11 0 2 (use (reg/i:SF 20 xmm0)) "audio.c":173:1 -1
+     (nil))
+;;  succ:       EXIT [always]  count:1073741824 (estimated locally) (FALLTHRU)
+
+
+;; Function setMixerGain (setMixerGain, funcdef_no=6521, decl_uid=4570, cgraph_uid=6522, symbol_order=6534)
+
+void setMixerGain (float newGain)
+{
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  if (newGain_2(D) < 0.0)
+    goto <bb 4>; [41.00%]
+  else
+    goto <bb 3>; [59.00%]
+;;    succ:       4
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+;;    succ:       4
+
+;;   basic block 4, loop depth 0
+;;    pred:       3
+;;                2
+  # newGain_1 = PHI <newGain_2(D)(3), 0.0(2)>
+  # DEBUG newGain => newGain_1
+  # DEBUG BEGIN_STMT
+  mixerGain = newGain_1;
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 1 (newGain_1 - 1 )
+Partition 2 (newGain_2(D) - 2 )
+
+
+Coalescible Partition map 
+
+Partition 0, base 0 (newGain_1 - 1 2 )
+
+
+Partition map 
+
+Partition 0 (newGain_1 - 1 )
+Partition 1 (newGain_2(D) - 2 )
+
+
+Conflict graph:
+
+After sorting:
+Sorted Coalesce list:
+(5900, 0) newGain_1 <-> newGain_2(D)
+
+Partition map 
+
+Partition 0 (newGain_1 - 1 )
+Partition 1 (newGain_2(D) - 2 )
+
+Coalesce list: (1)newGain_1 & (2)newGain_2(D) [map: 0, 1] : Success -> 0
+After Coalescing:
+
+Partition map 
+
+Partition 0 (newGain_1 - 1 2 )
+
+void setMixerGain (float newGain)
+{
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  if (newGain_2(D) < 0.0)
+    goto <bb 4>; [41.00%]
+  else
+    goto <bb 3>; [59.00%]
+;;    succ:       4
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+;;    succ:       4
+
+;;   basic block 4, loop depth 0
+;;    pred:       3
+;;                2
+  # newGain_1 = PHI <newGain_2(D)(3), 0.0(2)>
+  # DEBUG newGain => newGain_1
+  # DEBUG BEGIN_STMT
+  mixerGain = newGain_1;
+  return;
+;;    succ:       EXIT
+
+}
+
+
+Inserting a value copy on edge BB2->BB4 : PART.0 = 0.0
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 7 6 0 (debug_marker) "audio.c":178:5 -1
+     (nil))
+;; if (newGain_2(D) < 0.0)
+
+(insn 8 7 9 (set (reg:SF 83)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":178:7 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+
+(insn 9 8 10 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg:SF 83)
+            (reg/v:SF 82 [ newGain ]))) "audio.c":178:7 -1
+     (nil))
+
+(jump_insn 10 9 0 (set (pc)
+        (if_then_else (gt (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "audio.c":178:7 -1
+     (int_list:REG_BR_PROB 440234148 (nil)))
+
+;; Generating RTL for gimple basic block 3
+
+;; Generating RTL for gimple basic block 4
+
+;; 
+
+(code_label 12 11 13 35 (nil) [0 uses])
+
+(note 13 12 0 NOTE_INSN_BASIC_BLOCK)
+
+;; # DEBUG newGain => newGain_1
+
+(debug_insn 14 13 0 (var_location:SF newGain (const_int 0 [0])) -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 15 14 0 (debug_marker) "audio.c":183:5 -1
+     (nil))
+;; mixerGain = newGain_1;
+
+(insn 16 15 0 (set (mem/c:SF (symbol_ref:DI ("mixerGain") [flags 0x2]  <var_decl 0x7e6482db4120 mixerGain>) [6 mixerGain+0 S4 A32])
+        (reg/v:SF 82 [ newGain ])) "audio.c":183:15 -1
+     (nil))
+Edge 2->4 redirected to 7
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Forwarding edge 2->4 to 6 failed.
+Forwarding edge 2->4 to 6 failed.
+Merging block 7 into block 6...
+Merged blocks 6 and 7.
+Merged 6 and 7 without moving.
+
+
+try_optimize_cfg iteration 2
+
+Forwarding edge 2->4 to 6 failed.
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 5 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 4, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 5 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(insn 2 5 3 2 (set (reg/v:SF 82 [ newGain ])
+        (reg:SF 20 xmm0 [ newGain ])) "audio.c":177:1 -1
+     (nil))
+(note 3 2 7 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 7 3 8 2 (debug_marker) "audio.c":178:5 -1
+     (nil))
+(insn 8 7 9 2 (set (reg:SF 83)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":178:7 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+(insn 9 8 10 2 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg:SF 83)
+            (reg/v:SF 82 [ newGain ]))) "audio.c":178:7 -1
+     (nil))
+(jump_insn 10 9 11 2 (set (pc)
+        (if_then_else (gt (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 22)
+            (pc))) "audio.c":178:7 995 {*jcc}
+     (int_list:REG_BR_PROB 440234148 (nil))
+ -> 22)
+;;  succ:       5 [41.0% (guessed)]  count:440234144 (estimated locally)
+;;              4 [59.0% (guessed)]  count:633507680 (estimated locally) (FALLTHRU)
+
+;; basic block 4, loop depth 0, count 633507680 (estimated locally), maybe hot
+;;  prev block 2, next block 5, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       2 [59.0% (guessed)]  count:633507680 (estimated locally) (FALLTHRU)
+(note 11 10 19 4 [bb 4] NOTE_INSN_BASIC_BLOCK)
+(jump_insn 19 11 20 4 (set (pc)
+        (label_ref 12)) -1
+     (nil)
+ -> 12)
+;;  succ:       6 [always]  count:633507680 (estimated locally)
+
+(barrier 20 19 22)
+;; basic block 5, loop depth 0, count 440234144 (estimated locally), maybe hot
+;;  prev block 4, next block 6, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       2 [41.0% (guessed)]  count:440234144 (estimated locally)
+(code_label 22 20 21 5 36 (nil) [1 uses])
+(note 21 22 4 5 [bb 5] NOTE_INSN_BASIC_BLOCK)
+(insn 4 21 12 5 (set (reg/v:SF 82 [ newGain ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":180:17 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+;;  succ:       6 [always]  count:440234144 (estimated locally) (FALLTHRU)
+
+;; basic block 6, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 5, next block 1, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       5 [always]  count:440234144 (estimated locally) (FALLTHRU)
+;;              4 [always]  count:633507680 (estimated locally)
+(code_label 12 4 13 6 35 (nil) [1 uses])
+(note 13 12 14 6 [bb 6] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 14 13 15 6 (var_location:SF newGain (reg/v:SF 82 [ newGain ])) -1
+     (nil))
+(debug_insn 15 14 16 6 (debug_marker) "audio.c":183:5 -1
+     (nil))
+(insn 16 15 0 6 (set (mem/c:SF (symbol_ref:DI ("mixerGain") [flags 0x2]  <var_decl 0x7e6482db4120 mixerGain>) [6 mixerGain+0 S4 A32])
+        (reg/v:SF 82 [ newGain ])) "audio.c":183:15 -1
+     (nil))
+;;  succ:       EXIT [always]  count:1073741824 (estimated locally) (FALLTHRU) audio.c:184:1
+
+
+;; Function getMixerGain (getMixerGain, funcdef_no=6522, decl_uid=4572, cgraph_uid=6523, symbol_order=6535)
+
+float getMixerGain ()
+{
+  float _2;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  _2 = mixerGain;
+  return _2;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 2 (_2 - 2 )
+Partition 3 (_3(D) - 3 )
+
+
+Coalescible Partition map 
+
+Partition 0, base 0 (_2 - 2 3 )
+
+
+Partition map 
+
+Partition 0 (_2 - 2 )
+Partition 1 (_3(D) - 3 )
+
+
+Conflict graph:
+
+After sorting:
+Sorted Coalesce list:
+(10000, 0) _2 <-> _3(D)
+
+Partition map 
+
+Partition 0 (_2 - 2 )
+Partition 1 (_3(D) - 3 )
+
+Coalesce list: (2)_2 & (3)_3(D) [map: 0, 1] : Success -> 0
+After Coalescing:
+
+Partition map 
+
+Partition 0 (_2 - 2 3 )
+
+
+Replacing Expressions
+_2 replace with --> _2 = mixerGain;
+
+
+float getMixerGain ()
+{
+  float _2;
+  float _3(D);
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  _2 = mixerGain;
+  return _2;
+;;    succ:       EXIT
+
+}
+
+
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 5 4 0 (debug_marker) "audio.c":189:5 -1
+     (nil))
+;; return _2;
+
+(insn 6 5 7 (set (reg:SF 84)
+        (mem/c:SF (symbol_ref:DI ("mixerGain") [flags 0x2]  <var_decl 0x7e6482db4120 mixerGain>) [6 mixerGain+0 S4 A32])) "audio.c":189:11 discrim 1 -1
+     (nil))
+
+(insn 7 6 8 (set (reg:SF 82 [ <retval> ])
+        (reg:SF 84)) "audio.c":189:11 discrim 1 -1
+     (nil))
+
+(jump_insn 8 7 9 (set (pc)
+        (label_ref 0)) "audio.c":189:11 discrim 1 -1
+     (nil))
+
+(barrier 9 8 0)
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Removing jump 8.
+Merging block 4 into block 2...
+Merged blocks 2 and 4.
+Merged 2 and 4 without moving.
+
+
+try_optimize_cfg iteration 2
+
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 3 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 1, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 3 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(note 2 3 5 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 5 2 6 2 (debug_marker) "audio.c":189:5 -1
+     (nil))
+(insn 6 5 7 2 (set (reg:SF 84)
+        (mem/c:SF (symbol_ref:DI ("mixerGain") [flags 0x2]  <var_decl 0x7e6482db4120 mixerGain>) [6 mixerGain+0 S4 A32])) "audio.c":189:11 discrim 1 -1
+     (nil))
+(insn 7 6 11 2 (set (reg:SF 82 [ <retval> ])
+        (reg:SF 84)) "audio.c":189:11 discrim 1 -1
+     (nil))
+(insn 11 7 12 2 (set (reg/i:SF 20 xmm0)
+        (reg:SF 82 [ <retval> ])) "audio.c":190:1 -1
+     (nil))
+(insn 12 11 0 2 (use (reg/i:SF 20 xmm0)) "audio.c":190:1 -1
+     (nil))
+;;  succ:       EXIT [always]  count:1073741824 (estimated locally) (FALLTHRU)
+
+
+;; Function setAudioTuning (setAudioTuning, funcdef_no=6523, decl_uid=4574, cgraph_uid=6524, symbol_order=6536)
+
+void setAudioTuning (float newTuning)
+{
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  if (newTuning_2(D) > 0.0)
+    goto <bb 3>; [59.00%]
+  else
+    goto <bb 4>; [41.00%]
+;;    succ:       3
+;;                4
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  # DEBUG BEGIN_STMT
+  tuning = newTuning_2(D);
+  # DEBUG BEGIN_STMT
+;;    succ:       4
+
+;;   basic block 4, loop depth 0
+;;    pred:       2
+;;                3
+  # DEBUG BEGIN_STMT
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 2 (newTuning_2(D) - 2 )
+
+
+Coalescible Partition map 
+
+Partition 0, base 0 (newTuning_2(D) - 2 )
+
+
+Partition map 
+
+Partition 0 (newTuning_2(D) - 2 )
+
+
+Conflict graph:
+
+After sorting:
+Coalesce List:
+
+Partition map 
+
+Partition 0 (newTuning_2(D) - 2 )
+
+After Coalescing:
+
+Partition map 
+
+Partition 0 (newTuning_2(D) - 2 )
+
+void setAudioTuning (float newTuning)
+{
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  if (newTuning_2(D) > 0.0)
+    goto <bb 3>; [59.00%]
+  else
+    goto <bb 4>; [41.00%]
+;;    succ:       3
+;;                4
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  # DEBUG BEGIN_STMT
+  tuning = newTuning_2(D);
+  # DEBUG BEGIN_STMT
+;;    succ:       4
+
+;;   basic block 4, loop depth 0
+;;    pred:       2
+;;                3
+  # DEBUG BEGIN_STMT
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 6 5 0 (debug_marker) "audio.c":197:5 -1
+     (nil))
+;; if (newTuning_2(D) > 0.0)
+
+(insn 7 6 8 (set (reg:SF 83)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":197:7 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+
+(insn 8 7 9 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg/v:SF 82 [ newTuning ])
+            (reg:SF 83))) "audio.c":197:7 -1
+     (nil))
+
+(jump_insn 9 8 10 (set (pc)
+        (if_then_else (gt (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref 12)
+            (pc))) "audio.c":197:7 -1
+     (int_list:REG_BR_PROB 633507684 (nil)))
+
+(jump_insn 10 9 11 (set (pc)
+        (label_ref 0)) "audio.c":197:7 -1
+     (nil))
+
+(barrier 11 10 12)
+
+(code_label 12 11 0 40 (nil) [0 uses])
+
+;; Generating RTL for gimple basic block 3
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 14 13 0 (debug_marker) "audio.c":199:9 -1
+     (nil))
+;; tuning = newTuning_2(D);
+
+(insn 15 14 0 (set (mem/c:SF (symbol_ref:DI ("tuning") [flags 0x2]  <var_decl 0x7e6482db41b0 tuning>) [6 tuning+0 S4 A32])
+        (reg/v:SF 82 [ newTuning ])) "audio.c":199:16 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 16 15 0 (debug_marker) "audio.c":200:9 -1
+     (nil))
+;; Generating RTL for gimple basic block 4
+
+;; 
+
+(code_label 17 16 18 39 (nil) [0 uses])
+
+(note 18 17 0 NOTE_INSN_BASIC_BLOCK)
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 19 18 0 (debug_marker) "audio.c":205:9 -1
+     (nil))Purged non-fallthru edges from bb 8
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Edge 2->5 redirected to 6
+Forwarding edge 2->4 to 8 failed.
+Forwarding edge 2->4 to 8 failed.
+Redirecting jump 10 from 7 to 8.
+deleting block 5
+Merging block 7 into block 6...
+Merged blocks 6 and 7.
+Merged 6 and 7 without moving.
+
+
+try_optimize_cfg iteration 2
+
+Forwarding edge 2->4 to 8 failed.
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 4 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 4, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 4 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(insn 2 4 3 2 (set (reg/v:SF 82 [ newTuning ])
+        (reg:SF 20 xmm0 [ newTuning ])) "audio.c":196:1 -1
+     (nil))
+(note 3 2 6 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 6 3 7 2 (debug_marker) "audio.c":197:5 -1
+     (nil))
+(insn 7 6 8 2 (set (reg:SF 83)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "audio.c":197:7 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+(insn 8 7 9 2 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg/v:SF 82 [ newTuning ])
+            (reg:SF 83))) "audio.c":197:7 -1
+     (nil))
+(jump_insn 9 8 22 2 (set (pc)
+        (if_then_else (gt (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 24)
+            (pc))) "audio.c":197:7 995 {*jcc}
+     (int_list:REG_BR_PROB 633507684 (nil))
+ -> 24)
+;;  succ:       6 [59.0% (guessed)]  count:633507680 (estimated locally)
+;;              4 [41.0% (guessed)]  count:440234144 (estimated locally) (FALLTHRU)
+
+;; basic block 4, loop depth 0, count 440234144 (estimated locally), maybe hot
+;;  prev block 2, next block 6, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       2 [41.0% (guessed)]  count:440234144 (estimated locally) (FALLTHRU)
+(note 22 9 10 4 [bb 4] NOTE_INSN_BASIC_BLOCK)
+(jump_insn 10 22 11 4 (set (pc)
+        (label_ref:DI 20)) "audio.c":197:7 996 {jump}
+     (nil)
+ -> 20)
+;;  succ:       8 [always]  count:440234144 (estimated locally)
+
+(barrier 11 10 24)
+;; basic block 6, loop depth 0, count 633507681 (estimated locally), maybe hot
+;;  prev block 4, next block 8, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       2 [59.0% (guessed)]  count:633507680 (estimated locally)
+(code_label 24 11 13 6 41 (nil) [1 uses])
+(note 13 24 14 6 [bb 6] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 14 13 15 6 (debug_marker) "audio.c":199:9 -1
+     (nil))
+(insn 15 14 16 6 (set (mem/c:SF (symbol_ref:DI ("tuning") [flags 0x2]  <var_decl 0x7e6482db41b0 tuning>) [6 tuning+0 S4 A32])
+        (reg/v:SF 82 [ newTuning ])) "audio.c":199:16 -1
+     (nil))
+(debug_insn 16 15 19 6 (debug_marker) "audio.c":200:9 -1
+     (nil))
+(debug_insn 19 16 20 6 (debug_marker) "audio.c":205:9 -1
+     (nil))
+;;  succ:       8 [always]  count:633507681 (estimated locally) (FALLTHRU) audio.c:207:1
+
+;; basic block 8, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 6, next block 1, flags: (NEW, REACHABLE, RTL)
+;;  pred:       6 [always]  count:633507681 (estimated locally) (FALLTHRU) audio.c:207:1
+;;              4 [always]  count:440234144 (estimated locally)
+(code_label 20 19 21 8 38 (nil) [1 uses])
+(note 21 20 0 8 [bb 8] NOTE_INSN_BASIC_BLOCK)
+;;  succ:       EXIT [always]  count:1073741824 (estimated locally) (FALLTHRU)
+
+
+;; Function getAudioTuning (getAudioTuning, funcdef_no=6524, decl_uid=4576, cgraph_uid=6525, symbol_order=6537)
+
+float getAudioTuning ()
+{
+  float _2;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  _2 = tuning;
+  return _2;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 2 (_2 - 2 )
+Partition 3 (_3(D) - 3 )
+
+
+Coalescible Partition map 
+
+Partition 0, base 0 (_2 - 2 3 )
+
+
+Partition map 
+
+Partition 0 (_2 - 2 )
+Partition 1 (_3(D) - 3 )
+
+
+Conflict graph:
+
+After sorting:
+Sorted Coalesce list:
+(10000, 0) _2 <-> _3(D)
+
+Partition map 
+
+Partition 0 (_2 - 2 )
+Partition 1 (_3(D) - 3 )
+
+Coalesce list: (2)_2 & (3)_3(D) [map: 0, 1] : Success -> 0
+After Coalescing:
+
+Partition map 
+
+Partition 0 (_2 - 2 3 )
+
+
+Replacing Expressions
+_2 replace with --> _2 = tuning;
+
+
+float getAudioTuning ()
+{
+  float _2;
+  float _3(D);
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  _2 = tuning;
+  return _2;
+;;    succ:       EXIT
+
+}
+
+
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 5 4 0 (debug_marker) "audio.c":212:5 -1
+     (nil))
+;; return _2;
+
+(insn 6 5 7 (set (reg:SF 84)
+        (mem/c:SF (symbol_ref:DI ("tuning") [flags 0x2]  <var_decl 0x7e6482db41b0 tuning>) [6 tuning+0 S4 A32])) "audio.c":212:11 discrim 1 -1
+     (nil))
+
+(insn 7 6 8 (set (reg:SF 82 [ <retval> ])
+        (reg:SF 84)) "audio.c":212:11 discrim 1 -1
+     (nil))
+
+(jump_insn 8 7 9 (set (pc)
+        (label_ref 0)) "audio.c":212:11 discrim 1 -1
+     (nil))
+
+(barrier 9 8 0)
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Removing jump 8.
+Merging block 4 into block 2...
+Merged blocks 2 and 4.
+Merged 2 and 4 without moving.
+
+
+try_optimize_cfg iteration 2
+
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 3 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 1, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 3 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(note 2 3 5 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 5 2 6 2 (debug_marker) "audio.c":212:5 -1
+     (nil))
+(insn 6 5 7 2 (set (reg:SF 84)
+        (mem/c:SF (symbol_ref:DI ("tuning") [flags 0x2]  <var_decl 0x7e6482db41b0 tuning>) [6 tuning+0 S4 A32])) "audio.c":212:11 discrim 1 -1
+     (nil))
+(insn 7 6 11 2 (set (reg:SF 82 [ <retval> ])
+        (reg:SF 84)) "audio.c":212:11 discrim 1 -1
+     (nil))
+(insn 11 7 12 2 (set (reg/i:SF 20 xmm0)
+        (reg:SF 82 [ <retval> ])) "audio.c":213:1 -1
+     (nil))
+(insn 12 11 0 2 (use (reg/i:SF 20 xmm0)) "audio.c":213:1 -1
+     (nil))
+;;  succ:       EXIT [always]  count:1073741824 (estimated locally) (FALLTHRU)
+

@@ -1,0 +1,2069 @@
+
+;; Function initializeFilter (initializeFilter, funcdef_no=23, decl_uid=3392, cgraph_uid=24, symbol_order=23)
+
+struct 
+{
+  float alpha;
+  float lastResult;
+  float gain;
+  float initialValue;
+  float highValue;
+  int highLimit;
+  int highCount;
+  _Bool sawOne;
+  _Bool doGain;
+  _Bool deadElimination;
+} * initializeFilter (struct 
+{
+  float alpha;
+  float lastResult;
+  float gain;
+  float initialValue;
+  float highValue;
+  int highLimit;
+  int highCount;
+  _Bool sawOne;
+  _Bool doGain;
+  _Bool deadElimination;
+} * specP, float alpha, float gain, float initialValue)
+{
+  _Bool _1;
+  float iftmp.0_2;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  if (alpha_3(D) < 0.0)
+    goto <bb 5>; [41.00%]
+  else
+    goto <bb 3>; [59.00%]
+;;    succ:       5
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  if (alpha_3(D) > 1.0e+0)
+    goto <bb 4>; [59.00%]
+  else
+    goto <bb 5>; [41.00%]
+;;    succ:       4
+;;                5
+
+;;   basic block 4, loop depth 0
+;;    pred:       3
+;;    succ:       5
+
+;;   basic block 5, loop depth 0
+;;    pred:       2
+;;                3
+;;                4
+  # iftmp.0_2 = PHI <0.0(2), alpha_3(D)(3), 1.0e+0(4)>
+  specP_5(D)->alpha = iftmp.0_2;
+  # DEBUG BEGIN_STMT
+  specP_5(D)->gain = gain_7(D);
+  # DEBUG BEGIN_STMT
+  specP_5(D)->lastResult = 0.0;
+  # DEBUG BEGIN_STMT
+  specP_5(D)->initialValue = initialValue_10(D);
+  # DEBUG BEGIN_STMT
+  specP_5(D)->highCount = 0;
+  # DEBUG BEGIN_STMT
+  specP_5(D)->highValue = 0.0;
+  # DEBUG BEGIN_STMT
+  specP_5(D)->sawOne = 0;
+  # DEBUG BEGIN_STMT
+  _1 = gain_7(D) != 0.0;
+  specP_5(D)->doGain = _1;
+  # DEBUG BEGIN_STMT
+  specP_5(D)->deadElimination = 0;
+  # DEBUG BEGIN_STMT
+  return specP_5(D);
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 1 (_1 - 1 )
+Partition 2 (iftmp.0_2 - 2 )
+Partition 3 (alpha_3(D) - 3 )
+Partition 5 (specP_5(D) - 5 )
+Partition 7 (gain_7(D) - 7 )
+Partition 10 (initialValue_10(D) - 10 )
+Partition 20 (_20(D) - 20 )
+
+
+Coalescible Partition map 
+
+Partition 0, base 0 (iftmp.0_2 - 2 3 )
+Partition 2, base 1 (specP_5(D) - 5 20 )
+Partition 3, base 2 (gain_7(D) - 7 )
+Partition 4, base 3 (initialValue_10(D) - 10 )
+
+
+Partition map 
+
+Partition 0 (iftmp.0_2 - 2 )
+Partition 1 (alpha_3(D) - 3 )
+Partition 2 (specP_5(D) - 5 )
+Partition 3 (gain_7(D) - 7 )
+Partition 4 (initialValue_10(D) - 10 )
+Partition 5 (_20(D) - 20 )
+
+
+Conflict graph:
+2: 5
+5: 2
+
+After sorting:
+Sorted Coalesce list:
+(10000, 0) specP_5(D) <-> _20(D)
+(4838, 0) iftmp.0_2 <-> alpha_3(D)
+
+Partition map 
+
+Partition 0 (iftmp.0_2 - 2 )
+Partition 1 (alpha_3(D) - 3 )
+Partition 2 (specP_5(D) - 5 )
+Partition 3 (gain_7(D) - 7 )
+Partition 4 (initialValue_10(D) - 10 )
+Partition 5 (_20(D) - 20 )
+
+Coalesce list: (5)specP_5(D) & (20)_20(D) [map: 2, 5] : Fail due to conflict
+Coalesce list: (2)iftmp.0_2 & (3)alpha_3(D) [map: 0, 1] : Success -> 0
+After Coalescing:
+
+Partition map 
+
+Partition 0 (_1 - 1 )
+Partition 1 (iftmp.0_2 - 2 3 )
+Partition 2 (specP_5(D) - 5 )
+Partition 3 (gain_7(D) - 7 )
+Partition 4 (initialValue_10(D) - 10 )
+Partition 5 (_20(D) - 20 )
+
+
+Replacing Expressions
+_1 replace with --> _1 = gain_7(D) != 0.0;
+
+
+struct 
+{
+  float alpha;
+  float lastResult;
+  float gain;
+  float initialValue;
+  float highValue;
+  int highLimit;
+  int highCount;
+  _Bool sawOne;
+  _Bool doGain;
+  _Bool deadElimination;
+} * initializeFilter (struct 
+{
+  float alpha;
+  float lastResult;
+  float gain;
+  float initialValue;
+  float highValue;
+  int highLimit;
+  int highCount;
+  _Bool sawOne;
+  _Bool doGain;
+  _Bool deadElimination;
+} * specP, float alpha, float gain, float initialValue)
+{
+  _Bool _1;
+  float iftmp.0_2;
+  struct 
+{
+  float alpha;
+  float lastResult;
+  float gain;
+  float initialValue;
+  float highValue;
+  int highLimit;
+  int highCount;
+  _Bool sawOne;
+  _Bool doGain;
+  _Bool deadElimination;
+} * _20(D);
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  if (alpha_3(D) < 0.0)
+    goto <bb 5>; [41.00%]
+  else
+    goto <bb 3>; [59.00%]
+;;    succ:       5
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       2
+  if (alpha_3(D) > 1.0e+0)
+    goto <bb 4>; [59.00%]
+  else
+    goto <bb 5>; [41.00%]
+;;    succ:       4
+;;                5
+
+;;   basic block 4, loop depth 0
+;;    pred:       3
+;;    succ:       5
+
+;;   basic block 5, loop depth 0
+;;    pred:       2
+;;                3
+;;                4
+  # iftmp.0_2 = PHI <0.0(2), alpha_3(D)(3), 1.0e+0(4)>
+  specP_5(D)->alpha = iftmp.0_2;
+  # DEBUG BEGIN_STMT
+  specP_5(D)->gain = gain_7(D);
+  # DEBUG BEGIN_STMT
+  specP_5(D)->lastResult = 0.0;
+  # DEBUG BEGIN_STMT
+  specP_5(D)->initialValue = initialValue_10(D);
+  # DEBUG BEGIN_STMT
+  specP_5(D)->highCount = 0;
+  # DEBUG BEGIN_STMT
+  specP_5(D)->highValue = 0.0;
+  # DEBUG BEGIN_STMT
+  specP_5(D)->sawOne = 0;
+  # DEBUG BEGIN_STMT
+  _1 = gain_7(D) != 0.0;
+  specP_5(D)->doGain = _1;
+  # DEBUG BEGIN_STMT
+  specP_5(D)->deadElimination = 0;
+  # DEBUG BEGIN_STMT
+  return specP_5(D);
+;;    succ:       EXIT
+
+}
+
+
+Inserting a value copy on edge BB2->BB5 : PART.1 = 0.0
+Inserting a value copy on edge BB4->BB5 : PART.1 = 1.0e+0
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 11 10 0 (debug_marker) "lowpass.c":17:5 -1
+     (nil))
+;; if (alpha_3(D) < 0.0)
+
+(insn 12 11 13 (set (reg:SF 88)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "lowpass.c":17:20 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+
+(insn 13 12 14 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg:SF 88)
+            (reg/v:SF 85 [ alpha ]))) "lowpass.c":17:20 -1
+     (nil))
+
+(jump_insn 14 13 0 (set (pc)
+        (if_then_else (gt (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "lowpass.c":17:20 -1
+     (int_list:REG_BR_PROB 440234148 (nil)))
+
+;; Generating RTL for gimple basic block 3
+
+;; if (alpha_3(D) > 1.0e+0)
+
+(insn 16 15 17 (set (reg:SF 89)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "lowpass.c":17:20 discrim 2 -1
+     (expr_list:REG_EQUAL (const_double:SF 1.0e+0 [0x0.8p+1])
+        (nil)))
+
+(insn 17 16 18 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg/v:SF 85 [ alpha ])
+            (reg:SF 89))) "lowpass.c":17:20 discrim 2 -1
+     (nil))
+
+(jump_insn 18 17 19 (set (pc)
+        (if_then_else (gt (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref 21)
+            (pc))) "lowpass.c":17:20 discrim 2 -1
+     (int_list:REG_BR_PROB 633507684 (nil)))
+
+(jump_insn 19 18 20 (set (pc)
+        (label_ref 0)) "lowpass.c":17:20 discrim 2 -1
+     (nil))
+
+(barrier 20 19 21)
+
+(code_label 21 20 0 3 (nil) [0 uses])
+
+;; Generating RTL for gimple basic block 4
+
+;; Generating RTL for gimple basic block 5
+
+;; 
+
+(code_label 23 22 24 2 (nil) [0 uses])
+
+(note 24 23 0 NOTE_INSN_BASIC_BLOCK)
+
+;; specP_5(D)->alpha = iftmp.0_2;
+
+(insn 25 24 0 (set (mem:SF (reg/v/f:DI 84 [ specP ]) [1 specP_5(D)->alpha+0 S4 A32])
+        (reg/v:SF 85 [ alpha ])) "lowpass.c":17:18 discrim 8 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 26 25 0 (debug_marker) "lowpass.c":18:5 -1
+     (nil))
+;; specP_5(D)->gain = gain_7(D);
+
+(insn 27 26 0 (set (mem:SF (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 8 [0x8])) [1 specP_5(D)->gain+0 S4 A32])
+        (reg/v:SF 86 [ gain ])) "lowpass.c":18:17 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 28 27 0 (debug_marker) "lowpass.c":19:5 -1
+     (nil))
+;; specP_5(D)->lastResult = 0.0;
+
+(insn 29 28 30 (set (reg:SF 90)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "lowpass.c":19:23 -1
+     (nil))
+
+(insn 30 29 0 (set (mem:SF (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 4 [0x4])) [1 specP_5(D)->lastResult+0 S4 A32])
+        (reg:SF 90)) "lowpass.c":19:23 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 31 30 0 (debug_marker) "lowpass.c":20:5 -1
+     (nil))
+;; specP_5(D)->initialValue = initialValue_10(D);
+
+(insn 32 31 0 (set (mem:SF (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 12 [0xc])) [1 specP_5(D)->initialValue+0 S4 A32])
+        (reg/v:SF 87 [ initialValue ])) "lowpass.c":20:25 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 33 32 0 (debug_marker) "lowpass.c":21:5 -1
+     (nil))
+;; specP_5(D)->highCount = 0;
+
+(insn 34 33 0 (set (mem:SI (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 24 [0x18])) [3 specP_5(D)->highCount+0 S4 A32])
+        (const_int 0 [0])) "lowpass.c":21:22 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 35 34 0 (debug_marker) "lowpass.c":22:5 -1
+     (nil))
+;; specP_5(D)->highValue = 0.0;
+
+(insn 36 35 37 (set (reg:SF 91)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "lowpass.c":22:22 -1
+     (nil))
+
+(insn 37 36 0 (set (mem:SF (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 16 [0x10])) [1 specP_5(D)->highValue+0 S4 A32])
+        (reg:SF 91)) "lowpass.c":22:22 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 38 37 0 (debug_marker) "lowpass.c":24:5 -1
+     (nil))
+;; specP_5(D)->sawOne = 0;
+
+(insn 39 38 0 (set (mem:QI (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 28 [0x1c])) [4 specP_5(D)->sawOne+0 S1 A32])
+        (const_int 0 [0])) "lowpass.c":24:19 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 40 39 0 (debug_marker) "lowpass.c":25:5 -1
+     (nil))
+;; specP_5(D)->doGain = _1;
+
+(insn 41 40 42 (set (reg:SF 96)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "lowpass.c":25:39 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+
+(insn 42 41 43 (set (reg:CCFP 17 flags)
+        (unspec:CCFP [
+                (compare:CCFP (reg/v:SF 86 [ gain ])
+                    (reg:SF 96))
+            ] UNSPEC_NOTRAP)) "lowpass.c":25:39 -1
+     (nil))
+
+(insn 43 42 46 (set (reg:QI 95)
+        (unordered:QI (reg:CCFP 17 flags)
+            (const_int 0 [0]))) "lowpass.c":25:39 -1
+     (nil))
+
+(insn 46 43 44 (set (reg:QI 99)
+        (const_int 1 [0x1])) "lowpass.c":25:39 -1
+     (nil))
+
+(insn 44 46 45 (set (reg:SF 98)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "lowpass.c":25:39 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+
+(insn 45 44 47 (set (reg:CCFP 17 flags)
+        (unspec:CCFP [
+                (compare:CCFP (reg/v:SF 86 [ gain ])
+                    (reg:SF 98))
+            ] UNSPEC_NOTRAP)) "lowpass.c":25:39 -1
+     (nil))
+
+(insn 47 45 48 (set (reg:QI 97)
+        (if_then_else:QI (uneq (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (reg:QI 95)
+            (reg:QI 99))) "lowpass.c":25:39 -1
+     (nil))
+
+(insn 48 47 0 (set (mem:QI (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 29 [0x1d])) [4 specP_5(D)->doGain+0 S1 A8])
+        (reg:QI 97)) "lowpass.c":25:39 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 49 48 0 (debug_marker) "lowpass.c":26:5 -1
+     (nil))
+;; specP_5(D)->deadElimination = 0;
+
+(insn 50 49 0 (set (mem:QI (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 30 [0x1e])) [4 specP_5(D)->deadElimination+0 S1 A16])
+        (const_int 0 [0])) "lowpass.c":26:28 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 51 50 0 (debug_marker) "lowpass.c":28:5 -1
+     (nil))
+;; return specP_5(D);
+
+(insn 52 51 53 (set (reg/f:DI 83 [ <retval> ])
+        (reg/v/f:DI 84 [ specP ])) "lowpass.c":28:11 discrim 1 -1
+     (nil))
+
+(jump_insn 53 52 54 (set (pc)
+        (label_ref 0)) "lowpass.c":28:11 discrim 1 -1
+     (nil))
+
+(barrier 54 53 0)
+Edge 2->5 redirected to 8
+Purged non-fallthru edges from bb 10
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Edge 4->6 redirected to 7
+Forwarding edge 4->5 to 9 failed.
+Forwarding edge 4->5 to 9 failed.
+deleting block 6
+Removing jump 53.
+Merging block 10 into block 9...
+Merged blocks 9 and 10.
+Merged 9 and 10 without moving.
+
+
+try_optimize_cfg iteration 2
+
+Forwarding edge 4->5 to 9 failed.
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 9 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741823 (estimated locally), maybe hot
+;;  prev block 0, next block 4, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       ENTRY [always]  count:1073741823 (estimated locally) (FALLTHRU)
+(note 9 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(insn 2 9 3 2 (set (reg/v/f:DI 84 [ specP ])
+        (reg:DI 5 di [ specP ])) "lowpass.c":16:1 -1
+     (nil))
+(insn 3 2 4 2 (set (reg/v:SF 85 [ alpha ])
+        (reg:SF 20 xmm0 [ alpha ])) "lowpass.c":16:1 -1
+     (nil))
+(insn 4 3 5 2 (set (reg/v:SF 86 [ gain ])
+        (reg:SF 21 xmm1 [ gain ])) "lowpass.c":16:1 -1
+     (nil))
+(insn 5 4 6 2 (set (reg/v:SF 87 [ initialValue ])
+        (reg:SF 22 xmm2 [ initialValue ])) "lowpass.c":16:1 -1
+     (nil))
+(note 6 5 11 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 11 6 12 2 (debug_marker) "lowpass.c":17:5 -1
+     (nil))
+(insn 12 11 13 2 (set (reg:SF 88)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "lowpass.c":17:20 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+(insn 13 12 14 2 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg:SF 88)
+            (reg/v:SF 85 [ alpha ]))) "lowpass.c":17:20 -1
+     (nil))
+(jump_insn 14 13 15 2 (set (pc)
+        (if_then_else (gt (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 62)
+            (pc))) "lowpass.c":17:20 995 {*jcc}
+     (int_list:REG_BR_PROB 440234148 (nil))
+ -> 62)
+;;  succ:       8 [41.0% (guessed)]  count:440234144 (estimated locally)
+;;              4 [59.0% (guessed)]  count:633507679 (estimated locally) (FALLTHRU)
+
+;; basic block 4, loop depth 0, count 633507680 (estimated locally), maybe hot
+;;  prev block 2, next block 5, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       2 [59.0% (guessed)]  count:633507679 (estimated locally) (FALLTHRU)
+(note 15 14 16 4 [bb 4] NOTE_INSN_BASIC_BLOCK)
+(insn 16 15 17 4 (set (reg:SF 89)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "lowpass.c":17:20 discrim 2 -1
+     (expr_list:REG_EQUAL (const_double:SF 1.0e+0 [0x0.8p+1])
+        (nil)))
+(insn 17 16 18 4 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg/v:SF 85 [ alpha ])
+            (reg:SF 89))) "lowpass.c":17:20 discrim 2 -1
+     (nil))
+(jump_insn 18 17 63 4 (set (pc)
+        (if_then_else (gt (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 65)
+            (pc))) "lowpass.c":17:20 discrim 2 995 {*jcc}
+     (int_list:REG_BR_PROB 633507684 (nil))
+ -> 65)
+;;  succ:       7 [59.0% (guessed)]  count:373769533 (estimated locally)
+;;              5 [41.0% (guessed)]  count:259738147 (estimated locally) (FALLTHRU)
+
+;; basic block 5, loop depth 0, count 259738147 (estimated locally), maybe hot
+;;  prev block 4, next block 7, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       4 [41.0% (guessed)]  count:259738147 (estimated locally) (FALLTHRU)
+(note 63 18 19 5 [bb 5] NOTE_INSN_BASIC_BLOCK)
+(jump_insn 19 63 20 5 (set (pc)
+        (label_ref 23)) "lowpass.c":17:20 discrim 2 -1
+     (nil)
+ -> 23)
+;;  succ:       9 [always]  count:259738147 (estimated locally)
+
+(barrier 20 19 65)
+;; basic block 7, loop depth 0, count 373769533 (estimated locally), maybe hot
+;;  prev block 5, next block 8, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       4 [59.0% (guessed)]  count:373769533 (estimated locally)
+(code_label 65 20 22 7 5 (nil) [1 uses])
+(note 22 65 8 7 [bb 7] NOTE_INSN_BASIC_BLOCK)
+(insn 8 22 59 7 (set (reg/v:SF 85 [ alpha ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC1") [flags 0x2]) [0  S4 A32])) "lowpass.c":17:20 discrim 4 -1
+     (expr_list:REG_EQUAL (const_double:SF 1.0e+0 [0x0.8p+1])
+        (nil)))
+(jump_insn 59 8 60 7 (set (pc)
+        (label_ref 23)) -1
+     (nil)
+ -> 23)
+;;  succ:       9 [always]  count:373769533 (estimated locally)
+
+(barrier 60 59 62)
+;; basic block 8, loop depth 0, count 440234144 (estimated locally), maybe hot
+;;  prev block 7, next block 9, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       2 [41.0% (guessed)]  count:440234144 (estimated locally)
+(code_label 62 60 61 8 4 (nil) [1 uses])
+(note 61 62 7 8 [bb 8] NOTE_INSN_BASIC_BLOCK)
+(insn 7 61 23 8 (set (reg/v:SF 85 [ alpha ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "lowpass.c":17:20 discrim 1 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+;;  succ:       9 [always]  count:440234144 (estimated locally) (FALLTHRU)
+
+;; basic block 9, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 8, next block 1, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       8 [always]  count:440234144 (estimated locally) (FALLTHRU)
+;;              7 [always]  count:373769533 (estimated locally)
+;;              5 [always]  count:259738147 (estimated locally)
+(code_label 23 7 24 9 2 (nil) [2 uses])
+(note 24 23 25 9 [bb 9] NOTE_INSN_BASIC_BLOCK)
+(insn 25 24 26 9 (set (mem:SF (reg/v/f:DI 84 [ specP ]) [1 specP_5(D)->alpha+0 S4 A32])
+        (reg/v:SF 85 [ alpha ])) "lowpass.c":17:18 discrim 8 -1
+     (nil))
+(debug_insn 26 25 27 9 (debug_marker) "lowpass.c":18:5 -1
+     (nil))
+(insn 27 26 28 9 (set (mem:SF (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 8 [0x8])) [1 specP_5(D)->gain+0 S4 A32])
+        (reg/v:SF 86 [ gain ])) "lowpass.c":18:17 -1
+     (nil))
+(debug_insn 28 27 29 9 (debug_marker) "lowpass.c":19:5 -1
+     (nil))
+(insn 29 28 30 9 (set (reg:SF 90)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "lowpass.c":19:23 -1
+     (nil))
+(insn 30 29 31 9 (set (mem:SF (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 4 [0x4])) [1 specP_5(D)->lastResult+0 S4 A32])
+        (reg:SF 90)) "lowpass.c":19:23 -1
+     (nil))
+(debug_insn 31 30 32 9 (debug_marker) "lowpass.c":20:5 -1
+     (nil))
+(insn 32 31 33 9 (set (mem:SF (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 12 [0xc])) [1 specP_5(D)->initialValue+0 S4 A32])
+        (reg/v:SF 87 [ initialValue ])) "lowpass.c":20:25 -1
+     (nil))
+(debug_insn 33 32 34 9 (debug_marker) "lowpass.c":21:5 -1
+     (nil))
+(insn 34 33 35 9 (set (mem:SI (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 24 [0x18])) [3 specP_5(D)->highCount+0 S4 A32])
+        (const_int 0 [0])) "lowpass.c":21:22 -1
+     (nil))
+(debug_insn 35 34 36 9 (debug_marker) "lowpass.c":22:5 -1
+     (nil))
+(insn 36 35 37 9 (set (reg:SF 91)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "lowpass.c":22:22 -1
+     (nil))
+(insn 37 36 38 9 (set (mem:SF (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 16 [0x10])) [1 specP_5(D)->highValue+0 S4 A32])
+        (reg:SF 91)) "lowpass.c":22:22 -1
+     (nil))
+(debug_insn 38 37 39 9 (debug_marker) "lowpass.c":24:5 -1
+     (nil))
+(insn 39 38 40 9 (set (mem:QI (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 28 [0x1c])) [4 specP_5(D)->sawOne+0 S1 A32])
+        (const_int 0 [0])) "lowpass.c":24:19 -1
+     (nil))
+(debug_insn 40 39 41 9 (debug_marker) "lowpass.c":25:5 -1
+     (nil))
+(insn 41 40 42 9 (set (reg:SF 96)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "lowpass.c":25:39 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+(insn 42 41 43 9 (set (reg:CCFP 17 flags)
+        (unspec:CCFP [
+                (compare:CCFP (reg/v:SF 86 [ gain ])
+                    (reg:SF 96))
+            ] UNSPEC_NOTRAP)) "lowpass.c":25:39 -1
+     (nil))
+(insn 43 42 46 9 (set (reg:QI 95)
+        (unordered:QI (reg:CCFP 17 flags)
+            (const_int 0 [0]))) "lowpass.c":25:39 -1
+     (nil))
+(insn 46 43 44 9 (set (reg:QI 99)
+        (const_int 1 [0x1])) "lowpass.c":25:39 -1
+     (nil))
+(insn 44 46 45 9 (set (reg:SF 98)
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "lowpass.c":25:39 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+(insn 45 44 47 9 (set (reg:CCFP 17 flags)
+        (unspec:CCFP [
+                (compare:CCFP (reg/v:SF 86 [ gain ])
+                    (reg:SF 98))
+            ] UNSPEC_NOTRAP)) "lowpass.c":25:39 -1
+     (nil))
+(insn 47 45 48 9 (set (reg:QI 97)
+        (if_then_else:QI (uneq (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (reg:QI 95)
+            (reg:QI 99))) "lowpass.c":25:39 -1
+     (nil))
+(insn 48 47 49 9 (set (mem:QI (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 29 [0x1d])) [4 specP_5(D)->doGain+0 S1 A8])
+        (reg:QI 97)) "lowpass.c":25:39 -1
+     (nil))
+(debug_insn 49 48 50 9 (debug_marker) "lowpass.c":26:5 -1
+     (nil))
+(insn 50 49 51 9 (set (mem:QI (plus:DI (reg/v/f:DI 84 [ specP ])
+                (const_int 30 [0x1e])) [4 specP_5(D)->deadElimination+0 S1 A16])
+        (const_int 0 [0])) "lowpass.c":26:28 -1
+     (nil))
+(debug_insn 51 50 52 9 (debug_marker) "lowpass.c":28:5 -1
+     (nil))
+(insn 52 51 56 9 (set (reg/f:DI 83 [ <retval> ])
+        (reg/v/f:DI 84 [ specP ])) "lowpass.c":28:11 discrim 1 -1
+     (nil))
+(insn 56 52 57 9 (set (reg/i:DI 0 ax)
+        (reg/f:DI 83 [ <retval> ])) "lowpass.c":29:1 -1
+     (nil))
+(insn 57 56 0 9 (use (reg/i:DI 0 ax)) "lowpass.c":29:1 -1
+     (nil))
+;;  succ:       EXIT [always]  count:1073741824 (estimated locally) (FALLTHRU)
+
+
+;; Function setFilterDeadDetection (setFilterDeadDetection, funcdef_no=24, decl_uid=3396, cgraph_uid=25, symbol_order=24)
+
+void setFilterDeadDetection (struct 
+{
+  float alpha;
+  float lastResult;
+  float gain;
+  float initialValue;
+  float highValue;
+  int highLimit;
+  int highCount;
+  _Bool sawOne;
+  _Bool doGain;
+  _Bool deadElimination;
+} * specP, float hival, int cutoff)
+{
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  specP_2(D)->deadElimination = 1;
+  # DEBUG BEGIN_STMT
+  specP_2(D)->highValue = hival_4(D);
+  # DEBUG BEGIN_STMT
+  specP_2(D)->highLimit = cutoff_6(D);
+  # DEBUG BEGIN_STMT
+  specP_2(D)->highCount = 0;
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 2 (specP_2(D) - 2 )
+Partition 4 (hival_4(D) - 4 )
+Partition 6 (cutoff_6(D) - 6 )
+
+
+Coalescible Partition map 
+
+Partition 0, base 0 (specP_2(D) - 2 )
+Partition 1, base 1 (hival_4(D) - 4 )
+Partition 2, base 2 (cutoff_6(D) - 6 )
+
+
+Partition map 
+
+Partition 0 (specP_2(D) - 2 )
+Partition 1 (hival_4(D) - 4 )
+Partition 2 (cutoff_6(D) - 6 )
+
+
+Conflict graph:
+
+After sorting:
+Coalesce List:
+
+Partition map 
+
+Partition 0 (specP_2(D) - 2 )
+Partition 1 (hival_4(D) - 4 )
+Partition 2 (cutoff_6(D) - 6 )
+
+After Coalescing:
+
+Partition map 
+
+Partition 0 (specP_2(D) - 2 )
+Partition 1 (hival_4(D) - 4 )
+Partition 2 (cutoff_6(D) - 6 )
+
+void setFilterDeadDetection (struct 
+{
+  float alpha;
+  float lastResult;
+  float gain;
+  float initialValue;
+  float highValue;
+  int highLimit;
+  int highCount;
+  _Bool sawOne;
+  _Bool doGain;
+  _Bool deadElimination;
+} * specP, float hival, int cutoff)
+{
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  specP_2(D)->deadElimination = 1;
+  # DEBUG BEGIN_STMT
+  specP_2(D)->highValue = hival_4(D);
+  # DEBUG BEGIN_STMT
+  specP_2(D)->highLimit = cutoff_6(D);
+  # DEBUG BEGIN_STMT
+  specP_2(D)->highCount = 0;
+  return;
+;;    succ:       EXIT
+
+}
+
+
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 8 7 0 (debug_marker) "lowpass.c":40:5 -1
+     (nil))
+;; specP_2(D)->deadElimination = 1;
+
+(insn 9 8 0 (set (mem:QI (plus:DI (reg/v/f:DI 82 [ specP ])
+                (const_int 30 [0x1e])) [4 specP_2(D)->deadElimination+0 S1 A16])
+        (const_int 1 [0x1])) "lowpass.c":40:28 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 10 9 0 (debug_marker) "lowpass.c":41:5 -1
+     (nil))
+;; specP_2(D)->highValue = hival_4(D);
+
+(insn 11 10 0 (set (mem:SF (plus:DI (reg/v/f:DI 82 [ specP ])
+                (const_int 16 [0x10])) [1 specP_2(D)->highValue+0 S4 A32])
+        (reg/v:SF 83 [ hival ])) "lowpass.c":41:22 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 12 11 0 (debug_marker) "lowpass.c":42:5 -1
+     (nil))
+;; specP_2(D)->highLimit = cutoff_6(D);
+
+(insn 13 12 0 (set (mem:SI (plus:DI (reg/v/f:DI 82 [ specP ])
+                (const_int 20 [0x14])) [3 specP_2(D)->highLimit+0 S4 A32])
+        (reg/v:SI 84 [ cutoff ])) "lowpass.c":42:22 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 14 13 0 (debug_marker) "lowpass.c":43:5 -1
+     (nil))
+;; specP_2(D)->highCount = 0;
+
+(insn 15 14 0 (set (mem:SI (plus:DI (reg/v/f:DI 82 [ specP ])
+                (const_int 24 [0x18])) [3 specP_2(D)->highCount+0 S4 A32])
+        (const_int 0 [0])) "lowpass.c":43:22 -1
+     (nil))
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Merging block 4 into block 2...
+Merged blocks 2 and 4.
+Merged 2 and 4 without moving.
+
+
+try_optimize_cfg iteration 2
+
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 6 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 1, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 6 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(insn 2 6 3 2 (set (reg/v/f:DI 82 [ specP ])
+        (reg:DI 5 di [ specP ])) "lowpass.c":39:1 -1
+     (nil))
+(insn 3 2 4 2 (set (reg/v:SF 83 [ hival ])
+        (reg:SF 20 xmm0 [ hival ])) "lowpass.c":39:1 -1
+     (nil))
+(insn 4 3 5 2 (set (reg/v:SI 84 [ cutoff ])
+        (reg:SI 4 si [ cutoff ])) "lowpass.c":39:1 -1
+     (nil))
+(note 5 4 8 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 8 5 9 2 (debug_marker) "lowpass.c":40:5 -1
+     (nil))
+(insn 9 8 10 2 (set (mem:QI (plus:DI (reg/v/f:DI 82 [ specP ])
+                (const_int 30 [0x1e])) [4 specP_2(D)->deadElimination+0 S1 A16])
+        (const_int 1 [0x1])) "lowpass.c":40:28 -1
+     (nil))
+(debug_insn 10 9 11 2 (debug_marker) "lowpass.c":41:5 -1
+     (nil))
+(insn 11 10 12 2 (set (mem:SF (plus:DI (reg/v/f:DI 82 [ specP ])
+                (const_int 16 [0x10])) [1 specP_2(D)->highValue+0 S4 A32])
+        (reg/v:SF 83 [ hival ])) "lowpass.c":41:22 -1
+     (nil))
+(debug_insn 12 11 13 2 (debug_marker) "lowpass.c":42:5 -1
+     (nil))
+(insn 13 12 14 2 (set (mem:SI (plus:DI (reg/v/f:DI 82 [ specP ])
+                (const_int 20 [0x14])) [3 specP_2(D)->highLimit+0 S4 A32])
+        (reg/v:SI 84 [ cutoff ])) "lowpass.c":42:22 -1
+     (nil))
+(debug_insn 14 13 15 2 (debug_marker) "lowpass.c":43:5 -1
+     (nil))
+(insn 15 14 0 2 (set (mem:SI (plus:DI (reg/v/f:DI 82 [ specP ])
+                (const_int 24 [0x18])) [3 specP_2(D)->highCount+0 S4 A32])
+        (const_int 0 [0])) "lowpass.c":43:22 -1
+     (nil))
+;;  succ:       EXIT [always]  count:1073741824 (estimated locally) (FALLTHRU) lowpass.c:44:1
+
+
+;; Function lowPassFilter (lowPassFilter, funcdef_no=25, decl_uid=3399, cgraph_uid=26, symbol_order=25)
+
+float lowPassFilter (struct 
+{
+  float alpha;
+  float lastResult;
+  float gain;
+  float initialValue;
+  float highValue;
+  int highLimit;
+  int highCount;
+  _Bool sawOne;
+  _Bool doGain;
+  _Bool deadElimination;
+} * specP, float sample)
+{
+  float result;
+  _Bool _1;
+  float _2;
+  int _3;
+  int _4;
+  int _5;
+  _Bool _6;
+  float _8;
+  float _9;
+  double _10;
+  double _11;
+  double _12;
+  float _13;
+  double _14;
+  double _15;
+  double _16;
+  _Bool _17;
+  float _18;
+  float iftmp.2_21;
+  float iftmp.2_33;
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  # DEBUG BEGIN_STMT
+  _1 = specP_25(D)->deadElimination;
+  if (_1 != 0)
+    goto <bb 4>; [50.00%]
+  else
+    goto <bb 3>; [50.00%]
+;;    succ:       4
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       5
+;;                2
+  goto <bb 7>; [100.00%]
+;;    succ:       7
+
+;;   basic block 4, loop depth 0
+;;    pred:       2
+  # DEBUG BEGIN_STMT
+  _2 = specP_25(D)->highValue;
+  if (_2 <= sample_26(D))
+    goto <bb 5>; [50.00%]
+  else
+    goto <bb 6>; [50.00%]
+;;    succ:       5
+;;                6
+
+;;   basic block 5, loop depth 0
+;;    pred:       4
+  # DEBUG BEGIN_STMT
+  _3 = specP_25(D)->highCount;
+  _4 = _3 + 1;
+  specP_25(D)->highCount = _4;
+  _5 = specP_25(D)->highLimit;
+  if (_4 >= _5)
+    goto <bb 8>; [50.00%]
+  else
+    goto <bb 3>; [50.00%]
+;;    succ:       8
+;;                3
+
+;;   basic block 6, loop depth 0
+;;    pred:       4
+  # DEBUG BEGIN_STMT
+  specP_25(D)->highCount = 0;
+;;    succ:       7
+
+;;   basic block 7, loop depth 0
+;;    pred:       6
+;;                3
+;;    succ:       8
+
+;;   basic block 8, loop depth 0
+;;    pred:       7
+;;                5
+  # sample_19 = PHI <sample_26(D)(7), 0.0(5)>
+  # DEBUG sample => sample_19
+  # DEBUG BEGIN_STMT
+  _6 = specP_25(D)->sawOne;
+  if (_6 != 0)
+    goto <bb 10>; [50.00%]
+  else
+    goto <bb 9>; [50.00%]
+;;    succ:       9
+;;                10
+
+;;   basic block 9, loop depth 0
+;;    pred:       8
+  # DEBUG BEGIN_STMT
+  specP_25(D)->sawOne = 1;
+  # DEBUG BEGIN_STMT
+  result_31 = specP_25(D)->initialValue;
+  # DEBUG result => result_31
+  goto <bb 11>; [100.00%]
+;;    succ:       11
+
+;;   basic block 10, loop depth 0
+;;    pred:       8
+  # DEBUG BEGIN_STMT
+  _8 = specP_25(D)->alpha;
+  _9 = _8 * sample_19;
+  _10 = (double) _9;
+  _11 = (double) _8;
+  _12 = 1.0e+0 - _11;
+  _13 = specP_25(D)->lastResult;
+  _14 = (double) _13;
+  _15 = _12 * _14;
+  _16 = _10 + _15;
+  result_29 = (float) _16;
+  # DEBUG result => result_29
+;;    succ:       11
+
+;;   basic block 11, loop depth 0
+;;    pred:       9
+;;                10
+  # result_20 = PHI <result_31(9), result_29(10)>
+  # DEBUG result => result_20
+  # DEBUG BEGIN_STMT
+  specP_25(D)->lastResult = result_20;
+  # DEBUG BEGIN_STMT
+  _17 = specP_25(D)->doGain;
+  if (_17 != 0)
+    goto <bb 12>; [50.00%]
+  else
+    goto <bb 13>; [50.00%]
+;;    succ:       12
+;;                13
+
+;;   basic block 12, loop depth 0
+;;    pred:       11
+  _18 = specP_25(D)->gain;
+  iftmp.2_33 = _18 * result_20;
+;;    succ:       13
+
+;;   basic block 13, loop depth 0
+;;    pred:       12
+;;                11
+  # iftmp.2_21 = PHI <iftmp.2_33(12), result_20(11)>
+  return iftmp.2_21;
+;;    succ:       EXIT
+
+}
+
+
+
+Partition map 
+
+Partition 1 (_1 - 1 )
+Partition 2 (_2 - 2 )
+Partition 3 (_3 - 3 )
+Partition 4 (_4 - 4 )
+Partition 5 (_5 - 5 )
+Partition 6 (_6 - 6 )
+Partition 8 (_8 - 8 )
+Partition 9 (_9 - 9 )
+Partition 10 (_10 - 10 )
+Partition 11 (_11 - 11 )
+Partition 12 (_12 - 12 )
+Partition 13 (_13 - 13 )
+Partition 14 (_14 - 14 )
+Partition 15 (_15 - 15 )
+Partition 16 (_16 - 16 )
+Partition 17 (_17 - 17 )
+Partition 18 (_18 - 18 )
+Partition 19 (sample_19 - 19 )
+Partition 20 (result_20 - 20 )
+Partition 21 (iftmp.2_21 - 21 )
+Partition 25 (specP_25(D) - 25 )
+Partition 26 (sample_26(D) - 26 )
+Partition 29 (result_29 - 29 )
+Partition 31 (result_31 - 31 )
+Partition 33 (iftmp.2_33 - 33 )
+Partition 41 (_41(D) - 41 )
+
+
+Coalescible Partition map 
+
+Partition 0, base 0 (sample_19 - 19 26 )
+Partition 2, base 1 (result_20 - 20 21 29 31 33 41 )
+Partition 3, base 2 (specP_25(D) - 25 )
+
+
+Partition map 
+
+Partition 0 (sample_19 - 19 )
+Partition 1 (result_20 - 20 )
+Partition 2 (iftmp.2_21 - 21 )
+Partition 3 (specP_25(D) - 25 )
+Partition 4 (sample_26(D) - 26 )
+Partition 5 (result_29 - 29 )
+Partition 6 (result_31 - 31 )
+Partition 7 (iftmp.2_33 - 33 )
+Partition 8 (_41(D) - 41 )
+
+
+Conflict graph:
+
+After sorting:
+Sorted Coalesce list:
+(10000, 0) result_20 <-> iftmp.2_21
+(10000, 0) iftmp.2_21 <-> _41(D)
+(5000, 0) result_20 <-> result_31
+(5000, 0) result_20 <-> result_29
+(5000, 0) iftmp.2_21 <-> iftmp.2_33
+(2500, 0) sample_19 <-> sample_26(D)
+
+Partition map 
+
+Partition 0 (sample_19 - 19 )
+Partition 1 (result_20 - 20 )
+Partition 2 (iftmp.2_21 - 21 )
+Partition 3 (specP_25(D) - 25 )
+Partition 4 (sample_26(D) - 26 )
+Partition 5 (result_29 - 29 )
+Partition 6 (result_31 - 31 )
+Partition 7 (iftmp.2_33 - 33 )
+Partition 8 (_41(D) - 41 )
+
+Coalesce list: (20)result_20 & (21)iftmp.2_21 [map: 1, 2] : Success -> 1
+Coalesce list: (21)result_20 & (41)_41(D) [map: 1, 8] : Success -> 1
+Coalesce list: (20)result_20 & (31)result_31 [map: 1, 6] : Success -> 1
+Coalesce list: (20)result_20 & (29)result_29 [map: 1, 5] : Success -> 1
+Coalesce list: (21)result_20 & (33)iftmp.2_33 [map: 1, 7] : Success -> 1
+Coalesce list: (19)sample_19 & (26)sample_26(D) [map: 0, 4] : Success -> 0
+After Coalescing:
+
+Partition map 
+
+Partition 0 (_1 - 1 )
+Partition 1 (_2 - 2 )
+Partition 2 (_3 - 3 )
+Partition 3 (_4 - 4 )
+Partition 4 (_5 - 5 )
+Partition 5 (_6 - 6 )
+Partition 6 (_8 - 8 )
+Partition 7 (_9 - 9 )
+Partition 8 (_10 - 10 )
+Partition 9 (_11 - 11 )
+Partition 10 (_12 - 12 )
+Partition 11 (_13 - 13 )
+Partition 12 (_14 - 14 )
+Partition 13 (_15 - 15 )
+Partition 14 (_16 - 16 )
+Partition 15 (_17 - 17 )
+Partition 16 (_18 - 18 )
+Partition 17 (sample_19 - 19 26 )
+Partition 18 (result_20 - 20 21 29 31 33 41 )
+Partition 19 (specP_25(D) - 25 )
+
+
+Replacing Expressions
+_1 replace with --> _1 = specP_25(D)->deadElimination;
+
+_2 replace with --> _2 = specP_25(D)->highValue;
+
+_3 replace with --> _3 = specP_25(D)->highCount;
+
+_5 replace with --> _5 = specP_25(D)->highLimit;
+
+_6 replace with --> _6 = specP_25(D)->sawOne;
+
+_9 replace with --> _9 = _8 * sample_19;
+
+_10 replace with --> _10 = (double) _9;
+
+_11 replace with --> _11 = (double) _8;
+
+_12 replace with --> _12 = 1.0e+0 - _11;
+
+_13 replace with --> _13 = specP_25(D)->lastResult;
+
+_14 replace with --> _14 = (double) _13;
+
+_15 replace with --> _15 = _12 * _14;
+
+_16 replace with --> _16 = _10 + _15;
+
+_17 replace with --> _17 = specP_25(D)->doGain;
+
+_18 replace with --> _18 = specP_25(D)->gain;
+
+
+float lowPassFilter (struct 
+{
+  float alpha;
+  float lastResult;
+  float gain;
+  float initialValue;
+  float highValue;
+  int highLimit;
+  int highCount;
+  _Bool sawOne;
+  _Bool doGain;
+  _Bool deadElimination;
+} * specP, float sample)
+{
+  float result;
+  _Bool _1;
+  float _2;
+  int _3;
+  int _4;
+  int _5;
+  _Bool _6;
+  float _8;
+  float _9;
+  double _10;
+  double _11;
+  double _12;
+  float _13;
+  double _14;
+  double _15;
+  double _16;
+  _Bool _17;
+  float _18;
+  float iftmp.2_21;
+  float iftmp.2_33;
+  float _41(D);
+
+;;   basic block 2, loop depth 0
+;;    pred:       ENTRY
+  # DEBUG BEGIN_STMT
+  # DEBUG BEGIN_STMT
+  _1 = specP_25(D)->deadElimination;
+  if (_1 != 0)
+    goto <bb 4>; [50.00%]
+  else
+    goto <bb 3>; [50.00%]
+;;    succ:       4
+;;                3
+
+;;   basic block 3, loop depth 0
+;;    pred:       5
+;;                2
+  goto <bb 7>; [100.00%]
+;;    succ:       7
+
+;;   basic block 4, loop depth 0
+;;    pred:       2
+  # DEBUG BEGIN_STMT
+  _2 = specP_25(D)->highValue;
+  if (_2 <= sample_26(D))
+    goto <bb 5>; [50.00%]
+  else
+    goto <bb 6>; [50.00%]
+;;    succ:       5
+;;                6
+
+;;   basic block 5, loop depth 0
+;;    pred:       4
+  # DEBUG BEGIN_STMT
+  _3 = specP_25(D)->highCount;
+  _4 = _3 + 1;
+  specP_25(D)->highCount = _4;
+  _5 = specP_25(D)->highLimit;
+  if (_4 >= _5)
+    goto <bb 8>; [50.00%]
+  else
+    goto <bb 3>; [50.00%]
+;;    succ:       8
+;;                3
+
+;;   basic block 6, loop depth 0
+;;    pred:       4
+  # DEBUG BEGIN_STMT
+  specP_25(D)->highCount = 0;
+;;    succ:       7
+
+;;   basic block 7, loop depth 0
+;;    pred:       6
+;;                3
+;;    succ:       8
+
+;;   basic block 8, loop depth 0
+;;    pred:       7
+;;                5
+  # sample_19 = PHI <sample_26(D)(7), 0.0(5)>
+  # DEBUG sample => sample_19
+  # DEBUG BEGIN_STMT
+  _6 = specP_25(D)->sawOne;
+  if (_6 != 0)
+    goto <bb 10>; [50.00%]
+  else
+    goto <bb 9>; [50.00%]
+;;    succ:       9
+;;                10
+
+;;   basic block 9, loop depth 0
+;;    pred:       8
+  # DEBUG BEGIN_STMT
+  specP_25(D)->sawOne = 1;
+  # DEBUG BEGIN_STMT
+  result_31 = specP_25(D)->initialValue;
+  # DEBUG result => result_31
+  goto <bb 11>; [100.00%]
+;;    succ:       11
+
+;;   basic block 10, loop depth 0
+;;    pred:       8
+  # DEBUG BEGIN_STMT
+  _8 = specP_25(D)->alpha;
+  _9 = _8 * sample_19;
+  _10 = (double) _9;
+  _11 = (double) _8;
+  _12 = 1.0e+0 - _11;
+  _13 = specP_25(D)->lastResult;
+  _14 = (double) _13;
+  _15 = _12 * _14;
+  _16 = _10 + _15;
+  result_29 = (float) _16;
+  # DEBUG result => result_29
+;;    succ:       11
+
+;;   basic block 11, loop depth 0
+;;    pred:       9
+;;                10
+  # result_20 = PHI <result_31(9), result_29(10)>
+  # DEBUG result => result_20
+  # DEBUG BEGIN_STMT
+  specP_25(D)->lastResult = result_20;
+  # DEBUG BEGIN_STMT
+  _17 = specP_25(D)->doGain;
+  if (_17 != 0)
+    goto <bb 12>; [50.00%]
+  else
+    goto <bb 13>; [50.00%]
+;;    succ:       12
+;;                13
+
+;;   basic block 12, loop depth 0
+;;    pred:       11
+  _18 = specP_25(D)->gain;
+  iftmp.2_33 = _18 * result_20;
+;;    succ:       13
+
+;;   basic block 13, loop depth 0
+;;    pred:       12
+;;                11
+  # iftmp.2_21 = PHI <iftmp.2_33(12), result_20(11)>
+  return iftmp.2_21;
+;;    succ:       EXIT
+
+}
+
+
+Inserting a value copy on edge BB5->BB8 : PART.17 = 0.0
+
+;; Generating RTL for gimple basic block 2
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 8 7 0 (debug_marker) "lowpass.c":50:1 -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 9 8 0 (debug_marker) "lowpass.c":52:5 -1
+     (nil))
+;; if (_1 != 0)
+
+(insn 10 9 11 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem:QI (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 30 [0x1e])) [4 specP_25(D)->deadElimination+0 S1 A16])
+            (const_int 0 [0]))) "lowpass.c":52:7 -1
+     (nil))
+
+(jump_insn 11 10 0 (set (pc)
+        (if_then_else (ne (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "lowpass.c":52:7 -1
+     (int_list:REG_BR_PROB 536870916 (nil)))
+
+;; Generating RTL for gimple basic block 3
+
+;; Generating RTL for gimple basic block 4
+
+;; 
+
+(code_label 15 14 16 8 (nil) [0 uses])
+
+(note 16 15 0 NOTE_INSN_BASIC_BLOCK)
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 17 16 0 (debug_marker) "lowpass.c":54:9 -1
+     (nil))
+;; if (_2 <= sample_26(D))
+
+(insn 18 17 19 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg/v:SF 101 [ sample ])
+            (mem:SF (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 16 [0x10])) [1 specP_25(D)->highValue+0 S4 A32]))) "lowpass.c":54:11 -1
+     (nil))
+
+(jump_insn 19 18 20 (set (pc)
+        (if_then_else (ge (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref 22)
+            (pc))) "lowpass.c":54:11 -1
+     (int_list:REG_BR_PROB 536870916 (nil)))
+
+(jump_insn 20 19 21 (set (pc)
+        (label_ref 0)) "lowpass.c":54:11 -1
+     (nil))
+
+(barrier 21 20 22)
+
+(code_label 22 21 0 11 (nil) [0 uses])
+
+;; Generating RTL for gimple basic block 5
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 24 23 0 (debug_marker) "lowpass.c":56:13 -1
+     (nil))
+;; _4 = _3 + 1;
+
+(insn 25 24 26 (set (reg:SI 102)
+        (mem:SI (plus:DI (reg/v/f:DI 100 [ specP ])
+                (const_int 24 [0x18])) [3 specP_25(D)->highCount+0 S4 A32])) "lowpass.c":56:17 -1
+     (nil))
+
+(insn 26 25 0 (parallel [
+            (set (reg:SI 85 [ _4 ])
+                (plus:SI (reg:SI 102)
+                    (const_int 1 [0x1])))
+            (clobber (reg:CC 17 flags))
+        ]) "lowpass.c":56:17 -1
+     (expr_list:REG_EQUAL (plus:SI (mem:SI (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 24 [0x18])) [3 specP_25(D)->highCount+0 S4 A32])
+            (const_int 1 [0x1]))
+        (nil)))
+
+;; specP_25(D)->highCount = _4;
+
+(insn 27 26 0 (set (mem:SI (plus:DI (reg/v/f:DI 100 [ specP ])
+                (const_int 24 [0x18])) [3 specP_25(D)->highCount+0 S4 A32])
+        (reg:SI 85 [ _4 ])) "lowpass.c":56:15 -1
+     (nil))
+
+;; if (_4 >= _5)
+
+(insn 28 27 29 5 (set (reg:CCGC 17 flags)
+        (compare:CCGC (reg:SI 85 [ _4 ])
+            (mem:SI (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 20 [0x14])) [3 specP_25(D)->highLimit+0 S4 A32]))) "lowpass.c":56:15 -1
+     (nil))
+
+(jump_insn 29 28 33 5 (set (pc)
+        (if_then_else (ge (reg:CCGC 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "lowpass.c":56:15 -1
+     (int_list:REG_BR_PROB 536870916 (nil)))
+
+(note 33 29 31 15 [bb 15] NOTE_INSN_BASIC_BLOCK)
+
+(jump_insn 31 33 32 15 (set (pc)
+        (label_ref 30)) -1
+     (nil))
+
+(barrier 32 31 0)
+
+;; Generating RTL for gimple basic block 6
+
+;; 
+
+(code_label 34 32 35 10 (nil) [0 uses])
+
+(note 35 34 0 NOTE_INSN_BASIC_BLOCK)
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 36 35 0 (debug_marker) "lowpass.c":63:13 -1
+     (nil))
+;; specP_25(D)->highCount = 0;
+
+(insn 37 36 0 (set (mem:SI (plus:DI (reg/v/f:DI 100 [ specP ])
+                (const_int 24 [0x18])) [3 specP_25(D)->highCount+0 S4 A32])
+        (const_int 0 [0])) "lowpass.c":63:30 -1
+     (nil))
+
+;; Generating RTL for gimple basic block 7
+
+;; 
+
+(code_label 38 37 39 9 (nil) [0 uses])
+
+(note 39 38 0 NOTE_INSN_BASIC_BLOCK)
+
+;; Generating RTL for gimple basic block 8
+
+;; 
+
+(code_label 40 39 41 12 (nil) [0 uses])
+
+(note 41 40 0 NOTE_INSN_BASIC_BLOCK)
+
+;; # DEBUG sample => sample_19
+
+(debug_insn 42 41 0 (var_location:SF sample (const_int 0 [0])) -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 43 42 0 (debug_marker) "lowpass.c":67:5 -1
+     (nil))
+;; if (_6 != 0)
+
+(insn 44 43 45 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem:QI (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 28 [0x1c])) [4 specP_25(D)->sawOne+0 S1 A32])
+            (const_int 0 [0]))) "lowpass.c":67:7 -1
+     (nil))
+
+(jump_insn 45 44 0 (set (pc)
+        (if_then_else (ne (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "lowpass.c":67:7 -1
+     (int_list:REG_BR_PROB 536870916 (nil)))
+
+;; Generating RTL for gimple basic block 9
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 47 46 0 (debug_marker) "lowpass.c":69:9 -1
+     (nil))
+;; specP_25(D)->sawOne = 1;
+
+(insn 48 47 0 (set (mem:QI (plus:DI (reg/v/f:DI 100 [ specP ])
+                (const_int 28 [0x1c])) [4 specP_25(D)->sawOne+0 S1 A32])
+        (const_int 1 [0x1])) "lowpass.c":69:23 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 49 48 0 (debug_marker) "lowpass.c":70:9 -1
+     (nil))
+;; result_31 = specP_25(D)->initialValue;
+
+(insn 50 49 0 (set (reg/v:SF 99 [ <retval> ])
+        (mem:SF (plus:DI (reg/v/f:DI 100 [ specP ])
+                (const_int 12 [0xc])) [1 specP_25(D)->initialValue+0 S4 A32])) "lowpass.c":70:16 -1
+     (nil))
+
+;; # DEBUG result => result_31
+
+(debug_insn 51 50 0 (var_location:SF result (const_int 0 [0])) "lowpass.c":70:16 -1
+     (nil))
+;; Generating RTL for gimple basic block 10
+Swap operands in stmt:
+_16 = _10 + _15;
+Cost left opnd=1, right opnd=3
+
+;; 
+
+(code_label 54 53 55 14 (nil) [0 uses])
+
+(note 55 54 0 NOTE_INSN_BASIC_BLOCK)
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 56 55 0 (debug_marker) "lowpass.c":75:9 -1
+     (nil))
+;; _8 = specP_25(D)->alpha;
+
+(insn 57 56 0 (set (reg:SF 88 [ _8 ])
+        (mem:SF (reg/v/f:DI 100 [ specP ]) [1 specP_25(D)->alpha+0 S4 A32])) "lowpass.c":75:24 -1
+     (nil))
+
+;; result_29 = (float) _16;
+
+(insn 58 57 59 (set (reg:DF 103)
+        (float_extend:DF (reg:SF 88 [ _8 ]))) "lowpass.c":75:57 -1
+     (nil))
+
+(insn 59 58 60 (set (reg:DF 105)
+        (mem/u/c:DF (symbol_ref/u:DI ("*.LC2") [flags 0x2]) [0  S8 A64])) "lowpass.c":75:50 -1
+     (expr_list:REG_EQUAL (const_double:DF 1.0e+0 [0x0.8p+1])
+        (nil)))
+
+(insn 60 59 61 (set (reg:DF 104)
+        (minus:DF (reg:DF 105)
+            (reg:DF 103))) "lowpass.c":75:50 -1
+     (nil))
+
+(insn 61 60 62 (set (reg:DF 106)
+        (float_extend:DF (mem:SF (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 4 [0x4])) [1 specP_25(D)->lastResult+0 S4 A32]))) "lowpass.c":75:73 -1
+     (nil))
+
+(insn 62 61 63 (set (reg:DF 107)
+        (mult:DF (reg:DF 104)
+            (reg:DF 106))) "lowpass.c":75:66 -1
+     (nil))
+
+(insn 63 62 64 (set (reg:SF 108)
+        (mult:SF (reg:SF 88 [ _8 ])
+            (reg/v:SF 101 [ sample ]))) "lowpass.c":75:32 -1
+     (nil))
+
+(insn 64 63 65 (set (reg:DF 109)
+        (float_extend:DF (reg:SF 108))) "lowpass.c":75:32 -1
+     (nil))
+
+(insn 65 64 66 (set (reg:DF 110)
+        (plus:DF (reg:DF 107)
+            (reg:DF 109))) "lowpass.c":75:42 -1
+     (nil))
+
+(insn 66 65 0 (set (reg/v:SF 99 [ <retval> ])
+        (float_truncate:SF (reg:DF 110))) "lowpass.c":75:16 -1
+     (nil))
+
+;; # DEBUG result => result_29
+
+(debug_insn 67 66 0 (var_location:SF result (const_int 0 [0])) "lowpass.c":75:16 -1
+     (nil))
+;; Generating RTL for gimple basic block 11
+
+;; 
+
+(code_label 68 67 69 15 (nil) [0 uses])
+
+(note 69 68 0 NOTE_INSN_BASIC_BLOCK)
+
+;; # DEBUG result => result_20
+
+(debug_insn 70 69 0 (var_location:SF result (const_int 0 [0])) -1
+     (nil))
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 71 70 0 (debug_marker) "lowpass.c":79:5 -1
+     (nil))
+;; specP_25(D)->lastResult = result_20;
+
+(insn 72 71 0 (set (mem:SF (plus:DI (reg/v/f:DI 100 [ specP ])
+                (const_int 4 [0x4])) [1 specP_25(D)->lastResult+0 S4 A32])
+        (reg/v:SF 99 [ <retval> ])) "lowpass.c":79:23 -1
+     (nil))
+
+;; # DEBUG BEGIN_STMT
+
+(debug_insn 73 72 0 (debug_marker) "lowpass.c":81:5 -1
+     (nil))
+;; if (_17 != 0)
+
+(insn 74 73 75 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem:QI (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 29 [0x1d])) [4 specP_25(D)->doGain+0 S1 A8])
+            (const_int 0 [0]))) "lowpass.c":81:51 -1
+     (nil))
+
+(jump_insn 75 74 0 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 0)
+            (pc))) "lowpass.c":81:51 -1
+     (int_list:REG_BR_PROB 536870916 (nil)))
+
+;; Generating RTL for gimple basic block 12
+
+;; iftmp.2_33 = _18 * result_20;
+
+(insn 77 76 0 (set (reg/v:SF 99 [ <retval> ])
+        (mult:SF (reg/v:SF 99 [ <retval> ])
+            (mem:SF (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 8 [0x8])) [1 specP_25(D)->gain+0 S4 A32]))) "lowpass.c":81:51 discrim 1 -1
+     (nil))
+
+;; Generating RTL for gimple basic block 13
+
+;; 
+
+(code_label 78 77 79 16 (nil) [0 uses])
+
+(note 79 78 0 NOTE_INSN_BASIC_BLOCK)
+
+;; return iftmp.2_21;
+
+(jump_insn 80 79 81 (set (pc)
+        (label_ref 0)) "lowpass.c":81:51 discrim 5 -1
+     (nil))
+
+(barrier 81 80 0)
+Edge 5->8 redirected to 17
+Purged non-fallthru edges from bb 19
+
+
+try_optimize_cfg iteration 1
+
+Merging block 3 into block 2...
+Merged blocks 2 and 3.
+Merged 2 and 3 without moving.
+Forwarding edge 2->4 to 13 failed.
+Forwarding edge 2->4 to 13 failed.
+Redirecting jump 13 from 11 to 13.
+Edge 5->7 redirected to 8
+Forwarding edge 5->6 to 10 failed.
+Forwarding edge 5->6 to 10 failed.
+deleting block 7
+Forwarding edge 8->9 to 13 failed.
+Redirecting jump 31 from 4 to 13.
+Merging block 11 into block 10...
+Merged blocks 10 and 11.
+Merged 10 and 11 without moving.
+Edge 16->18 redirected to 19
+Merging block 18 into block 17...
+Merged blocks 17 and 18.
+Merged 17 and 18 without moving.
+Removing jump 80.
+
+
+try_optimize_cfg iteration 2
+
+Forwarding edge 2->4 to 13 failed.
+Deleted label in block 4.
+Forwarding edge 5->6 to 10 failed.
+Forwarding edge 8->9 to 13 failed.
+fix_loop_structure: fixing up loops for function
+
+
+;;
+;; Full RTL generated for this function:
+;;
+(note 1 0 6 NOTE_INSN_DELETED)
+;; basic block 2, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 0, next block 4, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       ENTRY [always]  count:1073741824 (estimated locally) (FALLTHRU)
+(note 6 1 2 2 [bb 2] NOTE_INSN_BASIC_BLOCK)
+(insn 2 6 3 2 (set (reg/v/f:DI 100 [ specP ])
+        (reg:DI 5 di [ specP ])) "lowpass.c":49:1 -1
+     (nil))
+(insn 3 2 4 2 (set (reg/v:SF 101 [ sample ])
+        (reg:SF 20 xmm0 [ sample ])) "lowpass.c":49:1 -1
+     (nil))
+(note 4 3 8 2 NOTE_INSN_FUNCTION_BEG)
+(debug_insn 8 4 9 2 (debug_marker) "lowpass.c":50:1 -1
+     (nil))
+(debug_insn 9 8 10 2 (debug_marker) "lowpass.c":52:5 -1
+     (nil))
+(insn 10 9 11 2 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem:QI (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 30 [0x1e])) [4 specP_25(D)->deadElimination+0 S1 A16])
+            (const_int 0 [0]))) "lowpass.c":52:7 -1
+     (nil))
+(jump_insn 11 10 12 2 (set (pc)
+        (if_then_else (ne (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 15)
+            (pc))) "lowpass.c":52:7 -1
+     (int_list:REG_BR_PROB 536870916 (nil))
+ -> 15)
+;;  succ:       5 [50.0% (guessed)]  count:536870912 (estimated locally)
+;;              4 [50.0% (guessed)]  count:536870912 (estimated locally) (FALLTHRU)
+
+;; basic block 4, loop depth 0, count 536870912 (estimated locally), maybe hot
+;;  prev block 2, next block 5, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       2 [50.0% (guessed)]  count:536870912 (estimated locally) (FALLTHRU)
+(note 12 11 13 4 [bb 4] NOTE_INSN_BASIC_BLOCK)
+(jump_insn 13 12 14 4 (set (pc)
+        (label_ref:DI 40)) 996 {jump}
+     (nil)
+ -> 40)
+;;  succ:       13 [always]  count:536870912 (estimated locally)
+
+(barrier 14 13 15)
+;; basic block 5, loop depth 0, count 536870913 (estimated locally), maybe hot
+;;  prev block 4, next block 6, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       2 [50.0% (guessed)]  count:536870912 (estimated locally)
+(code_label 15 14 16 5 8 (nil) [1 uses])
+(note 16 15 17 5 [bb 5] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 17 16 18 5 (debug_marker) "lowpass.c":54:9 -1
+     (nil))
+(insn 18 17 19 5 (set (reg:CCFP 17 flags)
+        (compare:CCFP (reg/v:SF 101 [ sample ])
+            (mem:SF (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 16 [0x10])) [1 specP_25(D)->highValue+0 S4 A32]))) "lowpass.c":54:11 -1
+     (nil))
+(jump_insn 19 18 90 5 (set (pc)
+        (if_then_else (ge (reg:CCFP 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 92)
+            (pc))) "lowpass.c":54:11 995 {*jcc}
+     (int_list:REG_BR_PROB 536870916 (nil))
+ -> 92)
+;;  succ:       8 [50.0% (guessed)]  count:268435457 (estimated locally)
+;;              6 [50.0% (guessed)]  count:268435457 (estimated locally) (FALLTHRU)
+
+;; basic block 6, loop depth 0, count 268435457 (estimated locally), maybe hot
+;;  prev block 5, next block 8, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       5 [50.0% (guessed)]  count:268435457 (estimated locally) (FALLTHRU)
+(note 90 19 20 6 [bb 6] NOTE_INSN_BASIC_BLOCK)
+(jump_insn 20 90 21 6 (set (pc)
+        (label_ref 34)) "lowpass.c":54:11 -1
+     (nil)
+ -> 34)
+;;  succ:       10 [always]  count:268435457 (estimated locally)
+
+(barrier 21 20 92)
+;; basic block 8, loop depth 0, count 268435456 (estimated locally), maybe hot
+;;  prev block 6, next block 9, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       5 [50.0% (guessed)]  count:268435457 (estimated locally)
+(code_label 92 21 23 8 18 (nil) [1 uses])
+(note 23 92 24 8 [bb 8] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 24 23 25 8 (debug_marker) "lowpass.c":56:13 -1
+     (nil))
+(insn 25 24 26 8 (set (reg:SI 102)
+        (mem:SI (plus:DI (reg/v/f:DI 100 [ specP ])
+                (const_int 24 [0x18])) [3 specP_25(D)->highCount+0 S4 A32])) "lowpass.c":56:17 -1
+     (nil))
+(insn 26 25 27 8 (parallel [
+            (set (reg:SI 85 [ _4 ])
+                (plus:SI (reg:SI 102)
+                    (const_int 1 [0x1])))
+            (clobber (reg:CC 17 flags))
+        ]) "lowpass.c":56:17 -1
+     (expr_list:REG_EQUAL (plus:SI (mem:SI (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 24 [0x18])) [3 specP_25(D)->highCount+0 S4 A32])
+            (const_int 1 [0x1]))
+        (nil)))
+(insn 27 26 28 8 (set (mem:SI (plus:DI (reg/v/f:DI 100 [ specP ])
+                (const_int 24 [0x18])) [3 specP_25(D)->highCount+0 S4 A32])
+        (reg:SI 85 [ _4 ])) "lowpass.c":56:15 -1
+     (nil))
+(insn 28 27 29 8 (set (reg:CCGC 17 flags)
+        (compare:CCGC (reg:SI 85 [ _4 ])
+            (mem:SI (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 20 [0x14])) [3 specP_25(D)->highLimit+0 S4 A32]))) "lowpass.c":56:15 -1
+     (nil))
+(jump_insn 29 28 33 8 (set (pc)
+        (if_then_else (ge (reg:CCGC 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 89)
+            (pc))) "lowpass.c":56:15 995 {*jcc}
+     (int_list:REG_BR_PROB 536870916 (nil))
+ -> 89)
+;;  succ:       12 [50.0% (guessed)]  count:134217728 (estimated locally)
+;;              9 [50.0% (guessed)]  count:134217728 (estimated locally) (FALLTHRU)
+
+;; basic block 9, loop depth 0, count 134217728 (estimated locally), maybe hot
+;;  prev block 8, next block 10, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       8 [50.0% (guessed)]  count:134217728 (estimated locally) (FALLTHRU)
+(note 33 29 31 9 [bb 9] NOTE_INSN_BASIC_BLOCK)
+(jump_insn 31 33 32 9 (set (pc)
+        (label_ref:DI 40)) 996 {jump}
+     (nil)
+ -> 40)
+;;  succ:       13 [always]  count:134217728 (estimated locally)
+
+(barrier 32 31 34)
+;; basic block 10, loop depth 0, count 268435456 (estimated locally), maybe hot
+;;  prev block 9, next block 12, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       6 [always]  count:268435457 (estimated locally)
+(code_label 34 32 35 10 10 (nil) [1 uses])
+(note 35 34 36 10 [bb 10] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 36 35 37 10 (debug_marker) "lowpass.c":63:13 -1
+     (nil))
+(insn 37 36 86 10 (set (mem:SI (plus:DI (reg/v/f:DI 100 [ specP ])
+                (const_int 24 [0x18])) [3 specP_25(D)->highCount+0 S4 A32])
+        (const_int 0 [0])) "lowpass.c":63:30 -1
+     (nil))
+(jump_insn 86 37 87 10 (set (pc)
+        (label_ref 40)) -1
+     (nil)
+ -> 40)
+;;  succ:       13 [always]  count:268435456 (estimated locally)
+
+(barrier 87 86 89)
+;; basic block 12, loop depth 0, count 134217728 (estimated locally), maybe hot
+;;  prev block 10, next block 13, flags: (NEW, REACHABLE, RTL, MODIFIED)
+;;  pred:       8 [50.0% (guessed)]  count:134217728 (estimated locally)
+(code_label 89 87 88 12 17 (nil) [1 uses])
+(note 88 89 5 12 [bb 12] NOTE_INSN_BASIC_BLOCK)
+(insn 5 88 40 12 (set (reg/v:SF 101 [ sample ])
+        (mem/u/c:SF (symbol_ref/u:DI ("*.LC0") [flags 0x2]) [0  S4 A32])) "lowpass.c":58:24 -1
+     (expr_list:REG_EQUAL (const_double:SF 0.0 [0x0.0p+0])
+        (nil)))
+;;  succ:       13 [always]  count:134217728 (estimated locally) (FALLTHRU)
+
+;; basic block 13, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 12, next block 14, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       12 [always]  count:134217728 (estimated locally) (FALLTHRU)
+;;              10 [always]  count:268435456 (estimated locally)
+;;              4 [always]  count:536870912 (estimated locally)
+;;              9 [always]  count:134217728 (estimated locally)
+(code_label 40 5 41 13 12 (nil) [3 uses])
+(note 41 40 42 13 [bb 13] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 42 41 43 13 (var_location:SF sample (reg/v:SF 101 [ sample ])) -1
+     (nil))
+(debug_insn 43 42 44 13 (debug_marker) "lowpass.c":67:5 -1
+     (nil))
+(insn 44 43 45 13 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem:QI (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 28 [0x1c])) [4 specP_25(D)->sawOne+0 S1 A32])
+            (const_int 0 [0]))) "lowpass.c":67:7 -1
+     (nil))
+(jump_insn 45 44 46 13 (set (pc)
+        (if_then_else (ne (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref 54)
+            (pc))) "lowpass.c":67:7 -1
+     (int_list:REG_BR_PROB 536870916 (nil))
+ -> 54)
+;;  succ:       14 [50.0% (guessed)]  count:536870912 (estimated locally) (FALLTHRU)
+;;              15 [50.0% (guessed)]  count:536870912 (estimated locally)
+
+;; basic block 14, loop depth 0, count 536870913 (estimated locally), maybe hot
+;;  prev block 13, next block 15, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       13 [50.0% (guessed)]  count:536870912 (estimated locally) (FALLTHRU)
+(note 46 45 47 14 [bb 14] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 47 46 48 14 (debug_marker) "lowpass.c":69:9 -1
+     (nil))
+(insn 48 47 49 14 (set (mem:QI (plus:DI (reg/v/f:DI 100 [ specP ])
+                (const_int 28 [0x1c])) [4 specP_25(D)->sawOne+0 S1 A32])
+        (const_int 1 [0x1])) "lowpass.c":69:23 -1
+     (nil))
+(debug_insn 49 48 50 14 (debug_marker) "lowpass.c":70:9 -1
+     (nil))
+(insn 50 49 51 14 (set (reg/v:SF 99 [ <retval> ])
+        (mem:SF (plus:DI (reg/v/f:DI 100 [ specP ])
+                (const_int 12 [0xc])) [1 specP_25(D)->initialValue+0 S4 A32])) "lowpass.c":70:16 -1
+     (nil))
+(debug_insn 51 50 52 14 (var_location:SF result (reg/v:SF 99 [ <retval> ])) "lowpass.c":70:16 -1
+     (nil))
+(jump_insn 52 51 53 14 (set (pc)
+        (label_ref 68)) -1
+     (nil)
+ -> 68)
+;;  succ:       16 [always]  count:536870913 (estimated locally)
+
+(barrier 53 52 54)
+;; basic block 15, loop depth 0, count 536870913 (estimated locally), maybe hot
+;;  prev block 14, next block 16, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       13 [50.0% (guessed)]  count:536870912 (estimated locally)
+(code_label 54 53 55 15 14 (nil) [1 uses])
+(note 55 54 56 15 [bb 15] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 56 55 57 15 (debug_marker) "lowpass.c":75:9 -1
+     (nil))
+(insn 57 56 58 15 (set (reg:SF 88 [ _8 ])
+        (mem:SF (reg/v/f:DI 100 [ specP ]) [1 specP_25(D)->alpha+0 S4 A32])) "lowpass.c":75:24 -1
+     (nil))
+(insn 58 57 59 15 (set (reg:DF 103)
+        (float_extend:DF (reg:SF 88 [ _8 ]))) "lowpass.c":75:57 -1
+     (nil))
+(insn 59 58 60 15 (set (reg:DF 105)
+        (mem/u/c:DF (symbol_ref/u:DI ("*.LC2") [flags 0x2]) [0  S8 A64])) "lowpass.c":75:50 -1
+     (expr_list:REG_EQUAL (const_double:DF 1.0e+0 [0x0.8p+1])
+        (nil)))
+(insn 60 59 61 15 (set (reg:DF 104)
+        (minus:DF (reg:DF 105)
+            (reg:DF 103))) "lowpass.c":75:50 -1
+     (nil))
+(insn 61 60 62 15 (set (reg:DF 106)
+        (float_extend:DF (mem:SF (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 4 [0x4])) [1 specP_25(D)->lastResult+0 S4 A32]))) "lowpass.c":75:73 -1
+     (nil))
+(insn 62 61 63 15 (set (reg:DF 107)
+        (mult:DF (reg:DF 104)
+            (reg:DF 106))) "lowpass.c":75:66 -1
+     (nil))
+(insn 63 62 64 15 (set (reg:SF 108)
+        (mult:SF (reg:SF 88 [ _8 ])
+            (reg/v:SF 101 [ sample ]))) "lowpass.c":75:32 -1
+     (nil))
+(insn 64 63 65 15 (set (reg:DF 109)
+        (float_extend:DF (reg:SF 108))) "lowpass.c":75:32 -1
+     (nil))
+(insn 65 64 66 15 (set (reg:DF 110)
+        (plus:DF (reg:DF 107)
+            (reg:DF 109))) "lowpass.c":75:42 -1
+     (nil))
+(insn 66 65 67 15 (set (reg/v:SF 99 [ <retval> ])
+        (float_truncate:SF (reg:DF 110))) "lowpass.c":75:16 -1
+     (nil))
+(debug_insn 67 66 68 15 (var_location:SF result (reg/v:SF 99 [ <retval> ])) "lowpass.c":75:16 -1
+     (nil))
+;;  succ:       16 [always]  count:536870913 (estimated locally) (FALLTHRU)
+
+;; basic block 16, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 15, next block 17, flags: (NEW, REACHABLE, RTL, MODIFIED, VISITED)
+;;  pred:       14 [always]  count:536870913 (estimated locally)
+;;              15 [always]  count:536870913 (estimated locally) (FALLTHRU)
+(code_label 68 67 69 16 15 (nil) [1 uses])
+(note 69 68 70 16 [bb 16] NOTE_INSN_BASIC_BLOCK)
+(debug_insn 70 69 71 16 (var_location:SF result (reg/v:SF 99 [ <retval> ])) -1
+     (nil))
+(debug_insn 71 70 72 16 (debug_marker) "lowpass.c":79:5 -1
+     (nil))
+(insn 72 71 73 16 (set (mem:SF (plus:DI (reg/v/f:DI 100 [ specP ])
+                (const_int 4 [0x4])) [1 specP_25(D)->lastResult+0 S4 A32])
+        (reg/v:SF 99 [ <retval> ])) "lowpass.c":79:23 -1
+     (nil))
+(debug_insn 73 72 74 16 (debug_marker) "lowpass.c":81:5 -1
+     (nil))
+(insn 74 73 75 16 (set (reg:CCZ 17 flags)
+        (compare:CCZ (mem:QI (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 29 [0x1d])) [4 specP_25(D)->doGain+0 S1 A8])
+            (const_int 0 [0]))) "lowpass.c":81:51 -1
+     (nil))
+(jump_insn 75 74 76 16 (set (pc)
+        (if_then_else (eq (reg:CCZ 17 flags)
+                (const_int 0 [0]))
+            (label_ref:DI 82)
+            (pc))) "lowpass.c":81:51 995 {*jcc}
+     (int_list:REG_BR_PROB 536870916 (nil))
+ -> 82)
+;;  succ:       17 [50.0% (guessed)]  count:536870912 (estimated locally) (FALLTHRU)
+;;              19 [50.0% (guessed)]  count:536870912 (estimated locally)
+
+;; basic block 17, loop depth 0, count 536870913 (estimated locally), maybe hot
+;;  prev block 16, next block 19, flags: (NEW, REACHABLE, RTL, VISITED)
+;;  pred:       16 [50.0% (guessed)]  count:536870912 (estimated locally) (FALLTHRU)
+(note 76 75 77 17 [bb 17] NOTE_INSN_BASIC_BLOCK)
+(insn 77 76 82 17 (set (reg/v:SF 99 [ <retval> ])
+        (mult:SF (reg/v:SF 99 [ <retval> ])
+            (mem:SF (plus:DI (reg/v/f:DI 100 [ specP ])
+                    (const_int 8 [0x8])) [1 specP_25(D)->gain+0 S4 A32]))) "lowpass.c":81:51 discrim 1 -1
+     (nil))
+;;  succ:       19 [always]  count:536870913 (estimated locally) (FALLTHRU) lowpass.c:81:51
+
+;; basic block 19, loop depth 0, count 1073741824 (estimated locally), maybe hot
+;;  prev block 17, next block 1, flags: (NEW, REACHABLE, RTL)
+;;  pred:       17 [always]  count:536870913 (estimated locally) (FALLTHRU) lowpass.c:81:51
+;;              16 [50.0% (guessed)]  count:536870912 (estimated locally)
+(code_label 82 77 85 19 7 (nil) [1 uses])
+(note 85 82 83 19 [bb 19] NOTE_INSN_BASIC_BLOCK)
+(insn 83 85 84 19 (set (reg/i:SF 20 xmm0)
+        (reg/v:SF 99 [ <retval> ])) "lowpass.c":82:1 -1
+     (nil))
+(insn 84 83 0 19 (use (reg/i:SF 20 xmm0)) "lowpass.c":82:1 -1
+     (nil))
+;;  succ:       EXIT [always]  count:1073741824 (estimated locally) (FALLTHRU)
+

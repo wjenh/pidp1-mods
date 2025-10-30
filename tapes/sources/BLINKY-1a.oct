@@ -1,0 +1,32 @@
+/BLINKY-1a.  ZERO MEMORY THEN BINARY-LOAD PAPER TAPE.  MIKE HILL 23-SEP-2025
+
+	/////////////////////////////////////////////////////////////////////
+	/                                                                   /
+	/  Z E R O   C O R E   M E M O R Y   T H E N   U S E   B I N L D R  /
+	/                                                                   /
+	/      P A R T   O F   T H E   B L I N K Y - 1   P R O J E C T      /
+	/    F O R   T H E   P i D P - 1   ( O R )   A   R E A L   O N E    /
+	/                                                                   /
+	/  Mike Hill                                           23-Sep-2025  /
+	/                                                                   /
+	/  Copyright (c) 2025 Mike Hill                All rights reserved  /
+	/                                                                   /
+	/////////////////////////////////////////////////////////////////////
+
+/ Goal>
+/
+/    Zero memory from 0000-7741 prior to loading a binary-format RIM tape
+/    which was created with 'noinput' (i.e. has no binary-loader code
+/    prepended).
+/
+/ Instructions>
+/
+/    Assemble this file using the macro1 cross-assembler (WITHOUT the '-r'
+/    qualifier) and prepend the resulting RIM file to the desired program.
+
+///////////////////////////////////////////////////////////////////////////////
+
+7742/			340000	447742	527746	607742	347741	764207
+7750,	267742
+
+start 7742

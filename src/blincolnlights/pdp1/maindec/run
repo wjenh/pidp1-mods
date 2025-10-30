@@ -1,3 +1,0 @@
-#!/bin/sh
-for i in maindec1_*.mac; do macro1 $i; done
-cat maindec1_*.rim > maindec1.rim

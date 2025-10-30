@@ -156,8 +156,8 @@ Word *memBaseP;
             return(0);          // do nothing. An error?
         }
 
-        // We want the high speed channel to take over and do our entire transfer, halting processing until done.
-        chanFlags = HSC_MODE_STEAL;
+        // We want to manage the delay time ourselves
+        chanFlags = HSC_MODE_IMMEDIATE;
 
         if( readMode )
         {
@@ -183,15 +183,16 @@ Word *memBaseP;
             cmdCompletionTime = drumCount - drumAddr;
         }
 
-        // The dma takes 5us/word and the high speed logic will take care of that
-        // We only need to delay for the time it will take the drum to get to the correct position.
-        // Each drum position takes 8.5us.
+        completionTime += transferCount;    // and the actual transfer
+
+        // Each drum word takes 8.5us, plus the rotation time to get to the word.
         cmdCompletionTime = pdp1P->simtime + (cmdCompletionTime * 8500);
 
         // we assume we get it, manual says to check status before calling IOT_61.
+        pdp1P->hsc = 1;                     // and we have to manage the light
         stat = HSC_request_channel(pdp1P, 1, chanFlags, transferCount, memBank, memAddr, readBuffer, writeBuffer);
-        ioBusy = 1;
         iotLog("HSC_request_channel returned %d\n", stat);
+        ioBusy = 1;
         break;
 
     default:
@@ -258,6 +259,7 @@ int hsStatus;
                 IOCOMPLETE(pdp1P);
             }
 
+            pdp1P->hsc = 0;
             iotLog("IOT 61 completed timeout.\n");
         }
     }

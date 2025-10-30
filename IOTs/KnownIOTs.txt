@@ -19,7 +19,7 @@ Those marked with an asterisk are implemented in the pidp1 emulator and are rese
 
 30 * rrb
 31
-32
+32 NOTE - this is for the BBN timesharing clock, an implementaton is provided
 33 * cks
 34
 35
@@ -41,6 +41,7 @@ Those marked with an asterisk are implemented in the pidp1 emulator and are rese
 55 * esm
 56 * cbs
 
+60 NOTE 60 can be used by the IOT_60 implemenation to allow sbs16 to be enabled
 61 NOTE 61, 62, 63 are for the Type 23 drum memory, an implementation is provided
 62
 63 

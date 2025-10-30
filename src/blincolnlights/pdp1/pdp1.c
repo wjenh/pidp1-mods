@@ -716,6 +716,7 @@ cycle0(PDP1 *pdp)
 	}
 	if(IR_SKIP) {
 		int skip = 0;
+		if((MB & B6) && IO) skip = 1;       // wje - pdp-1D sni, skip on nonzero IO
 		if((MB & B7) && !(IO&B0)) skip = 1;
 		if((MB & B8) && !pdp->ov1) skip = 1;
 		if((MB & B9) && (AC&B0)) skip = 1;
@@ -729,6 +730,7 @@ cycle0(PDP1 *pdp)
 	if(IR_SHRO && (MB & B16)) shro(pdp);
 	if(IR_LAW) AC |= MB & 0007777;
 	if(IR_OPR) {
+        if(MB & B5) IO = ~IO;           // wje - pdp-1D cmi, complement IO
 		if(MB & B7) AC |= pdp->tw;
 		if(MB & B11) pc_to_ac(pdp);
 #ifdef LAILIA

@@ -156,6 +156,7 @@ Word *memBaseP;
             return(0);          // do nothing. An error?
         }
 
+        // We want to manage the delay time ourselves
         chanFlags = HSC_MODE_IMMEDIATE;
 
         if( readMode )
@@ -182,15 +183,16 @@ Word *memBaseP;
             cmdCompletionTime = drumCount - drumAddr;
         }
 
-        // the dma takes 5us, the drum per-word time of 8.5us masks it
-        cmdCompletionTime += transferCount;
+        cmdCompletionTime += transferCount;    // and the actual transfer
+
+        // Each drum word takes 8.5us, plus the rotation time to get to the word.
         cmdCompletionTime = pdp1P->simtime + (cmdCompletionTime * 8500);
 
         // we assume we get it, manual says to check status before calling IOT_61.
+        pdp1P->hsc = 1;                     // and we have to manage the light
         stat = HSC_request_channel(pdp1P, 1, chanFlags, transferCount, memBank, memAddr, readBuffer, writeBuffer);
-        ioBusy = 1;
-        pdp1P->hsc = 1;     // since we're using immediate mode, we have to pretend we're not and turn the light on
         iotLog("HSC_request_channel returned %d\n", stat);
+        ioBusy = 1;
         break;
 
     default:
@@ -257,7 +259,7 @@ int hsStatus;
                 IOCOMPLETE(pdp1P);
             }
 
-            pdp1P->hsc = 0;     // and turn the light on
+            pdp1P->hsc = 0;
             iotLog("IOT 61 completed timeout.\n");
         }
     }

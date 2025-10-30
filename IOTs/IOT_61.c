@@ -183,7 +183,7 @@ Word *memBaseP;
             cmdCompletionTime = drumCount - drumAddr;
         }
 
-        completionTime += transferCount;    // and the actual transfer
+        cmdCompletionTime += transferCount;    // and the actual transfer
 
         // Each drum word takes 8.5us, plus the rotation time to get to the word.
         cmdCompletionTime = pdp1P->simtime + (cmdCompletionTime * 8500);

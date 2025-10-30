@@ -1,0 +1,5 @@
+{
+    "HSC_request_channel";
+    "HSC_get_status";
+    "dynamicIotProcessBreak";
+};

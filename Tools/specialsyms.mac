@@ -1,7 +1,18 @@
 DEFINE SYMBOLS NOT IN MACRO1
+
+/ PDP-1D added instructions
 / ac to/from io
 lia=760020
 lai=760040
+/ skip on IO nozero, zero
+sni=644000
+szi=654000
+/ complement IO
+cmi=770000
+
+/ BBN timesharing clock
+clk=720032
+cls=722032
 
 / Type 23 drum
 dia=720061
@@ -9,9 +20,8 @@ dwc=720062
 dcl=720063
 dba=722061
 dra=722062
-/ nonstandard, drum busy, done bits in cks
-dby=400000
-ddn=000040
+/ nonstandard, drum busy bit in cks
+dby=000001
 
 / sbs16 break system
 dsc=720050

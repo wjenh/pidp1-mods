@@ -87,6 +87,7 @@ emu(PDP1 *pdp, Panel *panel)
                // and transfers all of its requested words at 5us/word. We fake this by just not cycling.
                while( processHSChannels(pdp) )
                {
+                   updatelights(pdp, panel);
                    pdp->simtime += 5000;
                    throttle(pdp);
                }

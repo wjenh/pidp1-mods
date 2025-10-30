@@ -57,13 +57,16 @@ There are 4 mode flags that are or'd:
 - HSC_MODE_FROMMEM     read from memory into the fromBuffer
 - HSC_MODE_TOMEM       write to memory from the toBuffer
 - HSC_MODE_IMMEDIATE   don't do any timing simulation, the transfers happen within the call, zero-delay
-- HSC_MODE_NOSTEAL     keep the 5us timing per word but don't affect the cycle time, just the busy duration
+- HSC_MODE_STEAL       take over the system until all words are transferred
 ```
 
-IMMEDIATE will never steal cycles, so NOSTEAL isn't necessary.
-NOSTEAL is useful if whatever you're simulating takes more than 5us per word it wants to transfer.
-An example is the Type 23 drum. Each word takes 8.5us to transfer, which is greater than the 5us cycle time.
-So, there is no need to steal an additional 5us. In fact, that would make the timing wrong.
+IMMEDIATE will never steal cycles, the transfer completes when HSC_request_channel() returns.
+
+STEAL replicates the original behavior fairly closely stealing all cycles until the transfer is complete.
+Note that the original processing time depended upon the external hardware, it drove read/write timing.
+The best we can do is assume 5us per word.
+
+The default is to transparently transfer one word every cycle, 5us. This does not affect system timing.
 
 The status returns are:
 

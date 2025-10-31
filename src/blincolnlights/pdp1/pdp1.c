@@ -813,7 +813,7 @@ defer(PDP1 *pdp)
 			if((MB & 07703) == 1) {
 				mask = ~(1<<((MB&074)>>2));
 				pdp->b4 &= mask;
-				pdp->b3 &= mask;   // wje
+				pdp->b3 &= mask;   // wje fix sbs16 not clearing
                 pdp->exd = 1;
                 sbs_restore = 1;
 			}
@@ -1162,7 +1162,7 @@ cycle(PDP1 *pdp)
 	else if(pdp->df1) defer(pdp);
 	else cycle1(pdp);
     // update any IOTs regardless of cycle type
-    dynamicIotProcessorDoPoll(pdp);
+    dynamicIotProcessorDoPoll(pdp);             // wje - handle pseudo-async IOTs
 }
 
 void
@@ -1331,7 +1331,7 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
 		break;
 
 	default:
-        if( !dynamicIotProcessor(pdp, dev, pulse, nac) )
+        if( !dynamicIotProcessor(pdp, dev, pulse, nac) )        // wje - see if there is a dynamic IOT to handle this
             printf("unknown IOT %06o\n", MB);
 		break;
 	}
@@ -1360,7 +1360,7 @@ req(PDP1 *pdp, int chan)
 void
 dynamicReq(PDP1 *pdp, int chan)
 {
-    req(pdp, chan);
+    req(pdp, chan);             // wje - because req() is private
 }
 
 void

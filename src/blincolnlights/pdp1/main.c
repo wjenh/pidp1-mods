@@ -79,13 +79,13 @@ emu(PDP1 *pdp, Panel *panel)
 			}
 
 			if(pdp->run) {
-               if(doaudio)
+               if(doaudio)                          // wje - handle new audio stream
                     svc_audio(pdp);
-               dynamicIotProcessorStart();
+               dynamicIotProcessorStart();          // wje - let dyn IOTs know we transitioned to run
 
                // A dma transfer can be in STEAL mode, in which case it effectively halts the processor
                // and transfers all of its requested words at 5us/word. We fake this by just not cycling.
-               while( processHSChannels(pdp) )
+               while( processHSChannels(pdp) )      // wje - handle dma and see if we need to give up cycles
                {
                    updatelights(pdp, panel);
                    pdp->simtime += 5000;
@@ -94,7 +94,7 @@ emu(PDP1 *pdp, Panel *panel)
 
                cycle(pdp);
             } else {
-               dynamicIotProcessorStop();
+               dynamicIotProcessorStop();           // wje - let dyn IOTs know we transitioned to stop
                updatelights(pdp, panel);
 			}
 			throttle(pdp);

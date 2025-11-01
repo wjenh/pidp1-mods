@@ -1,11 +1,12 @@
 ROTATE THRU THREE PROGRAMS ON THE DRUM
 
 / This uses the IOT 32 clock 1 minute interrupt.
-/ This MUST be loaded in extended mem bank 1.
-/ When started, extend mode will be on.
-/ It sets up interrupt block 0 in mem bank 0 and overwrites some of the drumloader
-/ code at 7751 and configures the clock to interrupt every minute and return to this code.
-/ It then selects the program to load and jumps into the drumloader code to handle the rest.
+/ When started, it copies its control code to the bank defined by 'bnk',
+/ enables extended memory, and transfers control there.
+/ It then sets up interrupt block 0 in mem bank 0 and overwrites some of the loader at 7751
+/ and configures the clock to interrupt every minute and return to this code in bank 1.
+/ It then selects the program to load and fatches it from the drum then transfers control
+/ to the start address that drumloader established.
 / You will have to reload drumloader after using this.
 
 clk=iot 32
@@ -27,13 +28,14 @@ go=7754
 rti=7757
 str=7773
 
-bk1=10000
+/ Which bank we load into for the control program, the highest one
+bnk=170000
 
 / We start at 300 in bank 0
-/ From there, we copy 100-400 to bank 1
-/ and then tranfer here for initial setup
-/ read the test switches, save as pgm list
-/ halt so switches can be cleared
+/ From there, we copy 100-400 to bank 'bnk'
+/ and then tranfer here for initial setup,
+/ read the test switches, save as the pgm list,
+/ then halt so the switches can be cleared if necessary.
 100/
     lat
     dac pgm
@@ -70,7 +72,7 @@ res,
      cla
      dac adt
      lac (b0a
-     ior (bk1
+     ior (bnk
      dac ads
      law 4
      jda cpy
@@ -78,7 +80,7 @@ res,
      lac (ldr
      dac adt
      lac (b0b
-     ior (bk1
+     ior (bnk
      dac ads
      law 20
      jda cpy
@@ -139,18 +141,18 @@ b0b,
      eem
      jmp i 2
 
-/ we are loaded here in  bank 0, copy our stuff to bank 1
+/ we are loaded here in  bank 0, copy our stuff to the bank used for the control program
 / and jump to 100 there
 300/
     eem
     law 100
     dac ads
-    ior (bk1
+    ior (bnk
     dac adt
     law 300
     jda cpy
     law 100
-    ior (bk1
+    ior (bnk
     dac ads
     jmp i ads
 

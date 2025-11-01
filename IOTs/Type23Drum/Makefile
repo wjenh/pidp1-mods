@@ -4,7 +4,7 @@ drumloader.rim: drumloader.mac
 	../../bin/macro1_1 -r drumloader.mac
 
 rotate.rim: rotate.mac
-	../../bin/macro1_1 -r rotate.mac
+	../../bin/macro1_1 rotate.mac
 
 drumtest.rim: drumtest.mac
 	../../bin/macro1_1 drumtest.mac

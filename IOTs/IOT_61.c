@@ -9,9 +9,9 @@
 // #define DOLOGGING
 #include "Logger/iotLogger.h"
 
-// flags for busy, done for the cks instruction
-// DRP is busy
-// from the simh PDP-1 drum implementation
+// Flag for busy for the cks instruction
+// DRP set is busy, cleared by operation completion, dia, or dba
+// from the DEC-1-137M diagnostic test program
 #define CKS_DRP 0000001
 
 /*
@@ -34,7 +34,6 @@ static int writeMode;
 static int ioBusy;
 static int needBreak;
 static int inWait;
-static int goFast;
 static u64 lastSimtime;         // used in the polling code for drumcount updates
 static u64 cmdCompletionTime;   // relative to pdp1P->simtime
 
@@ -75,18 +74,6 @@ Word *memBaseP;
     case 061:            // dia, drum initial address, in the IO register, or dba, drum break address
         needBreak = ioBusy = 0;             // just to be sure
         pdp1P->cksflags &= ~CKS_DRP;        // and not busy
-
-        if( pdp1P->mb & 0100 )      // turn on Faster-n-hell mode
-        {
-            goFast = 1;
-            return(1);
-        }
-
-        if( pdp1P->mb & 0200 )      // turn it off
-        {
-            goFast = 0;
-            return(1);
-        }
 
         readMode = pdp1P->io & 0400000;
         writeMode = 0;
@@ -174,13 +161,17 @@ Word *memBaseP;
 
         pdp1P->cksflags |= CKS_DRP;
 
-        if( drumAddr < drumCount )  // have to wait for it to come around again on the guitar
+        // Transferring a full mem bank is special, it can start anywhere, no rotational delay
+        if( transferCount != 4096 )
         {
-            cmdCompletionTime = 4096 - drumCount + drumAddr;
-        }
-        else
-        {
-            cmdCompletionTime = drumCount - drumAddr;
+            if( drumAddr < drumCount )  // have to wait for it to come around again on the guitar
+            {
+                cmdCompletionTime = 4096 - drumCount + drumAddr;
+            }
+            else
+            {
+                cmdCompletionTime = drumCount - drumAddr;
+            }
         }
 
         cmdCompletionTime += transferCount;    // and the actual transfer
@@ -270,7 +261,7 @@ int hsStatus;
         // This won't be exact, but the longer the time but the higher the count, the more accurate it will be.
         // The worst case will be a 10us interval.
 
-        if( goFast || (pdp1P->simtime >= (lastSimtime + 8500)) )
+        if( pdp1P->simtime >= (lastSimtime + 8500) )
         {
             lastSimtime = pdp1P->simtime;
             drumCount = ++drumCount % 4096;

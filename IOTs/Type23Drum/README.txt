@@ -14,11 +14,7 @@ The drum count, 0-4095, which is the current word location for the drum, is not 
 The real drum increments the count once every 8.5 us, but the emulator calls the poll method once ever 5 us.
 So, the count increments faster than the original. This might affect the timing of some programs.
 
-However, if you don't want to twiddle your thumbs for many milliseconds, there are 2 nonstandard additons.
-IOT 161, DIA 100, will turn on fast mode, operations will complete immediately.
-IOT 261, DIA 200, turns that off.
-
-A transfer request is started immediately on execution of dcl, but the completion will appear to be delayed for
+A transfer request is done immediately on execution of dcl, but the completion will appear to be delayed for
 the proper time, 8.5 us per drum location needed to reach the start address plus 8.5 us per word transferred.
 
 Some sample programs and tests are included.

@@ -3,15 +3,8 @@
 #
 # install script for PiDP-1
 #
-# Change INSTALLDIR and/or INSTALLHOME if you want to install in other than /opt/pidp1
-#
 #PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-#INSTALLHOME=/opt
-#INSTALLDIR=pidp1
-
-INSTALLHOME=/opt
-INSTALLDIR=pidp1-mods
 
 # check this script is NOT run as root
 if [ "$(whoami)" = "root" ]; then
@@ -19,8 +12,8 @@ if [ "$(whoami)" = "root" ]; then
     exit 1
 fi
 
-if [ ! -d "$INSTALLHOME/$INSTALLDIR" ]; then
-    echo clone git repo into $INSTALLHOME
+if [ ! -d "/opt/pidp1" ]; then
+    echo clone git repo into /opt/
     exit 1
 fi
 
@@ -41,7 +34,7 @@ echo
 
 usr=$(whoami)
 usrgroup=$(id -g -n)
-cd $INSTALLHOME/$INSTALLDIR
+cd /opt/pidp1
 
 # give pidp1 user owner after the sudo git clone command
 # =============================================================================
@@ -52,7 +45,7 @@ while true; do
     case $yn in
         [Yy]* )
             # make sure that the directory does not have root ownership
-            sudo chown -R $usr:$usrgroup $INSTALLHOME/$INSTALLDIR
+            sudo chown -R $usr:$usrgroup /opt/pidp1
 	    break
 	    ;;
         [Nn]* ) 
@@ -148,36 +141,36 @@ while true; do
     read -p "Make required PiDP-1 binaries? " yn
     case $yn in
         [Yy]* )
-		make -C $INSTALLHOME/$INSTALLDIR/src/blincolnlights/pinctrl 	# pinctrl functions
-		make -C $INSTALLHOME/$INSTALLDIR/src/blincolnlights/panel_pidp1 	# panel driver
-		make -C $INSTALLHOME/$INSTALLDIR/src/blincolnlights/pdp1 	# simulator
-		make -C $INSTALLHOME/$INSTALLDIR/src/p7sim			# returns sense switches
-		make -C $INSTALLHOME/$INSTALLDIR/src/scanpf 			# returns sense switches
-		make -C $INSTALLHOME/$INSTALLDIR/src/blincolnlights/tapevis	# returns sense switches
-		make -C $INSTALLHOME/$INSTALLDIR/src/$INSTALLDIR_test 		# hardware test program
-		make -C $INSTALLHOME/$INSTALLDIR/src/pdp1_periph		# hardware test program
+		make -C /opt/pidp1/src/blincolnlights/pinctrl 	# pinctrl functions
+		make -C /opt/pidp1/src/blincolnlights/panel_pidp1 	# panel driver
+		make -C /opt/pidp1/src/blincolnlights/pdp1 	# simulator
+		make -C /opt/pidp1/src/p7sim			# returns sense switches
+		make -C /opt/pidp1/src/scanpf 			# returns sense switches
+		make -C /opt/pidp1/src/blincolnlights/tapevis	# returns sense switches
+		make -C /opt/pidp1/src/pidp1_test 		# hardware test program
+		make -C /opt/pidp1/src/pdp1_periph		# hardware test program
 		
 		# this makes the virtual pdp-1 panel, used if no PiDP-1 hardware is attached:
-		make -C $INSTALLHOME/$INSTALLDIR/src/blincolnlights/vpanel_pdp1 	# panel driver
+		make -C /opt/pidp1/src/blincolnlights/vpanel_pdp1 	# panel driver
 
 		# the macro1_1 cross-compiler:
-		gcc $INSTALLHOME/$INSTALLDIR/src/macro/macro1_1.c -o $INSTALLHOME/$INSTALLDIR/src/macro/macro1_1
+		gcc /opt/pidp1/src/macro/macro1_1.c -o /opt/pidp1/src/macro/macro1_1
 		# monas cross assembler:
-		make -C $INSTALLHOME/$INSTALLDIR/src/monas
+		make -C /opt/pidp1/src/monas
 		# the usb_paper_tape tool:
-		make -C $INSTALLHOME/$INSTALLDIR/src/usb_paper_tape
+		make -C /opt/pidp1/src/usb_paper_tape
 		# Bill Ezell's tape disassembler:
-		cc $INSTALLHOME/$INSTALLDIR/src/disassembler/disassemble_tape.c -o $INSTALLHOME/$INSTALLDIR/src/disassembler/disassemble_tape
-		cp $INSTALLHOME/$INSTALLDIR/src/disassembler/disassemble_tape $INSTALLHOME/$INSTALLDIR/bin
+		cc /opt/pidp1/src/disassembler/disassemble_tape.c -o /opt/pidp1/src/disassembler/disassemble_tape
+		cp /opt/pidp1/src/disassembler/disassemble_tape /opt/pidp1/bin
 		# Bill Ezell's audio control:
-		make -C $INSTALLHOME/$INSTALLDIR/Tools install
+		make -C /opt/pidp1/Tools install
             
 		echo Setting required access privileges to pidp1 simulator
 		# make sure pidp1 panel driver has the right privileges
             	# to access GPIO with root privileges:
-            	sudo chmod +s $INSTALLHOME/$INSTALLDIR/src/blincolnlights/panel_pidp1
+            	sudo chmod +s /opt/pidp1/src/blincolnlights/panel_pidp1
             	# to run as a RT thread:
-            	sudo setcap cap_sys_nice+ep $INSTALLHOME/$INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1
+            	sudo setcap cap_sys_nice+ep /opt/pidp1/src/blincolnlights/panel_pidp1/panel_pidp1
 	    	echo Done.
 		break
 		;;
@@ -197,24 +190,24 @@ while true; do
     case $prxn in
         [Yy]* ) 
             # put pdp1 command into /usr/local
-            sudo ln -f -s $INSTALLHOME/$INSTALLDIR/bin/pdp1.sh /usr/local/bin/pdp1
+            sudo ln -f -s /opt/pidp1/bin/pdp1.sh /usr/local/bin/pdp1
             # put pdp1control script into /usr/local
-            sudo ln -f -s $INSTALLHOME/$INSTALLDIR/bin/pdp1control.sh /usr/local/bin/pdp1control
+            sudo ln -f -s /opt/pidp1/bin/pdp1control.sh /usr/local/bin/pdp1control
 	    #
 	    #
-	    sudo ln -sf $INSTALLHOME/$INSTALLDIR/bin/encode_fiodec /usr/local/bin/encode_fiodec
-            sudo ln -sf $INSTALLHOME/$INSTALLDIR/bin/decode_fiodec /usr/local/bin/decode_fiodec
-	    sudo ln -sf $INSTALLHOME/$INSTALLDIR/bin/tape_visualizer /usr/local/bin/tape_visualizer
+	    sudo ln -sf /opt/pidp1/bin/encode_fiodec /usr/local/bin/encode_fiodec
+            sudo ln -sf /opt/pidp1/bin/decode_fiodec /usr/local/bin/decode_fiodec
+	    sudo ln -sf /opt/pidp1/bin/tape_visualizer /usr/local/bin/tape_visualizer
 	    #
-	    sudo ln -sf $INSTALLHOME/$INSTALLDIR/bin/monas /usr/local/bin/monas
-	    sudo ln -sf $INSTALLHOME/$INSTALLDIR/bin/macro1_1 /usr/local/bin/macro1_1
-	    sudo ln -sf $INSTALLHOME/$INSTALLDIR/bin/macro1_1 /usr/local/bin/macro1
-	    sudo ln -sf $INSTALLHOME/$INSTALLDIR/bin/disassemble_tape /usr/local/bin/disassemble_tape
+	    sudo ln -sf /opt/pidp1/bin/monas /usr/local/bin/monas
+	    sudo ln -sf /opt/pidp1/bin/macro1_1 /usr/local/bin/macro1_1
+	    sudo ln -sf /opt/pidp1/bin/macro1_1 /usr/local/bin/macro1
+	    sudo ln -sf /opt/pidp1/bin/disassemble_tape /usr/local/bin/disassemble_tape
 	    #
-	    sudo ln -sf $INSTALLHOME/$INSTALLDIR/bin/tkaskopenfile /usr/local/bin/tkaskopenfile
-	    sudo ln -sf $INSTALLHOME/$INSTALLDIR/bin/tkaskopenfilewrite /usr/local/bin/tkaskopenfilewrite
+	    sudo ln -sf /opt/pidp1/bin/tkaskopenfile /usr/local/bin/tkaskopenfile
+	    sudo ln -sf /opt/pidp1/bin/tkaskopenfilewrite /usr/local/bin/tkaskopenfilewrite
         #
-	    sudo ln -sf $INSTALLHOME/$INSTALLDIR/bin/pdp1audio /usr/local/bin/pdp1audio
+	    sudo ln -sf /opt/pidp1/bin/pdp1audio /usr/local/bin/pdp1audio
 
 	    break
 	    ;;
@@ -236,12 +229,12 @@ while true; do
     case $yv in
         [Yy]* )
 	    echo Activated PiDP hardware front panel
-	    $INSTALLHOME/$INSTALLDIR/bin/pdp1control.sh panel pidp
+	    /opt/pidp1/bin/pdp1control.sh panel pidp
 	    break
             ;;
         [Vv]* ) 
             echo Activated virtual front panel - PiDP hardware deactivated
-	    $INSTALLHOME/$INSTALLDIR/bin/pdp1control.sh panel virtual
+	    /opt/pidp1/bin/pdp1control.sh panel virtual
 	    break
             ;;
         * ) echo "Please answer yes or no.";;
@@ -260,17 +253,17 @@ while true; do
     case $ywa in
         [Yy]* )
 	    echo Activated GUI user interface
-	    $INSTALLHOME/$INSTALLDIR/bin/pdp1control.sh set gui
+	    /opt/pidp1/bin/pdp1control.sh set gui
 	    break
             ;;
         [Ww]* ) 
             echo Activated Web interface
-	    $INSTALLHOME/$INSTALLDIR/bin/pdp1control.sh set web
+	    /opt/pidp1/bin/pdp1control.sh set web
 	    break
             ;;
         [Aa]* ) 
             echo Activated Apps interface
-	    $INSTALLHOME/$INSTALLDIR/bin/pdp1control.sh set apps
+	    /opt/pidp1/bin/pdp1control.sh set apps
 	    break
             ;;
         * ) echo "Please answer Y, W, or A.";;
@@ -289,7 +282,7 @@ while true; do
     case $yn in
         [Yy]* )
 	    echo Activated USB paper tape option
-	    $INSTALLHOME/$INSTALLDIR/bin/pdp1control.sh usbtape y
+	    /opt/pidp1/bin/pdp1control.sh usbtape y
 
 
 	    # Disable annoying popup when USB stick is inserted:
@@ -307,7 +300,7 @@ while true; do
             ;;
         [Nn]* ) 
             echo USB paper tape option NOT activated
-	    $INSTALLHOME/$INSTALLDIR/bin/pdp1control.sh usbtape n
+	    /opt/pidp1/bin/pdp1control.sh usbtape n
 	    break
             ;;
         * ) echo "Please answer Y or N.";;
@@ -335,7 +328,7 @@ else
 		case $yhn in
 		      [Yy]* ) 
 			mkdir -p ~/.config/autostart
-			cp $INSTALLHOME/$INSTALLDIR/install/pdp1startup.desktop ~/.config/autostart
+			cp /opt/pidp1/install/pdp1startup.desktop ~/.config/autostart
 			echo
 			echo Autostart via .desktop file for GUI setup
 			break
@@ -372,15 +365,15 @@ while true; do
     read -p "Add desktop icons and desktop settings? " prxn
     case $prxn in
         [Yy]* ) 
-            cp $INSTALLHOME/$INSTALLDIR/install/tty.desktop /home/$usr/Desktop/
-            cp $INSTALLHOME/$INSTALLDIR/install/pdp1control.desktop /home/$usr/Desktop/
-            cp $INSTALLHOME/$INSTALLDIR/install/type30.desktop /home/$usr/Desktop/
-            cp $INSTALLHOME/$INSTALLDIR/install/ptr.desktop /home/$usr/Desktop/
-            cp $INSTALLHOME/$INSTALLDIR/install/ptp.desktop /home/$usr/Desktop/
+            cp /opt/pidp1/install/tty.desktop /home/$usr/Desktop/
+            cp /opt/pidp1/install/pdp1control.desktop /home/$usr/Desktop/
+            cp /opt/pidp1/install/type30.desktop /home/$usr/Desktop/
+            cp /opt/pidp1/install/ptr.desktop /home/$usr/Desktop/
+            cp /opt/pidp1/install/ptp.desktop /home/$usr/Desktop/
 
             # audio control app for new audio system
-            cp $INSTALLHOME/$INSTALLDIR/install/audioOn.desktop /home/$usr/Desktop/
-            cp $INSTALLHOME/$INSTALLDIR/install/audioOff.desktop /home/$usr/Desktop/
+            cp /opt/pidp1/install/audioOn.desktop /home/$usr/Desktop/
+            cp /opt/pidp1/install/audioOff.desktop /home/$usr/Desktop/
 
             #make pcmanf run on double click, change its config file
             config_file="/home/$usr/.config/libfm/libfm.conf"
@@ -396,13 +389,13 @@ while true; do
             fi
         
             # wallpaper
-            pcmanfm --set-wallpaper $INSTALLHOME/$INSTALLDIR/install/wallpaper.png --wallpaper-mode=fit
+            pcmanfm --set-wallpaper /opt/pidp1/install/wallpaper.png --wallpaper-mode=fit
 
             #echo
             #echo "Installing Teletype font..."
             #echo
             #mkdir ~/.fonts
-            #    cp $INSTALLHOME/$INSTALLDIR/install/TTY33MAlc-Book.ttf ~/.fonts/
+            #    cp /opt/pidp1/install/TTY33MAlc-Book.ttf ~/.fonts/
             #fc-cache -v -f
 
 

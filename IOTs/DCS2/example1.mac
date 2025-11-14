@@ -1,0 +1,189 @@
+SIMPLE DEMO OF THE DATA COMMUNICATIONS SYSTEM MKII
+
+/ Listens on port 2022 for a connection, then says hello.
+/ It asks for a character, answers it back, loops.
+rch=0022
+tcb=4022
+ssb=4122
+scb=4222
+rcs=4722
+clr=2000
+/ and symbols not compatible with native macro
+/ channel request block first word
+dfcset=010000
+dfcrlf=400000
+dfflex=200000
+dfecho=100000
+dfsrv=000100
+
+lia=760020
+lai=760040
+lsw=760060
+
+// this is what is returned for an invalid Concise char
+nch=13
+
+// Concise for q
+q=50
+
+define say a
+    law a
+    jda txt
+    term
+
+define return
+    lio (77
+    iot tcb
+    term
+
+100/
+/ set up channel 0
+     lio (dfcset ctl
+     iot scb 
+/ wait for a connection
+wfc,
+     cli
+     iot rcs
+     rir 3s
+     spi i
+     jmp wfc
+
+/ lock the send channel to 0 
+     cli
+     iot ssb
+
+/ say hello
+     say hlo
+     return
+agn,
+     say hl2
+     return
+
+/ wait for 0 to be the current channel
+wcc, cli
+     iot rcs
+     ril 6s
+     spi i
+     jmp wcc
+
+/ get the response
+rsp,
+/ wait for a char
+     cli
+     iot rcs
+     rir 5s
+     spi i
+     jmp rsp
+
+/ a negative return means nothing to read
+     iot clr rch
+     spi
+     jmp rsp
+/ save the char
+     lai
+     dac usr
+
+/ check for no char
+     sub (nch
+     sza i
+     jmp bad
+
+/ check for lower shift, just save it and kee reading
+     lai
+     sub (72
+     sza i
+     jmp svs
+
+/ and upper shift, just send if we have it
+rs1, lai
+     sub (74
+     sza i
+     jmp svs
+
+/ or quit
+     lai
+     sub (q
+     sza i
+     jmp bye
+
+rs2, return
+     say ans
+
+/ echo it back
+     lac uls
+     sza i
+     jmp .+3
+     lia
+     iot tcb
+     lio usr
+     iot tcb
+     return
+     dzm uls
+     jmp agn
+
+/ save a shift char from IO, keep reading
+svs, lai
+     dac uls
+     jmp rsp
+
+bad, return
+     say inv
+     return
+     jmp agn
+
+bye, return
+     say gby
+     return
+/ shut down DCS2
+     lio (004000
+     iot scb
+     hlt
+
+/ write out a string produced by text until a word containing
+/ only nch, 13, stop, is seen
+/ the starting address is in the ac
+txt, 0
+     dac rtn
+top, lac i txt
+     lia
+     and (77
+/ check for the end marker
+     sub (nch
+     sza i
+     jmp i rtn
+     lai
+     ral 6s
+     lia
+     iot tcb
+     ral 6s
+     lia
+     iot tcb
+     ral 6s
+     lia
+     iot tcb
+     idx txt
+     jmp top
+rtn, 0
+
+/ server port, flex, echo, and crlf on channel 0
+/ listen on port 2022
+ctl, dfcrlf dfecho dfflex dfsrv
+     03746
+
+hlo, text "Hello, I am a PiDP-1."
+     nch
+hl2, text "Type any character or q or Q to quit."
+     nch
+ans, text "You typed "
+     nch
+inv, text "I'm sorry, there is no fLex equivalent for that."
+     nch
+gby, text "Goodbye."
+     nch
+
+/ tmp storage for char read and needed upper/lower shift
+usr, 0
+uls, 0
+
+constants
+start 100

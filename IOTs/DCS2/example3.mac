@@ -1,0 +1,217 @@
+ANOTHER SIMPLE DEMO OF THE DATA COMMUNICATIONS SYSTEM MKII
+
+/ Listens on port 2022 for a connection, then says hello.
+/ It asks for a character, answers it back, loops.
+/ This version uses interrupts busy-test loops, and is the desired
+/ way to use multiple channels.
+rch=0022
+tcb=4022
+ssb=4122
+scb=4222
+rcs=4722
+rwe=0222
+roc=5222
+rci=4522
+
+clr=2000
+
+/ and symbols not compatible with native macro
+/ channel request block first word
+dfcset=010000
+dfcrlf=400000
+dfflex=200000
+dfecho=100000
+dfsrv=000100
+dfint=004000
+dfior=010000
+dfioe=020000
+dfioc=040000
+
+lia=760020
+lai=760040
+lsw=760060
+
+/ this is what is returned for an invalid Concise char
+nch=13
+
+/ Concise for the letter q
+q=50
+
+/ bit for connection lost in status
+lst=000100
+
+define say a
+    law a
+    jda txt
+    term
+
+define return
+    lio (77
+    iot tcb
+    term
+
+0/
+    0
+    0
+    0
+    jmp isr
+
+100/
+/ set up channel 0
+     lio (dfcset ctl
+     iot scb 
+/ wait for a connection
+     iot i rwe
+/ lock the send channel to 0 
+     cli
+     iot ssb
+
+/ now enable interrupts
+     esm
+
+/ say hello
+     say hlo
+     return
+     say hl2
+     return
+/ interrupts will take over from here, just spin
+/ halt just in case, shouldn't be needed
+spn, jmp .
+     hlt
+
+/ interrupt comes here
+isr, iot clr rch
+/ save the char
+     lai
+     dac usr
+     dzm uls
+
+/ check for connection lost
+     cli
+     iot rcs
+     lai
+     and (lst
+     sza
+     jmp bye
+     lac usr
+     lia
+/ check for no char
+     sub (nch
+     sza i
+     jmp bad
+
+/ check for lower shift, buffer has actual char, read it
+     lai
+     sub (72
+     sza
+     jmp rs1
+     lai
+     dac uls
+     iot clr rch
+     lai
+     dac usr
+     jmp rs2
+
+/ and upper shift, buffer has actual char, read it
+rs1, lai
+     sub (74
+     sza
+     jmp rs2
+     lai
+     dac uls
+     iot clr rch
+     lai
+     dac usr
+
+/ or quit
+rs2,
+     lai
+     sub (q
+     sza i
+     jmp bye
+
+rs3, return
+     say ans
+
+/ echo it back
+     lac uls
+     sza i
+     jmp .+3
+     lia
+     iot tcb
+     lio usr
+     iot tcb
+     return
+     dzm uls
+
+/ done, return from the interrupt
+rti, cli
+     iot rci
+     jmp i 1
+
+/ save a shift char from IO, keep reading
+svs, lai
+     dac uls
+     jmp rti
+
+bad, return
+     say inv
+     return
+     jmp rti
+
+/ Turn off interrupts, shut down DCS2, then halt
+bye, cbs
+     lsm
+/ shut down DCS2
+     lio (004000
+     iot scb
+     hlt
+
+/ write out a string produced by text until a word containing
+/ only nch, 13, stop, is seen
+/ the starting address is in the ac
+txt, 0
+     dac rtn
+top, lac i txt
+     lia
+     and (77
+/ check for the end marker
+     sub (nch
+     sza i
+     jmp i rtn
+     lai
+     ral 6s
+     lia
+     iot tcb
+     ral 6s
+     lia
+     iot tcb
+     ral 6s
+     lia
+     iot tcb
+     idx txt
+     jmp top
+rtn, 0
+
+/ server port, flex, echo, and crlf on channel 0, interrupt on char ready or disconnect
+/ listen on port 2022
+ctl, dfcrlf dfecho dfflex dfsrv dfint dfior dfioe
+     03746
+
+hlo, text "Hello, I am a PiDP-1."
+     nch
+hl2, text "Type any character or q or Q to quit."
+     nch
+ans, text "You typed "
+     nch
+inv, text "I'm sorry, there is no fLex equivalent for that."
+     nch
+gby, text "Goodbye."
+     nch
+
+/ tmp storage for char read and needed upper/lower shift
+usr, 0
+uls, 0
+
+constants
+start 100

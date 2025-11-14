@@ -2,6 +2,10 @@
 
 #define IONOWAIT(p) (p->ioh = 0)
 #define IOCOMPLETE(p) (p->ios = 1)
+
+#define IOINHOLD(p) (p->ioh)
+#define IOWANTWAIT(p) ((p->mb & 0014000) == 0010000)
+#define IOWANTCOMPLETE(p) ((p->mb & 0014000) == 0004000)
 #define IOCOMPLETE_IFNEEDED(p, com) ((com)?IOCOMPLETE(p):0)
 
 // Include to be used by IOT handler implementations

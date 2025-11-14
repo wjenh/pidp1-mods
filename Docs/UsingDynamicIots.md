@@ -65,11 +65,6 @@ Some functions are defined to help with some of the more useful ones, see below.
 Note that the panel numbering of the sense switches and the program flags is reversed from the actual bit positions.
 That is, flag or switch 6 is the lsb, 01, 1 is 040.
 
-If an IOT is called in 'wait' mode, i and c, bits 5 and 6, are 1,0, then you **must** call `IOCOMPLETE()`
-or IOCOMPLETE_IFNEEDED() at some point, either in the IOT or in a poll.
-The same applies for 'need complete', bits are 0,1.
-Until this is done, the emulator will continuously call your IOT until the complete is issued.
-
 The state of these 2 is passed in the `completion` argument to your handler.
 if it is 1, then bits 5 and 6 are either 1,0 or 0,1.
 This is consistent with the real PDP-1 behavior, a wait state does just that, waits before proceeding.
@@ -78,6 +73,29 @@ Finally, any IOT in the range of 030 - 037 *automatically* has the IO register c
 This behavior can't be bypassed.
 This is again a strange real PDP-1 behavior. So, don't get caught by it if you're passing control information
 in the IO register and use an IOT in that range!
+
+## Waits, completions, and pulses
+
+IOTs are called twice, once at the internal subclock time TP7 with pulse set to 0, and again
+at internal subclock time TP10 with pulse set to 1.
+In the original hardware, the first time was intended to have IOT hardware do any setup needed, then the
+second time for it to complete its operation.
+
+This isn't normally important to you, **EXCEPT** for the case where an IOT is called in 'wait' mode,
+i and c, bits 5 and 6, are 1,0, then you **must** call `IOCOMPLETE()` or IOCOMPLETE_IFNEEDED()
+at some point, either in the IOT or in a poll.
+Until this is done, the emulator will enter and remain in 'io hold' state.
+
+However, the proper complete status is only passed to IOTs during TP7, so if you don't process your IOT when
+pulse is 0, you won't know a wait was asked for, and if you don't complete what you don't know to complete,
+things will not work out well.
+
+This mostly applies to 'need completion pulse', where the i,c bits are 0,1.
+However, no harm is done if you don't issue completion, it just means that IOT i 0 will hang, but it's rarely used.
+
+The best practice is to always use IOCOMPLETE() or IOTCOMPLETEIFNEEDED() if your IOT is called with completion set
+and to always process during pulse 1, TP10, unless you have some special requirements.
+
 ## Other common functions
 
 If you have any special initialization to do before your IOT is called, implement `iotStart()`.

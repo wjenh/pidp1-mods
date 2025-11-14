@@ -1,0 +1,43 @@
+DEFINES FOR VARIOUS DCS2 FEATURES, FOR MACRO1 NOT NATIVE MACRO
+100/
+
+rch=0022
+rrc=0122
+rcr=1022
+rsc=1122
+tcb=4022
+ssb=4122
+tcc=5022
+
+rwe=0222
+scb=4222
+rle=4322
+rpc=4422
+rci=4522
+ric=4622
+rcs=4722
+roc=5222
+
+/ and symbols not compatible with native macro
+/ dcfxxx are single bit flags
+/ dcmxxx are multibit masks
+/ Channel Request Block first word
+dcfcrnl=400000
+dcfflex=200000
+dcfecho=100000
+dcfioc=040000
+dcfioe=020000
+dcfior=010000
+dcfie=004000
+dcmsbs=003600
+dcfsrv=000100
+dcmcha=000077
+
+// Directive to scb
+sbcset=001000
+sbcbnd=002000
+sbcrst=004000
+sbcclr=000000
+
+/ check status bit in IO reg
+dcfcks=000200

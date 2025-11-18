@@ -1,0 +1,25 @@
+SHORT EXAMPLE OF M1P
+100/ jmp xyz
+
+    jmp foo	/ comment just tabs
+    jmp bar   / comment just spaces
+    jmp xyz	 / comment with tabs and spaces
+    ral 3s	sza
+    lac ('a'
+    lac ('\n'
+
+decimal
+    0xFF
+octal
+    0xFF
+
+    ascii "Hello there"
+lbl, ascii "Bye!"
+
+xyz, 0
+foo, 0
+bar, 0
+
+constants
+start 100
+more

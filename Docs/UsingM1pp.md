@@ -28,7 +28,7 @@ The missing label test does a simple check for the first line starting with digi
 or a sequence of alpha characters followed by a comma.
 Only a warning is given, the line is preserved as-is.
 
-A comment on a line after code with only tabs separating it causes both assemblers to give an error.
+A comment on a line after code with only spaces separating it causes both assemblers to give an error.
 When detected, the comment is moved to the following line.
 
 Text following a location directive, e.g., '100/ xxx' silently produces bad code.

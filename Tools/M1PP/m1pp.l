@@ -99,17 +99,10 @@ ascii[ \t]+		{
 			    printLoc(yytext, yyleng);
 			}
 
-[a-zA-Z0-9]\t[^ \/]	{
-			    ch = (yytext[yyleng-1]);
-			    yytext[yyleng-2] = '\0';
-			    yyleng -= 2;
-			    unput(ch);
-			    fprintf(yyout, "%s\n", yytext);
-			    doIndent();
-			}
-
-[^ \t][\t]+\/		{
-			    fprintf(yyout, "%c\n/", yytext[0]);
+[^\t$][ ]+\/			{
+			    fputc( yytext[0], yyout);
+			    fprintf(yyout, "\n");
+			    fputc('/', yyout);
 			}
 
 \(			{
@@ -402,7 +395,8 @@ int i;
 /*
  * Indent by as many spaces as the current indent level.
  */
-void doIndent()
+void
+doIndent()
 {
 int i;
 

@@ -1177,7 +1177,7 @@ static const char concise2ascii[] = {
         NONE, 'a', 'b', 'c', 'd', 'e', 'f', 'g',        // 60-67
         'h', 'i', LCS, '.', UCS, '\b', NONE, '\n',      // 70-77
 
-        ' ', '\'', NONE, '~', '#', '!', '&', '<',        // same, shifted
+        ' ', '\"', '\'', '~', '#', '!', '&', '<',        // same, shifted
         '>', '^', LF, NONE, NONE, NONE, NONE, NONE,
         '\\', '?', 'S', 'T', 'U', 'V', 'W', 'X',
         'Y', 'Z', NONE, '=', Blk, Red, '\t', NONE,

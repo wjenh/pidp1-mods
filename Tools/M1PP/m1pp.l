@@ -13,6 +13,7 @@ AE*/
 #define DEFAULT_SYSDIR "/opt/pidp1/MacroIncludes/"
 
 void checkFirst(char *);
+bool checkFlexo(char *);
 void checkComplete();
 void printLoc(char *, int);
 int processEscape(char);
@@ -72,6 +73,15 @@ decimal			{
 
 octal			{
 			    decimal = false;
+			    fprintf(yyout, "%s", yytext);
+			}
+
+flexo[ ]+[^\n]{1,3}	{
+			    if( checkFlexo(yytext) )
+			    {
+			        fprintf(errfP, "Warning: shifted characters in %s\n", yytext);
+			    }
+
 			    fprintf(yyout, "%s", yytext);
 			}
 
@@ -199,7 +209,6 @@ start			{
 			        fprintf(yyout, "000000\n");
 			    }
 			}
-
 %%
 
 /*
@@ -313,6 +322,34 @@ checkFirst(char *cP)
 	    fprintf(errfP, "Warning: the first line looks like a storage label, not a program label.\n");
 	}
     }
+}
+
+/*
+ * Scan the passed string which will be of the form 'flexo x', 'xy', or 'xyz' to
+ * see if there is a flexo shifted character.
+ * If so, return true, else false.
+ * Uses the flex/ascii mapping:
+ *
+ */
+bool
+checkFlexo(char *cP)
+{
+int i;
+
+    for( i = 0, cP += strlen(cP) - 1; i++ < 3; --cP )
+    {
+    	if( isspace(*cP) )
+	{
+	    return( false );		// is ok
+	}
+
+	if( isupper(*cP) || strchr("#!&^\\*", *cP) )
+	{
+	    return(true);		// shifted
+	}
+    }
+
+    return( false );			// is ok
 }
 
 /*

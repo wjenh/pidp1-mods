@@ -18,6 +18,7 @@ The processed output is fully compatible with both macro and macro1.
 - A missing label as the first line
 - A comment after code with only tabs separating it
 - Text following a location directive
+- Shifted characters in a flexo pseudo-instruction
 - Combined instructions vs instructions separated by tabs
 - Constants seen but no constants statement
 - No start at the end of the program
@@ -34,13 +35,20 @@ Text following a location directive, e.g., '100/ xxx' silently produces bad code
 Everything following the slash is ignored, so something like '100/ sza' loses the 'sza'.
 When detected, the rest of the line following the slash is moved to the next line.
 
+Shifted characters in a flexo pseudo-instruction warns about the broken behavior of flexo when using shifted
+characters. A character that causes a shift change results in two characters,
+the shift code, 072 or 074, and the actual character.
+This means that *flexo Abc* will result in *074 A 072*, not what what was expected.
+Flexo assumes it begins in unshifted mode, so unshifted characters work as expected.
+This is another silent failure.
+
 Instructions on the same line can be separated by spaces or tabs.
 Seeing the difference can be difficult.
 Spaces mean 'add together', tabs mean 'start a new line'.
 For clarity, if tabs are seen between instructions on the same line, each will be moved to a separate line.
 
 The ideal check would be to determine if adding the words makes sense.
-For example, 'jmp x idx y' is almost certainly meaningless and would result in a single totally different
+For example, 'idx x jmp y' is almost certainly meaningless and would result in a single totally different
 instruction than intended.
 However, this version doesn't check for that, it would require parsing the code as if it was being assembled.
 So, it is still possible to have nonsense code.
@@ -80,11 +88,14 @@ of each ascii character, again depending upon the current radix.
 Characters are packed two per word with the first being in bits 2-9, the second in 10-17.
 The two high bits will be zero.
 The final character will always be a byte of 0, the usual string terminator.
+A text string is limited to no more than 1024 bytes.
 
 - Include file support is added.
 The statements *#include "file"* or *#include \<file\>* appearing at the beginning of a line by itself will
 insert the contents of the file at that point, just as would occur in C or C++.
-The default root location when *<file>* is used is */opt/pidp1/MacroIncludes*, but see the usage
+Any text following the closing quote or bracket is added as a comment on a line by itself.
+Nested includes are supported, up to 1024 files deep, which admittedly is a bit excessive.
+The default root location when *\<file\>* is used is */opt/pidp1/MacroIncludes*, but see the usage
 details below.
 
 ## Building m1pp
@@ -93,9 +104,9 @@ Just type make.
 
 ## Usage
 
-m1pp [-o file] [-e errfile] [-S sysrootpath] [sourcefile]
+m1pp [-o outfile] [-e errfile] [-S sysrootpath] [sourcefile]
 
-The -S sysrootpath directive changes the location that *include \<x\>* files are searched for.
+The -S sysrootpath directive changes the location that *#include \<x\>* files are searched for.
 
 If no input file is given, stdin is used.
 

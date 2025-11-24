@@ -1,0 +1,16 @@
+/ This defines the IOT instructions for the Type 23 drum.
+/ Note this differs from the examples in that it does not add the iot
+/ explicitly, so use is e.g. iot dia.
+dia=61
+dba=2061
+dwc=62
+dra=2062
+dcl=63
+
+/ Additional flags, not compatible with native macro, only macro1.
+/ These flags are in the IO register.
+drmrd=400000
+drmwrt=400000
+
+/ The bit set if a cks is done.
+cksdrm=1

@@ -1,0 +1,72 @@
+/ Defines for the DCS2 system.
+/ See the documentation.
+rch=0022
+rrc=0122
+rcr=1022
+rsc=1122
+tcb=4022
+ssb=4122
+tcc=5022
+
+/ rch and rcr will clear the IO register if
+/ this is added to the IOT, else it ors.
+rchclr=002000
+
+/ Extended commands.
+rwe=0222
+scb=4222
+rle=4322
+rpc=4422
+rci=4522
+ric=4622
+rcs=4722
+roc=5222
+
+/ symbols not compatible with native macro
+/ dcfxxx are single bit flags
+/ dcmxxx are multibit masks
+/ Channel Request Block first word
+dcfcrnl=400000
+dcfflex=200000
+dcfecho=100000
+dcfioc=040000
+dcfioe=020000
+dcfior=010000
+dcfie=004000
+dcfsrv=000100
+dcmsbs=003600
+dcmcha=000077
+
+// Directives to scb
+sbcset=010000
+sbcbnd=020000
+sbcrst=040000
+sbcclr=000000
+
+/ Channel status flags
+dsfopn=000001
+dsfsvr=000002
+dsfcon=000004
+dsfful=000010
+dsfrdy=000020
+dsfser=000040
+dsfcls=000100
+dsfien=000200
+dsfioc=000400
+dsfiof=001000
+dsfioe=002000
+dsfcur=004000
+
+/ and some combined ones
+dssrdy=dsfopn+dsfcon
+dsserr=dsfcls+dsfser+dsfful
+
+/ check status bit in IO reg
+dcfcks=000200
+
+/ special flex characters
+flxerr=076
+flxnch=013
+flxetx=013
+flxnl=077
+

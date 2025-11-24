@@ -7,7 +7,7 @@
 
 // An extended implementation of the PDP-1D timeshare clock.
 // IOT 32 reads the current 1ms counter, 0-59999 dec.
-// IOT 32 with bit 7 set is an extension, set clock, IOT 20032:
+// IOT 32 with bit 7 set is an extension, set clock, IOT 2032:
 // AC register contains flags:
 // 000 000 0eI iMM MMm mmm
 // e enables the clock, 1 to enable, 0 is as a regular IOT 32, disabling also clears the interrupt enables.

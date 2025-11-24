@@ -151,7 +151,8 @@ The characters will be converted to ascii before sending, or converted from asci
 See the detailed description in the Channel Control Block description below.
 
 For rch and rcr, the action on an error depends upon if flexo mode is enabled.
-For no character ready or any error, the low 6 bits returned will be FLEX_NCHAR, 013.
+For flexo, for no character ready the low 6 bits returned will be FLEX_NCHAR, 013.
+For any error, the low 6 bits returned will be FLEX_ERR, 076.
 
 For 8-bit mode, if no character is available IO register bits 0 and 1 will both be 1 and the other bits unchanged.
 If any other error occurs, bit 0 will be set, bit 1 cleared, and the rest of the register set to the full
@@ -183,8 +184,8 @@ on return IO register bit 0 will be a 1 and the NOCHANNEL eror will be set.
 And the new extended commands:
 
 - scb 724222 set/clear/rebind channel request
-    On call:
     ```
+    On call:
     IO register bit 5 set to 1 is a set request
     IO register bits 6-17 are the address of the request block in memory
     ```
@@ -196,7 +197,10 @@ And the new extended commands:
     Rebind only applies to server channels.
     This closes any currently open socket on the channel and returns to listen mode.
 
-    If IO register bits 12-17 are all 0's *and* bit 3 is also a 1,  a complete reset of DCS2 is done
+    ```
+    IO register bit 3 set to 1 is a reset request, no other bits used
+    ```
+    A complete reset of DCS2 is done.
     A reset will close all open channels as well as clear internal state and disable polling
     resetting DCS2 to its startup state.
 

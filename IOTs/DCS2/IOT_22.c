@@ -21,7 +21,7 @@
 #define NUM_CHANS   8       // the more chans, the higher the polling overhead
 #define SERVER_BACKLOG  4   // number of incoming connect requests we queue
 
-#define DOLOGGING
+// #define DOLOGGING
 #include "Logger/iotLogger.h"
 
 #define getFullAddress(pdp1P, addr) &(pdp1P->core[(pdp1P->ema | (addr & 07777))%MAXMEM])
@@ -35,6 +35,8 @@
 #define FLEX_SPACE 000
 // And the no-char-on-read marker
 #define FLEX_NCHAR 013
+// We use 076 to indicate an error, it's not a Concise or Flex character
+#define FLEX_ERR 076
 // No character available on a read, or no flex->ascii translation on write, including shift codes
 #define NONE -1
 
@@ -206,6 +208,8 @@ char wbuf[8];
 
     if( !initialized )
     {
+        iotLog("DCS2 initialized\n");
+
         if( (epoll_fd = epoll_create(1)) < 0 )
         {
             last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_EPOLL | ((errno & 0377) << 4);
@@ -241,18 +245,26 @@ char wbuf[8];
             chanP = &channels[cur_chan];
 
             // Clear the bits that will receive the character
-            pdp1P->io &= (chanP->control_flags & CNTL_FLEX)?077:0xFF;
+            if( clear_io )
+            {
+                pdp1P->io = 0;
+            }
+            else
+            {
+                pdp1P->io &= (chanP->control_flags & CNTL_FLEX)?077:0xFF;
+            }
 
             if( hasRcvPushback(chanP) )
             {
                 ich = getChar(chanP);
+                chanP->control_flags |= CNTL_RREADY;    // just to be sure
             }
             else if( !hasChar(chanP)  || ((ich = getChar(chanP)) < 0) )
             {
-                // no char, set flag bits for binary, FLEX_NCHAR if Flex mode
+                // no char or error, set flag bits for binary, FLEX_NCHAR or FLEX_ERR if Flex mode
                 if( chanP->control_flags & CNTL_FLEX )
                 {
-                    ich = FLEX_NCHAR;
+                    ich = (ich == FAIL)?FLEX_ERR:FLEX_NCHAR;
                 }
                 else
                 {
@@ -266,11 +278,6 @@ char wbuf[8];
                 chanP->control_flags &= ~CNTL_RREADY;   // will be reset in poll loop
             }
 
-            if( clear_io )
-            {
-                pdp1P->io = 0;
-            }
-
             pdp1P->io |= ich;
         }
         else
@@ -279,7 +286,7 @@ char wbuf[8];
             last_error = pdp1P-> io = IO_ERR_FLAG | IO_ERR_NOCURRENT;
         }
 
-        if( cmd == 010 )        // rcr
+        if( cmd == RCR ) 
         {
             releaseChannel();
         }
@@ -367,13 +374,8 @@ char wbuf[8];
 
             j = send(chanP->chan_fd, wbuf, i, MSG_NOSIGNAL);
 
-            if( i != j )
+            if( j < 0 )
             {
-                if( j > 0 )
-                {
-                    errno = EAGAIN;
-                }
-
                 if( errno == EAGAIN )
                 {
                     iotLog("TCC/TCB got EAGAIN on %d\n", cur_chan);
@@ -518,7 +520,7 @@ char wbuf[8];
         else
         {
             chanP = &channels[i];
-            if( !chanP->control_flags & CNTL_OPEN )
+            if( !(chanP->control_flags & CNTL_OPEN) )
             {
                 pdp1P->io = IO_ERR_FLAG | IO_ERR_NOTOPEN;
             }
@@ -730,6 +732,7 @@ struct epoll_event event;
     switch( cmd )
     {
     case 0:             // close channel
+        iotLog("Channel close on %d\n", chan_no);
         resetChannel(chanP);
         break;
 
@@ -740,7 +743,10 @@ struct epoll_event event;
             return( IO_ERR_FLAG | IO_ERR_OPEN );              // already open
         }
 
-        chanP->control_flags |= (word0 & RQST_SRV)?CNTL_SERVER:0;
+        iotLog("Channel open on %d\n", chan_no);
+
+        chanP->control_flags = (word0 & RQST_SRV)?CNTL_SERVER:0;
+
         chanP->control_flags |= (word0 & RQST_IE)?CNTL_IE:0;
         chanP->control_flags |= (word0 & RQST_IOR)?CNTL_IOR:0;
         chanP->control_flags |= (word0 & RQST_IOE)?CNTL_IOE:0;
@@ -802,6 +808,8 @@ struct epoll_event event;
             return( IO_ERR_FLAG | IO_ERR_NOTSERVER );              // not open or not server
         }
 
+        iotLog("Channel rebind on %d\n", chan_no);
+
         if( chanP->chan_fd != -1 )
         {
             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, chanP->chan_fd, 0);
@@ -811,15 +819,16 @@ struct epoll_event event;
         }
 
         // now available, poll will take it from here
-        chanP->control_flags  &= !CNTL_CONNECTED;
+        chanP->control_flags  &= ~(CNTL_CONNECTED|CNTL_RREADY|CNTL_TFULL|CNTL_CONNERR);
         break;
 
     case 4:             // full reset
         enablePolling(0);
+        iotLog("DCS full reset\n");
 
         for( i = 0; i < NUM_CHANS; ++i )
         {
-            resetChannel(chanP);
+            resetChannel(&channels[i]);
         }
 
         forceReleasePorts();
@@ -847,11 +856,13 @@ resetChannel(ChannelP chanP)
 {
 int i;
 
+    iotLog("Resetting channel %d\n", chanP->chan_no);
+
     if( !(chanP->control_flags & CNTL_OPEN) )
     {
+        iotLog("Reset channel but not open\n");
         return;                      // ignore
     }
-
     if( chanP->chan_fd != -1 )
     {
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, chanP->chan_fd, 0);
@@ -866,7 +877,7 @@ int i;
     i = chanP->chan_no;
     memset(chanP, 0, sizeof(Channel));
     chanP->chan_no = i;                 // we keep these settings
-    chanP->chan_fd = -1;
+    chanP->chan_fd = -1;                // and initialize this
 
     if( cur_chan == i )
     {
@@ -1019,7 +1030,7 @@ ChannelP chanP;
     for( i = (cur_chan + 1) % NUM_CHANS; i != cur_chan; i = (i + 1) % NUM_CHANS)          // handle wraparound
     {
         chanP = &channels[i];
-        if( (chanP->control_flags & (CNTL_OPEN | CNTL_RREADY)) == (CNTL_OPEN | CNTL_RREADY) )
+        if( (chanP->control_flags & (CNTL_OPEN|CNTL_RREADY)) == (CNTL_OPEN|CNTL_RREADY) )
         {
             cur_chan = i;
             cur_chan_locked = true;
@@ -1107,6 +1118,7 @@ releasePort(PortMapP mapP)
     {
         close( mapP->primary_fd );
         mapP->port = 0;
+        mapP->count = 0;
         mapP->primary_fd = -1;
     }
 }

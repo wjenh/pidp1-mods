@@ -1,0 +1,38 @@
+/ Wait for a character on the current DCS channel.
+/ The IO register is cleared and the character is 
+/ returned in the IO register.
+/ If an error occurs, the IO register will be the character flxerr.
+/ The AC register is preserved.
+/ Call via jda getch.
+
+#includeif <1Dinstructions.mh>
+#includeif <DCS/dcs2defs.mh>
+
+getch, 0
+     dac gchrtn
+/ loop waiting for a character
+gchlp,
+     cli
+     iot rcs
+     lai
+     and (dsfful dsfser dsfcls
+     sza
+     jmp gcherr
+     lai
+     and (dsfrdy
+     spa
+     jmp gchlp
+     iot rch rchclr
+     lai
+     sad (flxnch
+/ really shouldn't happen
+     jmp gchlp
+/ the character in IO is either valid or flxerr
+     jmp .+3
+gcherr,
+     law flxerr
+     lia
+     lac getch
+hlt
+     jmp i gchrtn
+gchrtn, 0

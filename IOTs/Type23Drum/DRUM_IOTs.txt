@@ -1,20 +1,20 @@
 Each of three IOTs for the drum expect parameters in the IO register.
 The proper IOTs for the drum are:
 
-IOT 61 7  20x61, dia
-IOT 2061 722x61, dba same as dia except requests a break on channel 5 when the i/o is done
+IOT 61,  72xx61, dia
+IOT 2061 722061, dba same as dia except requests a break on channel 5 when the i/o is done
    IO rfffffaaaaaaaaaaaa
       r             1 if a read is requested else 0
       fffff         the drum 'field' to read from, 0-037, 0-31 dec
       aaaaaaaaaaaa  the drum address within the field to begin from
 
-IOT 62   72ox62, dwc
+IOT 62,   72xx62, dwc
    IO wfffffcccccccccccc
       w             1 if a write is requested else 0
       fffff         the drum 'field' to write to, 0-037, 0-31 dec
       cccccccccccc  the number of 18 bit words to read and/or write, 0-07777, 0-4095 dec, 0 means 4096
 
-IOT 2062 722x62, dra
+IOT 2062, 722062, dra
    current drum address -> IO, 0-07777, 0-4095 dec
 
 IOT 63,  72xx63, dcl

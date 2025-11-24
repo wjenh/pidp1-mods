@@ -1,0 +1,12 @@
+/ Defines for the IOT_32 timesharing clock
+/ Use as iot clr, etc.
+clr=32
+cls=2032
+
+/ Flags in AC, not compatible with macro, only macro1
+ckenab=2000
+ckimn=1000
+ckims=400
+/ And the channel masks
+ckmmn=360
+ckmms=17

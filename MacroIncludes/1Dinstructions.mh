@@ -1,0 +1,4 @@
+/ The few implemented PDP1-D instructions
+lia=760020
+lai=760040
+lsw=760060

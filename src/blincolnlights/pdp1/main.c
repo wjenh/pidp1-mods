@@ -285,7 +285,7 @@ int
 main(int argc, char *argv[])
 {
 	PDP1 pdp1, *pdp = &pdp1;
-    visiblePDP1P = pdp;
+	visiblePDP1P = pdp;
 	pthread_t th;
 	const char *host;
 	int port;
@@ -320,7 +320,8 @@ main(int argc, char *argv[])
 	memset(pdp, 0, sizeof(*pdp));
 	readmem("coremem", memp, memsz);
 
-	startpolling();
+        pdp1.sbs16 = 1;     // wje on by default now
+	startpolling();     // wje
 
 	pdp->dpy[0].fd = -1;
 	pdp->dpy[1].fd = -1;

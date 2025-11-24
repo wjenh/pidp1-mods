@@ -11,6 +11,7 @@ AE*/
 #define MAXDEPTH 128	// include file nesting, should be enough for anyone
 #define STRBUF 1024	// maximum literal string length
 #define DEFAULT_SYSDIR "/opt/pidp1/MacroIncludes/"
+#define MAXKNOWN 128	// the maximum number of included files we remember
 
 void checkFirst(char *);
 bool checkFlexo(char *);
@@ -19,7 +20,9 @@ void printLoc(char *, int);
 int processEscape(char);
 void setIndent(char *);
 void doIndent();
-void processInclude(char *);
+void processInclude(char *, bool);
+bool addInc(char *);
+bool findInc(char *);
 void yyerror(char *, char *);
 void usage();
 
@@ -33,12 +36,14 @@ char ch;
 
 FILE *errfP;
 
-YY_BUFFER_STATE inclStack[MAXDEPTH];
-int inclStackIdx = 0;
-char sysIncludeDir[512];
+char sysIncludeDir[128];
+
+char knownIncs[MAXKNOWN][128];
+int knownCount;
 
 %}
 
+%s BODY
 %x FIRST ASCII DONE
 
 %%
@@ -48,9 +53,9 @@ char sysIncludeDir[512];
 %}
 
 <FIRST>^.*$		{
-			    BEGIN INITIAL;
+			    BEGIN BODY;
 			    checkFirst(yytext);
-			    fprintf(yyout, "%s\n", yytext);
+			    fprintf(yyout, "%s", yytext);
 			}
 
 ^[ \t]*			{
@@ -59,11 +64,19 @@ char sysIncludeDir[512];
 			}
 
 ^#include[ \t]+\<.+\>.*$	{
-			    processInclude(yytext);
+			    processInclude(yytext, false);
 			}
 
 ^#include[ \t]+\".+\".*$	{
-			    processInclude(yytext);
+			    processInclude(yytext, false);
+			}
+
+^#includeif[ \t]+\<.+\>.*$	{
+			    processInclude(yytext, true);
+			}
+
+^#includeif[ \t]+\".+\".*$	{
+			    processInclude(yytext, true);
 			}
 
 decimal			{
@@ -101,8 +114,12 @@ ascii[ \t]+		{
 
 [^\t$][ ]+\/			{
 			    fputc( yytext[0], yyout);
-			    fprintf(yyout, "\n");
+			    fputc('\n', yyout);
 			    fputc('/', yyout);
+			}
+
+^\/.*$			{
+			    fprintf(yyout, "%s", yytext);
 			}
 
 \(			{
@@ -115,7 +132,7 @@ constants		{
 			    fprintf(yyout, "%s", yytext);
 			}
 
-start			{
+^[ \t]*start.*$			{
 			    BEGIN DONE;
 			    saw_start = true;
 			    fprintf(yyout, "%s", yytext);
@@ -123,28 +140,30 @@ start			{
 
 <DONE>^.*$		{
 			    saw_extra = true;
-			    fprintf(yyout, "%s\n", yytext);
+			    fprintf(yyout, "%s", yytext);
 			}
 
-\'			{
+<BODY>\'\\?.\'		{
 			int ch;
 
-			    if( (ch = input()) == '\\' )
+			    if( yytext[1] == '\\' )
 			    {
-				ch = input();
-			 	ch = processEscape(ch);
+			        ch = yytext[2];
+			        ch = processEscape(ch);
+			    }
+			    else
+			    {
+			    	ch = yytext[1];
 			    }
 
-			    if( ch == EOF )
-			    {
-				yyerror("unterminated single-quote", 0);
-			    }
-			    else if( ch )
-			    {
-				fprintf(yyout, decimal?"%d":"%o", ch);
-			    }
-			    
-			    input();	// get rid of trailing quote
+		            if( ch == EOF )
+		            {
+			        yyerror("unterminated single-quote", 0);
+		            }
+		            else if( ch )
+		            {
+			        fprintf(yyout, decimal?"%d":"%o", ch);
+		            }
 			}
 
 <ASCII>\"		{
@@ -152,7 +171,6 @@ start			{
 			char *cP;
 			char string[STRBUF];
 
-			    BEGIN INITIAL;
 			    cP = string;
 
 			    while( (tmpc = input()) != '"' )
@@ -201,6 +219,8 @@ start			{
 			    {
 			        fprintf(yyout, "000000\n");
 			    }
+
+			    BEGIN BODY;
 			}
 %%
 
@@ -431,66 +451,123 @@ checkComplete()
 
 /*
  * The entire line 'include....' is passed.
- * Figure out the file, open it.
+ * Figure out the file.
+ * If ifnew is true, only load the file if it hasn't already been loaded, skip otherwise.
+ * if isnew is false or the file hasn't been loaded, load it.
  * If successful, the current yyin is pushed onto the file stack
  * and the named file becomes the new yyin.
  * When eof occurs, the stack is popped and the previous yyin restored.
+ * 
  */
 void
-processInclude(char *cP)
+processInclude(char *lineP, bool ifNew)
 {
 bool sysInc = false;
-char *cP2;
+char *cP2, *cP3;
 char *nameP;
+char *filenameP;
 char filename[512];
+char basename[64];
 FILE *fP;
 
-    // The lexer has guaranteed we will have matched "" or <>
-    if( (cP2 = strchr(cP,'"')) )
+    // The lexer has guaranteed we will have matched "" or <>.
+    // We keep the first char of filename as " or < for searching.
+    if( (nameP = strchr(lineP,'"')) )
     {
-    	nameP = cP2 + 1;
-	cP2 = strchr(nameP,'"');
-	*cP2++ = 0;
+	cP2 = strchr(nameP + 1,'"');
+    	*stpncpy(filename, nameP + 1, cP2 - nameP - 1) = 0;
+	nameP = filename;
+	filenameP = nameP;
     }
     else
     {
 	sysInc = true;
-    	nameP = strchr(cP,'<') + 1;
+	basename[0] = '<';
+	cP3 = basename + 1;
+
+    	nameP = strchr(lineP,'<') + 1;
 	cP2 = strchr(nameP,'>');
-	*cP2++ = 0;
+    	*stpncpy(cP3, nameP, cP2 - nameP) = 0;
+	nameP = basename;
+	sprintf(filename, "%s/%s", sysIncludeDir, nameP + 1);
+	filenameP = filename;
+    }
+
+    ++cP2;	// now point to the char after the closing delimiter
+
+    if( ifNew && findInc(basename) )
+    {
+    	return;			// do nothing
     }
 
     if( *cP2 )			// has trailing text, make it a comment
     {
-    	fprintf(yyout,"/%s\n", cP2);
+    	fprintf(yyout,"\n/%s", cP2);
     }
 
-    sprintf(filename,"%s%s%s",sysInc?sysIncludeDir:"", sysInc?"/":"", nameP);
-
-    if( !(fP = fopen(nameP,"r")) )
+    if( !(fP = fopen(filenameP,"r")) )
     {
-    	yyerror("can't open include file ", nameP);
+    	yyerror("can't open include file", filenameP);
     }
     
-    inclStack[inclStackIdx++] = YY_CURRENT_BUFFER;
-    yy_switch_to_buffer( yy_create_buffer(fP, YY_BUF_SIZE) );
+    addInc(basename);	// keep the opening < or " to differentiate include source
+    yypush_buffer_state( yy_create_buffer(fP, YY_BUF_SIZE) );
+}
+
+/*
+ * Search the list of included files to see if it has already been loaded.
+ * If so, return true else false.
+ */
+bool
+findInc(char *nameP)
+{
+int i;
+
+    for( i = 0; i < knownCount; ++i )
+    {
+    	if( !strcmp(nameP, knownIncs[i]) )
+	{
+	    return(true);
+	}
+    }
+
+    return(false);
+}
+
+/*
+ * Add an include name to the known list.
+ * If the list of known names is exhausted, return false else true.
+ */
+bool
+addInc(char *nameP)
+{
+    if( knownCount >= MAXKNOWN )
+    {
+    	return(false);
+    }
+
+    strcpy( knownIncs[knownCount++], nameP );
+    return(true);
 }
 
 void
 yyerror(char *cP, char *cP2)
 {
-    fprintf(errfP,"Fatal error: %s%s\n", cP, cP2?cP2:"");
+    fprintf(errfP,"Fatal error: %s %s\n", cP, cP2?cP2:"");
     exit(1);
 }
 
 int
 yywrap()
 {
-    if( inclStackIdx > 0 )
+FILE *fP;
+
+    fP = yyin;			// in case we pop state
+    yypop_buffer_state();
+
+    if( YY_CURRENT_BUFFER )
     {
-        fclose(yyin);
-        yy_delete_buffer( YY_CURRENT_BUFFER );
-        yy_switch_to_buffer(inclStack[--inclStackIdx]);
+        fclose(fP);
 	return(0);
     }
     else
@@ -505,9 +582,18 @@ main(int argc, char **argv)
 {
 int i;
 char opt;
+char *cP;
 
     errfP = stderr;
-    strcpy(sysIncludeDir, DEFAULT_SYSDIR);
+
+    if( (cP = getenv("M1SYSINC")) )
+    {
+    	strcpy(sysIncludeDir, cP);
+    }
+    else
+    {
+        strcpy(sysIncludeDir, DEFAULT_SYSDIR);
+    }
 
     while( (opt = getopt(argc, argv, "S:o:e:")) != -1 )
     {

@@ -6,11 +6,16 @@ dba=2061
 dwc=62
 dra=2062
 dcl=63
+dss=2063
 
 / Additional flags, not compatible with native macro, only macro1.
 / These flags are in the IO register.
 drmrd=400000
 drmwrt=400000
+
+/ Bits for dss
+drms16=40
+drmsch=20
 
 / The bit set if a cks is done.
 cksdrm=1

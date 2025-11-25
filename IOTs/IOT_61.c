@@ -42,6 +42,8 @@ static int memAddr;
 static Word readBuffer[4096];
 static Word writeBuffer[4096];
 
+static int sbsChan = 5;
+
 static void readDrumToBuffer(int, Word *, int, int, int);
 static void writeBufferToDrum(int, Word *, int, int, int);
 
@@ -124,7 +126,23 @@ Word *memBaseP;
         }
         break;
 
-    case 063:            // dcl, drum core location
+    case 063:            // dcl, drum core location and dss, drum set sbs
+        if( pdp1P->mb & 02000 )
+        {
+            // enable/disable sbs16
+            pdp1P->sbs16 = pdp1P->io & 040;
+
+            stat = sbsChan;
+
+            // change interrupt channel?
+            if( pdp1P->io & 020 )
+            {
+                sbsChan = pdp1P->io & 017;
+            }
+            iotLog("dss called with setting %02o\n", pdp1P->io & 077);
+            break;
+        }
+        
         // The manual says mem bank is bits 2, 3, but this isn't correct.
         // The hardware description is.
         // It's adtually bits 2-5 to support up to 16 memory modules.

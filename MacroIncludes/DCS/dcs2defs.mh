@@ -23,6 +23,7 @@ rci=4522
 ric=4622
 rcs=4722
 roc=5222
+res=5322
 
 / symbols not compatible with native macro
 / dcfxxx are single bit flags

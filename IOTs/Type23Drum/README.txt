@@ -1,5 +1,6 @@
 This is an implementation of the Type 23 Drum memory.
 Just copy to the IOTs directory and make in order to use it.
+See the documentation in Docs/UsingType23Drum.md for important details.
 
 IMPORTANT - The H23 Paralell Drum Jul 64 manual has some very signifiant errors, don't believe it all.
 The opcode for DCL is totally wrong.

@@ -61,6 +61,7 @@
 #define RCS     047
 #define RWE     002
 #define ROC     052
+#define RES     053
 
 #define SCBCLEAR    0
 #define SCBOPEN     1
@@ -536,6 +537,12 @@ char wbuf[8];
                 pdp1P->io = 0;
             }
         }
+        break;
+
+    case RES:                   // enable/disable sbs16
+        i = !!pdp1P->sbs16;     // in case it wasn't just 1
+        pdp1P->sbs16 = pdp1P->io & 1;
+        pdp1P->io = i;
         break;
 
     default:

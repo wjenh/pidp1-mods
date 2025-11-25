@@ -294,6 +294,12 @@ And the new extended commands:
     The new channel becomes the current channel and will be locked.
     If an error occurred, the current channel and lock state will be unchanged.
 
+- res 725322 enable/disable sbs16
+    ```
+    On call, IO register bit 17 set to 1 enables sbs16, else disables it.
+    On return, the IO register will have the prior setting.
+    ```
+
 ## The Channel Request Block
 
 The request block varies depending upon whether the channel is a server or a client.
@@ -306,19 +312,19 @@ nfECerissssmcccccc
 
 where:
 ```
-n      bit 0, convert carriage return to carriage return and a linefeed on output
-       This is the telnet standard, and note that the Concise character set does not have linefeed so it will
-       be dropped on input when Flexo mode is on.
-f      bit 1, do Flexo conversion; outgoing characters are converted to ascii from Flexo,
-       the reverse for incoming ones, 0 to just pass the data unchanged as 8 bit binary
-E      bit 2, echo input
-C      bit 3, interrupt on connecton established or lost
-e      bit 4, interrupt on a socket error other than established or lost
-r      bit 5, interrupt on recieved characters available
-i      bit 6, 1 to allow interrupts
-ssss   bits 7-10, if i is 1, the SBS channel to use to interrupt, always treated as 0 if no SBS16
-m      bit 11, 1 for server, 0 for client
-cccccc bits 12-17 are the channel number up to 63 depending upon configuration
+bit 0, n        convert carriage return to carriage return and a linefeed on output
+                This is the telnet standard, and note that the Concise character set does not have
+                linefeed so it will be dropped on input when Flexo mode is on.
+bit 1, f        do Flexo conversion; outgoing characters are converted to ascii from Flexo,
+                the reverse for incoming ones, 0 to just pass the data unchanged as 8 bit binary
+bit 2, E        echo input
+bit 3, C        interrupt on connecton established or lost
+bit 4, e        interrupt on a socket error other than established or lost
+bit 5, r        interrupt on recieved characters available
+bit 6, i        1 to allow interrupts
+bits 7-10, ssss if i is 1, the SBS channel to use to interrupt, always treated as 0 if no SBS16
+bit 11, m       1 for server, 0 for client
+bits 12-17, cccccc the channel number up to 63 depending upon configuration
 ```
 
 Enabling interrupts here immediately makes the channel a candidate for interrupts,

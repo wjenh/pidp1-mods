@@ -85,6 +85,23 @@ bits 6-17, the current drum address, 0-7777 octal, 0-4095 decimal
 ```
 An error will never occur, this is a software drum, not a hardware drum.
 
+## One nonstandard IOT
+
+While it appears that channel 5 is the original interrupt channel, there is some evidence that it
+was not always true, possibly because of local modifications, a hallmark of the PDP-1.
+It is also the case that the PiDP-1 emulator does not enable SBS16, although it supports it.
+A new IOT has been added to address this:
+
+- IOT 2063, dss, 722063, drum set sbs
+
+IOT register bits set on call:
+```
+bit 12, 1 to enable SBS16, 0 to disable
+bit 13, 1 to change the assigned interrupt channel number
+bits 14-17, the new interrupt channel to use
+```
+On return, the IO register will contain the prior channel number
+
 ## How do I know it's done?
 
 If you aren't using the interrupt mode, the only indication is that

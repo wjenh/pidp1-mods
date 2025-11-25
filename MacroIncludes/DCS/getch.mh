@@ -20,7 +20,7 @@ gchlp,
      jmp gcherr
      lai
      and (dsfrdy
-     spa
+     sza i
      jmp gchlp
      iot rch rchclr
      lai
@@ -33,6 +33,5 @@ gcherr,
      law flxerr
      lia
      lac getch
-hlt
      jmp i gchrtn
 gchrtn, 0

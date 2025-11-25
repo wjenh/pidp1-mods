@@ -320,7 +320,6 @@ main(int argc, char *argv[])
 	memset(pdp, 0, sizeof(*pdp));
 	readmem("coremem", memp, memsz);
 
-        pdp1.sbs16 = 1;     // wje on by default now
 	startpolling();     // wje
 
 	pdp->dpy[0].fd = -1;

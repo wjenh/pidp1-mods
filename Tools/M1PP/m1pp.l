@@ -182,6 +182,7 @@ constants		{
 
 				if( tmpc == EOF )
 				{
+					yyerror("unterminated quote in ascii string", 0);
 				}
 
 				if( tmpc == '\\' )

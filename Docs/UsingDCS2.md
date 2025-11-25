@@ -128,6 +128,10 @@ See below for the DCS2 error codes.
 **Note**: The current memory bank is honored in all calls that are passed 12-bit addresses, so DCS2 can be used
 in extended memory mode.
 
+**Warning**: The mnemonics below are directly from the DEC documentation, but notice there is an *rcr* instruction.
+That conflicts with the rcr that is rotate-combined-right.
+Keep that in mind. The include files provided with m1pp use rchr instead.
+
 All are implemented via a single IOT, 22 as mentioned.
 The following IOT commands are supported:
 

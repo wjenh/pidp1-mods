@@ -1,0 +1,517 @@
+SELECT AND RUN A DRUMLOADER PROGRAM VIA REMOTE CONNECTION
+
+/ This uses the IOT 61 Drum implementation to query for, load,
+/ and run a program from the drum.
+/ It can also label a program, or list available programs.
+/ When started, it copies its control code to bank 'bank', below,
+/ When a program is requested, it copies the core image from the drum to bank 0 and
+/ replaces the default binloader at 7751 with its bank 0 control code, 
+/ It then sets up interrupt block 0, enables interrupts, closes the remote connection,
+/ and transfers control to the program.
+/ When a new connection comes in, it repeats the query for a new program to run.
+/ If the loaded program halts or overwrites 7751 and up,
+/ you can restart this at location 100 in the specified bank.
+
+/ The few implemented PDP1-D instructions
+lia=760020
+lai=760040
+lsw=760060
+
+/ This defines the IOT instructions for the Type 23 drum.
+/ Note this differs from the examples in that it does not add the iot
+/ explicitly, so use is e.g. iot dia.
+dia=61
+dba=2061
+dwc=62
+dra=2062
+dcl=63
+
+/ Additional flags, not compatible with native macro, only macro1.
+/ These flags are in the IO register.
+drmrd=400000
+drmwrt=400000
+
+/ The bit set if a cks is done.
+cksdrm=1
+
+/ Defines for the DCS2 system.
+/ See the documentation.
+/ NOTE that rcr in DCS conflicts with rcr, rotate-combined-right.
+/ It is renamed rchr here.
+rch=0022
+rrc=0122
+rchr=1022
+rsc=1122
+tcb=4022
+ssb=4122
+tcc=5022
+
+/ rch and rcr will clear the IO register if
+/ this is added to the IOT, else it ors.
+rchclr=002000
+
+/ Extended commands.
+rwe=0222
+scb=4222
+rle=4322
+rpc=4422
+rci=4522
+ric=4622
+rcs=4722
+roc=5222
+
+/ symbols not compatible with native macro
+/ dcfxxx are single bit flags
+/ dcmxxx are multibit masks
+/ Channel Request Block first word
+dcfcrnl=400000
+dcfflex=200000
+dcfecho=100000
+dcfioc=040000
+dcfioe=020000
+dcfior=010000
+dcfie=004000
+dcfsrv=000100
+dcmsbs=003600
+dcmcha=000077
+
+// Directives to scb
+sbcset=010000
+sbcbnd=020000
+sbcrst=040000
+sbcclr=000000
+
+/ Channel status flags
+dsfopn=000001
+dsfsvr=000002
+dsfcon=000004
+dsfful=000010
+dsfrdy=000020
+dsfser=000040
+dsfcls=000100
+dsfien=000200
+dsfioc=000400
+dsfiof=001000
+dsfioe=002000
+dsfcur=004000
+
+/ and some combined ones
+dssrdy=dsfopn+dsfcon
+dsserr=dsfcls+dsfser+dsfful
+
+/ check status bit in IO reg
+dcfcks=000200
+
+/ special flex characters
+flxerr=076
+flxnch=013
+flxetx=013
+flxnl=077
+
+
+
+/ Which bank we load the control program into
+bnk=10000
+bnkno=1
+isr=7751
+rtn=7754
+strt=7765
+sadr=7773
+
+/ A scratch buffer at 500 is used for reading a line.
+linbuf=500
+
+ch0=20
+ch1=01
+ch8=10
+chq=50
+
+/ Put our included code bits here
+1000/
+/ Wait for a character on the current DCS channel.
+/ The IO register is cleared and the character is 
+/ returned in the IO register.
+/ If an error occurs, the IO register will be the character flxerr.
+/ The AC register is preserved.
+/ Call via jda getch.
+
+
+
+
+getch, 0
+     dac gchrtn
+/ loop waiting for a character
+gchlp,
+     cli
+     iot rcs
+     lai
+     and (dsfful dsfser dsfcls
+     sza
+     jmp gcherr
+     lai
+     and (dsfrdy
+     sza i
+     jmp gchlp
+     iot rch rchclr
+     lai
+     sad (flxnch
+/ really shouldn't happen
+     jmp gchlp
+/ the character in IO is either valid or flxerr
+     jmp .+3
+gcherr,
+     law flxerr
+     lia
+     lac getch
+     jmp i gchrtn
+gchrtn, 0
+
+/ Read a line of characters into the memory address passed in the IO register.
+/ One character is placed in each word.
+/ The line is terminated by the nl character, flxnl, 077.
+/ The memory area is not bounds checked!
+/ The current DCS2 channel is used.
+/ If an error occurs, the IO register will have the DCS2 error code, else 0.
+/ The AC register is preserved.
+/ Call via jda getlin.
+
+
+
+
+
+getlin, 0
+        dac glnrtn
+        dio glnmem
+glnlp,  jda getch
+        lai
+        sad (flxerr
+        jmp glnbad
+        dio i glnmem
+        law flxnl
+        sad i glnmem
+        jmp glndon
+        idx glnmem
+        jmp glnlp
+glndon, lac getlin
+        cli
+        jmp i glnrtn
+glnbad, iot rle
+        lac getlin
+        jmp i glnrtn
+glnrtn, 0
+glnmem, 0
+
+/ Write a block of flex text out.
+/ Write out a string produced by text until a word containing
+/ only etx, 13, fio-dec stop, is seen, the starting address is in the ac,
+/ text <whatever>
+/ etx
+/
+/ Include this before using it or declaring text that uses
+/ the character defines, below.
+/
+/ Output goes to SBS channel 0 which must be in flexo mode.
+/ On call, AC contains the address of the text block.
+/ Insert this at the desired point in code.
+/ Call via jda txtflx.
+
+
+
+
+txtflx, 0
+     dac txtrtn
+txttop, lac i txtflx
+     lia
+     and (77
+/ check for the end marker
+     sub (flxetx
+     sza i
+     jmp i txtrtn
+     lai
+     ral 6s
+     lia
+     iot tcb
+     ral 6s
+     lia
+     iot tcb
+     ral 6s
+     lia
+     iot tcb
+     idx txtflx
+     jmp txttop
+txtrtn, 0
+
+
+define say a
+    law a
+    ior (bnk
+    jda txtflx
+    term
+
+define return
+    law flxnl
+    lia
+    iot tcb
+    term
+
+/ DCS2 is using channel interrupts
+0/
+    lem
+    jmp strt
+    0
+    jmp isr
+
+/ We don't initially start here, just convenient for copying to the extended bank.
+/ When running, the bank 0 code will transfer here on interrupt, a channel connect.
+100/
+res, lsm
+     cbs
+     cli
+     iot rci
+/ be sure we actually have a connection
+/ if not, wait for one
+rs2, iot rcs
+     rir 3s
+     spi i
+     jmp rs2
+
+/ lock the send channel to 0 
+     cli
+     iot ssb
+     say hl1
+     return
+     say hl1b
+     return
+     say hl1c
+     return
+
+/ get the track to load
+/ if there is an error, just return to the current program
+try, say hl2
+     lio (linbuf
+     jda getlin
+     spi
+     jmp dcsfal
+     lio (linbuf
+     jda getnum
+     spi i
+     jmp getnld
+     lai
+     and (77
+     sad (chq
+     jmp stp
+     say badnum
+     return
+     jmp try
+stp, lio (sbcrst
+     iot scb
+     hlt
+
+/ IO has the track to load
+/ load bank 0 mem from drum
+getnld,
+     lai
+     sal 6s
+     sal 6s
+     ior (drmrd
+     lia
+     iot dia
+     cli
+     iot dwc
+     iot dcl
+
+/ bank 0 now has pgm loaded, check for start
+     lac (sadr
+     dac ads
+     lac i ads
+     sza i
+     jmp getnns
+
+/ copy our bank 0 stuff again
+     dzm adt
+     lac (b0a
+     ior (bnk
+     dac ads
+     law 4
+     jda cpy
+
+     lac (isr
+     dac adt
+     lac (b0b
+     ior (bnk
+     dac ads
+     law 20
+     jda cpy
+
+/ Close the channel, it will reopen on the next connection
+     lio (sbcbnd
+     iot scb
+/ and transfer back to bank 0, adr 0
+     jmp i b0s
+b0s, 0
+
+/ we had an error, just rebind and wait
+dcsfal, lio (sbcbnd
+     iot scb
+     jmp res
+
+getnns, say badpgm
+    return
+    jmp try
+
+/ Get an octal number into IO, preserves AC
+/ IO contains the buffer address filled by getlin.
+/ It will accumulate the number until it sees a newline.
+/ If too many digits are fecthed, the initial digits
+/ will shift out to the left.
+/ If a non-octal-digit is seen IO bit 0 will be 1
+/ and the low bits will have the character.
+getnum, 0
+     dac getnrt
+     dzm getnbr
+     dio getnbf
+getnlp, lio i getnbf
+     lai
+     sad (flxnl
+     jmp getnok
+     sza i
+     jmp getnbd
+     sad (ch0
+     jmp getnc0
+     sub (ch8
+     sma
+     jmp getnbd
+getndg, lai
+     scr 3s
+     lac getnbr
+     scl 3s
+     dac getnbr
+     idx getnbf
+     jmp getnlp
+getnc0, cli
+     jmp getndg
+getnbd, lai
+     ior (400000
+     lia
+     jmp .+2
+getnok, lio getnbr
+     lac getnum
+     jmp i getnrt
+getnrt, 0
+getnbr, 0
+getnbf, 0
+
+hl1, text "Hello from your PiDP1!"
+     flxetx
+
+hl1b, text "Once you select a program, this connection will close."
+     flxetx
+
+hl1c, text "Open it again to select a new program."
+     flxetx
+
+hl2, text "Program number to load, 0-31 or q to halt? "
+     flxetx
+
+badnum, text "Sorry, that's not a valid number, try again."
+     flxetx
+
+badpgm, text "That program has no start address, try again."
+     flxetx
+
+/ Copy from one mem bank to another.
+/ AC has the count of words to copy.
+/ Location ads has the location in the source bank to copy from.
+/ Location adt has the destination.
+/ Both can have extended addresses.
+/ If extended addresses are used, be sure an eem has been done first.
+cpy, 0
+    dap cd
+    lac cpy
+    cma
+cl, add (1
+    lsw
+    lac i ads
+    dac i adt
+    idx ads
+    idx adt
+    lsw
+    sza
+    jmp cl
+cd, jmp .
+ads, 0
+adt, 0
+
+/ The channel 0 interrupt setup.
+/ We execute a bit of code that will get
+/ overwritten but reloaded on pgm switch.
+b0a, lem
+     jmp strt
+     0
+     jmp isr
+
+/ The bank 0 control transfer back to bank 1
+/ resides in the usual loader area starting at 7751.
+b0b,
+/ A connect request comes here, isr, 7751.
+/ We have to jump thru hoops jumping to rti
+/ because you can't enable extended mem while in
+/ the interrupt and have it stick
+     law 7754
+     dac 1
+     jmp i 1
+
+/ The above ends up here, rtn, 7754. The jmp i 1 dismissed the interrupt.
+/ Enable extened memory and  jump back to our control code.
+/ We have to construct the address because we can't use a stored constant.
+     law res
+     rcr 6s
+     rcr 6s
+     law bnkno
+     rcl 6s
+     rcl 6s
+     dac 0
+     eem
+     jmp i 0
+
+// The controller jumps here, strt, 7765, to start the program.
+    cbs
+    esm
+    jmp i sadr
+
+constants
+
+/ We are started here in bank 0, copy our control program to the same locations in the bank
+/ used for the control program, set up DCS2 and jump to 100 there.
+6000/
+/ force clear DCS2 in case user restarted here
+    lio (sbcrst
+    iot scb
+    eem
+    law 100
+    dac ads
+    ior (bnk
+    dac adt
+/ AC has the number of words to copy
+    law 2000
+    jda cpy
+
+/ set up for interrupts, channel 0 for flex, echo, crnl, intr on state change
+    cli
+    lio (sbcset ctl
+    iot scb 
+
+    law 100
+    ior (bnk
+    dac ads
+    jmp i ads
+
+/ server port, flex, echo, and crlf on channel 0, interrupt on connect or disconnect
+/ listen on port 2022
+ctl, dcfcrnl dcfecho dcfflex dcfsrv dcfie dcfioe dcfioc
+     decimal 2022
+     octal
+
+constants
+
+start 6000

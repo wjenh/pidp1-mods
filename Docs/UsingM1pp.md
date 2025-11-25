@@ -16,7 +16,7 @@ The processed output is fully compatible with both macro and macro1.
 ## The checks
 
 - A missing label as the first line
-- A comment after code with only tabs separating it
+- A comment after code with only spaces separating it
 - Text following a location directive
 - Shifted characters in a flexo pseudo-instruction
 - Combined instructions vs instructions separated by tabs
@@ -97,6 +97,8 @@ Any text following the closing quote or bracket is added as a comment on a line 
 Nested includes are supported, up to 1024 files deep, which admittedly is a bit excessive.
 The default root location when *\<file\>* is used is */opt/pidp1/MacroIncludes*, but see the usage
 details below.
+If instead *#includeif* is used, the file will only be included if it hasn't already been so.
+This is useful to allow different includes to reference the same nested include for definitions.
 
 ## Building m1pp
 
@@ -107,6 +109,8 @@ Just type make.
 m1pp [-o outfile] [-e errfile] [-S sysrootpath] [sourcefile]
 
 The -S sysrootpath directive changes the location that *#include \<x\>* files are searched for.
+It can also be changed by setting the environment variable M1SYSINC to the desired path.
+The -S option will override the environment setting, if any.
 
 If no input file is given, stdin is used.
 

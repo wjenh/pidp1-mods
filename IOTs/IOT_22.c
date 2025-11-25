@@ -21,7 +21,7 @@
 #define NUM_CHANS   8       // the more chans, the higher the polling overhead
 #define SERVER_BACKLOG  4   // number of incoming connect requests we queue
 
-// #define DOLOGGING
+#define DOLOGGING
 #include "Logger/iotLogger.h"
 
 #define getFullAddress(pdp1P, addr) &(pdp1P->core[(pdp1P->ema | (addr & 07777))%MAXMEM])
@@ -61,6 +61,11 @@
 #define RCS     047
 #define RWE     002
 #define ROC     052
+
+#define SCBCLEAR    0
+#define SCBOPEN     1
+#define SCBREBIND   2
+#define SCBRESET    4
 
 // Control flags in the Channel structure.
 // The 6 lowest also match the channel status bits.
@@ -176,14 +181,14 @@ static Channel channels[NUM_CHANS];
 static PortMap ports[NUM_CHANS];            // we will never have more ports than channels
 struct epoll_event events[NUM_CHANS * 2];   // could be twice as many if all are unique server channels
 
-Word manageChannelBlock(PDP1 *, Word *, int);
+Word manageChannelBlock(PDP1 *, int);
 void resetChannel(ChannelP);
 PortMapP assignPort(PDP1 *, int);
 void releasePort(PortMapP);
 void forceReleasePorts(void);
 void closeRemoteSocket(ChannelP, int);
 void releaseChannel(void);
-bool canPost(ChannelP, int);
+bool canPost(PDP1 *, ChannelP, int);
 void postInterrupt(ChannelP, int);
 int getChar(ChannelP);
 
@@ -382,7 +387,7 @@ char wbuf[8];
                     chanP->control_flags |= CNTL_TFULL;
                     last_error = pdp1P->io |= IO_ERR_FLAG | IO_ERR_FULL;
 
-                    if( canPost(chanP, CNTL_IOE) )
+                    if( canPost(pdp1P, chanP, CNTL_IOE) )
                     {
                         postInterrupt(chanP, CNTL_IOE);
                     }
@@ -419,7 +424,7 @@ char wbuf[8];
         break;
 
     case SCB:                           // extended command, configure channel
-        pdp1P->io = manageChannelBlock(pdp1P, getFullAddress(pdp1P, pdp1P->io & 07777), (pdp1P->io >> 12) & 07);
+        pdp1P->io = manageChannelBlock(pdp1P, pdp1P->io);
         break;
 
     case RLE:                           // extended command, get last error
@@ -569,10 +574,12 @@ struct epoll_event event;
 
             if( data & EP_SERVER )                  // connection request
             {
+                data &= ~EP_SERVER;
+
                 if( eventP->events & EPOLLIN )
                 {
                     did_our_event = true;
-                    mapP = &ports[data & ~EP_SERVER];
+                    mapP = &ports[data];
                     // Find the first available channel that is associated with this map entry
                     chanP = &channels[0];
                     for( j = 0; j++ < NUM_CHANS; ++chanP )
@@ -581,14 +588,13 @@ struct epoll_event event;
                             (chanP->primaryPortP == mapP) )
                         {
                             // Open but not connected, means waiting for a connect
-
                             if( (chanP->chan_fd = accept(mapP->primary_fd, NULL, NULL)) < 0 )
                             {
                                 // Hmm, not good.
                                 chanP->control_flags |= CNTL_CONNERR;
                                 last_error = chanP->last_err =
                                     IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_SOCKET | ((errno & 0377) << 4);
-                                if( canPost(chanP, CNTL_IOE) )
+                                if( canPost(pdp1P, chanP, CNTL_IOE) )
                                 {
                                     iotLog("Posting IOE %o on chan %d\n", last_error, chanP->chan_no);
                                     postInterrupt(chanP, CNTL_IOE);
@@ -607,7 +613,7 @@ struct epoll_event event;
                                 j = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, chanP->chan_fd, &event);
 
                                 iotLog("Client connected to channel %d\n", chanP->chan_no);
-                                if( canPost(chanP, CNTL_IOC) )
+                                if( canPost(pdp1P, chanP, CNTL_IOC) )
                                 {
                                     iotLog("Posting IOC connected on chan %d\n",chanP->chan_no);
                                     postInterrupt(chanP, CNTL_IOC);
@@ -635,7 +641,7 @@ struct epoll_event event;
                             cur_chan_locked = true;
                         }
 
-                        if( canPost(chanP, CNTL_IOR) )
+                        if( canPost(pdp1P, chanP, CNTL_IOR) )
                         {
                             iotLog("Posting IOR on channel %d\n", data);
                             postInterrupt(chanP, CNTL_IOR);
@@ -644,7 +650,7 @@ struct epoll_event event;
                     else
                     {
                         chanP->control_flags |= CNTL_CONNECTED;
-                        if( canPost(chanP, CNTL_IOC) )
+                        if( canPost(pdp1P, chanP, CNTL_IOC) )
                         {
                             iotLog("Posting IOC connected on chan %d\n",chanP->chan_no);
                             postInterrupt(chanP, CNTL_IOC);
@@ -659,7 +665,7 @@ struct epoll_event event;
                     eventP->events &= ~EPOLLOUT;
                     epoll_ctl(epoll_fd, EPOLL_CTL_MOD, chanP->chan_fd, eventP);
 
-                    if( canPost(chanP, CNTL_IOR) )
+                    if( canPost(pdp1P, chanP, CNTL_IOR) )
                     {
                         iotLog("Posting IOR connected on chan %d\n",chanP->chan_no);
                         postInterrupt(chanP, CNTL_IOR);
@@ -671,7 +677,7 @@ struct epoll_event event;
                     chanP->control_flags |= CNTL_LOST;
                     last_error = chanP->last_err = IO_ERR_FLAG | IO_ERR_LOST;
 
-                    if( canPost(chanP, CNTL_IOC) )
+                    if( canPost(pdp1P, chanP, CNTL_IOC) )
                     {
                         iotLog("Posting IOC connection lost on chan %d\n",chanP->chan_no);
                         postInterrupt(chanP, CNTL_IOC);
@@ -682,7 +688,7 @@ struct epoll_event event;
                     chanP->control_flags |= CNTL_CONNERR;
                     last_error = chanP->last_err = IO_ERR_FLAG | IO_ERR_SOCKET;
 
-                    if( canPost(chanP, CNTL_IOE) )
+                    if( canPost(pdp1P, chanP, CNTL_IOE) )
                     {
                         iotLog("Posting IOE socket error on chan %d\n",chanP->chan_no);
                         postInterrupt(chanP, CNTL_IOE);
@@ -708,21 +714,35 @@ struct epoll_event event;
 }
 
 Word
-manageChannelBlock(PDP1 *pdp1P, Word *rqstP, int cmd)
+manageChannelBlock(PDP1 *pdp1P, int io)
 {
 int i;
+int cmd;
 int chan_no;
 int port;
-Word word0;
+Word *rqstP;
+Word word;
 ChannelP chanP;
 struct epoll_event event;
 
-    if( cmd != 4 )                                              // a reset has no control request block
+    cmd = (io >> 12) & 07;
+
+    if( cmd != SCBRESET )
     {
-        word0 = (int)*rqstP++;
-        chan_no = word0 & REQ_CHAN_MSK;
+        if( cmd == SCBREBIND )
+        {
+            chan_no = io & 07777;
+        }
+        else
+        {
+            rqstP = getFullAddress(pdp1P, io & 07777);
+            word = (int)*rqstP++;
+            chan_no = word & REQ_CHAN_MSK;
+        }
+
         if( chan_no >= NUM_CHANS )
         {
+            iotLog("manageChannels got bad channel %d\n", chan_no);
             return( IO_ERR_FLAG | IO_ERR_CHAN );                  // nope
         }
 
@@ -731,12 +751,12 @@ struct epoll_event event;
 
     switch( cmd )
     {
-    case 0:             // close channel
+    case SCBCLEAR:
         iotLog("Channel close on %d\n", chan_no);
         resetChannel(chanP);
         break;
 
-    case 1:             // open channel
+    case SCBOPEN:
         if( chanP->control_flags & CNTL_OPEN )
         {
             iotLog("set channel, already open\n");
@@ -745,19 +765,19 @@ struct epoll_event event;
 
         iotLog("Channel open on %d\n", chan_no);
 
-        chanP->control_flags = (word0 & RQST_SRV)?CNTL_SERVER:0;
+        chanP->control_flags = (word & RQST_SRV)?CNTL_SERVER:0;
 
-        chanP->control_flags |= (word0 & RQST_IE)?CNTL_IE:0;
-        chanP->control_flags |= (word0 & RQST_IOR)?CNTL_IOR:0;
-        chanP->control_flags |= (word0 & RQST_IOE)?CNTL_IOE:0;
-        chanP->control_flags |= (word0 & RQST_IOC)?CNTL_IOC:0;
-        chanP->control_flags |= (word0 & RQST_ECHO)?CNTL_ECHO:0;
-        chanP->control_flags |= (word0 & RQST_FLEX)?CNTL_FLEX:0;
-        chanP->control_flags |= (word0 & RQST_CRLF)?CNTL_CRLF:0;
+        chanP->control_flags |= (word & RQST_IE)?CNTL_IE:0;
+        chanP->control_flags |= (word & RQST_IOR)?CNTL_IOR:0;
+        chanP->control_flags |= (word & RQST_IOE)?CNTL_IOE:0;
+        chanP->control_flags |= (word & RQST_IOC)?CNTL_IOC:0;
+        chanP->control_flags |= (word & RQST_ECHO)?CNTL_ECHO:0;
+        chanP->control_flags |= (word & RQST_FLEX)?CNTL_FLEX:0;
+        chanP->control_flags |= (word & RQST_CRLF)?CNTL_CRLF:0;
 
         port = *rqstP++;
 
-        if( word0 & RQST_SRV )
+        if( word & RQST_SRV )
         {
             chanP->address.sin_family = AF_INET;
             chanP->address.sin_addr.s_addr = INADDR_ANY;
@@ -796,33 +816,33 @@ struct epoll_event event;
             chanP->control_flags |= CNTL_OPEN;      // poll will establish the connection
         }
 
-        if( word0 & RQST_IE )
+        if( word & RQST_IE )
         {
-            chanP->sbs_chan = (word0 & REQ_SBS_MSK)  >> REQ_SBS_SHIFT;
+            chanP->sbs_chan = (word & REQ_SBS_MSK)  >> REQ_SBS_SHIFT;
         }
         break;
 
-    case 2:             // rebind channel
-        if( !(chanP->control_flags & (CNTL_OPEN | CNTL_SERVER)) )
+    case SCBREBIND:
+        iotLog("Channel rebind on %d\n", chan_no);
+        if( !isTrue(chanP->control_flags,(CNTL_OPEN|CNTL_SERVER)) )
         {
+            iotLog("Channel rebind on %d, not open and not server\n", chan_no);
             return( IO_ERR_FLAG | IO_ERR_NOTSERVER );              // not open or not server
         }
-
-        iotLog("Channel rebind on %d\n", chan_no);
 
         if( chanP->chan_fd != -1 )
         {
             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, chanP->chan_fd, 0);
+            shutdown(chanP->chan_fd, SHUT_WR);
             close( chanP->chan_fd );
             chanP->chan_fd = -1;
-            releasePort(chanP->primaryPortP);
         }
 
         // now available, poll will take it from here
         chanP->control_flags  &= ~(CNTL_CONNECTED|CNTL_RREADY|CNTL_TFULL|CNTL_CONNERR);
         break;
 
-    case 4:             // full reset
+    case SCBRESET:
         enablePolling(0);
         iotLog("DCS full reset\n");
 
@@ -851,6 +871,9 @@ struct epoll_event event;
 
 // Completely reset a channel.
 // This will also close its fd, if any and if a server chan, remove it from the port map.
+// If this is the last channel that is assigned to a particular port, the port's primary
+// file descriptor is also closed and no more connections will be accepted until a new
+// channel setup is done to accept the port.
 void
 resetChannel(ChannelP chanP)
 {
@@ -863,9 +886,11 @@ int i;
         iotLog("Reset channel but not open\n");
         return;                      // ignore
     }
+
     if( chanP->chan_fd != -1 )
     {
         epoll_ctl(epoll_fd, EPOLL_CTL_DEL, chanP->chan_fd, 0);
+        shutdown(chanP->chan_fd, SHUT_WR);
         close( chanP->chan_fd );
     }
 
@@ -899,9 +924,9 @@ int i;
 // See if interrupts are enabled, none in progress, and this CNTL_Ixx type is allowed.
 // If allowed but one is already in process, just set the queued flag.
 bool
-canPost(ChannelP chanP, int kind)
+canPost(PDP1 *pdp1P, ChannelP chanP, int kind)
 {
-    if( isTrue(chanP->control_flags, (CNTL_IE | kind)) )
+    if( pdp1P->sbm && isTrue(chanP->control_flags, (CNTL_IE | kind)) )
     {
         if( chanP->interrupt_issued )   // chan is enabled but in an interrupt now, postponed?
         {
@@ -914,6 +939,7 @@ canPost(ChannelP chanP, int kind)
         }
         else
         {
+            iotLog("canPost says yes for channel %d\n", chanP->chan_no);
             return( true );
         }
     }
@@ -1041,8 +1067,7 @@ ChannelP chanP;
 
 // Given a port, see if it already has a map entry.
 // If not, assign one and establish the prirmary fd (from socket()).
-// Set the passed channel's primaryPortP to the map entry found or created
-// then increment the map entry's port-used count.
+// Increment the map entry's port-used count.
 // On error, return 0, else the assigned PortMapP.
 // Both the channel and IO register will already be set with the error.
 PortMapP
@@ -1055,6 +1080,7 @@ PortMapP mapP;
 struct sockaddr_in address;
 struct epoll_event event;
 
+    // Find an avalable channel for the port
     for( empty = -1, i = 0; i < NUM_CHANS; ++i )
     {
         mapP = &ports[i];
@@ -1147,6 +1173,7 @@ PortMapP mapP;
 }
 
 // Remote side failed on recv(), close things up.
+// The channel becomes avaialbe for a new connection.
 void
 closeRemoteSocket(ChannelP chanP, int errnum)
 {
@@ -1155,6 +1182,7 @@ closeRemoteSocket(ChannelP chanP, int errnum)
     chanP->chan_fd = -1;
     chanP->control_flags |= CNTL_LOST;
     chanP->control_flags &= ~CNTL_CONNECTED;
+    releasePort(chanP->primaryPortP);
     last_error = chanP->last_err = IO_ERR_FLAG | IO_ERR_LOST | (errno?(IO_ERR_ERRNO | errno):0);
 }
 

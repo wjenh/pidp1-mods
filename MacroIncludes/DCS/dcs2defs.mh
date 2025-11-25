@@ -1,8 +1,10 @@
 / Defines for the DCS2 system.
 / See the documentation.
+/ NOTE that rcr in DCS conflicts with rcr, rotate-combined-right.
+/ It is renamed rchr here.
 rch=0022
 rrc=0122
-rcr=1022
+rchr=1022
 rsc=1122
 tcb=4022
 ssb=4122

@@ -29,6 +29,17 @@ res=5322
 / dcfxxx are single bit flags
 / dcmxxx are multibit masks
 / Channel Request Block first word
+/ dcfcrnl - turn newline into carriage return, newline on send
+/ dcfflex - flexo mode, do automatic conversion
+/ dcfecho - echo received characters
+/ dcfioc - interrupt on connection open or close
+/ dcfioe - interrupt on socket error
+/ dcfior - interroupt on character received
+/ dcfie -  enable interrupts for channel
+/ dcfsrv - server mode
+/ dcmsbs - bitmask, sbs channel to use
+/ dcmcha - bitmask, channel number for this channel
+
 dcfcrnl=400000
 dcfflex=200000
 dcfecho=100000
@@ -47,6 +58,19 @@ sbcrst=040000
 sbcclr=000000
 
 / Channel status flags
+/ dsfopn - channel has been opened by scb
+/ dsfsvr - channel is a server channel, else client
+/ dsfcon - connected to remote host
+/ dsfful - socket transmit buffer is full
+/ dsfrdy - has characters ready to read
+/ dsfser - got a socket error of some kine
+/ dsfcls - remote closed connection
+/ dsfien - interrupts are enabled
+/ dsfior - interrupted because a character was received
+/ dsfioc - interrupted because a connection was opened or closed
+/ dsfioe - interrupted because transmit buffer full or other socket error
+/ dsfcur - is the current channel
+
 dsfopn=000001
 dsfsvr=000002
 dsfcon=000004
@@ -55,14 +79,39 @@ dsfrdy=000020
 dsfser=000040
 dsfcls=000100
 dsfien=000200
-dsfioc=000400
-dsfiof=001000
+dsfior=000400
+dsfioc=001000
 dsfioe=002000
 dsfcur=004000
 
 / and some combined ones
 dssrdy=dsfopn+dsfcon
 dsserr=dsfcls+dsfser+dsfful
+
+/ Errors returned in IO, dserr is the error flag
+/ dseno - channel not open
+/ dseoe - illegal operation on open channel
+/ dseic - invalid channel number
+/ dsens - server command on non-server channel
+/ dseil - illegal command, commdand with illegal options
+/ dseso - socket open or operation failed
+/ dsebi - server bind to port failed
+/ dsecc - rch, rcr, tcb, or tcc done but no current receive or send channel
+/ dselo - remote end closed connection
+/ dseep - internal error in epoll
+/ dsenc - no client connected but operation attempted
+dserr=400000
+dseno=1
+dseoe=2
+dseic=3
+dsens=4
+dseil=5
+dseso=6
+dsebi=7
+dsecc=10
+dselo=11
+dseep=12
+dsenc=13
 
 / check status bit in IO reg
 dcfcks=000200
@@ -72,4 +121,3 @@ flxerr=076
 flxnch=013
 flxetx=013
 flxnl=077
-

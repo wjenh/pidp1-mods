@@ -137,8 +137,8 @@ The following IOT commands are supported:
 
 - rch 720022 receive a character from the current receive channel into the IO register
 - rcr 721022 same as rch except also release the channel, combines rch and rsc
-- tcb 724022 send a flexo character from the IO register to the current send channel
-- tcc 725022 send a flexo character fron the IO register to the current receive channel
+- tcb 724022 send a character from the IO register to the current send channel
+- tcc 725022 send a character fron the IO register to the current receive channel
     and release the channel
 - rrc 720122 get the active channel number into IO register bits 12-17
 - rsc 721122 release the current receive channel
@@ -154,6 +154,8 @@ Flexo mode is honored for rch, rcr, tcb, and tcc.
 The characters will be converted to ascii before sending, or converted from ascii on reading.
 See the detailed description in the Channel Control Block description below.
 
+Rcr, rch, tcb, and tcc use the low 6 bits in flexo mode, else the low 8 bits.
+
 For rch and rcr, the action on an error depends upon if flexo mode is enabled.
 For flexo, for no character ready the low 6 bits returned will be FLEX_NCHAR, 013.
 For any error, the low 6 bits returned will be FLEX_ERR, 076.
@@ -162,7 +164,7 @@ For 8-bit mode, if no character is available IO register bits 0 and 1 will both 
 If any other error occurs, bit 0 will be set, bit 1 cleared, and the rest of the register set to the full
 error code.
 
-THe tcb and tcc commands will fail if the channel isn't open and connected,
+The tcb and tcc commands will fail if the channel isn't open and connected,
 the transmit buffer is full, or there is a socket error.
 A socket error is most likely because the remote end isn't listening any more.
 

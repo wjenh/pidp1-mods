@@ -118,8 +118,8 @@
 #define STATUS_LOST         0000100     // remote end closed the connection
 #define STATUS_IE           0000200     // interrupts are enabled
 #define STATUS_IOR          0000400     // interrupted because a character was received
-#define STATUS_IOE          0001000     // interrupted because the transmit buffer is full
-#define STATUS_IOC          0002000     // interrupted because of some error condition
+#define STATUS_IOE          0001000     // interrupted because the transmit buffer is full or other error
+#define STATUS_IOC          0002000     // interrupted because connection was opened or closed
 #define STATUS_CHAN         0004000     // is current channel
 
 // Error codes we return in the IO register

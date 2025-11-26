@@ -4,9 +4,15 @@ clr=32
 cls=2032
 
 / Flags in AC, not compatible with macro, only macro1
-ckenab=2000
-ckimn=1000
-ckims=400
+/ clss16 - enable SBS16, can't disable
+/ clsena - enable clock, must be set to use, including clr
+/ clsimn - enable minute interrupt
+/ clsims - enable 32ms interrupt
+
+cls16=4000
+clsena=2000
+clsimn=1000
+clsims=400
 / And the channel masks
-ckmmn=360
-ckmms=17
+clfmmn=360
+clfmms=17

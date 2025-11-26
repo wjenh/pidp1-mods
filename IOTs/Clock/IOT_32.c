@@ -9,7 +9,8 @@
 // IOT 32 reads the current 1ms counter, 0-59999 dec.
 // IOT 32 with bit 7 set is an extension, set clock, IOT 2032:
 // AC register contains flags:
-// 000 000 0eI iMM MMm mmm
+// 000 000 seI iMM MMm mmm
+// s enables the SBS16 system, it will remain enabled regardless of this bit on subsequent calls
 // e enables the clock, 1 to enable, 0 is as a regular IOT 32, disabling also clears the interrupt enables.
 // I enables the 1 min interrupt. 1 enables, 0 disables.
 // i enables the 32 ms interrupt. 1 enables, 0 disables.
@@ -37,7 +38,7 @@ int op;
 
     if( (pdp1P->mb & 03700) == 02000 )     // IOT 2032, pay attention to rest
     {
-        op = (pdp1P->ac >> 8) & 07;
+        op = (pdp1P->ac >> 8) & 17;
         iotLog("In iot 2032 io %o op %o\n", pdp1P->ac, op);
         completeNeeded = 0;
 
@@ -72,6 +73,11 @@ int op;
         else
         {
             enabled = enable32ms = enable1min = 0;
+        }
+
+        if( op & 010 )
+        {
+            pdp1P->sbs16 = 1;
         }
     }
     else

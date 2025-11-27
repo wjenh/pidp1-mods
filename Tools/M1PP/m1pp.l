@@ -187,12 +187,14 @@ constants		{
 
 				if( tmpc == '\\' )
 				{
-				    if( tmpc = processEscape(tmpc) && tmpc )
-				    {
-				        *cP++ = (char)tmpc;
-				    }
+				    tmpc = processEscape(input());
 				}
-				else if( tmpc )
+
+				if( tmpc == EOF )
+				{
+					yyerror("unterminated escape in ascii string", 0);
+				}
+				else
 				{
 				    *cP++ = (char)tmpc;
 				}

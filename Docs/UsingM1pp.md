@@ -85,8 +85,8 @@ It will be converted to either an octal or decimal number, depending upon the cu
 - A new pseudo-instruction *ascii "text"* is added.
 When used, it works just as the macro *text* pseudo-instruction works, except it generates the numeric equivalent
 of each ascii character, again depending upon the current radix.
-Characters are packed two per word with the first being in bits 2-9, the second in 10-17.
-The two high bits will be zero.
+Characters are packed two per word with the first being in bits 0-8, the second in 9-17, 9 bits each.
+The high bit in each 9-bit field will be zero.
 The final character will always be a byte of 0, the usual string terminator.
 A text string is limited to no more than 1024 bytes.
 

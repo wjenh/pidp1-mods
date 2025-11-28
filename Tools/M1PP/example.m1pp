@@ -7,6 +7,8 @@ SHORT EXAMPLE OF M1P
     ral 3s	sza
     lac ('a'
     lac ('\n'
+    law 1 +2
+    law 3 -4
 
 decimal
     0xFF

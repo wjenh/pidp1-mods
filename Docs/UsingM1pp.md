@@ -25,7 +25,6 @@ The processed output is fully compatible with both macro and macro1.
 - Extra text after a start
 - leading spaces or tabs with a + or -
 - + or - surrounded by spaces or tabs
-- space or tab before a -xxx
 
 The missing label test does a simple check for the first line starting with digits followed by a forward slash,
 or a sequence of alpha characters followed by a comma.
@@ -66,9 +65,6 @@ If there are more lines following the start statement, a warning will be given b
 assembler does not process those lines.
 
 Various combinations of +/- and spaces or tabs is illegal, these are fixed, e.g. '1 + 2' changed to '1+2'.
-A leading - can be an issue as in 'a -b', this probably doesn't do what you expect.
-Rather, it means 'add -b to a'.
-A warning is given.
 
 ## New features
 

@@ -1,4 +1,4 @@
-SELECT AND RUN A DRUMLOADER PROGRAM VIA REMOTE CONNECTION
+SELECT AND RUN A DRUMLOADER PROGRAM VIA REMOTE CONNECTION ASCII VERSION
 
 / This uses the IOT 61 Drum implementation to query for, load,
 / and run a program from the drum.
@@ -25,11 +25,16 @@ dba=2061
 dwc=62
 dra=2062
 dcl=63
+dss=2063
 
 / Additional flags, not compatible with native macro, only macro1.
 / These flags are in the IO register.
 drmrd=400000
 drmwrt=400000
+
+/ Bits for dss
+drms16=40
+drmsch=20
 
 / The bit set if a cks is done.
 cksdrm=1
@@ -59,11 +64,23 @@ rci=4522
 ric=4622
 rcs=4722
 roc=5222
+res=5322
 
 / symbols not compatible with native macro
 / dcfxxx are single bit flags
 / dcmxxx are multibit masks
 / Channel Request Block first word
+/ dcfcrnl - turn newline into carriage return, newline on send
+/ dcfflex - flexo mode, do automatic conversion
+/ dcfecho - echo received characters
+/ dcfioc - interrupt on connection open or close
+/ dcfioe - interrupt on socket error
+/ dcfior - interroupt on character received
+/ dcfie -  enable interrupts for channel
+/ dcfsrv - server mode
+/ dcmsbs - bitmask, sbs channel to use
+/ dcmcha - bitmask, channel number for this channel
+
 dcfcrnl=400000
 dcfflex=200000
 dcfecho=100000
@@ -82,6 +99,19 @@ sbcrst=040000
 sbcclr=000000
 
 / Channel status flags
+/ dsfopn - channel has been opened by scb
+/ dsfsvr - channel is a server channel, else client
+/ dsfcon - connected to remote host
+/ dsfful - socket transmit buffer is full
+/ dsfrdy - has characters ready to read
+/ dsfser - got a socket error of some kine
+/ dsfcls - remote closed connection
+/ dsfien - interrupts are enabled
+/ dsfior - interrupted because a character was received
+/ dsfioc - interrupted because a connection was opened or closed
+/ dsfioe - interrupted because transmit buffer full or other socket error
+/ dsfcur - is the current channel
+
 dsfopn=000001
 dsfsvr=000002
 dsfcon=000004
@@ -90,14 +120,39 @@ dsfrdy=000020
 dsfser=000040
 dsfcls=000100
 dsfien=000200
-dsfioc=000400
-dsfiof=001000
+dsfior=000400
+dsfioc=001000
 dsfioe=002000
 dsfcur=004000
 
 / and some combined ones
 dssrdy=dsfopn+dsfcon
 dsserr=dsfcls+dsfser+dsfful
+
+/ Errors returned in IO, dserr is the error flag
+/ dseno - channel not open
+/ dseoe - illegal operation on open channel
+/ dseic - invalid channel number
+/ dsens - server command on non-server channel
+/ dseil - illegal command, commdand with illegal options
+/ dseso - socket open or operation failed
+/ dsebi - server bind to port failed
+/ dsecc - rch, rcr, tcb, or tcc done but no current receive or send channel
+/ dselo - remote end closed connection
+/ dseep - internal error in epoll
+/ dsenc - no client connected but operation attempted
+dserr=400000
+dseno=1
+dseoe=2
+dseic=3
+dsens=4
+dseil=5
+dseso=6
+dsebi=7
+dsecc=10
+dselo=11
+dseep=12
+dsenc=13
 
 / check status bit in IO reg
 dcfcks=000200
@@ -108,6 +163,47 @@ flxnch=013
 flxetx=013
 flxnl=077
 
+/ Defines for the IOT_32 timesharing clock
+/ Use as iot rck, etc.
+/ rck - read 1ms clock
+/ cls - set clock parameters
+/ cct - set countdown timer
+
+rck=32
+cls=2032
+cct=2132
+
+/ Flags in AC for cls, not compatible with macro, only macro1
+/ clss16 - enable SBS16, can't disable
+/ clsena - enable clock, must be set to use, including clr
+/ clsimn - enable minute interrupt
+/ clsims - enable 32ms interrupt
+
+cls16=4000
+clsena=2000
+clsimn=1000
+clsims=400
+
+/ And the channel masks
+/ clfmmn - minute channel
+/ clmffs - 32 millisecond channel
+clfmmn=360
+clfmms=17
+
+/ NOTE for cct, enable SBS16 via iot cls cls16.
+/ Flags in AC for cct, not compatible with macro, only macro1
+/ cctie - enable interrupt
+
+cctie=400000
+
+/ And the channel and timer masks
+/ cctich - interrupt channel
+/ cctcnt - countdown timer
+cctmch=360000
+cctcnt=017777
+
+/ The cks flag for the countdown timer
+cctcks=040000
 
 
 / Which bank we load the control program into
@@ -121,137 +217,174 @@ sadr=7773
 / A scratch buffer at 500 is used for reading a line.
 linbuf=500
 
-ch0=20
-ch1=01
-ch8=10
-chq=50
-
 / Put our included code bits here
 1000/
-/ Wait for a character on the current DCS channel.
+/ Wait for an ascii character on the current DCS channel.
 / The IO register is cleared and the character is 
 / returned in the IO register.
-/ If an error occurs, the IO register will be the character flxerr.
+/ If an error occurs, the IO register will be 0.
 / The AC register is preserved.
-/ Call via jda getch.
+/ Call via jda getach.
 
 
 
 
-getch, 0
-     dac gchrtn
+getach, 0
+     dac gachrt
 / loop waiting for a character
-gchlp,
+gachlp,
      cli
      iot rcs
      lai
      and (dsfful dsfser dsfcls
      sza
-     jmp gcherr
+     jmp gacher
      lai
      and (dsfrdy
      sza i
-     jmp gchlp
+     jmp gachlp
      iot rch rchclr
      lai
-     sad (flxnch
+     spi
 / really shouldn't happen
-     jmp gchlp
-/ the character in IO is either valid or flxerr
-     jmp .+3
-gcherr,
-     law flxerr
-     lia
-     lac getch
-     jmp i gchrtn
-gchrtn, 0
+     jmp gachlp
+/ the character in IO is either valid or 0
+     jmp .+2
+gacher,
+     cli
+     lac getach
+     jmp i gachrt
+gachrt, 0
 
-/ Read a line of characters into the memory address passed in the IO register.
+/ Read a line of ascii characters into the memory address passed in the IO register.
 / One character is placed in each word.
-/ The line is terminated by the nl character, flxnl, 077.
+/ The line is terminated by the null character, 0, and the line terminatior (nl or cr) dropped.
 / The memory area is not bounds checked!
 / The current DCS2 channel is used.
 / If an error occurs, the IO register will have the DCS2 error code, else 0.
 / The AC register is preserved.
-/ Call via jda getlin.
+/ Call via jda getaln.
 
 
 
 
 
-getlin, 0
-        dac glnrtn
-        dio glnmem
-glnlp,  jda getch
+getaln, 0
+        dac glartn
+        dio glamem
+glalp,  jda getach
         lai
-        sad (flxerr
-        jmp glnbad
-        dio i glnmem
-        law flxnl
-        sad i glnmem
-        jmp glndon
-        idx glnmem
-        jmp glnlp
-glndon, lac getlin
+        spa
+        jmp glabad
+        dio i glamem
+        sad (15
+        jmp gladon
+        sad (12
+        jmp gladon
+        idx glamem
+        jmp glalp
+gladon, lac getaln
         cli
-        jmp i glnrtn
-glnbad, iot rle
-        lac getlin
-        jmp i glnrtn
-glnrtn, 0
-glnmem, 0
+/ overwrite the cr or nl with 0
+        dzm i glamem
+        jmp i glartn
+glabad, iot rle
+        lac getaln
+        jmp i glartn
+glartn, 0
+glamem, 0
 
-/ Write a block of flex text out.
-/ Write out a string produced by text until a word containing
-/ only etx, 13, fio-dec stop, is seen, the starting address is in the ac,
-/ text <whatever>
-/ etx
+/ Write a block of ascii text out.
+/ Write out a string produced by ascii until a word containing
+/ only 0 is seen, the starting address is in the ac,
+/ ascii <whatever>
 /
 / Include this before using it or declaring text that uses
 / the character defines, below.
 /
-/ Output goes to SBS channel 0 which must be in flexo mode.
+/ Output goes to SBS channel 0 which must be in ascii mode.
 / On call, AC contains the address of the text block.
 / Insert this at the desired point in code.
-/ Call via jda txtflx.
+/ Call via jda txtasc.
 
 
 
 
-txtflx, 0
-     dac txtrtn
-txttop, lac i txtflx
-     lia
-     and (77
-/ check for the end marker
-     sub (flxetx
+txtasc, 0
+     dac txartn
+txatop, lac i txtasc
+/ a word has xaaaaaaaaxbbbbbbbb
+     sar 4s
+     sar 5s
      sza i
-     jmp i txtrtn
+     jmp i txartn
+     lia
+     iot tcb
+     law 377
+     and i txtasc
+     sza i
+     jmp i txartn
+     lia
+     iot tcb
+     idx txtasc
+     jmp txatop
+txartn, 0
+
+/ Given a buffer of ascii digits, convert them to a binary number, return it in the AC.
+/ Base-10 is used.
+/ On call, the IO register contains the address of a buffer that contains one
+/ ascii character per word.
+/ Digits will be accumulated until a word of 0 is seen.
+/ If any character other than '0'-'9' is seen, processing stops
+/ and the number up to that point is returned.
+/ The IO register will have bit 0 set to 1 and the low 8 bits will have the character.
+/ No overflow condition is detected, high bits will shift out in this case.
+/ The maximum number is 98,304 unless AC is treated as unsigned, in which case it's 196,608.
+getnum, 0
+     dac getnrt
+     dzm getnbr
+     dio getnbf
+getnlp, lio i getnbf
      lai
-     ral 6s
+     sza i
+     jmp getnok
+     sub (60
+     spa
+     jmp getnbd
+     sub (72-60
+     spa i
+     jmp getnbd
+getndg,
+/ multiply current number by 10 using a 3-bit shift (times 8) and 2 adds
+     lac getnbr
+     sal 3s
+     add getnbr
+     add getnbr
+     dac getnbr
+     lai
+     sub (60
+     add getnbr
+     dac getnbr
+     idx getnbf
+     jmp getnlp
+getnbd, lai
+     ior (400000
      lia
-     iot tcb
-     ral 6s
-     lia
-     iot tcb
-     ral 6s
-     lia
-     iot tcb
-     idx txtflx
-     jmp txttop
-txtrtn, 0
+     jmp .+2
+getnok, cli
+     lac getnbr
+     jmp i getnrt
+getnrt, 0
+getnbr, 0
+getnbf, 0
+
+
 
 
 define say a
     law a
     ior (bnk
-    jda txtflx
-    term
-
-define return
-    law flxnl
-    lia
-    iot tcb
+    jda txtasc
     term
 
 / DCS2 is using channel interrupts
@@ -264,7 +397,7 @@ define return
 / We don't initially start here, just convenient for copying to the extended bank.
 / When running, the bank 0 code will transfer here on interrupt, a channel connect.
 100/
-res, lsm
+resume, lsm
      cbs
      cli
      iot rci
@@ -279,17 +412,14 @@ rs2, iot rcs
      cli
      iot ssb
      say hl1
-     return
      say hl1b
-     return
      say hl1c
-     return
 
 / get the track to load
 / if there is an error, just return to the current program
 try, say hl2
      lio (linbuf
-     jda getlin
+     jda getaln
      spi
      jmp dcsfal
      lio (linbuf
@@ -297,20 +427,18 @@ try, say hl2
      spi i
      jmp getnld
      lai
-     and (77
-     sad (chq
+     and (377
+     sad (150
      jmp stp
      say badnum
-     return
      jmp try
 stp, lio (sbcrst
      iot scb
      hlt
 
-/ IO has the track to load
+/ AC has the track to load
 / load bank 0 mem from drum
 getnld,
-     lai
      sal 6s
      sal 6s
      ior (drmrd
@@ -343,6 +471,13 @@ getnld,
      law 20
      jda cpy
 
+     say bye
+/ start 3 second countdown
+     law 5670
+     iot i cct
+     cla
+     iot cct
+
 / Close the channel, it will reopen on the next connection
      lio (sbcbnd
      iot scb
@@ -353,71 +488,188 @@ b0s, 0
 / we had an error, just rebind and wait
 dcsfal, lio (sbcbnd
      iot scb
-     jmp res
+     jmp resume
 
 getnns, say badpgm
-    return
     jmp try
 
-/ Get an octal number into IO, preserves AC
-/ IO contains the buffer address filled by getlin.
-/ It will accumulate the number until it sees a newline.
-/ If too many digits are fecthed, the initial digits
-/ will shift out to the left.
-/ If a non-octal-digit is seen IO bit 0 will be 1
-/ and the low bits will have the character.
-getnum, 0
-     dac getnrt
-     dzm getnbr
-     dio getnbf
-getnlp, lio i getnbf
-     lai
-     sad (flxnl
-     jmp getnok
-     sza i
-     jmp getnbd
-     sad (ch0
-     jmp getnc0
-     sub (ch8
-     sma
-     jmp getnbd
-getndg, lai
-     scr 3s
-     lac getnbr
-     scl 3s
-     dac getnbr
-     idx getnbf
-     jmp getnlp
-getnc0, cli
-     jmp getndg
-getnbd, lai
-     ior (400000
-     lia
-     jmp .+2
-getnok, lio getnbr
-     lac getnum
-     jmp i getnrt
-getnrt, 0
-getnbr, 0
-getnbf, 0
+hl1, / ascii
+    110145
+    154154
+    157040
+    146162
+    157155
+    040171
+    157165
+    162040
+    120151
+    104120
+    061041
+    012000
 
-hl1, text "Hello from your PiDP1!"
-     flxetx
+hl1b, / ascii
+    117156
+    143145
+    040171
+    157165
+    040163
+    145154
+    145143
+    164040
+    141040
+    160162
+    157147
+    162141
+    155054
+    040164
+    150151
+    163040
+    143157
+    156156
+    145143
+    164151
+    157156
+    040167
+    151154
+    154040
+    143154
+    157163
+    145056
+    012000
 
-hl1b, text "Once you select a program, this connection will close."
-     flxetx
+hl1c, / ascii
+    117160
+    145156
+    040151
+    164040
+    141147
+    141151
+    156040
+    164157
+    040163
+    145154
+    145143
+    164040
+    141040
+    156145
+    167040
+    160162
+    157147
+    162141
+    155056
+    012000
 
-hl1c, text "Open it again to select a new program."
-     flxetx
 
-hl2, text "Program number to load, 0-31 or q to halt? "
-     flxetx
+hl2, / ascii
+    120162
+    157147
+    162141
+    155040
+    156165
+    155142
+    145162
+    040164
+    157040
+    154157
+    141144
+    054040
+    060055
+    063061
+    040157
+    162040
+    150040
+    164157
+    040143
+    154157
+    163145
+    040141
+    154154
+    040143
+    157156
+    156145
+    143164
+    151157
+    156163
+    040141
+    156144
+    040150
+    141154
+    164077
+    040000
 
-badnum, text "Sorry, that's not a valid number, try again."
-     flxetx
 
-badpgm, text "That program has no start address, try again."
-     flxetx
+badnum, / ascii
+    123157
+    162162
+    171054
+    040164
+    150141
+    164047
+    163040
+    156157
+    164040
+    141040
+    166141
+    154151
+    144040
+    156165
+    155142
+    145162
+    054040
+    164162
+    171040
+    141147
+    141151
+    156056
+    012000
+
+
+badpgm, / ascii
+    124150
+    141164
+    040160
+    162157
+    147162
+    141155
+    040150
+    141163
+    040156
+    157040
+    163164
+    141162
+    164040
+    141144
+    144162
+    145163
+    163054
+    040164
+    162171
+    040141
+    147141
+    151156
+    056012
+    000000
+
+
+bye, / ascii
+    012114
+    157141
+    144151
+    156147
+    040160
+    162157
+    147162
+    141155
+    054040
+    164150
+    145156
+    040143
+    154157
+    163151
+    156147
+    056012
+    000000
+
 
 / Copy from one mem bank to another.
 / AC has the count of words to copy.
@@ -464,7 +716,7 @@ b0b,
 / The above ends up here, rtn, 7754. The jmp i 1 dismissed the interrupt.
 / Enable extened memory and  jump back to our control code.
 / We have to construct the address because we can't use a stored constant.
-     law res
+     law resume
      rcr 6s
      rcr 6s
      law bnkno
@@ -506,9 +758,9 @@ constants
     dac ads
     jmp i ads
 
-/ server port, flex, echo, and crlf on channel 0, interrupt on connect or disconnect
+/ server port, ascii, echo, and crlf on channel 0, interrupt on connect or disconnect
 / listen on port 2022
-ctl, dcfcrnl dcfecho dcfflex dcfsrv dcfie dcfioe dcfioc
+ctl, dcfcrnl dcfecho dcfsrv dcfie dcfioe dcfioc
      decimal 2022
      octal
 

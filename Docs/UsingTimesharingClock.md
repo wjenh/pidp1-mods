@@ -34,15 +34,16 @@ Why the AC? Because all IOTs 30-37 automatically clear the IO register when invo
 # The IOT
 
 This is implemented via a single IOT, 32 as mentioned.
-However, there are two subcommands.
+However, there are three subcommands.
 
-IOT 32,clr, 720022, read 1ms clock
+IOT 32,rck, 720032, read 1ms clock
 ```
 Return the current millisecond timer value in the IO register.
 The value will range from 0-59999 decimal, 0-165137 octal, and wraps around.
+This is the original IOT.
 ```
 
-IOT 2032, cls, 722022, set clock parameters
+IOT 2032, cls, 722032, set clock parameters
 ```
 The AC register flags are:
 000 000 seI iMM MMm mmm
@@ -57,5 +58,33 @@ bits 14-17 mmmm is the channel to use for the 32 ms interrupt
 
 If the SBS16 system is not enabled, the interrupt channels are ignored and use the single channel provided
 by the SBS system.
+
+IOT 2132, cct, 722132, set countdown timer
+```
+The AC register flags are:
+icc cct ttt ttt ttt ttt
+
+bit 0 i enables interrupt on timer done
+bits 1-4 specify the interrupt channel to use
+bita 5-17 countdown count, 1-8191, 017777, millisecnds to count down
+```
+
+This provides a countdown timer that can provide a flag or interrupt after the number of 1msec counts
+have elapsed.
+Timing begins on the next instruction cycle after the IOT returns.
+If the countdouwn period is 0, then the timer is stopped if a countdown is in progress and the cks status bit
+is cleared.
+
+When the count reaches 0, bit 3 in the cks check status instruction return value will be a 1.
+The flag will be reset when the counter is started again or if a reset, via setting a count of 0, is done.
+
+This honors the i, wait for completion and c, issue a completion pulse flags in the IOT call,
+so a program can delay for a period without any additional coding needed or use the iot wait instruction, 720000.
+
+The countdown timer is independent of the rest of the clock. The primary clock does not need to be enabled
+for it to work.
+
+If the SBS16 system is not enabled, the interrupt channel is ignored and uses the single channel provided
+by the SBS system.  It can be enabled by issuing IOT cls 4000.
 
 The mnemonics are in the macro include file CLOCK/clockdefs.mh for use with the m1pp preprocessor.

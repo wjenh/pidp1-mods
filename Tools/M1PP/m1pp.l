@@ -115,11 +115,6 @@ flexo[ ]+[^\n]{1,3}	{
 			    fputc(*cP, yyout);
 			}
 
-[ \t]+[-][^ \t]		{
-			    fprintf(errfP, "Warning: '-' with leading spaces or tabs in '%s'\n", yytext);
-			    fprintf(yyout, "%s", yytext);
-			}
-
 0x[0-9A-Fa-f]+		{
 			    ival = strtol(yytext,0,16);
 			    fprintf(yyout, decimal?"%d":"%o", ival);

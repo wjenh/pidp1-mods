@@ -1,0 +1,49 @@
+/ Given a buffer of ascii digits, convert them to a binary number, return it in the AC.
+/ Base-10 is used.
+/ On call, the IO register contains the address of a buffer that contains one
+/ ascii character per word.
+/ Digits will be accumulated until a word of 0 is seen.
+/ If any character other than '0'-'9' is seen, processing stops
+/ and the number up to that point is returned.
+/ The IO register will have bit 0 set to 1 and the low 8 bits will have the character.
+/ No overflow condition is detected, high bits will shift out in this case.
+/ The maximum number is 98,304 unless AC is treated as unsigned, in which case it's 196,608.
+getnum, 0
+     dac getnrt
+     dzm getnbr
+     dio getnbf
+getnlp, lio i getnbf
+     lai
+     sza i
+     jmp getnok
+     sub ('0'
+     spa
+     jmp getnbd
+     sub (':'-'0'
+     spa i
+     jmp getnbd
+getndg,
+/ multiply current number by 10 using a 3-bit shift (times 8) and 2 adds
+     lac getnbr
+     sal 3s
+     add getnbr
+     add getnbr
+     dac getnbr
+     lai
+     sub ('0'
+     add getnbr
+     dac getnbr
+     idx getnbf
+     jmp getnlp
+getnbd, lai
+     ior (400000
+     lia
+     jmp .+2
+getnok, cli
+     lac getnbr
+     jmp i getnrt
+getnrt, 0
+getnbr, 0
+getnbf, 0
+
+

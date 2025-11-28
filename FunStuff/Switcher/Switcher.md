@@ -1,7 +1,9 @@
 # Switcher
 
 Switcher is a demo program that uses IOT 22, the DCS2 Data Communications Systerm, IOTs 61-63, the Type 23 drum,
-and m1pp, the macro_1 preprocessor to provide a remote-access program loader.
+IOT 32, the countdown timer/clock, and m1pp, the macro_1 preprocessor to provide a remote-access program loader.
+
+This example uses the ascii capabilities of m1pp.
 
 ## What does it do?
 

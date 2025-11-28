@@ -96,6 +96,29 @@ So, what is 'flexo'?
 It's just Concise code, that's it.
 This is what the macro directives char, flexo, and text produce.
 
+## Carriage return, linefeed, newline, echo?
+
+This is an area on which there is plenty of variation. Some systems indicate end-of-line with a linefeed
+character, aka newline, ascii 012. Some use carriage return, 015, followed by linefeed. Some just use carriage return.
+DCS2 has configurable behavior, but the behavior depends upon the flexo mode.
+
+If echo mode is on, the incoming character is immediately echoed back to the remote host with no modification.
+If it's off, then no echoing is done.
+
+If flexo mode is on, the rules are simple.
+Concise/flexo does not have a linefeed character, only carriage return, 077.
+If crnl is not on, then this will be converted to the newline character on output.
+
+A carriage return on input will be converted to flexo 077. A newline will be ignored.
+If crnl is on, then sending a flexo carriage return will result in sending an ascii
+carriage return followed by an ascii newline.
+
+If flexo mode is off, then the rules are a bit different.
+If crnl is on, then sending an ascii carriage return will result in a carriage return followed by a newline
+being sent. Sending a newline does not have any special meaning, it is sent as it is.
+
+For crnl on or off, the incoming characters are passed unchanged, both carriage return and newline.
+
 ## Notes on waits, completion pulses, and channel starvation
 
 Only one command, rwe, below, will honor either the wait bit (i) or the completion pulse request.

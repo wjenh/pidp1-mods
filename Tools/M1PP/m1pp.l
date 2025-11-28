@@ -33,6 +33,7 @@ bool saw_constant = false;
 bool saw_extra = false;
 bool saw_start = false;
 char ch;
+char *cP;
 
 FILE *errfP;
 
@@ -95,6 +96,27 @@ flexo[ ]+[^\n]{1,3}	{
 			        fprintf(errfP, "Warning: shifted characters in %s\n", yytext);
 			    }
 
+			    fprintf(yyout, "%s", yytext);
+			}
+
+[+-][ \t]+		{
+			    fprintf(errfP, "Illegal, correcting + or - followed by spaces or tabs in '%s'\n", yytext);
+			    fputc(yytext[0], yyout);
+			}
+
+[ \t]+[+-][ \t]+	{
+			    fprintf(errfP, "Illegal, correcting + or - surrounded by spaces or tabs in '%s'\n", yytext);
+			    cP = yytext;
+			    while( isspace(*cP) )
+			    {
+			    	++cP;
+			    }
+
+			    fputc(*cP, yyout);
+			}
+
+[ \t]+[-][^ \t]		{
+			    fprintf(errfP, "Warning: '-' with leading spaces or tabs in '%s'\n", yytext);
 			    fprintf(yyout, "%s", yytext);
 			}
 

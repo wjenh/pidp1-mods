@@ -23,6 +23,9 @@ The processed output is fully compatible with both macro and macro1.
 - Constants seen but no constants statement
 - No start at the end of the program
 - Extra text after a start
+- leading spaces or tabs with a + or -
+- + or - surrounded by spaces or tabs
+- space or tab before a -xxx
 
 The missing label test does a simple check for the first line starting with digits followed by a forward slash,
 or a sequence of alpha characters followed by a comma.
@@ -61,6 +64,11 @@ to emit them before the end of the program.
 If there is no start statement at the end of the program, a warning will be given.
 If there are more lines following the start statement, a warning will be given because the
 assembler does not process those lines.
+
+Various combinations of +/- and spaces or tabs is illegal, these are fixed, e.g. '1 + 2' changed to '1+2'.
+A leading - can be an issue as in 'a -b', this probably doesn't do what you expect.
+Rather, it means 'add -b to a'.
+A warning is given.
 
 ## New features
 

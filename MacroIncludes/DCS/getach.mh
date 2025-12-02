@@ -1,7 +1,7 @@
 / Wait for an ascii character on the current DCS channel.
 / The IO register is cleared and the character is 
 / returned in the IO register.
-/ If an error occurs, the IO register will be 0.
+/ If an error occurs, the IO register will be the rcs status with bit 0 set to 1.
 / The AC register is preserved.
 / Call via jda getach.
 
@@ -9,13 +9,13 @@
 #includeif <DCS/dcs2defs.mh>
 
 getach, 0
-     dac gachrt
+     dap gachrt
 / loop waiting for a character
 gachlp,
      cli
      iot rcs
      lai
-     and (dsfful dsfser dsfcls
+     and (dsfser dsfcls
      sza
      jmp gacher
      lai
@@ -23,14 +23,13 @@ gachlp,
      sza i
      jmp gachlp
      iot rch rchclr
-     lai
      spi
-/ really shouldn't happen
-     jmp gachlp
-/ the character in IO is either valid or 0
-     jmp .+2
+     jmp gacher
+     jmp gacdn
 gacher,
-     cli
+     lai
+     ior (400000
+     lia
+gacdn,
      lac getach
-     jmp i gachrt
-gachrt, 0
+gachrt, jmp .

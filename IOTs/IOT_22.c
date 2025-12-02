@@ -35,6 +35,7 @@
 #define FLEX_SPACE 000
 // And the no-char-on-read marker
 #define FLEX_NCHAR 013
+#define ASCII_NCHAR 077
 // We use 076 to indicate an error, it's not a Concise or Flex character
 #define FLEX_ERR 076
 // No character available on a read, or no flex->ascii translation on write, including shift codes
@@ -59,9 +60,10 @@
 #define RCI     045
 #define RIC     046
 #define RCS     047
-#define RWE     002
+#define RWE     051
 #define ROC     052
 #define RES     053
+#define RXL     054
 
 #define SCBCLEAR    0
 #define SCBOPEN     1
@@ -91,7 +93,9 @@
 #define CNTL_FLEX       0200000 // Concise<->ascii translation is enabled
 #define CNTL_CRLF       0400000 // convert a carraige return to carriage return and a line feed on output
 
-#define CNTL_COMMON_MASK    0374000 // mask for the the common bits
+// The reset mask is the bits we should clear when a channel is opened, in case there were leftovers
+#define CNTL_RESET_MASK     (CNTL_LOST | CNTL_CONNERR | CNTL_TFULL | CNTL_RREADY)
+#define CNTL_COMMON_MASK    0374000 // mask for the common bits with rcs
 
 #define RQST_CRLF           0400000 // cr/lf bit in the scb control word
 #define RQST_FLEX           0200000 // etc
@@ -143,6 +147,11 @@
 // This is used with epoll() to mark the type of poll entry
 #define EP_SERVER       0100000
 
+// These are flags in the IO register for RXL
+#define RXL_FLEX            0400000
+#define RXL_CHANGE          0001000
+#define RXL_SHIFTED         0000400
+
 typedef struct
 {
 int port;                   // the inet port assigned
@@ -176,6 +185,7 @@ static int cur_chan = -1;       // which channel is currently selected, -1 for n
 static bool cur_chan_locked;
 static int send_chan = -1;      // if one was selected by ssb
 static int last_intr_chan = -1; // last channel that interrupted
+static int last_intr_reason;    // the CNTL_Ixx cause
 static bool need_general_completion = false;    // need a completion pulse for a non-channel-specific operation
 
 static Channel channels[NUM_CHANS];
@@ -323,7 +333,7 @@ char wbuf[8];
         {
             if( cur_chan < 0 )
             {
-                iotLog("TCC/TCB has no channel\n");
+                iotLog("TCC/TCB has no channel assigned\n");
                 last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_NOCURRENT;
                 break;
             }
@@ -331,6 +341,13 @@ char wbuf[8];
             {
                 chanP = &channels[cur_chan];
             }
+        }
+
+        if( !(chanP->control_flags & CNTL_CONNECTED) )
+        {
+            iotLog("TCC/TCB channel %d is not connected\n", cur_chan);
+            last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_NOTCONNECTED;
+            break;
         }
 
         if( chanP->chan_fd < 0 )
@@ -344,11 +361,6 @@ char wbuf[8];
         {
             iotLog("TCC/TCB has FULL on %d\n", cur_chan);
             last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_FULL;
-        }
-        else if( !(chanP->control_flags & CNTL_CONNECTED) )
-        {
-            iotLog("TCC/TCB has NOT CONNECTED on %d\n", cur_chan);
-            last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_NOTCONNECTED;
         }
         else
         {
@@ -448,16 +460,16 @@ char wbuf[8];
             chanP = &channels[i];
             if( chanP->control_flags & CNTL_IE )
             {
-                iotLog("RCI resetting interrupt for channel %d\n", i);
+                iotLog("RCI resetting interrupts for channel %d\n", i);
 
                 chanP->interrupt_issued = false;
                 chanP->interrupts_in_process = 0;
-                if( chanP->interrupts_queued )
-                {
-                    iotLog("RCI posting queued interrupt for channel %d\n", i);
-                    postInterrupt(chanP, chanP->interrupts_queued);      // interrupt again
-                    chanP->interrupts_queued = 0;
-                }
+                chanP->interrupts_queued = 0;
+            }
+
+            if( last_intr_chan == i)
+            {
+                last_intr_chan = -1;
             }
         }
         break;
@@ -490,19 +502,32 @@ char wbuf[8];
                 pdp1P->io |= STATUS_IE;
             }
 
-            if( chanP->control_flags & CNTL_IOR )
+            if( chanP->control_flags & CNTL_LOST )
             {
-                pdp1P->io |= STATUS_IOR;
-            }
-
-            if( chanP->control_flags & CNTL_IOE )
-            {
-                pdp1P->io |= STATUS_IOE;
+                pdp1P->io |= STATUS_LOST;
             }
 
             if( i == cur_chan )
             {
                 pdp1P->io |= STATUS_CHAN;
+            }
+
+            if( i == last_intr_chan )
+            {
+                if( last_intr_reason & CNTL_IOR )
+                {
+                    pdp1P->io |= STATUS_IOR;
+                }
+
+                if( last_intr_reason & CNTL_IOE )
+                {
+                    pdp1P->io |= STATUS_IOE;
+                }
+
+                if( last_intr_reason & CNTL_IOC )
+                {
+                    pdp1P->io |= STATUS_LOST;
+                }
             }
         }
         break;
@@ -543,6 +568,44 @@ char wbuf[8];
         i = !!pdp1P->sbs16;     // in case it wasn't just 1
         pdp1P->sbs16 = pdp1P->io & 1;
         pdp1P->io = i;
+        break;
+
+    case RXL:                   // translate to/from flexo and ascii
+        i = pdp1P->io & RXL_SHIFTED;    // shift flag
+
+        if( pdp1P->io & RXL_FLEX )      // flex->ascii
+        {
+            ich = flexoToAscii(pdp1P->io & 077, &i);
+            if( ich == NONE )
+            {
+                ich = ASCII_NCHAR;
+            }
+        }
+        else
+        {
+            ich = asciiToFlexo(pdp1P->io & 0377, &i);
+            if( ich == NONE )
+            {
+                ich = FLEX_NCHAR;
+            }
+        }
+
+        if( i )
+        {
+            i = RXL_SHIFTED;
+        }
+
+        if( (pdp1P->io & RXL_SHIFTED) != i )
+        {
+            pdp1P->io |= RXL_CHANGE;
+        }
+        else
+        {
+            pdp1P->io &= ~RXL_CHANGE;
+        }
+
+        pdp1P->io &= ~(RXL_SHIFTED | 077);
+        pdp1P->io |= (i | ich);
         break;
 
     default:
@@ -610,6 +673,7 @@ struct epoll_event event;
                             else
                             {
                                 chanP->control_flags |= CNTL_CONNECTED;
+                                chanP->control_flags &= ~CNTL_RESET_MASK;
 
                                 j = fcntl(chanP->chan_fd, F_GETFL, 0);
                                 j |= O_NONBLOCK | O_RDWR;
@@ -657,6 +721,7 @@ struct epoll_event event;
                     else
                     {
                         chanP->control_flags |= CNTL_CONNECTED;
+                        chanP->control_flags &= ~CNTL_RESET_MASK;
                         if( canPost(pdp1P, chanP, CNTL_IOC) )
                         {
                             iotLog("Posting IOC connected on chan %d\n",chanP->chan_no);
@@ -866,6 +931,7 @@ struct epoll_event event;
             epoll_fd = -1;
         }
 
+        iotCloseLog();              // just to keep the log file updated
         initialized = false;
         break;
 
@@ -966,6 +1032,7 @@ postInterrupt(ChannelP chanP, int kind)
         initiateBreak(chanP->sbs_chan);
         chanP->interrupt_issued = true;
         chanP->interrupts_in_process |= kind;
+        last_intr_reason = chanP->interrupts_in_process;
         last_intr_chan = chanP->chan_no;
     }
 }
@@ -981,7 +1048,7 @@ getChar(ChannelP chanP)
 int i;
 char ch, ch2;
 
-    if( chanP->flexo_rcv_pushback )
+    if( hasRcvPushback(chanP) )
     {
         ch = chanP->flexo_rcv_pushback;
         chanP->flexo_rcv_pushback = 0;
@@ -997,6 +1064,7 @@ char ch, ch2;
 
         if( i == 0 )
         {
+            iotLog("getChar() recv() got no character, RRDY is %d\n", chanP->control_flags & CNTL_RREADY);
             return( NONE );
         }
         else if( i < 0 )

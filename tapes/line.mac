@@ -1,0 +1,166 @@
+LINE
+100/
+
+/ Swap values between AC and IO.
+define swap
+	rcl 9s			
+	rcl 9s
+	term	
+
+/ Draw a point at X,Y on the display. Note X and Y are positive integers 
+/ between 0 and 1023 and must be converted to screen coordinates.
+define plot X,Y
+	lac Y			/ Get the y coordibate.
+	add sof			/ Convert to screen coordinates.
+	sal 8s			/ Move y to high bits.
+	swap			/ Move value from AC to IO register.		
+	lac X			/ Get the x coordinate.
+	add sof			/ Convert to screen coordinates.	
+	sal 8s			/ Move x to high AC bits.
+	dpy-i			/ Draw pixel. Don't wait.
+	term
+
+/ Create a random number.
+define random 
+	lac ran
+	rar 1s
+	xor (355671
+	add (355671
+	dac ran 
+	term
+
+/ Draw the line defines by the points X1,Y1 and X2,Y2. Called as subroutine.
+drt,	jmp .
+dln,    dap drt			/ Save the return address.
+	lac X1			/ Get the starting coordinate.	
+	dac x
+	lac Y1
+	dac y
+
+	lac X2			/ Calculate dx.
+	sub X1			/ X2 - X1
+	spa			/ Skip compliment if AC positive.
+	cma			/ Compliment AC to get positive value.
+	dac dx			/ Save absolute value in dx.
+	
+	lac Y2			/ Calculate -dy.
+	sub Y1			/ Y2 - Y1
+	spa i			/ Skip compliment if AC negative.
+	cma			/ Compilment AC to get negative value.
+	dac dy			/ Save negative value in dy.
+
+	lio pos			/ Positive slope to start.	
+	lac X2			/ Calculate sx.
+	sub X1			/ X2 - X1
+	spa			/ Skip switch if AC positive.
+	lio neg			/ Negative slope.
+	dio sx			/ Save slope in sx.
+
+	lio pos			/ Positive slope to start.	
+	lac Y2			/ Calculate sy.
+	sub Y1			/ Y2 - Y1
+	spa			/ Skip switch if AC positive.
+	lio neg			/ Negative slope.
+	dio sy			/ Save slope in sy.
+
+	lac dx			/ Intitialize the error term.
+	add dy
+	dac err
+
+/ Plot the points of the line.
+lup,	plot x,y		/ Draw the next point.
+
+/ Figure out the next point to plot.
+ctn,	lac err			/ Calculate the e2 term.
+	sal 1s			/ e2 = err * 2
+	dac e2
+
+/ Check for y change.
+	lac e2			/ Is (e2 > dy)?
+	sub dy			/ e2 - dy
+	sma			/ Skip if negative.
+	jmp doy			/ Process y change.
+	jmp dox			/ Check for x change.
+
+doy,	lac X2			/ Is x done?
+	sub x			/ x2 - x 
+	sza i			/ Skip if not zero.
+	jmp dne			/ Line done. 
+
+	lac err			/ err = err + dy;
+	add dy
+	dac err			/ err + dy
+
+	lac x			/ x = x + sx
+	add sx
+	dac x			/ x + sx
+
+/ Check for x change.
+dox,	lac dx			/ Is (e2 < dx)?
+	sub e2			/ dx - e2
+	sma			/ Skip if minus.
+	jmp prx			/ Process y.
+	jmp lup			/ Keep drawing line.
+
+prx,	lac Y2			/ Is y done?
+	sub y			/ y2 - y
+	sza i 			/ Skip if not zero.
+	jmp dne			/ Line done.
+
+	lac err			/ err = err + dx
+	add dx	
+	dac err			/ err + dx
+
+	lac y			/ y = y + sy
+	add sy
+	dac y			/ y + sy
+	jmp lup			/ Keep drawing the line.
+dne,	jmp drt
+
+/ Mainline.
+go,	jsp dln			/ Draw the line.
+
+	lac X2			/ Move end coordinate to start coordinate.
+	dac X1
+	lac Y2
+	dac Y1
+	
+	random			/ Set new ending coordinate.
+	and lbt
+	dac X2			
+	random
+	and lbt
+	dac Y2
+	
+	jmp go			/ Do the next line.
+
+/ Temporary variables used by drawline.
+x,	0			/ Used to "walk" the line.
+y,	0
+dx,	0			/ Amount to change x and y on each step.	
+dy,	0 
+sx,	0			/ Direction of x and y movement.
+sy,	0
+err,	0			/ Error terms used in algorithm.
+e2,	0
+
+/ Slope constants.
+pos,	1			/ Positive slope.
+neg,	-1			/ Negative slope.
+
+/ Screen conversion constant.
+sof,	-777
+
+/ Lower 10 bits mask.
+lbt,	1777
+
+/ Random number goes here.
+ran,	716243
+
+/ Line coordinates.
+X1,	333			/ Starting coordinate.
+Y1,	333
+X2,	1333			/ Ending coordinate.
+Y2,	1333
+
+start go

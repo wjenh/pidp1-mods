@@ -11,13 +11,14 @@ SELECT AND RUN A DRUMLOADER PROGRAM VIA REMOTE CONNECTION ASCII VERSION
 / When a new connection comes in, it repeats the query for a new program to run.
 / If the loaded program halts or overwrites 7751 and up,
 / you can restart this at location 100 in the specified bank.
+/ It also uses IOT 22, DCS2, and IOT 32, timesharing clock.
 
 #include <1Dinstructions.mh>
 #include <DRUM/type23drumdefs.mh>
 #include <DCS/dcs2defs.mh>
 #include <CLOCK/clockdefs.mh>
 
-/ Which bank we load the control program into
+/ Which bank we load the control program into and its shifted value
 bnk=10000
 bnkno=1
 isr=7751
@@ -25,8 +26,8 @@ rtn=7754
 strt=7765
 sadr=7773
 
-/ A scratch buffer at 500 is used for reading a line.
-linbuf=500
+/ A scratch buffer at 3000 is used for reading a line.
+linbuf=3000
 
 / Put our included code bits here
 1000/
@@ -41,6 +42,12 @@ define say a
     jda txtasc
     term
 
+define newline
+    law '\n'
+    lia
+    iot tcb
+    term
+
 / DCS2 is using channel interrupts
 0/
     lem
@@ -49,18 +56,31 @@ define say a
     jmp isr
 
 / We don't initially start here, just convenient for copying to the extended bank.
+/ The initial code will transfer here when done.
 / When running, the bank 0 code will transfer here on interrupt, a channel connect.
 100/
 resume, lsm
      cbs
      cli
      iot rci
-/ be sure we actually have a connection
-/ if not, wait for one
-rs2, iot rcs
-     rir 3s
-     spi i
-     jmp rs2
+/ be sure we actually open and have a connection
+/ if not open, do so
+/ if open and not connected, wait for one
+rs2, cli
+     iot rcs
+     lai
+     and (dsfopn
+     sza
+     jmp rs3
+     lio (sbcset ctl
+     iot scb
+
+rs3, cli
+     iot rcs
+     lai
+     and (dsfcon
+     sza i
+     jmp rs3
 
 / lock the send channel to 0 
      cli
@@ -69,26 +89,65 @@ rs2, iot rcs
      say hl1b
      say hl1c
 
-/ get the track to load
-/ if there is an error, just return to the current program
+/ get the track to load or the command
+/ if not valid, ask again
+/ if a fatal error occurs, halt then rebind and go back to the connection wait
 try, say hl2
      lio (linbuf
      jda getaln
-     spi
+     lai
+     sza
      jmp dcsfal
+     newline
      lio (linbuf
      jda getnum
+/ AC has number, IO neg if no number, char in low bits
      spi i
      jmp getnld
      lai
      and (377
      sad ('h'
      jmp stp
+     sad ('l'
+     jmp list
      say badnum
      jmp try
 stp, lio (sbcrst
      iot scb
      hlt
+     jmp resume
+
+/ List programs on the drum
+/ Loop thru all tracks getting the control block, 7751-7777
+list,
+     newline
+     dzm trk
+lst2, lac trk
+     sal 6s
+     sal 6s
+     ior (drmrd isr
+     lia
+     iot dia
+     law 26
+     lia
+     iot dwc
+     law linbuf
+     ior (bnk
+     lia
+     iot dcl
+     lac linbuf+25
+     sad (707070
+     jmp .+2
+     jmp trkn
+     jda prttrk
+     say dir
+     say linbuf
+     newline
+trkn, idx trk
+     sad (040
+     jmp try
+     jmp lst2
+trk, 0
 
 / AC has the track to load
 / load bank 0 mem from drum
@@ -102,14 +161,24 @@ getnld,
      iot dwc
      iot dcl
 
-/ bank 0 now has pgm loaded, check for start
-     lac (sadr
+/ bank 0 now has pgm loaded, check for valid load entry
+     law 7777
      dac ads
      lac i ads
-     sza i
-     jmp getnns
+     sad (707070
+     jmp trkok
+     say inval
+     jmp try
 
-/ copy our bank 0 stuff again
+/ say the pgm, copy our bank 0 stuff again
+trkok,
+     say bye
+/ show the directory filename
+     law isr
+     jda txtasc
+     say bye2
+
+/ copy our low mem code
      dzm adt
      lac (b0a
      ior (bnk
@@ -117,7 +186,8 @@ getnld,
      law 4
      jda cpy
 
-     lac (isr
+/ copy our high mem code
+     law isr
      dac adt
      lac (b0b
      ior (bnk
@@ -125,9 +195,8 @@ getnld,
      law 20
      jda cpy
 
-     say bye
-/ start 3 second countdown
-     law 5670
+/ start 2 second countdown
+     law 3720
      iot i cct
      cla
      iot cct
@@ -135,29 +204,47 @@ getnld,
 / Close the channel, it will reopen on the next connection
      lio (sbcbnd
      iot scb
-/ and transfer back to bank 0, adr 0
+/ be sure things are cleaned up interrupt-wise
+     cbs
+     cli
+     iot rci
+/ and transfer back to bank 0, adr 7765
      jmp i b0s
-b0s, 0
+b0s, 7765
 
 / we had an error, just rebind and wait
 dcsfal, lio (sbcbnd
      iot scb
+     hlt
      jmp resume
-
-getnns, say badpgm
-    jmp try
 
 hl1, ascii "Hello from your PiDP1!\n"
 hl1b, ascii "Once you select a program, this connection will close.\n"
 hl1c, ascii "Open it again to select a new program.\n"
+hl2, ascii "Program number to load, 0-31, l to list available,\nor h to close all connections and halt? "
 
-hl2, ascii "Program number to load, 0-31 or h to close all connections and halt? "
+dir, ascii " - "
 
 badnum, ascii "Sorry, that's not a valid number, try again.\n"
+inval, ascii "That track does not have a program loaded, try again.\n"
 
-badpgm, ascii "That program has no start address, try again.\n"
+bye, ascii "\nLoading program "
+bye2, ascii " then closing.\n"
 
-bye, ascii "\nLoading program, then closing.\n"
+/ Print the track number in location trk as 2 decimal digits.
+prttrk, 0
+    dap prtrtn
+    cla
+    lio trk
+    sil 1s
+    div (12
+    add ('0'
+    lsw
+    iot tcb
+    add ('0'
+    lia
+    iot tcb
+prtrtn, jmp .
 
 / Copy from one mem bank to another.
 / AC has the count of words to copy.
@@ -166,7 +253,7 @@ bye, ascii "\nLoading program, then closing.\n"
 / Both can have extended addresses.
 / If extended addresses are used, be sure an eem has been done first.
 cpy, 0
-    dap cd
+    dap cpydn
     lac cpy
     cma
 cl, add (1
@@ -178,9 +265,18 @@ cl, add (1
     lsw
     sza
     jmp cl
-cd, jmp .
+cpydn, jmp .
 ads, 0
 adt, 0
+
+/ server port, ascii, echo, and crlf on channel 0, interrupt on connect or disconnect
+/ listen on port 2022
+ctl, dcfcrnl dcfecho dcfsrv dcfie dcfioe dcfioc
+     0d2022
+     octal
+
+// get our contants output so they don't step on us later
+constants
 
 / The channel 0 interrupt setup.
 / We execute a bit of code that will get
@@ -214,44 +310,31 @@ b0b,
      eem
      jmp i 0
 
-// The controller jumps here, strt, 7765, to start the program.
-    cbs
+/ The controller jumps here, strt, 7765, to start the program.
+/ Be sure to not overwrite 7773-7777!
+    lem
     esm
     jmp i sadr
 
 constants
 
-/ We are started here in bank 0, copy our control program to the same locations in the bank
-/ used for the control program, set up DCS2 and jump to 100 there.
+/ We are started here in bank 0, copy our control program imagefrom this bank to the same
+/ locations in the bank  used for the control program and jump to 100 there.
+/ Why all this hand-waving? Neither macro nor the default loader handles extended memory. Lame.
 6000/
-/ force clear DCS2 in case user restarted here
-    lio (sbcrst
-    iot scb
     eem
     law 100
     dac ads
-    ior (bnk
+    ior lclbnk
     dac adt
 / AC has the number of words to copy
     law 2000
     jda cpy
 
-/ set up for interrupts, channel 0 for flex, echo, crnl, intr on state change
-    cli
-    lio (sbcset ctl
-    iot scb 
-
     law 100
-    ior (bnk
+    ior lclbnk
     dac ads
     jmp i ads
-
-/ server port, ascii, echo, and crlf on channel 0, interrupt on connect or disconnect
-/ listen on port 2022
-ctl, dcfcrnl dcfecho dcfsrv dcfie dcfioe dcfioc
-     decimal 2022
-     octal
-
-constants
+lclbnk, bnk
 
 start 6000

@@ -120,6 +120,11 @@ flexo[ ]+[^\n]{1,3}	{
 			    fprintf(yyout, decimal?"%d":"%o", ival);
 			}
 
+0d[0-9]+		{
+			    ival = strtol(yytext+2,0,10);
+			    fprintf(yyout, decimal?"%d":"%o", ival);
+			}
+
 ascii[ \t]+		{
 			    BEGIN ASCII;
 			    fprintf(yyout, "/ ascii\n");

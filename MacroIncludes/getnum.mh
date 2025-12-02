@@ -6,6 +6,7 @@
 / If any character other than '0'-'9' is seen, processing stops
 / and the number up to that point is returned.
 / The IO register will have bit 0 set to 1 and the low 8 bits will have the character.
+/ The AC will have the number.
 / No overflow condition is detected, high bits will shift out in this case.
 / The maximum number is 98,304 unless AC is treated as unsigned, in which case it's 196,608.
 getnum, 0
@@ -45,5 +46,3 @@ getnok, cli
 getnrt, 0
 getnbr, 0
 getnbf, 0
-
-

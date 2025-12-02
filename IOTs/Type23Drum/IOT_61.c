@@ -304,6 +304,8 @@ readDrumToBuffer(
     int drumAddr,       // start point relative to drum index
     int transferCount)  // number of words to transfer
 {
+int wantbytes;
+int gotbytes;
 int drumSplitCount = 0;
 int drumRemainderCount = 0;
 
@@ -322,11 +324,24 @@ int drumRemainderCount = 0;
 
     lseek(drumFd, DRUMADDRTOSEEK(drumField, drumAddr), SEEK_SET);
     // a read fail is ok, could be an uninitialized drum block. Mem gets buffer content.
-    read(drumFd, buffer, sizeof(Word) * drumSplitCount);
+    // But, the rest of the buffer is set to 0.
+    wantbytes = sizeof(Word) * drumSplitCount;
+    gotbytes = read(drumFd, buffer, wantbytes);
+    if( gotbytes != wantbytes )
+    {
+        memset(buffer + (gotbytes / sizeof(Word)), 0, wantbytes - gotbytes);
+    }
+
     if( drumRemainderCount )
     {
+        wantbytes = sizeof(Word) * drumRemainderCount;
         lseek(drumFd, DRUMADDRTOSEEK(drumField, 0), SEEK_SET);
-        read(drumFd, buffer + drumSplitCount, sizeof(Word) * drumRemainderCount);
+        gotbytes = read(drumFd, buffer + drumSplitCount, wantbytes);
+
+        if( gotbytes != wantbytes )
+        {
+            memset(buffer + drumSplitCount + (gotbytes / sizeof(Word)), 0, wantbytes - gotbytes);
+        }
     }
 }
 

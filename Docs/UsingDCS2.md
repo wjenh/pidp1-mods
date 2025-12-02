@@ -96,6 +96,16 @@ So, what is 'flexo'?
 It's just Concise code, that's it.
 This is what the macro directives char, flexo, and text produce.
 
+During ascii to flexo conversion, some characters cannot be represented.
+In this case, the special character flxnch, 013, will be returned.
+The full list of special characters is:
+
+- flxnch 013    no flexo equivalent for ascii character
+- flxetx 013    end marker for some string operations
+- flxerr 076    error marker, some error happened in rcr or rch
+- flxnl  077    the end-of-line character, flexo carriage return
+- ascnch 077    a flexo shift or unshift character was seen by rxl in flexo to ascii mode
+
 ## Carriage return, linefeed, newline, echo?
 
 This is an area on which there is plenty of variation. Some systems indicate end-of-line with a linefeed
@@ -180,8 +190,8 @@ See the detailed description in the Channel Control Block description below.
 Rcr, rch, tcb, and tcc use the low 6 bits in flexo mode, else the low 8 bits.
 
 For rch and rcr, the action on an error depends upon if flexo mode is enabled.
-For flexo, for no character ready the low 6 bits returned will be FLEX_NCHAR, 013.
-For any error, the low 6 bits returned will be FLEX_ERR, 076.
+For flexo, for no character ready the low 6 bits returned will be flxnch.
+For any error, the low 6 bits returned will be flxerr.
 
 For 8-bit mode, if no character is available IO register bits 0 and 1 will both be 1 and the other bits unchanged.
 If any other error occurs, bit 0 will be set, bit 1 cleared, and the rest of the register set to the full
@@ -324,6 +334,39 @@ And the new extended commands:
     On call, IO register bit 17 set to 1 enables sbs16, else disables it.
     On return, the IO register will have the prior setting.
     ```
+
+- rxl 725422 convert between flexo and ascii
+    ```
+    On call:
+    IO register bit 0 set to 1 is flex to ascii, otherwise ascii to flex
+    IO register bit 9 set to 1 means upper-shift for flex, see note
+    IO register bits 10-17 are the character to convert
+    On return:
+    IO register bit 0 will be unchanged
+    IO register bit 8 set to 1 for ascii to flex means the flex shift state changed
+    IO register bit 9 set to 1 for ascii to flex means in upper shift state
+    IO register bits 10-17 are the converted character
+    ```
+    This is a convenience IOT that will convert back and forth between flexo/concise and ascii.
+    It uses the same mappings as the regular send and receive translations.
+
+    The ineraction of bits 8 and 9 are important.
+
+    Bit 9 is the current shift state, set to a 1 if currently in upper shift mode, else 0.
+    Typically, this would initially be set to 0.
+
+    **IMPORTANT**, after the initial setting, the application should not change this bit until the current
+    character stream is competed. Otherwise, a valid character might never be returned.
+    When a shift, upper or lower, occurs, bit 9 will be updated to reflect the shift state
+    and bit 8 set to indicate a shift change happened.
+
+    For ascii to flex conversion, the character returned will be the appropriate shift character.
+    If there is no equivalent flex character for an ascii character, flxnch will be returned.
+
+    For flexo to ascii conversion, a shift character will be ignored and the returned character will be ascnch.
+
+    For either mode, the application should resubmit the character if bit 9 is a 1.
+    It can also check for ascnch in flexo to ascii mode or an upper or lower shift character in ascii to flexo mode.
 
 ## The Channel Request Block
 

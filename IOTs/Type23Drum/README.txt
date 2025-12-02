@@ -53,15 +53,19 @@ proper track, turn ss1 off, and start at 7751 or 7752 if you don't want it to ha
 If you load something via readin, this will get overwritten by the bin loader.
 
 Also note that some programs might overwrite this area. If so, you can't use this.
+None of the spacewars will run, they overwrite and/or cause interrupts.
 
 Included here is a pdp23drum file. This is preloaded with 4 programs:
-0 - circle
+0 - line
 1 - pdp1m13 music player
 2 - snowflake
-3 - spacewar48
+3 - circle
+4 - ddt
+5 - macro NOTE, not compatible with switcher or rotate, overwrites just about everything
+6 - expensive typewriter
 
 Copy it to /opt/pidp1.
-Just readin drumloader.rim, set ss1 off, set the leftmost test switched to 000000, 000001, 000010, 000011.
+Just readin drumloader.rim, set ss1 off, set the test switches to 000000, 000001, etc.
 Set addr to 7752, start. Your program of choice will start. You can set the switches again at any time, start at 7752,
 and the new prgram will start.
 

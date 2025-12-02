@@ -2,3 +2,5 @@ This directory contains various tools plus a macro1 symbol table that can be use
 weren't in the original assembler.
 To use, macro1 -S specialsyms.sym yourcode.mac
 Update it by make specialsyms.sym
+
+Or, just use m1pp and the provided include files.

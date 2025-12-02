@@ -11,11 +11,25 @@ SELECT AND RUN A DRUMLOADER PROGRAM VIA REMOTE CONNECTION ASCII VERSION
 / When a new connection comes in, it repeats the query for a new program to run.
 / If the loaded program halts or overwrites 7751 and up,
 / you can restart this at location 100 in the specified bank.
+/ It also uses IOT 22, DCS2, and IOT 32, timesharing clock.
 
 / The few implemented PDP1-D instructions
-lia=760020
-lai=760040
-lsw=760060
+/ Bit positions
+liab=20
+laib=40
+lswb=60
+swpb=60
+cmib=4000
+snib=4000
+szib=14000
+/ Instruction form
+lia=760000 liab
+lai=760000 laib
+lsw=760000 lswb
+swp=760000 swpb
+cmi=760000 cmib
+sni=640000 snib
+szi=640000 szib
 
 / This defines the IOT instructions for the Type 23 drum.
 / Note this differs from the examples in that it does not add the iot
@@ -63,8 +77,10 @@ rpc=4422
 rci=4522
 ric=4622
 rcs=4722
+rwe=5122
 roc=5222
 res=5322
+rxl=5422
 
 / symbols not compatible with native macro
 / dcfxxx are single bit flags
@@ -78,6 +94,9 @@ res=5322
 / dcfior - interroupt on character received
 / dcfie -  enable interrupts for channel
 / dcfsrv - server mode
+/ rxlfta - flexo to ascii
+/ rxlucs - flexo upper case shift
+/ rxlchg - flexo shift state changed
 / dcmsbs - bitmask, sbs channel to use
 / dcmcha - bitmask, channel number for this channel
 
@@ -89,6 +108,10 @@ dcfioe=020000
 dcfior=010000
 dcfie=004000
 dcfsrv=000100
+rxlfta=0400000
+rxlucs=00400
+rxlchg=01000
+
 dcmsbs=003600
 dcmcha=000077
 
@@ -162,6 +185,8 @@ flxerr=076
 flxnch=013
 flxetx=013
 flxnl=077
+/ ascnch is used by rxl
+ascnch=077
 
 / Defines for the IOT_32 timesharing clock
 / Use as iot rck, etc.
@@ -206,7 +231,7 @@ cctcnt=017777
 cctcks=040000
 
 
-/ Which bank we load the control program into
+/ Which bank we load the control program into and its shifted value
 bnk=10000
 bnkno=1
 isr=7751
@@ -214,15 +239,15 @@ rtn=7754
 strt=7765
 sadr=7773
 
-/ A scratch buffer at 500 is used for reading a line.
-linbuf=500
+/ A scratch buffer at 3000 is used for reading a line.
+linbuf=3000
 
 / Put our included code bits here
 1000/
 / Wait for an ascii character on the current DCS channel.
 / The IO register is cleared and the character is 
 / returned in the IO register.
-/ If an error occurs, the IO register will be 0.
+/ If an error occurs, the IO register will be the rcs status with bit 0 set to 1.
 / The AC register is preserved.
 / Call via jda getach.
 
@@ -230,13 +255,13 @@ linbuf=500
 
 
 getach, 0
-     dac gachrt
+     dap gachrt
 / loop waiting for a character
 gachlp,
      cli
      iot rcs
      lai
-     and (dsfful dsfser dsfcls
+     and (dsfser dsfcls
      sza
      jmp gacher
      lai
@@ -244,24 +269,23 @@ gachlp,
      sza i
      jmp gachlp
      iot rch rchclr
-     lai
      spi
-/ really shouldn't happen
-     jmp gachlp
-/ the character in IO is either valid or 0
-     jmp .+2
+     jmp gacher
+     jmp gacdn
 gacher,
-     cli
+     lai
+     ior (400000
+     lia
+gacdn,
      lac getach
-     jmp i gachrt
-gachrt, 0
+gachrt, jmp .
 
 / Read a line of ascii characters into the memory address passed in the IO register.
 / One character is placed in each word.
 / The line is terminated by the null character, 0, and the line terminatior (nl or cr) dropped.
 / The memory area is not bounds checked!
 / The current DCS2 channel is used.
-/ If an error occurs, the IO register will have the DCS2 error code, else 0.
+/ If an error occurs, the IO register will have the DCS2 rcs error code, else 0.
 / The AC register is preserved.
 / Call via jda getaln.
 
@@ -270,28 +294,24 @@ gachrt, 0
 
 
 getaln, 0
-        dac glartn
+        dap glartn
         dio glamem
 glalp,  jda getach
         lai
+        sza i
+        jmp glalp
         spa
         jmp glabad
         dio i glamem
         sad (15
         jmp gladon
-        sad (12
-        jmp gladon
         idx glamem
         jmp glalp
-gladon, lac getaln
-        cli
-/ overwrite the cr or nl with 0
+gladon, cli
+/ overwrite the cr with 0
         dzm i glamem
-        jmp i glartn
-glabad, iot rle
-        lac getaln
-        jmp i glartn
-glartn, 0
+glabad, lac getaln
+glartn, jmp .
 glamem, 0
 
 / Write a block of ascii text out.
@@ -338,6 +358,7 @@ txartn, 0
 / If any character other than '0'-'9' is seen, processing stops
 / and the number up to that point is returned.
 / The IO register will have bit 0 set to 1 and the low 8 bits will have the character.
+/ The AC will have the number.
 / No overflow condition is detected, high bits will shift out in this case.
 / The maximum number is 98,304 unless AC is treated as unsigned, in which case it's 196,608.
 getnum, 0
@@ -379,12 +400,16 @@ getnbr, 0
 getnbf, 0
 
 
-
-
 define say a
     law a
     ior (bnk
     jda txtasc
+    term
+
+define newline
+    law 12
+    lia
+    iot tcb
     term
 
 / DCS2 is using channel interrupts
@@ -395,18 +420,31 @@ define say a
     jmp isr
 
 / We don't initially start here, just convenient for copying to the extended bank.
+/ The initial code will transfer here when done.
 / When running, the bank 0 code will transfer here on interrupt, a channel connect.
 100/
 resume, lsm
      cbs
      cli
      iot rci
-/ be sure we actually have a connection
-/ if not, wait for one
-rs2, iot rcs
-     rir 3s
-     spi i
-     jmp rs2
+/ be sure we actually open and have a connection
+/ if not open, do so
+/ if open and not connected, wait for one
+rs2, cli
+     iot rcs
+     lai
+     and (dsfopn
+     sza
+     jmp rs3
+     lio (sbcset ctl
+     iot scb
+
+rs3, cli
+     iot rcs
+     lai
+     and (dsfcon
+     sza i
+     jmp rs3
 
 / lock the send channel to 0 
      cli
@@ -415,26 +453,65 @@ rs2, iot rcs
      say hl1b
      say hl1c
 
-/ get the track to load
-/ if there is an error, just return to the current program
+/ get the track to load or the command
+/ if not valid, ask again
+/ if a fatal error occurs, halt then rebind and go back to the connection wait
 try, say hl2
      lio (linbuf
      jda getaln
-     spi
+     lai
+     sza
      jmp dcsfal
+     newline
      lio (linbuf
      jda getnum
+/ AC has number, IO neg if no number, char in low bits
      spi i
      jmp getnld
      lai
      and (377
      sad (150
      jmp stp
+     sad (154
+     jmp list
      say badnum
      jmp try
 stp, lio (sbcrst
      iot scb
      hlt
+     jmp resume
+
+/ List programs on the drum
+/ Loop thru all tracks getting the control block, 7751-7777
+list,
+     newline
+     dzm trk
+lst2, lac trk
+     sal 6s
+     sal 6s
+     ior (drmrd isr
+     lia
+     iot dia
+     law 26
+     lia
+     iot dwc
+     law linbuf
+     ior (bnk
+     lia
+     iot dcl
+     lac linbuf+25
+     sad (707070
+     jmp .+2
+     jmp trkn
+     jda prttrk
+     say dir
+     say linbuf
+     newline
+trkn, idx trk
+     sad (040
+     jmp try
+     jmp lst2
+trk, 0
 
 / AC has the track to load
 / load bank 0 mem from drum
@@ -448,14 +525,24 @@ getnld,
      iot dwc
      iot dcl
 
-/ bank 0 now has pgm loaded, check for start
-     lac (sadr
+/ bank 0 now has pgm loaded, check for valid load entry
+     law 7777
      dac ads
      lac i ads
-     sza i
-     jmp getnns
+     sad (707070
+     jmp trkok
+     say inval
+     jmp try
 
-/ copy our bank 0 stuff again
+/ say the pgm, copy our bank 0 stuff again
+trkok,
+     say bye
+/ show the directory filename
+     law isr
+     jda txtasc
+     say bye2
+
+/ copy our low mem code
      dzm adt
      lac (b0a
      ior (bnk
@@ -463,7 +550,8 @@ getnld,
      law 4
      jda cpy
 
-     lac (isr
+/ copy our high mem code
+     law isr
      dac adt
      lac (b0b
      ior (bnk
@@ -471,9 +559,8 @@ getnld,
      law 20
      jda cpy
 
-     say bye
-/ start 3 second countdown
-     law 5670
+/ start 2 second countdown
+     law 3720
      iot i cct
      cla
      iot cct
@@ -481,195 +568,232 @@ getnld,
 / Close the channel, it will reopen on the next connection
      lio (sbcbnd
      iot scb
-/ and transfer back to bank 0, adr 0
+/ be sure things are cleaned up interrupt-wise
+     cbs
+     cli
+     iot rci
+/ and transfer back to bank 0, adr 7765
      jmp i b0s
-b0s, 0
+b0s, 7765
 
 / we had an error, just rebind and wait
 dcsfal, lio (sbcbnd
      iot scb
+     hlt
      jmp resume
 
-getnns, say badpgm
-    jmp try
-
 hl1, / ascii
-    110145
-    154154
-    157040
-    146162
-    157155
-    040171
-    157165
-    162040
-    120151
-    104120
-    061041
-    012000
+     110145
+     154154
+     157040
+     146162
+     157155
+     040171
+     157165
+     162040
+     120151
+     104120
+     061041
+     012000
 
 hl1b, / ascii
-    117156
-    143145
-    040171
-    157165
-    040163
-    145154
-    145143
-    164040
-    141040
-    160162
-    157147
-    162141
-    155054
-    040164
-    150151
-    163040
-    143157
-    156156
-    145143
-    164151
-    157156
-    040167
-    151154
-    154040
-    143154
-    157163
-    145056
-    012000
+     117156
+     143145
+     040171
+     157165
+     040163
+     145154
+     145143
+     164040
+     141040
+     160162
+     157147
+     162141
+     155054
+     040164
+     150151
+     163040
+     143157
+     156156
+     145143
+     164151
+     157156
+     040167
+     151154
+     154040
+     143154
+     157163
+     145056
+     012000
 
 hl1c, / ascii
-    117160
-    145156
-    040151
-    164040
-    141147
-    141151
-    156040
-    164157
-    040163
-    145154
-    145143
-    164040
-    141040
-    156145
-    167040
-    160162
-    157147
-    162141
-    155056
-    012000
-
+     117160
+     145156
+     040151
+     164040
+     141147
+     141151
+     156040
+     164157
+     040163
+     145154
+     145143
+     164040
+     141040
+     156145
+     167040
+     160162
+     157147
+     162141
+     155056
+     012000
 
 hl2, / ascii
-    120162
-    157147
-    162141
-    155040
-    156165
-    155142
-    145162
-    040164
-    157040
-    154157
-    141144
-    054040
-    060055
-    063061
-    040157
-    162040
-    150040
-    164157
-    040143
-    154157
-    163145
-    040141
-    154154
-    040143
-    157156
-    156145
-    143164
-    151157
-    156163
-    040141
-    156144
-    040150
-    141154
-    164077
-    040000
+     120162
+     157147
+     162141
+     155040
+     156165
+     155142
+     145162
+     040164
+     157040
+     154157
+     141144
+     054040
+     060055
+     063061
+     054040
+     154040
+     164157
+     040154
+     151163
+     164040
+     141166
+     141151
+     154141
+     142154
+     145054
+     012157
+     162040
+     150040
+     164157
+     040143
+     154157
+     163145
+     040141
+     154154
+     040143
+     157156
+     156145
+     143164
+     151157
+     156163
+     040141
+     156144
+     040150
+     141154
+     164077
+     040000
+
+
+dir, / ascii
+     040055
+     040000
 
 
 badnum, / ascii
-    123157
-    162162
-    171054
-    040164
-    150141
-    164047
-    163040
-    156157
-    164040
-    141040
-    166141
-    154151
-    144040
-    156165
-    155142
-    145162
-    054040
-    164162
-    171040
-    141147
-    141151
-    156056
-    012000
+     123157
+     162162
+     171054
+     040164
+     150141
+     164047
+     163040
+     156157
+     164040
+     141040
+     166141
+     154151
+     144040
+     156165
+     155142
+     145162
+     054040
+     164162
+     171040
+     141147
+     141151
+     156056
+     012000
 
-
-badpgm, / ascii
-    124150
-    141164
-    040160
-    162157
-    147162
-    141155
-    040150
-    141163
-    040156
-    157040
-    163164
-    141162
-    164040
-    141144
-    144162
-    145163
-    163054
-    040164
-    162171
-    040141
-    147141
-    151156
-    056012
-    000000
+inval, / ascii
+     124150
+     141164
+     040164
+     162141
+     143153
+     040144
+     157145
+     163040
+     156157
+     164040
+     150141
+     166145
+     040141
+     040160
+     162157
+     147162
+     141155
+     040154
+     157141
+     144145
+     144054
+     040164
+     162171
+     040141
+     147141
+     151156
+     056012
+     000000
 
 
 bye, / ascii
-    012114
-    157141
-    144151
-    156147
-    040160
-    162157
-    147162
-    141155
-    054040
-    164150
-    145156
-    040143
-    154157
-    163151
-    156147
-    056012
-    000000
+     012114
+     157141
+     144151
+     156147
+     040160
+     162157
+     147162
+     141155
+     040000
 
+bye2, / ascii
+     040164
+     150145
+     156040
+     143154
+     157163
+     151156
+     147056
+     012000
+
+
+/ Print the track number in location trk as 2 decimal digits.
+prttrk, 0
+    dap prtrtn
+    cla
+    lio trk
+    sil 1s
+    div (12
+    add (60
+    lsw
+    iot tcb
+    add (60
+    lia
+    iot tcb
+prtrtn, jmp .
 
 / Copy from one mem bank to another.
 / AC has the count of words to copy.
@@ -678,7 +802,7 @@ bye, / ascii
 / Both can have extended addresses.
 / If extended addresses are used, be sure an eem has been done first.
 cpy, 0
-    dap cd
+    dap cpydn
     lac cpy
     cma
 cl, add (1
@@ -690,9 +814,18 @@ cl, add (1
     lsw
     sza
     jmp cl
-cd, jmp .
+cpydn, jmp .
 ads, 0
 adt, 0
+
+/ server port, ascii, echo, and crlf on channel 0, interrupt on connect or disconnect
+/ listen on port 2022
+ctl, dcfcrnl dcfecho dcfsrv dcfie dcfioe dcfioc
+     3746
+     octal
+
+// get our contants output so they don't step on us later
+constants
 
 / The channel 0 interrupt setup.
 / We execute a bit of code that will get
@@ -726,44 +859,31 @@ b0b,
      eem
      jmp i 0
 
-// The controller jumps here, strt, 7765, to start the program.
-    cbs
+/ The controller jumps here, strt, 7765, to start the program.
+/ Be sure to not overwrite 7773-7777!
+    lem
     esm
     jmp i sadr
 
 constants
 
-/ We are started here in bank 0, copy our control program to the same locations in the bank
-/ used for the control program, set up DCS2 and jump to 100 there.
+/ We are started here in bank 0, copy our control program imagefrom this bank to the same
+/ locations in the bank  used for the control program and jump to 100 there.
+/ Why all this hand-waving? Neither macro nor the default loader handles extended memory. Lame.
 6000/
-/ force clear DCS2 in case user restarted here
-    lio (sbcrst
-    iot scb
     eem
     law 100
     dac ads
-    ior (bnk
+    ior lclbnk
     dac adt
 / AC has the number of words to copy
     law 2000
     jda cpy
 
-/ set up for interrupts, channel 0 for flex, echo, crnl, intr on state change
-    cli
-    lio (sbcset ctl
-    iot scb 
-
     law 100
-    ior (bnk
+    ior lclbnk
     dac ads
     jmp i ads
-
-/ server port, ascii, echo, and crlf on channel 0, interrupt on connect or disconnect
-/ listen on port 2022
-ctl, dcfcrnl dcfecho dcfsrv dcfie dcfioe dcfioc
-     decimal 2022
-     octal
-
-constants
+lclbnk, bnk
 
 start 6000

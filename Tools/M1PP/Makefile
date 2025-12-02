@@ -1,5 +1,5 @@
-m1pp: m1pp.c
-	cc -g -o m1pp m1pp.c
+.PRECIOUS: *.c
 
-m1pp.c: m1pp.l
-	flex -o m1pp.c m1pp.l
+m1pp: m1pp.l
+	flex m1pp.l
+	cc -o m1pp m1pp.c

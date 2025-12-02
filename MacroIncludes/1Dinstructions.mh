@@ -1,4 +1,17 @@
 / The few implemented PDP1-D instructions
-lia=760020
-lai=760040
-lsw=760060
+/ Bit positions
+liab=20
+laib=40
+lswb=60
+swpb=60
+cmib=4000
+snib=4000
+szib=14000
+/ Instruction form
+lia=760000 liab
+lai=760000 laib
+lsw=760000 lswb
+swp=760000 swpb
+cmi=760000 cmib
+sni=640000 snib
+szi=640000 szib

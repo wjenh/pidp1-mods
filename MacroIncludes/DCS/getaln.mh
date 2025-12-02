@@ -3,7 +3,7 @@
 / The line is terminated by the null character, 0, and the line terminatior (nl or cr) dropped.
 / The memory area is not bounds checked!
 / The current DCS2 channel is used.
-/ If an error occurs, the IO register will have the DCS2 error code, else 0.
+/ If an error occurs, the IO register will have the DCS2 rcs error code, else 0.
 / The AC register is preserved.
 / Call via jda getaln.
 
@@ -12,26 +12,22 @@
 #includeif <DCS/getach.mh>
 
 getaln, 0
-        dac glartn
+        dap glartn
         dio glamem
 glalp,  jda getach
         lai
+        sza i
+        jmp glalp
         spa
         jmp glabad
         dio i glamem
         sad ('\r'
         jmp gladon
-        sad ('\n'
-        jmp gladon
         idx glamem
         jmp glalp
-gladon, lac getaln
-        cli
-/ overwrite the cr or nl with 0
+gladon, cli
+/ overwrite the cr with 0
         dzm i glamem
-        jmp i glartn
-glabad, iot rle
-        lac getaln
-        jmp i glartn
-glartn, 0
+glabad, lac getaln
+glartn, jmp .
 glamem, 0

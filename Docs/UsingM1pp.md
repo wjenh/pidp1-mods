@@ -23,8 +23,6 @@ The processed output is fully compatible with both macro and macro1.
 - Constants seen but no constants statement
 - No start at the end of the program
 - Extra text after a start
-- leading spaces or tabs with a + or -
-- + or - surrounded by spaces or tabs
 
 The missing label test does a simple check for the first line starting with digits followed by a forward slash,
 or a sequence of alpha characters followed by a comma.
@@ -64,8 +62,6 @@ If there is no start statement at the end of the program, a warning will be give
 If there are more lines following the start statement, a warning will be given because the
 assembler does not process those lines.
 
-Various combinations of +/- and spaces or tabs is illegal, these are fixed, e.g. '1 + 2' changed to '1+2'.
-
 ## New features
 
 Some convenience features have been added.
@@ -79,6 +75,10 @@ If you object and don't want to use them, then just don't use them.
 The features are:
 
 - A hexadecimal number of the form *0xn*, the standard C/C++ representation, can be used anywhere
+a number can be used. It will be converted to either an octal or decimal number, depending upon the
+current radix that is set.
+
+- A decimal number of the form *0dn*, like the hexadecimal representation, can be used anywhere
 a number can be used. It will be converted to either an octal or decimal number, depending upon the
 current radix that is set.
 

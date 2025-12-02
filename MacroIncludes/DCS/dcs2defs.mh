@@ -22,8 +22,10 @@ rpc=4422
 rci=4522
 ric=4622
 rcs=4722
+rwe=5122
 roc=5222
 res=5322
+rxl=5422
 
 / symbols not compatible with native macro
 / dcfxxx are single bit flags
@@ -37,6 +39,9 @@ res=5322
 / dcfior - interroupt on character received
 / dcfie -  enable interrupts for channel
 / dcfsrv - server mode
+/ rxlfta - flexo to ascii
+/ rxlucs - flexo upper case shift
+/ rxlchg - flexo shift state changed
 / dcmsbs - bitmask, sbs channel to use
 / dcmcha - bitmask, channel number for this channel
 
@@ -48,6 +53,10 @@ dcfioe=020000
 dcfior=010000
 dcfie=004000
 dcfsrv=000100
+rxlfta=0400000
+rxlucs=00400
+rxlchg=01000
+
 dcmsbs=003600
 dcmcha=000077
 
@@ -121,3 +130,5 @@ flxerr=076
 flxnch=013
 flxetx=013
 flxnl=077
+/ ascnch is used by rxl
+ascnch=077

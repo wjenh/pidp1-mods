@@ -1,0 +1,37 @@
+// Useful things for extended memory access
+#ifndef MEMORY_AH
+#define MEMORY_AH
+
+#define farjmp(a) \
+    jmp i .+1; \
+    a
+
+#define farjsp(a) \
+    jsp i .+1; \
+    a
+
+#define farjda(a) \
+    jda i .+1; \
+    a
+
+#define farlac(a) \
+    lac i .+2; \
+    jmp .+2; \
+    a
+
+#define farlio(a) \
+    lio i .+2; \
+    jmp .+2; \
+    a
+
+#define fardac(a) \
+    dac i .+2; \
+    jmp .+2; \
+    a
+
+#define fardio(a) \
+    dio i .+2; \
+    jmp .+2; \
+    a
+
+#endif

@@ -3,4 +3,4 @@ weren't in the original assembler.
 To use, macro1 -S specialsyms.sym yourcode.mac
 Update it by make specialsyms.sym
 
-Or, just use m1pp and the provided include files.
+Or, just use m1pp or am1 and the provided include files.

@@ -1,0 +1,38 @@
+ AM1 EXTENDED MEMORY LOADER
+ / Data format
+ / Any number of blocks:
+ /
+ / ctl word
+ / if loading, followed by
+ / end address + 1
+ / data word
+ / ... end address + 1 - start address total data words
+ /
+ / ctl word is:
+ / dds sss sss sss sss sss
+ / where:
+ / dd 00 load data starting at address ssssssssssssssss
+ / dd 10 start, execute jmp i ssssssssssssssss, terminates loading
+
+lai=760040
+
+7751/
+    eem
+loop, rpb
+    lai
+    and (177777
+    dac addr
+    spi
+    jmp i addr	/done
+    rpb
+    dio end
+load, rpb
+    dio i addr
+    idx addr
+    sas end
+    jmp load
+    jmp loop
+addr, 0
+end, 0
+constants
+start 7751

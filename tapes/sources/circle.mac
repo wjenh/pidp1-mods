@@ -1,3 +1,5 @@
+CIRCLE PROGRAM FIXED WITH START AND THIS COMMENT
+4/
 go,	lac x
 lup,	cma
 	sar 4s
@@ -12,3 +14,4 @@ lup,	cma
 
 x,	200000
 y,	0
+start 4

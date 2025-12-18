@@ -1,0 +1,111 @@
+# Define the symbol table for builtin permanent symbols, such as opcodes.
+# Each line has 3 fields:
+# name type value
+# The type is one of 'opcode', 'opaddr', 'oporable', or 'value'.
+# Opcode will set the symbol flags to SYMF_PERM | SYM_OPCODE.
+# Opaddr will set the symbol flags to SYMF_PERM | SYM_OPADDR, an instruction with an address field.
+# Oporable will set the symbol flags to SYMF_PERM | SYM_OPORABLE, an instruction that can be combined.
+# Value will set the symbol flags to SYMF_PERM | SYM_VALUE, a numeric constant, such as from 1s or i.
+# The value is the integer value of the symbol.
+#
+# See btabgen.c for more details.
+
+1s  value 01
+2s  value 03
+3s  value 07
+4s  value 017
+5s  value 037
+6s  value 077
+7s  value 0177
+8s  value 0377
+9s  value 0777
+
+i   value 010000
+
+and opaddr 0020000
+ior opaddr 0040000
+xor opaddr 0060000
+xct opaddr 0100000
+jfd opaddr 0120000
+cal opaddr 0160000
+jda opaddr 0170000
+lac opaddr 0200000
+lio opaddr 0220000
+dac opaddr 0240000
+dap opaddr 0260000
+dip opaddr 0300000
+dio opaddr 0320000
+dzm opaddr 0340000
+add opaddr 0400000
+sub opaddr 0420000
+idx opaddr 0440000
+isp opaddr 0460000
+sad opaddr 0500000
+sas opaddr 0520000
+mus opaddr 0540000
+dis opaddr 0560000
+mul opaddr 0540000
+div opaddr 0560000
+jmp opaddr 0600000
+jsp opaddr 0620000
+law opcode 0700000
+
+skp oporable 0640000
+spi oporable 0642000
+sni oporable 0644000
+szi oporable 0654000
+szo oporable 0641000
+sma oporable 0640400
+spa oporable 0640200
+sza oporable 0640100
+szf oporable 0640000
+szs oporable 0640000
+
+ral opcode 0661000
+rar opcode 0671000
+ril opcode 0662000
+rir opcode 0672000
+rcl opcode 0663000
+rcr opcode 0673000
+sal opcode 0665000
+sar opcode 0675000
+sil opcode 0666000
+sir opcode 0676000
+scl opcode 0667000
+scr opcode 0677000
+
+nop oporable 0760000
+opr oporable 0760000
+
+cli oporable 0764000
+cmi oporable 0770000
+lat oporable 0762200
+cma oporable 0761000
+hlt oporable 0760400
+cla oporable 0760200
+
+lap opcode  0760300
+clf opcode  0760000
+stf opcode  0760010
+
+iot opcode  0720000
+
+# 1D instructions
+lia oporable 0760020
+lai oporable 0760040
+lsw oporable 0760060
+swp oporable 0760060
+
+tyi opcode 0720004
+rrb opcode 0720030
+cks opcode 0720033
+lsm opcode 0720054
+esm opcode 0720055
+rpa opcode 0730001
+rpb opcode 0730002
+tyo opcode 0730003
+ppa opcode 0730005
+ppb opcode 0730006
+dpy opcode 0730007
+lem opcode 0720074
+eem opcode 0724074

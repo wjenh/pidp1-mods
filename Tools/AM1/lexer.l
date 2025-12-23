@@ -13,6 +13,7 @@
 
 bool decimalMode;
 bool inConstant;
+bool didTerm;
 
 extern int lineno;
 
@@ -25,7 +26,7 @@ extern void vwarn(char *msgP, ...);
 extern char asciiToFlexo(char, int *);	// in parsefns.c
 
 int processEscape(char);
-void reset_line(char *);
+void reset_line(void);
 
 #define YY_USER_INIT BEGIN FIRST
 
@@ -187,9 +188,15 @@ octal			{ decimalMode = false; }
 			    return(ENDCONST);
 			}
 
-[ \t]*\/\/.*$		{
-			    yylval.strP = malloc(strlen(yytext) + 1);
-			    strcpy(yylval.strP, yytext);
+[ \t]*\/\/.*\n		{
+			char *cP;
+
+			    cP = strchr(yytext, '/') + 2;
+			    yylval.strP = malloc(strlen(cP) + 1);
+			    strcpy(yylval.strP, cP);
+			    *strchr(yylval.strP, '\n') = 0;
+			    ++lineno;
+			    didTerm = false;
 			    return(COMMENT);
 			}
 
@@ -313,7 +320,19 @@ octal			{ decimalMode = false; }
 			    return(ORIGIN);
 			}
 
-[ \t]*(\n|(\;[ \t]*))		{
+^\n			{
+			    ++lineno;
+
+			    if( !didTerm )
+			    {
+			    	didTerm = true;
+				return( TERMINATOR );
+			    }
+			 }
+
+[ \t]*(\n|(\;[ \t]*))	{
+			    didTerm = false;
+			    
 			    if( inConstant )
 			    {
 				inConstant = false;
@@ -334,38 +353,14 @@ octal			{ decimalMode = false; }
 				    // not semi terminated
 			            ++lineno;
 				}
+				didTerm = false;
 			        return(TERMINATOR);
 			    }
 			}
 
-<FIRST,BODY>^\#	{
-			int tmpc;
-			char *cP;
-			char string[STRBUF];
-
+<FIRST,BODY>^\#		{
 			    // Handle cpp line number resets
-			    // grab rest of line
-
-			    cP = string;
-
-			    while( (tmpc = input()) != '\n' )
-			    {
-				if( tmpc == EOF )
-				{
-				    verror("premature end of file");
-				}
-
-				if( cP >= (string+STRBUF) )
-				{
-				    verror("internal # line too long");
-				}
-
-				*cP++ = tmpc;
-			    }
-			    // unput(tmpc);
-
-			    *cP = '\0';
-			    reset_line(string);
+			    reset_line();
 			}
 
 \'			{

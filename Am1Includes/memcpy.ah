@@ -1,0 +1,36 @@
+#ifndef MEMCPY_AH
+#define MEMCPY_AH
+// Copy from one mem bank to another.
+// AC has the count of words to copy.
+// The word following the call has the address to copy from
+// The next word has the address to copy to
+// Both can have extended addresses.
+// If extended addresses are used, be sure an eem has been done first.
+memcpy, 0
+local
+// AC is in memcpy, return PC in AC
+    dap %cpydn
+    lio i %cpydn
+    dio %ads
+    idx %cpydn
+    lio i %cpydn
+    dio %adt
+    idx %cpydn
+    lac memcpy
+    cma
+%cl, add [1
+    lsw
+    lac i %ads
+    dac i %adt
+    idx %ads
+    idx %adt
+    lsw
+    sza
+    jmp %cl
+    jmp i %cpydn
+%cpydn, 0
+%ads, 0
+%adt, 0
+endloc
+
+#endif

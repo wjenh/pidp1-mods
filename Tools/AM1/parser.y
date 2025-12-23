@@ -533,6 +533,13 @@ expr		: expr SEPARATOR expr       { $$ = binop(cur_pc, SEPARATOR, $1, $3); }
                     $$->value.symP = symP;
                     $$->value2.ival = $3;
                 }
+                | ADDR BREF INTEGER
+                {
+                    // This is a symbol in our own bank, but that's ok
+                    $$ = newnode(cur_pc, BREF, NILP, NILP);
+                    $$->value.symP = $1;
+                    $$->value2.ival = $3;
+                }
                 | NAME
                 {
                 SymNodeP symP, symP2;

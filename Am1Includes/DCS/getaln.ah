@@ -1,0 +1,39 @@
+#ifndef GETALN_AH
+#define GETALN_AH
+
+// Read a line of ascii characters into the memory address passed in the IO register.
+// One character is placed in each word.
+// The line is terminated by the null character, 0, and the line terminatior (nl or cr) dropped.
+// The memory area is not bounds checked!
+// The current DCS2 channel is used.
+// If an error occurs, the IO register will have the DCS2 rcs error code, else 0.
+// The AC register is preserved.
+// Call via jda getaln.
+
+#include <1Dinstructions.ah>
+#include <DCS/dcs2defs.ah>
+#include <DCS/getach.ah>
+
+getaln,  0
+local
+        dap %glartn
+        dio %glamem
+%glalp,   jda getach
+        lai
+        sza i
+        jmp %glalp
+        spa
+        jmp %glabad
+        dio i %glamem
+        sad ['\r'
+        jmp %gladon
+        idx %glamem
+        jmp %glalp
+%gladon,  cli
+// overwrite the cr with 0
+        dzm i %glamem
+%glabad,  lac getaln
+%glartn,  jmp .
+%glamem,  0
+
+#endif

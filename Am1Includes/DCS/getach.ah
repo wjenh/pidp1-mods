@@ -1,0 +1,42 @@
+#ifndef GETACH_AH
+#define GETACH_AH
+
+// Wait for an ascii character on the current DCS channel.
+// The IO register is cleared and the character is 
+// returned in the IO register.
+// If an error occurs, the IO register will be the rcs status with bit 0 set to 1.
+// The AC register is preserved.
+// Call via jda getach.
+
+#include <1Dinstructions.ah>
+#include <DCS/dcs2defs.ah>
+
+getach,  0
+local
+     dap %gachrt
+// loop waiting for a character
+%gachlp, 
+     cli
+     iot rcs
+     lai
+     and [dsfser dsfcls
+     sza
+     jmp %gacher
+     lai
+     and [dsfrdy
+     sza i
+     jmp %gachlp
+     iot rch rchclr
+     spi
+     jmp %gacher
+     jmp %gacdn
+%gacher, 
+     lai
+     ior [400000
+     lia
+%gacdn, 
+     lac getach
+%gachrt,  jmp .
+endloc
+
+#endif

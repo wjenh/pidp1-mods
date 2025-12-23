@@ -1,0 +1,46 @@
+#ifndef TEXTFLEX_AH
+#define TEXTFLEX_AH
+
+/ Write a block of flex text out.
+// Write out a string produced by text until a word containing
+// only etx, 13, fio-dec stop, is seen, the starting address is in the ac,
+// text <whatever>
+// etx
+//
+// Include this before using it or declaring text that uses
+// the character defines, below.
+//
+// Output goes to SBS channel 0 which must be in flexo mode.
+// On call, AC contains the address of the text block.
+// Insert this at the desired point in code.
+// Call via jda txtflx.
+
+#include <1Dinstructions.ah>
+#include <DCS/dcs2defs.ah>
+
+txtflx,  0
+local
+     dac %txtrtn
+%txttop,  lac i %txtflx
+     lia
+     and [77
+// check for the end marker
+     sub [flxetx
+     sza i
+     jmp i %txtrtn
+     lai
+     ral 6s
+     lia
+     iot tcb
+     ral 6s
+     lia
+     iot tcb
+     ral 6s
+     lia
+     iot tcb
+     idx %txtflx
+     jmp %txttop
+%txtrtn,  0
+endloc
+
+#endif

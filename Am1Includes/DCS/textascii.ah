@@ -1,0 +1,40 @@
+#ifndef TEXTASCII_AH
+#define TEXTASCII_AH
+
+// Write a block of ascii text out.
+// Write out a string produced by ascii until a word containing
+// only 0 is seen, the starting address is in the ac,
+// ascii <whatever>
+//
+// Include this before using it or declaring text that uses
+// the character defines, below.
+//
+// Output goes to SBS channel 0 which must be in ascii mode.
+// On call, AC contains the address of the text block.
+// Insert this at the desired point in code.
+// Call via jda txtasc.
+
+#include <1Dinstructions.ah>
+#include <DCS/dcs2defs.ah>
+
+txtasc,  0
+     dac txartn
+txatop,  lac i txtasc
+// a word has xaaaaaaaaxbbbbbbbb
+     sar 4s
+     sar 5s
+     sza i
+     jmp i txartn
+     lia
+     iot tcb
+     law 377
+     and i txtasc
+     sza i
+     jmp i txartn
+     lia
+     iot tcb
+     idx txtasc
+     jmp txatop
+txartn,  0
+
+#endif

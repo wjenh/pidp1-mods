@@ -15,34 +15,54 @@ extern char *filenameP;                     // current input file name
 static char filename[1024];
 
 void
-reset_line( char *cppline )
+reset_line()
 {
-int i;
-char *cP;
-char tmpstr[129];
+int i, tmpc;
+char *cP, *cP2;
+char tmpstr[1024];
 
-    while( *cppline && !isdigit(*cppline) )
+    cP = tmpstr;
+
+    while( (tmpc = input()) != '\n' )
     {
-        ++cppline;
+        if( tmpc == EOF )
+        {
+            verror("premature end of file");
+        }
+
+        if( cP >= (tmpstr+STRBUF) )
+        {
+            verror("internal # line too long");
+        }
+
+        *cP++ = tmpc;
     }
 
-    i = atoi(cppline);
+    *cP = '\0';
+    cP2 = tmpstr;
+
+    while( *cP2 && !isdigit(*cP2) )
+    {
+        ++cP2;
+    }
+
+    i = atoi(cP2);
     if( i > 0 )
     {
-        lineno = i - 1;     // adjust for yacc nl processing
+        lineno = i;     // adjust for yacc nl processing
     }
 
-    while( *cppline && (*cppline != '"') )
+    while( *cP2 && (*cP2 != '"') )
     {
-        ++cppline;
+        ++cP2;
     }
 
     cP = filename;
-    ++cppline;
+    ++cP2;
 
-    while( *cppline && (*cppline != '"') )
+    while( *cP2 && (*cP2 != '"') )
     {
-        *cP++ = *cppline++;
+        *cP++ = *cP2++;
     }
 
     *cP = '\0';

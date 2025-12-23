@@ -10,11 +10,11 @@
 #define snib 4000
 #define szib 14000
 // Instruction form
-#define lia 760000 liab
-#define lai 760000 laib
-#define lsw 760000 lswb
-#define swp 760000 swpb
-#define cmi 760000 cmib
-#define sni 640000 snib
-#define szi 640000 szib
+#define lia 760000|liab
+#define lai 760000|laib
+#define lsw 760000|lswb
+#define swp 760000|swpb
+#define cmi 760000|cmib
+#define sni 640000|snib
+#define szi 640000|szib
 #endif

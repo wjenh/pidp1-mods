@@ -20,7 +20,8 @@
  *	also accepts -Ipath syntax
  * The following are for debugging, not of genaral use.
  *
- * -y   enable yacc debugging output on stderr
+ * -x   enable (f)lex debugging output on stderr
+ * -y   enable yacc (bison) debugging output on stderr
  * -k   keep the intermediate cpp file
  * -p   dump the parse tree in readable form on stdout
  *
@@ -77,6 +78,7 @@ bool noWarn;
 int lineno;
 
 extern int yydebug;
+extern int yy_flex_debug;
 
 PNodeP rootP;                   // root of the parse tree
 SymNodeP globalSymP;            // global addresses 
@@ -110,6 +112,7 @@ char *cP, *cP2;
 SymNodeP symP;
 
     yydebug = 0;
+    yy_flex_debug = 0;
 
     for(i = 1; i < NSIG;)
     {
@@ -169,8 +172,12 @@ SymNodeP symP;
                 strcpy(incroot, cP);
                 break;
 
+            case 'x':
+                yy_flex_debug = 1;
+                break;
+
             case 'y':
-                yydebug = 1;                                // undocumented
+                yydebug = 1;
                 break;
 
             case 'I':                                       /* accept either Ixxx or I xxx */
@@ -767,7 +774,7 @@ leave(int signo)
 int
 usage()
 {
-    fprintf(stderr, "Usage: am1 [-Wbmnv[ykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile\n");
+    fprintf(stderr, "Usage: am1 [-Wbmnv[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile\n");
     fprintf(stderr, "  -W don't print warnings\n");
     fprintf(stderr, "  -b generate binary code\n");
     fprintf(stderr, "  -m generate macro1 code\n");
@@ -776,6 +783,7 @@ usage()
     fprintf(stderr, "  -D define a symbol to cpp\n");
     fprintf(stderr, "  -I add an include path to cpp\n");
     fprintf(stderr, "  -i define the include root\n");
+    fprintf(stderr, "  -x enable flex debug output on stderr\n");
     fprintf(stderr, "  -y enable yacc debug output on stderr\n");
     fprintf(stderr, "  -k don't delete cpp tmp file\n");
     fprintf(stderr, "  -p dump parse tree to stdout\n");
@@ -835,7 +843,7 @@ run_cpp(char *filenameP, char *pfilename)
         }
     }
 
-    sprintf(tmpstr, "%s -DAM1 -nostdinc -isystem %s ", CPP_PATH, incroot);
+    sprintf(tmpstr, "%s -DAM1 -nostdinc -isystem %s -traditional-cpp ", CPP_PATH, incroot);
     cP = tmpstr + strlen(tmpstr);
 
     while(incsP)

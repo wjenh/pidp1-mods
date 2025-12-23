@@ -39,13 +39,25 @@ static void
 emitStatements(FILE *outfP, PNodeP nodeP)
 {
 PNodeP node2P;
+char str[128];
 
     while( nodeP )
     {
         switch( nodeP->type )
         {
         case COMMENT:
-            fprintf(outfP, "%s", nodeP->value.strP);
+            if( strlen(nodeP->value.strP) > 70 )
+            {
+                // macro screws up on long lines
+                strncpy(str, nodeP->value.strP, 70);
+                str[71] = 0;
+                fprintf(outfP, "/ %s\n", str);
+                fprintf(outfP, "/ %s\n", nodeP->value.strP + 70);
+            }
+            else
+            {
+                fprintf(outfP, "/ %s\n", nodeP->value.strP);
+            }
             break;
 
         case ORIGIN:
@@ -73,16 +85,12 @@ PNodeP node2P;
             break;
 
         case LCLLOCATION:
-            fprintf(outfP, "    ");
             if( nodeP->rightP )
             {
+                fprintf(outfP, "    ");
                 emitOperand(outfP, nodeP->rightP);
+                fprintf(outfP,"\n");
             }
-            else
-            {
-                fprintf(outfP,"0");
-            }
-            fprintf(outfP,"\n");
             break;
 
         case VARS:
@@ -268,6 +276,7 @@ PNodeP node2P;
         }
         break;
 
+    case LITCHAR:
     case CHAR:
     case FLEXO:
         fprintf(outfP, "%06o", nodeP->value.ival & WRDMASK);

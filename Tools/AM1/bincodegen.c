@@ -319,6 +319,7 @@ PNodeP node2P;
 
     case CHAR:
     case FLEXO:
+    case LITCHAR:
         return( nodeP->value.ival & WRDMASK );
         break;
 

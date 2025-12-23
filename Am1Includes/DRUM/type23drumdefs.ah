@@ -1,0 +1,26 @@
+#ifndef DRUMDEFS_AH
+#define DRUMDEFS_AH
+
+// This defines the IOT instructions for the Type 23 drum.
+// Note this differs from the examples in that it does not add the iot
+// explicitly, so use is e.g. iot dia.
+#define dia 61
+#define dba 2061
+#define dwc 62
+#define dra 2062
+#define dcl 63
+#define dss 2063
+
+// Additional flags, not compatible with native macro, only macro1.
+// These flags are in the IO register.
+#define drmrd 400000
+#define drmwrt 400000
+
+// Bits for dss
+#define drms16 40
+#define drmsch 20
+
+// The bit set if a cks is done.
+#define cksdrm 1
+
+#endif

@@ -15,7 +15,7 @@ lex.yy.o: lex.yy.c y.tab.h
 	$(CC) -c lex.yy.c
 	
 lex.yy.c: lexer.l y.tab.c lexfuncs.c
-	flex lexer.l
+	flex -d lexer.l
 
 y.tab.c, y.tab.h: parser.y am1.h symtab.h
 	bison -o y.tab.c -d parser.y

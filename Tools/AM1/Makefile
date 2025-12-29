@@ -1,6 +1,7 @@
 CC=gcc -O0 -g
 
-am1:	am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o permsyms.def.o eval.o maccodegen.o bincodegen.o
+am1:	am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o permsyms.def.o eval.o \
+	maccodegen.o bincodegen.o listcodegen.o
 
 clean:
 	@rm *.o lex.yy.c y.tab.c y.tab.h permsyms.def.c am1 symtabgen 2>/dev/null || true
@@ -37,6 +38,9 @@ maccodegen.o: maccodegen.c am1.h y.tab.h
 
 bincodegen.o: bincodegen.c am1.h y.tab.h font5x7.h xldr.h
 	$(CC) -c bincodegen.c
+
+listcodegen.o: listcodegen.c am1.h y.tab.h
+	$(CC) -c listcodegen.c
 
 symtabgen: symtabgen.c am1.h symtab.o
 

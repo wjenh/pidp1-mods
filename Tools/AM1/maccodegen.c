@@ -4,11 +4,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "am1.h"
 #include "y.tab.h"
 
-extern SymNodeP constSymP;		// literal constants so we can check for a constants stmt if needed
+extern SymListP constsListP;
+extern bool sawBank;
+extern BankContextP banksP;
 
 extern int countText(char *strP);
 extern int countAscii(char *strP);
@@ -32,6 +35,20 @@ macCodegen(FILE *outfP, PNodeP rootP)
     // The root lhs is the program body, the rhs the START at the end of the program.
     fprintf(outfP,"%s\n", rootP->value.strP);
     emitStatements(outfP, rootP->leftP);
+
+    if( sawBank )       // finish trailing consts
+    {
+        for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
+        {
+            if( bankP->constSymP )
+            {
+                fprintf(outfP, "/ Constants for bank %d\n", bankP->bank);
+                fprintf(outfP, "%o/\n", bankP->cur_pc);
+                emitConstants(outfP, bankP->constSymP);
+            }
+        }
+    }
+
     fprintf(outfP,"start %o\n", rootP->rightP->value.ival);
 }
 
@@ -96,6 +113,10 @@ char str[128];
         case VARS:
             fprintf(outfP,"/ variables\n");
             emitVars(outfP, nodeP->rightP);
+            break;
+
+        case BANK:
+            fprintf(outfP,"/ BANK - following is in bank %d\n", nodeP->value.ival );
             break;
 
         case CONSTANTS:
@@ -232,6 +253,10 @@ PNodeP node2P;
     case OPCODE:
     case OPADDR:
         fprintf(outfP,"%s", nodeP->value.symP->name );
+        break;
+
+    case BREF:
+        fprintf(outfP,"BREF %s:%d", nodeP->value.symP->name, nodeP->value2.ival );
         break;
 
     case LCLADDR:

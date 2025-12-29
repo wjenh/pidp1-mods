@@ -19,7 +19,10 @@ It can, in fact, produce as its output valid source that can be assembled by **m
 ## The features and differences
 
 First, two different assembly modes are supported, generating of **macro1** source and direct generation of rim-lodable
-binary code. While most of the language constructs apply to both, one, *bank*, is not supported by **macro1**.
+binary code.
+While most of the language constructs apply to both, one, *bank*, is not supported by **macro1**.
+Code will still be generated but should just be for reference as any code in extended memory will just overlay
+code in bank 0.
 
 Features
 
@@ -45,8 +48,7 @@ Differences in source code
 These changes were done to allow the above changes and to remove some of the ambiguous
 use of characters in **macro1** that were poorly handled.
 
-- Location assignment statements **must** be on a line by themselves with an optional comment
-- Constants are now of the form *[xxx* and *[xxx], not *(xxx* and *(xxx)*
+- Constants are now of the form *[xxx* and *[xxx]*, not *(xxx* and *(xxx)*
 - Multiple statemens on a line are separated by *;* not tab
 - Tabs are not statement delimiters and are treated as a space
 - Cpp directives of the form *#xxx* are supported
@@ -99,13 +101,30 @@ allocated and pops back to the next higher context, if any.
 
 All references within the scope are then emitted as pc-relative so no externally visible symbols are created.
 
-Similarly, each memory bank has its own context that holds the global symbols and constants, the current
-location, etc. The contexts are automatically switched when banks are switched.
+Constants are handled specially to allow for constant reuse.
+When a constant is encountered, its defining expression is used to create a hash code that is saved
+as the key in the constants symbol table.
+Thus, the next time the same value is seen the existing entry will be used.
+When a *constants* directive is seen, all constants added since the last instance of the diretive are assigned
+locations starting from the current location, which will be updated to one past the last constant processed.
+However, the actual value is not computed until the end of the program so that forward references can be used.
 
-Finally, there's a global global symbol table that allows sharing across memory banks.
+If there are constants that have not been processed when the end of the program is reached, they will be automatically
+processed and placed just after the last location used.
+This might or might not be what is intended, so explicitly placing them is advised.
 
-Two code generators are implemented, one that emits correct macro1 code that can be assembled by it,
-and one that emits binary suitable for rim loading.
+Each memory bank has its own context that holds the global symbols and constants, the current
+location, etc.
+The context is created the first time a bank is specified by the *bank* directive.
+The contexts are automatically switched when banks are switched.
+
+A cross-bank reference looks up the given symbol in the global symbol table of the target bank and becomes
+the full 16-bit address if that symbol.
+If the symbol does not exist currently in the bank, it will be created.
+If it is never reolved in that bank, an error will be given at the end of the program.
+
+Three code generators are implemented, one that emits correct macro1 code that can be assembled by it,
+and one that emits binary suitable for rim loading, and onefor generating listings.
 The parser side knows nothing about the details of the code generators, it just manages the symbol tables
 and creates the parse tree.
 
@@ -123,11 +142,12 @@ Just type make.
 
 ## Usage
 
-**am1** [-Wbmnv[ykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile
+**am1** [-Wbmlnv[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile
 
 - W don't print warnings
-- m generate binary tape image code
+- b generate binary tape image code, the default action
 - m generate **macro1** code
+- l generate a program listing
 - n don't run **cpp** on the input
 - v print the version number and exit
 - Dsymbol define a symbol for **cpp**, -Dsym or -D sym are both accepted
@@ -136,9 +156,15 @@ Just type make.
 
 These additional flags are generally for debugging:
 
-- y generate yacc debugging output to stderr
+- x send lex debugging output to stderr
+- y send yacc debugging output to stderr
 - k keep intermediate **cpp** file
 - p print the internal parse tree in readable form
+
+Both **macro1** and binary code can be generated at the same time.\
+While a listing can be produced for either macro or binary, the binary value for each location is only
+available if binary has been generated.
+For macro only output, the value field is meaningless.
 
 ## General program structure
 
@@ -186,7 +212,7 @@ followed optionally by any number of alphanumeric characters and digits, e.g. *s
 
 Note that while **am1** allows effectively unlimited symbol lengths (1023 to be precise), **macro** only allows 3
 and **macro1** only allows 6.
-More precisely, symbols must be unique in the first 3 characters for macro, 6 for **macro1**.
+More precisely, symbols must be unique in the first 3 characters for **macro**, 6 for **macro1**.
 
 Unlike **macro1**, a digit cannot be used as the first character of a symbol.
 
@@ -211,7 +237,7 @@ bar, .....
 The first is a *reference*, its value is the memory location assigned to foo.\
 The second assigns foo a memory location, which is the current program location.\
 It is an error to reference a symbol that never has a location assigned to it, and it is an error to define
-a location for the same symbol more than once.
+a location for the same symbol more than once in the same memory bank.
 
 Note that this is a departure from **macro1** which allow arbitrary redefinition of *any* symbol, a bad idea.
 
@@ -327,7 +353,7 @@ There are two additional special number representations:
 - char cl, cm, or cr
 - 'c'
 
-The first is the same as the **macro1** version, *c* must be a valid Flex/Concise character, and the lmr
+The first is the same as the **macro1** version, *c* must be a valid *unshifted* Flex/Concise character, and the lmr
 specifies which 6 bit field in the resulting 18 bit value the character's value is place.
 
 The second results in the value of the ascii character, but the usual escapes are allowed:
@@ -461,7 +487,8 @@ These cause any declared variables or constants to be emitted at the current loc
 Subsequent declarations will be held until the next variables or constants constants.
 
 If no directive is given, any variables and constants will be written at the end of the program, the
-location when the start directive is given.
+location where the start directive is given.
+This might not place these where you want, so using the directives is advised.
 
 The location counter is updated appropriately after either directive.
 
@@ -504,7 +531,8 @@ In bank 1, a will have the value 201, its in-bank address.
 Code using banks and cross-bank references must understand the standard PDP-1 extended memory mode access rules.
 
 The **macro** and **macro1** compilers do not support extended memory,
-so this will give an error if macro code is being generated.
+so code using banks will generate code that isn't actually usable, but it will be annotated
+to show where banks were switched.
 
 Some useful macros for dealing with cross-bank references are provided in the \<memory.ah\> include file.
 
@@ -519,6 +547,7 @@ Examples are:
 start 100
 start begin
 start 20100 // start at location 100 in bank 2
+start begin:3 // start at the location of *begin* in bank 3
 ```
 
 Any defined location can be used.

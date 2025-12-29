@@ -7,6 +7,7 @@
  * -W	don't print any warnings
  * -b	generate binary source
  * -m	generate macro1 source
+ * -l	generate a listing
  * -n	don't run cpp on input source
  * -v   print the current version number and exit
  *
@@ -32,6 +33,7 @@
  *
  * sourcefile.mac is the macro1 source output file
  * sourcefile.rim is the loadable executable file in rim/bin format
+ * sourcefile.lst is the listing output file
  *
  * The environment variable 'AM1INCDIR' overrides the default system
  * include directory, which is overridden itself by -i.
@@ -62,7 +64,7 @@ FILE *outfP;                    // where we put our code
 char *filenameP;                // input am1 file 
 
 char pfilename[128];            // cpp tmp file name
-char ofilename[128];            // binary output file 
+char ofilename[128];            // output file 
 char basename[64];              // base name 
 char incroot[129];              // root of includes
 char str1[256];                 // scratch strings 
@@ -70,6 +72,7 @@ char str2[256];
 
 bool doMacro;
 bool doBinary;
+bool doListing;
 bool doCpp;
 bool keepCpp;
 bool dumpTree;
@@ -84,6 +87,7 @@ PNodeP rootP;                   // root of the parse tree
 SymNodeP globalSymP;            // global addresses 
 SymNodeP localSymP;             // local addresses 
 SymNodeP constSymP;             // constants
+SymListP constsListP;           // the list of all constant groups
 
 extern int cur_pc;
 
@@ -91,11 +95,13 @@ extern char *am1_version;
 extern FILE *yyin;              // lex input file 
 extern int yyparse();
 extern BankContextP findBank(int bankNo);
+extern void setConstVal(SymNodeP);
 char *getenv();
 
 int evalExpr(PNodeP);
 int macCodegen(FILE *, PNodeP);
 int binCodegen(FILE *, PNodeP);
+int listCodegen(FILE *, PNodeP);
 
 void add_cpp(char, char *);
 void leave(int);
@@ -151,6 +157,10 @@ SymNodeP symP;
 
             case 'b':
                 doBinary = true;
+                break;
+
+            case 'l':
+                doListing = true;
                 break;
 
             case 'n':
@@ -283,6 +293,12 @@ SymNodeP symP;
         leave(0);
     }
 
+    // Now resolve all const values
+    for( SymListP listP = constsListP; listP; listP = listP->nextP )
+    {
+        setConstVal(listP->symP);
+    }
+
     fclose(yyin);
     
     if(dumpTree)
@@ -292,8 +308,8 @@ SymNodeP symP;
 
     if( doMacro && sawBank )
     {
-        fprintf(stderr, "am1: 'bank' was used, macro code not generated.\n");
-        doMacro = 0;
+        fprintf(stderr, "am1: WARNING - 'bank' was used, macro1 does not support it.\n");
+        fprintf(stderr, "Your code will not do what you expect and should just be for reference.\n");
     }
 
     if( doMacro )
@@ -329,6 +345,27 @@ SymNodeP symP;
         }
 
         i = binCodegen(outfP, rootP);
+
+        fclose(outfP);
+
+        if(!i)                    // codegen failed
+        {
+            unlink(ofilename);      // get rid of output
+        }
+    }
+
+    if( doListing )
+    {
+        strcpy(ofilename, basename);                         /* output file */
+        strcat(ofilename, ".lst");
+
+        if(!(outfP = fopen(ofilename, "w")))
+        {
+            fprintf(stderr, "am1: can't open output file '%s'\n", ofilename);
+            leave(0);
+        }
+
+        i = listCodegen(outfP, rootP);
 
         fclose(outfP);
 
@@ -774,10 +811,11 @@ leave(int signo)
 int
 usage()
 {
-    fprintf(stderr, "Usage: am1 [-Wbmnv[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile\n");
+    fprintf(stderr, "Usage: am1 [-Wbmlnv[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile\n");
     fprintf(stderr, "  -W don't print warnings\n");
     fprintf(stderr, "  -b generate binary code\n");
     fprintf(stderr, "  -m generate macro1 code\n");
+    fprintf(stderr, "  -l generate listing\n");
     fprintf(stderr, "  -n don't run cpp\n");
     fprintf(stderr, "  -v print the am1 version number and exit\n");
     fprintf(stderr, "  -D define a symbol to cpp\n");

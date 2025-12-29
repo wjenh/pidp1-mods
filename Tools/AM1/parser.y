@@ -33,6 +33,7 @@ static PNodeP varNodesP;                // unemitted vars
 extern SymNodeP globalSymP;		// global symtab
 extern SymNodeP constSymP;		// literal constants
 extern SymNodeP permSymP;	        // the instructions and other permanent values
+extern SymListP constsListP;            // the list of all constant groups
 
 extern bool noWarn;
 extern bool sawBank;
@@ -44,11 +45,14 @@ SymNodeP addLocalSymbol(char *nameP);
 LocalContextP newLocalContext(void);
 int countAscii(char *strP);
 int countText(char *strP);
-void setConstPC(SymNodeP constSymP);
+int setConstPC(int pc, SymNodeP constSymP);
+void setConstVal(SymNodeP constSymP);
 void setVarsPC(PNodeP varNodesP);
 void addShare(char *strP);
 void swapBanks(int newBank);
 BankContextP findBank(int bank);
+BankContextP addBank(int bank);
+SymListP addToSymlist(SymListP listP, SymNodeP symP, int bank, int pc);
 
 extern SymNodeP resolveLocalSymbol(char *);
 
@@ -175,6 +179,8 @@ start           : START expr TERMINATOR
 body		: stmt_list
 		{
                 PNodeP nodeP;
+                SymListP symlistP;
+                BankContextP bankP;
 
 		    if( $1 )
 		    {
@@ -184,13 +190,35 @@ body		: stmt_list
                             nodeP = newnode(cur_pc, VARS, $1->leftP, varNodesP);
                         }
 
-                        if( constSymP )         // if not null, a constants wasn't given but constants were used
+                        if( constSymP )     // if not null, finish constants
                         {
-                            setConstPC(constSymP);
-                            nodeP = newnode(cur_pc, CONSTANTS, $1->leftP, NILP);
-                            nodeP->value.symP = constSymP;
-                            $1->leftP = nodeP;
-                            $1 = nodeP;
+                            if( !sawBank )
+                            {
+                                constsListP = addToSymlist(constsListP, constSymP, curBank, cur_pc);
+                                // no extended banks, codegen will handle directly
+                                setConstPC(cur_pc, constSymP);
+                                nodeP = newnode(cur_pc, CONSTANTS, $1->leftP, NILP);
+                                nodeP->value.symP = constSymP;
+                                $1->leftP = nodeP;
+                                $1 = nodeP;
+                            }
+                            else
+                            {
+                                // update this bank's consts
+                                bankP = findBank(curBank);
+                                bankP->cur_pc = cur_pc;
+                                bankP->constSymP = constSymP;
+                                // now update all banks that need it
+                                for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
+                                {
+                                    if( bankP->constSymP )
+                                    {
+                                        setConstPC(bankP->cur_pc, bankP->constSymP);
+                                        constsListP = addToSymlist(constsListP, bankP->constSymP,
+                                            bankP->bank, bankP->cur_pc);
+                                    }
+                                }
+                            }
                         }
 
 			$$ = $1->leftP;		/* recover head link */
@@ -372,7 +400,8 @@ stmt		: expr
                 {
                     if( $1->value2 < localDepth )
                     {
-                        verror("local label %s is defined in an outer scope, can't be declared here", $1->name);
+                        verror("local label %s is defined in an outer scope, can't be declared here",
+                            $1->name);
                     }
                     else if( $1->flags & SYMF_RESOLVED )
                     {
@@ -388,8 +417,11 @@ stmt		: expr
                 }
                 | CONSTANTS
                 {
+                SymListP symlistP;
+
                     // End this constant scope
-                    setConstPC(constSymP);
+                    constsListP = addToSymlist(constsListP, constSymP, curBank, cur_pc);
+                    cur_pc = setConstPC(cur_pc, constSymP);
 		    $$ = newnode(cur_pc, CONSTANTS, NILP, NILP);
                     $$->value.symP = constSymP;
                     sym_init(&constSymP);
@@ -693,20 +725,65 @@ varname         : NAME
                 }
 %%
 
-// Walk a symbol table of constants, set the pc and value for each
-void
-setConstPC(SymNodeP nodeP)
+// Walk a symbol table of constants, set the pc for each,
+// return the updated pc.
+int
+setConstPC(int pc, SymNodeP symP)
 {
-    if( !nodeP )
+int newPC;
+
+    if( !symP )
+    {
+        return(0);
+    }
+
+    if( !(symP->flags & SYMF_ASSIGNED) )
+    {
+        symP->value = pc++;
+        symP->flags |= SYMF_ASSIGNED;
+    }
+
+    newPC = setConstPC(pc, symP->leftP);
+    if( newPC > pc )
+    {
+        pc = newPC;
+    }
+
+    newPC = setConstPC(pc, symP->rightP);
+    return( (newPC > pc)?newPC:pc );
+}
+
+// Add a new entry to the passed symlist, return new head.
+SymListP
+addToSymlist(SymListP listP, SymNodeP symP, int bank, int pc)
+{
+SymListP newP;
+
+    newP = (SymListP)malloc(sizeof(SymList));
+    newP->nextP = listP;
+    newP->symP = symP;
+    newP->bank = bank;
+    newP->pc = pc;
+    return( newP );
+}
+
+// Walk a symbol table of constants, set the value for each
+void
+setConstVal(SymNodeP symP)
+{
+    if( !symP )
     {
         return;
     }
 
-    nodeP->value = cur_pc++;
-    nodeP->value2 = evalExpr((PNodeP)(nodeP->ptr));
-    nodeP->flags |= SYMF_RESOLVED;
-    setConstPC(nodeP->leftP);
-    setConstPC(nodeP->rightP);
+    if( !(symP->flags & SYMF_EVALED) )
+    {
+        symP->value2 = evalExpr((PNodeP)(symP->ptr));
+        symP->flags |= SYMF_EVALED;
+    }
+
+    setConstVal(symP->leftP);
+    setConstVal(symP->rightP);
 }
 
 // Walk a list of var decls, set the pc for each VAR type found
@@ -780,19 +857,28 @@ BankContextP curP;
         // fresh start
         sym_init(&globalSymP);
         sym_init(&constSymP);
-        //cur_pc = newBank << 12;     // the real 16 bit memory address
 
         // First time we've been to this bank, add an entry.
-        newP = (BankContextP)calloc(1, sizeof(BankContext));
-        newP->bank = newBank;
-        newP->nextP = banksP;
+        newP = addBank(newBank);
         newP->cur_pc = cur_pc;
-        banksP = newP;
     }
 
     curBank = newBank;
 }
 
+BankContextP
+addBank(int bank)
+{
+BankContextP newP;
+
+    newP = (BankContextP)calloc(1, sizeof(BankContext));
+    newP->bank = bank;
+    newP->nextP = banksP;
+    banksP = newP;
+    return( newP );
+}
+
+BankContextP ctxP;
 // Return the bank context if one exists for the given bank, else NILP
 BankContextP
 findBank(int bank)

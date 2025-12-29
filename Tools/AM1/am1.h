@@ -34,6 +34,9 @@
 #define SYMF_RESOLVED 0x200     // has been resolved to its final value
 #define SYMF_VAR 0x400          // is a variable
 #define SYMF_FORCED 0x1000      // is a forced-local from a local context
+#define SYMF_ASSIGNED 0x2000    // is a constant that has been assigned a location
+#define SYMF_EVALED 0x4000      // is a constant that has been evaluated
+#define SYMF_EMITTED 0x8000     // is a constant that has been emitted
 
 #define CTX_FORCELOCAL 1        // focelocal is active for this context
 
@@ -78,8 +81,17 @@ typedef struct bankcontext
     struct bankcontext *nextP;
     int bank;               // the bank number
     int cur_pc;             // pc at the time of the switch from this bank
-    SymNodeP globalSymP;    // we preserve the globals and consts, no need for locals, will never be in process
+    SymNodeP globalSymP;    // we preserve the globals and consts, no need for locals
     SymNodeP constSymP;
 } BankContext, *BankContextP;
+
+// list of symtabs
+typedef struct symlist
+{
+    SymNodeP symP;
+    int bank;               // the bank this was defined in
+    int pc;                 // the PC for the first location of this list
+    struct symlist *nextP;
+} SymList, *SymListP;
 
 #endif

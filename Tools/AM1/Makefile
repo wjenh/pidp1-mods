@@ -10,7 +10,7 @@ permsyms.def.o: permsyms.def.c
 	$(CC) -c permsyms.def.c
 
 permsyms.def.c: symtabgen permsyms.def
-	symtabgen permsyms.def
+	./symtabgen permsyms.def
 
 lex.yy.o: lex.yy.c y.tab.h
 	$(CC) -c lex.yy.c
@@ -43,6 +43,7 @@ listcodegen.o: listcodegen.c am1.h y.tab.h
 	$(CC) -c listcodegen.c
 
 symtabgen: symtabgen.c am1.h symtab.o
+	$(CC) -o symtabgen symtabgen.c symtab.o
 
 symtab.o: symtab.c symtab.h
 	$(CC) -c symtab.c

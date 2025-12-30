@@ -319,14 +319,10 @@ unsigned int i;
 int
 countAscii(char *strP)
 {
-int words;
+int chars;
         
-    if( !((words = strlen(strP)) & 1) )
-    {
-        ++words;
-    }
-
-    return( words );
+    chars = strlen(strP);
+    return( (chars / 2) + 1);
 }
 
 // Count packed flexo code

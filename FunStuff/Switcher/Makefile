@@ -1,13 +1,11 @@
-all: switcher.rim
+all: switcher.mrim switcher.arim
 
-switcher.rim: switcher.mac
+switcher.mrim: switcher.mac
 	/opt/pidp1/bin/macro1_1 switcher.mac
 
+switcher.arim: switcher.am1
+	../../Tools/AM1/am1 switcher.am1
+	mv switcher.rim switcher.arim
+
 switcher.mac: switcher.m1p
-	../M1pp/m1pp -o switcher.mac switcher.m1p
-
-dtest.rim: dtest.mac
-	/opt/pidp1/bin/macro1_1 dtest.mac
-
-dtest.mac: dtest.m1p
-	../M1pp/m1pp -o dtest.mac dtest.m1p
+	../../Tools/M1pp/m1pp -o switcher.mac switcher.m1p

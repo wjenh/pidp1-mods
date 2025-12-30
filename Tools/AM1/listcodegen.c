@@ -135,7 +135,7 @@ char str[128];
     }
 }
 
-// Very similar to evalExpr(), but doesn't do full reduction
+// Format and output an expression
 static void
 listOperand(FILE *outfP, PNodeP nodeP)
 {
@@ -175,10 +175,10 @@ PNodeP node2P;
             ch = '*';
             break;
         case AND:
-            ch = ' ';
+            ch = '&';
             break;
         case OR:
-            ch = '!';
+            ch = '|';
             break;
         case SEPARATOR:
             ch = ' ';

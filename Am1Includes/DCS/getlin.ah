@@ -16,7 +16,7 @@
 
 getlin,  0
 local
-        dac %glnrtn
+        dap %glnrtn
         dio %glnmem
 %glnlp,   jda getch
         lai

@@ -253,6 +253,11 @@ SymNodeP symP;
         *cP = '\0';
     }
 
+    if( doMacro )
+    {
+        add_cpp( 'D', "MACRO1" );                   // used by some includes
+    }
+
     if(doCpp)
     {
         sprintf(pfilename, "%s.cpp", basename);
@@ -313,7 +318,7 @@ SymNodeP symP;
 
     if( doMacro )
     {
-        strcpy(ofilename, basename);                         /* output file */
+        strcpy(ofilename, basename);                // output file
         strcat(ofilename, ".mac");
 
         if(!(outfP = fopen(ofilename, "w")))

@@ -18,7 +18,7 @@ getaln,  0
 local
         dap %glartn
         dio %glamem
-%glalp,   jda getach
+%glalp, jda getach
         lai
         sza i
         jmp %glalp

@@ -13,7 +13,7 @@
 // The maximum number is 98,304 unless AC is treated as unsigned, in which case it's 196,608.
 local
 getnum, 0
-     dac %getnrt
+     dap %getnrt
      dzm %getnbr
      dio %getnbf
 %getnlp, lio i %getnbf

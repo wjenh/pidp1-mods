@@ -144,6 +144,7 @@ extern void leave(int);
 %type <pnodeP> varname
 %type <pnodeP> optExpr
 %type <pnodeP> terminator
+%type <pnodeP> terminators
 %type <ival> optINTEGER
 
 /* precedence for operators */
@@ -158,9 +159,8 @@ extern void leave(int);
 %right UMINUS
 %right '='
 %left ENDCONST
-%left TERMINATOR
 
-%expect 0   // uminus optINTEGER terminators
+%expect 1       // terminators
 
 %%
 
@@ -421,9 +421,9 @@ stmt		: expr
 
                     // End this constant scope
                     constsListP = addToSymlist(constsListP, constSymP, curBank, cur_pc);
-                    cur_pc = setConstPC(cur_pc, constSymP);
 		    $$ = newnode(cur_pc, CONSTANTS, NILP, NILP);
                     $$->value.symP = constSymP;
+                    cur_pc = setConstPC(cur_pc, constSymP);
                     sym_init(&constSymP);
                 }
                 | ASCII
@@ -440,14 +440,24 @@ stmt		: expr
                 }
                 ;
 
-terminator      : TERMINATOR
+terminator      : terminators
                 {
-                    $$ = newnode(cur_pc, TERMINATOR, NILP, NILP);
+                    $$ = $1;
                 }
                 | COMMENT
                 {
                     $$ = newnode(cur_pc, COMMENT, NILP, NILP);
                     $$->value.strP = $1;
+                }
+                ;
+
+terminators     : TERMINATOR
+                {
+                    $$ = newnode(cur_pc, TERMINATOR, NILP, NILP);
+                }
+                | terminators TERMINATOR
+                {
+                    $$ = $1;
                 }
                 ;
 

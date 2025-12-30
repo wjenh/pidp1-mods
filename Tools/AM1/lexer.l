@@ -13,7 +13,6 @@
 
 bool decimalMode;
 bool inConstant;
-bool didTerm;
 
 extern int lineno;
 
@@ -196,7 +195,6 @@ octal			{ decimalMode = false; }
 			    strcpy(yylval.strP, cP);
 			    *strchr(yylval.strP, '\n') = 0;
 			    ++lineno;
-			    didTerm = false;
 			    return(COMMENT);
 			}
 
@@ -322,17 +320,10 @@ octal			{ decimalMode = false; }
 
 ^\n			{
 			    ++lineno;
-
-			    if( !didTerm )
-			    {
-			    	didTerm = true;
-				return( TERMINATOR );
-			    }
+			    return( TERMINATOR );
 			 }
 
 [ \t]*(\n|(\;[ \t]*))	{
-			    didTerm = false;
-			    
 			    if( inConstant )
 			    {
 				inConstant = false;
@@ -353,7 +344,7 @@ octal			{ decimalMode = false; }
 				    // not semi terminated
 			            ++lineno;
 				}
-				didTerm = false;
+
 			        return(TERMINATOR);
 			    }
 			}

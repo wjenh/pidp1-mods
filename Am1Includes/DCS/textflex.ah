@@ -20,7 +20,7 @@
 
 txtflx,  0
 local
-     dac %txtrtn
+     dap %txtrtn
 %txttop,  lac i %txtflx
      lia
      and [77

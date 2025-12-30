@@ -3,7 +3,11 @@
 Switcher is a demo program that uses IOT 22, the DCS2 Data Communications Systerm, IOTs 61-63, the Type 23 drum,
 IOT 32, the countdown timer/clock, and m1pp, the macro_1 preprocessor to provide a remote-access program loader.
 
-This example uses the ascii capabilities of m1pp.
+This example uses the ascii capabilities of m1pp and am1.
+
+Be sure m1pp and am1 are built in their respective Tools directory.
+
+Two rim files will be created, switcher.mrim and switcher.arim, both are readin loadable.
 
 ## What does it do?
 
@@ -28,3 +32,7 @@ This process can be repeated indefinitely.
 To get include files!
 This makes using the various IOTs much easier and also provides some utility code.
 The processed switcher.mac is included if you don't want rerun m1pp.
+
+## Why does it use am1?
+
+The same reason m1pp is used, plus it has cpp, bank management and local variables!

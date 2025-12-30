@@ -8,7 +8,7 @@
 # Value will set the symbol flags to SYMF_PERM | SYM_VALUE, a numeric constant, such as from 1s or i.
 # The value is the integer value of the symbol.
 #
-# See btabgen.c for more details.
+# See symtabgen.c for more details.
 
 1s  value 01
 2s  value 03
@@ -52,8 +52,6 @@ law opcode 0700000
 
 skp oporable 0640000
 spi oporable 0642000
-sni oporable 0644000
-szi oporable 0654000
 szo oporable 0641000
 sma oporable 0640400
 spa oporable 0640200
@@ -78,7 +76,6 @@ nop oporable 0760000
 opr oporable 0760000
 
 cli oporable 0764000
-cmi oporable 0770000
 lat oporable 0762200
 cma oporable 0761000
 hlt oporable 0760400
@@ -95,6 +92,9 @@ lia oporable 0760020
 lai oporable 0760040
 lsw oporable 0760060
 swp oporable 0760060
+cmi oporable 0764000
+sni oporable 0644000
+szi oporable 0654060
 
 tyi opcode 0720004
 rrb opcode 0720030

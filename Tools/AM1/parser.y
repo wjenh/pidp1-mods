@@ -56,9 +56,9 @@ SymListP addToSymlist(SymListP listP, SymNodeP symP, int bank, int pc);
 
 extern SymNodeP resolveLocalSymbol(char *);
 
-void yyerror();
-void verror(char *msgP, ...);
-void vwarn(char *msgP, ...);
+int yyerror(const char *errstr);
+void verror(const char *msgP, ...);
+void vwarn(const char *msgP, ...);
 
 int yylex(void);
 
@@ -903,7 +903,7 @@ yywrap()				/* tell lex to clean up */
 }
 
 void
-vwarn(char *msgP, ...)
+vwarn(const char *msgP, ...)
 {
 va_list argP;
 char format[1024];
@@ -918,7 +918,7 @@ char format[1024];
 }
 
 void
-verror(char *msgP, ...)
+verror(const char *msgP, ...)
 {
 va_list argP;
 char format[1024];
@@ -931,10 +931,12 @@ char format[1024];
     leave(0);
 }
 
-void
-yyerror(char *errstr)
+int
+yyerror(const char *errstr)
 {
     fprintf(stderr,"am1: %s\nat line %d, file %s\n",
 	errstr,lineno,filenameP);
     leave(0);
+    // never returns, just to shut up overly-picky c compilers
+    return(0);
 }

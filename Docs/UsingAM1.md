@@ -138,6 +138,8 @@ It is implemented using flex.
 
 ## Building **am1**
 
+Be sure you have flex and bison installed, then:
+
 Just type make.
 
 ## Usage

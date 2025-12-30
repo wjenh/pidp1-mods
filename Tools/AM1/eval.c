@@ -62,6 +62,8 @@ SymNodeP symP;
             return( lval ^ rval );
         default:
             verror("unknown binary op %d in evalExpr", nodeP->value.ival);
+            // never returns, just to shut up overly-picky c compilers
+            return(0);
         }
 
     case UNOP:
@@ -76,6 +78,8 @@ SymNodeP symP;
             return( ~onesComplAdj(rval) );
         default:
             verror("unknown unary op %d in evalExpr", nodeP->value.ival);
+            // never returns, just to shut up overly-picky c compilers
+            return(0);
         }
 
     case CONSTANT:
@@ -107,6 +111,8 @@ SymNodeP symP;
         else
         {
             verror("symbol %s has no defined value", symP->name);
+            // never returns, just to shut up overly-picky c compilers
+            return(0);
         }
 
         if( nodeP->type == BREF )
@@ -124,6 +130,8 @@ SymNodeP symP;
 
     default:
         verror("unknown op %d in evalExpr", nodeP->type);
+        // never returns, just to shut up overly-picky c compilers
+        return(0);
     }
 }
 
@@ -185,6 +193,8 @@ SymNodeP symP;
             break;
         default:
             verror("unknown binary op %d in hashExpr", nodeP->value.ival);
+            // never returns, just to shut up overly-picky c compilers
+            return(0);
         }
 
         partial &= 0777777;
@@ -214,6 +224,8 @@ SymNodeP symP;
             return( ~rval );
         default:
             verror("unknown unary op %d in evalExpr", nodeP->value.ival);
+            // never returns, just to shut up overly-picky c compilers
+            return(0);
         }
 
     case CONSTANT:
@@ -256,6 +268,8 @@ SymNodeP symP;
 
     default:
         verror("unknown op %d in hashExpr", nodeP->type);
+        // never returns, just to shut up overly-picky c compilers
+        return(0);
     }
 }
 

@@ -167,7 +167,7 @@ SymNodeP symP;
         // the 0th entry will always be the 'no local scope' value, 0
         for( int i = localDepth - 1; i > 0; --i )
         {
-            if( symP = sym_find(&(localStack[i]->symRootP), nameP) )
+            if( (symP = sym_find(&(localStack[i]->symRootP), nameP)) )
             {
                 break;
             }

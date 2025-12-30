@@ -96,7 +96,6 @@ extern FILE *yyin;              // lex input file
 extern int yyparse();
 extern BankContextP findBank(int bankNo);
 extern void setConstVal(SymNodeP);
-char *getenv();
 
 int evalExpr(PNodeP);
 int macCodegen(FILE *, PNodeP);
@@ -129,7 +128,7 @@ SymNodeP symP;
         }
     }
 
-    signal(SIGCLD, SIG_DFL);                              /* special case */
+    signal(SIGCHLD, SIG_DFL);                             /* special case */
 
     doCpp = 1;
 
@@ -680,6 +679,7 @@ void
 dumpBody(PNodeP nodeP)
 {
 int i;
+char ch;
 char *nameP;
 PNodeP nodeP2;
 char str[128];
@@ -718,8 +718,6 @@ char str[128];
             break;
 
         case CHAR:
-            char ch;
-
             i = nodeP->value.ival;
             if( i & 077 )
             {

@@ -11,10 +11,13 @@
 
 #define STRBUF 1024	/* maximum literal string length */
 
-bool decimalMode;
-bool inConstant;
+bool decimalMode = false;
+bool inConstant = false;
+bool sawSemi = false;
+bool noIncrement = false;
 
 extern int lineno;
+extern char *filenameP;
 
 extern SymNodeP permSymP;
 extern SymNodeP globalSymP;
@@ -47,6 +50,7 @@ void reset_line(void);
 \%forcelocal		{
 			    return(FORCELOC);
 			}
+
 local[ \t]*		{ return(LOCAL); }
 endloc[ \t]*		{ return(ENDLOC); }
 var[ \t]*		{ return(VAR); }
@@ -194,7 +198,11 @@ octal			{ decimalMode = false; }
 			    yylval.strP = malloc(strlen(cP) + 1);
 			    strcpy(yylval.strP, cP);
 			    *strchr(yylval.strP, '\n') = 0;
-			    ++lineno;
+			    if( !noIncrement )
+			    {
+			        ++lineno;
+			    }
+			    noIncrement = sawSemi = false;
 			    return(COMMENT);
 			}
 
@@ -225,18 +233,16 @@ octal			{ decimalMode = false; }
 			}
 
 [1-9]s			{
-			SymNodeP nodeP;
+			SymNodeP symP;
 
-			    // Special hack for the shit/rotate modifiers
-			    if( !(nodeP = sym_find((SymNodeP *)&permSymP,yytext)) ||
-				((nodeP->flags & SYM_MASK) != SYM_VALUE) )
+			    if( (symP = sym_find((SymNodeP *)&permSymP,yytext)) )
 			    {
-				verror("internal error looking up '%s'", yytext);
+			        yylval.symP = symP;
+			        return(VALUESPEC);
 			    }
 			    else
 			    {
-				yylval.ival = nodeP->value;
-				return(INTEGER);
+				verror("can't find %s in permanent symbols", yytext);
 			    }
 			}
 
@@ -248,8 +254,8 @@ octal			{ decimalMode = false; }
 				switch( symP->flags & SYM_MASK )
 				{
 				case SYM_VALUE:
-				    yylval.ival = symP->value;
-				    return(INTEGER);
+				    yylval.symP = symP;
+				    return(VALUESPEC);
 
 				case SYM_OPCODE:
 				    yylval.symP = symP;
@@ -310,7 +316,14 @@ octal			{ decimalMode = false; }
 			    int ch;
 
 			    ch = yytext[yyleng-1];
+			    if( ch == '\n' )
+			    {
+			    	++lineno;
+				noIncrement = true;	// we don't want terminator to inc again
+			    }
+
 			    unput( ch );
+
 			    if( ch == '/' )
 			    {
 			    	unput(' ');	// preserve a space between origin and comment
@@ -319,7 +332,11 @@ octal			{ decimalMode = false; }
 			}
 
 ^\n			{
-			    ++lineno;
+			    if( !noIncrement )
+			    {
+			        ++lineno;
+			    }
+			    noIncrement = sawSemi = false;
 			    return( TERMINATOR );
 			 }
 
@@ -339,19 +356,40 @@ octal			{ decimalMode = false; }
 			    }
 			    else
 			    {
-				if( !strchr(yytext,';') )
+				if( strchr(yytext,';') )
+				{
+				    if( !sawSemi )
+				    {
+				        ++lineno;		// only once until real terminator
+				    }
+
+				    sawSemi = true;
+				    return(SEMI);
+				}
+				else
 				{
 				    // not semi terminated
-			            ++lineno;
-				}
+				    if( sawSemi )
+				    {
+				        sawSemi = false;	// we don't incr here, all one line
+				    }
+				    else if( !noIncrement )
+				    {
+					++lineno;
+				    }
 
-			        return(TERMINATOR);
+				    noIncrement = false;
+				    return(TERMINATOR);
+				}
 			    }
 			}
 
 <FIRST,BODY>^\#		{
 			    // Handle cpp line number resets
 			    reset_line();
+			    yylval.strP = malloc(strlen(filenameP) + 1);
+			    strcpy(yylval.strP, filenameP);
+			    return( FILENAME );
 			}
 
 \'			{

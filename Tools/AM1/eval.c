@@ -98,6 +98,7 @@ SymNodeP symP;
     case OPORABLE:
     case OPCODE:
     case OPADDR:
+    case VALUESPEC:
         return( nodeP->value.symP->value );
 
     case ADDR:
@@ -237,6 +238,7 @@ SymNodeP symP;
     case OPORABLE:
     case OPCODE:
     case OPADDR:
+    case VALUESPEC:
         return( nodeP->value.symP->value );
 
     case ADDR:

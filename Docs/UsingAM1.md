@@ -163,11 +163,34 @@ These additional flags are generally for debugging:
 - k keep intermediate **cpp** file
 - p print the internal parse tree in readable form
 
-Both **macro1** and binary code can be generated at the same time.\
+Both **macro1** and binary code can be generated at the same time.
+
+If warnings are disabled, errors will still be printed.
+
+If the 'system' include files are not installed in the default location, /opt/pidp1/Am1Includes, then
+the location should be specified either by using the *-i incroot* switch or by setting the environment
+variable *AM1INCDIR* to the full path to the location.
+
+The -i flag has priority, followed by the environment variable, followed by the default.
+
+At runtime, /usr/bin/cpp must exist if preprocessing is being done.
+
+## Listing file
+
+The listing file is more complex than the **macro1** version in order to list code that is **#include**ed.
+Each file being processed will have an initial line identifying the file the listing following is from.
+
+Multiple statements on a line will be listed on separate lines, but the line number will be the same for all.
+
+Emptpy lines and comments do not show line numbers, only actual statements do so.
+
+#define statements are not listed, but the expansion is.
+
 While a listing can be produced for either macro or binary, the binary value for each location is only
 available if binary has been generated.
 For macro only output, the value field is meaningless.
-
+Of course, **macro1** will produce its own listing file, so creating one via **am1** is fairly useless other
+than seeing macro expansions.
 ## General program structure
 
 All programs start with a title line. This is mandatory. If you forget it, then whatever the first line is

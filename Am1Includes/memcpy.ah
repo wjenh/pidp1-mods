@@ -5,9 +5,11 @@
 // The word following the call has the address to copy from
 // The next word has the address to copy to
 // Both can have extended addresses.
+// If extended mode is on, it will be turned off on return.
 memcpy, 0
 local
 // AC is in memcpy, return PC in AC
+    lem
     dap %cpydn
     lio i %cpydn
     dio %ads
@@ -17,17 +19,17 @@ local
     idx %cpydn
     lac memcpy
     cma
+    eem
 %cl, add [1
     lsw
-    eem
     lac i %ads
     dac i %adt
-    lem
     idx %ads
     idx %adt
     lsw
     sza
     jmp %cl
+    lem
     jmp i %cpydn
 %cpydn, 0
 %ads, 0

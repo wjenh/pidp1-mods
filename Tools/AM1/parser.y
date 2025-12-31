@@ -62,9 +62,9 @@ void vwarn(const char *msgP, ...);
 
 int yylex(void);
 
-extern PNodeP binop(int, int, PNodeP, PNodeP);
-extern PNodeP unop(int, int, PNodeP);
-extern PNodeP newnode(int, int, PNodeP, PNodeP);
+extern PNodeP binop(int lineNo, int pc, int value, PNodeP leftP, PNodeP rightP);
+extern PNodeP unop(int lineNo, int pc, int value, PNodeP expP);
+extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 extern int evalExpr(PNodeP);
 extern long int hashExpr(PNodeP);
 extern void leave(int);
@@ -90,6 +90,7 @@ extern void leave(int);
 %token <symP> OPCODE
 %token <symP> OPADDR
 %token <symP> OPORABLE
+%token <symP> VALUESPEC
 %token <symP> LOCAL
 %token <symP> ADDR
 %token <symP> LCLADDR
@@ -99,6 +100,7 @@ extern void leave(int);
 %token <strP> HEADER
 %token <strP> ASCII
 %token <strP> TEXT
+%token <strP> FILENAME
 %token <ival> CHAR
 %token <ival> FLEXO
 %token <ival> INTEGER
@@ -127,7 +129,7 @@ extern void leave(int);
 %token PARENS
 %token BREF
 %token ENDCONST
-%token SEPARATOR TERMINATOR
+%token SEPARATOR TERMINATOR SEMI
 
 %token ENDLOC CONSTANTS
 %token RELOC ENDRELOC
@@ -164,15 +166,23 @@ extern void leave(int);
 
 %%
 
-program		: HEADER TERMINATOR body start
+program		: optfilenames HEADER TERMINATOR body start
                 {
-                    rootP = newnode(cur_pc, HEADER, $3, $4);
-                    rootP->value.strP = $1;
+                    rootP = newnode(lineno, cur_pc, HEADER, $4, $5);
+                    rootP->value.strP = $2;
 		}
+
+optfilenames    : filenames
+                |
+                ;
+
+filenames       : FILENAME
+                | filenames FILENAME
+                ;
 
 start           : START expr TERMINATOR
                 {
-                    $$ = newnode(cur_pc, START, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, START, NILP, NILP);
                     $$->value.ival = evalExpr($2);
                 }
 
@@ -187,7 +197,7 @@ body		: stmt_list
                         if( varNodesP )          // if not null, a variables wasn't given but vars declared
                         {
                             setVarsPC(varNodesP);
-                            nodeP = newnode(cur_pc, VARS, $1->leftP, varNodesP);
+                            nodeP = newnode(lineno, cur_pc, VARS, $1->leftP, varNodesP);
                         }
 
                         if( constSymP )     // if not null, finish constants
@@ -197,7 +207,7 @@ body		: stmt_list
                                 constsListP = addToSymlist(constsListP, constSymP, curBank, cur_pc);
                                 // no extended banks, codegen will handle directly
                                 setConstPC(cur_pc, constSymP);
-                                nodeP = newnode(cur_pc, CONSTANTS, $1->leftP, NILP);
+                                nodeP = newnode(lineno, cur_pc, CONSTANTS, $1->leftP, NILP);
                                 nodeP->value.symP = constSymP;
                                 $1->leftP = nodeP;
                                 $1 = nodeP;
@@ -286,7 +296,7 @@ stmt_list	: stmt terminator
 
 stmt		: expr
 		{
-		    $$ = newnode(cur_pc, EXPR, NILP, $1);
+		    $$ = newnode(lineno, cur_pc, EXPR, NILP, $1);
 		    if( $1 && !($1->flags & PN_NOINC) )
                     {
                         ++cur_pc;
@@ -304,7 +314,7 @@ stmt		: expr
                         verror("Bank cannot be used inside a local context");
                     }
 
-		    $$ = newnode(cur_pc, BANK, NILP, NILP);
+		    $$ = newnode(lineno, cur_pc, BANK, NILP, NILP);
                     $$->value.ival = $2;
                     swapBanks($2);
                     $$->value2.ival = cur_pc;   // is the pc for the new bank
@@ -312,11 +322,11 @@ stmt		: expr
                 }
                 | VAR names
                 {
-                    $$ = newnode(cur_pc, VAR, NILP, $2);
+                    $$ = newnode(lineno, cur_pc, VAR, NILP, $2);
                 }
                 | VARS
                 {
-                    $$ = newnode(cur_pc, VARS, NILP, varNodesP);
+                    $$ = newnode(lineno, cur_pc, VARS, NILP, varNodesP);
                     if( !varNodesP )
                     {
                         vwarn("no variables have been declareed, variables ignored");
@@ -329,7 +339,7 @@ stmt		: expr
                 }
                 | expr ORIGIN
                 {
-		    $$ = newnode(cur_pc, ORIGIN, NILP, NILP);
+		    $$ = newnode(lineno, cur_pc, ORIGIN, NILP, NILP);
                     $$->value.ival = cur_pc = evalExpr($1);
                 }
 		| NAME LOCATION optExpr
@@ -356,7 +366,7 @@ stmt		: expr
                         locType = LOCATION;
                     }
 
-                    $$ = newnode($3?cur_pc++:cur_pc, locType, NILP, $3);
+                    $$ = newnode(lineno, $3?cur_pc++:cur_pc, locType, NILP, $3);
                     $$->value.symP = symP;
                 }
 		| ADDR LOCATION optExpr
@@ -378,7 +388,7 @@ stmt		: expr
 
                         $1->flags |= SYMF_RESOLVED;
                         $1->value = cur_pc;
-                        $$ = newnode($3?cur_pc++:cur_pc, LOCATION, NILP, $3);
+                        $$ = newnode(lineno, $3?cur_pc++:cur_pc, LOCATION, NILP, $3);
                         $$->value.symP = $1;
                     }
                 }
@@ -393,7 +403,7 @@ stmt		: expr
 
                     symP->flags = SYMF_RESOLVED | SYM_LOC;
                     symP->value = cur_pc;
-                    $$ = newnode($3?cur_pc++:cur_pc, LCLLOCATION, NILP, $3);
+                    $$ = newnode(lineno, $3?cur_pc++:cur_pc, LCLLOCATION, NILP, $3);
                     $$->value.symP = symP;
                 }
 		| LCLADDR LOCATION optExpr
@@ -411,7 +421,7 @@ stmt		: expr
                     {
                         $1->flags |= SYMF_RESOLVED;
                         $1->value = cur_pc;
-                        $$ = newnode($3?cur_pc++:cur_pc, LCLLOCATION, NILP, $3);
+                        $$ = newnode(lineno, $3?cur_pc++:cur_pc, LCLLOCATION, NILP, $3);
                         $$->value.symP = $1;
                     }
                 }
@@ -421,20 +431,20 @@ stmt		: expr
 
                     // End this constant scope
                     constsListP = addToSymlist(constsListP, constSymP, curBank, cur_pc);
-		    $$ = newnode(cur_pc, CONSTANTS, NILP, NILP);
+		    $$ = newnode(lineno, cur_pc, CONSTANTS, NILP, NILP);
                     $$->value.symP = constSymP;
                     cur_pc = setConstPC(cur_pc, constSymP);
                     sym_init(&constSymP);
                 }
                 | ASCII
                 {
-		    $$ = newnode(cur_pc, ASCII, NILP, NILP);
+		    $$ = newnode(lineno, cur_pc, ASCII, NILP, NILP);
                     $$->value.strP = $1;
                     cur_pc += countAscii($1);
                 }
                 | TEXT
                 {
-		    $$ = newnode(cur_pc, TEXT, NILP, NILP);
+		    $$ = newnode(lineno, cur_pc, TEXT, NILP, NILP);
                     $$->value.strP = $1;
                     cur_pc += countText($1);
                 }
@@ -444,16 +454,25 @@ terminator      : terminators
                 {
                     $$ = $1;
                 }
+                | SEMI
+                {
+                    $$ = newnode(lineno, cur_pc, SEMI, NILP, NILP);
+                }
                 | COMMENT
                 {
-                    $$ = newnode(cur_pc, COMMENT, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, COMMENT, NILP, NILP);
+                    $$->value.strP = $1;
+                }
+                | FILENAME
+                {
+		    $$ = newnode(lineno, cur_pc, FILENAME, NILP, NILP);
                     $$->value.strP = $1;
                 }
                 ;
 
 terminators     : TERMINATOR
                 {
-                    $$ = newnode(cur_pc, TERMINATOR, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, TERMINATOR, NILP, NILP);
                 }
                 | terminators TERMINATOR
                 {
@@ -482,36 +501,41 @@ optINTEGER      : INTEGER
                 }
                 ;
 
-expr		: expr SEPARATOR expr       { $$ = binop(cur_pc, SEPARATOR, $1, $3); }
-                | MINUS expr %prec UMINUS   { $$ = unop(cur_pc, UMINUS, $2); }
-                | expr PLUS expr            { $$ = binop(cur_pc, PLUS, $1, $3); }
-                | expr MINUS expr           { $$ = binop(cur_pc, MINUS, $1, $3); }
-                | expr MUL expr             { $$ = binop(cur_pc, MUL, $1, $3); }
-                | expr DIV expr             { $$ = binop(cur_pc, DIV, $1, $3); }
-                | expr MOD expr             { $$ = binop(cur_pc, MOD, $1, $3); }
-                | expr AND expr             { $$ = binop(cur_pc, AND, $1, $3); }
-                | expr OR expr              { $$ = binop(cur_pc, OR, $1, $3); }
-                | expr XOR expr             { $$ = binop(cur_pc, XOR, $1, $3); }
-                | '(' expr ')'              { $$ = unop(cur_pc, PARENS, $2); }
-                | CMPL expr                 { $$ = unop(cur_pc, CMPL, $2); }
+expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3); }
+                | MINUS expr %prec UMINUS   { $$ = unop(lineno, cur_pc, UMINUS, $2); }
+                | expr PLUS expr            { $$ = binop(lineno, cur_pc, PLUS, $1, $3); }
+                | expr MINUS expr           { $$ = binop(lineno, cur_pc, MINUS, $1, $3); }
+                | expr MUL expr             { $$ = binop(lineno, cur_pc, MUL, $1, $3); }
+                | expr DIV expr             { $$ = binop(lineno, cur_pc, DIV, $1, $3); }
+                | expr MOD expr             { $$ = binop(lineno, cur_pc, MOD, $1, $3); }
+                | expr AND expr             { $$ = binop(lineno, cur_pc, AND, $1, $3); }
+                | expr OR expr              { $$ = binop(lineno, cur_pc, OR, $1, $3); }
+                | expr XOR expr             { $$ = binop(lineno, cur_pc, XOR, $1, $3); }
+                | '(' expr ')'              { $$ = unop(lineno, cur_pc, PARENS, $2); }
+                | CMPL expr                 { $$ = unop(lineno, cur_pc, CMPL, $2); }
                 | INTEGER
 		{
-		    $$ = newnode(cur_pc, INTEGER, NILP, NILP);
+		    $$ = newnode(lineno, cur_pc, INTEGER, NILP, NILP);
 		    $$->value.ival = $1;
 		}
                 | OPCODE
                 {
-                    $$ = newnode(cur_pc, OPCODE, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, OPCODE, NILP, NILP);
                     $$->value.symP = $1;
                 }
                 | OPADDR
                 {
-                    $$ = newnode(cur_pc, OPADDR, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, OPADDR, NILP, NILP);
                     $$->value.symP = $1;
                 }
                 | OPORABLE
                 {
-		    $$ = newnode(cur_pc, OPORABLE, NILP, NILP);
+		    $$ = newnode(lineno, cur_pc, OPORABLE, NILP, NILP);
+                    $$->value.symP = $1;
+                }
+                | VALUESPEC
+                {
+		    $$ = newnode(lineno, cur_pc, VALUESPEC, NILP, NILP);
                     $$->value.symP = $1;
                 }
 		| CONSTANT expr ENDCONST
@@ -530,17 +554,17 @@ expr		: expr SEPARATOR expr       { $$ = binop(cur_pc, SEPARATOR, $1, $3); }
                         sym_add(&constSymP, symP);
                         symP->ptr = $2;
                     }
-		    $$ = newnode(cur_pc, CONSTANT, NILP, NILP);
+		    $$ = newnode(lineno, cur_pc, CONSTANT, NILP, NILP);
                     $$->value.symP = symP;
 		}
 		| DOT
                 {
-                    $$ = newnode(cur_pc, DOT, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, DOT, NILP, NILP);
                     $$->value.ival = cur_pc;
                 }
                 | ADDR
                 {
-                    $$ = newnode(cur_pc, ADDR, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = $1;
                 }
                 | NAME BREF INTEGER
@@ -571,14 +595,14 @@ expr		: expr SEPARATOR expr       { $$ = binop(cur_pc, SEPARATOR, $1, $3); }
                         didBrefWarn = true;
                     }
 
-                    $$ = newnode(cur_pc, BREF, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
                     $$->value.symP = symP;
                     $$->value2.ival = $3;
                 }
                 | ADDR BREF INTEGER
                 {
                     // This is a symbol in our own bank, but that's ok
-                    $$ = newnode(cur_pc, BREF, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
                     $$->value.symP = $1;
                     $$->value2.ival = $3;
                 }
@@ -596,14 +620,14 @@ expr		: expr SEPARATOR expr       { $$ = binop(cur_pc, SEPARATOR, $1, $3); }
                         symP2->symP = symP;
                         sym_add(&globalSymP, symP2);
                         symP->flags = symP2->flags = SYMF_FORCED | SYM_LOC;
-                        $$ = newnode(cur_pc, LCLADDR, NILP, NILP);
+                        $$ = newnode(lineno, cur_pc, LCLADDR, NILP, NILP);
                     }
                     else
                     {
                         symP = sym_make($1, 0);
                         sym_add(&globalSymP, symP);
                         symP->flags = SYM_GLOB;
-                        $$ = newnode(cur_pc, ADDR, NILP, NILP);
+                        $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
                     }
 
                     $$->value.symP = symP;
@@ -620,34 +644,34 @@ expr		: expr SEPARATOR expr       { $$ = binop(cur_pc, SEPARATOR, $1, $3); }
 
                     symP = addLocalSymbol($1);
                     symP->flags = SYM_LOC;
-                    $$ = newnode(cur_pc, LCLADDR, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, LCLADDR, NILP, NILP);
                     $$->value.symP = symP;
                 }
 		| LCLADDR
                 {
-                    $$ = newnode(cur_pc, LCLADDR, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, LCLADDR, NILP, NILP);
                     $$->value.symP = $1;
                 }
                 | FLEXO
                 {
-                    $$ = newnode(cur_pc, FLEXO, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, FLEXO, NILP, NILP);
                     $$->value.ival = $1;
                 }
                 | CHAR
                 {
-                    $$ = newnode(cur_pc, CHAR, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, CHAR, NILP, NILP);
                     $$->value.ival = $1;
                 }
                 | LITCHAR
                 {
-                    $$ = newnode(cur_pc, LITCHAR, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, LITCHAR, NILP, NILP);
                     $$->value.ival = $1;
                 }
                 | LOCAL
                 {
                     // We push any current local scope, establish a new one
                     // locaSymlPP can be null if there is no current scope
-		    $$ = newnode(cur_pc, LOCAL, NILP, NILP);
+		    $$ = newnode(lineno, cur_pc, LOCAL, NILP, NILP);
                     $$->flags = PN_NOINC;
 
                     localStack[localDepth++] = localContextP;
@@ -669,7 +693,7 @@ expr		: expr SEPARATOR expr       { $$ = binop(cur_pc, SEPARATOR, $1, $3); }
 
                     localContextP->flags = CTX_FORCELOCAL;
                     sawForceLocal = true;
-		    $$ = newnode(cur_pc, FORCELOC, NILP, NILP);
+		    $$ = newnode(lineno, cur_pc, FORCELOC, NILP, NILP);
                     $$->flags = PN_NOINC;
                 }
                 | ENDLOC optINTEGER
@@ -730,7 +754,7 @@ varname         : NAME
                     symP = sym_make($1, 0);
                     sym_add(&globalSymP, symP);
                     symP->flags = SYM_GLOB | SYMF_VAR;
-                    $$ = newnode(cur_pc, ADDR, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = symP;
                 }
 %%

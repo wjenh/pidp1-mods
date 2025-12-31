@@ -66,7 +66,11 @@ char str[128];
         switch( nodeP->type )
         {
         case COMMENT:
-            fprintf(outfP, "/ %s\n", nodeP->value.strP);
+            fprintf(outfP, "  //%s\n", nodeP->value.strP);
+            break;
+
+        case FILENAME:
+            fprintf(outfP, "File %s", nodeP->value.strP);
             break;
 
         case ORIGIN:
@@ -120,6 +124,10 @@ char str[128];
             fprintf(outfP, "/ Ascii table\n");
             listAscii(outfP, nodeP, nodeP->value.strP);
             fprintf(outfP, "/ End\n");
+            break;
+
+        case SEMI:
+            fprintf(outfP, ";\n");
             break;
 
         case TERMINATOR:
@@ -259,6 +267,10 @@ PNodeP node2P;
         fprintf(outfP, "%o", nodeP->value.ival & WRDMASK);
         break;
 
+    case VALUESPEC:
+        fprintf(outfP, "%s", nodeP->value.symP->name);
+        break;
+
     case LOCAL:
         fprintf(outfP, "local");
         break;
@@ -271,9 +283,11 @@ PNodeP node2P;
         fprintf(outfP, "%%forcelocal");
         break;
 
+    /*
     case TERMINATOR:
         fprintf(outfP, "\n");
         break;
+    */
 
     default:
         verror("unknown op %d in listOperand", nodeP->type);
@@ -387,5 +401,5 @@ listConstants(FILE *fP, PNodeP nodeP, SymNodeP symP)
 static void
 startLine(FILE *outP, PNodeP nodeP)
 {
-    fprintf(outP, "%06o %06o ", nodeP->pc, nodeP->value2.ival);
+    fprintf(outP, "%4d: %06o %06o ", nodeP->lineNo, nodeP->pc, nodeP->value2.ival);
 }

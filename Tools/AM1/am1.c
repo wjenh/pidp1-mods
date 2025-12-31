@@ -130,7 +130,7 @@ SymNodeP symP;
 
     signal(SIGCHLD, SIG_DFL);                             /* special case */
 
-    doCpp = 1;
+    doCpp = true;
 
     /* do the command line processing */
     ++argv;
@@ -163,7 +163,7 @@ SymNodeP symP;
                 break;
 
             case 'n':
-                doCpp = true;
+                doCpp = false;
                 break;
 
             case 'v':
@@ -310,7 +310,7 @@ SymNodeP symP;
         dumpParseTree(rootP);
     }
 
-    if( doMacro && sawBank )
+    if( !noWarn && doMacro && sawBank  )
     {
         fprintf(stderr, "am1: WARNING - 'bank' was used, macro1 does not support it.\n");
         fprintf(stderr, "Your code will not do what you expect and should just be for reference.\n");
@@ -454,6 +454,9 @@ typeToName(int type)
     case BANK:
         return("bank");
         break;
+    case VALUESPEC:
+        return("valuespec");
+        break;
     case INTEGER:
         return("integer");
         break;
@@ -558,6 +561,10 @@ SymNodeP symP;
 
     case ORIGIN:
         sprintf(rsltP, "%s %0o", nameP, nodeP->value.ival);
+        break;
+
+    case VALUESPEC:
+        sprintf(rsltP, "%s (%0o)", nodeP->value.symP->name, nodeP->value.symP->value);
         break;
 
     case INTEGER:

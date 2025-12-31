@@ -49,7 +49,7 @@ char tmpstr[1024];
     i = atoi(cP2);
     if( i > 0 )
     {
-        lineno = i;     // adjust for yacc nl processing
+        lineno = i;     // adjust for yacc processing
     }
 
     while( *cP2 && (*cP2 != '"') )

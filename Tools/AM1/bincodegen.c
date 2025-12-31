@@ -350,6 +350,10 @@ PNodeP node2P;
         return( nodeP->value.ival & WRDMASK );
         break;
 
+    case VALUESPEC:
+        return( nodeP->value.symP->value );
+        break;
+
     default:
         verror("unknown op %d, pc 0%04o in reduceOperand", nodeP->type, nodeP->pc);
     }

@@ -311,6 +311,10 @@ PNodeP node2P;
         fprintf(outfP, "%o", nodeP->value.ival & WRDMASK);
         break;
 
+    case VALUESPEC:
+        fprintf(outfP, "%s", nodeP->value.symP->name);
+        break;
+
     case LOCAL:
     case ENDLOC:
     case FORCELOC:

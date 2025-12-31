@@ -7,7 +7,7 @@
 #include "symtab.h"
 
 #define AM1VERSION "am1 v1.0 4-Dec-2025"
-#define AM1INCDIR "/opt/pidp1/MacroIncludes"
+#define AM1INCDIR "/opt/pidp1/Am1Includes"
 
 #ifndef CPP_PATH
 #define CPP_PATH    "/usr/bin/cpp"
@@ -63,6 +63,7 @@ typedef struct parsenode
     int type;               // node type
     int flags;              // user defined flags
     int pc;                 // the mem loc for this node, if any
+    int lineNo;             // and the source line
     PNodeValue value;
     PNodeValue value2;
 } PNode, *PNodeP;

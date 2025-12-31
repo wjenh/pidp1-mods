@@ -5,12 +5,12 @@
 #include "am1.h"
 #include "y.tab.h"
 
-PNodeP unop(int, int, PNodeP);
-PNodeP binnop(int, int, PNodeP, PNodeP);
+PNodeP unop(int, int, int, PNodeP);
+PNodeP binop(int, int, int, PNodeP, PNodeP);
 void yyerror(char *);
 
 PNodeP
-newnode(int pc, int type, PNodeP leftP, PNodeP rightP)
+newnode(int lineNo, int pc, int type, PNodeP leftP, PNodeP rightP)
 {
     PNodeP nP;
     if(!(nP = (PNodeP) calloc(1, sizeof(PNode))))
@@ -18,6 +18,7 @@ newnode(int pc, int type, PNodeP leftP, PNodeP rightP)
         yyerror("out of memory in newnode()");
     }
 
+    nP->lineNo = lineNo - 1;        // because it will already have been incremented by the line terminator in flex
     nP->pc = pc;
     nP->type = type;
     nP->leftP = leftP;
@@ -39,21 +40,21 @@ freenodes(PNodeP nodeP)
 }
 
 PNodeP
-binop(int pc, int op, PNodeP lhsP, PNodeP rhsP)
+binop(int lineNo, int pc, int op, PNodeP lhsP, PNodeP rhsP)
 {
 PNodeP nodeP;
 
-    nodeP = newnode(pc, BINOP, lhsP, rhsP);
+    nodeP = newnode(lineNo, pc, BINOP, lhsP, rhsP);
     nodeP->value.ival = op;
     return(nodeP);
 }
 
 PNodeP
-unop(int pc, int op, PNodeP rhsP)
+unop(int lineNo, int pc, int op, PNodeP rhsP)
 {
 PNodeP nodeP;
 
-    nodeP = newnode(pc, UNOP, NILP, rhsP);
+    nodeP = newnode(lineNo, pc, UNOP, NILP, rhsP);
     nodeP->value.ival = op;
     return(nodeP);
 }

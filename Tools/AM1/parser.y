@@ -567,6 +567,15 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                     $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = $1;
                 }
+                | INTEGER BREF INTEGER
+                {
+                    if( ($3 < 0) || ($3 > 31) )
+                    {
+                        verror("bank number must be 0-31 decimal, 0-37 octal");
+                    }
+		    $$ = newnode(lineno, cur_pc, INTEGER, NILP, NILP);
+		    $$->value.ival = $1 + ($3 << 12);
+                }
                 | NAME BREF INTEGER
                 {
                 BankContextP bankP;
@@ -716,7 +725,8 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                         localContextP = localStack[--localDepth];
                     }
 
-                    $$ = NILP;
+		    $$ = newnode(lineno, cur_pc, ENDLOC, NILP, NILP);
+                    $$->flags = PN_NOINC;
                 }
 		;
 

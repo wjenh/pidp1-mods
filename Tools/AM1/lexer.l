@@ -198,7 +198,7 @@ octal			{ decimalMode = false; }
 			    yylval.strP = malloc(strlen(cP) + 1);
 			    strcpy(yylval.strP, cP);
 			    *strchr(yylval.strP, '\n') = 0;
-			    if( !noIncrement )
+			    if( !noIncrement && !sawSemi )
 			    {
 			        ++lineno;
 			    }

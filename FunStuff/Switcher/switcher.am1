@@ -13,12 +13,13 @@ SELECT AND RUN A DRUMLOADER PROGRAM VIA REMOTE CONNECTION ASCII VERSION
 // you can restart this at location 100 in the specified bank.
 // It also uses IOT 22, DCS2, and IOT 32, timesharing clock.
 
+// These are pure defines, no code
 #include <DRUM/type23drumdefs.ah>
 #include <DCS/dcs2defs.ah>
 #include <CLOCK/clockdefs.ah>
+#include <memory.ah>
 
-// Which bank we load the control program into and its shifted value
-#define bnk 10000
+// Which bank we load the control program into
 #define bnkno 1
 // A scratch buffer at 3000 is used for reading a line.
 #define linbuf 3000
@@ -36,33 +37,34 @@ bank bnkno
 #define say(a) law a; jda txtasc
 #define newline law '\n'; lia ; iot tcb
 
-// DCS2 is using channel interrupts
+// An image of what gets copied down to bank 0 is kept in this bank, not used except for the transfer.
+// DCS2 is using channel interrupts.
 0/
     lem
-    jmp strt
+    jmp runprog
     0
     jmp isr
 
 // When running, the bank 0 code will transfer here on interrupt, a channel connect.
 100/
-resume, lsm
+resume, lsm         // no interrupts for now
      cbs
-     lem            // extended mem off so we don't screw up local indirects`
+     lem            // extended mem off so we don't screw up local indirects
      cli
-     iot rci
-// be sure we actually open and have a connection
-// if not open, do so
-// if open and not connected, wait for one
+     iot rci        // clear the DCS2 interrupt flag, chan 0
+// Be sure we actually open and have a connection
+// If not open, do so
+// If open and not connected, wait for one
 rs2, cli
-     iot rcs
+     iot rcs        // get channel status for chan 0
      lai
      and [dsfopn
      sza
      jmp rs3
-     lio [sbcset ctl
+     lio [sbcset ctl]    // not open, do so, listens on port 2022 decimal.
      iot scb
 
-rs3, cli
+rs3, cli            // loop waiting for a connection, which will be ready if we got here via the interrupt
      iot rcs
      lai
      and [dsfcon
@@ -72,37 +74,37 @@ rs3, cli
 // lock the send channel to 0 
      cli
      iot ssb
-     say(hl1)
+     say(hl1)       // we're connected, say hello and proceed
      say(hl1b)
      say(hl1c)
 
-// get the track to load or the command
-// if not valid, ask again
-// if a fatal error occurs, halt then rebind and go back to the connection wait
+// Get the track to load or the command
+// If not valid, ask again
+// If a fatal error occurs, halt then rebind and go back to the connection wait
 try, say(hl2)
      lio [linbuf
      jda getaln
      lai
      sza
-     jmp dcsfal
+     jmp dcsfal     // got an error, probably a client disconnect
      newline
      lio [linbuf
      jda getnum
 // AC has number, IO neg if no number, char in low bits
      spi i
-     jmp getnld
+     jmp doload
      lai
      and [377
-     sad ['h'
-     jmp stp
+     sad ['h']       // yes, it's ascii on a PDP-1
+     jmp stop
      sad ['l'
      jmp list
      say(badnum)
-     jmp try
-stp, lio [sbcrst
+     jmp try        // not a recognized command or number, try again
+stop, lio [sbcrst]    // completely shut down DCS2
      iot scb
      hlt
-     jmp resume
+     jmp resume     // ok, they really want to continue
 
 // List programs on the drum
 // Loop thru all tracks getting the control block, 7751-7777
@@ -112,55 +114,52 @@ list,
 lst2, lac trk
      sal 6s
      sal 6s
-     ior [drmrd isr
+     ior [drmrd 7751] // directory area on the drum track
      lia
      iot dia
-     law 26
+     law 26         // read o26 words
      lia
      iot dwc
-     law linbuf
-     ior [bnk
+     law linbuf     // into our buffer
+     ior [0:bnkno]  // because law only does 12 bits
      lia
      iot dcl
-     lac linbuf+25
+     lac linbuf+25  // 707070 is a marker that the track has an image
      sad [707070
      jmp .+2
-     jmp trkn
+     jmp next
      jda prttrk
      say(dir)
      say(linbuf)
      newline
-trkn, idx trk
+next, idx trk       // next drum track
      sad [040
-     jmp try
+     jmp try        // done with listing
      jmp lst2
 trk, 0
 
 // AC has the track to load.
-// Load bank 0 mem from drum.
+// Load bank 0 mem from drum,the entire track.
 // Drum uses dma, no need for eem yet.
-getnld,
+doload,
      sal 6s
      sal 6s
      ior [drmrd
      lia
      iot dia
-     cli
+     cli            // a word count of 0 means 4096 words
      iot dwc
-     iot dcl
+     iot dcl        // bank 0, address 0
 
 // Bank 0 now has pgm loaded, check for valid load entry.
-// We need eem briefly to access location 7777 in bank 0.
-     law 7777
-     dac scratch
+// We need eem briefly to access location 7777 in bank 0 just to verify it.
      eem
-     lac i scratch
+     farlac(7777)    // nifty macro from memory.ah
      lem
      sad [707070
      jmp trkok
      say(inval)
      jmp try
-scratch, 0
 
 // say the pgm, copy our bank 0 stuff again
 trkok,
@@ -169,9 +168,9 @@ trkok,
 // show the directory filename, in bank 0 7751
 // we need it in this bank
      law 24
-     jda memcpy
-         isr
-         bnk+linbuf
+     jda memcpy     // eem must be off for memcpy
+         7751
+         linbuf:bnkno
      say(linbuf)
      say(bye2)
 
@@ -179,20 +178,20 @@ trkok,
 // remember that is is a full address copy
      law 4
      jda memcpy
-         bnk+0
+         0:bnkno
          0
 
 // copy our high mem code
      law 20
      jda memcpy
-         bnk+isr
+         isr:bnkno
          isr
 
 // start 2 second countdown
-     law 3720
-     iot i cct
+     law 0d2000     // 2k milliseconds
+     iot i cct      // start 1msec countdown timer and wait
      cla
-     iot cct
+     iot cct        // disable timer
 
 // Close the channel, it will reopen on the next connection
      lio [sbcbnd
@@ -201,10 +200,9 @@ trkok,
      cbs
      cli
      iot rci
-// and transfer back to bank 0, adr 7765
+// and transfer back to bank 0
      eem
-     jmp i b0s
-b0s, strt
+     farjmp(runprog)   // another cool macro
 
 // we had an error, just rebind and wait
 dcsfal, lio [sbcbnd
@@ -247,7 +245,7 @@ prttrk, 0
     cla
     lio trk
     sil 1s
-    div [12
+    div [0d10
     add ['0'
     lsw
     iot tcb
@@ -265,34 +263,27 @@ ctl, dcfcrnl dcfecho dcfsrv dcfie dcfioe dcfioc
 // put our contants out here so they don't mess up high memory
 constants
 
-// The bank 0 control transfer back to bank 1
-// resides in the usual loader area starting at 7751.
-// It's here for easy copying to 0
+// The bank 0 control transfer back to bank 1.
+// Resides in the usual loader area starting at 7751.
+// It's here for easy copying to 0.
 7751/
 // A connect request comes here, isr, 7751.
 // We have to jump thru hoops jumping to rti
 // because you can't enable extended mem while in
-// the interrupt and have it stick
+// the interrupt and have it stick.
 isr, law rtn
-     dac 1
+     dac 1          // fake the return from interrupt addr back here
      jmp i 1
 
 // The above ends up here, rtn, 7754. The jmp i 1 dismissed the interrupt.
 // Enable extened memory and jump back to our control code.
-// We have to construct the address because we can't use a stored constant.
-rtn, law resume
-     rcr 6s
-     rcr 6s
-     law bnkno
-     rcl 6s
-     rcl 6s
-     dac 0
-     eem
-     jmp i 0
+rtn, eem
+     farjmp(resume:bnkno)
 
-// The controller jumps here, strt, 7765, to start the program.
+// The controller jumps here, runprog to start the program.
 // Be sure to not overwrite 7773-7777!
-strt, lem
+// 7773 was loaded with the program start addr from the drum.
+runprog, lem
     esm
     jmp i sadr
 7773/

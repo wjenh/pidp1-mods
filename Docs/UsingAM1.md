@@ -553,6 +553,9 @@ lac a:1
 In bank 0, a:1 will have the value 10201.
 In bank 1, a will have the value 201, its in-bank address.
 
+Additionally, as a convenience, the form *integer:bankno* can be used.
+This is just a shorthand for *(bankno << 12) + integer*, e.g. 100:3.
+
 Code using banks and cross-bank references must understand the standard PDP-1 extended memory mode access rules.
 
 The **macro** and **macro1** compilers do not support extended memory,

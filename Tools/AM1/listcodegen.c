@@ -283,12 +283,6 @@ PNodeP node2P;
         fprintf(outfP, "%%forcelocal");
         break;
 
-    /*
-    case TERMINATOR:
-        fprintf(outfP, "\n");
-        break;
-    */
-
     default:
         verror("unknown op %d in listOperand", nodeP->type);
     }

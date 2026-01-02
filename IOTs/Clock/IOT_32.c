@@ -54,7 +54,7 @@ int i;
 
     if( (pdp1P->mb & 03700) == 02000 )     // IOT 2032, pay attention to rest
     {
-        op = (pdp1P->ac >> 8) & 17;
+        op = (pdp1P->ac >> 8) & 017;
         iotLog("In iot 2032 io %o op %o\n", pdp1P->ac, op);
         completeNeeded = 0;
 

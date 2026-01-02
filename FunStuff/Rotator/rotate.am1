@@ -1,0 +1,108 @@
+ROTATE THRU THREE PROGRAMS ON THE DRUM
+
+// This uses the IOT 32 clock 1 minute interrupt.
+// It runs in the bank defined by 'bnkno'.
+// It then sets up interrupt block 0 in mem bank 0 and overwrites some of the loader at 7751
+// and configures the clock to interrupt every minute and return to this code in bank 1.
+// It selects the program to load and fetches it from the drum then transfers control
+// to the start address that drumloader established.
+// You will have to reload drumloader after using this.
+
+#include <memory.ah>
+#include <CLOCK/clockdefs.ah>
+#include <DRUM/type23drumdefs.ah>
+// Am1 knows about the extended PDP-1D instructions, no need to define them here.
+
+#define startaddr 7773    // where the start address is loaded from the drum
+
+// Which bank we load into for the control program
+#define bnkno 1
+
+bank bnkno
+
+// Put included code here
+1000/
+#include <memcpy.ah>
+
+// The channel 0 interrupt setup.
+// We execute a bit of code that will get
+// overwritten but reloaded on pgm switch.
+// This never gets executed, it's for ease of copying to bank 0.
+0/
+     lem
+     jmp go
+     0
+     jmp isr
+
+// We start at 100
+100/
+    lat         // the test switches say which 3 progs to run
+    dac pgm
+// enable the clock
+    lac [3000] // 1 min interrupt enabled, clock enabled
+    iot cls
+
+// Control transfers here on every timeout, we will already be in extended mode.
+// Get the drum pgm to load, 3 sets of 6 bits, high bit ignored
+resume, 
+     lac pgm
+     lia
+     rar 6s
+     dac pgm
+// IO has the original, mask to get pgm to load
+     lai
+     and [37
+     sal 6s
+     sal 6s
+
+// load bank 0 mem from drum
+     ior [drmrd
+     lia
+     iot dia
+     cli
+     iot dwc
+     iot dcl
+
+// Yes, that's all it took to read a full memory image and load it into bank 0.
+// Bank 0 now has pgm loaded, update with our glue code.
+     law 4
+     jda memcpy
+     0:bnkno
+     0
+     law 20
+     jda memcpy
+     isr:bnkno
+     isr
+
+// turn on ints, extended mem, and transfer back to bank 0, adr 0
+     esm
+     eem
+     farjmp(0)
+
+// put this out now so we don't step on high mem
+pgm, 0
+constants
+
+// The bank 0 transfer-back code.
+// It resides in the usual loader area starting at 7751.
+// Again, it's here to make it easy to copy.
+// The clock interrupt comes here, isr, 7751.
+// We have to jump thru hoops jumping to rti
+// because you can't enable extended mem while in
+// the interrupt and have it stick.
+7751/
+isr, law rti
+     dac 1
+     jmp i 1
+
+// the interrupt return jumps here, jump back to the control code
+rti, eem
+     farjmp(resume:bnkno)
+
+// We jump here when control is transferred from bank 1,
+// if no start addr, go on to next pgm.
+go,  lac startaddr
+     sza
+     jmp i startaddr    // transfer to the loaded program
+
+start 100:bnkno

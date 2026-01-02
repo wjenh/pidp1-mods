@@ -327,7 +327,6 @@ Examples of constants are:
    lac [123]
    lio [a+456]
 ```
-If a constant is the last component of an expression, the trailing ] can be omitted.
 
 Functionally, the above is eqivalent to:
 ```
@@ -341,6 +340,10 @@ const2, a+456
 
 But, constants are also tracked and kept in a *constants pool*.
 Sucessive uses of the same constant all share one memory location for their value, saving space.
+
+If a constant is the last thing on a line, the trailing ] can be omitted.\
+*Note* that *last* means **last**, no comments, etc. allowed.\
+Best practice is to always close the constant.
 
 Also see the *constants* directive, below.
 

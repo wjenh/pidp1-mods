@@ -1,6 +1,7 @@
 #ifndef MEMCPY_AH
 #define MEMCPY_AH
 // Copy from one mem bank to another.
+// Call using jda.
 // AC has the count of words to copy.
 // The word following the call has the address to copy from
 // The next word has the address to copy to

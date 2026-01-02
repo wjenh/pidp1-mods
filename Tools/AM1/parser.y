@@ -148,6 +148,7 @@ extern void leave(int);
 %type <pnodeP> terminator
 %type <pnodeP> terminators
 %type <ival> optINTEGER
+%type <ival> bref
 
 /* precedence for operators */
 
@@ -567,23 +568,19 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                     $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = $1;
                 }
-                | INTEGER BREF INTEGER
+                | INTEGER bref
                 {
-                    if( ($3 < 0) || ($3 > 31) )
-                    {
-                        verror("bank number must be 0-31 decimal, 0-37 octal");
-                    }
 		    $$ = newnode(lineno, cur_pc, INTEGER, NILP, NILP);
-		    $$->value.ival = $1 + ($3 << 12);
+		    $$->value.ival = $1 + ($2 << 12);
                 }
-                | NAME BREF INTEGER
+                | NAME bref
                 {
                 BankContextP bankP;
                 SymNodeP symP;
 
-                    if( !(bankP = findBank($3)) )
+                    if( !(bankP = findBank($2)) )
                     {
-                        verror("bank %d has not been used, it cannot be referenced", $3);
+                        verror("bank %d has not been used, it cannot be referenced", $2);
                     }
 
                     if( !(symP = sym_find(&(bankP->globalSymP), $1)) )
@@ -593,7 +590,7 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                         symP = sym_make($1, 0);
                         sym_add(&(bankP->globalSymP), symP);
                         symP->flags = SYM_GLOB;
-                        vwarn("bank %d is creating symbol %s in bank %d", curBank, $1, $3);
+                        vwarn("bank %d is creating symbol %s in bank %d", curBank, $1, $2);
                     }
 
                     if( !didBrefWarn )
@@ -606,14 +603,14 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
 
                     $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
                     $$->value.symP = symP;
-                    $$->value2.ival = $3;
+                    $$->value2.ival = $2;
                 }
-                | ADDR BREF INTEGER
+                | ADDR bref
                 {
                     // This is a symbol in our own bank, but that's ok
                     $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
                     $$->value.symP = $1;
-                    $$->value2.ival = $3;
+                    $$->value2.ival = $2;
                 }
                 | NAME
                 {
@@ -741,6 +738,16 @@ names           : var
                     $$ = $3;
                 }
                 ;
+
+bref            : BREF INTEGER
+                {
+                    if( ($2 < 0) || ($2 > 15) )
+                    {
+                        verror("bank number must be 0-15 decimal, 0-17 octal");
+                    }
+
+                    $$ = $2;
+                }
 
 var             : varname
                 {

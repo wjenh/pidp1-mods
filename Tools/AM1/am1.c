@@ -39,6 +39,14 @@
  * include directory, which is overridden itself by -i.
  * If not set, it defaults to the predefined AM1INCDIR in am1.h.
  *
+ * Original author: Bill Ezell (wje) pdp1@quackers.net
+ * Free to use for any purpose as long as attribution is kept.
+ *
+ * Revision history:
+ *
+ * 18/12/2025 - initial version
+ * 02/01/2026 - 'production' release
+ *
 */
 #include <unistd.h>
 #include <stdlib.h>

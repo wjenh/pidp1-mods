@@ -1,6 +1,9 @@
+all: drumupdater drumlist 
+
 drumupdater: drumupdater.o
 
-clean:
-	@rm *.o drumupdater 2>/dev/null || true
+drumlist: drumlist.c
+	gcc -O0 -g drumlist.c -o drumlist
 
-ddump: ddump.c
+clean:
+	@rm *.o drumupdater drumlist 2>/dev/null || true

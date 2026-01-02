@@ -16,11 +16,19 @@
  *
  * See disassemble_tape.c for details on the loaders.
  *
+ * Usage: drumupdater [-i imagefile] [-l label] [-a] -t trackno filename
+ * where:
+ * i - use the given name for the drum image instead of 'drumImage'
+ * l - label the track with the given label, up to 12 flexo characters
+ * a - read the tape image as an AM1 loader format tape
+ * t - the track to store to, 0-31 dec.
+ *
  * Original author: Bill Ezell (wje), pdp1@quackers.net
  *
  * Revision history:
  *
  * 28/11/2025 wje - Initial version
+ * 02/01/2026 wje - Add AM1 loader format support, update the usage documentation
  *
  */
 #include <stdlib.h>
@@ -59,12 +67,13 @@ int opt;
 int trackNo = 0;
 int cur_addr;
 int end_addr;               // for BIN loader
-int start_addr = 4;        // for macro start, can come from RIM if no BIN blocks, 4 is the default if none
+int start_addr = 4;         // for macro start, can come from RIM if no BIN blocks, 4 is the default if none
+bool am1Mode = false;
 char *filenameP;
 char *cP, *cP2;
 char imageName[512];
 char label[128];
-Word word, word2;
+Word word;
 
 bool did_start = false;
 FILE *fP;
@@ -74,7 +83,7 @@ int outfd;
     strcpy(imageName, DEFAULT_IMAGE);
 
     // parse our comd line args
-    while( (opt = getopt(argc, argv, "i:l:t:")) != -1 )
+    while( (opt = getopt(argc, argv, "i:l:t:a")) != -1 )
     {
         switch( opt )
         {
@@ -92,6 +101,10 @@ int outfd;
 
         case 'l':
            strcpy(label, optarg);
+           break;
+
+        case 'a':
+           am1Mode = true;
            break;
 
         default: /* '?' */
@@ -118,7 +131,7 @@ int outfd;
         exit(1);
     }
 
-    if( !(outfd = open(imageName, O_CREAT + O_WRONLY, 0666)) )
+    if( (outfd = open(imageName, O_CREAT + O_WRONLY, 0666)) < 0 )
     {
         fprintf(stderr,"Can't open drum image file '%s'\n", imageName);
         exit(1);
@@ -195,7 +208,29 @@ int outfd;
             break;
 
         case LOOKING:
-            if( OPERATION(word) == 032 )   // RIM ended, DIO, beginning of BIN block
+
+            if( am1Mode )
+            {
+                if( word & 0600000 )
+                {
+                    // am1 loader end-of-code, start addr
+                    start_addr = word & 0177777;    // maybe it will support other than bank 0 eventually
+                    state = DONE;
+                }
+                else
+                {
+                    if( word > 07777 )
+                    {
+                        fprintf(stderr,"AM1 binary uses a bank other than 0, can't load to drum.\n");
+                        fclose(fP);
+                        exit(1);
+                    }
+                    cur_addr = word;        // start of am1 block
+                    end_addr = getWord(fP, state);
+                    state = BIN;
+                }
+            }
+            else if( OPERATION(word) == 032 )   // RIM ended, DIO, beginning of BIN block
             {
                 cur_addr = OPERAND(word);             // starting address
                 word = getWord(fP, state);            // shold be 'dio endaddr + 1'
@@ -232,7 +267,10 @@ int outfd;
 
                 if( cur_addr >= end_addr )      // done
                 {
-                    word = getWord(fP, state);         // checksum, ignore
+                    if( !am1Mode )
+                    {
+                        word = getWord(fP, state);         // checksum, ignore
+                    }
                     state = LOOKING;
                 }
             }
@@ -344,12 +382,14 @@ int last_ch;
     return( word );
 }
 
-void usage()
+void
+usage()
 {
-    fprintf(stderr,"Usage: drumupdater [-i imagefile] [-l label] [-t trackno] filename\n");
+    fprintf(stderr,"Usage: drumupdater [-i imagefile] [-l label] [-a] -t trackno filename\n");
     fprintf(stderr,"where:\n");
     fprintf(stderr,"i - use the given name for the drum image instead of 'drumImage'\n");
     fprintf(stderr,"l - label the track with the given label, up to 12 flexo characters\n");
-    fprintf(stderr,"t - the drum track to load, 0-31, 0 by default\n");
+    fprintf(stderr,"a - read the tape image as an AM1 loader format tape\n");
+    fprintf(stderr,"t - the drum track to load, 0-31\n");
     exit(1);
 }

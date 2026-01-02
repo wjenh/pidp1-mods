@@ -1,9 +1,12 @@
+CC=gcc
+
 all: drumupdater drumlist 
 
-drumupdater: drumupdater.o
+drumupdater: drumupdater.c
+	$(CC) drumupdater.c -o drumupdater
 
 drumlist: drumlist.c
-	gcc -O0 -g drumlist.c -o drumlist
+	$(CC) drumlist.c -o drumlist
 
 clean:
 	@rm *.o drumupdater drumlist 2>/dev/null || true

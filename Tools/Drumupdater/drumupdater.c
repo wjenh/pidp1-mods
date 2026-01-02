@@ -208,7 +208,6 @@ int outfd;
             break;
 
         case LOOKING:
-
             if( am1Mode )
             {
                 if( word & 0600000 )
@@ -255,8 +254,17 @@ int outfd;
             else
             {
                 // Random data outside a RIM or BIN
-                fprintf(stderr, "Extra data after end of program, ignored.\n");
-                state = DONE;
+                if( OPERATION(word) == 0 )
+                {
+                    fprintf(stderr, "This appears to be an am1 format tape, rerun with -a.\n");
+                    fclose(fP);
+                    exit(1);
+                }
+                else
+                {
+                    fprintf(stderr, "Extra data %o after end of program, ignored.\n", word);
+                    state = DONE;
+                }
             }
             break;
 

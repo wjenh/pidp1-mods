@@ -1,4 +1,4 @@
-CC=gcc -O0 -g
+CC=gcc
 
 am1:	am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o permsyms.def.o eval.o \
 	maccodegen.o bincodegen.o listcodegen.o

@@ -1,12 +1,14 @@
-ROTATE THRU THREE PROGRAMS ON THE DRUM
+ROTATE THRU SIX PROGRAMS ON THE DRUM
 
 // This uses the IOT 32 clock 1 minute interrupt.
 // It runs in the bank defined by 'bnkno'.
-// It then sets up interrupt block 0 in mem bank 0 and overwrites some of the loader at 7751
-// and configures the clock to interrupt every minute and return to this code in bank 1.
+// It immediately halts to allow the test switches to be set for the first 3 programs.
+// They are specified by 3 groups of 6 switches with the drum track in each group.
+// After continue, it halts again to allow setting the next 3 programs.
+// On continue, it then sets up interrupt block 0 in mem bank 0 and overwrites the loader at 7751
+// and configures the clock to interrupt every minute and return to this code.
 // It selects the program to load and fetches it from the drum then transfers control
 // to the start address that drumloader established.
-// You will have to reload drumloader after using this.
 
 #include <memory.ah>
 #include <CLOCK/clockdefs.ah>
@@ -36,21 +38,27 @@ bank bnkno
 
 // We start at 100
 100/
-    lat         // the test switches say which 3 progs to run
+    hlt
+    lat         // the test switches say which 6 progs to run
     dac pgm
+    hlt
+    lat
+    dac pgm2
 // enable the clock
     lac [3000] // 1 min interrupt enabled, clock enabled
     iot cls
 
 // Control transfers here on every timeout, we will already be in extended mode.
-// Get the drum pgm to load, 3 sets of 6 bits, high bit ignored
+// Get the drum pgm to load, 6 sets of 6 bits, high bit in each ignored, and rotate them.
 resume, 
      lac pgm
      lia
-     rar 6s
-     dac pgm
-// IO has the original, mask to get pgm to load
+     lac pgm2
+     rcr 6s
+     dac pgm2
      lai
+     dac pgm
+// mask to get pgm track to load
      and [37
      sal 6s
      sal 6s
@@ -81,6 +89,7 @@ resume,
 
 // put this out now so we don't step on high mem
 pgm, 0
+pgm2, 0
 constants
 
 // The bank 0 transfer-back code.

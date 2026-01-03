@@ -568,7 +568,12 @@ octal			{ decimalMode = false; }
 			    return( TEXT );
 			}
 
-.			{ return(yytext[0]); }
+.			{
+			    if( yytext[0] != '\r')	// in case we get cr-nl or nl-cr, drop the cr
+			    {
+			        return(yytext[0]);
+			    }
+			}
 
 %%
 #include "lexfuncs.c"

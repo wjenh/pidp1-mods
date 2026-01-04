@@ -87,6 +87,7 @@ extern void leave(int);
 %token <pnodeP> NAMES
 %token <pnodeP> VAR
 %token <pnodeP> VARS
+%token <pnodeP> TABLE
 %token <symP> OPCODE
 %token <symP> OPADDR
 %token <symP> OPORABLE
@@ -141,8 +142,8 @@ extern void leave(int);
 %type <pnodeP> stmt_list
 %type <pnodeP> stmt
 %type <pnodeP> expr
-%type <pnodeP> names
 %type <pnodeP> var
+%type <pnodeP> varnames
 %type <pnodeP> varname
 %type <pnodeP> optExpr
 %type <pnodeP> terminator
@@ -199,6 +200,8 @@ body		: stmt_list
                         {
                             setVarsPC(varNodesP);
                             nodeP = newnode(lineno, cur_pc, VARS, $1->leftP, varNodesP);
+                            $1->leftP = nodeP;
+                            $1 = nodeP;
                         }
 
                         if( constSymP )     // if not null, finish constants
@@ -321,7 +324,7 @@ stmt		: expr
                     $$->value2.ival = cur_pc;   // is the pc for the new bank
                     sawBank = true;
                 }
-                | VAR names
+                | VAR varnames
                 {
                     $$ = newnode(lineno, cur_pc, VAR, NILP, $2);
                 }
@@ -448,6 +451,18 @@ stmt		: expr
 		    $$ = newnode(lineno, cur_pc, TEXT, NILP, NILP);
                     $$->value.strP = $1;
                     cur_pc += countText($1);
+                }
+                | TABLE expr
+                {
+                    $$ = newnode(lineno, cur_pc, TABLE, NILP, NILP);
+                    $$->value.ival = evalExpr($2);
+                    cur_pc += $$->value.ival;
+                }
+                | TABLE expr LOCATION expr
+                {
+                    $$ = newnode(lineno, cur_pc, TABLE, NILP, $4);
+                    $$->value.ival = evalExpr($2);
+                    cur_pc += $$->value.ival;
                 }
                 ;
 
@@ -727,12 +742,18 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                 }
 		;
 
-names           : var
+varnames        : var
                 {
                     $$ = $1;
+
+                    if( varNodesP )
+                    {
+                        $1->rightP = varNodesP;
+                    }
+
                     varNodesP = $$;
                 }
-                | names LOCATION var
+                | varnames LOCATION var
                 {
                     $1->rightP = $3;
                     $$ = $3;
@@ -763,16 +784,22 @@ varname         : NAME
                 {
                 SymNodeP symP;
 
-                    if( sym_find(&globalSymP, $1) )
-                    {
-                        verror("variable %s is already declared", $1);
-                    }
-
                     symP = sym_make($1, 0);
                     sym_add(&globalSymP, symP);
                     symP->flags = SYM_GLOB | SYMF_VAR;
                     $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = symP;
+                }
+                | ADDR
+                {
+                    if( $1->flags & SYMF_RESOLVED )
+                    {
+                        verror("variable %s is already declared", $1);
+                    }
+
+                    $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
+                    $$->value.symP = $1;
+                    $1->flags = SYM_GLOB | SYMF_VAR;
                 }
 %%
 
@@ -851,6 +878,7 @@ SymNodeP symP;
         {
             symP->flags |= SYMF_RESOLVED;
             symP->value = cur_pc++;
+            nodeP->pc = symP->value;
         }
 
         nodeP = nodeP->rightP;

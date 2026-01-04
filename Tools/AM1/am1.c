@@ -269,10 +269,6 @@ SymNodeP symP;
     if(doCpp)
     {
         sprintf(pfilename, "%s.cpp", basename);
-    }
-
-    if( doCpp )
-    {
         if(!run_cpp(filenameP, pfilename))
         {
             fprintf(stderr, "am1: cpp failed\n");
@@ -755,6 +751,20 @@ char str[128];
             }
 
             printf("%s (%03o%c)", nameP, i, ch);
+            break;
+
+        case VAR:
+            printf("<var>\n");
+            dumpNode(4, nodeP->rightP);
+            break;
+
+        case VARS:
+            printf("<vars>\n");
+            dumpNode(4, nodeP->rightP);
+            break;
+
+        case TABLE:
+            printf("<table %o>\n", nodeP->value.ival);
             break;
 
         case TERMINATOR:

@@ -55,6 +55,7 @@ macCodegen(FILE *outfP, PNodeP rootP)
 static void
 emitStatements(FILE *outfP, PNodeP nodeP)
 {
+int i, j;
 PNodeP node2P;
 char str[128];
 
@@ -133,6 +134,27 @@ char str[128];
         case ASCII:
             fprintf(outfP, "/ Ascii table\n");
             emitAscii(outfP, nodeP->value.strP);
+            fprintf(outfP, "/ End\n");
+            break;
+
+        case TABLE:
+            fprintf(outfP, "/ Data table\n");
+
+            if( nodeP->rightP )     // has initializer
+            {
+                j = evalExpr(nodeP->rightP);
+
+                for( i = 0; i < nodeP->value.ival; ++i )
+                {
+                    nodeP->pc++;
+                    fprintf(outfP, "    %o\n", j);
+                }
+            }
+            else
+            {
+                fprintf(outfP, ".+%o/\n", nodeP->value.ival);
+            }
+
             fprintf(outfP, "/ End\n");
             break;
 

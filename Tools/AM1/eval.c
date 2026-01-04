@@ -14,14 +14,25 @@ int twosComplAdj(int);
 int countAscii(char *strP);
 int countText(char *strP);
 
+static int _evalExpr(PNodeP);
+
 void verror(char *msgP, ...);
 
+// Evaluate an expression, mask to proper word size.
 int
 evalExpr(PNodeP nodeP)
 {
+    return( _evalExpr(nodeP) & WRDMASK );
+}
+
+int
+_evalExpr(PNodeP nodeP)
+{
 int lval;
 int rval;
+char ch;
 SymNodeP symP;
+PNodeP node2P;
 
     if( !nodeP )
     {
@@ -31,108 +42,124 @@ SymNodeP symP;
     switch( nodeP->type )
     {
     case BINOP:
-        lval = evalExpr(nodeP->leftP);
-        rval = evalExpr(nodeP->rightP);
+        // The returned values will be in 1's cmpl
+        lval = _evalExpr(nodeP->leftP);
+        rval = _evalExpr(nodeP->rightP);
 
         switch( nodeP->value.ival )
         {
-        case SEPARATOR:     // the default behavior from macro1 is add
-        case PLUS:
-            return( lval + rval );
-        case MINUS:
-            return( lval - rval );
-        case MUL:
-            return( lval * rval );
-        case DIV:
-            return( lval / rval );
-        case MOD:
-            return( lval % rval );
-        // The bitwise oprs need to use 1's cmpl
-        case AND:
-            lval = onesComplAdj(lval);
-            rval = onesComplAdj(rval);
-            return( lval & rval );
-        case OR:
-            lval = onesComplAdj(lval);
-            rval = onesComplAdj(rval);
-            return( lval | rval );
         case XOR:
-            lval = onesComplAdj(lval);
-            rval = onesComplAdj(rval);
-            return( lval ^ rval );
+            lval = lval ^ rval;
+            break;
+
+        case SEPARATOR:
+        case OR:
+            lval = lval | rval;
+            break;
+
+        case AND:
+            lval = lval & rval;
+            break;
+
+        case DIV:
+            lval = onesComplAdj(twosComplAdj(lval) / twosComplAdj(rval));
+            break;
+
+        case MOD:
+            lval = onesComplAdj(twosComplAdj(lval) % twosComplAdj(rval));
+            break;
+
+        case PLUS:
+            lval = onesComplAdj(twosComplAdj(lval) + twosComplAdj(rval));
+            break;
+
+        case MINUS:
+            lval = onesComplAdj(twosComplAdj(lval) - twosComplAdj(rval));
+            break;
+
+        case MUL:
+            lval = onesComplAdj(twosComplAdj(lval) * twosComplAdj(rval));
+            break;
+
         default:
-            verror("unknown binary op %d in evalExpr", nodeP->value.ival);
-            // never returns, just to shut up overly-picky c compilers
-            return(0);
+            verror("unknown binary op %d in _evalExpr", nodeP->value.ival);
         }
+
+        return( lval );
 
     case UNOP:
-        rval = evalExpr(nodeP->rightP);
         switch( nodeP->value.ival )
         {
-        case PARENS:
-            return( rval );
-        case UMINUS:
-            return( -rval );
-        case CMPL:
-            return( ~onesComplAdj(rval) );
+            case PARENS:
+                return( _evalExpr(nodeP->rightP) );
+                break;
+
+            case UMINUS:
+            case CMPL:
+                return( ~_evalExpr(nodeP->rightP) );
+                break;
+
         default:
-            verror("unknown unary op %d in evalExpr", nodeP->value.ival);
-            // never returns, just to shut up overly-picky c compilers
-            return(0);
+            verror("unknown unary op %d in _evalExpr", nodeP->value.ival);
         }
+        break;
 
-    case CONSTANT:
-        symP = nodeP->value.symP;
-        if( !(symP->flags & SYMF_RESOLVED) )
-        {
-            symP->flags |= SYMF_RESOLVED;
-            symP->value2 = evalExpr(nodeP->rightP);
-        }
-
-        return( symP->value );
-
-    case DOT:
-        return( nodeP->value.ival );
-
+    case CONSTANT:      // don't adjust
     case OPORABLE:
     case OPCODE:
     case OPADDR:
-    case VALUESPEC:
         return( nodeP->value.symP->value );
+        break;
 
-    case ADDR:
+    case DOT:
+        return( nodeP->value.ival );   // also positive, don't adjust
+        break;
+
     case LCLADDR:
-    case BREF:
+        // local addrs will already be resolved to the actual location
         symP = nodeP->value.symP;
         if( symP->flags & SYMF_RESOLVED )
         {
-            rval = symP->value;
+            return( symP->value );
+        }
+        else
+        {
+            verror("local symbol %s has no defined value", symP->name);
+        }
+        break;
+
+    case ADDR:
+        symP = nodeP->value.symP;
+        if( symP->flags & SYMF_RESOLVED )
+        {
+            return( symP->value );
         }
         else
         {
             verror("symbol %s has no defined value", symP->name);
-            // never returns, just to shut up overly-picky c compilers
-            return(0);
         }
+        break;
 
-        if( nodeP->type == BREF )
-        {
-            rval = (nodeP->value2.ival << 12) + rval;
-        }
-        return( rval );
+    case BREF:
+        return( (nodeP->value2.ival << 12) | nodeP->value.symP->value );
+        break;
 
-
-    case INTEGER:
     case CHAR:
     case FLEXO:
     case LITCHAR:
-        return( nodeP->value.ival );
+        return( nodeP->value.ival & WRDMASK );
+        break;
+
+    case INTEGER:
+        return( nodeP->value.ival & WRDMASK );
+        break;
+
+    case VALUESPEC:
+        return( nodeP->value.symP->value );
+        break;
 
     default:
-        verror("unknown op %d in evalExpr", nodeP->type);
-        // never returns, just to shut up overly-picky c compilers
-        return(0);
+        verror("unknown op %d, pc 0%04o in _evalExpr", nodeP->type, nodeP->pc);
     }
 }
 
@@ -167,31 +194,37 @@ SymNodeP symP;
 
         switch( nodeP->value.ival )
         {
-        case PLUS:
-        case SEPARATOR:
-            partial = lval + rval;
-            break;
-        case MINUS:
-            partial = lval - rval;
-            break;
-        case MUL:
-            partial = lval * rval;
-            break;
         case DIV:
-            partial = lval / rval;
+            partial = onesComplAdj(twosComplAdj(lval) / twosComplAdj(rval));
             break;
+
         case MOD:
-            partial = lval ^ rval;
+            partial = onesComplAdj(twosComplAdj(lval) % twosComplAdj(rval));
             break;
+
+        case PLUS:
+            partial = onesComplAdj(twosComplAdj(lval) + twosComplAdj(rval));
+            break;
+
+        case MINUS:
+            partial = onesComplAdj(twosComplAdj(lval) - twosComplAdj(rval));
+            break;
+
+        case MUL:
+            partial = onesComplAdj(twosComplAdj(lval) * twosComplAdj(rval));
+            break;
+
         case AND:
             partial = lval & rval;
             break;
+        case SEPARATOR:
         case OR:
             partial = lval | rval;
             break;
         case XOR:
             partial = lval ^ rval;
             break;
+
         default:
             verror("unknown binary op %d in hashExpr", nodeP->value.ival);
             // never returns, just to shut up overly-picky c compilers
@@ -220,11 +253,11 @@ SymNodeP symP;
         case PARENS:
             return( rval );
         case UMINUS:
-            return( -rval );
         case CMPL:
-            return( ~rval );
+            lval = (~rval) & 0777777;
+            return( (rval & ~0777777) | lval );
         default:
-            verror("unknown unary op %d in evalExpr", nodeP->value.ival);
+            verror("unknown unary op %d in hashExpr", nodeP->value.ival);
             // never returns, just to shut up overly-picky c compilers
             return(0);
         }

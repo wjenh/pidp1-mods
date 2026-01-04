@@ -59,6 +59,7 @@ bank[ \t]*		{ return(BANK); }
 ^[ \t]*start[ \t]*	{ return(START); }
 ^[ \t]*constants[ \t]*	{ return(CONSTANTS); }
 ^[ \t]*variables[ \t]*	{ return(VARS); }
+^[ \t]*table[ \t]*	{ return(TABLE); }
 
 ascii[ \t]+		{ BEGIN DOASCII; }
 text[ \t]+		{ BEGIN DOTEXT; }

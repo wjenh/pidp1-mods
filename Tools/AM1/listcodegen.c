@@ -58,6 +58,7 @@ listCodegen(FILE *outfP, PNodeP rootP)
 static void
 listStatements(FILE *outfP, PNodeP nodeP)
 {
+int i, j;
 PNodeP node2P;
 char str[128];
 
@@ -117,6 +118,28 @@ char str[128];
         case TEXT:
             fprintf(outfP, "/ Text table\n");
             listText(outfP, nodeP, nodeP->value.strP);
+            fprintf(outfP, "/ End\n");
+            break;
+
+        case TABLE:
+            fprintf(outfP,"/ table %o\n", nodeP->value.ival);
+            if( nodeP->rightP )     // has initializer
+            {
+                j = evalExpr(nodeP->rightP);
+
+                for( i = 0; i < nodeP->value.ival; ++i )
+                {
+                    startLine(outfP, nodeP);
+                    nodeP->pc++;
+                    fprintf(outfP, "    %o\n", j);
+                }
+            }
+            else
+            {
+                startLine(outfP, nodeP);
+                fprintf(outfP, "    . = .+%o\n", nodeP->value.ival);
+            }
+
             fprintf(outfP, "/ End\n");
             break;
 
@@ -362,15 +385,25 @@ int val;
 static void
 listVars(FILE *fP, PNodeP nodeP)
 {
+int val;
 SymNodeP symP;
 
     while( nodeP )
     {
         symP = nodeP->value.symP;
+        nodeP->value2.ival = (nodeP->leftP)?evalExpr(nodeP->leftP):0;
         startLine(fP, nodeP);
         fprintf(fP,"%s, ", symP->name);
-        (nodeP->leftP)?listOperand(fP,nodeP->leftP):0;
+        if( nodeP->leftP )
+        {
+            listOperand(fP,nodeP->leftP);
+        }
+        else
+        {
+            fprintf(fP,"0");
+        }
         fprintf(fP,"\n");
+
         nodeP = nodeP->rightP;
     }
 }

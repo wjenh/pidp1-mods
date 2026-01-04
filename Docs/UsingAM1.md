@@ -230,6 +230,17 @@ Expressions are evaluated and the resulting value becomes the 18-bit result.
 All the terms in an expression are evaluated at assembly time to give an integer value; there is no
 computation done during the execution of an instruction.
 
+The PDP-1 used 1's complement math, which no modern computers use.
+But, **am1** runs on a modern computer and uses 2's complement math.
+It automatically converts the results of math operations (+, -, *, /, %, and unary minus) to the 1's complement
+representation during computations, the values in the binary output will be the correct 1's complement values.
+
+Remember that one annoying thing about 1's complement is that there are two values for zero, 0 and -0.
+0 is all bits off, -0 is all bits on, and it is maintained in the output.
+For example, the operation *-1 + 1* results in -0, not 0 as you would normally expect.
+
+This only applies to binary mode; for macro mode, **macro1** deals with this itself.
+
 ## Symbols
 
 A *symbol* is a string of characters composed from an initial upper or lower case alphabetic character,
@@ -322,6 +333,7 @@ Also see the *variables* directive below.
 ## Constants
 
 Constants are another shorthand, but with special behavior.
+
 Examples of constants are:
 ```
    lac [123]
@@ -346,6 +358,53 @@ If a constant is the last thing on a line, the trailing ] can be omitted.\
 Best practice is to always close the constant.
 
 Also see the *constants* directive, below.
+
+## Tables
+
+Tables correspond to the **macro1** *dimension* pseudo-op.
+A table statement reserves a number of words, optionally initialized to a value.
+The table keyword is followed by an expression that must be able to be fully evaluated at that time.
+
+Examples are:
+```
+table 10
+table 5*7
+```
+
+An optional expression can follow which will be the value to fill the table with.
+If no value is given, the table will not be initialized:
+```
+table 10, 'z'
+```
+fills the table with the ascii value of the letter *z*.
+
+The table keyword is a statement, and as such must be on a line by itself.
+This means that:
+```
+foo, table 5
+```
+is **not** legal.
+
+Functionally, it is eqivalent to the same number of the initializer value, e.g.
+```
+table 5, 17
+-or-
+17
+17
+17
+17
+17
+```
+
+Or, if there is no initializer:
+```
+table 5
+-or-
+.+5/
+```
+
+Using an initializer means that a 'tape' word will be written for each element of the table, which for large tables
+can significantly increase the size and load time.
 
 ## Operators
 

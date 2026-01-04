@@ -1,0 +1,6 @@
+This directory contains docviewer, a simple utility for converting tape images that are actually text
+to readable ascii.
+
+Usage: docviewer tapefile
+
+As usual, just type 'make' to build it.

@@ -96,7 +96,7 @@ binCodegen(FILE *outfP, PNodeP rootP)
 static void
 writeStatements(FILE *outfP, PNodeP nodeP)
 {
-int i;
+int i, j;
 PNodeP node2P;
 BankContextP bankP;
 
@@ -117,7 +117,7 @@ BankContextP bankP;
             initBuffer(outBufP, cur_pc);
             if( canReduce(nodeP->rightP) )
             {
-                i = reduceOperand(nodeP->rightP);
+                i = reduceOperand(nodeP->rightP) & WRDMSK;
                 nodeP->value2.ival = i;     // save for listing
                 putBuffer(outfP, outBufP, i);
                 cur_pc++;
@@ -127,7 +127,7 @@ BankContextP bankP;
         case EXPR:
             if( canReduce(nodeP->rightP) )
             {
-                i = reduceOperand(nodeP->rightP);
+                i = reduceOperand(nodeP->rightP) & WRDMSK;
                 nodeP->value2.ival = i;     // save for listing
                 putBuffer(outfP, outBufP, i);
                 cur_pc++;
@@ -138,7 +138,7 @@ BankContextP bankP;
         case LCLLOCATION:
             if( canReduce(nodeP->rightP) )
             {
-                i = reduceOperand(nodeP->rightP);
+                i = reduceOperand(nodeP->rightP) & WRDMSK;
                 nodeP->value2.ival = i;     // save for listing
                 putBuffer(outfP, outBufP, i);
                 cur_pc++;
@@ -166,6 +166,25 @@ BankContextP bankP;
             cur_pc = nodeP->value2.ival;
             flushBuffer(outfP, outBufP);
             initBuffer(outBufP, (cur_bank << 12) | cur_pc);
+            break;
+
+        case TABLE:
+            if( nodeP->rightP )     // has initializer
+            {
+                j = evalExpr(nodeP->rightP);
+
+                for( i = 0; i < nodeP->value.ival; ++i )
+                {
+                    putBuffer(outfP, outBufP, j);
+                    cur_pc++;
+                }
+            }
+            else
+            {
+                flushBuffer(outfP, outBufP);
+                cur_pc += nodeP->value.ival;
+                initBuffer(outBufP, (cur_bank << 12) | cur_pc);
+            }
             break;
 
         default:
@@ -440,7 +459,7 @@ SymNodeP symP;
 
     while( nodeP )
     {
-        i = (nodeP->leftP)?reduceOperand(nodeP->leftP):0;
+        i = (nodeP->leftP)?reduceOperand(nodeP->leftP) & WRDMSK:0;
         putBuffer(fP, outBufP, i);
         ++cur_pc;
 

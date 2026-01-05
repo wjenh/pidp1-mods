@@ -370,7 +370,7 @@ stmt		: expr
                         locType = LOCATION;
                     }
 
-                    $$ = newnode(lineno, $3?cur_pc++:cur_pc, locType, NILP, $3);
+                    $$ = newnode(lineno, ($3 && !($3->flags & PN_NOINC))?cur_pc++:cur_pc, locType, NILP, $3);
                     $$->value.symP = symP;
                 }
 		| ADDR LOCATION optExpr
@@ -392,7 +392,7 @@ stmt		: expr
 
                         $1->flags |= SYMF_RESOLVED;
                         $1->value = cur_pc;
-                        $$ = newnode(lineno, $3?cur_pc++:cur_pc, LOCATION, NILP, $3);
+                        $$ = newnode(lineno, ($3 && !($3->flags & PN_NOINC))?cur_pc++:cur_pc, LOCATION, NILP, $3);
                         $$->value.symP = $1;
                     }
                 }
@@ -407,15 +407,16 @@ stmt		: expr
 
                     symP->flags = SYMF_RESOLVED | SYM_LOC;
                     symP->value = cur_pc;
-                    $$ = newnode(lineno, $3?cur_pc++:cur_pc, LCLLOCATION, NILP, $3);
+                    $$ = newnode(lineno, ($3 && !($3->flags & PN_NOINC))?cur_pc++:cur_pc, LCLLOCATION, NILP, $3);
                     $$->value.symP = symP;
                 }
 		| LCLADDR LOCATION optExpr
                 {
                     if( $1->value2 < localDepth )
                     {
-                        verror("local label %s is defined in an outer scope, can't be declared here",
-                            $1->name);
+                        verror(
+                            "local label %s is defined in outer scope %d, this is scope %d, can't be declared here",
+                            $1->name, $1->value2, localDepth);
                     }
                     else if( $1->flags & SYMF_RESOLVED )
                     {
@@ -425,7 +426,7 @@ stmt		: expr
                     {
                         $1->flags |= SYMF_RESOLVED;
                         $1->value = cur_pc;
-                        $$ = newnode(lineno, $3?cur_pc++:cur_pc, LCLLOCATION, NILP, $3);
+                        $$ = newnode(lineno, ($3 && !($3->flags & PN_NOINC))?cur_pc++:cur_pc, LCLLOCATION, NILP, $3);
                         $$->value.symP = $1;
                     }
                 }

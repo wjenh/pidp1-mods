@@ -213,6 +213,7 @@ body		: stmt_list
                                 setConstPC(cur_pc, constSymP);
                                 nodeP = newnode(lineno, cur_pc, CONSTANTS, $1->leftP, NILP);
                                 nodeP->value.symP = constSymP;
+                                constSymP = NILP;
                                 $1->leftP = nodeP;
                                 $1 = nodeP;
                             }
@@ -222,16 +223,18 @@ body		: stmt_list
                                 bankP = findBank(curBank);
                                 bankP->cur_pc = cur_pc;
                                 bankP->constSymP = constSymP;
-                                // now update all banks that need it
-                                for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
-                                {
-                                    if( bankP->constSymP )
-                                    {
-                                        setConstPC(bankP->cur_pc, bankP->constSymP);
-                                        constsListP = addToSymlist(constsListP, bankP->constSymP,
-                                            bankP->bank, bankP->cur_pc);
-                                    }
-                                }
+                                constSymP = NILP;
+                            }
+                        }
+
+                        // now update all banks that need it
+                        for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
+                        {
+                            if( bankP->constSymP )
+                            {
+                                setConstPC(bankP->cur_pc, bankP->constSymP);
+                                constsListP = addToSymlist(constsListP, bankP->constSymP,
+                                    bankP->bank, bankP->cur_pc);
                             }
                         }
 
@@ -318,7 +321,7 @@ stmt		: expr
                         verror("Bank cannot be used inside a local context");
                     }
 
-		    $$ = newnode(lineno, cur_pc, BANK, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, BANK, NILP, NILP);
                     $$->value.ival = $2;
                     swapBanks($2);
                     $$->value2.ival = cur_pc;   // is the pc for the new bank
@@ -433,6 +436,7 @@ stmt		: expr
                 | CONSTANTS
                 {
                 SymListP symlistP;
+                BankContextP ctxP;
 
                     // End this constant scope
                     constsListP = addToSymlist(constsListP, constSymP, curBank, cur_pc);
@@ -440,6 +444,12 @@ stmt		: expr
                     $$->value.symP = constSymP;
                     cur_pc = setConstPC(cur_pc, constSymP);
                     sym_init(&constSymP);
+
+                    // Be sure we clear from our bank context, if we have one
+                    if( (ctxP = findBank(curBank)) )
+                    {
+                        ctxP->constSymP = NILP;
+                    }
                 }
                 | ASCII
                 {
@@ -770,6 +780,11 @@ bref            : BREF INTEGER
 
                     $$ = $2;
                 }
+                | BREF DOT
+                {
+                    $$ = curBank;        // dot is a marker to indicate 'this bank'
+                }
+                ;
 
 var             : varname
                 {
@@ -958,7 +973,6 @@ BankContextP newP;
     return( newP );
 }
 
-BankContextP ctxP;
 // Return the bank context if one exists for the given bank, else NILP
 BankContextP
 findBank(int bank)

@@ -250,13 +250,13 @@ PNodeP node2P;
             emitOperand(outfP, nodeP->rightP);
             break;
         case UMINUS:
-            fprintf(outfP,"-");
-            emitOperand(outfP, nodeP->rightP);
+            rval = onesComplAdj(evalExpr(nodeP));
+            fprintf(outfP, "%o", (rval) & WRDMASK);
             break;
         case CMPL:
             // there is no complement in macro1, have to reduce
-            rval = onesComplAdj(evalExpr(nodeP->rightP));
-            fprintf(outfP, "%o", (~rval) & WRDMASK);
+            rval = onesComplAdj(evalExpr(nodeP));
+            fprintf(outfP, "%o", (rval) & WRDMASK);
             break;
         default:
             verror("unknown unary op %d in emitOperand", nodeP->value.ival);

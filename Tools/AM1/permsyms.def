@@ -85,8 +85,6 @@ lap opcode  0760300
 clf opcode  0760000
 stf opcode  0760010
 
-iot opcode  0720000
-
 # 1D instructions
 lia oporable 0760020
 lai oporable 0760040
@@ -96,12 +94,11 @@ cmi oporable 0764000
 sni oporable 0644000
 szi oporable 0654060
 
+# various IOTs
+iot opcode 0720000
 tyi opcode 0720004
 rrb opcode 0720030
 cks opcode 0720033
-lsm opcode 0720054
-esm opcode 0720055
-cbs opcode 0720056
 rpa opcode 0730001
 rpb opcode 0730002
 tyo opcode 0730003
@@ -110,3 +107,14 @@ ppb opcode 0730006
 dpy opcode 0730007
 lem opcode 0720074
 eem opcode 0724074
+
+# SBS ops
+esm opcode 0720055
+lsm opcode 0720054
+cbs opcode 0720056
+
+# SBS16 ops
+dsc opcode 0720050
+asc opcode 0720051
+isb opcode 0720052
+cac opcode 0720053

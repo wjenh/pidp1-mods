@@ -1,15 +1,17 @@
 /* am1.c - another macro1 assembler
  *
- * Usage: am1 [-Wbmnv[ykp]] [-i path] [-Dsymbol[=value]]... [-I path]... sourcefile
+ * Usage: am1 [-Wabmnvz[ykp]] [-i path] [-Dsymbol[=value]]... [-I path]... sourcefile
  *
  * Valid switches are:
  *
  * -W	don't print any warnings
+ * -a	treat space in expressions as add, not or
  * -b	generate binary source
  * -m	generate macro1 source
  * -l	generate a listing
  * -n	don't run cpp on input source
  * -v   print the current version number and exit
+ * -z   convert 1's complement -0 to +0 in expressions
  *
  * -i path
  *	set the root for all includes not specified by -I
@@ -44,8 +46,10 @@
  *
  * Revision history:
  *
- * 18/12/2025 - initial version
- * 02/01/2026 - 'production' release
+ * 18-Dec-2025 - initial version
+ * 02-Jan-2026 - 'production' release
+ * 04-Jan-2026 - added tables, masking of math results to 18 bits
+ * 05-Jan-2026 - added -z, -a, cleanup, doc updates
  *
 */
 #include <unistd.h>
@@ -80,6 +84,8 @@ char str2[256];
 
 bool doMacro;
 bool doBinary;
+bool keepMinusZero;
+bool spaceIsAdd;
 bool doListing;
 bool doCpp;
 bool keepCpp;
@@ -126,6 +132,8 @@ SymNodeP symP;
 
     yydebug = 0;
     yy_flex_debug = 0;
+    keepMinusZero = true;
+    spaceIsAdd = false;
 
     for(i = 1; i < NSIG;)
     {
@@ -150,33 +158,17 @@ SymNodeP symP;
         {
             switch(*cP++)
             {
+            case 'a':
+                spaceIsAdd = true;
+                break;
+
             case 'k':
                 keepCpp = true;
-                break;
-
-            case 'p':
-                dumpTree = true;
-                break;
-
-            case 'm':
-                doMacro = true;
                 break;
 
             case 'b':
                 doBinary = true;
                 break;
-
-            case 'l':
-                doListing = true;
-                break;
-
-            case 'n':
-                doCpp = false;
-                break;
-
-            case 'v':
-                puts(AM1VERSION);
-                exit(0);
 
             case 'i':                                       /* accept either ixxx or i xxx */
                 if(!*cP)
@@ -189,12 +181,36 @@ SymNodeP symP;
                 strcpy(incroot, cP);
                 break;
 
+            case 'l':
+                doListing = true;
+                break;
+
+            case 'm':
+                doMacro = true;
+                break;
+
+            case 'n':
+                doCpp = false;
+                break;
+
+            case 'p':
+                dumpTree = true;
+                break;
+
+            case 'v':
+                puts(AM1VERSION);
+                exit(0);
+
             case 'x':
                 yy_flex_debug = 1;
                 break;
 
             case 'y':
                 yydebug = 1;
+                break;
+
+            case 'z':
+                keepMinusZero = false;
                 break;
 
             case 'I':                                       /* accept either Ixxx or I xxx */
@@ -435,7 +451,7 @@ typeToName(int type)
         return("ascii");
         break;
     case TEXT:
-        return("ascii");
+        return("text");
         break;
     case FLEXO:
         return("flexo");
@@ -839,13 +855,15 @@ leave(int signo)
 int
 usage()
 {
-    fprintf(stderr, "Usage: am1 [-Wbmlnv[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile\n");
+    fprintf(stderr, "Usage: am1 [-Wabmlnvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile\n");
     fprintf(stderr, "  -W don't print warnings\n");
+    fprintf(stderr, "  -a treat space in expressions as add, not or\n");
     fprintf(stderr, "  -b generate binary code\n");
     fprintf(stderr, "  -m generate macro1 code\n");
     fprintf(stderr, "  -l generate listing\n");
     fprintf(stderr, "  -n don't run cpp\n");
     fprintf(stderr, "  -v print the am1 version number and exit\n");
+    fprintf(stderr, "  -z allow 1's complement -0 to remain\n");
     fprintf(stderr, "  -D define a symbol to cpp\n");
     fprintf(stderr, "  -I add an include path to cpp\n");
     fprintf(stderr, "  -i define the include root\n");
@@ -855,6 +873,7 @@ usage()
     fprintf(stderr, "  -p dump parse tree to stdout\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "If neither -b nor -m are given, -b is assumed.\n");
+    fprintf(stderr, "By default, space is or, -0 is preserved.\n");
     exit(1);
 }
 

@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "am1.h"
 #include "y.tab.h"
@@ -11,8 +12,12 @@
 int evalExpr(PNodeP);
 int onesComplAdj(int);
 int twosComplAdj(int);
+int fixMinusZero(int val, int lhs, int rhs);
 int countAscii(char *strP);
 int countText(char *strP);
+
+extern bool keepMinusZero;
+extern bool spaceIsAdd;
 
 static int _evalExpr(PNodeP);
 
@@ -28,8 +33,10 @@ evalExpr(PNodeP nodeP)
 int
 _evalExpr(PNodeP nodeP)
 {
+int op;
 int lval;
 int rval;
+int rslt;
 char ch;
 SymNodeP symP;
 PNodeP node2P;
@@ -46,45 +53,65 @@ PNodeP node2P;
         lval = _evalExpr(nodeP->leftP);
         rval = _evalExpr(nodeP->rightP);
 
-        switch( nodeP->value.ival )
+        op = nodeP->value.ival;
+
+        switch( op )
         {
         case XOR:
             lval = lval ^ rval;
-            break;
+            return( lval );
 
         case SEPARATOR:
+            if( spaceIsAdd )
+            {
+                op = PLUS;      // fall thru to math code
+            }
+            else
+            {
+                lval = lval | rval;
+                return( lval );
+            }
+            break;
+
         case OR:
             lval = lval | rval;
-            break;
+            return( lval );
 
         case AND:
             lval = lval & rval;
-            break;
+            return( lval );
+        }
 
+        // Math operator, handle the one's cmpl adjustments
+        lval = twosComplAdj(lval);
+        rval = twosComplAdj(rval);
+        switch( op )
+        {
         case DIV:
-            lval = onesComplAdj(twosComplAdj(lval) / twosComplAdj(rval));
+            rslt = lval / rval;
             break;
 
         case MOD:
-            lval = onesComplAdj(twosComplAdj(lval) % twosComplAdj(rval));
+            rslt = lval % rval;
             break;
 
         case PLUS:
-            lval = onesComplAdj(twosComplAdj(lval) + twosComplAdj(rval));
+            rslt = lval + rval;
             break;
 
         case MINUS:
-            lval = onesComplAdj(twosComplAdj(lval) - twosComplAdj(rval));
+            rslt = lval - rval;
             break;
 
         case MUL:
-            lval = onesComplAdj(twosComplAdj(lval) * twosComplAdj(rval));
+            rslt = lval * rval;
             break;
 
         default:
             verror("unknown binary op %d in _evalExpr", nodeP->value.ival);
         }
 
+        lval = fixMinusZero(rslt, lval, rval);
         return( lval );
 
     case UNOP:
@@ -95,6 +122,16 @@ PNodeP node2P;
                 break;
 
             case UMINUS:
+                lval = _evalExpr(nodeP->rightP);
+                lval = ~lval;
+                if( (lval == -1) && !keepMinusZero )
+                {
+                    lval = 0;
+                }
+
+                return(lval);
+                break;
+
             case CMPL:
                 return( ~_evalExpr(nodeP->rightP) );
                 break;
@@ -147,11 +184,11 @@ PNodeP node2P;
     case CHAR:
     case FLEXO:
     case LITCHAR:
-        return( nodeP->value.ival & WRDMASK );
+        return( nodeP->value.ival );
         break;
 
     case INTEGER:
-        return( nodeP->value.ival & WRDMASK );
+        return( nodeP->value.ival );
         break;
 
     case VALUESPEC:
@@ -320,7 +357,7 @@ unsigned int i;
     if( oc < 0 )
     {
         i--;
-        if( (signed int)i == -1 )
+        if( ((signed int)i == -1) && !keepMinusZero )
         {
             i = 0;
         }
@@ -347,6 +384,20 @@ unsigned int i;
     }
 
     return(oc);
+}
+
+// Handle -0 results, result is 1s cmpl
+int
+fixMinusZero(int val, int lhs, int rhs)
+{
+    if( !val && ((lhs < 0) || (rhs < 0)) && keepMinusZero )
+    {
+        return( -1 );
+    }
+    else
+    {
+        return( onesComplAdj(val) );
+    }
 }
 
 // Count packed ascii, return number of words needed

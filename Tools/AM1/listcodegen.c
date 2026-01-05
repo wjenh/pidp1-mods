@@ -15,7 +15,6 @@ extern BankContextP banksP;
 extern int countText(char *strP);
 extern int countAscii(char *strP);
 extern int evalExpr(PNodeP);
-extern int onesComplAdj(int);
 
 static void startLine(FILE *outP, PNodeP nodeP);
 static void listStatements(FILE *, PNodeP);

@@ -1,5 +1,18 @@
 %{
-/* lex for the PDP-1 macro to am1 processor */
+/*
+  Lex for the PDP-1 macro to am1 processor
+ *
+ * Original author: Bill Ezell (wje) pdp1@quackers.net
+ * Free to use for any purpose as long as attribution is kept.
+ *
+ * Version 1.1
+ *
+ * Revision history:
+ *
+ * 15-Dec-2025 - initial version
+ * 5-Jan-2026 - fix bug terminating a #define macro with no endloc
+ *
+*/
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -124,6 +137,10 @@ FILE *errfP;
 			    if( hasParams )
 			    {
 			        fprintf(yyout, "endloc\n");
+			    }
+			    else
+			    {
+			    	fprintf(yyout, "\n");
 			    }
 			    fprintf(yyout, "// end of define conversion\n");
 			}

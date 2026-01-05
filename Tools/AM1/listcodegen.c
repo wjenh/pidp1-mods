@@ -44,6 +44,7 @@ listCodegen(FILE *outfP, PNodeP rootP)
             if( bankP->constSymP )
             {
                 node.pc = bankP->cur_pc;    // need a node for the pc
+                node.lineNo = 0;
                 fprintf(outfP, "/ Constants for bank %d\n", bankP->bank);
                 listConstants(outfP, &node, bankP->constSymP);
             }
@@ -110,7 +111,7 @@ char str[128];
 
         case CONSTANTS:
             startLine(outfP, nodeP);
-            fprintf(outfP," constants\n");
+            fprintf(outfP,"constants\n");
             listConstants(outfP, nodeP, nodeP->value.symP);
             break;
 
@@ -416,9 +417,10 @@ listConstants(FILE *fP, PNodeP nodeP, SymNodeP symP)
         return;
     }
 
+    nodeP->value2.ival = symP->value2;
     startLine(fP, nodeP);
     nodeP->pc++;    // because we only get the initial node
-    fprintf(fP," %06o\n", symP->value2);
+    fprintf(fP,"\n");
 
     listConstants(fP, nodeP, symP->leftP);
     listConstants(fP, nodeP, symP->rightP);

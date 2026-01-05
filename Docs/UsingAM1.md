@@ -613,7 +613,7 @@ The first time a bank is switched to, **the current location will be set to 0**.
 Remember to use the *constants* and *variables* directives in *each* bank where constants or variables are used.
 
 Global location symbols in one bank can be referenced from another bank by using the *bank reference* modifier on
-a location symbol, *sym:bankno*.
+a location symbol, *sym:bankno* or *sym:.* to reference the current bank.
 
 When it is used, the value is the 16-bit address of that symbol.
 If the location symbol is not defined in the target bank, it will be created.
@@ -628,15 +628,19 @@ bank 1
 200/
 lac a
 a, 0
+lio i [a:.]
 
 bank 0
 lac a:1
 ```
 In bank 0, a:1 will have the value 10201.
-In bank 1, a will have the value 201, its in-bank address.
+In bank 1, a will have the value 201, its in-bank address while a:. (a:dot) will have the value 10201.
 
-Additionally, as a convenience, the form *integer:bankno* can be used.
-This is just a shorthand for *(bankno << 12) + integer*, e.g. 100:3.
+To reinforce, a : always results in a 16-bit address regardless of where it is used.\
+The formal calculation is *(bankno << 12) + symbol-value*.
+
+As a convenience, the form *integer:bankno* can be used.
+The same as above, it is a shorthand for *(bankno << 12) + integer*, e.g. 100:3.
 
 Code using banks and cross-bank references must understand the standard PDP-1 extended memory mode access rules.
 

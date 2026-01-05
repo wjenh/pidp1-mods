@@ -6,7 +6,9 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.0 4-Dec-2025"
+#define AM1VERSION "am1 v1.4 5-Jan-2026"
+#define AM1SHORTVERSION "am1 v1.4"
+
 #define AM1INCDIR "/opt/pidp1/Am1Includes"
 
 #ifndef CPP_PATH
@@ -14,6 +16,7 @@
 #endif
 
 #define WRDMASK 0777777 // PDP-1 word, 18 bits
+#define ADDRMASK 07777 // PDP-1 address, 12 bits
 
 // actually the max local scope nesting
 #define MAXLOCALS   128

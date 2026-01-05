@@ -13,7 +13,6 @@
 
 #define BUFSIZE     4096
 #define ENDLOADER   0400000
-#define WRDMSK      0777777
 
 #define DIO         0320000
 #define JMP         0600000
@@ -35,6 +34,7 @@ static int cur_pc;
 static int cur_bank;
 
 extern bool sawBank;
+extern bool keepMinusZero;
 extern BankContextP banksP;
 extern SymListP constsListP;
 
@@ -55,6 +55,7 @@ static void writeBlankTape(FILE *fP, int count);
 
 static int canReduce(PNodeP);
 static int reduceOperand(PNodeP);
+static void adjustPC(int);
 
 static void writeStatements(FILE *, PNodeP);
 static void writeAscii(FILE *outfP, char *strP);
@@ -80,7 +81,9 @@ binCodegen(FILE *outfP, PNodeP rootP)
     // Next, put out our loader.
     writeLoader(outfP, sawBank);
     writeBlankTape(outfP, 2);
-    writeLabel(outfP, "AM1");
+    writeLabel(outfP, AM1SHORTVERSION);
+    writeBlankTape(outfP, 2);
+    writeLabel(outfP, "wje");       // for posterity. :)
     writeBlankTape(outfP, 2);
     // Emit the code
     writeStatements(outfP, rootP->leftP);
@@ -112,25 +115,25 @@ BankContextP bankP;
             break;
 
         case ORIGIN:
-            cur_pc =  nodeP->value.ival;
+            cur_pc =  nodeP->value.ival & ADDRMASK;
             flushBuffer(outfP, outBufP);
             initBuffer(outBufP, cur_pc);
             if( canReduce(nodeP->rightP) )
             {
-                i = reduceOperand(nodeP->rightP) & WRDMSK;
+                i = reduceOperand(nodeP->rightP);
                 nodeP->value2.ival = i;     // save for listing
                 putBuffer(outfP, outBufP, i);
-                cur_pc++;
+                adjustPC(1);
             }
             break;
 
         case EXPR:
             if( canReduce(nodeP->rightP) )
             {
-                i = reduceOperand(nodeP->rightP) & WRDMSK;
+                i = reduceOperand(nodeP->rightP);
                 nodeP->value2.ival = i;     // save for listing
                 putBuffer(outfP, outBufP, i);
-                cur_pc++;
+                adjustPC(1);
             }
             break;
 
@@ -138,10 +141,10 @@ BankContextP bankP;
         case LCLLOCATION:
             if( canReduce(nodeP->rightP) )
             {
-                i = reduceOperand(nodeP->rightP) & WRDMSK;
+                i = reduceOperand(nodeP->rightP);
                 nodeP->value2.ival = i;     // save for listing
                 putBuffer(outfP, outBufP, i);
-                cur_pc++;
+                adjustPC(1);
             }
             break;
 
@@ -163,7 +166,7 @@ BankContextP bankP;
 
         case BANK:
             cur_bank = nodeP->value.ival;
-            cur_pc = nodeP->value2.ival;
+            cur_pc = nodeP->value2.ival & ADDRMASK;
             flushBuffer(outfP, outBufP);
             initBuffer(outBufP, (cur_bank << 12) | cur_pc);
             break;
@@ -176,13 +179,13 @@ BankContextP bankP;
                 for( i = 0; i < nodeP->value.ival; ++i )
                 {
                     putBuffer(outfP, outBufP, j);
-                    cur_pc++;
+                    adjustPC(1);
                 }
             }
             else
             {
                 flushBuffer(outfP, outBufP);
-                cur_pc += nodeP->value.ival;
+                adjustPC(nodeP->value.ival);
                 initBuffer(outBufP, (cur_bank << 12) | cur_pc);
             }
             break;
@@ -254,128 +257,12 @@ PNodeP node2P;
         return(0);
     }
 
-    switch( nodeP->type )
+    if( nodeP->type == DOT )
     {
-    case BINOP:
-        // The returned values will be in 1's cmpl
-        lval = reduceOperand(nodeP->leftP);
-        rval = reduceOperand(nodeP->rightP);
-
-        switch( nodeP->value.ival )
-        {
-        case XOR:
-            lval = lval ^ rval;
-            break;
-
-        case SEPARATOR:
-        case OR:
-            lval = lval | rval;
-            break;
-
-        case AND:
-            lval = lval & rval;
-            break;
-
-        case DIV:
-            lval = onesComplAdj(twosComplAdj(lval) / twosComplAdj(rval));
-            break;
-
-        case MOD:
-            lval = onesComplAdj(twosComplAdj(lval) % twosComplAdj(rval));
-            break;
-
-        case PLUS:
-            lval = onesComplAdj(twosComplAdj(lval) + twosComplAdj(rval));
-            break;
-
-        case MINUS:
-            lval = onesComplAdj(twosComplAdj(lval) - twosComplAdj(rval));
-            break;
-
-        case MUL:
-            lval = onesComplAdj(twosComplAdj(lval) * twosComplAdj(rval));
-            break;
-
-        default:
-            verror("unknown binary op %d in reduceOperand", nodeP->value.ival);
-        }
-
-        return( lval );
-
-    case UNOP:
-        switch( nodeP->value.ival )
-        {
-            case PARENS:
-                return( reduceOperand(nodeP->rightP) );
-                break;
-
-                case UMINUS:
-            case CMPL:
-                return( ~reduceOperand(nodeP->rightP) );
-                break;
-
-        default:
-            verror("unknown unary op %d in reduceOperand", nodeP->value.ival);
-        }
-        break;
-
-    case CONSTANT:      // don't adjust
-    case OPORABLE:
-    case OPCODE:
-    case OPADDR:
-        return( nodeP->value.symP->value );
-        break;
-
-    case DOT:
-        return( cur_pc );   // also positive, don't adjust
-        break;
-
-    case LCLADDR:
-        // local addrs will already be resolved to the actual location
-        symP = nodeP->value.symP;
-        if( symP->flags & SYMF_RESOLVED )
-        {
-            return( symP->value );
-        }
-        else
-        {
-            verror("local symbol %s has no defined value", symP->name);
-        }
-        break;
-
-    case ADDR:
-        symP = nodeP->value.symP;
-        if( symP->flags & SYMF_RESOLVED )
-        {
-            return( symP->value );
-        }
-        else
-        {
-            verror("symbol %s has no defined value", symP->name);
-        }
-        break;
-
-    case BREF:
-        return( (nodeP->value2.ival << 12) | nodeP->value.symP->value );
-        break;
-
-    case CHAR:
-    case FLEXO:
-    case LITCHAR:
-        return( nodeP->value.ival & WRDMASK );
-        break;
-
-    case INTEGER:
-        return( nodeP->value.ival & WRDMASK );
-        break;
-
-    case VALUESPEC:
-        return( nodeP->value.symP->value );
-        break;
-
-    default:
-        verror("unknown op %d, pc 0%04o in reduceOperand", nodeP->type, nodeP->pc);
+        return( cur_pc );
     }
+
+    return( evalExpr(nodeP) );
 }
 
 // Emit packed ascii
@@ -400,7 +287,7 @@ int word;
         {
             word = (word << 9) | *strP;
             putBuffer(outfP, outBufP,  word);
-            ++cur_pc;
+            adjustPC(1);
         }
 
         i ^= 1;
@@ -410,7 +297,7 @@ int word;
     if( i )         // if not zero, we didn't finish writing a full word, do so with low byte 0
     {
         putBuffer(outfP, outBufP, word << 9);
-        ++cur_pc;
+        adjustPC(1);
     }
 }
 
@@ -426,7 +313,7 @@ int val;
         if( i && !(i % 3) )
         {
             putBuffer(outfP, outBufP, val);
-            ++cur_pc;
+            adjustPC(1);
         }
 
         val <<= 6;
@@ -441,12 +328,12 @@ int val;
         }
 
         putBuffer(outfP, outBufP, val);
-        ++cur_pc;
+        adjustPC(1);
     }
     else if( !*strP && !( i % 3) )
     {
         putBuffer(outfP, outBufP, val);
-        ++cur_pc;
+        adjustPC(1);
     }
 }
 
@@ -459,9 +346,9 @@ SymNodeP symP;
 
     while( nodeP )
     {
-        i = (nodeP->leftP)?reduceOperand(nodeP->leftP) & WRDMSK:0;
+        i = (nodeP->leftP)?reduceOperand(nodeP->leftP):0;
         putBuffer(fP, outBufP, i);
-        ++cur_pc;
+        adjustPC(1);
 
         nodeP = nodeP->rightP;
     }
@@ -479,12 +366,23 @@ writeConstants(FILE *fP, SymNodeP symP)
     if( !(symP->flags & SYMF_EMITTED) )
     {
         symP->flags |= SYMF_EMITTED;
-        putBuffer(fP, outBufP, onesComplAdj(symP->value2));
-        ++cur_pc;
+        putBuffer(fP, outBufP, symP->value2);
+        adjustPC(1);
     }
 
     writeConstants(fP, symP->leftP);
     writeConstants(fP, symP->rightP);
+}
+
+// Add a value to the current pc, mask to 12 bits
+void
+adjustPC(int incr)
+{
+    cur_pc += incr;
+    if( cur_pc > ADDRMASK )
+    {
+        cur_pc = 0;
+    }
 }
 
 // Reset a buffer to empty with a new starting address

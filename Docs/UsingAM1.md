@@ -32,14 +32,15 @@ Features
 - Allows easy use of ascii characters and strings
 - Supports octal, decimal, and hex numbers without special statements
 - Adds operators for and, or, xor, complement, multiply, divide in expressions
+- Can select between keeping -0 or automatically converting to +0 in expressions
+- Allows space-separated symbols to be treated as *a | b | c* instead of *a + b + c*
 - Adds parenthesized expressions
 - Adds actual operator precedence
-- Allows space-separated symbols to be treated as *a | b | c* instead of *a + b + c*
 - Supports extended memory
 - Can share location symbols across memory banks
 - Can generate either **macro1** source or rim format binary code output
 - The rim format loads a new loader to support extended memory use
-- Does **not** allow redefining symbols
+- Does **not** allow redefining symbols (but cpp defines can)
 - Does **not** treat tab as a statement delimiter
 - 'Punches' the readable program header line in binary mode, like the original **macro** does
 
@@ -61,6 +62,7 @@ use of characters in **macro1** that were poorly handled.
 - The directive *bank* is provided to control placement in extended memory
 - Location symbols in one bank can be referenced from another bank by using the *:banknum* suffix
 - Explicit variable declarations with optional initializers is added, *var name=expr, name...*
+- Tables with optional initializers are added, *table 10, 7+5*
 - Macro1 style define-terminate blocks are **not** supported, use **cpp** #defines
 
 ## A note on **macro** vs **macro1**
@@ -124,7 +126,7 @@ If the symbol does not exist currently in the bank, it will be created.
 If it is never reolved in that bank, an error will be given at the end of the program.
 
 Three code generators are implemented, one that emits correct macro1 code that can be assembled by it,
-and one that emits binary suitable for rim loading, and onefor generating listings.
+and one that emits binary suitable for rim loading, and one for generating listings.
 The parser side knows nothing about the details of the code generators, it just manages the symbol tables
 and creates the parse tree.
 
@@ -144,14 +146,16 @@ Just type make.
 
 ## Usage
 
-**am1** [-Wbmlnv[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile
+**am1** [-Wabmlnvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile
 
 - W don't print warnings
+- a space means add, default is or
 - b generate binary tape image code, the default action
 - m generate **macro1** code
 - l generate a program listing
 - n don't run **cpp** on the input
 - v print the version number and exit
+- z replace -0 with 0 for math operation results
 - Dsymbol define a symbol for **cpp**, -Dsym or -D sym are both accepted
 - Ipath add a search path to **cpp** for "files", -Ipath or -I path are both accepted
 - ipath set the root directory for <file> searches, -ipath or -i path are both accepted
@@ -166,6 +170,17 @@ These additional flags are generally for debugging:
 Both **macro1** and binary code can be generated at the same time.
 
 If warnings are disabled, errors will still be printed.
+
+Both **macro** and **macro1** treat *a space b* as *a + b*, which leads to some tortuous expressions
+in code when multiple operands are combined.
+By default, **am1** treats a space as an *or* operation, which makes much more sense.
+However, the original behavior can be used via the *-a* flag.
+
+The 1's complement -0 value, all bits set, when produced by a math operation in an expression
+is normally preserved.
+The *-z* flag overrides this and converts -0 to +0, all bits cleared.
+Again, this only affects the results of the binary math operators and unary minus, other values are
+not altered.
 
 If the 'system' include files are not installed in the default location, /opt/pidp1/Am1Includes, then
 the location should be specified either by using the *-i incroot* switch or by setting the environment
@@ -191,6 +206,7 @@ available if binary has been generated.
 For macro only output, the value field is meaningless.
 Of course, **macro1** will produce its own listing file, so creating one via **am1** is fairly useless other
 than seeing macro expansions.
+
 ## General program structure
 
 All programs start with a title line. This is mandatory. If you forget it, then whatever the first line is
@@ -243,10 +259,11 @@ This only applies to binary mode; for macro mode, **macro1** deals with this its
 
 ## Symbols
 
-A *symbol* is a string of characters composed from an initial upper or lower case alphabetic character,
-followed optionally by any number of alphanumeric characters and digits, e.g. *scratchLocation1*.
+A *symbol* is a string of characters composed from an initial upper or lower case
+alphabetic character or underscore, followed optionally by any number of alphanumeric characters, digits,
+and underscore e.g. *scratch_Location_1*.
 
-Note that while **am1** allows effectively unlimited symbol lengths (1023 to be precise), **macro** only allows 3
+Note that while **am1** allows effectively unlimited symbol lengths (1023), **macro** only allows 3
 and **macro1** only allows 6.
 More precisely, symbols must be unique in the first 3 characters for **macro**, 6 for **macro1**.
 
@@ -420,8 +437,11 @@ Note that some are left associative, but most are right associative. (look it up
 - ( )       expression nesting, the expression within the parentheses is evaluated as a group
 
 Internally, 2's complement arithmetic is used for the math operators, but the result is adjusted to be
-a 1's complement value. The 1's complement -0 value, 7777777, will never be produced, it will always be changed
-to +0. However, bitwise operations can of course affect any bit and their result is not adjusted, they are not math.
+a 1's complement value. The 1's complement -0 value, 7777777, can be produced by math operations such as -1+1,
+but by default will be converted to +0.
+This can be overridden if -0 is to be kept, see *Usage*.
+
+Bitwise operations can of course affect any bit and their result is not adjusted, they are not math.
 
 ## Numbers
 

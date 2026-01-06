@@ -13,6 +13,7 @@
 
 #define BUFSIZE     4096
 #define ENDLOADER   0400000
+#define STPLOADER   0600000
 
 #define DIO         0320000
 #define JMP         0600000
@@ -89,7 +90,14 @@ binCodegen(FILE *outfP, PNodeP rootP)
     writeStatements(outfP, rootP->leftP);
     // Finsh up
     flushBuffer(outfP, outBufP);
-    writeWord(outfP, ENDLOADER | rootP->rightP->value.ival);
+    if( rootP->rightP->type == START )
+    {
+        writeWord(outfP, ENDLOADER | rootP->rightP->value.ival);
+    }
+    else
+    {
+        writeWord(outfP, STPLOADER);     // pause instead of start
+    }
     writeBlankTape(outfP, 2);
     writeLabel(outfP, "DONE");
 

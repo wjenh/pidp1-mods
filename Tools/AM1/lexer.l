@@ -57,6 +57,7 @@ var[ \t]*		{ return(VAR); }
 bank[ \t]*		{ return(BANK); }
 \:			{ return(BREF); }
 ^[ \t]*start[ \t]*	{ return(START); }
+^[ \t]*pause[ \t]*	{ return(PAUSE); }
 ^[ \t]*constants[ \t]*	{ return(CONSTANTS); }
 ^[ \t]*variables[ \t]*	{ return(VARS); }
 ^[ \t]*table[ \t]*	{ return(TABLE); }

@@ -115,6 +115,7 @@
  * 28/09/2025 wje - Add -c for compalibility mode, will emit source that works with the native PDP-1 macro assembler.
  * 03/10/2025 wje - Handle non-standard tapes better, bail if in macro mode, dump in default mode.
  * 18/12/2025 wje - Added support for the new AM1 loader.
+ * 06/01/2026 wje - Added support for pause in the AM1 loader.
  *
  */
 #include <stdlib.h>
@@ -518,30 +519,40 @@ char tmpstr[16];
             {
                 if( word & 0600000 )
                 {
-                    // am1 loader end-of-code, start addr
-                    word &= 0177777;
-                    if( getLabel(word, word, labelStr) != -1 )
+                    // am1 loader end-of-code, start addr or pause
+                    if( (word & 0600000) == 0600000 )
                     {
-                        printf("\n     start %s\n", labelStr); // macro directive to give start addr
-                    }
-                    else
-                    {
-                        printf("\n     start %06o\n", word);    // could be an extended address
-                    }
-
-                    if( as_macro )
-                    {
-                        did_start = true;
+                        printf("\n     pause\n");
+                        DIAGNOSTIC("Saw pause at tape location %d, new state is DONE", tape_loc);
                         state = DONE;
-                        DIAGNOSTIC("Saw jmp %06o at tape location %d, new state is DONE", word, tape_loc);
                     }
                     else
                     {
-                        word2 = 0617770;
-                        formatInstr(cur_addr, word);            // emit the JMP
-                        printf("\n");
-                        state = DATA;
-                        DIAGNOSTIC("Saw jmp %04o at tape location %d, new state is DATA", OPERAND(word), tape_loc);
+                        word &= 0177777;
+                        if( getLabel(word, word, labelStr) != -1 )
+                        {
+                            printf("\n     start %s\n", labelStr); // macro directive to give start addr
+                        }
+                        else
+                        {
+                            printf("\n     start %06o\n", word);    // could be an extended address
+                        }
+
+                        if( as_macro )
+                        {
+                            did_start = true;
+                            state = DONE;
+                            DIAGNOSTIC("Saw jmp %06o at tape location %d, new state is DONE", word, tape_loc);
+                        }
+                        else
+                        {
+                            word2 = 0617770;
+                            formatInstr(cur_addr, word);            // emit the JMP
+                            printf("\n");
+                            state = DATA;
+                            DIAGNOSTIC("Saw jmp %04o at tape location %d, new state is DATA",
+                                OPERAND(word), tape_loc);
+                        }
                     }
                 }
                 else

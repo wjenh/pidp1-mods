@@ -10,6 +10,7 @@
  * -m	generate macro1 source
  * -l	generate a listing
  * -n	don't run cpp on input source
+ * -s	generate a symbol table file
  * -v   print the current version number and exit
  * -z   convert 1's complement -0 to +0 in expressions
  *
@@ -36,6 +37,8 @@
  * sourcefile.mac is the macro1 source output file
  * sourcefile.rim is the loadable executable file in rim/bin format
  * sourcefile.lst is the listing output file
+ * sourcefile.cpp is the cpp output file
+ * sourcefile.sym is the symbol table output file
  *
  * The environment variable 'AM1INCDIR' overrides the default system
  * include directory, which is overridden itself by -i.
@@ -50,6 +53,7 @@
  * 02-Jan-2026 - 'production' release
  * 04-Jan-2026 - added tables, masking of math results to 18 bits
  * 05-Jan-2026 - added -z, -a, cleanup, doc updates
+ * 06-Jan-2026 - added -s and symbol table output
  *
 */
 #include <unistd.h>
@@ -87,6 +91,7 @@ bool doBinary;
 bool keepMinusZero;
 bool spaceIsAdd;
 bool doListing;
+bool doSymtab;
 bool doCpp;
 bool keepCpp;
 bool dumpTree;
@@ -104,12 +109,14 @@ SymNodeP constSymP;             // constants
 SymListP constsListP;           // the list of all constant groups
 
 extern int cur_pc;
+extern BankContextP banksP;
 
 extern char *am1_version;
 extern FILE *yyin;              // lex input file 
 extern int yyparse();
 extern BankContextP findBank(int bankNo);
 extern void setConstVal(SymNodeP);
+extern void listSymtab(FILE *outfP, char* filenameP, BankContextP banksP, SymNodeP globalsP);
 
 int evalExpr(PNodeP);
 int macCodegen(FILE *, PNodeP);
@@ -195,6 +202,10 @@ SymNodeP symP;
 
             case 'p':
                 dumpTree = true;
+                break;
+
+            case 's':
+                doSymtab = true;
                 break;
 
             case 'v':
@@ -399,6 +410,21 @@ SymNodeP symP;
         }
     }
 
+    if( doSymtab )
+    {
+        strcpy(ofilename, basename);                         /* output file */
+        strcat(ofilename, ".sym");
+
+        if(!(outfP = fopen(ofilename, "w")))
+        {
+            fprintf(stderr, "am1: can't open output file '%s'\n", ofilename);
+            leave(0);
+        }
+
+        listSymtab(outfP, filenameP, banksP, globalSymP);
+        fclose(outfP);
+    }
+
     if(doCpp && !keepCpp)
     {
         unlink(pfilename);
@@ -537,6 +563,9 @@ typeToName(int type)
     case START:
         return("start");
         break;
+    case PAUSE:
+        return("pause");
+        break;
     case CONSTANTS:
         return("constants");
         break;
@@ -572,6 +601,7 @@ SymNodeP symP;
     case CONSTANTS:
     case RELOC:
     case ENDRELOC:
+    case PAUSE:
         return(nameP);
 
     case EXPR:
@@ -855,13 +885,14 @@ leave(int signo)
 int
 usage()
 {
-    fprintf(stderr, "Usage: am1 [-Wabmlnvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile\n");
+    fprintf(stderr, "Usage: am1 [-Wabmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile\n");
     fprintf(stderr, "  -W don't print warnings\n");
     fprintf(stderr, "  -a treat space in expressions as add, not or\n");
     fprintf(stderr, "  -b generate binary code\n");
     fprintf(stderr, "  -m generate macro1 code\n");
     fprintf(stderr, "  -l generate listing\n");
     fprintf(stderr, "  -n don't run cpp\n");
+    fprintf(stderr, "  -s generate a symbol table file\n");
     fprintf(stderr, "  -v print the am1 version number and exit\n");
     fprintf(stderr, "  -z allow 1's complement -0 to remain\n");
     fprintf(stderr, "  -D define a symbol to cpp\n");

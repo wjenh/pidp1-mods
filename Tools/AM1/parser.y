@@ -83,6 +83,7 @@ extern void leave(int);
 /* typed symbols */
 
 %token <pnodeP> START
+%token <pnodeP> PAUSE
 %token <pnodeP> CONSTANT
 %token <pnodeP> NAMES
 %token <pnodeP> VAR
@@ -186,6 +187,10 @@ start           : START expr TERMINATOR
                 {
                     $$ = newnode(lineno, cur_pc, START, NILP, NILP);
                     $$->value.ival = evalExpr($2);
+                }
+                | PAUSE TERMINATOR
+                {
+                    $$ = newnode(lineno, cur_pc, PAUSE, NILP, NILP);
                 }
 
 body		: stmt_list
@@ -369,6 +374,7 @@ stmt		: expr
                         symP = sym_make($1, 0);
                         symP->flags = SYMF_RESOLVED | SYM_GLOB;
                         symP->value = cur_pc;
+                        symP->bank = curBank;
                         sym_add(&globalSymP, symP);
                         locType = LOCATION;
                     }
@@ -650,6 +656,7 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                         // We add a new sym to globals with a ref to the local
                         symP2 = sym_make($1, 0);
                         symP2->symP = symP;
+                        symP2->bank = curBank;
                         sym_add(&globalSymP, symP2);
                         symP->flags = symP2->flags = SYMF_FORCED | SYM_LOC;
                         $$ = newnode(lineno, cur_pc, LCLADDR, NILP, NILP);
@@ -657,6 +664,7 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                     else
                     {
                         symP = sym_make($1, 0);
+                        symP->bank = curBank;
                         sym_add(&globalSymP, symP);
                         symP->flags = SYM_GLOB;
                         $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
@@ -801,6 +809,7 @@ varname         : NAME
                 SymNodeP symP;
 
                     symP = sym_make($1, 0);
+                    symP->bank = curBank;
                     sym_add(&globalSymP, symP);
                     symP->flags = SYM_GLOB | SYMF_VAR;
                     $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);

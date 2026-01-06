@@ -9,9 +9,12 @@
 #include "am1.h"
 #include "y.tab.h"
 
+#define LOADER_HALT 07772       // the halt instruction in our loader, keep in sync with xldr
+
 extern SymListP constsListP;
 extern bool sawBank;
 extern BankContextP banksP;
+extern bool noWarn;
 
 extern int countText(char *strP);
 extern int countAscii(char *strP);
@@ -32,7 +35,7 @@ void
 macCodegen(FILE *outfP, PNodeP rootP)
 {
     // The root is a HEADER.
-    // The root lhs is the program body, the rhs the START at the end of the program.
+    // The root lhs is the program body, the rhs the START or PAUSE at the end of the program.
     fprintf(outfP,"%s\n", rootP->value.strP);
     emitStatements(outfP, rootP->leftP);
 
@@ -49,7 +52,19 @@ macCodegen(FILE *outfP, PNodeP rootP)
         }
     }
 
-    fprintf(outfP,"start %o\n", rootP->rightP->value.ival);
+    if( rootP->rightP->type == PAUSE )
+    {
+        if( !noWarn )
+        {
+            fprintf(stderr,"am1: WARNING: pause is not supported by macro1, replacing with a jump to hlt\n");
+        }
+
+        fprintf(outfP,"start %o\n", LOADER_HALT);
+    }
+    else
+    {
+        fprintf(outfP,"start %o\n", rootP->rightP->value.ival);
+    }
 }
 
 static void

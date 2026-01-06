@@ -1,0 +1,13 @@
+Test of forcelocal
+100/
+    local
+    %%forcelocal
+    jmp a
+    jmp b
+    jmp %c
+    b, 0
+    %c, 1
+    endloc
+    hlt
+a, 2
+start 100

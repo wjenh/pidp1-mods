@@ -35,19 +35,17 @@ listCodegen(FILE *outfP, PNodeP rootP)
     fprintf(outfP,"%s\n", rootP->value.strP);
     listStatements(outfP, rootP->leftP);
 
-    if( sawBank )       // finish trailing consts
+    // Do any trailing constants
+    for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
     {
-        for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
-        {
-        PNode node;
+    PNode node;
 
-            if( bankP->constSymP )
-            {
-                node.pc = bankP->cur_pc;    // need a node for the pc
-                node.lineNo = 0;
-                fprintf(outfP, "/ Constants for bank %d\n", bankP->bank);
-                listConstants(outfP, &node, bankP->constSymP);
-            }
+        if( bankP->constSymP )
+        {
+            node.pc = bankP->cur_pc;    // need a node for the pc
+            node.lineNo = 0;
+            fprintf(outfP, "/ Constants for bank %d\n", bankP->bank);
+            listConstants(outfP, &node, bankP->constSymP);
         }
     }
 

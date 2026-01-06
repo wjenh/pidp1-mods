@@ -1,0 +1,11 @@
+Test of includes
+#include <1Dinstructions.ah>
+
+100/
+    jda getnum
+    hlt
+
+200/
+#include <getnum.ah>
+
+start 0100

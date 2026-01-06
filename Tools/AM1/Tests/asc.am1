@@ -1,0 +1,5 @@
+Test of ascii
+100/
+    ascii "Hello!"
+    iot 21
+start 100

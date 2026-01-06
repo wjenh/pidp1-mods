@@ -209,28 +209,20 @@ body		: stmt_list
                             $1 = nodeP;
                         }
 
-                        if( constSymP )     // if not null, finish constants
+                        if( !sawBank )
                         {
-                            if( !sawBank )
-                            {
-                                constsListP = addToSymlist(constsListP, constSymP, curBank, cur_pc);
-                                // no extended banks, codegen will handle directly
-                                setConstPC(cur_pc, constSymP);
-                                nodeP = newnode(lineno, cur_pc, CONSTANTS, $1->leftP, NILP);
-                                nodeP->value.symP = constSymP;
-                                constSymP = NILP;
-                                $1->leftP = nodeP;
-                                $1 = nodeP;
-                            }
-                            else
-                            {
-                                // update this bank's consts
-                                bankP = findBank(curBank);
-                                bankP->cur_pc = cur_pc;
-                                bankP->constSymP = constSymP;
-                                constSymP = NILP;
-                            }
+                            // All in bank 0, but make a bank entry for it for consistency
+                            bankP = addBank(0);
+                            bankP->globalSymP = globalSymP;
                         }
+                        else
+                        {
+                            bankP = findBank(curBank);
+                        }
+
+                        bankP->cur_pc = cur_pc;
+                        bankP->constSymP = constSymP;
+                        constSymP = NILP;
 
                         // now update all banks that need it
                         for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)

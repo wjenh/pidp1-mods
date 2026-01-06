@@ -1,0 +1,19 @@
+Test of flexo, char, text
+100/
+    text "12345"
+a,
+    text .678.
+b,
+    char 1r
+    char 1m
+    char 1l
+cm,
+    flexo 123
+    flexo 45
+    flexo Abc
+    flexo Ab
+    flexo aB
+    flexo AB
+    flexo ABC
+d,  iot 21
+start 100

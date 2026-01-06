@@ -1,0 +1,26 @@
+CONSTANTS TEST
+bank 1
+100/
+    lac [17
+    lac [foo]
+    lac [20+30]
+    lac [-0]
+    lac [-1]
+    lac [1-2]
+
+    constants
+
+    lac [10+7]
+    lac [foo+bar]
+foo,
+bar,
+    .
+
+bank 0
+200/
+    lac [23
+    lac [foo
+    lac [foo:1
+foo,
+
+start 100

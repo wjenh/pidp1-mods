@@ -39,16 +39,14 @@ macCodegen(FILE *outfP, PNodeP rootP)
     fprintf(outfP,"%s\n", rootP->value.strP);
     emitStatements(outfP, rootP->leftP);
 
-    if( sawBank )       // finish trailing consts
+    // Finish any trailing constants
+    for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
     {
-        for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
+        if( bankP->constSymP )
         {
-            if( bankP->constSymP )
-            {
-                fprintf(outfP, "/ Constants for bank %d\n", bankP->bank);
-                fprintf(outfP, "%o/\n", bankP->cur_pc);
-                emitConstants(outfP, bankP->constSymP);
-            }
+            fprintf(outfP, "/ Constants for bank %d\n", bankP->bank);
+            fprintf(outfP, "%o/\n", bankP->cur_pc);
+            emitConstants(outfP, bankP->constSymP);
         }
     }
 

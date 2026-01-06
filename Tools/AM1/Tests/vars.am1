@@ -1,0 +1,12 @@
+Test of vars
+100/
+var a, b=10, c=b-1
+
+    dio a
+    lac b
+    c
+    f
+variables
+
+var d, e=17, f
+start 100

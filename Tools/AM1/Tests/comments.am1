@@ -1,0 +1,7 @@
+Test of comments
+100/
+    jmp a
+    jmp a  // do we still get comments?
+a, 2
+// or here?
+start 100

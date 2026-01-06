@@ -19,13 +19,12 @@
 
 void printSymbol(FILE *outfP, SymNodeP symP);
 
-// If any banks have been used, globals will be in each bank's context.
+// Globals will be in each bank's context.
 // The global syms from the last bank switched to added after the last switch are in  globalSymP.
 void
-listSymtab(FILE *outfP, char* filenameP, BankContextP banksP, SymNodeP globalSymP)
+listSymtab(FILE *outfP, char* filenameP, BankContextP banksP)
 {
     fprintf(outfP, "%s\n", filenameP);
-    printSymbol(outfP, globalSymP);
     if( banksP )
     {
         for( BankContextP bankP = banksP; bankP; bankP = bankP->nextP )
@@ -43,7 +42,8 @@ printSymbol(FILE *outfP, SymNodeP symP)
         return;
     }
 
-    fprintf(outfP, "%06o %s\n", (symP->bank << 12) + symP->value, symP->name);
+    // This time we infix walk to get syms in nice alphabetic order
     printSymbol(outfP, symP->leftP);
+    fprintf(outfP, "%06o %s\n", (symP->bank << 12) + symP->value, symP->name);
     printSymbol(outfP, symP->rightP);
 }

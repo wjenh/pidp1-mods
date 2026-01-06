@@ -54,6 +54,7 @@
  * 04-Jan-2026 - added tables, masking of math results to 18 bits
  * 05-Jan-2026 - added -z, -a, cleanup, doc updates
  * 06-Jan-2026 - added -s and symbol table output
+ * 06-Jan-2026 - final code cleanup, make bank use vs no use consistent instead of no use being a special case
  *
 */
 #include <unistd.h>
@@ -116,7 +117,7 @@ extern FILE *yyin;              // lex input file
 extern int yyparse();
 extern BankContextP findBank(int bankNo);
 extern void setConstVal(SymNodeP);
-extern void listSymtab(FILE *outfP, char* filenameP, BankContextP banksP, SymNodeP globalsP);
+extern void listSymtab(FILE *outfP, char* filenameP, BankContextP banksP);
 
 int evalExpr(PNodeP);
 int macCodegen(FILE *, PNodeP);
@@ -421,7 +422,7 @@ SymNodeP symP;
             leave(0);
         }
 
-        listSymtab(outfP, filenameP, banksP, globalSymP);
+        listSymtab(outfP, filenameP, banksP);
         fclose(outfP);
     }
 

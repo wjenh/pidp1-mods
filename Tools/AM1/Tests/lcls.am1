@@ -1,0 +1,11 @@
+Test of local scoping
+100/
+    local
+    jmp %a
+        local
+        jmp %c
+        jmp %a
+        endloc
+    %a,
+    endloc
+start 100

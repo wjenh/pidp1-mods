@@ -1,0 +1,7 @@
+Test of global vars
+100/
+    lio a
+b,  hlt
+    idx b
+a,  0
+start 100

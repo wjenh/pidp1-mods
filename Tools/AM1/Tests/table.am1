@@ -1,0 +1,11 @@
+Test of table
+100/
+    lac tbl
+    hlt
+tbl,
+    table 10
+tbl2,
+    table 20
+    table 5, 123
+    lio tbl2
+start 100

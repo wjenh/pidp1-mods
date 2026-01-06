@@ -207,18 +207,14 @@ BankContextP bankP;
     }
 
     // We now have to emit any constants that didn't have an ending constants statement
-
-    if( sawBank )       // finish trailing consts
+    for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
     {
-        for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
+        if( bankP->constSymP )
         {
-            if( bankP->constSymP )
-            {
-                flushBuffer(outfP, outBufP);
-                cur_bank = bankP->bank;
-                initBuffer(outBufP, bankP->cur_pc);
-                writeConstants(outfP, bankP->constSymP);
-            }
+            flushBuffer(outfP, outBufP);
+            cur_bank = bankP->bank;
+            initBuffer(outBufP, bankP->cur_pc);
+            writeConstants(outfP, bankP->constSymP);
         }
     }
 }

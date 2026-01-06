@@ -1,0 +1,30 @@
+Test of bank and cross-bank refs
+#include <memory.ah>
+
+bank 1
+100/
+a, 123
+d, farlio(e:0)
+   lio i [d:.
+   hlt
+
+200/
+b,
+
+bank 0
+100/
+    farlac(a:1)
+    lio i [a:1
+    farjmp(b:1)
+
+c,  hlt
+    farjmp(d:1);
+
+e, 321
+
+bank 1
+    farjmp(c:0)
+
+bank 0
+constants
+start 100

@@ -1,0 +1,14 @@
+Test of various math operators
+100/
+    opr
+    1+2
+    opr 1 + 2
+    opr -1
+    (1+5)
+    1-2
+    ~1
+    -1+1
+-1+1/
+    ~-1
+    -0
+start 100

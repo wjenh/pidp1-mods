@@ -31,7 +31,7 @@ int
 listCodegen(FILE *outfP, PNodeP rootP)
 {
     // The root is a HEADER.
-    // The root lhs is the program body, the rhs the START at the end of the program.
+    // The root lhs is the program body, the rhs the START or PAUSE at the end of the program.
     fprintf(outfP,"%s\n", rootP->value.strP);
     listStatements(outfP, rootP->leftP);
 
@@ -51,7 +51,14 @@ listCodegen(FILE *outfP, PNodeP rootP)
         }
     }
 
-    fprintf(outfP,"start %o\n", rootP->rightP->value.ival);
+    if( rootP->rightP->type == START )
+    {
+        fprintf(outfP,"start %o\n", rootP->rightP->value.ival);
+    }
+    else
+    {
+        fprintf(outfP,"pause\n");
+    }
     return(1);
 }
 

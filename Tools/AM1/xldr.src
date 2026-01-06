@@ -13,6 +13,7 @@
  / where:
  / dd 00 load data starting at address ssssssssssssssss
  / dd 10 start, execute jmp i ssssssssssssssss, terminates loading
+ / dd 11 no start, just halt, terminates loading, used for multiple tape loads
 
 lai=760040
 
@@ -23,7 +24,7 @@ loop, rpb
     and (177777
     dac addr
     spi
-    jmp i addr	/done
+    jmp done
     rpb
     dio end
 load, rpb
@@ -32,6 +33,10 @@ load, rpb
     sas end
     jmp load
     jmp loop
+done, ril 1s
+    spi
+    hlt		/ nostart, just halt
+    jmp i addr	/ start prog
 addr, 0
 end, 0
 constants

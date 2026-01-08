@@ -1,6 +1,6 @@
 Test of vars
 100/
-var a, b=10, c=b-1
+var a, b=[10], c=b-1
 
     dio a
     lac b

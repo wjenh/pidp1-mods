@@ -6,8 +6,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.6 6-Jan-2026"
-#define AM1SHORTVERSION "am1 v1.6"
+#define AM1VERSION "am1 v1.7 8-Jan-2026"
+#define AM1SHORTVERSION "am1 v1.7"
 
 #define AM1INCDIR "/opt/pidp1/Am1Includes"
 
@@ -57,6 +57,7 @@ typedef union
     int ival;
     char *strP;
     SymNodeP symP;      // symbol node
+    void *ptr;
 } PNodeValue;
 
 typedef struct parsenode
@@ -70,6 +71,13 @@ typedef struct parsenode
     PNodeValue value;
     PNodeValue value2;
 } PNode, *PNodeP;
+
+// a list of PNodePs, used for wildcard cross-bank refs
+typedef struct parsenodelist
+{
+    struct parsenodelist *nextP;
+    PNodeP nodeP;
+} PNodeListItem, *PNodeListP;
 
 // Context for a local scope
 typedef struct
@@ -85,8 +93,9 @@ typedef struct bankcontext
     struct bankcontext *nextP;
     int bank;               // the bank number
     int cur_pc;             // pc at the time of the switch from this bank
-    SymNodeP globalSymP;    // we preserve the globals and consts, no need for locals
+    SymNodeP globalSymP;    // we preserve the globals,consts, and vars, no need for locals
     SymNodeP constSymP;
+    PNodeListP varNodesP;
 } BankContext, *BankContextP;
 
 // list of symtabs

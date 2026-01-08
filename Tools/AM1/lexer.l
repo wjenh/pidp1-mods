@@ -35,7 +35,7 @@ void reset_line(void);
 %}
 
 %s BODY
-%x FIRST DOASCII DOTEXT
+%x FIRST DOASCII DOTEXT CONST
 
 %%
 
@@ -193,18 +193,31 @@ octal			{ decimalMode = false; }
 			    return(ENDCONST);
 			}
 
-[ \t]*\/\/.*\n		{
+[ \t]*"//".*\n		{
 			char *cP;
 
 			    cP = strchr(yytext, '/') + 2;
 			    yylval.strP = malloc(strlen(cP) + 1);
 			    strcpy(yylval.strP, cP);
 			    *strchr(yylval.strP, '\n') = 0;
+
+			    if( inConstant )
+			    {
+			    	noIncrement = true;	// because we're going to push back a newline
+			    }
+
 			    if( !noIncrement && !sawSemi )
 			    {
 			        ++lineno;
 			    }
 			    noIncrement = sawSemi = false;
+
+			    if( inConstant )
+			    {
+			    	unput('\n');
+			    }
+			    inConstant = false;
+
 			    return(COMMENT);
 			}
 
@@ -342,7 +355,7 @@ octal			{ decimalMode = false; }
 			    return( TERMINATOR );
 			 }
 
-[ \t]*(\n|(\;[ \t]*))	{
+[ \t]*(\n|\;[ \t]*)		{
 			    if( inConstant )
 			    {
 				inConstant = false;
@@ -354,6 +367,8 @@ octal			{ decimalMode = false; }
 				{
 				    unput('\n');
 				}
+
+				yylval.strP = 0;
 			        return(ENDCONST);
 			    }
 			    else

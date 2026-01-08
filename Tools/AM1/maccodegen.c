@@ -11,7 +11,6 @@
 
 #define LOADER_HALT 07772       // the halt instruction in our loader, keep in sync with xldr
 
-extern SymListP constsListP;
 extern bool sawBank;
 extern BankContextP banksP;
 extern bool noWarn;
@@ -25,8 +24,8 @@ static void emitStatements(FILE *, PNodeP);
 static void emitOperand(FILE *, PNodeP);
 static void emitAscii(FILE *outfP, char *strP);
 static void emitText(FILE *outfP, char *strP);
-static void emitVars(FILE *outfP, PNodeP nodeP);
-static void emitConstants(FILE *outfP, SymNodeP nodeP);
+static void emitVars(FILE *outfP, PNodeListP listP);
+static int emitConstants(FILE *outfP, SymNodeP nodeP);
 
 void verror(char *msgP, ...);
 
@@ -39,14 +38,21 @@ macCodegen(FILE *outfP, PNodeP rootP)
     fprintf(outfP,"%s\n", rootP->value.strP);
     emitStatements(outfP, rootP->leftP);
 
-    // Finish any trailing constants
+    // Finish any trailing constants and vars
     for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
     {
         if( bankP->constSymP )
         {
             fprintf(outfP, "/ Constants for bank %d\n", bankP->bank);
             fprintf(outfP, "%o/\n", bankP->cur_pc);
-            emitConstants(outfP, bankP->constSymP);
+            bankP->cur_pc += emitConstants(outfP, bankP->constSymP);
+        }
+
+        if( bankP->varNodesP )
+        {
+            fprintf(outfP, "/ Vars for bank %d\n", bankP->bank);
+            fprintf(outfP, "%o/\n", bankP->cur_pc);
+            emitVars(outfP, bankP->varNodesP);
         }
     }
 
@@ -126,7 +132,7 @@ char str[128];
 
         case VARS:
             fprintf(outfP,"/ variables\n");
-            emitVars(outfP, nodeP->rightP);
+            emitVars(outfP, (PNodeListP)(nodeP->value.ptr));
             break;
 
         case BANK:
@@ -278,6 +284,10 @@ PNodeP node2P;
 
     case CONSTANT:
         fprintf(outfP,"%04o",nodeP->value.symP->value);
+        if( nodeP->rightP )
+        {
+            fprintf(outfP,"\t/ %s", nodeP->rightP->value.strP);
+        }
         break;
 
     case DOT:
@@ -430,29 +440,36 @@ int val;
 
 // Walk a list of variables, emit the storage
 static void
-emitVars(FILE *fP, PNodeP nodeP)
+emitVars(FILE *fP, PNodeListP listP)
 {
+PNodeP nodeP;
 SymNodeP symP;
 
-    while( nodeP )
+    while( listP )
     {
+        nodeP = listP->nodeP;
         symP = nodeP->value.symP;
         fprintf(fP,"%s, %06o\n", symP->name, (nodeP->leftP)?evalExpr(nodeP->leftP):0);
-        nodeP = nodeP->rightP;
+
+        listP = listP->nextP;
     }
 }
 
 // Walk a symbol table of constants, emit the values
-static void
+static int
 emitConstants(FILE *fP, SymNodeP symP)
 {
+int val;
+
     if( !symP )
     {
-        return;
+        return(0);
     }
 
     fprintf(fP,"    %06o\n", symP->value2);
 
-    emitConstants(fP, symP->leftP);
-    emitConstants(fP, symP->rightP);
+    val = emitConstants(fP, symP->leftP);
+    val += emitConstants(fP, symP->rightP);
+
+    return(val);
 }

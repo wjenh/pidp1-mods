@@ -1,0 +1,21 @@
+Test of wildcarded cross-bank refs.
+
+100/
+    law [10     // comment
+    hlt
+    // try a wildcard
+    lio [a:*    // should resolve in bank 1
+    lio [c:*    // and same
+    // lio [b:*    // should fail
+    hlt
+    hlt
+    constants
+
+bank 1
+a, 0
+var c=3
+
+bank 2
+a, 0
+
+start 100

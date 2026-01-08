@@ -15,14 +15,17 @@ extern BankContextP banksP;
 extern int countText(char *strP);
 extern int countAscii(char *strP);
 extern int evalExpr(PNodeP);
+extern char flexoToAscii(char fchar, int *shift);
 
 static void startLine(FILE *outP, PNodeP nodeP);
 static void listStatements(FILE *, PNodeP);
 static void listOperand(FILE *, PNodeP);
 static void listAscii(FILE *outfP, PNodeP nodeP, char *strP);
 static void listText(FILE *outfP, PNodeP nodeP, char *strP);
+static bool listVar(FILE *outfP, PNodeP nodeP);
 static void listVars(FILE *outfP, PNodeP nodeP);
 static void listConstants(FILE *outfP, PNodeP nodeP, SymNodeP symP);
+static void flxToA(char *flxP, char *rlstP);
 
 void verror(char *msgP, ...);
 
@@ -35,7 +38,7 @@ listCodegen(FILE *outfP, PNodeP rootP)
     fprintf(outfP,"%s\n", rootP->value.strP);
     listStatements(outfP, rootP->leftP);
 
-    // Do any trailing constants
+    // Do any trailing constants and vars
     for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
     {
     PNode node;
@@ -46,6 +49,15 @@ listCodegen(FILE *outfP, PNodeP rootP)
             node.lineNo = 0;
             fprintf(outfP, "/ Constants for bank %d\n", bankP->bank);
             listConstants(outfP, &node, bankP->constSymP);
+        }
+
+        if( bankP->varNodesP )
+        {
+            node.pc = bankP->cur_pc;    // need a node for the pc
+            node.lineNo = 0;
+            node.value.ptr = bankP->varNodesP;
+            fprintf(outfP, "/ Variables for bank %d\n", bankP->bank);
+            listVars(outfP, &node);
         }
     }
 
@@ -72,7 +84,7 @@ char str[128];
         switch( nodeP->type )
         {
         case COMMENT:
-            fprintf(outfP, "  //%s\n", nodeP->value.strP);
+            fprintf(outfP, "%4d:  //%s\n", nodeP->lineNo, nodeP->value.strP);
             break;
 
         case FILENAME:
@@ -106,7 +118,7 @@ char str[128];
 
         case VARS:
             fprintf(outfP,"/ variables\n");
-            listVars(outfP, nodeP->rightP);
+            listVars(outfP, nodeP);
             break;
 
         case BANK:
@@ -145,13 +157,13 @@ char str[128];
                 fprintf(outfP, "    . = .+%o\n", nodeP->value.ival);
             }
 
-            fprintf(outfP, "/ End\n");
+            fprintf(outfP, "/ End");
             break;
 
         case ASCII:
             fprintf(outfP, "/ Ascii table\n");
             listAscii(outfP, nodeP, nodeP->value.strP);
-            fprintf(outfP, "/ End\n");
+            fprintf(outfP, "/ End");
             break;
 
         case SEMI:
@@ -159,7 +171,13 @@ char str[128];
             break;
 
         case TERMINATOR:
-            fprintf(outfP, "\n");
+            fprintf(outfP, "\n");       // a bare terminator doesn't get a line number if output
+            break;
+
+        case VAR:
+            startLine(outfP, nodeP);
+            fprintf(outfP, "var ");
+            listVar(outfP, nodeP->rightP);
             break;
 
         default:
@@ -253,6 +271,10 @@ PNodeP node2P;
         fprintf(outfP,"[");
         listOperand(outfP, nodeP->value.symP->ptr);
         fprintf(outfP,"]");
+        if( nodeP->rightP )
+        {
+            fprintf(outfP,"  // %s", nodeP->rightP->value.strP);
+        }
         break;
 
     case DOT:
@@ -356,9 +378,12 @@ listText(FILE *outfP, PNodeP nodeP, char *strP)
 {
 int i;
 int val;
+char buf[256];
 
-    fprintf(outfP,"/ flexo \"%s\"\n", strP);
+    flxToA(strP, buf);
+    fprintf(outfP,"/ text \"%s\"\n", buf);
     startLine(outfP, nodeP);
+
     for( val = i = 0; *strP != 0; i++ )
     {
         if( i && !(i % 3) )
@@ -377,6 +402,8 @@ int val;
         {
             val <<= 6;
         }
+
+        nodeP->pc++;    // because we only get the initial node
         startLine(outfP, nodeP);
         fprintf(outfP, " %06o\n", val);
     }
@@ -386,19 +413,60 @@ int val;
     }
 }
 
-// Walk a list of variables, list the storage
+// Variable, walk the list of names and list them.
+// Each node's rightP is the next one, leftP is the optional initializer.
+// However, the list is in reverse order, so handle that.
+// Returns true if one was printed and a comman is needed.
+static bool
+listVar(FILE *fP, PNodeP nodeP)
+{
+int val;
+bool needComma = false;
+SymNodeP symP;
+
+    if( !nodeP )
+    {
+        return(false);
+    }
+
+    needComma = listVar(fP, nodeP->rightP);
+
+    symP = nodeP->value.symP;
+    if( needComma )
+    {
+        fprintf(fP, ", ");
+    }
+
+    fprintf(fP, "%s", symP->name);
+    if( nodeP->leftP )
+    {
+        fprintf(fP, "=");
+        listOperand(fP,nodeP->leftP);
+    }
+
+    return(true);
+}
+
+// Variables, walk the variables, list the storage
 static void
 listVars(FILE *fP, PNodeP nodeP)
 {
 int val;
+int lineNo;
+PNodeListP listP;
 SymNodeP symP;
 
-    while( nodeP )
+    lineNo = nodeP->lineNo;
+    listP = (PNodeListP)(nodeP->value.ptr);
+    while( listP )
     {
+        nodeP = listP->nodeP;
+        nodeP->lineNo = lineNo;       // because these nodes were defined back in the var stmt
         symP = nodeP->value.symP;
         nodeP->value2.ival = (nodeP->leftP)?evalExpr(nodeP->leftP):0;
         startLine(fP, nodeP);
         fprintf(fP,"%s, ", symP->name);
+
         if( nodeP->leftP )
         {
             listOperand(fP,nodeP->leftP);
@@ -407,9 +475,9 @@ SymNodeP symP;
         {
             fprintf(fP,"0");
         }
-        fprintf(fP,"\n");
 
-        nodeP = nodeP->rightP;
+        fprintf(fP,"\n");
+        listP = listP->nextP;
     }
 }
 
@@ -422,7 +490,7 @@ listConstants(FILE *fP, PNodeP nodeP, SymNodeP symP)
         return;
     }
 
-    nodeP->value2.ival = symP->value2;
+    nodeP->value2.ival = symP->value2;  // set the value
     startLine(fP, nodeP);
     nodeP->pc++;    // because we only get the initial node
     fprintf(fP,"\n");
@@ -435,4 +503,25 @@ static void
 startLine(FILE *outP, PNodeP nodeP)
 {
     fprintf(outP, "%4d: %06o %06o ", nodeP->lineNo, nodeP->pc, nodeP->value2.ival);
+}
+
+// Convert a string containing flex chars into ascii
+static void
+flxToA(char *flxP, char *outP)
+{
+int shift = 0;
+int ch;
+    
+    while( *flxP )
+    {
+        ch = flexoToAscii(*flxP++, &shift);
+        if( ch == NONE )
+        {
+            continue;
+        }
+
+        *outP++ = ch;
+    }
+
+    *outP = 0;
 }

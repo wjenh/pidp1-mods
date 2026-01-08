@@ -1,0 +1,13 @@
+Test of line numbering in various cases
+
+100/
+    var a, b=3
+    law [10     // comment
+    lac b
+    hlt
+    text "abcde"
+    ascii "abc"
+    constants
+    variables
+
+start 100

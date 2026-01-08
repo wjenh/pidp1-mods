@@ -28,8 +28,8 @@ BankContextP banksP;
 
 static char scratchStr[128];            // and string
 
-static PNodeP varNodesP;                // unemitted vars
-
+static PNodeListP varNodesP;            // unemitted vars
+extern PNodeListP wildcardsP;           // any wildcarded cross-bank refs
 extern SymNodeP globalSymP;		// global symtab
 extern SymNodeP constSymP;		// literal constants
 extern SymNodeP permSymP;	        // the instructions and other permanent values
@@ -47,9 +47,11 @@ int countAscii(char *strP);
 int countText(char *strP);
 int setConstPC(int pc, SymNodeP constSymP);
 void setConstVal(SymNodeP constSymP);
-void setVarsPC(PNodeP varNodesP);
+void setVarsPC(int bank, PNodeListP varNodesP);
 void addShare(char *strP);
 void swapBanks(int newBank);
+void resolveWildcards(PNodeListP wildsP, BankContextP banksP);
+bool resolveWildcard(PNodeListP itemP, BankContextP bankP);
 BankContextP findBank(int bank);
 BankContextP addBank(int bank);
 SymListP addToSymlist(SymListP listP, SymNodeP symP, int bank, int pc);
@@ -99,6 +101,7 @@ extern void leave(int);
 %token <strP> NAME
 %token <strP> LCLNAME
 %token <strP> COMMENT
+%token <strP> ENDLOC
 %token <strP> HEADER
 %token <strP> ASCII
 %token <strP> TEXT
@@ -130,10 +133,11 @@ extern void leave(int);
 %token BINOP
 %token PARENS
 %token BREF
+%token WILDREF
 %token ENDCONST
 %token SEPARATOR TERMINATOR SEMI
 
-%token ENDLOC CONSTANTS
+%token CONSTANTS
 %token RELOC ENDRELOC
 
 /* union declarations for non-terminals */
@@ -149,6 +153,7 @@ extern void leave(int);
 %type <pnodeP> optExpr
 %type <pnodeP> terminator
 %type <pnodeP> terminators
+%type <pnodeP> endConst
 %type <ival> optINTEGER
 %type <ival> bref
 
@@ -201,14 +206,6 @@ body		: stmt_list
 
 		    if( $1 )
 		    {
-                        if( varNodesP )          // if not null, a variables wasn't given but vars declared
-                        {
-                            setVarsPC(varNodesP);
-                            nodeP = newnode(lineno, cur_pc, VARS, $1->leftP, varNodesP);
-                            $1->leftP = nodeP;
-                            $1 = nodeP;
-                        }
-
                         if( !sawBank )
                         {
                             // All in bank 0, but make a bank entry for it for consistency
@@ -221,18 +218,33 @@ body		: stmt_list
                         }
 
                         bankP->cur_pc = cur_pc;
+                        bankP->globalSymP = globalSymP;
                         bankP->constSymP = constSymP;
-                        constSymP = NILP;
+                        bankP->varNodesP = varNodesP;
 
-                        // now update all banks that need it
+                        // now update all banks that need it for unemitted consts and vars
                         for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
                         {
+                            if( bankP->varNodesP )
+                            {
+                                setVarsPC(bankP->bank, bankP->varNodesP);
+                            }
+
                             if( bankP->constSymP )
                             {
                                 setConstPC(bankP->cur_pc, bankP->constSymP);
                                 constsListP = addToSymlist(constsListP, bankP->constSymP,
                                     bankP->bank, bankP->cur_pc);
                             }
+                        }
+
+                        // Fix any wildcarded brefs
+                        resolveWildcards(wildcardsP, banksP);
+
+                        // Resolve all constant values
+                        for( symlistP = constsListP; symlistP; symlistP = symlistP->nextP )
+                        {
+                            setConstVal(symlistP->symP);
                         }
 
 			$$ = $1->leftP;		/* recover head link */
@@ -298,6 +310,10 @@ stmt_list	: stmt terminator
 		}
 		;
 
+// Many rules have to look ahead a token, and if that's a terminator, the line number will have been incremented.
+// So, newnode() automatically decrements it.
+// But, for some other statements, they don't look ahead, so the line number won't have been incremented yet.
+// Adjust it for those.
 stmt		: expr
 		{
 		    $$ = newnode(lineno, cur_pc, EXPR, NILP, $1);
@@ -318,7 +334,7 @@ stmt		: expr
                         verror("Bank cannot be used inside a local context");
                     }
 
-                    $$ = newnode(lineno, cur_pc, BANK, NILP, NILP);
+                    $$ = newnode(lineno+1, cur_pc, BANK, NILP, NILP);
                     $$->value.ival = $2;
                     swapBanks($2);
                     $$->value2.ival = cur_pc;   // is the pc for the new bank
@@ -330,14 +346,15 @@ stmt		: expr
                 }
                 | VARS
                 {
-                    $$ = newnode(lineno, cur_pc, VARS, NILP, varNodesP);
+                    $$ = newnode(lineno+1, cur_pc, VARS, NILP, NILP);
+                    $$->value.ptr = varNodesP;
                     if( !varNodesP )
                     {
                         vwarn("no variables have been declareed, variables ignored");
                     }
                     else
                     {
-                        setVarsPC(varNodesP);
+                        setVarsPC(curBank, varNodesP);
                         varNodesP = 0;
                     }
                 }
@@ -435,10 +452,9 @@ stmt		: expr
                 {
                 SymListP symlistP;
                 BankContextP ctxP;
-
                     // End this constant scope
                     constsListP = addToSymlist(constsListP, constSymP, curBank, cur_pc);
-		    $$ = newnode(lineno, cur_pc, CONSTANTS, NILP, NILP);
+		    $$ = newnode(lineno+1, cur_pc, CONSTANTS, NILP, NILP);
                     $$->value.symP = constSymP;
                     cur_pc = setConstPC(cur_pc, constSymP);
                     sym_init(&constSymP);
@@ -451,13 +467,13 @@ stmt		: expr
                 }
                 | ASCII
                 {
-		    $$ = newnode(lineno, cur_pc, ASCII, NILP, NILP);
+		    $$ = newnode(lineno+1, cur_pc, ASCII, NILP, NILP);
                     $$->value.strP = $1;
                     cur_pc += countAscii($1);
                 }
                 | TEXT
                 {
-		    $$ = newnode(lineno, cur_pc, TEXT, NILP, NILP);
+		    $$ = newnode(lineno+1, cur_pc, TEXT, NILP, NILP);
                     $$->value.strP = $1;
                     cur_pc += countText($1);
                 }
@@ -563,7 +579,7 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
 		    $$ = newnode(lineno, cur_pc, VALUESPEC, NILP, NILP);
                     $$->value.symP = $1;
                 }
-		| CONSTANT expr ENDCONST
+		| CONSTANT expr endConst
 		{
                 int hash;
                 SymNodeP symP;
@@ -579,7 +595,7 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                         sym_add(&constSymP, symP);
                         symP->ptr = $2;
                     }
-		    $$ = newnode(lineno, cur_pc, CONSTANT, NILP, NILP);
+		    $$ = newnode(lineno, cur_pc, CONSTANT, NILP, $3);
                     $$->value.symP = symP;
 		}
 		| DOT
@@ -635,6 +651,34 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                     $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
                     $$->value.symP = $1;
                     $$->value2.ival = $2;
+                }
+                | NAME wildref
+                {
+                PNodeListP wildP;
+
+                    if( !didBrefWarn )
+                    {
+                        vwarn(
+                        "remember that a cross-bank reference is the full 16-bit address of %s, not 12 bits",
+                        $1);
+                        didBrefWarn = true;
+                    }
+
+                    $$ = newnode(lineno, cur_pc, WILDREF, NILP, NILP);
+                    $$->value.strP = $1;
+
+                    // We need this for fixup later
+                    wildP = (PNodeListP)malloc(sizeof(PNodeListItem));
+                    wildP->nodeP = $$;
+                    wildP->nextP = wildcardsP;
+                    wildcardsP = wildP;
+                }
+                | ADDR wildref
+                {
+                    // This is a symbol in our own bank, but that's ok
+                    $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
+                    $$->value.symP = $1;
+                    $$->value2.ival = curBank;
                 }
                 | NAME
                 {
@@ -753,23 +797,47 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                 }
 		;
 
+endConst        : ENDCONST
+                {
+                    $$ = NILP;
+                }
+                | COMMENT
+                {
+                    $$ = newnode(lineno, cur_pc, COMMENT, NILP, NILP);
+                    $$->value.strP = $1;
+                    // Hack, this will have causeed a newline pushback in the lexer, adjust it now.
+                    // We have to do it here to keep line numbering correct in the CONST node.
+                    //--lineno;
+                }
+                ;
+
 varnames        : var
                 {
+                PNodeListP varP;
+
                     $$ = $1;
 
-                    if( varNodesP )
-                    {
-                        $1->rightP = varNodesP;
-                    }
-
-                    varNodesP = $$;
+                    // Chain it into the list of unemitted vars
+                    varP = (PNodeListP)malloc(sizeof(PNodeListItem));
+                    varP->nodeP = $$;
+                    varP->nextP = varNodesP;
+                    varNodesP = varP;
                 }
                 | varnames LOCATION var
                 {
-                    $1->rightP = $3;
+                PNodeListP varP;
+
+                    $3->rightP = $1;
                     $$ = $3;
+
+                    // And chain in the new var
+                    varP = (PNodeListP)malloc(sizeof(PNodeListItem));
+                    varP->nodeP = $3;
+                    varP->nextP = varNodesP;
+                    varNodesP = varP;
                 }
                 ;
+
 
 bref            : BREF INTEGER
                 {
@@ -784,6 +852,9 @@ bref            : BREF INTEGER
                 {
                     $$ = curBank;        // dot is a marker to indicate 'this bank'
                 }
+                ;
+
+wildref         : BREF MUL
                 ;
 
 var             : varname
@@ -883,23 +954,77 @@ setConstVal(SymNodeP symP)
 
 // Walk a list of var decls, set the pc for each VAR type found
 void
-setVarsPC(PNodeP nodeP)
+setVarsPC(int bank, PNodeListP listP)
 {
+PNodeP nodeP;
 SymNodeP symP;
 
-    while( nodeP )
+    while( listP )
     {
+        nodeP = listP->nodeP;
         symP = nodeP->value.symP;
 
         if( (symP->flags & SYMF_VAR) && !(symP->flags & SYMF_RESOLVED) )
         {
             symP->flags |= SYMF_RESOLVED;
             symP->value = cur_pc++;
+            symP->bank = bank;
             nodeP->pc = symP->value;
+            nodeP->value2.ival = bank;
         }
 
-        nodeP = nodeP->rightP;
+        listP = listP->nextP;
     }
+}
+
+// Resolve cross-bank wildcards, turn into BREFs.
+// Not the most efficient, O(wildcards*banks), but there won't be that many of them.
+void
+resolveWildcards(PNodeListP listP, BankContextP banksP)
+{
+    while( listP )
+    {
+        if( !resolveWildcard(listP, banksP) )
+        {
+            // another hack to get offending line, we're at the end of the program
+            lineno = listP->nodeP->lineNo + 1;
+            verror("wildcarded symbol '%s' cannot be found", listP->nodeP->value.strP);
+        }
+
+        listP = listP->nextP;
+    }
+}
+
+// We search the banks backwards because the banks are listed in reverse order of firs use.
+// Returns true if found, else false.
+bool
+resolveWildcard(PNodeListP itemP, BankContextP bankP)
+{
+SymNodeP symP;
+
+    if( bankP->nextP )
+    {
+        if( resolveWildcard(itemP, bankP->nextP) )
+        {
+            return(true);
+        }
+    }
+
+    if( (symP = sym_find(&(bankP->globalSymP), itemP->nodeP->value.strP)) )
+    {
+        if( !(symP->flags | SYMF_RESOLVED) )
+        {
+            verror("wildcarded symbol '%s' in bank %d was never resolved", symP->name, bankP->bank);
+        }
+
+        // A bit of a hack, we turn it into a BREF
+        itemP->nodeP->type = BREF;
+        itemP->nodeP->value.symP = symP;
+        itemP->nodeP->value2.ival = symP->bank;
+        return( true );
+    }
+
+    return( false );
 }
 
 // Add a local symbol, setting the scope level
@@ -938,6 +1063,7 @@ BankContextP curP;
     curP->cur_pc = cur_pc;
     curP->globalSymP = globalSymP;
     curP->constSymP = constSymP;
+    curP->varNodesP = varNodesP;
 
     newP = findBank(newBank);
 
@@ -947,12 +1073,14 @@ BankContextP curP;
         cur_pc = newP->cur_pc;
         globalSymP = newP->globalSymP;
         constSymP = newP->constSymP;
+        varNodesP = newP->varNodesP;
     }
     else
     {
         // fresh start
         sym_init(&globalSymP);
         sym_init(&constSymP);
+        varNodesP = NILP;
 
         // First time we've been to this bank, add an entry.
         newP = addBank(newBank);

@@ -37,7 +37,6 @@ static int cur_bank;
 extern bool sawBank;
 extern bool keepMinusZero;
 extern BankContextP banksP;
-extern SymListP constsListP;
 
 extern int evalExpr(PNodeP);
 extern int onesComplAdj(int);
@@ -61,7 +60,7 @@ static void adjustPC(int);
 static void writeStatements(FILE *, PNodeP);
 static void writeAscii(FILE *outfP, char *strP);
 static void writeText(FILE *outfP, char *strP);
-static void writeVars(FILE *outfP, PNodeP nodeP);
+static void writeVars(FILE *outfP, PNodeListP listP);
 static void writeConstants(FILE *outfP, SymNodeP nodeP);
 
 void verror(char *msgP, ...);
@@ -157,7 +156,7 @@ BankContextP bankP;
             break;
 
         case VARS:
-            writeVars(outfP, nodeP->rightP);
+            writeVars(outfP, (PNodeListP)(nodeP->value.ptr));
             break;
 
         case CONSTANTS:
@@ -343,18 +342,21 @@ int val;
 
 // Walk a list of variables, emit the storage
 static void
-writeVars(FILE *fP, PNodeP nodeP)
+writeVars(FILE *fP, PNodeListP listP)
 {
 int i;
+PNodeP nodeP;
 SymNodeP symP;
 
-    while( nodeP )
+    while( listP )
     {
+        nodeP = listP->nodeP;
+
         i = (nodeP->leftP)?reduceOperand(nodeP->leftP):0;
         putBuffer(fP, outBufP, i);
         adjustPC(1);
 
-        nodeP = nodeP->rightP;
+        listP = listP->nextP;
     }
 }
 

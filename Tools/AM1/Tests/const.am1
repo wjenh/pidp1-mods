@@ -7,6 +7,7 @@ bank 1
     lac [-0]
     lac [-1]
     lac [1-2]
+    lac [10     // comment
 
     constants
 

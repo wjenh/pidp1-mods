@@ -55,6 +55,7 @@
  * 05-Jan-2026 - added -z, -a, cleanup, doc updates
  * 06-Jan-2026 - added -s and symbol table output
  * 06-Jan-2026 - final code cleanup, make bank use vs no use consistent instead of no use being a special case
+ * 08-Jan-2026 - clean up line numbering in listing, add bank ref wildcard, a:*
  *
 */
 #include <unistd.h>
@@ -104,6 +105,7 @@ extern int yydebug;
 extern int yy_flex_debug;
 
 PNodeP rootP;                   // root of the parse tree
+PNodeListP wildcardsP;          // any wildcarded cross-bank refs
 SymNodeP globalSymP;            // global addresses 
 SymNodeP localSymP;             // local addresses 
 SymNodeP constSymP;             // constants
@@ -116,7 +118,6 @@ extern char *am1_version;
 extern FILE *yyin;              // lex input file 
 extern int yyparse();
 extern BankContextP findBank(int bankNo);
-extern void setConstVal(SymNodeP);
 extern void listSymtab(FILE *outfP, char* filenameP, BankContextP banksP);
 
 int evalExpr(PNodeP);
@@ -327,12 +328,6 @@ SymNodeP symP;
     {
         fprintf(stderr, "Compilation failed.\n");
         leave(0);
-    }
-
-    // Now resolve all const values
-    for( SymListP listP = constsListP; listP; listP = listP->nextP )
-    {
-        setConstVal(listP->symP);
     }
 
     fclose(yyin);
@@ -703,6 +698,33 @@ char str[128];
 }
 
 void
+dumpNodeList(int indent, PNodeListP listP)
+{
+PNodeP nodeP;
+int i;
+char str[128];
+
+    while( listP )
+    {
+        nodeP = listP->nodeP;
+
+        if(nodeP->type != TERMINATOR)
+        {
+            for(i = 0; i < indent; ++i)
+            {
+                fputc(' ', stdout);
+            }
+
+            printf("%s\n", nodeToName(nodeP, str));
+        }
+
+        dumpNode(indent + 4, nodeP->leftP);
+
+        listP = listP->nextP;
+    }
+}
+
+void
 dumpExpr(PNodeP nodeP)
 {
 PNodeP nodeP2;
@@ -730,6 +752,7 @@ char str[32];
         printf("constant(pc %o) [", nodeP->value.symP->value);
         dumpExpr((PNodeP)(nodeP->value.symP->ptr));
         printf("]");
+        dumpExpr(nodeP->rightP);
     }
     else
     {
@@ -807,7 +830,7 @@ char str[128];
 
         case VARS:
             printf("<vars>\n");
-            dumpNode(4, nodeP->rightP);
+            dumpNodeList(4, (PNodeListP)(nodeP->value.ptr));
             break;
 
         case TABLE:

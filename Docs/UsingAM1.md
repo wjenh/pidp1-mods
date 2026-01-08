@@ -43,6 +43,7 @@ Features
 - Does **not** allow redefining symbols (but cpp defines can)
 - Does **not** treat tab as a statement delimiter
 - 'Punches' the readable program header line in binary mode, like the original **macro** does
+- 'Punches' the readable program header line in binary mode, like the original **macro** does
 
 Differences in source code
 
@@ -146,7 +147,7 @@ Just type make.
 
 ## Usage
 
-**am1** [-Wabmlnvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile
+**am1** [-Wabmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile
 
 - W don't print warnings
 - a space means add, default is or
@@ -154,6 +155,7 @@ Just type make.
 - m generate **macro1** code
 - l generate a program listing
 - n don't run **cpp** on the input
+- n generate a symbol table
 - v print the version number and exit
 - z replace -0 with 0 for math operation results
 - Dsymbol define a symbol for **cpp**, -Dsym or -D sym are both accepted
@@ -207,6 +209,65 @@ For macro only output, the value field is meaningless.
 Of course, **macro1** will produce its own listing file, so creating one via **am1** is fairly useless other
 than seeing macro expansions.
 
+## Output files
+
+All output files have the original file's name but with a different extension.
+The following can be produced:
+
+- *file*.rim - binary output that can be read-in loaded
+- *file*.mac - text output that can (usually) be assembeld by **macro1**
+- *file*.lst - text output that is a listing of the assembled program, only generated for binary mode
+- *file*.cpp - text output that is the intermediate output from the **cpp** preprocessor
+- *file*.sym - text output that is a listing of all global symbols in the program
+
+The sym file contains an initial line that is the filename of the original file
+followed by one line per symbol of the form:
+```
+aaaaaa symbol-name
+```
+
+where *aaaaaa* is the full 16-bit address of the symbol's location in memory.
+
+## Using macros
+
+The C preprocessor is used to handle macros, and you should be familiar with it.
+
+The simple case:
+```
+#define foo bar
+```
+is essentially identical to the **macro1** *foo=bar*.
+
+However, defining the equivalent of a macro is different. The preprocessor expects the complete definition
+to be one line. This is done by using line continuations and semicolons:
+```
+#define mymacro(a,b) lio a; cma; lac b
+
+or
+
+#define mymacro(a,b) \
+    lio a; \
+    cma; \
+    lac b
+```
+
+The backslash at the end of the line says 'ignore the end of the line, treat the next line as part of this line'.
+There is one non-obvious and somewhat annoying side-effect of this. Consider:
+```
+#define mymacro(a,b) \ // This is my macro
+    lio a; \
+    etc.
+```
+
+This will fail completely because of the line-joining. What this really looks like is:
+```
+#define mymacro(a,b) // This is my macro lio a;...
+```
+
+As you can see, everything following the comment appears as part of the comment!
+So, put your comments before the definition.
+Yes, this is annoying.
+
 ## General program structure
 
 All programs start with a title line. This is mandatory. If you forget it, then whatever the first line is
@@ -233,7 +294,8 @@ statement.... // comment
 Each statement generally increments the current location by one, but see more below.
 Comments and empty lines do not affect the current location.
 
-Finally, the last line must be a *start xxx* statement to tell the loader where to start executing.
+Finally, the last line must be a *start xxx* statement to tell the loader where to start executing
+or a *pause* statement to allow for loading additional tapes before starting a program.
 
 The original **macro1** was not particulary good at reporting errors, and a missing start would generally cause
 unintened behavior. This statement is now mandatory, enforced by the assembler.
@@ -354,7 +416,7 @@ Constants are another shorthand, but with special behavior.
 Examples of constants are:
 ```
    lac [123]
-   lio [a+456]
+   lio [a+456   // a trailing comment
 ```
 
 Functionally, the above is eqivalent to:
@@ -370,8 +432,8 @@ const2, a+456
 But, constants are also tracked and kept in a *constants pool*.
 Sucessive uses of the same constant all share one memory location for their value, saving space.
 
-If a constant is the last thing on a line, the trailing ] can be omitted.\
-*Note* that *last* means **last**, no comments, etc. allowed.\
+If a constant is the last thing on a line except for a trailing comment, the trailing ] can be omitted.\
+*Note* that *last* means **last**, nothing but an optional trailing comment is allowed.\
 Best practice is to always close the constant.
 
 Also see the *constants* directive, below.
@@ -485,15 +547,19 @@ Some generate code, some don't.
 
 Directives are:
 - location assignment, xxx/
+- local
+- endloc
 - octal
 - decimal
 - flexo
 - text
 - ascii
+- var
 - variables
 - constants
 - bank
 - start
+- pause
 - two special directives, see below
 
 ## Location assigment
@@ -594,7 +660,7 @@ These cause any declared variables or constants to be emitted at the current loc
 Subsequent declarations will be held until the next variables or constants constants.
 
 If no directive is given, any variables and constants will be written at the end of the program, the
-location where the start directive is given.
+location where the start or pause directive is given.
 This might not place these where you want, so using the directives is advised.
 
 The location counter is updated appropriately after either directive.
@@ -612,12 +678,21 @@ The first time a bank is switched to, **the current location will be set to 0**.
 
 Remember to use the *constants* and *variables* directives in *each* bank where constants or variables are used.
 
-Global location symbols in one bank can be referenced from another bank by using the *bank reference* modifier on
-a location symbol, *sym:bankno* or *sym:.* to reference the current bank.
+Global location symbols in one bank can be referenced from another bank by using a *bank reference* modifier on
+a location symbol, *sym:bankno*, *sym:.*, or *sym:\**, to reference a symbol.
 
 When it is used, the value is the 16-bit address of that symbol.
-If the location symbol is not defined in the target bank, it will be created.
+
+The *sym:.* form means *in this current bank* and results in a full 16-bit address for the symbol.
+
+For the *sym:bankno* form, if the location symbol is not defined in the target bank, it will be created.
 However, it must be resolved at some point in that bank or an error will be generated.
+
+The *sym:\** form is a wildcarded location. It means *whatever bank that symbol is defined in*.
+Since the same symbol name can be defined in multiple banks, a search rule is used.
+At the end of parse tree generation the location is resolved by searching the list of banks used from
+first used to last used. The first match is the resolution.
+If not found in any bank, an error results.
 
 For example:
 ```
@@ -629,12 +704,17 @@ bank 1
 lac a
 a, 0
 lio i [a:.]
+lac b:*
 
 bank 0
-lac a:1
+b, lac a:1
+   lac a:*
 ```
-In bank 0, a:1 will have the value 10201.
-In bank 1, a will have the value 201, its in-bank address while a:. (a:dot) will have the value 10201.
+In bank 0, a:1 will have the value 10201, as will a:\*.\
+In bank 1, a will have the value 201, its in-bank address, while a:. (a:dot) will have the value 10201.
+
+In bank 0, b will have the value 100.\
+In bank 1, b:\* will have the value 00100, since the full address of a bank 0 symbol is the same.
 
 To reinforce, a : always results in a 16-bit address regardless of where it is used.\
 The formal calculation is *(bankno << 12) + symbol-value*.
@@ -644,27 +724,33 @@ The same as above, it is a shorthand for *(bankno << 12) + integer*, e.g. 100:3.
 
 Code using banks and cross-bank references must understand the standard PDP-1 extended memory mode access rules.
 
+As an example, the *jda* instruction does not work with extended memory. It uses the indirect bit as part of
+the opcode and will not actually indirect.
+A macro that implements a working jda for extended memory, *farjda()* is provided in the <memory.ah>
+include file along with other macros useful for cross-bank referencing.
+
 The **macro** and **macro1** compilers do not support extended memory,
 so code using banks will generate code that isn't actually usable, but it will be annotated
 to show where banks were switched.
 
-Some useful macros for dealing with cross-bank references are provided in the \<memory.ah\> include file.
+## Start or pause
 
-## Start
-
-The start directive must be the last statement in a program, and this is enforced.
-It tells the loader where to begin running the program.
+The start or pause directive must be the last statement in a program, and this is enforced.
+*Start* tells the loader where to begin running the program.
 The start address can be a numeric address or a location symbol.
 The start address can also be in any bank and can be a shared location symbol.
+
+The *pause* directive tells the loader to halt instead of starting the program.
+Additional tapes can the be loaded via read-in.
+
 Examples are:
 ```
 start 100
 start begin
 start 20100 // start at location 100 in bank 2
 start begin:3 // start at the location of *begin* in bank 3
+pause
 ```
-
-Any defined location can be used.
 
 ## Special directives
 
@@ -682,3 +768,40 @@ It will always be on a line by itself and is of the form:
 ```
 
 It is recommended that neither be used directly.
+
+## An example
+
+This is a simple example that shows various aspects of multi-bank operation.
+
+```
+Simple am1 demo using multiple banks
+
+// The loader will have left extended memory enabled.
+// The initial bank is 0.
+#include <memory.ah>
+
+100/
+       cla
+loop,  lio val; lio val; lio val        // just a delay
+       add val
+       sma
+       jmp loop
+       farjda(update:*) // a macro in memory.ah
+       jmp loop
+
+val,   1              // initially, we increment
+
+bank 1
+100/
+update, 0             // we jump here from bank 0
+       dac rtn
+       lac i [val:0   // change the sign of the operand
+       cma
+       fardac(val:0)  // another macro
+       lac update
+       jmp i rtn
+rtn,   0
+constants
+
+start 100
+```

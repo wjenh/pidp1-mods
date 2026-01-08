@@ -3,35 +3,24 @@
 #define MEMORY_AH
 
 #define farjmp(a) \
-    jmp i .+1; \
-    a
+    jmp i [a]
 
 #define farjsp(a) \
-    jsp i .+1; \
-    a
+    jsp i [a]
 
 #define farjda(a) \
-    jda i .+1; \
-    a
+    dac i [a]; jsp i [a+1]
 
 #define farlac(a) \
-    lac i .+2; \
-    jmp .+2; \
-    a
+    lac i [a]
 
 #define farlio(a) \
-    lio i .+2; \
-    jmp .+2; \
-    a
+    lio i [a]
 
 #define fardac(a) \
-    dac i .+2; \
-    jmp .+2; \
-    a
+    dac i [a]
 
 #define fardio(a) \
-    dio i .+2; \
-    jmp .+2; \
-    a
+    dio i [a]
 
 #endif

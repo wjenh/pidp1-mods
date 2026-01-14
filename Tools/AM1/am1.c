@@ -58,6 +58,7 @@
  * 08-Jan-2026 - clean up line numbering in listing, add bank ref wildcard, a:*
  * 12-Jan-2026 - more listing cleanup, rename pause to stop, add import/export, add lshift and rshift,
  *               make opr precedence same as C, update docs
+ * 14-Jan-2026 - fix serious bug introduced by the mod operator, can't use a percent
  *
 */
 #include <unistd.h>
@@ -856,6 +857,10 @@ char str[128];
 
         case TERMINATOR:
             printf("<terminator>\n");
+            break;
+
+        case FILENAME:
+            printf("<filename '%s'>\n", nodeP->value.strP);
             break;
 
         default:

@@ -1,0 +1,288 @@
+header ROTATE THRU SIX PROGRAMS ON THE DRUM
+<terminator>
+comment  This uses the IOT 32 clock 1 minute interrupt.
+comment  It runs in the bank defined by 'bnkno'.
+comment  It immediately halts to allow the test switches to be set for the first 3 programs.
+comment  They are specified by 3 groups of 6 switches with the drum track in each group.
+comment  After continue, it halts again to allow setting the next 3 programs.
+comment  On continue, it then sets up interrupt block 0 in mem bank 0 and overwrites the loader at 7751
+comment  and configures the clock to interrupt every minute and return to this code.
+comment  It selects the program to load and fetches it from the drum then transfers control
+comment  to the start address that drumloader established.
+<terminator>
+Unknown type 282
+comment  Useful things for extended memory access
+<terminator>
+Unknown type 282
+<terminator>
+Unknown type 282
+<terminator>
+comment  Defines for the IOT_32 timesharing clock
+comment  Use as iot rck, etc.
+comment  rck - read 1ms clock
+comment  cls - set clock parameters
+comment  cct - set countdown timer
+<terminator>
+comment  Flags in AC for 2032, not compatible with macro, only macro1
+comment  clss16 - enable SBS16, can't disable
+comment  clsena - enable clock, must be set to use, including clr
+comment  clsimn - enable minute interrupt
+comment  clsims - enable 32ms interrupt
+<terminator>
+comment  And the channel masks
+comment  clfmmn - minute channel
+comment  clmffs - 32 millisecond channel
+<terminator>
+comment  NOTE for 2132, enable SBS16 via iot 2032 4000.
+comment  Flags in AC for 2132, not compatible with macro, only macro1
+comment  cctie - enable interrupt
+<terminator>
+comment  And the channel and timer masks
+comment  cctich - interrupt channel
+comment  cctcnt - countdown timer
+<terminator>
+comment  The cks flag for the countdown timer
+<terminator>
+Unknown type 282
+<terminator>
+Unknown type 282
+<terminator>
+comment  This defines the IOT instructions for the Type 23 drum.
+comment  Note this differs from the examples in that it does not add the iot
+comment  explicitly, so use is e.g. iot dia.
+<terminator>
+comment  Additional flags, not compatible with native macro, only macro1.
+comment  These flags are in the IO register.
+<terminator>
+comment  Bits for 2063
+<terminator>
+comment  The bit set if a cks is done.
+<terminator>
+Unknown type 282
+comment  Am1 knows about the extended PDP-1D instructions, no need to define them here.
+<terminator>
+comment  Which bank we load into for the control program
+<terminator>
+bank (1) pc 7761
+<terminator>
+comment  Put included code here
+origin (1000) 
+<terminator>
+Unknown type 282
+<terminator>
+comment  Copy from one mem bank to another.
+comment  Call using jda.
+comment  AC has the count of words to copy.
+comment  The word following the call has the address to copy from
+comment  The next word has the address to copy to
+comment  Both can have extended addresses.
+comment  If extended mode is on, it will be turned off on return.
+location memcpy (1000)
+    integer (0)
+<terminator>
+local
+<terminator>
+comment  AC is in memcpy, return PC in AC
+expr opcode lem
+<terminator>
+expr opaddr dap mod addr cpydn (0)
+<terminator>
+expr opaddr lio <separator> i (10000) mod addr cpydn (0)
+<terminator>
+expr opaddr dio mod addr ads (0)
+<terminator>
+expr opaddr idx mod addr cpydn (0)
+<terminator>
+expr opaddr lio <separator> i (10000) mod addr cpydn (0)
+<terminator>
+expr opaddr dio mod addr adt (0)
+<terminator>
+expr opaddr idx mod addr cpydn (0)
+<terminator>
+expr opaddr lac <separator> addr memcpy (1000)
+<terminator>
+expr oporable cma
+<terminator>
+expr opcode eem
+<terminator>
+local location %cl (1014)
+     <separator> 
+        opaddr add
+        constant 
+<terminator>
+expr oporable lsw
+<terminator>
+expr opaddr lac <separator> i (10000) mod addr ads (0)
+<terminator>
+expr opaddr dac <separator> i (10000) mod addr adt (0)
+<terminator>
+expr opaddr idx mod addr ads (0)
+<terminator>
+expr opaddr idx mod addr adt (0)
+<terminator>
+expr oporable lsw
+<terminator>
+expr oporable sza
+<terminator>
+expr opaddr jmp mod addr cl (0)
+<terminator>
+expr opcode lem
+<terminator>
+expr opaddr jmp <separator> i (10000) mod addr cpydn (0)
+<terminator>
+local location %cpydn (1027)
+    integer (0)
+<terminator>
+local location %ads (1030)
+    integer (0)
+<terminator>
+local location %adt (1031)
+    integer (0)
+<terminator>
+endloc
+<terminator>
+Unknown type 282
+<terminator>
+comment  The channel 0 interrupt setup.
+comment  We execute a bit of code that will get
+comment  overwritten but reloaded on pgm switch.
+comment  This never gets executed, it's for ease of copying to bank 0.
+origin (0) 
+<terminator>
+expr opcode lem
+<terminator>
+expr opaddr jmp <separator> addr go (7756)
+<terminator>
+expr integer (0)
+<terminator>
+expr opaddr jmp <separator> addr isr (7751)
+<terminator>
+comment  We start at 100
+origin (100) 
+<terminator>
+expr oporable hlt
+<terminator>
+expr oporable lat
+comment  the test switches say which 6 progs to run
+expr opaddr dac <separator> addr pgm (143)
+<terminator>
+expr oporable hlt
+<terminator>
+expr oporable lat
+<terminator>
+expr opaddr dac <separator> addr pgm2 (144)
+<terminator>
+comment  enable the clock
+expr opaddr lac <separator> constant(pc 147) [integer (3000)]
+comment  1 min interrupt enabled, clock enabled
+expr opcode iot <separator> integer (2032)
+<terminator>
+comment  Control transfers here on every timeout, we will already be in extended mode.
+comment  Get the drum pgm to load, 6 sets of 6 bits, high bit in each ignored, and rotate them.
+location resume (110)
+<terminator>
+expr opaddr lac <separator> addr pgm (143)
+<terminator>
+expr oporable lia
+<terminator>
+expr opaddr lac <separator> addr pgm2 (144)
+<terminator>
+expr opcode rcr <separator> 6s (77)
+<terminator>
+expr opaddr dac <separator> addr pgm2 (144)
+<terminator>
+expr oporable lai
+<terminator>
+expr opaddr dac <separator> addr pgm (143)
+<terminator>
+comment  mask to get pgm track to load
+expr opaddr and <separator> constant(pc 151) [integer (37)]
+<terminator>
+expr opcode sal <separator> 6s (77)
+<terminator>
+expr opcode sal <separator> 6s (77)
+<terminator>
+comment  load bank 0 mem from drum
+expr opaddr ior <separator> constant(pc 150) [integer (400000)]
+<terminator>
+expr oporable lia
+<terminator>
+expr opcode iot <separator> integer (61)
+<terminator>
+expr oporable cli
+<terminator>
+expr opcode iot <separator> integer (62)
+<terminator>
+expr opcode iot <separator> integer (63)
+<terminator>
+comment  Yes, that's all it took to read a full memory image and load it into bank 0.
+comment  Bank 0 now has pgm loaded, update with our glue code.
+expr opcode law <separator> integer (4)
+<terminator>
+expr opaddr jda <separator> addr memcpy (1000)
+<terminator>
+expr integer (10000)
+<terminator>
+expr integer (0)
+<terminator>
+expr opcode law <separator> integer (20)
+<terminator>
+expr opaddr jda <separator> addr memcpy (1000)
+<terminator>
+expr bref:1 isr (7751)
+<terminator>
+expr addr isr (7751)
+<terminator>
+comment  turn on ints, extended mem, and transfer back to bank 0, adr 0
+expr opcode esm
+<terminator>
+expr opcode eem
+<terminator>
+expr opaddr jmp <separator> i (10000) <separator> constant(pc 146) [integer (0)]
+<terminator>
+comment  put this out now so we don't step on high mem
+location pgm (143)
+    integer (0)
+<terminator>
+location pgm2 (144)
+    integer (0)
+<terminator>
+constants
+<terminator>
+comment  The bank 0 transfer-back code.
+comment  It resides in the usual loader area starting at 7751.
+comment  Again, it's here to make it easy to copy.
+comment  The clock interrupt comes here, isr, 7751.
+comment  We have to jump thru hoops jumping to rti
+comment  because you can't enable extended mem while in
+comment  the interrupt and have it stick.
+origin (7751) 
+<terminator>
+location isr (7751)
+     <separator> 
+        opcode law
+        addr rti (7754)
+<terminator>
+expr opaddr dac <separator> integer (1)
+<terminator>
+expr opaddr jmp <separator> i (10000) <separator> integer (1)
+<terminator>
+comment  the interrupt return jumps here, jump back to the control code
+location rti (7754)
+    opcode eem
+<terminator>
+expr opaddr jmp <separator> i (10000) <separator> constant(pc 7761) [bref:1 resume (110)]
+<terminator>
+comment  We jump here when control is transferred from bank 1,
+comment  if no start addr, go on to next pgm.
+location go (7756)
+     <separator> 
+        opaddr lac
+        integer (7773)
+comment  where the start address is loaded from the drum
+expr oporable sza
+<terminator>
+expr opaddr jmp <separator> i (10000) <separator> integer (7773)
+comment  where the start address is loaded from the drum    // transfer to the loaded program
+<terminator>
+start (10100)

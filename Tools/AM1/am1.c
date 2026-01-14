@@ -56,6 +56,8 @@
  * 06-Jan-2026 - added -s and symbol table output
  * 06-Jan-2026 - final code cleanup, make bank use vs no use consistent instead of no use being a special case
  * 08-Jan-2026 - clean up line numbering in listing, add bank ref wildcard, a:*
+ * 12-Jan-2026 - more listing cleanup, rename pause to stop, add import/export, add lshift and rshift,
+ *               make opr precedence same as C, update docs
  *
 */
 #include <unistd.h>
@@ -84,7 +86,7 @@ char *filenameP;                // input am1 file
 char pfilename[128];            // cpp tmp file name
 char ofilename[128];            // output file 
 char basename[64];              // base name 
-char incroot[129];              // root of includes
+char incroot[256];              // root of includes
 char str1[256];                 // scratch strings 
 char str2[256];
 
@@ -538,6 +540,12 @@ typeToName(int type)
     case MOD:
         return("mod");
         break;
+    case LSHIFT:
+        return("lshift");
+        break;
+    case RSHIFT:
+        return("rshift");
+        break;
     case UNOP:
         return("unop");
         break;
@@ -559,8 +567,8 @@ typeToName(int type)
     case START:
         return("start");
         break;
-    case PAUSE:
-        return("pause");
+    case STOP:
+        return("stop");
         break;
     case CONSTANTS:
         return("constants");
@@ -597,7 +605,7 @@ SymNodeP symP;
     case CONSTANTS:
     case RELOC:
     case ENDRELOC:
-    case PAUSE:
+    case STOP:
         return(nameP);
 
     case EXPR:
@@ -837,6 +845,15 @@ char str[128];
             printf("<table %o>\n", nodeP->value.ival);
             break;
 
+        case IMPORT:
+            printf("<import %s>\n", nodeP->value.strP);
+            break;
+
+        case EXPORT:
+            printf("<export>\n");
+            dumpNode(4, nodeP->rightP);
+            break;
+
         case TERMINATOR:
             printf("<terminator>\n");
             break;
@@ -983,7 +1000,7 @@ run_cpp(char *filenameP, char *pfilename)
         }
     }
 
-    sprintf(tmpstr, "%s -DAM1 -nostdinc -isystem %s -traditional-cpp ", CPP_PATH, incroot);
+    sprintf(tmpstr, "%s -nostdinc -isystem %s -traditional-cpp ", CPP_PATH, incroot);
     cP = tmpstr + strlen(tmpstr);
 
     while(incsP)

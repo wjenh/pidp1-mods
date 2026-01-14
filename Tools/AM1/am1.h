@@ -6,8 +6,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.7 8-Jan-2026"
-#define AM1SHORTVERSION "am1 v1.7"
+#define AM1VERSION "am1 v1.8 12-Jan-2026"
+#define AM1SHORTVERSION "am1 v1.8"
 
 #define AM1INCDIR "/opt/pidp1/Am1Includes"
 
@@ -23,6 +23,7 @@
 
 // PNode flags
 #define PN_NOINC    1   // don't increment pc
+#define PN_SOL      2   // used to signal a comment at the beginning of a line
 
 // Symbol table flags amd such
 #define SYM_VALUE 1
@@ -40,6 +41,8 @@
 #define SYMF_ASSIGNED 0x2000    // is a constant that has been assigned a location
 #define SYMF_EVALED 0x4000      // is a constant that has been evaluated
 #define SYMF_EMITTED 0x8000     // is a constant that has been emitted
+#define SYMF_IMPORTED 0x10000   // came from an import file
+#define SYMF_EXPORTED 0x20000   // needs to be exported
 
 #define CTX_FORCELOCAL 1        // focelocal is active for this context
 

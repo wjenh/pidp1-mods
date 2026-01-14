@@ -1,0 +1,354 @@
+TEST GETALN
+
+/ The few implemented PDP1-D instructions
+lia=760020
+lai=760040
+lsw=760060
+
+/ Defines for the DCS2 system.
+/ See the documentation.
+/ NOTE that rcr in DCS conflicts with rcr, rotate-combined-right.
+/ It is renamed rchr here.
+rch=0022
+rrc=0122
+rchr=1022
+rsc=1122
+tcb=4022
+ssb=4122
+tcc=5022
+
+/ rch and rcr will clear the IO register if
+/ this is added to the IOT, else it ors.
+rchclr=002000
+
+/ Extended commands.
+rwe=0222
+scb=4222
+rle=4322
+rpc=4422
+rci=4522
+ric=4622
+rcs=4722
+rwe=5122
+roc=5222
+res=5322
+rxl=5422
+
+/ symbols not compatible with native macro
+/ dcfxxx are single bit flags
+/ dcmxxx are multibit masks
+/ Channel Request Block first word
+/ dcfcrnl - turn newline into carriage return, newline on send
+/ dcfflex - flexo mode, do automatic conversion
+/ dcfecho - echo received characters
+/ dcfioc - interrupt on connection open or close
+/ dcfioe - interrupt on socket error
+/ dcfior - interroupt on character received
+/ dcfie -  enable interrupts for channel
+/ dcfsrv - server mode
+/ rxlfta - flexo to ascii
+/ rxlucs - flexo upper case shift
+/ rxlchg - flexo shift state changed
+/ dcmsbs - bitmask, sbs channel to use
+/ dcmcha - bitmask, channel number for this channel
+
+dcfcrnl=400000
+dcfflex=200000
+dcfecho=100000
+dcfioc=040000
+dcfioe=020000
+dcfior=010000
+dcfie=004000
+dcfsrv=000100
+rxlfta=0400000
+rxlucs=00400
+rxlchg=01000
+
+dcmsbs=003600
+dcmcha=000077
+
+// Directives to scb
+sbcset=010000
+sbcbnd=020000
+sbcrst=040000
+sbcclr=000000
+
+/ Channel status flags
+/ dsfopn - channel has been opened by scb
+/ dsfsvr - channel is a server channel, else client
+/ dsfcon - connected to remote host
+/ dsfful - socket transmit buffer is full
+/ dsfrdy - has characters ready to read
+/ dsfser - got a socket error of some kine
+/ dsfcls - remote closed connection
+/ dsfien - interrupts are enabled
+/ dsfior - interrupted because a character was received
+/ dsfioc - interrupted because a connection was opened or closed
+/ dsfioe - interrupted because transmit buffer full or other socket error
+/ dsfcur - is the current channel
+
+dsfopn=000001
+dsfsvr=000002
+dsfcon=000004
+dsfful=000010
+dsfrdy=000020
+dsfser=000040
+dsfcls=000100
+dsfien=000200
+dsfior=000400
+dsfioc=001000
+dsfioe=002000
+dsfcur=004000
+
+/ and some combined ones
+dssrdy=dsfopn+dsfcon
+dsserr=dsfcls+dsfser+dsfful
+
+/ Errors returned in IO, dserr is the error flag
+/ dseno - channel not open
+/ dseoe - illegal operation on open channel
+/ dseic - invalid channel number
+/ dsens - server command on non-server channel
+/ dseil - illegal command, commdand with illegal options
+/ dseso - socket open or operation failed
+/ dsebi - server bind to port failed
+/ dsecc - rch, rcr, tcb, or tcc done but no current receive or send channel
+/ dselo - remote end closed connection
+/ dseep - internal error in epoll
+/ dsenc - no client connected but operation attempted
+dserr=400000
+dseno=1
+dseoe=2
+dseic=3
+dsens=4
+dseil=5
+dseso=6
+dsebi=7
+dsecc=10
+dselo=11
+dseep=12
+dsenc=13
+
+/ check status bit in IO reg
+dcfcks=000200
+
+/ special flex characters
+flxerr=076
+flxnch=013
+flxetx=013
+flxnl=077
+/ ascnch is used by rxl
+ascnch=077
+
+
+/ Put our included code bits here
+1000/
+/ Wait for an ascii character on the current DCS channel.
+/ The IO register is cleared and the character is 
+/ returned in the IO register.
+/ If an error occurs, the IO register will be the rcs status with bit 0 set to 1.
+/ The AC register is preserved.
+/ Call via jda getach.
+
+
+
+
+getach, 0
+     dap gachrt
+/ loop waiting for a character
+gachlp,
+     cli
+     iot rcs
+     lai
+     and (dsfser dsfcls
+     sza
+     jmp gacher
+     lai
+     and (dsfrdy
+     sza i
+     jmp gachlp
+     iot rch rchclr
+     spi
+     jmp gacher
+     jmp gacdn
+gacher,
+     lai
+     ior (400000
+     lia
+gacdn,
+     lac getach
+gachrt, jmp .
+
+/ Read a line of ascii characters into the memory address passed in the IO register.
+/ One character is placed in each word.
+/ The line is terminated by the null character, 0, and the line terminatior (nl or cr) dropped.
+/ The memory area is not bounds checked!
+/ The current DCS2 channel is used.
+/ If an error occurs, the IO register will have the DCS2 rcs error code, else 0.
+/ The AC register is preserved.
+/ Call via jda getaln.
+
+
+
+
+
+getaln, 0
+        dap glartn
+        dio glamem
+glalp,  jda getach
+        lai
+        sza i
+        jmp glalp
+        spa
+        jmp glabad
+        dio i glamem
+        sad (15
+        jmp gladon
+        idx glamem
+        jmp glalp
+gladon, cli
+/ overwrite the cr with 0
+        dzm i glamem
+glabad, lac getaln
+glartn, jmp .
+glamem, 0
+
+/ Write a block of ascii text out.
+/ Write out a string produced by ascii until a word containing
+/ only 0 is seen, the starting address is in the ac,
+/ ascii <whatever>
+/
+/ Include this before using it or declaring text that uses
+/ the character defines, below.
+/
+/ Output goes to SBS channel 0 which must be in ascii mode.
+/ On call, AC contains the address of the text block.
+/ Insert this at the desired point in code.
+/ Call via jda txtasc.
+
+
+
+
+txtasc, 0
+     dac txartn
+txatop, lac i txtasc
+/ a word has xaaaaaaaaxbbbbbbbb
+     sar 4s
+     sar 5s
+     sza i
+     jmp i txartn
+     lia
+     iot tcb
+     law 377
+     and i txtasc
+     sza i
+     jmp i txartn
+     lia
+     iot tcb
+     idx txtasc
+     jmp txatop
+txartn, 0
+
+
+define say a
+    law a
+    jda txtasc
+    term
+
+define newline
+    law 12
+    lia
+    iot tcb
+    term
+
+100/
+     lio (sbcset ctl
+     iot scb 
+/ be sure we actually have a connection
+/ if not, wait for one
+opn, iot rcs
+     rir 3s
+     spi i
+     jmp opn
+
+/ lock the send channel to 0 
+     cli
+     iot ssb
+
+     say hl1
+loop,
+     newline
+     law buf
+     lia
+     jda getaln
+     lac buf
+     sad (161
+     jmp stp
+     newline
+     law buf
+     dac glamem
+lp2, lio i glamem
+     idx glamem
+     lai
+     sza i
+     jmp loop
+     iot tcb
+     jmp lp2
+
+stp, lio (sbcrst
+     iot scb
+     hlt
+     jmp 100
+
+hl1, / ascii
+     124171
+     160145
+     040141
+     040154
+     151156
+     145054
+     040162
+     145163
+     165154
+     164163
+     040151
+     156040
+     101103
+     040141
+     156144
+     040111
+     117054
+     040167
+     151154
+     154040
+     150141
+     154164
+     040164
+     150145
+     156040
+     145143
+     150157
+     040154
+     151156
+     145056
+     040161
+     040164
+     157040
+     145170
+     151164
+     056012
+     000000
+
+
+/ server port, ascii, echo, and crlf on channel 0
+/ listen on port 2022
+ctl, dcfcrnl dcfecho dcfsrv
+     decimal 2022
+     octal
+
+constants
+
+300/
+buf, 0
+
+start 100

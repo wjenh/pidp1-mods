@@ -1,0 +1,72 @@
+TEST GETALN
+
+#include <1Dinstructions.mh>
+#include <DCS/dcs2defs.mh>
+
+/ Put our included code bits here
+1000/
+#include <DCS/getach.mh>
+#include <DCS/getaln.mh>
+#include <DCS/textascii.mh>
+#include <getnum.mh>
+
+define say a
+    law a
+    jda txtasc
+    term
+
+define newline
+    law '\n'
+    lia
+    iot tcb
+    term
+
+100/
+     lio (sbcset ctl
+     iot scb 
+/ be sure we actually have a connection
+/ if not, wait for one
+opn, iot rcs
+     rir 3s
+     spi i
+     jmp opn
+
+/ lock the send channel to 0 
+     cli
+     iot ssb
+
+     say hl1
+loop,
+     newline
+     law buf
+     lia
+     jda getaln
+     lac buf
+     sad ('q'
+     jmp stp
+     newline
+     law buf
+     lia
+     jda getnum
+     hlt
+     jmp loop
+
+stp, lio (sbcrst
+     iot scb
+     hlt
+     jmp 100
+
+hl1, ascii "Type a line, numeric results in AC and IO, will hall. q to exit.\n"
+
+/ server port, ascii, echo, and crlf on channel 0
+/ listen on port 2022
+ctl, dcfcrnl dcfecho dcfsrv
+     decimal 2022
+     octal
+
+constants
+
+300/
+buf, 0
+
+start 100

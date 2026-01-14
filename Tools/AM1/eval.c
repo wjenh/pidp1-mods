@@ -107,6 +107,14 @@ PNodeP node2P;
             rslt = lval * rval;
             break;
 
+        case LSHIFT:
+            rslt = lval << rval;
+            break;
+
+        case RSHIFT:
+            rslt = lval >> rval;
+            break;
+
         default:
             verror("unknown binary op %d in _evalExpr", nodeP->value.ival);
         }
@@ -254,12 +262,22 @@ SymNodeP symP;
         case AND:
             partial = lval & rval;
             break;
+
         case SEPARATOR:
         case OR:
             partial = lval | rval;
             break;
+
         case XOR:
             partial = lval ^ rval;
+            break;
+
+        case LSHIFT:
+            partial = onesComplAdj(twosComplAdj(lval) << twosComplAdj(rval));
+            break;
+
+        case RSHIFT:
+            partial = onesComplAdj(twosComplAdj(lval) >> twosComplAdj(rval));
             break;
 
         default:

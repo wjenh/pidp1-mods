@@ -34,7 +34,7 @@ void
 macCodegen(FILE *outfP, PNodeP rootP)
 {
     // The root is a HEADER.
-    // The root lhs is the program body, the rhs the START or PAUSE at the end of the program.
+    // The root lhs is the program body, the rhs the START or STOP at the end of the program.
     fprintf(outfP,"%s\n", rootP->value.strP);
     emitStatements(outfP, rootP->leftP);
 
@@ -56,11 +56,11 @@ macCodegen(FILE *outfP, PNodeP rootP)
         }
     }
 
-    if( rootP->rightP->type == PAUSE )
+    if( rootP->rightP->type == STOP )
     {
         if( !noWarn )
         {
-            fprintf(stderr,"am1: WARNING: pause is not supported by macro1, replacing with a jump to hlt\n");
+            fprintf(stderr,"am1: WARNING: stop is not supported by macro1, replacing with a jump to hlt\n");
         }
 
         fprintf(outfP,"start %o\n", LOADER_HALT);
@@ -76,6 +76,8 @@ emitStatements(FILE *outfP, PNodeP nodeP)
 {
 int i, j;
 PNodeP node2P;
+bool noNl = false;
+char *cP;
 char str[128];
 
     while( nodeP )
@@ -118,7 +120,6 @@ char str[128];
                 fprintf(outfP," ");
                 emitOperand(outfP, nodeP->rightP);
             }
-            fprintf(outfP,"\n");
             break;
 
         case LCLLOCATION:
@@ -126,7 +127,6 @@ char str[128];
             {
                 fprintf(outfP, "    ");
                 emitOperand(outfP, nodeP->rightP);
-                fprintf(outfP,"\n");
             }
             break;
 
@@ -137,6 +137,7 @@ char str[128];
 
         case BANK:
             fprintf(outfP,"/ BANK - following is in bank %d\n", nodeP->value.ival );
+            noNl = true;
             break;
 
         case CONSTANTS:
@@ -148,12 +149,14 @@ char str[128];
             fprintf(outfP, "/ Text table\n");
             emitText(outfP, nodeP->value.strP);
             fprintf(outfP, "/ End\n");
+            noNl = true;
             break;
 
         case ASCII:
             fprintf(outfP, "/ Ascii table\n");
             emitAscii(outfP, nodeP->value.strP);
             fprintf(outfP, "/ End\n");
+            noNl = true;
             break;
 
         case TABLE:
@@ -175,14 +178,41 @@ char str[128];
             }
 
             fprintf(outfP, "/ End\n");
+            noNl = true;
+            break;
+
+        case IMPORT:
+            if( *(nodeP->value.strP) != '<' )
+            {
+                fprintf(outfP, "/ import \"%s\"\n", nodeP->value.strP);
+            }
+            else
+            {
+                fprintf(outfP, "/ import %s\n", nodeP->value.strP);
+            }
+            break;
+
+        case EXPORT:
+            fprintf(outfP, "/ export ");
+            for( node2P = nodeP->rightP; node2P; node2P = node2P->leftP )
+            {
+                cP = (node2P->type == NAME)?node2P->value.strP:node2P->value.symP->name;
+                fprintf(outfP, "%s%s", cP, (node2P->leftP)?", ":"\n");
+            }
             break;
 
         case TERMINATOR:
-            fprintf(outfP, "\n");
+            if( !noNl )
+            {
+                fprintf(outfP, "\n");
+            }
+
+            noNl = false;
             break;
 
         default:
             // just ignore
+            noNl = true;
             break;
         }
 
@@ -228,6 +258,20 @@ PNodeP node2P;
             lval = onesComplAdj(evalExpr(nodeP->leftP));
             rval = onesComplAdj(evalExpr(nodeP->rightP));
             fprintf(outfP,"%o", (lval ^ rval) & WRDMASK);
+        }
+        else if( nodeP->value.ival == LSHIFT )
+        {
+            // there is no << in macro1, have to reduce everything
+            lval = onesComplAdj(evalExpr(nodeP->leftP));
+            rval = onesComplAdj(evalExpr(nodeP->rightP));
+            fprintf(outfP,"%o", (lval << rval) & WRDMASK);
+        }
+        else if( nodeP->value.ival == RSHIFT )
+        {
+            // there is no >> in macro1, have to reduce everything
+            lval = onesComplAdj(evalExpr(nodeP->leftP));
+            rval = onesComplAdj(evalExpr(nodeP->rightP));
+            fprintf(outfP,"%o", (lval >> rval) & WRDMASK);
         }
         else
         {

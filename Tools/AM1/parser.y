@@ -21,6 +21,7 @@ LocalContextP localContextP;	        // used while a local scope is enabled
 LocalContextP localStack[MAXLOCALS];
 bool sawForceLocal;
 bool didBrefWarn;
+bool atSol = true;                      // initially true
 
 // Bank contexts are kept as a linked list, not used often enough to need preallocation
 int curBank;
@@ -37,19 +38,22 @@ extern SymListP constsListP;            // the list of all constant groups
 
 extern bool noWarn;
 extern bool sawBank;
+extern bool doSymtab;
 extern int lineno;
 extern char *filenameP;
+extern char *incroot;
 extern PNodeP rootP;
 
 SymNodeP addLocalSymbol(char *nameP);
 LocalContextP newLocalContext(void);
+BankContextP swapBanks(int newBank);
 int countAscii(char *strP);
 int countText(char *strP);
 int setConstPC(int pc, SymNodeP constSymP);
 void setConstVal(SymNodeP constSymP);
 void setVarsPC(int bank, PNodeListP varNodesP);
-void addShare(char *strP);
-void swapBanks(int newBank);
+void addExports(PNodeP nodesP);
+void importSymbols(char *filenameP);
 void resolveWildcards(PNodeListP wildsP, BankContextP banksP);
 bool resolveWildcard(PNodeListP itemP, BankContextP bankP);
 BankContextP findBank(int bank);
@@ -85,12 +89,15 @@ extern void leave(int);
 /* typed symbols */
 
 %token <pnodeP> START
-%token <pnodeP> PAUSE
+%token <pnodeP> STOP
 %token <pnodeP> CONSTANT
 %token <pnodeP> NAMES
 %token <pnodeP> VAR
 %token <pnodeP> VARS
 %token <pnodeP> TABLE
+%token <pnodeP> ASCII
+%token <pnodeP> EXPORT
+%token <pnodeP> IMPORT
 %token <symP> OPCODE
 %token <symP> OPADDR
 %token <symP> OPORABLE
@@ -103,9 +110,10 @@ extern void leave(int);
 %token <strP> COMMENT
 %token <strP> ENDLOC
 %token <strP> HEADER
-%token <strP> ASCII
+%token <strP> STRING
 %token <strP> TEXT
 %token <strP> FILENAME
+%token <strP> LIBFILE
 %token <ival> CHAR
 %token <ival> FLEXO
 %token <ival> INTEGER
@@ -146,11 +154,15 @@ extern void leave(int);
 %type <pnodeP> body
 %type <pnodeP> stmt_list
 %type <pnodeP> stmt
+%type <pnodeP> one_stmt
 %type <pnodeP> expr
 %type <pnodeP> var
 %type <pnodeP> varnames
 %type <pnodeP> varname
 %type <pnodeP> optExpr
+%type <pnodeP> optLocals
+%type <pnodeP> symList
+%type <pnodeP> symbol
 %type <pnodeP> terminator
 %type <pnodeP> terminators
 %type <pnodeP> endConst
@@ -159,14 +171,18 @@ extern void leave(int);
 
 /* precedence for operators */
 
+%left TERMINATOR
+%left SEPARATOR
 %left LOCATION LCLLOCATION
 %right CONSTANT
-%left OR XOR SEPARATOR
+%left OR
+%left XOR
 %left AND
+%left LSHIFT RSHIFT
 %left PLUS MINUS
 %left MUL DIV MOD
-%right CMPL
-%right UMINUS
+%left CMPL
+%left UMINUS
 %right '='
 %left ENDCONST
 
@@ -193,9 +209,9 @@ start           : START expr TERMINATOR
                     $$ = newnode(lineno, cur_pc, START, NILP, NILP);
                     $$->value.ival = evalExpr($2);
                 }
-                | PAUSE TERMINATOR
+                | STOP TERMINATOR
                 {
-                    $$ = newnode(lineno, cur_pc, PAUSE, NILP, NILP);
+                    $$ = newnode(lineno, cur_pc, STOP, NILP, NILP);
                 }
 
 body		: stmt_list
@@ -314,7 +330,13 @@ stmt_list	: stmt terminator
 // So, newnode() automatically decrements it.
 // But, for some other statements, they don't look ahead, so the line number won't have been incremented yet.
 // Adjust it for those.
-stmt		: expr
+stmt            : one_stmt
+                {
+                    $$ = $1;
+                    atSol = false;
+                }
+
+one_stmt	: expr
 		{
 		    $$ = newnode(lineno, cur_pc, EXPR, NILP, $1);
 		    if( $1 && !($1->flags & PN_NOINC) )
@@ -338,7 +360,6 @@ stmt		: expr
                     $$->value.ival = $2;
                     swapBanks($2);
                     $$->value2.ival = cur_pc;   // is the pc for the new bank
-                    sawBank = true;
                 }
                 | VAR varnames
                 {
@@ -381,7 +402,7 @@ stmt		: expr
                     else
                     {
                         symP = sym_make($1, 0);
-                        symP->flags = SYMF_RESOLVED | SYM_GLOB;
+                        symP->flags |= SYMF_RESOLVED | SYM_GLOB;
                         symP->value = cur_pc;
                         symP->bank = curBank;
                         sym_add(&globalSymP, symP);
@@ -404,7 +425,7 @@ stmt		: expr
                             // This was from a local context when forced was in effect,
                             // fix it up.
                             $1->flags = SYM_GLOB;
-                            $1->symP->flags = SYM_GLOB | SYMF_RESOLVED;
+                            $1->symP->flags = SYM_GLOB;
                             $1->symP->value = cur_pc;
                         }
 
@@ -465,11 +486,11 @@ stmt		: expr
                         ctxP->constSymP = NILP;
                     }
                 }
-                | ASCII
+                | ASCII STRING
                 {
 		    $$ = newnode(lineno+1, cur_pc, ASCII, NILP, NILP);
-                    $$->value.strP = $1;
-                    cur_pc += countAscii($1);
+                    $$->value.strP = $2;
+                    cur_pc += countAscii($2);
                 }
                 | TEXT
                 {
@@ -489,11 +510,97 @@ stmt		: expr
                     $$->value.ival = evalExpr($2);
                     cur_pc += $$->value.ival;
                 }
+                | LOCAL optLocals
+                {
+                SymNodeP symP;
+                PNodeP nodeP;
+
+                    // We push any current local scope, establish a new one
+                    // locaSymlPP can be null if there is no current scope
+                    if( $2 )
+                    {
+                        nodeP = $2->leftP;      // recover head link
+                        $2->leftP = NILP;
+                    }
+                    else
+                    {
+                        nodeP = NILP;
+                    }
+		    $$ = newnode(lineno, cur_pc, LOCAL, NILP, nodeP);
+                    $$->flags |= PN_NOINC;
+
+                    localStack[localDepth++] = localContextP;
+                    if( localDepth > maxLocalDepth )
+                    {
+                        maxLocalDepth = localDepth;
+                    }
+
+                    localContextP = newLocalContext();
+                    localContextP->pc = cur_pc;          // will be the origin for the local relative refs
+                    sym_init( &(localContextP->symRootP) );
+
+                    while( nodeP )         // add local predefines
+                    {
+                        symP = addLocalSymbol(nodeP->value.strP);
+                        symP->flags = SYM_LOC;
+                        nodeP = nodeP->leftP;
+                    }
+                }
+                | ENDLOC optINTEGER
+                {
+                    if( $2 > 0 )
+                    {
+                        if( $2 != localDepth )
+                        {
+                            vwarn("endloc says ending level %d but the current level is %d", $2, localDepth);
+                        }
+                    }
+
+                    // We pop the local stack
+                    if( localDepth == 0 )
+                    {
+                        verror("endloc without an opening local");
+                    }
+                    else
+                    {
+                        localContextP = localStack[--localDepth];
+                    }
+
+		    $$ = newnode(lineno, cur_pc, ENDLOC, NILP, NILP);
+                    $$->flags |= PN_NOINC;
+                    $$->value.ival = $2;
+                }
+                | EXPORT symList
+                {
+                SymNodeP symP;
+                PNodeP nodeP;
+
+                    nodeP = $2->leftP;      // recover head link
+                    $2->leftP = NILP;
+
+                    addExports(nodeP);
+		    $$ = newnode(lineno, cur_pc, EXPORT, NILP, nodeP);
+                    $$->flags |= PN_NOINC;
+                    doSymtab = true;        // and force output
+                }
+                | IMPORT STRING
+                {
+		    $$ = newnode(lineno, cur_pc, IMPORT, NILP, NILP);
+                    $$->value.strP = $2;
+                    importSymbols($2);
+                }
+                | IMPORT LIBFILE
+                {
+		    $$ = newnode(lineno, cur_pc, IMPORT, NILP, NILP);
+                    $$->value.strP = $2;
+                    importSymbols($2);
+                }
                 ;
 
 terminator      : terminators
                 {
                     $$ = $1;
+                    atSol = true;
                 }
                 | SEMI
                 {
@@ -503,11 +610,17 @@ terminator      : terminators
                 {
                     $$ = newnode(lineno, cur_pc, COMMENT, NILP, NILP);
                     $$->value.strP = $1;
+                    if( atSol )
+                    {
+                        $$->flags |= PN_SOL;
+                    }
+                    atSol = true;
                 }
                 | FILENAME
                 {
 		    $$ = newnode(lineno, cur_pc, FILENAME, NILP, NILP);
                     $$->value.strP = $1;
+                    atSol = true;
                 }
                 ;
 
@@ -552,6 +665,8 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                 | expr AND expr             { $$ = binop(lineno, cur_pc, AND, $1, $3); }
                 | expr OR expr              { $$ = binop(lineno, cur_pc, OR, $1, $3); }
                 | expr XOR expr             { $$ = binop(lineno, cur_pc, XOR, $1, $3); }
+                | expr LSHIFT expr          { $$ = binop(lineno, cur_pc, LSHIFT, $1, $3); }
+                | expr RSHIFT expr          { $$ = binop(lineno, cur_pc, RSHIFT, $1, $3); }
                 | '(' expr ')'              { $$ = unop(lineno, cur_pc, PARENS, $2); }
                 | CMPL expr                 { $$ = unop(lineno, cur_pc, CMPL, $2); }
                 | INTEGER
@@ -743,23 +858,6 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                     $$ = newnode(lineno, cur_pc, LITCHAR, NILP, NILP);
                     $$->value.ival = $1;
                 }
-                | LOCAL
-                {
-                    // We push any current local scope, establish a new one
-                    // locaSymlPP can be null if there is no current scope
-		    $$ = newnode(lineno, cur_pc, LOCAL, NILP, NILP);
-                    $$->flags = PN_NOINC;
-
-                    localStack[localDepth++] = localContextP;
-                    if( localDepth > maxLocalDepth )
-                    {
-                        maxLocalDepth = localDepth;
-                    }
-
-                    localContextP = newLocalContext();
-                    localContextP->pc = cur_pc;          // will be the origin for the local relative refs
-                    sym_init( &(localContextP->symRootP) );
-                }
                 | FORCELOC
                 {
                     if( localDepth == 0 )
@@ -770,30 +868,7 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                     localContextP->flags = CTX_FORCELOCAL;
                     sawForceLocal = true;
 		    $$ = newnode(lineno, cur_pc, FORCELOC, NILP, NILP);
-                    $$->flags = PN_NOINC;
-                }
-                | ENDLOC optINTEGER
-                {
-                    if( $2 > 0 )
-                    {
-                        if( $2 != localDepth )
-                        {
-                            vwarn("endloc says ending level %d but the current level is %d", $2, localDepth);
-                        }
-                    }
-
-                    // We pop the local stack
-                    if( localDepth == 0 )
-                    {
-                        verror("endloc without an opening local");
-                    }
-                    else
-                    {
-                        localContextP = localStack[--localDepth];
-                    }
-
-		    $$ = newnode(lineno, cur_pc, ENDLOC, NILP, NILP);
-                    $$->flags = PN_NOINC;
+                    $$->flags |= PN_NOINC;
                 }
 		;
 
@@ -805,9 +880,48 @@ endConst        : ENDCONST
                 {
                     $$ = newnode(lineno, cur_pc, COMMENT, NILP, NILP);
                     $$->value.strP = $1;
-                    // Hack, this will have causeed a newline pushback in the lexer, adjust it now.
-                    // We have to do it here to keep line numbering correct in the CONST node.
-                    //--lineno;
+                }
+                ;
+
+optLocals       : symbol
+                {
+                    $$ = $1;
+                    $$->leftP = $$; // keep head
+                }
+                | optLocals LOCATION symbol
+                {
+                    $3->leftP = $1->leftP;
+                    $1->leftP = $3;
+                    $$ = $3;
+                }
+                |
+                {
+                    $$ = NILP;
+                }
+                ;
+
+symList         : symbol
+                {
+                    $$ = $1;
+                    $$->leftP = $$; // keep head
+                }
+                | symList LOCATION symbol
+                {
+                    $3->leftP = $1->leftP;
+                    $1->leftP = $3;
+                    $$ = $3;
+                }
+                ;
+
+symbol          : NAME
+                {
+                    $$ = newnode(lineno, cur_pc, NAME, NILP, NILP);
+                    $$->value.strP = $1;
+                }
+                | ADDR
+                {
+                    $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
+                    $$->value.symP = $1;
                 }
                 ;
 
@@ -890,6 +1004,32 @@ varname         : NAME
                     $1->flags = SYM_GLOB | SYMF_VAR;
                 }
 %%
+
+// Add exported symbols to the current global symtab
+void
+addExports(PNodeP nodesP)
+{
+SymNodeP symP;
+
+    while( nodesP )
+    {
+        switch( nodesP->type )
+        {
+        case NAME:
+            symP = sym_make(nodesP->value.strP, 0);     // first time seen, declare it as a global
+            symP->bank = curBank;
+            sym_add(&globalSymP, symP);
+            symP->flags = SYM_GLOB | SYMF_EXPORTED;
+            break;
+
+        case ADDR:
+            nodesP->value.symP->flags |= SYMF_EXPORTED;
+            break;
+        }
+
+        nodesP = nodesP->leftP;
+    }
+}
 
 // Walk a symbol table of constants, set the pc for each,
 // return the updated pc.
@@ -977,6 +1117,84 @@ SymNodeP symP;
     }
 }
 
+// Process a symbol file, bring in all exported ones.
+// If the filename starts with <, it will be terminated with the same and means system include.
+// Exported symbols found are created as globals in the bank they were defined in, a bank context
+// will be created if needed.
+void
+importSymbols(char *filenameP)
+{
+int bank;
+int origBank;
+int lastBank;
+long address;
+char *cP;
+FILE *infP;
+SymNodeP symP;
+BankContextP bankP;
+char str[256];
+
+    if( *filenameP == '<' )
+    {
+        sprintf(str, "%s/%s", incroot, filenameP + 1);
+        *strchr(str, '>') = 0;
+        cP = str;
+    }
+    else
+    {
+        cP = filenameP;
+    }
+
+    if( !(infP = fopen(filenameP, "r")) )
+    {
+        verror("can't open import file '%s'", filenameP);
+    }
+
+    origBank = curBank;                     // will need this later
+    lastBank = curBank;
+
+    fgets(str, sizeof(str), infP);          // discard first line, the file name
+    while( fgets(str, sizeof(str), infP) )
+    {
+        address = strtol(str, &cP, 8);      // first the address, which is octal
+        bank = address >> 12;
+        address &= 07777;
+
+        if( *(++cP) != 'X' )
+        {
+            continue;                       // not an exported symbol
+        }
+
+        cP += 2;                            // now the symbol name
+        *(cP + strlen(cP) - 1) = 0;         // get rid of the newline at the end
+
+        if( bank != lastBank )
+        {
+            bankP = swapBanks(bank);
+            lastBank = bank;
+        }
+
+        if( sym_find(&globalSymP, cP) )
+        {
+            fclose(infP);
+            verror("imported symbol '%s' has already been defined", cP);
+        }
+
+        symP = sym_make(cP, 0);
+        symP->flags |= SYMF_IMPORTED | SYMF_RESOLVED | SYM_GLOB;
+        symP->value = address;
+        symP->bank = bank;
+        sym_add(&globalSymP, symP);
+    }
+
+    if( bank != origBank )
+    {
+        swapBanks(origBank);             // back to where we were
+    }
+
+    fclose(infP);
+}
+
 // Resolve cross-bank wildcards, turn into BREFs.
 // Not the most efficient, O(wildcards*banks), but there won't be that many of them.
 void
@@ -1045,7 +1263,7 @@ SymNodeP symP;
 }
 
 // Used when bank is processed to switch between bank states
-void
+BankContextP
 swapBanks(int newBank)
 {
 BankContextP newP;
@@ -1054,10 +1272,8 @@ BankContextP curP;
     if( !(curP = findBank(curBank)) )
     {
         // First time we've left this bank, add an entry.
-        curP = (BankContextP)calloc(1, sizeof(BankContext));
-        curP->bank = curBank;
-        curP->nextP = banksP;
-        banksP = curP;
+        curP = addBank(curBank);
+        sawBank = true;
     }
 
     curP->cur_pc = cur_pc;
@@ -1081,13 +1297,16 @@ BankContextP curP;
         sym_init(&globalSymP);
         sym_init(&constSymP);
         varNodesP = NILP;
+        cur_pc = 0;
 
         // First time we've been to this bank, add an entry.
         newP = addBank(newBank);
         newP->cur_pc = cur_pc;
+        sawBank = true;
     }
 
     curBank = newBank;
+    return( newP );
 }
 
 BankContextP
@@ -1097,6 +1316,7 @@ BankContextP newP;
 
     newP = (BankContextP)calloc(1, sizeof(BankContext));
     newP->bank = bank;
+    newP->cur_pc = 0;       // new banks start at 0
     newP->nextP = banksP;
     banksP = newP;
     return( newP );

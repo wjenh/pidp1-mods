@@ -17,7 +17,7 @@ extern int countAscii(char *strP);
 extern int evalExpr(PNodeP);
 extern char flexoToAscii(char fchar, int *shift);
 
-static void startLine(FILE *outP, PNodeP nodeP);
+static void startLine(bool noValue, FILE *outP, PNodeP nodeP);
 static void listStatements(FILE *, PNodeP);
 static void listOperand(FILE *, PNodeP);
 static void listAscii(FILE *outfP, PNodeP nodeP, char *strP);
@@ -34,7 +34,7 @@ int
 listCodegen(FILE *outfP, PNodeP rootP)
 {
     // The root is a HEADER.
-    // The root lhs is the program body, the rhs the START or PAUSE at the end of the program.
+    // The root lhs is the program body, the rhs the START or STOP at the end of the program.
     fprintf(outfP,"%s\n", rootP->value.strP);
     listStatements(outfP, rootP->leftP);
 
@@ -47,7 +47,7 @@ listCodegen(FILE *outfP, PNodeP rootP)
         {
             node.pc = bankP->cur_pc;    // need a node for the pc
             node.lineNo = 0;
-            fprintf(outfP, "/ Constants for bank %d\n", bankP->bank);
+            fprintf(outfP, "// Constants for bank %d\n", bankP->bank);
             listConstants(outfP, &node, bankP->constSymP);
         }
 
@@ -56,7 +56,7 @@ listCodegen(FILE *outfP, PNodeP rootP)
             node.pc = bankP->cur_pc;    // need a node for the pc
             node.lineNo = 0;
             node.value.ptr = bankP->varNodesP;
-            fprintf(outfP, "/ Variables for bank %d\n", bankP->bank);
+            fprintf(outfP, "// Variables for bank %d\n", bankP->bank);
             listVars(outfP, &node);
         }
     }
@@ -67,7 +67,7 @@ listCodegen(FILE *outfP, PNodeP rootP)
     }
     else
     {
-        fprintf(outfP,"pause\n");
+        fprintf(outfP,"stop\n");
     }
     return(1);
 }
@@ -77,6 +77,7 @@ listStatements(FILE *outfP, PNodeP nodeP)
 {
 int i, j;
 PNodeP node2P;
+char *cP;
 char str[128];
 
     while( nodeP )
@@ -84,7 +85,15 @@ char str[128];
         switch( nodeP->type )
         {
         case COMMENT:
-            fprintf(outfP, "%4d:  //%s\n", nodeP->lineNo, nodeP->value.strP);
+            if( nodeP->flags & PN_SOL )
+            {
+                // the comment was a line by itself
+                fprintf(outfP, "%4d: //%s\n", nodeP->lineNo, nodeP->value.strP);
+            }
+            else
+            {
+                fprintf(outfP, "      //%s\n", nodeP->value.strP);
+            }
             break;
 
         case FILENAME:
@@ -92,7 +101,7 @@ char str[128];
             break;
 
         case ORIGIN:
-            startLine(outfP, nodeP);
+            startLine(true, outfP, nodeP);
             fprintf(outfP, "%o/", nodeP->value.ival);
             if( nodeP->rightP )
             {
@@ -101,13 +110,13 @@ char str[128];
             break;
 
         case EXPR:
-            startLine(outfP, nodeP);
+            startLine(false, outfP, nodeP);
             listOperand(outfP, nodeP->rightP);
             break;
 
         case LOCATION:
         case LCLLOCATION:
-            startLine(outfP, nodeP);
+            startLine((nodeP->rightP)?false:true, outfP, nodeP);
             fprintf(outfP, "%s,", nodeP->value.symP->name);
             if( nodeP->rightP )
             {
@@ -117,53 +126,53 @@ char str[128];
             break;
 
         case VARS:
-            fprintf(outfP,"/ variables\n");
+            fprintf(outfP,"// variables\n");
             listVars(outfP, nodeP);
             break;
 
         case BANK:
-            startLine(outfP, nodeP);
+            startLine(true, outfP, nodeP);
             fprintf(outfP,"bank %d", nodeP->value.ival );
             break;
 
         case CONSTANTS:
-            startLine(outfP, nodeP);
+            startLine(true, outfP, nodeP);
             fprintf(outfP,"constants\n");
             listConstants(outfP, nodeP, nodeP->value.symP);
             break;
 
         case TEXT:
-            fprintf(outfP, "/ Text table\n");
+            fprintf(outfP, "// Text table\n");
             listText(outfP, nodeP, nodeP->value.strP);
-            fprintf(outfP, "/ End\n");
+            fprintf(outfP, "// End\n");
             break;
 
         case TABLE:
-            fprintf(outfP,"/ table %o\n", nodeP->value.ival);
+            fprintf(outfP,"// table %o\n", nodeP->value.ival);
             if( nodeP->rightP )     // has initializer
             {
                 j = evalExpr(nodeP->rightP);
 
                 for( i = 0; i < nodeP->value.ival; ++i )
                 {
-                    startLine(outfP, nodeP);
+                    startLine(false, outfP, nodeP);
                     nodeP->pc++;
                     fprintf(outfP, "    %o\n", j);
                 }
             }
             else
             {
-                startLine(outfP, nodeP);
+                startLine(false, outfP, nodeP);
                 fprintf(outfP, "    . = .+%o\n", nodeP->value.ival);
             }
 
-            fprintf(outfP, "/ End");
+            fprintf(outfP, "// End");
             break;
 
         case ASCII:
-            fprintf(outfP, "/ Ascii table\n");
+            fprintf(outfP, "// Ascii table\n");
             listAscii(outfP, nodeP, nodeP->value.strP);
-            fprintf(outfP, "/ End");
+            fprintf(outfP, "// End");
             break;
 
         case SEMI:
@@ -175,9 +184,54 @@ char str[128];
             break;
 
         case VAR:
-            startLine(outfP, nodeP);
+            startLine(true, outfP, nodeP);
             fprintf(outfP, "var ");
             listVar(outfP, nodeP->rightP);
+            break;
+
+        case LOCAL:
+            startLine(true, outfP, nodeP);
+            fprintf(outfP, "local");
+            if( (node2P = nodeP->rightP) )
+            {
+                while( node2P )
+                {
+                    fprintf(outfP, " %s%s", node2P->value.strP, (node2P->leftP)?",":"");
+                    node2P = node2P->leftP;
+                }
+            } 
+            break;
+
+        case ENDLOC:
+            startLine(true, outfP, nodeP);
+            fprintf(outfP, "endloc");
+            if( nodeP->value.ival != -1 )
+            {
+                fprintf(outfP, " %d", nodeP->value.ival);
+            }
+
+            break;
+
+        case IMPORT:
+            startLine(true, outfP, nodeP);
+            if( *(nodeP->value.strP) != '<' )
+            {
+                fprintf(outfP, "import \"%s\"", nodeP->value.strP);
+            }
+            else
+            {
+                fprintf(outfP, "import %s", nodeP->value.strP);
+            }
+            break;
+
+        case EXPORT:
+            startLine(true, outfP, nodeP);
+            fprintf(outfP, "export ");
+            for( node2P = nodeP->rightP; node2P; node2P = node2P->leftP )
+            {
+                cP = (node2P->type == NAME)?node2P->value.strP:node2P->value.symP->name;
+                fprintf(outfP, "%s%s", cP, (node2P->leftP)?", ":"");
+            }
             break;
 
         default:
@@ -195,7 +249,7 @@ listOperand(FILE *outfP, PNodeP nodeP)
 {
 int lval;
 int rval;
-char ch;
+char *cP;
 SymNodeP symP;
 PNodeP node2P;
 
@@ -211,38 +265,44 @@ PNodeP node2P;
         switch( nodeP->value.ival )
         {
         case XOR:
-            ch = '^';
+            cP = "^";
             break;
         case DIV:
-            ch = '/';
+            cP = "/";
             break;
         case MOD:
-            ch = '%';
+            cP = "%";
             break;
         case PLUS:
-            ch = '+';
+            cP = "+";
             break;
         case MINUS:
-            ch = '-';
+            cP = "-";
             break;
         case MUL:
-            ch = '*';
+            cP = "*";
             break;
         case AND:
-            ch = '&';
+            cP = "&";
             break;
         case OR:
-            ch = '|';
+            cP = "|";
+            break;
+        case LSHIFT:
+            cP = "<<";
+            break;
+        case RSHIFT:
+            cP = ">>";
             break;
         case SEPARATOR:
-            ch = ' ';
+            cP = " ";
             break;
         default:
             verror("unknown binary op %d in listOperand",
                 nodeP->value.ival);
         }
 
-        fprintf(outfP,"%c", ch);
+        fprintf(outfP,"%s", cP);
         listOperand(outfP, nodeP->rightP);
         break;
 
@@ -321,14 +381,6 @@ PNodeP node2P;
         fprintf(outfP, "%s", nodeP->value.symP->name);
         break;
 
-    case LOCAL:
-        fprintf(outfP, "local");
-        break;
-
-    case ENDLOC:
-        fprintf(outfP, "endloc");
-        break;
-
     case FORCELOC:
         fprintf(outfP, "%%forcelocal");
         break;
@@ -344,12 +396,12 @@ listAscii(FILE *outfP, PNodeP nodeP, char *strP)
 {
 int i;
 
-    fprintf(outfP,"/ ascii \"%s\"\n", strP);
+    fprintf(outfP,"// ascii \"%s\"\n", strP);
     for( i = 0; *strP != 0; i ^= 1 )
     {
         if( !i )
         {
-            startLine(outfP, nodeP);
+            startLine(false, outfP, nodeP);
             nodeP->pc++;    // because we only get the initial node
         }
 
@@ -367,7 +419,7 @@ int i;
     }
     else
     {
-        startLine(outfP, nodeP);
+        startLine(false, outfP, nodeP);
         fprintf(outfP, " 000000\n");
     }
 }
@@ -381,8 +433,8 @@ int val;
 char buf[256];
 
     flxToA(strP, buf);
-    fprintf(outfP,"/ text \"%s\"\n", buf);
-    startLine(outfP, nodeP);
+    fprintf(outfP,"// text \"%s\"\n", buf);
+    startLine(false, outfP, nodeP);
 
     for( val = i = 0; *strP != 0; i++ )
     {
@@ -404,7 +456,7 @@ char buf[256];
         }
 
         nodeP->pc++;    // because we only get the initial node
-        startLine(outfP, nodeP);
+        startLine(false, outfP, nodeP);
         fprintf(outfP, " %06o\n", val);
     }
     else if( !*strP && !( i % 3) )
@@ -464,7 +516,7 @@ SymNodeP symP;
         nodeP->lineNo = lineNo;       // because these nodes were defined back in the var stmt
         symP = nodeP->value.symP;
         nodeP->value2.ival = (nodeP->leftP)?evalExpr(nodeP->leftP):0;
-        startLine(fP, nodeP);
+        startLine(false, fP, nodeP);
         fprintf(fP,"%s, ", symP->name);
 
         if( nodeP->leftP )
@@ -491,7 +543,7 @@ listConstants(FILE *fP, PNodeP nodeP, SymNodeP symP)
     }
 
     nodeP->value2.ival = symP->value2;  // set the value
-    startLine(fP, nodeP);
+    startLine(false, fP, nodeP);
     nodeP->pc++;    // because we only get the initial node
     fprintf(fP,"\n");
 
@@ -500,9 +552,17 @@ listConstants(FILE *fP, PNodeP nodeP, SymNodeP symP)
 }
 
 static void
-startLine(FILE *outP, PNodeP nodeP)
+startLine(bool noValue, FILE *outP, PNodeP nodeP)
 {
-    fprintf(outP, "%4d: %06o %06o ", nodeP->lineNo, nodeP->pc, nodeP->value2.ival);
+    if( noValue )
+    {
+        // Line has no emitted code, don't print a value
+        fprintf(outP, "%4d: %06o        ", nodeP->lineNo, nodeP->pc);
+    }
+    else
+    {
+        fprintf(outP, "%4d: %06o %06o ", nodeP->lineNo, nodeP->pc, nodeP->value2.ival);
+    }
 }
 
 // Convert a string containing flex chars into ascii

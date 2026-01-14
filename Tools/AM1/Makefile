@@ -1,4 +1,6 @@
 CC=gcc -O0 -g
+//BISONFLAGS=-Wcounterexamples
+BISONFLAGS=
 
 am1:	am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o permsyms.def.o eval.o \
 	maccodegen.o bincodegen.o listcodegen.o listSymtab.o
@@ -19,7 +21,7 @@ lex.yy.c: lexer.l y.tab.c lexfuncs.c
 	flex -d lexer.l
 
 y.tab.c, y.tab.h: parser.y am1.h symtab.h
-	bison -o y.tab.c -d parser.y
+	bison $(BISONFLAGS) -o y.tab.c -d parser.y
 
 y.tab.o: y.tab.c
 	$(CC) -DYYDEBUG=1 -c y.tab.c

@@ -54,15 +54,19 @@ void reset_line(void);
 local[ \t]*		{ return(LOCAL); }
 endloc[ \t]*		{ return(ENDLOC); }
 var[ \t]*		{ return(VAR); }
+table[ \t]*		{ return(TABLE); }
 bank[ \t]*		{ return(BANK); }
+
 \:			{ return(BREF); }
 ^[ \t]*start[ \t]*	{ return(START); }
-^[ \t]*pause[ \t]*	{ return(PAUSE); }
+^[ \t]*stop[ \t]*	{ return(STOP); }
 ^[ \t]*constants[ \t]*	{ return(CONSTANTS); }
 ^[ \t]*variables[ \t]*	{ return(VARS); }
-^[ \t]*table[ \t]*	{ return(TABLE); }
+^[ \t]*import[ \t]*	{ return(IMPORT); }
+^[ \t]*export[ \t]*	{ return(EXPORT); }
 
-ascii[ \t]+		{ BEGIN DOASCII; }
+ascii[ \t]+		{ return(ASCII); }
+
 text[ \t]+		{ BEGIN DOTEXT; }
 
 flexo[ \t][^\n;]{1,3}	{
@@ -180,6 +184,9 @@ octal			{ decimalMode = false; }
 [ ]*\-[ ]*		{ return(MINUS); }
 [ ]*\/[ ]*		{ return(DIV); }
 [ ]*\*[ ]*		{ return(MUL); }
+[ ]*\%[ ]*		{ return(MOD); }
+[ ]*<<[ ]*		{ return(LSHIFT); }
+[ ]*>>[ ]*		{ return(RSHIFT); }
 \.			{ return(DOT); }
 \,[ \t]*		{ return(LOCATION); }
 
@@ -353,9 +360,9 @@ octal			{ decimalMode = false; }
 			    }
 			    noIncrement = sawSemi = false;
 			    return( TERMINATOR );
-			 }
+			}
 
-[ \t]*(\n|\;[ \t]*)		{
+[ \t]*(\n|\;[ \t]*)	{
 			    if( inConstant )
 			    {
 				inConstant = false;
@@ -496,7 +503,7 @@ octal			{ decimalMode = false; }
 			    }
 			}
 
-<DOASCII>\"		{
+\"			{
 			int tmpc;
 			char *cP;
 			char string[STRBUF];
@@ -529,12 +536,17 @@ octal			{ decimalMode = false; }
 
 			    *cP = '\0';
 
-			    BEGIN BODY;
 			    yylval.strP = malloc(strlen(string) + 1);
 			    strcpy(yylval.strP, string);
-			    return( ASCII );
+			    return( STRING );
 			}
 
+\<[a-zA-Z\./_0-9]+\>	{
+			    yylval.strP = malloc(strlen(yytext) + 1);
+			    strcpy(yylval.strP, yytext);
+			    return(LIBFILE);
+			}
+			
 <DOTEXT>.		{
 			int tmpc, rslt;
 			int shift;

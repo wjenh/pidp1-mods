@@ -95,7 +95,7 @@ binCodegen(FILE *outfP, PNodeP rootP)
     }
     else
     {
-        writeWord(outfP, STPLOADER);     // pause instead of start
+        writeWord(outfP, STPLOADER);     // stop instead of start
     }
     writeBlankTape(outfP, 2);
     writeLabel(outfP, "DONE");
@@ -205,15 +205,25 @@ BankContextP bankP;
         nodeP = nodeP->leftP;
     }
 
-    // We now have to emit any constants that didn't have an ending constants statement
+    // We now have to emit any constants and vars that didn't have an ending constants statement
     for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
     {
-        if( bankP->constSymP )
+        if( bankP->constSymP || bankP->varNodesP )
         {
+            // prepare to write one or both
             flushBuffer(outfP, outBufP);
             cur_bank = bankP->bank;
             initBuffer(outBufP, bankP->cur_pc);
+        }
+
+        if( bankP->constSymP )
+        {
             writeConstants(outfP, bankP->constSymP);
+        }
+
+        if( bankP->varNodesP )
+        {
+            writeVars(outfP, bankP->varNodesP);
         }
     }
 }

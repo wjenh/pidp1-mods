@@ -184,7 +184,7 @@ octal			{ decimalMode = false; }
 [ ]*\-[ ]*		{ return(MINUS); }
 [ ]*\/[ ]*		{ return(DIV); }
 [ ]*\*[ ]*		{ return(MUL); }
-[ ]+mod[ ]+		{ return(MOD); }
+[ ]*%%[ ]*		{ return(MOD); }
 [ ]*<<[ ]*		{ return(LSHIFT); }
 [ ]*>>[ ]*		{ return(RSHIFT); }
 \.			{ return(DOT); }

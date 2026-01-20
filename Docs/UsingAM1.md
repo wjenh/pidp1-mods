@@ -31,18 +31,17 @@ Features
 - Provides a new, explicit, variable support with initializers
 - Allows easy use of ascii characters and strings
 - Supports octal, decimal, and hex numbers without special statements
-- Adds operators for and, or, xor, complement, multiply, divide in expressions
+- Adds operators for and, or, xor, complement, multiply, divide, mod in expressions
 - Can select between keeping -0 or automatically converting to +0 in expressions
 - Allows space-separated symbols to be treated as *a | b | c* instead of *a + b + c*
 - Adds parenthesized expressions
-- Adds actual operator precedence
 - Supports extended memory
+- Provides symbol exports and imports for linking programs together
 - Can share location symbols across memory banks
 - Can generate either **macro1** source or rim format binary code output
 - The rim format loads a new loader to support extended memory use
 - Does **not** allow redefining symbols (but cpp defines can)
 - Does **not** treat tab as a statement delimiter
-- 'Punches' the readable program header line in binary mode, like the original **macro** does
 - 'Punches' the readable program header line in binary mode, like the original **macro** does
 
 Differences in source code
@@ -54,7 +53,7 @@ use of characters in **macro1** that were poorly handled.
 - Multiple statemens on a line are separated by *;* not tab
 - Tabs are not statement delimiters and are treated as a space
 - Cpp directives of the form *#xxx* are supported
-- The operators *& | ~ ^ \* \/* as well as *(expr)* are added
+- The operators *& | ~ ^ \* \/*, %% (mod), as well as *(expr)* are added
 - *%* is added to indicate a local variable, *%xxx*
 - The numeric prefixes 0x, 0d, 0o are added to mean hex, decimal, octal regardless of the current radix
 - *'x'* is allowed to mean the value of a single ascii character, the usual escapes are recognized
@@ -88,6 +87,18 @@ If you have only a binary image, then use the **disassemble_tape** utility in it
 to create a macro source file you can then process as above.
 
 And of course, you can go back to macro sources from **am1** by using the macro source output flag.
+
+## Flex, flexo, FIO-DEC, concise???
+
+While the native character set used in the PDP-1 is frequently called *flex* or *flexo*, it really isn't.
+Flexo is FIO-DEC, a 6 bit character code with an 8th bit of parity.
+But what is really used is *concise*, which is just FIO-DEC without the parity bit, resulting in a strictly
+6 bit character.
+
+You will see all these variations of naming used in PDP-1 documentation, but just remember, it's all just
+6 bit *concise*. Unless it isn't, just to keep things confusing.
+
+In this document, no matter what it's called, it's *concise*.
 
 ## What goes on inside?
 
@@ -155,7 +166,7 @@ Just type make.
 - m generate **macro1** code
 - l generate a program listing
 - n don't run **cpp** on the input
-- n generate a symbol table
+- s generate a symbol table, automatic if exports are done
 - v print the version number and exit
 - z replace -0 with 0 for math operation results
 - Dsymbol define a symbol for **cpp**, -Dsym or -D sym are both accepted
@@ -218,15 +229,17 @@ The following can be produced:
 - *file*.mac - text output that can (usually) be assembeld by **macro1**
 - *file*.lst - text output that is a listing of the assembled program, only generated for binary mode
 - *file*.cpp - text output that is the intermediate output from the **cpp** preprocessor
-- *file*.sym - text output that is a listing of all global symbols in the program
+- *file*.sym - text output that is a listing of the global symbols in the program
 
 The sym file contains an initial line that is the filename of the original file
 followed by one line per symbol of the form:
 ```
-aaaaaa symbol-name
+aaaaaa F symbol-name
 ```
 
-where *aaaaaa* is the full 16-bit address of the symbol's location in memory.
+where *aaaaaa* is the full 16-bit address of the symbol's location in memory, and *F* is a flag, either *G*, *I*,
+or *X*,
+A *G* means the symbol wasn't exported, *X* symbols were, *I* symbols were imported.
 
 ## Using macros
 
@@ -295,7 +308,7 @@ Each statement generally increments the current location by one, but see more be
 Comments and empty lines do not affect the current location.
 
 Finally, the last line must be a *start xxx* statement to tell the loader where to start executing
-or a *pause* statement to allow for loading additional tapes before starting a program.
+or a *stop* statement to allow for loading additional tapes before starting a program.
 
 The original **macro1** was not particulary good at reporting errors, and a missing start would generally cause
 unintened behavior. This statement is now mandatory, enforced by the assembler.
@@ -305,19 +318,20 @@ unintened behavior. This statement is now mandatory, enforced by the assembler.
 An *expression* is a sequence of *symbols*, *operators*, and *numbers*.
 Expressions are evaluated and the resulting value becomes the 18-bit result.
 
-All the terms in an expression are evaluated at assembly time to give an integer value; there is no
-computation done during the execution of an instruction.
+All the terms in an expression are evaluated at *assembly time* to give an integer value;
+*there is no computation done during the execution of an instruction*!.
 
 The PDP-1 used 1's complement math, which no modern computers use.
 But, **am1** runs on a modern computer and uses 2's complement math.
 It automatically converts the results of math operations (+, -, *, /, %, and unary minus) to the 1's complement
-representation during computations, the values in the binary output will be the correct 1's complement values.
+representation after computation, the values in the binary output will be the correct 1's complement values.
 
 Remember that one annoying thing about 1's complement is that there are two values for zero, 0 and -0.
 0 is all bits off, -0 is all bits on, and it is maintained in the output.
 For example, the operation *-1 + 1* results in -0, not 0 as you would normally expect.
 
-This only applies to binary mode; for macro mode, **macro1** deals with this itself.
+Some of the math operations are not supported by **macro1**. These will be computed during assembly and
+emitted as numeric values.
 
 ## Symbols
 
@@ -346,11 +360,16 @@ An example of location symbols is:
 ```
     dac foo
     jmp bar
+    lio zip:3
 foo, 0
 bar, .....
 ```
-The first is a *reference*, its value is the memory location assigned to foo.\
-The second assigns foo a memory location, which is the current program location.\
+The first three are *references*, the value is the memory location assigned to each.
+The second two are *location assignments*. Each is given a memory location, which is the current program location.
+
+The form for *zip* is a *fully-qualified* symbol that results in its full 16 bit address, see the section on
+*bank*, below.
+
 It is an error to reference a symbol that never has a location assigned to it, and it is an error to define
 a location for the same symbol more than once in the same memory bank.
 
@@ -364,19 +383,26 @@ The second form is also called a *location asssignment*.
 ## Local symbols
 
 Local symbols are a variation of location symbols.
-They are defined between *local* and *endloc* directives,
+They are defined between *local* and *endloc* directives and come in two forms, *predefined* and *ad-hoc*.
+Predefined locals are specified following the *local* statement while ad-hoc symbols are declared when used
+via a leading per-cent, %, symbol.
+
+The two are distinct, predefinded *a* and ad-hoc *%a* are separate symbols.
+
 
 ```
-    local
+    local a, b
     %target, iot 31
+    a, cla
     .
     .
-    .
+    b,
     jmp %target
     endloc
 ```
 
-Unlike **macro1** where all symbols are global and so all symbols must be unique,
+Unlike **macro1** where all symbols are global and so all symbols must be unique or they will be
+redefined,
 local symbols allow code to be written that won't clash with other code.
 The local symbol exists only within the local block and the generated code uses pc-relative
 addressing to access it.
@@ -385,12 +411,22 @@ Local blocks can be nested up to 1024 deep.
 A local symbol in an enclosing block can be referenced within a nested block, and regular location symbols
 can be used and declared within local blocks.
 
+## Symbol exports and imports
+
+A program can export its global symbols for other programs to use. This is useful for allowing separately assembled and loaded programs to interact. The exported symbols are in a *.sym* file, see above.
+
+Symbols from other programs can be imported, making symbols in those programs accessable when loaded.
+
+A program has control over exporting and importing symbols by using the *export* and *import* directives.
+See the directives *import* and *export*, below.
+
 ## Variables
 
 Variables are actually just a shorthand way of representing a common operation, which is naming a location
 in memory.
 
 Variables must be explicitly declared via the *var* directive but then can be used just like any location symbol.
+A variable can have an optional initializer.
 
 This:
 ```
@@ -488,22 +524,32 @@ can significantly increase the size and load time.
 ## Operators
 
 The following operators are defined and listed in order of increasing priority.\
-Note that some are left associative, but most are right associative. (look it up)
+The priority is the same as that for **C** and the operations are the same.
 
-- | ^       bitwise or, bitwise xor
-- &         bitwise and
-- \+ \-     addition subtraction
-- \* / %     multiply divide modulo
-- ~         bitwise complement
-- unary minus, -n
-- ( )       expression nesting, the expression within the parentheses is evaluated as a group
+| Operator | Meaning                |
+|----------|------------------------|
+| \|       | bitwise or             |
+| ^        | bitwise xor            |
+| &        | bitwise and            |
+| << >>    | left-shift right-shift |
+| \+ \-    | addition subtraction   |
+| \* / %%  | multiply divide modulo |
+| ~        | complement             |
+| -        | unary minus, -n        |
+| ( )      | expression nesting     |
 
-Internally, 2's complement arithmetic is used for the math operators, but the result is adjusted to be
-a 1's complement value. The 1's complement -0 value, 7777777, can be produced by math operations such as -1+1,
+Note that the *modulo* operator is as shown, double percents.
+This is because the percent symbol is already used for local variables.
+The doubling is to distinguish it from the beginning of a local symbol.
+
+Internally, 2's complement arithmetic is used for most of the operators, but the result is adjusted to be
+a 1's complement value.
+The 1's complement -0 value, 7777777, can be produced by math operations such as -1+1,
 but by default will be converted to +0.
 This can be overridden if -0 is to be kept, see *Usage*.
 
 Bitwise operations can of course affect any bit and their result is not adjusted, they are not math.
+If a -0 bit pattern results, it is kept as-is.
 
 ## Numbers
 
@@ -523,9 +569,9 @@ There are two additional special number representations:
 - 'c'
 
 The first is the same as the **macro1** version, *c* must be a valid *unshifted* Flex/Concise character, and the lmr
-specifies which 6 bit field in the resulting 18 bit value the character's value is place.
+specifies which 6 bit field in the resulting 18 bit value the character's value is placed.
 
-The second results in the value of the ascii character, but the usual escapes are allowed:
+The second results in the value of the ascii character, the usual escapes are allowed:
 
 - \\t tab
 - \\e escape
@@ -559,7 +605,9 @@ Directives are:
 - constants
 - bank
 - start
-- pause
+- stop
+- import
+- export
 - two special directives, see below
 
 ## Location assigment
@@ -629,6 +677,10 @@ third in the low 6 bits. The location counter is advanced by 4.
 The second results in 5 words because of the need to insert an upper-shift character and a lower-shift character.
 The location counter is advanced by 5.
 
+Unlike the *ascii* directive, there is no end marker. You must know in your program how many words were used.
+Safe practice would be to put a marker word following the text with a value to indicate no more words.
+The flex/concise stop code, 013, is a good choice.
+
 ## Ascii
 
 The **ascii** directive inserts a block of ascii characters packed 2 to a word and always terminated by a binary 0
@@ -660,7 +712,7 @@ These cause any declared variables or constants to be emitted at the current loc
 Subsequent declarations will be held until the next variables or constants constants.
 
 If no directive is given, any variables and constants will be written at the end of the program, the
-location where the start or pause directive is given.
+location where the start or stop directive is given.
 This might not place these where you want, so using the directives is advised.
 
 The location counter is updated appropriately after either directive.
@@ -710,6 +762,7 @@ bank 0
 b, lac a:1
    lac a:*
 ```
+
 In bank 0, a:1 will have the value 10201, as will a:\*.\
 In bank 1, a will have the value 201, its in-bank address, while a:. (a:dot) will have the value 10201.
 
@@ -733,14 +786,14 @@ The **macro** and **macro1** compilers do not support extended memory,
 so code using banks will generate code that isn't actually usable, but it will be annotated
 to show where banks were switched.
 
-## Start or pause
+## Start or stop
 
-The start or pause directive must be the last statement in a program, and this is enforced.
+The start or stop directive must be the last statement in a program, and this is enforced.
 *Start* tells the loader where to begin running the program.
 The start address can be a numeric address or a location symbol.
 The start address can also be in any bank and can be a shared location symbol.
 
-The *pause* directive tells the loader to halt instead of starting the program.
+The *stop* directive tells the loader to halt instead of starting the program.
 Additional tapes can the be loaded via read-in.
 
 Examples are:
@@ -749,8 +802,54 @@ start 100
 start begin
 start 20100 // start at location 100 in bank 2
 start begin:3 // start at the location of *begin* in bank 3
-pause
+stop
 ```
+
+## Export and import
+
+The *export* directive is used to indicate which symbols are to be shared with other programs:
+```
+export symbol, symbol, ....
+```
+
+The directive can be repeated as often as desired.
+Each symbol listed is marked for export.
+This automatically asserts the *-s* command flag if it has not been given.
+
+The symbol does not have a bank reference, its bank is the current bank.
+Exporting a symbol will define it in the current bank if it isn't already defined,
+and as usual it is an error if it is never resolved.
+```
+bank 3
+export a, b, c
+.
+.
+.
+bank 1
+export x, y, a
+```
+
+Note that symbol 'a' exists separately in two different banks.
+
+The *import* directive names a file to import symbols from, and has the same form as the *#include* directive
+for **cpp**. It can also be repeated as needed.
+```
+import "foo.sym"
+import <libx.sym>
+```
+
+Just as for include files, the bracketed form looks in the sytem include directory for the file.
+
+The exported symbols in the file will be created in the global symbol table for the bank they were exported from
+and will be resolved to the address they were exported with.
+
+It is an error to duplicate a symbol of the same name in the same bank, it is treated as if it were defined
+in the bank. This means any import must be done before a symbol is resolved.
+
+Imported symbols follow the same rules as cross-bank references; the address will always be 16 bits except in the
+bank where the symbol was defined, in which case it will be 12 bits.
+
+No code is generated for imported symbols, they are just references.
 
 ## Special directives
 
@@ -805,3 +904,142 @@ constants
 
 start 100
 ```
+
+## Reserved symbols
+
+This is a complete list of all reserved symbols.
+Reserved symbols cannot be redefined as location symbols within a program.
+However, **cpp** can redefine them via the *#define* directive, since it runs first.
+
+|Miscellaneous   | Value |
+|----------------|-------|
+|1s | 01|
+|2s | 03|
+|3s | 07|
+|4s | 017|
+|5s | 037|
+|6s | 077|
+|7s | 0177|
+|8s | 0377|
+|9s | 0777|
+|i | 010000|
+
+|Opcodes         | Value |
+|----------------|-------|
+|and | 0020000|
+|ior | 0040000|
+|xor | 0060000|
+|xct | 0100000|
+|jfd | 0120000|
+|cal | 0160000|
+|jda | 0170000|
+|lac | 0200000|
+|lio | 0220000|
+|dac | 0240000|
+|dap | 0260000|
+|dip | 0300000|
+|dio | 0320000|
+|dzm | 0340000|
+|add | 0400000|
+|sub | 0420000|
+|idx | 0440000|
+|isp | 0460000|
+|sad | 0500000|
+|sas | 0520000|
+|mus | 0540000|
+|dis | 0560000|
+|mul | 0540000|
+|div | 0560000|
+|jmp | 0600000|
+|jsp | 0620000|
+|law | 0700000|
+|skp | 0640000|
+|spi | 0642000|
+|szo | 0641000|
+|sma | 0640400|
+|spa | 0640200|
+|sza | 0640100|
+|szf | 0640000|
+|szs | 0640000|
+|ral | 0661000|
+|rar | 0671000|
+|ril | 0662000|
+|rir | 0672000|
+|rcl | 0663000|
+|rcr | 0673000|
+|sal | 0665000|
+|sar | 0675000|
+|sil | 0666000|
+|sir | 0676000|
+|scl | 0667000|
+|scr | 0677000|
+|nop | 0760000|
+|opr | 0760000|
+|cli | 0764000|
+|lat | 0762200|
+|cma | 0761000|
+|hlt | 0760400|
+|cla | 0760200|
+|lap | 0760300|
+|clf | 0760000|
+|stf | 0760010|
+
+|1D instructions | Value |
+|----------------|-------|
+|lia | 0760020|
+|lai | 0760040|
+|lsw | 0760060|
+|swp | 0760060|
+|cmi | 0764000|
+|sni | 0644000|
+|szi | 0654060|
+
+|Various IOTs    | Value |
+|----------------|-------|
+|iot | 0720000|
+|ioh | 0720000|
+|tyi | 0720004|
+|rrb | 0720030|
+|cks | 0720033|
+|rpa | 0730001|
+|rpb | 0730002|
+|tyo | 0730003|
+|ppa | 0730005|
+|ppb | 0730006|
+|dpy | 0730007|
+|lem | 0720074|
+|eem | 0724074|
+
+|SBS ops         | Value |
+|----------------|-------|
+|esm | 0720055|
+|lsm | 0720054|
+|cbs | 0720056|
+
+|SBS16 ops       | Value |
+|----------------|-------|
+|dsc | 0720050|
+|asc | 0720051|
+|isb | 0720052|
+|cac | 0720053|
+
+| Keywords    |
+|-------------|
+| %forcelocal |
+| ascii       |
+| bank        |
+| char        |
+| constants   |
+| decimal     |
+| endloc      |
+| export      |
+| flexo       |
+| import      |
+| local       |
+| octal       |
+| start       |
+| stop        |
+| table       |
+| text        |
+| var         |
+| variables   |

@@ -2,7 +2,7 @@
 #include "pdp1.h"
 #include "iotHandler.h"
 
-// #define DOLOGGING
+//#define DOLOGGING
 #include "Logger/iotLogger.h"
 
 #define COUNTER_CKS_FLAG 0040000
@@ -51,6 +51,8 @@ int i;
     {
         return(1);
     }
+
+    iotLog("In clk iot mb %o dev %o\n", pdp1P->mb, dev);
 
     if( (pdp1P->mb & 03700) == 02000 )     // IOT 2032, pay attention to rest
     {
@@ -144,17 +146,20 @@ void iotPoll(PDP1 *pdp1P)
     // we are called every 1msec
     if( enabled )
     {
+        ++counter;
+
         if( enable32ms && ((counter & 0x3F) == 0x20) )  // 32 msecs
         {
             initiateBreak(channel32ms);
             completeNeeded = 0;
         }
 
-        if( counter++ > 59999 ) // 1 min wraparound
+        if( counter > 59999 ) // 1 min wraparound
         {
             counter = 0;
             if( enable1min )
             {
+                iotLog("IOT 2032 initiating 1 min break\n");
                 initiateBreak(channel1min);
                 completeNeeded = 0;
             }

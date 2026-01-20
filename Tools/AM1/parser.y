@@ -156,6 +156,8 @@ extern void leave(int);
 %type <pnodeP> stmt
 %type <pnodeP> one_stmt
 %type <pnodeP> expr
+%type <pnodeP> simple_expr
+%type <pnodeP> directive_expr
 %type <pnodeP> var
 %type <pnodeP> varnames
 %type <pnodeP> varname
@@ -204,7 +206,7 @@ filenames       : FILENAME
                 | filenames FILENAME
                 ;
 
-start           : START expr TERMINATOR
+start           : START simple_expr TERMINATOR
                 {
                     $$ = newnode(lineno, cur_pc, START, NILP, NILP);
                     $$->value.ival = evalExpr($2);
@@ -379,7 +381,7 @@ one_stmt	: expr
                         varNodesP = 0;
                     }
                 }
-                | expr ORIGIN
+                | simple_expr ORIGIN
                 {
 		    $$ = newnode(lineno, cur_pc, ORIGIN, NILP, NILP);
                     $$->value.ival = cur_pc = evalExpr($1);
@@ -425,7 +427,7 @@ one_stmt	: expr
                             // This was from a local context when forced was in effect,
                             // fix it up.
                             $1->flags = SYM_GLOB;
-                            $1->symP->flags = SYM_GLOB;
+                            $1->symP->flags = SYM_GLOB | SYMF_RESOLVED;
                             $1->symP->value = cur_pc;
                         }
 
@@ -498,77 +500,17 @@ one_stmt	: expr
                     $$->value.strP = $1;
                     cur_pc += countText($1);
                 }
-                | TABLE expr
+                | TABLE simple_expr
                 {
                     $$ = newnode(lineno, cur_pc, TABLE, NILP, NILP);
                     $$->value.ival = evalExpr($2);
                     cur_pc += $$->value.ival;
                 }
-                | TABLE expr LOCATION expr
+                | TABLE simple_expr LOCATION simple_expr
                 {
                     $$ = newnode(lineno, cur_pc, TABLE, NILP, $4);
                     $$->value.ival = evalExpr($2);
                     cur_pc += $$->value.ival;
-                }
-                | LOCAL optLocals
-                {
-                SymNodeP symP;
-                PNodeP nodeP;
-
-                    // We push any current local scope, establish a new one
-                    // locaSymlPP can be null if there is no current scope
-                    if( $2 )
-                    {
-                        nodeP = $2->leftP;      // recover head link
-                        $2->leftP = NILP;
-                    }
-                    else
-                    {
-                        nodeP = NILP;
-                    }
-		    $$ = newnode(lineno, cur_pc, LOCAL, NILP, nodeP);
-                    $$->flags |= PN_NOINC;
-
-                    localStack[localDepth++] = localContextP;
-                    if( localDepth > maxLocalDepth )
-                    {
-                        maxLocalDepth = localDepth;
-                    }
-
-                    localContextP = newLocalContext();
-                    localContextP->pc = cur_pc;          // will be the origin for the local relative refs
-                    sym_init( &(localContextP->symRootP) );
-
-                    while( nodeP )         // add local predefines
-                    {
-                        symP = addLocalSymbol(nodeP->value.strP);
-                        symP->flags = SYM_LOC;
-                        nodeP = nodeP->leftP;
-                    }
-                }
-                | ENDLOC optINTEGER
-                {
-                    if( $2 > 0 )
-                    {
-                        if( $2 != localDepth )
-                        {
-                            vwarn("endloc says ending level %d but the current level is %d", $2, localDepth);
-                        }
-                    }
-
-                    // We pop the local stack
-                    if( localDepth == 0 )
-                    {
-                        verror("endloc without an opening local");
-                    }
-                    else
-                    {
-                        localContextP = localStack[--localDepth];
-                    }
-
-		    $$ = newnode(lineno, cur_pc, ENDLOC, NILP, NILP);
-                    $$->flags |= PN_NOINC;
-                    $$->value.ival = $2;
                 }
                 | EXPORT symList
                 {
@@ -655,20 +597,24 @@ optINTEGER      : INTEGER
                 }
                 ;
 
-expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3); }
-                | MINUS expr %prec UMINUS   { $$ = unop(lineno, cur_pc, UMINUS, $2); }
-                | expr PLUS expr            { $$ = binop(lineno, cur_pc, PLUS, $1, $3); }
-                | expr MINUS expr           { $$ = binop(lineno, cur_pc, MINUS, $1, $3); }
-                | expr MUL expr             { $$ = binop(lineno, cur_pc, MUL, $1, $3); }
-                | expr DIV expr             { $$ = binop(lineno, cur_pc, DIV, $1, $3); }
-                | expr MOD expr             { $$ = binop(lineno, cur_pc, MOD, $1, $3); }
-                | expr AND expr             { $$ = binop(lineno, cur_pc, AND, $1, $3); }
-                | expr OR expr              { $$ = binop(lineno, cur_pc, OR, $1, $3); }
-                | expr XOR expr             { $$ = binop(lineno, cur_pc, XOR, $1, $3); }
-                | expr LSHIFT expr          { $$ = binop(lineno, cur_pc, LSHIFT, $1, $3); }
-                | expr RSHIFT expr          { $$ = binop(lineno, cur_pc, RSHIFT, $1, $3); }
-                | '(' expr ')'              { $$ = unop(lineno, cur_pc, PARENS, $2); }
-                | CMPL expr                 { $$ = unop(lineno, cur_pc, CMPL, $2); }
+expr            : simple_expr               { $$ = $1; }
+                | directive_expr            { $$ = $1; }
+                ;
+
+simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3); }
+                | MINUS simple_expr %prec UMINUS   { $$ = unop(lineno, cur_pc, UMINUS, $2); }
+                | simple_expr PLUS simple_expr            { $$ = binop(lineno, cur_pc, PLUS, $1, $3); }
+                | simple_expr MINUS simple_expr           { $$ = binop(lineno, cur_pc, MINUS, $1, $3); }
+                | simple_expr MUL simple_expr             { $$ = binop(lineno, cur_pc, MUL, $1, $3); }
+                | simple_expr DIV simple_expr             { $$ = binop(lineno, cur_pc, DIV, $1, $3); }
+                | simple_expr MOD simple_expr             { $$ = binop(lineno, cur_pc, MOD, $1, $3); }
+                | simple_expr AND simple_expr             { $$ = binop(lineno, cur_pc, AND, $1, $3); }
+                | simple_expr OR simple_expr              { $$ = binop(lineno, cur_pc, OR, $1, $3); }
+                | simple_expr XOR simple_expr             { $$ = binop(lineno, cur_pc, XOR, $1, $3); }
+                | simple_expr LSHIFT simple_expr          { $$ = binop(lineno, cur_pc, LSHIFT, $1, $3); }
+                | simple_expr RSHIFT simple_expr          { $$ = binop(lineno, cur_pc, RSHIFT, $1, $3); }
+                | '(' simple_expr ')'              { $$ = unop(lineno, cur_pc, PARENS, $2); }
+                | CMPL simple_expr                 { $$ = unop(lineno, cur_pc, CMPL, $2); }
                 | INTEGER
 		{
 		    $$ = newnode(lineno, cur_pc, INTEGER, NILP, NILP);
@@ -694,7 +640,7 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
 		    $$ = newnode(lineno, cur_pc, VALUESPEC, NILP, NILP);
                     $$->value.symP = $1;
                 }
-		| CONSTANT expr endConst
+		| CONSTANT simple_expr endConst
 		{
                 int hash;
                 SymNodeP symP;
@@ -808,6 +754,7 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                         symP2 = sym_make($1, 0);
                         symP2->symP = symP;
                         symP2->bank = curBank;
+                        symP2->flags = SYM_LOC;
                         sym_add(&globalSymP, symP2);
                         symP->flags = symP2->flags = SYMF_FORCED | SYM_LOC;
                         $$ = newnode(lineno, cur_pc, LCLADDR, NILP, NILP);
@@ -858,17 +805,79 @@ expr		: expr SEPARATOR expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3
                     $$ = newnode(lineno, cur_pc, LITCHAR, NILP, NILP);
                     $$->value.ival = $1;
                 }
-                | FORCELOC
+                ;
+
+directive_expr  : FORCELOC
                 {
                     if( localDepth == 0 )
                     {
-                        verror("%%%%forcelocal without an opening local");
+                        verror("%%forcelocal without an opening local");
                     }
 
                     localContextP->flags = CTX_FORCELOCAL;
                     sawForceLocal = true;
 		    $$ = newnode(lineno, cur_pc, FORCELOC, NILP, NILP);
                     $$->flags |= PN_NOINC;
+                }
+                | LOCAL optLocals
+                {
+                SymNodeP symP;
+                PNodeP nodeP;
+
+                    // We push any current local scope, establish a new one
+                    // locaSymlPP can be null if there is no current scope
+                    if( $2 )
+                    {
+                        nodeP = $2->leftP;      // recover head link
+                        $2->leftP = NILP;
+                    }
+                    else
+                    {
+                        nodeP = NILP;
+                    }
+		    $$ = newnode(lineno, cur_pc, LOCAL, NILP, nodeP);
+                    $$->flags |= PN_NOINC;
+
+                    localStack[localDepth++] = localContextP;
+                    if( localDepth > maxLocalDepth )
+                    {
+                        maxLocalDepth = localDepth;
+                    }
+
+                    localContextP = newLocalContext();
+                    localContextP->pc = cur_pc;          // will be the origin for the local relative refs
+                    sym_init( &(localContextP->symRootP) );
+
+                    while( nodeP )         // add local predefines
+                    {
+                        symP = addLocalSymbol(nodeP->value.strP);
+                        symP->flags = SYM_LOC;
+                        nodeP = nodeP->leftP;
+                    }
+                }
+                | ENDLOC optINTEGER
+                {
+                    if( $2 > 0 )
+                    {
+                        if( $2 != localDepth )
+                        {
+                            vwarn("endloc says ending level %d but the current level is %d", $2, localDepth);
+                        }
+                    }
+
+                    // We pop the local stack
+                    if( localDepth == 0 )
+                    {
+                        verror("endloc without an opening local");
+                    }
+                    else
+                    {
+                        localContextP = localStack[--localDepth];
+                    }
+
+		    $$ = newnode(lineno, cur_pc, ENDLOC, NILP, NILP);
+                    $$->flags |= PN_NOINC;
+                    $$->value.ival = $2;
                 }
 		;
 
@@ -975,7 +984,7 @@ var             : varname
                 {
                     $$ = $1;
                 }
-                | varname '=' expr
+                | varname '=' simple_expr
                 {
                     $1->leftP = $3;
                     $$ = $1;

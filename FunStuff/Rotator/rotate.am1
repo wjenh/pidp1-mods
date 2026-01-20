@@ -15,7 +15,8 @@ ROTATE THRU SIX PROGRAMS ON THE DRUM
 #include <DRUM/type23drumdefs.ah>
 // Am1 knows about the extended PDP-1D instructions, no need to define them here.
 
-#define startaddr 7773    // where the start address is loaded from the drum
+// where the start address is loaded from the drum
+#define startaddr 7773
 
 // Which bank we load into for the control program
 #define bnkno 1
@@ -45,7 +46,7 @@ bank bnkno
     lat
     dac pgm2
 // enable the clock
-    lac [3000] // 1 min interrupt enabled, clock enabled
+    law clsena clsimn   // 1 min interrupe enabled, clock enabled
     iot cls
 
 // Control transfers here on every timeout, we will already be in extended mode.
@@ -77,7 +78,7 @@ resume,
      jda memcpy
      0:bnkno
      0
-     law 20
+     law end - isr
      jda memcpy
      isr:bnkno
      isr
@@ -113,5 +114,7 @@ rti, eem
 go,  lac startaddr
      sza
      jmp i startaddr    // transfer to the loaded program
+constants
+end,
 
 start 100:bnkno

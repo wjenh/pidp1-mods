@@ -189,29 +189,6 @@ char str[128];
             listVar(outfP, nodeP->rightP);
             break;
 
-        case LOCAL:
-            startLine(true, outfP, nodeP);
-            fprintf(outfP, "local");
-            if( (node2P = nodeP->rightP) )
-            {
-                while( node2P )
-                {
-                    fprintf(outfP, " %s%s", node2P->value.strP, (node2P->leftP)?",":"");
-                    node2P = node2P->leftP;
-                }
-            } 
-            break;
-
-        case ENDLOC:
-            startLine(true, outfP, nodeP);
-            fprintf(outfP, "endloc");
-            if( nodeP->value.ival != -1 )
-            {
-                fprintf(outfP, " %d", nodeP->value.ival);
-            }
-
-            break;
-
         case IMPORT:
             startLine(true, outfP, nodeP);
             if( *(nodeP->value.strP) != '<' )
@@ -383,6 +360,26 @@ PNodeP node2P;
 
     case FORCELOC:
         fprintf(outfP, "%%forcelocal");
+        break;
+
+    case LOCAL:
+        fprintf(outfP, "local");
+        if( (node2P = nodeP->rightP) )
+        {
+            while( node2P )
+            {
+                fprintf(outfP, " %s%s", node2P->value.strP, (node2P->leftP)?",":"");
+                node2P = node2P->leftP;
+            }
+        } 
+        break;
+
+    case ENDLOC:
+        fprintf(outfP, "endloc");
+        if( nodeP->value.ival != -1 )
+        {
+            fprintf(outfP, " %d", nodeP->value.ival);
+        }
         break;
 
     default:

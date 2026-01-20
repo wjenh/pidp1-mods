@@ -16,12 +16,13 @@
  *
  * See disassemble_tape.c for details on the loaders.
  *
- * Usage: drumupdater [-i imagefile] [-l label] [-a] -t trackno filename
+ * Usage: drumupdater [-i imagefile] [-l label] [-a] [-d] -t trackno filename
  * where:
  * i - use the given name for the drum image instead of 'drumImage'
  * l - label the track with the given label, up to 12 flexo characters
  * a - read the tape image as an AM1 loader format tape
  * t - the track to store to, 0-31 dec.
+ * d - enable diagnostics
  *
  * Original author: Bill Ezell (wje), pdp1@quackers.net
  *
@@ -29,6 +30,7 @@
  *
  * 28/11/2025 wje - Initial version
  * 02/01/2026 wje - Add AM1 loader format support, update the usage documentation
+ * 20/01/2026 wje - Rework command line parsing to fix error in parsing
  *
  */
 #include <stdlib.h>
@@ -37,6 +39,8 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <string.h>
+
+#define DIAGNOSTIC(args...) if( diagnostics ) {printf(args); printf("\n");}
 
 #define DEFAULT_IMAGE "drumImage"
 
@@ -58,6 +62,7 @@ State state;
 
 // This array is used to hold the tape image for writing to the drum.
 Word memlocs[4096];     // enough for the entire address space
+bool diagnostics = false;
 
 int
 main(int argc, char **argv)
@@ -82,40 +87,81 @@ int outfd;
     label[0] = 0;
     strcpy(imageName, DEFAULT_IMAGE);
 
-    // parse our comd line args
-    while( (opt = getopt(argc, argv, "i:l:t:a")) != -1 )
+    /* do the command line processing */
+    ++argv;
+    --argc;
+
+    while(argc && (**argv == '-'))                        /* look for directives */
     {
-        switch( opt )
+        for(cP = *argv + 1; *cP;)
         {
-        case 'i':
-           strcpy(imageName, optarg);
-           break;
+            switch(*cP++)
+            {
+            case 'a':
+                am1Mode = true;
+                break;
 
-        case 't':
-           trackNo = strtol(optarg, &cP, 0);
-           if( (cP == optarg) || *cP )
-           {
-               trackNo = -1;               // invalid number
-           }
-           break;
+            case 'd':
+                diagnostics = true;
+                break;
 
-        case 'l':
-           strcpy(label, optarg);
-           break;
+            case 'i':                                       /* accept either ixxx or i xxx */
+                if( !*cP )
+                {
+                    --argc;
+                    ++argv;
+                    cP = *argv;
+                }
 
-        case 'a':
-           am1Mode = true;
-           break;
+                strcpy(imageName, cP);
+                cP = "";
+                break;
 
-        default: /* '?' */
-	   usage();
+            case 't':
+                if( !*cP )
+                {
+                    --argc;
+                    ++argv;
+                    cP = *argv;
+                }
+
+                trackNo = strtol(cP, &cP2, 0);
+                if( (cP2 == cP) || *cP2 )
+                {
+                    trackNo = -1;               // invalid number
+                }
+
+                cP = "";
+                break;
+
+            case 'l':
+                if( !*cP )
+                {
+                    --argc;
+                    ++argv;
+                    cP = *argv;
+                }
+
+                strcpy(label, cP);
+                cP = "";
+                break;
+
+            default:
+                usage();
+                break;
+            }
         }
+
+        --argc;
+        ++argv;
     }
 
-    if( optind >= argc )
+    if(argc != 1)
     {
-        usage();                // should only be the input filename
+        usage();
     }
+
+    filenameP = *argv;
 
     if( (trackNo > 31 ) || (trackNo < 0) )
     {
@@ -123,8 +169,7 @@ int outfd;
         exit(1);
     }
 
-    filenameP = argv[optind];
-
+    DIAGNOSTIC("Opening input file %s\n", filenameP);
     if( !(fP = fopen(filenameP, "r")) )
     {
         fprintf(stderr,"Can't open file '%s'\n", filenameP);
@@ -156,6 +201,7 @@ int outfd;
     }
 
     state = START;
+    DIAGNOSTIC("State now START at tape_loc %d\n", tape_loc);
 
     // The state machine loop
     for(;;)
@@ -178,6 +224,7 @@ int outfd;
             if( OPERATION(word) == 032 )            // beginning of the RIM code block
             {
                 state = RIM;
+                DIAGNOSTIC("State now RIM at tape_loc %d\n", tape_loc);
                 cur_addr = OPERAND(word);
                 word = getWord(fP, state);
                 memlocs[cur_addr] = word;
@@ -189,6 +236,7 @@ int outfd;
             {
                 start_addr = OPERAND(word);     // in case no BIN block follows
                 state = LOOKING;                // look for a BIN block now
+                DIAGNOSTIC("State now LOOKING at tape_loc %d\n", tape_loc);
             }
             else if( OPERATION(word) == 032 )   // next data word to load
             {
@@ -214,6 +262,7 @@ int outfd;
                 {
                     // am1 loader end-of-code, start addr
                     start_addr = word & 0177777;    // maybe it will support other than bank 0 eventually
+                    DIAGNOSTIC("State now DONE at tape_loc %d\n", tape_loc);
                     state = DONE;
                 }
                 else
@@ -226,6 +275,7 @@ int outfd;
                     }
                     cur_addr = word;        // start of am1 block
                     end_addr = getWord(fP, state);
+                    DIAGNOSTIC("State now BIN at tape_loc %d\n", tape_loc);
                     state = BIN;
                 }
             }
@@ -243,10 +293,12 @@ int outfd;
                 }
 
                 end_addr = OPERAND(word);       // last location + 1, in checksum as the dio instruction
+                DIAGNOSTIC("State now BIN at tape_loc %d\n", tape_loc);
                 state = BIN;
             }
             else if( OPERATION(word) == 060 )   // JMP, done loading BIN blocks, end of valid input
             {
+                DIAGNOSTIC("State now DONE at tape_loc %d\n", tape_loc);
                 state = DONE;
                 start_addr = OPERAND(word);
                 memlocs[cur_addr] = word;        // keep the JMP
@@ -263,6 +315,7 @@ int outfd;
                 else
                 {
                     fprintf(stderr, "Extra data %o after end of program, ignored.\n", word);
+                    DIAGNOSTIC("State now DONE at tape_loc %d\n", tape_loc);
                     state = DONE;
                 }
             }
@@ -279,6 +332,7 @@ int outfd;
                     {
                         word = getWord(fP, state);         // checksum, ignore
                     }
+                    DIAGNOSTIC("State now LOOKING at tape_loc %d\n", tape_loc);
                     state = LOOKING;
                 }
             }
@@ -345,8 +399,7 @@ int outfd;
 }
 
 // Return the next 18 bit word, 3 tape characters, from the 'tape', or -1 if EOF.
-// If a word was pushed back, return it instead.
-// Since this is the equivalent of the RPB instruction, ignore any without bit o200 set.
+// Since this is the equivalent of the RPB instruction, ignore any without bit 0200 set.
 
 int
 getWord(FILE *fP, int state)
@@ -393,11 +446,12 @@ int last_ch;
 void
 usage()
 {
-    fprintf(stderr,"Usage: drumupdater [-i imagefile] [-l label] [-a] -t trackno filename\n");
+    fprintf(stderr,"Usage: drumupdater [-i imagefile] [-l label] [-a] [-d] -t trackno filename\n");
     fprintf(stderr,"where:\n");
     fprintf(stderr,"i - use the given name for the drum image instead of 'drumImage'\n");
     fprintf(stderr,"l - label the track with the given label, up to 12 flexo characters\n");
     fprintf(stderr,"a - read the tape image as an AM1 loader format tape\n");
+    fprintf(stderr,"d - enable diagnostics\n");
     fprintf(stderr,"t - the drum track to load, 0-31\n");
     exit(1);
 }

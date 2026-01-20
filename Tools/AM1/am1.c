@@ -59,6 +59,7 @@
  * 12-Jan-2026 - more listing cleanup, rename pause to stop, add import/export, add lshift and rshift,
  *               make opr precedence same as C, update docs
  * 14-Jan-2026 - fix serious bug introduced by the mod operator, can't use a percent
+ * 20-Jan-2026 - fix bug in forced locals, rename mod to %%
  *
 */
 #include <unistd.h>

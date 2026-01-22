@@ -6,8 +6,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.10 20-Jan-2026"
-#define AM1SHORTVERSION "am1 v1.10"
+#define AM1VERSION "am1 v1.11 22-Jan-2026"
+#define AM1SHORTVERSION "am1 v1.11"
 
 #define AM1INCDIR "/opt/pidp1/Am1Includes"
 

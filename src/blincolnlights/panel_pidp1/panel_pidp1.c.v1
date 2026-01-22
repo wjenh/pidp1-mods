@@ -19,8 +19,7 @@
 
 #include <pthread.h>
 
-// define this to get the loop timing for the 2 main loops
-#define TIMINGS
+#define TIMINGS // define this to get the loop timing for the 2 main loops
 
 int ADDR[] = {4, 17, 27, 22};
 int COLUMNS[] = {26, 19, 13, 6, 5, 11, 9, 10, 18, 23, 24, 25, 8, 7, 12, 16, 20, 21 };
@@ -121,12 +120,9 @@ lightRow(int a, u8 *l)
         {
             setPin(COLUMNS[i], !(phase < l[i]));
         }
-
-// The following used to be nsleep(1) followed by xsleep(3000), with the comment 'allowing syscalls takes too long'.
-// But, nsleep() calls nanosleep(), which allows a reschedule. So, the comment made no sense.
-// Replaced with just nsleep().
-        //nsleep(1);
-        nsleep(phase_delays[phase]);
+// would be nice to allow syscalls but takes quite a long time :/
+        nsleep(1);
+        xsleep(phase_delays[phase]);
     }
 
     setRow(~0);
@@ -206,25 +202,15 @@ float map(float x, float x1, float x2, float y1, float y2)
 u64 decayDelta, decayLoopCount;
 #endif
 
-// The following 2 values greatly affect processor loading.
-// The original did a non-rescheduling delay which really chewed up processing time.
-// Switching to a usleep lets a reschedule occur which works fine and dramatically reduces cpu load.
-//
-// Setting NSAMPLES to 1K and SAMPLEDELAY to 3 usecs works well.
-
-// The number of times the light array from shared mem is scanned per cycle, originally 10K
-#define NSAMPLES 1000
-
-// The delay between each light array scan, usecs, originally 3, using xsleep to not reschedule
-#define SAMPLEDELAY 3
-
-void *
+// not ideal yet at all, but better than nothing
+void*
 lampthread(void *arg)
 {
 #ifdef TIMINGS
 u64 lastTime, currentTime;
 #endif
 
+const int nsamples = 1000;
 PanelLamps *p = (PanelLamps*)arg;
 Panel cur;
 u32 on[10][18];
@@ -240,7 +226,7 @@ float dt;
     for(;;)
     {
         memset(on, 0, sizeof(on));
-        for(int i = 0; i < NSAMPLES; i++)
+        for(int i = 0; i < nsamples; i++)
         {
             cur = *p->p;
             countRow(on[0], cur.lights0);
@@ -253,6 +239,7 @@ float dt;
             countRow(on[7], cur.lights7);
             countRow(on[8], cur.lights8);
             countRow(on[9], cur.lights9);
+            //xsleep(3000);
             usleep(3);
         }
 
@@ -265,7 +252,7 @@ float dt;
         {
             for(int j = 0; j < 18; j++)
             {
-                float targ = (float)on[i][j]/NSAMPLES;
+                float targ = (float)on[i][j]/nsamples;
                 if(targ >= intensity[i][j])
                 {
                     float t = powf(1.0f-rise, dt);

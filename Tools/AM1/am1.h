@@ -6,8 +6,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.10 20-Jan-2026"
-#define AM1SHORTVERSION "am1 v1.10"
+#define AM1VERSION "am1 v1.12 23-Jan-2026"
+#define AM1SHORTVERSION "am1 v1.12"
 
 #define AM1INCDIR "/opt/pidp1/Am1Includes"
 
@@ -54,6 +54,13 @@
 #define CSHIFT     074
 #define FLEX_SPACE 000
 
+// holder for flex characters, can contain null
+typedef struct flextext
+{
+    int nchars;             // total chars in bufP
+    char *bufP;             // and where the chars are
+} FlexText, *FlexTextP;
+
 // Our internal parse tree node and values
 typedef union
 {
@@ -61,6 +68,7 @@ typedef union
     char *strP;
     SymNodeP symP;      // symbol node
     void *ptr;
+    FlexText flexText;
 } PNodeValue;
 
 typedef struct parsenode

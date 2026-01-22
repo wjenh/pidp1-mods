@@ -96,6 +96,7 @@ szi oporable 0654060
 
 # various IOTs
 iot opcode 0720000
+ioh opcode 0720000
 tyi opcode 0720004
 rrb opcode 0720030
 cks opcode 0720033

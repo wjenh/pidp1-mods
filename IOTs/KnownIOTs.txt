@@ -13,13 +13,17 @@ Those marked with an asterisk are implemented in the pidp1 emulator and are rese
 11 * spacewar controllers
 
 21
-22
+
+22 Type 30 Data Communications System, implemented
 
 24
 
+26 Type 33 Symbol Generator, implemented
+27 Type 33 Symbol Generator
+
 30 * rrb
 31
-32 NOTE - this is for the BBN timesharing clock, an implementaton is provided
+32 BBN timesharing clock, implemented
 33 * cks
 34
 35
@@ -41,10 +45,10 @@ Those marked with an asterisk are implemented in the pidp1 emulator and are rese
 55 * esm
 56 * cbs
 
-60 NOTE 60 can be used by the IOT_60 implemenation to allow sbs16 to be enabled
-61 NOTE 61, 62, 63 are for the Type 23 drum memory, an implementation is provided
-62
-63 
+60 NOTE 60 is nonstandard and can be used to allow sbs16 to be enabled and disabled
+61 Type 23 Parallel Drum
+62 Type 23 Parallel Drum
+63 Type 23 Parallel Drum
 
 66
 67

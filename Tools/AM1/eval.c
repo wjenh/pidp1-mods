@@ -14,7 +14,7 @@ int onesComplAdj(int);
 int twosComplAdj(int);
 int fixMinusZero(int val, int lhs, int rhs);
 int countAscii(char *strP);
-int countText(char *strP);
+int countText(FlexText flexText);
 
 extern bool keepMinusZero;
 extern bool spaceIsAdd;
@@ -438,12 +438,12 @@ int chars;
 
 // Count packed flexo code
 int
-countText(char *strP)
+countText(FlexText flexText)
 {
 int i;
 int rslt;
 
-    i = strlen(strP);
+    i = flexText.nchars;
     rslt = i / 3;
     if( i % 3 )             // not a full word
     {

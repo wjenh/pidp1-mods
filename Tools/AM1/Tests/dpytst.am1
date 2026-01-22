@@ -1,0 +1,74 @@
+Test of dpy coord shifts
+
+var x, y, bias, dpyinst
+
+100/
+loop,   dzm bias
+        lat     // test switches 17, 18 are the 'c' bits, 16 uses neg coords
+        and [4
+        sza i
+        jmp loop2
+        lac [400000
+        dac bias
+
+loop2,  cla lat
+        and [3
+        sal 9s
+        ior [dpy
+        dac dpyinst // yes, going to use xct
+        dzm x
+        dzm y
+        jda drawx   // bottom
+        jda drawy   // right side
+        jda drawx   // top
+        dzm x
+        jda drawy   // left side
+        jmp loop
+
+// Drow a horizontal line offset vertically by the y coordinate
+// On return, x will be at end of its line
+drawx,  0
+        local side,rtn
+        dac rtn
+        dzm x
+side,   lac y
+        sal 8s
+        ior bias
+        lia
+        lac x
+        sad [200    // 128 dots on a side
+        jmp i rtn
+        sal 8s
+        ior bias
+        xct dpyinst
+        ioh
+        idx x
+        jmp side
+rtn,    0
+        endloc
+
+// Drow a vertical line offset horizontally by the x coordinate
+// On return, y will be at end of its line
+drawy,  0
+        local side, rtn
+        dac rtn
+        dzm y
+side,   lac y
+        sad [200    // 128 dots on a side
+        jmp i rtn
+        sal 8s
+        ior bias
+        lsw         // -1D swap IO and AC
+        lac x
+        sal 8s
+        ior bias
+        xct dpyinst
+        ioh
+        idx y
+        jmp side
+rtn,    0
+        endloc
+
+variables
+constants
+start 100

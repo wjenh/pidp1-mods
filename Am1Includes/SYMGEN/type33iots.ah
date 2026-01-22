@@ -1,0 +1,11 @@
+#ifndef TYPE33
+#define TYPE33
+
+// Draw characters using the Type 33 Symbol Generator
+
+#define gpl 02027
+#define gpr 00027
+#define gcf 00127
+#define glf 02026
+#define gsp 00026
+#endif

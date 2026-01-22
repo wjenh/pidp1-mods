@@ -15,15 +15,13 @@ extern bool sawBank;
 extern BankContextP banksP;
 extern bool noWarn;
 
-extern int countText(char *strP);
-extern int countAscii(char *strP);
 extern int evalExpr(PNodeP);
 extern int onesComplAdj(int);
 
 static void emitStatements(FILE *, PNodeP);
 static void emitOperand(FILE *, PNodeP);
 static void emitAscii(FILE *outfP, char *strP);
-static void emitText(FILE *outfP, char *strP);
+static void emitText(FILE *outfP, FlexText flexText);
 static void emitVars(FILE *outfP, PNodeListP listP);
 static int emitConstants(FILE *outfP, SymNodeP nodeP);
 
@@ -147,7 +145,7 @@ char str[128];
 
         case TEXT:
             fprintf(outfP, "/ Text table\n");
-            emitText(outfP, nodeP->value.strP);
+            emitText(outfP, nodeP->value.flexText);
             fprintf(outfP, "/ End\n");
             noNl = true;
             break;
@@ -451,12 +449,15 @@ int i;
 
 // Emit packed flexo code
 static void
-emitText(FILE *outfP, char *strP)
+emitText(FILE *outfP, FlexText flexText)
 {
 int i;
 int val;
+char *bufP;
 
-    for( val = i = 0; *strP != 0; i++ )
+    bufP = flexText.bufP;
+
+    for( val = i = 0; i < flexText.nchars; i++ )
     {
         if( i && !(i % 3) )
         {
@@ -465,7 +466,7 @@ int val;
         }
 
         val <<= 6;
-        val |= *strP++;
+        val |= *bufP++;
     }
 
     if( i % 3 )     // had leftovers, finish the word
@@ -476,7 +477,7 @@ int val;
         }
         fprintf(outfP, "    %06o\n", val);
     }
-    else if( !*strP && !( i % 3) )
+    else if( (i >= flexText.nchars) && !( i % 3) )
     {
         fprintf(outfP, "    %06o\n", val);      // didn't emit the word yet
     }

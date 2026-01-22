@@ -60,6 +60,8 @@
  *               make opr precedence same as C, update docs
  * 14-Jan-2026 - fix serious bug introduced by the mod operator, can't use a percent
  * 20-Jan-2026 - fix bug in forced locals, rename mod to %%
+ * 22-Jan-2026 - add ioh, same as iot
+ * 23-Jan-2026 - fix bug in constants stmt, would clear pc if no constants to emit, fix text stmt
  *
 */
 #include <unistd.h>

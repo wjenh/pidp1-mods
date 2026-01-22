@@ -59,7 +59,7 @@ static void adjustPC(int);
 
 static void writeStatements(FILE *, PNodeP);
 static void writeAscii(FILE *outfP, char *strP);
-static void writeText(FILE *outfP, char *strP);
+static void writeText(FILE *outfP, FlexText flexText);
 static void writeVars(FILE *outfP, PNodeListP listP);
 static void writeConstants(FILE *outfP, SymNodeP nodeP);
 
@@ -164,7 +164,7 @@ BankContextP bankP;
             break;
 
         case TEXT:
-            writeText(outfP, nodeP->value.strP);
+            writeText(outfP, nodeP->value.flexText);
             break;
 
         case ASCII:
@@ -316,12 +316,15 @@ int word;
 
 // Emit packed flexo code
 static void
-writeText(FILE *outfP, char *strP)
+writeText(FILE *outfP, FlexText flexText)
 {
 int i;
 int val;
+char *bufP;
 
-    for( val = i = 0; *strP != 0; i++ )
+    bufP = flexText.bufP;
+
+    for( val = i = 0; i < flexText.nchars; i++ )
     {
         if( i && !(i % 3) )
         {
@@ -330,7 +333,7 @@ int val;
         }
 
         val <<= 6;
-        val |= *strP++;
+        val |= *bufP++;
     }
 
     if( i % 3 )     // had leftovers, finish the word
@@ -343,7 +346,7 @@ int val;
         putBuffer(outfP, outBufP, val);
         adjustPC(1);
     }
-    else if( !*strP && !( i % 3) )
+    else if( (i >= flexText.nchars) && !( i % 3) )
     {
         putBuffer(outfP, outBufP, val);
         adjustPC(1);

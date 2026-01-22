@@ -9,6 +9,9 @@
 // PDP-1D but probably also on some C's?
 #define LAILIA
 
+// Allow origin shift in dpy IOT
+#define DPY_SHIFT_ENABLED
+
 #define B0 0400000
 #define B1 0200000
 #define B2 0100000
@@ -1250,6 +1253,16 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
 			pdp->dcp = nac;
 			pdp->dbx |= AC>>8;
 			pdp->dby |= IO>>8;
+#ifdef DPY_SHIFT_ENABLED
+                        if( ch & 010 )      // origin at bottom
+                        {
+                            pdp->dby ^= 01000;
+                        }
+                        if( ch & 020 )      // origin at left
+                        {
+                            pdp->dbx ^= 01000;
+                        }
+#endif
 			pdp->dint |= (MB>>6)&7;
 			pdp->dpy_defl_time = pdp->simtime + US(35);
 			pdp->dpy_time = pdp->dpy_defl_time + US(15);

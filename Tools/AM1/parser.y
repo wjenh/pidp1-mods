@@ -48,7 +48,7 @@ SymNodeP addLocalSymbol(char *nameP);
 LocalContextP newLocalContext(void);
 BankContextP swapBanks(int newBank);
 int countAscii(char *strP);
-int countText(char *strP);
+int countText(FlexText text);
 int setConstPC(int pc, SymNodeP constSymP);
 void setConstVal(SymNodeP constSymP);
 void setVarsPC(int bank, PNodeListP varNodesP);
@@ -84,6 +84,7 @@ extern void leave(int);
     char *strP;
     SymNodeP symP;
     PNodeP pnodeP;
+    FlexText flexText;
     }
 
 /* typed symbols */
@@ -111,7 +112,7 @@ extern void leave(int);
 %token <strP> ENDLOC
 %token <strP> HEADER
 %token <strP> STRING
-%token <strP> TEXT
+%token <flexText> TEXT
 %token <strP> FILENAME
 %token <strP> LIBFILE
 %token <ival> CHAR
@@ -475,17 +476,21 @@ one_stmt	: expr
                 {
                 SymListP symlistP;
                 BankContextP ctxP;
-                    // End this constant scope
-                    constsListP = addToSymlist(constsListP, constSymP, curBank, cur_pc);
-		    $$ = newnode(lineno+1, cur_pc, CONSTANTS, NILP, NILP);
-                    $$->value.symP = constSymP;
-                    cur_pc = setConstPC(cur_pc, constSymP);
-                    sym_init(&constSymP);
+                    // End this constant scope, if there is one, but include the node for listings
+                    $$ = newnode(lineno+1, cur_pc, CONSTANTS, NILP, NILP);
 
-                    // Be sure we clear from our bank context, if we have one
-                    if( (ctxP = findBank(curBank)) )
+                    if( constSymP )
                     {
-                        ctxP->constSymP = NILP;
+                        constsListP = addToSymlist(constsListP, constSymP, curBank, cur_pc);
+                        $$->value.symP = constSymP;
+                        cur_pc = setConstPC(cur_pc, constSymP);
+                        sym_init(&constSymP);
+
+                        // Be sure we clear from our bank context, if we have one
+                        if( (ctxP = findBank(curBank)) )
+                        {
+                            ctxP->constSymP = NILP;
+                        }
                     }
                 }
                 | ASCII STRING
@@ -497,7 +502,7 @@ one_stmt	: expr
                 | TEXT
                 {
 		    $$ = newnode(lineno+1, cur_pc, TEXT, NILP, NILP);
-                    $$->value.strP = $1;
+                    $$->value.flexText = $1;
                     cur_pc += countText($1);
                 }
                 | TABLE simple_expr
@@ -823,6 +828,7 @@ directive_expr  : FORCELOC
                 {
                 SymNodeP symP;
                 PNodeP nodeP;
+                char *cP;
 
                     // We push any current local scope, establish a new one
                     // locaSymlPP can be null if there is no current scope
@@ -835,6 +841,7 @@ directive_expr  : FORCELOC
                     {
                         nodeP = NILP;
                     }
+
 		    $$ = newnode(lineno, cur_pc, LOCAL, NILP, nodeP);
                     $$->flags |= PN_NOINC;
 
@@ -850,7 +857,16 @@ directive_expr  : FORCELOC
 
                     while( nodeP )         // add local predefines
                     {
-                        symP = addLocalSymbol(nodeP->value.strP);
+                        if( nodeP->type == ADDR )
+                        {
+                            cP = nodeP->value.symP->name;   // already a global by this name
+                        }
+                        else
+                        {
+                            cP = nodeP->value.strP;
+                        }
+
+                        symP = addLocalSymbol(cP);
                         symP->flags = SYM_LOC;
                         nodeP = nodeP->leftP;
                     }
@@ -1005,7 +1021,7 @@ varname         : NAME
                 {
                     if( $1->flags & SYMF_RESOLVED )
                     {
-                        verror("variable %s is already declared", $1);
+                        verror("variable %s is already declared", $1->name);
                     }
 
                     $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
@@ -1045,11 +1061,9 @@ SymNodeP symP;
 int
 setConstPC(int pc, SymNodeP symP)
 {
-int newPC;
-
     if( !symP )
     {
-        return(0);
+        return(pc);
     }
 
     if( !(symP->flags & SYMF_ASSIGNED) )
@@ -1058,14 +1072,9 @@ int newPC;
         symP->flags |= SYMF_ASSIGNED;
     }
 
-    newPC = setConstPC(pc, symP->leftP);
-    if( newPC > pc )
-    {
-        pc = newPC;
-    }
-
-    newPC = setConstPC(pc, symP->rightP);
-    return( (newPC > pc)?newPC:pc );
+    pc = setConstPC(pc, symP->leftP);
+    pc = setConstPC(pc, symP->rightP);
+    return( pc );
 }
 
 // Add a new entry to the passed symlist, return new head.

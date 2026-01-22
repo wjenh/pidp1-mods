@@ -12,8 +12,6 @@
 extern bool sawBank;
 extern BankContextP banksP;
 
-extern int countText(char *strP);
-extern int countAscii(char *strP);
 extern int evalExpr(PNodeP);
 extern char flexoToAscii(char fchar, int *shift);
 
@@ -21,11 +19,11 @@ static void startLine(bool noValue, FILE *outP, PNodeP nodeP);
 static void listStatements(FILE *, PNodeP);
 static void listOperand(FILE *, PNodeP);
 static void listAscii(FILE *outfP, PNodeP nodeP, char *strP);
-static void listText(FILE *outfP, PNodeP nodeP, char *strP);
+static void listText(FILE *outfP, PNodeP nodeP, FlexText text);
 static bool listVar(FILE *outfP, PNodeP nodeP);
 static void listVars(FILE *outfP, PNodeP nodeP);
 static void listConstants(FILE *outfP, PNodeP nodeP, SymNodeP symP);
-static void flxToA(char *flxP, char *rlstP);
+static void flxToA(FlexText flexText, char *rsltP);
 
 void verror(char *msgP, ...);
 
@@ -143,7 +141,7 @@ char str[128];
 
         case TEXT:
             fprintf(outfP, "// Text table\n");
-            listText(outfP, nodeP, nodeP->value.strP);
+            listText(outfP, nodeP, nodeP->value.flexText);
             fprintf(outfP, "// End\n");
             break;
 
@@ -368,7 +366,16 @@ PNodeP node2P;
         {
             while( node2P )
             {
-                fprintf(outfP, " %s%s", node2P->value.strP, (node2P->leftP)?",":"");
+                if( node2P->type == ADDR )
+                {
+                    cP = node2P->value.symP->name;      // this was a local override of a global
+                }
+                else
+                {
+                    cP = node2P->value.strP;
+                }
+
+                fprintf(outfP, " %s%s", cP, (node2P->leftP)?",":"");
                 node2P = node2P->leftP;
             }
         } 
@@ -423,26 +430,30 @@ int i;
 
 // Emit packed flexo code
 static void
-listText(FILE *outfP, PNodeP nodeP, char *strP)
+listText(FILE *outfP, PNodeP nodeP, FlexText flexText)
 {
 int i;
 int val;
+char *bufP;
 char buf[256];
 
-    flxToA(strP, buf);
+    flxToA(flexText, buf);
     fprintf(outfP,"// text \"%s\"\n", buf);
-    startLine(false, outfP, nodeP);
+    bufP = flexText.bufP;
 
-    for( val = i = 0; *strP != 0; i++ )
+    // Node will only have the pc of the first word, adjust as we go
+    for( val = i = 0; i < flexText.nchars; i++ )
     {
         if( i && !(i % 3) )
         {
+            startLine(false, outfP, nodeP);
+            nodeP->pc++;
             fprintf(outfP, " %06o\n", val);
             val = 0;
         }
 
         val <<= 6;
-        val |= *strP++;
+        val |= *bufP++;
     }
 
     if( i % 3 )     // had leftovers, finish the word
@@ -452,12 +463,12 @@ char buf[256];
             val <<= 6;
         }
 
-        nodeP->pc++;    // because we only get the initial node
         startLine(false, outfP, nodeP);
         fprintf(outfP, " %06o\n", val);
     }
-    else if( !*strP && !( i % 3) )
+    else if( (i >= flexText.nchars) && !( i % 3) )
     {
+        startLine(false, outfP, nodeP);
         fprintf(outfP, " %06o\n", val);      // didn't list the word yet
     }
 }
@@ -564,14 +575,18 @@ startLine(bool noValue, FILE *outP, PNodeP nodeP)
 
 // Convert a string containing flex chars into ascii
 static void
-flxToA(char *flxP, char *outP)
+flxToA(FlexText text, char *outP)
 {
+int i;
 int shift = 0;
 int ch;
+char *cP;
     
-    while( *flxP )
+    cP = text.bufP;
+
+    for(i = 0; i < text.nchars; ++i )
     {
-        ch = flexoToAscii(*flxP++, &shift);
+        ch = flexoToAscii(*cP++, &shift);
         if( ch == NONE )
         {
             continue;

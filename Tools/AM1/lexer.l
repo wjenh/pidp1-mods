@@ -549,6 +549,7 @@ octal			{ decimalMode = false; }
 			
 <DOTEXT>.		{
 			int tmpc, rslt;
+			int count;
 			int shift;
 			char marker;
 			char *cP;
@@ -557,7 +558,7 @@ octal			{ decimalMode = false; }
 			    marker = yytext[0];
 
 			    cP = string;
-			    shift = 0;
+			    count = shift = 0;
 
 			    while( (tmpc = input()) != marker )
 			    {
@@ -583,17 +584,18 @@ octal			{ decimalMode = false; }
 				if( (rslt == CSHIFT) || (rslt == CUNSHIFT) )
 				{
 				    *cP++ = rslt;
+				    ++count;
 				    rslt = asciiToFlexo(tmpc, &shift);	// get the real char
 				}
 
 			        *cP++ = (char)rslt;
+				++count;
 			    }
 
-			    *cP = '\0';
-
 			    BEGIN BODY;
-			    yylval.strP = malloc(strlen(string) + 1);
-			    strcpy(yylval.strP, string);
+			    yylval.flexText.nchars = count;
+			    yylval.flexText.bufP  = (char *)malloc(count);
+			    memcpy(yylval.flexText.bufP, string, count);
 			    return( TEXT );
 			}
 

@@ -1,0 +1,339 @@
+
+      TEST GETACH                                                         Page 1
+
+
+    1                   TEST GETACH
+    2                   
+    3                   / The few implemented PDP1-D instructions
+    4       760020      lia=760020
+    5       760040      lai=760040
+    6       760060      lsw=760060
+    7                   
+    8                   / Defines for the DCS2 system.
+    9                   / See the documentation.
+   10                   / NOTE that rcr in DCS conflicts with rcr, rotate-combined-right.
+   11                   / It is renamed rchr here.
+   12       000022      rch=0022
+   13       000122      rrc=0122
+   14       001022      rchr=1022
+   15       001122      rsc=1122
+   16       004022      tcb=4022
+   17       004122      ssb=4122
+   18       005022      tcc=5022
+   19                   
+   20                   / rch and rcr will clear the IO register if
+   21                   / this is added to the IOT, else it ors.
+   22       002000      rchclr=002000
+   23                   
+   24                   / Extended commands.
+   25       000222      rwe=0222
+   26       004222      scb=4222
+   27       004322      rle=4322
+   28       004422      rpc=4422
+   29       004522      rci=4522
+   30       004622      ric=4622
+   31       004722      rcs=4722
+   32       005122      rwe=5122
+   33       005222      roc=5222
+   34       005322      res=5322
+   35       005422      rxl=5422
+   36                   
+   37                   / symbols not compatible with native macro
+   38                   / dcfxxx are single bit flags
+   39                   / dcmxxx are multibit masks
+   40                   / Channel Request Block first word
+   41                   / dcfcrnl - turn newline into carriage return, newline on send
+   42                   / dcfflex - flexo mode, do automatic conversion
+   43                   / dcfecho - echo received characters
+   44                   / dcfioc - interrupt on connection open or close
+   45                   / dcfioe - interrupt on socket error
+   46                   / dcfior - interroupt on character received
+   47                   / dcfie -  enable interrupts for channel
+   48                   / dcfsrv - server mode
+   49                   / rxlfta - flexo to ascii
+   50                   / rxlucs - flexo upper case shift
+   51                   / rxlchg - flexo shift state changed
+   52                   / dcmsbs - bitmask, sbs channel to use
+   53                   / dcmcha - bitmask, channel number for this channel
+   54                   
+   55       400000      dcfcrnl=400000
+   56       200000      dcfflex=200000
+   57       100000      dcfecho=100000
+
+      TEST GETACH                                                         Page 2
+
+
+   58       040000      dcfioc=040000
+   59       020000      dcfioe=020000
+   60       010000      dcfior=010000
+   61       004000      dcfie=004000
+   62       000100      dcfsrv=000100
+   63       400000      rxlfta=0400000
+   64       000400      rxlucs=00400
+   65       001000      rxlchg=01000
+   66                   
+   67       003600      dcmsbs=003600
+   68       000077      dcmcha=000077
+   69                   
+   70                   // Directives to scb
+   71       010000      sbcset=010000
+   72       020000      sbcbnd=020000
+   73       040000      sbcrst=040000
+   74       000000      sbcclr=000000
+   75                   
+   76                   / Channel status flags
+   77                   / dsfopn - channel has been opened by scb
+   78                   / dsfsvr - channel is a server channel, else client
+   79                   / dsfcon - connected to remote host
+   80                   / dsfful - socket transmit buffer is full
+   81                   / dsfrdy - has characters ready to read
+   82                   / dsfser - got a socket error of some kine
+   83                   / dsfcls - remote closed connection
+   84                   / dsfien - interrupts are enabled
+   85                   / dsfior - interrupted because a character was received
+   86                   / dsfioc - interrupted because a connection was opened or closed
+   87                   / dsfioe - interrupted because transmit buffer full or other socket error
+   88                   / dsfcur - is the current channel
+   89                   
+   90       000001      dsfopn=000001
+   91       000002      dsfsvr=000002
+   92       000004      dsfcon=000004
+   93       000010      dsfful=000010
+   94       000020      dsfrdy=000020
+   95       000040      dsfser=000040
+   96       000100      dsfcls=000100
+   97       000200      dsfien=000200
+   98       000400      dsfior=000400
+   99       001000      dsfioc=001000
+  100       002000      dsfioe=002000
+  101       004000      dsfcur=004000
+  102                   
+  103                   / and some combined ones
+  104       000005      dssrdy=dsfopn+dsfcon
+  105       000150      dsserr=dsfcls+dsfser+dsfful
+  106                   
+  107                   / Errors returned in IO, dserr is the error flag
+  108                   / dseno - channel not open
+  109                   / dseoe - illegal operation on open channel
+  110                   / dseic - invalid channel number
+  111                   / dsens - server command on non-server channel
+  112                   / dseil - illegal command, commdand with illegal options
+  113                   / dseso - socket open or operation failed
+  114                   / dsebi - server bind to port failed
+
+      TEST GETACH                                                         Page 3
+
+
+  115                   / dsecc - rch, rcr, tcb, or tcc done but no current receive or send channel
+  116                   / dselo - remote end closed connection
+  117                   / dseep - internal error in epoll
+  118                   / dsenc - no client connected but operation attempted
+  119       400000      dserr=400000
+  120       000001      dseno=1
+  121       000002      dseoe=2
+  122       000003      dseic=3
+  123       000004      dsens=4
+  124       000005      dseil=5
+  125       000006      dseso=6
+  126       000007      dsebi=7
+  127       000010      dsecc=10
+  128       000011      dselo=11
+  129       000012      dseep=12
+  130       000013      dsenc=13
+  131                   
+  132                   / check status bit in IO reg
+  133       000200      dcfcks=000200
+  134                   
+  135                   / special flex characters
+  136       000076      flxerr=076
+  137       000013      flxnch=013
+  138       000013      flxetx=013
+  139       000077      flxnl=077
+  140                   / ascnch is used by rxl
+  141       000077      ascnch=077
+  142                   
+  143                   
+  144                   / Put our included code bits here
+  145 01000             1000/
+  146                   / Wait for an ascii character on the current DCS channel.
+  147                   / The IO register is cleared and the character is 
+  148                   / returned in the IO register.
+  149                   / If an error occurs, the IO register will be the rcs status with bit 0 set to 1.
+  150                   / The AC register is preserved.
+  151                   / Call via jda getach.
+  152                   
+  153                   
+  154                   
+  155                   
+  156 01000 000000      getach, 0
+  157 01001 241026           dac gachrt
+  158                   / loop waiting for a character
+  159                   gachlp,
+  160 01002 764000           cli
+  161 01003 724722           iot rcs
+  162 01004 760040           lai
+  163 01005 020167           and (dsfful dsfser dsfcls
+  164 01006 640100           sza
+  165 01007 601021           jmp gacher
+  166 01010 760040           lai
+  167 01011 020170           and (dsfrdy
+  168 01012 650100           sza i
+  169 01013 601002           jmp gachlp
+  170 01014 722022           iot rch rchclr
+  171 01015 760040           lai
+
+      TEST GETACH                                                         Page 4
+
+
+  172 01016 642000           spi
+  173                   / really shouldn't happen
+  174 01017 601002           jmp gachlp
+  175 01020 601024           jmp gacdn
+  176                   gacher,
+  177 01021 760040           lai
+  178 01022 040171           ior (400000
+  179 01023 760020           lia
+  180                   gacdn,
+  181 01024 201000           lac getach
+  182 01025 611026           jmp i gachrt
+  183 01026 000000      gachrt, 0
+  184                   
+  185                   / Write a block of ascii text out.
+  186                   / Write out a string produced by ascii until a word containing
+  187                   / only 0 is seen, the starting address is in the ac,
+  188                   / ascii <whatever>
+  189                   /
+  190                   / Include this before using it or declaring text that uses
+  191                   / the character defines, below.
+  192                   /
+  193                   / Output goes to SBS channel 0 which must be in ascii mode.
+  194                   / On call, AC contains the address of the text block.
+  195                   / Insert this at the desired point in code.
+  196                   / Call via jda txtasc.
+  197                   
+  198                   
+  199                   
+  200                   
+  201 01027 000000      txtasc, 0
+  202 01030 241050           dac txartn
+  203 01031 211027      txatop, lac i txtasc
+  204                   / a word has xaaaaaaaaxbbbbbbbb
+  205 01032 675017           sar 4s
+  206 01033 675037           sar 5s
+  207 01034 650100           sza i
+  208 01035 611050           jmp i txartn
+  209 01036 760020           lia
+  210 01037 724022           iot tcb
+  211 01040 700377           law 377
+  212 01041 031027           and i txtasc
+  213 01042 650100           sza i
+  214 01043 611050           jmp i txartn
+  215 01044 760020           lia
+  216 01045 724022           iot tcb
+  217 01046 441027           idx txtasc
+  218 01047 601031           jmp txatop
+  219 01050 000000      txartn, 0
+  220                   
+  221                   
+  222                   define say a
+  223                       law a
+  224                       jda txtasc
+  225                       term
+  226                   
+  227                   define newline
+  228                       law 12
+
+      TEST GETACH                                                         Page 5
+
+
+  229                       lia
+  230                       iot tcb
+  231                       term
+  232                   
+  233 00100             100/
+  234 00100 220172           lio (sbcset ctl
+  235 00101 724222           iot scb 
+  236                   / be sure we actually have a connection
+  237                   / if not, wait for one
+  238 00102 724722      opn, iot rcs
+  239 00103 672007           rir 3s
+  240 00104 652000           spi i
+  241 00105 600102           jmp opn
+  242                   
+  243                   / lock the send channel to 0 
+  244 00106 764000           cli
+  245 00107 724122           iot ssb
+  246                   
+  247                        say hl1
+      00110 700130
+      00111 171027
+  248                   loop,
+  249 00112 764000           cli
+  250 00113 760200           cla
+  251 00114 171000           jda getach
+  252 00115 760060           lsw
+  253 00116 500173           sad (161
+  254 00117 600125           jmp stp
+  255 00120 760400           hlt
+  256                        newline
+      00121 700012
+      00122 760020
+      00123 724022
+  257 00124 600112           jmp loop
+  258                   
+  259 00125 220174      stp, lio (sbcrst
+  260 00126 724222           iot scb
+  261 00127 760400           hlt
+  262                   
+  263                   hl1, / ascii
+  264 00130 124171           124171
+  265 00131 160145           160145
+  266 00132 040141           040141
+  267 00133 040143           040143
+  268 00134 150141           150141
+  269 00135 162054           162054
+  270 00136 040162           040162
+  271 00137 145163           145163
+  272 00140 165154           165154
+  273 00141 164163           164163
+  274 00142 040151           040151
+  275 00143 156040           156040
+  276 00144 101103           101103
+  277 00145 040141           040141
+  278 00146 156144           156144
+  279 00147 040111           040111
+  280 00150 117054           117054
+
+      TEST GETACH                                                         Page 6
+
+
+  281 00151 040167           040167
+  282 00152 151154           151154
+  283 00153 154040           154040
+  284 00154 150154           150154
+  285 00155 164056           164056
+  286 00156 040161           040161
+  287 00157 040164           040164
+  288 00160 157040           157040
+  289 00161 145170           145170
+  290 00162 151164           151164
+  291 00163 056012           056012
+  292 00164 000000           000000
+  293                   
+  294                   
+  295                   / server port, ascii, echo, and crlf on channel 0
+  296                   / listen on port 2022
+  297 00165 500100      ctl, dcfcrnl dcfecho dcfsrv
+  298 00166 003746           decimal 2022
+  299                        octal
+  300                   
+  301 00167 000150      constants
+      00170 000020
+      00171 400000
+      00172 010165
+      00173 000161
+      00174 040000
+  302                   
+  303       000100      start 100
+
+      No errors detected

@@ -3,9 +3,10 @@
 
 // Draw characters using the Type 33 Symbol Generator
 
-#define gpl 02027
-#define gpr 00027
-#define gcf 00127
-#define glf 02026
-#define gsp 00026
+#define gpl 002027
+#define gpr 000027
+#define gcf 000127
+#define glf 002026
+#define gsp 000026
+#define sdb 002007
 #endif

@@ -1,0 +1,100 @@
+#ifndef TYPE33UNPACK
+#define TYPE33UNPACK
+#include <SYMGEN/type33iots.ah>
+#include <SYMGEN/type33chars.ah>
+
+// Unpack characters consisting of a list of words produced by the text pseudo-op, flex code,
+// into a buffer of two words per character consisting of the 2 words to be given to gpl and gpr.
+// This results in the fastest possible rendering speed.
+// AC contains the address of the list produced by text.
+// A word following the last entry must be 013, stop.
+// IO contains the address of the buffer to place the results in.
+// Uses AC and IO registers.
+// Returns the word-pair count in IO.
+// Caller must be sure the buffer is large enough.
+// Called via jda.
+unpacktext, 0
+    local rtn, top, shift, cnt, chr, loop, toupper, tolower, buffer, length, ptr, nxt, bye
+    dac rtn
+    dio buffer
+    dzm shift
+    dzm length
+top, lac i unpacktext   // fetch next packed chars word from text
+    sad [13
+    jmp bye             // end marker
+    dac chr             // we have to dig out the 3 chars
+    lac [-3
+    dac cnt
+    idx unpacktext        // set up for next word
+
+loop, lac chr
+    cli
+    rcl 6s              // lop off the top 6 bits, into IO
+    dac chr
+    lai                 // original high 6 bits now in AC low 6 bits
+    sad [72             // lower case shift
+    jmp tolower
+    sad [74             // upper case shift
+    jmp toupper
+    ior shift           // was it shifted?
+    sal 1s
+    add [t33chrs        // convert to mapping table entry
+    dac ptr
+    lac i ptr
+    dac i buffer        // first word
+    idx buffer
+    idx ptr
+    lac i ptr
+    dac i buffer        // second word
+    idx buffer
+    idx length          // one more word pair
+
+nxt,isp cnt
+    jmp loop
+    jmp top
+
+toupper, law 0100
+    dac shift
+    jmp nxt
+tolower, dzm shift
+    jmp nxt
+
+bye, lio length
+    jmp i rtn
+
+shift, 0
+cnt, 0
+chr, 0
+buffer, 0
+length, 0
+ptr, 0
+rtn, 0
+    endloc
+
+// Draw a buffer of bit patterns, 2 words per 5x7 character, that are in gpl, gpr format.
+// The buffer starting address is in AC, the number of word pairs in the buffer is in IO.
+// Uses IO and AC.
+// Called via jda.
+renderchars, 0
+    local rtn, top, count
+    dac rtn
+    lai
+    cma
+    dac count           // -count
+top, lio i renderchars  // fetch next char bits word from buffer
+    iot i gpl
+    idx renderchars
+    lio i renderchars   // second word
+    ioh
+    iot i gpr
+    idx renderchars
+    ioh
+
+    isp count
+    jmp top
+    jmp i rtn
+
+rtn, 0
+count, 0
+    endloc
+#endif

@@ -9,8 +9,21 @@
 // PDP-1D but probably also on some C's?
 #define LAILIA
 
+// The following two are mutually exclusive because they use common bits in the dpy instruction.
+// Either can be simulated, shift via offsetting coordinates, sdb via dpy-i 400.
+// However, dpy-i 400 won't allow setting intensity i the command as sdb does.
+// If both are given, TYPE_33_SUPPORT will be used since DPY_SHIFT_ENABLED can be completely simulated
+// while sdb cannot.
+
 // Allow origin shift in dpy IOT
-#define DPY_SHIFT_ENABLED
+//#define DPY_SHIFT_ENABLED
+// Enable the sdb instruction for the Type 33 Symbol Generator
+#define TYPE_33_SUPPORT
+
+#if defined(DPY_SHIFT_ENABLED) && defined(TYPE_33_SUPPORT)
+#warning "DPY_SHIFT_ENABLED and TYPE_33_SUPPORT can't both be used at the same time, defaulting to TYPE_33_SUPPORT"
+#undef DPY_SHIFT_ENABLED
+#endif
 
 #define B0 0400000
 #define B1 0200000
@@ -1250,7 +1263,6 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
 			pdp->dby = 0;
 			pdp->dint = 0;
 		} else {
-			pdp->dcp = nac;
 			pdp->dbx |= AC>>8;
 			pdp->dby |= IO>>8;
 #ifdef DPY_SHIFT_ENABLED
@@ -1263,10 +1275,20 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
                             pdp->dbx ^= 01000;
                         }
 #endif
-			pdp->dint |= (MB>>6)&7;
-			pdp->dpy_defl_time = pdp->simtime + US(35);
-			pdp->dpy_time = pdp->dpy_defl_time + US(15);
-		}
+                        pdp->dpy_defl_time = pdp->simtime + US(35);
+                        pdp->dpy_time = pdp->dpy_defl_time + US(15);
+                        pdp->dcp = nac;
+                        pdp->dint |= (MB>>6)&7;
+
+#ifdef TYPE_33_SUPPORT
+                        if( ch & 020 )      // sdb
+                        {
+                            pdp->dpy_defl_time = NEVER;     // just set coords and intensity
+                            pdp->dpy_time = NEVER;
+                            nac = 0;        // completion not supported
+                        }
+#endif
+                }
 		break;
 
 	case 011:	// spacewar controllers
@@ -1286,7 +1308,7 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
 
 	case 033:	// cks
 		if(pulse) {
-			// TODO: LP
+			// TODO: LP wje - just use a dynamic IOT
 			IO |= pdp->rbs<<16;
 			IO |= !pdp->tyo<<15;
 			IO |= pdp->tbs<<14;

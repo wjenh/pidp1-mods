@@ -1,0 +1,251 @@
+Demo of Type 33 symbol generator
+
+#include <SYMGEN/type33iots.ah>
+
+#define YSTART 0d300
+#define YDELTA 0d50
+#define XSTART -0d450
+#define SIZE 2
+#define AUTOSPACE 4
+#define BRIGHTNESS 3
+
+#define clrnum dzm ones; dzm tens; dzm hundreds; dzm thousands
+
+100/
+strt,
+    law SIZE AUTOSPACE (BRIGHTNESS << 6)
+    lia
+    iot glf
+    clrnum
+loop,
+    law YSTART
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    iot sdb 200
+    lac [line1
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    iot sdb 200
+    lac [line2
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    iot sdb 200
+    lac [line3
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    iot sdb 200
+    lac [line4
+    jda drawtext
+
+    jsp updnum
+    jmp loop
+
+200/
+strt2,
+    law SIZE | AUTOSPACE | (BRIGHTNESS << 6)
+    lia
+    iot glf
+    clrnum
+loop2,
+    law 0d450
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    iot sdb 200
+    law 1
+    jda drawchar
+    law 2
+    jda drawchar
+    law 61          // a
+    jda drawchar
+    law 161         // A
+    jda drawchar
+    law 62          // B
+    jda drawchar
+    law 162         // b
+    jda drawchar
+    jsp updnum
+    jmp loop2
+
+300/
+strt3,
+    law SIZE | AUTOSPACE | (BRIGHTNESS << 6)
+    lia
+    iot glf
+    clrnum
+loop3,
+    law YSTART
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    iot sdb 200
+    lac [lineA
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    iot sdb 200
+    lac [linea
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    iot sdb 200
+    lac [lineNum
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    iot sdb 200
+    lac [lineSym
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    iot sdb 200
+    lac [lineMix
+    jda drawtext
+
+    jsp updnum
+    jmp loop3
+
+updnum,             // jsp call
+    local rtn
+    dap rtn
+    cli
+    law i 400
+    iot sdb 200
+
+    lac thousands
+    sza
+    jmp .+2
+    law 20
+    jda drawchar
+
+    lac hundreds
+    sza
+    jmp .+2
+    law 20
+    jda drawchar
+
+    lac tens
+    sza
+    jmp .+2
+    law 20
+    jda drawchar
+
+    lac ones
+    sza
+    jmp .+2
+    law 20
+    jda drawchar
+
+    jsp updatedigits
+rtn, jmp .
+    endloc
+
+updatedigits,        // increment ones, ripple overflow up, jsp call
+    local rtn
+    dap rtn
+
+    idx ones
+    sas [0d10
+    jmp rtn
+
+    dzm ones
+    idx tens
+    sas [0d10
+    jmp rtn
+
+    dzm tens
+    idx hundreds
+    sas [0d10
+    jmp rtn
+
+    dzm hundreds
+    idx thousands
+    sad [0d10
+    dzm thousands
+
+rtn, jmp .
+    endloc
+
+xoffset, XSTART << 10
+yoffset, 0
+
+ones, 0
+tens, 0
+hundreds, 0
+thousands, 0
+
+line1,
+    text 'The Type 30 Digital Display'
+    013
+line2,
+    text 'and the Type 33 Symbol Generator'
+    013
+line3,
+    text 'provide fast man-machine'
+    013
+line4,
+    text 'communication'
+    013
+
+lineA,
+    text 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    013
+linea,
+    text 'abcdefghijklmnopqrstuvwxyz'
+    013
+lineNum,
+    text '0123456789'
+    013
+lineSym,
+    text x?.,@-+*/()[]<>'"=~_`|#!\x
+    013
+lineMix,
+    text 'aAbBcCDdEe'
+    013
+
+// The following brings in type33drawchar also
+#include <SYMGEN/type33drawtext.ah>
+
+start strt

@@ -1,43 +1,25 @@
-#ifndef TYPE33DRAW
-#define TYPE33DRAW
+#ifndef TYPE33DRAWTEXT
+#define TYPE33DRAWTEXT
+#include <SYMGEN/type33drawchar.ah>
 
-// Draw one character at the current display location, 
-// AC contains the flex char.
-// If bit 11, 0100, the char is shifted.
-// Called via jda.
-drawone, 0
-    local rtn
-    dac rtn
-    lac drawone
-    sal 1s      // the table has 2 entries per character
-    add [t33chrs
-    dac drawone
-    lio i drawone
-    iot i gpl
-    idx drawone
-    lio i drawone
-    iot i gpr
-    jmp i rtn
-rtn, 0
-    endloc
-    
 // Draw a line of characters starting at the current display location.
 // The characters consist of a list of words produced by the text pseudo-op, flex code.
 // AC contains the address of the list produced by text.
 // A word following the last entry must be 013, stop.
 // Auto-space must be enabled.
+// Uses AC and IO registers.
 // Called via jda.
-drawline, 0
-    local rtn, shift, cnt, chr, loop, toupper, tolower
+drawtext, 0
+    local rtn, shift, cnt, chr, top, loop, nxt, toupper, tolower
     dac rtn
     dzm shift
-top, lac i drawline     // fetch next word from text
+top, lac i drawtext     // fetch next word from text
     sad [13
     jmp i rtn           // end marker
     dac chr             // we have to dig out the 3 chars
     lac [-3
     dac cnt
-    idx drawline        // set up for next word
+    idx drawtext        // set up for next word
 loop, lac chr
     cli
     rcl 6s              // lop off the top 6 bits, into IO
@@ -48,7 +30,7 @@ loop, lac chr
     sad [74             // upper case shift
     jmp toupper
     ior shift           // was it shifted
-    jda drawone         // finally
+    jda drawchar        // finally
 nxt,isp cnt
     jmp loop
     jmp top

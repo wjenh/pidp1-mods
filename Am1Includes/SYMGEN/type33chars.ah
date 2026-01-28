@@ -1,5 +1,6 @@
-#ifndef CHARBITS
-#define CHARBITS
+#ifndef TYPE33CHARS
+#define TYPE33CHARS
+
 // Character definitions for the Type 33 Symbol Generator
 // There are two words per character, ordered by flexo/concise code
 t33chrs,

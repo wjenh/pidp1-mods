@@ -1,0 +1,18 @@
+#ifndef TYPE33DIGITS
+#define TYPE33DIGITS
+
+// Digits 0-9 definitions for the Type 33 Symbol Generator
+// There are two words per character, ordered by flexo/concise code
+t33digits,
+372030; 060276 //0, 20
+000056; 740000 //1, 01
+612430; 462306 //2, 02
+212030; 462266 //3, 03
+074200; 437610 //4, 04
+276230; 462261 //5, 05
+372230; 462262 //6, 06
+007420; 441203 //7, 07
+332230; 462266 //8, 10
+032230; 452236 //9, 11
+
+#endif

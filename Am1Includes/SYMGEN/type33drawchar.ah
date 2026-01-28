@@ -1,0 +1,28 @@
+#ifndef TYPE33DRAWCHAR
+#define TYPE33DRAWCHAR
+#include <SYMGEN/type33iots.ah>
+#include <SYMGEN/type33chars.ah>
+
+// Draw one character at the current display location, 
+// AC contains the flex char.
+// If bit 11, 0100, the char is shifted.
+// Both AC and IO registers are used.
+// Called via jda.
+drawchar, 0
+    local rtn
+    dac rtn
+    lac drawchar
+    sal 1s      // the table has 2 entries per character
+    add [t33chrs
+    dac drawchar
+    lio i drawchar
+    iot i gpl
+    ioh
+    idx drawchar
+    lio i drawchar
+    iot i gpr
+    ioh
+    jmp i rtn
+rtn, 0
+    endloc
+#endif

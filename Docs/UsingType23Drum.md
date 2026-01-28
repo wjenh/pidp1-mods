@@ -28,7 +28,7 @@ All contol bits are passed in the IO register.
 
 -IOT 61, dia, 72xx61, drum initial address
 
--IOT 2061, dia, 722061, drum break address
+-IOT 2061, dba, 722061, drum break address
 
 One of these is executed first.
 

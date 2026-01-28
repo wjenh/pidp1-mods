@@ -62,7 +62,7 @@ struct PDP1
 	int ihs;
 	int ios;
 	int ioh;
-    int hsc;        // wje - add hsc light control, drum uses it
+        int hsc;        // wje - add hsc light control, drum uses it
 
 	// extensions
 	int lai, lia;
@@ -149,8 +149,8 @@ struct PDP1
 	int spcwar1;
 	int spcwar2;
     
-    // extra flags for cks
-    int cksflags;
+        // wje - extra flags for cks, settable in IOTs
+        int cksflags;
 };
 
 #define IR pdp->ir

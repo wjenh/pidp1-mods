@@ -20,7 +20,9 @@
 8s  value 0377
 9s  value 0777
 
+# The IOT wait-for-completion, need-completion flags
 i   value 010000
+C   value 004000
 
 and opaddr 0020000
 ior opaddr 0040000
@@ -96,7 +98,7 @@ szi oporable 0654060
 
 # various IOTs
 iot opcode 0720000
-ioh opcode 0720000
+ioh opcode 0730000
 tyi opcode 0720004
 rrb opcode 0720030
 cks opcode 0720033
@@ -119,3 +121,10 @@ dsc opcode 0720050
 asc opcode 0720051
 isb opcode 0720052
 cac opcode 0720053
+
+# Special op used with the Type 33 Symbol Generator
+# Same as dpy-i if Type 33 support not enabled
+sdb opcode 0722007
+
+# Equivalent of dpy-i C
+dpyc opcode 0724007

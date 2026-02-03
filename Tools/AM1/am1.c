@@ -62,6 +62,7 @@
  * 20-Jan-2026 - fix bug in forced locals, rename mod to %%
  * 22-Jan-2026 - add ioh, same as iot
  * 23-Jan-2026 - fix bug in constants stmt, would clear pc if no constants to emit, fix text stmt
+ * 03-Feb-2026 - add C, dpyc, sdb
  *
 */
 #include <unistd.h>

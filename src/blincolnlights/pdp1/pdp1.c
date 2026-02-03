@@ -1,10 +1,14 @@
 #include "common.h"
 #include "pdp1.h"
 #include <unistd.h>
+#include <stdint.h>
 #include <fcntl.h>
 
 #define NOTIOTH
 #include "dynamicIots.h"
+
+//#define DOPIDPLOGGING
+#include "pidpLogger.h"
 
 // PDP-1D but probably also on some C's?
 #define LAILIA
@@ -23,6 +27,27 @@
 #if defined(DPY_SHIFT_ENABLED) && defined(TYPE_33_SUPPORT)
 #warning "DPY_SHIFT_ENABLED and TYPE_33_SUPPORT can't both be used at the same time, defaulting to TYPE_33_SUPPORT"
 #undef DPY_SHIFT_ENABLED
+#endif
+
+// Enable p7sim pseudo-lightpen
+#define P7LIGHTPEN
+
+#ifdef P7LIGHTPEN
+#include <poll.h>
+
+// The light pen came with 6 different aperture masks ranging from 0.05 to 0.30 inches.
+// The setting of penAperture, see readLightpen() below, emulates these by defining the distance from the
+// last dpy coordinates such that if the pen coordinates are within +/- penAperture pixels it is considered a hit.
+// THe nonstandard dpy 3000 extension allows changing the aperture.
+// IO contains the aperture size in pixels, 0 being an exact single-pixel match.
+// In other words, it is the number of pixels away from the dpy pixel that still counts as a hit.
+// Each pixel corresponds to 1/1024th of the display, or 0.010" on the original Type 30 display.
+// APERTURE sets the default value.
+// A setting of 3 corresponds to an aperture of 0.060".
+// The emulator doesn't seem to actually implement a second display for this.
+//
+#define APERTURE  3
+static int penAperture = APERTURE;
 #endif
 
 #define B0 0400000
@@ -56,6 +81,12 @@
 
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
+
+#ifdef P7LIGHTPEN
+static int lightpenEnabled;
+static void resetPenBuffer(PDP1 *pdp1P);
+static int readLightPen(PDP1 *pdp1P);
+#endif
 
 // TP length	ns
 //	0 	200	200
@@ -179,6 +210,11 @@ pwrclr(PDP1 *pdp)
 
 	pdp->dpy_defl_time = NEVER;
 	pdp->dpy_time = NEVER;
+
+#ifdef P7LIGHTPEN
+        resetPenBuffer(pdp);
+        lightpenEnabled = 0;
+#endif
 }
 
 static void
@@ -1262,31 +1298,45 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
 			pdp->dbx = 0;
 			pdp->dby = 0;
 			pdp->dint = 0;
-		} else {
-			pdp->dbx |= AC>>8;
-			pdp->dby |= IO>>8;
-#ifdef DPY_SHIFT_ENABLED
-                        if( ch & 010 )      // origin at bottom
-                        {
-                            pdp->dby ^= 01000;
-                        }
-                        if( ch & 020 )      // origin at left
-                        {
-                            pdp->dbx ^= 01000;
-                        }
+#ifdef P7LIGHTPEN
+                        pdp->cksflags &= ~0400000;  // Was set by the last dpy completion pulse if there was a hit
 #endif
-                        pdp->dpy_defl_time = pdp->simtime + US(35);
-                        pdp->dpy_time = pdp->dpy_defl_time + US(15);
-                        pdp->dcp = nac;
-                        pdp->dint |= (MB>>6)&7;
+		}
+#ifdef P7LIGHTPEN
+                else if( (ch & 030) == 030 )     // set lightpen aperture, enable or disable light pen
+                {
+                    pdp->dpy_defl_time = NEVER;     // just set aperture
+                    pdp->dpy_time = NEVER;
+                    penAperture = IO & 01777;       // 0-1023
+                    lightpenEnabled = IO & 02000;
+                }
+#endif
+                else
+                {
+                    pdp->dbx |= AC>>8;
+                    pdp->dby |= IO>>8;
+
+#ifdef DPY_SHIFT_ENABLED
+                    if( ch & 010 )      // origin at bottom
+                    {
+                        pdp->dby ^= 01000;
+                    }
+                    if( ch & 020 )      // origin at left
+                    {
+                        pdp->dbx ^= 01000;
+                    }
+#endif
+                    pdp->dpy_defl_time = pdp->simtime + US(35);
+                    pdp->dpy_time = pdp->dpy_defl_time + US(15);
+                    pdp->dcp = nac;
+                    pdp->dint |= (MB>>6)&7;
 
 #ifdef TYPE_33_SUPPORT
-                        if( ch & 020 )      // sdb
-                        {
-                            pdp->dpy_defl_time = NEVER;     // just set coords and intensity
-                            pdp->dpy_time = NEVER;
-                            nac = 0;        // completion not supported
-                        }
+                    if( (ch & 030) == 020 )      // sdb
+                    {
+                        pdp->dpy_defl_time = NEVER;     // just set coords and intensity
+                        pdp->dpy_time = NEVER;
+                    }
 #endif
                 }
 		break;
@@ -1308,7 +1358,7 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
 
 	case 033:	// cks
 		if(pulse) {
-			// TODO: LP wje - just use a dynamic IOT
+			// TODO: LP (wje - just use a dynamic IOT)
 			IO |= pdp->rbs<<16;
 			IO |= !pdp->tyo<<15;
 			IO |= pdp->tbs<<14;
@@ -1410,13 +1460,138 @@ flushdpy(DispCon *d)
 	}
 }
 
+#ifdef P7LIGHTPEN
+int
+cvtDpyToSigned(int dpy)             // convert a 10 bit dpy coordinate to a 2's complement signed int
+{
+    // For coordinates, the 1's complement -0 value, 01777, is legitimate, map negative numbers
+    // to the range -1 to -512.
+    if( dpy & 01000 )               // high bit set means neg 1's cmpl number
+    {
+        return( -(~dpy & 0777) - 1 );
+    }
+    else
+    {
+        return(dpy);
+    }
+}
+
+
+// See if there is a light pen hit.
+// If so, return 1.
+// If no hit, return 0.
+// Because of the completely asynchronous mouse updates from the display, it's impossible
+// to directly tie a coordinate to the dpy instruction execution time.
+// An attempt is made to correlate over a time period of mouse events, but the event buffer
+// is periodically cleared, some events will be missed and the correlation could be wrong.
+
+#define PENBUFSIZE 64
+#define RELOADINTERVAL  1000000     // nsecs
+#include <stdbool.h>
+
+static uint64_t lastTime;
+static int penBufCount;                // number of elements currently in buffer
+static uint32_t penBuffer[PENBUFSIZE];
+static bool penBufferUsed[PENBUFSIZE];
+static struct pollfd penPollData;
+
+// Reset the pen buffer, refill if data available
+void
+resetPenBuffer(PDP1 *pdp1P)
+{
+DispCon *dpyP;
+
+    penBufCount = 0;
+    dpyP = &(pdp1P->dpy[0]);
+    if( dpyP->fd >= 0 )
+    {
+        if( poll(&penPollData, 1, 0) > 0 )
+        {
+            if( !(penPollData.revents & POLLIN) )
+            {
+                return;                              // should normally not be the case, but be sure
+            }
+
+            penBufCount = read(dpyP->fd, penBuffer, sizeof(penBuffer)) / sizeof(int);
+            memset(penBufferUsed, 0, penBufCount * sizeof(bool));
+            lastTime = gettime();
+        }
+    }
+}
+
+int
+readLightPen(PDP1 *pdp1P)
+{
+int i, sawOne, penx, peny, dpyx, dpyy;
+uint32_t rslt;
+DispCon *dpyP;
+
+    dpyP = &(pdp1P->dpy[0]);
+    if( dpyP->fd < 0 )                              // No display is connected
+    {
+        penPollData.fd = -1;
+        return(0);
+    }
+
+    if( penPollData.fd < 0 )                        // First time since open, set up the poll data
+    {
+        penPollData.fd = dpyP->fd;
+        penPollData.events = POLLIN;
+    }
+
+    if( ((lastTime + RELOADINTERVAL) < gettime()) || (penBufCount <= 0) )
+    {
+        resetPenBuffer(pdp1P);
+    }
+
+    if( penBufCount <= 0 )
+    {
+        return(0);                              // nothing to do
+    }
+
+    // Take the first match found
+    for( i = 0; i < penBufCount; ++i )
+    {
+        if( !penBufferUsed[i] )
+        {
+            rslt = penBuffer[i];
+
+            // sanity check
+            if( (rslt & 0xFF000000) == 0xFF000000 )         // light pen
+            {
+                dpyx = cvtDpyToSigned(pdp1P->dbx);
+                dpyy = cvtDpyToSigned(pdp1P->dby);
+                penx = cvtDpyToSigned((rslt >> 10) & 0x3FF);
+                peny = cvtDpyToSigned(rslt & 0x3FF);
+                pidpLog("Looking for dbx %d, dby %d match, bufcnt %d\n", dpyx, dpyy, penBufCount);
+                pidpLog("Got lpx %0d, lpy %d\n", penx, peny);
+
+                // Both coordinate pairs have been converted from 10 bit 1's complement to
+                // full signed 2's complement.
+                if( (penx >= (dpyx - penAperture)) &&
+                    (penx <= (dpyx + penAperture)) &&
+                    (peny >= (dpyy - penAperture)) &&
+                    (peny <= (dpyy + penAperture)) )
+                {
+                    pidpLog("Got hit for dbx %0d, dby %d\n", dpyx, dpyy);
+                    penBufferUsed[i] = true;
+                    return(1);
+                }
+            }
+        }
+    }
+
+    return(0);
+}
+#endif
+
 void
 dpycmd(PDP1 *pdp, int i, u32 cmd)
 {
-	DispCon *d = &pdp->dpy[i];
-	d->cmdbuf[d->ncmds++] = cmd;
-	if(d->ncmds == nelem(d->cmdbuf))
-		flushdpy(d);
+    DispCon *d = &pdp->dpy[i];
+    d->cmdbuf[d->ncmds++] = cmd;
+    if(d->ncmds == nelem(d->cmdbuf))
+        flushdpy(d);
 }
 
 void
@@ -1595,7 +1770,18 @@ if(pdp->pf & 040) printf("	char missed <%o>\n", pdp->tb);
 	}
 	if(pdp->dpy_time < pdp->simtime) {
 		pdp->dpy_time = NEVER;
-		if(pdp->dcp) pdp->ios = 1;
+		if(pdp->dcp)
+                {
+#ifdef P7LIGHTPEN
+                    // If there was a light pen hit, cks bit 0 is set, and pf3 is set.
+                    if( lightpenEnabled && readLightPen(pdp) )
+                    {
+                        pdp->cksflags |= 0400000;               // cleared by next dpy
+                        pdp->pf |= decflg(3);
+                    }
+#endif
+                    pdp->ios = 1;
+                }
 	}
 }
 
@@ -1735,7 +1921,10 @@ handlecmd(PDP1 *pdp, char *line)
 			if(pdp->dpy[0].fd < 0)
 				strcpy(resp, "can't open display");
 			else
-				nodelay(pdp->dpy[0].fd);
+                            nodelay(pdp->dpy[0].fd);
+#ifdef P7LIGHTPEN
+                        resetPenBuffer(pdp);
+#endif
 		}
 		// help
 		else if(strcmp(args[0], "?") == 0 ||
@@ -1763,55 +1952,65 @@ handlecmd(PDP1 *pdp, char *line)
 				pdp->muldiv_sw = !pdp->muldiv_sw;
 			sprintf(resp, "mul-div now %s", pdp->muldiv_sw ? "on" : "off");
 		}
-		else if(strcmp(args[0], "audio") == 0) {
-            resp[0] = '\0';
-			if(args[1]) {
-				if(strcmp(args[1], "on") == 0 ||
-				   strcmp(args[1], "1") == 0)
-					doaudio = 1;
-				else if(strcmp(args[1], "off") == 0 ||
-				   strcmp(args[1], "0") == 0)
+		else if(strcmp(args[0], "audio") == 0)
                 {
-                    doaudio = 0;
-                }
-                else if( strcmp(args[1], "query") == 0 )
-                {
-                    sprintf(resp,"Audio %s, current alpha %f, current gain %f, current tuning %f\n",
-                        doaudio?"on":"off", getFilterAlpha(), getMixerGain(), getAudioTuning());
-                }
-				else if(strcmp(args[1], "alpha") == 0 )
-                {
-                    setFilterAlpha(atof(args[2]));
-                }
-				else if(strcmp(args[1], "gain") == 0 )
-                {
-                    setMixerGain(atof(args[2]));
-                }
-				else if(strcmp(args[1], "tuning") == 0 )
-                {
-                    setAudioTuning(atof(args[2]));
-                }
-			} else {
-                    doaudio = !doaudio;
-                }
+                    resp[0] = '\0';
+                    if(args[1])
+                    {
+                        if( strcmp(args[1], "on") == 0 || strcmp(args[1], "1") == 0 )
+                        {
+                            doaudio = 1;
+                        }
+                        else if( strcmp(args[1], "off") == 0 || strcmp(args[1], "0") == 0 )
+                        {
+                            doaudio = 0;
+                        }
+                        else if( strcmp(args[1], "query") == 0 )
+                        {
+                            sprintf(resp,"Audio %s, current alpha %f, current gain %f, current tuning %f\n",
+                                doaudio?"on":"off", getFilterAlpha(), getMixerGain(), getAudioTuning());
+                        }
+                        else if(strcmp(args[1], "alpha") == 0 )
+                        {
+                            setFilterAlpha(atof(args[2]));
+                        }
+                        else if(strcmp(args[1], "gain") == 0 )
+                        {
+                            setMixerGain(atof(args[2]));
+                        }
+                        else if(strcmp(args[1], "tuning") == 0 )
+                        {
+                            setAudioTuning(atof(args[2]));
+                        }
+                    }
+                    else
+                    {
+                        doaudio = !doaudio;
+                    }
 
-            if( doaudio )
-            {
-                if( isAudioInitialized() )
-                    continueaudio();
-                else
-                {
-                    initaudio();
-                    startaudio();
-                }
-            }
-            else
-                stopaudio();
+                    if( doaudio )
+                    {
+                        if( isAudioInitialized() )
+                        {
+                            continueaudio();
+                        }
+                        else
+                        {
+                            initaudio();
+                            startaudio();
+                        }
+                    }
+                    else
+                    {
+                        stopaudio();
+                    }
 
-            if( !resp[0] )
-                sprintf(resp, "audio now %s", doaudio ? "on" : "off");
+                    if( !resp[0] )
+                    {
+                        sprintf(resp, "audio now %s", doaudio ? "on" : "off");
+                    }
 		}
-	}
+        }
 
 	free(args[0]);
 	free(args);

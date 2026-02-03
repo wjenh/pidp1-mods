@@ -1,6 +1,7 @@
 #include "common.h"
 #include "pdp1.h"
 #include "args.h"
+#include "panel_pidp1.h"    // wje - add, only a typedef was here, not the thing being typedefed!
 
 #define NOTIOTH
 #include "dynamicIots.h"
@@ -10,11 +11,15 @@
 #include <unistd.h>
 #include <pthread.h>
 
+#ifdef USE__PANEL_SEMAPHORE
+#include <semaphore.h>
+#endif
+
 #include <sys/socket.h>
 
 #include <signal.h>
 
-typedef struct Panel Panel;
+//typedef struct Panel Panel;   // wje - see above
 void updateswitches(PDP1 *pdp, Panel *panel);
 void updatelights(PDP1 *pdp, Panel *panel);
 void lightsoff(Panel *panel);
@@ -96,12 +101,12 @@ emu(PDP1 *pdp, Panel *panel)
             } else {
                dynamicIotProcessorStop();           // wje - let dyn IOTs know we transitioned to stop
                updatelights(pdp, panel);
-			}
-			throttle(pdp);
-			handleio(pdp);
-			pdp->simtime += 5000;
+            }
+            throttle(pdp);
+            handleio(pdp);
+            pdp->simtime += 5000;
         } else {
-            stopaudio();
+                stopaudio();
 			pwrclr(pdp);
 
 			/* magic key combo used for shutdown */
@@ -272,11 +277,17 @@ exitcleanup(void)
 {
 	dumpmem("coremem", memp, memsz);
 	lightsoff(panel);
+#ifdef USE__PANEL_SEMAPHORE
+        sem_destroy(&(panel->semaphore));    // wje - close semaphore
+#endif
 }
 
 void
 sighandler(int sig)
 {
+#ifdef USE__PANEL_SEMAPHORE
+        sem_destroy(&(panel->semaphore));    // wje - close semaphore
+#endif
 	exit(0);
 }
 
@@ -309,6 +320,9 @@ main(int argc, char *argv[])
 		return 1;
 	}
 
+#ifdef USE__PANEL_SEMAPHORE
+        sem_init(&(panel->semaphore), 1, 1);    // wje - initialize the semaphre used between us and the panel driver
+#endif
 	memp = pdp->core;
 	memsz = MAXMEM;
 

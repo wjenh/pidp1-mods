@@ -109,8 +109,9 @@ uint64_t utmp;
             enablePolling(DOTDELAY);
             iotLog("Gpl, io %06o dbx %04o dby %04o sr %06o\n", pdp1P->io, pdp1P->dbx, pdp1P->dby, shiftregister);
         }
-        else if( pdp1P->mb & GCFBIT )       // clears light pen flag, which we don't have, does nothing
+        else if( pdp1P->mb & GCFBIT )       // clears light pen flag, cks bit 0400000
         {
+            pdp1P->cksflags &= ~0400000;
             noWait = true;
         }
         else                                // gpr

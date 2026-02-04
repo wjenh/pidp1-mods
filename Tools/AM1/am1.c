@@ -63,6 +63,7 @@
  * 22-Jan-2026 - add ioh, same as iot
  * 23-Jan-2026 - fix bug in constants stmt, would clear pc if no constants to emit, fix text stmt
  * 03-Feb-2026 - add C, dpyc, sdb
+ * 04-Feb-2026 - predefine AM1 as an ifdef marker for include files, not defined if macro is being produced
  *
 */
 #include <unistd.h>
@@ -297,9 +298,9 @@ SymNodeP symP;
         *cP = '\0';
     }
 
-    if( doMacro )
+    if( !doMacro )
     {
-        add_cpp( 'D', "MACRO1" );                   // used by some includes
+        add_cpp( 'D', "AM1" );                   // used by some includes
     }
 
     if(doCpp)

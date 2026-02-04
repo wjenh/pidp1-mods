@@ -170,8 +170,8 @@ buf4,
 table 100
 buf4len, 0
 
-#include <SYMGEN/type33unpack.ah>
-#include <SYMGEN/type33drawdigits.ah>
+#include <SYMGEN/type33unpack.ac>
+#include <SYMGEN/type33drawdigits.ac>
 
 constants
 

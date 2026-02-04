@@ -1,9 +1,12 @@
-# Pidp-1 mods updates
+## Pidp-1 mods updates
 
-This contains files modified from https://github.com/obsolescence/pidp1 to add new functionality.
-Note that this may or may not be tracked in the original repo, so apply with care.
+This contains files modified from https://github.com/obsolescence/pidp1 to add new functionality and fix some issues.
+Note that this no longer tracks the original repo since it seems to have been abandoned by the developers.
+The link was removed on 3-Feb-26 to make this a fully-independent repository.
 
-# Installing and building
+It also adds various tools such as the am1 assembler and include files for i, drum utilities, documentation, etc.
+
+## Installing and building
 
 It contains a full build tree.
 By default, it will reside in /opt/pidp1-mods but this can be changed.
@@ -15,9 +18,9 @@ The default is /opt/pidp1-mods.
 
 Everything after this proceeds as for the original install.
 
-# **NOTE**
+## **NOTE**
 
-Again,the  one checkout difference is that the original had you check out in /opt.
+Again, the one checkout difference is that the original had you check out in /opt.
 This one you check out in an empty /opt/pidp1-mods directory or other directory of your choice.
 Of course, you're probably reading this after checking out in your /opt directory.
 Sorry, it's just the way I set up the repo initially, made sense at the time.

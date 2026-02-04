@@ -20,19 +20,19 @@ SELECT AND RUN A DRUMLOADER PROGRAM VIA REMOTE CONNECTION ASCII VERSION
 #include <memory.ah>
 
 // Which bank we load the control program into
-#define bnkno 1
+#define BNKNO 1
 // A scratch buffer at 3000 is used for reading a line.
 #define linbuf 3000
 
-bank bnkno
+bank BNKNO
 
 // Put our included code bits here
 1000/
-#include <DCS/getach.ah>
-#include <DCS/getaln.ah>
-#include <DCS/textascii.ah>
-#include <getnum.ah>
-#include <memcpy.ah>
+#include <DCS/getach.ac>
+#include <DCS/getaln.ac>
+#include <DCS/textascii.ac>
+#include <getnum.ac>
+#include <memcpy.ac>
 
 #define say(a) law a; jda txtasc
 #define newline law '\n'; lia ; iot tcb
@@ -96,12 +96,12 @@ try, say(hl2)
      lai
      and [377
      sad ['h']       // yes, it's ascii on a PDP-1
-     jmp stop
+     jmp done
      sad ['l'
      jmp list
      say(badnum)
      jmp try        // not a recognized command or number, try again
-stop, lio [sbcrst]    // completely shut down DCS2
+done, lio [sbcrst]    // completely shut down DCS2
      iot scb
      hlt
      jmp resume     // ok, they really want to continue
@@ -121,7 +121,7 @@ lst2, lac trk
      lia
      iot dwc
      law linbuf     // into our buffer
-     ior [0:bnkno]  // because law only does 12 bits
+     ior [0:BNKNO]  // because law only does 12 bits
      lia
      iot dcl
      lac linbuf+25  // 707070 is a marker that the track has an image
@@ -170,7 +170,7 @@ trkok,
      law 24
      jda memcpy     // eem must be off for memcpy
          7751
-         linbuf:bnkno
+         linbuf:BNKNO
      say(linbuf)
      say(bye2)
 
@@ -178,13 +178,13 @@ trkok,
 // remember that is is a full address copy
      law 4
      jda memcpy
-         0:bnkno
+         0:BNKNO
          0
 
 // copy our high mem code
      law 20
      jda memcpy
-         isr:bnkno
+         isr:BNKNO
          isr
 
 // start 2 second countdown
@@ -258,7 +258,6 @@ prtrtn, jmp .
 // listen on port 2022
 ctl, dcfcrnl dcfecho dcfsrv dcfie dcfioe dcfioc
      0d2022
-     octal
 
 // put our contants out here so they don't mess up high memory
 constants
@@ -278,7 +277,7 @@ isr, law rtn
 // The above ends up here, rtn, 7754. The jmp i 1 dismissed the interrupt.
 // Enable extened memory and jump back to our control code.
 rtn, eem
-     farjmp(resume:bnkno)
+     farjmp(resume:BNKNO)
 
 // The controller jumps here, runprog to start the program.
 // Be sure to not overwrite 7773-7777!

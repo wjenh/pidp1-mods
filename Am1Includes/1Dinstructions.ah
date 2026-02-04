@@ -1,10 +1,9 @@
 #ifndef DINSTRUCTS_H
 #define DINSTRUCTS_H
-#ifdef MACRO1
+#ifndef AM1
 // The few implemented PDP1-D instructions.
-// Only needed if macro is being generated, AM1 bin knows them already.
-// These defs will override the builtin ones.
-// Bit positions
+// Only needed if macro is being generated, am1 bin knows them already.
+// Bit positions:
 #define liab 20
 #define laib 40
 #define lswb 60

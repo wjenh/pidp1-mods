@@ -12,7 +12,7 @@
 
 #include <1Dinstructions.ah>
 #include <DCS/dcs2defs.ah>
-#include <DCS/getch.ah>
+#include <DCS/getch.ac>
 
 getlin,  0
 local

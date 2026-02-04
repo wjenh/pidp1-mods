@@ -1,7 +1,7 @@
 #ifndef TYPE33DRAWCHAR
 #define TYPE33DRAWCHAR
-#include <SYMGEN/type33iots.ah>
-#include <SYMGEN/type33chars.ah>
+#include <SYMGEN/type33iots.ac>
+#include <SYMGEN/type33chars.ac>
 
 // Draw one character at the current display location, 
 // AC contains the flex char.

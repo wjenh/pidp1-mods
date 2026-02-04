@@ -12,7 +12,7 @@
 
 #include <1Dinstructions.ah>
 #include <DCS/dcs2defs.ah>
-#include <DCS/getach.ah>
+#include <DCS/getach.ac>
 
 getaln,  0
 local

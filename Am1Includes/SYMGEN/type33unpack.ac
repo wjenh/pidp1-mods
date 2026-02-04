@@ -1,6 +1,5 @@
 #ifndef TYPE33UNPACK
 #define TYPE33UNPACK
-#include <SYMGEN/type33iots.ah>
 #include <SYMGEN/type33chars.ac>
 
 // Unpack characters consisting of a list of words produced by the text pseudo-op, flex code,
@@ -69,32 +68,5 @@ buffer, 0
 length, 0
 ptr, 0
 rtn, 0
-    endloc
-
-// Draw a buffer of bit patterns, 2 words per 5x7 character, that are in gpl, gpr format.
-// The buffer starting address is in AC, the number of word pairs in the buffer is in IO.
-// Uses IO and AC.
-// Called via jda.
-renderchars, 0
-    local rtn, top, count
-    dac rtn
-    lai
-    cma
-    dac count           // -count
-top, lio i renderchars  // fetch next char bits word from buffer
-    iot C gpl
-    idx renderchars
-    lio i renderchars   // second word
-    ioh
-    iot C gpr
-    idx renderchars
-    ioh
-
-    isp count
-    jmp top
-    jmp i rtn
-
-rtn, 0
-count, 0
     endloc
 #endif

@@ -1,0 +1,44 @@
+#ifndef TYPE33DRAWASCTEXT
+#define TYPE33DRAWASCTEXT
+#include <SYMGEN/type33drawascchar.ac>
+
+// Draw a line of characters starting at the current display location.
+// The characters consist of a list of words produced by the ascii pseudo-op, ascii code.
+// AC contains the address of the list produced by ascii.
+// Auto-space must be enabled.
+// Uses AC and IO registers.
+// Called via jda.
+drawasctext, 0
+    local rtn, cnt, chr, top, loop, nxt, wait, bye
+    dap rtn
+    lac [nop
+    dac wait
+top, lac i drawasctext     // fetch next word from list
+    dac chr                // we have to dig out the 2 chars
+    lac [-2
+    dac cnt
+    idx drawasctext        // set up for next word
+loop,
+    lac chr
+    cli
+    rcl 9s              // lop off the top 9 bits, into IO
+    dac chr
+    lai                 // original high 9 bits now in AC low 9 bits
+    sza i
+    jmp bye             // 0 byte, done
+    xct wait
+    jda drawasccharn
+    lac [ioh
+    dac wait
+nxt,isp cnt
+    jmp loop
+    jmp top
+
+bye, xct wait
+rtn, jmp .
+
+cnt, 0
+chr, 0
+wait, 0
+    endloc
+#endif

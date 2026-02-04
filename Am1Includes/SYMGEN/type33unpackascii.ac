@@ -1,0 +1,60 @@
+#ifndef TYPE33UNPACKASCII
+#define TYPE33UNPACKASCII
+#include <SYMGEN/type33ascchars.ac>
+
+// Unpack characters consisting of a list of words produced by the ascii pseudo-op, ascii code,
+// into a buffer of two words per character consisting of the 2 words to be given to gpl and gpr.
+// This results in the fastest possible rendering speed.
+// AC contains the address of the list produced by text.
+// A word following the last entry must be 013, stop.
+// IO contains the address of the buffer to place the results in.
+// Uses AC and IO registers.
+// Returns the word-pair count in IO.
+// Caller must be sure the buffer is large enough.
+// Called via jda.
+unpackasc, 0
+    local rtn, top, cnt, chr, loop, buffer, length, ptr, nxt, bye
+    dac rtn
+    dio buffer
+    dzm length
+top, lac i unpackasc   // fetch next packed chars word from ascii buffer
+    dac chr             // we have to process the 2 characters
+    lac [-2
+    dac cnt
+    idx unpackasc        // set up for next word
+
+loop, lac chr
+    cli
+    rcl 9s              // lop off the top 9 bits, into IO
+    dac chr
+    lai                 // original high 9 bits now in AC low 9 bits
+    sza i
+    jmp bye             // null, done
+    sub [0x20
+    sal 1s              // 2 words per
+    add [t33ascchrs
+    dac ptr
+    lac i ptr
+    dac i buffer        // first word
+    idx buffer
+    idx ptr
+    lac i ptr
+    dac i buffer        // second word
+    idx buffer
+    idx length          // one more word pair
+
+nxt,isp cnt
+    jmp loop
+    jmp top
+
+bye, lio length
+    jmp i rtn
+
+cnt, 0
+chr, 0
+buffer, 0
+length, 0
+ptr, 0
+rtn, 0
+    endloc
+#endif

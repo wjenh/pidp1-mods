@@ -973,7 +973,6 @@ int x, y;
 int pdpx, pdpy;
 uint32 cmd;
 
-    cmd = 0xFF << 24;
     // First, unapply scaling
     pdpx = (int)((float)penx / xRescale);
     pdpy = (int)((float)peny / xRescale);
@@ -992,6 +991,7 @@ uint32 cmd;
         --pdpy;            // 1's cmpl conversion
     }
 
+    cmd = 0xFF << 24;
     cmd |= (pdpx & 0x3FF) << 10;
     cmd |= (pdpy & 0x3FF);
     write(netfd, &cmd, 4);

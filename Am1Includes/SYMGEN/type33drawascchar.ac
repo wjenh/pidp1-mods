@@ -1,40 +1,39 @@
-#ifndef TYPE33DRAWCHAR
-#define TYPE33DRAWCHAR
+#ifndef TYPE33DRAWASCCHAR
+#define TYPE33DRAASCWCHAR
 #include <SYMGEN/type33iots.ah>
-#include <SYMGEN/type33chars.ac>
+#include <SYMGEN/type33ascchars.ac>
 
-// Draw one character at the current display location, 
-// AC contains the flex char.
-// If bit 11, 0100, the char is shifted.
+// Draw one ascii character at the current display location, 
+// AC contains the ascii char.
 // Both AC and IO registers are used.
 // Does NOT wait until drawing is complete, caller must issue an ioh.
 // Called via jda.
-drawcharn, 0
+drawasccharn, 0
     local rtn
     dap rtn
-    lac drawcharn
+    lac drawasccharn
+    sub [0x20   // no nonprinting chars
     sal 1s      // the table has 2 entries per character
-    add [t33chrs
-    dac drawcharn
-    lio i drawcharn
+    add [t33ascchrs
+    dac drawasccharn
+    lio i drawasccharn
     iot i gpl
-    idx drawcharn
-    lio i drawcharn
+    idx drawasccharn
+    lio i drawasccharn
     iot C gpr
 rtn, jmp .
     endloc
 
 // Draw one character at the current display location, 
-// AC contains the flex char.
-// If bit 11, 0100, the char is shifted.
+// AC contains the ascii char.
 // Both AC and IO registers are used.
 // Waits until drawing is complete.
 // Called via jda.
-drawchar, 0
+drawascchar, 0
     local rtn
     dap rtn
-    lac drawchar
-    jda drawcharn
+    lac drawascchar
+    jda drawasccharn
     ioh
 rtn, jmp .
     endloc

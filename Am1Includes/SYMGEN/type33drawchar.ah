@@ -7,22 +7,35 @@
 // AC contains the flex char.
 // If bit 11, 0100, the char is shifted.
 // Both AC and IO registers are used.
+// Does NOT wait until drawing is complete, caller must issue an ioh.
+// Called via jda.
+drawcharn, 0
+    local rtn
+    dap rtn
+    lac drawcharn
+    sal 1s      // the table has 2 entries per character
+    add [t33chrs
+    dac drawcharn
+    lio i drawcharn
+    iot i gpl
+    idx drawcharn
+    lio i drawcharn
+    iot C  gpr
+rtn, jmp .
+    endloc
+
+// Draw one character at the current display location, 
+// AC contains the flex char.
+// If bit 11, 0100, the char is shifted.
+// Both AC and IO registers are used.
+// Waits until drawing is complete.
 // Called via jda.
 drawchar, 0
     local rtn
-    dac rtn
+    dap rtn
     lac drawchar
-    sal 1s      // the table has 2 entries per character
-    add [t33chrs
-    dac drawchar
-    lio i drawchar
-    iot i gpl
+    jda drawcharn
     ioh
-    idx drawchar
-    lio i drawchar
-    iot i gpr
-    ioh
-    jmp i rtn
-rtn, 0
+rtn, jmp .
     endloc
 #endif

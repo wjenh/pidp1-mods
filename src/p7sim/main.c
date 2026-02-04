@@ -61,7 +61,7 @@ GLuint whiteTex, yellowTex[2];
 GLuint whiteFBO, yellowFBO[2];
 int flip;
 
-int doLightpen = 1;
+int doLightpen = 0;
 int penx;
 int peny;
 
@@ -1005,7 +1005,7 @@ usage(char *nameP)
     fprintf(stderr, "where:\n");
     fprintf(stderr, "-d, enable debug\n");
     fprintf(stderr, "-p port, set port to use, default is %d\n", DEFAULTPORT);
-    fprintf(stderr, "-l, disable pseudo-lightpen support\n");
+    fprintf(stderr, "-l, enable pseudo-lightpen support\n");
     fprintf(stderr, "-h height, set window height, default is %d\n", HEIGHT);
     fprintf(stderr, "-H scale, rescale height by floating point value scale\n");
     fprintf(stderr, "-w width, set window width, default is %d\n", WIDTH);

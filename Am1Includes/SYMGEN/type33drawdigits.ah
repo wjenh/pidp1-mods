@@ -5,22 +5,34 @@
 // Draw one one digit 0-9 at the current display location, 
 // AC contains the value.
 // Uses AC and IO registers.
+// Waits until drawing is complete.
 // Called via jda.
 drawdigit, 0
     local rtn
-    dac rtn
+    dap rtn
     lac drawdigit
+    jda drawdigitn
+    ioh
+rtn, jmp .
+    endloc
+
+// Draw one one digit 0-9 at the current display location, 
+// AC contains the value.
+// Uses AC and IO registers.
+// Doex NOT wait for completion, caller must issue an ioh
+// Called via jda.
+drawdigitn, 0
+    local rtn
+    dap rtn
+    lac drawdigitn
     sal 1s      // the table has 2 entries per character
     add [t33digits
-    dac drawdigit
-    lio i drawdigit
+    dac drawdigitn
+    lio i drawdigitn
     iot i gpl
-    ioh
-    idx drawdigit
-    lio i drawdigit
-    iot i gpr
-    ioh
-    jmp i rtn
-rtn, 0
+    idx drawdigitn
+    lio i drawdigitn
+    iot C gpr
+rtn, jmp .
     endloc
 #endif

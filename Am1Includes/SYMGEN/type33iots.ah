@@ -8,5 +8,4 @@
 #define gcf 000127
 #define glf 002026
 #define gsp 000026
-#define sdb 002007
 #endif

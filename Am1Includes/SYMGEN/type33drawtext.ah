@@ -10,17 +10,20 @@
 // Uses AC and IO registers.
 // Called via jda.
 drawtext, 0
-    local rtn, shift, cnt, chr, top, loop, nxt, toupper, tolower
-    dac rtn
+    local rtn, shift, cnt, chr, top, loop, nxt, toupper, tolower, wait, bye
+    dap rtn
     dzm shift
+    lac [nop
+    dac wait
 top, lac i drawtext     // fetch next word from text
     sad [13
-    jmp i rtn           // end marker
+    jmp bye             // end marker
     dac chr             // we have to dig out the 3 chars
     lac [-3
     dac cnt
     idx drawtext        // set up for next word
-loop, lac chr
+loop,
+    lac chr
     cli
     rcl 6s              // lop off the top 6 bits, into IO
     dac chr
@@ -30,7 +33,10 @@ loop, lac chr
     sad [74             // upper case shift
     jmp toupper
     ior shift           // was it shifted
-    jda drawchar        // finally
+    xct wait
+    jda drawcharn       // finally
+    lac [ioh
+    dac wait
 nxt,isp cnt
     jmp loop
     jmp top
@@ -41,9 +47,12 @@ toupper, law 0100
 tolower, dzm shift
     jmp nxt
 
+bye, xct wait
+rtn, jmp .
+
 shift, 0
 cnt, 0
 chr, 0
-rtn, 0
+wait, 0
     endloc
 #endif

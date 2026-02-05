@@ -7,14 +7,31 @@
 
 INSTALLDIR=/opt/pidp1
 
-
 # check this script is NOT run as root
 if [ "$(whoami)" = "root" ]; then
     echo script must NOT be run as root
     exit 1
 fi
 
-if [ ! -d "INSTALLDIR" ]; then
+echo "The install directory is ${INSTALLDIR}"
+while true; do
+    echo
+    read -p "Do you want to change it? " yn
+    case $yn in
+        [Yy]* )
+            read -p "New directory? " INSTALLDIR
+	    break
+	    ;;
+        [Nn]* ) 
+            echo Ok
+	    break
+            ;;
+        * ) echo "Please answer yes or no.";;
+    esac
+done
+
+
+if [ ! -d "${INSTALLDIR}" ]; then
     echo clone git repo or copy distribution into $INSTALLDIR
     exit 1
 fi

@@ -1,24 +1,20 @@
 /*
  * p7sim - simulator for Type 30 display
- * This was written originally by Angelo Papenhoff, aap.
- * It has been modified by Bill Ezell, wje, pdp1@quackers.net to add:
+ * Originally by Angelo Papenhoff, aap.
+ *
+ * Mods by Bill Ezell, wje@pdp1@quackers.net for:
  * Resizing via -h and -w on cmd line
  * Automatic rescaling, override via -H and -W on cmd line.
  * Set borderless via -b on cmd line
  * Allow toggling borderless via 'b' key
+ * Lightpen integration with pidp1
  *
  * When resizing is specified, a scaling factor will be applied to the normal 1024x1204 size
  * such that the SMALLER of h and v is scaled to be 1024, either made smaller or larger, and
  * applied to both axes. This will keep the square display regardless of the physical display
  * resolution. This can be overriden by giving an explict scale factor via -W and -H.
  *
- * Amd, make it readable. :)
- * It uses the One True Formatting Style, keep it.
- * The formatting is based on research done at Stanford many years ago that determined the major causes
- * of coding errors, the formatting reduced that. It works.
- *
- * wje 05-Jan-26 break from original repo, now independent. Initial reformatting. New features.
- *
+ * 5-Feb-26 wje - initial mods
 */
 
 #include <stdlib.h>
@@ -230,11 +226,10 @@ printlog(GLuint object)
     {
         glGetShaderInfoLog(object, log_length, NULL, log);
     }
-    else
-        if(glIsProgram(object))
-        {
-            glGetProgramInfoLog(object, log_length, NULL, log);
-        }
+    else if(glIsProgram(object))
+    {
+        glGetProgramInfoLog(object, log_length, NULL, log);
+    }
 
     fprintf(stderr, "%s", log);
     free(log);
@@ -751,34 +746,42 @@ keydown(SDL_Keysym keysym)
     {
     case SDL_SCANCODE_UP:
         sizefoo += 0.0001f;
-        if( dbgflag )
+
+        if(dbgflag)
         {
             printf("sz %g\n", sizefoo);
         }
+
         break;
 
     case SDL_SCANCODE_DOWN:
         sizefoo -= 0.0001f;
-        if( dbgflag )
+
+        if(dbgflag)
         {
             printf("sz %g\n", sizefoo);
         }
+
         break;
 
     case SDL_SCANCODE_LEFT:
         intfoo -= 0.01f;
-        if( dbgflag )
+
+        if(dbgflag)
         {
             printf("int %g\n", intfoo);
         }
+
         break;
 
     case SDL_SCANCODE_RIGHT:
         intfoo += 0.01f;
-        if( dbgflag )
+
+        if(dbgflag)
         {
             printf("int %g\n", intfoo);
         }
+
         break;
 
     case SDL_SCANCODE_S:
@@ -791,9 +794,9 @@ keydown(SDL_Keysym keysym)
         scalefoo = 0;
         break;
 
-    case SDL_SCANCODE_B:
+    case SDL_SCANCODE_B:        // wje = 'b' toggles border on window
         border = !border;
-        SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
+        SDL_SetWindowBordered(window, (border) ? SDL_TRUE : SDL_FALSE);
         break;
 
     case SDL_SCANCODE_X:
@@ -808,7 +811,6 @@ process(int frmtime)
     Point *p;
     int i, n, idx;
 
-//printf("process %d\n", nnewpoints);
     /* age */
     n = 0;
 
@@ -934,7 +936,7 @@ readthread(void *args)
                 {
                     Point *np = &newpoints[nnewpoints++];
 #ifdef CMDSCALING
-                    // Compute scaling from cmd line args
+                    // wje - Compute scaling from cmd line args
                     np->x = (int)((float)x * xRescale);
                     np->y = (int)((float)y * yRescale);
 #else
@@ -972,16 +974,17 @@ readthread(void *args)
     exit(0);
 }
 
-// For the real hardware, the Type 30 hardware would figure out if there was a hit
+// wje - For the real hardware, the Type 30 hardware would figure out if there was a hit
 // at the last drawn pixel when issuing the completion pulse,
 // but that's not possible here, let it be determined back in the pdp1 code.
 void
 updatepen()
 {
-int x, y;
+    int x, y;
 int pdpx, pdpy;
 uint32 cmd;
 
+    cmd = 0xFF << 24;
     // First, unapply scaling
     pdpx = (int)((float)penx / xRescale);
     pdpy = (int)((float)peny / xRescale);
@@ -989,28 +992,30 @@ uint32 cmd;
     // The original code did not properly adjust the coords from SDL to PDP1.
     // SDL has the upper left corner x,y as 0,0, PDP1 is -512,512, plus the PDP1 coords are 1's complement.
     pdpx -= 512;
-    if( pdpx < 0 )
+
+    if(pdpx < 0)
     {
         -- pdpx;            // 1's cmpl conversion
     }
 
     pdpy = 512 - pdpy;
-    if( pdpy < 0 )
+
+    if(pdpy < 0)
     {
         --pdpy;            // 1's cmpl conversion
     }
 
-    cmd = 0xFF << 24;
     cmd |= (pdpx & 0x3FF) << 10;
     cmd |= (pdpy & 0x3FF);
     write(netfd, &cmd, 4);
 }
 
+// wje - add h, H, v, V, n, l
 void
 usage(char *nameP)
 {
     fprintf(stderr,
-        "usage: %s [-d] [-p port] [-l] [-h height] [-H scale] [-w width] [-W scale] [-n] [server]\n", nameP);
+            "usage: %s [-d] [-p port] [-l] [-h height] [-H scale] [-w width] [-W scale] [-n] [server]\n", nameP);
     fprintf(stderr, "where:\n");
     fprintf(stderr, "-d, enable debug\n");
     fprintf(stderr, "-p port, set port to use, default is %d\n", DEFAULTPORT);
@@ -1047,9 +1052,9 @@ float scaleFactor;
 
     pidpInitLog("/tmp/p7sim.dbg");
 
-    while( (opt = getopt(argc, argv, "p:dh:w:W:H:nl")) != -1 )
+    while((opt = getopt(argc, argv, "p:dh:w:W:H:nl")) != -1)
     {
-        switch( opt )
+        switch(opt)
         {
         case 'p':
             port = atoi(optarg);
@@ -1087,16 +1092,17 @@ float scaleFactor;
             forcedXrescale = 1;
             break;
 
-        default:
+        default
+                :
             usage(argv[0]);
             break;
         }
     }
 
-    if( doXsize || doYsize )
+    if(doXsize || doYsize)
     {
         // Use smaller size to compute the scale factor
-        if( width < height )
+        if(width < height)
         {
             scaleFactor = (float)width / (float)WIDTH;
         }
@@ -1105,23 +1111,23 @@ float scaleFactor;
             scaleFactor = (float)height / (float)HEIGHT;
         }
 
-        if( !forcedXrescale )
+        if(!forcedXrescale)
         {
             xRescale = scaleFactor;
         }
 
-        if( !forcedYrescale )
+        if(!forcedYrescale)
         {
             yRescale = scaleFactor;
         }
     }
 
-    if( dbgflag )
+    if(dbgflag)
     {
         printf("x size %d, y size %d, xscale %f, yscale %f\n", width, height, xRescale, yRescale);
     }
 
-    if( optind < argc )
+    if(optind < argc)
     {
         netfd = dial(argv[optind], port);
     }
@@ -1130,7 +1136,7 @@ float scaleFactor;
         netfd = serve1(port);
     }
 
-    if( netfd < 0 )
+    if(netfd < 0)
     {
         fprintf(stderr, "Can't open port!\n");
         return(1);
@@ -1157,14 +1163,15 @@ float scaleFactor;
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
     SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE |
-        SDL_WINDOW_ALLOW_HIGHDPI);
-    if( !border )
+                                   SDL_WINDOW_ALLOW_HIGHDPI);
+
+    if(!border)
     {
         window_flags |= SDL_WINDOW_BORDERLESS;
     }
 
     window = SDL_CreateWindow("P7 sim", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        width + 2*BORDER, height + 2*BORDER, window_flags);
+                              width + 2 * BORDER, height + 2 * BORDER, window_flags);
 
     if(window == nil)
     {
@@ -1217,23 +1224,27 @@ float scaleFactor;
                 cursortimer = 50;
                 penx = event.motion.x;
                 peny = event.motion.y;
-                if( doLightpen && penDown )
+
+                if(doLightpen && penDown)
                 {
                     updatepen();
                 }
+
                 break;
 
             case SDL_MOUSEBUTTONDOWN:
-                if( event.button.button == 1 )
+                if(event.button.button == 1)
                 {
                     penDown = 1;
                     penx = event.button.x;
                     peny = event.button.y;
-                    if( doLightpen )
+
+                    if(doLightpen)      // wje - only if enabled
                     {
                         updatepen();
                     }
                 }
+
                 break;
 
             case SDL_MOUSEBUTTONUP:
@@ -1241,6 +1252,7 @@ float scaleFactor;
                 {
                     penDown = 0;
                 }
+
                 break;
 
             case SDL_QUIT:

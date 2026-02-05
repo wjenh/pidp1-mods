@@ -1,0 +1,21 @@
+// Definitions for the lightpen
+#ifndef LIGHTPEN
+
+// Modifier for dpy
+#define LIGHTPEN 3000
+
+// IO register flag for dpy LIGHTPEN
+#define LTPENENABLE 2000
+
+// Aperture equivalents, also in IO
+#define APERTURE050    0d3
+#define APERTURE100    0d6
+#define APERTURE150    0d8
+#define APERTURE200    0d11
+#define APERTURE250    0d14
+#define APERTURE300    0d17
+
+// Example:
+// lio [LIGHTPENENABLE APERTURE150
+// dpy LIGHTPEN
+#endif

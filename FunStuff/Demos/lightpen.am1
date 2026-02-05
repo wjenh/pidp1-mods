@@ -1,0 +1,184 @@
+Demo of light pen
+
+// This requires light pen support in pidp1 and p7sim
+#include <SYMGEN/type33iots.ah>
+#include <LIGHTPEN/lightpen.ah>
+
+#define LABELY 0d450 << 0d8
+#define LABELX -0d450 << 0d8
+#define TEXTSIZE 2
+#define AUTOSPACE 4
+#define BRIGHTNESS 0
+
+// These are in pixels
+#define PENSPACING 0d10
+
+100/
+strt,
+    dzm xoffset
+    dzm yoffset
+    law LTPENENABLE APERTURE050
+    lia
+    dpy-i LIGHTPEN
+loop,
+    law TEXTSIZE AUTOSPACE (BRIGHTNESS << 6)
+    lia
+    iot glf
+    lio [LABELY
+    lac [LABELX
+    sdb BRIGHTNESS << 6
+    lac [line1
+    jda drawtext
+
+    jsp drawcross
+    jmp loop
+
+drawcross,      // xoffset and yoffset are the center of the cross
+    local rtn
+    dap rtn
+    law TEXTSIZE (BRIGHTNESS << 6)  // no autospacing
+    lia
+    iot glf
+
+    lac yoffset // start 1 char down, top at yoffset
+    sub [6 * (2 + TEXTSIZE)
+    ral 8s
+    lia
+    lac xoffset // 1.5 chars left
+    sub [7 * (2 + TEXTSIZE)
+    ral 8s
+    sdb BRIGHTNESS  // position for the write
+
+    law 3
+    lia
+    law cross1   // draw 3 symbols for bottom half
+    jda renderchars
+
+    lac yoffset             // reposition to orign but up one dot spacing
+    add [2 + TEXTSIZE
+    ral 8s
+    lia
+    lac xoffset
+    sub [2 * (2 + TEXTSIZE) // and 2 dot spacings left
+    ral 8s
+    sdb BRIGHTNESS
+    lio cross2
+    iot gpl C
+    lio cross2 + 1
+    ioh
+    iot gpr C
+
+    // Now track the lightpen
+    // We successively write 8 pixels around the current cross center looking for a hit
+    law i 3
+    dac ctr
+    lac xoffset
+    sub [PENSPACING
+    dac lpx
+    lac yoffset
+    sub [PENSPACING
+    dac lpy
+    ioh         // from last gpr
+
+ck1,            // 3 vertical on left side
+    lia         // AC has latest y
+    ril 8s
+    lac lpx
+    ral 8s
+    dpy 300
+    cli
+    cks
+    spi
+    jmp hit
+    isp ctr
+    jmp .+2
+    jmp ck1a
+    lac lpy
+    add [PENSPACING
+    dac lpy
+    jmp ck1
+
+ck1a, lio lpy
+    ril 8s
+    lac lpx   // top center
+    add [PENSPACING
+    dac lpx
+    ral 8s
+    dpy 300
+    cli
+    cks
+    spi
+    jmp hit
+
+    law i 3
+    dac ctr
+    lac lpx
+    add [PENSPACING
+    dac lpx
+    lac lpy
+ck2,            // 3 vertical on right side
+    lia
+    ril 8s
+    lac lpx
+    ral 8s
+    dpy 300
+    cli
+    cks
+    spi
+    jmp hit
+    isp ctr
+    jmp .+2
+    jmp ck2a
+    lac lpy
+    sub [PENSPACING
+    dac lpy
+    jmp ck2
+
+ck2a, lac yoffset   // finally, bottom center
+    sub [PENSPACING
+    dac lpy
+    lia
+    ril 8s
+    lac xoffset
+    dac lpx
+    ral 8s
+    dpy 300
+    cli
+    cks
+    spi i
+    jmp rtn
+
+hit, lac lpx        // set new cross origin to lp hit location
+    dac xoffset
+    lac lpy
+    dac yoffset
+rtn, jmp .
+    endloc
+
+xoffset, 0      // cross centerpoint
+yoffset, 0
+
+lpx, 0          // for lighpen hits
+lpy, 0
+ctr, 0
+
+line1,
+    text 'Drag the cross with the light pen'
+    013
+
+cross1,
+    004020
+    040201
+    004036
+    740201
+    004020
+    040201
+cross2,
+    000016
+    740000
+
+#include <SYMGEN/type33drawtext.ac>
+#include <SYMGEN/type33unpack.ac>
+#include <SYMGEN/type33render.ac>
+
+start strt

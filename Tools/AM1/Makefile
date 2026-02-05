@@ -1,4 +1,5 @@
 CC=gcc -O0 -g
+MACRO=/opt/pidp1/bin/macro1_1
 //BISONFLAGS=-Wcounterexamples
 BISONFLAGS=
 
@@ -6,7 +7,7 @@ am1:	am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o permsyms.def.o ev
 	maccodegen.o bincodegen.o listcodegen.o listSymtab.o
 
 clean:
-	@rm *.o lex.yy.c y.tab.c y.tab.h permsyms.def.c am1 symtabgen 2>/dev/null || true
+	@rm *.o lex.yy.c y.tab.c y.tab.h permsyms.def.c am1 symtabgen cvtxldr xldr.rim xldr.lst 2>/dev/null || true
 
 permsyms.def.o: permsyms.def.c
 	$(CC) -c permsyms.def.c
@@ -52,3 +53,10 @@ symtabgen: symtabgen.c am1.h symtab.o
 
 symtab.o: symtab.c symtab.h
 	$(CC) -c symtab.c
+
+cvtxldr: cvtxldr.c
+	$(CC) -o cvtxldr cvtxldr.c
+
+genxldr: cvtxldr
+	$(MACRO) xldr.src
+	cvtxldr xldr.lst >xldr.h

@@ -20,11 +20,12 @@ lai=760040
 7751/
     eem
 loop, rpb
-    lai
-    and (177777
-    dac addr
     spi
     jmp done
+    rcl 9s
+    rcl 7s
+    ral 2s
+    dac addr
     rpb
     dio end
 load, rpb

@@ -21,9 +21,6 @@
 #define NOTIOTH
 #include "dynamicIots.h"
 
-//#define DOPIDPLOGGING
-#include "pidpLogger.h"
-
 // PDP-1D but probably also on some C's?
 #define LAILIA
 
@@ -2395,8 +2392,6 @@ readLightPen(PDP1 *pdp1P)
                 dpyy = cvtDpyToSigned(pdp1P->dby);
                 penx = cvtDpyToSigned((rslt >> 10) & 0x3FF);
                 peny = cvtDpyToSigned(rslt & 0x3FF);
-                pidpLog("Looking for dbx %d, dby %d match, bufcnt %d\n", dpyx, dpyy, penBufCount);
-                pidpLog("Got lpx %0d, lpy %d\n", penx, peny);
 
                 // Both coordinate pairs have been converted from 10 bit 1's complement to
                 // full signed 2's complement.
@@ -2405,7 +2400,6 @@ readLightPen(PDP1 *pdp1P)
                     (peny >= (dpyy - penAperture)) &&
                     (peny <= (dpyy + penAperture)))
                 {
-                    pidpLog("Got hit for dbx %0d, dby %d\n", dpyx, dpyy);
                     penBufferUsed[i] = true;
                     return(1);
                 }

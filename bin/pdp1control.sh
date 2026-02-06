@@ -3,17 +3,17 @@
 # start script for pidp1.  
 
 # Interface setting - can be 'gui', 'web', or 'apps'
-interface="gui"
+interface="web"
 
 # Front panel setting - can be 'pidp' or 'virtual'
 frontpanel="virtual"
 
 # Use USB ports for paper tape reader/punch
-usb_paper_tape="y"
+usb_paper_tape="n"
 
 argc=$#
 pidp1="/opt/pidp1-mods/bin/pdp1"
-cd /opt/pidp1
+cd /opt/pidp1-mods
 
 # Requires screen utility for detached pidp1 console functionality.
 #
@@ -86,7 +86,7 @@ do_start() {
 		echo start web server
 		cd /opt/pidp1-mods/web_pdp1
 		nohup go run /opt/pidp1-mods/web_pdp1/pdpsrv.go > /dev/null 2>&1 &
-		cd /opt/pidp1
+		cd /opt/pidp1-mods
 	elif [ "$interface" = "apps" ]; then
 		echo start apps
 		sleep 1

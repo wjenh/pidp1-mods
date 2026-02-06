@@ -377,6 +377,14 @@ while true; do
             cp $INSTALLDIR/install/audioOn.desktop /home/$usr/Desktop/
             cp $INSTALLDIR/install/audioOff.desktop /home/$usr/Desktop/
 
+            chmod u+x /home/$usr/Desktop/tty.desktop
+            chmod u+x /home/$usr/Desktop/pdp1control.desktop
+            chmod u+x /home/$usr/Desktop/type30.desktop
+            chmod u+x /home/$usr/Desktop/ptr.desktop
+            chmod u+x /home/$usr/Desktop/ptp.desktop
+            chmod u+x /home/$usr/Desktop/audioOn.desktop
+            chmod u+x /home/$usr/audioOff.desktop
+
             #make pcmanf run on double click, change its config file
             config_file="/home/$usr/.config/libfm/libfm.conf"
             # Create the directory if it doesn't exist

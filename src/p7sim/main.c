@@ -1045,8 +1045,6 @@ float scaleFactor;
     doXsize = doYsize = 0;
     forcedXrescale = forcedYrescale = 0;
 
-    pidpInitLog("/tmp/p7sim.dbg");
-
     while( (opt = getopt(argc, argv, "p:dh:w:W:H:nl")) != -1 )
     {
         switch( opt )

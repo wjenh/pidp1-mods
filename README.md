@@ -9,18 +9,18 @@ It also adds various tools such as the am1 assembler and include files for i, dr
 ## Installing and building
 
 It contains a full build tree.
-By default, it will reside in /opt/pidp1-mods but this can be changed.
-Look at install/install.sh and change INSTALLDIR as desired.
+Unlike the original, it is checked out in the /opt directory and will make its own installation directory,
+which will always be pidp1-mods.
 
-Make a clean /opt/pidp1-mods (or whatever you set in the script) directory, move into it, check this out there.
-Or, just check out the pdp1mods.tar and extract it into your desired directory, then set INSTALLDIR as above.
-The default is /opt/pidp1-mods.
+Move to /opt, check this out there:
+
+```
+sudo git clone https://github.com/wjenh/pidp1-mods.git
+```
 
 Everything after this proceeds as for the original install.
 
 ## **NOTE**
 
-Again, the one checkout difference is that the original had you check out in /opt.
-This one you check out in an empty /opt/pidp1-mods directory or other directory of your choice.
-Of course, you're probably reading this after checking out in your /opt directory.
-Sorry, it's just the way I set up the repo initially, made sense at the time.
+Again, the one checkout difference is that the original had you check out in /opt/pidp1.
+This one you check out in /opt.

@@ -15,7 +15,7 @@
 #include <arpa/inet.h>
 
 // PDP-1 USB Port Assignments (loaded from config file)
-#define CONFIG_FILE "/opt/pidp1/bin/usb_paper_tape_ports.cfg"
+#define CONFIG_FILE "/opt/pidp1-mods/bin/usb_paper_tape_ports.cfg"
 
 static int READER_BUS = 1;
 static int READER_PORT = 2;

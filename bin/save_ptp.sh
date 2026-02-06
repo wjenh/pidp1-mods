@@ -3,7 +3,7 @@
 BASE_DIR="/opt/pidp1-mods"
 DEFAULT_NAME="new_tape"
 
-# Launch zenity save dialog, starting in /opt/pidp1
+# Launch zenity save dialog, starting in /opt/pidp1-mods
 ABS_FILE=$(zenity --file-selection --save --confirm-overwrite \
                   --title="Save As" \
                   --filename="${BASE_DIR}/tapes/${DEFAULT_NAME}")

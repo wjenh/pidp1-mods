@@ -14,7 +14,7 @@ No changes to the core emulator are needed to add a dynamic IOT, the binding is 
 ## What does one look like?
 
 All dynamic IOTS follow a specific naming format and must be in a specific directory.
-IOTs are installed in the `opt/pidp1/IOTs` directory and must be named `IOT_nn.so`, where *nn* is the IOT number
+IOTs are installed in the `opt/pidp1-mods/IOTs` directory and must be named `IOT_nn.so`, where *nn* is the IOT number
 **in octal** of the -1's IOT device code.
 
 ## How do I install one?

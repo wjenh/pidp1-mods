@@ -64,7 +64,7 @@ Included here is a pdp23drum file. This is preloaded with 4 programs:
 5 - macro NOTE, not compatible with switcher or rotate, overwrites just about everything
 6 - expensive typewriter
 
-Copy it to /opt/pidp1.
+Copy it to /opt/pidp1-mods.
 Just readin drumloader.rim, set ss1 off, set the test switches to 000000, 000001, etc.
 Set addr to 7752, start. Your program of choice will start. You can set the switches again at any time, start at 7752,
 and the new prgram will start.

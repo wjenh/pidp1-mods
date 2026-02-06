@@ -9,7 +9,7 @@ sleep 2
 echo
 echo starting pidp-1 panel driver...
 
-sudo /opt/pidp1/bin/panel_pidp1&
+sudo /opt/pidp1-mods/bin/panel_pidp1&
 
 echo ...started panel driver
 sleep 1
@@ -39,7 +39,7 @@ echo "Joystick test: press each button"
 echo "--> check for a change in output"
 echo
 
-/opt/pidp1/bin/pidp1_test
+/opt/pidp1-mods/bin/pidp1_test
 
 echo
 echo test program has ended

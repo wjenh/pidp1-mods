@@ -10,7 +10,7 @@ AE*/
 
 #define MAXDEPTH 128	// include file nesting, should be enough for anyone
 #define STRBUF 1024	// maximum literal string length
-#define DEFAULT_SYSDIR "/opt/pidp1/MacroIncludes/"
+#define DEFAULT_SYSDIR "/opt/pidp1-mods/MacroIncludes/"
 #define MAXKNOWN 128	// the maximum number of included files we remember
 
 void checkFirst(char *);

@@ -1,9 +1,9 @@
 [Desktop Entry]
 Name=-Save Paper Tape Punch
 Comment=PTP for PiDP-1
-Exec=/usr/bin/lxterminal -e "/opt/pidp1/bin/save_ptp.sh"
+Exec=/usr/bin/lxterminal -e "/opt/pidp1-mods/bin/save_ptp.sh"
 Terminal=false
 Type=Application
-Icon=/opt/pidp1/install/ptr-icon.svg
+Icon=/opt/pidp1-mods/install/ptr-icon.svg
 Categories=X-PDP1;
 StartupNotify=false

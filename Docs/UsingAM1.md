@@ -195,7 +195,7 @@ The *-z* flag overrides this and converts -0 to +0, all bits cleared.
 Again, this only affects the results of the binary math operators and unary minus, other values are
 not altered.
 
-If the 'system' include files are not installed in the default location, /opt/pidp1/Am1Includes, then
+If the 'system' include files are not installed in the default location, /opt/pidp1-mods/Am1Includes, then
 the location should be specified either by using the *-i incroot* switch or by setting the environment
 variable *AM1INCDIR* to the full path to the location.
 

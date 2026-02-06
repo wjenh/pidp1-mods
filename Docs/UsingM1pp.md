@@ -99,7 +99,7 @@ The statements *#include "file"* or *#include \<file\>* appearing at the beginni
 insert the contents of the file at that point, just as would occur in C or C++.
 Any text following the closing quote or bracket is added as a comment on a line by itself.
 Nested includes are supported, up to 1024 files deep, which admittedly is a bit excessive.
-The default root location when *\<file\>* is used is */opt/pidp1/MacroIncludes*, but see the usage
+The default root location when *\<file\>* is used is */opt/pidp1-mods/MacroIncludes*, but see the usage
 details below.
 If instead *#includeif* is used, the file will only be included if it hasn't already been so.
 This is useful to allow different includes to reference the same nested include for definitions.

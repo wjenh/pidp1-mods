@@ -20,7 +20,7 @@
  * The drum also uses IOTs 62 and 63, so replicate into those.
  */
 
-#define DRUMFILE "/opt/pidp1/pdp23drum"
+#define DRUMFILE "/opt/pidp1-mods/pdp23drum"
 #define DRUMADDRTOSEEK(field, offset) (((field * 4096) + (offset)) * sizeof(Word))
 
 static int drumFd = -1;

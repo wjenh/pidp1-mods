@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DEFAULT_DIR="/opt/pidp1/tapes"
+DEFAULT_DIR="/opt/pidp1-mods/tapes"
 echo "Default directory is: $DEFAULT_DIR"
 
 # Prompt the user for a filename (can be just a name or full path)

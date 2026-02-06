@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_DIR="/opt/pidp1"
+BASE_DIR="/opt/pidp1-mods"
 
 # Launch zenity from the base dir
 ABS_FILE=$(zenity --file-selection --title="Choose a file" --filename="${BASE_DIR}/tapes/")

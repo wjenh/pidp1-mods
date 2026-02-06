@@ -12,7 +12,7 @@ frontpanel="virtual"
 usb_paper_tape="y"
 
 argc=$#
-pidp1="/opt/pidp1/bin/pdp1"
+pidp1="/opt/pidp1-mods/bin/pdp1"
 cd /opt/pidp1
 
 # Requires screen utility for detached pidp1 console functionality.
@@ -84,8 +84,8 @@ do_start() {
 		nohup bin/pdp1_periphES > /dev/null 2>&1 &
 	elif [ "$interface" = "web" ]; then
 		echo start web server
-		cd /opt/pidp1/web_pdp1
-		nohup go run /opt/pidp1/web_pdp1/pdpsrv.go > /dev/null 2>&1 &
+		cd /opt/pidp1-mods/web_pdp1
+		nohup go run /opt/pidp1-mods/web_pdp1/pdpsrv.go > /dev/null 2>&1 &
 		cd /opt/pidp1
 	elif [ "$interface" = "apps" ]; then
 		echo start apps
@@ -147,7 +147,7 @@ do_set() {
 	case "$2" in
 		gui|web|apps)
 			# Use specific temporary file path
-			temp_file="/opt/pidp1/bin/pdp1control.tmp"
+			temp_file="/opt/pidp1-mods/bin/pdp1control.tmp"
 			
 			# Use sed to replace the interface variable assignment
 			sed "s/^interface=\"[^\"]*\"/interface=\"$2\"/" "$0" > "$temp_file"
@@ -179,7 +179,7 @@ do_panel() {
 	case "$2" in
 		pidp|virtual)
 			# Use specific temporary file path
-			temp_file="/opt/pidp1/bin/pdp1control.tmp"
+			temp_file="/opt/pidp1-mods/bin/pdp1control.tmp"
 			
 			# Use sed to replace the frontpanel variable assignment
 			sed "s/^frontpanel=\"[^\"]*\"/frontpanel=\"$2\"/" "$0" > "$temp_file"
@@ -211,7 +211,7 @@ do_usbtape() {
 	case "$2" in
 		y|n)
 			# Use specific temporary file path
-			temp_file="/opt/pidp1/bin/pdp1control.tmp"
+			temp_file="/opt/pidp1-mods/bin/pdp1control.tmp"
 			
 			# Use sed to replace the frontpanel variable assignment
 			sed "s/^usb_paper_tape=\"[^\"]*\"/usb_paper_tape=\"$2\"/" "$0" > "$temp_file"

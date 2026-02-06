@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Directory to list files from
-SUBDIR="/opt/pidp1/tapes"
+SUBDIR="/opt/pidp1-mods/tapes"
 
 # Check if the directory exists
 if [[ ! -d "$SUBDIR" ]]; then

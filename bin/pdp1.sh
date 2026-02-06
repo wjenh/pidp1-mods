@@ -18,19 +18,19 @@ else
 			nohup lxterminal --command="telnet localhost 1041" > /dev/null 2>&1 &
 			;;
 		ptr)
-			nohup /opt/pidp1/bin/load_ptr.sh > /dev/null 2>&1 &
+			nohup /opt/pidp1-mods/bin/load_ptr.sh > /dev/null 2>&1 &
 			;;
 		ptp)
-			nohup /opt/pidp1/bin/save_ptp.sh > /dev/null 2>&1 &
+			nohup /opt/pidp1-mods/bin/save_ptp.sh > /dev/null 2>&1 &
 			;;
 		type30)
-			nohup /opt/pidp1/bin/p7simES localhost > /dev/null 2>&1 &
+			nohup /opt/pidp1-mods/bin/p7simES localhost > /dev/null 2>&1 &
 			;;
 		type30b)
-			nohup /opt/pidp1/bin/p7simES -p 3401 localhost > /dev/null 2>&1 &
+			nohup /opt/pidp1-mods/bin/p7simES -p 3401 localhost > /dev/null 2>&1 &
 			;;
 		tape)
-			nohup /opt/pidp1/bin/tapevis > /dev/null 2>&1 &
+			nohup /opt/pidp1-mods/bin/tapevis > /dev/null 2>&1 &
 			;;
 		*)
 			echo options are: 

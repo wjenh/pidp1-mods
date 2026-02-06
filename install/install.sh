@@ -417,4 +417,4 @@ done
 echo
 echo Done. Please do a sudo reboot and the front panel will come to life.
 echo Rerun this script if you want to do any install modifications.
-
+echo You can uninstall everyting including /opt/pidp1-mods by using the uninstall.sh script.

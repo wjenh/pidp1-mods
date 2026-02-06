@@ -6,7 +6,7 @@ files := $(wildcard *.c)
 %.o:%.c iotHandler.h
 	gcc $(INC) -fPIC -c $< -o $@
 
-all: $(files:.c=.so) Logger/iotLogger.o
+all: Logger/iotLogger.o $(files:.c=.so)
 
 Logger/iotLogger.o: Logger/iotLogger.c Logger/iotLogger.h
 	(cd Logger; make)

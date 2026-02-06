@@ -14,18 +14,14 @@
  / dd 00 load data starting at address ssssssssssssssss
  / dd 10 start, execute jmp i ssssssssssssssss, terminates loading
  / dd 11 no start, just halt, terminates loading, used for multiple tape loads
-
-lai=760040
+ / REMEMBER there must be tabs in front of macro comments.
 
 7751/
     eem
 loop, rpb
+    dio addr
     spi
     jmp done
-    rcl 9s
-    rcl 7s
-    ral 2s
-    dac addr
     rpb
     dio end
 load, rpb
@@ -35,10 +31,10 @@ load, rpb
     jmp load
     jmp loop
 done, ril 1s
-    spi
-    hlt		/ nostart, just halt
+    spi i
     jmp i addr	/ start prog
+    hlt		/ nostart, just halt
+    jmp loop	/ and go again
 addr, 0
 end, 0
-constants
 start 7751

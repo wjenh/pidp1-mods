@@ -5,7 +5,7 @@
 #
 #PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-INSTALLDIR=/opt/pidp1
+INSTALLDIR=/opt/pidp1-mods
 
 # check this script is NOT run as root
 if [ "$(whoami)" = "root" ]; then
@@ -167,7 +167,8 @@ while true; do
 		make -C $INSTALLDIR/src/scanpf 			# returns sense switches
 		make -C $INSTALLDIR/src/blincolnlights/tapevis	# returns sense switches
 		make -C $INSTALLDIR/src/pidp1_test 		# hardware test program
-		make -C $INSTALLDIR/src/pdp1_periph		# hardware test program
+		make -C $INSTALLDIR/src/pdp1_periph		# unified peripherals
+		make all -C $INSTALLDIR/IOTs			# dynamic IOTs
 		
 		# this makes the virtual pdp-1 panel, used if no PiDP-1 hardware is attached:
 		make -C $INSTALLDIR/src/blincolnlights/vpanel_pdp1 	# panel driver

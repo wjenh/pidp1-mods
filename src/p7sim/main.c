@@ -1058,7 +1058,7 @@ float scaleFactor;
             break;
 
         case 'l':
-            doLightpen = 0;
+            doLightpen = 1;
             break;
 
         case 'n':

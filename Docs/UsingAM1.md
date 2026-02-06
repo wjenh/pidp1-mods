@@ -20,9 +20,11 @@ It can, in fact, produce as its output valid source that can be assembled by **m
 
 First, two different assembly modes are supported, generating of **macro1** source and direct generation of rim-lodable
 binary code.
-While most of the language constructs apply to both, one, *bank*, is not supported by **macro1**.
+While most of the language constructs apply to both, no extended memory features such as *bank* and
+*bank references*,are supported by **macro1**, and neither are the PDP-1D extended instructions.
+
 Code will still be generated but should just be for reference as any code in extended memory will just overlay
-code in bank 0.
+code in bank 0, and the PDP-1D and special instructions will give an error unless defined in *macro1**.
 
 Features
 
@@ -32,6 +34,9 @@ Features
 - Allows easy use of ascii characters and strings
 - Supports octal, decimal, and hex numbers without special statements
 - Adds operators for and, or, xor, complement, multiply, divide, mod in expressions
+- Adds the need-completion flag, C
+- Adds sdb for Type 33 Symbol Generator support
+- Adds dpyc shorthand for *dpy-i C*
 - Can select between keeping -0 or automatically converting to +0 in expressions
 - Allows space-separated symbols to be treated as *a | b | c* instead of *a + b + c*
 - Adds parenthesized expressions
@@ -54,6 +59,9 @@ use of characters in **macro1** that were poorly handled.
 - Tabs are not statement delimiters and are treated as a space
 - Cpp directives of the form *#xxx* are supported
 - The operators *& | ~ ^ \* \/*, %% (mod), as well as *(expr)* are added
+- *C* is defined as 040000 for use with IOTS
+- *dpyc* is defined as 724007 for convenience
+- *sdb* is defined as 722007 for Type 33 support, equivalent to dpy-i if Type 33 not configured
 - *%* is added to indicate a local variable, *%xxx*
 - The numeric prefixes 0x, 0d, 0o are added to mean hex, decimal, octal regardless of the current radix
 - *'x'* is allowed to mean the value of a single ascii character, the usual escapes are recognized
@@ -166,6 +174,7 @@ Just type make.
 - m generate **macro1** code
 - l generate a program listing
 - n don't run **cpp** on the input
+- r don't output an initial rim loader
 - s generate a symbol table, automatic if exports are done
 - v print the version number and exit
 - z replace -0 with 0 for math operation results
@@ -226,6 +235,7 @@ All output files have the original file's name but with a different extension.
 The following can be produced:
 
 - *file*.rim - binary output that can be read-in loaded
+- *file*.bin - binary output that has no rim loader
 - *file*.mac - text output that can (usually) be assembeld by **macro1**
 - *file*.lst - text output that is a listing of the assembled program, only generated for binary mode
 - *file*.cpp - text output that is the intermediate output from the **cpp** preprocessor
@@ -239,7 +249,25 @@ aaaaaa F symbol-name
 
 where *aaaaaa* is the full 16-bit address of the symbol's location in memory, and *F* is a flag, either *G*, *I*,
 or *X*,
-A *G* means the symbol wasn't exported, *X* symbols were, *I* symbols were imported.
+A *G* means the symbol wasn't exported, *X* means the symbol was, *I* symbols were imported.
+
+## Files with no loader
+
+When binary code is being output and the *-r* command line flag is used, no initial rim loader will be
+written.
+This is useful for creating tapes that will be loaded after a program and is used in conjunction with the *stop*
+directive.
+
+Addional tapes loaded must have been generated with the *-r* flag; if not, the results will be undefined.
+
+Common uses are loading tables of data or loading additional already assembled code.
+
+When used, a program that needs to load additional data or code should end with a *stop*.
+A no-loader tape can then be mounted and the *continue* switch pressed to load the tape.
+As long as tapes end with a *stop*, the process can be repeated.
+
+If the program is to automatically start, the last tape should end with a *start* statement with the
+appropiate start address.
 
 ## Using macros
 
@@ -743,7 +771,8 @@ However, it must be resolved at some point in that bank or an error will be gene
 The *sym:\** form is a wildcarded location. It means *whatever bank that symbol is defined in*.
 Since the same symbol name can be defined in multiple banks, a search rule is used.
 At the end of parse tree generation the location is resolved by searching the list of banks used from
-first used to last used. The first match is the resolution.
+the first declared in a program by a *bank* statement to the last declared.
+The first match is the resolution.
 If not found in any bank, an error results.
 
 For example:
@@ -816,7 +845,7 @@ The directive can be repeated as often as desired.
 Each symbol listed is marked for export.
 This automatically asserts the *-s* command flag if it has not been given.
 
-The symbol does not have a bank reference, its bank is the current bank.
+The symbol is not qualified with a bank reference, its bank is the current bank when the export is done.
 Exporting a symbol will define it in the current bank if it isn't already defined,
 and as usual it is an error if it is never resolved.
 ```
@@ -850,6 +879,10 @@ Imported symbols follow the same rules as cross-bank references; the address wil
 bank where the symbol was defined, in which case it will be 12 bits.
 
 No code is generated for imported symbols, they are just references.
+Note that the symbol file will contain all global symbols from the exporting code, only those marked
+as exported will be imported.
+
+They are accessed using the normal inter-bank notation, *sym:n*.
 
 ## Special directives
 
@@ -923,6 +956,7 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 |8s | 0377|
 |9s | 0777|
 |i | 010000|
+|C | 004000|
 
 |Opcodes         | Value |
 |----------------|-------|
@@ -1007,6 +1041,8 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 |ppa | 0730005|
 |ppb | 0730006|
 |dpy | 0730007|
+|dpyc | 0740007|
+|sdb | 0722007|
 |lem | 0720074|
 |eem | 0724074|
 

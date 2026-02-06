@@ -10,6 +10,7 @@
  * -m	generate macro1 source
  * -l	generate a listing
  * -n	don't run cpp on input source
+ * -r	don't write a loader at the beginning of a tape
  * -s	generate a symbol table file
  * -v   print the current version number and exit
  * -z   convert 1's complement -0 to +0 in expressions
@@ -22,6 +23,7 @@
  * -I path
  *	add a directory to the cpp #include search list
  *	also accepts -Ipath syntax
+ *
  * The following are for debugging, not of genaral use.
  *
  * -x   enable (f)lex debugging output on stderr
@@ -44,6 +46,7 @@
  * include directory, which is overridden itself by -i.
  * If not set, it defaults to the predefined AM1INCDIR in am1.h.
  *
+ * If -r, no rim loader, is used, the binary output file will have a .bin extension, not .rim.
  * Original author: Bill Ezell (wje) pdp1@quackers.net
  * Free to use for any purpose as long as attribution is kept.
  *
@@ -60,10 +63,11 @@
  *               make opr precedence same as C, update docs
  * 14-Jan-2026 - fix serious bug introduced by the mod operator, can't use a percent
  * 20-Jan-2026 - fix bug in forced locals, rename mod to %%
- * 22-Jan-2026 - add ioh, same as iot
+ * 22-Jan-2026 - add ioh, same as iot i
  * 23-Jan-2026 - fix bug in constants stmt, would clear pc if no constants to emit, fix text stmt
  * 03-Feb-2026 - add C, dpyc, sdb
  * 04-Feb-2026 - predefine AM1 as an ifdef marker for include files, not defined if macro is being produced
+ * 06-Feb-2026 - add -r flag
  *
 */
 #include <unistd.h>
@@ -103,6 +107,7 @@ bool spaceIsAdd;
 bool doListing;
 bool doSymtab;
 bool doCpp;
+bool noRim;
 bool keepCpp;
 bool dumpTree;
 bool sawBank;
@@ -212,6 +217,10 @@ SymNodeP symP;
 
             case 'p':
                 dumpTree = true;
+                break;
+
+            case 'r':
+                noRim = true;
                 break;
 
             case 's':
@@ -375,7 +384,7 @@ SymNodeP symP;
     if( doBinary )
     {
         strcpy(ofilename, basename);                         /* output file */
-        strcat(ofilename, ".rim");
+        strcat(ofilename, (noRim)?".bin":".rim");
 
         if(!(outfP = fopen(ofilename, "w")))
         {
@@ -943,6 +952,7 @@ usage()
     fprintf(stderr, "  -m generate macro1 code\n");
     fprintf(stderr, "  -l generate listing\n");
     fprintf(stderr, "  -n don't run cpp\n");
+    fprintf(stderr, "  -r don't write a loader at the beginning of the binary file\n");
     fprintf(stderr, "  -s generate a symbol table file\n");
     fprintf(stderr, "  -v print the am1 version number and exit\n");
     fprintf(stderr, "  -z allow 1's complement -0 to remain\n");

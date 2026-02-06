@@ -35,6 +35,7 @@ static int cur_pc;
 static int cur_bank;
 
 extern bool sawBank;
+extern bool noRim;
 extern bool keepMinusZero;
 extern BankContextP banksP;
 
@@ -79,8 +80,11 @@ binCodegen(FILE *outfP, PNodeP rootP)
     writeLabel(outfP, rootP->value.strP);
     writeBlankTape(outfP, 5);
     // Next, put out our loader.
-    writeLoader(outfP, sawBank);
-    writeBlankTape(outfP, 2);
+    if( !noRim )
+    {
+        writeLoader(outfP, sawBank);
+        writeBlankTape(outfP, 2);
+    }
     writeLabel(outfP, AM1SHORTVERSION);
     writeBlankTape(outfP, 2);
     writeLabel(outfP, "wje");       // for posterity. :)

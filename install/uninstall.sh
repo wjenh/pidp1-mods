@@ -62,7 +62,19 @@ else
     echo Can\'t restore your wallpaper, sorry.
 fi
 
-echo Removing /opt/pidp1-mods
-rm -rf pidp1-mods
+while true; do
+    echo
+    read -p "Do you want to remove the /opt/pidp1-mods directory? " yn
+    case $yn in
+        [Yy]* )
+            rm -rf /opt/pidp1-mods
+	    break
+	    ;;
+        [Nn]* ) 
+	    break
+            ;;
+        * ) echo "Please answer yes or no.";;
+    esac
+done
 
 echo Done.

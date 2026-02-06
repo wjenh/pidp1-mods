@@ -172,7 +172,7 @@ char fname[256];
 
     entryP = &handles[dev];
 
-    sprintf(fname,"/opt/pidp1/IOTs/IOT_%2o.so", dev);
+    sprintf(fname,"/opt/pidp1-mods/IOTs/IOT_%2o.so", dev);
 
     if( !(entryP->dlHandleP = dlopen(fname, RTLD_LAZY)) )
     {

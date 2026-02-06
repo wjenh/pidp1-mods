@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_DIR="/opt/pidp1"
+BASE_DIR="/opt/pidp1-mods"
 DEFAULT_NAME="new_tape"
 
 # Launch zenity save dialog, starting in /opt/pidp1

@@ -2,15 +2,8 @@
  * p7sim - simulator for Type 30 display
  * This was written originally by Angelo Papenhoff, aap.
  * It has been modified by Bill Ezell, wje, pdp1@quackers.net to add:
- * Resizing via -h and -w on cmd line
- * Automatic rescaling, override via -H and -W on cmd line.
- * Set borderless via -b on cmd line
+ * Lightpen control
  * Allow toggling borderless via 'b' key
- *
- * When resizing is specified, a scaling factor will be applied to the normal 1024x1204 size
- * such that the SMALLER of h and v is scaled to be 1024, either made smaller or larger, and
- * applied to both axes. This will keep the square display regardless of the physical display
- * resolution. This can be overriden by giving an explict scale factor via -W and -H.
  *
  * Amd, make it readable. :)
  * It uses the One True Formatting Style, keep it.
@@ -52,8 +45,8 @@ typedef uint8_t uint8;
 #define WIDTH 1024
 #define HEIGHT 1024
 #define BORDER 2
-#define BWIDTH (width + 2*BORDER)
-#define BHEIGHT (height + 2*BORDER)
+#define FULLWIDTH (WIDTH + 2*BORDER)
+#define FULLHEIGHT (HEIGHT + 2*BORDER)
 #define DEFAULTPORT 3400
 
 #define CMDSCALING  // use -H and -W to enable rescaling
@@ -73,9 +66,7 @@ int flip;
 int doLightpen = 0;
 int penx;
 int peny;
-
-int height, width, border;
-float xRescale, yRescale;
+int border;
 
 uint64 simtime, realtime;
 
@@ -441,7 +432,7 @@ draw(void)
         printf("%f %d. %.2f %.2f %.2f\n", dt, npoints, st, rt, rt - st);
     }
 
-    glViewport(0, 0, BWIDTH, BHEIGHT);
+    glViewport(0, 0, FULLWIDTH, FULLHEIGHT);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
     /* draw white phosphor */
@@ -463,8 +454,8 @@ draw(void)
             break;
         }
 
-        float x = (points[i].x / (float)width) + (float)BORDER / BWIDTH;
-        float y = (points[i].y / (float)height) + (float)BORDER / BHEIGHT;
+        float x = (points[i].x / (float)WIDTH) + (float)BORDER / FULLWIDTH;
+        float y = (points[i].y / (float)HEIGHT) + (float)BORDER / FULLHEIGHT;
 // teco uses 3
 // spacewar uses 4
 // DDT uses 7
@@ -670,7 +661,8 @@ makeFBO(GLuint *fbo, GLuint *tex)
 {
     glGenTextures(1, tex);
     glBindTexture(GL_TEXTURE_2D, *tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, BWIDTH, BHEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, nil);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, FULLWIDTH, FULLHEIGHT,
+        0, GL_RGBA, GL_UNSIGNED_BYTE, nil);
     texDefaults();
     glGenFramebuffers(1, fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
@@ -933,14 +925,8 @@ readthread(void *args)
                 if(x || y)
                 {
                     Point *np = &newpoints[nnewpoints++];
-#ifdef CMDSCALING
-                    // Compute scaling from cmd line args
-                    np->x = (int)((float)x * xRescale);
-                    np->y = (int)((float)y * yRescale);
-#else
                     np->x = x >> scalefoo;
                     np->y = y >> scalefoo;
-#endif
                     np->i = intensity;
 
                     if(xxfoo != 8)
@@ -982,9 +968,8 @@ int x, y;
 int pdpx, pdpy;
 uint32 cmd;
 
-    // First, unapply scaling
-    pdpx = (int)((float)penx / xRescale);
-    pdpy = (int)((float)peny / xRescale);
+    pdpx = penx;
+    pdpy = peny;
 
     // The original code did not properly adjust the coords from SDL to PDP1.
     // SDL has the upper left corner x,y as 0,0, PDP1 is -512,512, plus the PDP1 coords are 1's complement.
@@ -1010,15 +995,11 @@ void
 usage(char *nameP)
 {
     fprintf(stderr,
-        "usage: %s [-d] [-p port] [-l] [-h height] [-H scale] [-w width] [-W scale] [-n] [server]\n", nameP);
+        "usage: %s [-d] [-p port] [-l] [-n] [server]\n", nameP);
     fprintf(stderr, "where:\n");
     fprintf(stderr, "-d, enable debug\n");
     fprintf(stderr, "-p port, set port to use, default is %d\n", DEFAULTPORT);
     fprintf(stderr, "-l, enable pseudo-lightpen support\n");
-    fprintf(stderr, "-h height, set window height, default is %d\n", HEIGHT);
-    fprintf(stderr, "-H scale, rescale height by floating point value scale\n");
-    fprintf(stderr, "-w width, set window width, default is %d\n", WIDTH);
-    fprintf(stderr, "-W scale, rescale width by floating point value scale\n");
     fprintf(stderr, "-n, start with no border\n");
     fprintf(stderr, "server, hostname of server to connect to\n");
     exit(1);
@@ -1038,14 +1019,8 @@ int penDown;
 float scaleFactor;
 
     port = DEFAULTPORT;
-    height = HEIGHT;
-    width = WIDTH;
-    border = 1;
-    xRescale = yRescale = 1.0;
-    doXsize = doYsize = 0;
-    forcedXrescale = forcedYrescale = 0;
 
-    while( (opt = getopt(argc, argv, "p:dh:w:W:H:nl")) != -1 )
+    while( (opt = getopt(argc, argv, "p:dnl")) != -1 )
     {
         switch( opt )
         {
@@ -1065,58 +1040,10 @@ float scaleFactor;
             border = 0;     // no border
             break;
 
-        case 'h':
-            height = atoi(optarg);
-            doYsize = 1;
-            break;
-
-        case 'w':
-            width = atoi(optarg);
-            doXsize = 1;
-            break;
-
-        case 'H':
-            yRescale = atof(optarg);
-            forcedYrescale = 1;
-            break;
-
-        case 'W':
-            xRescale = atof(optarg);
-            forcedXrescale = 1;
-            break;
-
         default:
             usage(argv[0]);
             break;
         }
-    }
-
-    if( doXsize || doYsize )
-    {
-        // Use smaller size to compute the scale factor
-        if( width < height )
-        {
-            scaleFactor = (float)width / (float)WIDTH;
-        }
-        else
-        {
-            scaleFactor = (float)height / (float)HEIGHT;
-        }
-
-        if( !forcedXrescale )
-        {
-            xRescale = scaleFactor;
-        }
-
-        if( !forcedYrescale )
-        {
-            yRescale = scaleFactor;
-        }
-    }
-
-    if( dbgflag )
-    {
-        printf("x size %d, y size %d, xscale %f, yscale %f\n", width, height, xRescale, yRescale);
     }
 
     if( optind < argc )
@@ -1162,7 +1089,7 @@ float scaleFactor;
     }
 
     window = SDL_CreateWindow("P7 sim", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        width + 2*BORDER, height + 2*BORDER, window_flags);
+        FULLWIDTH, FULLHEIGHT, window_flags);
 
     if(window == nil)
     {

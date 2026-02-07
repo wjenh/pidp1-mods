@@ -1,7 +1,7 @@
 /*
  * Examine a drum image, list tracks loaded via drumupdater.
  *
- * Usage: drumlister [-i imagefile]
+ * Usage: drumlist [-i imagefile]
  * where:
  * i - use the given name for the drum image instead of 'drumImage'
  *
@@ -10,6 +10,7 @@
  * Revision history:
  *
  * 02/01/2026 wje - Initial version
+ * 14/01/2026 wje - fix usage check
  *
  */
 #include <stdlib.h>
@@ -39,22 +40,14 @@ char imageName[512];
     strcpy(imageName, DEFAULT_IMAGE);
 
     // parse our comd line args
-    while( (opt = getopt(argc, argv, "i:")) != -1 )
+    if( argc > 1 )
     {
-        switch( opt )
+        if( (strcmp(argv[1], "-i") != 0) || (argc != 3) )
         {
-        case 'i':
-           strcpy(imageName, optarg);
-           break;
-
-        default: /* '?' */
-	   usage();
+            usage();
         }
-    }
 
-    if( optind > argc )
-    {
-        usage();                // no other args
+        strcpy(imageName, argv[2]);
     }
 
     if( (fd = open(imageName, O_RDONLY)) < 0 )

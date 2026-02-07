@@ -1,5 +1,5 @@
 CC=gcc -O0 -g
-MACRO=/opt/pidp1/bin/macro1_1
+MACRO=/opt/pidp1-mods/bin/macro1_1
 //BISONFLAGS=-Wcounterexamples
 BISONFLAGS=
 
@@ -57,6 +57,6 @@ symtab.o: symtab.c symtab.h
 cvtxldr: cvtxldr.c
 	$(CC) -o cvtxldr cvtxldr.c
 
-genxldr: cvtxldr
+xldr: cvtxldr
 	$(MACRO) xldr.src
 	cvtxldr xldr.lst >xldr.h

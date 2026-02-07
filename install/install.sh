@@ -173,6 +173,21 @@ while true; do
             	sudo chmod +s $INSTALLDIR/src/blincolnlights/panel_pidp1
             	# to run as a RT thread:
             	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1
+
+                ln -sf $INSTALLDIR/src/disassembler/disassemble_tape $INSTALLDIR/bin/disassemble_tape
+                ln -sf $INSTALLDIR/src/macro/macro1_1 $INSTALLDIR/bin/macro1_1
+                ln -sf $INSTALLDIR/src/blincolnlights/tools/mkptyfio_telnet $INSTALLDIR/bin/mkptyfio_telnet
+                ln -sf $INSTALLDIR/src/monas/monas $INSTALLDIR/bin/monas
+                ln -sf $INSTALLDIR/src/p7sim/p7sim $INSTALLDIR/bin/p7sim
+                ln -sf $INSTALLDIR/src/p7sim/p7simES $INSTALLDIR/bin/p7simES
+                ln -sf $INSTALLDIR/src/blincolnlights/vpanel_pdp1/panel_pdp1 $INSTALLDIR/bin/panel_pidp1
+                ln -sf $INSTALLDIR/src/blincolnlights/pdp1/pdp1 $INSTALLDIR/bin/pdp1
+                ln -sf $INSTALLDIR/src/pdp1_periph/pdp1_periphES $INSTALLDIR/bin/pdp1_periphES
+                ln -sf $INSTALLDIR/src/usb_paper_tape/pdp1_usb_monitor $INSTALLDIR/bin/pdp1_usb_monitor
+                ln -sf $INSTALLDIR/src/pidp1-mods_test/pidp1_test $INSTALLDIR/bin/pidp1_test
+                ln -sf $INSTALLDIR/src/scanpf/scanpf $INSTALLDIR/bin/scanpf
+                ln -sf $INSTALLDIR/src/blincolnlights/tapevis/tapevis $INSTALLDIR/bin/tapevis
+                ln -sf $INSTALLDIR/src/blincolnlights/vpanel_pdp1/panel_pdp1 $INSTALLDIR/bin/vpanel_pdp1
 	    	echo Done.
 		break
 		;;

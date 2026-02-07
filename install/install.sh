@@ -187,7 +187,7 @@ while true; do
                 ln -sf $INSTALLDIR/src/pidp1-mods_test/pidp1_test $INSTALLDIR/bin/pidp1_test
                 ln -sf $INSTALLDIR/src/scanpf/scanpf $INSTALLDIR/bin/scanpf
                 ln -sf $INSTALLDIR/src/blincolnlights/tapevis/tapevis $INSTALLDIR/bin/tapevis
-                ln -sf $INSTALLDIR/src/blincolnlights/vpanel_pdp1/panel_pdp1 $INSTALLDIR/bin/vpanel_pdp1
+                ln -sf $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1 $INSTALLDIR/bin/panel_pidp1
 	    	echo Done.
 		break
 		;;

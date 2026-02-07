@@ -8,9 +8,10 @@
  * of coding errors, the formatting reduced that. It works.
  *
  * wje 05-Jan-26 break from original repo, now independent. Initial reformatting.
- *  Prior to this break, dynamic IOTs, new audio, high speed channel support, light pen support,
- *  and other minor changes were done.
- *
+ *    Prior to this break, dynamic IOTs, new audio, high speed channel support, light pen support,
+ *    and other minor changes were done.
+ * wje 07-Feb-26 sdb  does not draw a dot, only sets position and intensity
+ *    Special dpy mod, dpy 3000, sets lightpen enable and the aperture from IO
 */
 #include "common.h"
 #include "pdp1.h"
@@ -2083,7 +2084,8 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
         else if((ch & 030) == 030)       // wje, set lightpen aperture, enable or disable light pen
         {
             pdp->dpy_defl_time = NEVER;     // just set aperture
-            pdp->dpy_time = NEVER;
+            pdp->dpy_time = 0;
+            pdp->dcp = 0;                   // be sure its not set
             penAperture = IO & 01777;       // 0-1023 pixels, each one corresponds to the original 0.009"
             lightpenEnabled = IO & 02000;
         }
@@ -2115,9 +2117,11 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
             {
                 // This is documented as taking 30 usecs because it doesn't
                 // need the addtional time to draw the dot.
-                // So just delay for the deflection time.
-                pdp->dpy_defl_time = pdp->simtime + US(30);
-                pdp->dpy_time = pdp->dpy_defl_time + US(0);
+                // But, there is no real reason to do so, so just complete immediately.
+                // Yes, not historically accurate, but neither is using a mouse for a lightpen.
+                pdp->dint = -1;         // marker for no dot
+                pdp->dpy_defl_time = NEVER;
+                pdp->dpy_time = 0;
             }
 #endif
         }
@@ -2313,7 +2317,7 @@ cvtDpyToSigned(int dpy)             // convert a 10 bit dpy coordinate to a 2's 
 // The physical light pen aperture is simulated by having any match within the dot location
 // plus the aperture setting.
 #define PENBUFSIZE 64
-#define RELOADINTERVAL 1000000          // nsecs
+#define RELOADINTERVAL 10000          // usecs, 10 msecs
 #include <stdbool.h>
 
 static uint64_t lastTime;
@@ -2368,7 +2372,7 @@ readLightPen(PDP1 *pdp1P)
         penPollData.events = POLLIN;
     }
 
-    if(((lastTime + RELOADINTERVAL) < gettime()) || (penBufCount <= 0))
+    if(((lastTime + (RELOADINTERVAL * 1000)) < gettime()) || (penBufCount <= 0))
     {
         resetPenBuffer(pdp1P);
     }
@@ -2491,7 +2495,7 @@ display(PDP1 *pdp, int i)
     // this is really a hardware configuration
     int twoscreens = pdp->dpy[0].fd >= 0 && pdp->dpy[1].fd >= 0;
 
-    if(twoscreens)
+    if( twoscreens && (in != -1) )
     {
         if(!!(pdp->dint & 4) != i)
         {
@@ -2504,9 +2508,15 @@ display(PDP1 *pdp, int i)
     }
 
     cmd |= ((in + 4) & 7) << 20;
-
     pdp->dpy[i].last = pdp->simtime;
+#ifdef TYPE_33_SUPPORT
+    if( in != -1 )
+    {
+        dpycmd(pdp, i, cmd);
+    }
+#else
     dpycmd(pdp, i, cmd);
+#endif
 }
 
 void

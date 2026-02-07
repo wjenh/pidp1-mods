@@ -118,6 +118,24 @@ done
 
 while true; do
     echo
+    read -p "Install flex and bison - required for building some of the tools? " prxn
+    case $prxn in
+        [Yy]* ) 
+            sudo apt update
+	    sudo apt -y install flex
+	    sudo apt -y install bison
+	    break
+	    ;;
+        [Nn]* ) 
+            echo Skipped install of flex and bison - some tools will not build unless these are already installed
+            break
+	    ;;
+        * ) echo "Please answer Y or N.";;
+    esac
+done
+
+while true; do
+    echo
     read -p "Install required dependencies for the web server? " prxn
     case $prxn in
         [Yy]* ) 

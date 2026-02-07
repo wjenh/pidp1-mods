@@ -1,0 +1,292 @@
+Type 33 symbol generator fast rendering
+
+#include <SYMGEN/type33iots.ah>
+
+#define YSTART 0d400
+#define YDELTA 0d50
+#define XSTART -0d450
+#define SIZE 2
+#define AUTOSPACE 4
+#define BRIGHTNESS 2
+
+#define clrnum dzm ones; dzm tens; dzm hundreds; dzm thousands
+
+100/
+strt,
+    // Unpack the text lines first
+    lio [buf1
+    lac [line1
+    jda unpacktext
+    dio buf1len
+
+    lio [buf2
+    lac [line2
+    jda unpacktext
+    dio buf2len
+
+    lio [buf3
+    lac [line3
+    jda unpacktext
+    dio buf3len
+
+    lio [buf4
+    lac [line4
+    jda unpacktext
+    dio buf4len
+
+    lio [buf5
+    lac [line5
+    jda unpackasc
+    dio buf5len
+
+    lio [buf6
+    lac [line6
+    jda unpackasc
+    dio buf6len
+
+    lio [buf7
+    lac [line7
+    jda unpackasc
+    dio buf7len
+
+    lio [buf8
+    lac [line8
+    jda unpackasc
+    dio buf8len
+
+    lio [buf9
+    lac [line9
+    jda unpackasc
+    dio buf9len
+
+    law SIZE AUTOSPACE (BRIGHTNESS << 6)
+    lia
+    iot glf
+    clrnum
+loop,
+    law YSTART
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lio buf1len
+    lac [buf1
+    jda renderchars
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lio buf2len
+    lac [buf2
+    jda renderchars
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lio buf3len
+    lac [buf3
+    jda renderchars
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lio buf4len
+    lac [buf4
+    jda renderchars
+
+    lac yoffset
+    sub [YDELTA
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lio buf5len
+    lac [buf5
+    jda renderchars
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lio buf6len
+    lac [buf6
+    jda renderchars
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lio buf7len
+    lac [buf7
+    jda renderchars
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lio buf8len
+    lac [buf8
+    jda renderchars
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lio buf9len
+    lac [buf9
+    jda renderchars
+
+    jsp updnum
+    jmp loop
+
+updnum,             // jsp call
+    local rtn
+    dap rtn
+    lac [-0d400 << 10
+    lio
+    sdb BRIGHTNESS << 6
+
+    lac thousands
+    jda drawdigit
+
+    lac hundreds
+    jda drawdigit
+
+    lac tens
+    jda drawdigit
+
+    lac ones
+    jda drawdigitn
+
+    jsp updatedigits
+    ioh
+rtn, jmp .
+    endloc
+
+updatedigits,        // increment ones, ripple overflow up, jsp call
+    local rtn
+    dap rtn
+
+    idx ones
+    sas [0d10
+    jmp rtn
+
+    dzm ones
+    idx tens
+    sas [0d10
+    jmp rtn
+
+    dzm tens
+    idx hundreds
+    sas [0d10
+    jmp rtn
+
+    dzm hundreds
+    idx thousands
+    sad [0d10
+    dzm thousands
+
+rtn, jmp .
+    endloc
+
+xoffset, XSTART << 10
+yoffset, 0
+
+ones, 0
+tens, 0
+hundreds, 0
+thousands, 0
+
+line1,
+    text 'The Type 30 Digital Display'
+    013
+buf1,
+table 200
+buf1len, 0
+
+line2,
+    text 'and the Type 33 Symbol Generator'
+    013
+buf2,
+table 200
+buf2len, 0
+
+line3,
+    text 'provide fast man-machine'
+    013
+buf3,
+table 200
+buf3len, 0
+
+line4,
+    text 'communication'
+    013
+buf4,
+table 200
+buf4len, 0
+
+line5,
+    ascii "And I can do ascii also:"
+buf5,
+table 100
+buf5len, 0
+
+line6,
+    ascii "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+buf6,
+table 100
+buf6len, 0
+
+line7,
+    ascii "abcdefghijklmnopqrstuvwxyz"
+buf7,
+table 100
+buf7len, 0
+
+line8,
+    ascii "0123456789"
+buf8,
+table 100
+buf8len, 0
+
+line9,
+    ascii "?.,@-+*/()[]<>'\"=~_`|#!"
+buf9,
+table 100
+buf9len, 0
+
+#include <SYMGEN/type33unpack.ac>
+#include <SYMGEN/type33unpackascii.ac>
+#include <SYMGEN/type33render.ac>
+#include <SYMGEN/type33drawdigits.ac>
+
+constants
+
+start strt

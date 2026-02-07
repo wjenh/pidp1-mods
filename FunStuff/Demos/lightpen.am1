@@ -11,13 +11,13 @@ Demo of light pen
 #define BRIGHTNESS 0
 
 // These are in pixels
-#define PENSPACING 0d10
+#define PENSPACING 0d12
 
 100/
 strt,
     dzm xoffset
     dzm yoffset
-    law LTPENENABLE APERTURE050
+    law LTPENENABLE APERTURE200
     lia
     dpy-i LIGHTPEN
 loop,

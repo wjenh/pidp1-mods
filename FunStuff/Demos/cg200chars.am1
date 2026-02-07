@@ -1,0 +1,79 @@
+Type 33 symbol generator 200 char rendering
+
+#include <SYMGEN/type33iots.ah>
+
+#define YSTART 0d450
+#define YDELTA 0d35
+#define XSTART -0d450
+#define SIZE 2
+#define AUTOSPACE 4
+#define BRIGHTNESS 2
+
+100/
+strt,
+    // Unpack the text lines first
+    lio [buf1
+    lac [line1
+    jda unpacktext
+    dio buf1len
+    law i 0d1000
+    dac iters
+
+top,
+    law SIZE AUTOSPACE (BRIGHTNESS << 6)
+    lia
+    iot glf
+    law i 0d10
+    dac ctr
+    law YSTART
+    dac yoffset
+
+loop,
+    lac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lio buf1len
+    lac [buf1
+    jda renderchars
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    isp ctr
+    jmp loop
+    isp iters
+    jmp top
+
+loop2, lac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [done
+    jda drawtext
+    jmp loop2
+
+xoffset, XSTART << 10
+yoffset, 0
+ctr, 0
+iters, 0
+
+line1,
+    text '01234567890123456789'
+    013
+buf1,
+table 200
+buf1len, 0
+
+done,
+    text 'Done'
+    013
+
+#include <SYMGEN/type33unpack.ah>
+#include <SYMGEN/type33drawtext.ah>
+
+constants
+
+start strt

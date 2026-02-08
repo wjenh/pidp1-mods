@@ -11,6 +11,7 @@
  * of coding errors, the formatting reduced that. It works.
  *
  * wje 05-Jan-26 break from original repo, now independent. Initial reformatting. New features.
+ * wje 08-Feb-26 rework lightpen code
  *
 */
 
@@ -19,6 +20,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <ctype.h>
 #include <unistd.h>
 
@@ -71,6 +73,7 @@ int border;
 uint64 simtime, realtime;
 
 void usage(char *nameP);
+void updatepen(bool penDown);
 
 void
 panic(char *fmt, ...)
@@ -962,32 +965,40 @@ readthread(void *args)
 // at the last drawn pixel when issuing the completion pulse,
 // but that's not possible here, let it be determined back in the pdp1 code.
 void
-updatepen()
+updatepen(bool penDown)
 {
 int x, y;
 int pdpx, pdpy;
 uint32 cmd;
 
-    pdpx = penx;
-    pdpy = peny;
-
-    // The original code did not properly adjust the coords from SDL to PDP1.
-    // SDL has the upper left corner x,y as 0,0, PDP1 is -512,512, plus the PDP1 coords are 1's complement.
-    pdpx -= 512;
-    if( pdpx < 0 )
+    if( penDown )
     {
-        -- pdpx;            // 1's cmpl conversion
+        pdpx = penx;
+        pdpy = peny;
+
+        // The original code did not properly adjust the coords from SDL to PDP1.
+        // SDL has the upper left corner x,y as 0,0, PDP1 is -512,512, plus the PDP1 coords are 1's complement.
+        pdpx -= 512;
+        if( pdpx < 0 )
+        {
+            --pdpx;             // 1's cmpl conversion
+        }
+
+        pdpy = 512 - pdpy;
+        if( pdpy < 0 )
+        {
+            --pdpy;            // 1's cmpl conversion
+        }
+
+        cmd = 0xFF0 << 20;
+        cmd |= (pdpx & 0x3FF) << 10;
+        cmd |= (pdpy & 0x3FF);
+    }
+    else
+    {
+        cmd = 0xFF1 << 20;  // pen up cmd to host
     }
 
-    pdpy = 512 - pdpy;
-    if( pdpy < 0 )
-    {
-        --pdpy;            // 1's cmpl conversion
-    }
-
-    cmd = 0xFF << 24;
-    cmd |= (pdpx & 0x3FF) << 10;
-    cmd |= (pdpy & 0x3FF);
     write(netfd, &cmd, 4);
 }
 
@@ -1015,7 +1026,7 @@ int port;
 int opt;
 int doXsize, doYsize;
 int forcedXrescale, forcedYrescale;
-int penDown;
+bool penDown;
 float scaleFactor;
 
     port = DEFAULTPORT;
@@ -1061,7 +1072,7 @@ float scaleFactor;
         return(1);
     }
 
-    penDown = 0;
+    penDown = false;
 
     SDL_Init(SDL_INIT_EVERYTHING);
 
@@ -1144,19 +1155,19 @@ float scaleFactor;
                 peny = event.motion.y;
                 if( doLightpen && penDown )
                 {
-                    updatepen();
+                    updatepen(true);
                 }
                 break;
 
             case SDL_MOUSEBUTTONDOWN:
                 if( event.button.button == 1 )
                 {
-                    penDown = 1;
+                    penDown = true;
                     penx = event.button.x;
                     peny = event.button.y;
                     if( doLightpen )
                     {
-                        updatepen();
+                        updatepen(true);
                     }
                 }
                 break;
@@ -1164,7 +1175,8 @@ float scaleFactor;
             case SDL_MOUSEBUTTONUP:
                 if(event.button.button == 1)
                 {
-                    penDown = 0;
+                    penDown = false;
+                    updatepen(false);
                 }
                 break;
 

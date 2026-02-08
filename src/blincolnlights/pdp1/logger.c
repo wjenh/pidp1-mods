@@ -2,11 +2,16 @@
  * This is a utility to allow debugging.
  * It will initialize itself on first use creating a log file '/tmp/dbg.log'.
  * It should be closed, but it flushes its output so that's not strictly necessary.
- * Use: logger("same format as printf", .....);
+ *
+ * A logger call will only produce output if its enable arg is nonzero.
+ *
+ * Use:
+ * logger(1,"same format as printf", .....);
  */
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 #define DOLOGGING
 #include "logger.h"
@@ -14,8 +19,13 @@
 static FILE *fP;
 
 void
-_logger(char *fmt, ...)
+_logger(int enable, char *fmt, ...)
 {
+    if( !enable )
+    {
+        return;     // do nothing
+    }
+
     if( !fP )
     {
         fP = fopen("/tmp/dbg.log", "a");

@@ -10,14 +10,21 @@
  * wje 05-Jan-26 break from original repo, now independent. Initial reformatting.
  *    Prior to this break, dynamic IOTs, new audio, high speed channel support, light pen support,
  *    and other minor changes were done.
- * wje 07-Feb-26 sdb  does not draw a dot, only sets position and intensity
+ * wje 07-Feb-26 sdb does not draw a dot, only sets position and intensity
  *    Special dpy mod, dpy 3000, sets lightpen enable and the aperture from IO
+ * wje 08-Feb-26 rework lightpen, was overthought, now much more accurate
 */
 #include "common.h"
 #include "pdp1.h"
 #include <unistd.h>
 #include <stdint.h>
 #include <fcntl.h>
+#include <stdbool.h>
+
+//#define DOLOGGING
+#include "logger.h"
+// Set desired log type to 1 to enable output assuming logging is defined.
+#define LOG_LP 0
 
 #define NOTIOTH
 #include "dynamicIots.h"
@@ -104,8 +111,8 @@ static void iot(PDP1 *pdp, int pulse);
 
 #ifdef P7LIGHTPEN
 static int lightpenEnabled;
-static void resetPenBuffer(PDP1 *pdp1P);
-static int readLightPen(PDP1 *pdp1P);
+static bool penDown;
+static bool checkLightPen(PDP1 *pdp1P);
 #endif
 
 // The emulator duplicates all of the original hardware
@@ -248,7 +255,6 @@ pwrclr(PDP1 *pdp)
     pdp->dpy_time = NEVER;
 
 #ifdef P7LIGHTPEN
-    resetPenBuffer(pdp);
     lightpenEnabled = 0;        // This is enabled via a dpy 3000 iot, which see
 #endif
 }
@@ -2088,6 +2094,7 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
             pdp->dcp = 0;                   // be sure its not set
             penAperture = IO & 01777;       // 0-1023 pixels, each one corresponds to the original 0.009"
             lightpenEnabled = IO & 02000;
+            penDown = false;
         }
 #endif
         else
@@ -2286,8 +2293,8 @@ flushdpy(DispCon *d)
 }
 
 #ifdef P7LIGHTPEN
-// wje, although the display semulator, p7sim, sends 'lightpen' updates, there
-// was no code here to handle them as well as it can.
+// Although the display semulator, p7sim, sends 'lightpen' updates, there
+// was no code here originally to handle them.
 int
 cvtDpyToSigned(int dpy)             // convert a 10 bit dpy coordinate to a 2's complement signed int
 {
@@ -2307,63 +2314,50 @@ cvtDpyToSigned(int dpy)             // convert a 10 bit dpy coordinate to a 2's 
 // See if there is a light pen hit.
 // If so, return 1.
 // If no hit, return 0.
-// Because of the completely asynchronous mouse updates from the display, it's impossible
-// to directly tie a coordinate to the dpy instruction execution time.
-// An attempt is made to correlate over a time period of mouse events, but the event buffer
-// is periodically cleared, some events will be missed and the correlation could be wrong.
-// This depends upon the fact that the display needs to be continually redrawn, so a hit
-// is actually matching a time in the past.
-// This works fine for relatively static displays, can miscategorize if dots are moving rapidly.
+// The client sends x,y coordinates whenever the mouse is moved with mouse button 1 down.
+// When the button is releasde, a 'pen lifted' notice is sent.
 // The physical light pen aperture is simulated by having any match within the dot location
 // plus the aperture setting.
-#define PENBUFSIZE 64
-#define RELOADINTERVAL 10000          // usecs, 10 msecs
-#include <stdbool.h>
+//
+// The algorithm is:
+// If a pen-lifted event is seen, set penDwon to false, no hit cheking will be done.
+// If a coordnate event is see, set penDown to true and save the most recent x, y update.
+// Whenever a dpy completion occurs, check the status and if the pen is down, see if the
+// dpy coordinates match the current position within the aperture boundaries and if so,
+// set the appropriate flags.
+//
+// A command from the client is a 32 bit word:
+// FFpccccc where:
+// p = 0x1 if the pen is up, 0x0 if down
+// c is the packed x, y 10 bit 1's complement coordinates (x << 10) | y
 
-static uint64_t lastTime;
-static int penBufCount;                 // number of elements currently in buffer
-static uint32_t penBuffer[PENBUFSIZE];
-static bool penBufferUsed[PENBUFSIZE];
+#define CMDBITS 0xFF000000
+#define LPCMD   0xFF000000
+#define PENBITS 0x00F00000
+#define LPUP    0x00100000
+
+#define PENBUFSIZE  64  // read up to this many commands at once
+
+static int lastX;
+static int lastY;
 static struct pollfd penPollData;
 
-// Reset the pen buffer, refill if data available
-void
-resetPenBuffer(PDP1 *pdp1P)
+// See if there is data from the client, update lp status
+bool
+updatePenLocation(PDP1 *pdp1P)
 {
-    DispCon *dpyP;
+int count;
+uint32_t cmdBuf[PENBUFSIZE];
+uint32_t cmd;
+DispCon *dpyP;
 
-    penBufCount = 0;
-    dpyP = &(pdp1P->dpy[0]);
-
-    if(dpyP->fd >= 0)
-    {
-        if(poll(&penPollData, 1, 0) > 0)
-        {
-            if(!(penPollData.revents & POLLIN))
-            {
-                return;                              // should normally not be the case, but be sure
-            }
-
-            penBufCount = read(dpyP->fd, penBuffer, sizeof(penBuffer)) / sizeof(int);
-            memset(penBufferUsed, 0, penBufCount * sizeof(bool));
-            lastTime = gettime();
-        }
-    }
-}
-
-int
-readLightPen(PDP1 *pdp1P)
-{
-    int i, sawOne, penx, peny, dpyx, dpyy;
-    uint32_t rslt;
-    DispCon *dpyP;
-
+    count = 0;
     dpyP = &(pdp1P->dpy[0]);
 
     if(dpyP->fd < 0)                                // No display is connected
     {
         penPollData.fd = -1;
-        return(0);
+        return(false);
     }
 
     if(penPollData.fd < 0)                          // First time since open, set up the poll data
@@ -2372,46 +2366,72 @@ readLightPen(PDP1 *pdp1P)
         penPollData.events = POLLIN;
     }
 
-    if(((lastTime + (RELOADINTERVAL * 1000)) < gettime()) || (penBufCount <= 0))
-    {
-        resetPenBuffer(pdp1P);
-    }
+    // Read all pending commands.
+    // Only the last will be significant.
+    count = 0;
 
-    if(penBufCount <= 0)
+    while( poll(&penPollData, 1, 0) > 0 )
     {
-        return(0);                              // nothing to do
-    }
-
-    // Take the first match found
-    for(i = 0; i < penBufCount; ++i)
-    {
-        if(!penBufferUsed[i])
+        if(!(penPollData.revents & POLLIN))
         {
-            rslt = penBuffer[i];
+            // The other end must have closed its connection
+            break;
+        }
 
-            // sanity check
-            if((rslt & 0xFF000000) == 0xFF000000)           // light pen
+        count = read(dpyP->fd, cmdBuf, sizeof(cmdBuf)) / sizeof(uint32_t);
+    }
+
+    if( count > 0 )
+    {
+        cmd = cmdBuf[count - 1];                // last one
+        logger(LOG_LP, "LP cmd 0x%08x, count %d\n", cmd, count);
+        if( (cmd & CMDBITS) == LPCMD )  // light pen, just to be sure
+        {
+            if( (cmd & PENBITS) == LPUP )   // pen up, done
             {
-                dpyx = cvtDpyToSigned(pdp1P->dbx);
-                dpyy = cvtDpyToSigned(pdp1P->dby);
-                penx = cvtDpyToSigned((rslt >> 10) & 0x3FF);
-                peny = cvtDpyToSigned(rslt & 0x3FF);
-
-                // Both coordinate pairs have been converted from 10 bit 1's complement to
-                // full signed 2's complement.
-                if((penx >= (dpyx - penAperture)) &&
-                    (penx <= (dpyx + penAperture)) &&
-                    (peny >= (dpyy - penAperture)) &&
-                    (peny <= (dpyy + penAperture)))
-                {
-                    penBufferUsed[i] = true;
-                    return(1);
-                }
+                penDown = false;
+            }
+            else
+            {
+                penDown = true;
+                // We convert to a signed 2's complement integer
+                lastX = cvtDpyToSigned((cmd >> 10) & 0x3FF);
+                lastY = cvtDpyToSigned(cmd & 0x3FF);
+                logger(LOG_LP, "New lastX %d, lastY %d\n", lastX, lastY);
             }
         }
     }
 
-    return(0);
+    return( penDown );
+}
+
+bool
+checkLightPen(PDP1 *pdp1P)
+{
+int i, sawOne, dpyx, dpyy;
+DispCon *dpyP;
+
+    if( !updatePenLocation(pdp1P) )
+    {
+        return(false);                // no hit possible
+    }
+
+    dpyP = &(pdp1P->dpy[0]);
+    dpyx = cvtDpyToSigned(pdp1P->dbx);
+    dpyy = cvtDpyToSigned(pdp1P->dby);
+
+    // Both coordinate pairs have been converted from 10 bit 1's complement to
+    // full signed 2's complement.
+    if((lastX >= (dpyx - penAperture)) &&
+        (lastX <= (dpyx + penAperture)) &&
+        (lastY >= (dpyy - penAperture)) &&
+        (lastY <= (dpyy + penAperture)))
+    {
+        logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d\n", lastX, lastY, dpyx, dpyy);
+        return(true);
+    }
+
+    return(false);
 }
 #endif
 
@@ -2712,7 +2732,7 @@ handleio(PDP1 *pdp)
         {
 #ifdef P7LIGHTPEN
             // If there was a light pen hit, cks bit 0 is set, and pf3 is set.
-            if(lightpenEnabled && readLightPen(pdp))
+            if( lightpenEnabled && checkLightPen(pdp) )
             {
                 pdp->cksflags |= 0400000;               // cleared by next dpy
                 pdp->pf |= decflg(3);
@@ -2937,10 +2957,6 @@ handlecmd(PDP1 *pdp, char *line)
             {
                 nodelay(pdp->dpy[0].fd);
             }
-
-#ifdef P7LIGHTPEN
-            resetPenBuffer(pdp);
-#endif
         }
         else if(strcmp(args[0], "?") == 0 || strcmp(args[0], "help") == 0)
         {

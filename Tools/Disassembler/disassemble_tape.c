@@ -116,6 +116,7 @@
  * 03/10/2025 wje - Handle non-standard tapes better, bail if in macro mode, dump in default mode.
  * 18/12/2025 wje - Added support for the new AM1 loader.
  * 06/01/2026 wje - Added support for pause in the AM1 loader.
+ * 09/02/2026 wje - Fix completion bit handling, dpy i and c handling
  *
  */
 #include <stdlib.h>
@@ -127,6 +128,7 @@
 #define DIAGNOSTIC(args...) if( diagnostics ) {printf(args); printf("\n");}
 
 // Instructions have a 5 bit opcode followed by a 1 bit indirect marker as the high 6 bits of a word
+// IOTs can also have a completion-requested, bit 6 set, 04000.
 #define OPERATION(x)    (x >> 12)
 
 // The remaining 12 low bits are the operand whose meaning varies by instruction
@@ -149,7 +151,7 @@ typedef enum {START, RESTART, LOOKING, RIM, BIN, DATA, RAW, DONE} State;
 typedef enum {NONE, CAN_INDIRECT, IS_SKIP, IS_SHIFT, IS_OPR, IS_IOT, IS_LAW, IS_CALJDA, IS_ILLEGAL} Modifiers;
 
 // IOT instructions have a number of special behaviors
-typedef enum {UNKNOWN, NORMAL, CAN_WAIT, INVERT_WAIT, IS_DPY, IS_SZF, IS_SZS, HAS_ID} SpecialMods;
+typedef enum {UNKNOWN, NORMAL, CAN_WAIT, INVERT_WAIT, IS_DPY, IS_IOH, IS_SZF, IS_SZS, HAS_ID} SpecialMods;
 
 // defines one instruction
 typedef struct
@@ -259,6 +261,7 @@ CodeDef opcodes[] =                 // we don't use the indirect bit, so we have
 // The more specific masks should come first
 Special iots[] =
     {
+        {010000, "ioh", NORMAL, 017777},
         {04074, "eem", NORMAL, 07777},
         {00074, "lem", NORMAL, 07777},
         {00001, "rpa", INVERT_WAIT, 0777},
@@ -414,6 +417,7 @@ char tmpstr[16];
         }
 
         printf("Disassembled from %s\n", shortname);
+        printf("ioh=iot i\n");   // just makes things easier
     }
     else
     {
@@ -1030,6 +1034,7 @@ formatInstr(int pc, int word)
 {
 int opcode;
 int indirect;
+int completion;
 int operand;
 int tmp, tmp2;
 int bits03;
@@ -1067,6 +1072,7 @@ Special *sP;
 
     opcode = OPERATION(word);
     indirect = opcode & 01;
+    completion = word & 04000;
     opcode >>= 1;                                           // convert to 32 possible instructions
 
     operand = OPERAND(word);
@@ -1160,7 +1166,7 @@ Special *sP;
             break;
 
         case IS_SZS:
-            printf(" %0o", ((operand >> 3) & 07));
+            printf(" %0o0", ((operand >> 3) & 07));
             break;
         }
         break;
@@ -1264,7 +1270,7 @@ Special *sP;
         // Sometimes there are extra bits in the operand above the usual 6 bits
         tmp2 = operand & 037700;
 
-        sP = findSpecial(iots, operand);
+        sP = findSpecial(iots, word);   // yes, use the whole word
         printf(" %s", sP->name);
 
         switch( sP->modifiers )
@@ -1277,6 +1283,11 @@ Special *sP;
                     operand |= 010000;       // include the bit in the output
                 }
 
+                if( completion )
+                {
+                    operand |= 004000;       // include the bit in the output
+                }
+
                 printf("%s%05o", (as_macro)?separator:" | ", operand);
 
                 if( unknown_iots )
@@ -1284,12 +1295,19 @@ Special *sP;
                     fprintf(stderr, "iot %05o\n", operand);
                 }
             }
+            else            // is ioh
+            {
+                if( indirect )
+                {
+                    printf(" i");
+                }
+            }
             break;
 
         case CAN_WAIT:
             if( indirect )
             {
-                printf(" %s", as_macro?"i":"w");
+                printf(" i");
             }
             break;
 
@@ -1301,18 +1319,44 @@ Special *sP;
             break;
 
         case IS_DPY:            // does INVERT_WAIT plus intensity
+            tmp = 0;
+
             if( !indirect )
             {
                 printf("-i");
             }
 
-            tmp = operand & 0700;  // macro doesn't print the intensity if it's zero 
+            if( as_macro )
+            {
+                tmp = operand & 07700;  // macro doesn't print the intensity if it's zero 
+            }
+            else
+            {
+                tmp = operand & 03770;  // macro doesn't print the intensity if it's zero 
+                if( completion )
+                {
+                    printf(" C");
+                }
+            }
+
             if( tmp > 0 )
             {
-                printf(" %3o", tmp);
+                printf(" %4o", tmp);
             }
 
             tmp2 = 0;              // dpy uses some of the special bits
+            break;
+
+        case IS_IOH:            // special case iot for completion
+            if( indirect )
+            {
+                printf(" i");
+            }
+            if( completion )
+            {
+                printf(" %s", (as_macro)?"4000":"C");
+            }
+            tmp2 = 0;
             break;
 
         case HAS_ID:            // some encode a subdevice, eg tape drive number

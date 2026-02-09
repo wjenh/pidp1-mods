@@ -28,7 +28,7 @@ _logger(int enable, char *fmt, ...)
 
     if( !fP )
     {
-        fP = fopen("/tmp/dbg.log", "a");
+        fP = fopen("/tmp/pidp1.log", "a");
         fprintf(fP,"Logging started\n");
     }
 

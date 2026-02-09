@@ -4,8 +4,8 @@
 
 #include <SDL2/SDL.h>
 
-#define SAMPLE_RATE (5714*1)          // one sample every 175 us, it's what the original did, oversample if desired
-#define SAMPLE_TIME (1000000000/SAMPLE_RATE)  // one sample every 175 us, it's what the original did, oversample by 6
+#define SAMPLE_RATE (5714)          // one sample every 175 us, it's what the original did, oversample if desired
+#define SAMPLE_TIME (1000000000/sampleRate) // scheduling time for pidp1's timing loop
 #define PRELOAD 64                          // number of samples to accumulate in SDL buffer before playing
 
 // The values we use for the square wave
@@ -156,6 +156,15 @@ float buffer[2];
 	SDL_QueueAudio(dev, buffer, 2 * sizeof(float));
 }
 
+// set the sampling rate for SDB.
+// Oversampling is ok.
+void
+setSampleRate(int usecs)
+{
+    sampleRate = usecs;
+}
+
+// Set all filters to the same alpha
 void
 setFilterAlpha(float newAlpha)
 {
@@ -163,6 +172,35 @@ setFilterAlpha(float newAlpha)
     voice1.alpha = alpha;
     voice2.alpha = alpha;
     voice3.alpha = alpha;
+    voice4.alpha = alpha;
+}
+
+// Individual channel tuning
+void
+setFilter1Alpha(float newAlpha)
+{
+    alpha = boundValue(newAlpha);
+    voice1.alpha = alpha;
+}
+
+void
+setFilter2Alpha(float newAlpha)
+{
+    alpha = boundValue(newAlpha);
+    voice2.alpha = alpha;
+}
+
+void
+setFilter3Alpha(float newAlpha)
+{
+    alpha = boundValue(newAlpha);
+    voice3.alpha = alpha;
+}
+
+void
+setFilter4Alpha(float newAlpha)
+{
+    alpha = boundValue(newAlpha);
     voice4.alpha = alpha;
 }
 

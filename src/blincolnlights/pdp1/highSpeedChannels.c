@@ -15,6 +15,8 @@
 #include "logger.h"
 #include "highSpeedChannels.h"
 
+#define LOG_HSC 0   // logger enable for this
+
 // Original had three channels, priority ordered 1-3
 static HSC_Control chan1;
 static HSC_Control chan2;
@@ -86,7 +88,7 @@ HSC_ControlP controlP;
     controlP = HSC_chans[chan - 1];
     if( controlP->status == HSC_BUSY )
     {
-        logger("request_channel called but still busy\n");
+        logger(LOG_HSC, "request_channel called but still busy\n");
         return( HSC_BUSY );
     }
 
@@ -99,7 +101,7 @@ HSC_ControlP controlP;
     controlP->fromBufP = fromBufferP;
 
     controlP->status = HSC_BUSY;
-    logger("channel %d set to BUSY\n", chan);
+    logger(LOG_HSC, "channel %d set to BUSY\n", chan);
     return( HSC_OK );
 }
 
@@ -168,7 +170,7 @@ Word word;
     // are we done?
     if( controlP->count-- <= 0 )
     {
-        logger("processChannel marking DONE\n");
+        logger(LOG_HSC, "processChannel marking DONE\n");
         controlP->status = HSC_DONE;
         pdp1P->hsc = 0;
         return;

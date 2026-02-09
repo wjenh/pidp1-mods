@@ -21,6 +21,7 @@
  * Revision history:
  *
  * 27/10/2025 wje - Initial version
+ * 09/02/2026 wje - Fix completion bit handling, dpy i and c handling
  *
  */
 #include <stdlib.h>
@@ -29,6 +30,7 @@
 #include <string.h>
 
 // Instructions have a 5 bit opcode followed by a 1 bit indirect marker as the high 6 bits of a word
+// IOTs can also have a completion-requested, bit 6 set, 04000.
 #define OPERATION(x)    (x >> 12)
 
 // The remaining 12 low bits are the operand whose meaning varies by instruction
@@ -167,6 +169,7 @@ decodeInstr(int word, char*resultP)
 unsigned int opcode;
 unsigned int operand;
 int indirect;
+int completion;
 int tmp, tmp2;
 int bits03;
 char *cP;
@@ -183,6 +186,7 @@ Special *sP;
     }
 
     indirect = opcode & 01;
+    completion = word & 04000;
     opcode >>= 1;                                           // convert to 32 possible instructions
 
     operand = OPERAND(word);
@@ -271,7 +275,7 @@ Special *sP;
             break;
 
         case IS_SZS:
-            resultP += sprintf(resultP," %0o", ((operand >> 3) & 07));
+            resultP += sprintf(resultP," %0o0", ((operand >> 3) & 07));
             break;
         }
         break;
@@ -361,7 +365,7 @@ Special *sP;
 
     case IS_IOT:
         // Sometimes there are extra bits in the operand above the usual 6 bits
-        tmp2 = operand & 037700;
+        tmp2 = operand & 017700;
 
         sP = findSpecial(iots, operand);
         resultP += sprintf(resultP,"%s", sP->name);
@@ -376,14 +380,26 @@ Special *sP;
                     operand |= 010000;       // include the bit in the output
                 }
 
+                if( completion )
+                {
+                    operand |= 004000;       // include the bit in the output
+                }
+
                 resultP += sprintf(resultP,"|%05o", operand);
+            }
+            else            // is ioh
+            {
+                if( indirect )
+                {
+                    resultP += sprintf(resultP," i");
+                }
             }
             break;
 
         case CAN_WAIT:
             if( indirect )
             {
-                resultP += sprintf(resultP," w");
+                resultP += sprintf(resultP," i");
             }
             break;
 
@@ -400,10 +416,10 @@ Special *sP;
                 resultP += sprintf(resultP,"-i");
             }
 
-            tmp = operand & 0700;  // macro doesn't print the intensity if it's zero 
+            tmp = operand & 07700;  // macro doesn't print the intensity if it's zero 
             if( tmp > 0 )
             {
-                resultP += sprintf(resultP," %3o", tmp);
+                resultP += sprintf(resultP," %4o", tmp);
             }
 
             tmp2 = 0;              // dpy uses some of the special bits

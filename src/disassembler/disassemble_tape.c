@@ -19,7 +19,8 @@
  * However, many tapes have a leader punched that shows a punch pattern that makes descriptive text.
  * This is also captured by printing out in 'readable label' form any character up to the first 0200 one.
  *
- * Processing then continues looking for a RIM block, followed by ddt-form BIN blocks.
+ * Processing then continues looking for a RIM block, followed by ddt-form BIN blocks or if -a is given,
+ * am1 extended loader blocks.
  * 
  * When tapes were loaded, the BIN loader would effectively stop at the end of a load because of a JMP
  * being executed. But, tapes sometimes had additional data following.
@@ -113,6 +114,8 @@
  * 27/09/2025 wje - Continue to process a tape even if a malformed BIN block is found, jsut give a warning.
  * 28/09/2025 wje - Add -c for compalibility mode, will emit source that works with the native PDP-1 macro assembler.
  * 03/10/2025 wje - Handle non-standard tapes better, bail if in macro mode, dump in default mode.
+ * 18/12/2025 wje - Added support for the new AM1 loader.
+ * 06/01/2026 wje - Added support for pause in the AM1 loader.
  *
  */
 #include <stdlib.h>
@@ -193,6 +196,7 @@ bool unknown_iots = false;
 bool diagnostics = false;
 bool keep_rim = false;
 bool compatibility_mode = false;
+bool am1Loader = false;
 
 int pass = 1;               // first pass
 int label_number = 1;       // used with memlocs and labels
@@ -336,6 +340,10 @@ char tmpstr[16];
         {
             switch( *cP )
             {
+            case 'a':
+                am1Loader = true;
+                break;
+
             case 'i':
                 unknown_iots = true;
                 break;
@@ -507,7 +515,54 @@ char tmpstr[16];
             break;
 
         case LOOKING:
-            if( OPERATION(word) == 032 )   // RIM ended, DIO, beginning of BIN block
+            if( am1Loader )
+            {
+                if( word & 0600000 )
+                {
+                    // am1 loader end-of-code, start addr or pause
+                    if( (word & 0600000) == 0600000 )
+                    {
+                        printf("\n     pause\n");
+                        DIAGNOSTIC("Saw pause at tape location %d, new state is DONE", tape_loc);
+                        state = DONE;
+                    }
+                    else
+                    {
+                        word &= 0177777;
+                        if( getLabel(word, word, labelStr) != -1 )
+                        {
+                            printf("\n     start %s\n", labelStr); // macro directive to give start addr
+                        }
+                        else
+                        {
+                            printf("\n     start %06o\n", word);    // could be an extended address
+                        }
+
+                        if( as_macro )
+                        {
+                            did_start = true;
+                            state = DONE;
+                            DIAGNOSTIC("Saw jmp %06o at tape location %d, new state is DONE", word, tape_loc);
+                        }
+                        else
+                        {
+                            word2 = 0617770;
+                            formatInstr(cur_addr, word);            // emit the JMP
+                            printf("\n");
+                            state = DATA;
+                            DIAGNOSTIC("Saw jmp %04o at tape location %d, new state is DATA",
+                                OPERAND(word), tape_loc);
+                        }
+                    }
+                }
+                else
+                {
+                    cur_addr = word;        // start of am1 block
+                    end_addr = getWord(fP, 2, state);
+                    state = BIN;
+                }
+            }
+            else if( OPERATION(word) == 032 )   // RIM ended, DIO, beginning of BIN block
             {
                 cur_addr = OPERAND(word);   // starting address
 
@@ -610,10 +665,13 @@ char tmpstr[16];
                 {
                     if( !as_macro )
                     {
-                        printf("End of BIN block at tape position %d\n", tape_loc - 3);
+                        printf("End of %s block at tape position %d\n", am1Loader?"AM1":"BIN", tape_loc - 3);
                     }
 
-                    word = getWord(fP, 2, state);         // checksum already checked in pass one
+                    if( !am1Loader )
+                    {
+                        word = getWord(fP, 2, state);         // checksum already checked in pass one
+                    }
                     state = LOOKING;
                 }
             }
@@ -1102,7 +1160,7 @@ Special *sP;
             break;
 
         case IS_SZS:
-            printf(" %0o", ((operand >> 3) & 07));
+            printf(" %0o0", ((operand >> 3) & 07));
             break;
         }
         break;
@@ -1226,12 +1284,19 @@ Special *sP;
                     fprintf(stderr, "iot %05o\n", operand);
                 }
             }
+            else            // is ioh
+            {
+                if( indirect )
+                {
+                    printf(" i");
+                }
+            }
             break;
 
         case CAN_WAIT:
             if( indirect )
             {
-                printf(" %s", as_macro?"i":"w");
+                printf(" i");
             }
             break;
 
@@ -1248,10 +1313,10 @@ Special *sP;
                 printf("-i");
             }
 
-            tmp = operand & 0700;  // macro doesn't print the intensity if it's zero 
+            tmp = operand & 07700;  // macro doesn't print the intensity if it's zero 
             if( tmp > 0 )
             {
-                printf(" %3o", tmp);
+                printf(" %4o", tmp);
             }
 
             tmp2 = 0;              // dpy uses some of the special bits
@@ -1361,10 +1426,12 @@ char *cP;
     }
 }
 
-void usage()
+void
+usage()
 {
-    fprintf(stderr,"Usage: disassemble_tape [-midkcr] filename\n");
+    fprintf(stderr,"Usage: disassemble_tape [-amidkcr] filename\n");
     fprintf(stderr,"where:\n");
+    fprintf(stderr,"a - expect the am1 loader\n");
     fprintf(stderr,"m - output in pure macro assember form\n");
     fprintf(stderr,"i - print any unknown IOTs on stderr\n");
     fprintf(stderr,"d - enable diagnostics for debugging this progam\n");

@@ -271,7 +271,7 @@ Special *sP;
             break;
 
         case IS_SZS:
-            resultP += sprintf(resultP," %0o", ((operand >> 3) & 07));
+            resultP += sprintf(resultP," %0o0", ((operand >> 3) & 07));
             break;
         }
         break;
@@ -378,12 +378,19 @@ Special *sP;
 
                 resultP += sprintf(resultP,"|%05o", operand);
             }
+            else            // is ioh
+            {
+                if( indirect )
+                {
+                    resultP += sprintf(resultP," i");
+                }
+            }
             break;
 
         case CAN_WAIT:
             if( indirect )
             {
-                resultP += sprintf(resultP," w");
+                resultP += sprintf(resultP," i");
             }
             break;
 
@@ -400,10 +407,10 @@ Special *sP;
                 resultP += sprintf(resultP,"-i");
             }
 
-            tmp = operand & 0700;  // macro doesn't print the intensity if it's zero 
+            tmp = operand & 07700;  // macro doesn't print the intensity if it's zero 
             if( tmp > 0 )
             {
-                resultP += sprintf(resultP," %3o", tmp);
+                resultP += sprintf(resultP," %4o", tmp);
             }
 
             tmp2 = 0;              // dpy uses some of the special bits

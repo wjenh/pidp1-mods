@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <poll.h>
 
 //#define DOLOGGING
 #include "logger.h"
@@ -38,21 +39,15 @@
 // If both are given, TYPE_33_SUPPORT will be used since DPY_SHIFT_ENABLED can be completely simulated
 // while sdb cannot.
 
+// NOTE that both shift and sdb can't be active at the same time, they conflict.
+// If both are on, then sdb takes priority.
 // Allow origin shift in dpy IOT
-//#define DPY_SHIFT_ENABLED
+#define DPY_SHIFT_ENABLED
 // Enable the sdb instruction for the Type 33 Symbol Generator
 #define TYPE_33_SUPPORT
 
-#if defined(DPY_SHIFT_ENABLED) && defined(TYPE_33_SUPPORT)
-#warning "DPY_SHIFT_ENABLED and TYPE_33_SUPPORT can't both be used at the same time, defaulting to TYPE_33_SUPPORT"
-#undef DPY_SHIFT_ENABLED
-#endif
-
 // Enable p7sim pseudo-lightpen
 #define P7LIGHTPEN
-
-#ifdef P7LIGHTPEN
-#include <poll.h>
 
 // The light pen came with 6 different aperture masks ranging from 0.05 to 0.30 inches.
 // The setting of penAperture, see readLightpen() below, emulates these by defining the distance from the
@@ -73,9 +68,13 @@
 // 0.25     14       0.252
 // 0.30     17       0.306
 //
-#define APERTURE  3
-static int penAperture = APERTURE;
-#endif
+
+#define APERTURE 3                  // the default, 0.050"
+
+int lightpenEnabled = 0;            // we always expose these for loadConfig in main.c
+int penAperture = APERTURE;
+int sdbEnabled = 1;
+int dpyShiftEnabled = 0;
 
 #define B0 0400000
 #define B1 0200000
@@ -110,7 +109,6 @@ static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
 
 #ifdef P7LIGHTPEN
-static int lightpenEnabled;
 static bool penDown;
 static bool checkLightPen(PDP1 *pdp1P);
 #endif
@@ -255,7 +253,7 @@ pwrclr(PDP1 *pdp)
     pdp->dpy_time = NEVER;
 
 #ifdef P7LIGHTPEN
-    lightpenEnabled = 0;        // This is enabled via a dpy 3000 iot, which see
+    lightpenEnabled = 1;        // This is enabled via a dpy 3000 iot, which see
 #endif
 }
 
@@ -2087,13 +2085,12 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
         }
 
 #ifdef P7LIGHTPEN
-        else if((ch & 030) == 030)       // wje, set lightpen aperture, enable or disable light pen
+        else if((ch & 030) == 030)       // wje, set lightpen aperture
         {
             pdp->dpy_defl_time = NEVER;     // just set aperture
             pdp->dpy_time = 0;
             pdp->dcp = 0;                   // be sure its not set
             penAperture = IO & 01777;       // 0-1023 pixels, each one corresponds to the original 0.009"
-            lightpenEnabled = IO & 02000;
             penDown = false;
         }
 #endif
@@ -2103,24 +2100,28 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
             pdp->dby |= IO >> 8;
 
 #ifdef DPY_SHIFT_ENABLED
-            // wje, emulate the origin shift that was implemented in some systems
-            if(ch & 010)        // origin at bottom
+            // Emulate the origin shift that was implemented in some systems
+            // It conflicts with sdb, sdb takes priority
+            if( dpyShiftEnabled && !sdbEnabled )
             {
-                pdp->dby ^= 01000;
-            }
+                if(ch & 010)        // origin at bottom
+                {
+                    pdp->dby ^= 01000;
+                }
 
-            if(ch & 020)        // origin at left
-            {
-                pdp->dbx ^= 01000;
+                if(ch & 020)        // origin at left
+                {
+                    pdp->dbx ^= 01000;
+                }
             }
 #endif
             pdp->dpy_defl_time = pdp->simtime + US(35);
             pdp->dpy_time = pdp->dpy_defl_time + US(15);
-            pdp->dcp = nac;
             pdp->dint |= (MB >> 6) & 7;
+            pdp->dcp = nac;
 
 #ifdef TYPE_33_SUPPORT
-            if((ch & 030) == 020)        // wje, sdb is a reposition without drawing a dot
+            if( sdbEnabled && ((ch & 030) == 020) )  // sdb is a reposition without drawing a dot
             {
                 // This is documented as taking 30 usecs because it doesn't
                 // need the addtional time to draw the dot.
@@ -3012,7 +3013,7 @@ handlecmd(PDP1 *pdp, char *line)
                 else if(strcmp(args[1], "query") == 0)
                 {
                     sprintf(resp, "Audio %s, current alpha %f, current gain %f, current tuning %f\n",
-                            doaudio ? "on" : "off", getFilterAlpha(), getMixerGain(), getAudioTuning());
+                        doaudio ? "on" : "off", getFilterAlpha(), getMixerGain(), getAudioTuning());
                 }
                 else if(strcmp(args[1], "alpha") == 0)
                 {

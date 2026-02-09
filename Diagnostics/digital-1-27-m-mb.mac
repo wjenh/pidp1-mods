@@ -1,0 +1,603 @@
+Disassembled from digital-1-27-m-mb
+ioh=iot i
+0/
+L5,   szs 10
+      jmp L1
+      szs 20
+      jmp L2
+      szs 30
+      jmp L3
+      szs 40
+      jmp L4
+      jmp L5
+L14,  szs i 10
+      jmp L5
+L1,   lac L6
+      dac 1216
+      lio L8
+      lac L9
+L16,  clf 7
+      dpy-i 4000
+      add L10
+      ioh
+      dpy-i 4000
+      szf i 3
+      stf 4
+      clf 3
+      ioh
+      szf i 3
+      stf 5
+      dio 1217
+      lio 1216
+      szf i 5
+      dpy
+      sub L10
+      szf i 4
+      dpy-i
+      rcl     9s
+      rcl     9s
+      add L12
+      sad L13
+      jmp L14
+      dac 1216
+      lac 1217
+      add L15
+      rcl     9s
+      rcl     9s
+      jmp L16
+L2,   dzm 1220
+L23,  szs i 20
+      jmp L5
+      clf 3
+      lio L10
+      lac L18
+L29,  dpy-i 4000
+      sub L19
+      sma
+      jmp L20
+      add L21
+      sas L18
+      jmp L20
+      rcl     9s
+      rcl     9s
+      sub L22
+      spa
+      jmp L23
+      rcl     9s
+      rcl     9s
+100/
+L20,  ioh
+      szf i 3
+      jmp L24
+      dac 1221
+      rcl     9s
+      rcl     9s
+      cks
+      spi i
+      jmp L26
+      clf 3
+      rcl     9s
+      rcl     9s
+      idx 1220
+      sad L27
+      jmp L28
+      lac 1221
+      jmp L29
+L24,  dio 1221
+      cks
+      spi
+      jmp L30
+      lio 1221
+      jmp L29
+L30,  cla
+      jda L42
+      cla
+      jda L45
+      lac L31
+      jda L49
+      lac L32
+      jda L49
+      szs i 20
+      jmp L5
+      jmp L30
+L26,  cla
+      jda L45
+      lac L33
+      jda L42
+      lac L32
+      jda L49
+      lac L31
+      jda L49
+      cla
+      jda L49
+      szs i 20
+      jmp L5
+      jmp L26
+L28,  cla
+      jda L42
+      cla
+      jda L45
+      lac L33
+      jda L42
+      lac L33
+      jda L45
+      cla
+      jda L49
+      lac L32
+      jda L49
+      lac L34
+      jda L42
+      lac L34
+      jda L45
+      lio L35
+200/
+      dzm 1221
+      lac L36
+      dac 1222
+L40,  law 2000
+      add 1221
+      dac 1221
+      add 1222
+      sad L38
+      jmp L39
+      rcl     9s
+      rcl     9s
+      dpy
+      rcl     9s
+      rcl     9s
+      lac 1222
+      sub 1221
+      rcl     9s
+      rcl     9s
+      dpy
+      add L19
+      rcl     9s
+      rcl     9s
+      jmp L40
+L39,  szs i 20
+      jmp L5
+      jmp L28
+L42,  000232
+      dap L41
+      lac L42
+      cli
+L43,  dpy-i
+      rcl     9s
+      rcl     9s
+      add L19
+      sad L31
+L41,  jmp L41
+      rcl     9s
+      rcl     9s
+      jmp L43
+L45,  000247
+      dap L44
+      lac L45
+      lio L31
+L47,  dpy-i
+      rcl     9s
+      rcl     9s
+      add L19
+      sad L46
+L44,  jmp L44
+      rcl     9s
+      rcl     9s
+      jmp L47
+L49,  000264
+      dap L48
+      lac L49
+      lio L19
+      rcl     9s
+      rcl     9s
+L51,  dpy-i
+      add L19
+      sad L33
+L48,  jmp L48
+      nop
+L50,  nop
+300/
+      xct L50
+      jmp L51
+L65,  szs i 30
+      jmp L5
+L3,   lio L52
+      dio 1223
+L66,  lac L54
+      dac 1224
+L63,  dpy
+      szf i 3
+      jmp L56
+      clf 3
+      rcl     9s
+      rcl     9s
+      sub L54
+      sal     3s
+      add L57
+      rcl     9s
+      rcl     9s
+      sub L54
+      sal     3s
+      add L57
+      dpy-i
+      jmp L58
+L56,  nop
+L59,  xct L56
+L60,  xct L59
+L61,  xct L60
+      xct L61
+      xct L56
+L58,  lac 1224
+      lio 1223
+      add L15
+      dac 1224
+      sas L62
+      jmp L63
+      lac 1223
+      sub L15
+      dac 1223
+      sad L64
+      jmp L65
+      lio 1223
+      jmp L66
+L4,   szs 60
+      jmp L5
+      law 1227
+      dap L67
+L87,  lio L68
+      dio 1225
+L77,  lac L68
+      dac 1226
+      jmp L71
+L73,  ioh
+      szf 3
+      jmp L72
+L71,  dpy-i 4000
+      clf 3
+      add L12
+      szo i
+      jmp L73
+      ioh
+      szf 3
+      jmp L72
+      rcl     9s
+400/
+      rcl     9s
+      add L12
+      szo
+      jmp L74
+L78,  rcl     9s
+      rcl     9s
+      szs 60
+      jmp L75
+      law 0400
+      add 1226
+      dac 1226
+      sas L76
+      jmp L71
+      jmp L77
+L74,  law 0400
+      add 1225
+      dac 1225
+      sas L76
+      jmp L78
+      jmp L4
+L72,  sub L12
+      jmp L79
+L88,  szs 60
+      jmp L75
+      szs i 40
+      jmp L5
+      lac L80
+      add L81
+      lio L82
+      clf 3
+      dpy
+      szf i 3
+      stf 1
+      szf 3
+      szf i 1
+      szf i 0
+      jmp L79
+      lac L83
+      sub L81
+      clf 3
+      dpy
+      szf i 3
+      stf 1
+      szf 3
+      szf i 1
+      szf i 0
+      jmp L79
+      lac L84
+      add L81
+      lio L85
+      rcl     9s
+      rcl     9s
+      clf 3
+      dpy
+      szf i 3
+      stf 1
+      szf 3
+      szf i 1
+      szf i 0
+      jmp L79
+      rcl     9s
+      rcl     9s
+      lac L86
+      sub L81
+500/
+      clf 3
+      rcl     9s
+      rcl     9s
+      dpy
+      szf i 3
+      stf 1
+      szf 3
+      szf i 1
+      szf i 0
+      jmp L79
+      szf 2
+      jmp L87
+      szf 1
+      stf 2
+      jmp L88
+L79,  jmp L89
+L94,  jmp L90
+L97,  lac L85
+      rcl     9s
+      rcl     9s
+      jmp L91
+L98,  lac L84
+      clf 1
+      clf 2
+      jmp L92
+L89,  sub L93
+      dpy-i 4000
+      clf 3
+      add L12
+      ioh
+      szf 3
+      sub L93
+      dpy-i 4000
+      clf 3
+      add L19
+      ioh
+      szf 3
+      sub L12
+      dpy-i 4000
+      clf 3
+      add L15
+      ioh
+      szf 3
+      sub L19
+      dpy-i 4000
+      clf 3
+      add L22
+      ioh
+      szf 3
+      sub L15
+      dpy-i 4000
+      clf 3
+      ioh
+      szf 3
+      sub L22
+      dac L80
+      jmp L94
+L90,  add L93
+      dpy-i 4000
+      clf 3
+      sub L12
+      ioh
+      szf 3
+      add L93
+600/
+      dpy-i 4000
+      clf 3
+      sub L19
+      ioh
+      szf 3
+      add L12
+      dpy-i 4000
+      clf 3
+      sub L15
+      ioh
+      szf 3
+      add L19
+      dpy-i 4000
+      clf 3
+      sub L22
+      ioh
+      szf 3
+      add L15
+      dpy-i 4000
+      clf 3
+      ioh
+      szf 3
+      add L22
+      dac L83
+      sar     1s
+      dac L85
+      lac L80
+      sar     1s
+      add L85
+      dac L85
+      and L95
+      dac L96
+      jmp L97
+L91,  sub L93
+      rcl     9s
+      rcl     9s
+      dpy-i 4000
+      clf 3
+      rcl     9s
+      rcl     9s
+      add L12
+      ioh
+      szf 3
+      sub L93
+      rcl     9s
+      rcl     9s
+      dpy-i 4000
+      clf 3
+      rcl     9s
+      rcl     9s
+      add L19
+      ioh
+      szf 3
+      sub L12
+      rcl     9s
+      rcl     9s
+      dpy-i 4000
+      clf 3
+      rcl     9s
+      rcl     9s
+      add L15
+      ioh
+      szf 3
+      sub L19
+700/
+      rcl     9s
+      rcl     9s
+      dpy-i 4000
+      clf 3
+      rcl     9s
+      rcl     9s
+      add L22
+      ioh
+      szf 3
+      sub L15
+      rcl     9s
+      rcl     9s
+      dpy-i 4000
+      clf 3
+      rcl     9s
+      rcl     9s
+      ioh
+      szf 3
+      sub L22
+      dac L84
+      jmp L98
+L92,  add L93
+      rcl     9s
+      rcl     9s
+      dpy-i 4000
+      clf 3
+      rcl     9s
+      rcl     9s
+      sub L12
+      ioh
+      szf 3
+      add L93
+      rcl     9s
+      rcl     9s
+      dpy-i 4000
+      clf 3
+      rcl     9s
+      rcl     9s
+      sub L19
+      ioh
+      szf 3
+      add L12
+      rcl     9s
+      rcl     9s
+      dpy-i 4000
+      clf 3
+      rcl     9s
+      rcl     9s
+      sub L15
+      ioh
+      szf 3
+      add L19
+      rcl     9s
+      rcl     9s
+      dpy-i 4000
+      clf 3
+      rcl     9s
+      rcl     9s
+      sub L22
+      ioh
+      szf 3
+      add L15
+      rcl     9s
+      rcl     9s
+1000/
+L111, dpy-i 4000
+      clf 3
+      rcl     9s
+      rcl     9s
+      ioh
+      szf 3
+      add L22
+      dac L86
+      sar     1s
+      dac L82
+      lac L84
+      sar     1s
+      add L82
+      dac L82
+      rar     9s
+      and L99
+      ior L96
+L67,  dac L100
+      idx L67
+      sas L101
+      jmp L88
+L75,  law 1226
+      dap L102
+L103, idx L102
+L102, lac L102
+      cli
+      rcr     9s
+      rar     9s
+      dpy-i
+      lac L102
+      ior L46
+      sas L67
+      jmp L103
+      szs i 40
+      jmp L5
+      jmp L75
+L80,  001044
+L83,  001045
+L84,  001046
+L86,  001047
+L85,  001050
+L82,  001051
+L96,  001052
+L81,  002000
+L6,   sad i 3000
+L8,   jda 5000
+L9,   mul 5000
+L10,  xor 4000
+L12,  004000
+L13,  mul 3000
+L15,  001000
+L18,  xor 2400
+L19,  002000
+L21,  xor 4400
+L22,  000400
+L27,  001751
+L31,  and L5
+L32,  and i 6000
+L33,  and 2000
+L34,  ior i 6000
+L35,  xor L111
+L36,  017000
+L38,  and i 7000
+L46,  ior L5
+1100/
+L52,  lac i 7000
+L54,  cal
+L57,  add 7600
+L62,  lio L5
+L64,  cal
+L68,  add 3777
+L76,  add 7777
+L93,  010000
+L95,  777000
+L99,  000777
+L101, dac 7777
+1227/
+L100, 001227
+
+     start L5

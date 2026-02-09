@@ -25,12 +25,17 @@ sudo git clone https://github.com/wjenh/pidp1-mods.git
 
 Everything after this proceeds as for the original install.
 
+## Configuration file
+
+A configuration file, /opt/pidp1-mods/pidp1.config, is read when the emulator starts.
+It allows control over many features, see the provided one for details.
+
 ## What is configured by default?
 
 The default for the emulator is basically *everything*:
 
 - The useful PDP-1D instructions, lia, lai, lsw, swp, cmi, sni, szi
-- Lightpen support and an extended dpy for enabling and disabling it and setting the aperture size
+- Lightpen support and an extended dpy for setting the aperture size on the fly
 - Lightpen support in p7sim and p7simES
 - Dynamic IOTs
 - Improved audio and a control app for it
@@ -46,10 +51,12 @@ The following IOTs are also built:
 - Type 630 Data Communications System
 - IOT 60, a nonstandard iot to enable and disable the SBS16 interrupt system
 
-Many of thes features can be diabled via #defines in pdp1.c and p7sim main.c.
+Many of thes features can be diabled via #defines in pdp1.c and p7sim main.c.\
+The lightpen, audio. mult/div, dpy origin shift, and sdb can be enabled or disabled and other values set
+in the config file.
 
-One dpy option, reorigin dpy coordinates, conflicts with the lightpen.
-It can be enabled in pdp1.c and lightpen support diabled.
+One dpy option, reorigin dpy coordinates, conflicts with the lightpen sdb iot.
+If both are enabled, the lightpen sdb iot takes priority.
 
 The tools, including am1, are not automatically built, see below.
 

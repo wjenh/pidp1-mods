@@ -13,6 +13,8 @@
  * wje 07-Feb-26 sdb does not draw a dot, only sets position and intensity
  *    Special dpy mod, dpy 3000, sets lightpen enable and the aperture from IO
  * wje 08-Feb-26 rework lightpen, was overthought, now much more accurate
+ * wje 10-Feb-26 work around poll() returning data ready when it's not
+ * wje 10-Feb-26 style cleanup, remove conditionals for light pen, origin shift, lai, lia
 */
 #include "common.h"
 #include "pdp1.h"
@@ -27,28 +29,10 @@
 #include "logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
 #define LOG_LP 0
+#define LOG_POLL 0
 
 #define NOTIOTH
 #include "dynamicIots.h"
-
-// PDP-1D but probably also on some C's?
-#define LAILIA
-
-// The following two are mutually exclusive because they use common bits in the dpy instruction.
-// Either can be simulated, shift via offsetting coordinates, sdb via dpy-i 400.
-// However, dpy-i 400 won't allow setting intensity i the command as sdb does.
-// If both are given, TYPE_33_SUPPORT will be used since DPY_SHIFT_ENABLED can be completely simulated
-// while sdb cannot.
-
-// NOTE that both shift and sdb can't be active at the same time, they conflict.
-// If both are on, then sdb takes priority.
-// Allow origin shift in dpy IOT
-#define DPY_SHIFT_ENABLED
-// Enable the sdb instruction for the Type 33 Symbol Generator
-#define TYPE_33_SUPPORT
-
-// Enable p7sim pseudo-lightpen
-#define P7LIGHTPEN
 
 // The light pen came with 6 different aperture masks ranging from 0.05 to 0.30 inches.
 // The setting of penAperture, see readLightpen() below, emulates these by defining the distance from the
@@ -106,13 +90,11 @@ int dpyShiftEnabled = 0;
 #define TTI_CHAN 7
 #define TTO_CHAN 8
 
+static bool penDown;
+
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
-
-#ifdef P7LIGHTPEN
-static bool penDown;
 static bool checkLightPen(PDP1 *pdp1P);
-#endif
 
 // The emulator duplicates all of the original hardware
 // subcycles. Impressive.
@@ -252,16 +234,14 @@ pwrclr(PDP1 *pdp)
 
     pdp->dpy_defl_time = NEVER;
     pdp->dpy_time = NEVER;
-
-#ifdef P7LIGHTPEN
-    lightpenEnabled = 1;        // This is enabled via a dpy 3000 iot, which see
-#endif
 }
 
 static void
 mul_shift(PDP1 *pdp)
 {
-    int ac = AC >> 1;
+int ac;
+
+    ac = AC >> 1;
     IO = (AC & B17) << 17 | IO >> 1;
     AC = ac;
 }
@@ -269,7 +249,9 @@ mul_shift(PDP1 *pdp)
 static void
 div_shift(PDP1 *pdp)
 {
-    int ac = (AC&~B0) << 1 | (IO & B0) >> 17;
+int ac;
+
+    ac = (AC&~B0) << 1 | (IO & B0) >> 17;
     IO = (IO&~B0) << 1 | (~AC & B0) >> 17;
     AC = ac;
 }
@@ -450,11 +432,8 @@ sc(PDP1 *pdp)
     clr_sbs(pdp);
     pdp->b2 = 0;
 
-#ifdef LAILIA
     pdp->lai = 0;
     pdp->lia = 0;
-#endif
-
     pdp->emc = 0;
     pdp->exd = 0;
     pdp->tyo = 0;
@@ -605,13 +584,14 @@ clrmd(PDP1 *pdp)
 static void
 multiply(PDP1 *pdp)
 {
-    int lastlong;
+int lastlong;
+
     pdp->simtime += 150;
     goto start;
 
     do
     {
-        if(lastlong = (IO & B17))
+        if( lastlong = (IO & B17) )
         {
             // MDP-3
             AC ^= MB;
@@ -649,7 +629,9 @@ start:
 static void
 divide(PDP1 *pdp)
 {
-    int done;
+int t;
+int done;
+
     pdp->simtime += 150;
     goto start;
 
@@ -752,7 +734,7 @@ start:
         MB |= IO;
 
         // MDP-13
-        int t = MB;
+        t = MB;
         MB = AC;
         AC = t;
         IO = 0;
@@ -795,8 +777,10 @@ decflg(int n)
 static void
 shro(PDP1 *pdp)
 {
-    int ac = AC;
-    int io = IO;
+int ac, io;
+
+    ac = AC;
+    io = IO;
 
     switch((MB >> 9) & 017)
     {
@@ -876,38 +860,35 @@ syncov(PDP1 *pdp)
 static void
 cycle0(PDP1 *pdp)
 {
-    int hack = pdp->cychack;
+int hack;
+
+    hack = pdp->cychack;
     pdp->cychack = 0;
 
     switch(hack)
     {
-    default
-            :
-
+    default:
         // TP0
         if(IR_SHRO && (MB & B12))
         {
             shro(pdp);
         }
 
-#ifdef LAILIA
         if(pdp->lai)
         {
             MB |= IO;
         }
-#endif
+
         pc_to_ma(pdp);
         TP(0)
 
     case 1:
-
         // TP1
         if(IR_SHRO && (MB & B11))
         {
             shro(pdp);
         }
 
-#ifdef LAILIA
         if(pdp->lai && pdp->lia)
         {
             int t = MB;
@@ -929,7 +910,6 @@ cycle0(PDP1 *pdp)
             }
         }
 
-#endif
         pdp->emc = 0;
 
         TP(1)
@@ -951,13 +931,11 @@ cycle0(PDP1 *pdp)
 
         pdp->ihs = 0;
 
-#ifdef LAILIA
         if(pdp->lia)
         {
             IO |= MB;
         }
 
-#endif
         TP(2)
 
         // TP3
@@ -1134,7 +1112,6 @@ cycle0(PDP1 *pdp)
                 pc_to_ac(pdp);
             }
 
-#ifdef LAILIA
             if(MB & B12)
             {
                 pdp->lai = 1;
@@ -1144,7 +1121,6 @@ cycle0(PDP1 *pdp)
             {
                 pdp->lia = 1;
             }
-#endif
 
             if(MB & B14)
             {
@@ -1270,12 +1246,10 @@ cycle0(PDP1 *pdp)
             pdp->smb = 1;
         }
 
-#ifdef LAILIA
         if(pdp->lai)
         {
             MB = 0;
         }
-#endif
 
         TP(10)
     }
@@ -1284,8 +1258,8 @@ cycle0(PDP1 *pdp)
 static void
 defer(PDP1 *pdp)
 {
-    int sbs_restore = 0;
-    int mask = 0;
+int sbs_restore = 0;
+int mask = 0;
 
     // TP0
     mb_to_ma(pdp);
@@ -1466,14 +1440,14 @@ defer(PDP1 *pdp)
 static void
 cycle1(PDP1 *pdp)
 {
-    int hack = pdp->cychack;
+int hack;
+
+    hack = pdp->cychack;
     pdp->cychack = 0;
 
     switch(hack)
     {
-    default
-            :
-
+    default:
         // TP0
         if(IR_CALJDA && !(MB & B5))
         {
@@ -1774,6 +1748,9 @@ cycle1(PDP1 *pdp)
 static void
 brkcycle(PDP1 *pdp)
 {
+int be;
+int r;
+
     // TP0
     if(IR_SHRO && (MB & B12))
     {
@@ -1782,9 +1759,9 @@ brkcycle(PDP1 *pdp)
 
     if(pdp->bc == 1 && pdp->sbs16)
     {
-        int be = 0;
+        be = 0;
 
-        for(int r = pdp->req; !(r & 1); r >>= 1)
+        for(r = pdp->req; !(r & 1); r >>= 1)
         {
             be++;
         }
@@ -1986,7 +1963,8 @@ throttle(PDP1 *pdp)
 static void
 iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
 {
-    int ch;
+int ch;
+
     ch = (MB >> 6) & 077;
 
     switch(dev)
@@ -2080,12 +2058,11 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
             pdp->dbx = 0;
             pdp->dby = 0;
             pdp->dint = 0;
-#ifdef P7LIGHTPEN
-            pdp->cksflags &= ~0400000;  // wje, was set by the last dpy completion pulse if there was a hit
-#endif
+            if( lightpenEnabled )
+            {
+                pdp->cksflags &= ~0400000;  // wje, set by the last dpy completion if lp hit
+            }
         }
-
-#ifdef P7LIGHTPEN
         else if((ch & 030) == 030)       // wje, set lightpen aperture
         {
             pdp->dpy_defl_time = NEVER;     // just set aperture
@@ -2094,13 +2071,11 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
             penAperture = IO & 01777;       // 0-1023 pixels, each one corresponds to the original 0.009"
             penDown = false;
         }
-#endif
         else
         {
             pdp->dbx |= AC >> 8;
             pdp->dby |= IO >> 8;
 
-#ifdef DPY_SHIFT_ENABLED
             // Emulate the origin shift that was implemented in some systems
             // It conflicts with sdb, sdb takes priority
             if( dpyShiftEnabled && !sdbEnabled )
@@ -2115,13 +2090,12 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
                     pdp->dbx ^= 01000;
                 }
             }
-#endif
+
             pdp->dpy_defl_time = pdp->simtime + US(35);
             pdp->dpy_time = pdp->dpy_defl_time + US(15);
             pdp->dint |= (MB >> 6) & 7;
             pdp->dcp = nac;
 
-#ifdef TYPE_33_SUPPORT
             if( sdbEnabled && ((ch & 030) == 020) )  // sdb is a reposition without drawing a dot
             {
                 // This is documented as taking 30 usecs because it doesn't
@@ -2132,7 +2106,6 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
                 pdp->dpy_defl_time = NEVER;
                 pdp->dpy_time = 0;
             }
-#endif
         }
         break;
 
@@ -2248,11 +2221,14 @@ iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
 static void
 iot(PDP1 *pdp, int pulse)
 {
-    int nac = (MB & (B5 | B6)) == B5 || (MB & (B5 | B6)) == B6;
-    int dev = MB & 077;
+int nac;
+int dev;
+
+    nac = (MB & (B5 | B6)) == B5 || (MB & (B5 | B6)) == B6;
+    dev = MB & 077;
 
     // 0 -> IO ON IOT also available for other devices
-    if(!pulse && (dev & 070) == 030)
+    if( !pulse && ((dev & 070) == 030) )
     {
         IO = 0;
     }
@@ -2283,8 +2259,11 @@ dynamicReq(PDP1 *pdp, int chan)
 void
 flushdpy(DispCon *d)
 {
-    int sz = d->ncmds * sizeof(d->cmdbuf[0]);
-    int n = write(d->fd, d->cmdbuf, sz);
+int sz;
+int n;
+
+    sz = d->ncmds * sizeof(d->cmdbuf[0]);
+    n = write(d->fd, d->cmdbuf, sz);
     d->ncmds = 0;
 
     if(n < sz)
@@ -2294,7 +2273,6 @@ flushdpy(DispCon *d)
     }
 }
 
-#ifdef P7LIGHTPEN
 // Although the display semulator, p7sim, sends 'lightpen' updates, there
 // was no code here originally to handle them.
 int
@@ -2379,7 +2357,7 @@ DispCon *dpyP;
         if( !(penPollData.revents & POLLIN) )
         {
             // The other end must have closed its connection
-            logger(LOG_LP, "LP poll returned %d\n", count);
+            logger(LOG_POLL, "LP poll returned 0x%x\n", penPollData.revents);
             count = 0;
             penDown = false;
             break;
@@ -2387,16 +2365,11 @@ DispCon *dpyP;
 
         if( (count = read(dpyP->fd, cmdBuf, sizeof(cmdBuf))) < sizeof(uint32_t) )
         {
-            logger(LOG_LP, "LP read returned %d\n", count);
+            logger(LOG_POLL, "LP read returned %d but pollin returned %d\n", count, i);
             count = 0;                          // some problem, probably fd closed
             penDown = false;
             break;
         }
-    }
-
-    if( i < 0 )
-    {
-        logger(LOG_LP, "poll() read returned %d, errno %d\n", i, errno);
     }
 
     count /= sizeof(uint32_t);                  // convert to index
@@ -2453,7 +2426,6 @@ DispCon *dpyP;
 
     return(false);
 }
-#endif
 
 void
 dpycmd(PDP1 *pdp, int i, u32 cmd)
@@ -2470,6 +2442,8 @@ dpycmd(PDP1 *pdp, int i, u32 cmd)
 void
 agedisplay(PDP1 *pdp, int i)
 {
+int ival;
+
     DispCon *d = &pdp->dpy[i];
 
     if(d->fd < 0)
@@ -2477,7 +2451,7 @@ agedisplay(PDP1 *pdp, int i)
         return;
     }
 
-    int ival = d->agetime;
+    ival = d->agetime;
     assert(d->last <= pdp->simtime);
     u64 dt = (pdp->simtime - d->last) / 1000;
 
@@ -2502,6 +2476,12 @@ agedisplay(PDP1 *pdp, int i)
 void
 display(PDP1 *pdp, int i)
 {
+int x, y;
+int dt;
+int cmd;
+int twoscreens;
+int intensity;
+
     // need to make sure dt field doesn't overflow cmd
     pdp->dpy[i].agetime = 510;
     agedisplay(pdp, i);
@@ -2513,9 +2493,9 @@ display(PDP1 *pdp, int i)
         return;
     }
 
-    int x = pdp->dbx;
-    int y = pdp->dby;
-    int dt = (pdp->simtime - pdp->dpy[i].last) / 1000;
+    x = pdp->dbx;
+    y = pdp->dby;
+    dt = (pdp->simtime - pdp->dpy[i].last) / 1000;
 
     if(x & 01000)
     {
@@ -2529,34 +2509,30 @@ display(PDP1 *pdp, int i)
 
     x = (x + 01000) & 01777;
     y = (y + 01000) & 01777;
-    int cmd = x | (y << 10) | (dt << 23);
-    int in = pdp->dint;
+    cmd = x | (y << 10) | (dt << 23);
+    intensity = pdp->dint;
     // checking fd's is a bit of a hack of course.
     // this is really a hardware configuration
-    int twoscreens = pdp->dpy[0].fd >= 0 && pdp->dpy[1].fd >= 0;
+    twoscreens = pdp->dpy[0].fd >= 0 && pdp->dpy[1].fd >= 0;
 
-    if( twoscreens && (in != -1) )
+    if( twoscreens && (intensity != -1) )
     {
-        if(!!(pdp->dint & 4) != i)
+        if( !!(pdp->dint & 4) != i )
         {
             return;
         }
 
         // unclear what's happening here exactly
         // spacewar 4.4 uses only intensity 0/4
-        in &= 3;
+        intensity &= 3;
     }
 
-    cmd |= ((in + 4) & 7) << 20;
+    cmd |= ((intensity + 4) & 7) << 20;
     pdp->dpy[i].last = pdp->simtime;
-#ifdef TYPE_33_SUPPORT
-    if( in != -1 )
+    if( intensity != -1 )
     {
         dpycmd(pdp, i, cmd);
     }
-#else
-    dpycmd(pdp, i, cmd);
-#endif
 }
 
 void
@@ -2750,14 +2726,13 @@ handleio(PDP1 *pdp)
 
         if(pdp->dcp)
         {
-#ifdef P7LIGHTPEN
             // If there was a light pen hit, cks bit 0 is set, and pf3 is set.
             if( lightpenEnabled && checkLightPen(pdp) )
             {
                 pdp->cksflags |= 0400000;               // cleared by next dpy
                 pdp->pf |= decflg(3);
             }
-#endif
+
             pdp->ios = 1;
         }
     }
@@ -2766,8 +2741,8 @@ handleio(PDP1 *pdp)
 int
 getwrd(int fd)
 {
-    u8 c;
-    int w, n;
+u8 c;
+int w, n;
 
     w = 0;
     n = 3;
@@ -2792,7 +2767,7 @@ getwrd(int fd)
 void
 readrim(PDP1 *pdp, int fd)
 {
-    int inst, wd;
+int inst, wd;
 
     if(fd < 0)
     {
@@ -2831,7 +2806,8 @@ readrim(PDP1 *pdp, int fd)
 void
 cli(PDP1 *pdp)
 {
-    static int timer = 0;
+int n;
+static int timer = 0;
 
     if(timer++ != 10000)
     {
@@ -2846,7 +2822,6 @@ cli(PDP1 *pdp)
     }
 
     char line[1024], *p;
-    int n;
 
     n = read(0, line, sizeof(line));
 
@@ -2862,11 +2837,16 @@ cli(PDP1 *pdp)
 char*
 handlecmd(PDP1 *pdp, char *line)
 {
-    int n;
-    static char resp[1024];
-    char *p;
+int n;
+int fd;
+char *p;
 
-    if(p = strchr(line, '\r'), p)
+static const char *host = "localhost";
+static int port = 3400;
+static char *rimfile = nil;
+static char resp[1024];
+
+    if( (p = strchr(line, '\r')), p)
     {
         *p = '\0';
     }
@@ -2917,9 +2897,6 @@ handlecmd(PDP1 *pdp, char *line)
         // load
         else if(strcmp(args[0], "l") == 0)
         {
-            static char *rimfile = nil;
-            int fd;
-
             if(args[1])
             {
                 free(rimfile);
@@ -2948,9 +2925,6 @@ handlecmd(PDP1 *pdp, char *line)
         // display
         else if(strcmp(args[0], "d") == 0)
         {
-            static const char *host = "localhost";
-            static int port = 3400;
-
             if(args[1])
             {
                 host = args[1];

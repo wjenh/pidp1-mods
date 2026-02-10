@@ -14,7 +14,7 @@
 */
 
 #include <stdbool.h>
-#define DO_LOGGING
+//#define DO_LOGGING
 #include "logger.h"
 #define LOG_LIGHTPEN 1
 

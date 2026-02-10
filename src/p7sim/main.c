@@ -74,6 +74,8 @@ uint64 simtime, realtime;
 
 void usage(char *nameP);
 void updatepen(bool penDown);
+void checkConfig(char *optionP);
+
 
 void
 panic(char *fmt, ...)

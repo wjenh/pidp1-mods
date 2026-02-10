@@ -198,7 +198,7 @@ while true; do
                 ln -sf $INSTALLDIR/src/monas/monas $INSTALLDIR/bin/monas
                 ln -sf $INSTALLDIR/src/p7sim/p7sim $INSTALLDIR/bin/p7sim
                 ln -sf $INSTALLDIR/src/p7sim/p7simES $INSTALLDIR/bin/p7simES
-                ln -sf $INSTALLDIR/src/blincolnlights/vpanel_pdp1/panel_pdp1 $INSTALLDIR/bin/panel_pidp1
+                ln -sf $INSTALLDIR/src/blincolnlights/vpanel_pdp1/panel_pdp1 $INSTALLDIR/bin/vpanel_pdp1
                 ln -sf $INSTALLDIR/src/blincolnlights/pdp1/pdp1 $INSTALLDIR/bin/pdp1
                 ln -sf $INSTALLDIR/src/pdp1_periph/pdp1_periphES $INSTALLDIR/bin/pdp1_periphES
                 ln -sf $INSTALLDIR/src/usb_paper_tape/pdp1_usb_monitor $INSTALLDIR/bin/pdp1_usb_monitor

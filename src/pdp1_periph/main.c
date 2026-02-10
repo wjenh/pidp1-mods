@@ -44,6 +44,8 @@
 #include "logger.h"
 #define LOG_LIGHTPEN 1
 
+void checkConfig(char *optionP);
+
 typedef uint64_t uint64;
 typedef uint32_t uint32;
 typedef uint16_t uint16;
@@ -51,7 +53,6 @@ typedef uint8_t uint8;
 
 #define nil NULL
 #define void_offsetof (void*)(uintptr_t)offsetof
-
 
 int resolution = 1024;
 #define WIDTH resolution

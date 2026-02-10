@@ -1,6 +1,7 @@
 all: pdp1_periph pdp1_periphES
 
-SRC=main.c p7.c ptape.c typewriter.c ../blincolnlights/common.c
+SRC=main.c p7.c ptape.c typewriter.c ../blincolnlights/common.c ../blincolnlights/checkConfig.c \
+	../blincolnlights/logger.c
 INC=-I../blincolnlights
 LIBS=-lSDL2_ttf
 

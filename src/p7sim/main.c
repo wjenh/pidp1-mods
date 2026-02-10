@@ -65,10 +65,10 @@ GLuint whiteTex, yellowTex[2];
 GLuint whiteFBO, yellowFBO[2];
 int flip;
 
+int border;
 int doLightpen = 0;
 int penx;
 int peny;
-int border;
 
 uint64 simtime, realtime;
 
@@ -1006,11 +1006,10 @@ void
 usage(char *nameP)
 {
     fprintf(stderr,
-        "usage: %s [-d] [-p port] [-l] [-n] [server]\n", nameP);
+        "usage: %s [-d] [-p port] [-n] [server]\n", nameP);
     fprintf(stderr, "where:\n");
     fprintf(stderr, "-d, enable debug\n");
     fprintf(stderr, "-p port, set port to use, default is %d\n", DEFAULTPORT);
-    fprintf(stderr, "-l, enable pseudo-lightpen support\n");
     fprintf(stderr, "-n, start with no border\n");
     fprintf(stderr, "server, hostname of server to connect to\n");
     exit(1);
@@ -1041,10 +1040,6 @@ float scaleFactor;
 
         case 'd':
             dbgflag++;
-            break;
-
-        case 'l':
-            doLightpen = 1;
             break;
 
         case 'n':
@@ -1107,6 +1102,8 @@ float scaleFactor;
         fprintf(stderr, "can't create window\n");
         return(1);
     }
+
+    doLightpen = checkConfig("type30lightpen");
 
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, gl_context);

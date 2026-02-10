@@ -1,0 +1,29 @@
+This light pen test starts at address 0.
+It uses the sense switches to pick a test.
+When started, it just loops looking for a sense switch to be set.
+Switches 1-4 select one of 4 different tests.
+
+Switch 5 is not used.
+Switch 6 has a special meaning, stop test. When set, the program returns to address 0.
+
+Switch 1 test:
+    Two small vertical lines are displayed. Moving the light pen over either will show an expanded
+    view of the pixels seen by the light pen, move the pen up and down over the lines to see this.
+    This test is stopped by turning the switch off.
+
+Switch 2 test:
+    A box with a bright horizontal line that sweeps from top to bottom is displayed.
+    On success, OK is displayed.
+    This test is stopped by turning the switch off.
+
+Switch 3 test:
+    A small box is displayed.
+    Moving the light pen around in the box shows an expanded view of the pixels seen.
+    This test is stopped by turning the switch off.
+
+Switch 4 test:
+    The screen is filled with dots that are continually redrawn from botton to top.
+    A light pen hit on a dot stops the drawing at that point.
+    The intent of this test seems to have been to detect hits over the entire range of x, y coordinates.
+    The test resumes when the pen is lifted.
+    This test must be stopped via switch 6.

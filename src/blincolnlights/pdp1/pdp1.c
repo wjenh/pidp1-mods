@@ -25,7 +25,7 @@
 //#define DOLOGGING
 #include "logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
-#define LOG_LP 0
+#define LOG_LP 1
 
 #define NOTIOTH
 #include "dynamicIots.h"
@@ -2428,7 +2428,7 @@ DispCon *dpyP;
         (lastY >= (dpyy - penAperture)) &&
         (lastY <= (dpyy + penAperture)))
     {
-        logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d\n", lastX, lastY, dpyx, dpyy);
+        logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d aperture %d\n", lastX, lastY, dpyx, dpyy,penAperture);
         return(true);
     }
 

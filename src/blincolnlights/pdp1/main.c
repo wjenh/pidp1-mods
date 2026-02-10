@@ -448,10 +448,6 @@ char answer[64];
         {
             pdp1P->muldiv_sw = onOff;
         }
-        else
-        {
-            fprintf(stderr,"Bad config file directive %s\n", option);
-        }
     }
 
     fclose(fP);

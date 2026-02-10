@@ -21,11 +21,12 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <poll.h>
+#include <errno.h>
 
 //#define DOLOGGING
 #include "logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
-#define LOG_LP 1
+#define LOG_LP 0
 
 #define NOTIOTH
 #include "dynamicIots.h"
@@ -2347,40 +2348,58 @@ static struct pollfd penPollData;
 bool
 updatePenLocation(PDP1 *pdp1P)
 {
+int i;
 int count;
 uint32_t cmdBuf[PENBUFSIZE];
 uint32_t cmd;
 DispCon *dpyP;
 
-    count = 0;
     dpyP = &(pdp1P->dpy[0]);
 
-    if(dpyP->fd < 0)                                // No display is connected
+    if( dpyP->fd < 0 )                                // No display is connected
     {
         penPollData.fd = -1;
+        penDown = false;
         return(false);
     }
 
-    if(penPollData.fd < 0)                          // First time since open, set up the poll data
+    if( penPollData.fd < 0 )                         // First time since open, set up the poll data
     {
         penPollData.fd = dpyP->fd;
         penPollData.events = POLLIN;
+        penDown = false;
     }
 
     // Read all pending commands.
     // Only the last will be significant.
     count = 0;
 
-    while( poll(&penPollData, 1, 0) > 0 )
+    while( (i = poll(&penPollData, 1, 0)) > 0 )
     {
-        if(!(penPollData.revents & POLLIN))
+        if( !(penPollData.revents & POLLIN) )
         {
             // The other end must have closed its connection
+            logger(LOG_LP, "LP poll returned %d\n", count);
+            count = 0;
+            penDown = false;
             break;
         }
 
-        count = read(dpyP->fd, cmdBuf, sizeof(cmdBuf)) / sizeof(uint32_t);
+        if( (count = read(dpyP->fd, cmdBuf, sizeof(cmdBuf))) < sizeof(uint32_t) )
+        {
+            logger(LOG_LP, "LP read returned %d\n", count);
+            count = 0;                          // some problem, probably fd closed
+            penDown = false;
+            break;
+        }
     }
+
+    if( i < 0 )
+    {
+        logger(LOG_LP, "poll() read returned %d, errno %d\n", i, errno);
+    }
+
+    count /= sizeof(uint32_t);                  // convert to index
 
     if( count > 0 )
     {

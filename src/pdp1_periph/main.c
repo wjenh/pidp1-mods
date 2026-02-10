@@ -16,6 +16,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <ctype.h>
 
 #include <limits.h>
@@ -44,7 +45,7 @@
 #include "logger.h"
 #define LOG_LIGHTPEN 1
 
-void checkConfig(char *optionP);
+bool checkConfig(char *optionP);
 
 typedef uint64_t uint64;
 typedef uint32_t uint32;

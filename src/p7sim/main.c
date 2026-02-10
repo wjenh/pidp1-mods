@@ -74,7 +74,7 @@ uint64 simtime, realtime;
 
 void usage(char *nameP);
 void updatepen(bool penDown);
-void checkConfig(char *optionP);
+bool checkConfig(char *optionP);
 
 
 void

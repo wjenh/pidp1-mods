@@ -2409,6 +2409,7 @@ bool
 checkLightPen(PDP1 *pdp1P)
 {
 int i, sawOne, dpyx, dpyy;
+int delx, dely;
 DispCon *dpyP;
 
     if( !updatePenLocation(pdp1P) )
@@ -2422,10 +2423,17 @@ DispCon *dpyP;
 
     // Both coordinate pairs have been converted from 10 bit 1's complement to
     // full signed 2's complement.
+    // Thanks to Ian S. for the code to deal with the aperture as an actual circle.
+
+    /*
     if((lastX >= (dpyx - penAperture)) &&
         (lastX <= (dpyx + penAperture)) &&
         (lastY >= (dpyy - penAperture)) &&
         (lastY <= (dpyy + penAperture)))
+    */
+    delx = (lastX - dpyx)*(lastX - dpyx);               // Find squared magnitudes of hit offset
+    dely = (lastY - dpyy)*(lastY - dpyy);
+    if( (delx + dely) < ((penAperture * penAperture) << 2) )   // Compare with (penAperture*2)^2
     {
         logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d aperture %d\n", lastX, lastY, dpyx, dpyy,penAperture);
         return(true);

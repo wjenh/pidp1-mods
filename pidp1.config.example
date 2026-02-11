@@ -31,7 +31,15 @@ gain=1.5
 tuning=0.0
 # samplerate sets how often audio is sent to SDL in 1/rate seconds, or 1000000/rate microseconds
 # The original music software updated every 175 us, 1000000/5714 is that.
-samplerate=5714
+#samplerate=5714
+
+# This is 2x oversampling
+# The alphas correspod to a curoff of 4Khz for pf1, 3Knz for pf2, and 2Khz for pf3 and 4
+samplerate=11428
+alpha1=0.687
+alpha2=0.625
+alpha3=0.524
+alpha4=0.524
 
 # The alpha for each channel can be controlled separately.
 # The hardware version at CHM sets 1 and 2 high, 3 mid, and 4 low.

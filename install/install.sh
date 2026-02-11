@@ -151,6 +151,24 @@ while true; do
     esac
 done
 
+if [ -f pidp1.config ] &&  [ pidp1.config.example -nt pidp1.config ]; then
+    echo The pidp1.config.example file might have new settings, review it to see.
+fi
+
+while ! test -f pidp1.config; do
+    echo
+    read -p "Create pidp1.config from pidp1.config.example? " yn
+    case $yn in
+        [Yy]* )
+            cp pidp1.config.example pidp1.config
+	    break
+	    ;;
+        [Nn]* ) 
+	    break
+            ;;
+        * ) echo "Please answer yes or no.";;
+    esac
+done
 
 # make required binaries
 # =============================================================================

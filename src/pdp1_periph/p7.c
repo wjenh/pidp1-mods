@@ -8,15 +8,16 @@
  * The formatting is based on research done at Stanford many years ago that determined the major causes
  * of coding errors, the formatting reduced that. It works.
  *
- * wje 07-Jan-26 break from original repo, now independent. Initial reformatting. lightpen support.
- * wje 08-Feb-26 update with new lightlen code.
+ * wje 07-Feb-26 break from original repo, now independent. Initial reformatting. lightpen support.
+ * wje 11-Feb-26 update with new lightlen code.
  *
 */
 
-#include <stdbool.h>
-//#define DO_LOGGING
-#include "logger.h"
-#define LOG_LIGHTPEN 1
+// NOTE that this for some reason isn't working correctly.
+// Lightpen events are being sent, but never recieved by pipd1. Can't fiture out whey.
+
+// NOTE that this file is included in main.c, not compiled separately
+// Logging control is there.
 
 #ifdef UNITY_BUILD
 #define LIGHTPEN
@@ -26,8 +27,6 @@ GLint point_program, excite_program, combine_program;
 GLuint whiteTex, yellowTex[2];
 GLuint whiteFBO, yellowFBO[2];
 
-int penx;
-int peny;
 int pendown;
 
 int flip;
@@ -342,14 +341,14 @@ process(int frmtime)
 void*
 dispthread(void *args)
 {
-    uint32 cmd;
-    uint32 cmds[128];
-    int ncmds;
-    int nbytes;
-    int i;
-    uint64 time;
-    uint64 frmtime = 33333;
-    int x, y, intensity, dt;
+uint32 cmd;
+uint32 cmds[128];
+int ncmds;
+int nbytes;
+int i;
+uint64 time;
+uint64 frmtime = 33333;
+int x, y, intensity, dt;
 
     uint64 realtime_start = SDL_GetPerformanceCounter();
     simtime = 0;
@@ -436,16 +435,19 @@ dispthread(void *args)
 // at the last drawn pixel when issuing the completion pulse,
 // but that's not possible here, let it be determined back in the pdp1 code.
 void
-updatepen(bool penDown)
+updatePen(bool penDown, int pdpx, int pdpy)
 {
 int i;
-int pdpx, pdpy;
 uint32 cmd;
 
     if( penDown )
     {
-        pdpx = penx;
-        pdpy = peny;
+        // Safety check in case we didn't limit the coords properly
+        if( (pdpx > 1023) || (pdpy > 1023) )
+        {
+            logger(LOG_LIGHTPEN, " UpdatePen coords out of bounds, x %d y %d\n", pdpx, pdpy);
+            return;
+        }
 
         // The original code did not properly adjust the coords from SDL to PDP1.
         // SDL has the upper left corner x,y as 0,0, PDP1 is -512,512, plus the PDP1 coords are 1's complement.
@@ -461,6 +463,7 @@ uint32 cmd;
             --pdpy;            // 1's cmpl conversion
         }
 
+        logger(LOG_LIGHTPEN, "normalized x %03o, y %03o\n", pdpx & 0x3FF, pdpy & 0x3FF);
         cmd = 0xFF0 << 20;
         cmd |= (pdpx & 0x3FF) << 10;
         cmd |= (pdpy & 0x3FF);
@@ -470,14 +473,18 @@ uint32 cmd;
         cmd = 0xFF1 << 20;  // pen up cmd to host
     }
 
-    if( (i =write(dpyfd, &cmd, 4)) != 4 )
+    if( (i = write(dpyfd, &cmd, sizeof(cmd))) != sizeof(cmd) )
     {
         logger(LOG_LIGHTPEN,"lightpen write failed %d\n", i);
+    }
+    else
+    {
+        logger(LOG_LIGHTPEN,"lightpen cmd 0x%08x sent %d bytes\n", cmd, i);
     }
 }
 #else
 void
-updatepen(bool penDown)
+updatePen(bool penDown, int penx, int peny)
 {
 }
 #endif

@@ -2,6 +2,8 @@
  * Include file for logger, also include it in your code.
  */
 
+#ifndef LOGGER_H
+#define LOGGER_H
 #ifdef DOLOGGING
 void _logger(int enable, char *fmt, ...);
 void _closeLog(void);
@@ -11,4 +13,5 @@ void _closeLog(void);
 #else
 #define logger(enable, fmt, ...)
 #define closeLog()
+#endif
 #endif

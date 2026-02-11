@@ -2336,8 +2336,13 @@ DispCon *dpyP;
 
     if( dpyP->fd < 0 )                                // No display is connected
     {
-        penPollData.fd = -1;
-        penDown = false;
+        if( penPollData.fd != -1 )
+        {
+            logger(LOG_POLL, "Polling stopped for dpy, fd closed\n");
+            penPollData.fd = -1;
+            penDown = false;
+        }
+
         return(false);
     }
 
@@ -2346,6 +2351,7 @@ DispCon *dpyP;
         penPollData.fd = dpyP->fd;
         penPollData.events = POLLIN;
         penDown = false;
+        logger(LOG_POLL, "Polling established for dpy on fd %d\n", dpyP->fd);
     }
 
     // Read all pending commands.

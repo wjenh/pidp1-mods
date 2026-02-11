@@ -33,7 +33,7 @@ static int stopped = 1;         // assume we are halted initially
 static IotEntry handles[64];
 static PollEntryP pollList;
 
-extern PDP1 *visiblePDP1P;      // from main.c
+extern PDP1 pdp1;              // from main.c
 extern void dynamicReq(PDP1 *pdp, int chan);
 
 void dynamicIotProcessBreak(int chan);
@@ -84,7 +84,7 @@ dynamicIotProcessBreak(int chan)
 {
     if( chan < 16)
     {
-        dynamicReq(visiblePDP1P, chan);               // signal a break, convoluted because of various unshared bits
+        dynamicReq(&pdp1, chan);               // signal a break, convoluted because of various unshared bits
     }
 }
 

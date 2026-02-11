@@ -45,9 +45,11 @@ void
 initaudio(void)
 {
     if( isInitialized )
+    {
         return;
+    }
 
-	SDL_Init(SDL_INIT_AUDIO);
+    SDL_Init(SDL_INIT_AUDIO);
 
     // Be careful with the gain, SDL will clip if the sample value sent to it is outside the range of -1.0 to 1.0.
     // HIVAL, LOWVAL are the maximum ranges for SDL input, so the gain should generally not be greater than 1.
@@ -65,15 +67,15 @@ initaudio(void)
 static void
 openAudio()
 {
-	SDL_AudioSpec spec;
+SDL_AudioSpec spec;
 
-	memset(&spec, 0, sizeof(spec));
-	spec.freq = sampleRate;        // the original did one sample every 175 us, replicate by default
-	spec.format = AUDIO_F32;
-	spec.channels = 2;
-	spec.samples = 1024;            // SDL's buffer size
-	spec.callback = nil;
-	dev = SDL_OpenAudioDevice(nil, 0, &spec, nil, 0);
+    memset(&spec, 0, sizeof(spec));
+    spec.freq = sampleRate;        // the original did one sample every 175 us, replicate by default
+    spec.format = AUDIO_F32;
+    spec.channels = 2;
+    spec.samples = 1024;            // SDL's buffer size
+    spec.callback = nil;
+    dev = SDL_OpenAudioDevice(nil, 0, &spec, nil, 0);
 }
 
 int
@@ -96,25 +98,29 @@ startaudio(void)
 void
 stopaudio(void)
 {
-	if( (dev == 0) || !isInitialized )
-		return;
+    if( (dev == 0) || !isInitialized )
+    {
+        return;
+    }
 
-	SDL_PauseAudioDevice(dev, 1);
-	SDL_ClearQueuedAudio(dev);
-	nsamples = 0;
-	nexttime = 0;
+    SDL_PauseAudioDevice(dev, 1);
+    SDL_ClearQueuedAudio(dev);
+    nsamples = 0;
+    nexttime = 0;
     isStopped = 1;
 }
 
 void
 continueaudio(void)
 {
-	if( (dev == 0) || !isStopped || !isInitialized )
-		return;
+    if( (dev == 0) || !isStopped || !isInitialized )
+    {
+        return;
+    }
 
-	SDL_ClearQueuedAudio(dev);              // clean things up, svc_audio() will unpause
-	nsamples = 0;
-	nexttime = 0;
+    SDL_ClearQueuedAudio(dev);              // clean things up, svc_audio() will unpause
+    nsamples = 0;
+    nexttime = 0;
     isStopped = 0;
 }
 
@@ -123,24 +129,30 @@ svc_audio(PDP1 *pdp)
 {
 float chan1, chan2, chan3, chan4;
 float buffer[2];
+u8 s;
 
-	u8 s;
+    if( (dev == 0) || (nexttime >= pdp->simtime) || !isInitialized || isStopped )
+    {
+        return;
+    }
 
-	if( (dev == 0) || (nexttime >= pdp->simtime) || !isInitialized || isStopped )
-		return;
-
-	if(nexttime == 0)
-		nexttime = pdp->simtime + SAMPLE_TIME;
-	else
-		nexttime += SAMPLE_TIME;
-
-	// queue up a reasonable number of samples, power of 2 is preferred
-	if(nsamples < PRELOAD) {
-		nsamples++;
-	}
+    if(nexttime == 0)
+    {
+        nexttime = pdp->simtime + SAMPLE_TIME;
+    }
     else
     {
-		// then start playing
+        nexttime += SAMPLE_TIME;
+    }
+
+    // queue up a reasonable number of samples, power of 2 is preferred
+    if(nsamples < PRELOAD)
+    {
+        nsamples++;
+    }
+    else
+    {
+        // then start playing
         SDL_PauseAudioDevice(dev, 0);
     }
 
@@ -153,7 +165,7 @@ float buffer[2];
     buffer[0] = mixSamples(chan1, chan2, mixerGain);
     buffer[1] = mixSamples(chan3, chan4, mixerGain);
 
-	SDL_QueueAudio(dev, buffer, 2 * sizeof(float));
+    SDL_QueueAudio(dev, buffer, 2 * sizeof(float));
 }
 
 // set the sampling rate for SDB.
@@ -237,7 +249,7 @@ setAudioTuning(float newTuning)
         tuning = newTuning;
         if( dev != 0 )
         {
-        /* If we were using SDL2, this would be simple, but we're not.
+        /* If we were using SDL3, this would be simple, but we're not.
             SDL_SetAudioStreamFrequencyRatio(tuning);
         */
         }

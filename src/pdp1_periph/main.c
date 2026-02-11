@@ -41,7 +41,7 @@
 #include <common.h>
 #include "args.h"
 
-//#define DO_LOGGING
+//#define DOLOGGING
 #include "logger.h"
 #define LOG_LIGHTPEN 1
 
@@ -71,7 +71,9 @@ int winW, winH;
 const char *host = "localhost";
 int dpyfd, typfd;
 int dbgflag;
+
 int doLightpen;
+bool penDown;
 
 int clifd[2];
 
@@ -80,10 +82,6 @@ TTF_Font *font;
 
 int audio;
 int muldiv;
-
-extern int penx;
-extern int peny;
-extern int pendown;
 
 typedef struct
 {
@@ -1278,7 +1276,14 @@ int dragging = -1;
 void
 mousemotion(SDL_MouseMotionEvent m)
 {
+int dx, dy;
+
+uint32 penx, peny;
+Region *penRegion;
+float scale;
+
     hover = -1;
+    penRegion = nil;
 
     for(int i = 0; i < NUM_REGIONS; i++)
     {
@@ -1287,22 +1292,39 @@ mousemotion(SDL_MouseMotionEvent m)
         if(r->iscircle)
         {
             Circle c = getCircle(r);
-            int dx = m.x - c.x;
-            int dy = m.y - c.y;
+            dx = m.x - c.x;
+            dy = m.y - c.y;
 
-            if(dx * dx + dy * dy < c.r * c.r)
+            if( ((dx * dy) + (dy * dy)) < c.r * c.r)
             {
                 hover = i;
+                penRegion = r;
             }
         }
         else
         {
-            if(r->x <= m.x && m.x <= r->x + r->w &&
-                    r->y <= m.y && m.y <= r->y + r->h)
+            if( (r->x <= m.x) && (m.x <= r->x + r->w) &&
+                (r->y <= m.y) && (m.y <= r->y + r->h) )
             {
                 hover = i;
+                penRegion = r;
             }
         }
+    }
+
+    if( doLightpen && penDown && penRegion )
+    {
+        // arg! Have to figure out the coords in the window, then scale them back
+        // to the range 0-1023.
+        // No ida why Region keeps all this in floats.
+        penx = m.x - (uint32)penRegion->x;
+        peny = m.y - (uint32)penRegion->y;
+        scale = 1024.0 / penRegion->w;
+        penx = (uint32)((float)penx * scale);
+        scale = 1024.0 / penRegion->h;
+        peny = (uint32)((float)peny * scale);
+        logger(LOG_LIGHTPEN, "mouse motion x %d y %d\n", penx, peny);
+        updatePen(penDown, penx, peny);
     }
 
     if(dragging >= 0)
@@ -1409,6 +1431,9 @@ main(int argc, char *argv[])
     int running;
     int port;
 
+    doLightpen = checkConfig("guilightpen");
+    logger(LOG_LIGHTPEN,"Config lightpen %d\n", doLightpen);
+
     port = 3400;
     ARGBEGIN
     {
@@ -1435,11 +1460,15 @@ main(int argc, char *argv[])
     }
 
     dpyfd = dial(host, port);
-
     if(dpyfd < 0)
     {
         fprintf(stderr, "couldn't connect to display %s:%d\n", host, port);
         return(1);
+    }
+
+    if( doLightpen )
+    {
+        nodelay(dpyfd);             // needed so lightpen updates will go out
     }
 
     typfd = dial(host, 1041);
@@ -1450,8 +1479,6 @@ main(int argc, char *argv[])
         return(1);
     }
 
-    doLightpen = checkConfig("guilightpen");
-    logger(LOG_LIGHTPEN,"Config lightpen %d\n", doLightpen);
     emuoption("audio", &audio, -1);
     emuoption("muldiv", &muldiv, -1);
 
@@ -1561,14 +1588,7 @@ main(int argc, char *argv[])
             case SDL_MOUSEMOTION:
                 SDL_ShowCursor(SDL_ENABLE);
                 cursortimer = 50;
-                penx = event.motion.x;
-                peny = event.motion.y;
                 mousemotion(event.motion);
-
-                if( doLightpen && pendown )
-                {
-                    updatepen(pendown);
-                }
                 break;
 
             case SDL_MOUSEBUTTONDOWN:
@@ -1581,11 +1601,9 @@ main(int argc, char *argv[])
                 {
                     if(event.button.button == 1)
                     {
-                        pendown = 1;
+                        penDown = true;
                         logger(LOG_LIGHTPEN,"lightpen down\n");
                     }
-
-                    updatepen(pendown);
                 }
                 break;
 
@@ -1599,9 +1617,9 @@ main(int argc, char *argv[])
                 {
                     if(event.button.button == 1)
                     {
-                            pendown = 0;
-                            updatepen(pendown);
-                            logger(LOG_LIGHTPEN,"lightpen up\n");
+                        penDown = false;
+                        logger(LOG_LIGHTPEN,"lightpen up\n");
+                        updatePen(false, 0, 0);
                     }
                 }
                 break;

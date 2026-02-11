@@ -32,7 +32,7 @@ void loadConfigFile(PDP1 *pdp1P, char *filenameP);
 Panel *getpanel(void);
 
 int doaudio;
-PDP1 *visiblePDP1P;          // dynamic IOTS need this, but can't get it otherwise
+PDP1 pdp1;      // moved here because dynamic IOT code needs it
 extern int penAperture;
 extern int lightpenEnabled;
 extern int sdbEnabled;
@@ -456,8 +456,7 @@ char answer[64];
 int
 main(int argc, char *argv[])
 {
-PDP1 pdp1, *pdp = &pdp1;
-visiblePDP1P = pdp;
+PDP1 *pdp = &pdp1;
 pthread_t th;
 const char *host;
 int port;

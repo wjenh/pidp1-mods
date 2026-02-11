@@ -2102,9 +2102,10 @@ int ch;
                 // need the addtional time to draw the dot.
                 // But, there is no real reason to do so, so just complete immediately.
                 // Yes, not historically accurate, but neither is using a mouse for a lightpen.
-                pdp->dint = -1;         // marker for no dot
+                // All it does is set the intensity and reposition x,y, does not honor completion.
                 pdp->dpy_defl_time = NEVER;
-                pdp->dpy_time = 0;
+                pdp->dpy_time = NEVER;
+                pdp->dcp = 0;
             }
         }
         break;
@@ -2480,7 +2481,7 @@ int ival;
 }
 
 void
-display(PDP1 *pdp, int i)
+display(PDP1 *pdp, int screenNo)
 {
 int x, y;
 int dt;
@@ -2488,27 +2489,32 @@ int cmd;
 int twoscreens;
 int intensity;
 
-    // need to make sure dt field doesn't overflow cmd
-    pdp->dpy[i].agetime = 510;
-    agedisplay(pdp, i);
-    // reset age interval for every point shown
-    pdp->dpy[i].agetime = 50 * 1000;
+    if( (screenNo < 0) || (screenNo > 1) )
+    {
+        return;     // only 2 screens
+    }
 
-    if(pdp->dpy[i].fd < 0)
+    // need to make sure dt field doesn't overflow cmd
+    pdp->dpy[screenNo].agetime = 510;
+    agedisplay(pdp, screenNo);
+    // reset age interval for every point shown
+    pdp->dpy[screenNo].agetime = 50 * 1000;
+
+    if(pdp->dpy[screenNo].fd < 0)
     {
         return;
     }
 
     x = pdp->dbx;
     y = pdp->dby;
-    dt = (pdp->simtime - pdp->dpy[i].last) / 1000;
+    dt = (pdp->simtime - pdp->dpy[screenNo].last) / 1000;
 
-    if(x & 01000)
+    if( x & 01000 )
     {
         x++;
     }
 
-    if(y & 01000)
+    if( y & 01000 )
     {
         y++;
     }
@@ -2519,13 +2525,13 @@ int intensity;
     intensity = pdp->dint;
     // checking fd's is a bit of a hack of course.
     // this is really a hardware configuration
-    twoscreens = pdp->dpy[0].fd >= 0 && pdp->dpy[1].fd >= 0;
+    twoscreens = (pdp->dpy[0].fd >= 0) && (pdp->dpy[1].fd >= 0);
 
-    if( twoscreens && (intensity != -1) )
+    if( twoscreens )
     {
-        if( !!(pdp->dint & 4) != i )
+        if( (pdp->dint & 4) && !screenNo )
         {
-            return;
+            return;         // dpy said second screen, call said first screen
         }
 
         // unclear what's happening here exactly
@@ -2533,11 +2539,15 @@ int intensity;
         intensity &= 3;
     }
 
-    cmd |= ((intensity + 4) & 7) << 20;
-    pdp->dpy[i].last = pdp->simtime;
-    if( intensity != -1 )
+    pdp->dpy[screenNo].last = pdp->simtime;
+
+    // The real hardware used intensity 4 for a brightness that was only
+    // visible to the lightpen.
+    // Simulate that by just not drawing a point.
+    if( intensity != 4 )
     {
-        dpycmd(pdp, i, cmd);
+        cmd |= ((intensity + 4) & 7) << 20;
+        dpycmd(pdp, screenNo, cmd);
     }
 }
 

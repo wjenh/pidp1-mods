@@ -1,11 +1,14 @@
 // Definitions for the lightpen
 #ifndef LIGHTPEN
 
-// Modifier for dpy
-#define LIGHTPEN 3000
+// Macros for getting the size in pixels of a character and spacing.
+// SPACINGSIZE is how much autospacing will move between characters.
+#define CHARSIZEX(size) ((2 + size) * 5)
+#define CHARSIZEY(size) ((2 + size) * 7)
+#define SPACINGSIZE(size) (4 + size)
 
-// IO register flag for dpy LIGHTPEN
-#define LTPENENABLE 2000
+// Modifier for dpy, set aperture
+#define LIGHTPEN 3000
 
 // Aperture equivalents, also in IO
 #define APERTURE050    0d3
@@ -16,6 +19,6 @@
 #define APERTURE300    0d17
 
 // Example:
-// lio [LIGHTPENENABLE APERTURE150
-// dpy LIGHTPEN
+// lio [APERTURE150
+// dpy-i LIGHTPEN
 #endif

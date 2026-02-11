@@ -29,9 +29,8 @@
 #define SUBOFFSET   2       // base number of dot spacings to offset for a subscript
 #define SEPSPACING  4       // base number of pixel for autospacing between chars
 
-#define INTENSITY   3       // dpy intensity, 4 is off, 0 is normal, 3 is brightest
 #define DOTDELAY    1       // 5 usec cycles between dot updates
-#define DPYDELAY    500     // delay in NANOSECS passed to the dpy code
+#define DPYDELAY    5000    // setup delay in NANOSECS passed to the dpy code
 
 void drawDot(PDP1 *pdp1P, int x, int y);
 
@@ -81,7 +80,7 @@ uint64_t utmp;
             sepSpacing = SEPSPACING + charSize;
             autoSpace = pdp1P->io & 04;
             subscript = 0;
-            intensity = pdp1P->dint;
+            intensity = 0;      // manual says sets to normal
             iotLog("Glf, dotspace %d, sepspace %d, auto %d, intensity %d, x %04o y %04o\n",
                 dotSpacing, sepSpacing, autoSpace, intensity, pdp1P->dbx, pdp1P->dby);
         }
@@ -102,7 +101,7 @@ uint64_t utmp;
             subscript = (shiftregister & 01)?-dotSpacing * SUBOFFSET:0;
             xpos = pdp1P->dbx;
             ystart = pdp1P->dby;
-            intensity = pdp1P->dint;        // pick up from last sdb
+            intensity = pdp1P->dint;        // pick up from last sdb or dpy
             xctr = yctr = 0;
             draw = true;
             charDone = false;
@@ -284,7 +283,10 @@ int totalTime;
 
         if( needCompletion )
         {
-            IOCOMPLETE(pdp1P);
+            // Let the dpy code in pdp1.c handle this so the lightpen will work.
+            pdp1P->dpy_time = pdp1P->simtime + DPYDELAY;
+            pdp1P->dcp = 1;
+            //IOCOMPLETE(pdp1P);
         }
 
         iotLog("Character display complete, dbx %04o dby %04o\n", pdp1P->dbx, pdp1P->dby);

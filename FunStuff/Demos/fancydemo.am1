@@ -47,8 +47,9 @@ strt,
     dac linePtr
     lac [txtBuf
     dac txtPtr
-    lac startAddrs
+    lac [startAddrs
     dac addrPtr
+    dzm numEntries
     lem                 // on from loader, not now
     jsp loadEntries
 

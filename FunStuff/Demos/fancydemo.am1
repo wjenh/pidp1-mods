@@ -1,0 +1,321 @@
+Demo of light pen, sym gen, drum, clock
+// Did I forget anything? Oh, right, DCS.
+
+// We load into and run in this bank
+#define BNKNO 1
+
+#include <SYMGEN/type33iots.ah>
+#include <LIGHTPEN/lightpen.ah>
+#include <DRUM/type23drumdefs.ah>
+#include <CLOCK/clockdefs.ah>
+#include <memory.ah>
+
+#define LABELY 0d450
+#define LABELX -0d450
+#define TEXTSIZE 2
+#define BRIGHTNESS 0
+
+#define LSTX LABELX
+#define LSTY (LABELY -(4 * CHARSIZEY(TEXTSIZE)))
+#define MSGY LABELY
+#define MSGX LABELX
+#define HIBRIGHTNESS 3
+#define DIGITSIZE 3
+
+// We count down from this
+#define COUNTDOWN 5
+
+// only the first 10
+#define MAXDIRS 0d10
+
+// location in buffer of the valid entry marker
+#define DIRMARKER 25
+// location in buffer of the start address
+#define STARTADDR 22
+// location in buffer of the has-a-label marker
+#define HASLABEL 23
+
+bank BNKNO
+
+var linePtr, txtPtr, addrPtr
+var ptr, dirY, dirCtr, ctr
+var numEntries     // will be one more than the number we have
+
+100/
+strt,
+    lac [lines
+    dac linePtr
+    lac [txtBuf
+    dac txtPtr
+    lac startAddrs
+    dac addrPtr
+    lem                 // on from loader, not now
+    jsp loadEntries
+
+    law APERTURE300
+    lia
+    dpy-i LIGHTPEN
+    law TEXTSIZE AUTOSPACE
+    lia
+    iot glf
+
+loop,
+    lio [LABELY << 0d8
+    lac [LABELX << 0d8
+    sdb BRIGHTNESS << 6
+    lac [header1
+    jda drawasctext
+
+    lio [(LABELY - CHARSIZEY(TEXTSIZE) - CHARSIZEY(TEXTSIZE)/2) << 0d8]
+    lac [LABELX << 0d8
+    sdb BRIGHTNESS << 6
+    lac [header2
+    jda drawasctext
+
+    // Now list the files we have
+    lac [LSTY
+    dac dirY
+    dzm dirCtr
+dirs,
+    lio dirY
+    ril 8s
+    lac [LSTX
+    ral 8s
+    sdb BRIGHTNESS << 6
+    clf 3
+    lac dirCtr
+    sad numEntries
+    jmp loop        // all done
+    add [lines
+    dac ptr
+    lac i ptr
+    jda drawasctext
+    szf 3
+    jsp gotOne
+    idx dirCtr
+    lac dirY
+    sub [CHARSIZEY(TEXTSIZE) * 2]
+    dac dirY
+    jmp dirs
+
+// A selection was made.
+// Wrap up and go.
+// dirCtr will have the selection
+gotOne,
+    lio [MSGY << 0d8
+    lac [MSGX << 0d8
+    sdb BRIGHTNESS << 6
+    law i COUNTDOWN
+    dac ctr
+    lac [lines
+    add dirCtr
+    dac linePtr
+    lac i linePtr
+    dac txtPtr          // now points to the text of the selection
+// start the countdown timer, 1 second interval
+     law 0d1000         // delay in milliseconds
+     iot cct            // go, cks bit 3 will be set when done
+
+waitLoop,
+    cks
+    ril 3s
+    spi i
+    jmp w2
+    idx ctr
+    sza i
+    jmp go
+    law 0d1000          // keep going
+    iot cct
+
+w2,                     // we're waiting, update the display
+    law TEXTSIZE AUTOSPACE
+    lia
+    iot glf
+
+    law MSGY
+    dac dirY           // reuse dirY
+    lia
+    ril 8s
+    lac [MSGX << 0d8
+    sdb BRIGHTNESS << 6
+    lac [msg1
+    jda drawasctext
+    iot gsp
+    lac txtPtr
+    jda drawasctext
+
+    lac dirY
+    sub [CHARSIZEY(TEXTSIZE) * 2]
+    dac dirY
+    lia
+    ril 8s
+    lac [LABELX << 0d8
+    sdb BRIGHTNESS << 6
+    lac [msg2
+    jda drawasctext
+    
+    lac dirY
+    sub [CHARSIZEY(TEXTSIZE) * 2]
+    dac dirY
+    lia
+    ril 8s
+    lac [LABELX << 0d8
+    sdb BRIGHTNESS << 6
+    lac [msg3
+    jda drawasctext
+    
+    lac dirY
+    sub [CHARSIZEY(TEXTSIZE) * 2]
+    lia
+    ril 8s
+    lac [LABELX << 0d8
+    sdb BRIGHTNESS << 6
+    lac [msg4
+    jda drawasctext
+
+    // draw the countdown
+    law DIGITSIZE
+    lia
+    iot glf
+    cli
+    cla
+    sdb HIBRIGHTNESS << 6
+    lac ctr
+    cma
+    jda drawdigit
+    jmp waitLoop
+
+go, cla
+    iot cct         // clear timer
+    lio dirCtr
+    jsp loadPgm
+    lac [startAddrs
+    add dirCtr
+    dac ctr
+    lio i ctr
+    jmp run
+
+// Load the list of programs on the drum
+// Loop thru all tracks getting the control block, 7751-7777
+loadEntries,
+    local trk, rtn
+     dap rtn
+     dzm trk
+ld2, lac trk
+     sal 6s
+     sal 6s
+     ior [drmrd 7751] // directory area on the drum track
+     lia
+     iot dia
+     law 26         // read o26 words
+     lia
+     iot dwc
+     lio [dirBuf:BNKNO     // into our buffer
+     iot dcl
+
+     lac dirBuf + DIRMARKER // 707070 is a marker that the track is initialized
+     sas [707070
+     jmp next               // no, skip this entry
+     lac dirBuf + HASLABEL  // if 1, has a label
+     sza i
+     jmp next               // no label
+     lac txtPtr             // save the name into current slot
+     dac dst
+     add [0d17              // ready for next slot
+     dac txtPtr
+     law 0d17               // 17 words, 34 chars
+     jda lclmemcpy
+     dirBuf
+dst, 0
+     lio dst             // is the ptr into the text buffer
+     law lines
+     add numEntries
+     dac dst
+     dio i dst
+     law startAddrs      // and save the start addr
+     add numEntries
+     dac dst
+     lio dirBuf + STARTADDR
+     dio i dst
+     idx numEntries
+     sas [MAXDIRS
+     jmp next
+     jmp rtn         // and done
+
+next, idx trk        // next drum track
+     sas [TRACKS     // the number of tracks on the drum, from drum include
+     jmp ld2
+rtn,jmp .
+trk,0
+    endloc
+
+// AC has the track to load.
+// Load bank 0 mem from drum,the entire track.
+// jsp, track in IO
+loadPgm,
+     local rtn
+     dap rtn
+     lai
+     sal 6s
+     sal 6s
+     ior [drmrd
+     lia
+     iot dia
+     cli            // a word count of 0 means 4096 words
+     iot dwc
+     iot dcl        // bank 0, address 0
+rtn, jmp .
+    endloc
+
+// Bank 0 now has pgm loaded, start it up
+// IO has start address
+run,
+    lac [lem
+    fardac(7751)    // nifty macro from memory.ah
+    lai
+    ior [jmp
+    fardac(7752)
+    farjmp(7751)
+
+// Put included code here
+#include <lclmemcpy.ac>
+#include <SYMGEN/type33drawasctext.ac>
+#include <SYMGEN/type33drawdigits.ac>
+
+// Pointer table for lines
+lines,
+    table MAXDIRS
+
+// table for start addresses
+startAddrs,
+    table MAXDIRS, 0
+
+// table for dir names
+// up to 33 ascii chars, 2 per word
+txtBuf,
+    table MAXDIRS * (0d34 / 2)
+
+// Scratch storage used for reading dir entries into
+dirBuf,
+    table 30
+
+header1,
+    ascii "Fun with the light pen"
+header2,
+    ascii "Make your selection:"
+
+msg1,
+    ascii "You selected "
+msg2,
+    ascii "You can come back here when ready,"
+msg3,
+    ascii "start at extend, bank 1, 100"
+msg4,
+    ascii "Starting in:"
+
+
+#include <SYMGEN/type33drawasctext.ac>
+#include <SYMGEN/type33drawdigits.ac>
+
+constants
+start strt:BNKNO

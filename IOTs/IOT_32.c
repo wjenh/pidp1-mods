@@ -100,6 +100,7 @@ int i;
     }
     else if( (pdp1P->mb & 03700) == 02100 )     // IOT 2132, countdown timer
     {
+        pdp1P->cksflags &= ~COUNTER_CKS_FLAG;   // clear in case it was set
         i = countdown;
         countdown = pdp1P->ac & 017777;     // the count
         if( countdown )
@@ -118,7 +119,6 @@ int i;
         {
             counterInterrupt = 0;
             counterCompleteNeeded = 0;
-            pdp1P->cksflags &= ~COUNTER_CKS_FLAG;
             if( !enabled )
             {
                 enablePolling(0);

@@ -41,6 +41,6 @@
 #define cctcnt 017777
 
 // The cks flag for the countdown timer
-#define cctcks 040000
+#define cctcks 020000
 
 #endif

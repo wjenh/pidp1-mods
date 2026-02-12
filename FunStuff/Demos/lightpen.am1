@@ -17,7 +17,7 @@ Demo of light pen
 strt,
     dzm xoffset
     dzm yoffset
-    law LTPENENABLE APERTURE200
+    law APERTURE200
     lia
     dpy-i LIGHTPEN
 loop,

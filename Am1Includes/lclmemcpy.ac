@@ -1,0 +1,37 @@
+#ifndef LCLMEMCPY_AH
+#define LCLMEMCPY_AH
+// Copy from one location to another in the same bank.
+// Call using jda.
+// AC has the count of words to copy.
+// The word following the call has the address to copy from
+// The next word has the address to copy to
+// If extended mode is on, it will be turned off on return.
+// The AC and IO are not preserved.
+lclmemcpy, 0
+local
+// AC is in memcpy, return PC in AC
+    lem
+    dap %cpydn
+    lio i %cpydn
+    dio %ads
+    idx %cpydn
+    lio i %cpydn
+    dio %adt
+    idx %cpydn
+    lac lclmemcpy
+    cma
+%cl, add [1
+    lsw
+    lac i %ads
+    dac i %adt
+    idx %ads
+    idx %adt
+    lsw
+    sza
+    jmp %cl
+%cpydn, jmp .
+%ads, 0
+%adt, 0
+endloc
+
+#endif

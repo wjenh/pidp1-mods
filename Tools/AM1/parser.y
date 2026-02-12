@@ -20,7 +20,6 @@ int maxLocalDepth = 0;                  // the deepest nexting we've seen
 LocalContextP localContextP;	        // used while a local scope is enabled
 LocalContextP localStack[MAXLOCALS];
 bool sawForceLocal;
-bool didBrefWarn;
 bool atSol = true;                      // initially true
 
 // Bank contexts are kept as a linked list, not used often enough to need preallocation
@@ -59,6 +58,7 @@ bool resolveWildcard(PNodeListP itemP, BankContextP bankP);
 BankContextP findBank(int bank);
 BankContextP addBank(int bank);
 SymListP addToSymlist(SymListP listP, SymNodeP symP, int bank, int pc);
+SymNodeP findSymbolInBank(int bank, char *nameP);
 
 extern SymNodeP resolveLocalSymbol(char *);
 
@@ -684,27 +684,17 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
                 BankContextP bankP;
                 SymNodeP symP;
 
-                    if( !(bankP = findBank($2)) )
+                    if( $2 != curBank )
                     {
-                        verror("bank %d has not been used, it cannot be referenced", $2);
+                        symP = findSymbolInBank($2, $1);
                     }
-
-                    if( !(symP = sym_find(&(bankP->globalSymP), $1)) )
+                    else
                     {
-                        // Nothing in that bank, go ahead and create it.
-                        // If it's never resolved there, an error will be reported later.
+                       // This is just a regular global in the current bank 
                         symP = sym_make($1, 0);
-                        sym_add(&(bankP->globalSymP), symP);
+                        symP->bank = curBank;
+                        sym_add(&globalSymP, symP);
                         symP->flags = SYM_GLOB;
-                        vwarn("bank %d is creating symbol %s in bank %d", curBank, $1, $2);
-                    }
-
-                    if( !didBrefWarn )
-                    {
-                        vwarn(
-                        "remember that a cross-bank reference is the full 16-bit address of %s, not 12 bits",
-                        symP->name);
-                        didBrefWarn = true;
                     }
 
                     $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
@@ -713,22 +703,25 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
                 }
                 | ADDR bref
                 {
-                    // This is a symbol in our own bank, but that's ok
+                SymNodeP symP;
+
+                    if( $2 != curBank )
+                    {
+                        symP = findSymbolInBank($2, $1->name);
+                    }
+                    else
+                    {
+                        // This is a symbol in our own bank, but that's ok
+                        symP = $1;
+                    }
+
                     $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
-                    $$->value.symP = $1;
+                    $$->value.symP = symP;
                     $$->value2.ival = $2;
                 }
                 | NAME wildref
                 {
                 PNodeListP wildP;
-
-                    if( !didBrefWarn )
-                    {
-                        vwarn(
-                        "remember that a cross-bank reference is the full 16-bit address of %s, not 12 bits",
-                        $1);
-                        didBrefWarn = true;
-                    }
 
                     $$ = newnode(lineno, cur_pc, WILDREF, NILP, NILP);
                     $$->value.strP = $1;
@@ -741,10 +734,29 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
                 }
                 | ADDR wildref
                 {
-                    // This is a symbol in our own bank, but that's ok
-                    $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
-                    $$->value.symP = $1;
-                    $$->value2.ival = curBank;
+                SymNodeP symP;
+                PNodeListP wildP;
+
+                    if( $1->bank == curBank )
+                    {
+                        // This is a symbol in our own bank, resolve it now
+                        symP = $1;
+                        $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
+                        $$->value.symP = $1;
+                        $$->value2.ival = curBank;
+                    }
+                    else
+                    {
+                        // In another bank, usual wildcard processing
+                        $$ = newnode(lineno, cur_pc, WILDREF, NILP, NILP);
+                        $$->value.strP = $1->name;
+
+                        // We need this for fixup later
+                        wildP = (PNodeListP)malloc(sizeof(PNodeListItem));
+                        wildP->nodeP = $$;
+                        wildP->nextP = wildcardsP;
+                        wildcardsP = wildP;
+                    }
                 }
                 | NAME
                 {
@@ -1356,6 +1368,36 @@ BankContextP ctxP;
 
     return( ctxP );
 }
+
+// Look up a symbol in a bank, create it if not found
+SymNodeP
+findSymbolInBank(int bank, char *nameP)
+{
+BankContextP bankP;
+SymNodeP symP;
+
+    // See if it's already defined
+    if( !(bankP = findBank(bank)) )
+    {
+        // First time we've seen this bank, add an entry.
+        bankP = addBank(bank);
+        sawBank = true;
+    }
+
+    if( !(symP = sym_find(&(bankP->globalSymP), nameP)) )
+    {
+        // Nothing in that bank, go ahead and create it.
+        // If it's never resolved there, an error will be reported later.
+        symP = sym_make(nameP, 0);
+        symP->flags = SYM_GLOB;
+        symP->bank = bank;
+        sym_add(&(bankP->globalSymP), symP);
+        vwarn("creating symbol %s in bank %d, be sure to resolve it", nameP, bank);
+    }
+
+    return( symP );
+}
+
 
 int
 yywrap()				/* tell lex to clean up */

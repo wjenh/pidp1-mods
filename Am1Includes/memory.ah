@@ -1,26 +1,27 @@
 // Useful things for extended memory access
+// eem will be turned off for all but jmp, jsp, jda
 #ifndef MEMORY_AH
 #define MEMORY_AH
 
 #define farjmp(a) \
-    jmp i [a]
+    eem; jmp i [a]
 
 #define farjsp(a) \
-    jsp i [a]
+    eem; jsp i [a]
 
 #define farjda(a) \
-    dac i [a]; jsp i [a+1]
+    eem; dac i [a]; jsp i [a+1]
 
 #define farlac(a) \
-    lac i [a]
+    eem; lac i [a]; lem
 
 #define farlio(a) \
-    lio i [a]
+    eem; lio i [a]; lem
 
 #define fardac(a) \
-    dac i [a]
+    eem; dac i [a]; lem
 
 #define fardio(a) \
-    dio i [a]
+    eem; dio i [a]; lem
 
 #endif

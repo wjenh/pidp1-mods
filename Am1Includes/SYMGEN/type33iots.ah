@@ -8,4 +8,20 @@
 #define gcf 000127
 #define glf 002026
 #define gsp 000026
+
+// Macros for getting the size in pixels of a character and spacing.
+// DOTSIZE is the number of pixels between dots, vertially and horizontally
+// SPACINGSIZE is how much autospacing will move between characters.
+#define CHARSIZEX(size) ((2 + size) * 5)
+#define CHARSIZEY(size) ((2 + size) * 7)
+#define DOTSIZE(size) (2 + size)
+#define SPACINGSIZE(size) (4 + size)
+
+// Used with glf to turn on autospacing
+#define AUTOSPACE 4
+// Example:
+// law AUTOSPACE 2
+// glf
+// Turns on autospacing with a character size of 2
+
 #endif

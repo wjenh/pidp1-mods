@@ -186,7 +186,12 @@ PNodeP node2P;
         break;
 
     case BREF:
-        return( (nodeP->value2.ival << 12) | nodeP->value.symP->value );
+        symP = nodeP->value.symP;
+        if( !(symP->flags & SYMF_RESOLVED) )
+        {
+            verror("symbol %s in bank %d has no defined value", symP->name, symP->bank);
+        }
+        return( (nodeP->value2.ival << 12) | symP->value );
         break;
 
     case CHAR:

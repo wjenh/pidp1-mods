@@ -1,6 +1,9 @@
 #ifndef DRUMDEFS_AH
 #define DRUMDEFS_AH
 
+// The drum has 32 tracks each 4096 words
+#define TRACKS  0d32
+
 // This defines the IOT instructions for the Type 23 drum.
 // Note this differs from the examples in that it does not add the iot
 // explicitly, so use is e.g. iot dia.

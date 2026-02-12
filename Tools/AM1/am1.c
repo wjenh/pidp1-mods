@@ -68,6 +68,7 @@
  * 03-Feb-2026 - add C, dpyc, sdb
  * 04-Feb-2026 - predefine AM1 as an ifdef marker for include files, not defined if macro is being produced
  * 06-Feb-2026 - add -r flag
+ * 12-Feb-2026 - fix a case of duplicate symbols across banks not resolving correctly
  *
 */
 #include <unistd.h>

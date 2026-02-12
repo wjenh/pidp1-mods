@@ -1,11 +1,6 @@
 // Definitions for the lightpen
 #ifndef LIGHTPEN
-
-// Macros for getting the size in pixels of a character and spacing.
-// SPACINGSIZE is how much autospacing will move between characters.
-#define CHARSIZEX(size) ((2 + size) * 5)
-#define CHARSIZEY(size) ((2 + size) * 7)
-#define SPACINGSIZE(size) (4 + size)
+#define LIGHTPEN
 
 // Modifier for dpy, set aperture
 #define LIGHTPEN 3000
@@ -19,6 +14,6 @@
 #define APERTURE300    0d17
 
 // Example:
-// lio [APERTURE150
+// lio [APERTURE150]
 // dpy-i LIGHTPEN
 #endif

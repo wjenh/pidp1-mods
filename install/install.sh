@@ -175,7 +175,7 @@ while true; do
 		make -C $INSTALLDIR/src/blincolnlights/vpanel_pdp1 	# panel driver
 
                 # The am1 macro assembler
-		make -C $INSTALLDIR/tools/AM1 install
+		make -C $INSTALLDIR/Tools/AM1 install
 
 		# the macro1_1 cross-compiler:
 		gcc $INSTALLDIR/src/macro/macro1_1.c -o $INSTALLDIR/src/macro/macro1_1

@@ -225,7 +225,7 @@ ld2, lac trk
      add [0d17              // ready for next slot
      dac txtPtr
      law 0d17               // 17 words, 34 chars
-     jda lclmemcpy
+     jda farmemcpy
      dirBuf
 dst, 0
      lio dst             // is the ptr into the text buffer
@@ -279,9 +279,9 @@ run,
     farjmp(7751)
 
 // Put included code here
-#include <lclmemcpy.ac>
-#include <SYMGEN/type33drawasctext.ac>
-#include <SYMGEN/type33drawdigits.ac>
+#include <farmemcpy.ac>
+#include <SYMGEN/drawasctext.ac>
+#include <SYMGEN/drawdigits.ac>
 
 // Pointer table for lines
 lines,
@@ -315,8 +315,8 @@ msg4,
     ascii "Starting in:"
 
 
-#include <SYMGEN/type33drawasctext.ac>
-#include <SYMGEN/type33drawdigits.ac>
+#include <SYMGEN/drawasctext.ac>
+#include <SYMGEN/drawdigits.ac>
 
 constants
 start strt:BNKNO

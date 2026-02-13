@@ -177,8 +177,8 @@ cross2,
     000016
     740000
 
-#include <SYMGEN/type33drawtext.ac>
-#include <SYMGEN/type33unpack.ac>
-#include <SYMGEN/type33render.ac>
+#include <SYMGEN/drawtext.ac>
+#include <SYMGEN/unpack.ac>
+#include <SYMGEN/render.ac>
 
 start strt

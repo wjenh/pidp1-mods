@@ -25,7 +25,7 @@ bank bnkno
 
 // Put included code here
 1000/
-#include <memcpy.ac>
+#include <farmemcpy.ac>
 
 // The channel 0 interrupt setup.
 // We execute a bit of code that will get
@@ -75,11 +75,11 @@ resume,
 // Yes, that's all it took to read a full memory image and load it into bank 0.
 // Bank 0 now has pgm loaded, update with our glue code.
      law 4
-     jda memcpy
+     jda farmemcpy
      0:bnkno
      0
      law end - isr
-     jda memcpy
+     jda farmemcpy
      isr:bnkno
      isr
 

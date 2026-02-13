@@ -147,7 +147,7 @@ lineasc3,
 lineasc4,
     ascii "?.,@-+*/()[]<>'\"=~_`|#!"
 
-#include <SYMGEN/type33drawtext.ac>
-#include <SYMGEN/type33drawasctext.ac>
+#include <SYMGEN/drawtext.ac>
+#include <SYMGEN/drawasctext.ac>
 
 start strt

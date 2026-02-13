@@ -1,12 +1,12 @@
 #ifndef MEMCPY_AH
 #define MEMCPY_AH
-// Copy from one mem bank to another.
+// Copy from one location to another in the same bank.
 // Call using jda.
 // AC has the count of words to copy.
-// The word following the call has the address to copy from
-// The next word has the address to copy to
-// Both can have extended addresses.
-// If extended mode is on, it will be turned off on return.
+// The word following the call has the address to copy from.
+// The next word has the address to copy to.
+// Extended mode must be off.
+// The AC and IO are not preserved.
 memcpy, 0
 local
 // AC is in memcpy, return PC in AC
@@ -20,7 +20,6 @@ local
     idx %cpydn
     lac memcpy
     cma
-    eem
 %cl, add [1
     lsw
     lac i %ads
@@ -30,9 +29,7 @@ local
     lsw
     sza
     jmp %cl
-    lem
-    jmp i %cpydn
-%cpydn, 0
+%cpydn, jmp .
 %ads, 0
 %adt, 0
 endloc

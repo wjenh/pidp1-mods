@@ -32,7 +32,7 @@ bank BNKNO
 #include <DCS/getaln.ac>
 #include <DCS/textascii.ac>
 #include <getnum.ac>
-#include <memcpy.ac>
+#include <farmemcpy.ac>
 
 #define say(a) law a; jda txtasc
 #define newline law '\n'; lia ; iot tcb
@@ -168,7 +168,7 @@ trkok,
 // show the directory filename, in bank 0 7751
 // we need it in this bank
      law 24
-     jda memcpy     // eem must be off for memcpy
+     jda farmemcpy     // eem must be off for memcpy
          7751
          linbuf:BNKNO
      say(linbuf)
@@ -177,13 +177,13 @@ trkok,
 // copy our low mem code, 0 to 0
 // remember that is is a full address copy
      law 4
-     jda memcpy
+     jda farmemcpy
          0:BNKNO
          0
 
 // copy our high mem code
      law 20
-     jda memcpy
+     jda farmemcpy
          isr:BNKNO
          isr
 

@@ -1,6 +1,6 @@
 #ifndef TYPE33UNPACKASCII
 #define TYPE33UNPACKASCII
-#include <SYMGEN/type33ascchars.ac>
+#include <SYMGEN/ascchars.ac>
 
 // Unpack characters consisting of a list of words produced by the ascii pseudo-op, ascii code,
 // into a buffer of two words per character consisting of the 2 words to be given to gpl and gpr.

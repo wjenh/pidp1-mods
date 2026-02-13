@@ -1,6 +1,6 @@
 #ifndef TYPE33DRAWASCTEXT
 #define TYPE33DRAWASCTEXT
-#include <SYMGEN/type33drawascchar.ac>
+#include <SYMGEN/drawascchar.ac>
 
 // Draw a line of characters starting at the current display location.
 // The characters consist of a list of words produced by the ascii pseudo-op, ascii code.

@@ -1,0 +1,32 @@
+#ifndef MEMSET_AH
+#define MEMSET_AH
+// Set an area of memory to a given value.
+// Call using jda.
+// AC has the count of words to set.
+// IO has the value to set.
+// The word following the call has the address to begin the setting.
+memset, 0
+local ptr, count, rtn, loop
+// AC is in memset, return PC in AC
+    dac rtn
+    lac memset
+    cma
+    dac memset      // so we can use idx
+    lac i rtn
+    dac ptr
+    idx rtn
+    spa i
+    jmp i rtn       // nothing to do, zero count or bad count
+
+loop, dio i ptr
+    idx ptr
+    idx count
+    spa
+    jmp loop
+    jmp i rtn
+rtn, 0
+count, 0
+ptr, 0
+endloc
+
+#endif

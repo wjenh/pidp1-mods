@@ -1,6 +1,6 @@
 #ifndef TYPE33UNPACK
 #define TYPE33UNPACK
-#include <SYMGEN/type33chars.ac>
+#include <SYMGEN/chars.ac>
 
 // Unpack characters consisting of a list of words produced by the text pseudo-op, flex code,
 // into a buffer of two words per character consisting of the 2 words to be given to gpl and gpr.

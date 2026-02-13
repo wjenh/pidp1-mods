@@ -282,10 +282,10 @@ buf9,
 table 100
 buf9len, 0
 
-#include <SYMGEN/type33unpack.ac>
-#include <SYMGEN/type33unpackascii.ac>
-#include <SYMGEN/type33render.ac>
-#include <SYMGEN/type33drawdigits.ac>
+#include <SYMGEN/unpack.ac>
+#include <SYMGEN/unpackascii.ac>
+#include <SYMGEN/render.ac>
+#include <SYMGEN/drawdigits.ac>
 
 constants
 

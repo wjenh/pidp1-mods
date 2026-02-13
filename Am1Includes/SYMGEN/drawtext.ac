@@ -1,6 +1,6 @@
 #ifndef TYPE33DRAWTEXT
 #define TYPE33DRAWTEXT
-#include <SYMGEN/type33drawchar.ac>
+#include <SYMGEN/drawchar.ac>
 
 // Draw a line of characters starting at the current display location.
 // The characters consist of a list of words produced by the text pseudo-op, flex code.

@@ -1,6 +1,6 @@
 #ifndef TYPE33DRAWDIGITS
 #define TYPE33DRAWDIGITS
-#include <SYMGEN/type33digits.ac>
+#include <SYMGEN/digits.ac>
 
 // Draw one one digit 0-9 at the current display location, 
 // AC contains the value.

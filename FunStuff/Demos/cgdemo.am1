@@ -245,7 +245,7 @@ lineMix,
     text 'aAbBcCDdEe'
     013
 
-// The following brings in type33drawchar also
-#include <SYMGEN/type33drawtext.ac>
+// The following brings in drawchar also
+#include <SYMGEN/drawtext.ac>
 
 start strt

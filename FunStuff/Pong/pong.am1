@@ -1,6 +1,5 @@
 pong game, v1.1 written by Hrvoje Cavrak, 12/2018
 
-#define ioh iot i
 #define szm sza sma-szf;
 
 #define swap \
@@ -21,7 +20,8 @@ local;\
 	law A;\
 	add x;\
 	sal 8s;\
-	dpy-i 300;\
+	dpy-i C 300;\
+        ioh;\
 endloc
 // end of define conversion
 
@@ -59,7 +59,8 @@ pdloop, \
 	sal 8s;\
 	swap;\
 	lac X;\
-	dpy-i 300;\
+	dpy-i C 300;\
+        ioh;\
 	law 6;\
 	add p1cnt;\
 	dac p1cnt;\
@@ -83,7 +84,7 @@ ploop2, \
 	sal 9s;\
 	swap;\
 	law D;\
-	dpy-i;\
+	dpy;\
 	law 70 ;\
 	add p1cnt;\
 	dac p1cnt;\

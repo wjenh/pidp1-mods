@@ -71,8 +71,9 @@ done,
     text 'Done'
     013
 
-#include <SYMGEN/type33unpack.ah>
-#include <SYMGEN/type33drawtext.ah>
+#include <SYMGEN/type33unpack.ac>
+#include <SYMGEN/type33drawtext.ac>
+#include <SYMGEN/type33render.ac>
 
 constants
 

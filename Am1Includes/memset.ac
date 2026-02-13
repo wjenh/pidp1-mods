@@ -15,6 +15,7 @@ local ptr, count, rtn, loop
     lac i rtn
     dac ptr
     idx rtn
+    lac memset
     spa i
     jmp i rtn       // nothing to do, zero count or bad count
 

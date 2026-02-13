@@ -10,7 +10,6 @@ All define markers so they are only included once, code includes might include o
 
 ## What's here?
 
-- 1Dinstructions.ah, define the PDP1-D instructions, only macro_1 needs these
 - farmemcpy.ac, copy memory from one bank to another
 - getnum.ac, give a string of ascii digits, convert to an 18 bit word
 - memcpy.ac, copy memory from one location to another in the same bank

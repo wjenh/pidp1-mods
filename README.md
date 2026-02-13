@@ -65,3 +65,9 @@ The tools, including am1, are not automatically built, see below.
 You can build some parts without building the entire set.
 For example, if you want to use the new assembler, you can just do a make in its directory.
 You will need to have flex and bison installed to build it.
+
+## The drum image
+
+An initial drum image for the Type 23 Parallel Drum can be installed.
+It contains several program images that can be run by several of the PDP-1 programs
+in the FunStuff directory and managed by the drum tools in Tools/Drumupdater.

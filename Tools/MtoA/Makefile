@@ -9,4 +9,4 @@ symtab.o: symtab.c symtab.h
 	$(CC) -c symtab.c
 
 clean:
-	@rm mactoam1 mactoam1.c *.o symtabgen 2>/dev/null || true
+	@rm mactoam1 mactoam1.c *.o 2>/dev/null || true

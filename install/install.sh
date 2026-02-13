@@ -19,7 +19,6 @@ if [ ! -d "${INSTALLDIR}" ]; then
 fi
 
 echo
-echo
 echo PiDP-1 install script
 echo ======================
 echo
@@ -30,7 +29,6 @@ echo binaries.
 echo
 echo Too Long, Didn\'t Read?
 echo Just say Yes to everything.
-echo
 echo
 
 usr=$(whoami)
@@ -51,28 +49,6 @@ while true; do
 	    ;;
         [Nn]* ) 
             echo Left ownership of PiDP directory unchanged
-	    break
-            ;;
-        * ) echo "Please answer yes or no.";;
-    esac
-done
-
-
-# pull in git submodules (for pdp1 sim itself, and the p7sim Type 30 display)
-# =============================================================================
-
-while true; do
-    echo
-    read -p "Update git submodules (required for first install)? " yn
-    case $yn in
-        [Yy]* )
-		git submodule init
-		#git submodule update --remote --force
-		git submodule update --init --remote --recursive --force
-		break
-		;;
-        [Nn]* ) 
-            echo Skipped updating submodules from github
 	    break
             ;;
         * ) echo "Please answer yes or no.";;
@@ -170,6 +146,27 @@ while ! test -f pidp1.config; do
     esac
 done
 
+if [ -f pdp23drum ] &&  [ pdp23drum.example -nt pdp23drum ]; then
+    echo The distributed Type 23 drum image is newer than your drum image.
+    echo If you want to update it, do cp pdp23drum.example pdp23drum
+fi
+
+while ! test -f pdp23drum; do
+    echo
+    read -p "Create drum image from pdp23drum.example? " yn
+    case $yn in
+        [Yy]* )
+            cp pdp23drum.example pdp23drum
+            chmod a+rw pdp23drum
+	    break
+	    ;;
+        [Nn]* ) 
+	    break
+            ;;
+        * ) echo "Please answer yes or no.";;
+    esac
+done
+
 # make required binaries
 # =============================================================================
 
@@ -191,16 +188,19 @@ while true; do
 		# this makes the virtual pdp-1 panel, used if no PiDP-1 hardware is attached:
 		make -C $INSTALLDIR/src/blincolnlights/vpanel_pdp1 	# panel driver
 
+                # The am1 macro assembler
+		make -C $INSTALLDIR/tools/AM1 install
+
 		# the macro1_1 cross-compiler:
 		gcc $INSTALLDIR/src/macro/macro1_1.c -o $INSTALLDIR/src/macro/macro1_1
 		# monas cross assembler:
 		make -C $INSTALLDIR/src/monas
 		# the usb_paper_tape tool:
 		make -C $INSTALLDIR/src/usb_paper_tape
-		# Bill Ezell's tape disassembler:
-		cc $INSTALLDIR/src/disassembler/disassemble_tape.c -o $INSTALLDIR/src/disassembler/disassemble_tape
-		cp $INSTALLDIR/src/disassembler/disassemble_tape $INSTALLDIR/bin
-		# Bill Ezell's audio control:
+		# The tape disassembler
+                make -C $INSTALLDIR/Tools/Disassembler disassembler
+		cp $INSTALLDIR/Tools/Disassembler/disassemble_tape $INSTALLDIR/bin
+		# The etended audio control
 		make -C $INSTALLDIR/Tools install
             
 		echo Setting required access privileges to pidp1 simulator
@@ -210,7 +210,6 @@ while true; do
             	# to run as a RT thread:
             	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1
 
-                ln -sf $INSTALLDIR/src/disassembler/disassemble_tape $INSTALLDIR/bin/disassemble_tape
                 ln -sf $INSTALLDIR/src/macro/macro1_1 $INSTALLDIR/bin/macro1_1
                 ln -sf $INSTALLDIR/src/blincolnlights/tools/mkptyfio_telnet $INSTALLDIR/bin/mkptyfio_telnet
                 ln -sf $INSTALLDIR/src/monas/monas $INSTALLDIR/bin/monas
@@ -257,6 +256,8 @@ while true; do
 	    sudo ln -sf $INSTALLDIR/bin/macro1_1 /usr/local/bin/macro1
 	    sudo ln -sf $INSTALLDIR/bin/disassemble_tape /usr/local/bin/disassemble_tape
 	    #
+	    sudo ln -sf $INSTALLDIR/bin/am1 /usr/local/bin/am1
+            #
 	    sudo ln -sf $INSTALLDIR/bin/tkaskopenfile /usr/local/bin/tkaskopenfile
 	    sudo ln -sf $INSTALLDIR/bin/tkaskopenfilewrite /usr/local/bin/tkaskopenfilewrite
         #

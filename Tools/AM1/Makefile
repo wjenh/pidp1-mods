@@ -9,6 +9,9 @@ am1:	am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o permsyms.def.o ev
 clean:
 	@rm *.o lex.yy.c y.tab.c y.tab.h permsyms.def.c am1 symtabgen cvtxldr xldr.rim xldr.lst 2>/dev/null || true
 
+install: am1
+	cp am1 ../../bin
+
 permsyms.def.o: permsyms.def.c
 	$(CC) -c permsyms.def.c
 

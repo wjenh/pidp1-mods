@@ -145,32 +145,21 @@ w2,                     // we're waiting, update the display
     lac txtPtr
     jda drawasctext
 
-    lac dirY
-    sub [CHARSIZEY(TEXTSIZE) * 2]
-    dac dirY
-    lia
-    ril 8s
-    lac [LABELX << 0d8
-    sdb BRIGHTNESS << 6
+    jsp nextLine
     lac [msg2
     jda drawasctext
     
-    lac dirY
-    sub [CHARSIZEY(TEXTSIZE) * 2]
-    dac dirY
-    lia
-    ril 8s
-    lac [LABELX << 0d8
-    sdb BRIGHTNESS << 6
+    jsp nextLine
     lac [msg3
     jda drawasctext
+    law BNKNO
+    jda drawdigit
+
+    jsp nextLine
+    lac [msg3b
+    jda drawasctext
     
-    lac dirY
-    sub [CHARSIZEY(TEXTSIZE) * 2]
-    lia
-    ril 8s
-    lac [LABELX << 0d8
-    sdb BRIGHTNESS << 6
+    jsp nextLine
     lac [msg4
     jda drawasctext
 
@@ -225,7 +214,7 @@ ld2, lac trk
      add [0d17              // ready for next slot
      dac txtPtr
      law 0d17               // 17 words, 34 chars
-     jda farmemcpy
+     jda memcpy
      dirBuf
 dst, 0
      lio dst             // is the ptr into the text buffer
@@ -278,8 +267,23 @@ run,
     fardac(7752)
     farjmp(7751)
 
+// Advace draw point to start of next line
+// Called via jsp.
+nextLine,
+    local rtn
+    dap rtn
+    lac dirY
+    sub [CHARSIZEY(TEXTSIZE) * 2]
+    dac dirY
+    lia
+    ril 8s
+    lac [LABELX << 0d8
+    sdb BRIGHTNESS << 6
+rtn, jmp .
+    endloc
+
 // Put included code here
-#include <farmemcpy.ac>
+#include <memcpy.ac>
 #include <SYMGEN/drawasctext.ac>
 #include <SYMGEN/drawdigits.ac>
 
@@ -310,7 +314,9 @@ msg1,
 msg2,
     ascii "You can come back here when ready,"
 msg3,
-    ascii "start at extend, bank 1, 100"
+    ascii "Turn on extend, set extension to "
+msg3b,
+    ascii "Set address 100, start"
 msg4,
     ascii "Starting in:"
 

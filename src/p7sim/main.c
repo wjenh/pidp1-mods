@@ -1152,6 +1152,15 @@ float scaleFactor;
                 cursortimer = 50;
                 penx = event.motion.x;
                 peny = event.motion.y;
+                if( (penx > 1023) || (peny > 1023) )
+                {
+                    penDown = false;        // mouse went out of the window bounds, not down now
+                    if( doLightpen )
+                    {
+                        updatepen(false);
+                    }
+                }
+
                 if( doLightpen && penDown )
                 {
                     updatepen(true);

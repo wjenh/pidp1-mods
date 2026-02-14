@@ -58,6 +58,7 @@
 
 int lightpenEnabled = 0;            // we always expose these for loadConfig in main.c
 int penAperture = APERTURE;
+int penArea;                        // computed as penAperture * penAperture * 4
 int sdbEnabled = 1;
 int dpyShiftEnabled = 0;
 
@@ -2069,6 +2070,7 @@ int ch;
             pdp->dpy_time = 0;
             pdp->dcp = 0;                   // be sure its not set
             penAperture = IO & 01777;       // 0-1023 pixels, each one corresponds to the original 0.009"
+            penArea = (penAperture * penAperture) << 2; // (penAperture * 2) ^ 2
             penDown = false;
         }
         else
@@ -2384,7 +2386,6 @@ DispCon *dpyP;
     if( count > 0 )
     {
         cmd = cmdBuf[count - 1];                // last one
-        logger(LOG_LP, "LP cmd 0x%08x, count %d\n", cmd, count);
         if( (cmd & CMDBITS) == LPCMD )  // light pen, just to be sure
         {
             if( (cmd & PENBITS) == LPUP )   // pen up, done
@@ -2421,22 +2422,20 @@ DispCon *dpyP;
     dpyx = cvtDpyToSigned(pdp1P->dbx);
     dpyy = cvtDpyToSigned(pdp1P->dby);
 
-    // Both coordinate pairs have been converted from 10 bit 1's complement to
-    // full signed 2's complement.
-    // Thanks to Ian S. for the code to deal with the aperture as an actual circle.
-
-    /*
-    if((lastX >= (dpyx - penAperture)) &&
-        (lastX <= (dpyx + penAperture)) &&
-        (lastY >= (dpyy - penAperture)) &&
-        (lastY <= (dpyy + penAperture)))
-    */
-    delx = (lastX - dpyx)*(lastX - dpyx);               // Find squared magnitudes of hit offset
-    dely = (lastY - dpyy)*(lastY - dpyy);
-    if( (delx + dely) < ((penAperture * penAperture) << 2) )   // Compare with (penAperture*2)^2
+    // Both coordinate pairs have been converted from 10 bit 1's complement to full signed 2's complement.
+    // We have to take edge wrapping into account, do nothing if it wrapped.
+    // Just compare bits outside the range, neg will have the bit set, pos won't
+    if( !((dpyx ^ lastX) & 0x200) && !((dpyy ^ lastY) & 0x200) )
     {
-        logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d aperture %d\n", lastX, lastY, dpyx, dpyy,penAperture);
-        return(true);
+        // Thanks to Ian S. for the code to deal with the aperture as an actual circle.
+
+        delx = (lastX - dpyx)*(lastX - dpyx);               // Find squared magnitudes of hit offset
+        dely = (lastY - dpyy)*(lastY - dpyy);
+        if( (delx + dely) < penArea )
+        {
+            logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d aperture %d\n", lastX, lastY, dpyx, dpyy,penAperture);
+            return(true);
+        }
     }
 
     return(false);

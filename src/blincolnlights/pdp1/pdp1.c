@@ -30,35 +30,37 @@
 // Set desired log type to 1 to enable output assuming logging is defined.
 #define LOG_LP 0
 #define LOG_POLL 0
+#define LOG_APERTURE 0
 
 #define NOTIOTH
 #include "dynamicIots.h"
 
 // The light pen came with 6 different aperture masks ranging from 0.05 to 0.30 inches.
 // The setting of penAperture, see readLightpen() below, emulates these by defining the distance from the
-// last dpy coordinates such that if the pen coordinates are within +/- penAperture pixels it is considered a hit.
+// last dpy coordinates to the light pen coordinates such that if the pen coordinates are within
+// penAperture pixels it is considered a hit.
+// The setting of penAperture is used to compute penArea, which is what is actually compared against.
+// This simulates a circular aperture.
 // THe nonstandard dpy 3000 extension allows changing the aperture.
-// IO contains the aperture size in pixels, 0 being an exact single-pixel match.
-// In other words, it is the number of pixels away from the dpy pixel that still counts as a hit.
+// IO contains the aperture size in pixels, 6-61.
 // Each pixel corresponds to 1/1024th of the display, or 0.009" on the original Type 30 display.
 // APERTURE sets the default value.
-// A setting of 3 corresponds to an aperture of 0.060".
-// The emulator doesn't seem to actually implement a second display for this.
+// The emulator didn't seem to actually implement a second display for this.
 //
-// Aperture Setting  Actual size
-// 0.05     3        0.054
-// 0.10     6        0.108
-// 0.15     8        0.144
-// 0.20     11       0.198
-// 0.25     14       0.252
-// 0.30     17       0.306
+// Aperture Setting  Size with 0.009" pixels
+// 0.05     6        0.054
+// 0.10     11       0.111
+// 0.15     17       0.153
+// 0.20     22       0.198
+// 0.25     28       0.252
+// 0.30     33       0.297
 //
 
 #define APERTURE 3                  // the default, 0.050"
 
 int lightpenEnabled = 0;            // we always expose these for loadConfig in main.c
 int penAperture = APERTURE;
-int penArea;                        // computed as penAperture * penAperture * 4
+int penArea = (APERTURE * APERTURE)/4;  // computed as (aperture squared) / 4
 int sdbEnabled = 1;
 int dpyShiftEnabled = 0;
 
@@ -2067,11 +2069,18 @@ int ch;
         else if((ch & 030) == 030)       // wje, set lightpen aperture
         {
             pdp->dpy_defl_time = NEVER;     // just set aperture
-            pdp->dpy_time = 0;
+            pdp->dpy_time = NEVER;
             pdp->dcp = 0;                   // be sure its not set
-            penAperture = IO & 01777;       // 0-1023 pixels, each one corresponds to the original 0.009"
-            penArea = (penAperture * penAperture) << 2; // (penAperture * 2) ^ 2
+            // The aperture is the diameter in pixels, allow 6 to 63
+            // Each pixel corresponds to the original 0.009"
+            penAperture = IO & 077; 
+            if( penAperture < 6 )
+            {
+                penAperture = 6;
+            }
+            penArea = (penAperture * penAperture) >> 2;  // radius squared
             penDown = false;
+            logger(LOG_APERTURE,"Aperture %d, area %d\n", penAperture, penArea);
         }
         else
         {

@@ -6,8 +6,10 @@
 # any other value means off.
 
 # These 2 control the lightpen in pidp1.
-lightpen=off
-aperture=5
+lightpen=on
+# An aperture of 22 corresponds to a 'physical' aperture of 0.200 inches.
+# This works well with the DEC lightpen diagnostic program.
+aperture=22
 
 # initially enable/diable mul/div in pidp1.
 muldiv=on

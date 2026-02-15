@@ -1,7 +1,12 @@
 Disassembled from digital-1-27-m-mb
 ioh=iot i
+lia=760020
 0/
-L5,   szs 10
+L5,
+      lat
+      lia
+      dpy-i 3000
+      szs 10
       jmp L1
       szs 20
       jmp L2

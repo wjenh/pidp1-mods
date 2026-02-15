@@ -1,6 +1,9 @@
 # Using the **am1** macro assembler for the PDP-1
 
-This document describes the **am1** macro assembler and how to use it
+This document describes the **am1** macro assembler and how to use it.
+
+This is version 1.16 and covers up through am1 version 1.16; it will be updated as needed.\
+Edit date 12-Feb-2026
 
 ## What is **am1**?
 
@@ -773,6 +776,10 @@ Since the same symbol name can be defined in multiple banks, a search rule is us
 At the end of parse tree generation the location is resolved by searching the list of banks used from
 the first declared in a program by a *bank* statement to the last declared.
 The first match is the resolution.
+
+However, if it is defined in the bank in which it is used, the symbol in that bank will be used and
+no searching done.
+
 If not found in any bank, an error results.
 
 For example:

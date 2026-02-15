@@ -6,12 +6,14 @@
 #define LIGHTPEN 3000
 
 // Aperture equivalents, also in IO
-#define APERTURE050    0d3
-#define APERTURE100    0d6
-#define APERTURE150    0d8
-#define APERTURE200    0d11
-#define APERTURE250    0d14
-#define APERTURE300    0d17
+// These are the diameter of the aperture in pixels.
+// The original Type 30 had a pixel size of 0.009 inches.
+#define APERTURE050    0d6
+#define APERTURE100    0d11
+#define APERTURE150    0d17
+#define APERTURE200    0d22
+#define APERTURE250    0d28
+#define APERTURE300    0d33
 
 // Example:
 // lio [APERTURE150]

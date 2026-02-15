@@ -51,45 +51,45 @@ However, the form that requests completion, *dpy-i 4000* or in am1, *dpy C* foll
 
 ## The aperture
 
-The original lightpen had a set of 6 aperture attachments to control the field of view of the lightpen,
-ranging from an opening of 0.05" to 0.30" in 0.05" increments.
-These corresponded to the pixels that would count as a hit in its view.
+The original lightpen had a set of 6 aperture attachments to control the field of view of the lightpen
+ranging from an opening of 0.05" to 0.30" in 0.05" increments.\
+These corresponded to the pixels that would count as a hit in its view.\
 
-The simulated lightpen pixel equivalents are:
-|Aperture|Radius in pixels|
+The simulated lightpen pixel equivalents are computed as a fraction of 1024 pixels, so the actual
+size of course depends upon the display size. The Type 30 display ploted in a 9.25" square, corresponding 
+a pixel size o 0.009".
+
+|Aperture|Diameter in pixels|
 |--------|----------------|
-|0.50    |3|
-|0.10    |6|
-|0.15    |8|
-|0.20    |11|
-|0.25    |14|
-|0.30    |17|
+|0.50    |6|
+|0.10    |11|
+|0.15    |17|
+|0.20    |22|
+|0.25    |28|
+|0.30    |33|
 
 Am1 has an include file that defines these, #include <LIGHTPEN/lightpen.ah>.
 
-## Enabling the lightpen and setting the aperture
+## Setting the aperture
 
-An extended *dpy* command has been provided, *dpy 3000*, 723000.
+An extended *dpy* command has been provided, *dpy-i 3000*, 723007.
 
-It expects the IO register to contain the aperture size to use in bits 8-17.
-
-Bit 9 enables or disables the lightpen, 1 to enable, 0 to disable.
+It expects the IO register to contain the aperture size to use in bits 12-17.
 
 For example:
 ```
-lio 001006
-dpy 3000
+lio [6, or lio (6 for macro1
+dpy-i 3000
 ```
-enables the lightpen with an apterure radius of 6 pixels, a circle with a diameter of 12 pixels on the screen.
+Sets an apterure diameter of 6 pixels.
 
-This command does not support completion, wait is ignored. Thus *dpy* and *dpy-i* operate identically.
+This command does **not** support completion, don't do a wait!
 
 ## What uses it?
 
 The p7sim Type 30 display emulator has support for this.\
-It must be started with a *-l* command line flag to enable it.\
-When enabled, the lightpen is simulated by the mouse.\
+The lightpen is simulated by the mouse.\
 As long as the left buttion is pressed, the cursor is the lightpen. Any pixel being drawn that is within
 the aperture around the cursor will be a hit.
 
-There is also support in the alternal Type 30 implementation found at https://github.com/Isysxp/PDP1-DPY.git.
+There is also support in the alternate Type 30 implementation found at https://github.com/Isysxp/PDP1-DPY.git.

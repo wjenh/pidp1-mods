@@ -56,7 +56,7 @@
 // 0.30     33       0.297
 //
 
-#define APERTURE 3                  // the default, 0.050"
+#define APERTURE 6                  // the default, 0.050"
 
 int lightpenEnabled = 0;            // we always expose these for loadConfig in main.c
 int penAperture = APERTURE;

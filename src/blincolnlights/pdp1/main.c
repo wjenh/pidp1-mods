@@ -34,7 +34,7 @@ Panel *getpanel(void);
 int doaudio;
 PDP1 pdp1;      // moved here because dynamic IOT code needs it
 extern int penAperture;
-extern int penArea;
+extern int penRadius2;
 extern int lightpenEnabled;
 extern int sdbEnabled;
 extern int dpyShiftEnabled;
@@ -436,7 +436,7 @@ char answer[64];
         else if( !strcmp(option,"aperture") )
         {
             penAperture = atoi(answer);
-            penArea = (penAperture * penAperture) / 4;
+            penRadius2 = (penAperture/2) * (penAperture/2);
         }
         else if( !strcmp(option,"dpyshift") )
         {

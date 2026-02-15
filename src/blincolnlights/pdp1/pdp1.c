@@ -39,7 +39,7 @@
 // The setting of penAperture, see readLightpen() below, emulates these by defining the distance from the
 // last dpy coordinates to the light pen coordinates such that if the pen coordinates are within
 // penAperture pixels it is considered a hit.
-// The setting of penAperture is used to compute penArea, which is what is actually compared against.
+// The setting of penAperture is used to compute penRadius2, which is what is actually compared against.
 // This simulates a circular aperture.
 // THe nonstandard dpy 3000 extension allows changing the aperture.
 // IO contains the aperture size in pixels, 6-61.
@@ -60,7 +60,7 @@
 
 int lightpenEnabled = 0;            // we always expose these for loadConfig in main.c
 int penAperture = APERTURE;
-int penArea = (APERTURE * APERTURE)/4;  // computed as (aperture squared) / 4
+int penRadius2 = (APERTURE/2) * ( APERTURE/2);  // radius squared
 int sdbEnabled = 1;
 int dpyShiftEnabled = 0;
 
@@ -2078,9 +2078,8 @@ int ch;
             {
                 penAperture = 6;
             }
-            penArea = (penAperture * penAperture) >> 2;  // radius squared
-            penDown = false;
-            logger(LOG_APERTURE,"Aperture %d, area %d\n", penAperture, penArea);
+            penRadius2 = (penAperture/2) * (penAperture/2);  // radius squared
+            logger(LOG_APERTURE,"Aperture %d, area %d\n", penAperture, penRadius2);
         }
         else
         {
@@ -2436,11 +2435,10 @@ DispCon *dpyP;
     // Just compare bits outside the range, neg will have the bit set, pos won't
     if( !((dpyx ^ lastX) & 0x200) && !((dpyy ^ lastY) & 0x200) )
     {
-        // Thanks to Ian S. for the code to deal with the aperture as an actual circle.
-
-        delx = (lastX - dpyx)*(lastX - dpyx);               // Find squared magnitudes of hit offset
-        dely = (lastY - dpyy)*(lastY - dpyy);
-        if( (delx + dely) < penArea )
+        // Use the distance equation for a circle to simulate an actual circular aperture
+        delx = lastX - dpyx;               // Find squared magnitudes of hit offset
+        dely = lastY - dpyy;
+        if( ((delx*delx) + (dely*dely)) < penRadius2 )
         {
             logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d aperture %d\n", lastX, lastY, dpyx, dpyy,penAperture);
             return(true);

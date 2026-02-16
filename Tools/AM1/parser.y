@@ -165,6 +165,7 @@ extern void leave(int);
 %type <pnodeP> varname
 %type <pnodeP> optExpr
 %type <pnodeP> optLocals
+%type <pnodeP> localSymDef
 %type <pnodeP> symList
 %type <pnodeP> symbol
 %type <pnodeP> terminator
@@ -944,12 +945,12 @@ LOCorADDLOC     : LOCAL
                 }
                 ;
 
-optLocals       : symbol
+optLocals       : localSymDef
                 {
                     $$ = $1;
                     $$->leftP = $$; // keep head
                 }
-                | optLocals LOCATION symbol
+                | optLocals LOCATION localSymDef
                 {
                     $3->leftP = $1->leftP;
                     $1->leftP = $3;
@@ -958,6 +959,26 @@ optLocals       : symbol
                 |
                 {
                     $$ = NILP;
+                }
+                ;
+
+localSymDef     : symbol
+                {
+                    $$ = $1;
+                }
+                | LCLADDR
+                {
+                    if( $1->value2 > localDepth )
+                    {
+                        verror(
+                            "local %s is already defined in this scope %d, can't be declared here",
+                            $1->name, $1->value2, localDepth);
+                    }
+
+                    // We are defining a nested local with the same name as an outer one,
+                    // that's fine.
+                    $$ = newnode(lineno, cur_pc, NAME, NILP, NILP);
+                    $$->value.strP = $1->name;
                 }
                 ;
 

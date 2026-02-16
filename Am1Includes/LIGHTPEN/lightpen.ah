@@ -4,8 +4,11 @@
 
 // Modifier for dpy, set aperture
 #define LIGHTPEN 3000
+// Example:
+// lio [APERTURE150]
+// dpy-i LIGHTPEN
 
-// Aperture equivalents, also in IO
+// Aperture equivalents, passed in IO to above.
 // These are the diameter of the aperture in pixels.
 // The original Type 30 had a pixel size of 0.009 inches.
 #define APERTURE050    0d6
@@ -15,7 +18,10 @@
 #define APERTURE250    0d28
 #define APERTURE300    0d33
 
-// Example:
-// lio [APERTURE150]
-// dpy-i LIGHTPEN
+// Define screen bounds
+#define LEFTX -0d511
+#define RIGHTX 0d511
+#define TOPY 0d511
+#define BOTTOMY -0d511
+
 #endif

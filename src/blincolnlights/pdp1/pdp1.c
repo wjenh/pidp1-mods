@@ -25,12 +25,13 @@
 #include <poll.h>
 #include <errno.h>
 
-//#define DOLOGGING
+#define DOLOGGING
 #include "logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
 #define LOG_LP 0
 #define LOG_POLL 0
 #define LOG_APERTURE 0
+#define LOG_STARTUP 1
 
 #define NOTIOTH
 #include "dynamicIots.h"
@@ -58,11 +59,12 @@
 
 #define APERTURE 6                  // the default, 0.050"
 
-int lightpenEnabled = 0;            // we always expose these for loadConfig in main.c
 int penAperture = APERTURE;
 int penRadius2 = (APERTURE/2) * ( APERTURE/2);  // radius squared
-int sdbEnabled = 1;
-int dpyShiftEnabled = 0;
+bool lightpenEnabled = false;       // we always expose these for loadConfig in main.c
+bool sdbEnabled = true;
+bool dpyShiftEnabled = false;
+bool audioEnabled = false;
 
 #define B0 0400000
 #define B1 0200000
@@ -95,6 +97,7 @@ int dpyShiftEnabled = 0;
 
 static bool penDown;
 
+static char *onOff(bool flag);
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
 static bool checkLightPen(PDP1 *pdp1P);
@@ -237,6 +240,17 @@ pwrclr(PDP1 *pdp)
 
     pdp->dpy_defl_time = NEVER;
     pdp->dpy_time = NEVER;
+
+    logger(LOG_STARTUP,"Sdb is %s, dpy shift is %s, sbs16 is %s, audio is %s\n",
+        onOff(sdbEnabled), onOff(dpyShiftEnabled), onOff(pdp->sbs16), onOff(audioEnabled));
+    logger(LOG_STARTUP,"Lightpen is %s, aperture is %d, radius^2 is %d\n", onOff(lightpenEnabled), penAperture,
+        penRadius2);
+}
+
+static char *
+onOff(bool flag)
+{
+    return((flag)?"on":"off");
 }
 
 static void
@@ -2079,7 +2093,7 @@ int ch;
                 penAperture = 6;
             }
             penRadius2 = (penAperture/2) * (penAperture/2);  // radius squared
-            logger(LOG_APERTURE,"Aperture %d, area %d\n", penAperture, penRadius2);
+            logger(LOG_APERTURE,"Aperture %d, radius squared %d\n", penAperture, penRadius2);
         }
         else
         {
@@ -2399,6 +2413,7 @@ DispCon *dpyP;
             if( (cmd & PENBITS) == LPUP )   // pen up, done
             {
                 penDown = false;
+                logger(LOG_LP, "Pen up\n", lastX, lastY);
             }
             else
             {
@@ -3027,16 +3042,16 @@ static char resp[1024];
             {
                 if(strcmp(args[1], "on") == 0 || strcmp(args[1], "1") == 0)
                 {
-                    doaudio = 1;
+                    audioEnabled = 1;
                 }
                 else if(strcmp(args[1], "off") == 0 || strcmp(args[1], "0") == 0)
                 {
-                    doaudio = 0;
+                    audioEnabled = 0;
                 }
                 else if(strcmp(args[1], "query") == 0)
                 {
                     sprintf(resp, "Audio %s, current alpha %f, current gain %f, current tuning %f\n",
-                        doaudio ? "on" : "off", getFilterAlpha(), getMixerGain(), getAudioTuning());
+                        audioEnabled ? "on" : "off", getFilterAlpha(), getMixerGain(), getAudioTuning());
                 }
                 else if(strcmp(args[1], "alpha") == 0)
                 {
@@ -3053,11 +3068,11 @@ static char resp[1024];
             }
             else
             {
-                doaudio = !doaudio;
+                audioEnabled = !audioEnabled;
             }
 
             // wje, the new audio support adds digital filtering
-            if(doaudio)
+            if(audioEnabled)
             {
                 if(isAudioInitialized())
                 {
@@ -3076,7 +3091,7 @@ static char resp[1024];
 
             if(!resp[0])
             {
-                sprintf(resp, "audio now %s", doaudio ? "on" : "off");
+                sprintf(resp, "audio now %s", audioEnabled ? "on" : "off");
             }
         }
     }

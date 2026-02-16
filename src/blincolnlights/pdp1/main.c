@@ -9,6 +9,7 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdbool.h>
 #include <pthread.h>
 
 #ifdef USE__PANEL_SEMAPHORE
@@ -31,13 +32,14 @@ void lightson(Panel *panel);
 void loadConfigFile(PDP1 *pdp1P, char *filenameP);
 Panel *getpanel(void);
 
-int doaudio;
 PDP1 pdp1;      // moved here because dynamic IOT code needs it
+
 extern int penAperture;
 extern int penRadius2;
-extern int lightpenEnabled;
-extern int sdbEnabled;
-extern int dpyShiftEnabled;
+extern bool lightpenEnabled;
+extern bool sdbEnabled;
+extern bool dpyShiftEnabled;
+extern bool audioEnabled;
 
 void
 emu(PDP1 *pdp, Panel *panel)
@@ -109,7 +111,7 @@ bool prev_readin_sw;
 
             if(pdp->run)
             {
-                if(doaudio)                          // wje - handle new audio stream
+                if( audioEnabled )                         // wje - handle new audio stream
                 {
                     svc_audio(pdp);
                 }
@@ -391,11 +393,11 @@ char answer[64];
             continue;
         }
 
-        onOff = strcmp(option,"y") || !strcmp(option,"yes") || !strcmp(option,"on");
+        onOff = !strcmp(answer,"y") || !strcmp(answer,"yes") || !strcmp(answer,"on");
 
         if( !strcmp(option,"audio") )
         {
-            doaudio = onOff;
+            audioEnabled = onOff;
         }
         else if( !strcmp(option,"samplerate") )
         {
@@ -444,7 +446,11 @@ char answer[64];
         }
         else if( !strcmp(option,"sdb") )
         {
-            pdp1P->muldiv_sw = onOff;
+            sdbEnabled = onOff;
+        }
+        else if( !strcmp(option,"sbs16") )
+        {
+            pdp1P->sbs16 = onOff;
         }
         else if( !strcmp(option,"muldiv") )
         {

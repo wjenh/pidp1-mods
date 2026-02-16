@@ -5,20 +5,28 @@
 # For options that are on or off, 'y', 'yes', 'on' all mean enabled,
 # any other value means off.
 
-# These 2 control the lightpen in pidp1.
-lightpen=on
-# An aperture of 22 corresponds to a 'physical' aperture of 0.200 inches.
-# This works well with the DEC lightpen diagnostic program.
-aperture=22
-
-# initially enable/diable mul/div in pidp1.
+# Enable/disable various features.
 muldiv=on
+# This is the 16 channel break system.
+sbs16=off
 
+# These two conflict, pick one.
+# sdb is an extended version of dpy used by the Type 33 Symbol Generator.
+# dpyshift is an extended version of dpy that allows origin-shifting, implemented by sonme PDP-1's.
+# They conflict. If both are on, sdb takes priority.
+# If both are on, sdb takes priority.
+sdb=on
+dpyshift=off
+
+lightpen=on
 # The unified control gui checks this
 # Note - this isn't currently working, but doesn't hurt to enable it
 guilightpen=no
 # The standalone type 30 display checks this
 type30lightpen=yes
+
+# An aperture of 22 corresponds to a physical aperture of 0.200 inches
+aperture=22
 
 # The following control the audio subsystem.
 # alpha sets the frequency response of all 4 digital filters the same.
@@ -45,9 +53,3 @@ alpha1=0.687
 alpha2=0.625
 alpha3=0.524
 alpha4=0.524
-
-# sdb is an extended version of dpy used by the Type 33 Symbol Generator.
-# dpyshift is an extended version of dpy that allows origin-shifting, implemented by sonme PDP-1's.
-# They conflict. If both are on, sdb takes priority.
-sdb=on
-dpyshift=off

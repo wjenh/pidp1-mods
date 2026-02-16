@@ -25,13 +25,14 @@
 #include <poll.h>
 #include <errno.h>
 
-//#define DOLOGGING
+#define DOLOGGING
 #include "logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
-#define LOG_LP 0
+#define LOG_LP 1
 #define LOG_POLL 0
+#define LOG_POLL_ERR 0
 #define LOG_APERTURE 0
-#define LOG_STARTUP 1
+#define LOG_STARTUP 0
 
 #define NOTIOTH
 #include "dynamicIots.h"
@@ -96,6 +97,8 @@ bool audioEnabled = false;
 #define TTO_CHAN 8
 
 static bool penDown;
+static int lastPenX;
+static int lastPenY;
 
 static char *onOff(bool flag);
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
@@ -2343,19 +2346,18 @@ cvtDpyToSigned(int dpy)             // convert a 10 bit dpy coordinate to a 2's 
 
 #define PENBUFSIZE  64  // read up to this many commands at once
 
-static int lastX;
-static int lastY;
-static struct pollfd penPollData;
-
 // See if there is data from the client, update lp status
 bool
 updatePenLocation(PDP1 *pdp1P)
 {
 int i;
 int count;
+int newX, newY;
 uint32_t cmdBuf[PENBUFSIZE];
 uint32_t cmd;
 DispCon *dpyP;
+
+static struct pollfd penPollData;
 
     dpyP = &(pdp1P->dpy[0]);
 
@@ -2388,7 +2390,7 @@ DispCon *dpyP;
         if( !(penPollData.revents & POLLIN) )
         {
             // The other end must have closed its connection
-            logger(LOG_POLL, "LP poll returned 0x%x\n", penPollData.revents);
+            logger(LOG_POLL_ERR, "LP poll returned 0x%x\n", penPollData.revents);
             count = 0;
             penDown = false;
             break;
@@ -2396,7 +2398,7 @@ DispCon *dpyP;
 
         if( (count = read(dpyP->fd, cmdBuf, sizeof(cmdBuf))) < sizeof(uint32_t) )
         {
-            logger(LOG_POLL, "LP read returned %d but pollin returned %d\n", count, i);
+            logger(LOG_POLL_ERR, "LP read returned %d but pollin returned %d\n", count, i);
             count = 0;                          // some problem, probably fd closed
             penDown = false;
             break;
@@ -2413,15 +2415,22 @@ DispCon *dpyP;
             if( (cmd & PENBITS) == LPUP )   // pen up, done
             {
                 penDown = false;
-                logger(LOG_LP, "Pen up\n", lastX, lastY);
+                logger(LOG_LP, "Pen up\n", lastPenX, lastPenY);
             }
             else
             {
                 penDown = true;
                 // We convert to a signed 2's complement integer
-                lastX = cvtDpyToSigned((cmd >> 10) & 0x3FF);
-                lastY = cvtDpyToSigned(cmd & 0x3FF);
-                logger(LOG_LP, "New lastX %d, lastY %d\n", lastX, lastY);
+                newX = cvtDpyToSigned((cmd >> 10) & 0x3FF);
+                newY = cvtDpyToSigned(cmd & 0x3FF);
+                logger(LOG_LP, "New lastX %d, lastY %d\n", lastPenX, lastPenY);
+                if( (newX == lastPenX) && (newY == lastPenY) )
+                {
+                    return( false );    // nothing moved
+                }
+
+                lastPenX = newX;
+                lastPenY = newY;
             }
         }
     }
@@ -2448,14 +2457,16 @@ DispCon *dpyP;
     // Both coordinate pairs have been converted from 10 bit 1's complement to full signed 2's complement.
     // We have to take edge wrapping into account, do nothing if it wrapped.
     // Just compare bits outside the range, neg will have the bit set, pos won't
-    if( !((dpyx ^ lastX) & 0x200) && !((dpyy ^ lastY) & 0x200) )
+    if( !((dpyx ^ lastPenX) & 0x200) && !((dpyy ^ lastPenY) & 0x200) )
     {
         // Use the distance equation for a circle to simulate an actual circular aperture
-        delx = lastX - dpyx;               // Find squared magnitudes of hit offset
-        dely = lastY - dpyy;
+        delx = lastPenX - dpyx;               // Find squared magnitudes of hit offset
+        dely = lastPenY - dpyy;
         if( ((delx*delx) + (dely*dely)) < penRadius2 )
         {
-            logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d aperture %d\n", lastX, lastY, dpyx, dpyy,penAperture);
+            logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d aperture %d\n",
+                lastPenX, lastPenY, dpyx, dpyy,penAperture);
+
             return(true);
         }
     }

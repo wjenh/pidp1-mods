@@ -403,6 +403,7 @@ PNodeP node2P;
         break;
 
     case LOCAL:
+    case ADDLOCAL:
     case ENDLOC:
     case FORCELOC:
         break;      // ignore

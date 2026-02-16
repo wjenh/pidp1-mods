@@ -103,7 +103,6 @@ extern void leave(int);
 %token <symP> OPADDR
 %token <symP> OPORABLE
 %token <symP> VALUESPEC
-%token <symP> LOCAL
 %token <symP> ADDR
 %token <symP> LCLADDR
 %token <strP> NAME
@@ -127,6 +126,8 @@ extern void leave(int);
 %token BANK
 %token LOCATION
 %token LCLLOCATION
+%token LOCAL
+%token ADDLOCAL
 %token FORCELOC
 %token DOT
 %token SLASH
@@ -171,6 +172,7 @@ extern void leave(int);
 %type <pnodeP> endConst
 %type <ival> optINTEGER
 %type <ival> bref
+%type <ival> LOCorADDLOC
 
 /* precedence for operators */
 
@@ -836,14 +838,16 @@ directive_expr  : FORCELOC
 		    $$ = newnode(lineno, cur_pc, FORCELOC, NILP, NILP);
                     $$->flags |= PN_NOINC;
                 }
-                | LOCAL optLocals
+                | LOCorADDLOC optLocals
                 {
                 SymNodeP symP;
                 PNodeP nodeP;
                 char *cP;
 
-                    // We push any current local scope, establish a new one
-                    // locaSymlPP can be null if there is no current scope
+                    // This can be a local, or an addlocal.
+                    // If local, push any current local scope, establish a new one.
+                    // locaSymlPP can be null if there is no current scope.
+                    // If addlocal, the scope must exist and the symbols are added to it
                     if( $2 )
                     {
                         nodeP = $2->leftP;      // recover head link
@@ -854,18 +858,28 @@ directive_expr  : FORCELOC
                         nodeP = NILP;
                     }
 
-		    $$ = newnode(lineno, cur_pc, LOCAL, NILP, nodeP);
+		    $$ = newnode(lineno, cur_pc, $1?LOCAL:ADDLOCAL, NILP, nodeP);
                     $$->flags |= PN_NOINC;
 
-                    localStack[localDepth++] = localContextP;
-                    if( localDepth > maxLocalDepth )
+                    if( $1 )
                     {
-                        maxLocalDepth = localDepth;
-                    }
+                        localStack[localDepth++] = localContextP;
+                        if( localDepth > maxLocalDepth )
+                        {
+                            maxLocalDepth = localDepth;
+                        }
 
-                    localContextP = newLocalContext();
-                    localContextP->pc = cur_pc;          // will be the origin for the local relative refs
-                    sym_init( &(localContextP->symRootP) );
+                        localContextP = newLocalContext();
+                        localContextP->pc = cur_pc;          // will be the origin for the local relative refs
+                        sym_init( &(localContextP->symRootP) );
+                    }
+                    else
+                    {
+                        if( !localContextP )
+                        {
+                            verror("addlocal but not in a local context");
+                        }
+                    }
 
                     while( nodeP )         // add local predefines
                     {
@@ -917,6 +931,16 @@ endConst        : ENDCONST
                 {
                     $$ = newnode(lineno, cur_pc, COMMENT, NILP, NILP);
                     $$->value.strP = $1;
+                }
+                ;
+
+LOCorADDLOC     : LOCAL
+                {
+                    $$ = 1;
+                }
+                | ADDLOCAL
+                {
+                    $$ = 0;
                 }
                 ;
 

@@ -361,7 +361,8 @@ PNodeP node2P;
         break;
 
     case LOCAL:
-        fprintf(outfP, "local");
+    case ADDLOCAL:
+        fprintf(outfP, (nodeP->type == LOCAL)?"local":"addlocal");
         if( (node2P = nodeP->rightP) )
         {
             while( node2P )

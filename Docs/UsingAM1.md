@@ -39,7 +39,7 @@ Features
 - Adds operators for and, or, xor, complement, multiply, divide, mod in expressions
 - Adds the need-completion flag, C
 - Adds sdb for Type 33 Symbol Generator support
-- Adds dpyc shorthand for *dpy-i C*
+- Adds dpyc, shorthand for *dpy-i C*
 - Can select between keeping -0 or automatically converting to +0 in expressions
 - Allows space-separated symbols to be treated as *a | b | c* instead of *a + b + c*
 - Adds parenthesized expressions
@@ -69,7 +69,7 @@ use of characters in **macro1** that were poorly handled.
 - The numeric prefixes 0x, 0d, 0o are added to mean hex, decimal, octal regardless of the current radix
 - *'x'* is allowed to mean the value of a single ascii character, the usual escapes are recognized
 - *ascii "xxx"* is provided to create a table of ascii character values similar to *text*
-- The directives *local* and *endloc* are provided to control local scoping
+- The directives *local*, *addlocal*, and *endlocal* are provided to control local scoping
 - The directive *bank* is provided to control placement in extended memory
 - Location symbols in one bank can be referenced from another bank by using the *:banknum* suffix
 - Explicit variable declarations with optional initializers is added, *var name=expr, name...*
@@ -414,12 +414,11 @@ The second form is also called a *location asssignment*.
 ## Local symbols
 
 Local symbols are a variation of location symbols.
-They are defined between *local* and *endloc* directives and come in two forms, *predefined* and *ad-hoc*.
+They are defined between *local* and *endlocal* directives and come in two forms, *predefined* and *ad-hoc*.
 Predefined locals are specified following the *local* statement while ad-hoc symbols are declared when used
 via a leading per-cent, %, symbol.
 
 The two are distinct, predefinded *a* and ad-hoc *%a* are separate symbols.
-
 
 ```
     local a, b
@@ -429,8 +428,20 @@ The two are distinct, predefinded *a* and ad-hoc *%a* are separate symbols.
     .
     b,
     jmp %target
-    endloc
+    endlocal
 ```
+
+Additionally, more locals can be defined after the initial *local* directive by using *addlocal*.
+
+```
+    local a, b
+    .
+    .
+    addlocal c, d.
+    ...
+```
+
+These act in all respects just as if they were added in the original *local* directive.
 
 Unlike **macro1** where all symbols are global and so all symbols must be unique or they will be
 redefined,
@@ -441,6 +452,9 @@ addressing to access it.
 Local blocks can be nested up to 1024 deep.
 A local symbol in an enclosing block can be referenced within a nested block, and regular location symbols
 can be used and declared within local blocks.
+
+Uf a local symbol is defined in a *local* or *addlocal* directive but never referenced, it will be ignored,
+no code will be generated for it.
 
 ## Symbol exports and imports
 
@@ -621,11 +635,13 @@ For example, if the current radix is octal, then 0x1f will be emitted as 37, the
 
 Directives, aka pseudo-instructions, tell the assembler to do special operations.
 Some generate code, some don't.
+In the list below, letters inside parentheses, (), are optional.
 
 Directives are:
 - location assignment, xxx/
-- local
-- endloc
+- loc(al)
+- addloc(al)
+- endloc(al)
 - octal
 - decimal
 - flexo
@@ -1069,12 +1085,13 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 | Keywords    |
 |-------------|
 | %forcelocal |
+| addlocal    |
 | ascii       |
 | bank        |
 | char        |
 | constants   |
 | decimal     |
-| endloc      |
+| endlocal    |
 | export      |
 | flexo       |
 | import      |

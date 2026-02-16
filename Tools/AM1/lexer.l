@@ -47,12 +47,12 @@ void reset_line(void);
 			    return(HEADER);
 			}
 
-\%forcelocal		{
-			    return(FORCELOC);
-			}
+\%forcelocal		{ return(FORCELOC); }
 
-local[ \t]*		{ return(LOCAL); }
-endloc[ \t]*		{ return(ENDLOC); }
+loc(al)?[ \t]*		{ return(LOCAL); }
+addloc(al)?[ \t]*	{ return(ADDLOCAL); }
+endloc(al)?[ \t]*	{ return(ENDLOC); }
+
 var[ \t]*		{ return(VAR); }
 table[ \t]*		{ return(TABLE); }
 bank[ \t]*		{ return(BANK); }

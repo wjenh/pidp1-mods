@@ -574,6 +574,9 @@ typeToName(int type)
     case LOCAL:
         return("local");
         break;
+    case ADDLOCAL:
+        return("addlocal");
+        break;
     case FORCELOC:
         return("force locals");
         break;
@@ -617,6 +620,7 @@ SymNodeP symP;
     switch(type)
     {
     case LOCAL:
+    case ADDLOCAL:
     case ENDLOC:
     case CONSTANTS:
     case RELOC:

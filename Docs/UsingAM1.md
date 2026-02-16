@@ -2,8 +2,8 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.16 and covers up through am1 version 1.16; it will be updated as needed.\
-Edit date 12-Feb-2026
+This is version 1.17 and covers up through am1 version 1.17; it will be updated as needed.\
+Edit date 15-Feb-2026
 
 ## What is **am1**?
 

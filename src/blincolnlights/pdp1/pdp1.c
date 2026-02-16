@@ -25,10 +25,10 @@
 #include <poll.h>
 #include <errno.h>
 
-#define DOLOGGING
+//#define DOLOGGING
 #include "logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
-#define LOG_LP 1
+#define LOG_LP 0
 #define LOG_POLL 0
 #define LOG_POLL_ERR 0
 #define LOG_APERTURE 0
@@ -97,6 +97,7 @@ bool audioEnabled = false;
 #define TTO_CHAN 8
 
 static bool penDown;
+static bool penDataValid;
 static int lastPenX;
 static int lastPenY;
 
@@ -2352,7 +2353,6 @@ updatePenLocation(PDP1 *pdp1P)
 {
 int i;
 int count;
-int newX, newY;
 uint32_t cmdBuf[PENBUFSIZE];
 uint32_t cmd;
 DispCon *dpyP;
@@ -2393,7 +2393,7 @@ static struct pollfd penPollData;
             logger(LOG_POLL_ERR, "LP poll returned 0x%x\n", penPollData.revents);
             count = 0;
             penDown = false;
-            break;
+            return(false);
         }
 
         if( (count = read(dpyP->fd, cmdBuf, sizeof(cmdBuf))) < sizeof(uint32_t) )
@@ -2401,9 +2401,10 @@ static struct pollfd penPollData;
             logger(LOG_POLL_ERR, "LP read returned %d but pollin returned %d\n", count, i);
             count = 0;                          // some problem, probably fd closed
             penDown = false;
-            break;
+            return(false);
         }
     }
+
 
     count /= sizeof(uint32_t);                  // convert to index
 
@@ -2421,21 +2422,15 @@ static struct pollfd penPollData;
             {
                 penDown = true;
                 // We convert to a signed 2's complement integer
-                newX = cvtDpyToSigned((cmd >> 10) & 0x3FF);
-                newY = cvtDpyToSigned(cmd & 0x3FF);
-                logger(LOG_LP, "New lastX %d, lastY %d\n", lastPenX, lastPenY);
-                if( (newX == lastPenX) && (newY == lastPenY) )
-                {
-                    return( false );    // nothing moved
-                }
-
-                lastPenX = newX;
-                lastPenY = newY;
+                lastPenX = cvtDpyToSigned((cmd >> 10) & 0x3FF);
+                lastPenY = cvtDpyToSigned(cmd & 0x3FF);
+                logger(LOG_LP, "LP received x %d, y %d\n", newX, newY);
+                penDataValid = true;
             }
         }
     }
 
-    return( penDown );
+    return( penDataValid );
 }
 
 bool
@@ -2447,7 +2442,7 @@ DispCon *dpyP;
 
     if( !updatePenLocation(pdp1P) )
     {
-        return(false);                // no hit possible
+        return(false);                // no hit
     }
 
     dpyP = &(pdp1P->dpy[0]);
@@ -2467,6 +2462,7 @@ DispCon *dpyP;
             logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d aperture %d\n",
                 lastPenX, lastPenY, dpyx, dpyy,penAperture);
 
+            penDataValid = false;
             return(true);
         }
     }

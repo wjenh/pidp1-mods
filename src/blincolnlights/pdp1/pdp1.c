@@ -25,7 +25,7 @@
 #include <poll.h>
 #include <errno.h>
 
-#define DOLOGGING
+//#define DOLOGGING
 #include "logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
 #define LOG_LP 0

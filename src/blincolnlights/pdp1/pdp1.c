@@ -97,7 +97,6 @@ bool audioEnabled = false;
 #define TTO_CHAN 8
 
 static bool penDown;
-static bool penDataValid;
 static int lastPenX;
 static int lastPenY;
 
@@ -2424,13 +2423,12 @@ static struct pollfd penPollData;
                 // We convert to a signed 2's complement integer
                 lastPenX = cvtDpyToSigned((cmd >> 10) & 0x3FF);
                 lastPenY = cvtDpyToSigned(cmd & 0x3FF);
-                logger(LOG_LP, "LP received x %d, y %d\n", newX, newY);
-                penDataValid = true;
+                logger(LOG_LP, "LP received x %d, y %d\n", lastPenX, lastPenY);
             }
         }
     }
 
-    return( penDataValid );
+    return( penDown );
 }
 
 bool
@@ -2461,8 +2459,6 @@ DispCon *dpyP;
         {
             logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d aperture %d\n",
                 lastPenX, lastPenY, dpyx, dpyy,penAperture);
-
-            penDataValid = false;
             return(true);
         }
     }

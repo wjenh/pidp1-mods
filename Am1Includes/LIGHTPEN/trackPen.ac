@@ -3,6 +3,7 @@
 // This code is used to follow the light pen.
 // It draws invisible tracking markers around the global xPosition and yPosition locations.
 // If the pen is moved but still being tracked, it updaes the positions and returns 1 in AC.
+// The amount the positions are updated and the spacing between markers is set by the constants below.
 // If the pen is lifted or tracking is lost, it returns 0 in AC and the locations are not changed.
 // This changes the aperture setting.
 // It is called by a jsp.

@@ -20,17 +20,15 @@
 #include "pdp1.h"
 #include <unistd.h>
 #include <stdint.h>
-#include <fcntl.h>
 #include <stdbool.h>
-#include <poll.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <errno.h>
 
 //#define DOLOGGING
 #include "logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
 #define LOG_LP 0
-#define LOG_POLL 0
-#define LOG_POLL_ERR 0
 #define LOG_APERTURE 0
 #define LOG_STARTUP 0
 
@@ -59,6 +57,8 @@
 //
 
 #define APERTURE 6                  // the default, 0.050"
+
+#define PENBUFSIZE  64              // read up to this many commands at once
 
 int penAperture = APERTURE;
 int penRadius2 = (APERTURE/2) * ( APERTURE/2);  // radius squared
@@ -99,7 +99,9 @@ bool audioEnabled = false;
 static bool penDown;
 static int lastPenX;
 static int lastPenY;
+static pthread_mutex_t lightpenLock;
 
+int lightpenListener(PDP1 *pdp1P);
 static char *onOff(bool flag);
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
@@ -2344,121 +2346,94 @@ cvtDpyToSigned(int dpy)             // convert a 10 bit dpy coordinate to a 2's 
 #define PENBITS 0x00F00000
 #define LPUP    0x00100000
 
-#define PENBUFSIZE  64  // read up to this many commands at once
-
+// This is the reader thread for the lightpen.
 // See if there is data from the client, update lp status
-bool
-updatePenLocation(PDP1 *pdp1P)
+int
+lightpenListener(PDP1 *pdp1P)
 {
-int i;
 int count;
 uint32_t cmdBuf[PENBUFSIZE];
 uint32_t cmd;
 DispCon *dpyP;
 
-static struct pollfd penPollData;
-
     dpyP = &(pdp1P->dpy[0]);
 
-    if( dpyP->fd < 0 )                                // No display is connected
-    {
-        if( penPollData.fd != -1 )
-        {
-            logger(LOG_POLL, "Polling stopped for dpy, fd closed\n");
-            penPollData.fd = -1;
-            penDown = false;
-        }
-
-        return(false);
-    }
-
-    if( penPollData.fd < 0 )                         // First time since open, set up the poll data
-    {
-        penPollData.fd = dpyP->fd;
-        penPollData.events = POLLIN;
-        penDown = false;
-        logger(LOG_POLL, "Polling established for dpy on fd %d\n", dpyP->fd);
-    }
-
-    // Read all pending commands.
+    // Loop reading all pending commands.
     // Only the last will be significant.
-    count = 0;
-
-    while( (i = poll(&penPollData, 1, 0)) > 0 )
+    // Return if the fd is closed.
+    for(;;)
     {
-        if( !(penPollData.revents & POLLIN) )
-        {
-            // The other end must have closed its connection
-            logger(LOG_POLL_ERR, "LP poll returned 0x%x\n", penPollData.revents);
-            count = 0;
-            penDown = false;
-            return(false);
-        }
-
         if( (count = read(dpyP->fd, cmdBuf, sizeof(cmdBuf))) < sizeof(uint32_t) )
         {
-            logger(LOG_POLL_ERR, "LP read returned %d but pollin returned %d\n", count, i);
             count = 0;                          // some problem, probably fd closed
             penDown = false;
-            return(false);
+            return(0);
         }
-    }
 
+        count /= sizeof(uint32_t);                  // convert to index
 
-    count /= sizeof(uint32_t);                  // convert to index
-
-    if( count > 0 )
-    {
-        cmd = cmdBuf[count - 1];                // last one
-        if( (cmd & CMDBITS) == LPCMD )  // light pen, just to be sure
+        if( count > 0 )
         {
-            if( (cmd & PENBITS) == LPUP )   // pen up, done
+            cmd = cmdBuf[count - 1];                // last one
+            if( (cmd & CMDBITS) == LPCMD )  // light pen, just to be sure
             {
-                penDown = false;
-                logger(LOG_LP, "Pen up\n", lastPenX, lastPenY);
-            }
-            else
-            {
-                penDown = true;
-                // We convert to a signed 2's complement integer
-                lastPenX = cvtDpyToSigned((cmd >> 10) & 0x3FF);
-                lastPenY = cvtDpyToSigned(cmd & 0x3FF);
-                logger(LOG_LP, "LP received x %d, y %d\n", lastPenX, lastPenY);
+                if( (cmd & PENBITS) == LPUP )   // pen up, done
+                {
+                    penDown = false;
+                    logger(LOG_LP, "Pen up\n", lastPenX, lastPenY);
+                }
+                else
+                {
+                    penDown = true;
+                    // We convert to a signed 2's complement integer
+                    // Use a mutex to be sure main thead gets a constent pair, maybe overkill.
+                    pthread_mutex_lock(&lightpenLock);
+                    lastPenX = cvtDpyToSigned((cmd >> 10) & 0x3FF);
+                    lastPenY = cvtDpyToSigned(cmd & 0x3FF);
+                    pthread_mutex_unlock(&lightpenLock);
+                    logger(LOG_LP, "LP received x %d, y %d\n", lastPenX, lastPenY);
+                }
             }
         }
     }
-
-    return( penDown );
 }
 
+// Check for a lightpen hit, return true if so, else false.
 bool
 checkLightPen(PDP1 *pdp1P)
 {
 int i, sawOne, dpyx, dpyy;
 int delx, dely;
+int lpX, lpY;
 DispCon *dpyP;
 
-    if( !updatePenLocation(pdp1P) )
+    if( !penDown )
     {
-        return(false);                // no hit
+        return(false);
     }
 
     dpyP = &(pdp1P->dpy[0]);
     dpyx = cvtDpyToSigned(pdp1P->dbx);
     dpyy = cvtDpyToSigned(pdp1P->dby);
 
+    // Use a mutex to be sure main thead gets a constent pair, maybe overkill.
+    pthread_mutex_lock(&lightpenLock);
+    lpX = lastPenX;
+    lpY = lastPenY;
+    pthread_mutex_unlock(&lightpenLock);
+
     // Both coordinate pairs have been converted from 10 bit 1's complement to full signed 2's complement.
     // We have to take edge wrapping into account, do nothing if it wrapped.
     // Just compare bits outside the range, neg will have the bit set, pos won't
-    if( !((dpyx ^ lastPenX) & 0x200) && !((dpyy ^ lastPenY) & 0x200) )
+    if( !((dpyx ^ lpX) & 0x200) && !((dpyy ^ lpY) & 0x200) )
     {
         // Use the distance equation for a circle to simulate an actual circular aperture
-        delx = lastPenX - dpyx;               // Find squared magnitudes of hit offset
-        dely = lastPenY - dpyy;
+        delx = lpX - dpyx;               // Find squared magnitudes of hit offset
+        dely = lpY - dpyy;
         if( ((delx*delx) + (dely*dely)) < penRadius2 )
         {
             logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d aperture %d\n",
-                lastPenX, lastPenY, dpyx, dpyy,penAperture);
+                lpX, lpY, dpyx, dpyy,penAperture);
             return(true);
         }
     }

@@ -25,6 +25,7 @@
 
 #define Edge(sw) (pdp->sw && !prev_##sw)
 
+int lightpenListener(PDP1 *pdp);
 void updateswitches(PDP1 *pdp, Panel *panel);
 void updatelights(PDP1 *pdp, Panel *panel);
 void lightsoff(Panel *panel);
@@ -199,11 +200,18 @@ connectdpy(PDP1 *pdp, DispCon *d, int fd)
     }
 }
 
+// Called when a connection request comes in
 void
 handledpy(int fd, void *arg)
 {
+pthread_t lp_thread;
+
     PDP1 *pdp = (PDP1*)arg;
     connectdpy(pdp, &pdp->dpy[0], fd);
+    if( lightpenEnabled )
+    {
+        pthread_create(&lp_thread, NULL, lightpenListener, pdp);
+    }
 }
 
 void

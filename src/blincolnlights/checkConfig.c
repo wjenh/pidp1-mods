@@ -36,7 +36,7 @@ char answer[64];
             continue;           // not us
         }
 
-        onOff = strcmp(answer,"y") || !strcmp(answer,"yes") || !strcmp(answer,"on");
+        onOff = !strcmp(answer,"y") || !strcmp(answer,"yes") || !strcmp(answer,"on");
         break;
     }
 

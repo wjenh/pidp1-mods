@@ -1,0 +1,229 @@
+Reproduce the PDP-1 line drawing program
+
+// A list of x and y deltas is maintained with the origin at the original lp hit point.
+// Up to MAXPOINTS points are stored and rendered.
+// Each point takes 2 words.
+
+#include <SYMGEN/type33iots.ah>
+#include <LIGHTPEN/lightpen.ah>
+
+#define TEXTSIZE 2
+#define BRIGHTNESS 2
+#define MSGX -0d500
+#define MSGY -0d450
+#define MSG2X 0d350
+#define MSG2Y -0d450
+
+#define MAXPOINTS 0d1024
+
+var xPosition, yPosition
+var lastX, lastY
+var pointCount
+
+100/
+strt,
+    law 7777
+    dac lastX
+    dac lastY
+    jsp findPen
+    jsp getPoints
+    jsp displayPoints
+    jmp strt
+
+// Add a point to the pont list with coordinates xPosition, yPosition
+// Each point is two words, y followed by x.
+addPoint,
+    local rtn, ok, redo, tmp
+    dap rtn
+
+    lac lastX
+    sas xPosition
+    jmp ok
+    lac lastY
+    sad yPosition
+    jmp rtn         // no change, ignore
+
+ok,
+    lac pointCount
+    sad [MAXPOINTS
+    jmp redo
+    sal 1s         // 2 words per point
+    add [pointList
+    dac tmp
+    lac yPosition
+    dac lastY
+    dac i tmp
+    idx tmp
+    lac xPosition
+    dac lastX
+    dac i tmp
+    idx pointCount
+    jmp rtn
+
+redo,       // copy the last entry to the first and set the count to 1
+    law MAXPOINTS - 2
+    add [pointList
+    dac tmp
+    lac i tmp
+    dac pointList
+    idx tmp
+    lac i tmp
+    dac pointList + 1
+    law 1
+    dac pointCount
+
+rtn, jmp .
+tmp, 0
+    endloc
+
+getPoints,
+    local rtn, loop
+    dap rtn
+    dzm pointCount
+loop,
+    // Give a hit where we are
+    lio yPosition
+    ril 8s
+    lac xPosition
+    ral 8s
+    dpy 300
+    add [300
+    dpy 300
+    sub [600
+    dpy 300
+    lsw
+    add [300
+    lsw
+    dpy 300
+    lsw
+    sub [600
+    lsw
+    dpy 300
+
+    jsp trackPen
+    sza
+    jsp addPoint
+    jsp checkDraw
+    sza
+    jmp rtn     // time to display
+    jmp loop
+
+rtn, jmp .
+    endloc
+
+displayPoints,
+    local rtn, loop
+    dap rtn
+loop,
+    jsp drawPoints
+    jsp checkReset
+    sza i
+    jmp loop
+rtn, jmp .
+    endloc
+
+// We interpolate between points
+drawPoints,
+    local rtn, ctr, ptr, tmp, loop
+    dap rtn
+
+    // Draw all points that we have data for
+    lac pointCount
+    sza i
+    jmp rtn     // noting to do
+    cma
+    dac ctr
+    law pointList
+    dac ptr
+loop,
+    lac i ptr
+    lia
+    ril 8s
+    idx ptr
+    lac i ptr
+    ral 8s
+    dpyc BRIGHTNESS << 6
+    idx ptr
+    isp ctr
+    jmp loop
+    ioh
+rtn, jmp .
+
+ctr, 0
+ptr, 0
+tmp, 0
+    endloc
+
+// If the 'reset' msg was clicked, return AC 1, else AC 0.
+// Call with jsp.
+checkReset,
+    local rtn, hit, miss
+    dap rtn
+
+    law AUTOSPACE TEXTSIZE
+    lia
+    iot glf
+
+    clf 3
+    lac [MSG2X << 0d8
+    lio [MSG2Y << 0d8
+    sdb BRIGHTNESS << 6  // position for the write
+    law resetMsg
+    jda drawasctext
+    szf i 3
+    jmp miss
+
+hit, law 1
+    jmp rtn
+
+miss, cla
+rtn, jmp .
+    endloc
+
+// If the 'draw' msg was clicked, return AC 1, else AC 0.
+// Call with jsp.
+checkDraw,
+    local rtn, hit, miss
+    dap rtn
+
+    law AUTOSPACE TEXTSIZE
+    lia
+    iot glf
+
+    clf 3
+    lac [MSGX << 0d8
+    lio [MSGY << 0d8
+    sdb BRIGHTNESS << 6  // position for the write
+    law drawMsg
+    jda drawasctext
+    szf i 3
+    jmp miss
+
+hit, law 1
+    jmp rtn
+
+miss, cla
+rtn, jmp .
+    endloc
+
+pointList,
+    table MAXPOINTS*2
+
+xPosition, 0      // drawoing point
+yPosition, 0
+
+lpx, 0          // for lighpen hits
+lpy, 0
+
+resetMsg,
+    ascii "Reset"
+drawMsg,
+    ascii "Draw"
+
+#include <SYMGEN/render.ac>
+#include <SYMGEN/drawasctext.ac>
+#include <LIGHTPEN/findPen.ac>
+#include <LIGHTPEN/trackPen.ac>
+
+constants
+start strt

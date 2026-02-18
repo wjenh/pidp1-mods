@@ -13,5 +13,7 @@ Each directory has a makefile, just type make in one.
 ## What's in Demos?
 
 - symgen, cg200chars, cgdemo, and cfgast demonstrate the Type 33 Symbol Generator
-- lightpen demonstrates the light pen, use with the p7sim or Ian S's display only
-- fancydemo allows picking and running a program from the drum using the light pen, same requirements
+- lightpen, demonstrates the light pen, use with the p7sim or Ian S's display only
+- drawLines, a semi-recreation of the original lightpen line drawing program
+- programSelector, allows picking and running a program from the drum using the light pen
+- findAndTrack, another light pen demo that lets you move a cross around the screen

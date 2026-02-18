@@ -10,6 +10,7 @@
  *
  * wje 07-Feb-26 break from original repo, now independent. Initial reformatting. lightpen support.
  * wje 11-Feb-26 update with new lightlen code.
+ * wje 18-Feb-26 now working with the lightpen
  *
 */
 
@@ -20,7 +21,6 @@
 // Logging control is there.
 
 #ifdef UNITY_BUILD
-#define LIGHTPEN
 
 GLuint pvbo;
 GLint point_program, excite_program, combine_program;
@@ -430,7 +430,6 @@ int x, y, intensity, dt;
     SDL_PushEvent(&event);
 }
 
-#ifdef LIGHTPEN
 // For the real hardware, the Type 30 hardware would figure out if there was a hit
 // at the last drawn pixel when issuing the completion pulse,
 // but that's not possible here, let it be determined back in the pdp1 code.
@@ -463,7 +462,7 @@ uint32 cmd;
             --pdpy;            // 1's cmpl conversion
         }
 
-        logger(LOG_LIGHTPEN, "normalized x %03o, y %03o\n", pdpx & 0x3FF, pdpy & 0x3FF);
+        logger(LOG_LIGHTPEN_MOVE, "LP normalized x %d, y %d\n", pdpx, pdpy);
         cmd = 0xFF0 << 20;
         cmd |= (pdpx & 0x3FF) << 10;
         cmd |= (pdpy & 0x3FF);
@@ -475,18 +474,12 @@ uint32 cmd;
 
     if( (i = write(dpyfd, &cmd, sizeof(cmd))) != sizeof(cmd) )
     {
-        logger(LOG_LIGHTPEN,"lightpen write failed %d\n", i);
+        logger(LOG_LIGHTPEN_WRITE,"lightpen write failed %d\n", i);
     }
     else
     {
-        logger(LOG_LIGHTPEN,"lightpen cmd 0x%08x sent %d bytes\n", cmd, i);
+        logger(LOG_LIGHTPEN_WRITE,"lightpen cmd 0x%08x sent %d bytes\n", cmd, i);
     }
 }
-#else
-void
-updatePen(bool penDown, int penx, int peny)
-{
-}
-#endif
 
 #endif

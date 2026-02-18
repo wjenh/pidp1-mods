@@ -1,0 +1,122 @@
+Find and follow the lightpen
+
+#include <SYMGEN/type33iots.ah>
+#include <LIGHTPEN/lightpen.ah>
+
+#define TEXTSIZE 2
+#define BRIGHTNESS 3
+
+#define MSGX -0d500
+#define MSGY -0d450
+
+var xPosition, yPosition    // these are used by the find and track included routines
+
+100/
+strt,
+    jsp findPen
+    jsp follow
+    jmp strt
+
+// Location found, follow the pen
+follow,
+    local rtn, loop
+    dap rtn
+loop,
+    jsp track
+    jsp checkBye
+    sza i
+    jmp loop
+rtn, jmp .
+    endloc
+
+track,      // xPosition and yPosition are the center of the cross
+    local rtn
+    dap rtn
+
+    law TEXTSIZE // no autospacing
+    lia
+    iot glf
+
+    lac yPosition // start 1 char down, top at yPosition
+    sub [6 * (2 + TEXTSIZE)
+    ral 8s
+    lia
+    lac xPosition // 1.5 chars left
+    sub [7 * (2 + TEXTSIZE)
+    ral 8s
+    sdb BRIGHTNESS << 6  // position for the write
+
+    law 3
+    lia
+    law cross1   // draw 3 symbols for bottom half
+    jda renderchars
+
+    lac yPosition             // reposition to orign but up one dot spacing
+    add [2 + TEXTSIZE
+    ral 8s
+    lia
+    lac xPosition
+    sub [2 * (2 + TEXTSIZE) // and 2 dot spacings left
+    ral 8s
+    sdb BRIGHTNESS << 6
+    lio cross2
+    iot i gpl
+    lio cross2 + 1
+    iot i gpr
+
+    jsp trackPen
+rtn, jmp .
+    endloc
+
+// If the 'bye' msg was clicked, return AC 1, else AC 0.
+// Call with jsp.
+checkBye,
+    local rtn, hit, miss
+    dap rtn
+
+    law AUTOSPACE TEXTSIZE
+    lia
+    iot glf
+
+    clf 3
+    lac [MSGX << 0d8
+    lio [MSGY << 0d8
+    sdb BRIGHTNESS << 6  // position for the write
+    law byeMsg
+    jda drawasctext
+    szf i 3
+    jmp miss
+
+hit, law 1
+    jmp rtn
+
+miss, cla
+rtn, jmp .
+    endloc
+
+// Used by the light pen includes also
+xPosition, 0
+yPosition, 0
+
+cross1,
+    004020
+    040201
+    004036
+    740201
+    004020
+    040201
+cross2,
+    000016
+    740000
+
+byeMsg,
+    ascii "Reset"
+
+// These are code inclues, put the code here.
+#include <LIGHTPEN/findPen.ac>
+#include <LIGHTPEN/trackPen.ac>
+#include <SYMGEN/render.ac>
+#include <SYMGEN/drawasctext.ac>
+
+constants
+start strt

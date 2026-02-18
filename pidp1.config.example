@@ -20,8 +20,7 @@ dpyshift=off
 
 lightpen=on
 # The unified control gui checks this
-# Note - this isn't currently working, but doesn't hurt to enable it
-guilightpen=no
+guilightpen=yes
 # The standalone type 30 display checks this
 type30lightpen=yes
 

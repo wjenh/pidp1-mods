@@ -9,6 +9,7 @@
  * of coding errors, the formatting reduced that. It works.
  *
  * wje 07-Jan-26 break from original repo, now independent. Initial reformatting. lightpen support.
+ * wje 18-Jan-26 now working with the light pen
  *
 */
 #include <stdlib.h>
@@ -43,7 +44,9 @@
 
 //#define DOLOGGING
 #include "logger.h"
-#define LOG_LIGHTPEN 1
+#define LOG_LIGHTPEN 0
+#define LOG_LIGHTPEN_MOVE 0
+#define LOG_LIGHTPEN_WRITE 0
 
 bool checkConfig(char *optionP);
 
@@ -1323,7 +1326,7 @@ float scale;
         penx = (uint32)((float)penx * scale);
         scale = 1024.0 / penRegion->h;
         peny = (uint32)((float)peny * scale);
-        logger(LOG_LIGHTPEN, "mouse motion x %d y %d\n", penx, peny);
+        logger(LOG_LIGHTPEN_MOVE, "mouse motion x %d y %d\n", penx, peny);
         updatePen(penDown, penx, peny);
     }
 
@@ -1464,11 +1467,6 @@ main(int argc, char *argv[])
     {
         fprintf(stderr, "couldn't connect to display %s:%d\n", host, port);
         return(1);
-    }
-
-    if( doLightpen )
-    {
-        nodelay(dpyfd);             // needed so lightpen updates will go out
     }
 
     typfd = dial(host, 1041);

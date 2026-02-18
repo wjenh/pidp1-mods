@@ -8,7 +8,6 @@
 // The AC register is preserved.
 // Call via jda getach.
 
-#include <1Dinstructions.ah>
 #include <DCS/dcs2defs.ah>
 
 getach,  0

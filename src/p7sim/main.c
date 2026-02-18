@@ -1106,6 +1106,12 @@ float scaleFactor;
     }
 
     doLightpen = checkConfig("type30lightpen");
+    if( doLightpen )
+    {
+        // We want mouse events to go out quickly
+        int flag = 1;
+	setsockopt(netfd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+    }
 
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, gl_context);
@@ -1152,6 +1158,7 @@ float scaleFactor;
                 cursortimer = 50;
                 penx = event.motion.x;
                 peny = event.motion.y;
+                /*
                 if( (penx > 1023) || (peny > 1023) )
                 {
                     penDown = false;        // mouse went out of the window bounds, not down now
@@ -1160,6 +1167,7 @@ float scaleFactor;
                         updatepen(false);
                     }
                 }
+                */
 
                 if( doLightpen && penDown )
                 {

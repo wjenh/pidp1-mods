@@ -23,6 +23,8 @@
 #include <stdbool.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <errno.h>
 
 //#define DOLOGGING
@@ -2352,6 +2354,7 @@ int
 lightpenListener(PDP1 *pdp1P)
 {
 int count;
+int flag = 1;
 uint32_t cmdBuf[PENBUFSIZE];
 uint32_t cmd;
 DispCon *dpyP;
@@ -2369,6 +2372,10 @@ DispCon *dpyP;
             penDown = false;
             return(0);
         }
+
+        // Turn on fast ack to minimize delays.
+        // This might or might not improve lightpen performance.
+        setsockopt(dpyP->fd, IPPROTO_TCP, TCP_QUICKACK, &flag, sizeof(flag));
 
         count /= sizeof(uint32_t);                  // convert to index
 

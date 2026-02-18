@@ -15,7 +15,6 @@
 // Insert this at the desired point in code.
 // Call via jda txtflx.
 
-#include <1Dinstructions.ah>
 #include <DCS/dcs2defs.ah>
 
 txtflx,  0

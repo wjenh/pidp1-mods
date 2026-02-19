@@ -33,8 +33,8 @@ static int stopped = 1;         // assume we are halted initially
 static IotEntry handles[64];
 static PollEntryP pollList;
 
-extern PDP1 pdp1;              // from main.c
-extern void dynamicReq(PDP1 *pdp, int chan);
+extern PDP1P pdp1P;              // from main.c
+extern void dynamicReq(PDP1P pdp, int chan);
 
 void dynamicIotProcessBreak(int chan);
 static IotEntryP initializeEntry(int dev);
@@ -46,7 +46,7 @@ static IotEntryP initializeEntry(int dev);
 // 1 - completion pulse enabled
 // Returns 1 for success, 0 if none found.
 int
-dynamicIotProcessor(PDP1 *pdpP, int dev, int pulse, int completion)
+dynamicIotProcessor(PDP1P pdpP, int dev, int pulse, int completion)
 {
 int i;
 int status;
@@ -84,7 +84,7 @@ dynamicIotProcessBreak(int chan)
 {
     if( chan < 16)
     {
-        dynamicReq(&pdp1, chan);               // signal a break, convoluted because of various unshared bits
+        dynamicReq(pdp1P, chan);               // signal a break, convoluted because of various unshared bits
     }
 }
 
@@ -136,7 +136,7 @@ IotStopP stopP;
 
 // Called every instruction cycle to hande any IOTs with polling.
 void
-dynamicIotProcessorDoPoll(PDP1 *pdp1P)
+dynamicIotProcessorDoPoll(PDP1P pdp1P)
 {
 IotEntryP entryP;
 PollEntryP pollItemP;

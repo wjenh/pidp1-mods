@@ -1,0 +1,135 @@
+#ifndef CONFIGUREPEN_AC
+#define CONFIGUREPEN_AC
+// Set global values for the pixel spacing, movment increment and aperture.
+// These can be used to configure application code.
+// Note that these settings are just variables, they do not automatically set anything.
+// Initially, they are set to the below default values.
+//
+// The trackPen and findPen code each has its own settings.
+
+#include <LIGHTPEN/lightpen.ah>
+
+// These are the generic defaults
+#define PEN_APERTURE APERTURE300
+#define PEN_SPACING 0d25
+#define PEN_INCREMENT (PEN_SPACING / 2)
+
+// These values work well for finding.
+#define FIND_APERTURE APERTURE200
+#define FIND_SPACING 0d8
+
+// These values work well for tracking.
+#define TRACK_APERTURE APERTURE300
+#define TRACK_SPACING 0d25
+#define TRACK_INCREMENT (TRACK_SPACING / 2)
+
+var penAperture=PEN_APERTURE, penSpacing=PEN_SPACING, penIncrement=PEN_INCREMENT
+var findAperture=FIND_APERTURE, findSpacing=FIND_SPACING
+var trackAperture=TRACK_APERTURE, trackSpacing=TRACK_SPACING, trackIncrement=TRACK_INCREMENT
+
+// setPenParameters sets the aperture, dot spacing, and position increments
+// in the global vars penAperture, penSpacing, and penIncrement respectively.
+// The IO register contains the values as 3 6-bit fields ranging from high bits to low bits respectively.
+// If a value is zero, the respective variable is not changed.
+// Called via jsp, neither IO nor AC are preserved.
+setPenParameters,
+    local rtn
+    dap rtn
+    cla
+    rcl 6s
+    sza
+    dac penAperture
+    cla
+    rcl 6s
+    sza
+    dac penSpacing
+    cla
+    rcl 6s
+    sza
+    dac penIncrement
+rtn, jmp .
+    endloc
+
+// resetPenParameters sets the 3 settings back to the default values.
+// Called via jsp, AC is not preserved.
+resetPenParameters,
+    local rtn
+    dap rtn
+    law PEN_INCREMENT
+    dac penIncrement
+    law PEN_SPACING
+    dac penSpacing
+    law PEN_APERTURE
+    dac penAperture
+rtn, jmp .
+    endloc
+
+// setFindParameters sets the aperture and dot spacing used by the findPen code.
+// in the global vars findAperture and findSpacing. There is no increment setting.
+// The IO register contains the aperture in bits 0-5, spacing in bit 6-11.
+// If a value is zero, the respective variable is not changed.
+// Called via jsp, neither IO nor AC are preserved.
+setFindParameters,
+    local rtn
+    dap rtn
+    cla
+    rcl 6s
+    sza
+    dac findAperture
+    cla
+    rcl 6s
+    sza
+    dac findSpacing
+rtn, jmp .
+    endloc
+
+// resetFindParameters sets the 2 settings back to the default values.
+// Called via jsp, AC is not preserved.
+resetFindParameters,
+    local rtn
+    dap rtn
+    law FIND_APERTURE
+    dac findAperture
+    law FIND_SPACING
+    dac findSpacing
+rtn, jmp .
+    endloc
+
+// setTrackParameters sets the aperture, dot spacing, and position increments
+// in the global vars trackAperture, trackSpacing, and trackIncrement respectively.
+// The IO register contains the values as 3 6-bit fields ranging from high bits to low bits respectively.
+// If a value is zero, the respective variable is not changed.
+// Called via jsp, neither IO nor AC are preserved.
+setTrackParameters,
+    local rtn
+    dap rtn
+    cla
+    rcl 6s
+    sza
+    dac trackAperture
+    cla
+    rcl 6s
+    sza
+    dac trackSpacing
+    cla
+    rcl 6s
+    sza
+    dac trackIncrement
+rtn, jmp .
+    endloc
+
+// resetTrackParameters sets the 3 settings back to the default values.
+// Called via jsp, AC is not preserved.
+resetTrackParameters,
+    local rtn
+    dap rtn
+    law TRACK_INCREMENT
+    dac trackIncrement
+    law TRACK_SPACING
+    dac trackSpacing
+    law TRACK_APERTURE
+    dac trackAperture
+rtn, jmp .
+    endloc
+
+#endif

@@ -7,12 +7,11 @@ typedef u16 Addr;
 #define EXTMASK 0170000
 //#define MAXMEM (4*1024)
 #define MAXMEM (64*1024)
+#define NIL (void *)0
 
 typedef struct PDP1 PDP1;
 typedef struct DispCon DispCon;
 typedef struct Panel Panel;
-
-void updatelights(PDP1 *pdp, Panel *panel);
 
 struct DispCon
 {
@@ -153,12 +152,16 @@ struct PDP1
         int cksflags;
 };
 
-#define IR pdp->ir
-#define PC pdp->pc
-#define MA pdp->ma
-#define MB pdp->mb
-#define AC pdp->ac
-#define IO pdp->io
+typedef struct PDP1 *PDP1P;
+
+void updatelights(PDP1P pdp, Panel *panel);
+
+#define IR pdp1P->ir
+#define PC pdp1P->pc
+#define MA pdp1P->ma
+#define MB pdp1P->mb
+#define AC pdp1P->ac
+#define IO pdp1P->io
 
 // 0
 #define IR_AND (IR == 001)
@@ -182,10 +185,10 @@ struct PDP1
 #define IR_ISP (IR == 023)
 #define IR_SAD (IR == 024)
 #define IR_SAS (IR == 025)
-#define IR_MUS (!pdp->muldiv_sw && (IR == 026))
-#define IR_DIS (!pdp->muldiv_sw && (IR == 027))
-#define IR_MUL (pdp->muldiv_sw && (IR == 026))
-#define IR_DIV (pdp->muldiv_sw && (IR == 027))
+#define IR_MUS (!pdp1P->muldiv_sw && (IR == 026))
+#define IR_DIS (!pdp1P->muldiv_sw && (IR == 027))
+#define IR_MUL (pdp1P->muldiv_sw && (IR == 026))
+#define IR_DIV (pdp1P->muldiv_sw && (IR == 027))
 #define IR_JMP (IR == 030)
 #define IR_JSP (IR == 031)
 #define IR_SKIP (IR == 032)
@@ -198,17 +201,17 @@ struct PDP1
 //#define IR_INCORR (IR==5 || IR==6 || IR==017 || IR==036)
 
 
-void pwrclr(PDP1 *pdp);
-void spec(PDP1 *pdp);
-void cycle(PDP1 *pdp);
-void start_readin(PDP1 *pdp);
-void readin1(PDP1 *pdp);
-void readin2(PDP1 *pdp);
-void handleio(PDP1 *pdp);
-void agedisplay(PDP1 *pdp, int i);
-void throttle(PDP1 *pdp);
-void cli(PDP1 *pdp);
-char *handlecmd(PDP1 *pdp, char *line);
+void pwrclr(PDP1P pdp1P);
+void spec(PDP1P pdp1P);
+void cycle(PDP1P pdp1P);
+void start_readin(PDP1P pdp1P);
+void readin1(PDP1P pdp1P);
+void readin2(PDP1P pdp1P);
+void handleio(PDP1P pdp1P);
+void agedisplay(PDP1P pdp, int i);
+void throttle(PDP1P pdp1P);
+void cli(PDP1P pdp1P);
+char *handlecmd(PDP1P pdp, char *line);
 
 void typtelnet(int port, int fd);
 
@@ -217,7 +220,7 @@ int isAudioInitialized(void);
 void stopaudio(void);
 void startaudio(void);
 void continueaudio(void);
-void svc_audio(PDP1 *pdp);
+void svc_audio(PDP1P pdp1P);
 void setSampleRate(int);
 void setFilterAlpha(float);
 void setFilter1Alpha(float);

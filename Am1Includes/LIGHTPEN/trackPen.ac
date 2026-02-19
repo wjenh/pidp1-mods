@@ -10,10 +10,8 @@
 
 #include <SYMGEN/type33iots.ah>
 #include <LIGHTPEN/lightpen.ah>
+#include <LIGHTPEN/configurePen.ac>
 
-#define TRACK_PEN_APERTURE APERTURE300
-#define TRACK_PEN_SPACING 0d25
-#define TRACK_PEN_DELTA (TRACK_PEN_SPACING / 2)
 // A brightness of 4 is invisible.
 #define TRACK_PEN_BRIGHTNESS 4
 
@@ -22,16 +20,17 @@ trackPen,      // xPosition and yPosition are the center of the tracking locatio
     addlocal ydelta, ydelta, lpx, lpy
     dap rtn
 
-    law TRACK_PEN_APERTURE
+    lac trackAperture
     lia
     dpy-i LIGHTPEN
     lac xPosition
-    sub [TRACK_PEN_SPACING
+    sub trackSpacing
     dac lpx
     lac yPosition
-    sub [TRACK_PEN_SPACING
+    sub trackSpacing
     dac lpy
-    law i TRACK_PEN_DELTA
+    lac  trackIncrement
+    cma
     dac xdelta
     dac ydelta
     law i 3
@@ -50,32 +49,32 @@ ck1,            // 3 vertical on left side
     jmp .+2
     jmp ck1a
     lac ydelta
-    add [TRACK_PEN_DELTA
+    add trackIncrement
     dac ydelta
     lac lpy
-    add [TRACK_PEN_SPACING
+    add trackSpacing
     dac lpy
     jmp ck1
 
 ck1a, lio lpy   // draw top center
     ril 8s
     lac lpx
-    add [TRACK_PEN_SPACING
+    add trackSpacing
     dac lpx
     ral 8s
     dpy TRACK_PEN_BRIGHTNESS << 6
     lac xdelta
-    add [TRACK_PEN_DELTA
+    add trackIncrement
     dac xdelta
     szf 3
     jmp hit
 
     // set up for right side
     lac xdelta
-    add [TRACK_PEN_DELTA
+    add trackIncrement
     dac xdelta
     lac lpx
-    add [TRACK_PEN_SPACING
+    add trackSpacing
     dac lpx
     law i 3
     dac ctr
@@ -92,19 +91,19 @@ ck2,            // 3 vertical on right side
     jmp .+2
     jmp ck2a
     lac ydelta
-    sub [TRACK_PEN_DELTA
+    sub trackIncrement
     dac ydelta
     lac lpy
-    sub [TRACK_PEN_SPACING
+    sub trackSpacing
     dac lpy
     jmp ck2
 
 ck2a,           // bottom center
     lac xdelta
-    sub [TRACK_PEN_DELTA
+    sub trackIncrement
     dac xdelta
     lac lpx
-    sub [TRACK_PEN_SPACING
+    sub trackSpacing
     dac lpx
     ral 8s
     lio lpy

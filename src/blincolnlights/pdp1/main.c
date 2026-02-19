@@ -1,3 +1,24 @@
+/*
+ * This was written originally by Angelo Papenhoff, aap.
+ * It has been modified by Bill Ezell, wje, pdp1@quackers.net to:
+ * Add new features.
+ * Make it readable. :)
+ * It uses the One True Formatting Style, keep it.
+ * The formatting is based on research done at Stanford many years ago that determined the major causes
+ * of coding errors, the formatting reduced that. It works.
+ *
+ * wje 05-Jan-26 break from original repo, now independent.
+ * wje 10-Feb-26 style cleanup, remove conditionals for light pen, origin shift, lai, lia
+ * wje 18-Feb-26 massive cleanup, add shm support
+*/
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdbool.h>
+#include <pthread.h>
+#include <signal.h>
+#include <sys/socket.h>
+#include <sys/mman.h>
+
 #include "common.h"
 #include "pdp1.h"
 #include "args.h"
@@ -7,33 +28,35 @@
 #include "dynamicIots.h"
 #include "highSpeedChannels.h"
 
-#include <fcntl.h>
-#include <unistd.h>
-#include <stdbool.h>
-#include <pthread.h>
-
-#ifdef USE__PANEL_SEMAPHORE
-#include <semaphore.h>
-#endif
-
-#include <sys/socket.h>
-#include <signal.h>
+#define DOLOGGING
+#include "logger.h"
+// Set desired log type to 1 to enable output assuming logging is defined.
+#define LOG_SHM 1
 
 // If present, will set the startup state of audio, lightpen support, etc.
 // See the distributed one for all settings.
 #define CONFIG_FILE "/opt/pidp1-mods/pidp1.config"
+#define SHM_NAME "/pidp1"
 
-#define Edge(sw) (pdp->sw && !prev_##sw)
+#define Edge(sw) (pdp1P->sw && !prev_##sw)
 
-int lightpenListener(PDP1 *pdp);
-void updateswitches(PDP1 *pdp, Panel *panel);
-void updatelights(PDP1 *pdp, Panel *panel);
+int lightpenListener(PDP1P pdp1P);
+void updateswitches(PDP1P pdp1P, Panel *panel);
+void updatelights(PDP1P pdp1P, Panel *panel);
 void lightsoff(Panel *panel);
 void lightson(Panel *panel);
-void loadConfigFile(PDP1 *pdp1P, char *filenameP);
+void loadConfigFile(PDP1P pdp1P, char *filenameP);
 Panel *getpanel(void);
 
-PDP1 pdp1;      // moved here because dynamic IOT code needs it
+// Completely reworked to malloc if needed for shared mem support
+PDP1 pdp1;
+PDP1P pdp1P;
+char *argv0;
+
+static Panel *panel;
+static Word *memp;
+static int memsz;
+static bool useShm;
 
 extern int penAperture;
 extern int penRadius2;
@@ -43,7 +66,7 @@ extern bool dpyShiftEnabled;
 extern bool audioEnabled;
 
 void
-emu(PDP1 *pdp, Panel *panel)
+emu(PDP1P pdp1P, Panel *panel)
 {
 bool prev_start_sw;
 bool prev_stop_sw;
@@ -52,129 +75,134 @@ bool prev_examine_sw;
 bool prev_deposit_sw;
 bool prev_readin_sw;
 
-    pdp->panel = panel;
-    pwrclr(pdp);
-    updateswitches(pdp, panel);
+    pdp1P->panel = panel;
+    pwrclr(pdp1P);
+    updateswitches(pdp1P, panel);
 
     inittime();
-    pdp->simtime = gettime();
-    pdp->dpy[0].last = pdp->simtime;
-    pdp->dpy[1].last = pdp->simtime;
-    pdp->dpy[0].ncmds = 0;
-    pdp->dpy[1].ncmds = 0;
+    pdp1P->simtime = gettime();
+    pdp1P->dpy[0].last = pdp1P->simtime;
+    pdp1P->dpy[1].last = pdp1P->simtime;
+    pdp1P->dpy[0].ncmds = 0;
+    pdp1P->dpy[1].ncmds = 0;
 
     for(;;)
     {
-        prev_start_sw = pdp->start_sw;
-        prev_stop_sw = pdp->stop_sw;
-        prev_continue_sw = pdp->continue_sw;
-        prev_examine_sw = pdp->examine_sw;
-        prev_deposit_sw = pdp->deposit_sw;
-        prev_readin_sw = pdp->readin_sw;
-        updateswitches(pdp, panel);
+        prev_start_sw = pdp1P->start_sw;
+        prev_stop_sw = pdp1P->stop_sw;
+        prev_continue_sw = pdp1P->continue_sw;
+        prev_examine_sw = pdp1P->examine_sw;
+        prev_deposit_sw = pdp1P->deposit_sw;
+        prev_readin_sw = pdp1P->readin_sw;
+        updateswitches(pdp1P, panel);
 
-        if( pdp->power_sw )
+        if(pdp1P->power_sw)
         {
-            if( Edge(start_sw) || Edge(continue_sw) || Edge(examine_sw) || Edge(deposit_sw) )
+            if(Edge(start_sw) || Edge(continue_sw) || Edge(examine_sw) || Edge(deposit_sw))
             {
-                spec(pdp);
-                cycle(pdp);
+                spec(pdp1P);
+                cycle(pdp1P);
             }
 
-            if( Edge(stop_sw) )
+            if(Edge(stop_sw))
             {
-                pdp->run_enable = 0;
+                pdp1P->run_enable = 0;
             }
 
-            if( Edge(readin_sw) )
+            if(Edge(readin_sw))
             {
-                start_readin(pdp);
+                start_readin(pdp1P);
             }
 
-            if( pdp->rim_cycle )
+            if(pdp1P->rim_cycle)
             {
-                readin1(pdp);
+                readin1(pdp1P);
             }
 
-            if( pdp->rim_return && (--pdp->rim_return == 0) && pdp->rim )
+            if(pdp1P->rim_return && (--pdp1P->rim_return == 0) && pdp1P->rim)
             {
                 // restart after reader is done
-                if( (IR == 0) && !pdp->stop_sw )
+                if((IR == 0) && !pdp1P->stop_sw)
                 {
-                    readin2(pdp);
+                    readin2(pdp1P);
                 }
                 else if(IR_DIO)
                 {
-                    cycle(pdp);
-                    pdp->rim_cycle = 1;
+                    cycle(pdp1P);
+                    pdp1P->rim_cycle = 1;
                 }
             }
 
-            if(pdp->run)
+            if(pdp1P->run)
             {
-                if( audioEnabled )                         // wje - handle new audio stream
+                if(audioEnabled)                           // wje - handle new audio stream
                 {
-                    svc_audio(pdp);
+                    svc_audio(pdp1P);
                 }
 
                 dynamicIotProcessorStart();          // wje - let dyn IOTs know we transitioned to run
 
                 // A dma transfer can be in STEAL mode, in which case it effectively halts the processor
                 // and transfers all of its requested words at 5us/word. We fake this by just not cycling.
-                while(processHSChannels(pdp))        // wje - handle dma and see if we need to give up cycles
+                while(processHSChannels(pdp1P))        // wje - handle dma and see if we need to give up cycles
                 {
-                    updatelights(pdp, panel);
-                    pdp->simtime += 5000;
-                    throttle(pdp);
+                    updatelights(pdp1P, panel);
+                    pdp1P->simtime += 5000;
+                    throttle(pdp1P);
                 }
 
-                cycle(pdp);
+                cycle(pdp1P);
             }
             else
             {
                 dynamicIotProcessorStop();           // wje - let dyn IOTs know we transitioned to stop
-                updatelights(pdp, panel);
+                updatelights(pdp1P, panel);
             }
 
-            throttle(pdp);
-            handleio(pdp);
-            pdp->simtime += 5000;
+            throttle(pdp1P);
+            handleio(pdp1P);
+            pdp1P->simtime += 5000;
         }
         else
         {
             stopaudio();
-            pwrclr(pdp);
+            pwrclr(pdp1P);
 
             /* magic key combo used for shutdown */
-            if( pdp->start_sw && pdp->readin_sw )
+            if(pdp1P->start_sw && pdp1P->readin_sw)
             {
                 lightson(panel);
                 sleep(1);
+                if( useShm )
+                {
+                    shm_unlink(SHM_NAME);
+                }
+
                 exit(100);
             }
 
             lightsoff(panel);
-            pdp->simtime = gettime();
+            pdp1P->simtime = gettime();
         }
 
-        agedisplay(pdp, 0);
-        agedisplay(pdp, 1);
-        cli(pdp);
+        agedisplay(pdp1P, 0);
+        agedisplay(pdp1P, 1);
+        cli(pdp1P);
     }
 }
 
 void
 handlenetcmd(int fd, void *arg)
 {
-PDP1 *pdp = (PDP1*)arg;
+PDP1P pdp1P = (PDP1P)arg;
 char *r;
 char line[1024];
 int n;
 
-    while( (n = read(fd, line, sizeof(line))), n > 0 )
+    while((n = read(fd, line, sizeof(line))), n > 0)
     {
         line[n] = 0;
-        r = handlecmd(pdp, line);
+        r = handlecmd(pdp1P, line);
         n = strlen(r);
         r[n] = '\n';
         r[n + 1] = '\0';
@@ -185,7 +213,7 @@ int n;
 }
 
 void
-connectdpy(PDP1 *pdp, DispCon *d, int fd)
+connectdpy(PDP1P pdp1P, DispCon *d, int fd)
 {
     if(d->fd >= 0)
     {
@@ -194,7 +222,7 @@ connectdpy(PDP1 *pdp, DispCon *d, int fd)
     else
     {
         d->fd = fd;
-        d->last = pdp->simtime;
+        d->last = pdp1P->simtime;
         d->agetime = 50 * 1000;
         nodelay(d->fd);
     }
@@ -205,38 +233,42 @@ void
 handledpy(int fd, void *arg)
 {
 pthread_t lp_thread;
+PDP1P pdp1P = (PDP1P)arg;
 
-    PDP1 *pdp = (PDP1*)arg;
-    connectdpy(pdp, &pdp->dpy[0], fd);
-    if( lightpenEnabled )
+    connectdpy(pdp1P, &pdp1P->dpy[0], fd);
+
+    if(lightpenEnabled)
     {
-        pthread_create(&lp_thread, NULL, lightpenListener, pdp);
+        pthread_create(&lp_thread, NULL, lightpenListener, pdp1P);
     }
 }
 
 void
 handledpy2(int fd, void *arg)
 {
-    PDP1 *pdp = (PDP1*)arg;
-    connectdpy(pdp, &pdp->dpy[1], fd);
+PDP1P pdp1P = (PDP1P)arg;
+
+    connectdpy(pdp1P, &pdp1P->dpy[1], fd);
 }
 
 void
 handleptr(int fd, void *arg)
 {
-    PDP1 *pdp = (PDP1*)arg;
-    close(pdp->r_fd);
-    pdp->r_fd = fd;
-    nodelay(pdp->r_fd);
+PDP1P pdp1P = (PDP1P)arg;
+
+    close(pdp1P->r_fd);
+    pdp1P->r_fd = fd;
+    nodelay(pdp1P->r_fd);
 }
 
 void
 handleptp(int fd, void *arg)
 {
-    PDP1 *pdp = (PDP1*)arg;
-    close(pdp->p_fd);
-    pdp->p_fd = fd;
-    nodelay(pdp->p_fd);
+PDP1P pdp1P = (PDP1P)arg;
+
+    close(pdp1P->p_fd);
+    pdp1P->p_fd = fd;
+    nodelay(pdp1P->p_fd);
 }
 
 void*
@@ -251,11 +283,11 @@ netthread(void *arg)
         { 3400, handledpy },
         { 3401, handledpy2 },
     };
+
     serveN(ports, nelem(ports), arg);
-    return( nil );
+    return(nil);
 }
 
-char *argv0;
 void
 usage(void)
 {
@@ -271,14 +303,14 @@ char buf[100], *s;
 Word a;
 Word w;
 
-    if( (f = fopen(file, "r")), f == nil)
+    if((f = fopen(file, "r")), f == nil)
     {
         return;
     }
 
     a = 0;
 
-    while( s = fgets(buf, 100, f) )
+    while(s = fgets(buf, 100, f))
     {
         while(*s)
         {
@@ -317,10 +349,10 @@ Word w;
 void
 dumpmem(const char *file, Word *mem, Word size)
 {
-    FILE *f;
-    Word i, a;
+FILE *f;
+Word i, a;
 
-    if( (f = fopen("coremem", "w")), f == nil )
+    if((f = fopen("coremem", "w")), f == nil)
     {
         return;
     }
@@ -329,7 +361,7 @@ dumpmem(const char *file, Word *mem, Word size)
 
     for(i = 0; i < size; i++)
     {
-        if( mem[i] != 0 )
+        if(mem[i] != 0)
         {
             a = i;
             fprintf(f, "%06o:\n", a);
@@ -340,27 +372,20 @@ dumpmem(const char *file, Word *mem, Word size)
     fclose(f);
 }
 
-// a bit ugly...
-static Panel *panel;
-static Word *memp;
-static int memsz;
-
 void
 exitcleanup(void)
 {
     dumpmem("coremem", memp, memsz);
     lightsoff(panel);
-#ifdef USE__PANEL_SEMAPHORE
-    sem_destroy(&(panel->semaphore));    // wje - close semaphore
-#endif
+    if( useShm )
+    {
+        shm_unlink(SHM_NAME);
+    }
 }
 
 void
 sighandler(int sig)
 {
-#ifdef USE__PANEL_SEMAPHORE
-    sem_destroy(&(panel->semaphore));    // wje - close semaphore
-#endif
     exit(0);
 }
 
@@ -374,7 +399,7 @@ sighandler(int sig)
 // For an option that is on or off, 'y', 'yes', or 'on' means enable, anything else means disable.
 // Invalid lines and options are reported on stderr.
 void
-loadConfigFile(PDP1 *pdp1P, char *filenameP)
+loadConfigFile(PDP1P pdp1P, char *filenameP)
 {
 int i;
 bool onOff;
@@ -383,51 +408,51 @@ char line[256];
 char option[64];
 char answer[64];
 
-    if( !(fP = fopen(filenameP, "r")) )
+    if(!(fP = fopen(filenameP, "r")))
     {
         return;
     }
 
-    while( fgets(line, sizeof(line), fP) )
+    while(fgets(line, sizeof(line), fP))
     {
-        if( (line[0] == '#') || (line[0] == '\n') )
+        if((line[0] == '#') || (line[0] == '\n'))
         {
             continue;
         }
 
-        if( (i = sscanf(line, "%[a-z0-9] = %[a-z0-9.]", option, answer)) != 2 )
+        if((i = sscanf(line, "%[a-z0-9] = %[a-z0-9.]", option, answer)) != 2)
         {
             fprintf(stderr, "Invalid config file line %d, %s", i, line);
             continue;
         }
 
-        onOff = !strcmp(answer,"y") || !strcmp(answer,"yes") || !strcmp(answer,"on");
+        onOff = !strcmp(answer, "y") || !strcmp(answer, "yes") || !strcmp(answer, "on");
 
-        if( !strcmp(option,"audio") )
+        if(!strcmp(option, "audio"))
         {
             audioEnabled = onOff;
         }
-        else if( !strcmp(option,"samplerate") )
+        else if(!strcmp(option, "samplerate"))
         {
             setSampleRate(atoi(answer));
         }
-        else if( !strcmp(option,"alpha") )
+        else if(!strcmp(option, "alpha"))
         {
             setFilterAlpha(atof(answer));
         }
-        else if( !strcmp(option,"alpha1") )
+        else if(!strcmp(option, "alpha1"))
         {
             setFilter1Alpha(atof(answer));
         }
-        else if( !strcmp(option,"alpha2") )
+        else if(!strcmp(option, "alpha2"))
         {
             setFilter2Alpha(atof(answer));
         }
-        else if( !strcmp(option,"alpha3") )
+        else if(!strcmp(option, "alpha3"))
         {
             setFilter3Alpha(atof(answer));
         }
-        else if( !strcmp(option,"alpha4") )
+        else if(!strcmp(option, "alpha4"))
         {
             setFilter4Alpha(atof(answer));
         }
@@ -439,30 +464,35 @@ char answer[64];
         {
             setAudioTuning(atof(answer));
         }
-        else if( !strcmp(option,"lightpen") )
+        else if(!strcmp(option, "lightpen"))
         {
             lightpenEnabled = onOff;
         }
-        else if( !strcmp(option,"aperture") )
+        else if(!strcmp(option, "aperture"))
         {
             penAperture = atoi(answer);
-            penRadius2 = (penAperture/2) * (penAperture/2);
+            penRadius2 = (penAperture / 2) * (penAperture / 2);
         }
-        else if( !strcmp(option,"dpyshift") )
+        else if(!strcmp(option, "dpyshift"))
         {
             dpyShiftEnabled = onOff;
         }
-        else if( !strcmp(option,"sdb") )
+        else if(!strcmp(option, "sdb"))
         {
             sdbEnabled = onOff;
         }
-        else if( !strcmp(option,"sbs16") )
+        else if(!strcmp(option, "sbs16"))
         {
             pdp1P->sbs16 = onOff;
         }
-        else if( !strcmp(option,"muldiv") )
+        else if(!strcmp(option, "muldiv"))
         {
             pdp1P->muldiv_sw = onOff;
+        }
+        else if(!strcmp(option, "shared"))
+        {
+            // Put the PDP1 struct in shared memory for use with other tools
+            useShm = true;
         }
     }
 
@@ -472,11 +502,17 @@ char answer[64];
 int
 main(int argc, char *argv[])
 {
-PDP1 *pdp = &pdp1;
 pthread_t th;
 const char *host;
+const char *tape = "tapes/dpys5.rim";
 int port;
 int fd[2];
+int shmFd;
+
+    argv0 = argv[0];
+
+    // Assume local, not shared
+    pdp1P = &pdp1;
 
     host = "localhost";
     port = 3400;
@@ -503,40 +539,62 @@ int fd[2];
         return 1;
     }
 
-#ifdef USE__PANEL_SEMAPHORE
-    sem_init(&(panel->semaphore), 1, 1);    // wje - initialize the semaphre used between us and the panel driver
-#endif
-    memp = pdp->core;
-    memsz = MAXMEM;
-
     atexit(exitcleanup);
     signal(SIGPIPE, SIG_IGN);
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
 
-    memset(pdp, 0, sizeof(*pdp));
+    memp = pdp1P->core;
+    memsz = MAXMEM;
+    memset(pdp1P, 0, sizeof(*pdp1P));
     readmem("coremem", memp, memsz);
 
-    startpolling();     // wje
+    pdp1P->muldiv_sw = 1;
+    loadConfigFile(pdp1P, CONFIG_FILE);
 
-    pdp->dpy[0].fd = -1;
-    pdp->dpy[1].fd = -1;
+    // Now check for shared mem use
+    if( useShm )
+    {
+        shmFd = shm_open(SHM_NAME, O_RDWR | O_CREAT, 0666);
+        if( shmFd < 0 )
+        {
+            logger(LOG_SHM, "shm_open failed, using local memory\n");
+            useShm = false;
+        }
+        else
+        {
+            ftruncate(shmFd, sizeof(PDP1));
+            pdp1P = mmap(NIL, sizeof(PDP1), PROT_READ | PROT_WRITE, MAP_SHARED, shmFd, 0);
+            if( pdp1P == NIL )
+            {
+                logger(LOG_SHM, "mmap failed, using local memoryry\n");
+                useShm = false;
+                pdp1P = &pdp1;
+            }
+            else
+            {
+                memcpy(pdp1P, &pdp1, sizeof(PDP1));
+            }
 
-    pthread_create(&th, NULL, netthread, pdp);
+            close(shmFd);
+            logger(LOG_SHM, "shared memory in use\n");
+        }
+    }
 
-    const char *tape = "tapes/dpys5.rim";
-    pdp->muldiv_sw = 1;
-    loadConfigFile(pdp, CONFIG_FILE);
+    pdp1P->dpy[0].fd = -1;
+    pdp1P->dpy[1].fd = -1;
 
-    pdp->r_fd = open(tape, O_RDONLY);
-    pdp->p_fd = open("punch.out", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    pthread_create(&th, NULL, netthread, pdp1P);
+    pdp1P->r_fd = open(tape, O_RDONLY);
+    pdp1P->p_fd = open("punch.out", O_CREAT | O_WRONLY | O_TRUNC, 0644);
 
-    pdp->typ_fd.id = -1;
+    pdp1P->typ_fd.id = -1;
     socketpair(AF_UNIX, SOCK_STREAM, 0, fd);
-    pdp->typ_fd.fd = fd[0];
-    waitfd(&pdp->typ_fd);
+    pdp1P->typ_fd.fd = fd[0];
+    waitfd(&pdp1P->typ_fd);
     typtelnet(1041, fd[1]);
 
-    emu(pdp, panel);
-    return( 0 );   // can't happen
+    startpolling();
+    emu(pdp1P, panel);
+    return(0);     // can't happen
 }

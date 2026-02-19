@@ -3,20 +3,18 @@
 
 #include <SYMGEN/type33iots.ah>
 #include <LIGHTPEN/lightpen.ah>
-
-// pixels between dots and lines for find
-#define FIND_APERTURE APERTURE100
-#define FIND_SPACING 0d8
+#include <LIGHTPEN/configurePen.ac>
 
 // Find the lightpen by drawing a line across the screen, then sweeping it down the screen
-// When found, the global variables xPosition and yPosition are updated wiht the pen hit
+// When found, the global variables xPosition and yPosition are updated with the pen hit
 // coordinates.
 // These must be defined in the encompassing code.
 // Called via jsp.
 findPen,
     local loop, rtn
     dap rtn
-    law FIND_APERTURE
+
+    law findAperture
     lia
     dpy-i LIGHTPEN
     law TOPY
@@ -25,7 +23,7 @@ loop, jsp drawline
     sza
     jmp rtn         // found it
     lac yPosition
-    sub [FIND_SPACING
+    sub findSpacing
     and [01777
     dac yPosition
     jmp loop
@@ -46,7 +44,7 @@ loop, lac xPosition
     dpy BRIGHTNESS << 6
     szf 3
     jmp rtny         // found it
-    law FIND_SPACING
+    lac findSpacing
     add xPosition
     dac xPosition
     sub [RIGHTX

@@ -5,6 +5,11 @@
 # For options that are on or off, 'y', 'yes', 'on' all mean enabled,
 # any other value means off.
 
+# If on, then the pidp-1 emulator state is kept in shared memory
+# instead of local memory.
+# This only needs to be enabled if other programs need to access the pidp1 state.
+shared=false
+
 # Enable/disable various features.
 muldiv=on
 # This is the 16 channel break system.

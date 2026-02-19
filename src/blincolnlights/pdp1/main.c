@@ -544,11 +544,6 @@ int shmFd;
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
 
-    memp = pdp1P->core;
-    memsz = MAXMEM;
-    memset(pdp1P, 0, sizeof(*pdp1P));
-    readmem("coremem", memp, memsz);
-
     pdp1P->muldiv_sw = 1;
     loadConfigFile(pdp1P, CONFIG_FILE);
 
@@ -580,6 +575,11 @@ int shmFd;
             logger(LOG_SHM, "shared memory in use\n");
         }
     }
+
+    memset(pdp1P, 0, sizeof(*pdp1P));
+    memp = pdp1P->core;
+    memsz = MAXMEM;
+    readmem("coremem", memp, memsz);
 
     pdp1P->dpy[0].fd = -1;
     pdp1P->dpy[1].fd = -1;

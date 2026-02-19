@@ -1,10 +1,11 @@
 # Define the symbol table for builtin permanent symbols, such as opcodes.
 # Each line has 3 fields:
 # name type value
-# The type is one of 'opcode', 'opaddr', 'oporable', or 'value'.
+# The type is one of 'opcode', 'opaddr', 'oporable', '1Dop' or 'value'.
 # Opcode will set the symbol flags to SYMF_PERM | SYM_OPCODE.
 # Opaddr will set the symbol flags to SYMF_PERM | SYM_OPADDR, an instruction with an address field.
 # Oporable will set the symbol flags to SYMF_PERM | SYM_OPORABLE, an instruction that can be combined.
+# 1Dop will set the symbol flags to SYMF_PERM | SYM_OPORABLE | SYM_1DOP
 # Value will set the symbol flags to SYMF_PERM | SYM_VALUE, a numeric constant, such as from 1s or i.
 # The value is the integer value of the symbol.
 #
@@ -88,13 +89,13 @@ clf opcode  0760000
 stf opcode  0760010
 
 # 1D instructions
-lia oporable 0760020
-lai oporable 0760040
-lsw oporable 0760060
-swp oporable 0760060
-cmi oporable 0764000
-sni oporable 0644000
-szi oporable 0654060
+lia 1Dop 0760020
+lai 1Dop 0760040
+lsw 1Dop 0760060
+swp 1Dop 0760060
+cmi 1Dop 0764000
+sni 1Dop 0644000
+szi 1Dop 0654060
 
 # various IOTs
 iot opcode 0720000

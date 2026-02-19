@@ -24,7 +24,7 @@ extern SymNodeP globalSymP;
 
 SymNodeP resolveLocalSymbol(char *nameP);
 extern void verror(char *msgP, ...);
-extern void vwarn(char *msgP, ...);
+extern void vwarn(int errtype, char *msgP, ...);
 extern char asciiToFlexo(char, int *);	// in parsefns.c
 
 int processEscape(char);
@@ -92,8 +92,8 @@ flexo[ \t][^\n;]{1,3}	{
 				ch = asciiToFlexo(*cP, &shift);
 				if( ch == NONE )
 				{
-				    vwarn("The character '%c' is not a Flexo character, replaced with space",
-				 	*cP);
+				    vwarn(WARN_FLEX,
+				        "The character '%c' is not a Flexo character, replaced with space", *cP);
 				    ch = FLEX_SPACE;
 				}
 
@@ -112,7 +112,8 @@ flexo[ \t][^\n;]{1,3}	{
 
 			    if( (nchars + nshifts) > 3 )
 			    {
-			    	vwarn("only the first %d characters used because shift/unshift codes needed",
+			    	vwarn(WARN_FLEX,
+				    "only the first %d characters used because shift/unshift codes needed",
 				    nchars - nshifts);
 			    }
 
@@ -152,7 +153,7 @@ char[ \t]+.[lmr]	{
 			    }
 			    else if( rslt == NONE )
 			    {
-			    	vwarn("The character '%c' is not a Flexo character, replaced with space",
+			    	vwarn(WARN_FLEX, "The character '%c' is not a Flexo character, replaced with space",
 				    *(cP - 1));
 				rslt = FLEX_SPACE;
 			    }
@@ -288,6 +289,7 @@ octal			{ decimalMode = false; }
 				    return(OPADDR);
 
 				case SYM_OPORABLE:
+				case SYM_1DOP:
 				    yylval.symP = symP;
 				    return(OPORABLE);
 				}
@@ -576,8 +578,8 @@ octal			{ decimalMode = false; }
 
 				if( rslt == NONE )
 				{
-				    vwarn("The character '%c' is not a Flexo character, replaced with space",
-				 	tmpc);
+				    vwarn(WARN_FLEX,
+				        "The character '%c' is not a Flexo character, replaced with space", tmpc);
 				    rslt = FLEX_SPACE;
 				}
 

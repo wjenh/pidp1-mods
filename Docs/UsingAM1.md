@@ -169,9 +169,8 @@ Just type make.
 
 ## Usage
 
-**am1** [-Wabmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile
+**am1** [-abmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] [-W[=warning]] sourcefile
 
-- W don't print warnings
 - a space means add, default is or
 - b generate binary tape image code, the default action
 - m generate **macro1** code
@@ -184,6 +183,8 @@ Just type make.
 - Dsymbol define a symbol for **cpp**, -Dsym or -D sym are both accepted
 - Ipath add a search path to **cpp** for "files", -Ipath or -I path are both accepted
 - ipath set the root directory for <file> searches, -ipath or -i path are both accepted
+- W don't print warnings
+- W=warning except print this one, can be repeated
 
 These additional flags are generally for debugging:
 
@@ -214,6 +215,23 @@ variable *AM1INCDIR* to the full path to the location.
 The -i flag has priority, followed by the environment variable, followed by the default.
 
 At runtime, /usr/bin/cpp must exist if preprocessing is being done.
+
+## Warnings and warning control
+
+Normally, various warnings will be given. These can be turned off by using the *-W* command line flag.
+Some will be repeated if the warning is relevant in moe than one case, some are only emitted once.
+
+When warnings are turned off, specific warnings can still be given by adding additional *-W=warning* flags.
+
+The valid warnings are:
+
+| Name   | Meaning                                               |        |
+|--------|-------------------------------------------------------|--------|
+| 1Dop   | iPDP-1D instruction is used                           |once    |
+| bank   | various warnings about banks and bank references      |once    |
+| local  | various warnings about the use of locals              |repeats |
+| flex   | warnings for illegal flexo/concise operations         |repeats |
+| vars   | various warnings for variables                        |repeats |
 
 ## Listing file
 

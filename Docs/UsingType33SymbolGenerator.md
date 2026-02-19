@@ -32,8 +32,9 @@ Displayed characters do not remain on the screen, all characters have to be comp
 redrawn fast enough to be seen.
 
 It is also imperative that the gpl and gpr instructions are properly waited for.
-Using the i modifier, completion needed, and ioh are essential unless you can be sure that enough time has elapsed
-between the drawing instructions, e.g. *gpl i; ioh*, or the characters will not draw correctly.
+Using the i modifier, wait for completion, or the C modifier (in **am1**), completion needed,
+and ioh are essential unless you can be sure that enough time has elapsed
+between the drawing instructions, e.g. *gpl i* or *gpl C; ioh*, or the characters will not draw correctly.
 
 Unfortunately, the timing is variable, averaging about 140 microseconds per character, but it depends upon
 now many dots have to be drawn, see below.
@@ -169,7 +170,17 @@ bits takes approximately 140 microseconds to completely render.
 This of course does not include the program logic to actually feed characters to the symbol generator, which can add
 considerable extra time, nor does it include the setup time for setting the drawing origin and format.
 
+More precisely, for the dot positions that make up a character, an off bit takes 2 microseconds,
+an on bit takes 5 microseconds.
+This does not include the setup time for *sdb* to set the initial position. This takes 30 microseconds.
+If instead of *sdb* a *dpy* is used, this takes 35 microseconds.
+
 Again, you must be sure a gpl has completed before issuing a gpr or the character will not be properly drawn.
+
+## Light pen support
+
+The light pen does work with the symbol generator.
+The hit point for a character is the center bottom bit or the right bottom bit.
 
 ## Simple example
 

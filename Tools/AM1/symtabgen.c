@@ -116,6 +116,10 @@ char line[1024];                                // and a line buffer
         {
             i = SYMF_PERM | SYM_OPORABLE;
         }
+        else if( !strcmp(typeP, "1Dop") )
+        {
+            i = SYMF_PERM | SYM_1DOP;
+        }
         else if( !strcmp(typeP, "value") )
         {
             i = SYMF_PERM | SYM_VALUE;

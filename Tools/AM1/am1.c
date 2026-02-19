@@ -1,10 +1,9 @@
 /* am1.c - another macro1 assembler
  *
- * Usage: am1 [-Wabmnvz[ykp]] [-i path] [-Dsymbol[=value]]... [-I path]... sourcefile
+ * Usage: am1 [-abmnvz[ykp]] [-i path] [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
  *
  * Valid switches are:
  *
- * -W	don't print any warnings
  * -a	treat space in expressions as add, not or
  * -b	generate binary source
  * -m	generate macro1 source
@@ -15,6 +14,10 @@
  * -v   print the current version number and exit
  * -z   convert 1's complement -0 to +0 in expressions
  *
+ * -W	don't print any warnings
+ * -W=warning
+ *      but do print the given warning, see the documentation 
+ *      can be repeated as needed
  * -i path
  *	set the root for all includes not specified by -I
  *	also accepts -ipath syntax
@@ -70,6 +73,8 @@
  * 06-Feb-2026 - add -r flag
  * 12-Feb-2026 - fix a case of duplicate symbols across banks not resolving correctly
  * 15-Feb-2026 - addlocal directive added, allow nested local to have same name as outer local
+ * 16-Feb-2026 - just some warnings about locals hiding other locals or globals
+ * 18-Feb-2026 - fix command line parsing, add -W=xxx error control
  *
 */
 #include <unistd.h>
@@ -78,6 +83,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <signal.h>
+#include <ctype.h>
 
 #include "am1.h"
 #include "symtab.h"
@@ -88,6 +94,16 @@ typedef struct inc_item
     char *incP;
     char type;                  // I, D, etc 
 } Inc_item, *Inc_itemP;
+
+// Define the various warnings that can be enabled and disabled
+Warning warnings[] = {
+    {"1Dop", WARN_1D, false, false, false},
+    {"bank", WARN_BANKS, false, false, false},
+    {"locals", WARN_LOCALS, false, true, false},
+    {"flex", WARN_FLEX, false, true, false},
+    {"vars", WARN_VARS, false, true, false},
+    {0, 0, false}  // end marker
+};
 
 Inc_itemP incsP;                // the list of cpp stuff 
 
@@ -140,12 +156,14 @@ int macCodegen(FILE *, PNodeP);
 int binCodegen(FILE *, PNodeP);
 int listCodegen(FILE *, PNodeP);
 
+void enableWarning(char *nameP);
 void add_cpp(char, char *);
 void leave(int);
 int run_cpp(char *, char *);
 int usage();
 void dumpParseTree(PNodeP);
 void dumpExpr(PNodeP);
+void vwarn(int errtype, const char *msgP, ...);
 
 int
 main(int argc, char **argv)
@@ -195,7 +213,7 @@ SymNodeP symP;
                 break;
 
             case 'i':                                       /* accept either ixxx or i xxx */
-                if(!*cP)
+                if( !*cP)
                 {
                     --argc;
                     ++argv;
@@ -270,7 +288,15 @@ SymNodeP symP;
                 break;
 
             case 'W':
-                noWarn = 1;
+                if( *cP == '=' )
+                {
+                    enableWarning(++cP);
+                    cP = "";
+                }
+                else
+                {
+                    noWarn = 1;
+                }
                 break;
 
             default:
@@ -356,10 +382,9 @@ SymNodeP symP;
         dumpParseTree(rootP);
     }
 
-    if( !noWarn && doMacro && sawBank  )
+    if( doMacro && sawBank  )
     {
-        fprintf(stderr, "am1: WARNING - 'bank' was used, macro1 does not support it.\n");
-        fprintf(stderr, "Your code will not do what you expect and should just be for reference.\n");
+        vwarn(WARN_BANKS, "'bank' was used, macro1 does not support it.\n");
     }
 
     if( doMacro )
@@ -951,8 +976,8 @@ leave(int signo)
 int
 usage()
 {
-    fprintf(stderr, "Usage: am1 [-Wabmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile\n");
-    fprintf(stderr, "  -W don't print warnings\n");
+    fprintf(stderr, "Usage: am1 [-abmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-irootpath]\n");
+    fprintf(stderr, "  [-W[=warning]]... sourcefile\n\n");
     fprintf(stderr, "  -a treat space in expressions as add, not or\n");
     fprintf(stderr, "  -b generate binary code\n");
     fprintf(stderr, "  -m generate macro1 code\n");
@@ -964,7 +989,9 @@ usage()
     fprintf(stderr, "  -z allow 1's complement -0 to remain\n");
     fprintf(stderr, "  -D define a symbol to cpp\n");
     fprintf(stderr, "  -I add an include path to cpp\n");
-    fprintf(stderr, "  -i define the include root\n");
+    fprintf(stderr, "  -i define the include root directory\n");
+    fprintf(stderr, "  -W don't print warnings\n");
+    fprintf(stderr, "  -W=warning but do print this one\n");
     fprintf(stderr, "  -x enable flex debug output on stderr\n");
     fprintf(stderr, "  -y enable yacc debug output on stderr\n");
     fprintf(stderr, "  -k don't delete cpp tmp file\n");
@@ -1039,4 +1066,56 @@ run_cpp(char *filenameP, char *pfilename)
     sprintf(cP, "%s %s", filenameP, pfilename);
 
     return(!system(tmpstr));
+}
+
+void
+enableWarning(char *nameP)
+{
+int i;
+    
+    for( i = 0; warnings[i].id; ++i )
+    {
+        if( !strcmp(nameP, warnings[i].name) )
+        {
+            warnings[i].enabled = true;
+            return;
+        }
+    }
+
+    fprintf(stderr,"No such warning '%s', ignored\n", nameP);
+}
+
+bool
+doWarn(int id)
+{
+WarningP warnP;
+
+    // First get the state
+    for( warnP = warnings; warnP->id != 0; ++warnP )
+    {
+        if( warnP->id == id )
+        {
+            break;
+        }
+    }
+
+    if( warnP->id == 0 )
+    {
+        fprintf(stderr,"Internal error bad warning id %d, ignored\n", id);
+        return(false);
+    }
+
+    if( !warnP->repeats && warnP->issued )
+    {
+        return(false);
+    }
+
+    warnP->issued = true;
+
+    if( noWarn && warnP->enabled )
+    {
+        return(true);
+    }
+
+    return( !noWarn );
 }

@@ -1,13 +1,14 @@
 // Includes for the am1 PDP-1 assembler
 
-#ifndef AM1INCDIR
+#ifndef AM1VERSION
 
 #include <stdlib.h>
+#include <stdbool.h>
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.17 15-Feb-2026"
-#define AM1SHORTVERSION "am1 v1.17"
+#define AM1VERSION "am1 v1.18 18-Feb-2026"
+#define AM1SHORTVERSION "am1 v1.18"
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
 
@@ -17,6 +18,13 @@
 
 #define WRDMASK 0777777 // PDP-1 word, 18 bits
 #define ADDRMASK 07777 // PDP-1 address, 12 bits
+
+// The warning ids we have
+#define WARN_1D 1
+#define WARN_BANKS 2
+#define WARN_LOCALS 3
+#define WARN_FLEX 4
+#define WARN_VARS 5
 
 // actually the max local scope nesting
 #define MAXLOCALS   128
@@ -32,6 +40,7 @@
 #define SYM_OPORABLE 4
 #define SYM_LOC 5
 #define SYM_GLOB 6
+#define SYM_1DOP 7
 
 #define SYM_MASK 0xFF
 #define SYMF_PERM 0x100
@@ -118,4 +127,12 @@ typedef struct symlist
     struct symlist *nextP;
 } SymList, *SymListP;
 
+// Define the various warnings that can be enabled and disabled
+typedef struct {
+    char name[16];
+    int id;
+    bool enabled;
+    bool repeats;
+    bool issued;
+} Warning, *WarningP;
 #endif

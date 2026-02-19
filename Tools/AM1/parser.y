@@ -36,6 +36,7 @@ extern SymNodeP permSymP;	        // the instructions and other permanent values
 extern SymListP constsListP;            // the list of all constant groups
 
 extern bool noWarn;
+extern bool doMacro;
 extern bool sawBank;
 extern bool doSymtab;
 extern int lineno;
@@ -64,7 +65,7 @@ extern SymNodeP resolveLocalSymbol(char *);
 
 int yyerror(const char *errstr);
 void verror(const char *msgP, ...);
-void vwarn(const char *msgP, ...);
+void vwarn(int errtype, const char *msgP, ...);
 
 int yylex(void);
 
@@ -74,6 +75,7 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 extern int evalExpr(PNodeP);
 extern long int hashExpr(PNodeP);
 extern void leave(int);
+extern bool doWarn(int);
 
 %}
 
@@ -377,7 +379,7 @@ one_stmt	: expr
                     $$->value.ptr = varNodesP;
                     if( !varNodesP )
                     {
-                        vwarn("no variables have been declareed, variables ignored");
+                        vwarn(WARN_VARS, "no variables have been declareed, variables ignored");
                     }
                     else
                     {
@@ -642,6 +644,10 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
                 {
 		    $$ = newnode(lineno, cur_pc, OPORABLE, NILP, NILP);
                     $$->value.symP = $1;
+                    if( doMacro && (($1->flags & SYM_MASK) == SYM_1DOP) )
+                    {
+                        vwarn(WARN_1D, "%s is a PDP-1D instruction", $1->name );
+                    }
                 }
                 | VALUESPEC
                 {
@@ -904,12 +910,13 @@ directive_expr  : FORCELOC
                     {
                         if( $2 != localDepth )
                         {
-                            vwarn("endloc says ending level %d but the current level is %d", $2, localDepth);
+                            vwarn(WARN_LOCALS, "endloc says ending level %d but the current level is %d",
+                                $2, localDepth);
                         }
                     }
 
                     // We pop the local stack
-                    if( localDepth == 0 )
+                    if( (localDepth == 0) && doWarn(WARN_LOCALS) )
                     {
                         verror("endloc without an opening local");
                     }
@@ -964,6 +971,11 @@ optLocals       : localSymDef
 
 localSymDef     : symbol
                 {
+                    if( $1->type == ADDR )
+                    {
+                        vwarn(WARN_LOCALS, "local %s will hide a global of the same name",$1->value.symP->name);
+                    }
+
                     $$ = $1;
                 }
                 | LCLADDR
@@ -976,7 +988,10 @@ localSymDef     : symbol
                     }
 
                     // We are defining a nested local with the same name as an outer one,
-                    // that's fine.
+                    // that's fine, but warn them.
+                    vwarn(WARN_LOCALS, "local %s will hide a local of the same name defined in scope %d",
+                        $1->name, $1->value2);
+
                     $$ = newnode(lineno, cur_pc, NAME, NILP, NILP);
                     $$->value.strP = $1->name;
                 }
@@ -1437,7 +1452,7 @@ SymNodeP symP;
         symP->flags = SYM_GLOB;
         symP->bank = bank;
         sym_add(&(bankP->globalSymP), symP);
-        vwarn("creating symbol %s in bank %d, be sure to resolve it", nameP, bank);
+        vwarn(WARN_BANKS, "creating symbol %s in bank %d, be sure to resolve it", nameP, bank);
     }
 
     return( symP );
@@ -1451,13 +1466,16 @@ yywrap()				/* tell lex to clean up */
 }
 
 void
-vwarn(const char *msgP, ...)
+vwarn(int errType, const char *msgP, ...)
 {
 va_list argP;
 char format[1024];
 
-    if( noWarn )
+    if( !doWarn(errType) )
+    {
         return;
+    }
+
     va_start(argP, msgP);
     sprintf(format,"am1: WARNING: %s\nat line %d, file %s\n",
         msgP,lineno,filenameP);

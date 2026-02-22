@@ -33,7 +33,7 @@ static int stopped = 1;         // assume we are halted initially
 static IotEntry handles[64];
 static PollEntryP pollList;
 
-extern PDP1P pdp1P;              // from main.c
+extern PDP1 *pdp1P;              // from main.c
 extern void dynamicReq(PDP1 *pdp, int chan);
 
 void dynamicIotProcessBreak(int chan);

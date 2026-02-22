@@ -29,10 +29,10 @@
 #include "dynamicIots.h"
 #include "highSpeedChannels.h"
 
-#define DOLOGGING
+//#define DOLOGGING
 #include "logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
-#define LOG_SHM 1
+#define LOG_SHM 0
 
 // If present, will set the startup state of audio, lightpen support, etc.
 // See the distributed one for all settings.
@@ -100,6 +100,7 @@ bool prev_readin_sw;
             {
                 spec(pdp1P);
                 cycle(pdp1P);
+                pdp1P->ad1start = 0;
                 pdp1P->ad1step = 0;
                 pdp1P->ad1continue = 0;
             }
@@ -506,6 +507,7 @@ PDP1 pdp1;
 PDP1 *pdp = &pdp1;
 pthread_t th;
 const char *host;
+const char *tape = "tapes/dpys5.rim";
 int port;
 int fd[2];
 int shmFd;
@@ -547,14 +549,6 @@ int shmFd;
     memset(pdp, 0, sizeof(*pdp));
     readmem("coremem", memp, memsz);
 
-    startpolling();     // wje
-
-    pdp->dpy[0].fd = -1;
-    pdp->dpy[1].fd = -1;
-
-    pthread_create(&th, NULL, netthread, pdp);
-
-    const char *tape = "tapes/dpys5.rim";
     pdp->muldiv_sw = 1;
     loadConfigFile(pdp, CONFIG_FILE);
 
@@ -587,6 +581,13 @@ int shmFd;
             logger(LOG_SHM, "shared memory in use\n");
         }
     }
+
+    startpolling();
+
+    pdp->dpy[0].fd = -1;
+    pdp->dpy[1].fd = -1;
+
+    pthread_create(&th, NULL, netthread, pdp);
 
     pdp->r_fd = open(tape, O_RDONLY);
     pdp->p_fd = open("punch.out", O_CREAT | O_WRONLY | O_TRUNC, 0644);

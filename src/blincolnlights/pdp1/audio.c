@@ -125,7 +125,7 @@ continueaudio(void)
 }
 
 void
-svc_audio(PDP1P pdp)
+svc_audio(PDP1 *pdp)
 {
 float chan1, chan2, chan3, chan4;
 float buffer[2];

@@ -26,11 +26,11 @@ typedef struct _HSC_ {
     } HSC_Control, *HSC_ControlP;
 
 // called from the emulator run loop
-int processHSChannels(PDP1P pdp1P);
+int processHSChannels(PDP1 *pdp1P);
 
 // user methods
 int HSC_request_channel(
-    PDP1P pdp1P,        // emulator context
+    PDP1 *pdp1P,        // emulator context
     int chan,           // channel,1-3, channel 1 being highest priority
     int mode,           // HSC_MODE_FROMMEM, _TOMEM, etc. (or'd together)
     int count,          // number of words to transfer, 0-4096

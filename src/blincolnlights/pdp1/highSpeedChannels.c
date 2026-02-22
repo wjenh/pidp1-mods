@@ -24,14 +24,14 @@ static HSC_Control chan3;
 
 static HSC_ControlP HSC_chans[] = {&chan1, &chan2, &chan3};
 
-static void processChannel(PDP1P pdp1P, HSC_ControlP controlP);
-static void processImmediate(PDP1P pdp1P, int mode, int count, int memBank, int memAddr,
+static void processChannel(PDP1 *pdp1P, HSC_ControlP controlP);
+static void processImmediate(PDP1 *pdp1P, int mode, int count, int memBank, int memAddr,
     Word *toBufferP, Word *fromBufferP);
 
 // Service routine called from run loop. Question - did the hardware pause on a halt, or complete?
 // Returns 0 if it took no action, 1 if it did a 'memory cycle' and we are in steal mode.
 int
-processHSChannels(PDP1P pdp1P)
+processHSChannels(PDP1 *pdp1P)
 {
 int i;
 HSC_ControlP controlP;
@@ -53,7 +53,7 @@ HSC_ControlP controlP;
 // Returns HSC_ERR for invalid chan, mode, count > 4096, banks out of range of 0-15 dec.
 int
 HSC_request_channel(
-    PDP1P pdp1P,        // emulator context
+    PDP1 *pdp1P,        // emulator context
     int chan,           // channel,1-3, channel 1 being highest priority
     int mode,           // HSC_MODE_FROMMEM, _TOMEM, _IMMEDIATE (or'd together)
     int count,          // number of words to transfer, 0-4096
@@ -107,7 +107,7 @@ HSC_ControlP controlP;
 
 static void
 processImmediate(
-    PDP1P pdp1P,        // emulator context
+    PDP1 *pdp1P,        // emulator context
     int mode,           // HSC_MODE_FROMMEM, _TOMEM, _IMMEDIATE (or'd together)
     int count,          // number of words to transfer, 0-4096, 0 means 4096
     int memBank,         // memory bank to copy to, 0-15
@@ -157,7 +157,7 @@ int status;
 // process one channel, one word.
 // We do a read before a write if both are enabled.
 static void
-processChannel(PDP1P pdp1P, HSC_ControlP controlP)
+processChannel(PDP1 *pdp1P, HSC_ControlP controlP)
 {
 Word *memBaseP;
 Word word;

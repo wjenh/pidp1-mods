@@ -3,10 +3,12 @@
  *
  * The first line will be the filename.
  * Each subsequent line is one symbol in the form:
- * aaaaaa t symbol-name
- * where aaaaaa is the 16-bit address of the symbol's location in memory
+ * aaaaaa t symbol-name nnnn
+ * where aaaaaa is the 15-bit address of the symbol's location in memory
  * t is one of G, X, I for global, exported, or imported
  * and nnnn is the line number in the source file where the symbol was resolved.
+ *
+ * wje 24-Feb-26 Add line number and versioning to symbol file, used by ad1.
  *
 */
 
@@ -18,6 +20,9 @@
 #include "am1.h"
 #include "symtab.h"
 
+#define SYMTAB_LABEL  "%%am1 symtab file%%"
+#define SYMTAB_VERSION  "V2"
+
 void printSymbol(FILE *outfP, SymNodeP symP);
 
 // Globals will be in each bank's context.
@@ -25,6 +30,8 @@ void printSymbol(FILE *outfP, SymNodeP symP);
 void
 listSymtab(FILE *outfP, char* filenameP, BankContextP banksP)
 {
+    fprintf(outfP, "%s\n", SYMTAB_LABEL);
+    fprintf(outfP, "%s\n", SYMTAB_VERSION);
     fprintf(outfP, "%s\n", filenameP);
     if( banksP )
     {
@@ -61,7 +68,7 @@ char *typeP;
         typeP = "G";
     }
 
-    fprintf(outfP, "%06o %s %s\n", (symP->bank << 12) + symP->value, typeP, symP->name);
+    fprintf(outfP, "%06o %s %s %d\n", (symP->bank << 12) + symP->value, typeP, symP->name, symP->lineno);
 
     printSymbol(outfP, symP->rightP);
 }

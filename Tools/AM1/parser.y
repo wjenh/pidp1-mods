@@ -411,6 +411,7 @@ one_stmt	: expr
                     {
                         symP = sym_make($1, 0);
                         symP->flags |= SYMF_RESOLVED | SYM_GLOB;
+                        symP->lineno = lineno - 1;
                         symP->value = cur_pc;
                         symP->bank = curBank;
                         sym_add(&globalSymP, symP);
@@ -437,6 +438,7 @@ one_stmt	: expr
                             $1->symP->value = cur_pc;
                         }
 
+                        $1->lineno = lineno - 1;
                         $1->flags |= SYMF_RESOLVED;
                         $1->value = cur_pc;
                         $$ = newnode(lineno, ($3 && !($3->flags & PN_NOINC))?cur_pc++:cur_pc, LOCATION, NILP, $3);
@@ -1098,6 +1100,7 @@ varname         : NAME
 
                     $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = $1;
+                    $1->lineno = lineno - 1;
                     $1->flags = SYM_GLOB | SYMF_VAR;
                 }
 %%
@@ -1196,6 +1199,7 @@ SymNodeP symP;
 
         if( (symP->flags & SYMF_VAR) && !(symP->flags & SYMF_RESOLVED) )
         {
+            symP->lineno = lineno - 1;
             symP->flags |= SYMF_RESOLVED;
             symP->value = cur_pc++;
             symP->bank = bank;
@@ -1271,6 +1275,7 @@ char str[256];
         }
 
         symP = sym_make(cP, 0);
+        symP->lineno = lineno - 1;
         symP->flags |= SYMF_IMPORTED | SYMF_RESOLVED | SYM_GLOB;
         symP->value = address;
         symP->bank = bank;

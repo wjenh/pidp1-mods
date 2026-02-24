@@ -2,8 +2,8 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.17 and covers up through am1 version 1.17; it will be updated as needed.\
-Edit date 15-Feb-2026
+This is version 1.18 and covers up through am1 version 1.18; it will be updated as needed.\
+Edit date 21-Feb-2026
 
 ## What is **am1**?
 
@@ -169,8 +169,9 @@ Just type make.
 
 ## Usage
 
-**am1** [-abmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] [-W[=warning]] sourcefile
+**am1** [-Wabmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile
 
+- W don't print warnings
 - a space means add, default is or
 - b generate binary tape image code, the default action
 - m generate **macro1** code
@@ -183,8 +184,6 @@ Just type make.
 - Dsymbol define a symbol for **cpp**, -Dsym or -D sym are both accepted
 - Ipath add a search path to **cpp** for "files", -Ipath or -I path are both accepted
 - ipath set the root directory for <file> searches, -ipath or -i path are both accepted
-- W don't print warnings
-- W=warning except print this one, can be repeated
 
 These additional flags are generally for debugging:
 
@@ -216,23 +215,6 @@ The -i flag has priority, followed by the environment variable, followed by the 
 
 At runtime, /usr/bin/cpp must exist if preprocessing is being done.
 
-## Warnings and warning control
-
-Normally, various warnings will be given. These can be turned off by using the *-W* command line flag.
-Some will be repeated if the warning is relevant in moe than one case, some are only emitted once.
-
-When warnings are turned off, specific warnings can still be given by adding additional *-W=warning* flags.
-
-The valid warnings are:
-
-| Name   | Meaning                                               |        |
-|--------|-------------------------------------------------------|--------|
-| 1Dop   | iPDP-1D instruction is used                           |once    |
-| bank   | various warnings about banks and bank references      |once    |
-| local  | various warnings about the use of locals              |repeats |
-| flex   | warnings for illegal flexo/concise operations         |repeats |
-| vars   | various warnings for variables                        |repeats |
-
 ## Listing file
 
 The listing file is more complex than the **macro1** version in order to list code that is **#include**ed.
@@ -262,15 +244,18 @@ The following can be produced:
 - *file*.cpp - text output that is the intermediate output from the **cpp** preprocessor
 - *file*.sym - text output that is a listing of the global symbols in the program
 
-The sym file contains an initial line that is the filename of the original file
+The sym file contains 3 initial lines, an id, a version, and the filename of the original file
 followed by one line per symbol of the form:
 ```
-aaaaaa F symbol-name
+%%am1 symbab file%%
+Vnnn
+aaaaaa F symbol-name lineno
 ```
 
 where *aaaaaa* is the full 16-bit address of the symbol's location in memory, and *F* is a flag, either *G*, *I*,
-or *X*,
-A *G* means the symbol wasn't exported, *X* means the symbol was, *I* symbols were imported.
+or *X*.\
+A *G* means the symbol wasn't exported, *X* means the symbol was, *I* symbols were imported.\
+The *lineno* value is the line number in the original source file where the symbol was *resolved*, not declared.
 
 ## Files with no loader
 

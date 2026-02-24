@@ -74,7 +74,7 @@
  * 12-Feb-2026 - fix a case of duplicate symbols across banks not resolving correctly
  * 15-Feb-2026 - addlocal directive added, allow nested local to have same name as outer local
  * 16-Feb-2026 - just some warnings about locals hiding other locals or globals
- * 18-Feb-2026 - fix command line parsing, add -W=xxx error control
+ * 18-Feb-2026 - fix command line parsing, add -W=xxx error control, add line number and version to symbol file
  *
 */
 #include <unistd.h>

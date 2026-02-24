@@ -18,6 +18,7 @@ typedef struct symnode      // a node in a symbol tree
     char *name;
     unsigned int symflags;  // internal flags
     unsigned int flags;     // for the user
+    int lineno;             // line number where it was resolved
     int bank;               // the bank number this was defined in, if needed
     int value;
     int value2;

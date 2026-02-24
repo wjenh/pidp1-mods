@@ -24,7 +24,9 @@ lex.yy.o: lex.yy.c y.tab.h
 lex.yy.c: lexer.l y.tab.c lexfuncs.c
 	flex -d lexer.l
 
-y.tab.c, y.tab.h: parser.y am1.h symtab.h
+y.tab.h: y.tab.c
+
+y.tab.c: parser.y am1.h symtab.h
 	bison $(BISONFLAGS) -o y.tab.c -d parser.y
 
 y.tab.o: y.tab.c

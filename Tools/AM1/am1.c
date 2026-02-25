@@ -1,11 +1,12 @@
 /* am1.c - another macro1 assembler
  *
- * Usage: am1 [-abmnvz[ykp]] [-i path] [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
+ * Usage: am1 [-abdmnvz[ykp]] [-i path] [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
  *
  * Valid switches are:
  *
  * -a	treat space in expressions as add, not or
  * -b	generate binary source
+ * -d	same as giving both -s and -l, generates all the files needed for ad1
  * -m	generate macro1 source
  * -l	generate a listing
  * -n	don't run cpp on input source
@@ -210,6 +211,11 @@ SymNodeP symP;
 
             case 'b':
                 doBinary = true;
+                break;
+
+            case 'd':
+                doListing = true;
+                doSymtab = true;
                 break;
 
             case 'i':                                       /* accept either ixxx or i xxx */
@@ -976,10 +982,11 @@ leave(int signo)
 int
 usage()
 {
-    fprintf(stderr, "Usage: am1 [-abmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-irootpath]\n");
+    fprintf(stderr, "Usage: am1 [-abdmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-irootpath]\n");
     fprintf(stderr, "  [-W[=warning]]... sourcefile\n\n");
     fprintf(stderr, "  -a treat space in expressions as add, not or\n");
     fprintf(stderr, "  -b generate binary code\n");
+    fprintf(stderr, "  -d generate both a listing and symbol file, combines -s and -l\n");
     fprintf(stderr, "  -m generate macro1 code\n");
     fprintf(stderr, "  -l generate listing\n");
     fprintf(stderr, "  -n don't run cpp\n");

@@ -289,7 +289,6 @@ octal			{ decimalMode = false; }
 				    return(OPADDR);
 
 				case SYM_OPORABLE:
-				case SYM_1DOP:
 				    yylval.symP = symP;
 				    return(OPORABLE);
 				}

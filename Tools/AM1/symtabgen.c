@@ -118,7 +118,7 @@ char line[1024];                                // and a line buffer
         }
         else if( !strcmp(typeP, "1Dop") )
         {
-            i = SYMF_PERM | SYM_1DOP;
+            i = SYMF_PERM | SYM_OPORABLE | SYMF_1DOP;
         }
         else if( !strcmp(typeP, "value") )
         {
@@ -214,7 +214,7 @@ int rightid;        // the array offset of right child
         fprintf(fP, "0,");
     }
 
-    fprintf(fP, "\"%s\",0,0x%x,0,%07o,0,0,0    // %d\n", nodeP->name, nodeP->flags, nodeP->value, nodeno);
+    fprintf(fP, "\"%s\",0,0x%x,0,0,%07o,0,0,0    // %d\n", nodeP->name, nodeP->flags, nodeP->value, nodeno);
     fprintf(fP, "    }");
 
     return( nodeno++ );

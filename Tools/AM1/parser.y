@@ -646,7 +646,7 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
                 {
 		    $$ = newnode(lineno, cur_pc, OPORABLE, NILP, NILP);
                     $$->value.symP = $1;
-                    if( doMacro && (($1->flags & SYM_MASK) == SYM_1DOP) )
+                    if( doMacro && ($1->flags & SYMF_1DOP) )
                     {
                         vwarn(WARN_1D, "%s is a PDP-1D instruction", $1->name );
                     }
@@ -918,7 +918,7 @@ directive_expr  : FORCELOC
                     }
 
                     // We pop the local stack
-                    if( (localDepth == 0) && doWarn(WARN_LOCALS) )
+                    if( localDepth == 0 )
                     {
                         verror("endloc without an opening local");
                     }

@@ -7,8 +7,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.18 18-Feb-2026"
-#define AM1SHORTVERSION "am1 v1.18"
+#define AM1VERSION "am1 v1.19 25-Feb-2026"
+#define AM1SHORTVERSION "am1 v1.19"
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
 
@@ -40,7 +40,6 @@
 #define SYM_OPORABLE 4
 #define SYM_LOC 5
 #define SYM_GLOB 6
-#define SYM_1DOP 7
 
 #define SYM_MASK 0xFF
 #define SYMF_PERM 0x100
@@ -52,6 +51,7 @@
 #define SYMF_EMITTED 0x8000     // is a constant that has been emitted
 #define SYMF_IMPORTED 0x10000   // came from an import file
 #define SYMF_EXPORTED 0x20000   // needs to be exported
+#define SYMF_1DOP 0x40000
 
 #define CTX_FORCELOCAL 1        // focelocal is active for this context
 

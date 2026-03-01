@@ -30,6 +30,7 @@ sudo rm -f /usr/local/bin/tkaskopenfile
 sudo rm -f /usr/local/bin/tkaskopenfilewrite
 sudo rm -f /usr/local/bin/pdp1audio
 sudo rm -f /usr/local/bin/am1
+sudo rm -f /usr/local/bin/ad1
 
 rm ~/.config/autostart/pdp1startup.desktop
 

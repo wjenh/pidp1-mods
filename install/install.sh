@@ -176,6 +176,8 @@ while true; do
 
                 # The am1 macro assembler
 		make -C $INSTALLDIR/Tools/AM1 install
+                # The ad1 symbolic debugger
+		make -C $INSTALLDIR/Tools/AD1 install
 
 		# the macro1_1 cross-compiler:
 		gcc $INSTALLDIR/src/macro/macro1_1.c -o $INSTALLDIR/src/macro/macro1_1
@@ -243,6 +245,7 @@ while true; do
 	    sudo ln -sf $INSTALLDIR/bin/disassemble_tape /usr/local/bin/disassemble_tape
 	    #
 	    sudo ln -sf $INSTALLDIR/bin/am1 /usr/local/bin/am1
+	    sudo ln -sf $INSTALLDIR/bin/ad1 /usr/local/bin/ad1
             #
 	    sudo ln -sf $INSTALLDIR/bin/tkaskopenfile /usr/local/bin/tkaskopenfile
 	    sudo ln -sf $INSTALLDIR/bin/tkaskopenfilewrite /usr/local/bin/tkaskopenfilewrite

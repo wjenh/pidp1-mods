@@ -1,4 +1,6 @@
 #include <stdbool.h>
+#define USEAD1
+#include "ad1intf.h"
 
 typedef u32 Word;
 typedef u16 Addr;
@@ -103,13 +105,8 @@ struct PDP1
 	int dcp;
 	int dbx, dby;
 	int dint;	// no direct schematics for this
-	// simulation
-//	int dpy_fd;
-//	int dpy2_fd;
 	u64 dpy_defl_time;
 	u64 dpy_time;
-//	u64 dpy_last;
-//	u64 dpy2_last;
 	DispCon dpy[2];
 
 	// reader
@@ -153,9 +150,19 @@ struct PDP1
         // wje - extra flags for cks, settable in IOTs
         int cksflags;
         // wje - added for ad1
-        int ad1start;
-        int ad1step;
-        int ad1continue;
+#ifdef USEAD1
+        int ad1flags;
+        int ad1StartAddr;   // these are used by the start command
+        int ad1ExtendedAddr;
+
+        int ad1brkNo;   // if a breakpoint was hit, which one, index in breakpoint table
+        bool ad1brkHit;  // true if a breakpoint was hit
+        Breakpoint ad1Breakpoints[AD1_NUM_BREAKPOINTS]; // ad1 manages this
+
+        int ad1watchNo;   // if a watch was hit, which one, index in watch table
+        bool ad1watchHit;  // true if a watch was hit
+        Watch ad1Watches[AD1_NUM_WATCHES]; // ad1 manages this
+#endif
 };
 
 #define IR pdp->ir

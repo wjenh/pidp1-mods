@@ -2,7 +2,7 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.18 and covers up through am1 version 1.18; it will be updated as needed.\
+This is version 1.18 and covers up through am1 version 1.20; it will be updated as needed.\
 Edit date 21-Feb-2026
 
 ## What is **am1**?
@@ -169,11 +169,12 @@ Just type make.
 
 ## Usage
 
-**am1** [-Wabmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile
+**am1** [-Wabdmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile
 
 - W don't print warnings
 - a space means add, default is or
 - b generate binary tape image code, the default action
+- d generate all files needed for **ad1**, the same as giving the *-s* and *-l* flags
 - m generate **macro1** code
 - l generate a program listing
 - n don't run **cpp** on the input
@@ -244,7 +245,7 @@ The following can be produced:
 - *file*.cpp - text output that is the intermediate output from the **cpp** preprocessor
 - *file*.sym - text output that is a listing of the global symbols in the program
 
-The sym file contains 3 initial lines, an id, a version, and the filename of the original file
+The sym file contains 3 initial lines, a label, a version, and the filename of the original file
 followed by one line per symbol of the form:
 ```
 %%am1 symbab file%%

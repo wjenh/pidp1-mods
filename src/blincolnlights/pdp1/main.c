@@ -94,15 +94,15 @@ bool prev_readin_sw;
 
         if( pdp->power_sw )
         {
-            if(Edge(start_sw) || pdp1P->ad1start || pdp1P->ad1step ||
-                Edge(continue_sw) || pdp1P->ad1continue ||
+            if(Edge(start_sw) || Edge(continue_sw) ||
+            AD1_START(pdp1P) || AD1_STEP(pdp1P) || AD1_CONTINUE(pdp1P) ||
                  Edge(examine_sw) || Edge(deposit_sw))
             {
                 spec(pdp1P);
                 cycle(pdp1P);
-                pdp1P->ad1start = 0;
-                pdp1P->ad1step = 0;
-                pdp1P->ad1continue = 0;
+                AD1_CLEAR_START(pdp1P);
+                AD1_CLEAR_STEP(pdp1P);
+                AD1_CLEAR_CONTINUE(pdp1P);
             }
 
             if( Edge(stop_sw) )
@@ -538,18 +538,11 @@ int shmFd;
         return 1;
     }
 
-    memp = pdp->core;
-    memsz = MAXMEM;
-
     atexit(exitcleanup);
     signal(SIGPIPE, SIG_IGN);
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
 
-    memset(pdp, 0, sizeof(*pdp));
-    readmem("coremem", memp, memsz);
-
-    pdp->muldiv_sw = 1;
     loadConfigFile(pdp, CONFIG_FILE);
 
     // Now check for shared mem use
@@ -582,6 +575,12 @@ int shmFd;
         }
     }
 
+    memset(pdp, 0, sizeof(*pdp));
+    memp = pdp->core;
+    memsz = MAXMEM;
+    readmem("coremem", memp, memsz);
+
+    pdp->muldiv_sw = 1;
     startpolling();
 
     pdp->dpy[0].fd = -1;

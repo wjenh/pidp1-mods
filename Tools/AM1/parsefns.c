@@ -9,6 +9,8 @@ PNodeP unop(int, int, int, PNodeP);
 PNodeP binop(int, int, int, PNodeP, PNodeP);
 void yyerror(char *);
 
+extern int curBank;
+
 PNodeP
 newnode(int lineNo, int pc, int type, PNodeP leftP, PNodeP rightP)
 {
@@ -20,6 +22,7 @@ newnode(int lineNo, int pc, int type, PNodeP leftP, PNodeP rightP)
 
     nP->lineNo = lineNo - 1;        // because it will already have been incremented by the line terminator in flex
     nP->pc = pc;
+    nP->bank = curBank;
     nP->type = type;
     nP->leftP = leftP;
     nP->rightP = rightP;

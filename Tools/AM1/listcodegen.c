@@ -566,11 +566,11 @@ startLine(bool noValue, FILE *outP, PNodeP nodeP)
     if( noValue )
     {
         // Line has no emitted code, don't print a value
-        fprintf(outP, "%4d: %06o        ", nodeP->lineNo, nodeP->pc);
+        fprintf(outP, "%4d: %02o%04o        ", nodeP->lineNo, nodeP->bank, nodeP->pc);
     }
     else
     {
-        fprintf(outP, "%4d: %06o %06o ", nodeP->lineNo, nodeP->pc, nodeP->value2.ival);
+        fprintf(outP, "%4d: %02o%04o %06o ",  nodeP->lineNo, nodeP->bank, nodeP->pc, nodeP->value2.ival);
     }
 }
 

@@ -34,6 +34,7 @@
 #define LOG_LP 0
 #define LOG_APERTURE 0
 #define LOG_STARTUP 0
+#define LOG_AD1 0
 
 #define NOTIOTH
 #include "dynamicIots.h"
@@ -109,6 +110,10 @@ static char *onOff(bool flag);
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
 static bool checkLightPen(PDP1 *pdp1P);
+#ifdef USEAD1
+static void checkBreakpoints(PDP1 *pdp1P, int address);
+static void checkWatches(PDP1 *pdp1P);
+#endif
 
 // The emulator duplicates all of the original hardware
 // subcycles. Impressive.
@@ -301,15 +306,14 @@ inc_ac(PDP1 *pdp)
     {
         AC = 0;
     }
+    else if(AC == 0777777)
+    {
+        AC = 1;
+    }
     else
-        if(AC == 0777777)
-        {
-            AC = 1;
-        }
-        else
-        {
-            AC++;
-        }
+    {
+        AC++;
+    }
 }
 static void
 pc_to_ac(PDP1 *pdp)
@@ -470,7 +474,7 @@ spec(PDP1 *pdp)
     // PB
     pdp->run = 0;
 
-    if(pdp->start_sw || pdp->ad1start || pdp->deposit_sw || pdp->examine_sw)
+    if(pdp->start_sw || AD1_START(pdp) || pdp->deposit_sw || pdp->examine_sw)
     {
         pdp->rim = 0;
     }
@@ -479,7 +483,7 @@ spec(PDP1 *pdp)
     pdp->run_enable = 1;
     clr_ma(pdp);
 
-    if(pdp->start_sw || pdp->ad1start)
+    if(pdp->start_sw || AD1_START(pdp))
     {
         pdp->cyc = 0;
     }
@@ -489,16 +493,24 @@ spec(PDP1 *pdp)
         pdp->ac = 0;
     }
 
-    if(pdp->start_sw || pdp->ad1start || pdp->deposit_sw || pdp->examine_sw)
+    if(pdp->start_sw || AD1_START(pdp) || pdp->deposit_sw || pdp->examine_sw)
     {
         sc(pdp);
     }
 
     // SP2
-    if(pdp->start_sw || pdp->ad1start || pdp->deposit_sw || pdp->examine_sw)
+    if(pdp->start_sw || AD1_START(pdp) || pdp->deposit_sw || pdp->examine_sw)
     {
-        PC |= pdp->ta;
-        pdp->epc |= pdp->eta;
+        if( AD1_START(pdp) )
+        {
+            PC |= pdp->ad1StartAddr;
+            pdp->epc |= pdp->ad1ExtendedAddr;
+        }
+        else
+        {
+            PC |= pdp->ta;
+            pdp->epc |= pdp->eta;
+        }
     }
 
     if(pdp->deposit_sw || pdp->examine_sw || pdp->rim)
@@ -530,9 +542,9 @@ spec(PDP1 *pdp)
     }
 
     // SP4
-    if(pdp->start_sw || pdp->ad1start || pdp->continue_sw || pdp->ad1continue )
+    if(pdp->start_sw || AD1_START(pdp) || pdp->continue_sw || AD1_CONTINUE(pdp) )
     {
-        pdp->ad1start = 0;
+        AD1_CLEAR_START(pdp);
         pdp->run = 1;
     }
 }
@@ -1189,14 +1201,21 @@ int hack;
             pdp->ioh = 0;
         }
 
-        if(IR_OPR && (MB & B9) ||
+        if(IR_OPR && (MB & B9) ||   // hlt
             IR_INCORR ||
             pdp->single_cyc_sw ||
-            (pdp->single_inst_sw || pdp->ad1step) && CY0_INST_DONE ||
+            (pdp->single_inst_sw || AD1_STEP(pdp)) && CY0_INST_DONE ||
             !pdp->run_enable)
         {
             pdp->run = 0;
         }
+
+#ifdef USEAD1
+        if( AD1_BREAKPOINT_HIT(pdp) || AD1_WATCH_HIT(pdp) )
+        {
+            pdp->run = 0;
+        }
+#endif
 
         clrmd(pdp);
         TP(9)
@@ -1400,7 +1419,7 @@ int mask = 0;
 
     if(IR_INCORR ||
         pdp->single_cyc_sw ||
-        (pdp->single_inst_sw || pdp->ad1step) && DF_INST_DONE ||
+        (pdp->single_inst_sw || AD1_STEP(pdp)) && DF_INST_DONE ||
         !pdp->run_enable)
     {
         pdp->run = 0;
@@ -1690,7 +1709,7 @@ int hack;
 
         if(IR_INCORR ||
             pdp->single_cyc_sw ||
-            pdp->single_inst_sw || pdp->ad1step ||
+            pdp->single_inst_sw || AD1_STEP(pdp) ||
             !pdp->run_enable)
         {
             pdp->run = 0;
@@ -1968,6 +1987,11 @@ cycle(PDP1 *pdp)
     {
         cycle1(pdp);
     }
+
+#ifdef USEAD1
+    checkBreakpoints(pdp, pdp->epc | PC);
+    checkWatches(pdp);
+#endif
 
     // update any IOTs regardless of cycle type
     dynamicIotProcessorDoPoll(pdp);             // wje - handle pseudo-async IOTs
@@ -3088,3 +3112,89 @@ static char resp[1024];
 
     return resp;
 }
+
+#ifdef USEAD1
+// Scan the breakpoint table to see if the passed address matches an enabled entry.
+// If so, check the count and if reached, signal a breakpoint.
+void
+checkBreakpoints(PDP1 *pdp1P, int address)
+{
+int i;
+BreakpointP brkP;
+
+    if( !AD1_BREAKPOINTS_ENABLED(pdp1P) )
+    {
+        return;
+    }
+
+    brkP = pdp1P->ad1Breakpoints;
+
+    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
+    {
+        if( (brkP->isSet) && (brkP->isEnabled) && (brkP->address == address) )
+        {
+            if( ++(brkP->curCount) >= brkP->count )    // a count of 0 or 1 are wquivalent
+            {
+                brkP->curCount = 0;     // for next time
+                AD1_SET_BREAKPOINT_HIT(pdp1P);
+                pdp1P->ad1brkNo = i;
+                logger(LOG_AD1, "breakpoint %d hit\n", i+1);
+            }
+            return;
+        }
+    }
+}
+
+// Scan the watch table to see if the passed address and its data match an enabled entry.
+// If so, signal a watch.
+void
+checkWatches(PDP1 *pdp1P)
+{
+int i;
+int curVal;
+bool hit;
+WatchP watchP;
+
+    if( !AD1_WATCHES_ENABLED(pdp1P) )
+    {
+        return;
+    }
+
+    hit = false;
+    watchP = pdp1P->ad1Watches;
+
+    for( i = 0; i < AD1_NUM_WATCHES; ++i )
+    {
+        if( watchP->isSet && watchP->isEnabled )
+        {
+            curVal = pdp1P->core[watchP->address] & 0777777;
+            if( curVal != watchP->lastVal )     // it was changed
+            {
+                if( watchP->onAny )
+                {
+                    hit = true;
+                }
+                else if( watchP->value == curVal )
+                {
+                    hit = true;
+                }
+            }
+
+            if( watchP->onAny )
+            {
+                watchP->value = curVal;     // just so ad1 can report it
+            }
+
+            watchP->lastVal = curVal;
+        }
+
+        if( hit )
+        {
+            AD1_SET_WATCH_HIT(pdp1P);
+            pdp1P->ad1watchNo = i;
+            logger(LOG_AD1, "watch %d hit\n", i+1);
+            return;
+        }
+    }
+}
+#endif

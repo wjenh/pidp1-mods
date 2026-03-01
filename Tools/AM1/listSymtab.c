@@ -1,12 +1,17 @@
 /*
  * listSymtab - output a symbol table dump
  *
- * The first line will be the filename.
+ * The first line is a symtab identification string.
+ * The second line is a symtab file version.
+ * The third line will be the filename.
  * Each subsequent line is one symbol in the form:
  * aaaaaa t symbol-name nnnn
- * where aaaaaa is the 15-bit address of the symbol's location in memory
- * t is one of G, X, I for global, exported, or imported
+ * where aaaaaa is the 16-bit address of the symbol's location in memory.
+ * t is one of G, X, I for global, exported, or imported.
  * and nnnn is the line number in the source file where the symbol was resolved.
+ *
+ * Note that the same symbol name can occur in different banks.
+ * The full address is used to resolve which symbol is where.
  *
  * wje 24-Feb-26 Add line number and versioning to symbol file, used by ad1.
  *

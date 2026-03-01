@@ -7,8 +7,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.19 25-Feb-2026"
-#define AM1SHORTVERSION "am1 v1.19"
+#define AM1VERSION "am1 v1.20 26-Feb-2026"
+#define AM1SHORTVERSION "am1 v1.20"
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
 
@@ -87,6 +87,7 @@ typedef struct parsenode
     int type;               // node type
     int flags;              // user defined flags
     int pc;                 // the mem loc for this node, if any
+    int bank;               // and the bank it's in
     int lineNo;             // and the source line
     PNodeValue value;
     PNodeValue value2;

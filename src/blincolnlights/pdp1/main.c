@@ -42,7 +42,7 @@
 #define NIL 0
 #define Edge(sw) (pdp->sw && !prev_##sw)
 
-int lightpenListener(PDP1 *pdp);
+int lightpenListener(void *pdp);
 void updateswitches(PDP1 *pdp, Panel *panel);
 void updatelights(PDP1 *pdp, Panel *panel);
 void lightsoff(Panel *panel);

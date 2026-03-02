@@ -105,7 +105,7 @@ static int lastPenX;
 static int lastPenY;
 static pthread_mutex_t lightpenLock;
 
-void lightpenListener(void *pdp1P);
+void *lightpenListener(void *pdp1P);
 static char *onOff(bool flag);
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
@@ -2376,7 +2376,7 @@ cvtDpyToSigned(int dpy)             // convert a 10 bit dpy coordinate to a 2's 
 
 // This is the reader thread for the lightpen.
 // See if there is data from the client, update lp status
-void
+void *
 lightpenListener(void *arg)
 {
 int count;
@@ -2398,7 +2398,7 @@ PDP1P pdp1P;
         {
             count = 0;                          // some problem, probably fd closed
             penDown = false;
-            return;
+            return(0);
         }
 
         // Turn on fast ack to minimize delays.

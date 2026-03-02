@@ -538,6 +538,7 @@ setFileFn(char *nameP)
     closeListFile();
     clearSymbols();
     resolveFiles(nameP);
+    loadFileData();             // before loading symbols!
     loadSymbols(symNameP);
 }
 

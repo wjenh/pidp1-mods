@@ -84,10 +84,14 @@ char tmpbuf[1024];
             // [ ]+lineno: address (rest of line)
             // Line numbers are always decimal, addresses octal.
             // Any line not of the above form is ignored.
+            // Note that the line number is that of the line in the original source,
+            // not in the listing file.
+            // So, we ignore it and use the current listing file line number.
             if( (cP = strchr(tmpbuf,':')) )
             {
                 *cP++ = NUL;
-                lineno = strtol(tmpbuf, &cP2, 10);
+                //lineno = strtol(tmpbuf, &cP2, 10);
+                lineno = numLines - 1;    // it was already incremented above
 
                 // cP now pointing to the space after the :
                 address = strtol(cP, &cP2, 8);
@@ -98,7 +102,7 @@ char tmpbuf[1024];
                     continue;
                 }
 
-                bank = address & 0xF000;
+                bank = (address & 0xF000) >> 12;
                 address &= 0xFFF;
                 if( (bank >= 0) && (bank < MEMBANKS) )
                 {
@@ -135,7 +139,8 @@ long *memP;
     {
         return( -1 );
     }
-    bank = address & 0xF000;
+
+    bank = (address & 0xF000) >> 12;
     address &= 0xFFF;
     if( (bank >= 0) && (bank < MEMBANKS) )
     {

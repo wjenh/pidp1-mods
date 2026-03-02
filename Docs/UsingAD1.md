@@ -2,8 +2,8 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.0 and covers up through ad1 version 1.0; it will be updated as needed.\
-Edit date 21-Feb-2026
+This is version 1.1 and covers up through ad1 version 1.0; it will be updated as needed.\
+Edit date 1-Mar-2026 minor edits
 
 ## What is **ad1**?
 
@@ -64,10 +64,10 @@ starting, stopping, single-stepping and processing of breakpoints and watches.
 
 Breakpoints are implemented by a breakpoint table in shared memory.
 When breakpoints are active, an assignemnt to the PC register is checked to see if it is a breakpoint address
-and if so and its hit count is reached, a flag is set to indicate that to *ad1* and the pidp-1 halted.
+and if so and its hit count is reached, a flag is set to indicate that to **ad1** and the pidp-1 halted.
 
 Watchpoints are implemented similarly with a watch table in shared memory.
-When watches are active, the addresss have their contents checked to see if they have changed and
+When watches are active, the addresses have their contents checked to see if they have changed and
 optionally match a given value.
 If so a flag is set to indicate that to **ad1** and the pidp-1 halted.
 Both breakpoints and watches are checked in the pidp-1 at the end of every machine cycle.
@@ -132,6 +132,27 @@ Note that the *shared* option must be on in the pidp-1 configuration file in ord
 As usual, just type 'make'. This assumes you have installed the pidp1-mods release and let it
 install Flex and Bison.
 
+## Line numbers, addresses, and symbols
+
+What is available depends upoon which of the filenames mentioned above are present.
+
+If there is a listing file, then a mapping between line numbers *in that listing file* and memory locations
+shown in the file is created.
+
+For example, this line from a listing file:
+```
+11: 000106 600104 jmp loop
+```
+says that at line 11 in the *original* source file the instruction is at memory location 000106.
+But, when a listing file is available, lines from it are what will be displayed, and the line number
+does not necessarily match line 11, especially if there are include files.
+
+When a listing file is used, the line number shown is ignored and the actual line number in the listing
+file is used for creating the map and, if a symbol file is also being used, to set the lines for the symbols.
+
+If only a source file is being used, then the line numbers will be from that file and if a symbol file
+is also being used, the line nubmers from the symbol file will be used for the symbol locations.
+
 ## Numbers, ones complement, twos complement, oh my
 
 The PDP-1 used 1's complement math, which no modern computers use.
@@ -154,7 +175,7 @@ The one exception is the special *c* formatting directive for the *show* command
 
 ## Addresses and extended memory
 
-Because *ad1* can debug code in any memory bank, addresses are always full 16-bit values.
+Because **ad1** can debug code in any memory bank, addresses are always full 16-bit values.
 This can be confusing because of the way the PDP-1 treated addressing within an extended memory bank.
 Regardless of the bank being executed in, addresses other than indirect addresses were treated as 12-bit addresses
 in the current bank.
@@ -266,7 +287,8 @@ If a command name or topic is given, the specific help for that is shown.
 Sets the default base that numbers will use when typed in.
 
 The valid choices are 2, 8, 10, and 16.\
-This is overriden by an explicit base in the number.
+This is overriden by an explicit base in the number.\
+The initial base is 8.
 
 ## BAnk integer
 
@@ -278,9 +300,9 @@ A base qualifier, *val,basenum*, overrides this setting.
 ## Break address [count]
 
 Sets a breakpoint at the given address with an optional count of how many times it must be hit before it is reported.
+The breakpoint is automatically enabled.
 
 When reported, the pidp-1 is halted.\
-The breakpoint is automatically enabled.
 
 Breakpoints are based on the address in the PC, so breakpoints placed in memory not referenced by the PC will never
 be hit, such as data or variables. Use a watch instead.
@@ -293,7 +315,7 @@ If the pidp-1 is halted, execution is resumed.
 ## DElete [Watch] [integer]
 
 If the integer is the number of a set breakpoint, delete it.\
-If no integer is given, prompt and if confirmed delete all breakpoints.
+If no integer is given, a prompt is given and if confirmed deletes all breakpoints.
 
 If watch is specified, then this applies to watches instead of breakpoints.
 It can be shortened the same as when used as a command.
@@ -316,6 +338,8 @@ The name is entered without any quotes. \
 The name can contain a file path.\
 If it can't be found an error will be reported.
 
+The name can be the basename of a program file, or have a *.am1*, *.sym*, or a *.lst* extension, the proper
+names will be derived.
 This is the same as if the name was given on the command line when **ad1** was started.
 
 ## Enable [Watch] [integer]
@@ -361,6 +385,8 @@ If the value is a negative number, it is adjusted to the 1's complement equivale
 If a register is given, it is similarly set, but if the register is a program flag, it can only be set to 1 or 0.\
 See the section on *registers* for more details.
 
+This is roughly equivalent to using the deposit switch on the front panel.
+
 ## SHow address|register [format]
 
 Shows the contents of a memory address or register with an optional format modifier.\
@@ -371,9 +397,9 @@ See the section on *registers* for more details on registers.
 An optional format can be given, and is one of:
 
 - b show the value in binary
-- o show the value in binary
-- d show the value in binary
-- x show the value in binary
+- o show the value in octal
+- d show the value in decimal
+- x show the value in hexadecimal
 - c treat the value as a 1's complement 12 bit number, print the equivalent negative number if the value is negative
 - a show the value as 2 ascii characters, the first in the high 9 bits, the second in the low 9 bits
 - f show the value as 3 flex characters, packed as 6 bits each
@@ -382,10 +408,12 @@ There are two pseudo-registers, *break* and *watch*, which can be shortened in t
 These will list all set breakpoints or watches and their status.
 
 Displaying the break, watch, pf, or ss registers ignores any optional format.
-The pf and the the ss register are always displayed in binary.
+The pf and the the ss registers are always displayed in binary.
 
 The *a* and *f* formats use the same value formats as the **ad1** 'c', *ascii*, *flex*, and *text* instructions
 produce.
+
+This is (very) roughly equivalent to using the examine switch on the front panel.
 
 ## STart address
 
@@ -407,11 +435,10 @@ Sets a watch at the given address with an optional value to watch for.
 
 If a value is given, a change of the value in memory to this value signals the watch.\
 If no value is given, then any change of the value in memory signals the watch.\
-
-Rewriting the same value into memory as was there does not count as a change.
-
-When reported, the pidp-1 is halted.\
 The watch is automatically enabled.
+
+Rewriting the same value into memory as was there does not count as a change.\
+When reported, the pidp-1 is halted.
 
 Watches are based on the contents of the address in memory and thus can be used on any memory location that
 is modified, including instructions that are modified.

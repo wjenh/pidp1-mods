@@ -7,6 +7,7 @@
  * Original author: Bill Ezell (wje) pdp1@quackers.net
  *
  * 28-Feb-26 wje - initial version
+ * 2-Mar-26 wje - fix memory mapping for banks other than 0
  *
 */
 #include <stdlib.h>
@@ -203,6 +204,7 @@ char line[256];
     if( argc == 1 )
     {
         resolveFiles( *argv );
+        loadFileData();         // do before loading symbols!
         loadSymbols(symNameP);
     }
 
@@ -840,11 +842,14 @@ loadFileData()
     if( !isFileMapped() )       // try to initialize it
     {
         // Try for a lst file
-        loadFileMap(true, lstNameP);
-        if( !isFileMapped() )
+        if( loadFileMap(true, lstNameP))
+        {
+            printf("Line numbers and addresses loaded from '%s'.\n", lstNameP);
+        }
+        else if( loadFileMap(false, am1NameP) )
         {
             // Try for a .am1 instead
-            loadFileMap(false, am1NameP);
+            printf("Line numbers from '%s', symbol mapping not available..\n", am1NameP);
         }
 
         if( !isFileMapped() )

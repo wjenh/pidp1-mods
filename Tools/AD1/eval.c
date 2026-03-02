@@ -30,6 +30,9 @@ int signExtend(int oc);
 int onesCompl(int val);
 int twosCompl(int val);
 
+extern bool isMemMapped(void);
+extern int getLineFromAddress(int addr);
+
 // See if this is a valid number, if so, return its value.
 // The base is overridden by explicit base settings in the string, 0x, 0d, 0b, 0o.
 // A leading 0 forces base 8.
@@ -262,8 +265,19 @@ char line[256];
         symP->nameP = malloc(strlen(cP) + 1);
         strcpy(symP->nameP, cP);
 
-        // Now try for the line number
-        lineno = strtol(cP2 + 1, NIL, 10);
+        // Now try for the line number.
+        // If a .lst file has been loaded, look up the line from the memory map.
+        // If not, use the current line number.
+        if( isMemMapped() )
+        {
+            lineno = getLineFromAddress(addr);
+        }
+
+        if( lineno < 1 )
+        {
+            lineno = strtol(cP2 + 1, NIL, 10);
+        }
+
         symP->lineno = lineno;
     }
 

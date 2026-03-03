@@ -461,11 +461,12 @@ printAscii(char ch)
 bool
 printFlex(bool shifted, char ch)
 {
+int chr;
 bool newShift;
 
     newShift = shifted;
-    ch = flexToAscii(ch, &newShift);
-    switch( ch )
+    chr = flexToAscii(ch, &newShift);
+    switch( chr )
     {
     case NOCHAR:
         PRINTCH(' ');

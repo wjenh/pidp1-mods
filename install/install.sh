@@ -230,7 +230,7 @@ while true; do
     case $prxn in
         [Yy]* ) 
             # First, clean /usr/local/bin to be sure no leftover original programs
-            sudo $INSTALLDIR/cleanbin.sh
+            sudo $INSTALLDIR/install/cleanbin.sh
             # put pdp1 command into /usr/local
             sudo ln -f -s $INSTALLDIR/bin/pdp1.sh /usr/local/bin/pdp1
             # put pdp1control script into /usr/local

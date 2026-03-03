@@ -207,7 +207,7 @@ while true; do
                 ln -sf $INSTALLDIR/src/blincolnlights/pdp1/pdp1 $INSTALLDIR/bin/pdp1
                 ln -sf $INSTALLDIR/src/pdp1_periph/pdp1_periphES $INSTALLDIR/bin/pdp1_periphES
                 ln -sf $INSTALLDIR/src/usb_paper_tape/pdp1_usb_monitor $INSTALLDIR/bin/pdp1_usb_monitor
-                ln -sf $INSTALLDIR/src/pidp1-mods_test/pidp1_test $INSTALLDIR/bin/pidp1_test
+                ln -sf $INSTALLDIR/src/pidp1_test/pidp1_test $INSTALLDIR/bin/pidp1_test
                 ln -sf $INSTALLDIR/src/scanpf/scanpf $INSTALLDIR/bin/scanpf
                 ln -sf $INSTALLDIR/src/blincolnlights/tapevis/tapevis $INSTALLDIR/bin/tapevis
                 ln -sf $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1 $INSTALLDIR/bin/panel_pidp1
@@ -229,6 +229,8 @@ while true; do
     read -p "Install PiDP-1 commands into OS? " prxn
     case $prxn in
         [Yy]* ) 
+            # First, clean /usr/local/bin to be sure no leftover original programs
+            sudo $INSTALLDIR/cleanbin.sh
             # put pdp1 command into /usr/local
             sudo ln -f -s $INSTALLDIR/bin/pdp1.sh /usr/local/bin/pdp1
             # put pdp1control script into /usr/local

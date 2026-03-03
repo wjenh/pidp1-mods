@@ -18,7 +18,7 @@
 #include <pthread.h>
 
 // define this to get the loop timing for the 2 main loops
-#define TIMINGS
+//#define TIMINGS
 
 int ADDR[] = {4, 17, 27, 22};
 int COLUMNS[] = {26, 19, 13, 6, 5, 11, 9, 10, 18, 23, 24, 25, 8, 7, 12, 16, 20, 21 };
@@ -233,6 +233,8 @@ float dt;
     memset(intensity, 0, sizeof(intensity));
 #ifdef TIMINGS
     lastTime = now = gettime();
+#else
+    now = gettime();
 #endif
 
     for(;;)
@@ -255,11 +257,9 @@ float dt;
             usleep(3);
         }
 
-#ifdef TIMINGS
         prev = now;
         now = gettime();
         dt = (now - prev) / (1000.0f * 1000.0f);
-#endif
 
         for(int i = 0; i < 10; i++)
         {

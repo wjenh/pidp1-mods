@@ -42,7 +42,7 @@ It is checked out in the /opt directory and will make its own installation direc
 Move to /opt, check this out there:
 
 ```
-sudo git clone https://github.com/wjenh/pidp1-mods.git
+sudo git clone --depth 1 https://github.com/wjenh/pidp1-mods.git
 ```
 
 Everything after this proceeds as for the original install.

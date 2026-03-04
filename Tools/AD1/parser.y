@@ -364,7 +364,7 @@ optBase         : SEPARATOR SYMBOL
                     // without much hadwaving.
                     if( strlen($2) != 1 )
                     {
-                        printf("A base specifier must be one character b, o, d, x or c.\n");
+                        printf("A base specifier must be one character b, o, d, x, a, f, s, i or c.\n");
                         return(0);
                     }
 
@@ -391,8 +391,14 @@ optBase         : SEPARATOR SYMBOL
                     case 'f':
                         $$ = FLEX;
                         break;
+                    case 's':
+                        $$ = SYMBOLIC;
+                        break;
+                    case 'i':
+                        $$ = INSTRUCTION;
+                        break;
                     default:
-                        printf("A base speciifer must be one of b, o, d, x, a, f, or c.\n");
+                        printf("A base specifier must be one character b, o, d, x, a, f, s, i or c.\n");
                         return(0);
                     }
                 }

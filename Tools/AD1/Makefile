@@ -3,8 +3,10 @@ BISONFLAGS=
 
 all: ad1
 
-ad1: ad1.o helpText.o eval.o lex.yy.o y.tab.o listFile.o files.o commands.o flexToAscii.o
-	$(CC) -o ad1 ad1.o helpText.o eval.o lex.yy.o y.tab.o listFile.o files.o commands.o flexToAscii.o
+ad1: ad1.o helpText.o eval.o lex.yy.o y.tab.o listFile.o files.o commands.o flexToAscii.o \
+	../Disassembler/decode_instruction.o
+	$(CC) -o ad1 ad1.o helpText.o eval.o lex.yy.o y.tab.o listFile.o files.o commands.o flexToAscii.o \
+	../Disassembler/decode_instruction.o
 
 clean:
 	@rm ad1 *.o y.tab.c y.tab.h lex.yy.c 2>/dev/null || true
@@ -32,6 +34,9 @@ listFile.o: listFile.c
 
 flexToAscii.o: flexToAscii.c
 	$(CC) -c flexToAscii.c
+
+../Disassembler/decode_instruction.o: ../Disassembler/decode_instruction.c
+	(cd ../Disassembler ; make decode_instruction.o)
 
 lex.yy.o: lex.yy.c y.tab.h
 	$(CC) -c lex.yy.c

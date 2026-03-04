@@ -4,13 +4,35 @@ This contains files modified from https://github.com/obsolescence/pidp1 to add n
 Note that this no longer tracks the original repo since that seems to have been abandoned by the developers.
 The link was removed on 3-Feb-26 to make this a fully-independent repository.
 
-It also adds various tools such as the am1 assembler and include files for am1, drum utilities, documentation, etc.
+It also adds various tools such as the am1 assembler and include files for am1, the ad1 symbolic debuger,
+drum utilities, documentation, etc.
 
 A sample drum image containing 9 programs is provided, use the *drumlist* tool to see what's included.
 
 The entire build can exist in parallel with the original distribution, but if the OS commands and desktop items are
 selected, they will overwrite the originals.
 The origial settings can be recovered by running its install.sh script again.
+
+**If you run in parallel** be *sure* you know which commands are being executed.
+
+Commands are not interchangeable between the two versions!
+Using commands from one against a pidp instance from the other is guaranteed to cause strange behavior.
+The safe way is to run the commands directly from the bin directory in the version repository you want, and also be
+sure the pdp1 instance matches.
+
+Moral - running parallel versions is tricky. Best way is to do a full install from whichever one you want to use,
+you can always reinstall from the other one if you want to switch
+
+## Checking it out
+
+It is strongly recommended to use:
+
+git clone --depth 1 https://github.com/wjenh/pidp1-mods.git
+
+to avoid also pulling down all the historical changes, which can be large.
+
+As of 4-March-26, pdf versions of the documentation is no longer being checked in, use a good md viewer
+in your browser, such as Markdown Viewer.
 
 ## Installing and building
 

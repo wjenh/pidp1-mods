@@ -8,6 +8,7 @@
  *
  * 28-Feb-26 wje - initial version
  * 2-Mar-26 wje - fix memory mapping for banks other than 0
+ * 4-Mar-26 wje - add new show formats
  *
 */
 #include <stdlib.h>
@@ -107,6 +108,7 @@ extern int brkCount;    // number of set breakpoints
 extern int watchCount;  // number of set watches
 extern int base;        // current number base
 extern int lastFormat;  // the last format type used
+extern int curBank;     // set by the bank cmd
 
 extern int yydebug;
 extern int yy_flex_debug;
@@ -122,6 +124,7 @@ extern int twosCompl(int val);
 extern int onesCompl(int val);
 extern int32_t findAddrByName(char *nameP);
 extern char *findNameByAddr(u32 addr);
+extern char *decodeInstr(int value, int addr, char *addrStrP, char *reslltP);
 extern bool loadSymbols(char *filenameP);
 extern void clearFiles(void);
 extern void clearSymbols(void);
@@ -387,8 +390,10 @@ getFormat(int fmt)
 void
 formatAndPrintOne(int fmt, int value)
 {
+int addr;
 char c1, c2, c3;
 char *cP;
+char tmpstr[128];
 
     if( (fmt != FLEX) && (fmt != AUTOBASE) )
     {
@@ -400,12 +405,35 @@ char *cP;
         if( (cP = findNameByAddr(value)) )
         {
             printf("%s", cP);
-            return;
         }
         else
         {
             printf(getFormat(lastFormat), value);
         }
+
+        return;
+    }
+    else if( fmt == ADDRESS )
+    {
+        if( (cP = findNameByAddr(value)) )
+        {
+            printf("%s", cP);
+        }
+        else
+        {
+            // Leading addresses are always octal
+            printf(getFormat(OCTAL), value);
+        }
+
+        return;
+    }
+    else if( fmt == INSTRUCTION )
+    {
+        // Might be an address?
+        addr = (value & 0777) | (curBank << 12);
+        cP = findNameByAddr(addr);
+        decodeInstr(value, value & 0777, cP, tmpstr);
+        printf("%s",  tmpstr);
     }
     else if( fmt == ASCII )
     {
@@ -434,12 +462,19 @@ char *cP;
     }
     else
     {
-        printf(getFormat(lastFormat), value);
+        printf(getFormat((fmt == AUTOBASE)?lastFormat:fmt), value);
     }
 
-    if( fmt != AUTOBASE )
+    switch( fmt )
     {
+    case AUTOBASE:
+    case SYMBOLIC:              // should never see this here, but be sure
+    case ADDRESS:               // same
+        return;                 // we don't want to change the last format for these
+
+    default:
         lastFormat = fmt;
+        break;
     }
 }
 

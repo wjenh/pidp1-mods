@@ -1,6 +1,6 @@
 // Primary include file for ad1
 
-#define VERSION "1.1 2-Mar-2026"
+#define VERSION "1.2 4-Mar-2026"
 
 #include <stdint.h>
 
@@ -46,11 +46,12 @@
 #define OCTAL 8
 #define DECIMAL 10
 #define HEX 16
-#define SYMBOLIC 100    // special marker for symbolic printing
-#define ASCII 101       // special marker for ascii char printing
-#define FLEX 102        //  special marker for flex/concise char printing
-#define ONESCMPL 103    // special marker for ones complement printing
-#define ADDR 104        // special marker for addresses, tries SYMBOLIC, if not uses address formatting
+#define SYMBOLIC 100      // marker for symbolic printing
+#define INSTRUCTION 101   // marker for instruction printing
+#define ASCII 102         // marker for ascii char printing
+#define FLEX 103          // marker for flex/concise char printing
+#define ONESCMPL 104      // marker for ones complement printing
+#define ADDRESS 105       // marker for symbolic, use base 8 if no symbol
 
 typedef uint32_t u32;
 

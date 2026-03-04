@@ -117,6 +117,8 @@
  * 18/12/2025 wje - Added support for the new AM1 loader.
  * 06/01/2026 wje - Added support for pause in the AM1 loader.
  * 09/02/2026 wje - Fix completion bit handling, dpy i and c handling
+ * 20/02/2026 wje - If not an instruction, be sure to emit all bits
+ * 01/03/2026 wje - Fix cal, emit operand if it actually isn't a cal
  *
  */
 #include <stdlib.h>
@@ -275,7 +277,7 @@ Special iots[] =
         {00030, "rrb", NORMAL, 077},
         {00004, "tyi", CAN_WAIT, 077},
         {00003, "tyo", CAN_WAIT, 077},
-        {00051, "asc", CAN_WAIT, 077},
+//        {00051, "asc", CAN_WAIT, 077},
         {00000, "iot", UNKNOWN, 0}       // special end marker if nothing mathces, must be last
     };
 
@@ -1103,7 +1105,15 @@ Special *sP;
         }
         else
         {
-            printf(" %s", instructionP->name);            // CAL
+            if( operand )
+            {
+                // looks like cal, but has more bits, probably data
+                printf(" %s %o", instructionP->name, operand);
+            }
+            else
+            {
+                printf(" %s", instructionP->name);            // CAL
+            }
         }
         break;
 

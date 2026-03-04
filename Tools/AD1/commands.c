@@ -158,7 +158,7 @@ int val;
 
     lastAddr = addr;
     val = (int)pdp1P->core[addr];
-    formatAndPrintTwo(SYMBOLIC, lastAddr, base, val);
+    formatAndPrintTwo(ADDRESS, lastAddr, base, val);
     NEWLINE;
 }
 

@@ -2,7 +2,7 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.1 and covers up through ad1 version 1.0; it will be updated as needed.\
+This is version 1.2 and covers up through ad1 version 1.2; it will be updated as needed.\
 Edit date 1-Mar-2026 minor edits
 
 ## What is **ad1**?
@@ -401,6 +401,8 @@ An optional format can be given, and is one of:
 - d show the value in decimal
 - x show the value in hexadecimal
 - c treat the value as a 1's complement 12 bit number, print the equivalent negative number if the value is negative
+- s show the value as a symbol name if a symbol address has that value, else as an octal number
+- i show the value as an instruction
 - a show the value as 2 ascii characters, the first in the high 9 bits, the second in the low 9 bits
 - f show the value as 3 flex characters, packed as 6 bits each
 

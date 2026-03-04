@@ -22,6 +22,7 @@
  *
  * 27/10/2025 wje - Initial version
  * 09/02/2026 wje - Fix completion bit handling, dpy i and c handling
+ * 01/03/2026 wje - Fix cal, emit operand if it actually isn't a cal
  *
  */
 #include <stdlib.h>
@@ -162,9 +163,11 @@ static Special shifts[] =
     };
 
 // Format an instruction into printed form, placing the results in the passed string.
-// A pointer to the terminating null byte in the string is returned.
+// If the instruction has an address field and the value matches addr, use the string
+// symbolP, if not null, instead of the number.
+// A pointer to the terminating null byte in the result string is returned.
 char *
-decodeInstr(int word, char*resultP)
+decodeInstr(int word, int addr, char *symbolP, char *resultP)
 {
 unsigned int opcode;
 unsigned int operand;
@@ -173,16 +176,18 @@ int completion;
 int tmp, tmp2;
 int bits03;
 char *cP;
+char *operandStrP;
 char tmpstr[32];
 char tmpstr2[32];
+char addrStr[32];
 CodeDef *instructionP;
 Special *sP;
 
     opcode = OPERATION(word);
     if( opcode > 077 )
     {
-        resultP += sprintf(resultP,"Invalid word, greater than 0777777\n");
-        return(resultP);
+        sprintf(resultP, "%06o", word);
+        return( resultP + strlen(resultP) );
     }
 
     indirect = opcode & 01;
@@ -191,6 +196,17 @@ Special *sP;
 
     operand = OPERAND(word);
     instructionP = &opcodes[opcode];
+
+    // Just in case the operand is an addr field and matches the passed addr.
+    if( (operand == addr) && symbolP && *symbolP )
+    {
+        operandStrP = symbolP;
+    }
+    else
+    {
+        sprintf(addrStr, "%06o", operand);
+        operandStrP = addrStr;
+    }
 
     if( instructionP->modifiers == IS_ILLEGAL )            // not an instruction, just emit the octal value
     {
@@ -205,25 +221,35 @@ Special *sP;
         break;
 
     case CAN_INDIRECT:
-        resultP += sprintf(resultP,"%s%s %06o", instructionP->name, (indirect)?" i":"", operand);
+        resultP += sprintf(resultP,"%s%s %s", instructionP->name, (indirect)?" i":"", operandStrP);
         break;
 
     case IS_CALJDA:
         if( indirect )
         {
-            resultP += sprintf(resultP,"jda %06o", operand);
+            resultP += sprintf(resultP,"jda %s", operandStrP);
         }
         else
         {
-            resultP += sprintf(resultP,"%s", instructionP->name);            // CAL
+            if( operand )
+            {
+                // looks like cal, but has more bits, probably data
+                printf(" %s %o", instructionP->name, operand);
+            }
+            else
+            {
+                printf(" %s", instructionP->name);            // CAL
+            }
         }
         break;
 
     case IS_LAW:
         // The versions of macro1 floating arund are broken, they don't hande the 'law -n' syntax properly.
-        //resultP += sprintf(resultP," %s %s%04o", instructionP->name, (indirect)?"-":"", operand);
-        resultP += sprintf(resultP,"%s %s%04o", instructionP->name, (indirect)?"i ":"", operand);
-        resultP += sprintf(resultP," (%d dec)", (indirect)?-operand:operand);
+        resultP += sprintf(resultP,"%s %s%s", instructionP->name, (indirect)?"i ":"", operandStrP);
+        if( !operandStrP )
+        {
+            resultP += sprintf(resultP," (%d dec)", (indirect)?-operand:operand);
+        }
         break;
 
     case IS_SHIFT:

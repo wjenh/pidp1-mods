@@ -214,9 +214,10 @@ ss			{
 			    {
 			    	// We can have a register with the same name as a command
 				// that looks like a symbol here.
-				// Try to look it up.
+				// Try to look it up, but only if it's longer than one char,
+				// because that might be a base specifier.
 				BEGIN INITIAL;
-				if( (dispP = findCommand(dispatchTable, yytext)) )
+				if( (strlen(yytext) > 1) &&(dispP = findCommand(dispatchTable, yytext)) )
 				{
 				    switch( dispP->token )
 				    {

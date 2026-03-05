@@ -89,7 +89,22 @@ The visible changes are in the hardware front paenl, gui, and Type 30 display.
 - Type 30 display now has the ability to set the screen size on startup, command line -s size or config file
 - Type 30 display can start bordered or borderless, command line -n, no border, or config file
 - Type 30 border/borderless can be toggled using the 'b' key while running
-- Improved performance hardware panel driver, panel_pidi1, not configurable. Looks more autentic, too
+- Improved performance hardware panel driver, panel_pidp1, not configurable. Looks more authentic, too
+
+## Lightpen support
+
+The lightpen is simulated using the mouse.
+
+Holding the left mouse button down means 'pen on screen'.
+Moving the mouse while pen-down simulates moving the lightpen around the screen.
+Mouse button up means the lightpen has been moved away from the screen.
+
+As far as code is concered, the operation looks just the same as the original lightpen.
+
+The simulation is fairly accurate, but because there is no real detection of light on the screen and because
+there is significant buffering between the execution of a dpy instruction and the actual display of a dot,
+some magic hadwaving is done in the emulator to correlate mouse coordinates with the dpy instructions.
+It works surprisingly well.
 
 ## **NOTE**
 

@@ -23,13 +23,24 @@ sbs16=off
 sdb=on
 dpyshift=off
 
+# Enable lightpen support in pidp1.
 lightpen=on
-# The unified control gui checks this
-guilightpen=yes
-# The standalone type 30 display checks this
-type30lightpen=yes
 
-# An aperture of 22 corresponds to a physical aperture of 0.200 inches
+# The gui and Type 30 of course need to be able to find the config tile for these to work.
+# If running on a remote system, copy the config file to /opt/pidp1-mods on that system,
+# or use the command line flags if available.
+
+# The unified control gui checks this.
+guilightpen=yes
+
+# The standalone type 30 display checks this.
+type30lightpen=yes
+# The default size is 1024, change to what you want, also via command line -s size.
+type30size=1024
+# The default is yes, also via sommand line -n, for no border.
+type30border=yes
+
+# An aperture of 22 corresponds to a physical aperture of 0.200 inches.
 aperture=22
 
 # The following control the audio subsystem.

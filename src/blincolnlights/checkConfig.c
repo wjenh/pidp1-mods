@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <string.h>
 
+static FILE *confFP;
+
 // Check for a boolean setting in the config file.
 bool
 checkConfig(char *settingP)
@@ -14,12 +16,21 @@ char line[256];
 char option[64];
 char answer[64];
 
-    if( !(fP = fopen("/opt/pidp1-mods/pidp1.config", "r")) )
+    if( !confFP )
     {
-        return(false);
+        // Not open yet, do so
+        if( !(fP = fopen("/opt/pidp1-mods/pidp1.config", "r")) )
+        {
+            return(false);
+        }
+    }
+    else
+    {
+        // back to the beginning
+        fseek(confFP, 0L, SEEK_SET);
     }
 
-    while( fgets(line, sizeof(line), fP) )
+    while( fgets(line, sizeof(line), confFP) )
     {
         if( (line[0] == '#') || (line[0] == '\n') )
         {
@@ -40,6 +51,17 @@ char answer[64];
         break;
     }
 
-    fclose(fP);
     return( onOff );
+}
+
+// Close the config file.
+// If needed, it will be reopened.
+void
+closeConfigFile()
+{
+    if( confFP )
+    {
+        fclose(confFP);
+        confFP = false;
+    }
 }

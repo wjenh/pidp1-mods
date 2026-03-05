@@ -12,6 +12,7 @@
  *
  * wje 05-Jan-26 break from original repo, now independent. Initial reformatting. New features.
  * wje 08-Feb-26 rework lightpen code
+ * wje 04-Mar-26 clean up unused code, add window scaling from config file
  *
 */
 
@@ -36,6 +37,12 @@
 #include <SDL.h>
 #include "glad/glad.h"
 
+//#define DOLOGGING
+#include "../blincolnlights/logger.h"
+// Set desired log type to 1 to enable output assuming logging is defined.
+#define LOG_SCALING 0
+#define LOG_LIGHTPEN 0
+
 typedef uint64_t uint64;
 typedef uint32_t uint32;
 typedef uint16_t uint16;
@@ -47,11 +54,12 @@ typedef uint8_t uint8;
 #define WIDTH 1024
 #define HEIGHT 1024
 #define BORDER 2
-#define FULLWIDTH (WIDTH + 2*BORDER)
-#define FULLHEIGHT (HEIGHT + 2*BORDER)
-#define DEFAULTPORT 3400
+int winSize = WIDTH;                 // default if nothing set
+int fullWidth = (WIDTH + 2*BORDER);
+int fullHeight = (HEIGHT + 2*BORDER);
+float scaleFactor = 1.0;
 
-#define CMDSCALING  // use -H and -W to enable rescaling
+#define DEFAULTPORT 3400
 
 SDL_Window *window;
 int netfd;
@@ -65,7 +73,7 @@ GLuint whiteTex, yellowTex[2];
 GLuint whiteFBO, yellowFBO[2];
 int flip;
 
-int border;
+int border = 1;
 int doLightpen = 0;
 int penx;
 int peny;
@@ -75,7 +83,8 @@ uint64 simtime, realtime;
 void usage(char *nameP);
 void updatepen(bool penDown);
 bool checkConfig(char *optionP);
-
+char *getConfig(char *optionP, char *rsltP);
+void closeConfigFile(void);
 
 void
 panic(char *fmt, ...)
@@ -303,10 +312,8 @@ linkprogram(GLint vs, GLint fs)
     return program;
 }
 
-float sizefoo = 0.005f;
-float intfoo = 1.0f;
 int scalefoo = 0;
-int xxfoo = 8;
+int intensityOverride = 8;
 
 float maxsz = 0.0055f;
 float minsz = 0.0018f;
@@ -437,7 +444,7 @@ draw(void)
         printf("%f %d. %.2f %.2f %.2f\n", dt, npoints, st, rt, rt - st);
     }
 
-    glViewport(0, 0, FULLWIDTH, FULLHEIGHT);
+    glViewport(0, 0, fullWidth, fullHeight);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
     /* draw white phosphor */
@@ -459,8 +466,8 @@ draw(void)
             break;
         }
 
-        float x = (points[i].x / (float)WIDTH) + (float)BORDER / FULLWIDTH;
-        float y = (points[i].y / (float)HEIGHT) + (float)BORDER / FULLHEIGHT;
+        float x = (points[i].x / (float)winSize) + (float)BORDER / fullWidth;
+        float y = (points[i].y / (float)winSize) + (float)BORDER / fullHeight;
 // teco uses 3
 // spacewar uses 4
 // DDT uses 7
@@ -666,7 +673,7 @@ makeFBO(GLuint *fbo, GLuint *tex)
 {
     glGenTextures(1, tex);
     glBindTexture(GL_TEXTURE_2D, *tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, FULLWIDTH, FULLHEIGHT,
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fullWidth, fullHeight,
         0, GL_RGBA, GL_UNSIGNED_BYTE, nil);
     texDefaults();
     glGenFramebuffers(1, fbo);
@@ -744,47 +751,32 @@ keydown(SDL_Keysym keysym)
         exit(0);
     }
 
+    // Many of the scancodes that were here did absolutely nothing.
     switch(keysym.scancode)
     {
     case SDL_SCANCODE_UP:
-        sizefoo += 0.0001f;
-        if( dbgflag )
-        {
-            printf("sz %g\n", sizefoo);
-        }
+        // was sizefoo, never used
         break;
 
     case SDL_SCANCODE_DOWN:
-        sizefoo -= 0.0001f;
-        if( dbgflag )
-        {
-            printf("sz %g\n", sizefoo);
-        }
+        // was sizefoo, never used
         break;
 
     case SDL_SCANCODE_LEFT:
-        intfoo -= 0.01f;
-        if( dbgflag )
-        {
-            printf("int %g\n", intfoo);
-        }
+        // was intfoo, never used
         break;
 
     case SDL_SCANCODE_RIGHT:
-        intfoo += 0.01f;
-        if( dbgflag )
-        {
-            printf("int %g\n", intfoo);
-        }
+        // was intfoo, never used
         break;
 
     case SDL_SCANCODE_S:
+        // This is now controlled by a config file setting, here just to remember it
         scalefoo = (scalefoo + 1) % 3;
         break;
 
     case SDL_SCANCODE_R:
-        sizefoo = 0.005f;
-        intfoo = 1.0f;
+        // This is now controlled by a config file setting, here just to remember it
         scalefoo = 0;
         break;
 
@@ -793,8 +785,9 @@ keydown(SDL_Keysym keysym)
         SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
         break;
 
+    case SDL_SCANCODE_I:
     case SDL_SCANCODE_X:
-        xxfoo = (xxfoo + 1) % 9;
+        intensityOverride = (intensityOverride + 1) % 9;
         break;
     }
 }
@@ -823,7 +816,7 @@ process(int frmtime)
             idx = -1;
         }
 
-        indices[p->y * HEIGHT + p->x] = idx;
+        indices[p->y * winSize + p->x] = idx;
     }
 
     npoints = n;
@@ -832,12 +825,12 @@ process(int frmtime)
     for(i = 0; i < nnewpoints; i++)
     {
         Point *np = &newpoints[i];
-        idx = indices[np->y * HEIGHT + np->x];
+        idx = indices[np->y * winSize + np->x];
 
         if(idx < 0)
         {
             idx = npoints++;
-            indices[np->y * HEIGHT + np->x] = idx;
+            indices[np->y * winSize + np->x] = idx;
         }
 
         p = &points[idx];
@@ -850,8 +843,6 @@ process(int frmtime)
     nnewpoints = 0;
 }
 
-//#define SAVELIST
-
 void*
 readthread(void *args)
 {
@@ -863,12 +854,6 @@ readthread(void *args)
     uint64 time;
     uint64 frmtime = 33333;
     int x, y, intensity, dt;
-
-#ifdef SAVELIST
-    static uint32 displist[1024];
-    int ndisp = 0;
-    FILE *f = fopen("displist.dat", "wb");
-#endif
 
     uint64 realtime_start = SDL_GetPerformanceCounter();
     simtime = 0;
@@ -916,27 +901,20 @@ readthread(void *args)
                 intensity = cmd >> 20 & 7;
                 time += dt;
 
-#ifdef SAVELIST
-                displist[ndisp++] = cmd;
-
-                if(ndisp == 1024)
-                {
-                    fwrite(displist, 4, ndisp, f);
-                    ndisp = 0;
-                }
-
-#endif
-
                 if(x || y)
                 {
                     Point *np = &newpoints[nnewpoints++];
+                    /* wje - now set from config file
                     np->x = x >> scalefoo;
                     np->y = y >> scalefoo;
+                    */
+                    np->x = (int)((float)x * scaleFactor);
+                    np->y = (int)((float)y * scaleFactor);
                     np->i = intensity;
 
-                    if(xxfoo != 8)
+                    if(intensityOverride != 8)
                     {
-                        np->i = xxfoo;
+                        np->i = intensityOverride;
                     }
 
                     np->time = time;
@@ -1008,11 +986,12 @@ void
 usage(char *nameP)
 {
     fprintf(stderr,
-        "usage: %s [-d] [-p port] [-n] [server]\n", nameP);
+        "usage: %s [-d] [-p port] [-n] [-s size] [server]\n", nameP);
     fprintf(stderr, "where:\n");
     fprintf(stderr, "-d, enable debug\n");
     fprintf(stderr, "-p port, set port to use, default is %d\n", DEFAULTPORT);
     fprintf(stderr, "-n, start with no border\n");
+    fprintf(stderr, "-s size, set screen size to size pixels\n");
     fprintf(stderr, "server, hostname of server to connect to\n");
     exit(1);
 }
@@ -1025,12 +1004,26 @@ SDL_Event event;
 int running;
 int port;
 int opt;
-int doXsize, doYsize;
-int forcedXrescale, forcedYrescale;
 bool penDown;
-float scaleFactor;
+char tmpstr[64];
 
     port = DEFAULTPORT;
+
+    // Set from config first, cmd line overrides
+    doLightpen = checkConfig("type30lightpen");
+    border = checkConfig("type30border");
+
+    if( getConfig("type30size", tmpstr) )
+    {
+        opt = atoi(tmpstr);
+        // Ok, they want a different window size
+        if( (opt >= 512) && (opt <= 4096) )
+        {
+            winSize = opt;
+        }
+    }
+
+    closeConfigFile();
 
     while( (opt = getopt(argc, argv, "p:dnl")) != -1 )
     {
@@ -1046,6 +1039,10 @@ float scaleFactor;
 
         case 'n':
             border = 0;     // no border
+            break;
+
+        case 's':
+            winSize = atoi(optarg);     // screen is n * n big
             break;
 
         default:
@@ -1070,6 +1067,13 @@ float scaleFactor;
     }
 
     penDown = false;
+    fullWidth = winSize + 2*BORDER;
+    fullHeight = winSize + 2*BORDER;
+    scaleFactor = (float)winSize/1024.0;
+#ifdef DOLOGGING
+    logger(LOG_SCALING, "Type 30 size %d, scaleFactor %f\n", winSize, scaleFactor);
+    logger(LOG_LIGHTPEN, "Type 30 lightpen %s\n", (doLightpen)?"enabled":"disabled");
+#endif
 
     SDL_Init(SDL_INIT_EVERYTHING);
 
@@ -1097,7 +1101,7 @@ float scaleFactor;
     }
 
     window = SDL_CreateWindow("P7 sim", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        FULLWIDTH, FULLHEIGHT, window_flags);
+        fullWidth, fullHeight, window_flags);
 
     if(window == nil)
     {
@@ -1105,7 +1109,6 @@ float scaleFactor;
         return(1);
     }
 
-    doLightpen = checkConfig("type30lightpen");
     if( doLightpen )
     {
         // We want mouse events to go out quickly
@@ -1150,7 +1153,6 @@ float scaleFactor;
                 break;
 
             case SDL_KEYUP:
-//              keyup(event.key.keysym);
                 break;
 
             case SDL_MOUSEMOTION:
@@ -1172,6 +1174,7 @@ float scaleFactor;
                 if( doLightpen && penDown )
                 {
                     updatepen(true);
+                    logger(LOG_LIGHTPEN, "Type 30 lightpen moved to x %d y %d\n", penx, peny);
                 }
                 break;
 
@@ -1184,6 +1187,7 @@ float scaleFactor;
                     if( doLightpen )
                     {
                         updatepen(true);
+                        logger(LOG_LIGHTPEN, "Type 30 lightpen down\n");
                     }
                 }
                 break;
@@ -1193,6 +1197,7 @@ float scaleFactor;
                 {
                     penDown = false;
                     updatepen(false);
+                    logger(LOG_LIGHTPEN, "Type 30 lightpen up\n");
                 }
                 break;
 

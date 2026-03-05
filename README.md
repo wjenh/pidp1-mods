@@ -55,15 +55,15 @@ It allows control over many features, see the provided one for details.
 ## What is configured by default?
 
 The default for the emulator is basically *everything*:
+See the config file.
 
 - The useful PDP-1D instructions, lia, lai, lsw, swp, cmi, sni, szi
 - Lightpen support and an extended dpy for setting the aperture size on the fly
-- Lightpen support in p7sim and p7simES
+- Lightpen support in p7sim, p7simES, and the integrated gui
 - Dynamic IOTs
 - Improved audio and a control app for it
 - High Speed Channels
 - Type 33 Symbol Generator added iot, sdb
-- Improved performance hardware panel driver
 
 The following IOTs are also built:
 
@@ -80,7 +80,16 @@ in the config file.
 One dpy option, reorigin dpy coordinates, conflicts with the lightpen sdb iot.
 If both are enabled, the lightpen sdb iot takes priority.
 
-The tools, including am1, are not automatically built, see below.
+## Changes in expsting applications
+
+The visible changes are in the hardware front paenl, gui, and Type 30 display.
+
+- gui app now has lightpen support, set in the config file
+- Type 30 display now has lightpen support, set in the config file
+- Type 30 display now has the ability to set the screen size on startup, command line -s size or config file
+- Type 30 display can start bordered or borderless, command line -n, no border, or config file
+- Type 30 border/borderless can be toggled using the 'b' key while running
+- Improved performance hardware panel driver, panel_pidi1, not configurable. Looks more autentic, too
 
 ## **NOTE**
 

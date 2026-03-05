@@ -7,8 +7,9 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.20 26-Feb-2026"
-#define AM1SHORTVERSION "am1 v1.20"
+#define AM1VERSION "am1 v1.21 05-Mar-2026"
+#define AM1SHORTVERSION "am1 v1.21"
+#define SYMFILEVERSION "V2"             // used for import to check proper version
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
 
@@ -18,6 +19,7 @@
 
 #define WRDMASK 0777777 // PDP-1 word, 18 bits
 #define ADDRMASK 07777 // PDP-1 address, 12 bits
+#define MAXBANK 017
 
 // The warning ids we have
 #define WARN_1D 1

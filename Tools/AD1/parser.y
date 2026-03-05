@@ -13,6 +13,7 @@
 #include "pdp1inc.h"
 
 extern int lastAddr;
+extern int lastFormat;
 extern int base;
 extern int curBank;
 extern char *fmt8P;
@@ -35,6 +36,7 @@ extern bool loadFileData(void);
 extern SymbolP findSymbolByName(int bank, char *nameP);
 extern void listBreaks(void);
 extern void listWatches(void);
+extern char *getUnrestrictedFormat(int fmt);
 
 extern void helpFn(char *nameP);
 extern void showFn(int addr, int base);
@@ -214,7 +216,9 @@ cmd		: QUIT
                 }
                 | BANK
                 {
-                    printf("Bank %d\n", curBank);
+                    printf("Bank is ");
+                    printf(getUnrestrictedFormat(lastFormat), curBank);
+                    NEWLINE;
                 }
                 | BREAK SEPARATOR expr optINTEGER
                 {
@@ -275,6 +279,10 @@ cmd		: QUIT
                 | BASE SEPARATOR INTEGER
                 {
                     setBaseFn($3);
+                }
+                | BASE
+                {
+                    printf("Base is %d\n", base);
                 }
                 | SETFILE SEPARATOR SYMBOL
                 {
@@ -440,6 +448,12 @@ address         : SEPARATOR expr
                     }
 
                     $$ = $2;
+
+                    // If the address has no bank, use the current bank.
+                    if( !($2 & 0170000) )
+                    {
+                        $$ |= curBank << 12;
+                    }
                 }
                 ;
 

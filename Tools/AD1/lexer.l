@@ -24,6 +24,7 @@ extern void freeMem(void);
 /* this is to handle special cases for a few arguments, a hack */
 %s CMDARG
 %s REGARG
+%s BASEARG
 
 %%
 ^[a-z]+			{
@@ -31,13 +32,18 @@ extern void freeMem(void);
 
 			    if( (dispP = findCommand(dispatchTable, yytext)) )
 			    {
-				// We sometimes need to have a command word as an argument or register
+				// We sometimes need to have a command word as an argument or register,
+				// or we want to control how integers are converted.
 			    	switch( dispP->token )
 				{
 				case DELETE:
 				case ENABLE:
 				case DISABLE:
 				    BEGIN CMDARG;
+				    break;
+
+				case BASE:
+				    BEGIN BASEARG;
 				    break;
 
 				case BANK:
@@ -181,6 +187,13 @@ ss			{
 			}
 
 [0-9]+			{
+			    if( YYSTATE == BASEARG )
+			    {
+			    	// This is always a decimal number.
+				yylval.ival = atoi(yytext);
+				return(INTEGER);
+			    }
+
 			    if( (base == 8) && (strchr(yytext, '8') || strchr(yytext, '9')) )
 			    {
 				printf("decimal number %s, but in octal mode", yytext);
@@ -214,7 +227,8 @@ ss			{
 			    {
 			    	// We can have a register with the same name as a command
 				// that looks like a symbol here.
-				// Try to look it up, but only if it's longer than one char,
+				// We want to use the length matching for a command,
+				// so try to look it up, but only if it's longer than one char,
 				// because that might be a base specifier.
 				BEGIN INITIAL;
 				if( (strlen(yytext) > 1) &&(dispP = findCommand(dispatchTable, yytext)) )

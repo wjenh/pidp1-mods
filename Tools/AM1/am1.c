@@ -77,6 +77,7 @@
  * 16-Feb-2026 - just some warnings about locals hiding other locals or globals
  * 18-Feb-2026 - fix command line parsing, add -W=xxx error control, add line number and version to symbol file
  * 26-Feb-2026 - use extended adresses, bank and pc, in listings
+ * 05-Mar-2026 - change import to use V2 symtabs, set correct max bank, 16 not 32
  *
 */
 #include <unistd.h>

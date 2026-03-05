@@ -55,6 +55,7 @@ extern BreakpointP isBreakpoint(int addr);
 
 extern bool loadFileData(void);
 extern char *getFormat(int fmt);
+extern char *getUnrestrictedFormat(int fmt);
 extern void formatAndPrintOne(int fmt, int value);
 extern void formatAndPrintTwo(int fmt1, int addr, int fmt2,  int value);
 
@@ -522,12 +523,18 @@ BreakpointP brkP;
 void
 setBaseFn(int num)
 {
-    if( (num < 1) || (num > 32) )
+    switch( num )
     {
+    case 2:
+    case 8:
+    case 10:
+    case 16:
+        lastFormat = base = num;
+        break;
+
+    default:
         printf("Base must be beteeen 1 and 32\n");
     }
-
-    base = num;
 }
 
 // User gave a file name, clear any open and use it.

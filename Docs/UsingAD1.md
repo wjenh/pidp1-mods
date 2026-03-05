@@ -290,6 +290,10 @@ The valid choices are 2, 8, 10, and 16.\
 This is overriden by an explicit base in the number.\
 The initial base is 8.
 
+This command always interprets the integer in *base 10*.
+
+It also changes the current output format to the new base.
+
 ## BAnk integer
 
 Sets the default memory bank in use, 0-15 in decimal.

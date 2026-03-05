@@ -97,6 +97,7 @@ void listWatches();
 
 bool loadFileData(void);
 char *getFormat(int fmt);
+char *getUnrestrictedFormat(int fmt);
 void formatAndPrintOne(int fmt, int value);
 void formatAndPrintTwo(int fmt1, int addr, int fmt2,  int value);
 void printAscii(char ch);
@@ -361,7 +362,7 @@ char line[256];
     exit(0);
 }
 
-// Given a numeric format as for strtol(), return a format string for printf()
+// Given a numeric format as for strtol(), return a format string for printf().
 // If it isn't one of binary, octal, decimal, or hex, return octal.
 char *
 getFormat(int fmt)
@@ -383,6 +384,27 @@ getFormat(int fmt)
         return(fmt16P);
     default:
         return(fmt8P);
+    }
+}
+
+// Given a numeric format as for strtol(), return a format string for printf()
+// that doesn't have any number of digits, e.g. %d.
+char *
+getUnrestrictedFormat(int fmt)
+{
+    switch( fmt )
+    {
+    case BINARY:
+        return("%b");
+    case 0:
+    case OCTAL:
+        return("%o");
+    case DECIMAL:
+        return("%d");
+    case HEX:
+        return("%x");
+    default:
+        return("%o");
     }
 }
 

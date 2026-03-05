@@ -2,8 +2,8 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.18 and covers up through am1 version 1.20; it will be updated as needed.\
-Edit date 21-Feb-2026
+This is version 1.19 and covers up through am1 version 1.21; it will be updated as needed.\
+Edit date 05-Mar-2026
 
 ## What is **am1**?
 
@@ -770,8 +770,8 @@ The location counter is updated appropriately after either directive.
 
 ## Bank and cross-bank references
 
-The bank directive causes all following code to be placed in the bank given, which must be between 0-31 decimal,
-0-37 octal.
+The bank directive causes all following code to be placed in the bank given, which must be between 0-15 decimal,
+0-17 octal.
 
 Each bank has its own global symbols and constants. These are preserved for each bank, so if a subsequent
 bank command switches back to an earlier bank, all of its symbols and constants will still be valid.

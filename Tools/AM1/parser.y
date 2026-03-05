@@ -354,9 +354,10 @@ one_stmt	: expr
 		}
                 | BANK INTEGER
                 {
-                    if( ($2 < 0) || ($2 > 31) )
+                    if( ($2 < 0) || ($2 > MAXBANK) )
                     {
-                        verror("Bank number must be between 0-32 decimal, 037 octal, 1F hex");
+                        verror("Bank number must be between 0-%d decimal, %o octal, %x hex",
+                            MAXBANK, MAXBANK, MAXBANK);
                     }
 
                     if( localContextP )
@@ -1212,7 +1213,7 @@ SymNodeP symP;
 }
 
 // Process a symbol file, bring in all exported ones.
-// If the filename starts with <, it will be terminated with the same and means system include.
+// If the filename starts with <, it will be terminated with > and means system include.
 // Exported symbols found are created as globals in the bank they were defined in, a bank context
 // will be created if needed.
 void
@@ -1221,12 +1222,15 @@ importSymbols(char *filenameP)
 int bank;
 int origBank;
 int lastBank;
-long address;
+int lineno;
+int address;
+char typec;
 char *cP;
 FILE *infP;
 SymNodeP symP;
 BankContextP bankP;
 char str[256];
+char symbol[256];
 
     if( *filenameP == '<' )
     {
@@ -1247,20 +1251,45 @@ char str[256];
     origBank = curBank;                     // will need this later
     lastBank = curBank;
 
-    fgets(str, sizeof(str), infP);          // discard first line, the file name
+    // discard first line, the file name
+    if( !fgets(str, sizeof(str), infP) )
+    {
+        verror("file '%s' is empty", filenameP);
+    }
+
+    if( strcmp(str, "%%am1 symtab file%%\n") )
+    {
+        verror("file '%s' is not a symbol file", filenameP);
+    }
+
+    if( !fgets(str, sizeof(str), infP) )          // second line, the version number
+    {
+        verror("file '%s' is not a symbol file", filenameP);
+    }
+
+    if( strncmp(str, SYMFILEVERSION, strlen(SYMFILEVERSION)) )
+    {
+        verror("file '%s' is not a version %s symbol file", filenameP, SYMFILEVERSION);
+    }
+
+    fgets(str, sizeof(str), infP);              // third line, file name, just skip it
+
+    // Ok, now the symbols
     while( fgets(str, sizeof(str), infP) )
     {
-        address = strtol(str, &cP, 8);      // first the address, which is octal
-        bank = address >> 12;
+        // Remember, symbol addresses in the sym file are always octal.
+        if( sscanf(str, "%o %c %s %d\n", &address, &typec, symbol, &lineno) != 4 )
+        {
+            verror("symbol file '%s' has an incorrect line format", filenameP);
+        }
+
+        bank = (address >> 12) & MAXBANK;
         address &= 07777;
 
-        if( *(++cP) != 'X' )
+        if( typec != 'X' )
         {
             continue;                       // not an exported symbol
         }
-
-        cP += 2;                            // now the symbol name
-        *(cP + strlen(cP) - 1) = 0;         // get rid of the newline at the end
 
         if( bank != lastBank )
         {
@@ -1268,14 +1297,14 @@ char str[256];
             lastBank = bank;
         }
 
-        if( sym_find(&globalSymP, cP) )
+        if( sym_find(&globalSymP, symbol) )
         {
             fclose(infP);
             verror("imported symbol '%s' has already been defined", cP);
         }
 
-        symP = sym_make(cP, 0);
-        symP->lineno = lineno - 1;
+        symP = sym_make(symbol, 0);
+        symP->lineno = lineno;
         symP->flags |= SYMF_IMPORTED | SYMF_RESOLVED | SYM_GLOB;
         symP->value = address;
         symP->bank = bank;

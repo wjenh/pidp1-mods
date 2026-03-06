@@ -182,12 +182,9 @@ in the current bank.
 
 For example, a *jmp 123* in bank 1 is exactly the same code as a *jmp 123* in bank 0.
 But, the actual address in bank 1 is *010123*.
-This normally won't cause a problem, but there are two cases where addressing is important.
+This normally won't cause a problem, but there is one case where addressing is important.
 
-First, breakpoints are set on full addresses. If you want a breakpoint on address 100 in bank 1, you must use the full
-value of 010123.
-
-Second, symbols with the same name can exist in different banks with different values.
+Symbols with the same name can exist in different banks with different values.
 **ad1** keeps symbols with their full address, provided in the symbol table produced by **am1**.
 
 An example, assume a location in bank 1 named *loc*, and a location in bank 0 also named *loc*.
@@ -199,6 +196,18 @@ First, a default current bank can be set with the *bank* command. All unqualifie
 then only match symbols in that bank.
 
 Second, a *bank qualifier* can be added to a symbol name, e.g., *loc,1* to explicitly identify the bank.
+
+All other uses of an address automatically add the current bank if the address appears to be in bank 0.
+This is consistent with the way the PDP-1 (and pidp-1) deal with addresses in extended memory.
+If you want to address the actual bank 0, you can change banks to bank 0 or use a bank referemce,
+e.g. *break 100,0*.
+
+A bank reference can be applied to any expression and has the highest precedence of any operator.
+
+The action is that the expression is changed thus:
+```
+expression = (bank-ref << 12) | (expression & 07777)
+```
 
 ## Expressions
 
@@ -233,6 +242,7 @@ The priority is the same as that for **C** and the operations are the same.
 | ~        | bitwise complement     |
 | -        | unary minus, -n        |
 | ( )      | expression nesting     |
+| ,number  | bank reference         |
 
 ## Registers
 
@@ -430,6 +440,13 @@ The address is a full 16-bit address, so execution can start in any bank.
 
 This is equivalent to using the continue switch on the front panel while the single-instruction switch is on.\
 One instruction cycle is executed.
+
+If there is a line in the listing file, if present, that matches the pc address after the step,
+it will be displayed.
+
+Note that some instructions can take extra machine cycles.
+These may appear to not advance when stepping and take an additional step command.
+This is normal.
 
 ## STOp
 

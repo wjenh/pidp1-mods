@@ -1,7 +1,5 @@
 // This contains the interface defines for the ad1 debugger.
 // It is enabled by defining USEAD1 in pdp1.h.
-#ifdef USEAD1
-
 #ifndef AD1NTF_H
 #define AD1NTF_H
 
@@ -60,30 +58,5 @@ typedef struct {
     int value;      // value to fire on based on, ignored if onAny is set
     int lastVal;    // for detecting an any change
     } Watch, *WatchP;
-
-#endif
-
-#else
-
-#ifndef AD1NTF_H
-#define AD1NTF_H
-
-#define AD1_START(p) 0
-#define AD1_STEP(p) 0
-#define AD1_CONTINUE(p) 0
-#define AD1_SET_START(p)
-#define AD1_SET_STEP(p)
-#define AD1_SET_CONTINUE(p)
-#define AD1_CLEAR_START(p)
-#define AD1_CLEAR_STEP(p)
-#define AD1_CLEAR_CONTINUE(p)
-
-#define AD1_ENABLE_BREAKPOINTS(p)
-#define AD1_DISABLE_BREAKPOINTS(p)
-#define AD1_BREAKPOINTS_ENABLED(p) 0
-#define AD1_BREAKPOINT_HIT(p) 0
-#define AD1_SET_BREAKPOINT_HIT(p)
-#define AD1_CLEAR_BREAKPOINT_HIT(p)
-#endif
 
 #endif

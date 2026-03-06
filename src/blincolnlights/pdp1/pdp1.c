@@ -105,15 +105,14 @@ static int lastPenX;
 static int lastPenY;
 static pthread_mutex_t lightpenLock;
 
+// These added for wje mods
 void *lightpenListener(void *pdp1P);
 static char *onOff(bool flag);
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
 static bool checkLightPen(PDP1 *pdp1P);
-#ifdef USEAD1
 static void checkBreakpoints(PDP1 *pdp1P, int address);
 static void checkWatches(PDP1 *pdp1P);
-#endif
 
 // The emulator duplicates all of the original hardware
 // subcycles. Impressive.
@@ -1204,18 +1203,16 @@ int hack;
         if(IR_OPR && (MB & B9) ||   // hlt
             IR_INCORR ||
             pdp->single_cyc_sw ||
-            (pdp->single_inst_sw || AD1_STEP(pdp)) && CY0_INST_DONE ||
+            ((pdp->single_inst_sw || AD1_STEP(pdp)) && CY0_INST_DONE) ||
             !pdp->run_enable)
         {
             pdp->run = 0;
         }
 
-#ifdef USEAD1
         if( AD1_BREAKPOINT_HIT(pdp) || AD1_WATCH_HIT(pdp) )
         {
             pdp->run = 0;
         }
-#endif
 
         clrmd(pdp);
         TP(9)
@@ -1419,7 +1416,7 @@ int mask = 0;
 
     if(IR_INCORR ||
         pdp->single_cyc_sw ||
-        (pdp->single_inst_sw || AD1_STEP(pdp)) && DF_INST_DONE ||
+        ((pdp->single_inst_sw || AD1_STEP(pdp)) && DF_INST_DONE) ||
         !pdp->run_enable)
     {
         pdp->run = 0;
@@ -1924,8 +1921,7 @@ int r;
         ma_to_pc(pdp);
     }
 
-    if(pdp->single_cyc_sw ||
-            !pdp->run_enable)
+    if(pdp->single_cyc_sw || !pdp->run_enable)
     {
         pdp->run = 0;
     }
@@ -1988,10 +1984,8 @@ cycle(PDP1 *pdp)
         cycle1(pdp);
     }
 
-#ifdef USEAD1
     checkBreakpoints(pdp, pdp->epc | PC);
     checkWatches(pdp);
-#endif
 
     // update any IOTs regardless of cycle type
     dynamicIotProcessorDoPoll(pdp);             // wje - handle pseudo-async IOTs
@@ -3115,7 +3109,6 @@ static char resp[1024];
     return resp;
 }
 
-#ifdef USEAD1
 // Scan the breakpoint table to see if the passed address matches an enabled entry.
 // If so, check the count and if reached, signal a breakpoint.
 void
@@ -3199,4 +3192,3 @@ WatchP watchP;
         }
     }
 }
-#endif

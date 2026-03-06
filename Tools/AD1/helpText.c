@@ -209,7 +209,7 @@ char *numberHelp[] = {
 char *expressionHelp[] = {
     "In most places an address or value can be used, an expression can be used.",
     "An expression is composed of numbers and symbols connected by operators.",
-    "The operators are +, -, *, /, &, |, ^, ~, (, ).",
+    "The operators are +, -, *, /, &, |, ^, ~, (, ), ., and comma itself",
     "See the documentation for precedence, it follows C precedence.",
     "Computatios are done in 2's complement math, but this is only within a math operation.",
     "For examle, foo - 1 converts foo to 2's complement does the subtraction, then converts back.",
@@ -237,6 +237,16 @@ char *registerHelp[] = {
     "pf1-6, individual program flags",
     "tw, the test word switches",
     "as, the address switches.",
+    NIL};
+
+char *addressHelp[] = {
+    "Addresses are always a full 16 bits.",
+    "As in the PDP-1, an address with no bank used in an extended bank is an address in thab bank.",
+    "This also applies to symbols, 'list foo' looks up symbol foo in the current bank.",
+    "An explicit address can always be specified using the bank reference operator, comma.",
+    " Examples:",
+    "123,0 forces a bank 0 reference.",
+    "foo,3 looks up a symbol in bank 3.",
     NIL};
 
 // Print out a list of text, last line a NIL

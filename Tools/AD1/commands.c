@@ -22,6 +22,7 @@ int curBank;            // set by the bank cmd
 int windowSize = 3;     // 3 lines before and after the current line
 int brkCount;           // number of set breakpoints
 int watchCount;         // number of set watches
+bool didStep;           // step command issued, used in ad1.c to show line
 
 void helpFn(char *nameP);
 void showFn(int addr, int base);
@@ -332,10 +333,7 @@ startFn(int addr)
 {
     pdp1P->run_enable = 0;      // stop it
     pdp1P->ad1StartAddr = addr & 07777;    
-    if( addr > 4095 )           // start in extended memory
-    {
-        pdp1P->ad1ExtendedAddr = addr & 0170000;    
-    }
+    pdp1P->ad1ExtendedAddr = addr & 0170000;    
     AD1_CLEAR_STEP(pdp1P);
     AD1_SET_START(pdp1P);
     lastAddr = addr;
@@ -358,6 +356,7 @@ stepFn(void)
     {
         AD1_SET_STEP(pdp1P);
         pdp1P->run = 1;
+        didStep = true;
     }
 }
 

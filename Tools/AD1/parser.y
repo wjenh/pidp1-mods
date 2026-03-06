@@ -160,8 +160,9 @@ typedef struct argitem_t {
 %left MUL DIV
 %left CMPL
 %left UMINUS
+%left BREF
 
-%expect 0
+%expect 1
 
 %%
 
@@ -212,7 +213,7 @@ cmd		: QUIT
                     }
 
                     // set from the current extended address in use
-                    curBank = (pdp1P->epc) >> 12 & 0xF;
+                    curBank = (pdp1P->epc >> 12) & 0xF;
                 }
                 | BANK
                 {
@@ -220,9 +221,9 @@ cmd		: QUIT
                     printf(getUnrestrictedFormat(lastFormat), curBank);
                     NEWLINE;
                 }
-                | BREAK SEPARATOR expr optINTEGER
+                | BREAK address optINTEGER
                 {
-                    setBpFn($3, $4);
+                    setBpFn($2, $3);
                 }
                 | DELETE SEPARATOR INTEGER
                 {
@@ -344,9 +345,9 @@ cmd		: QUIT
                 {
                     nextFn();
                 }
-                | WATCH SEPARATOR expr optINTEGER
+                | WATCH address optINTEGER
                 {
-                    setWatchFn($3, $4);
+                    setWatchFn($2, $3);
                 }
                 | WINDOW SEPARATOR INTEGER
                 {
@@ -449,9 +450,9 @@ address         : SEPARATOR expr
 
                     $$ = $2;
 
-                    // If the address has no bank, use the current bank.
                     if( !($2 & 0170000) )
                     {
+                        // If the address has no bank, use the current bank.
                         $$ |= curBank << 12;
                     }
                 }
@@ -505,9 +506,29 @@ expr            : MINUS expr %prec UMINUS
                 {
                     $$ = $2;
                 }
-                | symbol
+                | SYMBOL
                 {
-                    $$ = $1->address;
+                SymbolP symP;
+
+                    if( !(symP = findSymbolByName(curBank, $1)) )
+                    {
+                        printf("Can't find symbol '%s' in bank %d.\n", $1, curBank);
+                        return(0);
+                    }
+
+                    $$ = symP->address;
+                }
+                | SYMBOL BREF
+                {
+                SymbolP symP;
+
+                    if( !(symP = findSymbolByName($2, $1)) )
+                    {
+                        printf("Can't find symbol '%s' in bank %d.\n", $1, $2);
+                        return(0);
+                    }
+
+                    $$ = symP->address;
                 }
                 | INTEGER
                 {
@@ -516,6 +537,11 @@ expr            : MINUS expr %prec UMINUS
                 | DOT
                 {
                     $$ = lastAddr;
+                }
+                | expr BREF
+                {
+                    // an explicitg bank reference overrides any other extended address
+                    $$ = ($2 << 12) | ($1 & 07777);
                 }
                 ;
 %%

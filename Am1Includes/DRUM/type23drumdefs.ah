@@ -5,14 +5,12 @@
 #define TRACKS  0d32
 
 // This defines the IOT instructions for the Type 23 drum.
-// Note this differs from the examples in that it does not add the iot
-// explicitly, so use is e.g. iot dia.
-#define dia 61
-#define dba 2061
-#define dwc 62
-#define dra 2062
-#define dcl 63
-#define dss 2063
+#define dia iot 61
+#define dba iot 2061
+#define dwc iot 62
+#define dra iot 2062
+#define dcl iot 63
+#define dss iot 2063
 
 // Additional flags, not compatible with native macro, only macro1.
 // These flags are in the IO register.

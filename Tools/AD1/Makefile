@@ -1,5 +1,6 @@
 CC=gcc -O0 -g
 BISONFLAGS=
+# CONFLICTS=-Wcounterexamples
 
 all: ad1
 
@@ -47,7 +48,7 @@ lex.yy.c: lexer.l y.tab.c
 y.tab.h: y.tab.o
 
 y.tab.c: parser.y pdp1inc.h ad1.h
-	bison $(BISONFLAGS) -o y.tab.c -d parser.y
+	bison $(BISONFLAGS) $(CONFLICTS) -o y.tab.c -d parser.y
 
 y.tab.o: y.tab.c
 	$(CC) -DYYDEBUG=1 -c y.tab.c

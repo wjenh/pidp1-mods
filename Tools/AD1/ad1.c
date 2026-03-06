@@ -68,9 +68,10 @@ Dispatch dispatchTable[] = {
 
 // This is a hack to add extra help topics easily
 Dispatch extraHelpTable[] = {
-    {"numbers", 1, 0, numberHelp},
-    {"expressions", 1, 0, expressionHelp},
+    {"numbers", 2, 0, numberHelp},
+    {"expressions", 3, 0, expressionHelp},
     {"registers", 1, 0, registerHelp},
+    {"addresses", 1, 0, addressHelp},
     {0,0,0}
     };
 
@@ -95,6 +96,7 @@ void clearWatch(WatchP watchP);
 void deleteAllWatches(void);
 void listWatches();
 
+int getCurrentPC(void);
 bool loadFileData(void);
 char *getFormat(int fmt);
 char *getUnrestrictedFormat(int fmt);
@@ -110,6 +112,7 @@ extern int watchCount;  // number of set watches
 extern int base;        // current number base
 extern int lastFormat;  // the last format type used
 extern int curBank;     // set by the bank cmd
+extern bool didStep;    // step command issued
 
 extern int yydebug;
 extern int yy_flex_debug;
@@ -266,8 +269,8 @@ char line[256];
 
         while( true )
         {
-            // We only need to have timeouts if we have some
-            if( brkCount || watchCount )
+            // We only need to have timeouts if we have a reason
+            if( brkCount || watchCount || didStep )
             {
                 FD_SET(inFd, &read_fds);    // has to be reset each time
                 i = select(inFd + 1, &read_fds, NULL, NULL, &timeout);
@@ -316,9 +319,9 @@ char line[256];
 
             write(STDOUT_FILENO, "Cmd? ", 5);
             activeBrkP = NIL;
+            didStep = false;    // no need to report a step
         }
-
-        if( activeWatchP )
+        else if( activeWatchP )
         {
             // watch hit
             printf("\nWatch %d hit", activeWatchP->number);
@@ -334,6 +337,16 @@ char line[256];
 
             write(STDOUT_FILENO, "Cmd? ", 5);
             activeWatchP = NIL;
+            didStep = false;    // no need to report a step
+        }
+        else if( didStep && !pdp1P->run )
+        {
+            if( (i = getLineFromAddress(getCurrentPC())) > 0 )
+            {
+                printLine(i);
+            }
+            
+            didStep = false;
         }
 
         if( !fgets(line, sizeof(line), stdin) )
@@ -848,12 +861,12 @@ int watchno;
 // Search for a command, applying significant char matching.
 // If found, return the dispatch entry, else NIL.
 DispatchP
-findCommand(DispatchP dipatchTable, char *nameP)
+findCommand(DispatchP tableP, char *nameP)
 {
 int i;
 DispatchP cmdP;
 
-    for( cmdP = dispatchTable; cmdP->nameP != NIL; ++cmdP )
+    for( cmdP = tableP; cmdP->nameP != NIL; ++cmdP )
     {
         i = strlen(nameP);
 
@@ -975,6 +988,13 @@ Word data;
 
     fclose(fP);
     return( true );
+}
+
+// Return the current full address of the pc in the emulator, pd and epc.
+int
+getCurrentPC()
+{
+    return( (pdp1P->epc & 0170000) | (pdp1P->pc & 07777) );
 }
 
 void

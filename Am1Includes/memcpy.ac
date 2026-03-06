@@ -20,6 +20,7 @@ local
     idx %cpydn
     lac memcpy
     cma
+    eem
 %cl, add [1
     lsw
     lac i %ads
@@ -28,6 +29,7 @@ local
     idx %adt
     lsw
     sza
+    lem
     jmp %cl
 %cpydn, jmp .
 %ads, 0

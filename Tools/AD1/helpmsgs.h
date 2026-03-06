@@ -29,5 +29,6 @@ extern char *windowHelp[];
 extern char *numberHelp[];
 extern char *expressionHelp[];
 extern char *registerHelp[];
+extern char *addressHelp[];
 
 #endif

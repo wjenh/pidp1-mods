@@ -5,30 +5,30 @@
 // See the documentation.
 // NOTE that rcr in DCS conflicts with rcr, rotate-combined-right.
 // It is renamed rchr here.
-#define rch 0022
-#define rrc 0122
-#define rchr 1022
-#define rsc 1122
-#define tcb 4022
-#define ssb 4122
-#define tcc 5022
+#define rch iot 0022
+#define rrc iot 0122
+#define rchr iot 1022
+#define rsc iot 1122
+#define tcb iot 4022
+#define ssb iot 4122
+#define tcc iot 5022
 
 // rch and rcr will clear the IO register if
 // this is added to the IOT, else it ors.
 #define rchclr 002000
 
 // Extended commands.
-#define rwe 0222
-#define scb 4222
-#define rle 4322
-#define rpc 4422
-#define rci 4522
-#define ric 4622
-#define rcs 4722
-#define rwe 5122
-#define roc 5222
-#define res 5322
-#define rxl 5422
+#define rwe iot 0222
+#define scb iot 4222
+#define rle iot 4322
+#define rpc iot 4422
+#define rci iot 4522
+#define ric iot 4622
+#define rcs iot 4722
+#define rwe iot 5122
+#define roc iot 5222
+#define res iot 5322
+#define rxl iot 5422
 
 // symbols not compatible with native macro
 // dcfxxx are single bit flags

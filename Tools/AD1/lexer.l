@@ -14,7 +14,7 @@
 int parseAndExecute(char *lineP);
 
 extern int base;
-extern DispatchP dispatchTable;
+extern Dispatch dispatchTable[];
 
 extern DispatchP findCommand(DispatchP tbl, char *strP);
 extern void *allocMem(int bytes);
@@ -81,10 +81,11 @@ extern void freeMem(void);
 \,[0-9]{1,2}		{
 			int ival;
 
-			    ival = strtol(yytext+1, 0, 10);
+			    ival = strtol(yytext+1, 0, base);
 			    if( (ival < 0) || (ival >= MAXBANKS) )
 			    {
-				printf("A bank number must be between 0-%d decimal.\n", MAXBANKS - 1);
+				printf("A bank number must be between 0-%d decimal or other base equivalent.\n",
+					MAXBANKS - 1);
 				return(FAIL);
 			    }
 

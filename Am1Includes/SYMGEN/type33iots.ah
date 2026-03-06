@@ -3,11 +3,11 @@
 
 // Draw characters using the Type 33 Symbol Generator
 
-#define gpl 002027
-#define gpr 000027
-#define gcf 000127
-#define glf 002026
-#define gsp 000026
+#define gpl iot 2027
+#define gpr iot 27
+#define gcf iot 127
+#define glf iot 2026
+#define gsp iot 26
 
 // Macros for getting the size in pixels of a character and spacing.
 // DOTSIZE is the number of pixels between dots, vertially and horizontally

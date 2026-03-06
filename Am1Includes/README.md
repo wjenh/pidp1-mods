@@ -8,6 +8,8 @@ All ending in *.ac* incldue code, place them in your code as desired.
 
 All define markers so they are only included once, code includes might include other code as well as definitions.
 
+Defines of iot commands already have iot specified, no need to do so in code although it won't hurt if you do.
+
 ## What's here?
 
 - farmemcpy.ac, copy memory from one bank to another

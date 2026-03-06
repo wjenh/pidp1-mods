@@ -7,9 +7,9 @@
 // cls - set clock parameters
 // cct - set countdown timer
 
-#define rck 32
-#define cls 2032
-#define cct 2132
+#define rck iot 32
+#define cls iot 2032
+#define cct iot 2132
 
 // Flags in AC for cls, not compatible with macro, only macro1
 // clss16 - enable SBS16, can't disable

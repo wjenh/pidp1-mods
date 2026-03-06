@@ -1,5 +1,4 @@
 #include <stdbool.h>
-#define USEAD1
 #include "ad1intf.h"
 
 typedef u32 Word;
@@ -150,7 +149,6 @@ struct PDP1
         // wje - extra flags for cks, settable in IOTs
         int cksflags;
         // wje - added for ad1
-#ifdef USEAD1
         int ad1flags;
         int ad1StartAddr;   // these are used by the start command
         int ad1ExtendedAddr;
@@ -162,7 +160,6 @@ struct PDP1
         int ad1watchNo;   // if a watch was hit, which one, index in watch table
         bool ad1watchHit;  // true if a watch was hit
         Watch ad1Watches[AD1_NUM_WATCHES]; // ad1 manages this
-#endif
 };
 
 #define IR pdp->ir

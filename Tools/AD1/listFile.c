@@ -4,13 +4,11 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include "ad1.h"
+
 #define MAXLINES    4000
 #define MEMBANKS    16
 #define MEMSIZE     4096
-
-// Define here so we don't need to drag in ad1.h
-#define NIL (void *)0
-#define NUL '\0'
 
 static int numLines;
 static int curLine;
@@ -19,15 +17,19 @@ static FILE *fP;
 
 // How we map line numbers into file locations
 static long lineMap[MAXLINES];
-static long *memMap[MEMBANKS];  // we don't allocate until we need to
+// And addresses to line numbers
+// Since multiple source lines can use the same address, we keep them all in a list
+static MapEntryPP memMap[MEMBANKS];  // we don't allocate until we need to
 
 bool isFileMapped(void);
 bool isMemMapped(void);
 bool loadFileMap(bool isLst, char *filenameP);
 void closeListFile(void);
+MapEntryP getLinesFromAddress(int addr);
 int getLineFromAddress(int addr);
 int getLineCount(void);
 int getCurrentLineNumber(void);
+void printLines(MapEntryP linesP);
 bool printLine(int line);
 bool printNextLine(void);
 
@@ -52,11 +54,11 @@ bool
 loadFileMap(bool fromLst, char *filenameP)
 {
 int i;
-int lineno;
 int bank;
 int address;
 long offset;
-long *memP;
+MapEntryP memP, newP;
+MapEntryPP bankP;
 char *cP, *cP2;
 char tmpbuf[1024];
 
@@ -79,7 +81,7 @@ char tmpbuf[1024];
 
         if( fromLst )
         {
-            // Pick up the line number and address for building the memory map.
+            // Pick up the address for building the memory map.
             // Line will be of the form:
             // [ ]+lineno: address (rest of line)
             // Line numbers are always decimal, addresses octal.
@@ -90,8 +92,6 @@ char tmpbuf[1024];
             if( (cP = strchr(tmpbuf,':')) )
             {
                 *cP++ = NUL;
-                //lineno = strtol(tmpbuf, &cP2, 10);
-                lineno = numLines - 1;    // it was already incremented above
 
                 // cP now pointing to the space after the :
                 address = strtol(cP, &cP2, 8);
@@ -106,16 +106,29 @@ char tmpbuf[1024];
                 address &= 0xFFF;
                 if( (bank >= 0) && (bank < MEMBANKS) )
                 {
-                    if( !(memP = memMap[bank]) )    // not allocated yet
+                    if( !(bankP = memMap[bank]) )    // not allocated yet
                     {
-                        memP = (long *)calloc(MEMSIZE, sizeof(long));
-                        memMap[bank] = memP;
+                        bankP = (MapEntryPP)calloc(MEMSIZE, sizeof(MapEntryP));
+                        memMap[bank] = bankP;
                         memMapped = true;
                     }
 
-                    if( !memP[address] )
+                    newP = (MapEntryP)calloc(1, sizeof(MapEntry));
+                    newP->lineNo = numLines;
+
+                    if( !bankP[address] )
                     {
-                        memP[address] = lineno;    // if muliple users of addr, take only the first
+                        // First one
+                        bankP[address] = newP;    // if muliple users of addr, take only the first
+                    }
+                    else
+                    {
+                        // Get to the end of the list
+                        for( memP = bankP[address]; memP->nextP; memP = memP->nextP )
+                        {
+                        }
+
+                        memP->nextP = newP;
                     }
                 }
             }
@@ -126,34 +139,50 @@ char tmpbuf[1024];
     return(true);
 }
 
-// If we have a mem->line map, get the line number.
-// If not, return -1.
-// Address is a full 16 bit address.
+// Try to get a line number, return it if found else -1.
 int
 getLineFromAddress(int address)
 {
-int bank;
-long *memP;
+MapEntryP entryP;
 
-    if( !isMemMapped() )
+    if( (entryP = getLinesFromAddress(address)) )
     {
-        return( -1 );
-    }
-
-    bank = (address & 0xF000) >> 12;
-    address &= 0xFFF;
-    if( (bank >= 0) && (bank < MEMBANKS) )
-    {
-        if( !(memP = memMap[bank]) )    // nothing here
-        {
-            return( -1 );
-        }
-
-        return( memP[address] );
+        return( entryP->lineNo );
     }
     else
     {
-        return( -1 );
+        return(-1);
+    }
+}
+
+// If we have a mem->line map, get the line number.
+// If not, return -1.
+// Address is a full 16 bit address.
+MapEntryP
+getLinesFromAddress(int address)
+{
+int bank;
+MapEntryPP bankP;
+
+    if( !isMemMapped() )
+    {
+        return( NIL );
+    }
+
+    bank = (address & 0170000) >> 12;
+    address &= 07777;
+    if( (bank >= 0) && (bank < MEMBANKS) )
+    {
+        if( !(bankP = memMap[bank]) )    // nothing here
+        {
+            return( NIL );
+        }
+
+        return( bankP[address] );
+    }
+    else
+    {
+        return( NIL );
     }
 }
 
@@ -168,7 +197,9 @@ getLineCount()
 void
 closeListFile()
 {
-int i;
+int i, j;
+MapEntryPP bankP;
+MapEntryP entryP, nextP;;
 
     if( fP )
     {
@@ -184,12 +215,30 @@ int i;
         memMapped = false;
         for( i = 0; i < MEMBANKS; ++i )
         {
-            if( memMap[i] )
+            if( (bankP = memMap[i]) )
             {
+                for( entryP  = *bankP, j = 0; j < MEMSIZE; ++j, ++entryP )
+                {
+                    nextP = entryP->nextP;
+                    free(entryP);
+                    entryP = nextP;
+                }
+
                 free( memMap[i] );
                 memMap[i] = NIL;
             }
         }
+    }
+}
+
+// Print multiple lines from a MapEntry list.
+void
+printLines(MapEntryP linesP)
+{
+    while( linesP )
+    {
+        printLine(linesP->lineNo);
+        linesP = linesP->nextP;
     }
 }
 

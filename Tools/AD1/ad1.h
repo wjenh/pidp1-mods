@@ -1,6 +1,6 @@
 // Primary include file for ad1
 
-#define VERSION "1.2 4-Mar-2026"
+#define VERSION "1.3 7-Mar-2026"
 
 #include <stdint.h>
 
@@ -75,3 +75,10 @@ typedef struct arg_s {
     struct arg_s *nextP;
     int value;
     } Arg, *ArgP;
+
+// For the address to line number(s) mapping
+typedef struct MapEntry_t
+{
+    int lineNo;
+    struct MapEntry_t *nextP;
+} MapEntry, *MapEntryP, **MapEntryPP;

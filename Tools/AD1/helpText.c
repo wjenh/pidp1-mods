@@ -54,10 +54,12 @@ char *listHelp[] = {
     "If just the original source file is available, positioning by line number will the the only available.",
     "List with no arguments lists the next set of lines, or if none have been listed before, lines",
     "starting from the first line.",
-    "A numeric value lists from that line in the file.",
+    "A decimal-only value lists from that line in the file.",
     "A numeric value prefixed by an @ lists from the line at that address.",
     "A string value lists from the location of that symbol in the file if a symbol table is available.",
     "If there is no such symbol, an error is given.",
+    "A dot lists from the last memory address specifed.",
+    "A dot followed by + or - an integer  value lists frm the last memory address offset by the value.",
     "An optional format specifier can be added. This does not change the inpupt base, only the display",
     "Specifiers are:",
     "b - binary",
@@ -77,6 +79,7 @@ char *listHelp[] = {
 char *windowHelp[] = {
     "The window command sets the number of lines before and after the line being displayed by",
     "the line command. The default is 3",
+    "The number is always a decimal number.",
     "If the window would cause lines before the first or after the last to be displayed,",
     "only valid lines will be displayed,",
     "Example: win 3",
@@ -92,6 +95,7 @@ char *bankHelp[] = {
 char *baseHelp[] = {
     "The base command sets the default numeric base to the value given,",
     "which must be 2, 8, 10, or 16",
+    "The base specifier is always a decimal number of one of those values.",
     "Example: base 10",
     NIL};
 
@@ -105,6 +109,7 @@ char *deleteHelp[] = {
     "The delete command removes an existing breakpoint by its number.",
     "or if no number is given, all breakpoints.",
     "An error will be given if there is no breakpoint.",
+    "The number is always a decimal number.",
     "Examples:",
     "del 10",
     "del",
@@ -116,6 +121,7 @@ char *deleteHelp[] = {
 char *disableHelp[] = {
     "The disable command disables but does not remove  an existing breakpoint by its number.",
     "An error will be given if there is no breakpoint.",
+    "The number is always a decimal number.",
     "Example: disa 10",
     "If the word watch follows the disable, then this applies to watches.",
     "Example: di w 10",
@@ -124,6 +130,7 @@ char *disableHelp[] = {
 char *enableHelp[] = {
     "The enable command enables a disabled breakpoint by its number.",
     "An error will be given if there is no breakpoint.",
+    "The number is always a decimal number.",
     "Example: en 10",
     "If the word watch follows the disable, then this applies to watches.",
     "Example: en w 10",
@@ -204,6 +211,7 @@ char *numberHelp[] = {
     "These mean the obvious, binary, octal, decimal, or hexadecimal.",
     "Using an override does not change the current default base.",
     "Example: 0x3f or 0x3F",
+    "Some command arguments ar always decimal numbers, see their help.",
     NIL};
 
 char *expressionHelp[] = {

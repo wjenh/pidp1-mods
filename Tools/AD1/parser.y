@@ -123,6 +123,8 @@ typedef struct argitem_t {
 
 %token INTEGER
 %type <ival> INTEGER
+%token DECINTEGER
+%type <ival> DECINTEGER
 %token SYMBOL
 %type <strP> SYMBOL
 %token BREF
@@ -142,16 +144,17 @@ typedef struct argitem_t {
 
 /* non-terminals */
 %type <cmdP> cmd
-%type <ival> optINTEGER
-%type <ival> optBREF
+%type <ival> integer
+%type <ival> optDECINTEGER
 %type <ival> optBase
 %type <ival> expr
+%type <ival> dotexpr
 %type <ival> address
-%type <symP> symbol
 %type <ival> arg
 
 /* precedence for operators */
 
+%left BREF
 %left OR
 %left XOR
 %left AND
@@ -159,10 +162,11 @@ typedef struct argitem_t {
 %left PLUS MINUS
 %left MUL DIV
 %left CMPL
-%left UMINUS
-%left BREF
+%right UMINUS
+%left SYMBREF
 
-%expect 1
+/* s-r on BREF, UMINUS */
+%expect 2
 
 %%
 
@@ -221,11 +225,11 @@ cmd		: QUIT
                     printf(getUnrestrictedFormat(lastFormat), curBank);
                     NEWLINE;
                 }
-                | BREAK address optINTEGER
+                | BREAK address optDECINTEGER
                 {
                     setBpFn($2, $3);
                 }
-                | DELETE SEPARATOR INTEGER
+                | DELETE SEPARATOR DECINTEGER
                 {
                     deleteBpFn($3);
                 }
@@ -245,19 +249,19 @@ cmd		: QUIT
                 {
                     debugFn();
                 }
-                | ENABLE SEPARATOR expr
+                | ENABLE SEPARATOR DECINTEGER
                 {
                     enableBpFn($3);
                 }
-                | ENABLE SEPARATOR WATCH SEPARATOR expr
+                | ENABLE SEPARATOR WATCH SEPARATOR DECINTEGER
                 {
                     enableWatchFn($5);
                 }
-                | DISABLE SEPARATOR expr
+                | DISABLE SEPARATOR DECINTEGER
                 {
                     disableBpFn($3);
                 }
-                | DISABLE SEPARATOR WATCH SEPARATOR expr
+                | DISABLE SEPARATOR WATCH SEPARATOR DECINTEGER
                 {
                     disableWatchFn($5);
                 }
@@ -277,7 +281,7 @@ cmd		: QUIT
                 {
                     setFn(REGISTER, $3, $4);
                 }
-                | BASE SEPARATOR INTEGER
+                | BASE SEPARATOR DECINTEGER
                 {
                     setBaseFn($3);
                 }
@@ -293,15 +297,11 @@ cmd		: QUIT
                 {
                     listFn(NOARG);
                 }
-                | LIST SEPARATOR INTEGER
+                | LIST SEPARATOR DECINTEGER
                 {
                     listFn($3);
                 }
-                | LIST SEPARATOR symbol
-                {
-                    listFn($3->lineno);
-                }
-                | LIST SEPARATOR DOT 
+                | LIST SEPARATOR dotexpr
                 {
                 int line;
 
@@ -313,15 +313,11 @@ cmd		: QUIT
                     line = getLineFromAddress(lastAddr);
                     if( line <= 0 )
                     {
-                        printf("No line can be found for the current addres.\n");
+                        printf("No line can be found for the current address.\n");
                         return(0);
                     }
 
-                    listFn(line);
-                }
-                | LIST expr
-                {
-                    listFn($2);
+                    listFn(line + $3);
                 }
                 | LIST SEPARATOR LINEAT expr
                 {
@@ -335,7 +331,7 @@ cmd		: QUIT
                     line = getLineFromAddress($4);
                     if( line <= 0 )
                     {
-                        printf("No line can be found for that addres.\n");
+                        printf("No line can be found for that address.\n");
                         return(0);
                     }
 
@@ -345,11 +341,11 @@ cmd		: QUIT
                 {
                     nextFn();
                 }
-                | WATCH address optINTEGER
+                | WATCH address expr
                 {
                     setWatchFn($2, $3);
                 }
-                | WINDOW SEPARATOR INTEGER
+                | WINDOW SEPARATOR DECINTEGER
                 {
                     setWindowFn($3);
                 }
@@ -360,7 +356,54 @@ cmd		: QUIT
                 }
 		;
 
-optINTEGER      : SEPARATOR INTEGER
+integer         : INTEGER
+                {
+                    $$ = $1;
+                }
+                | DECINTEGER
+                {
+                char str[64];
+                char *cP;
+                    
+                    // Messy base enforcement
+                    sprintf(str, "%d", $1);
+                    if( base == 2 )
+                    {
+                        for( cP = str; *cP; )
+                        {
+                            switch( *cP++ )
+                            {
+                            case '0':
+                            case '1':
+                                break;
+
+                            default:
+                                yyerror("decimal number given, but in binary mode");
+                            }
+                        }
+
+                        $$ = strtol(str, NIL, 2);
+                    }
+                    else if( base == 8 )
+                    {
+                        if( strchr(str, '8') || strchr(str, '9') )
+                        {
+                            yyerror("decimal number given, but in octal mode");
+                        }
+
+                        $$ = strtol(str, NIL, 8);
+                    }
+                    else if( base == 16 )
+                    {
+                        $$ = strtol(str, NIL, 16);
+                    }
+                    else
+                    {
+                        $$ = $1;
+                    }
+                }
+
+optDECINTEGER   : SEPARATOR DECINTEGER
                 {
                     $$ = $2;
                 }
@@ -418,26 +461,6 @@ arg             : SEPARATOR expr
                 {
                     $$ = $2;
                 }
-                ;
-
-symbol          : SYMBOL optBREF
-                {
-                SymbolP symP;
-
-                    if( !(symP = findSymbolByName($2, $1)) )
-                    {
-                        printf("Can't find symbol '%s' in bank %d.\n", $1, $2);
-                        return(0);
-                    }
-
-                    $$ = symP;
-                }
-
-optBREF         : BREF
-                {
-                    $$ = $1;
-                }
-                | {$$ = curBank;}
                 ;
 
 address         : SEPARATOR expr
@@ -518,7 +541,7 @@ expr            : MINUS expr %prec UMINUS
 
                     $$ = symP->address;
                 }
-                | SYMBOL BREF
+                | SYMBOL BREF %prec SYMBREF
                 {
                 SymbolP symP;
 
@@ -530,7 +553,7 @@ expr            : MINUS expr %prec UMINUS
 
                     $$ = symP->address;
                 }
-                | INTEGER
+                | integer
                 {
                     $$ = $1;
                 }
@@ -540,10 +563,25 @@ expr            : MINUS expr %prec UMINUS
                 }
                 | expr BREF
                 {
-                    // an explicitg bank reference overrides any other extended address
+                    // an explicit bank reference overrides any other extended address
                     $$ = ($2 << 12) | ($1 & 07777);
                 }
                 ;
+
+dotexpr         : DOT
+                {
+                    $$ = 0;
+                }
+                | DOT PLUS INTEGER
+                {
+                    $$ = $3;
+                }
+                | DOT MINUS INTEGER
+                {
+                    $$ = -$3;
+                }
+                ;
+
 %%
 int
 yywrap()

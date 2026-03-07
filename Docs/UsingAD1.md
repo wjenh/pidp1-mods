@@ -2,8 +2,8 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.2 and covers up through ad1 version 1.2; it will be updated as needed.\
-Edit date 1-Mar-2026 minor edits
+This is version 1.3 and covers up through ad1 version 1.3; it will be updated as needed.\
+Edit date 7-Mar-2026
 
 ## What is **ad1**?
 
@@ -132,6 +132,28 @@ Note that the *shared* option must be on in the pidp-1 configuration file in ord
 As usual, just type 'make'. This assumes you have installed the pidp1-mods release and let it
 install Flex and Bison.
 
+## Numeric values
+
+How numbers are entered and their base depends upon context.
+
+For expressions, see below, and addresses a number can be in base 2, 8, 10, or 16.
+The default is set by the *base* command.
+
+A number can also have a base specifier to explicitly give the base regardless of the base setting.
+These prefix a number and have the form:
+- 0b Binary, the digits 0-1 are allowed
+- 0o Octal, the digits 0-7 are allowed
+- 0d Decimal, the digits 0-9 are allowed
+- 0x Hexadecimal, the digits 0-9A-Fa-f are allowed
+
+For example, *break 0x4F*.
+
+For some parameters to commands, the number is *always* decimal, any base setting is ignored, a base specifier
+is not allowed.
+
+For example, a breakpoint number is always decimal, but a breakpoint address can be in any of the allowed bases.
+
+This is noted in each command.
 ## Line numbers, addresses, and symbols
 
 What is available depends upoon which of the filenames mentioned above are present.
@@ -150,10 +172,15 @@ does not necessarily match line 11, especially if there are include files.
 When a listing file is used, the line number shown is ignored and the actual line number in the listing
 file is used for creating the map and, if a symbol file is also being used, to set the lines for the symbols.
 
+Sometimes multiple lines have the same address, such as when multiple instructions are given on the same line.
+In this case, listing that address lists all lines for that address.
+
 If only a source file is being used, then the line numbers will be from that file and if a symbol file
 is also being used, the line nubmers from the symbol file will be used for the symbol locations.
 
-## Numbers, ones complement, twos complement, oh my
+Line numbers are always decimal.
+
+## Ones complement, twos complement, oh my
 
 The PDP-1 used 1's complement math, which no modern computers use.
 But, **ad1** runs on a modern computer and uses 2's complement math.
@@ -211,7 +238,7 @@ expression = (bank-ref << 12) | (expression & 07777)
 
 ## Expressions
 
-In general, anywhere a numeric value is needed, an expression can be used, e.g:
+In general, anywhere a numeric value or address is needed, an expression can be used, e.g:
 
 ```
 start 100
@@ -280,7 +307,8 @@ for the command.
 
 Arguments are in several forms. The names used in the descriptions means:
 
-- integer, an integer number
+- decimal, a decimal-only integer number
+- integer, an integer number in any of the allowed bases
 - value, an integer , or,
 - value, a symbol imported from an **am1** symbol file, with an optional *bank qualifier*, *symbol,banknum*
 - expression, as noted aboe
@@ -292,7 +320,7 @@ Arguments are in several forms. The names used in the descriptions means:
 With no argument, a list of all commands and topics is shown with the minimum length needed indicated.\
 If a command name or topic is given, the specific help for that is shown.
 
-## BASe integer
+## BASe decimal
 
 Sets the default base that numbers will use when typed in.
 
@@ -300,13 +328,13 @@ The valid choices are 2, 8, 10, and 16.\
 This is overriden by an explicit base in the number.\
 The initial base is 8.
 
-This command always interprets the integer in *base 10*.
+This command always interprets the number in *base 10*.
 
 It also changes the current output format to the new base.
 
 ## BAnk integer
 
-Sets the default memory bank in use, 0-15 in decimal.
+Sets the default memory bank in use, 0-15 in decimal or the equvalent in other bases.
 
 When set to any value other than zero, all addresses that are < 4096 in decimal are assumed to be in this bank.\
 A base qualifier, *val,basenum*, overrides this setting.
@@ -315,6 +343,8 @@ A base qualifier, *val,basenum*, overrides this setting.
 
 Sets a breakpoint at the given address with an optional count of how many times it must be hit before it is reported.
 The breakpoint is automatically enabled.
+
+This command always interprets the count in *base 10*.
 
 When reported, the pidp-1 is halted.\
 
@@ -326,18 +356,22 @@ be hit, such as data or variables. Use a watch instead.
 This is equivalent to using the continue switch on the front panel.
 If the pidp-1 is halted, execution is resumed.
 
-## DElete [Watch] [integer]
+## DElete [Watch] [decimal]
 
-If the integer is the number of a set breakpoint, delete it.\
-If no integer is given, a prompt is given and if confirmed deletes all breakpoints.
+If the decimal is the number of a set breakpoint, delete it.\
+If no decimal is given, a prompt is given and if confirmed deletes all breakpoints.
+
+This command always interprets the number in *base 10*.
 
 If watch is specified, then this applies to watches instead of breakpoints.
 It can be shortened the same as when used as a command.
 
-## DIsable [Watch] [integer]
+## DIsable [Watch] [decimal]
 
-If the integer is the number of a set breakpoint, disable but don't delete it.\
+If the decimal is the number of a set breakpoint, disable but don't delete it.\
 It will not be procoessed if encountered until it is enabled again.
+
+This command always interprets the number in *base 10*.
 
 If watch is specified, then this applies to watches instead of breakpoints.
 It can be shortened the same as when used as a command.
@@ -356,27 +390,30 @@ The name can be the basename of a program file, or have a *.am1*, *.sym*, or a *
 names will be derived.
 This is the same as if the name was given on the command line when **ad1** was started.
 
-## Enable [Watch] [integer]
+## Enable [Watch] [decimal]
 
-If the integer is the number of a set breakpoint, enable it if it is enabled.\
+If the decimal is the number of a set breakpoint, enable it if it is enabled.\
 It will again be procoessed if encountered.
+
+This command always interprets the number in *base 10*.
 
 If watch is specified, then this applies to watches instead of breakpoints.
 It can be shortened the same as when used as a command.
 
-## List [number | symbol | @number| .]
+## List [decimal | expression | @number | .]
 
-If a source or listing file is open, list lines of text from it.
+If a source or listing file is open, list lines of text from it.\
+If no argument is given, list from the next line after the last one listed, or if none, the first line.\
+If the argument is a decimal, it is the line number to list.\
+If it is a symbol, it is the line number of the line the symbol was assigned a location.
 
-If no argument is given, list from the next line after the last one listed, or if none, the first line.
-
-If the argument is a number, it is the line number to list.\
-If it is a symbol, it is the line number of the line the symbol was assigned a location.\
 If the number is preceeded by @, then it is the line that corresponds to that address in the listing file,
 *line at address*.\
+This form allows a number in any valid base.
+
 if a . (period, dot) is given, it means *list from the line corresponding to the last address used*.
 
-If an empty line is entered, it is equivalent to enterint this command with no arguments.
+If an empty line is entered, it is equivalent to entering this command with no arguments.
 
 If the file was just a source file, then lines can only be viewed by line number.\
 Otherwise, if the **ad1** .lst file is found, full functionality is available.

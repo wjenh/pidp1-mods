@@ -9,6 +9,7 @@
  * 28-Feb-26 wje - initial version
  * 2-Mar-26 wje - fix memory mapping for banks other than 0
  * 4-Mar-26 wje - add new show formats
+ * 7-Mar-26 wje - restrict some cmd args to decimal, add multi-line at one address support
  *
 */
 #include <stdlib.h>
@@ -112,7 +113,6 @@ extern int watchCount;  // number of set watches
 extern int base;        // current number base
 extern int lastFormat;  // the last format type used
 extern int curBank;     // set by the bank cmd
-extern bool didStep;    // step command issued
 
 extern int yydebug;
 extern int yy_flex_debug;
@@ -122,7 +122,7 @@ extern char *symNameP;
 
 extern SymbolP findSymbolByName(char *nameP);
 extern int parseAndExecute(char *lineP);
-extern int getLineFromAddress(int addr);
+extern MapEntryP getLinesFromAddress(int addr);
 extern int signExtend(int oc);
 extern int twosCompl(int val);
 extern int onesCompl(int val);
@@ -159,6 +159,7 @@ char *cP;
 DispatchP cmdP;
 BreakpointP activeBrkP; // we hit a breakpoint, this is it
 WatchP activeWatchP;    // we hit a watch, this is it
+MapEntryP mapP;
 fd_set read_fds;
 struct timeval timeout;
 char line[256];
@@ -270,7 +271,7 @@ char line[256];
         while( true )
         {
             // We only need to have timeouts if we have a reason
-            if( brkCount || watchCount || didStep )
+            if( brkCount || watchCount )
             {
                 FD_SET(inFd, &read_fds);    // has to be reset each time
                 i = select(inFd + 1, &read_fds, NULL, NULL, &timeout);
@@ -307,9 +308,9 @@ char line[256];
         {
             // breakpoint hit
             printf("\nBreakpoint %d hit", activeBrkP->number);
-            if( (i = getLineFromAddress(activeBrkP->address)) > 0 )
+            if( (mapP = getLinesFromAddress(activeBrkP->address)) > 0 )
             {
-                printf(" at line %d:\n", i);
+                printf(" at line %d:\n", mapP->lineNo);
                 printLine(i);
             }
             else
@@ -319,15 +320,14 @@ char line[256];
 
             write(STDOUT_FILENO, "Cmd? ", 5);
             activeBrkP = NIL;
-            didStep = false;    // no need to report a step
         }
         else if( activeWatchP )
         {
             // watch hit
             printf("\nWatch %d hit", activeWatchP->number);
-            if( (i = getLineFromAddress(activeWatchP->address)) > 0 )
+            if( (mapP = getLinesFromAddress(activeWatchP->address)) > 0 )
             {
-                printf(" at line %d:\n", i);
+                printf(" at line %d:\n", mapP->lineNo);
                 printLine(i);
             }
             else
@@ -337,16 +337,6 @@ char line[256];
 
             write(STDOUT_FILENO, "Cmd? ", 5);
             activeWatchP = NIL;
-            didStep = false;    // no need to report a step
-        }
-        else if( didStep && !pdp1P->run )
-        {
-            if( (i = getLineFromAddress(getCurrentPC())) > 0 )
-            {
-                printLine(i);
-            }
-            
-            didStep = false;
         }
 
         if( !fgets(line, sizeof(line), stdin) )

@@ -42,10 +42,6 @@ extern void freeMem(void);
 				    BEGIN CMDARG;
 				    break;
 
-				case BASE:
-				    BEGIN BASEARG;
-				    break;
-
 				case BANK:
 				case SHOW:
 				case SET:
@@ -188,21 +184,9 @@ ss			{
 			}
 
 [0-9]+			{
-			    if( YYSTATE == BASEARG )
-			    {
-			    	// This is always a decimal number.
-				yylval.ival = atoi(yytext);
-				return(INTEGER);
-			    }
-
-			    if( (base == 8) && (strchr(yytext, '8') || strchr(yytext, '9')) )
-			    {
-				printf("decimal number %s, but in octal mode", yytext);
-				return(FAIL);
-			    }
-
-			    yylval.ival = (int)strtol(yytext,0,(base)?base:0);
-			    return(INTEGER);
+			    // This is always a decimal number.
+			    yylval.ival = atoi(yytext);
+			    return(DECINTEGER);
 			}
 
 <CMDARG>[a-z][a-z]*	{

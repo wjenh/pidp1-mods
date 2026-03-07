@@ -91,18 +91,34 @@ bool prev_readin_sw;
         prev_deposit_sw = pdp->deposit_sw;
         prev_readin_sw = pdp->readin_sw;
         updateswitches(pdp, panel);
+        // Override with any AD1 operations
+        if( AD1_START(pdp1P) )
+        {
+            pdp->start_sw = 1;
+            pdp->ta = pdp->ad1StartAddr;
+            pdp->eta = pdp->ad1ExtendedAddr;
+            AD1_CLEAR_START(pdp1P);
+        }
+
+        if( AD1_STEP(pdp1P) )
+        {
+            pdp->single_inst_sw = 1;
+            pdp->continue_sw = 1;
+            AD1_CLEAR_STEP(pdp1P);
+        }
+
+        if( AD1_CONTINUE(pdp1P) )
+        {
+            pdp->continue_sw = 1;
+            AD1_CLEAR_CONTINUE(pdp1P);
+        }
 
         if( pdp->power_sw )
         {
-            if(Edge(start_sw) || Edge(continue_sw) ||
-            AD1_START(pdp1P) || AD1_STEP(pdp1P) || AD1_CONTINUE(pdp1P) ||
-                 Edge(examine_sw) || Edge(deposit_sw))
+            if(Edge(start_sw) || Edge(continue_sw) || Edge(examine_sw) || Edge(deposit_sw))
             {
                 spec(pdp1P);
                 cycle(pdp1P);
-                AD1_CLEAR_START(pdp1P);
-                AD1_CLEAR_STEP(pdp1P);
-                AD1_CLEAR_CONTINUE(pdp1P);
             }
 
             if( Edge(stop_sw) )

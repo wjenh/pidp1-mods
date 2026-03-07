@@ -22,7 +22,6 @@ int curBank;            // set by the bank cmd
 int windowSize = 3;     // 3 lines before and after the current line
 int brkCount;           // number of set breakpoints
 int watchCount;         // number of set watches
-bool didStep;           // step command issued, used in ad1.c to show line
 
 void helpFn(char *nameP);
 void showFn(int addr, int base);
@@ -54,6 +53,8 @@ extern Dispatch dispatchTable[];
 extern Dispatch extraHelpTable[];
 extern BreakpointP isBreakpoint(int addr);
 
+extern MapEntryP getLinesFromAddress(int address);
+extern int getCurrentPC(void);
 extern bool loadFileData(void);
 extern char *getFormat(int fmt);
 extern char *getUnrestrictedFormat(int fmt);
@@ -78,7 +79,8 @@ extern void closeListFile(void);
 extern bool resolveFiles(char *nameP);
 extern void clearSymbols(void);
 extern void closeFile(void);
-extern bool printLine(int line);
+extern bool printLine(int lineno);
+extern bool printLines(MapEntryP linesP);
 extern bool printNextLine(void);
 extern int getCurrentLineNumber(void);
 extern DispatchP findCommand(DispatchP dipatchTable, char *nameP);
@@ -334,7 +336,6 @@ startFn(int addr)
     pdp1P->run_enable = 0;      // stop it
     pdp1P->ad1StartAddr = addr & 07777;    
     pdp1P->ad1ExtendedAddr = addr & 0170000;    
-    AD1_CLEAR_STEP(pdp1P);
     AD1_SET_START(pdp1P);
     lastAddr = addr;
 }
@@ -348,6 +349,9 @@ stopFn(void)
 void
 stepFn(void)
 {
+int lineNo;
+MapEntryP entryP;
+
     if( pdp1P->run )
     {
         printf("Must be stopped to step.\n");
@@ -356,16 +360,23 @@ stepFn(void)
     {
         AD1_SET_STEP(pdp1P);
         pdp1P->run = 1;
-        didStep = true;
+        usleep(1000);            // plenty of time for completion
+
+        if( (entryP = getLinesFromAddress(getCurrentPC())) > 0 )
+        {
+            printLines(entryP);
+        }
     }
 }
 
 void
 continueFn(void)
 {
-    AD1_CLEAR_STEP(pdp1P);
+    AD1_SET_CONTINUE(pdp1P);
+    /*
     pdp1P->run_enable = 1;
     pdp1P->run = 1;
+    */
 }
 
 void

@@ -31,7 +31,7 @@ int onesCompl(int val);
 int twosCompl(int val);
 
 extern bool isMemMapped(void);
-extern int getLineFromAddress(int addr);
+extern MapEntryP getLinesFromAddress(int addr);
 
 // See if this is a valid number, if so, return its value.
 // The base is overridden by explicit base settings in the string, 0x, 0d, 0b, 0o.
@@ -195,6 +195,7 @@ int lineno;
 u32 addr;
 char *cP, *cP2;
 SymbolP symP;
+MapEntryP entryP;
 FILE *fP;
 char line[256];
 
@@ -265,12 +266,18 @@ char line[256];
         symP->nameP = malloc(strlen(cP) + 1);
         strcpy(symP->nameP, cP);
 
+        lineno = -1;
+
         // Now try for the line number.
         // If a .lst file has been loaded, look up the line from the memory map.
         // If not, use the current line number.
         if( isMemMapped() )
         {
-            lineno = getLineFromAddress(addr);
+            entryP = getLinesFromAddress(addr);
+            if( entryP )
+            {
+                lineno = entryP->lineNo;
+            }
         }
 
         if( lineno < 1 )

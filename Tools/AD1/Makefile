@@ -1,6 +1,6 @@
 CC=gcc -O0 -g
 BISONFLAGS=
-# CONFLICTS=-Wcounterexamples
+#CONFLICTS=-Wcounterexamples
 
 all: ad1
 

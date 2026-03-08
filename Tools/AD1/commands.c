@@ -23,8 +23,12 @@ int windowSize = 3;     // 3 lines before and after the current line
 int brkCount;           // number of set breakpoints
 int watchCount;         // number of set watches
 
+extern char *am1NameP;
+extern char *lstNameP;
+extern char *symNameP;
+
 void helpFn(char *nameP);
-void showFn(int addr, int base);
+void showFn(int addr, int base, bool noDeref);
 void showRegisterFn(int reg, int base);
 void setFn(int type, int addr, int value);
 void startFn(int addr);
@@ -38,8 +42,8 @@ void deleteBpFn(int num);
 void enableBpFn(int num);
 void disableBpFn(int num);
 void setBaseFn(int num);
-void setFileFn(char *nameP);
-void listFn(int lineNo);
+void setFileFn(char *nameP, bool add);
+void listFn(int lineNo, MapEntryP mapP);
 void setWatchFn(int addr,  int value);
 void deleteWatchFn(int num);
 void enableWatchFn(int num);
@@ -61,6 +65,8 @@ extern char *getUnrestrictedFormat(int fmt);
 extern void formatAndPrintOne(int fmt, int value);
 extern void formatAndPrintTwo(int fmt1, int addr, int fmt2,  int value);
 
+extern void listSymbols(void);
+
 extern void listBreaks(void);
 extern bool validateBreakpointNumber(int num);
 extern void clearBreakpoint(BreakpointP brkP);
@@ -76,7 +82,7 @@ extern bool loadSymbols(char *filenameP);
 extern void clearFiles(void);
 extern void clearSymbols(void);
 extern void closeListFile(void);
-extern bool resolveFiles(char *nameP);
+extern void resolveFiles(char *nameP, char **am1PP, char **symPP, char **lstPP);
 extern void clearSymbols(void);
 extern void closeFile(void);
 extern bool printLine(int lineno);
@@ -128,7 +134,7 @@ DispatchP dispP;
             printf("%s\n", cP);
         }
 
-        printf("Help is also available for:\n");
+        printf("\nHelp is also available for:\n");
 
         for( dispP = extraHelpTable; dispP->nameP != 0; ++dispP )
         {
@@ -139,9 +145,8 @@ DispatchP dispP;
             }
             printf("%s\n", cP);
         }
+        NEWLINE;
     }
-
-    NEWLINE;
 }
 
 void
@@ -152,18 +157,27 @@ nextFn(void)
         lastAddr = 0;       // just wrap around
     } 
 
-    showFn(lastAddr, lastFormat);
+    showFn(lastAddr, lastFormat, false);
 }
 
 void
-showFn(int addr, int base)
+showFn(int addr, int base, bool noDeref)
 {
 int val;
 
     lastAddr = addr;
-    val = (int)pdp1P->core[addr];
-    formatAndPrintTwo(ADDRESS, lastAddr, base, val);
-    NEWLINE;
+
+    if( noDeref )
+    {
+        formatAndPrintOne(base, addr);
+        NEWLINE;
+    }
+    else
+    {
+        val = (int)pdp1P->core[addr];
+        formatAndPrintTwo(ADDRESS, lastAddr, base, val);
+        NEWLINE;
+    }
 }
 
 void
@@ -212,6 +226,9 @@ char *nameP;
         nameP = ".";
         val = pdp1P->core[lastAddr];
         break;
+    case SYREG:
+        listSymbols();
+        return;
     case BREAK:
         listBreaks();
         return;
@@ -465,11 +482,6 @@ char line[32];
         else
         {
             clearBreakpoint(brkP);
-
-            if( --brkCount <= 0 )
-            {
-                AD1_DISABLE_BREAKPOINTS(pdp1P);
-            }
         }
     }
 }
@@ -547,20 +559,35 @@ setBaseFn(int num)
     }
 }
 
-// User gave a file name, clear any open and use it.
+// User gave a file name, clear any open and use it unless add is true.
+// In that case only try for a symbol file and add those to the existing symbol table.
 void
-setFileFn(char *nameP)
+setFileFn(char *nameP, bool add)
 {
-    clearFiles();
-    closeListFile();
-    clearSymbols();
-    resolveFiles(nameP);
-    loadFileData();             // before loading symbols!
-    loadSymbols(symNameP);
+char *tmpP;
+
+    if( add )
+    {
+        resolveFiles(nameP, NIL, &tmpP, NIL);
+        loadSymbols(tmpP);
+        free(tmpP);
+    }
+    else
+    {
+        clearFiles();
+        closeListFile();
+        clearSymbols();
+        resolveFiles(nameP, &am1NameP, &symNameP, &lstNameP);
+        loadFileData();             // before loading symbols!
+        loadSymbols(symNameP);
+    }
 }
 
+// List can be called with NOARG, NIL which means continue listing from one past the last line,
+// value, NIL which means list from the value line, or
+// NOARG, mapP which means list all lines associated with the map entry.
 void
-listFn(int lineNo)
+listFn(int lineNo, MapEntryP mapP)
 {
 int i;
 
@@ -569,9 +596,14 @@ int i;
         return;
     }
 
-    if( lineNo == NOARG )
+    if( (lineNo == NOARG) && !mapP )
     {
         lineNo = getCurrentLineNumber();
+    }
+    else if( mapP )
+    {
+        printLines(mapP);
+        return;
     }
 
     if( (lineNo -= windowSize) < 1 )

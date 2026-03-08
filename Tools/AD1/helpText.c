@@ -28,9 +28,13 @@ char *dotHelp[] = {
     NIL};
 
 char *exitHelp[] = {
-    "The quit command exits ad1.",
-    "Any breakpoints are deleted before exiting.",
-    "Example: q",
+    "The exit and quit commands both exit ad1, but with one important difference.",
+    "Quit deletes all breakpoints and watches before exiting.",
+    "Exit preserves all breakpoints and watches but disables them before exiting.",
+    "Any termination other than via the exit command also deletes all breakpoints and watches.",
+    "Examples:",
+    "q",
+    "ex",
     NIL};
 
 char *breakHelp[] = {
@@ -128,12 +132,24 @@ char *disableHelp[] = {
     NIL};
 
 char *enableHelp[] = {
-    "The enable command enables a disabled breakpoint by its number.",
+    "The enable command enables a previousl diabled existing breakpoint by its number.",
     "An error will be given if there is no breakpoint.",
     "The number is always a decimal number.",
-    "Example: en 10",
+    "Example: ena 10",
     "If the word watch follows the disable, then this applies to watches.",
     "Example: en w 10",
+    NIL};
+
+char *fileHelp[] = {
+    "The file command given a file basename, name.ad1, name.lst, or name.sym.",
+    "closes any current file, deletes all symbols and line mappings, and loads the new file.",
+    "This is the same as if given on the command line.",
+    "Howver, if the name is prefixed with '+', the current file is preserved and ONLY the symbols",
+    "from the new file are added to the existing symbols.",
+    "No source from the new file is available.",
+    "Examples:",
+    "file myfile",
+    "file +extra",
     NIL};
 
 char *watchHelp[] = {
@@ -171,9 +187,11 @@ char *setHelp[] = {
     NIL};
 
 char *showHelp[] = {
-    "The show command shows the values of of either memory locations or of registers.",
+    "The show command shows the values of memory locations or of registers, or memory addresses.",
     "The address can be numeric or symbolic.",
     "An expression can also be used to compute an address.",
+    "If a symbolic address is prefixed with '#', then the address itself will be printed,",
+    "not the value of memory at that address.",
     "The value will be printed in the current base unless a second parameter is given,",
     "which must be one of b, o, d, x, or c, meaning binary, octal, decimal, hex, or 1's complement.",
     "If instead of an address, one of the register names is given, the contents of that register will be shown.",
@@ -181,6 +199,7 @@ char *showHelp[] = {
     "Examples:",
     "sh 100",
     "sh cnt",
+    "sh #cnt",
     "sh io x",
     NIL};
 
@@ -232,7 +251,8 @@ char *expressionHelp[] = {
     NIL};
 
 char *registerHelp[] = {
-    "The valid registers are ac, io, pf,pf1-pf6, tw, pc, as, ma, mb, ss, break, and watch.",
+    "The valid registers are ac, io, pf,pf1-pf6, tw, pc, as, ma, mb, ss, sy, break, and watch.",
+    "sy is a pseudo-register that will show all the symbols that are loaded and their addresses.",
     "Break and watch are pseudo-registers that will show the set breakpoints or watches.",
     "They follow the same name-shortening as the commands.",
     "The names correspond to:",

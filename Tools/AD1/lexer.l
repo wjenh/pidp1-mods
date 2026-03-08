@@ -73,6 +73,7 @@ extern void freeMem(void);
 \)			{ return(RPAREN); }
 \.			{ return(DOT); }
 \@			{ return(LINEAT); }
+\#			{ return(NODEREF); }
 
 \,[0-9]{1,2}		{
 			int ival;
@@ -101,6 +102,11 @@ io			{
 
 pf			{
 			    yylval.ival = PFREG;
+			    return( REGISTER );
+			}
+
+sy			{
+			    yylval.ival = SYREG;
 			    return( REGISTER );
 			}
 
@@ -248,7 +254,9 @@ ss			{
 			}
 
 [ ]+			{ return(SEPARATOR); }
+
 %%
+
 int
 parseAndExecute(char *lineP)
 {

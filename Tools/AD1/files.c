@@ -7,9 +7,11 @@
 #define NIL (void *)0
 #define NUL '\0'
 
-char *am1NameP;
-char *lstNameP;
-char *symNameP;
+extern char *am1NameP;
+extern char *lstNameP;
+extern char *symNameP;
+
+bool resolveFiles(char *nameP, char **am1PP, char **symPP, char **lstPP);
 
 // Try various ways to open the necessary files.
 // A filename could have been given as:
@@ -19,9 +21,10 @@ char *symNameP;
 // filename.lst
 // Infer the ohter names from whatever is given.
 // The names will be malloced, so clean up if needed.
+// The allocated names are set in the passed arguments if not null.
 // Returns true for all cases other than a nil or empty nameP.
 bool
-resolveFiles(char *nameP)
+resolveFiles(char *nameP, char **am1PP, char **symPP, char **lstPP)
 {
 char *extP;
 char *cP;
@@ -77,12 +80,27 @@ char symstr[256];
         strcpy(lststr, nameP);
     }
 
-    am1NameP = (char *)malloc(strlen(am1str)+1);
-    strcpy(am1NameP, am1str);
-    symNameP = (char *)malloc(strlen(symstr)+1);
-    strcpy(symNameP, symstr);
-    lstNameP = (char *)malloc(strlen(lststr)+1);
-    strcpy(lstNameP, lststr);
+    if( am1PP )
+    {
+        cP = (char *)malloc(strlen(am1str)+1);
+        strcpy(cP, am1str);
+        *am1PP = cP;
+    }
+
+    if( symPP )
+    {
+        cP = (char *)malloc(strlen(symstr)+1);
+        strcpy(cP, symstr);
+        *symPP = cP;
+    }
+
+    if( lstPP )
+    {
+        cP = (char *)malloc(strlen(lststr)+1);
+        strcpy(cP, lststr);
+        *lstPP = cP;
+    }
+
 
     return( true );
 }

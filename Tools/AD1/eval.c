@@ -17,12 +17,14 @@
 static Symbol symbols[NUMSYMBOLS];
 static int symCount;           // number of symbols
 
+extern int base;               // current numeric output base
 extern int curBank;
 
 SymbolP findSymbolByName(int bank, char *nameP);
 int findAddrByName(int bank, char *nameP);
 char *findNameByAddr(u32 addr);
 bool loadSymbols(char *fnameP);
+void listSymbols(void);
 int parseString(char *strP, char** parts, char *breaksP);
 int getNumber(char *stringP, int base);
 int getValue(char *stringP, int base);
@@ -30,8 +32,7 @@ int signExtend(int oc);
 int onesCompl(int val);
 int twosCompl(int val);
 
-extern bool isMemMapped(void);
-extern MapEntryP getLinesFromAddress(int addr);
+extern void formatAndPrintOne(int base, int value);
 
 // See if this is a valid number, if so, return its value.
 // The base is overridden by explicit base settings in the string, 0x, 0d, 0b, 0o.
@@ -115,42 +116,39 @@ int value;
 
 // Look for a symbol by name, return address if found else NIL
 // The same symbol can be in different banks, so check for the correct one.
-// We distinguish by bank or if the name has bank qualifier, it.
+// We distinguish by bank.
 SymbolP
 findSymbolByName(int bank, char *nameP)
 {
 int i;
-char *cP, *cP2;
 SymbolP symP;
-char tmpstr[256];       // in case we have a bank qualifier
-
-    if( (cP = strchr(nameP,',')) )
-    {
-        strncpy(tmpstr, nameP, cP - nameP);
-        tmpstr[cP - nameP] = '\0';
-
-        i = strtol(cP+1, NIL, 10);
-        if( (i < 1) || (i > MAXBANKS) )
-        {
-            printf("Qualified symbol '%s' must have a decimal bank mumber of 1-%d\n", nameP, MAXBANKS);
-            return(NIL);
-        }
-
-        nameP = tmpstr;
-        bank = i;               // this overrides the passed bank
-    }
 
     for( i = 0; i < symCount; ++i )
     {
         symP = &symbols[i];
 
-        if( !strcmp(nameP, symP->nameP) && (bank == ((symP->address >> 12) & 0xF)) )
+        if( !strcmp(nameP, symP->nameP) && (bank == BANKOF(symP->address)) )
         {
             return( &symbols[i] );
         }
     }
 
     return(NIL);
+}
+
+void
+listSymbols()
+{
+int i;
+SymbolP symP;
+
+    for( i = 0; i < symCount; ++i )
+    {
+        symP = &symbols[i];
+
+        formatAndPrintOne(base, symP->address);
+        printf(": %s\n", symP->nameP);
+    }
 }
 
 // Look for a symbol by name, return the symtab entry pointer if so, else -1
@@ -191,7 +189,6 @@ int i;
 bool
 loadSymbols(char *fnameP)
 {
-int lineno;
 u32 addr;
 char *cP, *cP2;
 SymbolP symP;
@@ -265,27 +262,6 @@ char line[256];
         symP->address = addr;
         symP->nameP = malloc(strlen(cP) + 1);
         strcpy(symP->nameP, cP);
-
-        lineno = -1;
-
-        // Now try for the line number.
-        // If a .lst file has been loaded, look up the line from the memory map.
-        // If not, use the current line number.
-        if( isMemMapped() )
-        {
-            entryP = getLinesFromAddress(addr);
-            if( entryP )
-            {
-                lineno = entryP->lineNo;
-            }
-        }
-
-        if( lineno < 1 )
-        {
-            lineno = strtol(cP2 + 1, NIL, 10);
-        }
-
-        symP->lineno = lineno;
     }
 
     fclose(fP);

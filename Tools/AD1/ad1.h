@@ -1,6 +1,6 @@
 // Primary include file for ad1
 
-#define VERSION "1.3 7-Mar-2026"
+#define VERSION "1.4 8-Mar-2026"
 
 #include <stdint.h>
 
@@ -12,6 +12,9 @@
 #define PRINTCH(c) fputc(c, stdout)
 
 #define MAXBANKS 16
+
+#define BANKOF(x) (((x) >> 12) & 017)
+#define ADDRESSOF(x) ((x) & 07777)
 
 // flexToAscii() returns
 #define NOCHAR -1
@@ -39,6 +42,7 @@
 #define PF6REG 13
 #define PFREG 14        // group reference to them all
 #define ASREG 15
+#define SYREG 16
 
 // Define bases, values match what strtol() wants.
 #define AUTOBASE 0
@@ -59,14 +63,13 @@ typedef uint32_t u32;
 typedef struct {
     u32 address;
     char *nameP;
-    int lineno;
     } Symbol, *SymbolP;
 
 // Definition of a command
 typedef struct {
     char *nameP;
-    int significant;
-    int token;
+    short significant;
+    short token;
     char **helpText;
     } Dispatch, *DispatchP;
 
@@ -79,6 +82,6 @@ typedef struct arg_s {
 // For the address to line number(s) mapping
 typedef struct MapEntry_t
 {
-    int lineNo;
+    short lineNo;
     struct MapEntry_t *nextP;
 } MapEntry, *MapEntryP, **MapEntryPP;

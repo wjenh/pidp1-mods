@@ -102,8 +102,8 @@ char tmpbuf[1024];
                     continue;
                 }
 
-                bank = (address & 0xF000) >> 12;
-                address &= 0xFFF;
+                bank = BANKOF(address);
+                address = ADDRESSOF(address);
                 if( (bank >= 0) && (bank < MEMBANKS) )
                 {
                     if( !(bankP = memMap[bank]) )    // not allocated yet
@@ -169,8 +169,9 @@ MapEntryPP bankP;
         return( NIL );
     }
 
-    bank = (address & 0170000) >> 12;
-    address &= 07777;
+    bank = BANKOF(address);
+    address = ADDRESSOF(address);
+
     if( (bank >= 0) && (bank < MEMBANKS) )
     {
         if( !(bankP = memMap[bank]) )    // nothing here

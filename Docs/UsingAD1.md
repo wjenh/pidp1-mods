@@ -2,8 +2,8 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.3 and covers up through ad1 version 1.3; it will be updated as needed.\
-Edit date 7-Mar-2026
+This is version 1.4 and covers up through ad1 version 1.4; it will be updated as needed.\
+Edit date 8-Mar-2026
 
 ## What is **ad1**?
 
@@ -137,7 +137,7 @@ install Flex and Bison.
 How numbers are entered and their base depends upon context.
 
 For expressions, see below, and addresses a number can be in base 2, 8, 10, or 16.
-The default is set by the *base* command.
+The default is set by the *base* command, initially base 8.
 
 A number can also have a base specifier to explicitly give the base regardless of the base setting.
 These prefix a number and have the form:
@@ -229,7 +229,7 @@ This is consistent with the way the PDP-1 (and pidp-1) deal with addresses in ex
 If you want to address the actual bank 0, you can change banks to bank 0 or use a bank referemce,
 e.g. *break 100,0*.
 
-A bank reference can be applied to any expression and has the highest precedence of any operator.
+A bank reference can be applied to any expression used as an address and overrides any other bank setting.
 
 The action is that the expression is changed thus:
 ```
@@ -289,6 +289,8 @@ The register names are:
 Of these, the ac, io, pc, and pf can be modified via the *set* command.
 
 Using pf refers to all 6 program flags, pf1-6 to each individual flag.
+
+The three pseudo-registers *sy*, *break*, and *watch* are used by the *show* command, which see.
 
 ## The commands
 
@@ -376,11 +378,19 @@ This command always interprets the number in *base 10*.
 If watch is specified, then this applies to watches instead of breakpoints.
 It can be shortened the same as when used as a command.
 
-## FIle name
+## FIle [+]name
 
-Open a new file for use with **ad1**.
+Open a new file for use with **ad1** or add additional symbols from a file.
 
-The current file, if any, is first closed. Any symbols and line maps are cleared.
+If only a name is given, the current file, if any, is first closed. Any symbols and line maps are cleared.
+
+If the name is prefixed by a plus sign, *+*, then a symbol file is searched for and if found, the symbols are
+added.\
+**Note** that only the symbols are added, the source for the addional file(s) is not.
+
+If a symbol of the name name in the same bank as an existing symbol is found, the existing symbol will be
+used, not the duplicate.
+However, the address of the duplicate can be seen using the *list sy* command.
 
 The name is entered without any quotes. \
 The name can contain a file path.\
@@ -400,18 +410,20 @@ This command always interprets the number in *base 10*.
 If watch is specified, then this applies to watches instead of breakpoints.
 It can be shortened the same as when used as a command.
 
-## List [decimal | expression | @number | .]
+## List [decimal | expression | @expression | .[+-decimal]]
 
 If a source or listing file is open, list lines of text from it.\
 If no argument is given, list from the next line after the last one listed, or if none, the first line.\
 If the argument is a decimal, it is the line number to list.\
 If it is a symbol, it is the line number of the line the symbol was assigned a location.
 
-If the number is preceeded by @, then it is the line that corresponds to that address in the listing file,
+If an expression is preceeded by @, then it is the line that corresponds to that address in the listing file,
 *line at address*.\
 This form allows a number in any valid base.
 
 if a . (period, dot) is given, it means *list from the line corresponding to the last address used*.
+It can have an optional + or - decimal, which means the last address plus or minus that value,
+e.g. *li .+4*.
 
 If an empty line is entered, it is equivalent to entering this command with no arguments.
 
@@ -423,9 +435,18 @@ Otherwise, if the **ad1** .lst file is found, full functionality is available.
 Repeat the last *show* command at the next address location.
 This does not change the pidp-1's PC, it is **ad1**'s local address location.
 
-## Quit
+## Quit and Exit
 
-Any breakpoints and watches are deleted and **ad1** exits.
+These both terminate ad1, but with an important difference.
+
+Quit deletes any breakpoints and watches and **ad1** exits.
+
+Exit **preserves* any breakpoints and watches bud disables them and **ad1** exits.\
+However, they are preserved only until the pidp-1 is restarted.
+
+Any normal termination other than via exit is equivalent to quit, all watches and breakpoints are deleted.\
+A kill via a signal will leave all breakpoints and watches in whatever state they are in.
+
 The pidp-1 is left in whatever state it is in.
 
 ## SEt address|register value
@@ -442,6 +463,7 @@ This is roughly equivalent to using the deposit switch on the front panel.
 
 Shows the contents of a memory address or register with an optional format modifier.\
 For an address, this is roughly equivalent to using the examine switch on the pidp-1 front panel.
+IF symbol is prefixed with *#*, then its address, not its contents, will be shown.
 
 See the section on *registers* for more details on registers.
 
@@ -457,7 +479,9 @@ An optional format can be given, and is one of:
 - a show the value as 2 ascii characters, the first in the high 9 bits, the second in the low 9 bits
 - f show the value as 3 flex characters, packed as 6 bits each
 
-There are two pseudo-registers, *break* and *watch*, which can be shortened in the same way as the command name.\
+There is a pseudo-register *sy* that will list all the loaded symbols and their addresses.
+
+There are two other pseudo-registers, *break* and *watch*, which can be shortened in the same way as the command name.\
 These will list all set breakpoints or watches and their status.
 
 Displaying the break, watch, pf, or ss registers ignores any optional format.

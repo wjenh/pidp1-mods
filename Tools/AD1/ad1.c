@@ -10,6 +10,8 @@
  * 2-Mar-26 wje - fix memory mapping for banks other than 0
  * 4-Mar-26 wje - add new show formats
  * 7-Mar-26 wje - restrict some cmd args to decimal, add multi-line at one address support
+ * 8-Mar-26 wje - show decoded instruction after watch or break hit if source not available,
+ *      add address-of-symbol, add symbol table list, fix flex conversion bug, general cleanup
  *
 */
 #include <stdlib.h>
@@ -32,6 +34,10 @@
 #define SHM_NAME "/pidp1"
 
 PDP1P pdp1P;            // the emulator state in shared memory
+char *am1NameP;
+char *lstNameP;
+char *symNameP;
+
 char *fmt8P = "%06o";
 char *fmt10P = "%06d";
 char *fmt16P = "%05x";
@@ -51,14 +57,15 @@ Dispatch dispatchTable[] = {
     {"debug", 5, DEBUG, NIL},   // used to dump a bunch of info about the state when running shared
     {"delete", 2, DELETE, deleteHelp},
     {"disable", 2, DISABLE, disableHelp},
-    {"file", 2, SETFILE, NIL},
-    {"enable", 1, ENABLE, enableHelp},
+    {"exit", 2, EXIT, exitHelp},
+    {"enable", 2, ENABLE, enableHelp},
+    {"file", 2, SETFILE, fileHelp},
     {"help", 1, HELP, NIL},
     {"list", 1, LIST, listHelp},
     {"next", 1, NEXT, nextHelp},
     {"quit", 1, QUIT, exitHelp},
-    {"set", 2, SET, NIL},
-    {"show", 2, SHOW, NIL},
+    {"set", 2, SET, setHelp},
+    {"show", 2, SHOW, showHelp},
     {"start", 2, START, startHelp},
     {"stop", 3, STOP, stopHelp},
     {"step", 1, STEP, stepHelp},
@@ -97,6 +104,9 @@ void clearWatch(WatchP watchP);
 void deleteAllWatches(void);
 void listWatches();
 
+void disableAllWatchesAndBreakpoints(void);
+void restoreAllWatchesAndBreakpoints(void);
+
 int getCurrentPC(void);
 bool loadFileData(void);
 char *getFormat(int fmt);
@@ -107,6 +117,8 @@ void printAscii(char ch);
 bool printFlex(bool shifted, char ch);
 bool loadMemoryFromFile(char *filenameP, Word memory[], Word memSize);
 void usage(void);
+
+static void leave(int, void *);
 
 extern int brkCount;    // number of set breakpoints
 extern int watchCount;  // number of set watches
@@ -133,19 +145,19 @@ extern bool loadSymbols(char *filenameP);
 extern void clearFiles(void);
 extern void clearSymbols(void);
 extern void closeListFile(void);
-extern bool resolveFiles(char *nameP);
+extern bool resolveFiles(char *nameP, char **am1PP, char **symPP, char **lstPP);
 extern bool isFileMapped(void);
 extern bool isMemMapped(void);
 extern bool loadFileMap(bool fromLst, char *filenameP);
 extern void clearSymbols(void);
 extern void closeFile(void);
 extern int getLineCount(void);
-extern bool printLine(int line);
+extern bool printLines(MapEntryP entryP);
 extern bool printNextLine(void);
 extern int getCurrentLineNumber(void);
 extern int getNumber(char *strP, int base);
-extern void listFn(int arg);
-extern bool flexToAscii(int ch, bool *shiftP);
+extern void listFn(int arg, MapEntryP mapP);
+extern int flexToAscii(int ch, bool *shiftP);
 
 int
 main(int argc, char **argv)
@@ -153,6 +165,7 @@ main(int argc, char **argv)
 int i;
 int shmFd;
 int inFd;
+int exitStatus;
 bool wantDelay;
 bool testMode;
 char *cP;
@@ -211,7 +224,7 @@ char line[256];
 
     if( argc == 1 )
     {
-        resolveFiles( *argv );
+        resolveFiles(*argv, &am1NameP, &symNameP, &lstNameP);
         loadFileData();         // do before loading symbols!
         loadSymbols(symNameP);
     }
@@ -257,7 +270,10 @@ char line[256];
         }
     }
 
-    atexit(deleteAllBreakpoints);
+    // We might have breakpoints already set because of a prior exit.
+    restoreAllWatchesAndBreakpoints();
+
+    on_exit(leave, 0);
     activeBrkP = NIL;
     activeWatchP = NIL;
     base = OCTAL;               // default is octal
@@ -271,7 +287,7 @@ char line[256];
         while( true )
         {
             // We only need to have timeouts if we have a reason
-            if( brkCount || watchCount )
+            if( (brkCount > 0) || (watchCount > 0) )
             {
                 FD_SET(inFd, &read_fds);    // has to be reset each time
                 i = select(inFd + 1, &read_fds, NULL, NULL, &timeout);
@@ -311,11 +327,16 @@ char line[256];
             if( (mapP = getLinesFromAddress(activeBrkP->address)) > 0 )
             {
                 printf(" at line %d:\n", mapP->lineNo);
-                printLine(i);
+                printLines(mapP);
+                NEWLINE;
             }
             else
             {
-                printf(".\n");
+                i = activeBrkP->address;
+                cP = findNameByAddr(i);
+                i = pdp1P->core[i];
+                decodeInstr(i, i & 0777, cP, line);
+                printf(": %s\n", line);
             }
 
             write(STDOUT_FILENO, "Cmd? ", 5);
@@ -328,11 +349,16 @@ char line[256];
             if( (mapP = getLinesFromAddress(activeWatchP->address)) > 0 )
             {
                 printf(" at line %d:\n", mapP->lineNo);
-                printLine(i);
+                printLines(mapP);
+                NEWLINE;
             }
             else
             {
-                printf(".\n");
+                i = activeBrkP->address;
+                cP = findNameByAddr(i);
+                i = pdp1P->core[i];
+                decodeInstr(i, i & 0777, cP, line);
+                printf(": %s\n", line);
             }
 
             write(STDOUT_FILENO, "Cmd? ", 5);
@@ -341,6 +367,7 @@ char line[256];
 
         if( !fgets(line, sizeof(line), stdin) )
         {
+            exitStatus = QUIT;
             break;
         }
 
@@ -349,20 +376,21 @@ char line[256];
         if( line[0] == '\n' )
         {
             // empty line, means same as list with no arg.
-            listFn(NOARG);
+            listFn(NOARG, NIL);
             continue;
         }
 
         cP = strchr(line, '\n');
         *cP = NUL;
 
-        if( parseAndExecute(line) == -1 )
+        exitStatus = parseAndExecute(line);
+        if( (exitStatus == EXIT) || (exitStatus == QUIT) )
         {
             break;          // exit done
         }
     }
 
-    exit(0);
+    exit(exitStatus);
 }
 
 // Given a numeric format as for strtol(), return a format string for printf().
@@ -462,7 +490,7 @@ char tmpstr[128];
     }
     else if( fmt == ASCII )
     {
-        // Ascii is packed two chars per word, 9 bits each
+        // Ascii is packed two chars per word, 9 bits each with the high bit ignored.
         c1 = (value & 0377000) >> 9;
         c2 = value & 0377;
         PRINTCH('\'');
@@ -517,7 +545,7 @@ printAscii(char ch)
     }
 }
 
-// Print a flex char as ascii using the passed shit state, return the possibly-changed shift state.
+// Print a flex char as ascii using the passed shift state, return the possibly-changed shift state.
 bool
 printFlex(bool shifted, char ch)
 {
@@ -540,7 +568,7 @@ bool newShift;
         newShift = false;
         break;
     default:
-        PRINTCH(ch);
+        PRINTCH(chr);
         break;
     }
 
@@ -633,6 +661,59 @@ BreakpointP brkP;
     return(NIL);
 }
 
+// called on termination by the exit command
+void
+disableAllWatchesAndBreakpoints()
+{
+int i;
+BreakpointP brkP;
+WatchP watchP;
+
+    brkP = pdp1P->ad1Breakpoints;
+
+    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i, ++brkP )
+    {
+        brkP->isEnabled = false;
+    }
+
+    watchP = pdp1P->ad1Watches;
+
+    for( i = 0; i < AD1_NUM_WATCHES; ++i, ++watchP )
+    {
+        watchP->isEnabled = false;;
+    }
+}
+
+// called on startup
+void
+restoreAllWatchesAndBreakpoints()
+{
+int i;
+BreakpointP brkP;
+WatchP watchP;
+
+    watchCount = brkCount = 0;
+
+    brkP = pdp1P->ad1Breakpoints;
+
+    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i, ++brkP )
+    {
+        if( brkP->isSet )
+        {
+            ++brkCount;
+        }
+    }
+
+    watchP = pdp1P->ad1Watches;
+
+    for( i = 0; i < AD1_NUM_WATCHES; ++i, ++watchP )
+    {
+        if( watchP->isSet )
+        {
+            ++watchCount;
+        }
+    }
+}
 // Does what is says.
 void
 deleteAllBreakpoints()
@@ -657,7 +738,7 @@ listBreaks()
 int i;
 BreakpointP brkP;
 
-    if( brkCount )
+    if( brkCount > 0 )
     {
         for( i = 0, brkP = pdp1P->ad1Breakpoints; i < AD1_NUM_BREAKPOINTS; ++i, ++brkP )
         {
@@ -789,7 +870,7 @@ WatchP watchP;
 
     // Should already be done, but be sure
     AD1_DISABLE_WATCHES(pdp1P);
-    brkCount = 0;
+    watchCount = 0;
 }
 
 void
@@ -985,6 +1066,21 @@ int
 getCurrentPC()
 {
     return( (pdp1P->epc & 0170000) | (pdp1P->pc & 07777) );
+}
+
+void
+leave(int status, void *ignore)
+{
+    // Exit will preserve all the breakpoints, but disable them
+    if( status == EXIT )
+    {
+        disableAllWatchesAndBreakpoints();
+    }
+    else
+    {
+        deleteAllBreakpoints();
+        deleteAllWatches();
+    }
 }
 
 void

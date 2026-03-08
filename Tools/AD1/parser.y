@@ -28,6 +28,7 @@ extern BreakpointP activeBrkP; // we hit a breakpoint, this is it
 int yyerror(const char *errstr);
 
 extern int getLineFromAddress(int address);
+extern MapEntryP getLinesFromAddress(int address);
 extern void formatAndPrintOne(char fmt, int val2P);
 extern void formatAndPrintTwo(char fmt, int valP, int fmt2, int val2P);
 extern int eval(int op, int lval, int rval);
@@ -39,7 +40,7 @@ extern void listWatches(void);
 extern char *getUnrestrictedFormat(int fmt);
 
 extern void helpFn(char *nameP);
-extern void showFn(int addr, int base);
+extern void showFn(int addr, int base, bool noDeref);
 extern void showRegisterFn(int reg, int base);
 extern void setFn(int type, int addr, int value);
 extern void startFn(int addr);
@@ -57,8 +58,8 @@ extern void deleteWatchFn(int num);
 extern void enableWatchFn(int num);
 extern void disableWatchFn(int num);
 extern void setBaseFn(int num);
-extern void setFileFn(char *nameP);
-extern void listFn(int lineNo);
+extern void setFileFn(char *nameP, bool add);
+extern void listFn(int lineNo, MapEntryP mapP);
 extern void setWindowFn(int size);
 extern void debugFn(void);
 %}
@@ -89,9 +90,11 @@ typedef struct argitem_t {
 %token DISABLE
 %token DOT
 %token ENABLE
+%token EXIT
 %token HELP
 %token LIST
 %token NEXT
+%token NODEREF
 %token SET
 %token SETFILE
 %token SHOW
@@ -147,10 +150,10 @@ typedef struct argitem_t {
 %type <ival> integer
 %type <ival> optDECINTEGER
 %type <ival> optBase
+%type <ival> optBREF
 %type <ival> expr
 %type <ival> dotexpr
 %type <ival> address
-%type <ival> arg
 
 /* precedence for operators */
 
@@ -165,8 +168,8 @@ typedef struct argitem_t {
 %right UMINUS
 %left SYMBREF
 
-/* s-r on BREF, UMINUS */
-%expect 2
+/* s-r UMINUS */
+%expect 1
 
 %%
 
@@ -174,7 +177,11 @@ stmt		: cmd
                 ;
 cmd		: QUIT
                 {
-                    return(-1);
+                    return(QUIT);
+                }
+                | EXIT
+                {
+                    return(EXIT);
                 }
                 | HELP
                 {
@@ -188,9 +195,9 @@ cmd		: QUIT
                 {
                     helpFn(".");
                 }
-                | START address
+                | START SEPARATOR address
                 {
-                    startFn($2);
+                    startFn($3);
                 }
                 | STOP
                 {
@@ -204,7 +211,7 @@ cmd		: QUIT
                 {
                     stepFn();
                 }
-                | BANK SEPARATOR INTEGER
+                | BANK SEPARATOR integer
                 {
                     setBankFn($3);
                 }
@@ -217,7 +224,7 @@ cmd		: QUIT
                     }
 
                     // set from the current extended address in use
-                    curBank = (pdp1P->epc >> 12) & 0xF;
+                    curBank = BANKOF(pdp1P->epc);
                 }
                 | BANK
                 {
@@ -225,15 +232,15 @@ cmd		: QUIT
                     printf(getUnrestrictedFormat(lastFormat), curBank);
                     NEWLINE;
                 }
-                | BREAK address optDECINTEGER
+                | BREAK SEPARATOR address optDECINTEGER
                 {
-                    setBpFn($2, $3);
+                    setBpFn($3, $4);
                 }
                 | DELETE SEPARATOR DECINTEGER
                 {
                     deleteBpFn($3);
                 }
-                | DELETE SEPARATOR WATCH SEPARATOR INTEGER
+                | DELETE SEPARATOR WATCH SEPARATOR DECINTEGER
                 {
                     deleteWatchFn($5);
                 }
@@ -265,21 +272,25 @@ cmd		: QUIT
                 {
                     disableWatchFn($5);
                 }
-                | SHOW address optBase
+                | SHOW SEPARATOR address optBase
                 {
-                    showFn($2, $3);
+                    showFn($3, $4, false);
+                }
+                | SHOW SEPARATOR NODEREF address optBase
+                {
+                    showFn($4, $5, true);
                 }
                 | SHOW SEPARATOR REGISTER optBase
                 {
                     showRegisterFn($3, $4);
                 }
-                | SET address arg
+                | SET SEPARATOR address SEPARATOR expr
                 {
-                    setFn(INTEGER, $2, $3);
+                    setFn(INTEGER, $3, $5);
                 }
-                | SET SEPARATOR REGISTER arg
+                | SET SEPARATOR REGISTER SEPARATOR expr
                 {
-                    setFn(REGISTER, $3, $4);
+                    setFn(REGISTER, $3, $5);
                 }
                 | BASE SEPARATOR DECINTEGER
                 {
@@ -291,15 +302,19 @@ cmd		: QUIT
                 }
                 | SETFILE SEPARATOR SYMBOL
                 {
-                    setFileFn($3);
+                    setFileFn($3, false);
+                }
+                | SETFILE SEPARATOR PLUS SYMBOL
+                {
+                    setFileFn($4, true);
                 }
                 | LIST
                 {
-                    listFn(NOARG);
+                    listFn(NOARG, NIL);
                 }
                 | LIST SEPARATOR DECINTEGER
                 {
-                    listFn($3);
+                    listFn($3, NIL);
                 }
                 | LIST SEPARATOR dotexpr
                 {
@@ -317,33 +332,33 @@ cmd		: QUIT
                         return(0);
                     }
 
-                    listFn(line + $3);
+                    listFn(line + $3, NIL);
                 }
-                | LIST SEPARATOR LINEAT expr
+                | LIST SEPARATOR LINEAT address
                 {
-                int line;
+                MapEntryP mapP;
 
                     if( !loadFileData() )
                     {
                         return(0);
                     }
 
-                    line = getLineFromAddress($4);
-                    if( line <= 0 )
+                    mapP = getLinesFromAddress($4);
+                    if( !mapP )
                     {
                         printf("No line can be found for that address.\n");
                         return(0);
                     }
 
-                    listFn(line);
+                    listFn(NOARG, mapP);
                 }
                 | NEXT
                 {
                     nextFn();
                 }
-                | WATCH address expr
+                | WATCH SEPARATOR address SEPARATOR expr
                 {
-                    setWatchFn($2, $3);
+                    setWatchFn($3, $5);
                 }
                 | WINDOW SEPARATOR DECINTEGER
                 {
@@ -457,23 +472,22 @@ optBase         : SEPARATOR SYMBOL
                 | { $$ = base; }    // defaults to the current base
                 ;
 
-arg             : SEPARATOR expr
+address         : expr optBREF
                 {
-                    $$ = $2;
-                }
-                ;
-
-address         : SEPARATOR expr
-                {
-                    if( ($2 < 0) || ($2 >= MAXMEM) )
+                    if( ($1 < 0) || ($1 >= MAXMEM) )
                     {
                         printf("A memory address must be between 0-65535 declimal, 177777 octal, FFFF hex.\n");
                         return(0);
                     }
 
-                    $$ = $2;
+                    $$ = $1;
 
-                    if( !($2 & 0170000) )
+                    // An explicit bank ref overrides all
+                    if( $2 >= 0 )
+                    {
+                        $$ = ($2 << 12) | ADDRESSOF($1);
+                    }
+                    else if( !($1 & 0170000) )
                     {
                         // If the address has no bank, use the current bank.
                         $$ |= curBank << 12;
@@ -561,27 +575,28 @@ expr            : MINUS expr %prec UMINUS
                 {
                     $$ = lastAddr;
                 }
-                | expr BREF
-                {
-                    // an explicit bank reference overrides any other extended address
-                    $$ = ($2 << 12) | ($1 & 07777);
-                }
                 ;
 
 dotexpr         : DOT
                 {
                     $$ = 0;
                 }
-                | DOT PLUS INTEGER
+                | DOT PLUS DECINTEGER
                 {
                     $$ = $3;
                 }
-                | DOT MINUS INTEGER
+                | DOT MINUS DECINTEGER
                 {
                     $$ = -$3;
                 }
                 ;
 
+optBREF         : BREF
+                {
+                    $$ = $1;
+                }
+                | {$$ = -1;}
+                ;
 %%
 int
 yywrap()

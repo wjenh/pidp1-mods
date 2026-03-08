@@ -34,8 +34,8 @@
 #define LOG_LP 0
 #define LOG_APERTURE 0
 #define LOG_STARTUP 0
-#define LOG_AD1 0
-#define LOG_STEP 0
+#define LOG_BREAK 0
+#define LOG_WATCH 0
 
 #define NOTIOTH
 #include "dynamicIots.h"
@@ -1979,10 +1979,8 @@ int addr;
 
     addr =  (pdp->epc | pdp->pc) & 0177777;
 
-    if( checkBreakpoints(pdp, addr) || checkWatches(pdp))
-    {
-        AD1_CLEAR_STEP(pdp);        // if we were stepping, don't need to now
-    }
+    checkBreakpoints(pdp, addr);
+    checkWatches(pdp);
 
     // update any IOTs regardless of cycle type
     dynamicIotProcessorDoPoll(pdp);             // wje - handle pseudo-async IOTs
@@ -3126,15 +3124,16 @@ BreakpointP brkP;
     {
         if( (brkP->isSet) && (brkP->isEnabled) && (brkP->address == address) )
         {
-            if( ++(brkP->curCount) >= brkP->count )    // a count of 0 or 1 are wquivalent
+            brkP->curCount++;
+            logger(LOG_BREAK, "breakpoint %d seen curcount %d\n", i+1, brkP->curCount);
+            if( brkP->curCount >= brkP->count )    // a count of 0 or 1 are wquivalent
             {
                 brkP->curCount = 0;     // for next time
                 AD1_SET_BREAKPOINT_HIT(pdp1P);
                 pdp1P->ad1brkNo = i;
-                logger(LOG_AD1, "breakpoint %d hit\n", i+1);
+                logger(LOG_BREAK, "breakpoint %d hit\n", i+1);
+                return(true);
             }
-
-            return(true);
         }
     }
 
@@ -3188,7 +3187,7 @@ WatchP watchP;
         {
             AD1_SET_WATCH_HIT(pdp1P);
             pdp1P->ad1watchNo = i;
-            logger(LOG_AD1, "watch %d hit\n", i+1);
+            logger(LOG_WATCH, "watch %d hit\n", i+1);
             return(true);
         }
 

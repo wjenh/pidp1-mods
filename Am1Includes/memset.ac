@@ -5,6 +5,7 @@
 // AC has the count of words to set.
 // IO has the value to set.
 // The word following the call has the address to begin the setting.
+// This does not use extended addressing, it operates in the current bank.
 memset, 0
 local ptr, count, rtn, loop
 // AC is in memset, return PC in AC

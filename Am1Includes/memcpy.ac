@@ -18,9 +18,9 @@ local
     lio i %cpydn
     dio %adt
     idx %cpydn
+    eem
     lac memcpy
     cma
-    eem
 %cl, add [1
     lsw
     lac i %ads
@@ -29,8 +29,8 @@ local
     idx %adt
     lsw
     sza
-    lem
     jmp %cl
+    lem
 %cpydn, jmp .
 %ads, 0
 %adt, 0

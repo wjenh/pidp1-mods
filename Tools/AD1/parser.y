@@ -154,6 +154,7 @@ typedef struct argitem_t {
 %type <ival> expr
 %type <ival> dotexpr
 %type <ival> address
+%type <ival> listSym
 
 /* precedence for operators */
 
@@ -344,6 +345,24 @@ cmd		: QUIT
                     }
 
                     mapP = getLinesFromAddress($4);
+                    if( !mapP )
+                    {
+                        printf("No line can be found for that address.\n");
+                        return(0);
+                    }
+
+                    listFn(NOARG, mapP);
+                }
+                | LIST SEPARATOR listSym
+                {
+                MapEntryP mapP;
+
+                    if( !loadFileData() )
+                    {
+                        return(0);
+                    }
+
+                    mapP = getLinesFromAddress($3);
                     if( !mapP )
                     {
                         printf("No line can be found for that address.\n");
@@ -591,6 +610,18 @@ dotexpr         : DOT
                 }
                 ;
 
+listSym         : SYMBOL optBREF
+                {
+                SymbolP symP;
+
+                    if( !(symP = findSymbolByName(($2 == -1)?curBank:$2, $1)) )
+                    {
+                        printf("Can't find symbol '%s' in bank %d decimal.\n", $1, ($2 == -1)?curBank:$2);
+                        return(0);
+                    }
+
+                    $$ = symP->address;
+                }
 optBREF         : BREF
                 {
                     $$ = $1;

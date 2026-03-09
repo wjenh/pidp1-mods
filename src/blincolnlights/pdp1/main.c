@@ -50,6 +50,9 @@ void lightson(Panel *panel);
 void loadConfigFile(PDP1 *pdp1P, char *filenameP);
 Panel *getpanel(void);
 
+static bool checkBreakpoints(PDP1 *pdp1P, int address);
+static bool checkWatches(PDP1 *pdp1P);
+
 PDP1P pdp1P;      // Here because dynamic IOT code needs it
 
 extern int penAperture;
@@ -64,6 +67,7 @@ static bool useShm;
 void
 emu(PDP1 *pdp, Panel *panel)
 {
+int addr;
 bool prev_start_sw;
 bool prev_stop_sw;
 bool prev_continue_sw;
@@ -117,6 +121,14 @@ bool prev_readin_sw;
         {
             if(Edge(start_sw) || Edge(continue_sw) || Edge(examine_sw) || Edge(deposit_sw))
             {
+                // Check breakpoints and watches at the beginning of a cycle,
+                // otherwise jmps can be missed.
+                addr =  (pdp->epc | pdp->pc) & 0177777;
+                if( checkBreakpoints(pdp, addr) || checkWatches(pdp) )
+                {
+                    pdp->run = 0;
+                }
+
                 spec(pdp1P);
                 cycle(pdp1P);
             }
@@ -166,6 +178,14 @@ bool prev_readin_sw;
                     updatelights(pdp, panel);
                     pdp->simtime += 5000;
                     throttle(pdp);
+                }
+
+                // Check breakpoints and watches at the beginning of a cycle,
+                // otherwise jmps can be missed.
+                addr =  (pdp->epc | pdp->pc) & 0177777;
+                if( checkBreakpoints(pdp, addr) || checkWatches(pdp) )
+                {
+                    pdp->run = 0;
                 }
 
                 cycle(pdp);
@@ -615,4 +635,95 @@ int shmFd;
 
     emu(pdp, panel);
     return( 0 );   // can't happen
+}
+
+// Scan the breakpoint table to see if the passed address matches an enabled entry.
+// If so, check the count and if reached, signal a breakpoint.
+// Return true if a brekpoint was hit, else false.
+static bool
+checkBreakpoints(PDP1 *pdp1P, int address)
+{
+int i;
+BreakpointP brkP;
+
+    if( !AD1_BREAKPOINTS_ENABLED(pdp1P) )
+    {
+        return(false);
+    }
+
+    brkP = pdp1P->ad1Breakpoints;
+
+    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
+    {
+        if( (brkP->isSet) && (brkP->isEnabled) && (brkP->address == address) )
+        {
+            brkP->curCount++;
+            logger(LOG_BREAK, "breakpoint %d seen curcount %d\n", i+1, brkP->curCount);
+            if( brkP->curCount >= brkP->count )    // a count of 0 or 1 are wquivalent
+            {
+                brkP->curCount = 0;     // for next time
+                AD1_SET_BREAKPOINT_HIT(pdp1P);
+                pdp1P->ad1brkNo = i;
+                logger(LOG_BREAK, "breakpoint %d hit\n", i+1);
+                return(true);
+            }
+        }
+    }
+
+    return(false);
+}
+
+// Scan the watch table to see if the passed address and its data match an enabled entry.
+// If so, signal a watch and return true, else false.
+static bool
+checkWatches(PDP1 *pdp1P)
+{
+int i;
+int curVal;
+bool hit;
+WatchP watchP;
+
+    if( !AD1_WATCHES_ENABLED(pdp1P) )
+    {
+        return(false);
+    }
+
+    hit = false;
+    watchP = pdp1P->ad1Watches;
+
+    for( i = 0; i < AD1_NUM_WATCHES; ++i )
+    {
+        if( watchP->isSet && watchP->isEnabled )
+        {
+            curVal = pdp1P->core[watchP->address] & 0777777;
+            if( curVal != watchP->lastVal )     // it was changed
+            {
+                if( watchP->onAny )
+                {
+                    hit = true;
+                }
+                else if( watchP->value == curVal )
+                {
+                    hit = true;
+                }
+            }
+
+            if( watchP->onAny )
+            {
+                watchP->value = curVal;     // just so ad1 can report it
+            }
+
+            watchP->lastVal = curVal;
+        }
+
+        if( hit )
+        {
+            AD1_SET_WATCH_HIT(pdp1P);
+            pdp1P->ad1watchNo = i;
+            logger(LOG_WATCH, "watch %d hit\n", i+1);
+            return(true);
+        }
+
+        return(false);
+    }
 }

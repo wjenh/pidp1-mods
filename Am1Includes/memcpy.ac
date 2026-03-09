@@ -8,32 +8,32 @@
 // Extended mode must be off.
 // The AC and IO are not preserved.
 memcpy, 0
-local
+local cpydn, ads, adt, cl
 // AC is in memcpy, return PC in AC
-    lem
-    dap %cpydn
-    lio i %cpydn
-    dio %ads
-    idx %cpydn
-    lio i %cpydn
-    dio %adt
-    idx %cpydn
+    dac cpydn
+    lio i cpydn
+    dio ads
+    idx cpydn
+    lio i cpydn
+    dio adt
+    idx cpydn
     eem
     lac memcpy
     cma
-%cl, add [1
+cl, add [1
     lsw
-    lac i %ads
-    dac i %adt
-    idx %ads
-    idx %adt
+    lac i ads
+    dac i adt
+    idx ads
+    idx adt
     lsw
     sza
-    jmp %cl
+    jmp cl
     lem
-%cpydn, jmp .
-%ads, 0
-%adt, 0
+    jmp i cpydn
+cpydn, 0
+ads, 0
+adt, 0
 endloc
 
 #endif

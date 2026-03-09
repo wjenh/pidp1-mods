@@ -128,6 +128,7 @@ extern int curBank;     // set by the bank cmd
 
 extern int yydebug;
 extern int yy_flex_debug;
+extern int lastAddr;
 extern char *am1NameP;
 extern char *lstNameP;
 extern char *symNameP;
@@ -324,6 +325,7 @@ char line[256];
         {
             // breakpoint hit
             printf("\nBreakpoint %d hit", activeBrkP->number);
+            lastAddr = activeBrkP->address;
             if( (mapP = getLinesFromAddress(activeBrkP->address)) > 0 )
             {
                 printf(" at line %d:\n", mapP->lineNo);
@@ -346,6 +348,7 @@ char line[256];
         {
             // watch hit
             printf("\nWatch %d hit", activeWatchP->number);
+            lastAddr = activeWatchP->address;
             if( (mapP = getLinesFromAddress(activeWatchP->address)) > 0 )
             {
                 printf(" at line %d:\n", mapP->lineNo);

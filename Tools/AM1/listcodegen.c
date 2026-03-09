@@ -10,6 +10,7 @@
 #include "y.tab.h"
 
 extern bool sawBank;
+extern int lineno;
 extern BankContextP banksP;
 
 extern int evalExpr(PNodeP);
@@ -44,7 +45,8 @@ listCodegen(FILE *outfP, PNodeP rootP)
         if( bankP->constSymP )
         {
             node.pc = bankP->cur_pc;    // need a node for the pc
-            node.lineNo = 0;
+            node.bank = bankP->bank;
+            node.lineNo = lineno;
             fprintf(outfP, "// Constants for bank %d\n", bankP->bank);
             listConstants(outfP, &node, bankP->constSymP);
         }
@@ -52,7 +54,8 @@ listCodegen(FILE *outfP, PNodeP rootP)
         if( bankP->varNodesP )
         {
             node.pc = bankP->cur_pc;    // need a node for the pc
-            node.lineNo = 0;
+            node.bank = bankP->bank;
+            node.lineNo = lineno;
             node.value.ptr = bankP->varNodesP;
             fprintf(outfP, "// Variables for bank %d\n", bankP->bank);
             listVars(outfP, &node);
@@ -542,7 +545,8 @@ SymNodeP symP;
     }
 }
 
-// Walk a symbol table of constants, list the values
+// Walk a symbol table of constants, list the values.
+// If auto is true, this is being called to emit constants when there was no constants statement.
 static void
 listConstants(FILE *fP, PNodeP nodeP, SymNodeP symP)
 {

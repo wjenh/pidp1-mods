@@ -60,6 +60,11 @@ being debugged.
 This is not only used for interrogating and setting the above registers and memory, it also allows control over
 starting, stopping, single-stepping and processing of breakpoints and watches.
 
+Commands are handled in the pidp-1 by *switch spoofing*.
+Just after the state of the panel switches is checked, they are overriden by any **ad1** commands that
+control the emulator state.
+In this way, the behavior is exactly as if the panel switches had been used.
+
 **Ad1** operates totally asynchnronously, all operations can be done while the pidp-1 is running.
 
 Breakpoints are implemented by a breakpoint table in shared memory.
@@ -70,7 +75,8 @@ Watchpoints are implemented similarly with a watch table in shared memory.
 When watches are active, the addresses have their contents checked to see if they have changed and
 optionally match a given value.
 If so a flag is set to indicate that to **ad1** and the pidp-1 halted.
-Both breakpoints and watches are checked in the pidp-1 at the end of every machine cycle.
+
+Both breakpoints and watches are checked in the pidp-1 at the beginning of every machine cycle.
 
 **Ad1** commands can then be given and when ready the program resumed.
 
@@ -410,11 +416,12 @@ This command always interprets the number in *base 10*.
 If watch is specified, then this applies to watches instead of breakpoints.
 It can be shortened the same as when used as a command.
 
-## List [decimal | expression | @expression | .[+-decimal]]
+## List [decimal | expression | @expression | symbol[,bref] | .[+-decimal]]
 
 If a source or listing file is open, list lines of text from it.\
 If no argument is given, list from the next line after the last one listed, or if none, the first line.\
 If the argument is a decimal, it is the line number to list.\
+If the argument is an expression,it is the line number to list, but see below.\
 If it is a symbol, it is the line number of the line the symbol was assigned a location.
 
 If an expression is preceeded by @, then it is the line that corresponds to that address in the listing file,

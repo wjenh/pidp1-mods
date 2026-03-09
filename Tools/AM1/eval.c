@@ -222,6 +222,7 @@ hashExpr(PNodeP nodeP)
 long int lval, hilval;
 long int rval, hirval;
 long int partial;
+uint64_t bigint;
 SymNodeP symP;
 
     if( !nodeP )
@@ -338,26 +339,19 @@ SymNodeP symP;
     case LCLADDR:
     case BREF:
         symP = nodeP->value.symP;
-        if( symP->flags & SYMF_RESOLVED )
+        // Use the symP as the 'value', modify it if there was an explicit bank ref
+        bigint = (uint64_t)symP;
+        bigint = (bigint & 0xFFFFFFFF) << 18;  // mangle its bits 
+        if( nodeP->type == BREF )
         {
-            return( symP->value );
+            bigint += (0xEFE << 20);
         }
-        else
-        {
-            // no value yet, use the symP as the 'value'
-            uint64_t bigint = (uint64_t)symP;
-            bigint = (bigint & 0xFFFFFFFF) << 18;  // mangle its bits 
-            if( nodeP->type == BREF )
-            {
-                bigint += (0xEFE << 20);
-            }
 
-            return( (int)bigint );
-        }
+        return( (int)bigint );
 
     case WILDREF:
         // All we have is the symbolname, use the string address
-        uint64_t bigint = (uint64_t)(nodeP->value.strP);
+        bigint = (uint64_t)(nodeP->value.strP);
         bigint = (bigint & 0xFFFFFFFF) << 18;  // mangle its bits 
         bigint += (0xEEF << 20);
         return( (int)bigint );

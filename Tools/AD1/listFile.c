@@ -126,6 +126,7 @@ char tmpbuf[1024];
                         // Get to the end of the list
                         for( memP = bankP[address]; memP->nextP; memP = memP->nextP )
                         {
+                            ;
                         }
 
                         memP->nextP = newP;
@@ -218,11 +219,14 @@ MapEntryP entryP, nextP;;
         {
             if( (bankP = memMap[i]) )
             {
-                for( entryP  = *bankP, j = 0; j < MEMSIZE; ++j, ++entryP )
+                for( entryP  = *bankP++, j = 0; j < MEMSIZE; ++j )
                 {
-                    nextP = entryP->nextP;
-                    free(entryP);
-                    entryP = nextP;
+                    while( entryP )
+                    {
+                        nextP = entryP->nextP;
+                        free(entryP);
+                        entryP = nextP;
+                    }
                 }
 
                 free( memMap[i] );

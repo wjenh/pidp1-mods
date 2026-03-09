@@ -512,7 +512,7 @@ int val;
         return(0);
     }
 
-    fprintf(fP,"    %06o\n", symP->value2);
+    fprintf(fP,"    %06o\n", symP->value2 & 0777777);
 
     val = emitConstants(fP, symP->leftP);
     val += emitConstants(fP, symP->rightP);

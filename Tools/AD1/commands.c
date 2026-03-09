@@ -15,7 +15,7 @@
 #include "helpmsgs.h"
 #include "y.tab.h"
 
-u32 lastAddr;
+int lastAddr;
 int base;               // default input number base, changed by the base command
 int lastFormat;         // last format used, 0 means use base
 int curBank;            // set by the bank cmd
@@ -178,6 +178,8 @@ int val;
         formatAndPrintTwo(ADDRESS, lastAddr, base, val);
         NEWLINE;
     }
+
+    lastFormat = base;
 }
 
 void
@@ -198,7 +200,7 @@ char *nameP;
         break;
     case PCREG:
         nameP = "PC";
-        val = pdp1P->pc;
+        val = pdp1P->epc | pdp1P->pc;
         break;
     case TWREG:
         nameP = "Test word switches";
@@ -361,12 +363,12 @@ void
 stopFn(void)
 {
     pdp1P->run_enable = 0;
+    lastAddr = pdp1P->epc | pdp1P->pc;
 }
 
 void
 stepFn(void)
 {
-int lineNo;
 MapEntryP entryP;
 
     if( pdp1P->run )
@@ -390,10 +392,6 @@ void
 continueFn(void)
 {
     AD1_SET_CONTINUE(pdp1P);
-    /*
-    pdp1P->run_enable = 1;
-    pdp1P->run = 1;
-    */
 }
 
 void

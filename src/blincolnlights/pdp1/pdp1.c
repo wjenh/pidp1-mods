@@ -112,8 +112,6 @@ static char *onOff(bool flag);
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
 static bool checkLightPen(PDP1 *pdp1P);
-static bool checkBreakpoints(PDP1 *pdp1P, int address);
-static bool checkWatches(PDP1 *pdp1P);
 
 // The emulator duplicates all of the original hardware
 // subcycles. Impressive.
@@ -1201,11 +1199,6 @@ int hack;
             pdp->run = 0;
         }
 
-        if( AD1_BREAKPOINT_HIT(pdp) || AD1_WATCH_HIT(pdp) )
-        {
-            pdp->run = 0;
-        }
-
         clrmd(pdp);
         TP(9)
 
@@ -1955,8 +1948,6 @@ cycle(PDP1 *pdp)
 // how do we handle that?
 //  assert(pdp->cyc || pdp->bc==0);
 //  assert(!pdp->df1 || pdp->bc==0);
-int addr;
-
     pdp->timernd = rand() % TP_unreachable;
 
     // a cycle takes 5 usecs
@@ -1976,11 +1967,6 @@ int addr;
     {
         cycle1(pdp);
     }
-
-    addr =  (pdp->epc | pdp->pc) & 0177777;
-
-    checkBreakpoints(pdp, addr);
-    checkWatches(pdp);
 
     // update any IOTs regardless of cycle type
     dynamicIotProcessorDoPoll(pdp);             // wje - handle pseudo-async IOTs
@@ -3102,95 +3088,4 @@ static char resp[1024];
     free(args);
 
     return resp;
-}
-
-// Scan the breakpoint table to see if the passed address matches an enabled entry.
-// If so, check the count and if reached, signal a breakpoint.
-// Return true if a brekpoint was hit, else false.
-bool
-checkBreakpoints(PDP1 *pdp1P, int address)
-{
-int i;
-BreakpointP brkP;
-
-    if( !AD1_BREAKPOINTS_ENABLED(pdp1P) )
-    {
-        return(false);
-    }
-
-    brkP = pdp1P->ad1Breakpoints;
-
-    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
-    {
-        if( (brkP->isSet) && (brkP->isEnabled) && (brkP->address == address) )
-        {
-            brkP->curCount++;
-            logger(LOG_BREAK, "breakpoint %d seen curcount %d\n", i+1, brkP->curCount);
-            if( brkP->curCount >= brkP->count )    // a count of 0 or 1 are wquivalent
-            {
-                brkP->curCount = 0;     // for next time
-                AD1_SET_BREAKPOINT_HIT(pdp1P);
-                pdp1P->ad1brkNo = i;
-                logger(LOG_BREAK, "breakpoint %d hit\n", i+1);
-                return(true);
-            }
-        }
-    }
-
-    return(false);
-}
-
-// Scan the watch table to see if the passed address and its data match an enabled entry.
-// If so, signal a watch and return true, else false.
-bool
-checkWatches(PDP1 *pdp1P)
-{
-int i;
-int curVal;
-bool hit;
-WatchP watchP;
-
-    if( !AD1_WATCHES_ENABLED(pdp1P) )
-    {
-        return(false);
-    }
-
-    hit = false;
-    watchP = pdp1P->ad1Watches;
-
-    for( i = 0; i < AD1_NUM_WATCHES; ++i )
-    {
-        if( watchP->isSet && watchP->isEnabled )
-        {
-            curVal = pdp1P->core[watchP->address] & 0777777;
-            if( curVal != watchP->lastVal )     // it was changed
-            {
-                if( watchP->onAny )
-                {
-                    hit = true;
-                }
-                else if( watchP->value == curVal )
-                {
-                    hit = true;
-                }
-            }
-
-            if( watchP->onAny )
-            {
-                watchP->value = curVal;     // just so ad1 can report it
-            }
-
-            watchP->lastVal = curVal;
-        }
-
-        if( hit )
-        {
-            AD1_SET_WATCH_HIT(pdp1P);
-            pdp1P->ad1watchNo = i;
-            logger(LOG_WATCH, "watch %d hit\n", i+1);
-            return(true);
-        }
-
-        return(false);
-    }
 }

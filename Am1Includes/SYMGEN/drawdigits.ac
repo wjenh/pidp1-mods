@@ -29,10 +29,10 @@ drawdigitn, 0
     add [t33digits
     dac drawdigitn
     lio i drawdigitn
-    iot i gpl
+    gpl i
     idx drawdigitn
     lio i drawdigitn
-    iot C gpr
+    gpr C
 rtn, jmp .
     endloc
 #endif

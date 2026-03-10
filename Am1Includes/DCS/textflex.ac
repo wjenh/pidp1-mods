@@ -30,13 +30,13 @@ local
      lai
      ral 6s
      lia
-     iot tcb
+     tcb
      ral 6s
      lia
-     iot tcb
+     tcb
      ral 6s
      lia
-     iot tcb
+     tcb
      idx %txtflx
      jmp %txttop
 %txtrtn,  0

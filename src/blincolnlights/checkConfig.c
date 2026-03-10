@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <string.h>
 
+bool getConfig(char *nameP, char *resultP);
+
 static FILE *confFP;
 
 // Check for a boolean setting in the config file.
@@ -11,7 +13,23 @@ checkConfig(char *settingP)
 {
 int i;
 bool onOff;
-FILE *fP;
+char answer[64];
+
+    if( !getConfig(settingP, answer) )
+    {
+        return(false);
+    }
+
+    onOff = !strcmp(answer,"y") || !strcmp(answer,"yes") || !strcmp(answer,"on");
+    return( onOff );
+}
+
+// Find a config setting by name, if found, set it in resultP and return true,
+// else false if not found.
+bool
+getConfig(char *nameP, char *resultP)
+{
+int i;
 char line[256];
 char option[64];
 char answer[64];
@@ -19,9 +37,9 @@ char answer[64];
     if( !confFP )
     {
         // Not open yet, do so
-        if( !(fP = fopen("/opt/pidp1-mods/pidp1.config", "r")) )
+        if( !(confFP = fopen("/opt/pidp1-mods/pidp1.config", "r")) )
         {
-            return(false);
+            return(0);
         }
     }
     else
@@ -42,16 +60,16 @@ char answer[64];
             continue;
         }
 
-        if( strcmp(option,settingP) )
+        if( strcmp(option, nameP) )
         {
             continue;           // not us
         }
 
-        onOff = !strcmp(answer,"y") || !strcmp(answer,"yes") || !strcmp(answer,"on");
-        break;
+        strcpy(resultP, answer);
+        return(true);
     }
 
-    return( onOff );
+    return( false );
 }
 
 // Close the config file.

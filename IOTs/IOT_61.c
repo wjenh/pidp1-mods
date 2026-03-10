@@ -2,6 +2,7 @@
 #include <fcntl.h>
 
 #include "common.h"
+#include "panel_pidp1.h"
 #include "pdp1.h"
 #include "highSpeedChannels.h"
 #include "iotHandler.h"
@@ -198,7 +199,7 @@ Word *memBaseP;
         cmdCompletionTime = pdp1P->simtime + (cmdCompletionTime * 8500);
 
         // we assume we get it, manual says to check status before calling IOT_61.
-        pdp1P->hsc = 1;                     // and we have to manage the light
+        pdp1P->panel->lights5 |= L5_HSC;                     // and we have to manage the light
         stat = HSC_request_channel(pdp1P, 1, chanFlags, transferCount, memBank, memAddr, readBuffer, writeBuffer);
         iotLog("HSC_request_channel returned %d\n", stat);
         ioBusy = 1;
@@ -268,7 +269,7 @@ int hsStatus;
                 IOCOMPLETE(pdp1P);
             }
 
-            pdp1P->hsc = 0;
+            pdp1P->panel->lights5 &= ~L5_HSC;                     // and we have to manage the light
             iotLog("IOT 61 completed timeout.\n");
         }
     }

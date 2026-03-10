@@ -17,10 +17,10 @@ drawcharn, 0
     add [t33chrs
     dac drawcharn
     lio i drawcharn
-    iot i gpl
+    gpl i
     idx drawcharn
     lio i drawcharn
-    iot C gpr
+    gpr C
 rtn, jmp .
     endloc
 

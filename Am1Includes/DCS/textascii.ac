@@ -25,13 +25,13 @@ txatop,  lac i txtasc
      sza i
      jmp i txartn
      lia
-     iot tcb
+     tcb
      law 377
      and i txtasc
      sza i
      jmp i txartn
      lia
-     iot tcb
+     tcb
      idx txtasc
      jmp txatop
 txartn,  0

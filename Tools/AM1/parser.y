@@ -238,7 +238,12 @@ body		: stmt_list
                         }
                         else
                         {
-                            bankP = findBank(curBank);
+                            if( !(bankP = findBank(curBank)) )
+                            {
+                                // Happens if there was a bank ref but no bank was set
+                                bankP = addBank(curBank);
+                                bankP->globalSymP = globalSymP;
+                            }
                         }
 
                         bankP->cur_pc = cur_pc;

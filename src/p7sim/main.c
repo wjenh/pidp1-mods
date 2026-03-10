@@ -83,7 +83,7 @@ uint64 simtime, realtime;
 void usage(char *nameP);
 void updatepen(bool penDown);
 bool checkConfig(char *optionP);
-char *getConfig(char *optionP, char *rsltP);
+bool getConfig(char *optionP, char *rsltP);
 void closeConfigFile(void);
 
 void

@@ -12,11 +12,11 @@ renderchars, 0
     cma
     dac count           // -count
 top, lio i renderchars  // fetch next char bits word from buffer
-    iot C gpl
+    gpl C
     idx renderchars
     lio i renderchars   // second word
     ioh
-    iot C gpr
+    gpr C
     idx renderchars
     ioh
 

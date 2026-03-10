@@ -58,19 +58,19 @@ strt,
     dpy-i LIGHTPEN
     law TEXTSIZE AUTOSPACE
     lia
-    iot glf
+    glf
 
 loop,
     lio [LABELY << 0d8
     lac [LABELX << 0d8
     sdb BRIGHTNESS << 6
-    lac [header1
+    law header1
     jda drawasctext
 
     lio [(LABELY - CHARSIZEY(TEXTSIZE) - CHARSIZEY(TEXTSIZE)/2) << 0d8]
     lac [LABELX << 0d8
     sdb BRIGHTNESS << 6
-    lac [header2
+    law header2
     jda drawasctext
 
     // Now list the files we have
@@ -115,7 +115,7 @@ gotOne,
     dac txtPtr          // now points to the text of the selection
 // start the countdown timer, 1 second interval
      law 0d1000         // delay in milliseconds
-     iot cct            // go, cks bit 3 will be set when done
+     cct            // go, cks bit 3 will be set when done
 
 waitLoop,
     cks
@@ -126,12 +126,12 @@ waitLoop,
     sza i
     jmp go
     law 0d1000          // keep going
-    iot cct
+    cct
 
 w2,                     // we're waiting, update the display
     law TEXTSIZE AUTOSPACE
     lia
-    iot glf
+    glf
 
     law MSGY
     dac dirY           // reuse dirY
@@ -141,7 +141,7 @@ w2,                     // we're waiting, update the display
     sdb BRIGHTNESS << 6
     lac [msg1
     jda drawasctext
-    iot gsp
+    gsp
     lac txtPtr
     jda drawasctext
 
@@ -166,7 +166,7 @@ w2,                     // we're waiting, update the display
     // draw the countdown
     law DIGITSIZE
     lia
-    iot glf
+    glf
     cli
     cla
     sdb HIBRIGHTNESS << 6
@@ -176,7 +176,7 @@ w2,                     // we're waiting, update the display
     jmp waitLoop
 
 go, cla
-    iot cct         // clear timer
+    cct         // clear timer
     lio dirCtr
     jsp loadPgm
     lac [startAddrs
@@ -196,12 +196,12 @@ ld2, lac trk
      sal 6s
      ior [drmrd 7751] // directory area on the drum track
      lia
-     iot dia
+     dia
      law 26         // read o26 words
      lia
-     iot dwc
+     dwc
      lio [dirBuf:BNKNO     // into our buffer
-     iot dcl
+     dcl
 
      lac dirBuf + DIRMARKER // 707070 is a marker that the track is initialized
      sas [707070
@@ -250,10 +250,10 @@ loadPgm,
      sal 6s
      ior [drmrd
      lia
-     iot dia
+     dia
      cli            // a word count of 0 means 4096 words
-     iot dwc
-     iot dcl        // bank 0, address 0
+     dwc
+     dcl        // bank 0, address 0
 rtn, jmp .
     endloc
 
@@ -283,7 +283,7 @@ rtn, jmp .
     endloc
 
 // Put included code here
-#include <memcpy.ac>
+#include "memcpy.ac"
 #include <SYMGEN/drawasctext.ac>
 #include <SYMGEN/drawdigits.ac>
 

@@ -30,7 +30,7 @@ local
 %glndon,  lac getlin
         cli
         jmp i %glnrtn
-%glnbad,  iot rle
+%glnbad,  rle
         lac getlin
         jmp i %glnrtn
 %glnrtn,  0

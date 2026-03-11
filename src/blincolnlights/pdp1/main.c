@@ -100,6 +100,20 @@ bool prev_readin_sw;
         prev_readin_sw = pdp->readin_sw;
         updateswitches(pdp, panel);
         // Override with any AD1 operations
+
+        // This one stays on until cleared by ad1 or a real switch, be sure it's first
+        if( AD1_SINGLE(pdp1P) )
+        {
+            if(Edge(start_sw) || Edge(continue_sw) )
+            {
+                AD1_CLEAR_SINGLE(pdp1P);
+            }
+            else
+            {
+                pdp->single_inst_sw = 1;
+            }
+        }
+
         if( AD1_START(pdp1P) )
         {
             pdp->start_sw = 1;
@@ -108,11 +122,10 @@ bool prev_readin_sw;
             AD1_CLEAR_START(pdp1P);
         }
 
-        if( AD1_STEP(pdp1P) )
+        if( AD1_STOP(pdp1P) )
         {
-            pdp->single_inst_sw = 1;
-            pdp->continue_sw = 1;
-            AD1_CLEAR_STEP(pdp1P);
+            pdp->stop_sw = 1;
+            AD1_CLEAR_STOP(pdp1P);
         }
 
         if( AD1_CONTINUE(pdp1P) )
@@ -125,8 +138,6 @@ bool prev_readin_sw;
         {
             if(Edge(start_sw) || Edge(continue_sw) || Edge(examine_sw) || Edge(deposit_sw))
             {
-                // Check breakpoints and watches at the beginning of a cycle,
-                // otherwise jmps can be missed.
                 spec(pdp1P);
                 cycle(pdp1P);
                 if( checkBreakpoints(pdp) || checkWatches(pdp) )
@@ -182,14 +193,11 @@ bool prev_readin_sw;
                     throttle(pdp);
                 }
 
-                // Check breakpoints and watches at the beginning of a cycle,
-                // otherwise jmps can be missed.
+                cycle(pdp);
                 if( checkBreakpoints(pdp) || checkWatches(pdp) )
                 {
                     pdp->run_enable = 0;
                 }
-
-                cycle(pdp);
             }
             else
             {

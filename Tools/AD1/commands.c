@@ -355,6 +355,7 @@ startFn(int addr)
     pdp1P->run_enable = 0;      // stop it
     pdp1P->ad1StartAddr = addr & 07777;    
     pdp1P->ad1ExtendedAddr = addr & 0170000;    
+    AD1_CLEAR_SINGLE(pdp1P);    // shouldn't be set, but be sure
     AD1_SET_START(pdp1P);
     lastAddr = addr;
 }
@@ -362,7 +363,9 @@ startFn(int addr)
 void
 stopFn(void)
 {
-    pdp1P->run_enable = 0;
+    AD1_CLEAR_SINGLE(pdp1P);    // shouldn't be set, but be sure
+    AD1_SET_STOP(pdp1P);
+    usleep(1000);       // plenty of time for the stop to happen, we need the pc at that point
     lastAddr = pdp1P->epc | pdp1P->pc;
 }
 
@@ -377,7 +380,8 @@ MapEntryP entryP;
     }
     else
     {
-        AD1_SET_STEP(pdp1P);
+        AD1_SET_SINGLE(pdp1P);   // this is a 'sticky' setting and must be cleared to get out of ss
+        AD1_SET_CONTINUE(pdp1P);
         usleep(1000);            // plenty of time for completion
 
         if( (entryP = getLinesFromAddress(getCurrentPC())) > 0 )
@@ -390,6 +394,7 @@ MapEntryP entryP;
 void
 continueFn(void)
 {
+    AD1_CLEAR_SINGLE(pdp1P);
     AD1_SET_CONTINUE(pdp1P);
 }
 

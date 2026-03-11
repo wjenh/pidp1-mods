@@ -19,7 +19,7 @@ int lastAddr;
 int base;               // default input number base, changed by the base command
 int lastFormat;         // last format used, 0 means use base
 int curBank;            // set by the bank cmd
-int windowSize = 3;     // 3 lines before and after the current line
+int windowSize = 6;     // default window size
 int brkCount;           // number of set breakpoints
 int watchCount;         // number of set watches
 
@@ -43,7 +43,7 @@ void enableBpFn(int num);
 void disableBpFn(int num);
 void setBaseFn(int num);
 void setFileFn(char *nameP, bool add);
-void listFn(int lineNo, MapEntryP mapP);
+void listFn(int lineNo);
 void setWatchFn(int addr,  int value);
 void deleteWatchFn(int num);
 void enableWatchFn(int num);
@@ -378,7 +378,6 @@ MapEntryP entryP;
     else
     {
         AD1_SET_STEP(pdp1P);
-        pdp1P->run = 1;
         usleep(1000);            // plenty of time for completion
 
         if( (entryP = getLinesFromAddress(getCurrentPC())) > 0 )
@@ -585,7 +584,7 @@ char *tmpP;
 // value, NIL which means list from the value line, or
 // NOARG, mapP which means list all lines associated with the map entry.
 void
-listFn(int lineNo, MapEntryP mapP)
+listFn(int lineNo)
 {
 int i;
 
@@ -594,14 +593,9 @@ int i;
         return;
     }
 
-    if( (lineNo == NOARG) && !mapP )
+    if( lineNo == NOARG )
     {
         lineNo = getCurrentLineNumber();
-    }
-    else if( mapP )
-    {
-        printLines(mapP);
-        return;
     }
 
     if( (lineNo -= windowSize) < 1 )

@@ -28,7 +28,6 @@ extern BreakpointP activeBrkP; // we hit a breakpoint, this is it
 int yyerror(const char *errstr);
 
 extern int getLineFromAddress(int address);
-extern MapEntryP getLinesFromAddress(int address);
 extern void formatAndPrintOne(char fmt, int val2P);
 extern void formatAndPrintTwo(char fmt, int valP, int fmt2, int val2P);
 extern int eval(int op, int lval, int rval);
@@ -59,7 +58,7 @@ extern void enableWatchFn(int num);
 extern void disableWatchFn(int num);
 extern void setBaseFn(int num);
 extern void setFileFn(char *nameP, bool add);
-extern void listFn(int lineNo, MapEntryP mapP);
+extern void listFn(int lineNo);
 extern void setWindowFn(int size);
 extern void debugFn(void);
 %}
@@ -132,8 +131,8 @@ typedef struct argitem_t {
 %type <strP> SYMBOL
 %token BREF
 %type <ival> BREF
-%token STRING
-%type <strP> STRING
+%token FILESTRING
+%type <strP> FILESTRING
 
 /* registers, etc */
 %token REGISTER
@@ -301,21 +300,26 @@ cmd		: QUIT
                 {
                     printf("Base is %d\n", base);
                 }
-                | SETFILE SEPARATOR SYMBOL
+                | FILESTRING
                 {
-                    setFileFn($3, false);
-                }
-                | SETFILE SEPARATOR PLUS SYMBOL
-                {
-                    setFileFn($4, true);
+                    if( *$1 == '+' )
+                    {
+                        setFileFn($1 + 1, true);
+                    }
+                    else
+                    {
+                        setFileFn($1, false);
+                    }
+
+                    return(0);          // we consumed the input, no more lexing on this line
                 }
                 | LIST
                 {
-                    listFn(NOARG, NIL);
+                    listFn(NOARG);
                 }
                 | LIST SEPARATOR DECINTEGER
                 {
-                    listFn($3, NIL);
+                    listFn($3);
                 }
                 | LIST SEPARATOR dotexpr
                 {
@@ -333,43 +337,43 @@ cmd		: QUIT
                         return(0);
                     }
 
-                    listFn(line + $3, NIL);
+                    listFn(line + $3);
                 }
                 | LIST SEPARATOR LINEAT address
                 {
-                MapEntryP mapP;
+                int line;
 
                     if( !loadFileData() )
                     {
                         return(0);
                     }
 
-                    mapP = getLinesFromAddress($4);
-                    if( !mapP )
+                    line = getLineFromAddress($4);
+                    if( line <= 0 )
                     {
                         printf("No line can be found for that address.\n");
                         return(0);
                     }
 
-                    listFn(NOARG, mapP);
+                    listFn(line);
                 }
                 | LIST SEPARATOR listSym
                 {
-                MapEntryP mapP;
+                int line;
 
                     if( !loadFileData() )
                     {
                         return(0);
                     }
 
-                    mapP = getLinesFromAddress($3);
-                    if( !mapP )
+                    line = getLineFromAddress($3);
+                    if( line <= 0 )
                     {
                         printf("No line can be found for that address.\n");
                         return(0);
                     }
 
-                    listFn(NOARG, mapP);
+                    listFn(line);
                 }
                 | NEXT
                 {

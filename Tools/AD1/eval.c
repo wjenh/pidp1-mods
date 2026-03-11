@@ -196,6 +196,11 @@ MapEntryP entryP;
 FILE *fP;
 char line[256];
 
+    if( !fnameP || !*fnameP )
+    {
+        return( false );            // nothing to do, fail silently
+    }
+
     if( !(fP = fopen(fnameP,"r")) )
     {
         printf("Can't open symbol file '%s', no symbols will be available.\n", fnameP);

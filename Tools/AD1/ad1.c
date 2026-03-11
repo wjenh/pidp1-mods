@@ -637,7 +637,7 @@ BreakpointP brkP;
     brkP = pdp1P->ad1Breakpoints;
     for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i, ++brkP )
     {
-        // Check the pc and mem addresses
+        // Check the pc addresses
         if( brkP->isSet && (brkP->address == addr) )
         {
             return(brkP);
@@ -654,7 +654,8 @@ int i;
 BreakpointP brkP;
 
     // see if a breakpoint was signaled
-    if( !pdp1P->run && AD1_BREAKPOINT_HIT(pdp1P) )
+    //if( !pdp1P->run && AD1_BREAKPOINT_HIT(pdp1P) )
+    if( AD1_BREAKPOINT_HIT(pdp1P) )
     {
         brkP = &(pdp1P->ad1Breakpoints[pdp1P->ad1brkNo]);
         AD1_CLEAR_BREAKPOINT_HIT(pdp1P);

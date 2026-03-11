@@ -68,9 +68,12 @@
 int penAperture = APERTURE;
 int penRadius2 = (APERTURE/2) * ( APERTURE/2);  // radius squared
 bool lightpenEnabled = false;       // we always expose these for loadConfig in main.c
-bool sdbEnabled = true;
+bool sdbEnabled = false;
 bool dpyShiftEnabled = false;
 bool audioEnabled = false;
+bool lailiaEnabled = false;
+bool all1DEnabled = false;
+
 
 #define B0 0400000
 #define B1 0200000
@@ -944,7 +947,7 @@ int hack;
             shro(pdp);
         }
 
-        if(pdp->lai)
+        if( pdp->lai)
         {
             MB |= IO;
         }
@@ -959,7 +962,7 @@ int hack;
             shro(pdp);
         }
 
-        if(pdp->lai && pdp->lia)
+        if( pdp->lai && pdp->lia)
         {
             int t = MB;
             MB = AC;
@@ -1104,7 +1107,7 @@ int hack;
         {
             int skip = 0;
 
-            if((MB & B6) && IO)
+            if( all1DEnabled && (MB & B6) && IO)
             {
                 skip = 1;    // wje - pdp-1D sni, skip on nonzero IO
             }
@@ -1167,7 +1170,7 @@ int hack;
 
         if(IR_OPR)
         {
-            if(MB & B5)
+            if( all1DEnabled && (MB & B5) )
             {
                 IO = ~IO;    // wje - pdp-1D cmi, complement IO
             }
@@ -1182,12 +1185,12 @@ int hack;
                 pc_to_ac(pdp);
             }
 
-            if(MB & B12)
+            if( (lailiaEnabled || all1DEnabled) && (MB & B12) )
             {
                 pdp->lai = 1;
             }
 
-            if(MB & B13)
+            if( (lailiaEnabled || all1DEnabled) && (MB & B13) )
             {
                 pdp->lia = 1;
             }

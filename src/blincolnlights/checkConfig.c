@@ -55,7 +55,7 @@ char answer[64];
             continue;
         }
 
-        if( (i = sscanf(line, "%[a-z0-9] = %[a-z0-9.]", option, answer)) != 2 )
+        if( (i = sscanf(line, "%[a-zA-Z0-9] = %[a-zA-Z0-9.]", option, answer)) != 2 )
         {
             continue;
         }

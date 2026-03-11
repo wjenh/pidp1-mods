@@ -37,7 +37,18 @@ char symstr[256];
         return(false);
     }
 
-    if( !(extP = strchr(nameP, '.')) )
+    // Differentiate between relative path dots and an extension dot,
+    // search backwards for a slash and if found, ignore it and all before it for finding the extension.
+    if( (cP = strrchr(nameP,'/')) )
+    {
+        ++cP;
+    }
+    else
+    {
+        cP = nameP;
+    }
+
+    if( !(extP = strrchr(cP, '.')) )
     {
         extP = nameP + strlen(nameP);
         strcpy(extP, ".am1");

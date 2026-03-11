@@ -33,6 +33,9 @@
 #include "logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
 #define LOG_SHM 0
+#define LOG_WATCH 0
+#define LOG_BREAK 0
+#define LOG_CONFIG 0
 
 // If present, will set the startup state of audio, lightpen support, etc.
 // See the distributed one for all settings.
@@ -50,7 +53,7 @@ void lightson(Panel *panel);
 void loadConfigFile(PDP1 *pdp1P, char *filenameP);
 Panel *getpanel(void);
 
-static bool checkBreakpoints(PDP1 *pdp1P, int address);
+static bool checkBreakpoints(PDP1 *pdp1P);
 static bool checkWatches(PDP1 *pdp1P);
 
 PDP1P pdp1P;      // Here because dynamic IOT code needs it
@@ -61,13 +64,14 @@ extern bool lightpenEnabled;
 extern bool sdbEnabled;
 extern bool dpyShiftEnabled;
 extern bool audioEnabled;
+extern bool lailiaEnabled;
+extern bool all1DEnabled;
 
 static bool useShm;
 
 void
 emu(PDP1 *pdp, Panel *panel)
 {
-int addr;
 bool prev_start_sw;
 bool prev_stop_sw;
 bool prev_continue_sw;
@@ -123,14 +127,12 @@ bool prev_readin_sw;
             {
                 // Check breakpoints and watches at the beginning of a cycle,
                 // otherwise jmps can be missed.
-                addr =  (pdp->epc | pdp->pc) & 0177777;
-                if( checkBreakpoints(pdp, addr) || checkWatches(pdp) )
-                {
-                    pdp->run = 0;
-                }
-
                 spec(pdp1P);
                 cycle(pdp1P);
+                if( checkBreakpoints(pdp) || checkWatches(pdp) )
+                {
+                    pdp->run_enable = 0;
+                }
             }
 
             if( Edge(stop_sw) )
@@ -182,10 +184,9 @@ bool prev_readin_sw;
 
                 // Check breakpoints and watches at the beginning of a cycle,
                 // otherwise jmps can be missed.
-                addr =  (pdp->epc | pdp->pc) & 0177777;
-                if( checkBreakpoints(pdp, addr) || checkWatches(pdp) )
+                if( checkBreakpoints(pdp) || checkWatches(pdp) )
                 {
-                    pdp->run = 0;
+                    pdp->run_enable = 0;
                 }
 
                 cycle(pdp);
@@ -457,8 +458,10 @@ char answer[64];
             continue;
         }
 
-        if( (i = sscanf(line, "%[a-z0-9] = %[a-z0-9.]", option, answer)) != 2 )
+        logger(LOG_CONFIG, "%s", line);
+        if( (i = sscanf(line, "%[a-zA-Z0-9] = %[a-zA-Z0-9.]", option, answer)) != 2 )
         {
+            logger(LOG_CONFIG, "invalid\n");
             fprintf(stderr, "Invalid config file line %d, %s", i, line);
             continue;
         }
@@ -522,6 +525,14 @@ char answer[64];
         {
             pdp1P->sbs16 = onOff;
         }
+        else if( !strcmp(option,"lailia") )
+        {
+            lailiaEnabled = onOff;
+        }
+        else if( !strcmp(option,"all1D") )
+        {
+            all1DEnabled = onOff;
+        }
         else if( !strcmp(option,"muldiv") )
         {
             pdp1P->muldiv_sw = onOff;
@@ -532,6 +543,14 @@ char answer[64];
             useShm = true;
         }
     }
+
+    logger(LOG_CONFIG, "lightpen %d\n", lightpenEnabled);
+    logger(LOG_CONFIG, "sdb %d\n", sdbEnabled);
+    logger(LOG_CONFIG, "dpy shift %d\n", dpyShiftEnabled);
+    logger(LOG_CONFIG, "audio %d\n", audioEnabled);
+    logger(LOG_CONFIG, "lailia %d\n", lailiaEnabled);
+    logger(LOG_CONFIG, "all 1D %d\n", all1DEnabled);
+    logger(LOG_CONFIG, "shm %d\n", useShm);
 
     fclose(fP);
 }
@@ -641,9 +660,10 @@ int shmFd;
 // If so, check the count and if reached, signal a breakpoint.
 // Return true if a brekpoint was hit, else false.
 static bool
-checkBreakpoints(PDP1 *pdp1P, int address)
+checkBreakpoints(PDP1 *pdp1P)
 {
 int i;
+int addr;
 BreakpointP brkP;
 
     if( !AD1_BREAKPOINTS_ENABLED(pdp1P) )
@@ -651,11 +671,12 @@ BreakpointP brkP;
         return(false);
     }
 
+    addr =  (pdp1P->epc | pdp1P->pc) & 0177777;
     brkP = pdp1P->ad1Breakpoints;
 
     for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
     {
-        if( (brkP->isSet) && (brkP->isEnabled) && (brkP->address == address) )
+        if( (brkP->isSet) && (brkP->isEnabled) && (brkP->address == addr) )
         {
             brkP->curCount++;
             logger(LOG_BREAK, "breakpoint %d seen curcount %d\n", i+1, brkP->curCount);

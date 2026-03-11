@@ -28,7 +28,10 @@ extern void freeMem(void);
 
 %%
 ^[a-z]+			{
+			char ch;
+			char *cP;
 			DispatchP dispP;
+			char tmpstr[256];
 
 			    if( (dispP = findCommand(dispatchTable, yytext)) )
 			    {
@@ -47,6 +50,24 @@ extern void freeMem(void);
 				case SET:
 				    BEGIN REGARG;
 				    break;
+
+				case SETFILE:
+				    // Hack to pick up the essentially arbitrary file path
+				    for( cP = tmpstr; (ch = input()); )
+				    {
+					*cP++ = ch;
+				    }
+
+				    *cP = '\0';
+
+				    for( cP = tmpstr; isspace(*cP); )
+				    {
+				    	++cP;
+				    }
+
+				    yylval.strP = (char *)malloc(strlen(cP) + 1);
+				    strcpy(yylval.strP, cP);
+				    return(FILESTRING);
 				}
 
 			        return(dispP->token);
@@ -238,19 +259,6 @@ ss			{
 			    yylval.strP = (char *)allocMem(strlen(yytext) + 1);
 			    strcpy(yylval.strP, yytext);
 			    return(SYMBOL);
-			}
-
-".*"			{
-			int i;
-			char *cP;
-				
-			    i = strlen(yytext);
-
-			    cP = allocMem(i);
-			    strcpy(cP, yytext + 1);
-			    *(cP + i - 1) = '\0';
-			    yylval.strP = cP;
-			    return(STRING);
 			}
 
 [ ]+			{ return(SEPARATOR); }

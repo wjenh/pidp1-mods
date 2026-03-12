@@ -80,6 +80,8 @@
  * 05-Mar-2026 - change import to use V2 symtabs, set correct max bank, 16 not 32
  * 08-Mar-2026 - fix obscure issue with a symbol being used with and without a bank ref in constants
  * 09-Mar-2026 - change constant hash to be sure the last fix returns a 64 bit hash, not a 32 bit hash
+ * 10-Mar-2026 - change constant hash again, if it ain't broke, fix it anyway.
+ *               Really just to hash resolved symbol values better.
  *
 */
 #include <unistd.h>

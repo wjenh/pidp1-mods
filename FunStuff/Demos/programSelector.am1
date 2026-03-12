@@ -2,7 +2,7 @@ Demo of light pen, sym gen, drum, clock
 // Did I forget anything? Oh, right, DCS.
 
 // We load into and run in this bank
-#define BNKNO 2
+#define BNKNO 1
 
 #include <SYMGEN/type33iots.ah>
 #include <LIGHTPEN/lightpen.ah>
@@ -26,7 +26,7 @@ Demo of light pen, sym gen, drum, clock
 #define COUNTDOWN 5
 
 // only the first 10
-#define MAXDIRS 0d15
+#define MAXDIRS 0d10
 
 // location in buffer of the valid entry marker
 #define DIRMARKER 25
@@ -43,11 +43,11 @@ var numEntries     // will be one more than the number we have
 
 100/
 strt,
-    lac [lines
+    law lines
     dac linePtr
-    lac [txtBuf
+    law txtBuf
     dac txtPtr
-    lac [startAddrs
+    law startAddrs
     dac addrPtr
     dzm numEntries
     lem                 // on from loader, not now
@@ -95,7 +95,7 @@ dirs,
     jsp gotOne
     idx dirCtr
     lac dirY
-    sub [CHARSIZEY(TEXTSIZE) + SPACINGSIZE(TEXTSIZE)]
+    sub [CHARSIZEY(TEXTSIZE) * 2]
     dac dirY
     jmp dirs
 
@@ -108,7 +108,7 @@ gotOne,
     sdb BRIGHTNESS << 6
     law i COUNTDOWN
     dac ctr
-    lac [lines
+    law lines
     add dirCtr
     dac linePtr
     lac i linePtr
@@ -139,28 +139,28 @@ w2,                     // we're waiting, update the display
     ril 8s
     lac [MSGX << 0d8
     sdb BRIGHTNESS << 6
-    lac [msg1
+    law msg1
     jda drawasctext
     gsp
     lac txtPtr
     jda drawasctext
 
     jsp nextLine
-    lac [msg2
+    law msg2
     jda drawasctext
     
     jsp nextLine
-    lac [msg3
+    law msg3
     jda drawasctext
     law BNKNO
     jda drawdigit
 
     jsp nextLine
-    lac [msg3b
+    law msg3b
     jda drawasctext
     
     jsp nextLine
-    lac [msg4
+    law msg4
     jda drawasctext
 
     // draw the countdown
@@ -179,7 +179,7 @@ go, cla
     cct         // clear timer
     lio dirCtr
     jsp loadPgm
-    lac [startAddrs
+    law startAddrs
     add dirCtr
     dac ctr
     lio i ctr
@@ -200,7 +200,7 @@ ld2, lac trk
      law 26         // read o26 words
      lia
      dwc
-     lio [dirBuf:BNKNO     // into our buffer
+     lio [dirBuf:BNKNO      // into our buffer
      dcl
 
      lac dirBuf + DIRMARKER // 707070 is a marker that the track is initialized
@@ -314,7 +314,7 @@ msg1,
 msg2,
     ascii "You can come back here when ready,"
 msg3,
-    ascii "Set extension to "
+    ascii "Turn on extend, set extension to "
 msg3b,
     ascii "Set address 100, start"
 msg4,

@@ -215,14 +215,17 @@ PNodeP node2P;
 
 // This is used for constants to allow us to collapse equivalent expressions.
 // It wouldn't be needed except constants are allowed to reference currently-undefined symbols,
-// which makes keeping the pc proper is not at all trivial.
+// which makes resolving expressions that result in the same value painful if the symbol is unresolved.
+// As an expression is evaluated, if the values are known, that's what is used.
+// If a symbol reference is encountered that hasn't been resolved, then the address of the symbol in
+// the symbol table is used to create a hash value, see below.
 long int
 hashExpr(PNodeP nodeP)
 {
 long int lval, hilval;
 long int rval, hirval;
 long int partial;
-uint64_t bigint;
+unsigned long hashVal;
 SymNodeP symP;
 
     if( !nodeP )
@@ -339,22 +342,32 @@ SymNodeP symP;
     case LCLADDR:
     case BREF:
         symP = nodeP->value.symP;
-        // Use the symP as the 'value', modify it if there was an explicit bank ref
-        bigint = (uint64_t)symP;
-        bigint = (bigint & 0xFFFFFFFF) << 18;  // mangle its bits 
-        if( nodeP->type == BREF )
+        if( symP->flags & SYMF_RESOLVED )
         {
-            bigint += (0xEFE << 20);
+            // The value is always a memory address, but be sure it has the correct bank address
+            lval = (symP->bank << 12) | (symP->value & 07777);
+            return( lval );
         }
 
-        return( (long int)bigint );
+        // Use the symP as the 'value', modify it if there was an explicit bank ref.
+        // But, since its true value isn't known, we don't want it to be confused with an actual memory address.
+        // All values except this one have resolved to an 18-bit number, which is the final value.
+        // So, scrabmle the symbol table address, take the low 40 bits, shift it up 22 bits.
+        // Why 22?
+        // The address will have been from malloc and will be unique within the lower sizeof(Symbol) bits.
+        // For safety, shift the address up 8 bits after taking the low 40 bits.
+        // If it's a bank ref, the symbol ptr is still fine to use.
+        // This isn't perfect, different unresolved symbols that finally resolve to the same address
+        // won't hash together, but that only means an extra word of memory will be used.
+        hashVal = (unsigned long)symP;
+        hashVal = (hashVal & 0xFFFFFFFFFF) << 22;
+        return( (long)hashVal );
 
     case WILDREF:
-        // All we have is the symbolname, use the string address
-        bigint = (uint64_t)(nodeP->value.strP);
-        bigint = (bigint & 0xFFFFFFFF) << 18;  // mangle its bits 
-        bigint += (0xEEF << 20);
-        return( (long int)bigint );
+        // All we have is the symbolname, use the string address mangled similarly as above.
+        hashVal = (unsigned long)(nodeP->value.strP);
+        hashVal = (hashVal & 0xFFFFFFFFFF) << 22;
+        return( (long)hashVal );
 
     case INTEGER:
     case CHAR:

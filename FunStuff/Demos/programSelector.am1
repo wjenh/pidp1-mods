@@ -2,7 +2,7 @@ Demo of light pen, sym gen, drum, clock
 // Did I forget anything? Oh, right, DCS.
 
 // We load into and run in this bank
-#define BNKNO 1
+#define BNKNO 2
 
 #include <SYMGEN/type33iots.ah>
 #include <LIGHTPEN/lightpen.ah>
@@ -26,7 +26,7 @@ Demo of light pen, sym gen, drum, clock
 #define COUNTDOWN 5
 
 // only the first 10
-#define MAXDIRS 0d10
+#define MAXDIRS 0d15
 
 // location in buffer of the valid entry marker
 #define DIRMARKER 25
@@ -95,7 +95,7 @@ dirs,
     jsp gotOne
     idx dirCtr
     lac dirY
-    sub [CHARSIZEY(TEXTSIZE) * 2]
+    sub [CHARSIZEY(TEXTSIZE) + SPACINGSIZE(TEXTSIZE)]
     dac dirY
     jmp dirs
 
@@ -314,7 +314,7 @@ msg1,
 msg2,
     ascii "You can come back here when ready,"
 msg3,
-    ascii "Turn on extend, set extension to "
+    ascii "Set extension to "
 msg3b,
     ascii "Set address 100, start"
 msg4,

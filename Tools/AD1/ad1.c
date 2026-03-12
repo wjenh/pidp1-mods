@@ -12,7 +12,7 @@
  * 7-Mar-26 wje - restrict some cmd args to decimal, add multi-line at one address support
  * 8-Mar-26 wje - show decoded instruction after watch or break hit if source not available,
  *      add address-of-symbol, add symbol table list, fix flex conversion bug, general cleanup
- *
+ * 11-Mar-26 wje rework single-step logic, make sure to clear single_inst on exit
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -1075,6 +1075,8 @@ getCurrentPC()
 void
 leave(int status, void *ignore)
 {
+    AD1_CLEAR_SINGLE(pdp1P);        // be sure we turn off single step, might have been on
+
     // Exit will preserve all the breakpoints, but disable them
     if( status == EXIT )
     {

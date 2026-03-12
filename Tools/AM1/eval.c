@@ -347,14 +347,14 @@ SymNodeP symP;
             bigint += (0xEFE << 20);
         }
 
-        return( (int)bigint );
+        return( (long int)bigint );
 
     case WILDREF:
         // All we have is the symbolname, use the string address
         bigint = (uint64_t)(nodeP->value.strP);
         bigint = (bigint & 0xFFFFFFFF) << 18;  // mangle its bits 
         bigint += (0xEEF << 20);
-        return( (int)bigint );
+        return( (long int)bigint );
 
     case INTEGER:
     case CHAR:

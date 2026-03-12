@@ -2,8 +2,8 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.4 and covers up through ad1 version 1.4; it will be updated as needed.\
-Edit date 8-Mar-2026
+This is version 1.6 and covers up through ad1 version 1.6; it will be updated as needed.\
+Edit date 12-Mar-2026
 
 ## What is **ad1**?
 
@@ -426,7 +426,6 @@ If it is a symbol, it is the line number of the line the symbol was assigned a l
 
 If an expression is preceeded by @, then it is the line that corresponds to that address in the listing file,
 *line at address*.\
-This form allows a number in any valid base.
 
 if a . (period, dot) is given, it means *list from the line corresponding to the last address used*.
 It can have an optional + or - decimal, which means the last address plus or minus that value,
@@ -436,6 +435,19 @@ If an empty line is entered, it is equivalent to entering this command with no a
 
 If the file was just a source file, then lines can only be viewed by line number.\
 Otherwise, if the **ad1** .lst file is found, full functionality is available.
+
+When the file is a listing file, the line numbers in it correspond to the original input source and
+aren't usually the same as the line in the listing file, they refer to the line in whichever file is being
+listed, so includes and macros can skew it.
+
+The list command displays the line number in the listing file itself, the file you're viewing, and the same
+for just a source file.
+
+For example:
+```
+23   42: jmp foo
+```
+The first number is the line in the file being viewed and is the line a *list at nn* command will show.
 
 ## Next
 

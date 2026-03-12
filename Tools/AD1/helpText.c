@@ -52,12 +52,15 @@ char *breakHelp[] = {
     NIL};
 
 char *listHelp[] = {
-    "The list command shows the content of the original source file or of a register",
-    "If it is not automatically founnd, the 'file' command can be used to locate it.",
-    "For full functionality, the actual file should be produced by am1.",
+    "The list command shows the content of the list or source file or of a register",
+    "If a file is not given on startup or a differnt file is wanted, the 'file' command can be used to open it.",
+    "For full functionality, the actual file should be produced by am1 with the -d switch.",
     "If just the original source file is available, positioning by line number will the the only available.",
     "List with no arguments lists the next set of lines, or if none have been listed before, lines",
     "starting from the first line.",
+    "Each line is listed with the line number in the file being shown and if a listing file, the line",
+    "from it. Note that the line numbers in the listing file are from the original source file and usually",
+    "aren't the line numbers to use, use the first number, the line in the file you're looking at.",
     "A decimal-only value lists from that line in the file.",
     "An expression prefixed by an @ lists from the line at that address.",
     "A string value lists from the location of that symbol in the file if a symbol table is available.",

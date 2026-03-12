@@ -1,6 +1,6 @@
 // Primary include file for ad1
 
-#define VERSION "1.5 11-Mar-2026"
+#define VERSION "1.6 12-Mar-2026"
 
 #include <stdint.h>
 

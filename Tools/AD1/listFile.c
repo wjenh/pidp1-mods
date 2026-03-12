@@ -265,7 +265,9 @@ char linebuf[1024];
     {
         curLine = lineno;
         // Lines from a .lst file aready have the line number text
-        printf("%s", linebuf);
+        // but they doesn't match the actual line numbers in the file, they're from the original file.
+        // So, also show the line number in the listing file.
+        printf("%-4d %s", lineno, linebuf);
         return(true);
     }
     else

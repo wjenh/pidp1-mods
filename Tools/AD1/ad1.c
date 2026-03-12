@@ -13,6 +13,7 @@
  * 8-Mar-26 wje - show decoded instruction after watch or break hit if source not available,
  *      add address-of-symbol, add symbol table list, fix flex conversion bug, general cleanup
  * 11-Mar-26 wje rework single-step logic, make sure to clear single_inst on exit
+ * 12-Mar-26 wje minor change to show line numbers better, updated in-app help.
 */
 #include <stdlib.h>
 #include <stdio.h>

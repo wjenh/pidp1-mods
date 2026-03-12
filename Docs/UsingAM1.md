@@ -2,7 +2,7 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.19 and covers up through am1 version 1.21; it will be updated as needed.\
+This is version 1.20 and covers up through am1 version 1.24; it will be updated as needed.\
 Edit date 05-Mar-2026
 
 ## What is **am1**?
@@ -169,9 +169,8 @@ Just type make.
 
 ## Usage
 
-**am1** [-Wabdmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-ipath] sourcefile
+**am1** [-abdmlnsvz[xykp]] [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
 
-- W don't print warnings
 - a space means add, default is or
 - b generate binary tape image code, the default action
 - d generate all files needed for **ad1**, the same as giving the *-s* and *-l* flags
@@ -183,6 +182,8 @@ Just type make.
 - v print the version number and exit
 - z replace -0 with 0 for math operation results
 - Dsymbol define a symbol for **cpp**, -Dsym or -D sym are both accepted
+- W print all warnings
+- W=name print just this warning, can be repeated for more warnings
 - Ipath add a search path to **cpp** for "files", -Ipath or -I path are both accepted
 - ipath set the root directory for <file> searches, -ipath or -i path are both accepted
 
@@ -215,6 +216,28 @@ variable *AM1INCDIR* to the full path to the location.
 The -i flag has priority, followed by the environment variable, followed by the default.
 
 At runtime, /usr/bin/cpp must exist if preprocessing is being done.
+
+## Warnings
+
+If enabled, various warnings can be printed.\
+Some are repeated, some only print once.
+If not stated, the warning is only issued once.
+
+The warnings are:
+- 1Dop, a PDP-1D instruction, lia, lai, lsw, swp, sni, szi, or cmi was used, repeats
+- bank, a bank statement is used but generating macro code
+- bref, a symbol with a bank reference is used but generating macro code
+- stop, a stop statement is used but generating macro code
+- locals, a local symbol hides a global symbol or an endlocal does not match the scoping depth, repeats
+- flex, a flexo op is used but shift codes make it exceed 3 characters, repeats
+- vars, a variables statement was used but there are no variables to emit, repeats
+
+Examples:
+```
+-W
+-W=1Dop
+-W=bank -W=locals
+```
 
 ## Listing file
 

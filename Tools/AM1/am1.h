@@ -27,6 +27,9 @@
 #define WARN_LOCALS 3
 #define WARN_FLEX 4
 #define WARN_VARS 5
+#define WARN_STOP 6
+#define WARN_BANK 7
+#define WARN_BREF 8
 
 // actually the max local scope nesting
 #define MAXLOCALS   128

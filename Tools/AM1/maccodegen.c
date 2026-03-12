@@ -13,8 +13,8 @@
 
 extern bool sawBank;
 extern BankContextP banksP;
-extern bool noWarn;
 
+extern bool doWarn(int warnNo);
 extern int evalExpr(PNodeP);
 extern int onesComplAdj(int);
 
@@ -56,7 +56,7 @@ macCodegen(FILE *outfP, PNodeP rootP)
 
     if( rootP->rightP->type == STOP )
     {
-        if( !noWarn )
+        if( doWarn(WARN_STOP) )
         {
             fprintf(stderr,"am1: WARNING: stop is not supported by macro1, replacing with a jump to hlt\n");
         }
@@ -134,6 +134,11 @@ char str[128];
             break;
 
         case BANK:
+            if( doWarn(WARN_BANK) )
+            {
+                fprintf(stderr,"am1: WARNING: banks are not supported by macro1!\n");
+            }
+
             fprintf(outfP,"/ BANK - following is in bank %d\n", nodeP->value.ival );
             noNl = true;
             break;
@@ -343,6 +348,11 @@ PNodeP node2P;
         break;
 
     case BREF:
+        if( doWarn(WARN_BREF) )
+        {
+            fprintf(stderr,"am1: WARNING: bank references are not supported by macro1!\n");
+        }
+
         fprintf(outfP,"BREF %s:%d", nodeP->value.symP->name, nodeP->value2.ival );
         break;
 

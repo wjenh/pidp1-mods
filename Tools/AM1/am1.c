@@ -104,11 +104,14 @@ typedef struct inc_item
 
 // Define the various warnings that can be enabled and disabled
 Warning warnings[] = {
-    {"1Dop", WARN_1D, false, false, false},
+    {"1Dop", WARN_1D, false, true, false},
     {"bank", WARN_BANKS, false, false, false},
     {"locals", WARN_LOCALS, false, true, false},
     {"flex", WARN_FLEX, false, true, false},
     {"vars", WARN_VARS, false, true, false},
+    {"stop", WARN_STOP, false, false, false},
+    {"bref", WARN_BREF, false, false, false},
+    {"banks", WARN_BANK, false, false, false},
     {0, 0, false}  // end marker
 };
 
@@ -163,7 +166,9 @@ int macCodegen(FILE *, PNodeP);
 int binCodegen(FILE *, PNodeP);
 int listCodegen(FILE *, PNodeP);
 
+void enableAllWarnings(void);
 void enableWarning(char *nameP);
+bool doWarn(int warnID);
 void add_cpp(char, char *);
 void leave(int);
 int run_cpp(char *, char *);
@@ -183,6 +188,7 @@ SymNodeP symP;
     yy_flex_debug = 0;
     keepMinusZero = true;
     spaceIsAdd = false;
+    noWarn = true;
 
     for(i = 1; i < NSIG;)
     {
@@ -307,7 +313,8 @@ SymNodeP symP;
                 }
                 else
                 {
-                    noWarn = 1;
+                    noWarn = 0;
+                    enableAllWarnings();
                 }
                 break;
 
@@ -1003,8 +1010,8 @@ usage()
     fprintf(stderr, "  -D define a symbol to cpp\n");
     fprintf(stderr, "  -I add an include path to cpp\n");
     fprintf(stderr, "  -i define the include root directory\n");
-    fprintf(stderr, "  -W don't print warnings\n");
-    fprintf(stderr, "  -W=warning but do print this one\n");
+    fprintf(stderr, "  -W print all warnings\n");
+    fprintf(stderr, "  -W=warning print this warnng\n");
     fprintf(stderr, "  -x enable flex debug output on stderr\n");
     fprintf(stderr, "  -y enable yacc debug output on stderr\n");
     fprintf(stderr, "  -k don't delete cpp tmp file\n");
@@ -1012,6 +1019,7 @@ usage()
     fprintf(stderr, "\n");
     fprintf(stderr, "If neither -b nor -m are given, -b is assumed.\n");
     fprintf(stderr, "By default, space is or, -0 is preserved.\n");
+    fprintf(stderr, "See the documenation for the supported warnings.\n");
     exit(1);
 }
 
@@ -1098,6 +1106,19 @@ int i;
     fprintf(stderr,"No such warning '%s', ignored\n", nameP);
 }
 
+void
+enableAllWarnings()
+{
+int i;
+    
+    for( i = 0; warnings[i].id; ++i )
+    {
+        warnings[i].enabled = true;
+    }
+}
+
+// See if a particular warning should be issued.
+// If so, return true, else false.
 bool
 doWarn(int id)
 {

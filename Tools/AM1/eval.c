@@ -225,6 +225,7 @@ hashExpr(PNodeP nodeP)
 long int lval, hilval;
 long int rval, hirval;
 long int partial;
+unsigned long bank;
 unsigned long hashVal;
 SymNodeP symP;
 
@@ -342,31 +343,42 @@ SymNodeP symP;
     case LCLADDR:
     case BREF:
         symP = nodeP->value.symP;
+
+        // The value is always a memory address, but be sure it has the correct bank address
+        // If it's a bref, we want a full 16 bit address.
+        if( nodeP->type == BREF )
+        {
+            bank = nodeP->value2.ival;
+        }
+        else
+        {
+            bank = 0;       // unqualified addresses always appear to be in bank 0.
+        }
+
         if( symP->flags & SYMF_RESOLVED )
         {
-            // The value is always a memory address, but be sure it has the correct bank address
-            lval = (symP->bank << 12) | (symP->value & 07777);
+            lval = (bank << 12) | (symP->value & 07777);
             return( lval );
         }
 
         // Use the symP as the 'value', modify it if there was an explicit bank ref.
         // But, since its true value isn't known, we don't want it to be confused with an actual memory address.
         // All values except this one have resolved to an 18-bit number, which is the final value.
-        // So, scrabmle the symbol table address, take the low 40 bits, shift it up 22 bits.
+        // So, scrabmle the symbol table address, take the low 38 bits, shift it up 22 bits.
         // Why 22?
         // The address will have been from malloc and will be unique within the lower sizeof(Symbol) bits.
-        // For safety, shift the address up 8 bits after taking the low 40 bits.
-        // If it's a bank ref, the symbol ptr is still fine to use.
+        // For safety, shift the address up 8 bits after taking the low 36 bits.
+        // If it's a bank ref, it's an explicit reference, add in the bank as the high 4 bits.
         // This isn't perfect, different unresolved symbols that finally resolve to the same address
         // won't hash together, but that only means an extra word of memory will be used.
         hashVal = (unsigned long)symP;
-        hashVal = (hashVal & 0xFFFFFFFFFF) << 22;
+        hashVal = ((hashVal & 0xFFFFFFFFF) << 22) | (bank << 60);
         return( (long)hashVal );
 
     case WILDREF:
         // All we have is the symbolname, use the string address mangled similarly as above.
         hashVal = (unsigned long)(nodeP->value.strP);
-        hashVal = (hashVal & 0xFFFFFFFFFF) << 22;
+        hashVal = ((hashVal & 0xFFFFFFFFF) << 22) | (bank << 60);
         return( (long)hashVal );
 
     case INTEGER:

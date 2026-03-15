@@ -1,0 +1,4 @@
+#include <memory.ah>
+// double slash comments
+cla /* old stype comments */
+#define foo(x) fardac(cla) // comment in macro

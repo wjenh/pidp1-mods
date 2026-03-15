@@ -1,0 +1,11 @@
+%%am1 symtab file%%
+V2
+rotate.am1
+017763 G end 120
+011000 G farmemcpy 10
+017757 G go 116
+017751 G isr 106
+010146 G pgm 94
+010147 G pgm2 95
+010110 G resume 53
+017754 G rti 111

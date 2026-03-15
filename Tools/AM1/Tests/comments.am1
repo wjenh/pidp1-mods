@@ -1,8 +1,10 @@
 Test of comments
+#include "comments.ah"
 100/
     jmp a
     jmp a  // do we still get comments?
     jmp a  // now?
+    foo(1)
 a, 2
 // or here?
 start 100

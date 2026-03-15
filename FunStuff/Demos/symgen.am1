@@ -13,7 +13,7 @@ Demo of Type 33 symbol generator
 strt,
     law SIZE | AUTOSPACE | (BRIGHTNESS << 6)
     lia
-    iot glf
+    glf
 loop,
     law YSTART
     dac yoffset

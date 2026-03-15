@@ -119,6 +119,7 @@
  * 09/02/2026 wje - Fix completion bit handling, dpy i and c handling
  * 20/02/2026 wje - If not an instruction, be sure to emit all bits
  * 01/03/2026 wje - Fix cal, emit operand if it actually isn't a cal
+ * 15/03/2026 wje - Change to use decode_instruction, no reason to duplicate all the code
  *
  */
 #include <stdlib.h>
@@ -136,40 +137,8 @@
 // The remaining 12 low bits are the operand whose meaning varies by instruction
 #define OPERAND(x)      (x & 0007777)
 
-// THe operate instruction is a pain, has to be done bitwise in ad-hoc code
-#define OPR_MASK_CLA 00200
-#define OPR_MASK_CLF 00007
-#define OPR_MASK_CLI 04000
-#define OPR_MASK_CMA 01000
-#define OPR_MASK_HLT 00400
-#define OPR_MASK_LAT 02200
-#define OPR_MASK_NOP 07777
-#define OPR_MASK_STF 00010
-
 // The processing loop is a simple state machine
 typedef enum {START, RESTART, LOOKING, RIM, BIN, DATA, RAW, DONE} State;
-
-// Indicates instruction-specific additional processing needed
-typedef enum {NONE, CAN_INDIRECT, IS_SKIP, IS_SHIFT, IS_OPR, IS_IOT, IS_LAW, IS_CALJDA, IS_ILLEGAL} Modifiers;
-
-// IOT instructions have a number of special behaviors
-typedef enum {UNKNOWN, NORMAL, CAN_WAIT, INVERT_WAIT, IS_DPY, IS_IOH, IS_SZF, IS_SZS, HAS_ID} SpecialMods;
-
-// defines one instruction
-typedef struct
-{
-    char *name;
-    Modifiers modifiers;
-} CodeDef;
-
-// This is used to handle instructions that aren't standard, such as the IOT, OPR, etc. instructions
-typedef struct
-{
-    int value;              // the value of the operand field to match
-    char *name;             // instruction name to output
-    SpecialMods modifiers;  // eg, if the instruction can wait for I/O completion
-    int mask;               // the bits in the operand to use for comparison to value, value == (oprerand & mask)
-} Special;
 
 // This is used to hold label information
 typedef struct
@@ -191,7 +160,9 @@ void markTarget(int);
 int getLabel(int, int,  char*);
 
 void usage(void);
-Special *findSpecial(Special *, int);
+
+extern char *decodeInstr(int word, int addr, char *symbolP, char *resultP);
+extern bool opCanIndirect(int opcode);
 
 // Set from cmd line args
 bool as_macro = false;
@@ -219,98 +190,6 @@ Label memlocs[4096];       // enough for the entire address space
 
 #define MEM_VALID  01       // this location was seen as a load address in RIM or BIN
 #define MEM_TARGET 02       // this location was seen as the target of a memoery reference
-
-// Opcodes using only the high 5 bits, not the indirect bit, which means we only need 32 opcode entries.
-// This generally works, except for the JDA instruction, 17, which is handled specially.
-
-CodeDef opcodes[] =                 // we don't use the indirect bit, so we have only 32 possibilities
-    {
-        { "illegal", IS_ILLEGAL },                     // OP 0
-        { "and", CAN_INDIRECT},                        // OP 2
-        { "ior", CAN_INDIRECT},                        // OP 4
-        { "xor", CAN_INDIRECT},                        // OP 6
-        { "xct", CAN_INDIRECT},                        // OP 10
-        { "illegal", IS_ILLEGAL},
-        { "illegal", IS_ILLEGAL},
-        { "cal", IS_CALJDA},                           // OP 16, special, could be JDA
-        { "lac", CAN_INDIRECT},                        // OP 20
-        { "lio", CAN_INDIRECT},                        // OP 22
-        { "dac", CAN_INDIRECT},                        // OP 24
-        { "dap", CAN_INDIRECT},                        // OP 26
-        { "dip", CAN_INDIRECT},                        // OP 30
-        { "dio", CAN_INDIRECT},                        // OP 32
-        { "dzm", CAN_INDIRECT},                        // OP 34
-        { "illegal", IS_ILLEGAL},
-        { "add", CAN_INDIRECT},                        // OP 40
-        { "sub", CAN_INDIRECT},                        // OP 42
-        { "idx", CAN_INDIRECT},                        // OP 44
-        { "isp", CAN_INDIRECT},                        // OP 46
-        { "sad", CAN_INDIRECT},                        // OP 50
-        { "sas", CAN_INDIRECT},                        // OP 52
-        { "mul", CAN_INDIRECT},                        // OP 54
-        { "div", CAN_INDIRECT},                        // OP 56
-        { "jmp", CAN_INDIRECT},                        // OP 60
-        { "jsp", CAN_INDIRECT},                        // OP 62
-        { "skp", IS_SKIP},                             // OP 64
-        { "sft", IS_SHIFT},                            // OP 66
-        { "law", IS_LAW},                              // OP 70
-        { "iot", IS_IOT},                              // OP 72
-        { "illegal", IS_ILLEGAL},
-        { "opr", IS_OPR}                               // OP 76
-    };
-
-// IOT decoding.
-// The more specific masks should come first
-Special iots[] =
-    {
-        {010000, "ioh", NORMAL, 017777},
-        {04074, "eem", NORMAL, 07777},
-        {00074, "lem", NORMAL, 07777},
-        {00001, "rpa", INVERT_WAIT, 0777},
-        {00002, "rpb", INVERT_WAIT, 0777},
-        {00033, "cks", NORMAL, 077},
-        {00007, "dpy", IS_DPY, 077},
-        {00055, "esm", NORMAL, 077},
-        {00054, "lsm", NORMAL, 077},
-        {00005, "ppa", INVERT_WAIT, 077},
-        {00006, "ppb", INVERT_WAIT, 077},
-        {00030, "rrb", NORMAL, 077},
-        {00004, "tyi", CAN_WAIT, 077},
-        {00003, "tyo", CAN_WAIT, 077},
-//        {00051, "asc", CAN_WAIT, 077},
-        {00000, "iot", UNKNOWN, 0}       // special end marker if nothing mathces, must be last
-    };
-
-// Skip decoding.
-Special skips[] =
-    {
-        {00400, "sma", NORMAL, 07777},
-        {00200, "spa", NORMAL, 07777},
-        {02000, "spi", NORMAL, 07777},
-        {00100, "sza", NORMAL, 07777},
-        {01000, "szo", NORMAL, 07777},
-        {00000, "szf", IS_SZF, 07770},
-        {00000, "szs", IS_SZS, 07707},
-        {00000, "skp", UNKNOWN, 0}      // special end mareker if nothing matches
-    };
-
-// Shift/rotate decoding.
-Special shifts[] =
-    {
-        {001000, "ral", NORMAL, 017000},
-        {011000, "rar", NORMAL, 017000},
-        {003000, "rcl", NORMAL, 017000},
-        {013000, "rcr", NORMAL, 017000},
-        {002000, "ril", NORMAL, 017000},
-        {012000, "rir", NORMAL, 017000},
-        {005000, "sal", NORMAL, 017000},
-        {015000, "sar", NORMAL, 017000},
-        {007000, "scl", NORMAL, 017000},
-        {017000, "scr", NORMAL, 017000},
-        {006000, "sil", NORMAL, 017000},
-        {016000, "sir", NORMAL, 017000},
-        {00000, "sft", UNKNOWN, 0}      // special end mareker if nothing matches, must be last
-    };
 
 int
 main(int argc, char **argv)
@@ -718,7 +597,6 @@ int word;
 int cur_addr;
 int end_addr;               // for BIN loader
 int start_addr = 4;        // for macro start, can come from RIM if no BIN blocks, 4 is the default if none
-CodeDef *instructionP;
 char tmpstr[16];
 
     state = START;
@@ -990,29 +868,6 @@ pushbackWord(int word)
     saved_word = word;
 }
 
-Special *
-findSpecial(Special *specP, int op)
-{
-int i;
-
-    for( ;; )
-    {
-        if( specP->modifiers == UNKNOWN )
-        {
-            break;                          // should be end of list
-        }
-
-        if( specP->value == (op & specP->mask) )   // found it
-        {
-            break;
-        }
-
-        specP++;
-    }
-
-    return( specP );
-}
-
 void
 printTapeLeader(int ch)
 {
@@ -1034,17 +889,9 @@ char tmpstr[16];
 void
 formatInstr(int pc, int word)
 {
-int opcode;
-int indirect;
-int completion;
-int operand;
-int tmp, tmp2;
-int bits03;
-char *cP;
-char tmpstr[32];
-char tmpstr2[32];
-CodeDef *instructionP;
-Special *sP;
+int tmp;
+char symbolstr[256];
+char tmpstr[256];
 
     if( getLabel(pc, pc, labelStr) != -1 )
     {
@@ -1072,317 +919,10 @@ Special *sP;
         printf("%-5d %04o: %06o %s", tape_loc, pc, word, (labelStr[0] != '\0')?labelStr:"     ");
     }
 
-    opcode = OPERATION(word);
-    indirect = opcode & 01;
-    completion = word & 04000;
-    opcode >>= 1;                                           // convert to 32 possible instructions
+    getLabel(word & 07777, word & 07777, symbolstr);
+    decodeInstr(word, word & 07777, symbolstr, tmpstr);
 
-    operand = OPERAND(word);
-    instructionP = &opcodes[opcode];
-
-    if( instructionP->modifiers == IS_ILLEGAL )            // not an instruction, just emit the octal value
-    {
-        printf(" %06o\n", word);
-        return;
-    }
-
-    switch( instructionP->modifiers )
-    {
-    case NONE:
-        printf(" %s", instructionP->name);
-        break;
-
-    case CAN_INDIRECT:
-        getLabel(operand, operand, labelStr);
-        printf(" %s%s %s", instructionP->name, (indirect)?" i":"", labelStr);
-        break;
-
-    case IS_CALJDA:
-        if( indirect )
-        {
-            getLabel(operand, operand, labelStr);
-            printf(" jda %s", labelStr);
-        }
-        else
-        {
-            if( operand )
-            {
-                // looks like cal, but has more bits, probably data
-                printf(" %s %o", instructionP->name, operand);
-            }
-            else
-            {
-                printf(" %s", instructionP->name);            // CAL
-            }
-        }
-        break;
-
-    case IS_LAW:
-        // The versions of macro1 floating arund are broken, they don't hande the 'law -n' syntax properly.
-        //printf(" %s %s%04o", instructionP->name, (indirect)?"-":"", operand);
-        printf(" %s %s%04o", instructionP->name, (indirect)?"i ":"", operand);
-        if( !as_macro )
-        {
-            printf(" (%d dec)", (indirect)?-operand:operand);
-        }
-        break;
-
-    case IS_SHIFT:
-        tmp = ((indirect?010000:0) | operand) & 017000;      // indirect bit controls left-right
-        sP = findSpecial(shifts, tmp);
-        if( sP->modifiers == UNKNOWN )
-        {
-            printf(" %06o", word);                           // a bare shift doesn't exist, must be data
-        }
-        else
-        {
-            // Shift/rotate is strange. The number of places to shift/rotate is the count of 1's in the lower 9 bits
-            tmp = operand & 0777;
-            tmp2 = 0;
-            while( tmp != 0 )
-            {
-                if( tmp & 01 )
-                {
-                    ++tmp2;
-                }
-                
-                tmp >>= 1;
-            }
-
-            printf(" %s",  sP->name);
-            if( tmp2 != 0 )
-            {
-                printf("   %3ds", tmp2);        // only if we'e actually shifting
-            }
-        }
-        break;
-
-    case IS_SKIP:
-        sP = findSpecial(skips, operand);
-        printf(" %s", sP->name);
-        if( indirect )
-        {
-            printf(" %s", as_macro?"i":"not");
-        }
-
-        switch( sP->modifiers )
-        {
-        case UNKNOWN:
-            printf(" %04o", operand);
-            break;
-
-        case IS_SZF:
-            printf(" %0o", (operand & 07));
-            break;
-
-        case IS_SZS:
-            printf(" %0o0", ((operand >> 3) & 07));
-            break;
-        }
-        break;
-
-    case IS_OPR:
-        // This one is a pain because multiple operations can be combined.
-        // Macro1 allows an 'or' operation, 'a!b', which is used in macro mode.
-        // However, the native assembler doesn't support this, so any combined operations
-        // are emitted as the octal word with a comment.
-        // If we see any extra bits not valid microinstuctions, then just the octal data is output.
-        tmp = 0;                // set to 1 if we have printed one already
-        tmpstr[0] = 0;          // be sure we start empty
-        printf(" ");
-
-        // A special case is nothing set, means nop
-        if( (operand & OPR_MASK_NOP) == 0 )
-        {
-            operand = 0;            // nothing left
-            strcpy(tmpstr, "nop");
-        }
-        else
-        {
-            bits03 = operand & 07;              // needed for a few ops
-            operand &= 07770;
-
-            if( (operand & OPR_MASK_LAT) == OPR_MASK_LAT )    // MUST come befoe CLA! Only 2 bit directive.
-            {
-                operand &= ~OPR_MASK_LAT;
-                sprintf(tmpstr2,"%slat", tmp?separator:"");
-                strcat(tmpstr, tmpstr2);
-                tmp = 1;
-            }
-            if( operand & OPR_MASK_CLA )        // MUST come after LAT!
-            {
-                operand &= ~OPR_MASK_CLA;
-                sprintf(tmpstr2,"%scla", tmp?separator:"");
-                strcat(tmpstr, tmpstr2);
-                tmp = 1;
-            }
-            if( operand & OPR_MASK_CLI )
-            {
-                operand &= ~OPR_MASK_CLI;
-                sprintf(tmpstr2,"%scli", tmp?separator:"");
-                strcat(tmpstr, tmpstr2);
-                tmp = 1;
-            }
-            if( operand & OPR_MASK_CMA )
-            {
-                operand &= ~OPR_MASK_CMA;
-                sprintf(tmpstr2,"%scma", tmp?separator:"");
-                strcat(tmpstr, tmpstr2);
-                tmp = 1;
-            }
-            if( operand & OPR_MASK_HLT )
-            {
-                operand &= ~OPR_MASK_HLT;
-                sprintf(tmpstr2,"%shlt", tmp?separator:"");
-                strcat(tmpstr, tmpstr2);
-                tmp = 1;
-            }
-            if( !(operand & OPR_MASK_STF) && bits03 )
-            {
-                // CLF is bits03, already cleared
-                sprintf(tmpstr2,"%sclf %o", tmp?separator:"", bits03);
-                strcat(tmpstr, tmpstr2);
-                bits03 = 0;                  // done with these
-                tmp = 1;
-            }
-            if( (operand & OPR_MASK_STF) && bits03 )
-            {
-                operand &= ~OPR_MASK_STF;
-                sprintf(tmpstr2,"%sstf %o", tmp?separator:"", bits03);
-                strcat(tmpstr, tmpstr2);
-                bits03 = 0;                  // done with these
-                tmp = 1;
-            }
-        }
-
-        if( compatibility_mode && (tmp == 1) )                  // multi component
-        {
-            if( operand | bits03 )                              // extra bits set
-            {
-                printf("%06o", word);
-            }
-            else
-            {
-                printf("%06o / %s", word, tmpstr);
-            }
-        }
-        else if( (operand | bits03) != 0 )                      // extra bits were left over, must be data
-        {
-            printf("%06o", word);
-        }
-        else
-        {
-            printf("%s", tmpstr);
-        }
-        break;
-
-    case IS_IOT:
-        // Sometimes there are extra bits in the operand above the usual 6 bits
-        tmp2 = operand & 037700;
-
-        sP = findSpecial(iots, word);   // yes, use the whole word
-        printf(" %s", sP->name);
-
-        switch( sP->modifiers )
-        {
-        case UNKNOWN:
-            if( operand != 0 )                  // not an empty IOT
-            {
-                if( indirect )
-                {
-                    operand |= 010000;       // include the bit in the output
-                }
-
-                if( completion )
-                {
-                    operand |= 004000;       // include the bit in the output
-                }
-
-                printf("%s%05o", (as_macro)?separator:" | ", operand);
-
-                if( unknown_iots )
-                {
-                    fprintf(stderr, "iot %05o\n", operand);
-                }
-            }
-            else            // is ioh
-            {
-                if( indirect )
-                {
-                    printf(" i");
-                }
-            }
-            break;
-
-        case CAN_WAIT:
-            if( indirect )
-            {
-                printf(" i");
-            }
-            break;
-
-        case INVERT_WAIT:       // because macro automatically sets, xx-i means not set
-            if( !indirect )
-            {
-                printf("-i");
-            }
-            break;
-
-        case IS_DPY:            // does INVERT_WAIT plus intensity
-            tmp = 0;
-
-            if( !indirect )
-            {
-                printf("-i");
-            }
-
-            if( as_macro )
-            {
-                tmp = operand & 07700;  // macro doesn't print the intensity if it's zero 
-            }
-            else
-            {
-                tmp = operand & 03770;  // macro doesn't print the intensity if it's zero 
-                if( completion )
-                {
-                    printf(" C");
-                }
-            }
-
-            if( tmp > 0 )
-            {
-                printf(" %4o", tmp);
-            }
-
-            tmp2 = 0;              // dpy uses some of the special bits
-            break;
-
-        case IS_IOH:            // special case iot for completion
-            if( indirect )
-            {
-                printf(" i");
-            }
-            if( completion )
-            {
-                printf(" %s", (as_macro)?"4000":"C");
-            }
-            tmp2 = 0;
-            break;
-
-        case HAS_ID:            // some encode a subdevice, eg tape drive number
-            printf(" %02o", (operand >> 6) & 077);
-            tmp2 = 0;
-            break;
-        }
-
-        if( (sP->modifiers != UNKNOWN) && (tmp2 != 0) )
-        {
-            printf("%s%04o", (as_macro)?separator:" | ", tmp2);   // add extra bits
-        }
-        break;
-    }
-
-    printf("\n");
+    printf("%s\n", tmpstr);
 }
 
 // Set memory location as used, i.e. was loaded by loader
@@ -1406,7 +946,6 @@ markValidByInstruction(int addr, int word)
 {
 int opcode;
 int operand;
-CodeDef *instructionP;
 
     if( compatibility_mode )
     {
@@ -1416,10 +955,8 @@ CodeDef *instructionP;
     markValid(addr);            //this address is used
 
     opcode = OPERATION(word);
-    opcode >>= 1;               // ignore indirect bit
     operand = OPERAND(word);
-    instructionP = &opcodes[opcode];
-    if( instructionP->modifiers == CAN_INDIRECT )
+    if( opCanIndirect(opcode) )
     {
         markTarget( operand );
     }

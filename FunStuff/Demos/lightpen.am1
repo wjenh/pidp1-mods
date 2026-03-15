@@ -23,7 +23,7 @@ strt,
 loop,
     law TEXTSIZE AUTOSPACE (BRIGHTNESS << 6)
     lia
-    iot glf
+    glf
     lio [LABELY
     lac [LABELX
     sdb BRIGHTNESS << 6
@@ -38,7 +38,7 @@ drawcross,      // xoffset and yoffset are the center of the cross
     dap rtn
     law TEXTSIZE (BRIGHTNESS << 6)  // no autospacing
     lia
-    iot glf
+    glf
 
     lac yoffset // start 1 char down, top at yoffset
     sub [6 * (2 + TEXTSIZE)
@@ -63,10 +63,10 @@ drawcross,      // xoffset and yoffset are the center of the cross
     ral 8s
     sdb BRIGHTNESS
     lio cross2
-    iot gpl C
+    gpl C
     lio cross2 + 1
     ioh
-    iot gpr C
+    gpr C
 
     // Now track the lightpen
     // We successively write 8 pixels around the current cross center looking for a hit

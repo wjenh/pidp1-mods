@@ -1,0 +1,6 @@
+Test of stop instead of start
+100/
+    hlt
+    law 10
+
+stop

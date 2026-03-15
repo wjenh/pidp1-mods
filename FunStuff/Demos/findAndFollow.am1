@@ -35,7 +35,7 @@ track,      // xPosition and yPosition are the center of the cross
 
     law TEXTSIZE // no autospacing
     lia
-    iot glf
+    glf
 
     lac yPosition // start 1 char down, top at yPosition
     sub [6 * (2 + TEXTSIZE)
@@ -60,9 +60,9 @@ track,      // xPosition and yPosition are the center of the cross
     ral 8s
     sdb BRIGHTNESS << 6
     lio cross2
-    iot i gpl
+    gpl i
     lio cross2 + 1
-    iot i gpr
+    gpr i
 
     jsp trackPen
 rtn, jmp .
@@ -76,7 +76,7 @@ checkBye,
 
     law AUTOSPACE TEXTSIZE
     lia
-    iot glf
+    glf
 
     clf 3
     lac [MSGX << 0d8

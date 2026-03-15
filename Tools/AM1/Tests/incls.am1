@@ -1,11 +1,10 @@
 Test of includes
-#include <1Dinstructions.ah>
 
 100/
-    jda getnum
+    jda farmemcpy
     hlt
 
 200/
-#include <getnum.ah>
+#include <farmemcpy.ac>
 
 start 0100

@@ -61,7 +61,7 @@ strt,
 
     law SIZE AUTOSPACE (BRIGHTNESS << 6)
     lia
-    iot glf
+    glf
     clrnum
 loop,
     law YSTART
@@ -170,7 +170,7 @@ updnum,             // jsp call
     local rtn
     dap rtn
     lac [-0d400 << 10
-    lio
+    lio [-0d450 << 10
     sdb BRIGHTNESS << 6
 
     lac thousands

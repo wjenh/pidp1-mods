@@ -1,11 +1,23 @@
 Test of local scoping
 100/
-    local
+    var a=2
+
+    loc a, b
+    addlocal x, y
     jmp %a
-        local
-        jmp %c
+        local b
+        lac x
+        jmp c
         jmp %a
-        endloc
-    %a,
+        jmp a
+    b, 0
+        endloc 2
+    %a, 0
+    a, 1
+    b, 0
+    x, 0
     endloc
+
+c, 3
+
 start 100

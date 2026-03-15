@@ -35,7 +35,7 @@ bank BNKNO
 #include <farmemcpy.ac>
 
 #define say(a) law a; jda txtasc
-#define newline law '\n'; lia ; iot tcb
+#define newline law '\n'; lia ; tcb
 
 // An image of what gets copied down to bank 0 is kept in this bank, not used except for the transfer.
 // DCS2 is using channel interrupts.
@@ -51,21 +51,21 @@ resume, lsm         // no interrupts for now
      cbs
      lem            // extended mem off so we don't screw up local indirects
      cli
-     iot rci        // clear the DCS2 interrupt flag, chan 0
+     rci        // clear the DCS2 interrupt flag, chan 0
 // Be sure we actually open and have a connection
 // If not open, do so
 // If open and not connected, wait for one
 rs2, cli
-     iot rcs        // get channel status for chan 0
+     rcs        // get channel status for chan 0
      lai
      and [dsfopn
      sza
      jmp rs3
      lio [sbcset ctl]    // not open, do so, listens on port 2022 decimal.
-     iot scb
+     scb
 
 rs3, cli            // loop waiting for a connection, which will be ready if we got here via the interrupt
-     iot rcs
+     rcs
      lai
      and [dsfcon
      sza i
@@ -73,7 +73,7 @@ rs3, cli            // loop waiting for a connection, which will be ready if we 
 
 // lock the send channel to 0 
      cli
-     iot ssb
+     ssb
      say(hl1)       // we're connected, say hello and proceed
      say(hl1b)
      say(hl1c)
@@ -102,7 +102,7 @@ try, say(hl2)
      say(badnum)
      jmp try        // not a recognized command or number, try again
 done, lio [sbcrst]    // completely shut down DCS2
-     iot scb
+     scb
      hlt
      jmp resume     // ok, they really want to continue
 
@@ -116,14 +116,14 @@ lst2, lac trk
      sal 6s
      ior [drmrd 7751] // directory area on the drum track
      lia
-     iot dia
+     dia
      law 26         // read o26 words
      lia
-     iot dwc
+     dwc
      law linbuf     // into our buffer
      ior [0:BNKNO]  // because law only does 12 bits
      lia
-     iot dcl
+     dcl
      lac linbuf+25  // 707070 is a marker that the track has an image
      sad [707070
      jmp .+2
@@ -146,14 +146,13 @@ doload,
      sal 6s
      ior [drmrd
      lia
-     iot dia
+     dia
      cli            // a word count of 0 means 4096 words
-     iot dwc
-     iot dcl        // bank 0, address 0
+     dwc
+     dcl        // bank 0, address 0
 
 // Bank 0 now has pgm loaded, check for valid load entry.
 // We need eem briefly to access location 7777 in bank 0 just to verify it.
-     eem
      farlac(7777)    // nifty macro from memory.ah
      lem
      sad [707070
@@ -168,9 +167,10 @@ trkok,
 // show the directory filename, in bank 0 7751
 // we need it in this bank
      law 24
-     jda farmemcpy     // eem must be off for memcpy
+     jda farmemcpy     // eem will be turned on by farmemcpy
          7751
          linbuf:BNKNO
+     lem
      say(linbuf)
      say(bye2)
 
@@ -189,24 +189,23 @@ trkok,
 
 // start 2 second countdown
      law 0d2000     // 2k milliseconds
-     iot i cct      // start 1msec countdown timer and wait
+     cct i      // start 1msec countdown timer and wait
      cla
-     iot cct        // disable timer
+     cct        // disable timer
 
 // Close the channel, it will reopen on the next connection
      lio [sbcbnd
-     iot scb
+     scb
 // be sure things are cleaned up interrupt-wise
      cbs
      cli
-     iot rci
+     rci
 // and transfer back to bank 0
-     eem
      farjmp(runprog)   // another cool macro
 
 // we had an error, just rebind and wait
 dcsfal, lio [sbcbnd
-     iot scb
+     scb
      hlt
      jmp resume
 
@@ -214,7 +213,7 @@ dcsfal, lio [sbcbnd
 boot,
     lem
     lio [sbcrst
-    iot scb
+    scb
     jmp resume
 
 hl1,
@@ -248,10 +247,10 @@ prttrk, 0
     div [0d10
     add ['0'
     lsw
-    iot tcb
+    tcb
     add ['0'
     lia
-    iot tcb
+    tcb
 prtrtn, jmp .
 
 // server port, ascii, echo, and crlf on channel 0, interrupt on connect or disconnect
@@ -276,8 +275,7 @@ isr, law rtn
 
 // The above ends up here, rtn, 7754. The jmp i 1 dismissed the interrupt.
 // Enable extened memory and jump back to our control code.
-rtn, eem
-     farjmp(resume:BNKNO)
+rtn, farjmp(resume:BNKNO)
 
 // The controller jumps here, runprog to start the program.
 // Be sure to not overwrite 7773-7777!
@@ -285,6 +283,8 @@ rtn, eem
 runprog, lem
     esm
     jmp i sadr
+// and our only constant here
+constants
 7773/
 sadr, 0
 

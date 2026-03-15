@@ -8,7 +8,7 @@
 memcpy, 0
 local
 // AC is in memcpy, return PC in AC
-    dap %cpydn
+    dac %cpydn
     lio i %cpydn
     dio %ads
     idx %cpydn

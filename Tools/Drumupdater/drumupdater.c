@@ -261,20 +261,14 @@ int outfd;
                 if( word & 0600000 )
                 {
                     // am1 loader end-of-code, start addr
-                    start_addr = word & 0177777;    // maybe it will support other than bank 0 eventually
+                    start_addr = word & 0177777;    // am1 uses a full 16 bit starting address
                     DIAGNOSTIC("State now DONE at tape_loc %d\n", tape_loc);
                     state = DONE;
                 }
                 else
                 {
-                    if( word > 07777 )
-                    {
-                        fprintf(stderr,"AM1 binary uses a bank other than 0, can't load to drum.\n");
-                        fclose(fP);
-                        exit(1);
-                    }
-                    cur_addr = word;        // start of am1 block
-                    end_addr = getWord(fP, state);
+                    cur_addr = word & 07777;        // start of am1 block
+                    end_addr = getWord(fP, state) & 07777;
                     DIAGNOSTIC("State now BIN at tape_loc %d\n", tape_loc);
                     state = BIN;
                 }

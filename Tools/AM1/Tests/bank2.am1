@@ -1,0 +1,14 @@
+Bank 2 test
+
+// This should fail with dirBuf not defined in 1
+bank 1
+    hlt
+
+bank 0
+100/
+    lio [dirBuf:0
+    lio [dirBuf:1
+dirBuf,
+    table 20
+constants
+start 100

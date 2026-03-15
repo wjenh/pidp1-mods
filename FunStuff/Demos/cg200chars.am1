@@ -22,7 +22,7 @@ strt,
 top,
     law SIZE AUTOSPACE (BRIGHTNESS << 6)
     lia
-    iot glf
+    glf
     law i 0d10
     dac ctr
     law YSTART

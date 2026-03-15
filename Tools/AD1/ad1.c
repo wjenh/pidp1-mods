@@ -14,6 +14,7 @@
  *      add address-of-symbol, add symbol table list, fix flex conversion bug, general cleanup
  * 11-Mar-26 wje rework single-step logic, make sure to clear single_inst on exit
  * 12-Mar-26 wje minor change to show line numbers better, updated in-app help.
+ * 13-Mar-26 wje minor change to catch sigint and sigquit and clean up
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -22,6 +23,7 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <sys/select.h>
 #include <sys/mman.h>
@@ -108,6 +110,7 @@ void listWatches();
 void disableAllWatchesAndBreakpoints(void);
 void restoreAllWatchesAndBreakpoints(void);
 
+void sigHandler(int signo);
 int getCurrentPC(void);
 bool loadFileData(void);
 char *getFormat(int fmt);
@@ -271,6 +274,10 @@ char line[256];
             close(shmFd);
         }
     }
+
+    // Now we want to be sure we exit cleanly, even if interrupted
+    signal(SIGINT, sigHandler);
+    signal(SIGTERM, sigHandler);
 
     // We might have breakpoints already set because of a prior exit.
     restoreAllWatchesAndBreakpoints();
@@ -1088,6 +1095,15 @@ leave(int status, void *ignore)
         deleteAllBreakpoints();
         deleteAllWatches();
     }
+}
+
+void
+sigHandler(int signo)
+{
+    AD1_CLEAR_SINGLE(pdp1P);        // be sure we turn off single step, might have been on
+    deleteAllBreakpoints();
+    deleteAllWatches();
+    _exit(1);
 }
 
 void

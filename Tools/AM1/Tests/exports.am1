@@ -1,0 +1,18 @@
+Test of exports
+100/
+    lio a
+    export a, b
+    lac b
+a, 0
+b, 0
+
+bank 1
+100/
+    lio a
+    export a, b, c
+    lac b
+a, 0
+b, 0
+c, 0
+
+stop

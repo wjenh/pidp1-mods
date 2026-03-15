@@ -162,7 +162,7 @@ checkReset,
 
     law AUTOSPACE TEXTSIZE
     lia
-    iot glf
+    glf
 
     clf 3
     lac [MSG2X << 0d8
@@ -188,7 +188,7 @@ checkDraw,
 
     law AUTOSPACE TEXTSIZE
     lia
-    iot glf
+    glf
 
     clf 3
     lac [MSGX << 0d8

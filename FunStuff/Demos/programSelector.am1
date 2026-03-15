@@ -2,7 +2,7 @@ Demo of light pen, sym gen, drum, clock
 // Did I forget anything? Oh, right, DCS.
 
 // We load into and run in this bank
-#define BNKNO 1
+#define BNKNO 2
 
 #include <SYMGEN/type33iots.ah>
 #include <LIGHTPEN/lightpen.ah>
@@ -26,7 +26,7 @@ Demo of light pen, sym gen, drum, clock
 #define COUNTDOWN 5
 
 // only the first 10
-#define MAXDIRS 0d10
+#define MAXDIRS 0d15
 
 // location in buffer of the valid entry marker
 #define DIRMARKER 25
@@ -39,6 +39,7 @@ bank BNKNO
 
 var linePtr, txtPtr, addrPtr
 var ptr, dirY, dirCtr, ctr
+var destBank, startAddr
 var numEntries     // will be one more than the number we have
 
 100/
@@ -48,7 +49,6 @@ strt,
     law txtBuf
     dac txtPtr
     law startAddrs
-    dac addrPtr
     dzm numEntries
     lem                 // on from loader, not now
     jsp loadEntries
@@ -95,7 +95,7 @@ dirs,
     jsp gotOne
     idx dirCtr
     lac dirY
-    sub [CHARSIZEY(TEXTSIZE) * 2]
+    sub [CHARSIZEY(TEXTSIZE) + SPACINGSIZE(TEXTSIZE)]
     dac dirY
     jmp dirs
 
@@ -177,12 +177,18 @@ w2,                     // we're waiting, update the display
 
 go, cla
     cct         // clear timer
-    lio dirCtr
-    jsp loadPgm
-    law startAddrs
+    law startAddrs  // get the starting address, might be 16 bits
     add dirCtr
     dac ctr
     lio i ctr
+    lai
+    and [170000     // the bank number, still in bits 2-5
+    dac destBank
+    lai
+    and [7777       // and the now 12 bit address
+    dac startAddr
+    lio dirCtr
+    jsp loadPgm
     jmp run
 
 // Load the list of programs on the drum
@@ -240,7 +246,9 @@ trk,0
     endloc
 
 // AC has the track to load.
-// Load bank 0 mem from drum,the entire track.
+// The address could be an extended address if it's an am1 program,
+// so we have to use destBank also.
+// Load the program's bank mem from drum, the entire track.
 // jsp, track in IO
 loadPgm,
      local rtn
@@ -253,21 +261,52 @@ loadPgm,
      dia
      cli            // a word count of 0 means 4096 words
      dwc
-     dcl        // bank 0, address 0
+     lio destBank
+     dcl        // bank x, address 0
 rtn, jmp .
     endloc
 
-// Bank 0 now has pgm loaded, start it up
-// IO has start address
+// DestBank now has pgm loaded, start it up.
+// Put a little program bit in bank 0
+// The jmp at 0002 is to get the sbs out of sbs mode, possibly eem mode, and get to the real start location.
+// When a program is started, a jmp will be made to 1:0.
+// It will be in eem mode because of the farjmp to 1:0.
+// It will jump to either 7751 if the program is in bank 0  or 7752 if the program is in another bank.
+// 0001:0 jmp i 2
+// 0002:0 7775 or 7776
+// 7775:0 lem
+// 7776:0 jmp i 7777
+// 7777:0 startAddr
 run,
-    lac [lem
-    fardac(7751)    // nifty macro from memory.ah
-    lai
-    ior [jmp
-    fardac(7752)
-    farjmp(7751)
+    eem
+    law 1
+    dac addrPtr
+    lac [jmp i 2
+    dac i addrPtr
+    idx addrPtr
 
-// Advace draw point to start of next line
+    // 7775 if we want eem off, else 7776
+    law 7775
+    lio destBank
+    szi
+    law 7776
+    dac i addrPtr
+
+    // Now turn off or leave on eem and jump to the actual starting address
+    law 7775
+    dac addrPtr
+    lac [lem
+    dac i addrPtr
+    idx addrPtr
+    lac [jmp i 7777
+    dac i addrPtr
+    idx addrPtr
+    lac startAddr
+    ior destBank
+    dac i addrPtr
+    farjmp(1)
+
+// Advance draw point to start of next line
 // Called via jsp.
 nextLine,
     local rtn
@@ -308,7 +347,6 @@ header1,
     ascii "Fun with the light pen"
 header2,
     ascii "Make your selection:"
-
 msg1,
     ascii "You selected "
 msg2,

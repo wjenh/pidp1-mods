@@ -23,6 +23,7 @@
  * 27/10/2025 wje - Initial version
  * 09/02/2026 wje - Fix completion bit handling, dpy i and c handling
  * 01/03/2026 wje - Fix cal, emit operand if it actually isn't a cal
+ * 15/03/2026 wje - Add more 1D instructions, improve extra bits reporting
  *
  */
 #include <stdlib.h>
@@ -32,10 +33,14 @@
 
 // Instructions have a 5 bit opcode followed by a 1 bit indirect marker as the high 6 bits of a word
 // IOTs can also have a completion-requested, bit 6 set, 04000.
-#define OPERATION(x)    (x >> 12)
+#define OPERATION(x)    (x >> 13)
 
-// The remaining 12 low bits are the operand whose meaning varies by instruction
-#define OPERAND(x)      (x & 0007777)
+// The remaining 13 low bits are the operand whose meaning varies by instruction
+// The indirect bit is included because some instructions attach a different meaning to the bit.
+#define OPERAND(x)      (x & 0017777)
+
+#define INDIRECT_BIT 010000
+#define COMPLETION_BIT 04000
 
 // THe operate instruction is a pain, has to be done bitwise in ad-hoc code
 #define OPR_MASK_CLA 00200
@@ -44,14 +49,17 @@
 #define OPR_MASK_CMA 01000
 #define OPR_MASK_HLT 00400
 #define OPR_MASK_LAT 02200
-#define OPR_MASK_NOP 07777
+#define OPR_MASK_NOP 017777
+#define OPR_MASK_LAI 00040
+#define OPR_MASK_LIA 00020
 #define OPR_MASK_STF 00010
+#define OPR_MASK_CMI 010000
 
 // Indicates instruction-specific additional processing needed
 typedef enum {NONE, CAN_INDIRECT, IS_SKIP, IS_SHIFT, IS_OPR, IS_IOT, IS_LAW, IS_CALJDA, IS_ILLEGAL} Modifiers;
 
-// IOT instructions have a number of special behaviors
-typedef enum {UNKNOWN, NORMAL, CAN_WAIT, INVERT_WAIT, IS_DPY, IS_SZF, IS_SZS, HAS_ID} SpecialMods;
+// IOT and other instructions have a number of special behaviors
+typedef enum {UNKNOWN, NORMAL, CAN_WAIT, INVERT_WAIT, IS_DPY, IS_SZF, IS_SZS, IS_SZI, HAS_ID} SpecialMods;
 
 // defines one instruction
 typedef struct
@@ -111,34 +119,57 @@ static CodeDef opcodes[] =                 // we don't use the indirect bit, so 
     };
 
 // IOT decoding.
-// The more specific masks should come first
+// A match is found if the word matches the first field exactly when masked by the last.
+// The more specific masks for the same IOT should come first
 static Special iots[] =
     {
+        // BBN CLOCK
+        {02032, "cks", NORMAL, 07777},
+        {02132, "cct", CAN_WAIT, 07777},
+        {00032, "rck", NORMAL, 07777},
+
+        // Type 23 drum
+        {02061, "dba", NORMAL, 07777},
+        {00061, "dia", NORMAL, 07777},
+        {02062, "dra", NORMAL, 07777},
+        {00062, "dwc", NORMAL, 07777},
+        {02063, "dss", CAN_WAIT, 07777},
+        {00063, "dcl", CAN_WAIT, 07777},
+
+        // SBS
+        {00052, "isb", NORMAL, 07777},
+        {00054, "lsm", NORMAL, 07777},
+        {00055, "esm", NORMAL, 07777},
+        {00056, "csb", NORMAL, 07777},
+
         {04074, "eem", NORMAL, 07777},
         {00074, "lem", NORMAL, 07777},
         {00001, "rpa", INVERT_WAIT, 0777},
         {00002, "rpb", INVERT_WAIT, 0777},
-        {00033, "cks", NORMAL, 077},
+        {00033, "cks", NORMAL, 07777},
         {00007, "dpy", IS_DPY, 077},
-        {00055, "esm", NORMAL, 077},
-        {00054, "lsm", NORMAL, 077},
         {00005, "ppa", INVERT_WAIT, 077},
         {00006, "ppb", INVERT_WAIT, 077},
         {00030, "rrb", NORMAL, 077},
         {00004, "tyi", CAN_WAIT, 077},
         {00003, "tyo", CAN_WAIT, 077},
-        {00051, "asc", CAN_WAIT, 077},
-        {00000, "iot", UNKNOWN, 0}       // special end marker if nothing mathces, must be last
+
+        {00000, "iot", UNKNOWN, 0}       // special end marker if nothing matches, must be last
     };
 
 // Skip decoding.
 static Special skips[] =
     {
+        // 1D skips
+        {014000, "szi", IS_SZI, 017777},
+        {04000, "sni", IS_SZI, 017777},
+
         {00400, "sma", NORMAL, 07777},
         {00200, "spa", NORMAL, 07777},
         {02000, "spi", NORMAL, 07777},
         {00100, "sza", NORMAL, 07777},
         {01000, "szo", NORMAL, 07777},
+
         {00000, "szf", IS_SZF, 07770},
         {00000, "szs", IS_SZS, 07707},
         {00000, "skp", UNKNOWN, 0}      // special end mareker if nothing matches
@@ -174,6 +205,7 @@ unsigned int operand;
 int indirect;
 int completion;
 int tmp, tmp2;
+int extra;
 int bits03;
 char *cP;
 char *operandStrP;
@@ -190,21 +222,19 @@ Special *sP;
         return( resultP + strlen(resultP) );
     }
 
-    indirect = opcode & 01;
-    completion = word & 04000;
-    opcode >>= 1;                                           // convert to 32 possible instructions
-
+    indirect = word & INDIRECT_BIT;
+    completion = word & COMPLETION_BIT;
     operand = OPERAND(word);
     instructionP = &opcodes[opcode];
 
     // Just in case the operand is an addr field and matches the passed addr.
-    if( (operand == addr) && symbolP && *symbolP )
+    if( ((operand & 07777) == addr) && symbolP && *symbolP )
     {
         operandStrP = symbolP;
     }
     else
     {
-        sprintf(addrStr, "%06o", operand);
+        sprintf(addrStr, "%04o", (operand & 07777));
         operandStrP = addrStr;
     }
 
@@ -222,23 +252,25 @@ Special *sP;
 
     case CAN_INDIRECT:
         resultP += sprintf(resultP,"%s%s %s", instructionP->name, (indirect)?" i":"", operandStrP);
+        extra &= ~INDIRECT_BIT;
         break;
 
     case IS_CALJDA:
         if( indirect )
         {
             resultP += sprintf(resultP,"jda %s", operandStrP);
+            extra &= ~INDIRECT_BIT;
         }
         else
         {
             if( operand )
             {
                 // looks like cal, but has more bits, probably data
-                printf(" %s %o", instructionP->name, operand);
+                resultP += sprintf(resultP, "%s %o", instructionP->name, operand);
             }
             else
             {
-                printf(" %s", instructionP->name);            // CAL
+                resultP += sprintf(resultP, "%s", instructionP->name);            // CAL
             }
         }
         break;
@@ -284,16 +316,29 @@ Special *sP;
 
     case IS_SKIP:
         sP = findSpecial(skips, operand);
-        resultP += sprintf(resultP,"%s", sP->name);
-        if( indirect )
+        if( sP->modifiers == IS_SZI )
         {
-            resultP += sprintf(resultP," not");
+            // Another special case
+            resultP += sprintf("%s", (indirect)?"szi":"sni");
+            indirect = 0;
+        }
+        else
+        {
+            resultP += sprintf(resultP,"%s", sP->name);
+            if( indirect )
+            {
+                resultP += sprintf(resultP," not");
+            }
         }
 
         switch( sP->modifiers )
         {
         case UNKNOWN:
             resultP += sprintf(resultP," %04o", operand);
+            break;
+
+        case IS_SZI:
+            resultP += sprintf(resultP," %0o", (operand & 07));
             break;
 
         case IS_SZF:
@@ -316,6 +361,7 @@ Special *sP;
         tmpstr[0] = 0;          // be sure we start empty
 
         // A special case is nothing set, means nop
+        // Check this first
         if( (operand & OPR_MASK_NOP) == 0 )
         {
             operand = 0;            // nothing left
@@ -324,7 +370,7 @@ Special *sP;
         else
         {
             bits03 = operand & 07;              // needed for a few ops
-            operand &= 07770;
+            operand &= 017770;
 
             if( (operand & OPR_MASK_LAT) == OPR_MASK_LAT )    // MUST come befoe CLA! Only 2 bit directive.
             {
@@ -340,6 +386,29 @@ Special *sP;
                 strcat(tmpstr, tmpstr2);
                 tmp = 1;
             }
+
+            // 1D operations
+            if( (tmp2 = operand & (OPR_MASK_LAI | OPR_MASK_LIA)) )
+            {
+                if( tmp2 == (OPR_MASK_LAI | OPR_MASK_LIA) )
+                {
+                    cP = "lsw";
+                }
+                else if( tmp2 == OPR_MASK_LAI )
+                {
+                    cP = "lai";
+                }
+                else
+                {
+                    cP = "lia";
+                }
+
+                sprintf(tmpstr2,"%s%s", tmp?"|":"", cP);
+                strcat(tmpstr, tmpstr2);
+                operand &= ~(OPR_MASK_LAI | OPR_MASK_LIA);
+                tmp = 1;
+            }
+
             if( operand & OPR_MASK_CLI )
             {
                 operand &= ~OPR_MASK_CLI;
@@ -391,9 +460,8 @@ Special *sP;
 
     case IS_IOT:
         // Sometimes there are extra bits in the operand above the usual 6 bits
-        tmp2 = operand & 017700;
-
         sP = findSpecial(iots, operand);
+        extra = operand & ~sP->mask;             // extra bits not in the masked bits
         resultP += sprintf(resultP,"%s", sP->name);
 
         switch( sP->modifiers )
@@ -426,6 +494,13 @@ Special *sP;
             if( indirect )
             {
                 resultP += sprintf(resultP," i");
+                extra &= ~INDIRECT_BIT;
+            }
+
+            if( completion )
+            {
+                resultP += sprintf(resultP," C");
+                extra &= ~COMPLETION_BIT;
             }
             break;
 
@@ -433,6 +508,14 @@ Special *sP;
             if( !indirect )
             {
                 resultP += sprintf(resultP,"-i");
+            }
+
+            extra &= ~INDIRECT_BIT;
+
+            if( completion )
+            {
+                resultP += sprintf(resultP," C");
+                extra &= ~COMPLETION_BIT;
             }
             break;
 
@@ -442,29 +525,51 @@ Special *sP;
                 resultP += sprintf(resultP,"-i");
             }
 
+            extra &= ~INDIRECT_BIT;
+
+            if( completion )
+            {
+                resultP += sprintf(resultP," C");
+                extra &= ~COMPLETION_BIT;
+            }
+
             tmp = operand & 07700;  // macro doesn't print the intensity if it's zero 
             if( tmp > 0 )
             {
                 resultP += sprintf(resultP," %4o", tmp);
             }
 
-            tmp2 = 0;              // dpy uses some of the special bits
+            extra = 0;              // dpy uses some of the special bits
             break;
 
         case HAS_ID:            // some encode a subdevice, eg tape drive number
-            resultP += sprintf(resultP," %02o", (operand >> 6) & 077);
-            tmp2 = 0;
+            resultP += sprintf(resultP," 0%0o", (operand >> 6) & 0177);
+            extra = 0;
             break;
         }
 
-        if( (sP->modifiers != UNKNOWN) && (tmp2 != 0) )
+        if( (sP->modifiers != UNKNOWN) && (extra != 0) )
         {
-            resultP += sprintf(resultP," | %04o", tmp2);   // add extra bits
+            resultP += sprintf(resultP," | 0%o", extra);   // add extra bits
         }
         break;
     }
 
     return( resultP );
+}
+
+bool
+opCanIndirect(int opcode)
+{
+CodeDef *instructionP;
+
+    if( opcode > 077 )
+    {
+        return(false);      // out of bounds
+    }
+
+    instructionP = &opcodes[opcode];
+    return( (instructionP->modifiers == CAN_INDIRECT) );
 }
 
 Special *

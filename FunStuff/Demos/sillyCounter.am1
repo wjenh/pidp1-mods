@@ -1,0 +1,19 @@
+A simple bank 1 program to increment the IO and AC registers as a combined 36 bit value
+// Really just to show that yes, you can easily use another bank.
+bank 1
+100/
+    var ctr, ctr2
+    dzm ctr
+    dzm ctr2
+    cli
+    cla
+loop,
+    idx ctr
+    sza
+    jmp loop
+    idx ctr2
+    lio ctr2
+    jmp loop
+
+variables
+start 100:1

@@ -1,0 +1,20 @@
+Test of various warnings
+#include <memory.ah>
+
+bank 1
+100/
+a, 123
+lio a:2
+
+local a, b
+b, 0
+a, 0
+    lio a
+endloc
+
+    lsw
+    lai
+    flexo AbC
+
+constants
+start 100

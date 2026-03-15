@@ -30,7 +30,7 @@ bank bnkno
 // The channel 0 interrupt setup.
 // We execute a bit of code that will get
 // overwritten but reloaded on pgm switch.
-// This never gets executed, it's for ease of copying to bank 0.
+// This never gets executed in this bank, it's for ease of copying to bank 0.
 0/
      lem
      jmp go
@@ -39,15 +39,14 @@ bank bnkno
 
 // We start at 100
 100/
+    lem
+    lsm
     hlt
     lat         // the test switches say which 6 progs to run
     dac pgm
     hlt
     lat
     dac pgm2
-// enable the clock
-    law clsena clsimn   // 1 min interrupe enabled, clock enabled
-    iot cls
 
 // Control transfers here on every timeout, we will already be in extended mode.
 // Get the drum pgm to load, 6 sets of 6 bits, high bit in each ignored, and rotate them.
@@ -67,10 +66,10 @@ resume,
 // load bank 0 mem from drum
      ior [drmrd
      lia
-     iot dia
+     dia
      cli
-     iot dwc
-     iot dcl
+     dwc
+     dcl
 
 // Yes, that's all it took to read a full memory image and load it into bank 0.
 // Bank 0 now has pgm loaded, update with our glue code.
@@ -85,6 +84,9 @@ resume,
 
 // turn on ints, extended mem, and transfer back to bank 0, adr 0
      esm
+// enable the clock
+     law clsena clsimn   // 1 min interrupt enabled, clock enabled
+     cls
      eem
      farjmp(0)
 

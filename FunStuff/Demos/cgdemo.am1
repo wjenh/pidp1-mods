@@ -15,7 +15,7 @@ Demo of Type 33 symbol generator
 strt,
     law SIZE AUTOSPACE (BRIGHTNESS << 6)
     lia
-    iot glf
+    glf
     clrnum
 loop,
     law YSTART
@@ -64,7 +64,7 @@ loop,
 strt2,
     law SIZE | AUTOSPACE | (BRIGHTNESS << 6)
     lia
-    iot glf
+    glf
     clrnum
 loop2,
     law 0d450
@@ -92,7 +92,7 @@ loop2,
 strt3,
     law SIZE | AUTOSPACE | (BRIGHTNESS << 6)
     lia
-    iot glf
+    glf
     clrnum
 loop3,
     law YSTART

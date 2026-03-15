@@ -1,0 +1,8 @@
+Test of imports
+// exports.am1 must have been run first and its sym file in this directory
+100/
+    import "exports.sym"
+    lio [a:*
+    lio [c:*
+    hlt
+stop

@@ -101,6 +101,8 @@ getMapForFileNo(MapEntryP mapP, int fileNo)
         {
             return( mapP );
         }
+        
+        mapP = mapP->nextP;
     }
 
     return(NIL);

@@ -572,6 +572,7 @@ setFileFn(char *nameP, bool add)
 int i;
 char *cP;
 FileInfoP infoP;
+char line[128];
 
     if( !nameP || !*nameP )
     {
@@ -623,6 +624,14 @@ FileInfoP infoP;
     }
     else
     {
+        // close them all?
+        printf("Close all files, removing source and symbol information? [y to close] ");
+        fgets(line, sizeof(line), stdin);
+        if( *line != 'y' )
+        {
+            return;
+        }
+
         closeFiles();
         newFile(nameP);
     }

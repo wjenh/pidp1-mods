@@ -495,7 +495,7 @@ address         : expr optBREF
                     $$ = $1;
 
                     // An explicit bank ref overrides all
-                    if( $2 >= 0 )
+                    if( $2 != NOARG )
                     {
                         $$ = ($2 << 12) | ADDRESSOF($1);
                     }
@@ -565,6 +565,7 @@ expr            : MINUS expr %prec UMINUS
                         return(0);
                     }
 
+                    curFileNo = symP->fileNo;
                     $$ = symP->address;
                 }
                 | SYMBOL BREF %prec SYMBREF
@@ -577,6 +578,7 @@ expr            : MINUS expr %prec UMINUS
                         return(0);
                     }
 
+                    curFileNo = symP->fileNo;
                     $$ = symP->address;
                 }
                 | integer
@@ -605,11 +607,17 @@ dotexpr         : DOT
 
 listSym         : SYMBOL optBREF optFILENO
                 {
+                int i;
                 SymbolP symP;
 
-                    if( !(symP = findSymbolByName(($2 == NOARG)?curBank:$2, $3-1, $1)) )
+                    if( $2 == NOARG )
                     {
-                        printf("Can't find symbol '%s' in bank %d, file %d\n", $1, ($2 == NOARG)?curBank:$2, $3);
+                        $2 = curBank;
+                    }
+
+                    if( !(symP = findSymbolByName($2, $3, $1)) )
+                    {
+                        printf("Can't find symbol '%s' in bank %d.\n", $1, $2);
                         return(0);
                     }
 
@@ -632,9 +640,9 @@ optFILENO       : FILENO
                         return(0);
                     }
 
-                    $$ = $1;
+                    $$ = $1 - 1;
                 }
-                | { $$ = curFileNo; }
+                | { $$ = NOARG; }
                 ;
 
 %%

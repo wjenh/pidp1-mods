@@ -12,6 +12,7 @@
 #include "ad1.h"
 #include "pdp1inc.h"
 
+extern int curFileNo;
 extern int lastAddr;
 extern int lastFormat;
 extern int base;
@@ -27,13 +28,12 @@ extern BreakpointP activeBrkP; // we hit a breakpoint, this is it
 
 int yyerror(const char *errstr);
 
-extern int getLineFromAddress(int address);
+extern int getLineFromAddress(int address, int fileno);
 extern void formatAndPrintOne(char fmt, int val2P);
 extern void formatAndPrintTwo(char fmt, int valP, int fmt2, int val2P);
 extern int eval(int op, int lval, int rval);
 extern int yylex(void);
-extern bool loadFileData(void);
-extern SymbolP findSymbolByName(int bank, char *nameP);
+extern SymbolP findSymbolByName(int bank, int fileno, char *nameP);
 extern void listBreaks(void);
 extern void listWatches(void);
 extern char *getUnrestrictedFormat(int fmt);
@@ -131,6 +131,8 @@ typedef struct argitem_t {
 %type <strP> SYMBOL
 %token BREF
 %type <ival> BREF
+%token FILENO
+%type <ival> FILENO
 %token FILESTRING
 %type <strP> FILESTRING
 
@@ -150,6 +152,7 @@ typedef struct argitem_t {
 %type <ival> optDECINTEGER
 %type <ival> optBase
 %type <ival> optBREF
+%type <ival> optFILENO
 %type <ival> expr
 %type <ival> dotexpr
 %type <ival> address
@@ -302,12 +305,13 @@ cmd		: QUIT
                 }
                 | FILESTRING
                 {
-                    if( *$1 == '+' )
+                    if( $1 && (*$1 == '+') )
                     {
                         setFileFn($1 + 1, true);
                     }
                     else
                     {
+                        // $1 can be an emptry string
                         setFileFn($1, false);
                     }
 
@@ -321,16 +325,11 @@ cmd		: QUIT
                 {
                     listFn($3);
                 }
-                | LIST SEPARATOR dotexpr
+                | LIST SEPARATOR dotexpr optFILENO
                 {
                 int line;
 
-                    if( !loadFileData() )
-                    {
-                        return(0);
-                    }
-
-                    line = getLineFromAddress(lastAddr);
+                    line = getLineFromAddress(lastAddr, $4);
                     if( line <= 0 )
                     {
                         printf("No line can be found for the current address.\n");
@@ -339,16 +338,11 @@ cmd		: QUIT
 
                     listFn(line + $3);
                 }
-                | LIST SEPARATOR LINEAT address
+                | LIST SEPARATOR LINEAT address optFILENO
                 {
                 int line;
 
-                    if( !loadFileData() )
-                    {
-                        return(0);
-                    }
-
-                    line = getLineFromAddress($4);
+                    line = getLineFromAddress($4, $5);
                     if( line <= 0 )
                     {
                         printf("No line can be found for that address.\n");
@@ -361,12 +355,7 @@ cmd		: QUIT
                 {
                 int line;
 
-                    if( !loadFileData() )
-                    {
-                        return(0);
-                    }
-
-                    line = getLineFromAddress($3);
+                    line = getLineFromAddress($3, NOARG);
                     if( line <= 0 )
                     {
                         printf("No line can be found for that address.\n");
@@ -570,7 +559,7 @@ expr            : MINUS expr %prec UMINUS
                 {
                 SymbolP symP;
 
-                    if( !(symP = findSymbolByName(curBank, $1)) )
+                    if( !(symP = findSymbolByName(curBank, NOARG, $1)) )
                     {
                         printf("Can't find symbol '%s' in bank %d.\n", $1, curBank);
                         return(0);
@@ -582,7 +571,7 @@ expr            : MINUS expr %prec UMINUS
                 {
                 SymbolP symP;
 
-                    if( !(symP = findSymbolByName($2, $1)) )
+                    if( !(symP = findSymbolByName($2, NOARG, $1)) )
                     {
                         printf("Can't find symbol '%s' in bank %d.\n", $1, $2);
                         return(0);
@@ -614,24 +603,40 @@ dotexpr         : DOT
                 }
                 ;
 
-listSym         : SYMBOL optBREF
+listSym         : SYMBOL optBREF optFILENO
                 {
                 SymbolP symP;
 
-                    if( !(symP = findSymbolByName(($2 == -1)?curBank:$2, $1)) )
+                    if( !(symP = findSymbolByName(($2 == NOARG)?curBank:$2, $3-1, $1)) )
                     {
-                        printf("Can't find symbol '%s' in bank %d decimal.\n", $1, ($2 == -1)?curBank:$2);
+                        printf("Can't find symbol '%s' in bank %d, file %d\n", $1, ($2 == NOARG)?curBank:$2, $3);
                         return(0);
                     }
 
+                    curFileNo = symP->fileNo;
                     $$ = symP->address;
                 }
+
 optBREF         : BREF
                 {
                     $$ = $1;
                 }
-                | {$$ = -1;}
+                | {$$ = NOARG;}
                 ;
+
+optFILENO       : FILENO
+                {
+                    if( ($1 < 1) || ($1 > MAXFILES) )
+                    {
+                        printf("File numbers must be between 1 and %d.\n", MAXFILES);
+                        return(0);
+                    }
+
+                    $$ = $1;
+                }
+                | { $$ = curFileNo; }
+                ;
+
 %%
 int
 yywrap()

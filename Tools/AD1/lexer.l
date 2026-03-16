@@ -96,14 +96,19 @@ extern void freeMem(void);
 \@			{ return(LINEAT); }
 \#			{ return(NODEREF); }
 
+\:[0-9]   		{
+			    yylval.ival = atoi(yytext+1);
+			    return( FILENO );
+			}
+
 \,[0-9]{1,2}		{
 			int ival;
 
 			    ival = strtol(yytext+1, 0, base);
-			    if( (ival < 0) || (ival >= MAXBANKS) )
+			    if( (ival < 0) || (ival >= MEMBANKS) )
 			    {
 				printf("A bank number must be between 0-%d decimal or other base equivalent.\n",
-					MAXBANKS - 1);
+				    MEMBANKS - 1);
 				return(FAIL);
 			    }
 

@@ -19,11 +19,12 @@ static int symCount;           // number of symbols
 
 extern int base;               // current numeric output base
 extern int curBank;
+extern int curFileNo;
 
-SymbolP findSymbolByName(int bank, char *nameP);
-int findAddrByName(int bank, char *nameP);
+SymbolP findSymbolByName(int bank, int fileNo, char *nameP);
+int findAddrByName(int bank, int fileNo, char *nameP);
 char *findNameByAddr(u32 addr);
-bool loadSymbols(char *fnameP);
+bool loadSymbols(FileInfoP infoP);
 void listSymbols(void);
 int parseString(char *strP, char** parts, char *breaksP);
 int getNumber(char *stringP, int base);
@@ -32,7 +33,9 @@ int signExtend(int oc);
 int onesCompl(int val);
 int twosCompl(int val);
 
+extern char *getFormat(int fmtType);
 extern void formatAndPrintOne(int base, int value);
+extern void printNumber(int value);
 
 // See if this is a valid number, if so, return its value.
 // The base is overridden by explicit base settings in the string, 0x, 0d, 0b, 0o.
@@ -105,9 +108,9 @@ int value;
             return(BADNUM);
         }
     }
-    else if( (value = findAddrByName(curBank, stringP)) < 0 )
+    else if( (value = findAddrByName(curBank, curFileNo, stringP)) < 0 )
     {
-        printf("There is no symbol '%s' found.\n", stringP);
+        printf("There is no symbol '%s' found in file %d.\n", stringP, curFileNo);
         return(BADNUM);
     }
 
@@ -116,9 +119,10 @@ int value;
 
 // Look for a symbol by name, return address if found else NIL
 // The same symbol can be in different banks, so check for the correct one.
-// We distinguish by bank.
+// We distinguish by bank and fileNo.
+// However, if fileNo is NOARG, don't check the file number.
 SymbolP
-findSymbolByName(int bank, char *nameP)
+findSymbolByName(int bank, int fileNo, char *nameP)
 {
 int i;
 SymbolP symP;
@@ -127,17 +131,36 @@ SymbolP symP;
     {
         symP = &symbols[i];
 
-        if( !strcmp(nameP, symP->nameP) && (bank == BANKOF(symP->address)) )
+        if( !strcmp(nameP, symP->nameP) && (bank == BANKOF(symP->address)) &&
+            ((fileNo == NOARG) || (symP->fileNo == fileNo)) )
         {
-            return( &symbols[i] );
+            return( symP );
         }
     }
 
     return(NIL);
 }
 
+// Walk the symbol list, print out the values.
 void
 listSymbols()
+{
+int i;
+SymbolP symP;
+
+    printf("Address File Name\n");
+    for( i = 0; i < symCount; ++i )
+    {
+        symP = &symbols[i];
+        printf(getFormat(OCTAL), symP->address);
+        printf("  %d    %s\n", symP->fileNo + 1, symP->nameP);
+    }
+}
+
+// See if a symbol is in the current file.
+// Return it if so, else NIL.
+SymbolP
+findSymbolInCurrentFile(char *nameP)
 {
 int i;
 SymbolP symP;
@@ -146,21 +169,57 @@ SymbolP symP;
     {
         symP = &symbols[i];
 
-        formatAndPrintOne(base, symP->address);
-        printf(": %s\n", symP->nameP);
+        if( !strcmp(nameP, symP->nameP) && (symP->fileNo == curFileNo) )
+        {
+            return( symP );
+        }
     }
+
+    return(NIL);
+}
+
+// See if a symbol in the current file has the given address.
+// Return it if so, else NIL.
+SymbolP
+findAddressInCurrentFile(int address)
+{
+int i;
+SymbolP symP;
+
+    for( i = 0; i < symCount; ++i )
+    {
+        symP = &symbols[i];
+
+        if( (symP->address == address)  && (symP->fileNo == curFileNo) )
+        {
+            return( symP );
+        }
+    }
+
+    return(NIL);
 }
 
 // Look for a symbol by name, return the symtab entry pointer if so, else -1
 // Note that the same symbol can be defined multiple times.
-// We distinguish by bank or if the name has bank qualifier, it.
+// We distinguish by bank or if the name has bank qualifier, it, as well as file number.
+// If fileNo is NOARG, only look in the current file.
+// If there is a symbol that is defined in the current file, use it.
+// If a fileNo is given and not found there but it is defined in another file,
+// use that one and make the current file that file.
+// If found, return the address, else return -1.
 int
-findAddrByName(int bank, char *nameP)
+findAddrByName(int bank, int fileNo, char *nameP)
 {
 SymbolP symP;
 
-    if( (symP = findSymbolByName(bank, nameP)) != NIL )
+    if( (fileNo == NOARG) && (symP = findSymbolInCurrentFile(nameP)) )
     {
+        return(symP->address);
+    }
+
+    if( (symP = findSymbolByName(bank, fileNo, nameP)) != NIL )
+    {
+        curFileNo = symP->fileNo;
         return( (int)symP->address );
     }
     else
@@ -169,17 +228,26 @@ SymbolP symP;
     }
 }
 
-// Look for a symbol by address, return name if foune, else null
+// Look for a symbol by address, return name if found, else nil.
 char *
 findNameByAddr(u32 addr)
 {
 int i;
+SymbolP symP;
+
+    if( (symP = findAddressInCurrentFile(addr)) )
+    {
+        return(symP->nameP);
+    }
 
     for( i = 0; i < symCount; ++i )
     {
-        if( symbols[i].address == addr )
+        symP = &symbols[i];
+
+        if( symP->address == addr )
         {
-            return( symbols[i].nameP );
+            curFileNo = symP->fileNo;
+            return( symP->nameP );
         }
     }
 
@@ -187,7 +255,7 @@ int i;
 }
 
 bool
-loadSymbols(char *fnameP)
+loadSymbols(FileInfoP infoP)
 {
 u32 addr;
 char *cP, *cP2;
@@ -196,20 +264,20 @@ MapEntryP entryP;
 FILE *fP;
 char line[256];
 
-    if( !fnameP || !*fnameP )
+    if( !infoP->symNameP || !*(infoP->symNameP) )
     {
-        return( false );            // nothing to do, fail silently
+        return( false );
     }
 
-    if( !(fP = fopen(fnameP,"r")) )
+    if( !(fP = fopen(infoP->symNameP,"r")) )
     {
-        printf("Can't open symbol file '%s', no symbols will be available.\n", fnameP);
+        printf("Can't open symbol file '%s', no symbols will be available.\n", infoP->symNameP);
         return( false );
     }
 
     if( !fgets(line, sizeof(line), fP) )
     {
-        printf("File '%s' is empty, no symbols will be available.\n", fnameP);
+        printf("File '%s' is empty, no symbols will be available.\n", infoP->symNameP);
         fclose(fP);
         return( false );
     }
@@ -217,7 +285,7 @@ char line[256];
     line[strlen(line) - 1] = NUL;   // drop newline
     if( strcmp(line, SYMHEADER) )
     {
-        printf("File '%s' not a valid symbol file, no symbols will be available.\n", fnameP);
+        printf("File '%s' not a valid symbol file, no symbols will be available.\n", infoP->symNameP);
         fclose(fP);
         return( false );
     }
@@ -239,7 +307,7 @@ char line[256];
         addr = strtol(line, &cP, 8);    // symbol addrs are always octal
         if( (*cP++ != ' ') || !strchr("GIX", *cP++) || (*cP++ != ' ') )
         {
-            printf("File '%s' is not a valid symbol file, no symbols will be available.\n", fnameP);
+            printf("File '%s' is not a valid symbol file, no symbols will be available.\n", infoP->symNameP);
             fclose(fP);
             symCount = 0;
             return( false );
@@ -267,6 +335,7 @@ char line[256];
         symP->address = addr;
         symP->nameP = malloc(strlen(cP) + 1);
         strcpy(symP->nameP, cP);
+        symP->fileNo = infoP->fileNo;
     }
 
     fclose(fP);

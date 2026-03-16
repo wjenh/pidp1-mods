@@ -63,7 +63,8 @@ char *listHelp[] = {
     "aren't the line numbers to use, use the first number, the line in the file you're looking at.",
     "A decimal-only value lists from that line in the file.",
     "An expression prefixed by an @ lists from the line at that address.",
-    "A string value lists from the location of that symbol in the file if a symbol table is available.",
+    "A string value with an optional bank and/or file  lists from the location of that symbol in the file",
+    "if a symbol table is available.",
     "If there is no such symbol, an error is given.",
     "A dot lists from the last memory address specifed or hit by a breakpoint or watch.",
     "A dot followed by + or - an integer  value lists frm the last memory address offset by the value.",
@@ -79,6 +80,8 @@ char *listHelp[] = {
     "Also see the window command and register help.",
     "Examples:",
     "sh loop",
+    "sh loop,1",
+    "sh loop,1:3",
     "sho loop x",
     "show ac b",
     NIL};
@@ -144,15 +147,21 @@ char *enableHelp[] = {
     NIL};
 
 char *fileHelp[] = {
-    "The file command given a file basename, name.ad1, name.lst, or name.sym.",
-    "closes any current file, deletes all symbols and line mappings, and loads the new file.",
-    "This is the same as if given on the command line.",
-    "Howver, if the name is prefixed with '+', the current file is preserved and ONLY the symbols",
-    "from the new file are added to the existing symbols.",
-    "No source from the new file is available.",
+    "The file command with no argument lists the current file number and the available open files.",
+    "If given a number and that number is that of an open file, the current file becomes that file.",
+    "If given a file basename, name.rim, .ad1, .lst, or .sym, it closes all open files and",
+    "deletes all symbols and line mappings, then loads the new file.",
+    "This will actually attempt to open name.lst, and if that is not found, name.ad1.",
+    "If only name.ad1 can be opened, then no address-related operations can be done.",
+    "An attempt to open name.sym is alsd done and if found symbol operations can then be done.",
+    "Howver, if the name is prefixed with '+', the current files are preserved and the new file opened",
+    "and added to the list of files.",
     "Examples:",
+    "file",
+    "file 2",
     "file myfile",
-    "file +extra",
+    "file myfile.rim",
+    "file +extra.lst",
     NIL};
 
 char *watchHelp[] = {
@@ -278,6 +287,21 @@ char *addressHelp[] = {
     " Examples:",
     "123,0 forces a bank 0 reference.",
     "foo,3 looks up a symbol in bank 3.",
+    NIL};
+
+char *multifileHelp[] = {
+    "If multiple files are open, listing behavior changes.",
+    "At any time, there is a current file, initially file 1.",
+    "This can be changed vial the file command, example, file 2.",
+    "However, some commands can change the current file, explicitly or implicitly.",
+    "For example, the list command if a symbol or address is used will change the current file if.",
+    "an explicit file number is given or the address or symbol does not exist in the current file but",
+    "does exist in another file.",
+    "This then changes the current file to that file if the symbol was found.",
+    "This case can also be combined with a bank reference, 'li foo,1:2'.",
+    "A break or watch hit address or a step can also change the current file.",
+    "If the address doesn't exist in the current file, they will change the current file to",
+    "the first file that does contain the address.",
     NIL};
 
 // Print out a list of text, last line a NIL

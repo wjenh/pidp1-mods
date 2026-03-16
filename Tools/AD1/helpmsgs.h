@@ -31,5 +31,6 @@ extern char *numberHelp[];
 extern char *expressionHelp[];
 extern char *registerHelp[];
 extern char *addressHelp[];
+extern char *multifileHelp[];
 
 #endif

@@ -6,148 +6,49 @@
 
 #include "ad1.h"
 
-#define MAXLINES    4000
-#define MEMBANKS    16
-#define MEMSIZE     4096
+int curLine;
+int curFileNo;
 
-static int numLines;
-static int curLine;
-static bool memMapped;
-static FILE *fP;
-
-// How we map line numbers into file locations
-static long lineMap[MAXLINES];
-// And addresses to line numbers
+extern int numFiles;
 // Since multiple source lines can use the same address, we keep them all in a list
-static MapEntryPP memMap[MEMBANKS];  // we don't allocate until we need to
+extern MapEntryPP memMap[MEMBANKS];
+extern FileInfoP files[];
 
-bool isFileMapped(void);
-bool isMemMapped(void);
-bool loadFileMap(bool isLst, char *filenameP);
-void closeListFile(void);
+MapEntryP getMapForFileNo(MapEntryP mapP, int fileNo);
 MapEntryP getLinesFromAddress(int addr);
-int getLineFromAddress(int addr);
-int getLineCount(void);
+int getLineFromAddress(int addr, int fileno);
+int getLineCount(int fileno);
 int getCurrentLineNumber(void);
 void printLines(MapEntryP linesP);
-bool printLine(int line);
+bool printLine(int fileno, int line);
 bool printNextLine(void);
 
-// Have we mapped a file and is it still open?
-bool
-isFileMapped()
-{
-    return((fP)?true:false);
-}
-
-// Is memory also mapped?
-bool
-isMemMapped()
-{
-    return(memMapped);
-}
-
-// Try to load line mappings from a source file.
-// If it's a .lst file, we can construct the memory->line mapping also.
-// Otherwise, all we have is the line number mapping.
-bool
-loadFileMap(bool fromLst, char *filenameP)
-{
-int i;
-int bank;
-int address;
-long offset;
-MapEntryP memP, newP;
-MapEntryPP bankP;
-char *cP, *cP2;
-char tmpbuf[1024];
-
-    if( !(fP = fopen(filenameP, "r")) )
-    {
-        return(false);
-    }
-    
-    // read through the file keeping track of the offset of the start of each line.
-    numLines = 0;
-    for( numLines = 0; numLines < MAXLINES; )
-    {
-        offset = ftell(fP);
-        lineMap[numLines++] = offset;
-
-        if( !fgets(tmpbuf, sizeof(tmpbuf), fP) )
-        {
-            break;
-        }
-
-        if( fromLst )
-        {
-            // Pick up the address for building the memory map.
-            // Line will be of the form:
-            // [ ]+lineno: address (rest of line)
-            // Line numbers are always decimal, addresses octal.
-            // Any line not of the above form is ignored.
-            // Note that the line number is that of the line in the original source,
-            // not in the listing file.
-            // So, we ignore it and use the current listing file line number.
-            if( (cP = strchr(tmpbuf,':')) )
-            {
-                *cP++ = NUL;
-
-                // cP now pointing to the space after the :
-                address = strtol(cP, &cP2, 8);
-
-                if( *cP2 != ' ' )
-                {
-                    // Not a memory allocating line, skip
-                    continue;
-                }
-
-                bank = BANKOF(address);
-                address = ADDRESSOF(address);
-                if( (bank >= 0) && (bank < MEMBANKS) )
-                {
-                    if( !(bankP = memMap[bank]) )    // not allocated yet
-                    {
-                        bankP = (MapEntryPP)calloc(MEMSIZE, sizeof(MapEntryP));
-                        memMap[bank] = bankP;
-                        memMapped = true;
-                    }
-
-                    newP = (MapEntryP)calloc(1, sizeof(MapEntry));
-                    newP->lineNo = numLines;
-
-                    if( !bankP[address] )
-                    {
-                        // First one
-                        bankP[address] = newP;    // if muliple users of addr, take only the first
-                    }
-                    else
-                    {
-                        // Get to the end of the list
-                        for( memP = bankP[address]; memP->nextP; memP = memP->nextP )
-                        {
-                            ;
-                        }
-
-                        memP->nextP = newP;
-                    }
-                }
-            }
-        }
-    }
-
-    curLine = -1;
-    return(true);
-}
+extern bool isMemMapped(void);
 
 // Try to get a line number, return it if found else -1.
+// Set the current file to the file it was found in, or the first file if not found in that file.
 int
-getLineFromAddress(int address)
+getLineFromAddress(int address, int fileno)
 {
 MapEntryP entryP;
 
+    if( fileno == NOARG )
+    {
+        fileno = curFileNo;
+    }
+
     if( (entryP = getLinesFromAddress(address)) )
     {
+        if( !getMapForFileNo(entryP, fileno) )
+        {
+            // Just use the first one.
+            curFileNo = entryP->fileNo;
+        }
+        else
+        {
+            curFileNo = fileno;
+        }
+
         return( entryP->lineNo );
     }
     else
@@ -164,6 +65,7 @@ getLinesFromAddress(int address)
 {
 int bank;
 MapEntryPP bankP;
+MapEntryP entryP;
 
     if( !isMemMapped() )
     {
@@ -188,80 +90,74 @@ MapEntryPP bankP;
     }
 }
 
-// How many lines are in the file
-int
-getLineCount()
+// See if there is an entry in the map list that matches the given file number.
+// Return it if so, else return NIL.
+MapEntryP
+getMapForFileNo(MapEntryP mapP, int fileNo)
 {
-    return(numLines);
-}
-
-// Done with file
-void
-closeListFile()
-{
-int i, j;
-MapEntryPP bankP;
-MapEntryP entryP, nextP;;
-
-    if( fP )
+    while( mapP )
     {
-        fclose(fP);
-    }
-
-    fP = 0;
-    numLines = 0;
-
-    // Clean up memory map if we have one
-    if( isMemMapped() )
-    {
-        memMapped = false;
-        for( i = 0; i < MEMBANKS; ++i )
+        if( mapP->fileNo == fileNo )
         {
-            if( (bankP = memMap[i]) )
-            {
-                for( entryP  = *bankP++, j = 0; j < MEMSIZE; ++j )
-                {
-                    while( entryP )
-                    {
-                        nextP = entryP->nextP;
-                        free(entryP);
-                        entryP = nextP;
-                    }
-                }
-
-                free( memMap[i] );
-                memMap[i] = NIL;
-            }
+            return( mapP );
         }
     }
+
+    return(NIL);
 }
 
-// Print multiple lines from a MapEntry list.
+// How many lines are in the file
+int
+getLineCount(int fileNo)
+{
+    if( (fileNo >= 0) && (fileNo <= numFiles) )
+    {
+        return( files[fileNo]->numLines );
+    }
+    else
+    {
+        return(0);
+    }
+}
+
+// Print multiple lines from a MapEntry list,
+// but only if they are in the current file.
 void
 printLines(MapEntryP linesP)
 {
     while( linesP )
     {
-        printLine(linesP->lineNo);
+        if( linesP->fileNo == curFileNo )
+        {
+            printLine(linesP->fileNo, linesP->lineNo);
+        }
         linesP = linesP->nextP;
     }
 }
 
-// Try to print a line given its line number.
+// Try to print a line given its file and line number.
 // Return true if it was printed, else false.
 // If successful, the current line is set to this line.
 bool
-printLine(int lineno)
+printLine(int fileno, int lineno)
 {
+FileInfoP infoP;
 char linebuf[1024];
 
-    if( !fP || (lineno < 1) || (lineno > numLines) )
+    if( (fileno < 0) || (fileno >= numFiles) )
     {
         return(false);
     }
 
-    fseek(fP, lineMap[lineno-1], SEEK_SET);
-    if( fgets(linebuf, sizeof(linebuf), fP) )
+    infoP = files[fileno];
+
+    if( !infoP->fP || (lineno < 1) || (lineno > infoP->numLines) )
+    {
+        return(false);
+    }
+
+    fseek(infoP->fP, infoP->lineMap[lineno-1], SEEK_SET);
+    if( fgets(linebuf, sizeof(linebuf), infoP->fP) )
     {
         curLine = lineno;
         // Lines from a .lst file aready have the line number text
@@ -282,7 +178,7 @@ char linebuf[1024];
 bool
 printNextLine(void)
 {
-    if( printLine(curLine + 1) )
+    if( printLine(curFileNo, curLine + 1) )
     {
         ++curLine;
         return(true);

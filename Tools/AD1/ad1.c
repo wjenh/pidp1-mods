@@ -15,6 +15,7 @@
  * 11-Mar-26 wje rework single-step logic, make sure to clear single_inst on exit
  * 12-Mar-26 wje minor change to show line numbers better, updated in-app help.
  * 13-Mar-26 wje minor change to catch sigint and sigquit and clean up
+ * 15-Mar-26 wje major chage to add multiple source file support
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -83,6 +84,7 @@ Dispatch extraHelpTable[] = {
     {"expressions", 3, 0, expressionHelp},
     {"registers", 1, 0, registerHelp},
     {"addresses", 1, 0, addressHelp},
+    {"multiplefiles", 1, 0, multifileHelp},
     {0,0,0}
     };
 
@@ -112,11 +114,11 @@ void restoreAllWatchesAndBreakpoints(void);
 
 void sigHandler(int signo);
 int getCurrentPC(void);
-bool loadFileData(void);
 char *getFormat(int fmt);
 char *getUnrestrictedFormat(int fmt);
 void formatAndPrintOne(int fmt, int value);
 void formatAndPrintTwo(int fmt1, int addr, int fmt2,  int value);
+void printNumber(int value);
 void printAscii(char ch);
 bool printFlex(bool shifted, char ch);
 bool loadMemoryFromFile(char *filenameP, Word memory[], Word memSize);
@@ -129,6 +131,8 @@ extern int watchCount;  // number of set watches
 extern int base;        // current number base
 extern int lastFormat;  // the last format type used
 extern int curBank;     // set by the bank cmd
+extern int curFileNo;   // which file we are using
+extern int curLine;     // which file we are using
 
 extern int yydebug;
 extern int yy_flex_debug;
@@ -137,29 +141,19 @@ extern char *am1NameP;
 extern char *lstNameP;
 extern char *symNameP;
 
-extern SymbolP findSymbolByName(char *nameP);
+extern FileInfoP newFile(char *nameP);
+extern void closeFiles(void);
+extern bool isFileMapped(int fileno);
 extern int parseAndExecute(char *lineP);
+extern int getMapForFileNo(MapEntryP mapP, int fileNo);
 extern MapEntryP getLinesFromAddress(int addr);
 extern int signExtend(int oc);
 extern int twosCompl(int val);
-extern int onesCompl(int val);
-extern int32_t findAddrByName(char *nameP);
 extern char *findNameByAddr(u32 addr);
 extern char *decodeInstr(int value, int addr, char *addrStrP, char *reslltP);
-extern bool loadSymbols(char *filenameP);
-extern void clearFiles(void);
-extern void clearSymbols(void);
-extern void closeListFile(void);
-extern bool resolveFiles(char *nameP, char **am1PP, char **symPP, char **lstPP);
-extern bool isFileMapped(void);
-extern bool isMemMapped(void);
 extern bool loadFileMap(bool fromLst, char *filenameP);
-extern void clearSymbols(void);
-extern void closeFile(void);
-extern int getLineCount(void);
 extern bool printLines(MapEntryP entryP);
 extern bool printNextLine(void);
-extern int getCurrentLineNumber(void);
 extern int getNumber(char *strP, int base);
 extern void listFn(int arg, MapEntryP mapP);
 extern int flexToAscii(int ch, bool *shiftP);
@@ -178,6 +172,7 @@ DispatchP cmdP;
 BreakpointP activeBrkP; // we hit a breakpoint, this is it
 WatchP activeWatchP;    // we hit a watch, this is it
 MapEntryP mapP;
+FileInfoP infoP;
 fd_set read_fds;
 struct timeval timeout;
 char line[256];
@@ -222,17 +217,20 @@ char line[256];
         ++argv;
     }
 
-    if( argc > 1)
+    curFileNo = -1;
+    while( argc-- >= 1 )
     {
-        usage();
+        if( (infoP = newFile(*(argv++))) )
+        {
+            // The first file is the default
+            if( curFileNo == -1 )
+            {
+                curFileNo = infoP->fileNo;
+            }
+        }
     }
 
-    if( argc == 1 )
-    {
-        resolveFiles(*argv, &am1NameP, &symNameP, &lstNameP);
-        loadFileData();         // do before loading symbols!
-        loadSymbols(symNameP);
-    }
+    curLine = -1;
 
     // Initialize the file descriptor set
     inFd = STDIN_FILENO;            // File descriptor for standard input
@@ -336,7 +334,13 @@ char line[256];
             lastAddr = activeBrkP->address;
             if( (mapP = getLinesFromAddress(activeBrkP->address)) > 0 )
             {
-                printf(" at line %d:\n", mapP->lineNo);
+                if( !getMapForFileNo(mapP, curFileNo) )
+                {
+                    // Just use the first one.
+                    curFileNo = mapP->fileNo;
+                }
+
+                printf(" at line %d,file %d:\n", mapP->lineNo, mapP->fileNo);
                 printLines(mapP);
                 NEWLINE;
             }
@@ -360,6 +364,7 @@ char line[256];
             if( (mapP = getLinesFromAddress(activeWatchP->address)) > 0 )
             {
                 printf(" at line %d:\n", mapP->lineNo);
+                curFileNo = mapP->fileNo;
                 printLines(mapP);
                 NEWLINE;
             }
@@ -472,7 +477,7 @@ char tmpstr[128];
         }
         else
         {
-            printf(getFormat(lastFormat), value);
+            printNumber(value);
         }
 
         return;
@@ -526,7 +531,7 @@ char tmpstr[128];
     }
     else
     {
-        printf(getFormat((fmt == AUTOBASE)?lastFormat:fmt), value);
+        printNumber(value);
     }
 
     switch( fmt )
@@ -540,6 +545,13 @@ char tmpstr[128];
         lastFormat = fmt;
         break;
     }
+}
+
+// Print a number using the current base.
+void
+printNumber(int value)
+{
+    printf(getFormat(lastFormat), value);
 }
 
 // Print one ascii char, possibly null
@@ -990,32 +1002,6 @@ int i;
     memListCount = 0;
 }
 
-bool
-loadFileData()
-{
-    if( !isFileMapped() )       // try to initialize it
-    {
-        // Try for a lst file
-        if( loadFileMap(true, lstNameP))
-        {
-            printf("Line numbers and addresses loaded from '%s'.\n", lstNameP);
-        }
-        else if( loadFileMap(false, am1NameP) )
-        {
-            // Try for a .am1 instead
-            printf("Line numbers from '%s', symbol mapping not available..\n", am1NameP);
-        }
-
-        if( !isFileMapped() )
-        {
-            printf("Can't find a listing or source file, set a file with the file command.\n");
-            return(false);
-        }
-    }
-
-    return(true);
-}
-
 // Load a pidp-1 memory save file into the test memory.
 // memSize is in memory words.
 bool
@@ -1095,6 +1081,8 @@ leave(int status, void *ignore)
         deleteAllBreakpoints();
         deleteAllWatches();
     }
+
+    closeFiles();
 }
 
 void
@@ -1109,7 +1097,7 @@ sigHandler(int signo)
 void
 usage()
 {
-    printf("Usage: ad1 [-v] [-y] [-x] [-T] [filename]\n");
+    printf("Usage: ad1 [-v] [-y] [-x] [-T] [filename ...]\n");
     printf("-v prints the version and exits\n");
     printf("-y enables yacc debugging\n");
     printf("-x enables lex debugging\n");

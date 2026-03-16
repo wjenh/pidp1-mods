@@ -2,7 +2,7 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.6 and covers up through ad1 version 1.6; it will be updated as needed.\
+This is version 1.7 and covers up through ad1 version 1.8; it will be updated as needed.\
 Edit date 12-Mar-2026
 
 ## What is **ad1**?
@@ -30,6 +30,7 @@ does not need to be loaded nor does it consume any pidp-1 memory at all.
 Features
 - Uses symbol tables from **am1** to provide symbolic names for program locations and variables
 - Uses listing files from **am1** to provide viewing of the source by address, symbol, or line number
+- Multiple files can be open to allow debugging of programs with separately assembled components
 - Can set up to 8 breakpoints, configurable to any number at build time
 - Individual breakpoints can be enabled, disabled, or deleted
 - Breakpoints can have a hit count and won't be raised until the count is reached
@@ -76,7 +77,7 @@ When watches are active, the addresses have their contents checked to see if the
 optionally match a given value.
 If so a flag is set to indicate that to **ad1** and the pidp-1 halted.
 
-Both breakpoints and watches are checked in the pidp-1 at the beginning of every machine cycle.
+Both breakpoints and watches are checked in the pidp-1 at the end of every machine cycle.
 
 **Ad1** commands can then be given and when ready the program resumed.
 
@@ -102,7 +103,7 @@ lines can be displayed by line number.
 
 ## Usage
 
-ad1 [-v] [-y] [-x] [-T] [filename]
+ad1 [-v] [-y] [-x] [-T] [filename ...]
 
 The **-v** option prints the version number and exits.
 
@@ -128,6 +129,9 @@ The three am1 filenames, *.am1*, *.lst*, and *.sym* will be derived from whichev
 If a filename.sym file is found, then the symbols will be available for use.\
 If a filename.lst file is found, then the source list operations will be available for use.\
 If there is no .lst file but there is a .am1 file, then source can be listed by line number only.
+
+Multiple filenames can be given.
+If so, the same information will be available for them.
 
 For full functionality, programs should be assembled using the **am1** *-d* flag.
 
@@ -159,10 +163,10 @@ is not allowed.
 
 For example, a breakpoint number is always decimal, but a breakpoint address can be in any of the allowed bases.
 
-This is noted in each command.
 ## Line numbers, addresses, and symbols
 
-What is available depends upoon which of the filenames mentioned above are present.
+What is available depends upoon which of the filenames mentioned above are present and how many files
+have been opened.
 
 If there is a listing file, then a mapping between line numbers *in that listing file* and memory locations
 shown in the file is created.
@@ -183,6 +187,17 @@ In this case, listing that address lists all lines for that address.
 
 If only a source file is being used, then the line numbers will be from that file and if a symbol file
 is also being used, the line nubmers from the symbol file will be used for the symbol locations.
+
+If multiple files have been loaded, they should not have overlapping line numbers or duplicated symbols
+*unless* they are in different banks.
+
+If not, use of the *file* command or some *list* commands can be used to switch between the overlapping files.
+
+At any time, there is a current file, initially the first file.
+Several commands change the current file either explicitly, the *file* command, or some other commands
+that references a symbol, prints the value at an address, or lists at an address.
+
+See the section on **File switching**.
 
 Line numbers are always decimal.
 
@@ -228,7 +243,8 @@ This is handled in two ways.
 First, a default current bank can be set with the *bank* command. All unqualified symbol lookups will
 then only match symbols in that bank.
 
-Second, a *bank qualifier* can be added to a symbol name, e.g., *loc,1* to explicitly identify the bank.
+Second, a *bank qualifier* can be added to a symbol name, e.g., *loc,1* to explicitly identify the bank.\
+Note that if multiple files are open, additional behavior applies.
 
 All other uses of an address automatically add the current bank if the address appears to be in bank 0.
 This is consistent with the way the PDP-1 (and pidp-1) deal with addresses in extended memory.
@@ -384,26 +400,39 @@ This command always interprets the number in *base 10*.
 If watch is specified, then this applies to watches instead of breakpoints.
 It can be shortened the same as when used as a command.
 
-## FIle [+]name
+## FIle [n] | [[+]name]
 
-Open a new file for use with **ad1** or add additional symbols from a file.
+If no argument is given, the current file number is listed along with all the open files with their file number.
 
-If only a name is given, the current file, if any, is first closed. Any symbols and line maps are cleared.
+If a number is given and it is that of a valid open file, then the current file is switched to that file.
 
-If the name is prefixed by a plus sign, *+*, then a symbol file is searched for and if found, the symbols are
-added.\
-**Note** that only the symbols are added, the source for the addional file(s) is not.
+Otherwise it opens a new file for use with **ad1*.
 
-If a symbol of the name name in the same bank as an existing symbol is found, the existing symbol will be
-used, not the duplicate.
-However, the address of the duplicate can be seen using the *list sy* command.
+The name can be the basename of a program file, or have an *.am1*, *.rim*, *.sym*, or *.lst* extension.
+The actual names needed will be derived, name.lst or name.am1, and name.sym.
+
+If the name is prefixed by a plus sign, *+*, then the file is opened and added to the list of files.
+If only a name is given, the current files, if any, are first closed. Any symbols and line maps are cleared.
+
+In both cases, symbols will be loaded if a .sym file is available,
+and line-address mapping provided if a .lst file is available.
+
+The source will be shown from the .lst file, or if not found, the .am1 file.
+If neither was found, no source will be available.
+
+Symbols are always identified by the combination of bank number and file number.
+
+If a file has the same line number(s) in the same bank as another opened file,
+a line lookup by address will first look in the current file and if not found there, will change
+the current file to the first file containing that address, if the address was found.\
+If a symbol of the name name in the same bank as as another symbol is found, the same us done.
+
+The addresses and files of all symbols can be seen using the *list sy* command.
 
 The name is entered without any quotes. \
 The name can contain a file path.\
-If it can't be found an error will be reported.
+If the file can't be found, an error will be reported.
 
-The name can be the basename of a program file, or have a *.am1*, *.sym*, or a *.lst* extension, the proper
-names will be derived.
 This is the same as if the name was given on the command line when **ad1** was started.
 
 ## Enable [Watch] [decimal]
@@ -416,20 +445,26 @@ This command always interprets the number in *base 10*.
 If watch is specified, then this applies to watches instead of breakpoints.
 It can be shortened the same as when used as a command.
 
-## List [decimal | expression | @expression | symbol[,bref] | .[+-decimal]]
+## List [decimal | expression | @expression[,bref][:fileno] | symbol[,bref][:fileno] | .[+-decimal]]
 
-If a source or listing file is open, list lines of text from it.\
+If a source or listing file is open and is the current file, list lines of text from it.\
 If no argument is given, list from the next line after the last one listed, or if none, the first line.\
 If the argument is a decimal, it is the line number to list.\
-If the argument is an expression,it is the line number to list, but see below.\
+If the argument is an expression, it is the line number to list, but see below.
+
 If it is a symbol, it is the line number of the line the symbol was assigned a location.
+The symbol might not have been in the current file, in which case the current file is made the file
+the symbol is defined in.
 
 If an expression is preceeded by @, then it is the line that corresponds to that address in the listing file,
 *line at address*.\
+Again, if the address corresponds to that in another file, the current file will be made the file the address
+is defined in.
 
-if a . (period, dot) is given, it means *list from the line corresponding to the last address used*.
+if a . (period, dot) is given, it means *list from the line corresponding to the last address used*.\
 It can have an optional + or - decimal, which means the last address plus or minus that value,
-e.g. *li .+4*.
+e.g. *li .+4*.\
+This also can change the current file.
 
 If an empty line is entered, it is equivalent to entering this command with no arguments.
 
@@ -547,3 +582,23 @@ Watches are based on the contents of the address in memory and thus can be used 
 is modified, including instructions that are modified.
 
 The address is a full 16-bit address.
+
+## File switching
+
+These commands or operations can change the current file, either explicitly or implicitly:
+
+- file, which see
+- list, which see
+- breakpoint hit
+- watch hit
+- step
+
+For breakpoints, watches, and steps the source corresponding to the address they have is listed if available.
+First, an attempt to find the address in the current file is tried.
+If that succeeds, it is used.
+
+If the address does not exist in the current file, then the first file in the file list that contains the address
+is used and that file becomes the current file.
+
+If the same address exists in multiple files this can be disambiguated by setting the current file
+via the *file* command or by using a file specifier in the *list* command.

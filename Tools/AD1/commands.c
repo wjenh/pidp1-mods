@@ -23,9 +23,9 @@ int windowSize = 6;     // default window size
 int brkCount;           // number of set breakpoints
 int watchCount;         // number of set watches
 
-extern char *am1NameP;
-extern char *lstNameP;
-extern char *symNameP;
+extern int numFiles;
+extern int curFileNo;
+extern FileInfoP files[MAXFILES];
 
 void helpFn(char *nameP);
 void showFn(int addr, int base, bool noDeref);
@@ -57,9 +57,9 @@ extern Dispatch dispatchTable[];
 extern Dispatch extraHelpTable[];
 extern BreakpointP isBreakpoint(int addr);
 
+extern int getMapForFileNo(MapEntryP mapP, int fileNo);
 extern MapEntryP getLinesFromAddress(int address);
 extern int getCurrentPC(void);
-extern bool loadFileData(void);
 extern char *getFormat(int fmt);
 extern char *getUnrestrictedFormat(int fmt);
 extern void formatAndPrintOne(int fmt, int value);
@@ -78,14 +78,10 @@ extern void clearWatch(WatchP watchP);
 extern void deleteAllWatches(void);
 
 extern int onesCompl(int val);
-extern bool loadSymbols(char *filenameP);
-extern void clearFiles(void);
-extern void clearSymbols(void);
-extern void closeListFile(void);
-extern void resolveFiles(char *nameP, char **am1PP, char **symPP, char **lstPP);
-extern void clearSymbols(void);
-extern void closeFile(void);
-extern bool printLine(int lineno);
+extern bool isFileMapped(int fileno);
+extern FileInfoP newFile(char *nameP);
+extern void closeFiles(void);
+extern bool printLine(int fileno, int lineno);
 extern bool printLines(MapEntryP linesP);
 extern bool printNextLine(void);
 extern int getCurrentLineNumber(void);
@@ -386,6 +382,12 @@ MapEntryP entryP;
 
         if( (entryP = getLinesFromAddress(getCurrentPC())) > 0 )
         {
+            if( !getMapForFileNo(entryP, curFileNo) )
+            {
+                // Just use the first one.
+                curFileNo = entryP->fileNo;
+            }
+
             printLines(entryP);
         }
     }
@@ -401,9 +403,9 @@ continueFn(void)
 void
 setBankFn(int bankno)
 {
-    if( (bankno < 0) || (bankno >= MAXBANKS) )
+    if( (bankno < 0) || (bankno >= MEMBANKS) )
     {
-        printf("A bank number must be 0-%d decimal or the hex or octal equivalent.\n", MAXBANKS - 1);
+        printf("A bank number must be 0-%d decimal or the hex or octal equivalent.\n", MEMBANKS - 1);
     }
 
     curBank = bankno;
@@ -562,26 +564,67 @@ setBaseFn(int num)
 }
 
 // User gave a file name, clear any open and use it unless add is true.
-// In that case only try for a symbol file and add those to the existing symbol table.
+// In that case, add the file to the current file list.
+// If the name is nil or nul, list the current files.
 void
 setFileFn(char *nameP, bool add)
 {
-char *tmpP;
+int i;
+char *cP;
+FileInfoP infoP;
 
-    if( add )
+    if( !nameP || !*nameP )
     {
-        resolveFiles(nameP, NIL, &tmpP, NIL);
-        loadSymbols(tmpP);
-        free(tmpP);
+        if( !numFiles )
+        {
+            printf("No files are open.\n");
+        }
+        else
+        {
+            printf("Curreint file is %d\n", curFileNo + 1);
+            for( int i = 0; i < numFiles; ++i )
+            {
+                if( isFileMapped(i) )
+                {
+                    infoP = files[i];
+                    cP = infoP->am1NameP;
+                    if( !cP )
+                    {
+                        cP = infoP->lstNameP;
+                    }
+                    if( !cP )
+                    {
+                        cP = infoP->symNameP;
+                    }
+
+                    if( cP )
+                    {
+                        printf("%d - '%s'\n", i+1, cP);
+                    }
+                }
+            }
+        }
+    }
+    else if( isdigit(*nameP) )
+    {
+        i = atoi(nameP);
+        if( isFileMapped(i - 1) )
+        {
+            curFileNo = i - 1;
+        }
+        else
+        {
+            printf("%d is not an open file.\n", i);
+        }
+    }
+    else if( add )
+    {
+        newFile(nameP);
     }
     else
     {
-        clearFiles();
-        closeListFile();
-        clearSymbols();
-        resolveFiles(nameP, &am1NameP, &symNameP, &lstNameP);
-        loadFileData();             // before loading symbols!
-        loadSymbols(symNameP);
+        closeFiles();
+        newFile(nameP);
     }
 }
 
@@ -592,11 +635,6 @@ void
 listFn(int lineNo)
 {
 int i;
-
-    if( !loadFileData() )                   // try to initialize if needed
-    {
-        return;
-    }
 
     if( lineNo == NOARG )
     {
@@ -620,7 +658,7 @@ int i;
         }
         else
         {
-            if( !printLine(lineNo) )
+            if( !printLine(curFileNo, lineNo) )
             {
                 printf("eof\n");
                 return;

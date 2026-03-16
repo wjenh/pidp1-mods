@@ -1,8 +1,14 @@
 // Primary include file for ad1
-
-#define VERSION "1.7 13-Mar-2026"
-
 #include <stdint.h>
+#include <stdio.h>
+
+#define VERSION "1.8 16-Mar-2026"
+
+#define MAXFILES 8       // maximum number of open files we can have
+#define MAXLINES    4000 // max number of lines in a file
+
+#define MEMBANKS    16
+#define MEMSIZE     4096
 
 #define NIL (void *)0
 #define NUL (char)0
@@ -10,8 +16,6 @@
 #define NOARG -1            // signal no argument, used in yacc and ad1.c
 #define NEWLINE fputc('\n', stdout)
 #define PRINTCH(c) fputc(c, stdout)
-
-#define MAXBANKS 16
 
 #define BANKOF(x) (((x) >> 12) & 017)
 #define ADDRESSOF(x) ((x) & 07777)
@@ -62,6 +66,7 @@ typedef uint32_t u32;
 // Nothing fancy, just a linear list. Won't be enough symbols to need otherwise.
 typedef struct {
     u32 address;
+    int fileNo;
     char *nameP;
     } Symbol, *SymbolP;
 
@@ -80,8 +85,19 @@ typedef struct arg_s {
     } Arg, *ArgP;
 
 // For the address to line number(s) mapping
-typedef struct MapEntry_t
-{
+typedef struct MapEntry_t {
+    short fileNo;
     short lineNo;
     struct MapEntry_t *nextP;
 } MapEntry, *MapEntryP, **MapEntryPP;
+
+// For file information
+typedef struct {
+    int fileNo;                 // index in files table
+    char *am1NameP;
+    char *lstNameP;
+    char *symNameP;
+    FILE *fP;
+    int numLines;               // lines in the file
+    long lineMap[MAXLINES];     // map line nubmers in file into file offsets in file
+} FileInfo, *FileInfoP;

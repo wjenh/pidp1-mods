@@ -18,6 +18,7 @@
 int lastAddr;
 int base;               // default input number base, changed by the base command
 int lastFormat;         // last format used, 0 means use base
+int curStartAddr;       // set by the start or load commands
 int curBank;            // set by the bank cmd
 int windowSize = 6;     // default window size
 int brkCount;           // number of set breakpoints
@@ -44,6 +45,7 @@ void disableBpFn(int num);
 void setBaseFn(int num);
 void setFileFn(char *nameP, bool add);
 void listFn(int lineNo);
+void loadFn(char *filenameP);
 void setWatchFn(int addr,  int value);
 void deleteWatchFn(int num);
 void enableWatchFn(int num);
@@ -85,6 +87,7 @@ extern bool printLine(int fileno, int lineno);
 extern bool printLines(MapEntryP linesP);
 extern bool printNextLine(void);
 extern int getCurrentLineNumber(void);
+extern int loadTape(char *filenameP);
 extern DispatchP findCommand(DispatchP dipatchTable, char *nameP);
 
 void
@@ -348,12 +351,19 @@ BreakpointP brkP;
 void
 startFn(int addr)
 {
-    pdp1P->run_enable = 0;      // stop it
-    pdp1P->ad1StartAddr = addr & 07777;    
-    pdp1P->ad1ExtendedAddr = addr & 0170000;    
-    AD1_CLEAR_SINGLE(pdp1P);    // shouldn't be set, but be sure
-    AD1_SET_START(pdp1P);
-    lastAddr = addr;
+    if( addr < 0 )
+    {
+        printf("No start address has been set, give one or load a tape.\n");
+    }
+    else
+    {
+        pdp1P->run_enable = 0;      // stop it
+        pdp1P->ad1StartAddr = addr & 07777;    
+        pdp1P->ad1ExtendedAddr = addr & 0170000;    
+        AD1_CLEAR_SINGLE(pdp1P);    // shouldn't be set, but be sure
+        AD1_SET_START(pdp1P);
+        curStartAddr = lastAddr = addr;
+    }
 }
 
 void
@@ -675,6 +685,26 @@ int i;
         }
 
         ++lineNo;
+    }
+}
+
+void
+loadFn(char *filenameP)
+{
+int addr;
+
+    if( (addr = loadTape(filenameP)) == LOADFAILED )
+    {
+        return;
+    }
+    else if( addr == LOADSTOP )
+    {
+        printf("Load of am1 tape with stop done, no starting address set.\n");
+    }
+    else
+    {
+        curStartAddr = addr;
+        printf("Load done, starting address set to 0%06o.\n", addr);
     }
 }
 

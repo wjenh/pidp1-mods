@@ -2,9 +2,9 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define VERSION "1.9 16-Mar-2026"
+#define VERSION "1.10 17-Mar-2026"
 
-#define MAXFILES 8       // maximum number of open files we can have
+#define MAXFILES    8    // maximum number of open files we can have
 #define MAXLINES    4000 // max number of lines in a file
 
 #define MEMBANKS    16
@@ -24,6 +24,10 @@
 #define NOCHAR -1
 #define LCS -2
 #define UCS -3
+
+// loader returns
+#define LOADFAILED -1
+#define LOADSTOP -2
 
 // Flags used in Directives
 #define FORCE_DECIMAL 1 // a number will only be interpreted as a base 10 number

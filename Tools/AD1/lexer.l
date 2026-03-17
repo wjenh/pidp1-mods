@@ -25,6 +25,7 @@ extern void freeMem(void);
 %s CMDARG
 %s REGARG
 %s BASEARG
+%s FILEARG
 
 %%
 ^[a-z]+			{
@@ -52,22 +53,9 @@ extern void freeMem(void);
 				    break;
 
 				case SETFILE:
-				    // Hack to pick up the essentially arbitrary file path
-				    for( cP = tmpstr; (ch = input()); )
-				    {
-					*cP++ = ch;
-				    }
-
-				    *cP = '\0';
-
-				    for( cP = tmpstr; isspace(*cP); )
-				    {
-				    	++cP;
-				    }
-
-				    yylval.strP = (char *)malloc(strlen(cP) + 1);
-				    strcpy(yylval.strP, cP);
-				    return(FILESTRING);
+				case LOAD:
+				    BEGIN FILEARG;
+				    break;
 				}
 
 			        return(dispP->token);
@@ -88,6 +76,7 @@ extern void freeMem(void);
 \-			{ return(MINUS); }
 \/			{ return(DIV); }
 \*			{ return(MUL); }
+\%			{ return(MOD); }
 \<\<			{ return(LSHIFT); }
 \>\>			{ return(RSHIFT); }
 \(			{ return(LPAREN); }
@@ -235,6 +224,23 @@ ss			{
 			        strcpy(yylval.strP, yytext);
 			        return(SYMBOL);
 			    }
+			}
+
+<FILEARG>[ \t]*.*	{
+			int ch;
+			char *cP;
+
+			    // Hack to pick up the essentially arbitrary file path
+			    BEGIN INITIAL;
+
+			    for( cP = yytext; *cP && isspace(*cP); )
+			    {
+				cP++;
+			    }
+
+			    yylval.strP = (char *)malloc(strlen(cP) + 1);
+			    strcpy(yylval.strP, cP);
+			    return(FILESTRING);
 			}
 
 [a-zA-Z_][a-zA-Z0-9_]*	{

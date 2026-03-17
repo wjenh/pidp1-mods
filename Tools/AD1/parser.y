@@ -15,6 +15,7 @@
 extern int curFileNo;
 extern int lastAddr;
 extern int lastFormat;
+extern int curStartAddr;
 extern int base;
 extern int curBank;
 extern char *fmt8P;
@@ -59,6 +60,7 @@ extern void disableWatchFn(int num);
 extern void setBaseFn(int num);
 extern void setFileFn(char *nameP, bool add);
 extern void listFn(int lineNo);
+extern void loadFn(char *nameP);
 extern void setWindowFn(int size);
 extern void debugFn(void);
 %}
@@ -92,6 +94,7 @@ typedef struct argitem_t {
 %token EXIT
 %token HELP
 %token LIST
+%token LOAD
 %token NEXT
 %token NODEREF
 %token SET
@@ -166,7 +169,7 @@ typedef struct argitem_t {
 %left AND
 %left LSHIFT RSHIFT
 %left PLUS MINUS
-%left MUL DIV
+%left MUL DIV MOD
 %left CMPL
 %right UMINUS
 %left SYMBREF
@@ -197,6 +200,10 @@ cmd		: QUIT
                 | HELP SEPARATOR DOT
                 {
                     helpFn(".");
+                }
+                | START
+                {
+                    startFn(curStartAddr);
                 }
                 | START SEPARATOR address
                 {
@@ -303,16 +310,16 @@ cmd		: QUIT
                 {
                     printf("Base is %d\n", base);
                 }
-                | FILESTRING
+                | SETFILE FILESTRING
                 {
-                    if( $1 && (*$1 == '+') )
+                    if( $2 && (*$2 == '+') )
                     {
-                        setFileFn($1 + 1, true);
+                        setFileFn($2 + 1, true);
                     }
                     else
                     {
                         // $1 can be an emptry string
-                        setFileFn($1, false);
+                        setFileFn($2, false);
                     }
 
                     return(0);          // we consumed the input, no more lexing on this line
@@ -363,6 +370,10 @@ cmd		: QUIT
                     }
 
                     listFn(line);
+                }
+                | LOAD FILESTRING
+                {
+                    loadFn($2);
                 }
                 | NEXT
                 {
@@ -526,6 +537,10 @@ expr            : MINUS expr %prec UMINUS
                 | expr DIV expr
                 {
                     $$ = eval(DIV, $1, $3);
+                }
+                | expr MOD expr
+                {
+                    $$ = eval(MOD, $1, $3);
                 }
                 | expr AND expr
                 {

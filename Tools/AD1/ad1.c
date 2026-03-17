@@ -15,7 +15,8 @@
  * 11-Mar-26 wje rework single-step logic, make sure to clear single_inst on exit
  * 12-Mar-26 wje minor change to show line numbers better, updated in-app help.
  * 13-Mar-26 wje minor change to catch sigint and sigquit and clean up
- * 19-Mar-26 wje major chage to add multiple source file support
+ * 16-Mar-26 wje major chage to add multiple source file support
+ * 18-Mar-26 wje align -0 processing with am1 and the PDP-1, add mod operator, add tape loading
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -66,6 +67,7 @@ Dispatch dispatchTable[] = {
     {"file", 2, SETFILE, fileHelp},
     {"help", 1, HELP, NIL},
     {"list", 1, LIST, listHelp},
+    {"load", 2, LOAD, NIL},
     {"next", 1, NEXT, nextHelp},
     {"quit", 1, QUIT, exitHelp},
     {"set", 2, SET, setHelp},
@@ -130,6 +132,7 @@ extern int brkCount;    // number of set breakpoints
 extern int watchCount;  // number of set watches
 extern int base;        // current number base
 extern int lastFormat;  // the last format type used
+extern int curStartAddr;     // set by the start or load commands
 extern int curBank;     // set by the bank cmd
 extern int curFileNo;   // which file we are using
 extern int curLine;     // which file we are using
@@ -230,6 +233,7 @@ char line[256];
         }
     }
 
+    curStartAddr = -1;
     curLine = -1;
 
     // Initialize the file descriptor set

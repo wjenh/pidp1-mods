@@ -32,6 +32,7 @@ int getValue(char *stringP, int base);
 int signExtend(int oc);
 int onesCompl(int val);
 int twosCompl(int val);
+int adjustZero(int val);
 
 extern char *getFormat(int fmtType);
 extern void formatAndPrintOne(int base, int value);
@@ -362,6 +363,19 @@ SymbolP symP;
     symCount = 0;
 }
 
+// Given a 1's complement value that is an 18 bit -0, convert to 0.
+// The result will still be 1's complement.
+int
+adjustZero(int val)
+{
+    if( (val & 0777777) == 0777777 )
+    {
+        val = 0;
+    }
+
+    return(val);
+}
+
 // Given a number in 2s cmpl, convert to 1s cmpl.
 // Only affects negative numbers.
 int
@@ -374,11 +388,6 @@ unsigned int i;
     if( oc < 0 )
     {
         i--;
-        if( ((signed int)i == -1) )
-        {
-            i = 0;
-        }
-
         oc = (signed int)i;
     }
 
@@ -389,6 +398,9 @@ unsigned int i;
 int
 signExtend(int oc)
 {
+    // We actually have a full C int, check bit 17 using rational bit positions, this would be bit 0 in -1 speak.
+    // If bit 18, one bit higher than the most significant bit in an 18 bit word, is zero, then
+    // the number is not sign extended, so extend it.
     if( (oc & 0x20000) && !(oc & 0x40000) )
     {
         // it's negative
@@ -399,7 +411,7 @@ signExtend(int oc)
     return( oc );
 }
 
-// Given a number in 18 bit 1s cmpl, convert to 2s cmpl.
+// Given a number in 1s cmpl, convert to 2s cmpl.
 // Only affects negative numbers.
 int
 twosCompl(int oc)
@@ -419,6 +431,8 @@ unsigned int i;
 // Evaluate an operation.
 // The values will be 1's complement, handle doing math ops in 2's complement.
 // The result will be 1's complement.
+// Note that all calculations are done using a full C int; the value will be truncated
+// to 18 bits if it is stored to the -1 in the set command.
 int
 eval(int op, int lval, int rval)
 {
@@ -436,10 +450,10 @@ int rslt;
         rslt = lval & rval;
         break;
     case LSHIFT:
-        rslt = lval << rval;
+        rslt = lval << twosCompl(rval);
         break;
     case RSHIFT:
-        rslt = lval >> rval;
+        rslt = lval >> twosCompl(rval);
         break;
     case CMPL:
         rslt = ~lval;
@@ -456,21 +470,28 @@ int rslt;
         case MINUS:
             rslt = lval - rval;
             break;
-        case UMINUS:
-            rslt = -lval;
-            break;
         case MUL:
             rslt = lval * rval;
             break;
         case DIV:
             rslt = lval / rval;
             break;
+        case MOD:
+            rslt = lval % rval;
+            break;
+
+        case UMINUS:
+            // Easier to deal with this in 1's complement
+            lval = onesCompl(lval);         // switch it back
+            rslt = adjustZero(~lval);       // and it's still 1's complement
+            return( rslt );
+
         default:
             printf("Internal error, bad operator %d\n", op);
             break;
         }
 
-        rslt = onesCompl(rslt);
+        rslt = adjustZero(onesCompl(rslt));
     }
     
     return( rslt );

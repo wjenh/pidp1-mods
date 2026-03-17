@@ -2,8 +2,8 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.7 and covers up through ad1 version 1.8; it will be updated as needed.\
-Edit date 12-Mar-2026
+This is version 1.8 and covers up through ad1 version 1.10; it will be updated as needed.\
+Edit date 17-Mar-2026
 
 ## What is **ad1**?
 
@@ -38,14 +38,14 @@ Features
 - Individual watches can be enabled, disabled, or deleted
 - Watches can have a value to match on write, or match on any write
 - Memory locations can be interrogated and set
-- Has full access to the PC, PF, SS, TW, TA, MA, MB, IO, and AC registers
-- Most of those can be both interrogated and set
-- Can interrogate the test switches and sense switches
+- Has full read access to the PC, PF, SS, TW, TA, MA, MB, IO, and AC registers
+- Can set AC, IO, PC, and PF
+- Can read the test switches and sense switches
 - Fully supports multi-bank operations
 - Numeric values can be in base 2, 8, 10, and 16
 - A numeric value can override the base setting by specifying its base as in 0177, 0d23, 0xFF, 0b11001
-- Data can be viewed as numbers, ascii, or flex/concise
-- Has a rich set of commands
+- Data can be viewed as numbers including in 1's complement, symbols, instructions, ascii, or flex/concise
+- Can directly load bin and am1 binary tapes, no mount or read-in needed
 - Has built-in help for commands
 
 ## What goes on inside?
@@ -124,7 +124,7 @@ Otherwise the filename can be one of:
 - filename.lst
 - filename.sym
 
-The three am1 filenames, *.am1*, *.lst*, and *.sym* will be derived from whichever of the above is given.
+The three **am1** filenames, *.am1*, *.lst*, and *.sym* will be derived from whichever of the above is given.
 
 If a filename.sym file is found, then the symbols will be available for use.\
 If a filename.lst file is found, then the source list operations will be available for use.\
@@ -194,8 +194,9 @@ If multiple files have been loaded, they should not have overlapping line number
 If not, use of the *file* command or some *list* commands can be used to switch between the overlapping files.
 
 At any time, there is a current file, initially the first file.
-Several commands change the current file either explicitly, the *file* command, or some other commands
-that references a symbol, prints the value at an address, or lists at an address.
+Several commands change the current file either explicitly, such as the *file* command.
+Some other commands that reference a symbol, prints the value at an address, or lists at an address can
+change it also, as can breakpoints and watches.
 
 See the section on **File switching**.
 
@@ -205,18 +206,21 @@ Line numbers are always decimal.
 
 The PDP-1 used 1's complement math, which no modern computers use.
 But, **ad1** runs on a modern computer and uses 2's complement math.
-It automatically converts the results of math operations (+, -, *, /, %, and unary minus) to the 1's complement
-representation after computation, the values that are stored by the *set* command
-will be the correct 1's complement values.
+
+However, in order for the math and bitwise operations to give the same result as they would have then,
+**ad1** automatically converts the operands(s) of the math operations *+, -, \*, /, %%* and unary minus to
+the 2's complement representation, performs the operation, and converts back to the 1's complement
+representation.
+The values that are stored by the *set* command will be the correct 1's complement values.
 
 Remember that one annoying thing about 1's complement is that there are two values for zero, 0 and -0.
 0 is all bits off, -0 is all bits on.
 The PDP-1 automatically converted -0 to 0 for the *add*, *sub*, *mul*, *div*, *idx*, and *isp* instructions.
-This is also done when values are computed in ad1 as noted above.
+This is also done when values are computed in **ad1** as noted above.
 
-Logical operations, *&*, *|*, *^*, *~*, are not math operations and do not do zero or 1's complement adjusting.
+Logical operations, *&*, *|*, *^*, *~*, are not math operations and do not do zero or 2's complement computations.
 
-When values are displayed, they are shown as positive values, just as you would see in a program listing.
+When values are displayed, they are shown as unsigned 18 bit values, just as you would see in a program listing.
 The PDP-1 front panel didn't show signed digits, it just showed binary light patterns.
 
 The one exception is the special *c* formatting directive for the *show* command, see below.
@@ -278,7 +282,8 @@ The special symbol . (period, dot), means *the last address used*, similar to it
 ## Operators
 
 The following operators are defined and listed in order of increasing priority.\
-The priority is the same as that for **C** and the operations are the same.
+The priority is the same as that for **C** and the operations are the same.\
+Note that unlike **am1**, the mod operation is a single percent sign.
 
 | Operator | Meaning                |
 |----------|------------------------|
@@ -287,7 +292,7 @@ The priority is the same as that for **C** and the operations are the same.
 | &        | bitwise and            |
 | << >>    | left-shift right-shift |
 | \+ \-    | addition subtraction   |
-| \* /     | multiply divide        |
+| \* / %   | multiply divide mod    |
 | ~        | bitwise complement     |
 | -        | unary minus, -n        |
 | ( )      | expression nesting     |
@@ -338,6 +343,15 @@ Arguments are in several forms. The names used in the descriptions means:
 - expression, as noted aboe
 - special symbol, as noted in the command description
 - address, a positive value or expression within the memory bounds of the pidp-1, 16 banks of 4096 words.
+
+Again, **ad1** operates by switch spoofing.
+
+If the actual single-step or single-cycle switch is on, it takes priority and cannot be overridden.\
+However, if the single-step switch is off and **ad1** is in step mode, setting it on and back off again
+will effectively turn off step mode.
+
+The remaining switches will operate as expected, they are momentary-action switches and are also handled
+as such by **ad1**..
 
 ## Help [command-name or topic]
 
@@ -484,6 +498,13 @@ For example:
 ```
 The first number is the line in the file being viewed and is the line a *list at nn* command will show.
 
+## LOad name
+
+Attept to load the named file as a binary or am1 rim tape.
+
+If successful, the current start address is set to the starting address unless the tape was an am1
+tape with a *stop* directive, in which case no starting address is set.
+
 ## Next
 
 Repeat the last *show* command at the next address location.
@@ -491,7 +512,7 @@ This does not change the pidp-1's PC, it is **ad1**'s local address location.
 
 ## Quit and Exit
 
-These both terminate ad1, but with an important difference.
+These both terminate **ad1**, but with an important difference.
 
 Quit deletes any breakpoints and watches and **ad1** exits.
 
@@ -527,7 +548,7 @@ An optional format can be given, and is one of:
 - o show the value in octal
 - d show the value in decimal
 - x show the value in hexadecimal
-- c treat the value as a 1's complement 12 bit number, print the equivalent negative number if the value is negative
+- c treat the value as a 1's complement 18 bit number, print the equivalent negative number if the value is negative
 - s show the value as a symbol name if a symbol address has that value, else as an octal number
 - i show the value as an instruction
 - a show the value as 2 ascii characters, the first in the high 9 bits, the second in the low 9 bits
@@ -535,7 +556,8 @@ An optional format can be given, and is one of:
 
 There is a pseudo-register *sy* that will list all the loaded symbols and their addresses.
 
-There are two other pseudo-registers, *break* and *watch*, which can be shortened in the same way as the command name.\
+There are two other pseudo-registers, *break* and *watch*,
+which can be shortened in the same way as the command name.
 These will list all set breakpoints or watches and their status.
 
 Displaying the break, watch, pf, or ss registers ignores any optional format.
@@ -546,10 +568,13 @@ produce.
 
 This is (very) roughly equivalent to using the examine switch on the front panel.
 
-## STart address
+## STart [address]
 
 This is equivalent to entering a start address on the pidp-1 front panel and using the start switch.
 The address is a full 16-bit address, so execution can start in any bank.
+
+If no address is given, the last start address set by this command or by *load* is used.
+If there has not been an address set, an error will be reported.
 
 ## Step
 
@@ -559,9 +584,12 @@ One instruction cycle is executed.
 If there is a line in the listing file, if present, that matches the pc address after the step,
 it will be displayed.
 
-Note that some instructions can take extra machine cycles.
-These may appear to not advance when stepping and take an additional step command.
-This is normal.
+Note that the shift and rotate instructions can extend into the next cycle, so the value you see
+might not be what you expect.
+This is normal and you would see the same by single-instruction stepping using the actual panel.
+
+Specifically, if a shift or rotate of more than 6 bits is done, the remaining bits are shifted/rotated
+at the beginning of the next cycle.
 
 ## STOp
 

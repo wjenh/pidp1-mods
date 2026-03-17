@@ -360,7 +360,7 @@ octal			{ decimalMode = false; }
 			        ++lineno;
 			    }
 			    noIncrement = sawSemi = false;
-			    return( TERMINATOR );
+			    return( EMPTYLINE );
 			}
 
 [ \t]*(\n|\;[ \t]*)	{

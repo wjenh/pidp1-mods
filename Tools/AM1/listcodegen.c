@@ -98,7 +98,7 @@ char str[128];
             break;
 
         case FILENAME:
-            fprintf(outfP, "File %s", nodeP->value.strP);
+            fprintf(outfP, "File %s\n", nodeP->value.strP);
             break;
 
         case ORIGIN:
@@ -107,6 +107,10 @@ char str[128];
             if( nodeP->rightP )
             {
                 listOperand(outfP, nodeP->rightP);
+            }
+            else
+            {
+                fprintf(outfP,"\n");
             }
             break;
 
@@ -312,6 +316,10 @@ PNodeP node2P;
         if( nodeP->rightP )
         {
             fprintf(outfP,"  // %s", nodeP->rightP->value.strP);
+        }
+        else
+        {
+            fprintf(outfP,"\n");
         }
         break;
 

@@ -12,7 +12,7 @@
 int evalExpr(PNodeP);
 int onesComplAdj(int);
 int twosComplAdj(int);
-int fixMinusZero(int val, int lhs, int rhs);
+int fixMinusZero(int val);
 int countAscii(char *strP);
 int countText(FlexText flexText);
 
@@ -30,6 +30,9 @@ evalExpr(PNodeP nodeP)
     return( _evalExpr(nodeP) & WRDMASK );
 }
 
+// Evaluate an expression represnted by the parse tree nodes passed.
+// Although the math operations are done in 2's complement, the returned
+// result will always be 1's complement.
 int
 _evalExpr(PNodeP nodeP)
 {
@@ -55,6 +58,7 @@ PNodeP node2P;
 
         op = nodeP->value.ival;
 
+        // bitwise operators, no -0 adjustment
         switch( op )
         {
         case XOR:
@@ -80,6 +84,14 @@ PNodeP node2P;
         case AND:
             lval = lval & rval;
             return( lval );
+
+        case LSHIFT:
+            rslt = lval << twosComplAdj(rval);
+            return( rslt );
+
+        case RSHIFT:
+            rslt = lval >> twosComplAdj(rval);
+            return( rslt );
         }
 
         // Math operator, handle the one's cmpl adjustments
@@ -107,19 +119,12 @@ PNodeP node2P;
             rslt = lval * rval;
             break;
 
-        case LSHIFT:
-            rslt = lval << rval;
-            break;
-
-        case RSHIFT:
-            rslt = lval >> rval;
-            break;
-
         default:
             verror("unknown binary op %d in _evalExpr", nodeP->value.ival);
         }
 
-        lval = fixMinusZero(rslt, lval, rval);
+        // convert back to 1's complement, change -0 to 0 if needed
+        lval = fixMinusZero(rslt);
         return( lval );
 
     case UNOP:
@@ -131,8 +136,9 @@ PNodeP node2P;
 
             case UMINUS:
                 lval = _evalExpr(nodeP->rightP);
+                // Result is already 1's compl from _evalExpr()
                 lval = ~lval;
-                if( (lval == -1) && !keepMinusZero )
+                if( !keepMinusZero && (lval == -1) )
                 {
                     lval = 0;
                 }
@@ -283,11 +289,11 @@ SymNodeP symP;
             break;
 
         case LSHIFT:
-            partial = onesComplAdj(twosComplAdj(lval) << twosComplAdj(rval));
+            partial = lval << twosComplAdj(rval);
             break;
 
         case RSHIFT:
-            partial = onesComplAdj(twosComplAdj(lval) >> twosComplAdj(rval));
+            partial = lval >> twosComplAdj(rval);
             break;
 
         default:
@@ -406,11 +412,6 @@ unsigned int i;
     if( oc < 0 )
     {
         i--;
-        if( ((signed int)i == -1) && !keepMinusZero )
-        {
-            i = 0;
-        }
-
         oc = (signed int)i;
     }
 
@@ -436,17 +437,19 @@ unsigned int i;
 }
 
 // Handle -0 results, result is 1s cmpl
+// The value is 2's complement.
+// Convert to 1's complement.
+// If not keeping -0, adjust to 0.
 int
-fixMinusZero(int val, int lhs, int rhs)
+fixMinusZero(int val)
 {
-    if( !val && ((lhs < 0) || (rhs < 0)) && keepMinusZero )
+    val = onesComplAdj(val);
+    if( !keepMinusZero && (val == -1) )
     {
-        return( -1 );
+        val = 0;
     }
-    else
-    {
-        return( onesComplAdj(val) );
-    }
+
+    return( val );
 }
 
 // Count packed ascii, return number of words needed

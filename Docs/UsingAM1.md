@@ -2,8 +2,8 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.20 and covers up through am1 version 1.24; it will be updated as needed.\
-Edit date 05-Mar-2026
+This is version 1.21 and covers up through am1 version 1.25; it will be updated as needed.\
+Edit date 17-Mar-2026
 
 ## What is **am1**?
 
@@ -111,6 +111,32 @@ You will see all these variations of naming used in PDP-1 documentation, but jus
 
 In this document, no matter what it's called, it's *concise*.
 
+## 1's complement and math operations
+
+The PDP-1 used 1's complement math, which no modern computers use.
+But, **am1** runs on a modern computer and uses 2's complement math.
+It automatically converts 1's complement to 2's complement for the math operations
+*+, -, \*, /, %%*, and unary minus, then converts the result back to the 1's complement
+representation after computation.\
+The values in the binary output will be the correct 1's complement values.
+
+Note that one annoying thing about 1's complement is that there are two values for zero, 0 and -0.
+0 is all bits off, -0 is all bits on, and it is normally automatically converted to 0,
+but for the result of math operations only.\
+This is the same behavior as the original PDP-1's hardware.
+
+For example, the operation *-1 + 1* would result in -0, not 0 as you would normally expect, so it is converted
+to 0.
+
+This can be overridden by a command line flag, but that is not recommended.
+It should be used with care, and generally not used at all, since math results are not likely
+to be what is expected.
+It is really provided more for completeness, not functionality.
+
+Again, this only applies to math operations.
+Bitwise operations are not math operations, so for example *~0*
+will give the expected 0777777 value, -0.
+
 ## What goes on inside?
 
 Unlike other PDP-1 assemblers, this is built with modern(ish) tools.
@@ -180,7 +206,7 @@ Just type make.
 - r don't output an initial rim loader
 - s generate a symbol table, automatic if exports are done
 - v print the version number and exit
-- z replace -0 with 0 for math operation results
+- z preserve -0 for math operation results, the default is to convert to 0
 - Dsymbol define a symbol for **cpp**, -Dsym or -D sym are both accepted
 - W print all warnings
 - W=name print just this warning, can be repeated for more warnings
@@ -192,7 +218,7 @@ These additional flags are generally for debugging:
 - x send lex debugging output to stderr
 - y send yacc debugging output to stderr
 - k keep intermediate **cpp** file
-- p print the internal parse tree in readable form
+- p print the internal parse tree in readable form on stdout
 
 Both **macro1** and binary code can be generated at the same time.
 
@@ -202,12 +228,6 @@ Both **macro** and **macro1** treat *a space b* as *a + b*, which leads to some 
 in code when multiple operands are combined.
 By default, **am1** treats a space as an *or* operation, which makes much more sense.
 However, the original behavior can be used via the *-a* flag.
-
-The 1's complement -0 value, all bits set, when produced by a math operation in an expression
-is normally preserved.
-The *-z* flag overrides this and converts -0 to +0, all bits cleared.
-Again, this only affects the results of the binary math operators and unary minus, other values are
-not altered.
 
 If the 'system' include files are not installed in the default location, /opt/pidp1-mods/Am1Includes, then
 the location should be specified either by using the *-i incroot* switch or by setting the environment
@@ -242,17 +262,20 @@ Examples:
 ## Listing file
 
 The listing file is more complex than the **macro1** version in order to list code that is **#include**ed.
-Each file being processed will have an initial line identifying the file the listing following is from.
+Each file being processed will have an initial line identifying the file the listing that follows is from.
 
 Multiple statements on a line will be listed on separate lines, but the line number will be the same for all.
 
-Emptpy lines and comments do not show line numbers, only actual statements do so.
+Empty lines are generally eliminated for clarity, since **cpp** tends to generate a lot of them when its
+directives are processed.
+
+Comments do not show line numbers, only actual statements do so.
 
 #define statements are not listed, but the expansion is.
 
 While a listing can be produced for either macro or binary, the binary value for each location is only
 available if binary has been generated.
-For macro only output, the value field is meaningless.
+For macro only output, since it is still a source file, no binary value for a location is available.
 Of course, **macro1** will produce its own listing file, so creating one via **am1** is fairly useless other
 than seeing macro expansions.
 
@@ -377,16 +400,9 @@ An *expression* is a sequence of *symbols*, *operators*, and *numbers*.
 Expressions are evaluated and the resulting value becomes the 18-bit result.
 
 All the terms in an expression are evaluated at *assembly time* to give an integer value;
-*there is no computation done during the execution of an instruction*!.
+*there is no computation done during the execution of an instruction*.
 
-The PDP-1 used 1's complement math, which no modern computers use.
-But, **am1** runs on a modern computer and uses 2's complement math.
-It automatically converts the results of math operations (+, -, *, /, %, and unary minus) to the 1's complement
-representation after computation, the values in the binary output will be the correct 1's complement values.
-
-Remember that one annoying thing about 1's complement is that there are two values for zero, 0 and -0.
-0 is all bits off, -0 is all bits on, and it is maintained in the output.
-For example, the operation *-1 + 1* results in -0, not 0 as you would normally expect.
+**Read** the section on 1's complement math, above!
 
 Some of the math operations are not supported by **macro1**. These will be computed during assembly and
 emitted as numeric values.
@@ -800,7 +816,9 @@ Each bank has its own global symbols and constants. These are preserved for each
 bank command switches back to an earlier bank, all of its symbols and constants will still be valid.
 The current location in that bank is also saved, and will be the same as it was when a bank switch was done.
 
-The first time a bank is switched to, **the current location will be set to 0**.
+Initially, the bank is 0 and the current location is 4 to match the behavior of **macro1**.\
+The first time a bank is switched to, **the current location will be set to 0** in that bank.\
+Afterwards, the value of the current location is preserved for each bank across bank switches.
 
 Remember to use the *constants* and *variables* directives in *each* bank where constants or variables are used.
 

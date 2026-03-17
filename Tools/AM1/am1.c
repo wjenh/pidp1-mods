@@ -1,19 +1,19 @@
 /* am1.c - another macro1 assembler
  *
- * Usage: am1 [-abdmnvz[ykp]] [-i path] [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
+ * Usage: am1 [-abdlmnrsvz[ykp]] [-i path] [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
  *
  * Valid switches are:
  *
  * -a	treat space in expressions as add, not or
  * -b	generate binary source
  * -d	same as giving both -s and -l, generates all the files needed for ad1
- * -m	generate macro1 source
  * -l	generate a listing
+ * -m	generate macro1 source
  * -n	don't run cpp on input source
  * -r	don't write a loader at the beginning of a tape
  * -s	generate a symbol table file
  * -v   print the current version number and exit
- * -z   convert 1's complement -0 to +0 in expressions
+ * -z   don't convert 1's complement -0 to +0 in math operations
  *
  * -W	don't print any warnings
  * -W=warning
@@ -82,6 +82,7 @@
  * 09-Mar-2026 - change constant hash to be sure the last fix returns a 64 bit hash, not a 32 bit hash
  * 10-Mar-2026 - change constant hash again, if it ain't broke, fix it anyway.
  *               Really just to hash resolved symbol values better.
+ * 17-Mar-2026 - general cleanup, eliminate empty lines in listing for clarity, make -0 to 0 conversion the default
  *
 */
 #include <unistd.h>
@@ -116,11 +117,9 @@ Warning warnings[] = {
 };
 
 Inc_itemP incsP;                // the list of cpp stuff 
-
 FILE *outfP;                    // where we put our code 
 
 char *filenameP;                // input am1 file 
-
 char pfilename[128];            // cpp tmp file name
 char ofilename[128];            // output file 
 char basename[64];              // base name 
@@ -186,7 +185,7 @@ SymNodeP symP;
 
     yydebug = 0;
     yy_flex_debug = 0;
-    keepMinusZero = true;
+    keepMinusZero = false;
     spaceIsAdd = false;
     noWarn = true;
 
@@ -278,7 +277,7 @@ SymNodeP symP;
                 break;
 
             case 'z':
-                keepMinusZero = false;
+                keepMinusZero = true;
                 break;
 
             case 'I':                                       /* accept either Ixxx or I xxx */
@@ -1000,13 +999,13 @@ usage()
     fprintf(stderr, "  -a treat space in expressions as add, not or\n");
     fprintf(stderr, "  -b generate binary code\n");
     fprintf(stderr, "  -d generate both a listing and symbol file, combines -s and -l\n");
-    fprintf(stderr, "  -m generate macro1 code\n");
     fprintf(stderr, "  -l generate listing\n");
+    fprintf(stderr, "  -m generate macro1 code\n");
     fprintf(stderr, "  -n don't run cpp\n");
     fprintf(stderr, "  -r don't write a loader at the beginning of the binary file\n");
     fprintf(stderr, "  -s generate a symbol table file\n");
     fprintf(stderr, "  -v print the am1 version number and exit\n");
-    fprintf(stderr, "  -z allow 1's complement -0 to remain\n");
+    fprintf(stderr, "  -z convert 1's complement -0 to +0 as the result of a math operation\n");
     fprintf(stderr, "  -D define a symbol to cpp\n");
     fprintf(stderr, "  -I add an include path to cpp\n");
     fprintf(stderr, "  -i define the include root directory\n");

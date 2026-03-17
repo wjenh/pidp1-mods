@@ -147,7 +147,7 @@ extern bool doWarn(int);
 %token BREF
 %token WILDREF
 %token ENDCONST
-%token SEPARATOR TERMINATOR SEMI
+%token SEPARATOR TERMINATOR SEMI EMPTYLINE
 
 %token CONSTANTS
 %token RELOC ENDRELOC
@@ -194,7 +194,7 @@ extern bool doWarn(int);
 %right '='
 %left ENDCONST
 
-%expect 1       // terminators
+%expect 2       // terminators
 
 %%
 
@@ -588,7 +588,15 @@ terminators     : TERMINATOR
                 {
                     $$ = newnode(lineno, cur_pc, TERMINATOR, NILP, NILP);
                 }
+                | EMPTYLINE
+                {
+                    $$ = newnode(lineno, cur_pc, EMPTYLINE, NILP, NILP);
+                }
                 | terminators TERMINATOR
+                {
+                    $$ = $1;
+                }
+                | terminators EMPTYLINE
                 {
                     $$ = $1;
                 }

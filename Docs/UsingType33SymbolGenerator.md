@@ -3,6 +3,8 @@
 This document describes how to use the Type 33 Symbol Senerator in your application.
 This is briefly described in the DEC PDP-1 Handbook.
 
+Updated 17-Mar-2026
+
 ## What is the Type 33 Symbol Generator
 
 The original was an option for the Type 30 and other displays.
@@ -37,7 +39,7 @@ and ioh are essential unless you can be sure that enough time has elapsed
 between the drawing instructions, e.g. *gpl i* or *gpl C; ioh*, or the characters will not draw correctly.
 
 Unfortunately, the timing is variable, averaging about 140 microseconds per character, but it depends upon
-now many dots have to be drawn, see below.
+how many dots have to be drawn, see below.
 
 ## Usage
 
@@ -53,7 +55,7 @@ There are 6 IOT commands:
 
 -IOT 27, gpr, draw right half of character
 
--IOT 127, gcf, clear light pen flag, does nothing until light pen support is provided
+-IOT 127, gcf, clear light pen flag, turns off the high bin in the check status register
 
 ## The sdb instruction
 
@@ -111,11 +113,10 @@ This draws the left half of a character starting from the current display locati
 The IO register is used.
 ```
 722027
-IO - bits 0-16 contain the first 17 bits of the 35 bit character, bit 17 if set makes this character a subscript
-by lowering its position.
-
-Completion pulses will are supported and should be used.
+IO - bits 0-16 contain the first 17 bits of the 35 bit character,
+Bit 17 if set makes this character a subscript by lowering its position.
 ```
+Completion pulses are supported and should be used.
 
 If subscripting is used, the y position remains set to the proper location for the next half character.
 
@@ -131,9 +132,8 @@ The IO register is used.
 ```
 722027
 IO - bits 0-17 contain the final 18 bits of the 35 bit character.
-
-Completion pulses will are supported and should be used.
 ```
+Completion pulses are supported and should be used.
 
 This instruction takes a variable length of time to complete, 2 microseconds for each 0 bit, 5 microseconds for each
 1 bit.
@@ -154,7 +154,7 @@ The character dot cells are in this bit order in the words, the first word handl
 1  8   15   5  12
 0  7   14   4  11
 
-Also note again that only 17 bits from the firs word are used, bit 17 is the subscript flag.
+Also note again that only 17 bits from the first word are used, bit 17 is the subscript flag.
 ```
 
 ## Spacing and timing
@@ -163,7 +163,7 @@ The inter-dot spacing within a character is 2 pixels + size, 2 - 5 pixels.
 
 The bottom of a subscripted character is shifted down 2 dot-spacings below the baseline.
 
-If auto-spacing is used, the spacing betwenn characters is 4 pixels + size, 4 - 7 pixels.
+If auto-spacing is used, the spacing between characters is 4 pixels + size, 4 - 7 pixels.
 
 Timing of gpl and gpr is variable as stated above. According to the DEC manuals, a character containing 16 'on'
 bits takes approximately 140 microseconds to completely render.
@@ -210,3 +210,5 @@ as well as subroutines to display one flex character, a line of characters creat
 display a digit 0-9, and unpack a *text* string into a buffer of word-pairs and render it.
 
 The unpack routines provide the fastest way to display a sequence of characters, but require more memory space.
+
+Equivalent includes for ascii characters are also provided.

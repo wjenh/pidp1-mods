@@ -2,9 +2,11 @@
 
 This document describes the lightpen simulation implemented in the emulator.
 
+Updated 17-Mar-2026
+
 ## Implementation
 
-Pseudo-ightpen support is implemented in the pidp1 emulator in pdp1.c.
+Pseudo-lightpen support is implemented in the pidp1 emulator in pdp1.c.
 
 While it can't exactly duplicate the function of the original hardware lightpen because there isn't one,
 it can very closely simulate it.
@@ -42,7 +44,7 @@ The *cks* status is reset by the next executed *dpy* command. The program flag i
 
 **IMPORTANT**
 
-THe lightpen status is only checked when completion is requested.
+The lightpen status is only updated when completion is requested.
 If there is no completion event, no update will occur.
 This matches the behavior of the original hardware.
 
@@ -53,15 +55,15 @@ However, the form that requests completion, *dpy-i 4000* or in am1, *dpy C* foll
 
 The original lightpen had a set of 6 aperture attachments to control the field of view of the lightpen
 ranging from an opening of 0.05" to 0.30" in 0.05" increments.\
-These corresponded to the pixels that would count as a hit in its view.\
+These corresponded to the pixels that would count as a hit in its view.
 
 The simulated lightpen pixel equivalents are computed as a fraction of 1024 pixels, so the actual
-size of course depends upon the display size. The Type 30 display ploted in a 9.25" square, corresponding 
-a pixel size o 0.009".
+size of course depends upon the display size. The Type 30 display plotted in a 9.25" square, corresponding 
+a pixel size of 0.009".
 
 |Aperture|Diameter in pixels|
 |--------|----------------|
-|0.50    |6|
+|0.05    |6|
 |0.10    |11|
 |0.15    |17|
 |0.20    |22|
@@ -74,22 +76,24 @@ Am1 has an include file that defines these, #include <LIGHTPEN/lightpen.ah>.
 
 An extended *dpy* command has been provided, *dpy-i 3000*, 723007.
 
-It expects the IO register to contain the aperture size to use in bits 12-17.
+It expects the IO register to contain the aperture size in pixels to use in bits 12-17.
 
 For example:
 ```
 lio [6, or lio (6 for macro1
 dpy-i 3000
 ```
-Sets an apterure diameter of 6 pixels.
+Sets an aperture diameter of 6 pixels.
 
 This command does **not** support completion, don't do a wait!
 
 ## What uses it?
 
-The p7sim Type 30 display emulator has support for this.\
+The p7sim Type 30 display emulator and the integrated gui have support for this.\
 The lightpen is simulated by the mouse.\
-As long as the left buttion is pressed, the cursor is the lightpen. Any pixel being drawn that is within
-the aperture around the cursor will be a hit.
+As long as the left buttion is pressed, the lightpen is on the screen and the cursor is the lightpen.
+Any pixel being drawn that is within the aperture around the cursor will be a hit.
+
+When the mouse button is released, the lightpen is off the screen.
 
 There is also support in the alternate Type 30 implementation found at https://github.com/Isysxp/PDP1-DPY.git.

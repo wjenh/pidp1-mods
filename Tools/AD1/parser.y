@@ -59,7 +59,7 @@ extern void enableWatchFn(int num);
 extern void disableWatchFn(int num);
 extern void setBaseFn(int num);
 extern void setFileFn(char *nameP, bool add);
-extern void listFn(int lineNo);
+extern void listFn(int lineNo, int fileNo);
 extern void loadFn(char *nameP);
 extern void setWindowFn(int size);
 extern void debugFn(void);
@@ -318,7 +318,7 @@ cmd		: QUIT
                     }
                     else
                     {
-                        // $1 can be an emptry string
+                        // $2 can be an emptry string
                         setFileFn($2, false);
                     }
 
@@ -326,11 +326,11 @@ cmd		: QUIT
                 }
                 | LIST
                 {
-                    listFn(NOARG);
+                    listFn(NOARG, NOARG);
                 }
-                | LIST SEPARATOR DECINTEGER
+                | LIST SEPARATOR DECINTEGER optFILENO
                 {
-                    listFn($3);
+                    listFn($3, $4);
                 }
                 | LIST SEPARATOR dotexpr optFILENO
                 {
@@ -343,7 +343,7 @@ cmd		: QUIT
                         return(0);
                     }
 
-                    listFn(line + $3);
+                    listFn(line + $3, NOARG);
                 }
                 | LIST SEPARATOR LINEAT address optFILENO
                 {
@@ -356,7 +356,7 @@ cmd		: QUIT
                         return(0);
                     }
 
-                    listFn(line);
+                    listFn(line, NOARG);
                 }
                 | LIST SEPARATOR listSym
                 {
@@ -369,7 +369,7 @@ cmd		: QUIT
                         return(0);
                     }
 
-                    listFn(line);
+                    listFn(line, NOARG);
                 }
                 | LOAD FILESTRING
                 {

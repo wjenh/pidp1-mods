@@ -16,7 +16,8 @@
  * 12-Mar-26 wje minor change to show line numbers better, updated in-app help.
  * 13-Mar-26 wje minor change to catch sigint and sigquit and clean up
  * 16-Mar-26 wje major chage to add multiple source file support
- * 18-Mar-26 wje align -0 processing with am1 and the PDP-1, add mod operator, add tape loading
+ * 17-Mar-26 wje align -0 processing with am1 and the PDP-1, add mod operator, add tape loading
+ * 18-Mar-26 wje unify lexing of file name for file and load, fix typos in help text
 */
 #include <stdlib.h>
 #include <stdio.h>

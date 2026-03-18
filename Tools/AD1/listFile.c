@@ -19,6 +19,7 @@ MapEntryP getLinesFromAddress(int addr);
 int getLineFromAddress(int addr, int fileno);
 int getLineCount(int fileno);
 int getCurrentLineNumber(void);
+void setCurrentLineNumber(int lineNo);
 void printLines(MapEntryP linesP);
 bool printLine(int fileno, int line);
 bool printNextLine(void);
@@ -194,4 +195,11 @@ int
 getCurrentLineNumber()
 {
     return( curLine );
+}
+
+// This too.
+void
+setCurrentLineNumber(int lineNo)
+{
+    curLine = lineNo;
 }

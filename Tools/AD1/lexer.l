@@ -226,7 +226,13 @@ ss			{
 			    }
 			}
 
-<FILEARG>[ \t]*.*	{
+<FILEARG><<EOF>>		{
+			    BEGIN INITIAL;
+			    yylval.strP = NIL;
+			    return(FILESTRING);
+			}
+
+<FILEARG>[ \t]+.*	{
 			int ch;
 			char *cP;
 

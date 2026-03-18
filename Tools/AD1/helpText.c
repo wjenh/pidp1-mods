@@ -52,38 +52,28 @@ char *breakHelp[] = {
     NIL};
 
 char *listHelp[] = {
-    "The list command shows the content of the list or source file or of a register",
-    "If a file is not given on startup or a differnt file is wanted, the 'file' command can be used to open it.",
+    "The list command shows the text frm the .lst or .ad1 file if one is present.",
+    "If a file is not given on startup or a different file is wanted, the 'file' command can be used to open it.",
     "For full functionality, the actual file should be produced by am1 with the -d switch.",
-    "If just the original source file is available, positioning by line number will the the only available.",
+    "If just the original source file is available, only positioning by line number will be available.",
     "List with no arguments lists the next set of lines, or if none have been listed before, lines",
     "starting from the first line.",
-    "Each line is listed with the line number in the file being shown and if a listing file, the line",
-    "from it. Note that the line numbers in the listing file are from the original source file and usually",
-    "aren't the line numbers to use, use the first number, the line in the file you're looking at.",
+    "Each line is listed with the line number in the file being shown followed by the text at that line.",
+    "Note that a .lst file also has line numbers but usually aren't the line numbers to use,",
+    "use the first number, the line in the file you're looking at, not the line in the original souurce.",
     "A decimal-only value lists from that line in the file.",
     "An expression prefixed by an @ lists from the line at that address.",
-    "A string value with an optional bank and/or file  lists from the location of that symbol in the file",
-    "if a symbol table is available.",
+    "A string value with an optional bank and/or file lists from the location of that symbol in the file",
+    " and/or bank given or associated with the address if a symbol table is available.",
     "If there is no such symbol, an error is given.",
     "A dot lists from the last memory address specifed or hit by a breakpoint or watch.",
     "A dot followed by + or - an integer  value lists frm the last memory address offset by the value.",
-    "An optional format specifier can be added. This does not change the inpupt base, only the display",
-    "Specifiers are:",
-    "b - binary",
-    "o - octal",
-    "d - decimal",
-    "x - hexadecimal",
-    "c - 1's complement, sign extend the 18 bit value and show the 1's complement result",
-    "a - ascii, 2 chars per word",
-    "f - flex, 3 chars per word, shift state remembered until another format is used",
-    "Also see the window command and register help.",
+    "If no bank or file qualifier has been given, the current bank and current file are assumed.",
     "Examples:",
-    "sh loop",
-    "sh loop,1",
-    "sh loop,1:3",
-    "sho loop x",
-    "show ac b",
+    "li 10",
+    "li 40:2",
+    "list foo:3,2",
+    "lis .+10",
     NIL};
 
 char *windowHelp[] = {
@@ -96,8 +86,8 @@ char *windowHelp[] = {
     NIL};
 
 char *bankHelp[] = {
-    "The bank command sets the default memory bank to the value given,",
-    "which must be 0-15.",
+    "The bank command sets the default memory bank to the value given, 0-15,",
+    "This will then be used as the bank when no explicit bank reference is given.",
     "See the documentation for important details.",
     "Example: bank 10",
     NIL};
@@ -123,7 +113,7 @@ char *deleteHelp[] = {
     "Examples:",
     "del 10",
     "del",
-    "If the word watch follows the delete, then this applies to watches.",
+    "If the word 'watch' follows the delete, then this applies to watches.",
     "Again, if no number is given, all watches are deleted.",
     "Example: del w 10",
     NIL};
@@ -133,7 +123,7 @@ char *disableHelp[] = {
     "An error will be given if there is no breakpoint.",
     "The number is always a decimal number.",
     "Example: disa 10",
-    "If the word watch follows the disable, then this applies to watches.",
+    "If the word 'watch' follows the disable, then this applies to watches.",
     "Example: di w 10",
     NIL};
 
@@ -142,18 +132,18 @@ char *enableHelp[] = {
     "An error will be given if there is no breakpoint.",
     "The number is always a decimal number.",
     "Example: ena 10",
-    "If the word watch follows the disable, then this applies to watches.",
+    "If the word 'watch' follows the enable, then this applies to watches.",
     "Example: en w 10",
     NIL};
 
 char *fileHelp[] = {
     "The file command with no argument lists the current file number and the available open files.",
     "If given a number and that number is that of an open file, the current file becomes that file.",
-    "If given a file basename, name.rim, .ad1, .lst, or .sym, it closes all open files and",
-    "deletes all symbols and line mappings, then loads the new file.",
+    "If given a file basename, name.rim, .ad1, .lst, or .sym, it asks for confirmation then closes",
+    "all open files and deletes all symbols and line mappings, then loads the new file.",
     "This will actually attempt to open name.lst, and if that is not found, name.ad1.",
     "If only name.ad1 can be opened, then no address-related operations can be done.",
-    "An attempt to open name.sym is alsd done and if found symbol operations can then be done.",
+    "An attempt to open name.sym is alsd done and if found symbol operations are then available.",
     "Howver, if the name is prefixed with '+', the current files are preserved and the new file opened",
     "and added to the list of files.",
     "Examples:",
@@ -179,18 +169,18 @@ char *watchHelp[] = {
 
 char *nextHelp[] = {
     "The next command increments the current address by one ane repeats the last show command at that address.",
-    "It does not affect the pidp-1, it just chnages ad1's location counter.",
+    "It does not affect the pidp-1, it just changes ad1's location counter.",
     "The address is kept as a full 16 bit address, so a next at the end of a bank will advance to the next bank.",
     "Example: n",
     NIL};
 
 char *setHelp[] = {
-    "The set command changes the values of of either memory locations or of some registers.",
+    "The set command changes the values of either memory locations or of some registers.",
     "The address can be numeric or symbolic.",
     "An expression can also be used to compute an address.",
     "The value is in the current base unless a numeric override, e.g. 0d12, is used.",
     "If instead of an address, one of the register names is given, the contents of that register will be set.",
-    "Only the ac, io, pf,pf1-pf6, and pc can be set.",
+    "Only the ac, io, pf, pf1-pf6, and pc can be set.",
     "Use help reg for help on registers.",
     "Examples:",
     "se 100 123",
@@ -200,19 +190,27 @@ char *setHelp[] = {
 
 char *showHelp[] = {
     "The show command shows the values of memory locations or of registers, or memory addresses.",
-    "The address can be numeric or symbolic.",
+    "The address can be numeric or symbolic and can have a bank qualifier, use help address for details.",
     "An expression can also be used to compute an address.",
     "If a symbolic address is prefixed with '#', then the address itself will be printed,",
     "not the value of memory at that address.",
     "The value will be printed in the current base unless a second parameter is given,",
-    "which must be one of b, o, d, x, or c, meaning binary, octal, decimal, hex, or 1's complement.",
+    "which must be one of:",
+    "b - binary",
+    "o - octal",
+    "d - decimal",
+    "x - hexadecimal",
+    "c - 1's complement, sign extend the 18 bit value and show the 1's complement result",
+    "a - ascii, 2 chars per word",
+    "f - flex, 3 chars per word, shift state remembered until another format is used",
+    "i - instruction, the word is decoded as an instruction and the instruction shown",
     "If instead of an address, one of the register names is given, the contents of that register will be shown.",
     "Use help reg for help on registers.",
     "Examples:",
-    "sh 100",
-    "sh cnt",
-    "sh #cnt",
-    "sh io x",
+    "sh loop",
+    "sh loop,1",
+    "sho loop i",
+    "show ac b",
     NIL};
 
 char *startHelp[] = {
@@ -248,7 +246,7 @@ char *numberHelp[] = {
 char *expressionHelp[] = {
     "In most places an address or value can be used, an expression can be used.",
     "An expression is composed of numbers and symbols connected by operators.",
-    "The operators are +, -, *, /, &, |, ^, ~, (, ), ., and comma itself",
+    "The operators are +, -, *, /, &, |, ^, ~, %, (, ), ., and comma itself",
     "See the documentation for precedence, it follows C precedence.",
     "Computatios are done in 2's complement math, but this is only within a math operation.",
     "For examle, foo - 1 converts foo to 2's complement does the subtraction, then converts back.",
@@ -256,10 +254,13 @@ char *expressionHelp[] = {
     "Thus, values will appear as they would in the pidp-1.",
     "The special symbol ', dot, means 'the last address used', similar to its use in an assembler.",
     "This is transparent to the user.",
+    "A comma followed by a number 0-15 is an explict bank reference.",
+    "The bank portion of the expression is replaced by the explicit bank.",
     "Examples:",
     ".+10",
     "counter+10",
     "counter*(10+.)",
+    "(foo+10),1",
     NIL};
 
 char *registerHelp[] = {
@@ -281,10 +282,12 @@ char *registerHelp[] = {
 
 char *addressHelp[] = {
     "Addresses are always a full 16 bits.",
-    "As in the PDP-1, an address with no bank used in an extended bank is an address in thab bank.",
+    "As in the PDP-1, an address with no bank used in an extended bank is an address in that bank.",
     "This also applies to symbols, 'list foo' looks up symbol foo in the current bank.",
-    "An explicit address can always be specified using the bank reference operator, comma.",
+    "The current bank is used for the bank unless an explicit bank has been specified using",
+    "the bank reference operator, comma.",
     " Examples:",
+    "123 refers to address 123 in the current bank.",
     "123,0 forces a bank 0 reference.",
     "foo,3 looks up a symbol in bank 3.",
     NIL};
@@ -302,6 +305,10 @@ char *multifileHelp[] = {
     "A break or watch hit address or a step can also change the current file.",
     "If the address doesn't exist in the current file, they will change the current file to",
     "the first file that does contain the address.",
+    "Examples:",
+    "12:1",
+    "foo:2",
+    "bar",
     NIL};
 
 // Print out a list of text, last line a NIL

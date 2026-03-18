@@ -44,7 +44,7 @@ void enableBpFn(int num);
 void disableBpFn(int num);
 void setBaseFn(int num);
 void setFileFn(char *nameP, bool add);
-void listFn(int lineNo);
+void listFn(int lineNo, int fileNo);
 void loadFn(char *filenameP);
 void setWatchFn(int addr,  int value);
 void deleteWatchFn(int num);
@@ -87,6 +87,7 @@ extern bool printLine(int fileno, int lineno);
 extern bool printLines(MapEntryP linesP);
 extern bool printNextLine(void);
 extern int getCurrentLineNumber(void);
+extern void setCurrentLineNumber(int lineNo);
 extern int loadTape(char *filenameP);
 extern DispatchP findCommand(DispatchP dipatchTable, char *nameP);
 
@@ -647,16 +648,21 @@ char line[128];
     }
 }
 
-// List can be called with NOARG, NIL which means continue listing from one past the last line,
-// value, NIL which means list from the value line, or
-// NOARG, mapP which means list all lines associated with the map entry.
+// List can be called with lineNo of NOARG which means continue listing from one past the last line,
+// A lineNo, a number which means list from that line.
+// If lineNo is not NOARG and fileNo is not NOARG, it means line in that file.
 void
-listFn(int lineNo)
+listFn(int lineNo, int fileNo)
 {
 int i;
 
     if( lineNo == NOARG )
     {
+        if( curFileNo != fileNo )
+        {
+            setCurrentLineNumber(1);
+        }
+
         lineNo = getCurrentLineNumber();
     }
 
@@ -667,7 +673,7 @@ int i;
 
     for( i = 0; i < ((windowSize * 2) + 1); ++i )
     {
-        if( lineNo == getCurrentLineNumber() )
+        if( (fileNo == curFileNo) && (lineNo == getCurrentLineNumber()) )
         {
             if( !printNextLine() )
             {
@@ -677,6 +683,11 @@ int i;
         }
         else
         {
+            if( fileNo != NOARG )
+            {
+                curFileNo = fileNo;
+            }
+
             if( !printLine(curFileNo, lineNo) )
             {
                 printf("eof\n");

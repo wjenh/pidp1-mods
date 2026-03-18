@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define VERSION "1.10 17-Mar-2026"
+#define VERSION "1.11 18-Mar-2026"
 
 #define MAXFILES    8    // maximum number of open files we can have
 #define MAXLINES    4000 // max number of lines in a file
@@ -69,7 +69,7 @@ typedef uint32_t u32;
 
 // Nothing fancy, just a linear list. Won't be enough symbols to need otherwise.
 typedef struct {
-    u32 address;
+    u32 address;        // full 16 bit address
     int fileNo;
     char *nameP;
     } Symbol, *SymbolP;

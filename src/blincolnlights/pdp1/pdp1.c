@@ -16,6 +16,7 @@
  * wje 10-Feb-26 work around poll() returning data ready when it's not
  * wje 10-Feb-26 style cleanup, remove conditionals for light pen, origin shift, lai, lia
  * wje 22-Feb-26 fix breakage from previous commit
+ * wje 18-Mar-26 sorry, not going to use aap's high speed channel, there isn't any real interface to it, other issues
 */
 #include "common.h"
 #include "pdp1.h"
@@ -161,15 +162,13 @@ enum
 // have to be careful with those at TP10
 // because that's where we choose the next type of cycle.
 // So the exact state of  cyc, df1, df2, bc, hsc  is crucial
-#define CY1 (pdp->cyc && !pdp->df1 && pdp->bc==0 && !pdp->hsc)
+#define CY1 (pdp->cyc && !pdp->df1 && pdp->bc==0)
 #define DF (pdp->cyc && pdp->df1)
 #define INST_DONE ((!pdp->cyc && CY0_INST_DONE || DF && DF_INST_DONE || CY1) && !pdp->bc)
 #define MIDBRK_PERMIT (!pdp->cyc && CY0_MIDBRK_PERMIT || DF && DF_MIDBRK_PERMIT)
 
 #define SBS_BREAK_REQ (pdp->sbm && pdp->sbs_seq)
-#define HSC_BREAK pdp->hsc_brk
-#define SBS_BREAK (SBS_BREAK_REQ && !HSC_BREAK)
-#define HSC_SBS_BREAK (SBS_BREAK_REQ || HSC_BREAK)	// == SBS_BREAK || HSC_BREAK
+#define SBS_BREAK (SBS_BREAK_REQ)
 #define MANUAL_RUN (pdp->single_cyc_sw || pdp->single_inst_sw && INST_DONE)
 // IR_INCORR does not apply to break cycles!
 #define STOP (IR_INCORR || MANUAL_RUN || !pdp->run_enable)
@@ -251,10 +250,7 @@ pwrclr(PDP1 *pdp)
 
     pdp->sbs_seq = 0;
 
-    pdp->hsc = rand() & 1;
-    pdp->hscn = rand() & 7;
-    pdp->hsc_req = 0;
-    pdp->hsc_brk = 0;	// combinational, could actually be 1
+    pdp->hsc = 0;
 
     pdp->emc = rand() & 1;
     pdp->exd = rand() & 1;
@@ -289,7 +285,7 @@ pwrclr(PDP1 *pdp)
     switch(rand() % 10) {
     case 0: pdp->cyc = 1; break;
     case 1: pdp->cyc = pdp->df1 = 1; break;
-    case 2: pdp->cyc = pdp->hsc = 1; break;
+    case 2: pdp->cyc = 1; break;
     case 3: pdp->cyc = 1; pdp->bc = 1; break;
     case 4: pdp->cyc = 1; pdp->bc = 2; break;
     case 5: pdp->cyc = 1; pdp->bc = 3; break;
@@ -436,25 +432,8 @@ inst_cancel(PDP1 *pdp)
     pdp->df2 = 0;
 }
 
-static void
-hsc_calc_req(PDP1 *pdp)
-{
-	if(pdp->hsc || INST_DONE || MIDBRK_PERMIT)
-		HSC_BREAK = (pdp->hscn & ~pdp->hscn+1);
-	else
-		HSC_BREAK = 0;
-}
-// TP9
-static void
-hsc_reset_sync(PDP1 *pdp)
-{
-	hsc_calc_req(pdp);
-	pdp->hscn &= ~HSC_BREAK;
-}
 // TP9A
-static void hsc_sync(PDP1 *pdp) { pdp->hscn |= pdp->hsc_req; }
 // TP10
-static void hsc_set(PDP1 *pdp) { pdp->hsc = HSC_BREAK; }
 
 static void
 sbs_calc_req(PDP1 *pdp)
@@ -512,9 +491,6 @@ sc(PDP1 *pdp)
     pdp->sbm = pdp->sbm_start_sw;
     clr_sbs(pdp);
     pdp->b2 = 0;
-
-    pdp->hsc = 0;
-    pdp->hscn = 0;
 
     pdp->lai = 0;
     pdp->lia = 0;
@@ -1208,7 +1184,6 @@ int hack;
         TP(8)
 
         // TP9
-        hsc_reset_sync(pdp);
         mop2379(pdp);
         writemem(pdp);      // approximate
 
@@ -1246,7 +1221,6 @@ int hack;
         TP(9)
 
         // TP9A
-        hsc_sync(pdp);
         if(IR_SHRO && (MB & B14))
         {
             shro(pdp);
@@ -1261,7 +1235,6 @@ int hack;
 
         // TP10
         sbs_reset_sync(pdp);
-        hsc_calc_req(pdp);
         memclr(pdp);
         syncov(pdp);
 
@@ -1302,7 +1275,7 @@ int hack;
             MB = 0;
         }
 
-	if(HSC_SBS_BREAK)
+	if(SBS_BREAK)
         {
             if(MIDBRK_PERMIT)
             {
@@ -1316,7 +1289,6 @@ int hack;
             pdp->cyc = 1;
         }
 
-	hsc_set(pdp);
 	TP(10)
     }
 }
@@ -1432,7 +1404,6 @@ int mask = 0;
     }
 
     // TP9
-    hsc_reset_sync(pdp);
     mop2379(pdp);
     writemem(pdp);      // approximate
     if( STOP )
@@ -1449,12 +1420,10 @@ int mask = 0;
         pdp->exd = !!(MB & B1);
     }
 
-    hsc_sync(pdp);
     TP(9a)
 
     // TP10
     sbs_reset_sync(pdp);
-    hsc_calc_req(pdp);
     memclr(pdp);
     syncov(pdp);
 
@@ -1468,7 +1437,7 @@ int mask = 0;
         pdp->smb = 1;
     }
 
-    if(HSC_SBS_BREAK)
+    if(SBS_BREAK)
     {
         if(MIDBRK_PERMIT)
         {
@@ -1482,7 +1451,6 @@ int mask = 0;
         pdp->cyc = 0;
     }
 
-    hsc_set(pdp);
     if(!pdp->df2)
     {
         pdp->df1 = 0;
@@ -1693,7 +1661,6 @@ int hack;
         TP(8)
 
         // TP9
-        hsc_reset_sync(pdp);
         mop2379(pdp);
         writemem(pdp);      // approximate
 
@@ -1726,7 +1693,6 @@ int hack;
         TP(9)
 
         // TP9A
-        hsc_sync(pdp);
         if((IR_ADD || IR_DIS) && AC == 0777777)
         {
             AC = 0;
@@ -1741,7 +1707,6 @@ int hack;
 
         // TP10
         sbs_reset_sync(pdp);
-        hsc_calc_req(pdp);
         memclr(pdp);
         syncov(pdp);
         pdp->cyc = 0;
@@ -1756,7 +1721,7 @@ int hack;
             pdp->smb = 1;
         }
 
-	if(HSC_SBS_BREAK)
+	if(SBS_BREAK)
         {
             pdp->bc |= SBS_BREAK;
         }
@@ -1927,7 +1892,6 @@ int r;
     TP(8)
 
     // TP9
-    hsc_reset_sync(pdp);
     mop2379(pdp);
     writemem(pdp);      // approximate
 
@@ -1950,7 +1914,6 @@ int r;
 
     // TP10
     sbs_reset_sync(pdp);
-    hsc_calc_req(pdp);
     memclr(pdp);
     syncov(pdp);
 
@@ -1976,93 +1939,6 @@ int r;
     }
 
     pdp->bc = (pdp->bc + 1) & 3;
-    // TODO: can get into hsc with cyc0 here, bad!
-    HSC_BREAK = 0;	// be safe for now
-    hsc_set(pdp);
-    TP(10)
-}
-
-static void
-hscycle(PDP1 *pdp)
-{
-    assert(pdp->cyc);
-    assert(!DF);
-    assert(!CY1);
-    assert(!pdp->bc);
-    assert(pdp->hsc);
-
-    // TP0
-    if(IR_SHRO && (MB & B12)) shro(pdp);
-// TODO: HASM -> MA
-// WORD XFER to acknowledge device, drop request before TP9A
-    TP(0)
-
-    // TP1
-    if(IR_SHRO && (MB & B11)) shro(pdp);
-    pdp->emc = 0;
-    TP(1)
-
-    // TP2
-    mop2379(pdp);
-    if(IR_SHRO && (MB & B10)) shro(pdp);
-    TP(2)
-
-    // TP3
-    mop2379(pdp);
-    if(IR_SHRO && (MB & B9)) shro(pdp);
-    MB = 0;
-    TP(3)
-
-    // TP4
-    sbs_sync(pdp);
-    readmem(pdp);
-    IR = 0;
-    TP(4)
-// TODO: device can grab MB now
-
-    // TP5
-// TODO: clear MB if input
-    TP(5)
-
-    // TP6
-    TP(6)
-
-    // TP6a
-    TP(6a)
-
-    // TP7
-    mop2379(pdp);
-// TODO: HSBM -> MB if input
-    TP(7)
-
-    // TP8
-    inhibit(pdp);
-    TP(8)
-
-    // TP9
-    hsc_reset_sync(pdp);
-    mop2379(pdp);
-    writemem(pdp);		// approximate
-    clrmd(pdp);
-    if(pdp->single_cyc_sw || !pdp->run_enable) pdp->run = 0;
-    TP(9)
-
-    // TP9A
-    hsc_sync(pdp);
-    TP(9a)
-
-    // TP10
-    sbs_reset_sync(pdp);
-    hsc_calc_req(pdp);
-    memclr(pdp);
-    syncov(pdp);
-    if(pdp->run) clr_ma(pdp);
-    if(MB & B0) pdp->smb = 1;
-    if(HSC_SBS_BREAK)
-            pdp->bc |= SBS_BREAK;
-    else
-            pdp->cyc = 0;
-    hsc_set(pdp);
     TP(10)
 }
 
@@ -2070,12 +1946,6 @@ void
 cycle(PDP1 *pdp)
 {
     pdp->timernd = rand() % TP_unreachable;
-
-    // a cycle takes 5 usecs
-    if( pdp->hsc )
-    {
-        hscycle(pdp);
-    }
 
     if(pdp->bc)
     {

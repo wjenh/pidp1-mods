@@ -1,21 +1,21 @@
-/**
+/*
  * This is a loose implementation of the Type 19 High Speed Channel Control.
  * It is for use in IOTs or other emulator code to package up direct memory access
  * and simulate the behavior of the PDP-1 dma, hiding details of memory back wraparound, etc.
  * It does one read/write operation every run cycle, 5us.
- * This isn't strictly correct, the actual hardware did a cycle-steal for each, adding 5us to the instruction
- * cycle time, but this will do for now.
+ * It can cycle-steal, when it does it takes over for as long as it takes to transfer all data at 5us per
+ * word transfer, a simultaenous read/write counts as one word transfer, 5us.
 */
 
 #include <unistd.h>
 
-// #define DOLOGGING
+//#define DOLOGGING
+#define LOG_HSC 0   // logger enable for this
+
 #include "common.h"
 #include "pdp1.h"
 #include "logger.h"
 #include "highSpeedChannels.h"
-
-#define LOG_HSC 0   // logger enable for this
 
 // Original had three channels, priority ordered 1-3
 static HSC_Control chan1;
@@ -29,7 +29,7 @@ static void processImmediate(PDP1 *pdp1P, int mode, int count, int memBank, int 
     Word *toBufferP, Word *fromBufferP);
 
 // Service routine called from run loop. Question - did the hardware pause on a halt, or complete?
-// Returns 0 if it took no action, 1 if it did a 'memory cycle' and we are in steal mode.
+// Returns 0 if it took no time, 1 if it did a 'memory cycle' and we are in steal mode.
 int
 processHSChannels(PDP1 *pdp1P)
 {
@@ -66,26 +66,33 @@ HSC_ControlP controlP;
 
     if( (chan < 1) || (chan > 3) )
     {
+        logger(LOG_HSC, "request_channel called bad channel %d\n", chan);
         return( HSC_ERR );
     }
     
     if( (memBank > 15) || (memBank > 15) || (memAddr > 4095) || (memAddr > 4095) || (count > 4096))
     {
+        logger(LOG_HSC, "request_channel called bad bank %d\n", memBank);
         return( HSC_ERR );
     }
 
     if( !(mode & 0x3) )
     {
+        logger(LOG_HSC, "request_channel called bad mode %x\n", mode);
         return( HSC_ERR );      // no from or to, nothing to do
     } 
 
+    controlP = HSC_chans[chan - 1];
+
     if( mode & HSC_MODE_IMMEDIATE )     // do it now, no -1 timing emulation, don't care if busy
     {
+        logger(LOG_HSC, "request_channel immediate transfer\n");
         processImmediate(pdp1P, mode, count, memBank, memAddr, toBufferP, fromBufferP);
+        controlP->status = HSC_DONE;
+        logger(LOG_HSC, "request_channel immediate transfer done\n");
         return( HSC_OK );
     }
 
-    controlP = HSC_chans[chan - 1];
     if( controlP->status == HSC_BUSY )
     {
         logger(LOG_HSC, "request_channel called but still busy\n");

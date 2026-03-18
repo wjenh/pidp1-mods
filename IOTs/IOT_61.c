@@ -7,7 +7,7 @@
 #include "highSpeedChannels.h"
 #include "iotHandler.h"
 
-// #define DOLOGGING
+//#define DOLOGGING
 #include "Logger/iotLogger.h"
 
 // Flag for busy for the cks instruction
@@ -60,7 +60,7 @@ Word *memBaseP;
         return(1);                  // only on one edge
     }
 
-    iotLog("In iot 61 as %o\n", dev);
+    iotLog("In iot 61 as %o, inWait %d\n", dev, inWait);
 
     if( drumFd < 0 )
     {
@@ -70,7 +70,7 @@ Word *memBaseP;
 
     lastSimtime = pdp1P->simtime;
     enablePolling(1);
-    inWait = completion;            // if nonzero, we will be in IOT wait state
+    inWait = completion;            // if nonzero, we will be in IOT wait or completion needed state
 
     switch( dev )
     {
@@ -97,7 +97,7 @@ Word *memBaseP;
             iotLog("dba, break on %o\n", drumAddr);
         }
         
-        iotLog("dia done, read %d, rfield %d, daddr %d\n", readMode, drumReadField, drumAddr);
+        iotLog("dia done, read %o, rfield %o, daddr %o\n", readMode, drumReadField, drumAddr);
         break;
 
     case 062:            // dwc, drum word count or dra, drum request address
@@ -147,7 +147,7 @@ Word *memBaseP;
         // The manual says mem bank is bits 2, 3, but this isn't correct.
         // The hardware description is.
         // It's adtually bits 2-5 to support up to 16 memory modules.
-        memBank = (pdp1P->io >> 12) & 037;      // support large memory -1's
+        memBank = (pdp1P->io >> 12) & 017;      // support large memory PDP-1's
         memAddr = pdp1P->io & 07777;
 
         iotLog("dcl 63 memBank %o memAddr %o\n", memBank, memAddr);
@@ -192,16 +192,28 @@ Word *memBaseP;
                 cmdCompletionTime = drumCount - drumAddr;
             }
         }
+        else
+        {
+            cmdCompletionTime = 0;
+        }
 
         cmdCompletionTime += transferCount;    // and the actual transfer
 
-        // Each drum word takes 8.5us, plus the rotation time to get to the word.
+        // Each drum word takes 8.5us
         cmdCompletionTime = pdp1P->simtime + (cmdCompletionTime * 8500);
 
         // we assume we get it, manual says to check status before calling IOT_61.
-        pdp1P->panel->lights5 |= L5_HSC;                     // and we have to manage the light
+        pdp1P->hsc = 1;                     // and we have to manage the light
         stat = HSC_request_channel(pdp1P, 1, chanFlags, transferCount, memBank, memAddr, readBuffer, writeBuffer);
-        iotLog("HSC_request_channel returned %d\n", stat);
+        iotLog("HSC_request_channel returned %d, it is done\n", stat);
+        // We used immediate, so all the data transfer by hsc has completed.
+        if( writeMode )
+        {
+            iotLog("iotPoll writing writebuf to drum\n");
+            writeBufferToDrum(drumFd, writeBuffer, drumWriteField, drumAddr, transferCount);
+        }
+
+        iotLog("Completion in %d usecs, ioWait %d\n", (cmdCompletionTime - pdp1P->simtime)/1000);
         ioBusy = 1;
         break;
 
@@ -223,6 +235,7 @@ iotStart()
     }
 
     needBreak = 0;
+    inWait = 0;
     drumCount = 0;  // we don't really know where the hardware would have been, just use 0
 }
 
@@ -250,27 +263,22 @@ int hsStatus;
 
         if( (pdp1P->simtime >= cmdCompletionTime) && (hsStatus != HSC_BUSY) )
         {
-            iotLog("iotPoll completing, status %d\n", hsStatus);
+            iotLog("iotPoll completing, hs status %d\n", hsStatus);
             ioBusy = 0;
-
-            // We now have original memory contents in writeBuffer, update drum
-            if( writeMode )
-            {
-                iotLog("iotPoll writing writebuf to drum\n");
-                writeBufferToDrum(drumFd, writeBuffer, drumWriteField, drumAddr, transferCount);
-            }
 
             pdp1P->cksflags &= ~CKS_DRP;    // and not busy
             drumCount = (drumAddr + transferCount) % 4096;   // sync up the drum count to match the end of the transfer
 
             if( inWait )
             {
+                iotLog("iotPoll posting iocomplete\n");
                 inWait = 0;
                 IOCOMPLETE(pdp1P);
             }
 
-            pdp1P->panel->lights5 &= ~L5_HSC;                     // and we have to manage the light
+            pdp1P->hsc = 0;               // and light off, aap's HSC used this also, annoying
             iotLog("IOT 61 completed timeout.\n");
+            enablePolling(0);                               // done for now
         }
     }
     else

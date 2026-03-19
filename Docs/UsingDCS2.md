@@ -1,6 +1,7 @@
 # Using the Simple(r) Communication System
 
 This document describes how to use the simplified multi-channel Type 630 Data Communication System replacement.
+Updated 19-Mar-2026
 
 ## What is DCS2?
 
@@ -452,7 +453,7 @@ For connects or disconnects, bits 15 and 11 will indicate the state.
 
 ## Check Status, cks, bits
 
-If check status is executed, IO register bit 10 will be 1 if there is any pending DCS2 error.
+If check status is executed, IO register bit 16 will be 1 if a channel is locked.
 
 ## Error flags
 

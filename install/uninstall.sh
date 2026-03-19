@@ -31,6 +31,8 @@ sudo rm -f /usr/local/bin/tkaskopenfilewrite
 sudo rm -f /usr/local/bin/pdp1audio
 sudo rm -f /usr/local/bin/am1
 sudo rm -f /usr/local/bin/ad1
+sudo rm -f /usr/local/bin/drumupdater
+sudo rm -f /usr/local/bin/drumlist
 
 rm ~/.config/autostart/pdp1startup.desktop
 

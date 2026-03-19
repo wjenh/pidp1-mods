@@ -14,6 +14,7 @@ clean:
 
 install: ad1
 	cp ad1 ../../bin
+	strip ../../bin/ad1
 
 ad1.o: ad1.c helpmsgs.h y.tab.h ad1.h
 	$(CC) -c ad1.c

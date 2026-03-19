@@ -1005,7 +1005,7 @@ usage()
     fprintf(stderr, "  -r don't write a loader at the beginning of the binary file\n");
     fprintf(stderr, "  -s generate a symbol table file\n");
     fprintf(stderr, "  -v print the am1 version number and exit\n");
-    fprintf(stderr, "  -z convert 1's complement -0 to +0 as the result of a math operation\n");
+    fprintf(stderr, "  -z keep 1's complement -0 as the result of a math operation\n");
     fprintf(stderr, "  -D define a symbol to cpp\n");
     fprintf(stderr, "  -I add an include path to cpp\n");
     fprintf(stderr, "  -i define the include root directory\n");
@@ -1017,7 +1017,7 @@ usage()
     fprintf(stderr, "  -p dump parse tree to stdout\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "If neither -b nor -m are given, -b is assumed.\n");
-    fprintf(stderr, "By default, space is or, -0 is preserved.\n");
+    fprintf(stderr, "By default, space is or, -0 is converted to 0.\n");
     fprintf(stderr, "See the documenation for the supported warnings.\n");
     exit(1);
 }

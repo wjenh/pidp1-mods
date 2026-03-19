@@ -13,6 +13,7 @@ Switch 1 test:
 
 Switch 2 test:
     A box with a bright horizontal line that sweeps from top to bottom is displayed.
+    Move the light pen around inside it.
     On success, OK is displayed.
     This test is stopped by turning the switch off.
 

@@ -3,7 +3,7 @@
 This document describes how to use the Type 33 Symbol Senerator in your application.
 This is briefly described in the DEC PDP-1 Handbook.
 
-Updated 17-Mar-2026
+Updated 19-Mar-2026
 
 ## What is the Type 33 Symbol Generator
 
@@ -140,6 +140,14 @@ This instruction takes a variable length of time to complete, 2 microseconds for
 
 After drawing is complete, the x positon will be that of the next character to write, the y position will be
 reset to the baseline position initially set.
+
+## The gcf instruction
+
+This just clears the light pen bit in the cks register, bit 0.
+
+```
+720127
+```
 
 ## Character matrix
 

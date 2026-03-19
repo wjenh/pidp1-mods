@@ -11,6 +11,7 @@ clean:
 
 install: am1
 	cp am1 ../../bin
+	strip ../../bin/am1
 
 permsyms.def.o: permsyms.def.c
 	$(CC) -c permsyms.def.c

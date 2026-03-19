@@ -29,6 +29,8 @@
 #define hasChar(cP) (((cP->control_flags & CNTL_FLEX) && cP->flexo_rcv_pushback) || (cP->control_flags & CNTL_RREADY))
 #define hasRcvPushback(cP) ((cP->control_flags & CNTL_FLEX) && cP->flexo_rcv_pushback)
 
+#define CKS_CHAN_FLAG 02    // cks bit 16, channel locked
+
 // Used in the flexo (actually concise) conversions, these are the flex lower/upper shift characters
 #define CUNSHIFT   072
 #define CSHIFT     074
@@ -192,14 +194,14 @@ static Channel channels[NUM_CHANS];
 static PortMap ports[NUM_CHANS];            // we will never have more ports than channels
 struct epoll_event events[NUM_CHANS * 2];   // could be twice as many if all are unique server channels
 
-Word manageChannelBlock(PDP1 *, int);
-void resetChannel(ChannelP);
-PortMapP assignPort(PDP1 *, int);
+Word manageChannelBlock(PDP1P , int);
+void resetChannel(PDP1P , ChannelP);
+PortMapP assignPort(PDP1P , int);
 void releasePort(PortMapP);
 void forceReleasePorts(void);
 void closeRemoteSocket(ChannelP, int);
-void releaseChannel(void);
-bool canPost(PDP1 *, ChannelP, int);
+void releaseChannel(PDP1P );
+bool canPost(PDP1P , ChannelP, int);
 void postInterrupt(ChannelP, int);
 int getChar(ChannelP);
 
@@ -207,7 +209,7 @@ int flexoToAscii(char, int *);
 char asciiToFlexo(char, int *);
 
 int
-iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
+iotHandler(PDP1P pdp1P, int dev, int pulse, int completion)
 {
 int i, j;
 int cmd;
@@ -304,7 +306,8 @@ char wbuf[8];
 
         if( cmd == RCR ) 
         {
-            releaseChannel();
+            releaseChannel(pdp1P);
+            pdp1P->cksflags &= ~CKS_CHAN_FLAG;
         }
         break;
 
@@ -314,7 +317,7 @@ char wbuf[8];
 
     case RSC:                                   // release current channel, if any
         pdp1P->io = 0;
-        releaseChannel();
+        releaseChannel(pdp1P);
         break;
 
     case TCB:                                   // single write to send chan, if none, use current chan
@@ -559,6 +562,7 @@ char wbuf[8];
             {
                 cur_chan = i;
                 cur_chan_locked = true;
+                pdp1P->cksflags |= CKS_CHAN_FLAG;
                 pdp1P->io = 0;
             }
         }
@@ -622,7 +626,7 @@ char wbuf[8];
 
 // Used to update channels, etc.
 void
-iotPoll(PDP1 *pdp1P)
+iotPoll(PDP1P pdp1P)
 {
 int i, j;
 int data;
@@ -710,6 +714,7 @@ struct epoll_event event;
                         {
                             cur_chan = data;
                             cur_chan_locked = true;
+                            pdp1P->cksflags |= CKS_CHAN_FLAG;
                         }
 
                         if( canPost(pdp1P, chanP, CNTL_IOR) )
@@ -786,7 +791,7 @@ struct epoll_event event;
 }
 
 Word
-manageChannelBlock(PDP1 *pdp1P, int io)
+manageChannelBlock(PDP1P pdp1P, int io)
 {
 int i;
 int cmd;
@@ -825,7 +830,7 @@ struct epoll_event event;
     {
     case SCBCLEAR:
         iotLog("Channel close on %d\n", chan_no);
-        resetChannel(chanP);
+        resetChannel(pdp1P, chanP);
         break;
 
     case SCBOPEN:
@@ -920,7 +925,7 @@ struct epoll_event event;
 
         for( i = 0; i < NUM_CHANS; ++i )
         {
-            resetChannel(&channels[i]);
+            resetChannel(pdp1P, &channels[i]);
         }
 
         forceReleasePorts();
@@ -948,7 +953,7 @@ struct epoll_event event;
 // file descriptor is also closed and no more connections will be accepted until a new
 // channel setup is done to accept the port.
 void
-resetChannel(ChannelP chanP)
+resetChannel(PDP1P pdp1P, ChannelP chanP)
 {
 int i;
 
@@ -981,6 +986,7 @@ int i;
     {
         cur_chan = -1;
         cur_chan_locked = 0;
+        pdp1P->cksflags &= ~CKS_CHAN_FLAG;
     }
 
     if( send_chan == i )
@@ -997,7 +1003,7 @@ int i;
 // See if interrupts are enabled, none in progress, and this CNTL_Ixx type is allowed.
 // If allowed but one is already in process, just set the queued flag.
 bool
-canPost(PDP1 *pdp1P, ChannelP chanP, int kind)
+canPost(PDP1P pdp1P, ChannelP chanP, int kind)
 {
     if( pdp1P->sbm && isTrue(chanP->control_flags, (CNTL_IE | kind)) )
     {
@@ -1118,13 +1124,14 @@ char ch, ch2;
 }
 
 void
-releaseChannel()
+releaseChannel(PDP1P pdp1P)
 {
 int i;
 ChannelP chanP;
 
     cur_chan = -1;
     cur_chan_locked = false;
+    pdp1P->cksflags &= ~CKS_CHAN_FLAG;
 
     // Scan the channel list, set the current channel to the next one that needs attention.
     // If none found, poll will take over.
@@ -1135,6 +1142,7 @@ ChannelP chanP;
         {
             cur_chan = i;
             cur_chan_locked = true;
+            pdp1P->cksflags |= CKS_CHAN_FLAG;
             break;
         }
     }
@@ -1146,7 +1154,7 @@ ChannelP chanP;
 // On error, return 0, else the assigned PortMapP.
 // Both the channel and IO register will already be set with the error.
 PortMapP
-assignPort(PDP1 *pdp1P, int port)
+assignPort(PDP1P pdp1P, int port)
 {
 int i;
 int empty;

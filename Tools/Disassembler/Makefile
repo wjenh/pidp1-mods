@@ -2,6 +2,10 @@ CC=gcc -O0 -g
 
 all: disassembler
 
+install: dosassembler
+	cp disassembler ../../bin/disassemble_tape
+	strip ../../bin/disassemble_tape
+
 disassembler: disassemble_tape.o decode_instruction.o
 	$(CC) -o disassemble_tape disassemble_tape.o decode_instruction.o
 

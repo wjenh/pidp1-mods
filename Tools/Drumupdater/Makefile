@@ -3,6 +3,12 @@ CC=gcc -O0 -g
 
 all: drumupdater drumlist 
 
+install: drumupdater drumlist
+	cp drumupdater ../../bin
+	cp drumlist ../../bin
+	strip ../../bin/drumupdater
+	strip ../../bin/drumlist
+
 drumupdater: drumupdater.c
 	$(CC) drumupdater.c -o drumupdater
 

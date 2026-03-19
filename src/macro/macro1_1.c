@@ -2965,7 +2965,7 @@ void errorLexeme( EMSG_T *mesg, WORD32 col )
 /*  Synopsis:  Display an error message with a given string. */
 void errorSymbol( EMSG_T *mesg, char *name, WORD32 col )
 {
-  char   linecol[12];
+  char   linecol[64];   // wje - increase to eliminate warning
   char  *s;
 
   if( pass == 2 )
@@ -2985,7 +2985,7 @@ void errorSymbol( EMSG_T *mesg, char *name, WORD32 col )
 /*  Synopsis:  Display an error message without a name argument. */
 void errorMessage( EMSG_T *mesg, WORD32 col )
 {
-  char   linecol[12];
+  char   linecol[64];   // wje - increase to elimnate warning
 
   if( pass == 2 )
   {

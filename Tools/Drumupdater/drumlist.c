@@ -20,7 +20,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-#define DEFAULT_IMAGE "drumImage"
+#define DEFAULT_IMAGE "/opt/pidp1-mods/pdp23drum"
 
 typedef int Word;        // we put the 18 bit PDP-1 words into a 32 bit integer
 Word buffer[128]; 

@@ -2,8 +2,8 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.21 and covers up through am1 version 1.25; it will be updated as needed.\
-Edit date 17-Mar-2026
+This is version 1.22 and covers up through am1 version 1.25; it will be updated as needed.\
+Edit date 19-Mar-2026
 
 ## What is **am1**?
 
@@ -40,6 +40,7 @@ Features
 - Adds the need-completion flag, C
 - Adds sdb for Type 33 Symbol Generator support
 - Adds dpyc, shorthand for *dpy-i C*
+- Adds PDP-1D instructions sni, szi, cmi, lai, lia, lsw, swp, scf, sci, ifi, iif, ida
 - Can select between keeping -0 or automatically converting to +0 in expressions
 - Allows space-separated symbols to be treated as *a | b | c* instead of *a + b + c*
 - Adds parenthesized expressions
@@ -1088,13 +1089,19 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 
 |1D instructions | Value |
 |----------------|-------|
-|lia | 0760020|
-|lai | 0760040|
-|lsw | 0760060|
-|swp | 0760060|
-|cmi | 0764000|
-|sni | 0644000|
-|szi | 0654060|
+|lia             | 0760020|
+|lai             | 0760040|
+|lsw             | 0760060|
+|swp             | 0760060|
+|cmi             | 0764000|
+|sni             | 0644000|
+|szi             | 0654060|
+|scf             | 0740040|
+|sci             | 0740100|
+|ifi             | 0742000|
+|iif             | 0744000|
+|ida             | 0740400|
+
 
 |Various IOTs    | Value |
 |----------------|-------|

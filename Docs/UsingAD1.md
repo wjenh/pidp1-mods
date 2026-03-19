@@ -77,7 +77,7 @@ When watches are active, the addresses have their contents checked to see if the
 optionally match a given value.
 If so a flag is set to indicate that to **ad1** and the pidp-1 halted.
 
-Both breakpoints and watches are checked in the pidp-1 at the end of every machine cycle.
+Both breakpoints and watches are checked in the pidp-1 at the beginning of every machine cycle.
 
 **Ad1** commands can then be given and when ready the program resumed.
 

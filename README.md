@@ -1,13 +1,18 @@
 ## Pidp-1 mods
 
 This contains files modified from https://github.com/obsolescence/pidp1 to add new functionality and fix some issues.
-Note that this no longer tracks the original repo since that seems to have been abandoned by the developers.
+Note that this no longer tracks the original repo since this branch has diverged too much for automatic tracking.
 The link was removed on 3-Feb-26 to make this a fully-independent repository.
+Selective updates from the original branch are made now.
 
-It also adds various tools such as the am1 assembler and include files for am1, the ad1 symbolic debuger,
-drum utilities, documentation, etc.
+In addition to new emulator features such as lightpen support, high speed channels, and dynamically-loaded IOTs,
+it also adds various tools such as the am1 assembler and include files for am1,
+the ad1 symbolic debuger, drum utilities, documentation, etc.
 
-A sample drum image containing 9 programs is provided, use the *drumlist* tool to see what's included.
+Implementations of the Type23 drum, the DCS communications system, the Type 33 symbol generator and the BBN
+timesharing clock are provided.
+
+A sample drum image containing multiple programs is provided, use the *drumlist* tool to see what's included.
 
 The entire build can exist in parallel with the original distribution, but if the OS commands and desktop items are
 selected, they will overwrite the originals.
@@ -18,10 +23,10 @@ The origial settings can be recovered by running its install.sh script again.
 Commands are not interchangeable between the two versions!
 Using commands from one against a pidp instance from the other is guaranteed to cause strange behavior.
 The safe way is to run the commands directly from the bin directory in the version repository you want, and also be
-sure the pdp1 instance matches.
+sure the pdp1 runtime instance matches.
 
 Moral - running parallel versions is tricky. Best way is to do a full install from whichever one you want to use,
-you can always reinstall from the other one if you want to switch
+you can always reinstall from the other one if you want to switch back.
 
 ## Checking it out
 
@@ -46,6 +51,7 @@ sudo git clone --depth 1 https://github.com/wjenh/pidp1-mods.git
 ```
 
 Everything after this proceeds as for the original install.
+Go into the install directory, type './install.sh' and follow the prompts.
 
 ## Configuration file
 
@@ -73,9 +79,8 @@ The following IOTs are also built:
 - Type 630 Data Communications System
 - IOT 60, a nonstandard iot to enable and disable the SBS16 interrupt system
 
-Many of thes features can be diabled via #defines in pdp1.c and p7sim main.c.\
-The lightpen, audio. mult/div, dpy origin shift, and sdb can be enabled or disabled and other values set
-in the config file.
+These features can be enabled and diabled via the configuration file, as can
+the lightpen, audio. mult/div, PDP-1D extensions,  dpy origin shift, and sdb.
 
 One dpy option, reorigin dpy coordinates, conflicts with the lightpen sdb iot.
 If both are enabled, the lightpen sdb iot takes priority.
@@ -101,8 +106,7 @@ Mouse button up means the lightpen has been moved away from the screen.
 
 As far as code is concered, the operation looks just the same as the original lightpen.
 
-The simulation is fairly accurate, but because there is no real detection of light on the screen and because
-there is significant buffering between the execution of a dpy instruction and the actual display of a dot,
+The simulation is fairly accurate, but because there is no real detection of light on the screen
 some magic hadwaving is done in the emulator to correlate mouse coordinates with the dpy instructions.
 It works surprisingly well.
 

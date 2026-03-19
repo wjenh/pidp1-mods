@@ -616,20 +616,29 @@ char line[128];
                 }
             }
         }
+
+        return;
     }
-    else if( isdigit(*nameP) )
+
+    if( isdigit(*nameP) )      // could be a file number
     {
-        i = atoi(nameP);
-        if( isFileMapped(i - 1) )
+        i = strtol(nameP, &cP, 10);
+        if( !cP || !*cP )
         {
-            curFileNo = i - 1;
-        }
-        else
-        {
-            printf("%d is not an open file.\n", i);
+            if( isFileMapped(i - 1) )
+            {
+                curFileNo = i - 1;
+            }
+            else
+            {
+                printf("%d is not an open file.\n", i);
+            }
+
+            return;
         }
     }
-    else if( add )
+
+    if( add )
     {
         newFile(nameP);
     }

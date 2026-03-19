@@ -36,7 +36,7 @@ Why the AC? Because all IOTs 30-37 automatically clear the IO register when invo
 This is implemented via a single IOT, 32 as mentioned.
 However, there are three subcommands.
 
-IOT 32,rck, 720032, read 1ms clock
+IOT 32, rck, 720032, read 1ms clock
 ```
 Return the current millisecond timer value in the IO register.
 The value will range from 0-59999 decimal, 0-165137 octal, and wraps around.

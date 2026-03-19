@@ -1,0 +1,20 @@
+Test of PDP-1D instructions
+// Will halt twice, continue to proceed, will loop
+100/
+    cli
+    scf     // clear all pf
+    law 52
+    lia     // ac to io
+    ifi     // pf |= io
+    law 25
+    lia
+    iif     // io |= pf
+    hlt     // io should have 77, pf 52
+
+    sci iif // clear io, then iif
+    ida     // increment ac, should have 26
+    swp     // swap io and ac, should have ac 52, io 26
+    hlt
+
+    jmp 100
+start 100

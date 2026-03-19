@@ -97,6 +97,12 @@ cmi 1Dop 0764000
 sni 1Dop 0644000
 szi 1Dop 0654060
 
+iif 1Dop 0744000
+ifi 1Dop 0742000
+ida 1Dop 0740400
+sci 1Dop 0740100
+scf 1Dop 0740040
+
 # various IOTs
 iot opcode 0720000
 ioh opcode 0730000

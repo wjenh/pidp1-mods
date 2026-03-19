@@ -17,6 +17,7 @@
  * wje 10-Feb-26 style cleanup, remove conditionals for light pen, origin shift, lai, lia
  * wje 22-Feb-26 fix breakage from previous commit
  * wje 18-Mar-26 sorry, not going to use aap's high speed channel, there isn't any real interface to it, other issues
+ * wje 19-Mar-26 add additional 1D instructions scf, sci, iif, ifi, ida
 */
 #include "common.h"
 #include "pdp1.h"
@@ -37,6 +38,7 @@
 #define LOG_STARTUP 0
 #define LOG_BREAK 0
 #define LOG_WATCH 0
+#define LOG_1D 0
 
 #define NOTIOTH
 #include "dynamicIots.h"
@@ -1085,6 +1087,7 @@ int hack;
 
             if( all1DEnabled && (MB & B6) && IO)
             {
+                logger(LOG_1D, "sni\n");
                 skip = 1;    // wje - pdp-1D sni, skip on nonzero IO
             }
 
@@ -1148,6 +1151,7 @@ int hack;
         {
             if( all1DEnabled && (MB & B5) )
             {
+                logger(LOG_1D, "cmi\n");
                 IO = ~IO;    // wje - pdp-1D cmi, complement IO
             }
 
@@ -1163,11 +1167,13 @@ int hack;
 
             if( (lailiaEnabled || all1DEnabled) && (MB & B12) )
             {
+                logger(LOG_1D, "lai\n");
                 pdp->lai = 1;
             }
 
             if( (lailiaEnabled || all1DEnabled) && (MB & B13) )
             {
+                logger(LOG_1D, "lia\n");
                 pdp->lia = 1;
             }
 
@@ -1179,6 +1185,52 @@ int hack;
             {
                 pdp->pf &= ~decflg(MB);
             }
+        }
+
+        if( all1DEnabled && IR_OPR1D )  // wje - 10 new instructions, most of no use but some are
+        {
+        int tmp;                // might be needed for IIF, IFI
+            // Not actually sure which TP these occurred in, would have to dig out of the schematics.
+            // That's Angelo's thing, but not mine.
+            // Here should be OK.
+            // The order is important, though.
+            // We're faking what the 1D-45 documentation calls event times 1-4,
+            // these are in event time order so they do the correct thing.
+            // et 1
+            logger(LOG_1D,"opr %o ", IR);
+            if( MB & B11 )      // SCI, special clear IO
+            {
+                logger(LOG_1D, "sci");
+                pdp->io = 0;
+            }
+            if( MB & B12 )      // SCF, special clear pfs
+            {
+                logger(LOG_1D, "scf");
+                pdp->pf = 0;
+            }
+
+            // et 2
+            // Note that also using SCI and SCF can clear the appropriate targets.
+            tmp = pdp->io;
+            if( MB & B6 )       // IIF, or pf1-6 into IO, no link or ring bits
+            {
+                logger(LOG_1D, "iif");
+                pdp->io |= pdp->pf;
+            }
+            if( MB & B7 )       // IFI, or IO into pf1-6, no link or ring bits
+            {
+                logger(LOG_1D, "ifi");
+                pdp->pf |= tmp;
+            }
+
+            // et 3
+            if( MB & B9 )       // IDA, increment AC
+            {
+                logger(LOG_1D, "ida");
+                pdp->ac++;
+            }
+
+            logger(LOG_1D, "\n");
         }
 
         TP(8)
@@ -1214,6 +1266,7 @@ int hack;
 
 	if( (IR_OPR && (MB & B9)) || STOP )
         {
+            logger(LOG_1D, "hlt, mb %06o IR %o\n", MB, IR);
             pdp->run = 0;
         }
 

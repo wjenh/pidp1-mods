@@ -124,6 +124,7 @@ bool prev_readin_sw;
 
         if( AD1_STOP(pdp1P) )
         {
+            prev_stop_sw = 0;
             pdp->stop_sw = 1;
             AD1_CLEAR_STOP(pdp1P);
         }
@@ -138,12 +139,14 @@ bool prev_readin_sw;
         {
             if(Edge(start_sw) || Edge(continue_sw) || Edge(examine_sw) || Edge(deposit_sw))
             {
+                // We don't check for a bp hit until spec() runs, it sets the pc
                 spec(pdp1P);
-                cycle(pdp1P);
+                logger(LOG_BREAK, "Spec-cycle PC %06o\n", pdp->epc | pdp->pc);
                 if( checkBreakpoints(pdp) || checkWatches(pdp) )
                 {
                     pdp->run_enable = 0;
                 }
+                cycle(pdp1P);
             }
 
             if( Edge(stop_sw) )
@@ -193,11 +196,13 @@ bool prev_readin_sw;
                     throttle(pdp);
                 }
 
-                cycle(pdp);
+                logger(LOG_BREAK, "Pre-cycle PC %06o\n", pdp->epc | pdp->pc);
                 if( checkBreakpoints(pdp) || checkWatches(pdp) )
                 {
                     pdp->run_enable = 0;
                 }
+                cycle(pdp);
+                logger(LOG_BREAK, "Post-cycle PC %06o\n", pdp->epc | pdp->pc);
             }
             else
             {
@@ -682,7 +687,7 @@ BreakpointP brkP;
     addr =  (pdp1P->epc | pdp1P->pc) & 0177777;
     brkP = pdp1P->ad1Breakpoints;
 
-    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
+    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i, ++brkP )
     {
         if( (brkP->isSet) && (brkP->isEnabled) && (brkP->address == addr) )
         {

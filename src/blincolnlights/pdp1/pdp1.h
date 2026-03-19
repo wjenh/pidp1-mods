@@ -209,9 +209,9 @@ struct PDP1
 #define IR_SHRO (IR == 033)
 #define IR_LAW (IR == 034)
 #define IR_IOT (IR == 035)
-// 36
+#define IR_OPR1D (IR == 036) // wje - a bunch of 1D-45 additions were done here
 #define IR_OPR (IR == 037)
-#define IR_INCORR (IR==0 || IR==5 || IR==6 || IR==017 || IR==036)
+#define IR_INCORR (IR==0 || IR==5 || IR==6 || IR==017 || (!all1DEnabled && (IR==036)))
 //#define IR_INCORR (IR==5 || IR==6 || IR==017 || IR==036)
 
 

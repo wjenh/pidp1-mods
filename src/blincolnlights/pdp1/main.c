@@ -65,6 +65,7 @@ extern bool sdbEnabled;
 extern bool dpyShiftEnabled;
 extern bool audioEnabled;
 extern bool lailiaEnabled;
+extern bool core1DEnabled;
 extern bool all1DEnabled;
 
 static bool useShm;
@@ -542,6 +543,10 @@ char answer[64];
         {
             lailiaEnabled = onOff;
         }
+        else if( !strcmp(option,"core1D") )
+        {
+            core1DEnabled = onOff;
+        }
         else if( !strcmp(option,"all1D") )
         {
             all1DEnabled = onOff;
@@ -557,11 +562,22 @@ char answer[64];
         }
     }
 
+    if( all1DEnabled )
+    {
+        core1DEnabled = true;
+    }
+
+    if( core1DEnabled )
+    {
+        lailiaEnabled = true;
+    }
+
     logger(LOG_CONFIG, "lightpen %d\n", lightpenEnabled);
     logger(LOG_CONFIG, "sdb %d\n", sdbEnabled);
     logger(LOG_CONFIG, "dpy shift %d\n", dpyShiftEnabled);
     logger(LOG_CONFIG, "audio %d\n", audioEnabled);
     logger(LOG_CONFIG, "lailia %d\n", lailiaEnabled);
+    logger(LOG_CONFIG, "core 1D %d\n", core1DEnabled);
     logger(LOG_CONFIG, "all 1D %d\n", all1DEnabled);
     logger(LOG_CONFIG, "shm %d\n", useShm);
 

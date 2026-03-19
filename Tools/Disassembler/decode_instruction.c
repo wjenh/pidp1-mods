@@ -24,6 +24,7 @@
  * 09/02/2026 wje - Fix completion bit handling, dpy i and c handling
  * 01/03/2026 wje - Fix cal, emit operand if it actually isn't a cal
  * 15/03/2026 wje - Add more 1D instructions, improve extra bits reporting
+ * 19/03/2026 wje - Add even more 1D instructions, fix macro mode for them
  *
  */
 #include <stdlib.h>
@@ -42,7 +43,7 @@
 #define INDIRECT_BIT 010000
 #define COMPLETION_BIT 04000
 
-// THe operate instruction is a pain, has to be done bitwise in ad-hoc code
+// The operate instruction is a pain, has to be done bitwise in ad-hoc code
 #define OPR_MASK_CLA 00200
 #define OPR_MASK_CLF 00007
 #define OPR_MASK_CLI 04000
@@ -55,8 +56,16 @@
 #define OPR_MASK_STF 00010
 #define OPR_MASK_CMI 010000
 
+// Same for the 1D extended operations
+#define OPR2_MASK_SCF 00040
+#define OPR2_MASK_SCI 00100
+#define OPR2_MASK_IFI 02000
+#define OPR2_MASK_IIF 04000
+#define OPR2_MASK_IDA 00400
+
 // Indicates instruction-specific additional processing needed
-typedef enum {NONE, CAN_INDIRECT, IS_SKIP, IS_SHIFT, IS_OPR, IS_IOT, IS_LAW, IS_CALJDA, IS_ILLEGAL} Modifiers;
+typedef enum {NONE, CAN_INDIRECT, IS_SKIP, IS_SHIFT, IS_OPR, IS_OPR2,
+    IS_IOT, IS_IOH, IS_LAW, IS_CALJDA, IS_ILLEGAL} Modifiers;
 
 // IOT and other instructions have a number of special behaviors
 typedef enum {UNKNOWN, NORMAL, CAN_WAIT, INVERT_WAIT, IS_DPY, IS_SZF, IS_SZS, IS_SZI, HAS_ID} SpecialMods;
@@ -114,7 +123,7 @@ static CodeDef opcodes[] =                 // we don't use the indirect bit, so 
         { "sft", IS_SHIFT},                            // OP 66
         { "law", IS_LAW},                              // OP 70
         { "iot", IS_IOT},                              // OP 72
-        { "illegal", IS_ILLEGAL},
+        { "opr1D", IS_OPR2},                         // OP 73, extended 1D instructions
         { "opr", IS_OPR}                               // OP 76
     };
 
@@ -123,6 +132,8 @@ static CodeDef opcodes[] =                 // we don't use the indirect bit, so 
 // The more specific masks for the same IOT should come first
 static Special iots[] =
     {
+        {010000, "ioh", IS_IOH, 017777},
+
         // BBN CLOCK
         {02032, "cks", NORMAL, 07777},
         {02132, "cct", CAN_WAIT, 07777},
@@ -198,7 +209,7 @@ static Special shifts[] =
 // symbolP, if not null, instead of the number.
 // A pointer to the terminating null byte in the result string is returned.
 char *
-decodeInstr(int word, int addr, char *symbolP, char *resultP)
+decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP, char *resultP)
 {
 unsigned int opcode;
 unsigned int operand;
@@ -278,7 +289,7 @@ Special *sP;
     case IS_LAW:
         // The versions of macro1 floating arund are broken, they don't hande the 'law -n' syntax properly.
         resultP += sprintf(resultP,"%s %s%s", instructionP->name, (indirect)?"i ":"", operandStrP);
-        if( !operandStrP )
+        if( !asMacro )
         {
             resultP += sprintf(resultP," (%d dec)", (indirect)?-operand:operand);
         }
@@ -319,7 +330,14 @@ Special *sP;
         if( sP->modifiers == IS_SZI )
         {
             // Another special case
-            resultP += sprintf("%s", (indirect)?"szi":"sni");
+            if( asMacro )
+            {
+                resultP += sprintf(resultP, "%06o", word);
+            }
+            else
+            {
+                resultP += sprintf(resultP, "%s", (indirect)?"szi":"sni");
+            }
             indirect = 0;
         }
         else
@@ -327,7 +345,7 @@ Special *sP;
             resultP += sprintf(resultP,"%s", sP->name);
             if( indirect )
             {
-                resultP += sprintf(resultP," not");
+                resultP += sprintf(resultP," %s", (asMacro)?"i":"not");
             }
         }
 
@@ -392,15 +410,15 @@ Special *sP;
             {
                 if( tmp2 == (OPR_MASK_LAI | OPR_MASK_LIA) )
                 {
-                    cP = "lsw";
+                    cP = (asMacro)?"760060":"lsw";
                 }
                 else if( tmp2 == OPR_MASK_LAI )
                 {
-                    cP = "lai";
+                    cP = (asMacro)?"760040":"lai";
                 }
                 else
                 {
-                    cP = "lia";
+                    cP = (asMacro)?"760020":"lia";
                 }
 
                 sprintf(tmpstr2,"%s%s", tmp?"|":"", cP);
@@ -458,6 +476,69 @@ Special *sP;
         }
         break;
 
+    case IS_OPR2:
+        // Same ad-hoc needed as for OPR.
+        // Neither macro or macro1 support any of these, so they are emitted as the octal word with a comment.
+        // If we see any extra bits not valid microinstuctions, then just the octal data is output.
+        tmp = 0;                // set to 1 if we have printed one already
+        tmpstr[0] = 0;          // be sure we start empty
+
+        if( asMacro )
+        {
+            // none are supported in macro or macro1
+            resultP += sprintf(resultP,"%06o", word);
+            break;
+        }
+
+        if( operand & OPR2_MASK_SCF )
+        {
+            operand &= ~OPR2_MASK_SCF;
+            sprintf(tmpstr2,"%sscf", tmp?"|":"");
+            strcat(tmpstr, tmpstr2);
+            tmp = 1;
+        }
+        if( operand & OPR2_MASK_SCI )
+        {
+            operand &= ~OPR2_MASK_SCI;
+            sprintf(tmpstr2,"%ssci", tmp?"|":"");
+            strcat(tmpstr, tmpstr2);
+            tmp = 1;
+        }
+
+        if( operand & OPR2_MASK_IFI )
+        {
+            operand &= ~OPR2_MASK_IFI;
+            sprintf(tmpstr2,"%sifi", tmp?"|":"");
+            strcat(tmpstr, tmpstr2);
+            tmp = 1;
+        }
+
+        if( operand & OPR2_MASK_IIF )
+        {
+            operand &= ~OPR2_MASK_IIF;
+            sprintf(tmpstr2,"%siif", tmp?"|":"");
+            strcat(tmpstr, tmpstr2);
+            tmp = 1;
+        }
+
+        if( operand & OPR2_MASK_IDA )
+        {
+            operand &= ~OPR2_MASK_IDA;
+            sprintf(tmpstr2,"%siif", tmp?"|":"");
+            strcat(tmpstr, tmpstr2);
+            tmp = 1;
+        }
+
+        if( operand != 0 )                      // extra bits were left over, must be data
+        {
+            resultP += sprintf(resultP,"%06o", word);
+        }
+        else
+        {
+            resultP += sprintf(resultP,"%s", tmpstr);
+        }
+        break;
+
     case IS_IOT:
         // Sometimes there are extra bits in the operand above the usual 6 bits
         sP = findSpecial(iots, operand);
@@ -479,7 +560,7 @@ Special *sP;
                     operand |= 004000;       // include the bit in the output
                 }
 
-                resultP += sprintf(resultP,"|%05o", operand);
+                resultP += sprintf(resultP,"%s%05o", (asMacro)?separatorP:" | ",  operand);
             }
             else            // is ioh
             {
@@ -499,7 +580,7 @@ Special *sP;
 
             if( completion )
             {
-                resultP += sprintf(resultP," C");
+                resultP += sprintf(resultP," %s",(asMacro)?"4000":"C");
                 extra &= ~COMPLETION_BIT;
             }
             break;
@@ -514,7 +595,7 @@ Special *sP;
 
             if( completion )
             {
-                resultP += sprintf(resultP," C");
+                resultP += sprintf(resultP," %s",(asMacro)?"4000":"C");
                 extra &= ~COMPLETION_BIT;
             }
             break;
@@ -529,17 +610,37 @@ Special *sP;
 
             if( completion )
             {
-                resultP += sprintf(resultP," C");
+                resultP += sprintf(resultP," %s",(asMacro)?"4000":"C");
                 extra &= ~COMPLETION_BIT;
             }
 
-            tmp = operand & 07700;  // macro doesn't print the intensity if it's zero 
+            if( asMacro )
+            {
+                tmp = operand & 07700;  // macro doesn't print the intensity if it's zero 
+            }
+            else
+            {
+                tmp = operand & 03770;
+            }
+
             if( tmp > 0 )
             {
                 resultP += sprintf(resultP," %4o", tmp);
             }
 
             extra = 0;              // dpy uses some of the special bits
+            break;
+
+        case IS_IOH:            // special case for completion flag
+            if( indirect )
+            {
+                resultP += sprintf(resultP,"  i");
+            }
+            else if( completion )
+            {
+                resultP += sprintf(resultP," %s",(asMacro)?"4000":"C");
+                extra &= ~COMPLETION_BIT;
+            }
             break;
 
         case HAS_ID:            // some encode a subdevice, eg tape drive number
@@ -550,7 +651,7 @@ Special *sP;
 
         if( (sP->modifiers != UNKNOWN) && (extra != 0) )
         {
-            resultP += sprintf(resultP," | 0%o", extra);   // add extra bits
+            resultP += sprintf(resultP,"%s0%o", (asMacro)?separatorP:" | ",  extra);   // add extra bits
         }
         break;
     }

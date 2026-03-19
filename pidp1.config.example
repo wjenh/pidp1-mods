@@ -10,14 +10,20 @@
 # This only needs to be enabled if other programs need to access the pidp1 state.
 shared=false
 
-# Enable/disable PDP-1D extensions
+# Enable/disable various PDP-1D extensions
 # lai and lia are available in the main branch pidp1 if compiled in.
 # Here they are controlled by this setting.
 # This also enables lsw/swp, since those are just an or of lai and lia.
 lailia=on
-# Enable all the supported PDP-1D extensions, lai, lia, sni, szi, cmi, lsw/swp.
+
+# Enable the PDP-1D extensions, lai, lia, sni, szi, cmi, lsw/swp, but not the extended-extended ones.
 # Enabling this DOES enable lia and lai even if they are disabled above.
 # Disabling this does NOT disable lai and lia if they are enabled above.
+core1D=on
+
+# Enable all PDP-1D extensions including lai, lia, sni, szi, cmi, lsw/swp, scf, sci, iif, ifi, and ida.
+# Enabling this DOES enable lailia and core1D even if disabled above
+# Disabling this does NOT disable lailia or core1D if they are enabled above.
 all1D=on
 
 # Enable/disable various features.

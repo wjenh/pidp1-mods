@@ -120,6 +120,7 @@
  * 20/02/2026 wje - If not an instruction, be sure to emit all bits
  * 01/03/2026 wje - Fix cal, emit operand if it actually isn't a cal
  * 15/03/2026 wje - Change to use decode_instruction, no reason to duplicate all the code
+ * 19/03/2026 wje - Pass macro flag to decodeInstr()
  *
  */
 #include <stdlib.h>
@@ -161,7 +162,7 @@ int getLabel(int, int,  char*);
 
 void usage(void);
 
-extern char *decodeInstr(int word, int addr, char *symbolP, char *resultP);
+extern char *decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP, char *resultP);
 extern bool opCanIndirect(int opcode);
 
 // Set from cmd line args
@@ -845,14 +846,14 @@ int saw_space;
             }
             else
             {
-                if( saw_space )
-                {
-                    printf("\n");
-                    saw_space = 0;
-                }
-
                 if( !as_macro )
                 {
+                    if( saw_space )
+                    {
+                        printf("\n");
+                        saw_space = 0;
+                    }
+
                     printTapeLeader(ch);
                 }
             }
@@ -920,7 +921,7 @@ char tmpstr[256];
     }
 
     getLabel(word & 07777, word & 07777, symbolstr);
-    decodeInstr(word, word & 07777, symbolstr, tmpstr);
+    decodeInstr(word, word & 07777, as_macro, separator, symbolstr, tmpstr);
 
     printf("%s\n", tmpstr);
 }

@@ -18,6 +18,7 @@
  * wje 22-Feb-26 fix breakage from previous commit
  * wje 18-Mar-26 sorry, not going to use aap's high speed channel, there isn't any real interface to it, other issues
  * wje 19-Mar-26 add additional 1D instructions scf, sci, iif, ifi, ida
+ * wje 19-Mar-26 add finer-grained control over 1D instuctions, lailia, core1D, all1D in config file
 */
 #include "common.h"
 #include "pdp1.h"
@@ -75,8 +76,8 @@ bool sdbEnabled = false;
 bool dpyShiftEnabled = false;
 bool audioEnabled = false;
 bool lailiaEnabled = false;
+bool core1DEnabled = false;
 bool all1DEnabled = false;
-
 
 #define B0 0400000
 #define B1 0200000
@@ -1085,7 +1086,7 @@ int hack;
         {
             int skip = 0;
 
-            if( all1DEnabled && (MB & B6) && IO)
+            if( core1DEnabled && (MB & B6) && IO)
             {
                 logger(LOG_1D, "sni\n");
                 skip = 1;    // wje - pdp-1D sni, skip on nonzero IO
@@ -1149,7 +1150,7 @@ int hack;
 
         if(IR_OPR)
         {
-            if( all1DEnabled && (MB & B5) )
+            if( core1DEnabled && (MB & B5) )
             {
                 logger(LOG_1D, "cmi\n");
                 IO = ~IO;    // wje - pdp-1D cmi, complement IO
@@ -1165,13 +1166,13 @@ int hack;
                 pc_to_ac(pdp);
             }
 
-            if( (lailiaEnabled || all1DEnabled) && (MB & B12) )
+            if( lailiaEnabled && (MB & B12) )
             {
                 logger(LOG_1D, "lai\n");
                 pdp->lai = 1;
             }
 
-            if( (lailiaEnabled || all1DEnabled) && (MB & B13) )
+            if( lailiaEnabled && (MB & B13) )
             {
                 logger(LOG_1D, "lia\n");
                 pdp->lia = 1;

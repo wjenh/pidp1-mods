@@ -5,7 +5,8 @@
 //#define DOLOGGING
 #include "Logger/iotLogger.h"
 
-#define COUNTER_CKS_FLAG 0040000
+// cks bit 13 is set when the countdown timer completes, cleared when counter is set again or reset
+#define COUNTER_CKS_FLAG 0000020
 
 // An extended implementation of the PDP-1D timeshare clock.
 // IOT 32 reads the current 1ms counter, 0-59999 dec.

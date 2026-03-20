@@ -115,11 +115,11 @@ gotOne,
     dac txtPtr          // now points to the text of the selection
 // start the countdown timer, 1 second interval
      law 0d1000         // delay in milliseconds
-     cct            // go, cks bit 3 will be set when done
+     cct                // go, cks bit 13 will be set when done
 
 waitLoop,
     cks
-    ril 3s
+    rir 5s
     spi i
     jmp w2
     idx ctr

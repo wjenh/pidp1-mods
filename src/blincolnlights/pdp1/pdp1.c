@@ -2138,8 +2138,10 @@ int ch;
                 pdp->cksflags &= ~0400000;  // wje, set by the last dpy completion if lp hit
             }
         }
-        else if((ch & 030) == 030)       // wje, set lightpen aperture
+        else if( lightpenEnabled && ((ch & 030) == 030) && !(MB &01000) )       // wje, set lightpen aperture
         {
+            // The MB test above is to hande a strange 0733007 version of dpy in snowflake.
+            // No idea what it is supposed to do.
             pdp->dpy_defl_time = NEVER;     // just set aperture
             pdp->dpy_time = NEVER;
             pdp->dcp = 0;                   // be sure its not set

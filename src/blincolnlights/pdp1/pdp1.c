@@ -19,6 +19,10 @@
  * wje 18-Mar-26 sorry, not going to use aap's high speed channel, there isn't any real interface to it, other issues
  * wje 19-Mar-26 add additional 1D instructions scf, sci, iif, ifi, ida
  * wje 19-Mar-26 add finer-grained control over 1D instuctions, lailia, core1D, all1D in config file
+ * wje 20-Mar-26 resolve conflict between progs that use dpy origin setting and dpy lightpen aperture setting
+ *    Note that if both are on, the heuristic might fail, doing both when only one was desired.
+ *    This will only happen if a dpy with shift but no wait or completion bits is done.
+ *    If a program seems to be doing both, turn one off in the config file, depending upon which one you want active.
 */
 #include "common.h"
 #include "pdp1.h"
@@ -36,6 +40,8 @@
 // Set desired log type to 1 to enable output assuming logging is defined.
 #define LOG_LP 0
 #define LOG_APERTURE 0
+#define LOG_DPYSHIFT 0
+#define LOG_SDB 0
 #define LOG_STARTUP 0
 #define LOG_BREAK 0
 #define LOG_WATCH 0
@@ -2138,7 +2144,7 @@ int ch;
                 pdp->cksflags &= ~0400000;  // wje, set by the last dpy completion if lp hit
             }
         }
-        else if( lightpenEnabled && ((ch & 030) == 030) && !(MB &014000) )       // wje, set lightpen aperture
+        else if( lightpenEnabled && ((ch & 037) == 037) && !(MB & 014000) )       // wje, set lightpen aperture
         {
             // The MB test above is to hande a strange 0733007/727007 versions of dpy in snowflake.
             // No idea what it is supposed to do.
@@ -2161,8 +2167,11 @@ int ch;
             pdp->dby |= IO >> 8;
 
             // Emulate the origin shift that was implemented in some systems
-            // It conflicts with sdb, sdb takes priority
-            if( dpyShiftEnabled && !sdbEnabled )
+            // It conflicts with sdb, the following test is done.
+            // The check is to exclude 037 beause otherwise this would overlap with aperture setting.
+            // It also checks to see if i or C is set to distiguish it from a program that's using
+            // sdb, will fail if a prog just does a bare dpy with shift and sdb will be assumed.
+            if( dpyShiftEnabled && (MB & 014000) && (ch & 030) )
             {
                 if(ch & 010)        // origin at bottom
                 {
@@ -2173,6 +2182,7 @@ int ch;
                 {
                     pdp->dbx ^= 01000;
                 }
+                logger(LOG_DPYSHIFT,"Dpy shift MB %06o\n", MB);
             }
 
             pdp->dpy_defl_time = pdp->simtime + US(35);
@@ -2180,7 +2190,7 @@ int ch;
             pdp->dint |= (MB >> 6) & 7;
             pdp->dcp = nac;
 
-            if( sdbEnabled && ((ch & 030) == 020) )  // sdb is a reposition without drawing a dot
+            if( sdbEnabled && ((MB & 017000) == 02000) )  // sdb is a reposition without drawing a dot
             {
                 // This is documented as taking 30 usecs because it doesn't
                 // need the addtional time to draw the dot.
@@ -2190,6 +2200,7 @@ int ch;
                 pdp->dpy_defl_time = NEVER;
                 pdp->dpy_time = NEVER;
                 pdp->dcp = 0;
+                logger(LOG_SDB,"Sdb MB %06o\n", MB);
             }
         }
         break;

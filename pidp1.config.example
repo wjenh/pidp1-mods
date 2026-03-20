@@ -17,8 +17,8 @@ shared=false
 lailia=on
 
 # Enable the PDP-1D extensions, lai, lia, sni, szi, cmi, lsw/swp, but not the extended-extended ones.
-# Enabling this DOES enable lia and lai even if they are disabled above.
-# Disabling this does NOT disable lai and lia if they are enabled above.
+# Enabling this DOES enable lailia even if they are disabled above.
+# Disabling this does NOT disable lailia if enabled above.
 core1D=on
 
 # Enable all PDP-1D extensions including lai, lia, sni, szi, cmi, lsw/swp, scf, sci, iif, ifi, and ida.
@@ -31,11 +31,14 @@ muldiv=on
 # This is the 16 channel break system.
 sbs16=off
 
-# These two conflict, pick one.
+# sdb and dpyshift can conflict.
 # sdb is an extended version of dpy used by the Type 33 Symbol Generator.
 # dpyshift is an extended version of dpy that allows origin-shifting, implemented by sonme PDP-1's.
-# They conflict. If both are on, sdb takes priority.
-# If both are on, sdb takes priority.
+# If both are on, an attempt is made to distinguish between them, but it's possible the wrong
+# choice will be made.
+# If so, sdb will be done, then dpyshift.
+# This will make any symbol generator chars positioned incorrectly.
+# If you get strange behavior, turn one off, preferably dpyshift.
 sdb=on
 dpyshift=off
 

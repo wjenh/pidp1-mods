@@ -1,0 +1,20 @@
+#ifndef TYPE64DEFS_AH
+#define TYPE64DEFS_AH
+
+#define lpc iot 2045
+#define lpb iot 0045
+#define pas iot 1045
+#define lpf iot 3045
+#define lpm iot 3145
+
+// line spacings for pas
+#define LPT_OVERSTRIKE  0
+#define LPT_1LINE    100
+#define LPT_2LINES   200
+#define LPT_3LINES   300
+#define LPT_6LINES   400
+#define LPT_22LINE   500
+#define LPT_33LINE   600
+#define LPT_FORMFEED 700
+
+#endif

@@ -3,6 +3,8 @@
  * It will initialize itself on first use creating a log file '/tmp/iot.dbg'.
  * It should be closed in an iotStop(), but it flushes its output so that's not strictly necessary.
  * Use: iotLog("same format as printf", .....);
+ *      iotCondLog(enable, "same format as printf", .....);
+ * The second form will only log if enable is non-zero.
  */
 
 #include <stdarg.h>
@@ -26,6 +28,26 @@ _iotLog(char *fmt, ...)
     va_start(args, fmt);
     vfprintf(fP, fmt, args);
     fflush(fP);
+    va_end(args);
+}
+
+void
+_iotCondLog(int enable, char *fmt, ...)
+{
+    if( enable )
+    {
+        if( !fP )
+        {
+            fP = fopen("/tmp/iot.dbg", "a");
+            fprintf(fP,"Logging started\n");
+        }
+
+        va_list args;
+        va_start(args, fmt);
+        vfprintf(fP, fmt, args);
+        fflush(fP);
+        va_end(args);
+    }
 }
 
 void

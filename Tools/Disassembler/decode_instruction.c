@@ -25,6 +25,7 @@
  * 01/03/2026 wje - Fix cal, emit operand if it actually isn't a cal
  * 15/03/2026 wje - Add more 1D instructions, improve extra bits reporting
  * 19/03/2026 wje - Add even more 1D instructions, fix macro mode for them
+ * 21/03/2026 wje - Print i and C for unknown IOTs
  *
  */
 #include <stdlib.h>
@@ -552,21 +553,30 @@ Special *sP;
             {
                 if( indirect )
                 {
-                    operand |= 010000;       // include the bit in the output
+                    resultP += sprintf(resultP," i");
+                    operand &= ~INDIRECT_BIT;
                 }
 
                 if( completion )
                 {
-                    operand |= 004000;       // include the bit in the output
+                    resultP += sprintf(resultP," %s",(asMacro)?"4000":"C");
+                    operand &= ~COMPLETION_BIT;
                 }
 
-                resultP += sprintf(resultP,"%s%05o", (asMacro)?separatorP:" | ",  operand);
+                resultP += sprintf(resultP,"%s%04o", (asMacro)?separatorP:" | ",  operand);
             }
             else            // is ioh
             {
                 if( indirect )
                 {
                     resultP += sprintf(resultP," i");
+                    extra &= ~INDIRECT_BIT;
+                }
+
+                if( completion )
+                {
+                    resultP += sprintf(resultP," %s",(asMacro)?"4000":"C");
+                    extra &= ~COMPLETION_BIT;
                 }
             }
             break;

@@ -315,7 +315,8 @@ PNodeP node2P;
         fprintf(outfP,"]");
         if( nodeP->rightP )
         {
-            fprintf(outfP,"  // %s", nodeP->rightP->value.strP);
+            // can only be a comment
+            fprintf(outfP,"  // %s\n", nodeP->rightP->value.strP);
         }
         else
         {

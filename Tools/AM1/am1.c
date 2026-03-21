@@ -754,7 +754,7 @@ char str[128];
 
     if(nodeP)
     {
-        if(nodeP->type != TERMINATOR)
+        if( (nodeP->type != TERMINATOR) && (nodeP->type != EMPTYLINE) )
         {
             for(i = 0; i < indent; ++i)
             {
@@ -780,7 +780,7 @@ char str[128];
     {
         nodeP = listP->nodeP;
 
-        if(nodeP->type != TERMINATOR)
+        if( (nodeP->type != TERMINATOR) && (nodeP->type != EMPTYLINE) )
         {
             for(i = 0; i < indent; ++i)
             {
@@ -823,7 +823,7 @@ char str[32];
     {
         printf("constant(pc %o) [", nodeP->value.symP->value);
         dumpExpr((PNodeP)(nodeP->value.symP->ptr));
-        printf("]");
+        printf("] ");
         dumpExpr(nodeP->rightP);
     }
     else
@@ -920,6 +920,10 @@ char str[128];
 
         case TERMINATOR:
             printf("<terminator>\n");
+            break;
+
+        case EMPTYLINE:
+            printf("<empty line>\n");
             break;
 
         case FILENAME:

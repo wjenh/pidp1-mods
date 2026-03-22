@@ -647,7 +647,7 @@ WatchP watchP;
 }
 
 ConfigurationP
-getConfigurationP()     // so other stuff can use our configuration, like IOTs
+getConfiguration()     // so other stuff can use our configuration, like IOTs
 {
     return( configurationP );
 }

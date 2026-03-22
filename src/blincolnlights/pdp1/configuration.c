@@ -77,20 +77,20 @@ char answer[64];
         }
 
         logger(LOG_CONFIG, "%s", line);
-        if( (i = sscanf(line, "%[a-zA-Z0-9] = %[a-zA-Z0-9.]", option, answer)) != 2 )
+        if( (i = sscanf(line, "%[a-zA-Z0-9] = %s", option, answer)) != 2 )
         {
             logger(LOG_CONFIG, "invalid\n");
             fprintf(stderr, "Invalid config file line %d, %s", i, line);
             continue;
         }
 
-        onOff = false;
-        if( !strcmp(answer,"y") || !strcmp(answer,"yes") || !strcmp(answer,"on") )
+        sawOnOff = onOff = false;
+        if( !strcmp(answer,"y") || !strcmp(answer,"yes") || !strcmp(answer,"on") || !strcmp(answer,"true") )
         {
             sawOnOff = true;
             onOff = true;
         }
-        else if( !strcmp(answer,"n") || !strcmp(answer,"no") || !strcmp(answer,"off") )
+        else if( !strcmp(answer,"n") || !strcmp(answer,"no") || !strcmp(answer,"off") || !strcmp(answer,"false") )
         {
             sawOnOff = true;
         }
@@ -188,16 +188,16 @@ char answer[64];
 
             // The user can decide which to use
             settingP->onOff = onOff;
-            if( strspn(answer, "0123456789") == strlen(answer) )
+            if( strspn(answer, "-0123456789") == strlen(answer) )
             {
                 settingP->ivalue = atoi(answer);
             }
-            else if( strspn(answer, "0123456789.") == strlen(answer) )
+            else if( strspn(answer, "-0123456789.") == strlen(answer) )
             {
                 settingP->fvalue = atof(answer);
                 settingP->ivalue = atoi(answer);    // we set this anyway to the int part
             }
-            else if( !sawOnOff )        // no idea, user decides
+            else if( !sawOnOff ) 
             {
                 settingP->strvalueP = (char *)malloc(strlen(answer) + 1);
                 strcpy(settingP->strvalueP, answer);
@@ -251,6 +251,8 @@ ConfigurationSettingP settingP;
         {
             return(settingP);
         }
+
+        settingP = settingP->nextP;
     }
 
     return(settingP);

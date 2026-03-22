@@ -4,5 +4,6 @@
     "dynamicIotProcessBreak";
     "dpycmd";
     "flushdpy";
-    "getConfigurationP";
+    "getConfiguration";
+    "findConfigurationSetting";
 };

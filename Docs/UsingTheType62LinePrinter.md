@@ -1,12 +1,11 @@
-## Using the Type 64 line printer
+## Using the Type 62 line printer
 
-The Type 64 line printer printed 120 character wide lines from a 64 character set using fiodec codes,
+The Type 62 line printer printed 120 character wide lines from a 64 character set using fiodec codes,
 called flexo in macro although was really concise code, which is fiodec without a parity bit.
 
-Documentation has been scarce so some of the implementation is guesswork, but the implementation prints
-using similar logic as the Type 62 printer used.
+It could print 600 lines per minute.
 
-**NOTE** that the operating mode must be switched to Type 64 from Type 62, Type 62 is the default.\
+**NOTE** that the operating mode can be switched to Type 64 if desired.\
 Use the lptType64 setting in the /opt/pidp1-mods/pidp1.config file.
 
 Updated 22-Mar-2026
@@ -17,7 +16,7 @@ Line printer output is written to a file, */tmp/pdp1lpt.txt* by default, but see
 The file is opened in append mode if not already open and lines are written to it.\
 The file is flushed when each line is printed, the file can be viewed or copied at will.
 
-The file is closed when an *lpc* or a *lpm* instruction is issued, see below.
+The file is closed if the file name is changed, the mode is changed, or a file close command is used, see below.
 
 In flexo mode, concise characters are converted to ascii with any character that has no equivalent printed as a space.
 The conversion set is the same as used by **macro1**, **am1**, **DCS2**, and any other character conversions
@@ -27,21 +26,42 @@ In ascii mode, the characters are used as-is.
 
 ## Timing
 
-Timing is guesstimated from the information in the PDP-1 Handbook.
+Timing is from the information in the PDP-1 Handbook.
 
-From that, the *lpc* instruction takes 5 milliseconds to complete, the *lpb* instruction takes one cycle,
-5 microseconds, no delay, and the *pas* instruction takes 200 milliseconds (300 lines/min).
+Loading characters into the line printer buffer complete in one cycle, 5us.\
+Printing a line takes 84 milliseconds.\
+Spacint a line or lines takes 16 milliseconds per line, 1 line printed and spaced by 1 takes 100 milliseconds,
+600 lines per minute.
 
-The *pas* timing is not really correct, it should take a fixed amount of time to print the line, then a variable
-amount of time for each line advance, but the timing information could not be found, so this timing is the
-time for printing one line and advance one line.
+New characters could be transferred while line spacing is being done, but this implementation allows that as
+soon as the print line instruction is executed, no waiting is required.
 
-New characters can be transferred while the current line is being printed.
+## Configuration
+
+Configuration of several functions can be done in the pidp1.config file:
+
+- lptType64=true/false
+select Type 62 or Type 64 mode, default false
+- lptLines=nn
+sets the mumber of lines per page, default 66
+- lptLineSpacing=n0,n1,n2,n3,n4,n5,n6,n7, default 1,2,3,4,11,22,-1
+sets the line spacing values used with *slp*
+- lptNoFF=true/false
+select between using repeated newlines or a form-feed character, default false
+
+The number of lines determines the number of newlines used if the form-feed character is not being used.
+It also determines the delay time when either form of form-feed is done.
+
+The line spacing values are selected by the format number in the *slp* command.
+A 0 means overstrike, but this is not needed with the Type 62 printer since that function
+is performed by the *prl* command, see below.
+
+A -1 means form-feed.
 
 ## Overstrike
 
 The original printer supported overstriking.
-This meant that the paper was not advanced when a *pas* instruction was issued, but the characters were printed.
+This meant that the paper was not advanced when a *prl* instruction was issued, but the characters were printed.
 Subsquent characters would be printed over existing characters on that line, overstruck.
 
 This can't be properly emulated.
@@ -52,58 +72,24 @@ New characters wil replace existing characters.
 For example:
 ```
 abcdef in buffer
-pas overstrike
+prl overstrike
 xyz
 xyzdef now in buffer
 ```
-
-## Configuration
-
-Configuration of several functions can be done in the pidp1.config file:
-
-- lptType64=true/false
-select Type 62 or Type 64 mode, default false
-- lptLines=nn
-sets the mumber of lines per page, default 66
-- lptLineSpacing=n0,n1,n2,n3,n4,n5,n6,n7, default 0,1,2,3,6,11,22,-1
-sets the line spacing values used with *pas*
-- lptNoFF=true/false
-select between using repeated newlines or a form-feed character, default false
-
-The number of lines determines the number of newlines used if the form-feed character is not being used.
-It also determines the delay time when either form of form-feed is done.
-
-The line spacing values are selected by the format number in the *pas* command.
-A 0 means overstrike, a -1 means form-feed.
 
 ## The IOT instructions
 
 There are only three original plus two added, implemented as IOT 45.
 
-- IOT 2045, lpc, clear buffer, resets print buffer to empty
-- IOT 0045, lpb, add the 3 characters in IO to the print buffer
-- IOT 1x45, pas, print the buffer, x specifies the spacing
+- IOT 0045, prl, print the buffer, no line advance is done
+- IOT 1045, flb, add the 3 characters in IO to the print buffer
+- IOT 2x45, slp, space one or more lines
 - IOT 3045, lpf, set printer output file
 - IOT 3145, lpm, set ascii or flexo mode
 
-These as well as values for spacing format control are in the <LPT/type64defs.ah> include file.
+These as well as values for spacing format control are in the <LPT/type62defs.ah> include file.
 
-## The lpc instruction
-
-This resets the printer to an initial state.
-Any characters in the buffer that have not been printed are discarded.
-It also closes the printer output file.
-
-The PDP-1 handbook calls this the *clr* instruction, but that seems too common a symbol name,
-it is *lpc* in the **am1** *\<LPT\>/type64defs.ah* include file.
-```
-722045
-
-IO and AC are unchanged.
-```
-Wait, i, and completion, C are supported and will take 5 milliseconds (1000 cycles) to be issued.
-
-## The lpb instruction
+## The flb instruction
 
 This adds the 2 in ascii mode or 3 in flexo mode characters in the IO register to the print buffer.
 If the buffer overflows, extra characters are discarded.
@@ -111,7 +97,7 @@ The characters are packed as 3, 6 bit characters as produced by the assembler *f
 or packed as 2, 9 bit characters as produced by the **am1** *ascii* or quoted character directives.
 
 ```
-720045
+721045
 
 IO - contains 3 flexo characters, a<<12 | b<<6 | c in flexo mode, 2 ascii characters a<<9 | b in ascii mode
 
@@ -124,31 +110,50 @@ This is done automatically when the assembler directives are used.
 
 In ascii mode, either character can be a null, \\0, in which case it is ignored.
 
-## The pas instruction
+## The slp instruction
 
-This command prints the current buffer and advances by the number of lines specifed in the instruction.
-The buffer will then be empty.
+This command advances by the number of lines specifed in the instruction.
+Until this command is issued, the same line can be overstruck.
+
+In order to get the overstrike behavior, *prl*, below, doesn't actually output anything,
+it just delays for 84 milliseconds.
+Only when *slp* is executed is text written to the output file.
 ```
-721x45
+722x45
 
 IO and AC are unchanged.
 ```
-Wait, i, and completion, C are supported and will take 200 milliseconds (40,000 cycles) to be issued.
+Wait, i, and completion, C are supported and will take 18 * number-of-lines milliseconds to be issued.
 
-The value of *x* selects one of 8 spacings:
+The value of *x* selects one of 8 spacings, the default values are:
 
-- 0 no advance, the buffer point is reset to the beginning, all characters remain in it, *overstrike*
-- 1 advance 1 line
-- 2 advance 2 lines
-- 3 advance 3 lines
-- 4 advance 6 lines
-- 5 advance 11 lines
-- 6 advance 22 lines
+- 0 advance 1 line
+- 1 advance 2 lines
+- 2 advance 3 lines
+- 3 advance 4 lines
+- 4 advance 11 lines
+- 5 advance 22 lines
+- 6 advance 33 lines
 - 7 insert a form-feed character after the current line
 
 The original printer had a changeable spacing tape so customers could configure the number
 of lines for each advance.\
 This is supported by the lptLineSpacing setting in the /opt/pidp1-mods/pidp1.config file.
+
+## The prl instruction
+
+In the original printer, this printed the current buffer and cleared it, but did not advance a line.
+In order to duplicate the overstrike behavior, this instructon does nothing but
+reset the buffer position to 0 and delay for 84 milliseconds.
+
+The actual writing to the output file is done when *slp* is executed.
+
+```
+720045
+
+IO and AC are unchanged.
+```
+Wait, i, and completion, C are supported and will take (18 * number-of-lines) milliseconds to be issued.
 
 ## The lpf instruction
 
@@ -191,22 +196,23 @@ of *the running pdp1 instance*, most likely */opt/pidp1-mods*, don't depend upon
 
 ## The lpm instruction
 
-This is an added instruction for convenience.
-It changes the character mode between flexo and ascii.
+This is an added instruction for convenience.\
+It changes the character mode between flexo and ascii and the printer mode between Type 62 and Type 64.\
+It can also close the print file.
 ```
 723145
 
 IO bit 17 - 0 for flexo mode, 1 for ascii mode
-IO bit 16 - 0 for no operation, 1 to close the output file
+IO bit 16 - 0 for no operation, 1 to close the output file and reset the line number and flex shift state
 
 On return, the IO and AC are unchanged.
 ```
 Wait, i, and completion, C are ignored.
 
-If flexo mode is set, then the *lpb* instructionj will expect flexo/concise characters packed three per word.\
-If ascii mode is set, then the *lpb* instruction will expect ascii characters packed two per word.
+If flexo mode is set, then the *flb* instruction will expect flexo/concise characters packed three per word.\
+If ascii mode is set, then the *flb* instruction will expect ascii characters packed two per word.
 
-If the output file is closed, it will be reopened when the next *pas* command is issued.
+If the output file is closed, it will be reopened when the next *slp* is executed.
 
 The default is flexo mode.\
-See *lpb* for more details.
+See *flb* for more details.

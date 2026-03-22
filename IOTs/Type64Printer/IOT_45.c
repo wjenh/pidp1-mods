@@ -5,6 +5,7 @@
 
 #include "common.h"
 #include "pdp1.h"
+#include "configuration.h"
 #include "iotHandler.h"
 
 //#define DOLOGGING
@@ -14,15 +15,17 @@
 #define LOG45FLEX 0
 #define LOG45FILE 0
 #define LOG45PRINT 0
+#define LOG45CONFIG 0
+#define LOG45FF 0
 
 #define DEFAULTFILE "/tmp/pdp1lpt.txt"
 #define BUFSIZE 120     // 120 column printer
 
-// IOT 2045 clears the print buffer and closes the output file
-// IOT 0045 adds characters to the print buffer from the IO register
-// IOT 1x45 adds line spacing and prints the buffer, opening the output file if needed
-// IOT 3045 gives a new file name or restores the default name
-// IOT 3145 sets the character mode to flexo or ascii
+#define TYPE62LINEDELAY 16  // milliseconds per
+#define TYPE62PRINTDELAY 84  // milliseconds per
+
+#define TYPE64LINEDELAY 32 // milliseconds per
+#define TYPE64PRINTDELAY 168 // milliseconds per
 
 #define ERROR 0777776   // -1 in 1's cmpl 12 bit
 // Flex conversion
@@ -30,34 +33,69 @@
 #define UCS -3
 #define NONE -1
 
-static char *spacing[] = {
-    "\r",
-    "\n",
-    "\n\n",
-    "\n\n\n",
-    "\n\n\n\n\n\n",
-    "\n\n\n\n\n\n\n\n\n\n\n",
-    "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
-    "\n\f"
+// Define the actions that can be done, bits that are or'd
+#define PRINT   0x1     // print the current buffer, reset buffer counter to 0
+#define SPACE   0x2     // do line spacing
+#define ADD     0x4     // add chars to buffer
+#define OVER    0x10    // set buffer counter to 0
+#define CLOSE   0x20    // close the output file
+#define RESET   0x40    // reset everything
+#define RETURN  0x100   // print an immediate cr
+#define NL      0x200   // print an immediate nl
+#define LPM     0x400   // lpm, same for both 62 and 64
+#define LPF     0x1000  // lpf, same for both 62 and 64
+
+// These are the defaults, entries 1-6 overridden by any config file setting
+static int spacing64[] = {
+    0,          // overstrike
+    1,
+    2,
+    3,
+    6,
+    11,
+    22,
+    -1          // marker for formfeed
+    };
+
+static int spacing62[] = {
+    1,
+    2,
+    3,
+    4,
+    11,
+    22,
+    33,
+    -1          // marker for formfeed
     };
 
 static int curShift = LCS;          // used for the flex shift char processing
 static int bufLoc;                  // location to place next character in buffer
+static int lineNo;                  // number of lines done
+static int linesPerPage = 66;       // override in config
 static char buffer[BUFSIZE + 1];    // the print buffer
 
 static char *filenameP = DEFAULTFILE;
 static FILE *outfP;
 
+static bool configDone;             // config loaded
+static bool type64;                 // emulating a type 64, else a type 62
 static bool asciiMode;
+static bool noFF;
+
 static bool inWait;                 // completion delay in effect
 
 static int flexoToAscii(char fc, int *shiftP);
+static void configure(void);
 
 int
 iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
 {
-int i;
-int word, addr, fchar, achar;
+int i, j;
+int word, addr;
+int actions;
+int spaceval;
+int delaytime;
+int fchar, achar;
 char *cP;
 bool fail;
 bool noWait;
@@ -70,12 +108,77 @@ bool noWait;
     iotCondLog(LOG45, "In lpt iot mb %o dev %o cmpl %d\n", pdp1P->mb, dev, completion);
     inWait = noWait = fail = false;
 
-    if( (pdp1P->mb & 03700) == 02000 )         // 2045, clear buffer
+    if( !configDone )
     {
+        configure();
+        configDone = true;
+    }
+
+    // Figure out the type 62 vs 64 diffs.
+    // 62:
+    // 0045, print no advance
+    // 1045, add chars
+    // 2x45, space
+    // 64:
+    // 0045, add chars
+    // 1x45, print and space
+    // 2045, reset
+    actions = 0;
+    delaytime = 0;  // if 0, no delay, else cycles
+
+    if( (pdp1P->mb & 03700) == 0 )             // 0045
+    {
+        actions = (type64)?ADD:OVER;
+    }
+    else if( (pdp1P->mb & 03000) == 01000 )    // 1x45
+    {
+        if( type64 )
+        {
+            spaceval = (pdp1P->mb >> 6) & 07;
+            if( spaceval )
+            {
+                actions = PRINT|SPACE;
+            }
+            else
+            {
+                actions = PRINT|OVER|RETURN;
+            }
+        }
+        else
+        {
+            actions = ADD;
+        }
+    }
+    else if( (pdp1P->mb & 03000) == 02000 )    // 2x45
+    {
+        if( type64 )
+        {
+            actions = RESET;
+        }
+        else
+        {
+            actions = PRINT|SPACE;
+            spaceval = (pdp1P->mb >> 6) & 07;
+        }
+    }
+    else if( (pdp1P->mb & 03700) == 03000 )    // 3045
+    {
+        actions = LPF;
+    }
+    else if( (pdp1P->mb & 03700) == 03100 )    // 3145
+    {
+        actions = LPM;
+    }
+
+    // Now do the processing.
+    if( actions & RESET )
+    {
+        lineNo = 1;
         bufLoc = 0;
         memset(buffer, 0, sizeof(buffer));
         curShift = LCS;
         asciiMode = false;                      // also resets to the default flexo mode
+        delaytime = 0;
 
         if( outfP )
         {
@@ -84,16 +187,21 @@ bool noWait;
             outfP = NULL;
         }
 
-        // Handle a pending iot C, we clear it
-        if( inWait )
-        {
-            IOCOMPLETE(pdp1P);
-        }
-
-        enablePolling(MSTOCYCLES(30));
+        delaytime = MSTOCYCLES(30);
         inWait = true;
     }
-    else if( (pdp1P->mb & 03700) == 0 )        // 0045, add chars to buffer
+
+    if( !outfP )
+    {
+        if( !(outfP = fopen(filenameP, "a")) )
+        {
+            fail = true;                      // sorry
+        }
+
+        iotCondLog(LOG45FILE, "Open file '%s', %d\n", filenameP, fail);
+    }
+
+    if( actions & ADD )                     // put chars in buffer
     {
         word = pdp1P->io;
 
@@ -140,14 +248,29 @@ bool noWait;
 
         noWait = true;                         // immediate
     }
-    else if( (pdp1P->mb & 03000) == 01000 )    // 1x45, print buffer and space
-    {
-        if( !outfP && !(outfP = fopen(filenameP, "a")) )
-        {
-            fail = true;                      // sorry
-        }
-        iotCondLog(LOG45FILE, "Open file '%s', %d\n", filenameP, fail);
 
+    // This needs to be separate because the 62 and 64 handle overstrikes differently
+    if( actions & OVER )
+    {
+        bufLoc = 0;
+    }
+
+    // do thse before PRINT and SPACE
+    if( actions & RETURN )
+    {
+        fputc('\r', outfP);
+    }
+
+    if( actions & NL )
+    {
+        fputc('\n', outfP);
+        ++lineNo;
+        delaytime += (type64)?TYPE64PRINTDELAY:TYPE62PRINTDELAY;
+    }
+
+    // do before SPACE
+    if( actions & PRINT )
+    {
         if( !fail )
         {
             // buffer will always be null terminated, just print it if not empty
@@ -159,30 +282,73 @@ bool noWait;
                 }
                 iotCondLog(LOG45PRINT, "Printed '%s', status %d\n", buffer, fail);
             }
+        }
 
-            // what to do for spacing
-            if( !fail )
+        bufLoc = 0;
+        curShift = LCS;
+        memset(buffer, 0, sizeof(buffer));
+    }
+
+    if( actions & SPACE )
+    {
+        // what to do for spacing
+        if( !fail )
+        {
+            i = (type64)?spacing64[(pdp1P->mb >> 6) & 07]:spacing62[(pdp1P->mb >> 6) & 07];
+            iotCondLog(LOG45FF, "SPACE, spacing %d\n", i);
+
+            if( i == -1 )      // form feed
             {
-                i = (pdp1P->mb >> 6) & 07;
-                if( fputs(spacing[i], outfP) < 0 )
+                // The delay time is not certain, assume same as one line advance time per remaining lines
+                j = linesPerPage - lineNo;
+                iotCondLog(LOG45FF, "FF, lpp %d, lineNo %d\n", linesPerPage, lineNo);
+
+                if( noFF )
                 {
-                    fail = true;
+                    iotCondLog(LOG45FF, "FF with noFF\n");
+                    // We go one more to termiate the current line
+                    for( i = 0; i <= j; ++i )
+                    {
+                        fputc('\n', outfP);
+                    }
+                }
+                else
+                {
+                    iotCondLog(LOG45FF, "FF using formfeed\n");
+                    fputs("\n\f", outfP);
                 }
 
-                bufLoc = 0;
-                if( i != 0 )            // not an overstrike, reset the buffer and shift state
-                {
-                    curShift = LCS;
-                    memset(buffer, 0, sizeof(buffer));
-                }
-
-                fflush(outfP);
-                enablePolling(MSTOCYCLES(200));
-                inWait = true;
+                lineNo = 1;
+                delaytime += (type64)?MSTOCYCLES(TYPE64LINEDELAY * j):MSTOCYCLES(TYPE62LINEDELAY * j);
+                iotCondLog(LOG45FF, "FF delay time %d\n", delaytime);
             }
+            else
+            {
+                while( i-- > 0 )
+                {
+                    ++lineNo;
+                    if( lineNo >= linesPerPage )
+                    {
+                        lineNo = 1;
+                    }
+
+                    fputc('\n', outfP);
+                    delaytime += (type64)?MSTOCYCLES(TYPE64LINEDELAY):MSTOCYCLES(TYPE62LINEDELAY);
+                }
+            }
+
+            // reset the buffer and shift state
+            bufLoc = 0;
+            curShift = LCS;
+            memset(buffer, 0, sizeof(buffer));
+
+            fflush(outfP);
+            enablePolling(MSTOCYCLES(200));
+            inWait = true;
         }
     }
-    else if( (pdp1P->mb & 03700) == 03000 )    // change file name
+
+    if( actions == LPF )
     {
         if( outfP )
         {
@@ -240,18 +406,36 @@ bool noWait;
 
         noWait = true;                         // immediate
     }
-    else if( (pdp1P->mb & 03700) == 03100 )    // change character mode
+
+    if( actions  == LPM )                      // change character mode, close file
     {
-        asciiMode = pdp1P->io != 0;
+        asciiMode = pdp1P->io & 1;
         iotCondLog(LOG45FILE, "File mode %d\n", asciiMode);
+
+        // This does almost what the Type 64 reset command does, the Type 62 doesn't have a reset,
+        // and that's how we close the output file.
+        // It does not change ascii mode though, the above bit does that.
+        if( pdp1P->io & 2 )
+        {
+            if( outfP )
+            {
+                fclose(outfP);
+                outfP = NULL;
+                iotCondLog(LOG45FILE, "File closed\n");
+            }
+
+            lineNo = 1;
+            bufLoc = 0;
+            memset(buffer, 0, sizeof(buffer));
+            curShift = LCS;
+        }
+
         noWait = true;
     }
-    else
+
+    if( delaytime && !noWait )
     {
-        iotCondLog(LOG45, "Bad lpt instr\n");
-        enablePolling(0);
-        inWait = false;
-        return(0);                          // fail
+        enablePolling(delaytime);
     }
 
     if( noWait && completion )
@@ -262,8 +446,12 @@ bool noWait;
     if( fail )
     {
         iotCondLog(LOG45, "Fail, closing file\n");
-        fclose(outfP);
-        outfP = NULL;
+        if( outfP )
+        {
+            fclose(outfP);
+            outfP = NULL;
+        }
+
         pdp1P->io = ERROR;
     }
     else
@@ -354,4 +542,50 @@ int ac;
     }
 
     return(ac);
+}
+
+void
+configure()
+{
+int i, ival;
+char *cP;
+ConfigurationP confP;
+ConfigurationSettingP settingP;
+
+    if( (settingP = findConfigurationSetting(getConfiguration(), "lptType64")) )
+    {
+        iotCondLog(LOG45CONFIG, "In lpt, lptType64 %d\n", settingP->onOff);
+        type64 = settingP->onOff;
+    }
+
+    if( (settingP = findConfigurationSetting(getConfiguration(), "lptLineSpacing")) )
+    {
+        iotCondLog(LOG45CONFIG, "In lpt, lptLineSpacing %s\n", settingP->strvalueP);
+        // pick up no more than 8 values
+        for( cP = settingP->strvalueP, i = 0; cP && *cP && (i < 8); ++i)
+        {
+            if( (ival = atoi(cP)) )
+            {
+                iotCondLog(LOG45CONFIG, "In lpt, spacing %d is %d\n", i, ival);
+                spacing62[i] = spacing64[i] = ival;
+            }
+
+            if( (cP = strchr(cP, ',')) )
+            {
+                ++cP;
+            }
+        }
+    }
+
+    if( (settingP = findConfigurationSetting(getConfiguration(), "lptLines")) )
+    {
+        iotCondLog(LOG45CONFIG, "In lpt, lines per page %d\n", settingP->ivalue);
+        linesPerPage = settingP->ivalue;
+    }
+
+    if( (settingP = findConfigurationSetting(getConfiguration(), "lptNoFF")) )
+    {
+        noFF = settingP->onOff;
+        iotCondLog(LOG45CONFIG, "In lpt, noFF %d\n", noFF);
+    }
 }

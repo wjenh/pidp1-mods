@@ -383,6 +383,10 @@ cmd		: QUIT
                 {
                     setWatchFn($3, $5);
                 }
+                | WATCH SEPARATOR address
+                {
+                    setWatchFn($3, BADNUM);
+                }
                 | WINDOW SEPARATOR DECINTEGER
                 {
                     setWindowFn($3);

@@ -1,0 +1,31 @@
+#ifndef PRINTFLEX_AC
+#define PRINTFLEX_AC
+// Code to send a line of text produced by the 'text' assembler directive to the printer.
+// A 0 word must follow the text string.
+// IO has one of the LPT_x line spacing values for terminating the line,
+// AC has the address of the text to print.
+// Neither AC for IO is preserved.
+// Call via jda printFlex.
+// This is only for the Type 62 line printer.
+
+#include <LPT/type62defs.ah>
+
+printFlex, 0
+    local rtn, loop, done, finish
+    dap rtn
+    lai
+    ior [slp i
+    dac finish
+loop,
+    lio i printFlex
+    sni
+    jmp done
+    flb
+    idx printFlex
+    jmp loop
+done, prl
+    xct finish
+rtn, jmp .
+finish, 0
+    endloc
+#endif

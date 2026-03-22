@@ -1,13 +1,13 @@
-#ifndef TYPE64DEFS_AH
-#define TYPE64DEFS_AH
+#ifndef TYPE62DEFS_AH
+#define TYPE62DEFS_AH
 
-#define lpc iot 2045
-#define lpb iot 0045
-#define pas iot 1045
+#define slp iot 2045
+#define prl iot 0045
+#define flb iot 1045
 #define lpf iot 3045
 #define lpm iot 3145
 
-// line spacings for pas
+// line spacings for slp
 #define LPT_SP0   000
 #define LPT_SP1   100
 #define LPT_SP2   200

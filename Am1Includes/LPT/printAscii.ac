@@ -1,0 +1,35 @@
+#ifndef PRINTASCII_AH
+#define PRINTASCII_AH
+// Code to send a line of text produced by the 'ascii' assembler directive to the printer.
+// IO has one of the LPT_x line spacing values for terminating the line,
+// AC has the address of the text to print.
+// Neither AC for IO is preserved.
+// Call via jda printAscii.
+// This is only for the Type 62 line printer.
+
+printAscii, 0
+    local rtn, done, loop, finish
+    dap rtn
+    lai
+    ior [slp i
+    dac finish
+loop,
+    lac i printAscii
+    lia
+    and [0377
+    flb
+    sza i
+    jmp done
+    lac i printAscii
+    sar 9s
+    sza i
+    jmp done
+    flb
+    idx printAscii
+    jmp loop
+done, prl
+    xct finish
+rtn, jmp .
+finish, 0
+    endloc
+#endif

@@ -1,6 +1,6 @@
 ## Include files for am1
 
-This directory contains two forms of include file.
+These directories contain two forms of include file.
 
 All ending in *.ah* only contain definitions, no code
 

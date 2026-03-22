@@ -87,3 +87,20 @@ alpha1=0.687
 alpha2=0.625
 alpha3=0.524
 alpha4=0.524
+
+# Settings for the IOT 45 line printer
+# The line printer type defaults to Type 62
+lptType64=false
+# Set the number of lines the spacing field advances for setting 0-7.
+# A setting of 0 means overstrike, -1 means form feed.
+# Note that the Type 62 does overstrikes differently, so setting it here isn't necessary.
+# This if for the Type 62.
+# For the 64, typical would be 0,1,2,3,11,22,33,44,-1
+lptLineSpacing=1,2,3,4,11,22,33,-1
+# Set the lines per page.
+# The default is 66 lines per page.
+# This affects the delay time when a form feed is requested.
+lptLines=66
+# Normally, a form feed puts a form feed character in the file.
+# If this is on, the necessary number of newlines is used instead.
+lptNoFF=yes

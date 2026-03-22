@@ -18,6 +18,7 @@
  * 16-Mar-26 wje major chage to add multiple source file support
  * 17-Mar-26 wje align -0 processing with am1 and the PDP-1, add mod operator, add tape loading
  * 18-Mar-26 wje unify lexing of file name for file and load, fix typos in help text
+ * 22-Mar-26 wje update to use new decodeInstr()
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -154,7 +155,7 @@ extern MapEntryP getLinesFromAddress(int addr);
 extern int signExtend(int oc);
 extern int twosCompl(int val);
 extern char *findNameByAddr(u32 addr);
-extern char *decodeInstr(int value, int addr, char *addrStrP, char *reslltP);
+extern char *decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP, char *resultP);
 extern bool loadFileMap(bool fromLst, char *filenameP);
 extern bool printLines(MapEntryP entryP);
 extern bool printNextLine(void);
@@ -354,7 +355,7 @@ char line[256];
                 i = activeBrkP->address;
                 cP = findNameByAddr(i);
                 i = pdp1P->core[i];
-                decodeInstr(i, i & 0777, cP, line);
+                decodeInstr(i, i & 0777, false, " ", cP, line);
                 printf(": %s\n", line);
             }
 
@@ -378,7 +379,7 @@ char line[256];
                 i = activeBrkP->address;
                 cP = findNameByAddr(i);
                 i = pdp1P->core[i];
-                decodeInstr(i, i & 0777, cP, line);
+                decodeInstr(i, i & 0777, false, " ", cP, line);
                 printf(": %s\n", line);
             }
 
@@ -506,7 +507,7 @@ char tmpstr[128];
         // Might be an address?
         addr = (value & 0777) | (curBank << 12);
         cP = findNameByAddr(addr);
-        decodeInstr(value, value & 0777, cP, tmpstr);
+        decodeInstr(value, value & 0777, false, " ", cP, tmpstr);
         printf("%s",  tmpstr);
     }
     else if( fmt == ASCII )

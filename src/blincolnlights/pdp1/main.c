@@ -25,6 +25,7 @@
 #include "args.h"
 #include "panel_pidp1.h"    // wje - add, only a typedef was here, not the thing being typedefed!
 
+#include "configuration.h"
 #define NOTIOTH
 #include "dynamicIots.h"
 #include "highSpeedChannels.h"
@@ -35,7 +36,6 @@
 #define LOG_SHM 0
 #define LOG_WATCH 0
 #define LOG_BREAK 0
-#define LOG_CONFIG 0
 
 // If present, will set the startup state of audio, lightpen support, etc.
 // See the distributed one for all settings.
@@ -45,21 +45,22 @@
 #define NIL 0
 #define Edge(sw) (pdp->sw && !prev_##sw)
 
-void *lightpenListener(void *pdp);
 void updateswitches(PDP1 *pdp, Panel *panel);
 void updatelights(PDP1 *pdp, Panel *panel);
 void lightsoff(Panel *panel);
 void lightson(Panel *panel);
-void loadConfigFile(PDP1 *pdp1P, char *filenameP);
 Panel *getpanel(void);
 
+ConfigurationP getConfigurationP(void);     // so other stuff can use our configuration, like IOTs
+
+extern void *lightpenListener(void *pdp);
+extern ConfigurationP loadConfigFile(char *filenameP);
 static bool checkBreakpoints(PDP1 *pdp1P);
 static bool checkWatches(PDP1 *pdp1P);
 
 PDP1P pdp1P;      // Here because dynamic IOT code needs it
 
 extern int penAperture;
-extern int penRadius2;
 extern bool lightpenEnabled;
 extern bool sdbEnabled;
 extern bool dpyShiftEnabled;
@@ -67,8 +68,9 @@ extern bool audioEnabled;
 extern bool lailiaEnabled;
 extern bool core1DEnabled;
 extern bool all1DEnabled;
-
 static bool useShm;
+
+ConfigurationP configurationP;  // from the config file
 
 void
 emu(PDP1 *pdp, Panel *panel)
@@ -440,150 +442,6 @@ sighandler(int sig)
 {
     exit(0);
 }
-
-
-// The config file has a simple format.
-// Lines starting with '#' are comments and are ignored.
-// Empty lines are ignored.
-// Otherwise, a line of the form 'xxx=yyy' is expected.
-// Embedded spaces are ignored.
-// The meaning of 'yyy' depends upon the option.
-// For an option that is on or off, 'y', 'yes', or 'on' means enable, anything else means disable.
-// Invalid lines and options are reported on stderr.
-void
-loadConfigFile(PDP1 *pdp1P, char *filenameP)
-{
-int i;
-bool onOff;
-FILE *fP;
-char line[256];
-char option[64];
-char answer[64];
-
-    if( !(fP = fopen(filenameP, "r")) )
-    {
-        return;
-    }
-
-    while( fgets(line, sizeof(line), fP) )
-    {
-        if( (line[0] == '#') || (line[0] == '\n') )
-        {
-            continue;
-        }
-
-        logger(LOG_CONFIG, "%s", line);
-        if( (i = sscanf(line, "%[a-zA-Z0-9] = %[a-zA-Z0-9.]", option, answer)) != 2 )
-        {
-            logger(LOG_CONFIG, "invalid\n");
-            fprintf(stderr, "Invalid config file line %d, %s", i, line);
-            continue;
-        }
-
-        onOff = !strcmp(answer,"y") || !strcmp(answer,"yes") || !strcmp(answer,"on");
-
-        if( !strcmp(option,"audio") )
-        {
-            audioEnabled = onOff;
-        }
-        else if( !strcmp(option,"samplerate") )
-        {
-            setSampleRate(atoi(answer));
-        }
-        else if( !strcmp(option,"alpha") )
-        {
-            setFilterAlpha(atof(answer));
-        }
-        else if( !strcmp(option,"alpha1") )
-        {
-            setFilter1Alpha(atof(answer));
-        }
-        else if( !strcmp(option,"alpha2") )
-        {
-            setFilter2Alpha(atof(answer));
-        }
-        else if( !strcmp(option,"alpha3") )
-        {
-            setFilter3Alpha(atof(answer));
-        }
-        else if( !strcmp(option,"alpha4") )
-        {
-            setFilter4Alpha(atof(answer));
-        }
-        else if(strcmp(option, "gain") == 0)
-        {
-            setMixerGain(atof(answer));
-        }
-        else if(strcmp(option, "tuning") == 0)
-        {
-            setAudioTuning(atof(answer));
-        }
-        else if( !strcmp(option,"lightpen") )
-        {
-            lightpenEnabled = onOff;
-        }
-        else if( !strcmp(option,"aperture") )
-        {
-            penAperture = atoi(answer);
-            penRadius2 = (penAperture/2) * (penAperture/2);
-        }
-        else if( !strcmp(option,"dpyshift") )
-        {
-            dpyShiftEnabled = onOff;
-        }
-        else if( !strcmp(option,"sdb") )
-        {
-            sdbEnabled = onOff;
-        }
-        else if( !strcmp(option,"sbs16") )
-        {
-            pdp1P->sbs16 = onOff;
-        }
-        else if( !strcmp(option,"lailia") )
-        {
-            lailiaEnabled = onOff;
-        }
-        else if( !strcmp(option,"core1D") )
-        {
-            core1DEnabled = onOff;
-        }
-        else if( !strcmp(option,"all1D") )
-        {
-            all1DEnabled = onOff;
-        }
-        else if( !strcmp(option,"muldiv") )
-        {
-            pdp1P->muldiv_sw = onOff;
-        }
-        else if(!strcmp(option, "shared"))
-        {
-            // Put the PDP1 struct in shared memory for use with other tools
-            useShm = true;
-        }
-    }
-
-    if( all1DEnabled )
-    {
-        core1DEnabled = true;
-    }
-
-    if( core1DEnabled )
-    {
-        lailiaEnabled = true;
-    }
-
-    logger(LOG_CONFIG, "lightpen %d\n", lightpenEnabled);
-    logger(LOG_CONFIG, "sdb %d\n", sdbEnabled);
-    logger(LOG_CONFIG, "dpy shift %d\n", dpyShiftEnabled);
-    logger(LOG_CONFIG, "audio %d\n", audioEnabled);
-    logger(LOG_CONFIG, "lailia %d\n", lailiaEnabled);
-    logger(LOG_CONFIG, "core 1D %d\n", core1DEnabled);
-    logger(LOG_CONFIG, "all 1D %d\n", all1DEnabled);
-    logger(LOG_CONFIG, "shm %d\n", useShm);
-
-    fclose(fP);
-}
-
 int
 main(int argc, char *argv[])
 {
@@ -627,10 +485,21 @@ int shmFd;
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
 
-    loadConfigFile(pdp, CONFIG_FILE);
+    configurationP = loadConfigFile(CONFIG_FILE);
+    pdp->muldiv_sw = configurationP->muldivEnabled;
+    pdp->sbs16 = configurationP->sbs16Enabled;
+    penAperture = configurationP->penAperture;
+    lightpenEnabled = configurationP->lightpenEnabled;
+    sdbEnabled = configurationP->sdbEnabled;
+    dpyShiftEnabled = configurationP->dpyShiftEnabled;
+    audioEnabled = configurationP->audioEnabled;
+    lailiaEnabled = configurationP->lailiaEnabled;
+    core1DEnabled = configurationP->core1DEnabled;
+    all1DEnabled = configurationP->all1DEnabled;
+    useShm = configurationP->useShm;
 
     // Now check for shared mem use
-    if( useShm )
+    if( configurationP->useShm )
     {
         shmFd = shm_open(SHM_NAME, O_RDWR | O_CREAT, 0666);
         if( shmFd < 0 )
@@ -664,7 +533,6 @@ int shmFd;
     memsz = MAXMEM;
     readmem("coremem", memp, memsz);
 
-    pdp->muldiv_sw = 1;
     startpolling();
 
     pdp->dpy[0].fd = -1;
@@ -776,4 +644,10 @@ WatchP watchP;
 
         return(false);
     }
+}
+
+ConfigurationP
+getConfigurationP()     // so other stuff can use our configuration, like IOTs
+{
+    return( configurationP );
 }

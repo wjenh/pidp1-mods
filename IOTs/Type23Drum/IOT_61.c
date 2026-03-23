@@ -8,7 +8,7 @@
 #include "iotHandler.h"
 
 //#define DOLOGGING
-#include "Logger/iotLogger.h"
+#include "iotLogger.h"
 
 // Flag for busy for the cks instruction
 // DRP set is busy, cleared by operation completion, dia, or dba

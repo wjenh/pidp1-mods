@@ -9,7 +9,7 @@ using similar logic as the Type 62 printer used.
 **NOTE** that the operating mode must be switched to Type 64 from Type 62, Type 62 is the default.\
 Use the lptType64 setting in the /opt/pidp1-mods/pidp1.config file.
 
-Updated 22-Mar-2026
+Updated 23-Mar-2026
 
 ## The output
 
@@ -183,8 +183,8 @@ fname,
 ```
 Note that the file name cannot contain wildcards or other *globbing* characters, those are expanded
 by the shell.
-However, relative paths can be used, *../b*.
-In specific, the path must be one that linux *fopen()* accepts.
+However, ~/, ~username/, and relative paths can be used, *../b*.
+In specific, the path must be one that linux *fopen()* accepts, with the addition of the ~ processing.
 
 Also note that unless an absolute path is given, the file will be relative to the current working directory
 of *the running pdp1 instance*, most likely */opt/pidp1-mods*, don't depend upon it.

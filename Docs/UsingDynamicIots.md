@@ -2,6 +2,8 @@
 
 This document describes the funcionality and now to create your own IOTs.
 
+Updated 23-Mar-2026
+
 ## What is a dynamic IOT?
 
 A dynamic IOT is a compiled shared object that has a specific name and implements specific methods.
@@ -28,9 +30,12 @@ You can see the required three includes in any of the examples, they are:
 ```
 The Makefile properly adds the paths to those.
 
+Alternatively, you can add a directory as was done for the distributed IOTs, just follow the same
+pattern.
+
 ## How do I implement one?
 
-At a minimum, implement the `iotHandler(PDP1 \*hardware, int device, int pulse, int completion)` function or
+At a minimum, implement the `iotHandler(PDP1 *state, int device, int pulse, int completion)` function or
 if another IOT is going to also handle your new one, iotIsAlias(otherIOTnumber).
 This method is called twice for each time the corresponding IOT is executed.
 Why twice? This emulates the way the original hardware worked.
@@ -38,7 +43,7 @@ The first call with the `pulse` argument being 1 mimics the first pulse that wou
 to an actual hardware implementation.
 The second call with the `pulse` argument being 0 mimics the second pulse that would have been sent.
 Technically, the first occurs at hardware subclock time TP7, the second at TP10.
-The function *must* return a 1. If it returns 0, that causes the emulator to treat it as an unknown IOT.
+The function *must* return a 1. If it returns 0, that causes the emulator to treat it as an unknown IOT and halt.
 
 It and several other functions are passed a PDP1 \* argument. This is a pointer to the entire state of the emulator.
 It can be used to access various registers and even change the pc. But, use with care, don't set random things.
@@ -74,6 +79,35 @@ This behavior can't be bypassed.
 This is again a strange real PDP-1 behavior. So, don't get caught by it if you're passing control information
 in the IO register and use an IOT in that range!
 
+## Be Careful!
+
+Your IOT will running in the pdp1 emulator instance.
+If you make a mistake, you can crash it.
+The obvious indication of that is that the panel lights stop and switches do nothing.
+
+You can see what the problem was fairly easily, but there are several steps.
+
+First, be sure everything is cleaned up.
+This is done most easily by using **pidp1control** to start again, then use it to stop.
+This will ensure all the subordinate processes are terminated, like the panel driver and such.
+
+Then, in the /opt/pidp1/src/blinconlnlights/pdp1 directory:\
+gdb pdp1\
+and type r at the prompt.
+
+But, now how to actually start your program?\
+Use *ad1*, the pidp-1 debugger:\
+ad1\
+and then type:\
+load yourprog.rim
+
+When the load finishes, type:\
+start
+
+Then, when the crash happens, gdb will tell you where and why.
+Most commonly, you forgot to link in a library file in your Makefile
+or you trashed memory.
+
 ## Waits, completions, and pulses
 
 IOTs are called twice, once at the internal subclock time TP7 with pulse set to 0, and again
@@ -82,7 +116,7 @@ In the original hardware, the first time was intended to have IOT hardware do an
 second time for it to complete its operation.
 
 This isn't normally important to you, **EXCEPT** for the case where an IOT is called in 'wait' mode,
-i and c, bits 5 and 6, are 1,0, then you **must** call `IOCOMPLETE()` or IOCOMPLETE_IFNEEDED()
+i and c, bits 5 and 6, are 1,0 or 0,1, then you **must** call `IOCOMPLETE()` or IOCOMPLETE_IFNEEDED()
 at some point, either in the IOT or in a poll.
 Until this is done, the emulator will enter and remain in 'io hold' state.
 
@@ -142,6 +176,14 @@ Otherwise, you will be polled every `value` instruction cycles.
 One cycle is 5 microseconds, so the minimum granularity is that.
 If you don't need to be polled as frequently, set a longer poll interval to reduce processor loading.
 
+It's good practice to disable polling if your IOT has finished what it needs to do, you can enable it again
+when necessary.
+
+## Library code
+
+Some useful library functions are provided in the Lib directory, see them for details.
+Examples are also in DCS2, Type62and64Printer, etc.
+
 ## Logging
 
 A logging facility is provided:
@@ -151,14 +193,30 @@ A logging facility is provided:
 ```
 within your code:
 ```
-iotLog("format like printf", ....);
+iotLog(boolean enable, "format like printf", ....);
 ```
-`iotCloseLog()` to close the log file can be called if you have an iotStop() implemented,
-but it's not actually required. The output to the log file is flushed after each log call.
+
+You can use `iotCloseLog()` to close the log file but it's not actually required.
+The output to the log file is flushed after each log call.
 The debug output will be written to the file `/tmp/iot.dbg`.
+
+You can log different kinds of events, controlled by the `enable` flag. If it is 0, nothing will be logged,
+nonzero, the message will be logged. See some of the provided IOTs for examples.
 
 If DOLOGGING is not defined then any log statements are dropped.
 This allows debugging to be turned on and off.
+
+## Configuration for your IOTs
+
+If you want to have configurable features controlled via the /opt/pidp1-mods/pidp-1.config file, it's easy to do.
+Two functions are provided automatically, you don't have to explicitly link them:
+
+```
+ConfigurationP getConfiguration(void)
+ConfigurationSettingP findConfigurationSetting(ConfigurationP configP, char *nameP)
+```
+
+See the code in the Type62and64 directory for examples.
 
 ## All functions and defines
 
@@ -178,12 +236,7 @@ Defines
 
 ## Final notes
 
-The MACRO1 assembler only recognizes the 3 letter names for esm and lsm for any other than the basic IOTs.
-You have to construct the instructions for asb and dsb and some others, typically with a `define` in the source.
-
-As of this writing the 16 channel system is not enabled in the emulator, nor is there any way to do so
-other than via a dyamic IOT.
-IOT_60, included, is an example of how to enable/disable it.
+If you use the **am1** assembler, include files for the provided IOTs are in the /opt/pidp1-mods/Am1 directory.
 
 IMPORTANT - once loaded, a handler stays loaded until the pidp1 emulator is shut down and restarted.
 So, if you change your handler, restart or it won't work properly.

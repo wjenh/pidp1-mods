@@ -51,7 +51,7 @@ void lightsoff(Panel *panel);
 void lightson(Panel *panel);
 Panel *getpanel(void);
 
-ConfigurationP getConfigurationP(void);     // so other stuff can use our configuration, like IOTs
+ConfigurationP getConfiguration(void);     // so other stuff can use our configuration, like IOTs
 
 extern void *lightpenListener(void *pdp);
 extern ConfigurationP loadConfigFile(char *filenameP);

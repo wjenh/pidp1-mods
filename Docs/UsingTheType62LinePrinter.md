@@ -8,7 +8,7 @@ It could print 600 lines per minute.
 **NOTE** that the operating mode can be switched to Type 64 if desired.\
 Use the lptType64 setting in the /opt/pidp1-mods/pidp1.config file.
 
-Updated 22-Mar-2026
+Updated 23-Mar-2026
 
 ## The output
 
@@ -30,11 +30,19 @@ Timing is from the information in the PDP-1 Handbook.
 
 Loading characters into the line printer buffer complete in one cycle, 5us.\
 Printing a line takes 84 milliseconds.\
-Spacint a line or lines takes 16 milliseconds per line, 1 line printed and spaced by 1 takes 100 milliseconds,
+Spacing a line or lines takes 16 milliseconds per line, 1 line printed and spaced by 1 takes 100 milliseconds,
 600 lines per minute.
 
-New characters could be transferred while line spacing is being done, but this implementation allows that as
-soon as the print line instruction is executed, no waiting is required.
+There is some conflicting information, though.
+The Type 62 manual for the PDP-4 states a spacing time of 7.5 msecs.
+There are also varying descriptions of the Type 62 stating printing speeds of 600 lpm or 1000 lpm.
+The above are used, since that is what is in the PDP-1 Handbook.
+
+New characters could be transferred while line spacing is being done but not when the line was being printed.
+However this implementation allows new characters to be sent as soon as the print line instruction, *prl*
+is executed, no waiting is required.
+
+However, see *Overstrike* below.
 
 ## Configuration
 
@@ -63,19 +71,23 @@ A -1 means form-feed.
 The original printer supported overstriking.
 This meant that the paper was not advanced when a *prl* instruction was issued, but the characters were printed.
 Subsquent characters would be printed over existing characters on that line, overstruck.
+The paper was only advanced when an *slp* was executed.
 
-This can't be properly emulated.
-An overstruck line resets the character position to the beginning of the line, preserving the current contents
-of the print buffer.
+This can't be properly emulated because a text file is being created, and you can't overstrike in that.
+For this implementation, *prl* resets the character position to the beginning of the line,
+preserving the current contents of the print buffer.
 New characters wil replace existing characters.
 
 For example:
 ```
 abcdef in buffer
-prl overstrike
-xyz
+prl
+flb xyz
 xyzdef now in buffer
+
+slp
 ```
+The output will be a line *xyzdef*.
 
 ## The IOT instructions
 
@@ -137,8 +149,13 @@ The value of *x* selects one of 8 spacings, the default values are:
 - 7 insert a form-feed character after the current line
 
 The original printer had a changeable spacing tape so customers could configure the number
-of lines for each advance.\
+of lines for each spacing.\
 This is supported by the lptLineSpacing setting in the /opt/pidp1-mods/pidp1.config file.
+
+Existing documentation has conflicting descriptions of the spacing tape function, some indicates
+that all 8 formats can be defined, others that formats 0 and 7 are fixed to be overstrike and form-feed
+respectively.
+This implementation allows all to be changed.
 
 ## The prl instruction
 
@@ -188,8 +205,8 @@ fname,
 ```
 Note that the file name cannot contain wildcards or other *globbing* characters, those are expanded
 by the shell.
-However, relative paths can be used, *../b*.
-In specific, the path must be one that linux *fopen()* accepts.
+However, ~/, ~username/, and relative paths can be used, *../b*.
+In specific, the path must be one that linux *fopen()* accepts, with the addition of the ~ processing.
 
 Also note that unless an absolute path is given, the file will be relative to the current working directory
 of *the running pdp1 instance*, most likely */opt/pidp1-mods*, don't depend upon it.

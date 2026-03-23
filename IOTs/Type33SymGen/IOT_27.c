@@ -16,7 +16,7 @@
 #include "iotHandler.h"
 
 //#define DOLOGGING
-#include "Logger/iotLogger.h"
+#include "iotLogger.h"
 
 #define GPLBIT 02000
 #define GCFBIT 00100

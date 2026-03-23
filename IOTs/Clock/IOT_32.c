@@ -3,7 +3,7 @@
 #include "iotHandler.h"
 
 //#define DOLOGGING
-#include "Logger/iotLogger.h"
+#include "iotLogger.h"
 
 // cks bit 13 is set when the countdown timer completes, cleared when counter is set again or reset
 #define COUNTER_CKS_FLAG 0000020

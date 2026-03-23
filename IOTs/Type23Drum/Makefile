@@ -1,4 +1,13 @@
-all: drumloader.rim rotate.rim drumdiag.rim drumtest.rim
+INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib
+%.o:%.c ../iotHandler.h ../Lib/iotLogger.h
+	gcc $(INC) -fPIC -c $< -o $@
+%.so:%.o
+	gcc -shared $< -o $@
+
+install: IOT_61.so IOT_62.so IOT_63.so
+	cp *.so ..
+
+progs: drumloader.rim rotate.rim drumdiag.rim drumtest.rim
 
 drumloader.rim: drumloader.mac
 	../../bin/macro1_1 -r drumloader.mac
@@ -13,5 +22,4 @@ drumdiag.rim: drumdiag.mac
 	../../bin/macro1_1 drumdiag.mac
 
 clean:
-	rm *.rim
-	rm *.lst
+	@rm *.o *.so *.rim *.lst 2>/dev/null || true

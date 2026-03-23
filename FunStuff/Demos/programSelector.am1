@@ -115,7 +115,7 @@ gotOne,
     dac txtPtr          // now points to the text of the selection
 // start the countdown timer, 1 second interval
      law 0d1000         // delay in milliseconds
-     cct                // go, cks bit 13 will be set when done
+     cct                // go, cks bit 13, cctcks, will be set when done
 
 waitLoop,
     cks
@@ -125,7 +125,7 @@ waitLoop,
     idx ctr
     sza i
     jmp go
-    law 0d1000          // keep going
+    law 0d1000          // keep going, 1 sec delay
     cct
 
 w2,                     // we're waiting, update the display

@@ -40,6 +40,7 @@ static Configuration configSettings = {
     .alpha3 = 0.524,
     .alpha4 = 0.524,
     .gain = 1.5,
+    .tuning = 1.0,
     .muldivEnabled = true,
     .core1DEnabled = true
 };

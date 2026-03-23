@@ -70,7 +70,7 @@ aperture=22
 # gain sets the 4 channel mixer gain, caution, too high and clipping will occur.
 # tuning shifts the frequency, but is not implemented until SDL3 is available.
 audio=off
-alpha=0.10
+alpha=0.20
 gain=1.5
 tuning=0.0
 # samplerate sets how often audio is sent to SDL in 1/rate seconds, or 1000000/rate microseconds.

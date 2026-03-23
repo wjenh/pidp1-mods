@@ -3103,14 +3103,15 @@ static char resp[1024];
                 else if(strcmp(args[1], "query") == 0)
                 {
                     sprintf(resp,
-                "Audio %s, alpha1 %f, alpha2 %f, alpha3 %f, alpha4 %f, gain %f, tuning %f\n",
+            "Audio %s, alpha1 %f, alpha2 %f, alpha3 %f, alpha4 %f, gain %f, tuning %f sample rate %d",
                         audioEnabled?"on":"off",
                         getFilter1Alpha(),
                         getFilter2Alpha(),
                         getFilter3Alpha(),
                         getFilter4Alpha(),
                         getMixerGain(),
-                        getAudioTuning());
+                        getAudioTuning(),
+                        getSampleRate());
                 }
                 else if(strcmp(args[1], "alpha") == 0)
                 {
@@ -3153,6 +3154,12 @@ static char resp[1024];
                     alpha = atof(args[2]);
                     setAudioTuning(alpha);
                     sprintf(resp, "Tuning now %f", alpha);
+                }
+                else if(strcmp(args[1], "rate") == 0)
+                {
+                    n = atoi(args[2]);
+                    setSampleRate(n);
+                    sprintf(resp, "Sample rate now %d", n);
                 }
             }
             else

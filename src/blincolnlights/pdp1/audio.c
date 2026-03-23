@@ -177,6 +177,14 @@ setSampleRate(int usecs)
     sampleRate = usecs;
 }
 
+// Get the sampling rate for SDB.
+// Oversampling is ok.
+int
+getSampleRate()
+{
+    return(sampleRate);
+}
+
 // Set all filters to the same alpha
 void
 setFilterAlpha(float newAlpha)

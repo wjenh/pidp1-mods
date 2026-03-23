@@ -500,6 +500,7 @@ int shmFd;
 
     setMixerGain(configurationP->gain);
     setAudioTuning(configurationP->tuning);
+    setSampleRate(configurationP->sampleRate);
     setFilterAlpha(configurationP->alpha);
     setFilter1Alpha(configurationP->alpha1);
     setFilter2Alpha(configurationP->alpha2);

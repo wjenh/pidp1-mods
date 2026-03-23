@@ -250,4 +250,6 @@ void setMixerGain(float);
 float getMixerGain(void);
 void setAudioTuning(float);
 float getAudioTuning(void);
+void setSampleRate(int);
+int  getSampleRate(void);
 extern int doaudio;

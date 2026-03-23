@@ -23,9 +23,10 @@ float fval;
             strcmp(argv[1], "alpha3") &&
             strcmp(argv[1], "alpha4") &&
             strcmp(argv[1], "gain") &&
+            strcmp(argv[1], "rate") &&
             strcmp(argv[1], "tuning") )
         {
-            fprintf(stderr,"Usage: pdp1audio [alpha[1-4]|gain|tuning] value\n");
+            fprintf(stderr,"Usage: pdp1audio [alpha[1-4]|gain|tuning|rate] value\n");
             exit(1);
         }
     }

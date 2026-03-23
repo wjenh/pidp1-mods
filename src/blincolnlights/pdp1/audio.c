@@ -30,14 +30,15 @@ static int isStopped = 1;
 static int isInitialized = 0;
 static int sampleRate = SAMPLE_RATE;
 
-static float alpha = ALPHA;
+// Set default values
 static float mixerGain = MIXGAIN;
 static float tuning = 1.0;
 
-static FilterSpec voice1;
-static FilterSpec voice2;
-static FilterSpec voice3;
-static FilterSpec voice4;
+// We set initial values for alpha
+static FilterSpec voice1 = {.alpha = ALPHA};
+static FilterSpec voice2 = {.alpha = ALPHA};
+static FilterSpec voice3 = {.alpha = ALPHA};
+static FilterSpec voice4 = {.alpha = ALPHA};
 
 static void openAudio(void);
 
@@ -53,10 +54,10 @@ initaudio(void)
 
     // Be careful with the gain, SDL will clip if the sample value sent to it is outside the range of -1.0 to 1.0.
     // HIVAL, LOWVAL are the maximum ranges for SDL input, so the gain should generally not be greater than 1.
-    initializeFilter(&voice1, alpha, FILTERGAIN, LOWVAL);
-    initializeFilter(&voice2, alpha, FILTERGAIN, LOWVAL);
-    initializeFilter(&voice3, alpha, FILTERGAIN, LOWVAL);
-    initializeFilter(&voice4, alpha, FILTERGAIN, LOWVAL);
+    initializeFilter(&voice1, FILTERGAIN, LOWVAL);
+    initializeFilter(&voice2, FILTERGAIN, LOWVAL);
+    initializeFilter(&voice3, FILTERGAIN, LOWVAL);
+    initializeFilter(&voice4, FILTERGAIN, LOWVAL);
 
     openAudio();
 
@@ -180,6 +181,8 @@ setSampleRate(int usecs)
 void
 setFilterAlpha(float newAlpha)
 {
+float alpha;
+
     alpha = boundValue(newAlpha);
     voice1.alpha = alpha;
     voice2.alpha = alpha;
@@ -191,6 +194,8 @@ setFilterAlpha(float newAlpha)
 void
 setFilter1Alpha(float newAlpha)
 {
+float alpha;
+
     alpha = boundValue(newAlpha);
     voice1.alpha = alpha;
 }
@@ -198,6 +203,8 @@ setFilter1Alpha(float newAlpha)
 void
 setFilter2Alpha(float newAlpha)
 {
+float alpha;
+
     alpha = boundValue(newAlpha);
     voice2.alpha = alpha;
 }
@@ -205,6 +212,8 @@ setFilter2Alpha(float newAlpha)
 void
 setFilter3Alpha(float newAlpha)
 {
+float alpha;
+
     alpha = boundValue(newAlpha);
     voice3.alpha = alpha;
 }
@@ -212,14 +221,34 @@ setFilter3Alpha(float newAlpha)
 void
 setFilter4Alpha(float newAlpha)
 {
+float alpha;
+
     alpha = boundValue(newAlpha);
     voice4.alpha = alpha;
 }
 
 float
-getFilterAlpha()
+getFilter1Alpha()
 {
-    return( alpha );
+    return( voice1.alpha );
+}
+
+float
+getFilter2Alpha()
+{
+    return( voice2.alpha );
+}
+
+float
+getFilter3Alpha()
+{
+    return( voice3.alpha );
+}
+
+float
+getFilter4Alpha()
+{
+    return( voice4.alpha );
 }
 
 void

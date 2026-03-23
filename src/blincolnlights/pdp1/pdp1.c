@@ -2935,6 +2935,7 @@ handlecmd(PDP1 *pdp, char *line)
 {
 int n;
 int fd;
+float alpha;
 char *p;
 
 static const char *host = "localhost";
@@ -3101,20 +3102,57 @@ static char resp[1024];
                 }
                 else if(strcmp(args[1], "query") == 0)
                 {
-                    sprintf(resp, "Audio %s, current alpha %f, current gain %f, current tuning %f\n",
-                        audioEnabled ? "on" : "off", getFilterAlpha(), getMixerGain(), getAudioTuning());
+                    sprintf(resp,
+                "Audio %s, alpha1 %f, alpha2 %f, alpha3 %f, alpha4 %f, gain %f, tuning %f\n",
+                        audioEnabled?"on":"off",
+                        getFilter1Alpha(),
+                        getFilter2Alpha(),
+                        getFilter3Alpha(),
+                        getFilter4Alpha(),
+                        getMixerGain(),
+                        getAudioTuning());
                 }
                 else if(strcmp(args[1], "alpha") == 0)
                 {
-                    setFilterAlpha(atof(args[2]));
+                    alpha = atof(args[2]);
+                    setFilterAlpha(alpha);
+                    sprintf(resp, "Alpha for all channels now %f", alpha);
+                }
+                else if(strcmp(args[1], "alpha1") == 0)
+                {
+                    alpha = atof(args[2]);
+                    setFilter1Alpha(alpha);
+                    sprintf(resp, "Alpha channel 1 now %f", alpha);
+                }
+                else if(strcmp(args[1], "alpha2") == 0)
+                {
+                    alpha = atof(args[2]);
+                    setFilter2Alpha(alpha);
+                    sprintf(resp, "Alpha channel 2 now %f", alpha);
+                }
+                else if(strcmp(args[1], "alpha3") == 0)
+                {
+                    alpha = atof(args[2]);
+                    setFilter3Alpha(alpha);
+                    sprintf(resp, "Alpha channel 3 now %f", alpha);
+                }
+                else if(strcmp(args[1], "alpha4") == 0)
+                {
+                    alpha = atof(args[2]);
+                    setFilter4Alpha(alpha);
+                    sprintf(resp, "Alpha channel 4 now %f", alpha);
                 }
                 else if(strcmp(args[1], "gain") == 0)
                 {
-                    setMixerGain(atof(args[2]));
+                    alpha = atof(args[2]);
+                    setMixerGain(alpha);
+                    sprintf(resp, "Mixer gain now %f", alpha);
                 }
                 else if(strcmp(args[1], "tuning") == 0)
                 {
-                    setAudioTuning(atof(args[2]));
+                    alpha = atof(args[2]);
+                    setAudioTuning(alpha);
+                    sprintf(resp, "Tuning now %f", alpha);
                 }
             }
             else
@@ -3142,7 +3180,7 @@ static char resp[1024];
 
             if(!resp[0])
             {
-                sprintf(resp, "audio now %s", audioEnabled ? "on" : "off");
+                sprintf(resp, "Audio is %s, use query to see more details.", audioEnabled?"on":"off");
             }
         }
     }

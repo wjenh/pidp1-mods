@@ -34,6 +34,6 @@ typedef struct {
     bool deadElimination;   // do stuck high value elimination
     } FilterSpec, *FilterSpecP;
 
-FilterSpecP initializeFilter(FilterSpecP, float, float, float);   // specP alpha, scale, initial value
+FilterSpecP initializeFilter(FilterSpecP, float, float);   // specP alpha, scale, initial value
 void setFilterDeadDetection(FilterSpecP, float, int);
 float lowPassFilter(FilterSpecP, float);

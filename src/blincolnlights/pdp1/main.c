@@ -498,6 +498,14 @@ int shmFd;
     all1DEnabled = configurationP->all1DEnabled;
     useShm = configurationP->useShm;
 
+    setMixerGain(configurationP->gain);
+    setAudioTuning(configurationP->tuning);
+    setFilterAlpha(configurationP->alpha);
+    setFilter1Alpha(configurationP->alpha1);
+    setFilter2Alpha(configurationP->alpha2);
+    setFilter3Alpha(configurationP->alpha3);
+    setFilter4Alpha(configurationP->alpha4);
+
     // Now check for shared mem use
     if( configurationP->useShm )
     {

@@ -11,10 +11,10 @@
 #include "lowpass.h"
 
 // Set the required values for a filter
+// Alpha is not initialized, use the functions in audio.c
 FilterSpecP
-initializeFilter(FilterSpecP specP, float alpha, float gain, float initialValue)
+initializeFilter(FilterSpecP specP, float gain, float initialValue)
 {
-    specP->alpha = boundValue(alpha);
     specP->gain = gain;
     specP->lastResult = 0.0;
     specP->initialValue = initialValue;

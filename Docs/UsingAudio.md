@@ -79,7 +79,8 @@ However, different music uses channels differently, so an overall setting seems 
 
 As alpha is adjusted, the sound quality can suddenly go very much downhill.
 This is a clear sign that the gain needs adjusting, check for overflows and reduce the gain until they stop.
+It is generally the case that the gain setting will be < 1.0.
 
-You can hear the effect by changing the default gain of 0.45 to 0.6.
+You can hear the effect by changing the default gain of 0.95 to 1.1.
 
 Finally, just have fun!

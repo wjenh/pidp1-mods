@@ -141,8 +141,11 @@ void
 svc_audio(PDP1 *pdp)
 {
 int i;
-int16_t buf[2];  // and our converted result
+int16_t scaledMix1, scaledMix2;
 float chan1, chan2, chan3, chan4;
+float mix1, mix2;
+
+int16_t buf[2];  // and our converted result
 
     if( (dev == 0) || (++nexttime < SAMPLE_TIME(sampleRate)) || !isInitialized || isStopped )
     {
@@ -169,9 +172,14 @@ float chan1, chan2, chan3, chan4;
     chan4 = lowPassFilter(&voice4,(pdp->pf & 0x04)?HIVAL:LOWVAL);
 
     // and downmix quad to stereo, map to s16
-    i = (int)(mixSamples(chan1, chan2, mixerGain) * 32767.0);
+    // Use 0.50 because we are combining 2 channels
+    mix1 = mixSamples(chan1, chan2, 0.50) * 32767.0;
+    scaledMix1 = (int16_t)(mix1 * mixerGain);  // and apply the adjustable gain
+    mix2 = mixSamples(chan3, chan4, 0.50) * 32767.0;
+    scaledMix2 = (int16_t)(mix2 * mixerGain);
+
     // Accumulate some statistics for param setting
-    if( i > 32768 )
+    if( (scaledMix1 > 32768) || (scaledMix2 > 32768) )
     {
         ++overflows;
         if(i > posOverflow )
@@ -180,7 +188,7 @@ float chan1, chan2, chan3, chan4;
         }
     }
 
-    if( i < -32767 )
+    if( (scaledMix1 < -32768) || (scaledMix2 < -32768) )
     {
         ++overflows;
         if(i < negOverflow )
@@ -189,28 +197,8 @@ float chan1, chan2, chan3, chan4;
         }
     }
 
-    buf[0] = (int16_t)i;
-
-    i = (int)(mixSamples(chan3, chan4, mixerGain) * 32767.0);
-    if( i > 32768 )
-    {
-        ++overflows;
-        if(i > posOverflow )
-        {
-            posOverflow = i;
-        }
-    }
-
-    if( i < -32767 )
-    {
-        ++overflows;
-        if(i < negOverflow )
-        {
-            negOverflow = i;
-        }
-    }
-
-    buf[1] = (int16_t)i;
+    buf[0] = scaledMix1;
+    buf[1] = scaledMix2;
 
     SDL_QueueAudio(dev, buf, sizeof(buf));
 }

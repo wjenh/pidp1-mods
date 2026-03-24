@@ -73,7 +73,7 @@ aperture=22
 # tuning shifts the frequency, but is not implemented until SDL3 is available.
 audio=off
 alpha=0.20
-gain=0.45
+gain=0.95
 tuning=1.0
 # samplerate sets how often audio is sent to SDL in rate samples per second.
 # However, the 5 usec cycle time of the emulator is the controlling factor, the rate will have a 5 used

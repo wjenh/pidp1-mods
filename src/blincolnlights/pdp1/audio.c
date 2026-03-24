@@ -144,7 +144,7 @@ int i;
 int16_t buf[2];  // and our converted result
 float chan1, chan2, chan3, chan4;
 
-    if( (dev == 0) || (++nexttime < sampleRate) || !isInitialized || isStopped )
+    if( (dev == 0) || (++nexttime < SAMPLE_TIME(sampleRate)) || !isInitialized || isStopped )
     {
         return;
     }
@@ -160,6 +160,7 @@ float chan1, chan2, chan3, chan4;
     }
 
     nexttime = 0;
+    ++nsamples;
 
     // filter each channel
     chan1 = lowPassFilter(&voice1,(pdp->pf & 0x20)?HIVAL:LOWVAL);
@@ -352,9 +353,10 @@ int i;
     if( rsltP )
     {
         *rsltP++ = posOverflow;
-        *rsltP = negOverflow;
+        *rsltP++ = negOverflow;
+        *rsltP = nsamples;
     }
 
-    overflows = posOverflow = negOverflow = 0;
+    nsamples = overflows = posOverflow = negOverflow = 0;
     return( i );
 }

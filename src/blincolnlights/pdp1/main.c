@@ -70,6 +70,25 @@ extern bool core1DEnabled;
 extern bool all1DEnabled;
 static bool useShm;
 
+// All for audio
+extern void setFilterAlpha(float);
+extern void setFilter1Alpha(float);
+extern void setFilter2Alpha(float);
+extern void setFilter3Alpha(float);
+extern void setFilter4Alpha(float);
+extern float getFilterAlpha(void);
+extern float getFilter1Alpha(void);
+extern float getFilter2Alpha(void);
+extern float getFilter3Alpha(void);
+extern float getFilter4Alpha(void);
+extern void setMixerGain(float);
+extern float getMixerGain(void);
+extern void setAudioTuning(float);
+extern float getAudioTuning(void);
+extern void setSampleRate(int);
+extern int getSampleRate(void);
+extern int getOverflowData(int *);
+
 ConfigurationP configurationP;  // from the config file
 
 void

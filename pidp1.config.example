@@ -63,30 +63,31 @@ type30border=yes
 aperture=22
 
 # The following control the audio subsystem.
+# These values give excellent results.
+# It is important to read the UsingAudio.md document in Docs before changing values!!!
 # alpha sets the frequency response of all 4 digital filters the same.
 # It controls the -6db cutoff frequency point for the low pass filters.
-# The value ranges from 0.0 to 1.0; 0.0 means zero frequency, not useful. 1.0 is infinite frequency,
+# The value ranges from 0.0 to 1.0; 0.0 means zero frequency, not useful. 1.0 and greater is infinite frequency,
 # effectively no filtering.
 # gain sets the 4 channel mixer gain, caution, too high and clipping will occur.
 # tuning shifts the frequency, but is not implemented until SDL3 is available.
 audio=off
 alpha=0.20
-gain=1.5
-tuning=0.0
-# samplerate sets how often audio is sent to SDL in 1/rate seconds, or 1000000/rate microseconds.
-# The original music software updated every 175 us, 1000000/5714 is that.
-#samplerate=5714
-
-# This is 2x oversampling
-samplerate=11428
+gain=0.45
+tuning=1.0
+# samplerate sets how often audio is sent to SDL in rate samples per second.
+# However, the 5 usec cycle time of the emulator is the controlling factor, the rate will have a 5 used
+# granularity.
+# The sample rate also directly affects the frequency response of the filters, adjust both as needed.
+samplerate=22000
 
 # Each channel's alpha can also be set separately.
 # The alphas correspond to a cutoff of 4Khz for pf1, 3Knz for pf2, and 2Khz for pf3 and 4.
-# CHM hardwware filters set 1 and 2 to a high cutoff, 3 mid cutoff, 4 low cutoff.
-alpha1=0.687
-alpha2=0.625
-alpha3=0.524
-alpha4=0.524
+# Probably not enoufh filtering, easier to try different setting using the pidpaudio app.
+#alpha1=0.687
+#alpha2=0.625
+#alpha3=0.524
+#alpha4=0.524
 
 # Settings for the IOT 45 line printer
 # The line printer type defaults to Type 62

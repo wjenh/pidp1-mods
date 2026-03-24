@@ -125,6 +125,26 @@ static char *onOff(bool flag);
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
 static bool checkLightPen(PDP1 *pdp1P);
+extern void setSampleRate(int);
+
+// All for audio
+extern void setFilterAlpha(float);
+extern void setFilter1Alpha(float);
+extern void setFilter2Alpha(float);
+extern void setFilter3Alpha(float);
+extern void setFilter4Alpha(float);
+extern float getFilterAlpha(void);
+extern float getFilter1Alpha(void);
+extern float getFilter2Alpha(void);
+extern float getFilter3Alpha(void);
+extern float getFilter4Alpha(void);
+extern void setMixerGain(float);
+extern float getMixerGain(void);
+extern void setAudioTuning(float);
+extern float getAudioTuning(void);
+extern void setSampleRate(int);
+extern int getSampleRate(void);
+extern int getOverflowData(int *);
 
 // The emulator duplicates all of the original hardware
 // subcycles. Impressive.
@@ -2937,6 +2957,7 @@ int n;
 int fd;
 float alpha;
 char *p;
+int overflows[8];
 
 static const char *host = "localhost";
 static int port = 3400;
@@ -3065,8 +3086,7 @@ static char resp[1024];
         {
             if(args[1])
             {
-                if(strcmp(args[1], "on") == 0 ||
-                        strcmp(args[1], "1") == 0)
+                if(strcmp(args[1], "on") == 0 || strcmp(args[1], "1") == 0)
                 {
                     pdp->muldiv_sw = 1;
                 }
@@ -3112,6 +3132,12 @@ static char resp[1024];
                         getMixerGain(),
                         getAudioTuning(),
                         getSampleRate());
+                }
+                else if(strcmp(args[1], "overflow") == 0)
+                {
+                    n = getOverflowData(overflows);
+                    sprintf(resp, "Overflows %d, high %d, low %d, samples %d",
+                        n, overflows[0], overflows[1], overflows[2]);
                 }
                 else if(strcmp(args[1], "alpha") == 0)
                 {

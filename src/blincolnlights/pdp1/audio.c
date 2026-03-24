@@ -1,34 +1,41 @@
+#include <stdbool.h>
+
 #include "common.h"
 #include "pdp1.h"
 #include "lowpass.h"
 
 #include <SDL2/SDL.h>
 
-#define SAMPLE_RATE (5714)          // one sample every 175 us, it's what the original did, oversample if desired
-#define SAMPLE_TIME (1000000000/sampleRate) // scheduling time for pidp1's timing loop
-#define PRELOAD 64                          // number of samples to accumulate in SDL buffer before playing
+#define SAMPLE_TIME(rate) (200000/(rate))    // scheduling time for pidp1's timing loop in cycles
+#define PRELOAD 64                           // number of samples to accumulate in SDL buffer before playing
+#define MINSAMPLES (16 * 2 * sizeof(float))  // number of sample bytes before we send them out
 
 // The values we use for the square wave
 #define HIVAL   1.0
 #define LOWVAL  -HIVAL
 
 // Filter settings
-#define ALPHA 0.10                           // initial value, generally works well
+#define ALPHA 0.20                           // initial value, generally works well
 
 // A FILTERGAIN of 0.0 is the same as 1.0, but avoids one floating multiply per cycle.
 // Normaally, use 0.0 and adjust the gain with MIXGAIN.
 #define FILTERGAIN 0.0
 
 // And output scaling
-// Warning - SDL will clip any audio value <-1.0 or >1.0, so don't set the gain too high, you'll have to experiment.
-#define MIXGAIN 1.5                         // works with the default alpha of 0.1
+// Warning - SDL will clip if you set the gain too high, you'll have to experiment.
+#define MIXGAIN 0.5                         // works with the default alpha
 
 static SDL_AudioDeviceID dev;
+
 static int nsamples;
+static int overflows;
+static int negOverflow;
+static int posOverflow;
 static u64 nexttime;
-static int isStopped = 1;
-static int isInitialized = 0;
-static int sampleRate = SAMPLE_RATE;
+static bool isStopped = true;
+static bool isInitialized = false;
+static bool rateChanged = false;
+static int sampleRate = 22000;
 
 // Set default values
 static float mixerGain = MIXGAIN;
@@ -61,8 +68,8 @@ initaudio(void)
 
     openAudio();
 
-    isInitialized = 1;
-    isStopped = 1;
+    isInitialized = true;
+    isStopped = true;
 }
 
 static void
@@ -71,12 +78,15 @@ openAudio()
 SDL_AudioSpec spec;
 
     memset(&spec, 0, sizeof(spec));
-    spec.freq = sampleRate;        // the original did one sample every 175 us, replicate by default
-    spec.format = AUDIO_F32;
+    spec.freq = sampleRate;
+    spec.format = AUDIO_S16;
     spec.channels = 2;
-    spec.samples = 1024;            // SDL's buffer size
+    spec.samples = 256;            // SDL's buffer size
     spec.callback = nil;
     dev = SDL_OpenAudioDevice(nil, 0, &spec, nil, 0);
+    overflows = 0;
+    negOverflow = 0;
+    posOverflow = 0;
 }
 
 int
@@ -108,7 +118,7 @@ stopaudio(void)
     SDL_ClearQueuedAudio(dev);
     nsamples = 0;
     nexttime = 0;
-    isStopped = 1;
+    isStopped = true;
 }
 
 void
@@ -122,59 +132,96 @@ continueaudio(void)
     SDL_ClearQueuedAudio(dev);              // clean things up, svc_audio() will unpause
     nsamples = 0;
     nexttime = 0;
-    isStopped = 0;
+    isStopped = false;
+    // Start playing
+    SDL_PauseAudioDevice(dev, 0);
 }
 
 void
 svc_audio(PDP1 *pdp)
 {
+int i;
+int16_t buf[2];  // and our converted result
 float chan1, chan2, chan3, chan4;
-float buffer[2];
-u8 s;
 
-    if( (dev == 0) || (nexttime >= pdp->simtime) || !isInitialized || isStopped )
+    if( (dev == 0) || (++nexttime < sampleRate) || !isInitialized || isStopped )
     {
         return;
     }
 
-    if(nexttime == 0)
+    if( dev && rateChanged )
     {
-        nexttime = pdp->simtime + SAMPLE_TIME;
-    }
-    else
-    {
-        nexttime += SAMPLE_TIME;
+        SDL_PauseAudioDevice(dev, 1);
+        SDL_CloseAudioDevice(dev);
+        dev = 0;
+        openAudio();
+        SDL_PauseAudioDevice(dev, isStopped);
+        rateChanged = false;
     }
 
-    // queue up a reasonable number of samples, power of 2 is preferred
-    if(nsamples < PRELOAD)
-    {
-        nsamples++;
-    }
-    else
-    {
-        // then start playing
-        SDL_PauseAudioDevice(dev, 0);
-    }
+    nexttime = 0;
 
     // filter each channel
     chan1 = lowPassFilter(&voice1,(pdp->pf & 0x20)?HIVAL:LOWVAL);
     chan2 = lowPassFilter(&voice2,(pdp->pf & 0x10)?HIVAL:LOWVAL);
     chan3 = lowPassFilter(&voice3,(pdp->pf & 0x08)?HIVAL:LOWVAL);
     chan4 = lowPassFilter(&voice4,(pdp->pf & 0x04)?HIVAL:LOWVAL);
-    // and downmix quad to stereo
-    buffer[0] = mixSamples(chan1, chan2, mixerGain);
-    buffer[1] = mixSamples(chan3, chan4, mixerGain);
 
-    SDL_QueueAudio(dev, buffer, 2 * sizeof(float));
+    // and downmix quad to stereo, map to s16
+    i = (int)(mixSamples(chan1, chan2, mixerGain) * 32767.0);
+    // Accumulate some statistics for param setting
+    if( i > 32768 )
+    {
+        ++overflows;
+        if(i > posOverflow )
+        {
+            posOverflow = i;
+        }
+    }
+
+    if( i < -32767 )
+    {
+        ++overflows;
+        if(i < negOverflow )
+        {
+            negOverflow = i;
+        }
+    }
+
+    buf[0] = (int16_t)i;
+
+    i = (int)(mixSamples(chan3, chan4, mixerGain) * 32767.0);
+    if( i > 32768 )
+    {
+        ++overflows;
+        if(i > posOverflow )
+        {
+            posOverflow = i;
+        }
+    }
+
+    if( i < -32767 )
+    {
+        ++overflows;
+        if(i < negOverflow )
+        {
+            negOverflow = i;
+        }
+    }
+
+    buf[1] = (int16_t)i;
+
+    SDL_QueueAudio(dev, buf, sizeof(buf));
 }
 
-// set the sampling rate for SDB.
+// Set the sampling rate for SDB.
 // Oversampling is ok.
+// Requires a teardown and reopen.
 void
-setSampleRate(int usecs)
+setSampleRate(int perSec)
 {
-    sampleRate = usecs;
+    sampleRate = perSec;
+    rateChanged = true;
 }
 
 // Get the sampling rate for SDB.
@@ -198,7 +245,7 @@ float alpha;
     voice4.alpha = alpha;
 }
 
-// Individual channel tuning
+// Individual channel filter adjustment
 void
 setFilter1Alpha(float newAlpha)
 {
@@ -277,19 +324,13 @@ getMixerGain()
 }
 
 // 1.0 is no tuning, >1.0 raises pitch, <1.0 lowers pitch
-// Needs SDL3, which isn't being used currently, so this does nothing
+// SDL2 doesn't have a tuning offset, so this doesn't actually do anything.
 void
 setAudioTuning(float newTuning)
 {
     if( newTuning > 0.0 )
     {
         tuning = newTuning;
-        if( dev != 0 )
-        {
-        /* If we were using SDL3, this would be simple, but we're not.
-            SDL_SetAudioStreamFrequencyRatio(tuning);
-        */
-        }
     }
 }
 
@@ -297,4 +338,23 @@ float
 getAudioTuning()
 {
     return( tuning );
+}
+
+// Expects an int[2], returns current overflow count, if rsltP is not null,
+// puts max max value seen, min value seen in the array and resets the values.
+int
+getOverflowData(int *rsltP)
+{
+int i;
+
+    i = overflows;
+
+    if( rsltP )
+    {
+        *rsltP++ = posOverflow;
+        *rsltP = negOverflow;
+    }
+
+    overflows = posOverflow = negOverflow = 0;
+    return( i );
 }

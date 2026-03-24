@@ -1,3 +1,5 @@
+// Utility for monitoring and changing values for the PDP-1 music output.
+// Read the documentation in Docs!
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -32,7 +34,9 @@ float fval;
     }
     else if( argc != 2 )
     {
-        fprintf(stderr,"Usage: pdp1audio on/off\n");
+        fprintf(stderr,"Usage: pdp1audio on/off|query|overflow\n");
+        fprintf(stderr,"or:    pdp1audio [alpha[1-4]|gain|tuning|rate] value\n");
+        fprintf(stderr,"alpha sets the alpha for all filters, the specifis ones just for a channel\n");
         exit(1);
     }
 

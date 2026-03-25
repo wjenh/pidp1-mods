@@ -13,8 +13,16 @@
  * wje 05-Jan-26 break from original repo, now independent. Initial reformatting. New features.
  * wje 08-Feb-26 rework lightpen code
  * wje 04-Mar-26 clean up unused code, add window scaling from config file
+ * wje 25-Mar-26 fix mouse coords when window size is not 1024x1024, fix display scaling when size < 1024
  *
 */
+
+//#define DOLOGGING
+#include "../blincolnlights/logger.h"
+// Set desired log type to 1 to enable output assuming logging is defined.
+#define LOG_LIGHTPEN 0
+#define LOG_MOUSE 0
+#define LOG_DEBUG 0
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -37,12 +45,6 @@
 #include <SDL.h>
 #include "glad/glad.h"
 
-//#define DOLOGGING
-#include "../blincolnlights/logger.h"
-// Set desired log type to 1 to enable output assuming logging is defined.
-#define LOG_SCALING 0
-#define LOG_LIGHTPEN 0
-
 typedef uint64_t uint64;
 typedef uint32_t uint32;
 typedef uint16_t uint16;
@@ -54,16 +56,35 @@ typedef uint8_t uint8;
 #define WIDTH 1024
 #define HEIGHT 1024
 #define BORDER 2
-int winSize = WIDTH;                 // default if nothing set
-int fullWidth = (WIDTH + 2*BORDER);
+int winSize = WIDTH;                 // default if nothing set, is the logical window size, default is 1024x1024
+int realxSize;                       // The size of the actual SDL window
+int realySize;
+bool scalexNeeded = false;
+bool scaleyNeeded = false;
+float mousexScale;                   // computed by setMouseScale()
+float mouseyScale;
+
+int fullWidth = (WIDTH + 2*BORDER); // is overridden in main(), but preserve initialization just in case
 int fullHeight = (HEIGHT + 2*BORDER);
-float scaleFactor = 1.0;
 
 #define DEFAULTPORT 3400
 
 SDL_Window *window;
 int netfd;
-int dbgflag;
+
+typedef struct Point Point;
+struct Point
+{
+int x, y;
+int i;
+int time;
+};
+
+int indices[1024 * 1024];
+Point newpoints[1024 * 1024];
+int nnewpoints;
+Point points[1024 * 1024];
+int npoints;
 
 GLuint vbo;
 GLuint pvbo;
@@ -81,10 +102,11 @@ int peny;
 uint64 simtime, realtime;
 
 void usage(char *nameP);
-void updatepen(bool penDown);
+void updatepen(bool penDown, int x, int y);
 bool checkConfig(char *optionP);
 bool getConfig(char *optionP, char *rsltP);
 void closeConfigFile(void);
+void setMouseScale(void);
 
 void
 panic(char *fmt, ...)
@@ -168,10 +190,10 @@ win:
 int
 serve1(int port)
 {
-    int sockfd, confd;
-    socklen_t len;
-    struct sockaddr_in server, client;
-    int x;
+int sockfd, confd;
+socklen_t len;
+struct sockaddr_in server, client;
+int x;
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -211,8 +233,8 @@ serve1(int port)
 void
 printlog(GLuint object)
 {
-    GLint log_length;
-    char *log;
+GLint log_length;
+char *log;
 
     if(glIsShader(object))
     {
@@ -235,11 +257,10 @@ printlog(GLuint object)
     {
         glGetShaderInfoLog(object, log_length, NULL, log);
     }
-    else
-        if(glIsProgram(object))
-        {
-            glGetProgramInfoLog(object, log_length, NULL, log);
-        }
+    else if(glIsProgram(object))
+    {
+        glGetProgramInfoLog(object, log_length, NULL, log);
+    }
 
     fprintf(stderr, "%s", log);
     free(log);
@@ -248,7 +269,7 @@ printlog(GLuint object)
 GLint
 compileshader(GLenum type, const char *src)
 {
-    GLint shader, success;
+GLint shader, success;
 
     shader = glCreateShader(type);
     glShaderSource(shader, 1, &src, NULL);
@@ -266,19 +287,6 @@ compileshader(GLenum type, const char *src)
 
     return shader;
 }
-
-typedef struct Point Point;
-struct Point
-{
-    int x, y;
-    int i;
-    int time;
-};
-int indices[1024 * 1024];
-Point newpoints[1024 * 1024];
-int nnewpoints;
-Point points[1024 * 1024];
-int npoints;
 
 GLint
 linkprogram(GLint vs, GLint fs)
@@ -433,16 +441,16 @@ getDeltaTime(void)
 void
 draw(void)
 {
-    int w, h;
+int w, h;
+float dt;
+float st;
+float rt;
 
-    float dt = getDeltaTime();
-    float st = simtime / 1000000.0f;
-    float rt = (float)realtime / SDL_GetPerformanceFrequency();
+    dt = getDeltaTime();
+    st = simtime / 1000000.0f;
+    rt = (float)realtime / SDL_GetPerformanceFrequency();
 
-    if(dbgflag)
-    {
-        printf("%f %d. %.2f %.2f %.2f\n", dt, npoints, st, rt, rt - st);
-    }
+    logger(LOG_DEBUG, "%f %d. %.2f %.2f %.2f\n", dt, npoints, st, rt, rt - st);
 
     glViewport(0, 0, fullWidth, fullHeight);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -466,8 +474,8 @@ draw(void)
             break;
         }
 
-        float x = (points[i].x / (float)winSize) + (float)BORDER / fullWidth;
-        float y = (points[i].y / (float)winSize) + (float)BORDER / fullHeight;
+        float x = (points[i].x / (float)winSize) + (float)((border)?(BORDER / fullWidth):0);
+        float y = (points[i].y / (float)winSize) + (float)((border)?(BORDER / fullWidth):0);
 // teco uses 3
 // spacewar uses 4
 // DDT uses 7
@@ -744,6 +752,7 @@ keydown(SDL_Keysym keysym)
     {
         fullscreen = !fullscreen;
         SDL_SetWindowFullscreen(window, screenmodes[fullscreen]);
+        setMouseScale();
     }
 
     if(keysym.scancode == SDL_SCANCODE_ESCAPE)
@@ -783,6 +792,7 @@ keydown(SDL_Keysym keysym)
     case SDL_SCANCODE_B:
         border = !border;
         SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
+        setMouseScale();
         break;
 
     case SDL_SCANCODE_I:
@@ -889,8 +899,7 @@ readthread(void *args)
                 esc = 0;
                 time += cmd;
             }
-
-            if(dt == 511)
+            else if(dt == 511)
             {
                 esc = 1;
             }
@@ -904,12 +913,20 @@ readthread(void *args)
                 if(x || y)
                 {
                     Point *np = &newpoints[nnewpoints++];
-                    /* wje - now set from config file
-                    np->x = x >> scalefoo;
-                    np->y = y >> scalefoo;
-                    */
-                    np->x = (int)((float)x * scaleFactor);
-                    np->y = (int)((float)y * scaleFactor);
+                    // SDL_RendererSetLogicalSize() is essentially broken if the screen
+                    // is smaller than the logical size, so we need to rescale ourselves.
+                    if( scalexNeeded )
+                    {
+                        x = (int)((float)x / mousexScale);
+                    }
+                    np->x = x;
+
+                    if( scaleyNeeded )
+                    {
+                        y = (int)((float)y / mouseyScale);
+                    }
+                    np->y = y;
+
                     np->i = intensity;
 
                     if(intensityOverride != 8)
@@ -944,17 +961,49 @@ readthread(void *args)
 // For the real hardware, the Type 30 hardware would figure out if there was a hit
 // at the last drawn pixel when issuing the completion pulse,
 // but that's not possible here, let it be determined back in the pdp1 code.
+// The window size might have been changed from the original 1024, adjust for that.
+// If the size is not 1024x1024, the Type 30 display area is rescaled to fit in the size automatically
+// because SDL_RenderSetLogicalSize(SDL_GetRenderer(window), 1024, 1024) has been done.
+// However, mouse x,y is relative to the window size, so will not be correct for anything other than 1024x1024.
+// Both mouse coordinates are offset by the respective windowsize - 1024 if the size is > 1024,
+// or scaled by 1024/size if less.
 void
-updatepen(bool penDown)
+updatepen(bool penDown, int winX, int winY)
 {
-int x, y;
+float x, y;
 int pdpx, pdpy;
 uint32 cmd;
 
     if( penDown )
     {
-        pdpx = penx;
-        pdpy = peny;
+        if( realxSize > 1024 )
+        {
+            pdpx = winX - (realxSize - 1024)/2;
+        }
+        else if( scalexNeeded )
+        {
+            pdpx = (int)((float)winX * mousexScale);
+        }
+        else
+        {
+            pdpx = winX;
+        }
+
+        if( realySize > 1024 )
+        {
+            pdpy = winY - (realySize - 1024)/2;
+        }
+        else if( scaleyNeeded )
+        {
+            pdpy = (int)((float)winY * mouseyScale);
+        }
+        else
+        {
+            pdpy = winY;
+        }
+
+        logger(LOG_MOUSE,"PDP1 win %d, %d, scaling %f, %f\n", realxSize, realySize, mousexScale, mouseyScale);
+        logger(LOG_MOUSE,"PDP1 mouse orig %d, %d, now %d, %d\n", winX, winY, pdpx, pdpy);
 
         // The original code did not properly adjust the coords from SDL to PDP1.
         // SDL has the upper left corner x,y as 0,0, PDP1 is -512,512, plus the PDP1 coords are 1's complement.
@@ -970,6 +1019,7 @@ uint32 cmd;
             --pdpy;            // 1's cmpl conversion
         }
 
+        logger(LOG_MOUSE,"PDP1 pen coords %d, %d\n",pdpx, pdpy);
         cmd = 0xFF0 << 20;
         cmd |= (pdpx & 0x3FF) << 10;
         cmd |= (pdpy & 0x3FF);
@@ -1011,7 +1061,10 @@ char tmpstr[64];
 
     // Set from config first, cmd line overrides
     doLightpen = checkConfig("type30lightpen");
-    border = checkConfig("type30border");
+    if( getConfig("type30border", 0) )
+    {
+        border = checkConfig("type30border");
+    }
 
     if( getConfig("type30size", tmpstr) )
     {
@@ -1025,7 +1078,7 @@ char tmpstr[64];
 
     closeConfigFile();
 
-    while( (opt = getopt(argc, argv, "p:dnl")) != -1 )
+    while( (opt = getopt(argc, argv, "p:s:dnl")) != -1 )
     {
         switch( opt )
         {
@@ -1034,7 +1087,7 @@ char tmpstr[64];
             break;
 
         case 'd':
-            dbgflag++;
+            // does nothing now, use logger setting LOG_DEBUG
             break;
 
         case 'n':
@@ -1067,13 +1120,9 @@ char tmpstr[64];
     }
 
     penDown = false;
-    fullWidth = winSize + 2*BORDER;
-    fullHeight = winSize + 2*BORDER;
-    scaleFactor = (float)winSize/1024.0;
-#ifdef DOLOGGING
-    logger(LOG_SCALING, "Type 30 size %d, scaleFactor %f\n", winSize, scaleFactor);
+    fullWidth = winSize + ((border)?2*BORDER:0);
+    fullHeight = winSize + ((border)?2*BORDER:0);
     logger(LOG_LIGHTPEN, "Type 30 lightpen %s\n", (doLightpen)?"enabled":"disabled");
-#endif
 
     SDL_Init(SDL_INIT_EVERYTHING);
 
@@ -1102,6 +1151,8 @@ char tmpstr[64];
 
     window = SDL_CreateWindow("P7 sim", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         fullWidth, fullHeight, window_flags);
+    SDL_RenderSetLogicalSize(SDL_GetRenderer(window), 1024, 1024);
+    setMouseScale();         // compute any mouse scaling we need.
 
     if(window == nil)
     {
@@ -1158,22 +1209,14 @@ char tmpstr[64];
             case SDL_MOUSEMOTION:
                 SDL_ShowCursor(SDL_ENABLE);
                 cursortimer = 50;
-                penx = event.motion.x;
-                peny = event.motion.y;
-                /*
-                if( (penx > 1023) || (peny > 1023) )
-                {
-                    penDown = false;        // mouse went out of the window bounds, not down now
-                    if( doLightpen )
-                    {
-                        updatepen(false);
-                    }
-                }
-                */
+
+                //penx = event.motion.x;
+                //peny = event.motion.y;
 
                 if( doLightpen && penDown )
                 {
-                    updatepen(true);
+                    SDL_GetMouseState(&penx, &peny);
+                    updatepen(true, penx, peny);
                     logger(LOG_LIGHTPEN, "Type 30 lightpen moved to x %d y %d\n", penx, peny);
                 }
                 break;
@@ -1182,11 +1225,15 @@ char tmpstr[64];
                 if( event.button.button == 1 )
                 {
                     penDown = true;
+                    /*
                     penx = event.button.x;
                     peny = event.button.y;
+                    */
+
                     if( doLightpen )
                     {
-                        updatepen(true);
+                        SDL_GetMouseState(&penx, &peny);
+                        updatepen(true, penx, peny);
                         logger(LOG_LIGHTPEN, "Type 30 lightpen down\n");
                     }
                 }
@@ -1196,7 +1243,7 @@ char tmpstr[64];
                 if(event.button.button == 1)
                 {
                     penDown = false;
-                    updatepen(false);
+                    updatepen(false, 0, 0);
                     logger(LOG_LIGHTPEN, "Type 30 lightpen up\n");
                 }
                 break;
@@ -1245,4 +1292,34 @@ char tmpstr[64];
     SDL_Quit();
 
     return 0;
+}
+
+// Get the current window size
+// If a size is < 1024, compute a scaling factor 1024/size.
+void
+setMouseScale()
+{
+    SDL_GetWindowSize(window, &realxSize, &realySize);
+
+    if( realxSize < 1024 )
+    {
+        mousexScale = 1024.0 / (float)realxSize;
+        scalexNeeded = true;
+    }
+    else
+    {
+        mousexScale = 1.0;
+        scaleyNeeded = true;
+    }
+
+    if( realySize < 1024 )
+    {
+        mouseyScale = 1024.0 / (float)realySize;
+        scaleyNeeded = true;
+    }
+    else
+    {
+        mouseyScale = 1.0;
+        scaleyNeeded = false;
+    }
 }

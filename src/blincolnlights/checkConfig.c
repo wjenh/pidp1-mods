@@ -24,7 +24,7 @@ char answer[64];
     return( onOff );
 }
 
-// Find a config setting by name, if found, set it in resultP and return true,
+// Find a config setting by name, if found, set it in resultP if not null and return true,
 // else false if not found.
 bool
 getConfig(char *nameP, char *resultP)
@@ -65,7 +65,10 @@ char answer[64];
             continue;           // not us
         }
 
-        strcpy(resultP, answer);
+        if( resultP )
+        {
+            strcpy(resultP, answer);
+        }
         return(true);
     }
 

@@ -13,7 +13,7 @@
  * wje 05-Jan-26 break from original repo, now independent. Initial reformatting. New features.
  * wje 08-Feb-26 rework lightpen code
  * wje 04-Mar-26 clean up unused code, add window scaling from config file
- * wje 25-Mar-26 fix mouse coords when window size is not 1024x1024, fix display scaling when size < 1024
+ * wje 25-Mar-26 fix mouse coords and dpy scaling when window size is not 1024x1024
  *
 */
 
@@ -22,6 +22,7 @@
 // Set desired log type to 1 to enable output assuming logging is defined.
 #define LOG_LIGHTPEN 0
 #define LOG_MOUSE 0
+#define LOG_SCALING 0
 #define LOG_DEBUG 0
 
 #include <stdlib.h>
@@ -56,13 +57,17 @@ typedef uint8_t uint8;
 #define WIDTH 1024
 #define HEIGHT 1024
 #define BORDER 2
+
+// Safety enforecement, all the scaling and rounding could result in an index > 1023
+#define CONSTRAIN_INDEX(i) (((i) > 1023)?1023:(i))
+
 int winSize = WIDTH;                 // default if nothing set, is the logical window size, default is 1024x1024
 int realxSize;                       // The size of the actual SDL window
 int realySize;
 bool scalexNeeded = false;
 bool scaleyNeeded = false;
-float mousexScale;                   // computed by setMouseScale()
-float mouseyScale;
+float xScaling;                   // computed by setScaling()
+float yScaling;
 
 int fullWidth = (WIDTH + 2*BORDER); // is overridden in main(), but preserve initialization just in case
 int fullHeight = (HEIGHT + 2*BORDER);
@@ -86,6 +91,9 @@ int nnewpoints;
 Point points[1024 * 1024];
 int npoints;
 
+uint32 screenmodes[2] = { 0, SDL_WINDOW_FULLSCREEN_DESKTOP };
+int fullscreen;
+
 GLuint vbo;
 GLuint pvbo;
 GLint point_program, excite_program, combine_program;
@@ -106,7 +114,7 @@ void updatepen(bool penDown, int x, int y);
 bool checkConfig(char *optionP);
 bool getConfig(char *optionP, char *rsltP);
 void closeConfigFile(void);
-void setMouseScale(void);
+void setScaling(void);
 
 void
 panic(char *fmt, ...)
@@ -742,17 +750,17 @@ initGL(void)
     glBufferData(GL_ARRAY_BUFFER, sizeof(pverts), pverts, GL_DYNAMIC_DRAW);
 }
 
-uint32 screenmodes[2] = { 0, SDL_WINDOW_FULLSCREEN_DESKTOP };
-int fullscreen;
-
 void
 keydown(SDL_Keysym keysym)
 {
     if(keysym.scancode == SDL_SCANCODE_F11)
     {
+        // We also want to constrain the mouse to the 1024x1024 Type 30 screen,
+        // but setWindowMouseRect usually won't work in Linux, especially running Wayland,
+        // so we hack that when we see a mouse event.
         fullscreen = !fullscreen;
         SDL_SetWindowFullscreen(window, screenmodes[fullscreen]);
-        setMouseScale();
+        setScaling();
     }
 
     if(keysym.scancode == SDL_SCANCODE_ESCAPE)
@@ -792,7 +800,7 @@ keydown(SDL_Keysym keysym)
     case SDL_SCANCODE_B:
         border = !border;
         SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
-        setMouseScale();
+        setScaling();
         break;
 
     case SDL_SCANCODE_I:
@@ -808,7 +816,6 @@ process(int frmtime)
     Point *p;
     int i, n, idx;
 
-//printf("process %d\n", nnewpoints);
     /* age */
     n = 0;
 
@@ -826,7 +833,7 @@ process(int frmtime)
             idx = -1;
         }
 
-        indices[p->y * winSize + p->x] = idx;
+        indices[CONSTRAIN_INDEX(p->y) * winSize + CONSTRAIN_INDEX(p->x)] = idx;
     }
 
     npoints = n;
@@ -835,12 +842,12 @@ process(int frmtime)
     for(i = 0; i < nnewpoints; i++)
     {
         Point *np = &newpoints[i];
-        idx = indices[np->y * winSize + np->x];
+        idx = indices[CONSTRAIN_INDEX(np->y) * winSize + CONSTRAIN_INDEX(np->x)];
 
         if(idx < 0)
         {
             idx = npoints++;
-            indices[np->y * winSize + np->x] = idx;
+            indices[CONSTRAIN_INDEX(np->y) * winSize + CONSTRAIN_INDEX(np->x)] = idx;
         }
 
         p = &points[idx];
@@ -915,15 +922,15 @@ readthread(void *args)
                     Point *np = &newpoints[nnewpoints++];
                     // SDL_RendererSetLogicalSize() is essentially broken if the screen
                     // is smaller than the logical size, so we need to rescale ourselves.
-                    if( scalexNeeded )
+                    if( scalexNeeded && (realxSize < 1024) )
                     {
-                        x = (int)((float)x / mousexScale);
+                        x = (int)((float)x / xScaling);
                     }
                     np->x = x;
 
-                    if( scaleyNeeded )
+                    if( scaleyNeeded && (realySize < 1024) )
                     {
-                        y = (int)((float)y / mouseyScale);
+                        y = (int)((float)y / yScaling);
                     }
                     np->y = y;
 
@@ -967,59 +974,76 @@ readthread(void *args)
 // However, mouse x,y is relative to the window size, so will not be correct for anything other than 1024x1024.
 // Both mouse coordinates are offset by the respective windowsize - 1024 if the size is > 1024,
 // or scaled by 1024/size if less.
+// BUT if in fullscreen mode, then the 1024x1024 area is scaled by the smaller of the new sizes, aspect
+// ratio is preserved.
 void
 updatepen(bool penDown, int winX, int winY)
 {
-float x, y;
+int offset;
 int pdpx, pdpy;
 uint32 cmd;
 
     if( penDown )
     {
-        if( realxSize > 1024 )
+        if( scalexNeeded )
         {
-            pdpx = winX - (realxSize - 1024)/2;
-        }
-        else if( scalexNeeded )
-        {
-            pdpx = (int)((float)winX * mousexScale);
+            offset = (realxSize - 1024/xScaling) / 2;     // how much 0,0 has been logically shifted
+            pdpx = (winX - offset) * xScaling;
         }
         else
         {
             pdpx = winX;
         }
 
-        if( realySize > 1024 )
+        if( scaleyNeeded )
         {
-            pdpy = winY - (realySize - 1024)/2;
-        }
-        else if( scaleyNeeded )
-        {
-            pdpy = (int)((float)winY * mouseyScale);
+            offset = (realySize - 1024/yScaling) / 2;     // how much 0,0 has been logically shifted
+            pdpy = (winY - offset) * yScaling;
         }
         else
         {
             pdpy = winY;
         }
 
-        logger(LOG_MOUSE,"PDP1 win %d, %d, scaling %f, %f\n", realxSize, realySize, mousexScale, mouseyScale);
+        // Here is where we constrain the mouse since the SDL stuff is not reliable.
+        if( pdpy < 0 )
+        {
+            pdpy = 0; 
+        }
+
+        if( pdpy > 1023 )
+        {
+            pdpy = 1023;
+        }
+
+        if( pdpx < 0 )
+        {
+            pdpx = 0; 
+        }
+
+        if( pdpx > 1023 )
+        {
+            pdpx = 1023;
+        }
+
         logger(LOG_MOUSE,"PDP1 mouse orig %d, %d, now %d, %d\n", winX, winY, pdpx, pdpy);
 
         // The original code did not properly adjust the coords from SDL to PDP1.
-        // SDL has the upper left corner x,y as 0,0, PDP1 is -512,512, plus the PDP1 coords are 1's complement.
-        pdpx -= 512;
+        // SDL has the upper left corner x,y as 0,0, ranging from 0 to 1023.
+        // PDP1 is -511,511, ranging from -511 to 511 plus the PDP1 coords are 1's complement.
+        pdpx -= 511;
         if( pdpx < 0 )
         {
             --pdpx;             // 1's cmpl conversion
         }
 
-        pdpy = 512 - pdpy;
+        pdpy = 511 - pdpy;
         if( pdpy < 0 )
         {
-            --pdpy;            // 1's cmpl conversion
+            --pdpy;             // 1's cmpl conversion
         }
 
-        logger(LOG_MOUSE,"PDP1 pen coords %d, %d\n",pdpx, pdpy);
+        logger(LOG_MOUSE,"PDP1 1's cmpl pen coords %d, %d\n",pdpx, pdpy);
         cmd = 0xFF0 << 20;
         cmd |= (pdpx & 0x3FF) << 10;
         cmd |= (pdpy & 0x3FF);
@@ -1152,7 +1176,7 @@ char tmpstr[64];
     window = SDL_CreateWindow("P7 sim", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         fullWidth, fullHeight, window_flags);
     SDL_RenderSetLogicalSize(SDL_GetRenderer(window), 1024, 1024);
-    setMouseScale();         // compute any mouse scaling we need.
+    setScaling();         // compute any mouse scaling we need.
 
     if(window == nil)
     {
@@ -1210,9 +1234,6 @@ char tmpstr[64];
                 SDL_ShowCursor(SDL_ENABLE);
                 cursortimer = 50;
 
-                //penx = event.motion.x;
-                //peny = event.motion.y;
-
                 if( doLightpen && penDown )
                 {
                     SDL_GetMouseState(&penx, &peny);
@@ -1225,10 +1246,6 @@ char tmpstr[64];
                 if( event.button.button == 1 )
                 {
                     penDown = true;
-                    /*
-                    penx = event.button.x;
-                    peny = event.button.y;
-                    */
 
                     if( doLightpen )
                     {
@@ -1277,14 +1294,11 @@ char tmpstr[64];
         {
             draw();
 
-            if(cursortimer > 0 && --cursortimer == 0)
+            if( (cursortimer > 0) && (--cursortimer == 0) )
             {
                 SDL_ShowCursor(SDL_DISABLE);
             }
         }
-
-//SDL_Delay(1);
-//usleep(30000);
     }
 
     SDL_GL_DeleteContext(gl_context);
@@ -1297,29 +1311,52 @@ char tmpstr[64];
 // Get the current window size
 // If a size is < 1024, compute a scaling factor 1024/size.
 void
-setMouseScale()
+setScaling()
 {
-    SDL_GetWindowSize(window, &realxSize, &realySize);
+    scalexNeeded = scaleyNeeded = false;
 
-    if( realxSize < 1024 )
+    SDL_GetWindowSize(window, &realxSize, &realySize);
+    logger(LOG_SCALING, "scaling, realxSize %d, realySize %d\n", realxSize, realySize);
+
+    if( border && !fullscreen )
     {
-        mousexScale = 1024.0 / (float)realxSize;
+        realxSize -= BORDER * 2;
+        realySize -= BORDER * 2;
+        logger(LOG_SCALING, "scaling, border, now realxSize %d, realySize %d\n", realxSize, realySize);
+    }
+
+    if( realxSize != 1024 )
+    {
+        xScaling = 1024.0 / (float)realxSize;
         scalexNeeded = true;
     }
     else
     {
-        mousexScale = 1.0;
-        scaleyNeeded = true;
+        xScaling = 1.0;
     }
 
-    if( realySize < 1024 )
+    if( realySize != 1024 )
     {
-        mouseyScale = 1024.0 / (float)realySize;
+        yScaling = 1024.0 / (float)realySize;
         scaleyNeeded = true;
     }
     else
     {
-        mouseyScale = 1.0;
-        scaleyNeeded = false;
+        yScaling = 1.0;
     }
+
+    // Now the hand-waving for fullscreen vs just a bigger window
+    if( fullscreen )
+    {
+        if( realxSize > realySize )
+        {
+            xScaling = yScaling;
+        }
+        else
+        {
+            yScaling = xScaling;
+        }
+    }
+
+    logger(LOG_SCALING, "scaling, xScaling %f, yScaling %f\n", xScaling, yScaling);
 }

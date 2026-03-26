@@ -17,12 +17,12 @@
  *
 */
 
-//#define DOLOGGING
+#define DOLOGGING
 #include "../blincolnlights/logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
 #define LOG_LIGHTPEN 0
-#define LOG_MOUSE 0
-#define LOG_SCALING 0
+#define LOG_MOUSE 1
+#define LOG_SCALING 1
 #define LOG_DEBUG 0
 
 #include <stdlib.h>
@@ -66,7 +66,7 @@ int realxSize;                       // The size of the actual SDL window
 int realySize;
 bool scalexNeeded = false;
 bool scaleyNeeded = false;
-float xScaling;                   // computed by setScaling()
+float xScaling;                     // computed by setScaling()
 float yScaling;
 
 int fullWidth = (WIDTH + 2*BORDER); // is overridden in main(), but preserve initialization just in case
@@ -760,7 +760,6 @@ keydown(SDL_Keysym keysym)
         // so we hack that when we see a mouse event.
         fullscreen = !fullscreen;
         SDL_SetWindowFullscreen(window, screenmodes[fullscreen]);
-        setScaling();
     }
 
     if(keysym.scancode == SDL_SCANCODE_ESCAPE)
@@ -863,21 +862,23 @@ process(int frmtime)
 void*
 readthread(void *args)
 {
-    uint32 cmd;
-    uint32 cmds[128];
-    int ncmds;
-    int nbytes;
-    int i;
-    uint64 time;
-    uint64 frmtime = 33333;
-    int x, y, intensity, dt;
+uint32 cmd;
+uint32 cmds[128];
+int ncmds;
+int nbytes;
+int i;
+uint64 time;
+uint64 frmtime = 33333;
+int x, y, intensity, dt;
 
-    uint64 realtime_start = SDL_GetPerformanceCounter();
-    simtime = 0;
-    realtime = realtime_start;
+float scaleFactor;
 
-    time = 0;
-    int esc = 0;
+uint64 realtime_start = SDL_GetPerformanceCounter();
+simtime = 0;
+realtime = realtime_start;
+
+time = 0;
+int esc = 0;
 
     for(;;)
     {
@@ -920,15 +921,16 @@ readthread(void *args)
                 if(x || y)
                 {
                     Point *np = &newpoints[nnewpoints++];
-                    // SDL_RendererSetLogicalSize() is essentially broken if the screen
-                    // is smaller than the logical size, so we need to rescale ourselves.
-                    if( scalexNeeded && (realxSize < 1024) )
+                    // we want to use the larger of the scale factors, preserve aspect ratio
+                    scaleFactor = (xScaling > yScaling)?xScaling:yScaling;
+
+                    if( !fullscreen )
                     {
                         x = (int)((float)x / xScaling);
                     }
                     np->x = x;
 
-                    if( scaleyNeeded && (realySize < 1024) )
+                    if( !fullscreen )
                     {
                         y = (int)((float)y / yScaling);
                     }
@@ -969,26 +971,39 @@ readthread(void *args)
 // at the last drawn pixel when issuing the completion pulse,
 // but that's not possible here, let it be determined back in the pdp1 code.
 // The window size might have been changed from the original 1024, adjust for that.
-// If the size is not 1024x1024, the Type 30 display area is rescaled to fit in the size automatically
-// because SDL_RenderSetLogicalSize(SDL_GetRenderer(window), 1024, 1024) has been done.
+// If the size is not 1024x1024, the Type 30 display area is rescaled to fit in the size automatically.
 // However, mouse x,y is relative to the window size, so will not be correct for anything other than 1024x1024.
 // Both mouse coordinates are offset by the respective windowsize - 1024 if the size is > 1024,
 // or scaled by 1024/size if less.
 // BUT if in fullscreen mode, then the 1024x1024 area is scaled by the smaller of the new sizes, aspect
 // ratio is preserved.
+// Remember, the scale factor gets smaller as the size increases, sw we want the larger of the scale factors.
 void
 updatepen(bool penDown, int winX, int winY)
 {
 int offset;
 int pdpx, pdpy;
+float xscale, yscale;
 uint32 cmd;
 
     if( penDown )
     {
+        // Handle the fullscreen fiddling
+        if( fullscreen )
+        {
+            xscale = (xScaling > yScaling)?xScaling:yScaling;
+            yscale = (yScaling > xScaling)?yScaling:xScaling;
+        }
+        else
+        {
+            xscale = xScaling;
+            yscale = yScaling;
+        }
+
         if( scalexNeeded )
         {
-            offset = (realxSize - 1024/xScaling) / 2;     // how much 0,0 has been logically shifted
-            pdpx = (winX - offset) * xScaling;
+            offset = (realxSize - 1024/xscale) / 2;     // how much 0,0 has been logically shifted
+            pdpx = (winX - offset) * xscale;
         }
         else
         {
@@ -997,8 +1012,8 @@ uint32 cmd;
 
         if( scaleyNeeded )
         {
-            offset = (realySize - 1024/yScaling) / 2;     // how much 0,0 has been logically shifted
-            pdpy = (winY - offset) * yScaling;
+            offset = (realySize - 1024/yscale) / 2;     // how much 0,0 has been logically shifted
+            pdpy = (winY - offset) * yscale;
         }
         else
         {
@@ -1073,12 +1088,13 @@ usage(char *nameP)
 int
 main(int argc, char *argv[])
 {
-pthread_t th;
-SDL_Event event;
+int i;
 int running;
 int port;
 int opt;
 bool penDown;
+pthread_t th;
+SDL_Event event;
 char tmpstr[64];
 
     port = DEFAULTPORT;
@@ -1092,11 +1108,15 @@ char tmpstr[64];
 
     if( getConfig("type30size", tmpstr) )
     {
-        opt = atoi(tmpstr);
+        i = atoi(tmpstr);
         // Ok, they want a different window size
-        if( (opt >= 512) && (opt <= 4096) )
+        if( (i >= 512) && (i <= 1024) )
         {
-            winSize = opt;
+            winSize = i;
+        }
+        else
+        {
+            fprintf(stderr, "Window can't be made larger than 1024, ignored.\n");
         }
     }
 
@@ -1119,7 +1139,15 @@ char tmpstr[64];
             break;
 
         case 's':
-            winSize = atoi(optarg);     // screen is n * n big
+            i = atoi(optarg);     // screen is n * n big
+            if( (i >= 512) && (i <= 1024) )
+            {
+                winSize = i;
+            }
+            else
+            {
+                fprintf(stderr, "Window can't be made larger than 1024, ignored.\n");
+            }
             break;
 
         default:
@@ -1175,7 +1203,6 @@ char tmpstr[64];
 
     window = SDL_CreateWindow("P7 sim", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         fullWidth, fullHeight, window_flags);
-    SDL_RenderSetLogicalSize(SDL_GetRenderer(window), 1024, 1024);
     setScaling();         // compute any mouse scaling we need.
 
     if(window == nil)
@@ -1276,6 +1303,11 @@ char tmpstr[64];
                     running = 0;
                     break;
 
+                case SDL_WINDOWEVENT_SIZE_CHANGED:
+                    logger(LOG_SCALING, "window size changed\n");
+                    setScaling();
+                    break;
+
                 case SDL_WINDOWEVENT_MOVED:
                 case SDL_WINDOWEVENT_ENTER:
                 case SDL_WINDOWEVENT_LEAVE:
@@ -1308,15 +1340,15 @@ char tmpstr[64];
     return 0;
 }
 
-// Get the current window size
-// If a size is < 1024, compute a scaling factor 1024/size.
+// Get the current window size and compute scaling factors, f = 1024/size.
+// Thus, a bigger window gives a smaller factor, it's the 1024 size relative to the window size.
 void
 setScaling()
 {
     scalexNeeded = scaleyNeeded = false;
 
     SDL_GetWindowSize(window, &realxSize, &realySize);
-    logger(LOG_SCALING, "scaling, realxSize %d, realySize %d\n", realxSize, realySize);
+    logger(LOG_SCALING, "scaling, fullscreen %d, realxSize %d, realySize %d\n", fullscreen, realxSize, realySize);
 
     if( border && !fullscreen )
     {
@@ -1343,19 +1375,6 @@ setScaling()
     else
     {
         yScaling = 1.0;
-    }
-
-    // Now the hand-waving for fullscreen vs just a bigger window
-    if( fullscreen )
-    {
-        if( realxSize > realySize )
-        {
-            xScaling = yScaling;
-        }
-        else
-        {
-            yScaling = xScaling;
-        }
     }
 
     logger(LOG_SCALING, "scaling, xScaling %f, yScaling %f\n", xScaling, yScaling);

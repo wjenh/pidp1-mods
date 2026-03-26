@@ -9,4 +9,4 @@ main.o: main.c
 	cc -g -O3 -Wno-unused-result -c main.c `sdl2-config --cflags --libs`
 
 clean:
-	@rm *.o p7sim p7simES 2>/dev/null || true
+	@rm *.o p7sim p7simES glad/glad.o 2>/dev/null || true

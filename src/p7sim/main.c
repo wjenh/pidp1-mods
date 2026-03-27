@@ -14,6 +14,7 @@
  * wje 08-Feb-26 rework lightpen code
  * wje 04-Mar-26 clean up unused code, add window scaling from config file
  * wje 25-Mar-26 fix mouse coords and dpy scaling when window size is not 1024x1024
+ * wje 27-Mar-26 allow starting with window size 512 and up, limit to phys screen size
  *
 */
 
@@ -65,8 +66,6 @@ int winSize = WIDTH;                 // default if nothing set, is the logical w
 int realxSize;                       // The size of the actual SDL window
 int realySize;
 bool fixedSize;
-bool scalexNeeded = false;
-bool scaleyNeeded = false;
 float xScaling;                     // computed by setScaling()
 float yScaling;
 
@@ -977,19 +976,21 @@ float scaleFactor;
 // Both mouse coordinates are offset by the respective windowsize - 1024 if the size is > 1024,
 // or scaled by 1024/size if less.
 // BUT if in fullscreen mode, then the 1024x1024 area is scaled by the smaller of the new sizes, aspect
-// ratio is preserved.
+// ratio is preserved. In that case, the offset comes from the actual window size, but the scaling from
+// the smaller window dimension.
 // Remember, the scale factor gets smaller as the size increases, sw we want the larger of the scale factors.
 void
 updatepen(bool penDown, int winX, int winY)
 {
-int offset;
 int pdpx, pdpy;
-float xscale, yscale;
+int xOffset, yOffset;
+float xscale, yscale, ftmp;
 uint32 cmd;
 
     if( penDown )
     {
-        // Handle the fullscreen fiddling
+        // Handle the fullscreen fiddling.
+        // Fullscreen keeps the aspect ratio, so the scaling is done based on the smaller window dimension.
         if( fullscreen )
         {
             xscale = (xScaling > yScaling)?xScaling:yScaling;
@@ -1001,25 +1002,16 @@ uint32 cmd;
             yscale = yScaling;
         }
 
-        if( scalexNeeded )
-        {
-            offset = (realxSize - 1024/xscale) / 2;     // how much 0,0 has been logically shifted
-            pdpx = (winX - offset) * xscale;
-        }
-        else
-        {
-            pdpx = winX;
-        }
+        // How much 0,0 has been logically shifted.
+        // If in fullscreen, the offset needs to be applied based on the
+        // window size, but scaling applied based on the scale factor.
+        // Are all the explicit casts necessary? No, but it makes it clear what's going on.
+        xOffset = (int)((float)realxSize - 1024.0/xscale + 0.5) / 2;
+        yOffset = (int)((float)realySize - 1024.0/yscale + 0.5) / 2;
+        logger(LOG_SCALING,"Scaling, xOffset %d, yOffset %d\n", xOffset, yOffset);
 
-        if( scaleyNeeded )
-        {
-            offset = (realySize - 1024/yscale) / 2;     // how much 0,0 has been logically shifted
-            pdpy = (winY - offset) * yscale;
-        }
-        else
-        {
-            pdpy = winY;
-        }
+        pdpx = (int)((float)(winX - xOffset) * xscale + 0.5);
+        pdpy = (int)((float)(winY - yOffset) * yscale + 0.5);
 
         // Here is where we constrain the mouse since the SDL stuff is not reliable.
         if( pdpy < 0 )
@@ -1349,8 +1341,6 @@ char tmpstr[64];
 void
 setScaling()
 {
-    scalexNeeded = scaleyNeeded = false;
-
     SDL_GetWindowSize(window, &realxSize, &realySize);
     logger(LOG_SCALING, "scaling, fullscreen %d, realxSize %d, realySize %d\n", fullscreen, realxSize, realySize);
 
@@ -1364,7 +1354,6 @@ setScaling()
     if( realxSize != 1024 )
     {
         xScaling = 1024.0 / (float)realxSize;
-        scalexNeeded = true;
     }
     else
     {
@@ -1374,7 +1363,6 @@ setScaling()
     if( realySize != 1024 )
     {
         yScaling = 1024.0 / (float)realySize;
-        scaleyNeeded = true;
     }
     else
     {

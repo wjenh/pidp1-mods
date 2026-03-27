@@ -14,7 +14,8 @@
  * wje 08-Feb-26 rework lightpen code
  * wje 04-Mar-26 clean up unused code, add window scaling from config file
  * wje 25-Mar-26 fix mouse coords and dpy scaling when window size is not 1024x1024
- * wje 27-Mar-26 allow starting with window size 512 and up, limit to phys screen size
+ * wje 27-Mar-26 allow starting with window size 512 and up, limit to phys screen size, don't allow
+ *    resizing, makes computing light pen coords a huge mess
  *
 */
 
@@ -24,6 +25,7 @@
 #define LOG_LIGHTPEN 0
 #define LOG_MOUSE 0
 #define LOG_SCALING 0
+#define LOG_SDL 0
 #define LOG_DEBUG 0
 
 #include <stdlib.h>
@@ -115,6 +117,7 @@ bool checkConfig(char *optionP);
 bool getConfig(char *optionP, char *rsltP);
 void closeConfigFile(void);
 void setScaling(void);
+int getMaxWindowSize(SDL_Window *windowP);
 
 void
 panic(char *fmt, ...)
@@ -453,6 +456,7 @@ int w, h;
 float dt;
 float st;
 float rt;
+float xScale, yScale;
 
     dt = getDeltaTime();
     st = simtime / 1000000.0f;
@@ -471,9 +475,24 @@ float rt;
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(point_program);
 
-
     PVertex *vp = pverts;
     int i;
+
+    if( fixedSize )
+    {
+        xScale = yScale = 1024.0/(float)winSize;
+    }
+    else if( fullscreen )
+    {
+        // Scaling is done for us by SDL
+        xScale = 1.0;
+        yScale = 1.0;
+    }
+    else
+    {
+        xScale = xScaling;
+        yScale = yScaling;
+    }
 
     for(i = 0; i < npoints; i++)
     {
@@ -482,8 +501,8 @@ float rt;
             break;
         }
 
-        float x = (points[i].x / (float)winSize) + (float)((border)?(BORDER / fullWidth):0);
-        float y = (points[i].y / (float)winSize) + (float)((border)?(BORDER / fullWidth):0);
+        float x = ((float)points[i].x / xScale) / (float)winSize + (float)((border)?(BORDER / fullWidth):0);
+        float y = ((float)points[i].y / yScale) / (float)winSize + (float)((border)?(BORDER / fullWidth):0);
 // teco uses 3
 // spacewar uses 4
 // DDT uses 7
@@ -836,7 +855,7 @@ process(int frmtime)
             idx = -1;
         }
 
-        indices[CONSTRAIN_INDEX(p->y) * winSize + CONSTRAIN_INDEX(p->x)] = idx;
+        indices[CONSTRAIN_INDEX(p->y) * 1024 + (CONSTRAIN_INDEX(p->x))] = idx;
     }
 
     npoints = n;
@@ -845,12 +864,12 @@ process(int frmtime)
     for(i = 0; i < nnewpoints; i++)
     {
         Point *np = &newpoints[i];
-        idx = indices[CONSTRAIN_INDEX(np->y) * winSize + CONSTRAIN_INDEX(np->x)];
+        idx = indices[CONSTRAIN_INDEX(np->y) * 1024 + CONSTRAIN_INDEX(np->x)];
 
         if(idx < 0)
         {
             idx = npoints++;
-            indices[CONSTRAIN_INDEX(np->y) * winSize + CONSTRAIN_INDEX(np->x)] = idx;
+            indices[CONSTRAIN_INDEX(np->y) * 1024 + CONSTRAIN_INDEX(np->x)] = idx;
         }
 
         p = &points[idx];
@@ -876,13 +895,11 @@ uint64 frmtime = 33333;
 uint64 realtime_start;
 uint32 cmds[128];
 
-float scaleFactor;
-
-    realtime_start = SDL_GetPerformanceCounter();
-    realtime = realtime_start;
-    simtime = 0;
-    time = 0;
-    int esc = 0;
+realtime_start = SDL_GetPerformanceCounter();
+realtime = realtime_start;
+simtime = 0;
+time = 0;
+int esc = 0;
 
     for(;;)
     {
@@ -928,11 +945,13 @@ float scaleFactor;
 
                     // We only have to rescale if we set a fixed smaller window.
                     // Otherwise, SDL does it.
+                    /*
                     if( fixedSize )
                     {
                         x = (int)((float)x / xScaling);
                         y = (int)((float)y / yScaling);
                     }
+                    */
 
                     np->x = x;
                     np->y = y;
@@ -1005,13 +1024,28 @@ uint32 cmd;
         // How much 0,0 has been logically shifted.
         // If in fullscreen, the offset needs to be applied based on the
         // window size, but scaling applied based on the scale factor.
+        // If using a fixed size, then there is no offset.
         // Are all the explicit casts necessary? No, but it makes it clear what's going on.
-        xOffset = (int)((float)realxSize - 1024.0/xscale + 0.5) / 2;
-        yOffset = (int)((float)realySize - 1024.0/yscale + 0.5) / 2;
-        logger(LOG_SCALING,"Scaling, xOffset %d, yOffset %d\n", xOffset, yOffset);
+        if( fixedSize )
+        {
+            xOffset = yOffset = 0;
+        }
+        else if( fullscreen )
+        {
+            xOffset = (int)((float)realxSize - 1024.0/xscale + 0.5) / 2;
+            yOffset = (int)((float)realySize - 1024.0/yscale + 0.5) / 2;
+        }
+        else
+        {
+            // If the window was resized by dragging, no scaling of offset, SDL just shifted it
+            xOffset = (realxSize - 1024.0) / 2;
+            yOffset = (realySize - 1024.0) / 2;
+        }
 
-        pdpx = (int)((float)(winX - xOffset) * xscale + 0.5);
-        pdpy = (int)((float)(winY - yOffset) * yscale + 0.5);
+        pdpx = (winX - xOffset) * xscale;
+        pdpy = (winY - yOffset) * yscale;
+        logger(LOG_MOUSE,"Mouse scaling, xscale %f, yscale %f, xOffset %d, yOffset %d\n",
+            xscale, yscale, xOffset, yOffset);
 
         // Here is where we constrain the mouse since the SDL stuff is not reliable.
         if( pdpy < 0 )
@@ -1073,7 +1107,7 @@ usage(char *nameP)
     fprintf(stderr, "-d, enable debug\n");
     fprintf(stderr, "-p port, set port to use, default is %d\n", DEFAULTPORT);
     fprintf(stderr, "-n, start with no border\n");
-    fprintf(stderr, "-s size, set screen size to size pixels\n");
+    fprintf(stderr, "-s size, set display size to size pixels, silently limited to screen size\n");
     fprintf(stderr, "server, hostname of server to connect to\n");
     exit(1);
 }
@@ -1135,7 +1169,7 @@ char tmpstr[64];
 
         case 's':
             i = atoi(optarg);     // screen is n * n big
-            if( (i >= 512) && (i <= 1024) )
+            if( (i >= 512) )
             {
                 winSize = i;
                 fixedSize = true;
@@ -1190,7 +1224,7 @@ char tmpstr[64];
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
-    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE |
+    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_OPENGL | // SDL_WINDOW_RESIZABLE |
         SDL_WINDOW_ALLOW_HIGHDPI);
     if( !border )
     {
@@ -1199,7 +1233,6 @@ char tmpstr[64];
 
     window = SDL_CreateWindow("P7 sim", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         fullWidth, fullHeight, window_flags);
-    setScaling();         // compute any mouse scaling we need.
 
     if(window == nil)
     {
@@ -1207,6 +1240,15 @@ char tmpstr[64];
         return(1);
     }
 
+    i = getMaxWindowSize(window);
+    if( winSize > i )
+    {
+        logger(LOG_SCALING, "Requested window size of %d exceeds physical size of %d, set to physical size.\n",
+            winSize, i);
+        winSize = i;
+    }
+
+    setScaling();         // compute any mouse scaling we need.
     if( doLightpen )
     {
         // We want mouse events to go out quickly
@@ -1341,14 +1383,15 @@ char tmpstr[64];
 void
 setScaling()
 {
+    // We keep the explicit size setting if given
     SDL_GetWindowSize(window, &realxSize, &realySize);
-    logger(LOG_SCALING, "scaling, fullscreen %d, realxSize %d, realySize %d\n", fullscreen, realxSize, realySize);
+    logger(LOG_SCALING, "Set scaling, fullscreen %d, realxSize %d, realySize %d\n", fullscreen, realxSize, realySize);
 
     if( border && !fullscreen )
     {
         realxSize -= BORDER * 2;
         realySize -= BORDER * 2;
-        logger(LOG_SCALING, "scaling, border, now realxSize %d, realySize %d\n", realxSize, realySize);
+        logger(LOG_SCALING, "Set scaling, border, now realxSize %d, realySize %d\n", realxSize, realySize);
     }
 
     if( realxSize != 1024 )
@@ -1369,5 +1412,28 @@ setScaling()
         yScaling = 1.0;
     }
 
-    logger(LOG_SCALING, "scaling, fixedSize %d, xScaling %f, yScaling %f\n", fixedSize, xScaling, yScaling);
+    logger(LOG_SCALING, "Set scaling, fixedSize %d, xScaling %f, yScaling %f\n", fixedSize, xScaling, yScaling);
+}
+
+int
+getMaxWindowSize(SDL_Window *windowP)
+{
+int idx;
+SDL_DisplayMode display;
+        
+    if( (idx = SDL_GetWindowDisplayIndex(windowP)) < 0 )
+    {
+        logger(LOG_SDL, "SDL_GetWindowDisplayIndex failed, %s\n", SDL_GetError());
+        return(1024);
+    }
+
+    if( SDL_GetDesktopDisplayMode(idx, &display) )
+    {
+        logger(LOG_SDL, "SDL_GetDesktopDisplayMode failed, %s\n", SDL_GetError());
+        return(1024);
+    }
+
+    // We limit to the smaller dimension of the display size.
+    logger(LOG_SDL, "SDL_GetDesktopDisplayMode says width %d height %d\n", display.w, display.h);
+    return( (display.w < display.h)?display.w:display.h );
 }

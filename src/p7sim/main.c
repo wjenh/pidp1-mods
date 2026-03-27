@@ -17,12 +17,12 @@
  *
 */
 
-#define DOLOGGING
+//#define DOLOGGING
 #include "../blincolnlights/logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
 #define LOG_LIGHTPEN 0
-#define LOG_MOUSE 1
-#define LOG_SCALING 1
+#define LOG_MOUSE 0
+#define LOG_SCALING 0
 #define LOG_DEBUG 0
 
 #include <stdlib.h>
@@ -64,6 +64,7 @@ typedef uint8_t uint8;
 int winSize = WIDTH;                 // default if nothing set, is the logical window size, default is 1024x1024
 int realxSize;                       // The size of the actual SDL window
 int realySize;
+bool fixedSize;
 bool scalexNeeded = false;
 bool scaleyNeeded = false;
 float xScaling;                     // computed by setScaling()
@@ -758,8 +759,12 @@ keydown(SDL_Keysym keysym)
         // We also want to constrain the mouse to the 1024x1024 Type 30 screen,
         // but setWindowMouseRect usually won't work in Linux, especially running Wayland,
         // so we hack that when we see a mouse event.
-        fullscreen = !fullscreen;
-        SDL_SetWindowFullscreen(window, screenmodes[fullscreen]);
+        // We don't allow full screen if a fixed size was given, that defeats the purpose.
+        if( !fixedSize )
+        {
+            fullscreen = !fullscreen;
+            SDL_SetWindowFullscreen(window, screenmodes[fullscreen]);
+        }
     }
 
     if(keysym.scancode == SDL_SCANCODE_ESCAPE)
@@ -862,23 +867,23 @@ process(int frmtime)
 void*
 readthread(void *args)
 {
-uint32 cmd;
-uint32 cmds[128];
 int ncmds;
 int nbytes;
 int i;
+int x, y, intensity, dt;
+uint32 cmd;
 uint64 time;
 uint64 frmtime = 33333;
-int x, y, intensity, dt;
+uint64 realtime_start;
+uint32 cmds[128];
 
 float scaleFactor;
 
-uint64 realtime_start = SDL_GetPerformanceCounter();
-simtime = 0;
-realtime = realtime_start;
-
-time = 0;
-int esc = 0;
+    realtime_start = SDL_GetPerformanceCounter();
+    realtime = realtime_start;
+    simtime = 0;
+    time = 0;
+    int esc = 0;
 
     for(;;)
     {
@@ -921,21 +926,17 @@ int esc = 0;
                 if(x || y)
                 {
                     Point *np = &newpoints[nnewpoints++];
-                    // we want to use the larger of the scale factors, preserve aspect ratio
-                    scaleFactor = (xScaling > yScaling)?xScaling:yScaling;
 
-                    if( !fullscreen )
+                    // We only have to rescale if we set a fixed smaller window.
+                    // Otherwise, SDL does it.
+                    if( fixedSize )
                     {
                         x = (int)((float)x / xScaling);
-                    }
-                    np->x = x;
-
-                    if( !fullscreen )
-                    {
                         y = (int)((float)y / yScaling);
                     }
-                    np->y = y;
 
+                    np->x = x;
+                    np->y = y;
                     np->i = intensity;
 
                     if(intensityOverride != 8)
@@ -1098,6 +1099,7 @@ SDL_Event event;
 char tmpstr[64];
 
     port = DEFAULTPORT;
+    fixedSize = false;
 
     // Set from config first, cmd line overrides
     doLightpen = checkConfig("type30lightpen");
@@ -1113,10 +1115,11 @@ char tmpstr[64];
         if( (i >= 512) && (i <= 1024) )
         {
             winSize = i;
+            fixedSize = true;
         }
         else
         {
-            fprintf(stderr, "Window can't be made larger than 1024, ignored.\n");
+            fprintf(stderr, "Window can't be made less than 512 or larger than 1024, ignored.\n");
         }
     }
 
@@ -1143,10 +1146,11 @@ char tmpstr[64];
             if( (i >= 512) && (i <= 1024) )
             {
                 winSize = i;
+                fixedSize = true;
             }
             else
             {
-                fprintf(stderr, "Window can't be made larger than 1024, ignored.\n");
+                fprintf(stderr, "Window can't be made less than 512 or larger than 1024, ignored.\n");
             }
             break;
 
@@ -1377,5 +1381,5 @@ setScaling()
         yScaling = 1.0;
     }
 
-    logger(LOG_SCALING, "scaling, xScaling %f, yScaling %f\n", xScaling, yScaling);
+    logger(LOG_SCALING, "scaling, fixedSize %d, xScaling %f, yScaling %f\n", fixedSize, xScaling, yScaling);
 }

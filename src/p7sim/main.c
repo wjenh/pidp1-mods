@@ -16,6 +16,7 @@
  * wje 25-Mar-26 fix mouse coords and dpy scaling when window size is not 1024x1024
  * wje 27-Mar-26 allow starting with window size 512 and up, limit to phys screen size, don't allow
  *    resizing, makes computing light pen coords a huge mess
+ * wje 28-Mar-26 don't constrain size if larger than physical screen
  *
 */
 
@@ -1243,29 +1244,28 @@ char tmpstr[64];
     i = getMaxWindowSize(window);
     if( winSize > i )
     {
-        logger(LOG_SCALING, "Requested window size of %d exceeds physical size of %d, set to physical size.\n",
+        logger(LOG_SCALING, "Requested window size of %d exceeds physical size of %d.\n",
             winSize, i);
-        winSize = i;
     }
 
     setScaling();         // compute any mouse scaling we need.
     if( doLightpen )
     {
         // We want mouse events to go out quickly
-        int flag = 1;
-	setsockopt(netfd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+        i = 1;
+        setsockopt(netfd, IPPROTO_TCP, TCP_NODELAY, &i, sizeof(i));
     }
 
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, gl_context);
-    SDL_GL_SetSwapInterval(1); // vsynch (1 on, 0 off)
+    SDL_GL_SetSwapInterval(1); // vsync (1 on, 0 off)
 
+    // why not memset(indices, 0xF, sizeof(indices))?
     for(int i = 0; i < 1024 * 1024; i++)
     {
         indices[i] = -1;
     }
 
-//  gladLoadGL();
     gladLoadGLES2Loader((GLADloadproc)SDL_GL_GetProcAddress);
 
     initGL();

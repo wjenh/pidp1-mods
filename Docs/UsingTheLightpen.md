@@ -74,7 +74,7 @@ Am1 has an include file that defines these, #include <LIGHTPEN/lightpen.ah>.
 
 ## Setting the aperture
 
-An extended *dpy* command has been provided, *dpy-i 3700*, 723707.
+An extended *dpy* command has been provided, *dpy-i 03400*, 723407.
 
 It expects the IO register to contain the aperture size in pixels to use in bits 12-17.
 

@@ -3,7 +3,7 @@
 #define LIGHTPEN_AH
 
 // Modifier for dpy, set aperture
-#define LIGHTPEN 3700
+#define LIGHTPEN 03400
 // Example:
 // lio [APERTURE150]
 // dpy-i LIGHTPEN

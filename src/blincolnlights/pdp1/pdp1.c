@@ -23,6 +23,7 @@
  *    Note that if both are on, the heuristic might fail, doing both when only one was desired.
  *    This will only happen if a dpy with shift but no wait or completion bits is done.
  *    If a program seems to be doing both, turn one off in the config file, depending upon which one you want active.
+ * wje 28-Mar-16 simplify the last one, change the aperture dpy to xx3407, update am1 include file.
 */
 #include "common.h"
 #include "pdp1.h"
@@ -35,11 +36,11 @@
 #include <netinet/tcp.h>
 #include <errno.h>
 
-//#define DOLOGGING
+#define DOLOGGING
 #include "logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
 #define LOG_LP 0
-#define LOG_APERTURE 0
+#define LOG_APERTURE 1
 #define LOG_DPYSHIFT 0
 #define LOG_SDB 0
 #define LOG_STARTUP 0
@@ -2154,6 +2155,17 @@ int ch;
         break;
 
     case 007:   // dpy
+        // Some machines had a variation where the intensity could be set using the
+        // xx03xx bits. Snowflake uses it.
+        // Some had a variant where the display origin could be shifted setting the x origin
+        // to left edge, center, right edge, the y origin to top, center, bottom using the
+        // xx30x bits.
+        // The symbol generator added the sdb variant, invisibly move display point using the value
+        // xx20xx, which conflicts with the origin-shifting.
+        // The aperture variant, added to support the pseudo-lightpen, uses
+        // xx34xx.
+        // This theoretically could conflict with some intensity setting, but no cases of an intensity
+        // of intensity 4 have been found.
         if(!pulse)
         {
             pdp->dbx = 0;
@@ -2164,10 +2176,8 @@ int ch;
                 pdp->cksflags &= ~0400000;  // wje, set by the last dpy completion if lp hit
             }
         }
-        else if( lightpenEnabled && ((ch & 037) == 037) && !(MB & 014000) )       // wje, set lightpen aperture
+        else if( lightpenEnabled && (MB & 003777) == 003407 )       // wje, set lightpen aperture
         {
-            // The MB test above is to hande a strange 0733007/727007 versions of dpy in snowflake.
-            // No idea what it is supposed to do.
             pdp->dpy_defl_time = NEVER;     // just set aperture
             pdp->dpy_time = NEVER;
             pdp->dcp = 0;                   // be sure its not set
@@ -2188,10 +2198,9 @@ int ch;
 
             // Emulate the origin shift that was implemented in some systems
             // It conflicts with sdb, the following test is done.
-            // The check is to exclude 037 beause otherwise this would overlap with aperture setting.
-            // It also checks to see if i or C is set to distiguish it from a program that's using
+            // It checks to see if i or C is set to distiguish it from a program that's using
             // sdb, will fail if a prog just does a bare dpy with shift and sdb will be assumed.
-            if( dpyShiftEnabled && (MB & 014000) && (ch & 030) )
+            if( dpyShiftEnabled && (ch & 030) )
             {
                 if(ch & 010)        // origin at bottom
                 {

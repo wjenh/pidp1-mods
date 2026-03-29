@@ -7,14 +7,28 @@
 
 PNodeP unop(int, int, int, PNodeP);
 PNodeP binop(int, int, int, PNodeP, PNodeP);
-void yyerror(char *);
+void checkPCBound(char *mstP, int pc, int lineNo);
+
+extern void yyerror(char *);
+extern void verror(const char *msgP, ...);
 
 extern int curBank;
+
+void
+checkPCBound(char *msgP, int addr, int lineNo)
+{
+    if( addr >= BANKSIZE )                 // ran over the end of the memory
+    {
+        // lineNo is not incremented yet, no need to back it up.
+        verror("%s would go past the memory bank size of 4096 words", msgP, lineNo);
+    }
+}
 
 PNodeP
 newnode(int lineNo, int pc, int type, PNodeP leftP, PNodeP rightP)
 {
-    PNodeP nP;
+PNodeP nP;
+
     if(!(nP = (PNodeP) calloc(1, sizeof(PNode))))
     {
         yyerror("out of memory in newnode()");

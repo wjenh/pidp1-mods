@@ -11,6 +11,7 @@
  * wje 10-Feb-26 style cleanup, remove conditionals for light pen, origin shift, lai, lia
  * wje 18-Feb-26 massive cleanup, add shm support
  * wje 22-Feb-26 massive cleanup was too massive, revert much of it
+ * wje 28-Mar-26 add timing logging
 */
 #include <fcntl.h>
 #include <unistd.h>
@@ -36,6 +37,7 @@
 #define LOG_SHM 0
 #define LOG_WATCH 0
 #define LOG_BREAK 0
+#define LOG_TIMING 0
 
 // If present, will set the startup state of audio, lightpen support, etc.
 // See the distributed one for all settings.
@@ -90,6 +92,17 @@ extern int getSampleRate(void);
 extern int getOverflowData(int *);
 
 ConfigurationP configurationP;  // from the config file
+
+#if LOG_TIMING
+// Used to track how long a cycle actually takes
+#include <limits.h>
+#include <locale.h>
+static long slowestTime;
+static long fastestTime = LONG_MAX;
+static long overflowCount;
+static long totalTime;
+static long totalCycles;
+#endif
 
 void
 emu(PDP1 *pdp, Panel *panel)
@@ -223,11 +236,49 @@ bool prev_readin_sw;
                 {
                     pdp->run_enable = 0;
                 }
+#if LOG_TIMING
+                long precycleTime = gettime();
+#endif
                 cycle(pdp);
+#if LOG_TIMING
+                long deltaTime = gettime() - precycleTime;
+                if( deltaTime > 5000 )
+                {
+                    ++overflowCount;
+                }
+
+                if( deltaTime > slowestTime )
+                {
+                    slowestTime = deltaTime;
+                }
+                if( deltaTime < fastestTime )
+                {
+                    fastestTime = deltaTime;
+                }
+
+                totalTime += deltaTime;
+                ++totalCycles;
+#endif
                 logger(LOG_BREAK, "Post-cycle PC %06o\n", pdp->epc | pdp->pc);
             }
             else
             {
+#if LOG_TIMING
+                if( totalCycles )
+                {
+                    setlocale(LC_NUMERIC,"en_US.utf-8");
+                    logger(LOG_TIMING,
+                        "Fastest time %'ldns; slowest %'ldns; avg %'ldns; cycles %'ld; overflows %'ld:%4.02f%%\n",
+                        fastestTime, slowestTime, totalTime/totalCycles, totalCycles,
+                        overflowCount, ((float)overflowCount/(float)totalCycles) * 100.0);
+                    slowestTime = 0;
+                    fastestTime = LONG_MAX;
+                    totalTime = 0;
+                    overflowCount = 0;
+                    totalCycles = 0;
+                }
+#endif
+
                 dynamicIotProcessorStop();           // wje - let dyn IOTs know we transitioned to stop
                 updatelights(pdp, panel);
             }

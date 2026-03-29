@@ -13,6 +13,9 @@ var xPosition, yPosition    // these are used by the find and track included rou
 
 100/
 strt,
+    law APERTURE200
+    lia
+    dpy-i LIGHTPEN
     jsp findPen
     jsp follow
     jmp strt

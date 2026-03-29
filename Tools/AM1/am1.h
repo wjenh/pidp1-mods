@@ -4,11 +4,12 @@
 
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.25 17-Mar-2026"
-#define AM1SHORTVERSION "am1 v1.25"
+#define AM1VERSION "am1 v1.26 28-Mar-2026"
+#define AM1SHORTVERSION "am1 v1.26"
 #define SYMFILEVERSION "V2"             // used for import to check proper version
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -18,8 +19,9 @@
 #endif
 
 #define WRDMASK 0777777 // PDP-1 word, 18 bits
-#define ADDRMASK 07777 // PDP-1 address, 12 bits
-#define MAXBANK 017
+#define ADDRMASK 07777  // PDP-1 address, 12 bits
+#define MAXBANK 15      // 16 banks
+#define BANKSIZE 4096   // of 4096 words
 
 // The warning ids we have
 #define WARN_1D 1
@@ -67,6 +69,8 @@
 #define CUNSHIFT   072
 #define CSHIFT     074
 #define FLEX_SPACE 000
+
+typedef uint32_t Word;         // minimum needed to hold a PDP-1 word, 18 bits
 
 // holder for flex characters, can contain null
 typedef struct flextext

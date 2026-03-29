@@ -36,11 +36,11 @@
 #include <netinet/tcp.h>
 #include <errno.h>
 
-#define DOLOGGING
+//#define DOLOGGING
 #include "logger.h"
 // Set desired log type to 1 to enable output assuming logging is defined.
 #define LOG_LP 0
-#define LOG_APERTURE 1
+#define LOG_APERTURE 0
 #define LOG_DPYSHIFT 0
 #define LOG_SDB 0
 #define LOG_STARTUP 0
@@ -2065,7 +2065,7 @@ throttle(PDP1 *pdp)
 static void
 iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
 {
-int ch;
+int i, ch;
 
     ch = (MB >> 6) & 077;
 
@@ -2183,13 +2183,14 @@ int ch;
             pdp->dcp = 0;                   // be sure its not set
             // The aperture is the diameter in pixels, allow 6 to 63
             // Each pixel corresponds to the original 0.009"
+            i = penAperture;                // current value
             penAperture = IO & 077; 
             if( penAperture < 6 )
             {
                 penAperture = 6;
             }
             penRadius2 = (penAperture/2) * (penAperture/2);  // radius squared
-            logger(LOG_APERTURE,"Aperture %d, radius squared %d\n", penAperture, penRadius2);
+            logger(LOG_APERTURE,"Aperture was %d, now %d, new radius squared %d\n", i,  penAperture, penRadius2);
         }
         else
         {

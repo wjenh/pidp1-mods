@@ -83,6 +83,7 @@
  * 10-Mar-2026 - change constant hash again, if it ain't broke, fix it anyway.
  *               Really just to hash resolved symbol values better.
  * 17-Mar-2026 - general cleanup, eliminate empty lines in listing for clarity, make -0 to 0 conversion the default
+ * 28-Mar-2026 - add code passing 4K boundary, code overwriting other code checks and error msgs
  *
 */
 #include <unistd.h>

@@ -74,8 +74,9 @@ extern PNodeP unop(int lineNo, int pc, int value, PNodeP expP);
 extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 extern int evalExpr(PNodeP);
 extern long int hashExpr(PNodeP);
+extern bool doWarn(int errType);
+extern void checkPCBound(char *msgP, int pc, int lineNo);
 extern void leave(int);
-extern bool doWarn(int);
 
 %}
 
@@ -351,6 +352,7 @@ stmt            : one_stmt
 
 one_stmt	: expr
 		{
+                    checkPCBound("Code", cur_pc, lineno);
 		    $$ = newnode(lineno, cur_pc, EXPR, NILP, $1);
 		    if( $1 && !($1->flags & PN_NOINC) )
                     {
@@ -390,6 +392,7 @@ one_stmt	: expr
                     else
                     {
                         setVarsPC(curBank, varNodesP);
+                        checkPCBound("Variables", cur_pc, lineno);
                         varNodesP = 0;
                     }
                 }
@@ -511,24 +514,28 @@ one_stmt	: expr
 		    $$ = newnode(lineno+1, cur_pc, ASCII, NILP, NILP);
                     $$->value.strP = $2;
                     cur_pc += countAscii($2);
+                    checkPCBound("Ascii", cur_pc, lineno);
                 }
                 | TEXT
                 {
 		    $$ = newnode(lineno+1, cur_pc, TEXT, NILP, NILP);
                     $$->value.flexText = $1;
                     cur_pc += countText($1);
+                    checkPCBound("Text", cur_pc, lineno);
                 }
                 | TABLE simple_expr
                 {
                     $$ = newnode(lineno, cur_pc, TABLE, NILP, NILP);
                     $$->value.ival = evalExpr($2);
                     cur_pc += $$->value.ival;
+                    checkPCBound("Table", cur_pc, lineno);
                 }
                 | TABLE simple_expr LOCATION simple_expr
                 {
                     $$ = newnode(lineno, cur_pc, TABLE, NILP, $4);
                     $$->value.ival = evalExpr($2);
                     cur_pc += $$->value.ival;
+                    checkPCBound("Table", cur_pc, lineno);
                 }
                 | EXPORT symList
                 {
@@ -1163,6 +1170,8 @@ setConstPC(int pc, SymNodeP symP)
 
     pc = setConstPC(pc, symP->leftP);
     pc = setConstPC(pc, symP->rightP);
+
+    checkPCBound("Constants", pc, lineno);
     return( pc );
 }
 
@@ -1223,6 +1232,8 @@ SymNodeP symP;
 
         listP = listP->nextP;
     }
+
+    checkPCBound("Variables", cur_pc, lineno);
 }
 
 // Process a symbol file, bring in all exported ones.

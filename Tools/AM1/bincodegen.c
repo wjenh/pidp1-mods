@@ -1,5 +1,6 @@
 /*
  * Process a parse tree to generate a loadable binary tape image.
+ * Check for memory overwrites also.
 */
 #include <stdio.h>
 #include <string.h>
@@ -34,6 +35,7 @@ static BufferP outBufP = &outBuf;
 static int cur_pc;
 static int cur_bank;
 
+extern int lineno;      // used by verror() for a line number
 extern bool sawBank;
 extern bool noRim;
 extern bool keepMinusZero;
@@ -42,6 +44,7 @@ extern BankContextP banksP;
 extern int evalExpr(PNodeP);
 extern int onesComplAdj(int);
 extern int twosComplAdj(int);
+extern void leave(int);
 
 static void initBuffer(BufferP bufP, int startAddr);
 static void putBuffer(FILE *outfP, BufferP bufP, uint32_t word);
@@ -59,12 +62,19 @@ static int reduceOperand(PNodeP);
 static void adjustPC(int);
 
 static void writeStatements(FILE *, PNodeP);
-static void writeAscii(FILE *outfP, char *strP);
-static void writeText(FILE *outfP, FlexText flexText);
-static void writeVars(FILE *outfP, PNodeListP listP);
-static void writeConstants(FILE *outfP, SymNodeP nodeP);
+static void writeVars(FILE *outfP, PNodeListP listP, int lineNo);
+static void writeConstants(FILE *outfP, SymNodeP nodeP, int lineNo);
+static bool writeText(FILE *outfP, FlexText flexText);
+static bool writeAscii(FILE *outfP, char *strP);
+static bool setBit(uint64_t map[], int addr);
+static bool setBits(uint64_t map[], int addr, int count);
 
 void verror(char *msgP, ...);
+
+// This is a bitmap for tracking used memory locations.
+// Each bit represents one word in memory and is set when a word is placed there.
+// If already set, it's an error.
+uint64_t memMap[((MAXBANK + 1) * BANKSIZE) / sizeof(uint64_t)];
 
 // Walk a tree and emit a binary tape image
 int
@@ -143,6 +153,11 @@ BankContextP bankP;
             {
                 i = reduceOperand(nodeP->rightP);
                 nodeP->value2.ival = i;     // save for listing
+                if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
+                {
+                    lineno = nodeP->lineNo;
+                    verror("Already used memory address 0%04o would be overwritten", cur_pc);
+                }
                 putBuffer(outfP, outBufP, i);
                 adjustPC(1);
             }
@@ -160,19 +175,27 @@ BankContextP bankP;
             break;
 
         case VARS:
-            writeVars(outfP, (PNodeListP)(nodeP->value.ptr));
+            writeVars(outfP, (PNodeListP)(nodeP->value.ptr), nodeP->lineNo);
             break;
 
         case CONSTANTS:
-            writeConstants(outfP, nodeP->value.symP);
+            writeConstants(outfP, nodeP->value.symP, nodeP->lineNo);
             break;
 
         case TEXT:
-            writeText(outfP, nodeP->value.flexText);
+            if( !writeText(outfP, nodeP->value.flexText) )
+            {
+                lineno = nodeP->lineNo;
+                verror("Already-used memory would be overwritten by text");
+            }
             break;
 
         case ASCII:
-            writeAscii(outfP, nodeP->value.strP);
+            if( !writeAscii(outfP, nodeP->value.strP) )
+            {
+                lineno = nodeP->lineNo;
+                verror("Already-used memory would be overwritten by ascii");
+            }
             break;
 
         case BANK:
@@ -196,6 +219,11 @@ BankContextP bankP;
             else
             {
                 flushBuffer(outfP, outBufP);
+                if( !setBits(memMap, (cur_bank << 12) | cur_pc, nodeP->value.ival) )
+                {
+                    lineno = nodeP->lineNo;
+                    verror("Already-used memory would be overwritten by table");
+                }
                 adjustPC(nodeP->value.ival);
                 initBuffer(outBufP, (cur_bank << 12) | cur_pc);
             }
@@ -222,12 +250,12 @@ BankContextP bankP;
 
         if( bankP->constSymP )
         {
-            writeConstants(outfP, bankP->constSymP);
+            writeConstants(outfP, bankP->constSymP, -1);
         }
 
         if( bankP->varNodesP )
         {
-            writeVars(outfP, bankP->varNodesP);
+            writeVars(outfP, bankP->varNodesP, -1);
         }
     }
 }
@@ -283,12 +311,9 @@ PNodeP node2P;
     return( evalExpr(nodeP) );
 }
 
-// Emit packed ascii
-static void
-writeAscii(
-    FILE *outfP,
-    char *strP
-    )
+// Emit packed ascii, return false if memory overwritten, else true.
+static bool
+writeAscii(FILE *outfP, char *strP)
 {
 int i;
 int word;
@@ -303,6 +328,11 @@ int word;
         }
         else
         {
+            if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
+            {
+                return(false);
+            }
+
             word = (word << 9) | *strP;
             putBuffer(outfP, outBufP,  word);
             adjustPC(1);
@@ -317,10 +347,12 @@ int word;
         putBuffer(outfP, outBufP, word << 9);
         adjustPC(1);
     }
+
+    return(true);
 }
 
 // Emit packed flexo code
-static void
+static bool
 writeText(FILE *outfP, FlexText flexText)
 {
 int i;
@@ -333,6 +365,11 @@ char *bufP;
     {
         if( i && !(i % 3) )
         {
+            if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
+            {
+                return(false);
+            }
+
             putBuffer(outfP, outBufP, val);
             adjustPC(1);
         }
@@ -343,6 +380,11 @@ char *bufP;
 
     if( i % 3 )     // had leftovers, finish the word
     {
+        if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
+        {
+            return(false);
+        }
+
         while( i++ % 3 )
         {
             val <<= 6;
@@ -353,14 +395,22 @@ char *bufP;
     }
     else if( (i >= flexText.nchars) && !( i % 3) )
     {
+        if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
+        {
+            return(false);
+        }
+
         putBuffer(outfP, outBufP, val);
         adjustPC(1);
     }
+
+    return(true);
 }
 
-// Walk a list of variables, emit the storage
+// Walk a list of variables, emit the storager.
+// If lineNo is -1, this is being called to automatically emit vars that were't emitted explicitly.
 static void
-writeVars(FILE *fP, PNodeListP listP)
+writeVars(FILE *fP, PNodeListP listP, int lineNo)
 {
 int i;
 PNodeP nodeP;
@@ -370,6 +420,20 @@ SymNodeP symP;
     {
         nodeP = listP->nodeP;
 
+        if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
+        {
+            if( lineNo == -1 )
+            {
+                fprintf(stderr, "Already-used memory would be overwritten by automatically emitted variables\n");
+                leave(0);
+            }
+            else
+            {
+                lineno = lineNo;
+                verror("Already-used memory would be overwritten by variables statement", lineNo);
+            }
+        }
+
         i = (nodeP->leftP)?reduceOperand(nodeP->leftP):0;
         putBuffer(fP, outBufP, i);
         adjustPC(1);
@@ -378,9 +442,10 @@ SymNodeP symP;
     }
 }
 
-// Walk a symbol table of constants, emit the values
+// Walk a symbol table of constants, emit the values.
+// If lineNo is -1, this is being called to automatically emit vars that were't emitted explicitly.
 static void
-writeConstants(FILE *fP, SymNodeP symP)
+writeConstants(FILE *fP, SymNodeP symP, int lineNo)
 {
     if( !symP )
     {
@@ -389,13 +454,27 @@ writeConstants(FILE *fP, SymNodeP symP)
 
     if( !(symP->flags & SYMF_EMITTED) )
     {
+        if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
+        {
+            if( lineNo == -1 )
+            {
+                fprintf(stderr, "Already-used memory would be overwritten by automatically emitted constants.\n");
+                leave(0);
+            }
+            else
+            {
+                lineno = lineNo;
+                verror("Already-used memory would be overwritten by constants statement");
+            }
+        }
+
         symP->flags |= SYMF_EMITTED;
         putBuffer(fP, outBufP, symP->value2);
         adjustPC(1);
     }
 
-    writeConstants(fP, symP->leftP);
-    writeConstants(fP, symP->rightP);
+    writeConstants(fP, symP->leftP, lineNo);
+    writeConstants(fP, symP->rightP, lineNo);
 }
 
 // Add a value to the current pc, mask to 12 bits
@@ -566,4 +645,39 @@ writeRIM(
 {
     writeWord(fP, DIO | addr);
     writeWord(fP, instr);
+}
+
+// Set the bit in the memory map corresponding to the address passed.
+// If it was not already set, return true, else if already set, false.
+bool
+setBit(uint64_t map[], int addr)
+{
+int idx;
+int bit;
+
+    idx = addr / 64;            // each map entry is 64 memory locations
+    bit = 1 << (addr % 64);
+    if( map[idx] & bit )
+    {
+        return( false );
+    }
+
+    map[idx] |= bit;
+    return(true);
+}
+
+// Set the bits in the memory map corresponding to the address passed and the number of locations to mark.
+// If it was not already set, return true, else if already set, false.
+bool
+setBits(uint64_t map[], int addr, int count)
+{
+    while( count > 0 )
+    {
+        if( !setBit(map, addr + (--count)) )
+        {
+            return(false);
+        }
+    }
+
+    return(true);
 }

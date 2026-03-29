@@ -2,8 +2,8 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.22 and covers up through am1 version 1.25; it will be updated as needed.\
-Edit date 19-Mar-2026
+This is version 1.23 and covers up through am1 version 1.26; it will be updated as needed.\
+Edit date 28-Mar-2026
 
 ## What is **am1**?
 
@@ -238,7 +238,7 @@ The -i flag has priority, followed by the environment variable, followed by the 
 
 At runtime, /usr/bin/cpp must exist if preprocessing is being done.
 
-## Warnings
+## Warnings and errors
 
 If enabled, various warnings can be printed.\
 Some are repeated, some only print once.
@@ -259,6 +259,22 @@ Examples:
 -W=1Dop
 -W=bank -W=locals
 ```
+
+Errors are always printed and cause assembly to stop.
+There are 4 kinds of errors:
+- internal errors, these should never happen and if they do, it's a bug
+- symbol definition errors occur if a symbol is used but never defined
+- syntax errors occur if the program is not structured correctly
+- memory violations
+
+The first two will be obvious, the third covers a variety of errors.
+These are invalid code syntax, e.g. *1++2*, unterminated text or ascii strings, and number base violations,
+e.g. using 9 when the base is octal.
+
+For the forth, **am1** checks for two kinds of memory violations.
+First, if code tries to go past the end of its bank, i.e. code at an address greater than 07777, an error will occur.\
+Second, when generating binary code, but not macro code, if code or data is placed in a location that already
+contains code or data, an *overwrite*, an error will occur.
 
 ## Listing file
 

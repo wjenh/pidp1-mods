@@ -667,6 +667,7 @@ Several special representations for numbers are also provided, they override the
 - 0oNNN an octal number, N must be 0-7
 - 0dNNN a decimal number, N must be 0-9
 - 0xNNN a hexadecimal number, N must be 0-9a-f or A-F
+- 0bNNN a binary number, N must be 0-1
 
 There are two additional special number representations:
 

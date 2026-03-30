@@ -1,37 +1,39 @@
 # disassemble_tape - a program to disassemble a PDP-1 binary prgram tape
 
+Updated 30-Mar-2026
+
 ## SYNOPSIS
 ```
-disassemble_tape  [-m] [-c] [-i] [-k] [-d] [-a] tapeimagefile
+disassemble_tape  [-a] [-m] [-k] [-l] [-r] [-d] tapeimagefile
 ```
 ## DESCRIPTION
 This is a two-pass disassembler for PDP-1 tape image files that contain RIM and BIN format data
 as would be produced by the PDP-1 macro assembler.
+
+It can also read tapes with the **am1** assembler loader.
+
 All non-error output goes to stdout.  
-Three modes are supported.
+
+Three modes are supported.\
 The default is to list the disassembled tape in an informative format, but this cannot be assembled.  
 Macro mode emits source that can be assembled by the MACRO1 and derivative assemblers.  
-Comatiblity mode emits source that can be assembled by the native PDP-1 macro assembler.  
 
-The difference between macro mode and compatibilty mode is that for macro mode, 4 character labels are generated
-and combined operate-group microinstructions are
-emitted as e.g. cla!cli!clf 3, but this sytax is not valid for the native assember which does not support
-a bitwise or operator.
-In this case, any composite opr instuction is just emitted as its octal equivalent and a comment added.
-No labels are generated for compatibility mode.
+The second is to generate output that **macro_1** or **am1** can assemble.
+
+The third just outputs the binary words as octal, one word per line.
 
 For default and macro modes, any memory location that is an address targeted by an instruction is assigned
 a label of the form 'Lnnn'.
 The label will them be used in the instruction and also shown at the target location.
 
 ## OPTIONS
+- '-a' - am1 extended loader compatibility, use for any am1 binaries
 - '-m' - macro mode, output is compatible with the MACRO1 assembler
 - '-c' - native macro mode, output is compatible with the native PDP-1 macro assembler
-- '-i' - list unknown IOTs encountered on stderr
 - '-k' - if in macro mode an initial RIM code block will not be output because MACRO usuaally does it; this keeps it
+- '-l' - if in verbose mode, don't print the leader
 - '-r' - Raw mode, just dump the tape as instructions or binary words, no RIM or BIN searching (not for macro)
 - '-d' - debug mode, not useful except for debugging disassemble_tape
-- '-a' - am1 assembler extended loader compatibility, use for any am1 binaries
 - Options can be combined, e.g. -mi.
 
 ## LIMITATIONS
@@ -58,7 +60,9 @@ they are assumed to comprise 18 bit words and are also disassembled.
 ## EMBEDDABLE DISASSEMBLER
 The decondeInstruction.c code provides a standalone instruction disassembler that can be embedded in other code
 that needs a readable version of a binary instruction word.
+
 ## ERRORS
+
 The following errors are possible and will be reported on stderr after which an exit(1) is done.
 - Incorrect command line arguments
 - Can't open input file
@@ -68,7 +72,7 @@ The following errors are possible and will be reported on stderr after which an 
 
 ## BUILDING
 Just do:
-cc disassemble_tape.c -o disassemble_tape
+make
 
 ## AUTHOR
 Bill Ezell (wje)  

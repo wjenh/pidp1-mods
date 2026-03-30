@@ -26,6 +26,7 @@
  * 15/03/2026 wje - Add more 1D instructions, improve extra bits reporting
  * 19/03/2026 wje - Add even more 1D instructions, fix macro mode for them
  * 21/03/2026 wje - Print i and C for unknown IOTs
+ * 29/03/2026 wje - Exclude symbolic name for iots and 1D instructions not supported by macro if in macro mode
  *
  */
 #include <stdlib.h>
@@ -35,7 +36,7 @@
 
 // Instructions have a 5 bit opcode followed by a 1 bit indirect marker as the high 6 bits of a word
 // IOTs can also have a completion-requested, bit 6 set, 04000.
-#define OPERATION(x)    (x >> 13)
+#define OPERATION(x)    (((x) >> 13) & 037)
 
 // The remaining 13 low bits are the operand whose meaning varies by instruction
 // The indirect bit is included because some instructions attach a different meaning to the bit.
@@ -54,7 +55,7 @@
 #define OPR_MASK_NOP 017777
 #define OPR_MASK_LAI 00040
 #define OPR_MASK_LIA 00020
-#define OPR_MASK_STF 00010
+#define OPR_MASK_STF 00010  // and CLF is not CLF with nonzero low 3 bits
 #define OPR_MASK_CMI 010000
 
 // Same for the 1D extended operations
@@ -63,6 +64,20 @@
 #define OPR2_MASK_IFI 02000
 #define OPR2_MASK_IIF 04000
 #define OPR2_MASK_IDA 00400
+
+// And the skips
+// 1D skips, SZI is sni -i, but there was the sni opcode for it
+#define SKP_MASK_SZI 014000
+#define SKP_MASK_SNI 04000
+// Regular skips
+// SZF and SZS are even more special, 
+#define SKP_MASK_SMA 00400
+#define SKP_MASK_SPA 00200
+#define SKP_MASK_SPI 02000
+#define SKP_MASK_SZA 00100
+#define SKP_MASK_SZO 01000
+#define SKP_MASK_SZF 00007
+#define SKP_MASK_SZS 00070
 
 // Indicates instruction-specific additional processing needed
 typedef enum {NONE, CAN_INDIRECT, IS_SKIP, IS_SHIFT, IS_OPR, IS_OPR2,
@@ -85,6 +100,7 @@ typedef struct
     char *name;             // instruction name to output
     SpecialMods modifiers;  // eg, if the instruction can wait for I/O completion
     int mask;               // the bits in the operand to use for comparison to value, value == (oprerand & mask)
+    bool notMacro;          // if true, not supported by macro
 } Special;
 
 Special *findSpecial(Special *, int);
@@ -133,76 +149,58 @@ static CodeDef opcodes[] =                 // we don't use the indirect bit, so 
 // The more specific masks for the same IOT should come first
 static Special iots[] =
     {
-        {010000, "ioh", IS_IOH, 017777},
+        {010000, "ioh", IS_IOH, 017777, false},
 
         // BBN CLOCK
-        {02032, "cks", NORMAL, 07777},
-        {02132, "cct", CAN_WAIT, 07777},
-        {00032, "rck", NORMAL, 07777},
+        {02032, "cks", NORMAL, 07777, true},
+        {02132, "cct", CAN_WAIT, 07777, true},
+        {00032, "rck", NORMAL, 07777, true},
 
         // Type 23 drum
-        {02061, "dba", NORMAL, 07777},
-        {00061, "dia", NORMAL, 07777},
-        {02062, "dra", NORMAL, 07777},
-        {00062, "dwc", NORMAL, 07777},
-        {02063, "dss", CAN_WAIT, 07777},
-        {00063, "dcl", CAN_WAIT, 07777},
+        {02061, "dba", NORMAL, 07777, true},
+        {00061, "dia", NORMAL, 07777, true},
+        {02062, "dra", NORMAL, 07777, true},
+        {00062, "dwc", NORMAL, 07777, true},
+        {02063, "dss", CAN_WAIT, 07777, true},
+        {00063, "dcl", CAN_WAIT, 07777, true},
 
         // SBS
-        {00052, "isb", NORMAL, 07777},
-        {00054, "lsm", NORMAL, 07777},
-        {00055, "esm", NORMAL, 07777},
-        {00056, "csb", NORMAL, 07777},
+        {00052, "isb", NORMAL, 07777, true},
+        {00054, "lsm", NORMAL, 07777, false},
+        {00055, "esm", NORMAL, 07777, false},
+        {00056, "cbs", NORMAL, 07777, false},
 
-        {04074, "eem", NORMAL, 07777},
-        {00074, "lem", NORMAL, 07777},
-        {00001, "rpa", INVERT_WAIT, 0777},
-        {00002, "rpb", INVERT_WAIT, 0777},
-        {00033, "cks", NORMAL, 07777},
-        {00007, "dpy", IS_DPY, 077},
-        {00005, "ppa", INVERT_WAIT, 077},
-        {00006, "ppb", INVERT_WAIT, 077},
-        {00030, "rrb", NORMAL, 077},
-        {00004, "tyi", CAN_WAIT, 077},
-        {00003, "tyo", CAN_WAIT, 077},
+        {04074, "eem", NORMAL, 07777, false},
+        {00074, "lem", NORMAL, 07777, false},
+        {00001, "rpa", INVERT_WAIT, 0777, false},
+        {00002, "rpb", INVERT_WAIT, 0777, false},
+        {00033, "cks", NORMAL, 07777, false},
+        {00007, "dpy", IS_DPY, 077, false},
+        {00005, "ppa", INVERT_WAIT, 077, false},
+        {00006, "ppb", INVERT_WAIT, 077, false},
+        {00030, "rrb", NORMAL, 077, false},
+        {00004, "tyi", CAN_WAIT, 077, false},
+        {00003, "tyo", INVERT_WAIT, 077, false},
 
-        {00000, "iot", UNKNOWN, 0}       // special end marker if nothing matches, must be last
-    };
-
-// Skip decoding.
-static Special skips[] =
-    {
-        // 1D skips
-        {014000, "szi", IS_SZI, 017777},
-        {04000, "sni", IS_SZI, 017777},
-
-        {00400, "sma", NORMAL, 07777},
-        {00200, "spa", NORMAL, 07777},
-        {02000, "spi", NORMAL, 07777},
-        {00100, "sza", NORMAL, 07777},
-        {01000, "szo", NORMAL, 07777},
-
-        {00000, "szf", IS_SZF, 07770},
-        {00000, "szs", IS_SZS, 07707},
-        {00000, "skp", UNKNOWN, 0}      // special end mareker if nothing matches
+        {00000, "iot", UNKNOWN, 0, false}       // special end marker if nothing matches, must be last
     };
 
 // Shift/rotate decoding.
 static Special shifts[] =
     {
-        {001000, "ral", NORMAL, 017000},
-        {011000, "rar", NORMAL, 017000},
-        {003000, "rcl", NORMAL, 017000},
-        {013000, "rcr", NORMAL, 017000},
-        {002000, "ril", NORMAL, 017000},
-        {012000, "rir", NORMAL, 017000},
-        {005000, "sal", NORMAL, 017000},
-        {015000, "sar", NORMAL, 017000},
-        {007000, "scl", NORMAL, 017000},
-        {017000, "scr", NORMAL, 017000},
-        {006000, "sil", NORMAL, 017000},
-        {016000, "sir", NORMAL, 017000},
-        {00000, "sft", UNKNOWN, 0}      // special end mareker if nothing matches, must be last
+        {001000, "ral", NORMAL, 017000, false},
+        {011000, "rar", NORMAL, 017000, false},
+        {003000, "rcl", NORMAL, 017000, false},
+        {013000, "rcr", NORMAL, 017000, false},
+        {002000, "ril", NORMAL, 017000, false},
+        {012000, "rir", NORMAL, 017000, false},
+        {005000, "sal", NORMAL, 017000, false},
+        {015000, "sar", NORMAL, 017000, false},
+        {007000, "scl", NORMAL, 017000, false},
+        {017000, "scr", NORMAL, 017000, false},
+        {006000, "sil", NORMAL, 017000, false},
+        {016000, "sir", NORMAL, 017000, false},
+        {00000, "sft", UNKNOWN, 0, true}      // special end marker if nothing matches, must be last
     };
 
 // Format an instruction into printed form, placing the results in the passed string.
@@ -297,81 +295,159 @@ Special *sP;
         break;
 
     case IS_SHIFT:
-        tmp = ((indirect?010000:0) | operand) & 017000;      // indirect bit controls left-right
+        tmp = operand & 017000;      // indirect bit controls left-right
         sP = findSpecial(shifts, tmp);
         if( sP->modifiers == UNKNOWN )
         {
             resultP += sprintf(resultP,"%06o", word);       // a bare shift doesn't exist, must be data
         }
+        else if( sP->notMacro && asMacro )
+        {
+            resultP += sprintf(resultP,"%06o", word);
+        }
         else
         {
             // Shift/rotate is strange. The number of places to shift/rotate is the count of 1's in the lower 9 bits
+            // This one is problematic. Technically any 1 bits in any positon count, but sometimes
+            // data words are like that.
+            // Macro uses consecutive bits, we'll go with that and if not, then it's not a shift/rotate.
             tmp = operand & 0777;
             tmp2 = 0;
-            while( tmp != 0 )
+            while( tmp & 01 )
             {
-                if( tmp & 01 )
-                {
-                    ++tmp2;
-                }
-                
+                ++tmp2;
                 tmp >>= 1;
             }
 
-            resultP += sprintf(resultP,"%s", sP->name);
-            if( tmp2 != 0 )
+            if( tmp )
             {
-                resultP += sprintf(resultP," %d (decimal)", tmp2);        // only if we'e actually shifting
+                // more bits left, fail
+                tmp2 = -1;
+            }
+
+            if( tmp2 < 0 )
+            {
+                resultP += sprintf(resultP,"%06o", word);
+            }
+            else
+            {
+                resultP += sprintf(resultP,"%s", sP->name);
+                if( tmp2 != 0 )
+                {
+                    // only if we'e actually shifting
+                    resultP += sprintf(resultP,asMacro?" %ds":" %d (decimal)", tmp2);
+                }
             }
         }
         break;
 
     case IS_SKIP:
-        sP = findSpecial(skips, operand);
-        if( sP->modifiers == IS_SZI )
+        // This one is a pain because multiple skips can be combined.
+        // Macro1 allows an 'or' operation, 'a!b', which is used in macro mode.
+        // However, the native assembler doesn't support this, so any combined operations
+        // are emitted as the octal word with a comment.
+        // If we see any extra bits not valid microinstuctions, then just the octal data is output.
+        // The first 2 are 1D instructions
+        tmp = 0;                // set to 1 if we have printed one already
+        tmpstr[0] = 0;          // be sure we start empty
+
+        if( operand == 0 )      // not a real skip, just do as data
         {
-            // Another special case
-            if( asMacro )
+            resultP += sprintf(resultP,"%06o", word);
+            break;
+        }
+
+        if( (operand & SKP_MASK_SZI) == SKP_MASK_SZI )    // MUST come befoe SNI! Only 2 bit directive.
+        {
+            if( asMacro )       // not in macro
             {
-                resultP += sprintf(resultP, "%06o", word);
+                sprintf(tmpstr,"%06o", word);
+                operand = 0;
             }
             else
             {
-                resultP += sprintf(resultP, "%s", (indirect)?"szi":"sni");
+                sprintf(tmpstr,"szi");
+                tmp = 1;
+                operand &= ~SKP_MASK_SZI;
             }
-            indirect = 0;
+        }
+        if( (operand & SKP_MASK_SNI) == SKP_MASK_SNI )
+        {
+            if( asMacro )       // not in macro
+            {
+                sprintf(tmpstr,"%06o", word);
+                operand = 0;
+            }
+            else
+            {
+                sprintf(tmpstr2,"%ssni", tmp?((asMacro)?separatorP:"|"):"");
+                strcat(tmpstr, tmpstr2);
+                tmp = 1;
+                operand &= ~SKP_MASK_SNI;
+            }
+        }
+        if( (operand & SKP_MASK_SMA) == SKP_MASK_SMA )
+        {
+            sprintf(tmpstr2,"%ssma", tmp?((asMacro)?separatorP:"|"):"");
+            strcat(tmpstr, tmpstr2);
+            tmp = 1;
+            operand &= ~SKP_MASK_SMA;
+        }
+        if( (operand & SKP_MASK_SPA) == SKP_MASK_SPA )
+        {
+            sprintf(tmpstr2,"%sspa", tmp?((asMacro)?separatorP:"|"):"");
+            strcat(tmpstr, tmpstr2);
+            tmp = 1;
+            operand &= ~SKP_MASK_SPA;
+        }
+        if( (operand & SKP_MASK_SPI) == SKP_MASK_SPI )
+        {
+            sprintf(tmpstr2,"%sspi", tmp?((asMacro)?separatorP:"|"):"");
+            strcat(tmpstr, tmpstr2);
+            tmp = 1;
+            operand &= ~SKP_MASK_SPI;
+        }
+        if( (operand & SKP_MASK_SZA) == SKP_MASK_SZA )
+        {
+            sprintf(tmpstr2,"%ssza", tmp?((asMacro)?separatorP:"|"):"");
+            strcat(tmpstr, tmpstr2);
+            tmp = 1;
+            operand &= ~SKP_MASK_SZA;
+        }
+        if( (operand & SKP_MASK_SZO) == SKP_MASK_SZO )
+        {
+            sprintf(tmpstr2,"%sszo", tmp?((asMacro)?separatorP:"|"):"");
+            strcat(tmpstr, tmpstr2);
+            tmp = 1;
+            operand &= ~SKP_MASK_SZO;
+        }
+        if( (operand & SKP_MASK_SZF) == SKP_MASK_SZF )
+        {
+            sprintf(tmpstr2,"%sszf %0o", tmp?((asMacro)?separatorP:"|"):"", (operand & SKP_MASK_SZF));
+            strcat(tmpstr, tmpstr2);
+            tmp = 1;
+            operand &= ~SKP_MASK_SZF;
+        }
+        if( (operand & SKP_MASK_SZS) == SKP_MASK_SZS )
+        {
+            sprintf(tmpstr2,"%sszs %0o",tmp?((asMacro)?separatorP:"|"):"", (operand & SKP_MASK_SZS) >> 3);
+            strcat(tmpstr, tmpstr2);
+            tmp = 1;
+            operand &= ~SKP_MASK_SZS;
+        }
+
+        if( operand != 0 )                      // extra bits were left over, must be data, don't print the skips
+        {
+            resultP += sprintf(resultP,"%06o", word);
         }
         else
         {
-            resultP += sprintf(resultP,"%s", sP->name);
-            if( indirect )
-            {
-                resultP += sprintf(resultP," %s", (asMacro)?"i":"not");
-            }
-        }
-
-        switch( sP->modifiers )
-        {
-        case UNKNOWN:
-            resultP += sprintf(resultP," %04o", operand);
-            break;
-
-        case IS_SZI:
-            resultP += sprintf(resultP," %0o", (operand & 07));
-            break;
-
-        case IS_SZF:
-            resultP += sprintf(resultP," %0o", (operand & 07));
-            break;
-
-        case IS_SZS:
-            resultP += sprintf(resultP," %0o0", ((operand >> 3) & 07));
-            break;
+            resultP += sprintf(resultP,"%s", tmpstr);
         }
         break;
 
     case IS_OPR:
-        // This one is a pain because multiple operations can be combined.
+        // Like skips, multiple can be combined, so all special cases.
         // Macro1 allows an 'or' operation, 'a!b', which is used in macro mode.
         // However, the native assembler doesn't support this, so any combined operations
         // are emitted as the octal word with a comment.
@@ -394,14 +470,14 @@ Special *sP;
             if( (operand & OPR_MASK_LAT) == OPR_MASK_LAT )    // MUST come befoe CLA! Only 2 bit directive.
             {
                 operand &= ~OPR_MASK_LAT;
-                sprintf(tmpstr2,"%slat", tmp?"|":"");
+                sprintf(tmpstr2,"%slat", tmp?((asMacro)?separatorP:"|"):"");
                 strcat(tmpstr, tmpstr2);
                 tmp = 1;
             }
             if( operand & OPR_MASK_CLA )        // MUST come after LAT!
             {
                 operand &= ~OPR_MASK_CLA;
-                sprintf(tmpstr2,"%scla", tmp?"|":"");
+                sprintf(tmpstr2,"%scla", tmp?((asMacro)?separatorP:"|"):"");
                 strcat(tmpstr, tmpstr2);
                 tmp = 1;
             }
@@ -422,7 +498,7 @@ Special *sP;
                     cP = (asMacro)?"760020":"lia";
                 }
 
-                sprintf(tmpstr2,"%s%s", tmp?"|":"", cP);
+                sprintf(tmpstr2,"%s%s", tmp?((asMacro)?separatorP:"|"):"", cP);
                 strcat(tmpstr, tmpstr2);
                 operand &= ~(OPR_MASK_LAI | OPR_MASK_LIA);
                 tmp = 1;
@@ -431,28 +507,28 @@ Special *sP;
             if( operand & OPR_MASK_CLI )
             {
                 operand &= ~OPR_MASK_CLI;
-                sprintf(tmpstr2,"%scli", tmp?"|":"");
+                sprintf(tmpstr2,"%scli", tmp?((asMacro)?separatorP:"|"):"");
                 strcat(tmpstr, tmpstr2);
                 tmp = 1;
             }
             if( operand & OPR_MASK_CMA )
             {
                 operand &= ~OPR_MASK_CMA;
-                sprintf(tmpstr2,"%scma", tmp?"|":"");
+                sprintf(tmpstr2,"%scma", tmp?((asMacro)?separatorP:"|"):"");
                 strcat(tmpstr, tmpstr2);
                 tmp = 1;
             }
             if( operand & OPR_MASK_HLT )
             {
                 operand &= ~OPR_MASK_HLT;
-                sprintf(tmpstr2,"%shlt", tmp?"|":"");
+                sprintf(tmpstr2,"%shlt", tmp?((asMacro)?separatorP:"|"):"");
                 strcat(tmpstr, tmpstr2);
                 tmp = 1;
             }
             if( !(operand & OPR_MASK_STF) && bits03 )
             {
                 // CLF is bits03, already cleared
-                sprintf(tmpstr2,"%sclf %o", tmp?"|":"", bits03);
+                sprintf(tmpstr2,"%sclf %o", tmp?((asMacro)?separatorP:"|"):"", bits03);
                 strcat(tmpstr, tmpstr2);
                 bits03 = 0;                  // done with these
                 tmp = 1;
@@ -460,7 +536,7 @@ Special *sP;
             if( (operand & OPR_MASK_STF) && bits03 )
             {
                 operand &= ~OPR_MASK_STF;
-                sprintf(tmpstr2,"%sstf %o", tmp?"|":"", bits03);
+                sprintf(tmpstr2,"%sstf %o", tmp?((asMacro)?separatorP:"|"):"", bits03);
                 strcat(tmpstr, tmpstr2);
                 bits03 = 0;                  // done with these
                 tmp = 1;
@@ -494,14 +570,14 @@ Special *sP;
         if( operand & OPR2_MASK_SCF )
         {
             operand &= ~OPR2_MASK_SCF;
-            sprintf(tmpstr2,"%sscf", tmp?"|":"");
+            sprintf(tmpstr2,"%sscf", tmp?((asMacro)?separatorP:"|"):"");
             strcat(tmpstr, tmpstr2);
             tmp = 1;
         }
         if( operand & OPR2_MASK_SCI )
         {
             operand &= ~OPR2_MASK_SCI;
-            sprintf(tmpstr2,"%ssci", tmp?"|":"");
+            sprintf(tmpstr2,"%ssci", tmp?((asMacro)?separatorP:"|"):"");
             strcat(tmpstr, tmpstr2);
             tmp = 1;
         }
@@ -509,7 +585,7 @@ Special *sP;
         if( operand & OPR2_MASK_IFI )
         {
             operand &= ~OPR2_MASK_IFI;
-            sprintf(tmpstr2,"%sifi", tmp?"|":"");
+            sprintf(tmpstr2,"%sifi", tmp?((asMacro)?separatorP:"|"):"");
             strcat(tmpstr, tmpstr2);
             tmp = 1;
         }
@@ -517,7 +593,7 @@ Special *sP;
         if( operand & OPR2_MASK_IIF )
         {
             operand &= ~OPR2_MASK_IIF;
-            sprintf(tmpstr2,"%siif", tmp?"|":"");
+            sprintf(tmpstr2,"%siif", tmp?((asMacro)?separatorP:"|"):"");
             strcat(tmpstr, tmpstr2);
             tmp = 1;
         }
@@ -525,7 +601,7 @@ Special *sP;
         if( operand & OPR2_MASK_IDA )
         {
             operand &= ~OPR2_MASK_IDA;
-            sprintf(tmpstr2,"%siif", tmp?"|":"");
+            sprintf(tmpstr2,"%sida", tmp?((asMacro)?separatorP:"|"):"");
             strcat(tmpstr, tmpstr2);
             tmp = 1;
         }
@@ -544,9 +620,16 @@ Special *sP;
         // Sometimes there are extra bits in the operand above the usual 6 bits
         sP = findSpecial(iots, operand);
         extra = operand & ~sP->mask;             // extra bits not in the masked bits
-        resultP += sprintf(resultP,"%s", sP->name);
+        if( sP->notMacro && asMacro )
+        {
+            resultP += sprintf(resultP,"%s","iot");
+        }
+        else
+        {
+            resultP += sprintf(resultP,"%s", sP->name);
+        }
 
-        switch( sP->modifiers )
+        switch( (sP->notMacro && asMacro)?UNKNOWN:sP->modifiers )
         {
         case UNKNOWN:
             if( operand != 0 )                  // not an empty IOT
@@ -563,7 +646,11 @@ Special *sP;
                     operand &= ~COMPLETION_BIT;
                 }
 
-                resultP += sprintf(resultP,"%s%04o", (asMacro)?separatorP:" | ",  operand);
+                if( operand )
+                {
+                    resultP += sprintf(resultP,"%s%04o", (asMacro)?separatorP:" | ",  operand);
+                    resultP += sprintf(resultP,"\t/%06o", word);
+                }
             }
             else            // is ioh
             {
@@ -626,7 +713,7 @@ Special *sP;
 
             if( asMacro )
             {
-                tmp = operand & 07700;  // macro doesn't print the intensity if it's zero 
+                tmp = operand & 03700;  // macro doesn't print the intensity if it's zero 
             }
             else
             {
@@ -635,20 +722,16 @@ Special *sP;
 
             if( tmp > 0 )
             {
-                resultP += sprintf(resultP," %4o", tmp);
+                resultP += sprintf(resultP," %04o", tmp);
             }
 
             extra = 0;              // dpy uses some of the special bits
             break;
 
         case IS_IOH:            // special case for completion flag
-            if( indirect )
+            if( completion )
             {
-                resultP += sprintf(resultP,"  i");
-            }
-            else if( completion )
-            {
-                resultP += sprintf(resultP," %s",(asMacro)?"4000":"C");
+                resultP += sprintf(resultP," %s",(asMacro)?"-i :4000":"C");
                 extra &= ~COMPLETION_BIT;
             }
             break;
@@ -669,6 +752,7 @@ Special *sP;
     return( resultP );
 }
 
+// This expects a 5 bit opcode from the high 6 bits >> 1.
 bool
 opCanIndirect(int opcode)
 {
@@ -679,7 +763,7 @@ CodeDef *instructionP;
         return(false);      // out of bounds
     }
 
-    instructionP = &opcodes[opcode];
+    instructionP = &opcodes[opcode & 037];
     return( (instructionP->modifiers == CAN_INDIRECT) );
 }
 

@@ -244,6 +244,11 @@ octal			{ decimalMode = false; }
 			    return(INTEGER);
 			}
 
+0b[0-1]+		{
+			    yylval.ival = (int)strtol(yytext+2,0,2);
+			    return(INTEGER);
+			}
+
 [0-9]+			{
 			    if( !decimalMode && (strchr(yytext, '8') || strchr(yytext, '9')) )
 			    {

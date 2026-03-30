@@ -12,7 +12,7 @@
  * assemblers. It will generate labels for referenced locations.
  * It cannot be assembled by the native PDP-1 assembler.
  *
- * The third mode generates output suitable for the native assember, but lacks any label information.
+ * The third mode is raw mode, each 18 bit data word is just printed as a an octal value.
  *
  * The PDP-1 binary tapes are loaded initially using read-in, which ignores any character that doesn't have
  * bit 0200 set.
@@ -83,6 +83,29 @@
  * 7776: checksum
  * 7777: 32aaaa     dio endaddr + 1
  *
+ * Am1 uses its own loader to deal with extended memory:
+ *
+ * 7751: 724074          eem            if extended memory was not used, am1 will replace this with a nop
+ * 7752: 730002      loop, rpb          no checksum is done, we aren't reading from a pysical tape reader
+ * 7753: 327773          dio addr       word is the address to being storing data or negative if done
+ * 7754: 642000          spi
+ * 7755: 607766          jmp done
+ * 7756: 730002          rpb            word is the ending address + 1
+ * 7757: 327774          dio end
+ * 7760: 730002      load, rpb          read data words and store until end is reached
+ * 7761: 337773          dio i addr
+ * 7762: 447773          idx addr
+ * 7763: 527774          sas end
+ * 7764: 607760          jmp load
+ * 7765: 607752          jmp loop
+ * 7766: 662001      done, ril 1s       the last word read in loop, above, is the start address
+ * 7767: 652000          spi i          if bit 0 was set....
+ * 7770: 617773          jmp i addr     start prog
+ * 7771: 760400          hlt            nostart, just halt
+ * 7772: 607752          jmp loop       and go again
+ * 7773: 000000      addr, 0
+ * 7774: 000000      end, 0
+ *
  * Comments:
  * This software may be freely used for any purpose as long as the author credit is kept.
  * It is strongly asked that the revision history be updated and any changes sent back to pdp1@quackers.net so
@@ -121,6 +144,7 @@
  * 01/03/2026 wje - Fix cal, emit operand if it actually isn't a cal
  * 15/03/2026 wje - Change to use decode_instruction, no reason to duplicate all the code
  * 19/03/2026 wje - Pass macro flag to decodeInstr()
+ * 30/03/2026 wje - Major rework for full multi-bank support in am1, fix some bugs, drop compatiiblity mode, -c
  *
  */
 #include <stdlib.h>
@@ -131,10 +155,15 @@
 
 #define DIAGNOSTIC(args...) if( diagnostics ) {printf(args); printf("\n");}
 
+#define MEMSIZE 4096    // words in a memory bank
+#define BANKS 16        // and the number of banks we support
+
+#define BANKOF(a) ((a) & ~(MEMSIZE - 1))   // get the bank part of a full 16 bit address, 4 bits
+#define BANKNUM(a) (BANKOF(a) >> 12)       // get the bank number of a full 16 bit address
+
 // Instructions have a 5 bit opcode followed by a 1 bit indirect marker as the high 6 bits of a word
 // IOTs can also have a completion-requested, bit 6 set, 04000.
-#define OPERATION(x)    (x >> 12)
-
+#define OPERATION(x)    (((x) >> 12) & 076)
 // The remaining 12 low bits are the operand whose meaning varies by instruction
 #define OPERAND(x)      (x & 0007777)
 
@@ -161,6 +190,7 @@ void markTarget(int);
 int getLabel(int, int,  char*);
 
 void usage(void);
+char *stateToName(State state);
 
 extern char *decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP, char *resultP);
 extern bool opCanIndirect(int opcode);
@@ -168,26 +198,28 @@ extern bool opCanIndirect(int opcode);
 // Set from cmd line args
 bool as_macro = false;
 bool raw_mode = false;
-bool unknown_iots = false;
+bool show_leader = true;
 bool diagnostics = false;
 bool keep_rim = false;
-bool compatibility_mode = false;
+bool verbose = true;
 bool am1Loader = false;
 
 int pass = 1;               // first pass
+int curBank = 0;            // used for am1
+int lastAddr = 0;;
 int label_number = 1;       // used with memlocs and labels
 int tape_loc = 0;
 int checksum = 0;
 int saved_word = -1;        // for getWord() pushback
 State state;
-char separator[4];          // used in macro and compatibility modes
+char separator[4];          // used in macro mode
 
 char labelStr[16];          // for formatting a label
 
 // This array is used for tracking labels.
 // The low 9 bits are the label number.
-// It is indexed by a memoery address.
-Label memlocs[4096];       // enough for the entire address space
+// It is indexed by a memory address.
+Label memlocs[BANKS * MEMSIZE];       // enough for the entire address space
 
 #define MEM_VALID  01       // this location was seen as a load address in RIM or BIN
 #define MEM_TARGET 02       // this location was seen as the target of a memoery reference
@@ -229,12 +261,9 @@ char tmpstr[16];
                 am1Loader = true;
                 break;
 
-            case 'i':
-                unknown_iots = true;
-                break;
-
             case 'm':
                 as_macro = true;
+                verbose = false;
                 break;
 
             case 'd':
@@ -245,14 +274,16 @@ char tmpstr[16];
                 keep_rim = true;
                 break;
 
+            case 'l':
+                show_leader = false;
+                break;
+
             case 'r':
                 raw_mode = true;
                 break;
 
-            case 'c':
-                compatibility_mode = true;
-                as_macro = true;
-                strcpy(separator, " ");         // just used in some comments
+            case 'v':
+                verbose = false;
                 break;
 
             default:
@@ -275,11 +306,6 @@ char tmpstr[16];
         exit(1);
     }
 
-    if( !as_macro )
-    {
-        keep_rim = true;            // in verbose mode, always emit the rim data
-    }
-
     if( !raw_mode )
     {
         passOne(fP);                // first pass finds all locations that need labels and validates the tape.
@@ -288,7 +314,7 @@ char tmpstr[16];
         tape_loc = 0;               // reset tape position
     }
 
-    if( as_macro )
+    if( as_macro && !raw_mode )
     {
         strcpy(shortname, basename(filename));
 
@@ -334,7 +360,7 @@ char tmpstr[16];
                 state = RIM;
                 cur_addr = OPERAND(word);
 
-                if( !as_macro )
+                if( verbose && !as_macro && keep_rim )
                 {
                     printf("Start of RIM block at tape position %d\n", tape_loc - 3);
                     printf("Tape  Addr  Raw    Lbl   Instruction\n");
@@ -358,7 +384,7 @@ char tmpstr[16];
             {
                 state = LOOKING;                // look for a BIN block now
                 start_addr = OPERAND(word);
-                if( !as_macro )
+                if( !as_macro && keep_rim )
                 {
                     printf("End of RIM loading, start address is %04o\n", start_addr);
                 }
@@ -415,14 +441,7 @@ char tmpstr[16];
                     else
                     {
                         word &= 0177777;
-                        if( getLabel(word, word, labelStr) != -1 )
-                        {
-                            printf("\n     start %s\n", labelStr); // macro directive to give start addr
-                        }
-                        else
-                        {
-                            printf("\n     start %06o\n", word);    // could be an extended address
-                        }
+                        printf("\n     start 0%06o\n", word);    // could be an extended address
 
                         if( as_macro )
                         {
@@ -430,6 +449,7 @@ char tmpstr[16];
                             state = DONE;
                             DIAGNOSTIC("Saw jmp %06o at tape location %d, new state is DONE", word, tape_loc);
                         }
+                        /*
                         else
                         {
                             word2 = 0617770;
@@ -439,6 +459,7 @@ char tmpstr[16];
                             DIAGNOSTIC("Saw jmp %04o at tape location %d, new state is DATA",
                                 OPERAND(word), tape_loc);
                         }
+                        */
                     }
                 }
                 else
@@ -472,13 +493,10 @@ char tmpstr[16];
                 "State LOOKING, got a DIO but next word was not one, bad BIN bloct at tape_location %d\n",
                         tape_loc = 3);
 
-                    if( as_macro )                      // bail out
+                    if( as_macro )
                     {
-                        fprintf(stderr,
-                    "Looking for a BIN block, but saw a non-standard block at tape location %d, terminating.\n",
-                            tape_loc = 3);
-                        fclose(fP);
-                        exit(1);
+                        // Print as a comment
+                        printf("/ %06o\n", word);
                     }
                     else
                     {
@@ -527,12 +545,8 @@ char tmpstr[16];
                 // Random data outside a RIM or BIN
                 if( as_macro )
                 {
-                        fprintf(stderr,
-                    "Looking for a RIM or BIN, but saw random binary at tape location %d, terminating.\n",
-                        tape_loc + 3);
-
-                        fclose(fP);
-                        exit(1);
+                        // Print as a comment
+                        printf("/ %06o\n", word);
                 }
                 else
                 {
@@ -544,12 +558,12 @@ char tmpstr[16];
 
         case BIN:
             {
-                // word will contain the 18 bit value for the current pc
+                // cur_addr will be the full 16 bit address for am1
                 formatInstr(cur_addr++, word);
 
                 if( cur_addr >= end_addr )      // done, get the checksum from the tape, compare
                 {
-                    if( !as_macro )
+                    if( verbose && !as_macro  )
                     {
                         printf("End of %s block at tape position %d\n", am1Loader?"AM1":"BIN", tape_loc - 3);
                     }
@@ -566,7 +580,14 @@ char tmpstr[16];
         case RAW:
         case DATA:                                      // we got past the end of all BIN blocks, ignore the rest
             // word will contain the 18 bit value we read, dump it
-            formatInstr(0, word);
+            if( state == RAW )
+            {
+                printf("0%06o\n", word);
+            }
+            else
+            {
+                formatInstr(0, word);
+            }
             break;
 
         default:
@@ -579,10 +600,14 @@ char tmpstr[16];
     {
         if( !did_start )                // we need to tell macro the starting addr, came from the RIM block
         {
-            printf("     start %o\n", start_addr); // macro directive to give start addr
+            if( start_addr >= MEMSIZE ) // this code used a bank start address outside of bank 0
+            {
+                printf("/ Warning - original start was %o, not in bank 0.\n", start_addr);
+            }
+            printf("     start %o\n", start_addr & 07777); // macro directive to give start addr
         }
     }
-    else
+    else if( verbose )
     {
         printf("Done\n");
     }
@@ -694,7 +719,21 @@ char tmpstr[16];
             break;
 
         case LOOKING:
-            if( OPERATION(word) == 032 )   // RIM ended, DIO, beginning of BIN block
+            if( am1Loader )
+            {
+                if( word & 0600000 )
+                {
+                    // am1 loader end-of-code, start addr or pause
+                    return;
+                }
+                else
+                {
+                    cur_addr = word;        // start of am1 block
+                    end_addr = getWord(fP, 2, state);
+                    state = BIN;
+                }
+            }
+            else if( OPERATION(word) == 032 )   // RIM ended, DIO, beginning of BIN block
             {
                 cur_addr = OPERAND(word);   // starting address
                 DIAGNOSTIC("BIN start, addr %04o", cur_addr);
@@ -848,13 +887,16 @@ int saw_space;
             {
                 if( !as_macro )
                 {
-                    if( saw_space )
+                    if( verbose && show_leader && saw_space )
                     {
                         printf("\n");
                         saw_space = 0;
                     }
 
-                    printTapeLeader(ch);
+                    if( verbose && show_leader )
+                    {
+                        printTapeLeader(ch);
+                    }
                 }
             }
         }
@@ -891,12 +933,25 @@ void
 formatInstr(int pc, int word)
 {
 int tmp;
+int bank;
+bool needBank = false;
 char symbolstr[256];
 char tmpstr[256];
 
-    if( getLabel(pc, pc, labelStr) != -1 )
+    if( BANKNUM(pc) != curBank )
     {
         if( as_macro )
+        {
+            printf("/ WARNING - this code uses extended memory, it will not work properly!\n");
+        }
+
+        needBank = true;
+        curBank = BANKNUM(pc);
+    }
+
+    if( getLabel(pc, pc, labelStr) != -1 )
+    {
+        if( !verbose || as_macro  )
         {
             strcat(labelStr,",");
         }
@@ -911,18 +966,44 @@ char tmpstr[256];
         labelStr[0] = '\0';
     }
 
-    if( as_macro )
+    if( !verbose )
     {
+        if( needBank )
+        {
+            printf((as_macro)?"/ Now in bank %o\n":"bank %o\n", curBank);
+        }
+
+        if( pc != (lastAddr + 1) )
+        {
+            printf("%o/\n", pc & 07777);    // addr is relative to current bank
+        }
+
+        lastAddr = pc;
+
         printf("%s", (labelStr[0] != '\0')?labelStr:"     ");
     }
     else
     {
+        if( needBank )
+        {
+            printf("%-5d %04o: bank %o\n", tape_loc, pc, curBank);
+        }
+
         printf("%-5d %04o: %06o %s", tape_loc, pc, word, (labelStr[0] != '\0')?labelStr:"     ");
     }
 
-    getLabel(word & 07777, word & 07777, symbolstr);
-    decodeInstr(word, word & 07777, as_macro, separator, symbolstr, tmpstr);
+    tmp = OPERATION(word) >> 1;
+    if( opCanIndirect(tmp) )
+    {
+        tmp = BANKOF(pc) | (word & 07777);
+        getLabel(tmp, word & 07777, symbolstr);
+    }
+    else
+    {
+        symbolstr[0] = '\0';
+    }
 
+    decodeInstr(word, word & 07777, as_macro, separator, symbolstr, tmpstr);
     printf("%s\n", tmpstr);
 }
 
@@ -930,13 +1011,9 @@ char tmpstr[256];
 void
 markValid(int address)
 {
-    if( compatibility_mode )
-    {
-        return;                         // we don't support labels
-    }
+int bank;
 
-    address = OPERAND(address);         // for safety, limits it to 12 bits
-
+    address &= (BANKS * MEMSIZE) - 1 ; // for safety, limit to our supported size
     memlocs[address].flags |= MEM_VALID;
     DIAGNOSTIC("%06o marked as valid", address);
 }
@@ -948,17 +1025,14 @@ markValidByInstruction(int addr, int word)
 int opcode;
 int operand;
 
-    if( compatibility_mode )
-    {
-        return;                         // we don't support labels
-    }
-
     markValid(addr);            //this address is used
 
-    opcode = OPERATION(word);
+    opcode = OPERATION(word) >> 1;
     operand = OPERAND(word);
+
     if( opCanIndirect(opcode) )
     {
+        operand = BANKOF(addr) | operand;
         markTarget( operand );
     }
 }
@@ -971,10 +1045,7 @@ int itmp, itmp2;
 char ch;
 char *cP;
 
-    if( compatibility_mode )
-    {
-        return;                         // we don't support labels
-    }
+    address &= (BANKS * MEMSIZE) - 1 ; // for safety, limit to our supported size
 
     if( !(memlocs[address].flags & MEM_TARGET) )
     {
@@ -997,7 +1068,7 @@ getLabel(int address, int defaultval, char* labelP)
 {
 char *cP;
 
-    address = OPERAND(address);                   // for safety
+    address &= (BANKS * MEMSIZE) - 1 ; // for safety, limit to our supported size
 
     if( (memlocs[address].flags & (MEM_VALID | MEM_TARGET)) == (MEM_VALID | MEM_TARGET) )
     {
@@ -1011,19 +1082,44 @@ char *cP;
     }
 }
 
+char *
+stateToName(State state)
+{
+    switch( state )
+    {
+    case START:
+        return("START");
+    case RESTART:
+        return("RESTART");
+    case LOOKING:
+        return("LOOKING");
+    case RIM:
+        return("RIM");
+    case BIN:
+        return("BIN");
+    case DATA:
+        return("DATA");
+    case RAW:
+        return("RAW");
+    case DONE:
+        return("DONE");
+    default:
+        return("UNKNOWN");
+    }
+}
+
 void
 usage()
 {
-    fprintf(stderr,"Usage: disassemble_tape [-amidkcr] filename\n");
+    fprintf(stderr,"Usage: disassemble_tape [-amklrd] filename\n");
     fprintf(stderr,"where:\n");
     fprintf(stderr,"a - expect the am1 loader\n");
-    fprintf(stderr,"m - output in pure macro assember form\n");
-    fprintf(stderr,"i - print any unknown IOTs on stderr\n");
-    fprintf(stderr,"d - enable diagnostics for debugging this progam\n");
+    fprintf(stderr,"m - output in pure macro assember form, warn about extended memory use\n");
     fprintf(stderr,"k - keep RIM loader code if seen and in macro mode; normally no because MACRO usually adds it\n");
-    fprintf(stderr,"c - compatibility with native assembler mode\n");
+    fprintf(stderr,"l - output the leader in readable form, only in verbose\n");
     fprintf(stderr,"r - raw mode, just dump every binary word as an instruction, no RIM or BIN checking\n");
-    fprintf(stderr,"    raw verrides all other flags except d\n");
+    fprintf(stderr,"d - enable diagnostics for debugging this progam\n");
+    fprintf(stderr,"    raw overrides all other flags except d\n");
     fprintf(stderr,"Flags can be together, -mid, or separate, -m -i -d\n");
     exit(1);
 }

@@ -192,7 +192,8 @@ while true; do
 		make -C $INSTALLDIR/src/usb_paper_tape
 		# The tape disassembler
                 make -C $INSTALLDIR/Tools/Disassembler all
-		cp $INSTALLDIR/Tools/Disassembler/disassembler $INSTALLDIR/bin/disassemble_tape
+		cp $INSTALLDIR/Tools/Disassembler/disassemble_tape $INSTALLDIR/bin/disassemble_tape
+		cp $INSTALLDIR/Tools/Disassembler/disassemble_mem $INSTALLDIR/bin/disassemble_mem
 		# The etended audio control
 		make -C $INSTALLDIR/Tools install
             

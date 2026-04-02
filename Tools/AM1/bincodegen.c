@@ -38,6 +38,7 @@ static int cur_bank;
 extern int lineno;      // used by verror() for a line number
 extern bool sawBank;
 extern bool noRim;
+extern bool noMemFatal;
 extern bool keepMinusZero;
 extern BankContextP banksP;
 
@@ -45,6 +46,7 @@ extern int evalExpr(PNodeP);
 extern int onesComplAdj(int);
 extern int twosComplAdj(int);
 extern void leave(int);
+extern void vwarn(int errtype, const char *msgP, ...);
 
 static void initBuffer(BufferP bufP, int startAddr);
 static void putBuffer(FILE *outfP, BufferP bufP, uint32_t word);
@@ -156,7 +158,14 @@ BankContextP bankP;
                 if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
                 {
                     lineno = nodeP->lineNo;
-                    verror("Already used memory address 0%04o would be overwritten", cur_pc);
+                    if( noMemFatal )
+                    {
+                        vwarn(WARN_MEMORY, "Already used memory address 0%04o would be overwritten.", cur_pc);
+                    }
+                    else
+                    {
+                        verror("Already used memory address 0%04o would be overwritten.", cur_pc);
+                    }
                 }
                 putBuffer(outfP, outBufP, i);
                 adjustPC(1);
@@ -186,7 +195,7 @@ BankContextP bankP;
             if( !writeText(outfP, nodeP->value.flexText) )
             {
                 lineno = nodeP->lineNo;
-                verror("Already-used memory would be overwritten by text");
+                verror("Already used memory address 0%04o would be overwritten by text.", cur_pc);
             }
             break;
 
@@ -194,7 +203,7 @@ BankContextP bankP;
             if( !writeAscii(outfP, nodeP->value.strP) )
             {
                 lineno = nodeP->lineNo;
-                verror("Already-used memory would be overwritten by ascii");
+                verror("Already used memory address 0%04o would be overwritten by ascii.", cur_pc);
             }
             break;
 
@@ -222,7 +231,7 @@ BankContextP bankP;
                 if( !setBits(memMap, (cur_bank << 12) | cur_pc, nodeP->value.ival) )
                 {
                     lineno = nodeP->lineNo;
-                    verror("Already-used memory would be overwritten by table");
+                    verror("Already used memory address 0%04o would be overwritten by table.", cur_pc);
                 }
                 adjustPC(nodeP->value.ival);
                 initBuffer(outBufP, (cur_bank << 12) | cur_pc);
@@ -407,7 +416,7 @@ char *bufP;
     return(true);
 }
 
-// Walk a list of variables, emit the storager.
+// Walk a list of variables, emit the storage.
 // If lineNo is -1, this is being called to automatically emit vars that were't emitted explicitly.
 static void
 writeVars(FILE *fP, PNodeListP listP, int lineNo)
@@ -424,13 +433,15 @@ SymNodeP symP;
         {
             if( lineNo == -1 )
             {
-                fprintf(stderr, "Already-used memory would be overwritten by automatically emitted variables\n");
-                leave(0);
+                verror(
+            "Already used memory would be overwritten by automatically emitted variables at memory address 0%4o.\n",
+                    cur_pc);
             }
             else
             {
                 lineno = lineNo;
-                verror("Already-used memory would be overwritten by variables statement", lineNo);
+                verror("Already used memory would be overwritten by variables at memory address 0%4o.\n",
+                    cur_pc);
             }
         }
 
@@ -458,13 +469,15 @@ writeConstants(FILE *fP, SymNodeP symP, int lineNo)
         {
             if( lineNo == -1 )
             {
-                fprintf(stderr, "Already-used memory would be overwritten by automatically emitted constants.\n");
-                leave(0);
+                verror(
+            "Already used memory would be overwritten by automatically emitted constants at memory address 0%4o.\n",
+                    cur_pc);
             }
             else
             {
                 lineno = lineNo;
-                verror("Already-used memory would be overwritten by constants statement");
+                verror("Already used memory would be overwritten by constants at memory address 0%4o.\n",
+                    cur_pc);
             }
         }
 
@@ -653,10 +666,11 @@ bool
 setBit(uint64_t map[], int addr)
 {
 int idx;
-int bit;
+uint64_t bit;
 
-    idx = addr / 64;            // each map entry is 64 memory locations
-    bit = 1 << (addr % 64);
+    idx = addr >> 6;            // each map entry is 64 memory locations
+    bit = UINT64_C(1) << (addr & 63);
+
     if( map[idx] & bit )
     {
         return( false );

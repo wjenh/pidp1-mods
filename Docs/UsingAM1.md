@@ -2,8 +2,8 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.23 and covers up through am1 version 1.26; it will be updated as needed.\
-Edit date 28-Mar-2026
+This is version 1.24 and covers up through am1 version 1.27; it will be updated as needed.\
+Edit date 2-Apr-2026
 
 ## What is **am1**?
 
@@ -196,12 +196,13 @@ Just type make.
 
 ## Usage
 
-**am1** [-abdmlnsvz[xykp]] [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
+**am1** [-abdmMlnsvz[xykp]] [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
 
 - a space means add, default is or
 - b generate binary tape image code, the default action
 - d generate all files needed for **ad1**, the same as giving the *-s* and *-l* flags
 - m generate **macro1** code
+- M memory overwrite by code is a warning, not a fatal error
 - l generate a program listing
 - n don't run **cpp** on the input
 - r don't output an initial rim loader
@@ -252,6 +253,7 @@ The warnings are:
 - locals, a local symbol hides a global symbol or an endlocal does not match the scoping depth, repeats
 - flex, a flexo op is used but shift codes make it exceed 3 characters, repeats
 - vars, a variables statement was used but there are no variables to emit, repeats
+- memory, an expression's address is the same as one that already has had code written to it, but see below
 
 Examples:
 ```
@@ -271,10 +273,18 @@ The first two will be obvious, the third covers a variety of errors.
 These are invalid code syntax, e.g. *1++2*, unterminated text or ascii strings, and number base violations,
 e.g. using 9 when the base is octal.
 
-For the forth, **am1** checks for two kinds of memory violations.
-First, if code tries to go past the end of its bank, i.e. code at an address greater than 07777, an error will occur.\
-Second, when generating binary code, but not macro code, if code or data is placed in a location that already
-contains code or data, an *overwrite*, an error will occur.
+For the forth, **am1** checks for multiple kinds of memory violations.
+These are only checked if binary, executable code is being produced.
+
+- if code tries to go past the end of its bank, i.e. code at an address greater than 07777,
+a fatal error will occur.
+- when generating binary code, but not macro code, if code or data is placed in a location that already
+contains code or data, an *overwrite*, a fatal error or warning will occur.
+- when emitting a *table*, *text*, or *ascii* directive, a fatal error on an overwrite will occur.
+- when emitting *variables* or *constants* either explictily or implicitly, a fatal error on an overwrite will occur.
+
+The second, overwrite by code, can be made a warning via the *-M* flag.
+By default, it is a fatal error.
 
 ## Listing file
 

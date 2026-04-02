@@ -1,6 +1,6 @@
 /* am1.c - another macro1 assembler
  *
- * Usage: am1 [-abdlmnrsvz[ykp]] [-i path] [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
+ * Usage: am1 [-abdlmMnrsvz[ykp]] [-i path] [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
  *
  * Valid switches are:
  *
@@ -9,6 +9,7 @@
  * -d	same as giving both -s and -l, generates all the files needed for ad1
  * -l	generate a listing
  * -m	generate macro1 source
+ * -M	memory overwrite by code is a warning, not a fatal error
  * -n	don't run cpp on input source
  * -r	don't write a loader at the beginning of a tape
  * -s	generate a symbol table file
@@ -84,6 +85,7 @@
  *               Really just to hash resolved symbol values better.
  * 17-Mar-2026 - general cleanup, eliminate empty lines in listing for clarity, make -0 to 0 conversion the default
  * 28-Mar-2026 - add code passing 4K boundary, code overwriting other code checks and error msgs
+ * 02-Apr-2026 - fix bug in mem check bitmap, make overwrite by code selectable warning/failure
  *
 */
 #include <unistd.h>
@@ -104,7 +106,8 @@ typedef struct inc_item
     char type;                  // I, D, etc 
 } Inc_item, *Inc_itemP;
 
-// Define the various warnings that can be enabled and disabled
+// Define the various warnings that can be enabled and disabled.
+// Flags are enabled, repeats, has been issued
 Warning warnings[] = {
     {"1Dop", WARN_1D, false, true, false},
     {"bank", WARN_BANKS, false, false, false},
@@ -112,8 +115,9 @@ Warning warnings[] = {
     {"flex", WARN_FLEX, false, true, false},
     {"vars", WARN_VARS, false, true, false},
     {"stop", WARN_STOP, false, false, false},
-    {"bref", WARN_BREF, false, false, false},
     {"banks", WARN_BANK, false, false, false},
+    {"bref", WARN_BREF, false, false, false},
+    {"memory", WARN_MEMORY, false, true, false},
     {0, 0, false}  // end marker
 };
 
@@ -140,6 +144,7 @@ bool keepCpp;
 bool dumpTree;
 bool sawBank;
 bool noWarn;
+bool noMemFatal;
 int lineno;
 
 extern int yydebug;
@@ -154,17 +159,9 @@ SymListP constsListP;           // the list of all constant groups
 
 extern int cur_pc;
 extern BankContextP banksP;
-
 extern char *am1_version;
 extern FILE *yyin;              // lex input file 
 extern int yyparse();
-extern BankContextP findBank(int bankNo);
-extern void listSymtab(FILE *outfP, char* filenameP, BankContextP banksP);
-
-int evalExpr(PNodeP);
-int macCodegen(FILE *, PNodeP);
-int binCodegen(FILE *, PNodeP);
-int listCodegen(FILE *, PNodeP);
 
 void enableAllWarnings(void);
 void enableWarning(char *nameP);
@@ -175,7 +172,14 @@ int run_cpp(char *, char *);
 int usage();
 void dumpParseTree(PNodeP);
 void dumpExpr(PNodeP);
-void vwarn(int errtype, const char *msgP, ...);
+
+extern int evalExpr(PNodeP);
+extern int macCodegen(FILE *, PNodeP);
+extern int binCodegen(FILE *, PNodeP);
+extern int listCodegen(FILE *, PNodeP);
+extern BankContextP findBank(int bankNo);
+extern void listSymtab(FILE *outfP, char* filenameP, BankContextP banksP);
+extern void vwarn(int errtype, const char *msgP, ...);
 
 int
 main(int argc, char **argv)
@@ -247,6 +251,10 @@ SymNodeP symP;
 
             case 'm':
                 doMacro = true;
+                break;
+
+            case 'M':
+                noMemFatal = true;
                 break;
 
             case 'n':
@@ -999,13 +1007,14 @@ leave(int signo)
 int
 usage()
 {
-    fprintf(stderr, "Usage: am1 [-abdmlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-irootpath]\n");
+    fprintf(stderr, "Usage: am1 [-abdmMlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-irootpath]\n");
     fprintf(stderr, "  [-W[=warning]]... sourcefile\n\n");
     fprintf(stderr, "  -a treat space in expressions as add, not or\n");
     fprintf(stderr, "  -b generate binary code\n");
     fprintf(stderr, "  -d generate both a listing and symbol file, combines -s and -l\n");
     fprintf(stderr, "  -l generate listing\n");
     fprintf(stderr, "  -m generate macro1 code\n");
+    fprintf(stderr, "  -M memory overwrite is a warning, not a fatal error\n");
     fprintf(stderr, "  -n don't run cpp\n");
     fprintf(stderr, "  -r don't write a loader at the beginning of the binary file\n");
     fprintf(stderr, "  -s generate a symbol table file\n");

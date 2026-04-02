@@ -1,0 +1,13 @@
+Test of memory overwrite by code
+100/
+    cli
+200/
+    cma
+77/
+    cli
+    cma
+200/
+    cla
+    lsw
+
+start 100

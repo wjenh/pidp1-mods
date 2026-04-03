@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <math.h>
+#include <string.h>
 
 #define IN_CONFIGURATION_C
 #include "configuration.h"

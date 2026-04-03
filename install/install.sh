@@ -193,7 +193,6 @@ while true; do
 		# The tape disassembler
                 make -C $INSTALLDIR/Tools/Disassembler all
 		cp $INSTALLDIR/Tools/Disassembler/disassemble_tape $INSTALLDIR/bin/disassemble_tape
-		cp $INSTALLDIR/Tools/Disassembler/disassemble_mem $INSTALLDIR/bin/disassemble_mem
 		# The etended audio control
 		make -C $INSTALLDIR/Tools install
             
@@ -251,7 +250,6 @@ while true; do
 	    sudo ln -sf $INSTALLDIR/bin/macro1_1 /usr/local/bin/macro1_1
 	    sudo ln -sf $INSTALLDIR/bin/macro1_1 /usr/local/bin/macro1
 	    sudo ln -sf $INSTALLDIR/bin/disassemble_tape /usr/local/bin/disassemble_tape
-	    sudo ln -sf $INSTALLDIR/bin/disassemble_mem /usr/local/bin/disassemble_mem
 	    #
 	    sudo ln -sf $INSTALLDIR/bin/am1 /usr/local/bin/am1
 	    sudo ln -sf $INSTALLDIR/bin/ad1 /usr/local/bin/ad1

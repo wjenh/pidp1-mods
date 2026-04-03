@@ -2,7 +2,7 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.24 and covers up through am1 version 1.27; it will be updated as needed.\
+This is version 1.25 and covers up through am1 version 1.27; it will be updated as needed.\
 Edit date 2-Apr-2026
 
 ## What is **am1**?
@@ -728,20 +728,26 @@ Directives are:
 - export
 - two special directives, see below
 
-## Location assigment
+## Location assigment 
 
 *Location assignments* directly set the current location to the value given, which must be an expression
 that evaluates *at that time* to a value. This means that for any use of a symbolic location, that
 location must already be resolved.
 Using a forward reference actually makes no sense, and **macro1** doesn't allow it either.
 
+**This statement must be on a line by itself**, optionally followed by a comment.
+This is to disambiguate it from an expression with a division operator.
+If you do want to have code on the same line, use a semicolon separator.
+
 Examples are:
 ```
-100:    the location counter is set to 100
-.+10:   the location counter is incremented by 10
+100/    the location counter is set to 100
+.+10/   the location counter is incremented by 10
 
 a, foo
-a+10:   the location couter is set to the location of foo plus 10, a must be defined *prior* to its use
+a+10/   the location couter is set to the location of foo plus 10, a must be defined *prior* to its use
+
+200/; cla
 ```
 
 ## Octal and decimal

@@ -414,77 +414,66 @@ usage(void)
     exit(1);
 }
 
+// Read a memory file produced by dumpmem() into working memory.
+// Reworked by wje to keep the address and data on one line, much more readable.
 void
-readmem(const char *file, Word *mem, Word size)
+readmem(const char *filenameP, Word *mem, Word size)
 {
-FILE *f;
-char buf[100], *s;
-Word a;
-Word w;
+Word addr;
+Word word;
+char *strP;
+FILE *fileP;
+char buf[100];
 
-    if( (f = fopen(file, "r")), f == nil)
+    if( (fileP = fopen(filenameP, "r")) == NIL )
     {
         return;
     }
 
-    a = 0;
-
-    while( s = fgets(buf, 100, f) )
+    while( strP = fgets(buf, 100, fileP) )
     {
-        while(*s)
+        addr = strtol(strP, &strP, 8);
+        if( !strP || (*strP != ':') )
         {
-            if(*s == ';')
-            {
-                break;
-            }
-            else if('0' <= *s && *s <= '7')
-            {
-                w = strtol(s, &s, 8);
+            // invalid line, just skip it
+            continue;
+        }
 
-                if(*s == ':')
-                {
-                    a = w;
-                    s++;
-                }
-                else if(a < size)
-                {
-                    mem[a++] = w;
-                }
-                else
-                {
-                    fprintf(stderr, "Address out of range: %o\n", a++);
-                }
-            }
-            else
-            {
-                s++;
-            }
+        // We'll assume the line is OK if we got the firt part
+        word = strtol(strP+1, &strP, 8);
+        if( addr < size)
+        {
+            mem[addr] = word;
+        }
+        else
+        {
+            fprintf(stderr, "Address out of range: %o\n", addr);
+            break;
         }
     }
 
-    fclose(f);
+    fclose(fileP);
 }
 
+// Dump working memory to the memory image file.
+// Reworked by wje to keep the address and data on one line, much more readable.
 void
 dumpmem(const char *file, Word *mem, Word size)
 {
-    FILE *f;
-    Word i, a;
+FILE *f;
+Word i;
 
     if( (f = fopen("coremem", "w")), f == nil )
     {
         return;
     }
 
-    a = 0;
-
     for(i = 0; i < size; i++)
     {
         if( mem[i] != 0 )
         {
-            a = i;
-            fprintf(f, "%06o:\n", a);
-            fprintf(f, "%06o\n", mem[a++]);
+            // Just put it on one line, jeez
+            fprintf(f, "%06o: %06o\n", i, mem[i]);
         }
     }
 

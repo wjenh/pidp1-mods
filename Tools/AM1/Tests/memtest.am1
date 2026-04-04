@@ -1,0 +1,18 @@
+Mem fail test
+var x, y, z
+100/
+    cla [1
+    cla [2
+    cla [3
+200/
+variables
+200/
+    text "foo"
+
+7770/
+0
+7770/
+constants
+7777/
+    0
+start 7770

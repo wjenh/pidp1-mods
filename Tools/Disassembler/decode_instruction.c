@@ -27,12 +27,16 @@
  * 19/03/2026 wje - Add even more 1D instructions, fix macro mode for them
  * 21/03/2026 wje - Print i and C for unknown IOTs
  * 29/03/2026 wje - Exclude symbolic name for iots and 1D instructions not supported by macro if in macro mode
+ * 31/03/2026 wje - Add instruction type flags
  *
  */
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
+
+// For the type flags
+#include "decode_instruction.h"
 
 // Instructions have a 5 bit opcode followed by a 1 bit indirect marker as the high 6 bits of a word
 // IOTs can also have a completion-requested, bit 6 set, 04000.
@@ -91,6 +95,7 @@ typedef struct
 {
     char *name;
     Modifiers modifiers;
+    int flags;              // instruction type flags from decode_instruction.h
 } CodeDef;
 
 // This is used to handle instructions that aren't standard, such as the IOT, OPR, etc. instructions
@@ -110,38 +115,38 @@ Special *findSpecial(Special *, int);
 
 static CodeDef opcodes[] =                 // we don't use the indirect bit, so we have only 32 possibilities
     {
-        { "illegal", IS_ILLEGAL },                     // OP 0
-        { "and", CAN_INDIRECT},                        // OP 2
-        { "ior", CAN_INDIRECT},                        // OP 4
-        { "xor", CAN_INDIRECT},                        // OP 6
-        { "xct", CAN_INDIRECT},                        // OP 10
-        { "illegal", IS_ILLEGAL},
-        { "illegal", IS_ILLEGAL},
-        { "cal", IS_CALJDA},                           // OP 16, special, could be JDA
-        { "lac", CAN_INDIRECT},                        // OP 20
-        { "lio", CAN_INDIRECT},                        // OP 22
-        { "dac", CAN_INDIRECT},                        // OP 24
-        { "dap", CAN_INDIRECT},                        // OP 26
-        { "dip", CAN_INDIRECT},                        // OP 30
-        { "dio", CAN_INDIRECT},                        // OP 32
-        { "dzm", CAN_INDIRECT},                        // OP 34
-        { "illegal", IS_ILLEGAL},
-        { "add", CAN_INDIRECT},                        // OP 40
-        { "sub", CAN_INDIRECT},                        // OP 42
-        { "idx", CAN_INDIRECT},                        // OP 44
-        { "isp", CAN_INDIRECT},                        // OP 46
-        { "sad", CAN_INDIRECT},                        // OP 50
-        { "sas", CAN_INDIRECT},                        // OP 52
-        { "mul", CAN_INDIRECT},                        // OP 54
-        { "div", CAN_INDIRECT},                        // OP 56
-        { "jmp", CAN_INDIRECT},                        // OP 60
-        { "jsp", CAN_INDIRECT},                        // OP 62
-        { "skp", IS_SKIP},                             // OP 64
-        { "sft", IS_SHIFT},                            // OP 66
-        { "law", IS_LAW},                              // OP 70
-        { "iot", IS_IOT},                              // OP 72
-        { "opr1D", IS_OPR2},                         // OP 73, extended 1D instructions
-        { "opr", IS_OPR}                               // OP 76
+        { "illegal", IS_ILLEGAL, INSTR_NOTONE },        // OP 0
+        { "and", CAN_INDIRECT, INSTR_READS},            // OP 2
+        { "ior", CAN_INDIRECT, INSTR_READS},            // OP 4
+        { "xor", CAN_INDIRECT, INSTR_READS},            // OP 6
+        { "xct", CAN_INDIRECT, INSTR_XCT|INSTR_READS},  // OP 10
+        { "illegal", IS_ILLEGAL, INSTR_NOTONE},         // OP 12
+        { "illegal", IS_ILLEGAL, INSTR_NOTONE},         // OP 14
+        { "cal", IS_CALJDA, INSTR_JUMPS|INSTR_WRITES},  // OP 16, special, could be JDA
+        { "lac", CAN_INDIRECT, INSTR_READS},            // OP 20
+        { "lio", CAN_INDIRECT, INSTR_READS},            // OP 22
+        { "dac", CAN_INDIRECT, INSTR_WRITES},           // OP 24
+        { "dap", CAN_INDIRECT, INSTR_WRITES},           // OP 26
+        { "dip", CAN_INDIRECT, INSTR_WRITES},           // OP 30
+        { "dio", CAN_INDIRECT, INSTR_WRITES},           // OP 32
+        { "dzm", CAN_INDIRECT, INSTR_WRITES},           // OP 34
+        { "illegal", IS_ILLEGAL, INSTR_NOTONE},         // OP 36
+        { "add", CAN_INDIRECT, INSTR_READS},            // OP 40
+        { "sub", CAN_INDIRECT, INSTR_READS},            // OP 42
+        { "idx", CAN_INDIRECT, INSTR_WRITES},           // OP 44
+        { "isp", CAN_INDIRECT, INSTR_WRITES},           // OP 46
+        { "sad", CAN_INDIRECT, INSTR_SKIPS|INSTR_READS},    // OP 50
+        { "sas", CAN_INDIRECT, INSTR_SKIPS|INSTR_READS},    // OP 52
+        { "mul", CAN_INDIRECT, INSTR_VALID},           // OP 54
+        { "div", CAN_INDIRECT, INSTR_VALID},           // OP 56
+        { "jmp", CAN_INDIRECT, INSTR_JUMPS|INSTR_READS},    // OP 60
+        { "jsp", CAN_INDIRECT, INSTR_JUMPS|INSTR_WRITES},   // OP 62
+        { "skp", IS_SKIP, INSTR_SKIPS},                // OP 64
+        { "sft", IS_SHIFT, INSTR_VALID},               // OP 66
+        { "law", IS_LAW, INSTR_VALID},                 // OP 70
+        { "iot", IS_IOT, INSTR_VALID},                 // OP 72
+        { "opr1D", IS_OPR2, INSTR_VALID},              // OP 73, extended 1D instruction
+        { "opr", IS_OPR, INSTR_VALID}                  // OP 76
     };
 
 // IOT decoding.
@@ -204,11 +209,12 @@ static Special shifts[] =
     };
 
 // Format an instruction into printed form, placing the results in the passed string.
-// If the instruction has an address field and the value matches addr, use the string
-// symbolP, if not null, instead of the number.
+// If the instruction has an address field and the value matches addr,
+// use the string symbolP if not null instead of the address.
+// If flagsP is not null, return the INSTR_x flags in it.
 // A pointer to the terminating null byte in the result string is returned.
 char *
-decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP, char *resultP)
+decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP, char *resultP, int *flagsP)
 {
 unsigned int opcode;
 unsigned int operand;
@@ -217,6 +223,7 @@ int completion;
 int tmp, tmp2;
 int extra;
 int bits03;
+int flags;
 char *cP;
 char *operandStrP;
 char tmpstr[32];
@@ -228,14 +235,37 @@ Special *sP;
     opcode = OPERATION(word);
     if( opcode > 077 )
     {
-        sprintf(resultP, "%06o", word);
-        return( resultP + strlen(resultP) );
+        resultP += sprintf(resultP, "%06o", word);
+        if( flagsP )
+        {
+            *flagsP = INSTR_NOTONE;
+        }
+        return( resultP );
     }
 
     indirect = word & INDIRECT_BIT;
     completion = word & COMPLETION_BIT;
     operand = OPERAND(word);
+
     instructionP = &opcodes[opcode];
+    flags = instructionP-> flags;           // initial flags, can be modified
+    if( indirect )
+    {
+        flags |= INSTR_INDIRECT;
+    }
+
+    if( flagsP )
+    {
+        *flagsP = flags;
+    }
+
+    if( flags & INSTR_NOTONE )
+    {
+        resultP += sprintf(resultP,"%06o", word);       // this one is easy
+        return(resultP);
+    }
+
+    flags |= INSTR_VALID;       // assume so
 
     // Just in case the operand is an addr field and matches the passed addr.
     if( ((operand & 07777) == addr) && symbolP && *symbolP )
@@ -246,12 +276,6 @@ Special *sP;
     {
         sprintf(addrStr, "%04o", (operand & 07777));
         operandStrP = addrStr;
-    }
-
-    if( instructionP->modifiers == IS_ILLEGAL )            // not an instruction, just emit the octal value
-    {
-        resultP += sprintf(resultP,"%06o", word);
-        return(resultP);
     }
 
     switch( instructionP->modifiers )
@@ -266,6 +290,7 @@ Special *sP;
         break;
 
     case IS_CALJDA:
+        // jda was a hack apparently, it is cal with the indirect bit set.
         if( indirect )
         {
             resultP += sprintf(resultP,"jda %s", operandStrP);
@@ -300,6 +325,7 @@ Special *sP;
         if( sP->modifiers == UNKNOWN )
         {
             resultP += sprintf(resultP,"%06o", word);       // a bare shift doesn't exist, must be data
+            flags = INSTR_NOTONE;
         }
         else if( sP->notMacro && asMacro )
         {
@@ -328,6 +354,7 @@ Special *sP;
             if( tmp2 < 0 )
             {
                 resultP += sprintf(resultP,"%06o", word);
+                flags = INSTR_NOTONE;
             }
             else
             {
@@ -344,17 +371,14 @@ Special *sP;
     case IS_SKIP:
         // This one is a pain because multiple skips can be combined.
         // Macro1 allows an 'or' operation, 'a!b', which is used in macro mode.
-        // However, the native assembler doesn't support this, so any combined operations
-        // are emitted as the octal word with a comment.
         // If we see any extra bits not valid microinstuctions, then just the octal data is output.
         // The first 2 are 1D instructions
         tmp = 0;                // set to 1 if we have printed one already
         tmpstr[0] = 0;          // be sure we start empty
 
-        if( operand == 0 )      // not a real skip, just do as data
+        if( indirect )
         {
-            resultP += sprintf(resultP,"%06o", word);
-            break;
+            operand &= ~INDIRECT_BIT;
         }
 
         if( (operand & SKP_MASK_SZI) == SKP_MASK_SZI )    // MUST come befoe SNI! Only 2 bit directive.
@@ -369,8 +393,10 @@ Special *sP;
                 sprintf(tmpstr,"szi");
                 tmp = 1;
                 operand &= ~SKP_MASK_SZI;
+                indirect = 0;
             }
         }
+
         if( (operand & SKP_MASK_SNI) == SKP_MASK_SNI )
         {
             if( asMacro )       // not in macro
@@ -384,61 +410,86 @@ Special *sP;
                 strcat(tmpstr, tmpstr2);
                 tmp = 1;
                 operand &= ~SKP_MASK_SNI;
+                indirect = 0;
             }
         }
+
         if( (operand & SKP_MASK_SMA) == SKP_MASK_SMA )
         {
-            sprintf(tmpstr2,"%ssma", tmp?((asMacro)?separatorP:"|"):"");
+            sprintf(tmpstr2,"%ssma%s", tmp?((asMacro)?separatorP:"|"):"", (indirect)?" i":"");
             strcat(tmpstr, tmpstr2);
             tmp = 1;
             operand &= ~SKP_MASK_SMA;
+            indirect = 0;
         }
+
         if( (operand & SKP_MASK_SPA) == SKP_MASK_SPA )
         {
-            sprintf(tmpstr2,"%sspa", tmp?((asMacro)?separatorP:"|"):"");
+            sprintf(tmpstr2,"%sspa%s", tmp?((asMacro)?separatorP:"|"):"", (indirect)?" i":"");
             strcat(tmpstr, tmpstr2);
             tmp = 1;
             operand &= ~SKP_MASK_SPA;
+            indirect = 0;
         }
+
         if( (operand & SKP_MASK_SPI) == SKP_MASK_SPI )
         {
-            sprintf(tmpstr2,"%sspi", tmp?((asMacro)?separatorP:"|"):"");
+            sprintf(tmpstr2,"%sspi%s", tmp?((asMacro)?separatorP:"|"):"", (indirect)?" i":"");
             strcat(tmpstr, tmpstr2);
             tmp = 1;
             operand &= ~SKP_MASK_SPI;
+            indirect = 0;
         }
+
         if( (operand & SKP_MASK_SZA) == SKP_MASK_SZA )
         {
-            sprintf(tmpstr2,"%ssza", tmp?((asMacro)?separatorP:"|"):"");
+            sprintf(tmpstr2,"%ssza%s", tmp?((asMacro)?separatorP:"|"):"", (indirect)?" i":"");
             strcat(tmpstr, tmpstr2);
             tmp = 1;
             operand &= ~SKP_MASK_SZA;
+            indirect = 0;
         }
+
         if( (operand & SKP_MASK_SZO) == SKP_MASK_SZO )
         {
-            sprintf(tmpstr2,"%sszo", tmp?((asMacro)?separatorP:"|"):"");
+            sprintf(tmpstr2,"%sszo%s", tmp?((asMacro)?separatorP:"|"):"", (indirect)?" i":"");
             strcat(tmpstr, tmpstr2);
             tmp = 1;
+            indirect = 0;
             operand &= ~SKP_MASK_SZO;
         }
-        if( (operand & SKP_MASK_SZF) == SKP_MASK_SZF )
+
+        if( operand & SKP_MASK_SZF )
         {
-            sprintf(tmpstr2,"%sszf %0o", tmp?((asMacro)?separatorP:"|"):"", (operand & SKP_MASK_SZF));
+            sprintf(tmpstr2,"%sszf%s %0o", tmp?((asMacro)?separatorP:"|"):"", (indirect)?" i":"",
+                (operand & SKP_MASK_SZF));
             strcat(tmpstr, tmpstr2);
             tmp = 1;
             operand &= ~SKP_MASK_SZF;
+            indirect = 0;
         }
-        if( (operand & SKP_MASK_SZS) == SKP_MASK_SZS )
+
+        if( operand & SKP_MASK_SZS )
         {
-            sprintf(tmpstr2,"%sszs %0o",tmp?((asMacro)?separatorP:"|"):"", (operand & SKP_MASK_SZS) >> 3);
+            sprintf(tmpstr2,"%sszs%s %o0", tmp?((asMacro)?separatorP:"|"):"", (indirect)?" i":"",
+                (operand & SKP_MASK_SZS) >> 3);
             strcat(tmpstr, tmpstr2);
             tmp = 1;
             operand &= ~SKP_MASK_SZS;
+            indirect = 0;
         }
 
-        if( operand != 0 )                      // extra bits were left over, must be data, don't print the skips
+        if( !tmpstr[0] || (operand != 0))    //  must be data or a bare skp
         {
-            resultP += sprintf(resultP,"%06o", word);
+            if( operand == 0 )
+            {
+                resultP += sprintf(resultP,"skp%s", (indirect)?" i":"");
+            }
+            else
+            {
+                resultP += sprintf(resultP,"%06o", word);
+                flags = INSTR_NOTONE;
+            }
         }
         else
         {
@@ -546,6 +597,7 @@ Special *sP;
         if( (operand | bits03) != 0 )                      // extra bits were left over, must be data
         {
             resultP += sprintf(resultP,"%06o", word);
+            flags = INSTR_NOTONE;
         }
         else
         {
@@ -747,6 +799,11 @@ Special *sP;
             resultP += sprintf(resultP,"%s0%o", (asMacro)?separatorP:" | ",  extra);   // add extra bits
         }
         break;
+    }
+
+    if( flagsP )
+    {
+        *flagsP = flags;
     }
 
     return( resultP );

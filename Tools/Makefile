@@ -8,6 +8,7 @@ tools:
 	cd AM1 ; make ; cp am1 ../../bin
 	cd Drumupdater ; make ; cp am1 ../../bin
 	cd MtoA ; make ; cp am1 ../../bin
+	cd Disassembler ; make ; cp disassembler ../../bin
 
 install: pdp1audio
 	cp pdp1audio ../bin

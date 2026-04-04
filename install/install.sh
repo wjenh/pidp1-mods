@@ -190,10 +190,9 @@ while true; do
 		make -C $INSTALLDIR/src/monas
 		# the usb_paper_tape tool:
 		make -C $INSTALLDIR/src/usb_paper_tape
-		# The tape disassembler
-                make -C $INSTALLDIR/Tools/Disassembler all
-		cp $INSTALLDIR/Tools/Disassembler/disassemble_tape $INSTALLDIR/bin/disassemble_tape
-		# The etended audio control
+		# The disassembler been renamed, get rid of the old one
+		test -f $INSTALLDIR/bin/disassemble_tape && rm $INSTALLDIR/bin/disassemble_tape
+		test -f /usr/local/bin/disassemble_tape && rm /usr/local/bin/disassemble_tape
 		make -C $INSTALLDIR/Tools install
             
 		echo Setting required access privileges to pidp1 simulator
@@ -249,7 +248,7 @@ while true; do
 	    sudo ln -sf $INSTALLDIR/bin/monas /usr/local/bin/monas
 	    sudo ln -sf $INSTALLDIR/bin/macro1_1 /usr/local/bin/macro1_1
 	    sudo ln -sf $INSTALLDIR/bin/macro1_1 /usr/local/bin/macro1
-	    sudo ln -sf $INSTALLDIR/bin/disassemble_tape /usr/local/bin/disassemble_tape
+	    sudo ln -sf $INSTALLDIR/bin/disassemble /usr/local/bin/disassemble
 	    #
 	    sudo ln -sf $INSTALLDIR/bin/am1 /usr/local/bin/am1
 	    sudo ln -sf $INSTALLDIR/bin/ad1 /usr/local/bin/ad1

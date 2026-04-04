@@ -37,6 +37,7 @@ void stopFn(void);
 void stepFn(void);
 void continueFn(void);
 void nextFn(void);
+void formatFn(int base);
 void setBankFn(int num);
 void setBpFn(int num, int count);
 void deleteBpFn(int num);
@@ -63,6 +64,7 @@ extern int getMapForFileNo(MapEntryP mapP, int fileNo);
 extern MapEntryP getLinesFromAddress(int address);
 extern int getCurrentPC(void);
 extern char *getFormat(int fmt);
+extern char *getFormatName(int fmt);
 extern char *getUnrestrictedFormat(int fmt);
 extern void formatAndPrintOne(int fmt, int value);
 extern void formatAndPrintTwo(int fmt1, int addr, int fmt2,  int value);
@@ -158,6 +160,19 @@ nextFn(void)
     } 
 
     showFn(lastAddr, lastFormat, false);
+}
+
+void
+formatFn(int base)
+{
+    if( base == NONE )      // special marker, show the current base
+    {
+        printf("Curremt format is %s\n", getFormatName(lastFormat));
+    }
+    else
+    {
+        lastFormat = base;
+    }
 }
 
 void

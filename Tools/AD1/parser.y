@@ -48,6 +48,7 @@ extern void stopFn(void);
 extern void stepFn(void);
 extern void continueFn(void);
 extern void nextFn(void);
+extern void formatFn(int base);
 extern void setBankFn(int num);
 extern void setBpFn(int num, int count);
 extern void deleteBpFn(int num);
@@ -92,6 +93,7 @@ typedef struct argitem_t {
 %token DOT
 %token ENABLE
 %token EXIT
+%token FORMAT
 %token HELP
 %token LIST
 %token LOAD
@@ -153,6 +155,7 @@ typedef struct argitem_t {
 %type <cmdP> cmd
 %type <ival> integer
 %type <ival> optDECINTEGER
+%type <ival> baseSpec
 %type <ival> optBase
 %type <ival> optBREF
 %type <ival> optFILENO
@@ -284,7 +287,11 @@ cmd		: QUIT
                 }
                 | SHOW SEPARATOR address optBase
                 {
-                    showFn($3, $4, false);
+                    showFn($3, ($4 == NONE)?base:$4, false);
+                }
+                | FORMAT optBase
+                {
+                    formatFn($2);
                 }
                 | SHOW SEPARATOR NODEREF address optBase
                 {
@@ -452,7 +459,7 @@ optDECINTEGER   : SEPARATOR DECINTEGER
                 | { $$ = BADNUM; }
                 ;
 
-optBase         : SEPARATOR SYMBOL
+baseSpec        : SEPARATOR SYMBOL
                 {
                     // We do this here because lex can't tell that one of these isn't a symbol
                     // without much hadwaving.
@@ -496,7 +503,13 @@ optBase         : SEPARATOR SYMBOL
                         return(0);
                     }
                 }
-                | { $$ = base; }    // defaults to the current base
+                ;
+
+optBase         : baseSpec
+                {
+                    $$ = $1;
+                }
+                | { $$ = NONE; } 
                 ;
 
 address         : expr optBREF

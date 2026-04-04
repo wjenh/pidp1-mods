@@ -16,6 +16,7 @@ extern char *deleteHelp[];
 extern char *disableHelp[];
 extern char *enableHelp[];
 extern char *fileHelp[];
+extern char *formatHelp[];
 extern char *nextHelp[];
 extern char *setHelp[];
 extern char *showHelp[];

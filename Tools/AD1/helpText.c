@@ -213,6 +213,24 @@ char *showHelp[] = {
     "show ac b",
     NIL};
 
+char *formatHelp[] = {
+    "The format command sets the current format to the given one which must be one of:",
+    "b - binary",
+    "o - octal",
+    "d - decimal",
+    "x - hexadecimal",
+    "c - 1's complement, sign extend the 18 bit value and show the 1's complement result",
+    "a - ascii, 2 chars per word",
+    "f - flex, 3 chars per word, shift state remembered until another format is used",
+    "i - instruction, the word is decoded as an instruction and the instruction shown",
+    "See also show, these are the same format directives.",
+    "If no argument is given, the curren format is shown.",
+    "Examples:",
+    "fo d",
+    "fo",
+    "format i",
+    NIL};
+
 char *startHelp[] = {
     "The start command begins execution at the given address.",
     "It is equivalent to using the start switch.",

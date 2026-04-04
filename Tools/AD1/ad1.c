@@ -19,6 +19,7 @@
  * 17-Mar-26 wje align -0 processing with am1 and the PDP-1, add mod operator, add tape loading
  * 18-Mar-26 wje unify lexing of file name for file and load, fix typos in help text
  * 22-Mar-26 wje update to use new decodeInstr()
+ * 4-Apr-26 wje add format command to see current format or set it
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -67,6 +68,7 @@ Dispatch dispatchTable[] = {
     {"exit", 2, EXIT, exitHelp},
     {"enable", 2, ENABLE, enableHelp},
     {"file", 2, SETFILE, fileHelp},
+    {"format", 2, FORMAT, formatHelp},
     {"help", 1, HELP, NIL},
     {"list", 1, LIST, listHelp},
     {"load", 2, LOAD, NIL},
@@ -119,6 +121,7 @@ void restoreAllWatchesAndBreakpoints(void);
 void sigHandler(int signo);
 int getCurrentPC(void);
 char *getFormat(int fmt);
+char *getFormatName(int fmt);
 char *getUnrestrictedFormat(int fmt);
 void formatAndPrintOne(int fmt, int value);
 void formatAndPrintTwo(int fmt1, int addr, int fmt2,  int value);
@@ -155,7 +158,7 @@ extern MapEntryP getLinesFromAddress(int addr);
 extern int signExtend(int oc);
 extern int twosCompl(int val);
 extern char *findNameByAddr(u32 addr);
-extern char *decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP, char *resultP);
+extern char *decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP, char *resultP, int *flagsP);
 extern bool loadFileMap(bool fromLst, char *filenameP);
 extern bool printLines(MapEntryP entryP);
 extern bool printNextLine(void);
@@ -355,7 +358,7 @@ char line[256];
                 i = activeBrkP->address;
                 cP = findNameByAddr(i);
                 i = pdp1P->core[i];
-                decodeInstr(i, i & 0777, false, " ", cP, line);
+                decodeInstr(i, i & 0777, false, " ", cP, line, 0);
                 printf(": %s\n", line);
             }
 
@@ -379,7 +382,7 @@ char line[256];
                 i = activeBrkP->address;
                 cP = findNameByAddr(i);
                 i = pdp1P->core[i];
-                decodeInstr(i, i & 0777, false, " ", cP, line);
+                decodeInstr(i, i & 0777, false, " ", cP, line, 0);
                 printf(": %s\n", line);
             }
 
@@ -461,6 +464,37 @@ getUnrestrictedFormat(int fmt)
     }
 }
 
+// Convert a format number to a printable string.
+char *
+getFormatName(int fmt)
+{
+    switch( fmt )
+    {
+    case 0:
+        return("automatic, determined by 0n, n, 0bn, 0xn");
+    case BINARY:
+        return("b - binary");
+    case OCTAL:
+        return("o - octal");
+    case DECIMAL:
+        return("d - decimal");
+    case HEX:
+        return("x - hexadecimal");
+    case ONESCMPL:
+        return("c - ones complement");
+    case ASCII:
+        return("a - ascii");
+    case FLEX:
+        return("f - flex");
+    case SYMBOLIC:
+        return("s - symbolic");
+    case INSTRUCTION:
+        return("i - instruction");
+    default:
+        return("unknown - internal error");
+    }
+}
+
 // Print a value, no newline.
 void
 formatAndPrintOne(int fmt, int value)
@@ -507,7 +541,7 @@ char tmpstr[128];
         // Might be an address?
         addr = (value & 0777) | (curBank << 12);
         cP = findNameByAddr(addr);
-        decodeInstr(value, value & 0777, false, " ", cP, tmpstr);
+        decodeInstr(value, value & 0777, false, " ", cP, tmpstr, 0);
         printf("%s",  tmpstr);
     }
     else if( fmt == ASCII )

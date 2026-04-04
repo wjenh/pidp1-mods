@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define VERSION "1.12 22-Mar-2026"
+#define VERSION "1.13 4-Apr-2026"
 
 #define MAXFILES    8    // maximum number of open files we can have
 #define MAXLINES    4000 // max number of lines in a file
@@ -53,6 +53,7 @@
 #define SYREG 16
 
 // Define bases, values match what strtol() wants.
+#define NONE -1
 #define AUTOBASE 0
 #define BINARY 2
 #define OCTAL 8

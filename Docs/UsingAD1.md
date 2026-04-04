@@ -2,8 +2,8 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.8 and covers up through ad1 version 1.10; it will be updated as needed.\
-Edit date 17-Mar-2026
+This is version 1.9 and covers up through ad1 version 1.13; it will be updated as needed.\
+Edit date 4-Apr-2026
 
 ## What is **ad1**?
 
@@ -77,7 +77,7 @@ When watches are active, the addresses have their contents checked to see if the
 optionally match a given value.
 If so a flag is set to indicate that to **ad1** and the pidp-1 halted.
 
-Both breakpoints and watches are checked in the pidp-1 at the beginning of every machine cycle.
+Both breakpoints and watches are checked in the pidp-1 at the end of every machine cycle.
 
 **Ad1** commands can then be given and when ready the program resumed.
 
@@ -414,6 +414,16 @@ This command always interprets the number in *base 10*.
 If watch is specified, then this applies to watches instead of breakpoints.
 It can be shortened the same as when used as a command.
 
+## Enable [Watch] [decimal]
+
+If the decimal is the number of a set breakpoint, enable it if it is enabled.\
+It will again be procoessed if encountered.
+
+This command always interprets the number in *base 10*.
+
+If watch is specified, then this applies to watches instead of breakpoints.
+It can be shortened the same as when used as a command.
+
 ## FIle [n] | [[+]name]
 
 If no argument is given, the current file number is listed along with all the open files with their file number.
@@ -449,15 +459,12 @@ If the file can't be found, an error will be reported.
 
 This is the same as if the name was given on the command line when **ad1** was started.
 
-## Enable [Watch] [decimal]
+## FOrmat [format]
 
-If the decimal is the number of a set breakpoint, enable it if it is enabled.\
-It will again be procoessed if encountered.
+If no argument is given, the current format is shown.\
+Otherwise, the current format is set to the one given.
 
-This command always interprets the number in *base 10*.
-
-If watch is specified, then this applies to watches instead of breakpoints.
-It can be shortened the same as when used as a command.
+The format is the same as for the *SHow* command below.
 
 ## List [decimal | expression | @expression[,bref][:fileno] | symbol[,bref][:fileno] | .[+-decimal]]
 

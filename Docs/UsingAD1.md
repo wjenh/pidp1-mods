@@ -2,8 +2,8 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.9 and covers up through ad1 version 1.13; it will be updated as needed.\
-Edit date 4-Apr-2026
+This is version 1.10 and covers up through ad1 version 1.14; it will be updated as needed.\
+Edit date 5-Apr-2026
 
 ## What is **ad1**?
 
@@ -499,6 +499,10 @@ listed, so includes and macros can skew it.
 The list command displays the line number in the listing file itself, the file you're viewing, and the same
 for just a source file.
 
+If the address being shown has been modified by the program, the modified value will not be seen since
+the line is coming from the listing file.
+To see the actual value, use the *show .* command.
+
 For example:
 ```
 23   42: jmp foo
@@ -575,7 +579,7 @@ produce.
 
 This is (very) roughly equivalent to using the examine switch on the front panel.
 
-## STart [address]
+## STArt [address]
 
 This is equivalent to entering a start address on the pidp-1 front panel and using the start switch.
 The address is a full 16-bit address, so execution can start in any bank.
@@ -583,12 +587,16 @@ The address is a full 16-bit address, so execution can start in any bank.
 If no address is given, the last start address set by this command or by *load* is used.
 If there has not been an address set, an error will be reported.
 
-## Step
+## Step [count]
 
 This is equivalent to using the continue switch on the front panel while the single-instruction switch is on.\
-One instruction cycle is executed.
+If *count* is given, that many number of instruction cycles is executed.\
+If *count* is not given, it defaults to 1.
 
-If there is a line in the listing file, if present, that matches the pc address after the step,
+If *count* is greater than 1 and a breakpoint or watchpoint is hit, stepping is immediately stopped
+and normal breakpoint or watchpoint handling is done.
+
+If there is a line in the listing file, if present, that matches the pc address after stepping is done,
 it will be displayed.
 
 Note that the shift and rotate instructions can extend into the next cycle, so the value you see
@@ -601,6 +609,23 @@ at the beginning of the next cycle.
 ## STOp
 
 This is equivalent to using the stop switch on the front panel, the pidp-1 is halted.
+
+## Trace
+
+If the instruction at the current address reads, writes, or transfers to its address part, show
+the target address.
+
+If the instruction is an indirect operation, automatically indirect to the target location.
+If that location is marked as indirect, ask whether or not to follow it.
+Repeat until a non-indirect target is found.
+
+If extended memory mode is enabled, then the indirection following past the first location the instruction
+indirects to is not done, because indirection is only one level in this mode.
+
+For each address, if there is an associated symbol, it is shown.
+Otherwise, the address is shown in the current numeric format.
+
+Finally, ask whether or not to make the final address the current address.
 
 ## Watch address [value]
 

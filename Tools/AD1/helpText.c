@@ -245,9 +245,22 @@ char *stopHelp[] = {
     NIL};
 
 char *stepHelp[] = {
-    "The step command executes one instruction and halts.",
+    "The step command executes one or instructions and halts.",
     "It is equivalent to using the continue switch in single-instruction mode.",
-    "Example: step",
+    "If an optional count is given, that many instruction cycles will be stepped.",
+    "This is always a decimal number.",
+    "If a breakpoint or watchpoint is hit while stepping, stepping stops.",
+    "Examples:",
+    "step",
+    "st 10",
+    NIL};
+
+char *traceHelp[] = {
+    "The trace command will follow the target of the instruction if it is one",
+    "that has an address argument.",
+    "If the instruction is an indirect operation, the target is used to get the actual location.",
+    "If the target itself is an indirect reference, a prompt will be given to see if it should be followed.",
+    "Example: t",
     NIL};
 
 // Extra help

@@ -14,6 +14,7 @@
 #include "pdp1inc.h"
 #include "helpmsgs.h"
 #include "y.tab.h"
+#include "../Disassembler/decode_instruction.h"
 
 int lastAddr;
 int base;               // default input number base, changed by the base command
@@ -34,7 +35,7 @@ void showRegisterFn(int reg, int base);
 void setFn(int type, int addr, int value);
 void startFn(int addr);
 void stopFn(void);
-void stepFn(void);
+void stepFn(int count);
 void continueFn(void);
 void nextFn(void);
 void formatFn(int base);
@@ -46,6 +47,7 @@ void disableBpFn(int num);
 void setBaseFn(int num);
 void setFileFn(char *nameP, bool add);
 void listFn(int lineNo, int fileNo);
+void traceFn(void);
 void loadFn(char *filenameP);
 void setWatchFn(int addr,  int value);
 void deleteWatchFn(int num);
@@ -68,6 +70,8 @@ extern char *getFormatName(int fmt);
 extern char *getUnrestrictedFormat(int fmt);
 extern void formatAndPrintOne(int fmt, int value);
 extern void formatAndPrintTwo(int fmt1, int addr, int fmt2,  int value);
+extern char *decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP,
+    char *resultP, int *flagsP);
 
 extern void listSymbols(void);
 
@@ -391,8 +395,10 @@ stopFn(void)
     lastAddr = pdp1P->epc | pdp1P->pc;
 }
 
+// If count is the number of instruction cycles to step.
+// A breakpoint or watchpoint hit will end stepping immediately.
 void
-stepFn(void)
+stepFn(int count)
 {
 MapEntryP entryP;
 
@@ -402,9 +408,22 @@ MapEntryP entryP;
     }
     else
     {
+        if( count == BADNUM )
+        {
+            count = 1;
+        }
+
         AD1_SET_SINGLE(pdp1P);   // this is a 'sticky' setting and must be cleared to get out of ss
-        AD1_SET_CONTINUE(pdp1P);
-        usleep(1000);            // plenty of time for completion
+
+        while( count-- > 0 )
+        {
+            AD1_SET_CONTINUE(pdp1P);
+            usleep(1000);            // plenty of time for completion
+            if( AD1_BREAKPOINT_HIT(pdp1P) || AD1_WATCH_HIT(pdp1P) )
+            {
+                return;             // stop now, main loop will detect this
+            }
+        }
 
         if( (entryP = getLinesFromAddress(getCurrentPC())) > 0 )
         {
@@ -680,6 +699,12 @@ listFn(int lineNo, int fileNo)
 {
 int i;
 
+    if( (fileNo == NOARG) && (curFileNo < 0) )
+    {
+        printf("No source or listing file is available.\n");
+        return;
+    }
+
     if( lineNo == NOARG )
     {
         if( curFileNo != fileNo )
@@ -720,6 +745,77 @@ int i;
         }
 
         ++lineNo;
+    }
+}
+
+void
+traceFn()
+{
+int val;
+int addr;
+int flags;
+char *cP;
+char instr[128];
+char tmpstr[128];
+
+    val = pdp1P->core[lastAddr];
+    // We need to decode to get the flags.
+    decodeInstr(val, 0, false, " ", 0, instr, &flags);
+    if( flags & (INSTR_READS | INSTR_WRITES) )
+    {
+        addr = (val & 07777) | (curBank << 12);
+        if( flags & INSTR_INDIRECT )
+        {
+            val = pdp1P->core[addr];
+        }
+        else
+        {
+            val = 0;    // nothing to deref
+        }
+
+        // The behavior of indirect depends upon whether or not eem is in effect.
+        // If it is, there is no subsequent indirection.
+        if( !pdp1P->exd )
+        {
+            while( val & 010000 )
+            {
+                val = (val & 07777) | (curBank << 12);
+                printf("The value at address ");
+                formatAndPrintOne(SYMBOLIC, addr);
+                printf(" is an indirect to ");
+                formatAndPrintOne(SYMBOLIC, val);
+                printf(", follow it, y for yes? ");
+                fgets(tmpstr, sizeof(tmpstr), stdin);
+                if( tmpstr[0] != 'y' )
+                {
+                    break;
+                }
+
+                addr = val;
+                val = pdp1P->core[addr];
+           }
+        }
+
+        printf("The target address is ");
+        formatAndPrintOne(SYMBOLIC, addr);
+        printf("\n");
+
+        if( flags & (INSTR_JUMPS | INSTR_CALLS) )
+        {
+            cP = strchr(instr, ' ');
+            *cP = '\0';
+            printf("The instruction was %s, set the current bank and address to the target, y to set? ", instr);
+            fgets(tmpstr, sizeof(tmpstr), stdin);
+            if( tmpstr[0] == 'y' )
+            {
+                lastAddr = addr;
+                curBank = (addr >> 12) & 017;
+            }
+        }
+    }
+    else
+    {
+        printf("The current instruction does not read or write memory.\n");
     }
 }
 

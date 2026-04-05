@@ -20,6 +20,7 @@
  * 18-Mar-26 wje unify lexing of file name for file and load, fix typos in help text
  * 22-Mar-26 wje update to use new decodeInstr()
  * 4-Apr-26 wje add format command to see current format or set it
+ * 5-Apr-26 wje add trace command to follow references, including indirects
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -76,9 +77,10 @@ Dispatch dispatchTable[] = {
     {"quit", 1, QUIT, exitHelp},
     {"set", 2, SET, setHelp},
     {"show", 2, SHOW, showHelp},
-    {"start", 2, START, startHelp},
+    {"start", 3, START, startHelp},
     {"stop", 3, STOP, stopHelp},
     {"step", 1, STEP, stepHelp},
+    {"trace", 1, TRACE, traceHelp},
     {"window", 2, WINDOW, windowHelp},
     {"watch", 1, WATCH, watchHelp},
     {0,0,0}

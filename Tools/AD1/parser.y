@@ -45,7 +45,7 @@ extern void showRegisterFn(int reg, int base);
 extern void setFn(int type, int addr, int value);
 extern void startFn(int addr);
 extern void stopFn(void);
-extern void stepFn(void);
+extern void stepFn(int count);
 extern void continueFn(void);
 extern void nextFn(void);
 extern void formatFn(int base);
@@ -61,6 +61,7 @@ extern void disableWatchFn(int num);
 extern void setBaseFn(int num);
 extern void setFileFn(char *nameP, bool add);
 extern void listFn(int lineNo, int fileNo);
+extern void traceFn(void);
 extern void loadFn(char *nameP);
 extern void setWindowFn(int size);
 extern void debugFn(void);
@@ -105,6 +106,7 @@ typedef struct argitem_t {
 %token START
 %token STOP
 %token STEP
+%token TRACE
 %token QUIT
 %token WATCH
 %token WINDOW
@@ -114,16 +116,17 @@ typedef struct argitem_t {
 %type <cmdP> CONTINUE
 %type <cmdP> DELETE
 %type <cmdP> DISABLE
-%type <cmdP> QUIT
+%type <cmdP> DOT
 %type <cmdP> ENABLE
 %type <cmdP> HELP
 %type <cmdP> NEXT
+%type <cmdP> QUIT
 %type <cmdP> SET
 %type <cmdP> SHOW
 %type <cmdP> START
 %type <cmdP> STOP
 %type <cmdP> STEP
-%type <cmdP> DOT
+%type <cmdP> TRACE
 %type <cmdP> WATCH
 
 /* typed symbols */
@@ -220,9 +223,9 @@ cmd		: QUIT
                 {
                     continueFn();
                 }
-                | STEP
+                | STEP optDECINTEGER
                 {
-                    stepFn();
+                    stepFn(($2 == BADNUM)?1:$2);
                 }
                 | BANK SEPARATOR integer
                 {
@@ -377,6 +380,10 @@ cmd		: QUIT
                     }
 
                     listFn(line, NOARG);
+                }
+                | TRACE
+                {
+                    traceFn();
                 }
                 | LOAD FILESTRING
                 {

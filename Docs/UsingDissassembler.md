@@ -2,9 +2,9 @@
 
 This document describes the disassembler and how to use it.
 
-This is version 1.00 and covers disassembler version 2.00; it will be updated as needed.
+This is version 1.1 and covers disassembler version 2.1; it will be updated as needed.
 
-Edit date 3-Apr-2026
+Edit date 5-Apr-2026
 
 ## What is the disassembler?
 
@@ -191,11 +191,14 @@ A loader is called with a sequence of commands:
 
 A loader returns statuses:
 - LOADER_ERROR  an error occured, typically a malformed file or premature EOF
-- LOADER_OK a generic acknowledgement, command succeeded but no data was read
+- LOADER_OK a generic acknowledgement, command succeeded but caller should ignore any data returned
 - LOADER_AGAIN  the command succeeded, but should be issued again
 - LOADER_MORE data is returned and there could be more available
 - LOADER_DONE the last data available has been returned
 - LOADER_STOP the same as LOADER_DONE, except an **am1** *stop* was seen
+
+*LOADER_START* sets the returned address and data to the address that was seen as the block beginning
+address, although a loader can return whatever address it wants.
 
 *LOADER_DONE* sets the returned address and data to the address that an assembler *start nnnn* directive
 would use, the locaction to begin execution of the program.
@@ -206,14 +209,16 @@ A typical flow would be:
 | Issued to loader | Returned by loader |
 |------------------|--------------------|
 | LOADER_CMD_INIT  | LOADER_INIT_x |
-| LOADER_CMD_START | LOADER_OK or LOADER_MORE |
-| LOADER_CMD_NEXT  | LOADER_MORE, LOADER_DONE, LOADER_STOP |
+| LOADER_CMD_START | LOADER_OK or LOADER_AGAIN |
+| LOADER_CMD_NEXT  | LOADER_MORE, LOADER_AGAIN, LOADER_DONE, LOADER_STOP |
 
 The disassembler will do this cycle twice, once for pass one, once for pass two.
 However, the *LOADER_CMD_INIT* will only be issued once when *disassembler* starts.
 
-A loader should return *LOADER_MORE* as long as a termination condition has not been seen.
-The disassembler will continue to issue *LOADER_CMD_NEXT* until it sees a termination condition.
+A loader should return *LOADER_MORE* as long as there is data in a current block of input to read.
+If a block boundary changes, *LOADER_AGAIN* is the recommended return status.
+The disassembler will continue to until it sees a termination condition in which case it should return
+*LOADER_DONE* or *LOADER_STOP*.
 
 Of course, a *LOADER_ERROR* can be returned at any time.
 

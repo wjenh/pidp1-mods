@@ -68,7 +68,7 @@ int i;
     {
         curAddr = beginAddr;
         state = LOADER_CMD_NEXT;        // ready for data
-        return( LOADER_MORE );
+        return( LOADER_AGAIN );
     }
 
     if( state != LOADER_CMD_NEXT )

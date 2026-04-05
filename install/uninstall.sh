@@ -26,6 +26,7 @@ sudo rm -f /usr/local/bin/monas
 sudo rm -f /usr/local/bin/macro1_1
 sudo rm -f /usr/local/bin/macro1
 sudo rm -f /usr/local/bin/disassemble_tape
+sudo rm -f /usr/local/bin/disassembler
 sudo rm -f /usr/local/bin/tkaskopenfile
 sudo rm -f /usr/local/bin/tkaskopenfilewrite
 sudo rm -f /usr/local/bin/pdp1audio

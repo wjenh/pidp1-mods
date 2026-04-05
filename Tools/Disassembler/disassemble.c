@@ -216,9 +216,8 @@ main(int argc, char **argv)
 {
 int opt;
 int word;
-int cur_addr;
-int last_addr;
-int end_addr;               // for BIN loader
+int curAddr;
+int endAddr;               // for BIN loader
 char *cP;
 FILE *fP;
 char filename[256];
@@ -392,10 +391,11 @@ char *ldrArgs[16];
         {
         case START:
         case RESTART:                               // only difference is that we don't print leader info
+            lastAddr = 0;
             if( OPERATION(word) == 032 )            // beginning of the RIM code block
             {
                 state = RIM;
-                cur_addr = OPERAND(word);
+                curAddr = OPERAND(word);
 
                 if( verbose && keepRim )
                 {
@@ -406,7 +406,7 @@ char *ldrArgs[16];
                 word = getWord(fP, 2, state);
                 if( keepRim )
                 {
-                    formatInstr(cur_addr, word);
+                    formatInstr(curAddr, word);
                 }
             }
             break;
@@ -416,7 +416,7 @@ char *ldrArgs[16];
             {
                 state = LOADING;                // loader-specific block now
                 // Reset our address to 0, initial condition, and restart the loader
-                last_addr = cur_addr = 0;
+                lastAddr = curAddr = 0;
                 if( (*loaderP)(fP, LOADER_CMD_START, &word, &word, NULL) == LOADER_ERROR )
                 {
                     fprintf(stderr,"Loader returned an error at read location %d\n", tape_loc);
@@ -427,12 +427,12 @@ char *ldrArgs[16];
             }
             else if( OPERATION(word) == 032 )   // next data word to load
             {
-                cur_addr = OPERAND(word);
+                lastAddr = curAddr = OPERAND(word);
                 word = getWord(fP, 2, state);
 
                 if( keepRim )
                 {
-                    formatInstr(cur_addr, word);
+                    formatInstr(curAddr, word);
                 }
             }
             else
@@ -460,16 +460,15 @@ char *ldrArgs[16];
             break;
 
         case LOADING:
-            // cur_addr will be the full 16 bit address for am1
+            // curAddr will be the full 16 bit address for am1
             // We have to check for referenced data that isn't included in the tape data, macro1
             // does not emit anything for variables, it just skips the memory area.
-            last_addr = cur_addr;
-            switch( (*loaderP)(fP, LOADER_CMD_NEXT, &cur_addr, &word, NULL) )
+            switch( (*loaderP)(fP, LOADER_CMD_NEXT, &curAddr, &word, NULL) )
             {
             case LOADER_DONE:
                 state = DONE;
 
-                if( asMacro && extendedMem && (BANKOF(cur_addr) != 0) )
+                if( asMacro && extendedMem && (BANKOF(curAddr) != 0) )
                 {
                     fprintf(outfP,"/ Warning - start address not in bank 0.\n");
                 }
@@ -477,16 +476,16 @@ char *ldrArgs[16];
                 // Put out the start directive
                 if( verbose )
                 {
-                    fprintf(outfP,"%-5d %06o: 000000", tape_loc, last_addr);
+                    fprintf(outfP,"%-5d %06o: 000000", tape_loc, lastAddr);
                 }
 
-                if( getLabel(cur_addr, cur_addr, tmpstr) == -1 )
+                if( getLabel(curAddr, curAddr, tmpstr) == -1 )
                 {
-                    sprintf(tmpstr,"%06o", cur_addr);
+                    sprintf(tmpstr,"%06o", curAddr);
                 }
                 else if( asAm1 )
                 {
-                    word = BANKNUM(cur_addr);
+                    word = BANKNUM(curAddr);
                     if( word )
                     {
                         fprintf(outfP,"     start %s:%o\n", tmpstr, word);
@@ -516,7 +515,7 @@ char *ldrArgs[16];
                 }
                 else
                 {
-                    fprintf(outfP,"%-5d %06o: 000000      stop\n", tape_loc, last_addr);
+                    fprintf(outfP,"%-5d %06o: 000000      stop\n", tape_loc, lastAddr);
                 }
                 state = DONE;
                 break;
@@ -526,17 +525,18 @@ char *ldrArgs[16];
                 continue;
 
             case LOADER_MORE:
-                if( cur_addr >> 12 )
+                if( curAddr >> 12 )
                 {
                     extendedMem = true;
                 }
 
-                if( cur_addr != (last_addr + 1) )
+                if( curAddr != (lastAddr + 1) )
                 {
-                    checkForVariables(outfP, last_addr, cur_addr);
+                    checkForVariables(outfP, lastAddr, curAddr);
                 }
 
-                formatInstr(cur_addr, word);
+                formatInstr(curAddr, word);
+                lastAddr = curAddr;
                 break;
 
             case LOADER_ERROR:
@@ -575,8 +575,8 @@ void
 passOne(FILE *fP, FILE *outfP)
 {
 int word;
-int cur_addr;
-int end_addr;               // for BIN loader
+int curAddr;
+int endAddr;               // for BIN loader
 
     if( skipRim )
     {
@@ -624,14 +624,14 @@ int end_addr;               // for BIN loader
             {
                 if( keepRim )
                 {
-                    markValidByInstruction(cur_addr, word);
+                    markValidByInstruction(curAddr, word);
                 }
 
                 DIAGNOSTIC(DIAG_STATE, "New state is LOADING");
 
                 state = LOADING;                // pass off to laoder
                 // Reset our address to 0, initial condition
-                cur_addr = 0;
+                curAddr = 0;
                 if( (*loaderP)(fP, LOADER_CMD_START, &word, &word, NULL) == LOADER_ERROR )
                 {
                     fprintf(stderr,"Loader returned an error at read location %d\n", tape_loc);
@@ -642,12 +642,12 @@ int end_addr;               // for BIN loader
             }
             else if( OPERATION(word) == 032 )   // next data word to load
             {
-                cur_addr = OPERAND(word);
+                curAddr = OPERAND(word);
 
                 word = getWord(fP, 1, state);
                 if( keepRim )
                 {
-                    markValidByInstruction(cur_addr, word);
+                    markValidByInstruction(curAddr, word);
                 }
             }
             else
@@ -662,8 +662,8 @@ int end_addr;               // for BIN loader
             break;
 
         case LOADING:
-            // cur_addr will be the full 16 bit address for am1
-            switch( (*loaderP)(fP, LOADER_CMD_NEXT, &cur_addr, &word, NULL) )
+            // curAddr will be the full 16 bit address for am1
+            switch( (*loaderP)(fP, LOADER_CMD_NEXT, &curAddr, &word, NULL) )
             {
             case LOADER_DONE:
             case LOADER_STOP:
@@ -674,7 +674,7 @@ int end_addr;               // for BIN loader
                 continue;
 
             case LOADER_MORE:
-                markValidByInstruction(FULLADDR(cur_addr), word);
+                markValidByInstruction(FULLADDR(curAddr), word);
                 break;
 
             case LOADER_ERROR:
@@ -687,7 +687,7 @@ int end_addr;               // for BIN loader
 
         case DONE:
             // Add the start address
-            markTarget(cur_addr, 0, false);
+            markTarget(curAddr, 0, false);
             return;
 
         default:
@@ -876,7 +876,7 @@ char tmpstr[256];
             fprintf(outfP,(asMacro)?"/ Now in bank %o\n":"bank %o\n", curBank);
         }
 
-        if( pc != (lastAddr + 1) )
+        if( pc > (lastAddr + 1) )
         {
             fprintf(outfP,"%o/\n", pc & 07777);    // addr is relative to current bank
         }

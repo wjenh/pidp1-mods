@@ -100,7 +100,7 @@ int word;
         endAddr &= 07777;                       // bin loader only deals with bank 0
         state = LOADER_CMD_NEXT;
 
-        return( LOADER_MORE );
+        return( LOADER_AGAIN );
     }
     else if( directive == LOADER_CMD_NEXT )
     {
@@ -118,7 +118,7 @@ int word;
         // End of block, drop checksum, back for a start or another block
         word = nextWord(fP);
         state = LOADER_CMD_START;
-        return( LOADER_MORE );
+        return( LOADER_AGAIN );
     }
     else
     {

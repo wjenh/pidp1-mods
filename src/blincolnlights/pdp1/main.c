@@ -12,6 +12,7 @@
  * wje 18-Feb-26 massive cleanup, add shm support
  * wje 22-Feb-26 massive cleanup was too massive, revert much of it
  * wje 28-Mar-26 add timing logging
+ * wje 6-Apr-26 small mod to not clear AD1_STEP until the end of a cycle, use config setting for mem file
 */
 #include <fcntl.h>
 #include <unistd.h>
@@ -71,6 +72,7 @@ extern bool lailiaEnabled;
 extern bool core1DEnabled;
 extern bool all1DEnabled;
 static bool useShm;
+static bool newMemFile;
 
 // All for audio
 extern void setFilterAlpha(float);
@@ -167,7 +169,6 @@ bool prev_readin_sw;
         if( AD1_CONTINUE(pdp1P) )
         {
             pdp->continue_sw = 1;
-            AD1_CLEAR_CONTINUE(pdp1P);
         }
 
         if( pdp->power_sw )
@@ -182,6 +183,7 @@ bool prev_readin_sw;
                     pdp->run_enable = 0;
                 }
                 cycle(pdp1P);
+                AD1_CLEAR_CONTINUE(pdp1P);
             }
 
             if( Edge(stop_sw) )
@@ -240,6 +242,7 @@ bool prev_readin_sw;
                 long precycleTime = gettime();
 #endif
                 cycle(pdp);
+                AD1_CLEAR_CONTINUE(pdp1P);      // wje - if we were continuing, clear so ad1 knows we're done
 #if LOG_TIMING
                 long deltaTime = gettime() - precycleTime;
                 if( deltaTime > 5000 )
@@ -419,6 +422,7 @@ usage(void)
 void
 readmem(const char *filenameP, Word *mem, Word size)
 {
+int val;
 Word addr;
 Word word;
 char *strP;
@@ -430,25 +434,37 @@ char buf[100];
         return;
     }
 
-    while( strP = fgets(buf, 100, fileP) )
+    // Handle both old and new file formats.
+    // New is addr: word, old has each on a separate line.
+    while( (strP = fgets(buf, 100, fileP)) )
     {
-        addr = strtol(strP, &strP, 8);
-        if( !strP || (*strP != ':') )
+        val = strtol(strP, &strP, 8);
+        if( strP && (*strP == ':') )
         {
-            // invalid line, just skip it
-            continue;
+            addr = val;         // address part
+            if( addr >= size )
+            {
+                fprintf(stderr, "Address out of range: %o\n", addr);
+                break;
+            }
         }
 
-        // We'll assume the line is OK if we got the firt part
-        word = strtol(strP+1, &strP, 8);
-        if( addr < size)
+        if( !strP || (*strP == '\n') )
         {
-            mem[addr] = word;
+            // must be old format memory
+            if( addr < size)
+            {
+                mem[addr] = val;
+            }
         }
         else
         {
-            fprintf(stderr, "Address out of range: %o\n", addr);
-            break;
+            // We'll assume the line is OK if we got the firt part
+            word = strtol(strP+1, &strP, 8);
+            if( addr < size)
+            {
+                mem[addr] = word;
+            }
         }
     }
 
@@ -472,8 +488,17 @@ Word i;
     {
         if( mem[i] != 0 )
         {
-            // Just put it on one line, jeez
-            fprintf(f, "%06o: %06o\n", i, mem[i]);
+            if( newMemFile )
+            {
+                // Just put it on one line, jeez
+                fprintf(f, "%06o: %06o\n", i, mem[i]);
+            }
+            else
+            {
+                // Why 2 lines? Silly.
+                fprintf(f, "%06o:\n", i);
+                fprintf(f, "%06o\n", mem[i]);
+            }
         }
     }
 
@@ -556,6 +581,7 @@ int shmFd;
     core1DEnabled = configurationP->core1DEnabled;
     all1DEnabled = configurationP->all1DEnabled;
     useShm = configurationP->useShm;
+    newMemFile = configurationP->newMemFile;
 
     setMixerGain(configurationP->gain);
     setAudioTuning(configurationP->tuning);

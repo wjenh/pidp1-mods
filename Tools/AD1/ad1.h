@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define VERSION "1.14 5-Apr-2026"
+#define VERSION "1.15 6-Apr-2026"
 
 #define MAXFILES    8    // maximum number of open files we can have
 #define MAXLINES    4000 // max number of lines in a file
@@ -35,6 +35,7 @@
 #define FORCE_RAW 3     // no processing of a token is done, the full text is returned as a string
 
 // Define registers
+#define NOREG 0         // a marker used for the show last command
 #define ACREG 1
 #define IOREG 2
 #define PCREG 3
@@ -91,8 +92,8 @@ typedef struct arg_s {
 
 // For the address to line number(s) mapping
 typedef struct MapEntry_t {
-    short fileNo;
-    short lineNo;
+    short fileNo;               // internal number assiged to file, index in files table
+    short lineNo;               // line number in file
     struct MapEntry_t *nextP;
 } MapEntry, *MapEntryP, **MapEntryPP;
 
@@ -104,5 +105,5 @@ typedef struct {
     char *symNameP;
     FILE *fP;
     int numLines;               // lines in the file
-    long lineMap[MAXLINES];     // map line nubmers in file into file offsets in file
+    long lineMap[MAXLINES];     // map line numbers in file into file offsets in file
 } FileInfo, *FileInfoP;

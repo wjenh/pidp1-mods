@@ -105,3 +105,12 @@ lptLines=66
 # Normally, a form feed puts a form feed character in the file.
 # If this is on, the necessary number of newlines is used instead.
 lptNoFF=yes
+
+# A new memory image file format is provided and is recommended.
+# It is much easier to read.
+# If this is on, the new format will be used, else the old format.
+# If on, old or new format files will be read but saved in the new format.
+# If off, old or new format files will be read but saved in the old format.
+# Basically, this is transparent to pidp-1, its for human convenience.
+newmemfile=true
+

@@ -25,7 +25,8 @@
  * The only difference is when extended memory is used.
  * In that case, the am1 bank directives will be emitted.
  *
- * The fourth mode is raw mode, each 18 bit data word is just printed as a an octal value.
+ * The fourth mode is raw mode, each 18 bit data word is just printed as a an octal value or as a decoded
+ * instruction.
  *
  * The PDP-1 binary tapes are loaded initially using read-in, which ignores any character that doesn't have
  * bit 0200 set.
@@ -78,33 +79,34 @@
  *
  * Revision history:
  *
- * 22/09/2025 wje - Initial version
- * 23/09/2025 wje - Convert to two pass
- * 24/09/2025 wje - Make macro-style formatting of labels nicer, fixes for 'instructions' that are actually data
- * 24/09/2025 wje - Add raw mode for tapes that don't have a standard loader, just dump everything as instructions
- * 25/09/2025 wje - Various fixes around OPR and such.
+ * 22-Sep-2025 wje - Initial version
+ * 23-Sep-2025 wje - Convert to two pass
+ * 24-Sep-2025 wje - Make macro-style formatting of labels nicer, fixes for 'instructions' that are actually data
+ * 24-Sep-2025 wje - Add raw mode for tapes that don't have a standard loader, just dump everything as instructions
+ * 25-Sep-2025 wje - Various fixes around OPR and such.
  *                  IMPORTANT - assemblers, native and cross, are broken for law -n,
  *                  so if a binary for 'law -n' is seen generate 'safe' law i n which will give the correct result.
  *                  The behavior of law -n does not match the original DEC Macro documentation.
  *                  Instead of law -n generating effectively law i n, the actual negative number is added to the
  *                  law opcode, producing garbage.
- * 25/09/2025 wje - Add a -s switch to generate 3 char labels for backwards compatibility
- * 27/09/2025 wje - Continue to process a tape even if a malformed BIN block is found, jsut give a warning.
- * 28/09/2025 wje - Add -c for compalibility mode, will emit source that works with the native PDP-1 macro assembler.
- * 03/10/2025 wje - Handle non-standard tapes better, bail if in macro mode, dump in default mode.
- * 18/12/2025 wje - Added support for the new AM1 loader.
- * 06/01/2026 wje - Added support for pause in the AM1 loader.
- * 09/02/2026 wje - Fix completion bit handling, dpy i and c handling
- * 20/02/2026 wje - If not an instruction, be sure to emit all bits
- * 01/03/2026 wje - Fix cal, emit operand if it actually isn't a cal
- * 15/03/2026 wje - Change to use decode_instruction, no reason to duplicate all the code
- * 19/03/2026 wje - Pass macro flag to decodeInstr()
- * 30/03/2026 wje - Major rework for full multi-bank support in am1, fix some bugs, drop compatiiblity mode, -c
- * 02/04/2026 wje - Another major rework for pluggable loaders, now version 2.0
+ * 25-Sep-2025 wje - Add a -s switch to generate 3 char labels for backwards compatibility
+ * 27-Sep-2025 wje - Continue to process a tape even if a malformed BIN block is found, jsut give a warning.
+ * 28-Sep-2025 wje - Add -c for compalibility mode, will emit source that works with the native PDP-1 macro assembler.
+ * 03-Oct-2025 wje - Handle non-standard tapes better, bail if in macro mode, dump in default mode.
+ * 18-Dec-2025 wje - Added support for the new AM1 loader.
+ * 06-Jan-2026 wje - Added support for pause in the AM1 loader.
+ * 09-Feb-2026 wje - Fix completion bit handling, dpy i and c handling
+ * 20-Feb-2026 wje - If not an instruction, be sure to emit all bits
+ * 01-Mar-2026 wje - Fix cal, emit operand if it actually isn't a cal
+ * 15-Mar-2026 wje - Change to use decode_instruction, no reason to duplicate all the code
+ * 19-Mar-2026 wje - Pass macro flag to decodeInstr()
+ * 30-Mar-2026 wje - Major rework for full multi-bank support in am1, fix some bugs, drop compatiiblity mode, -c
+ * 02-Apr-2026 wje - Another major rework for pluggable loaders, now version 2.0
+ * 05-Apr-2026 wje - Add symbol import file
  *
  */
 
-#define VERSION 2.0
+#define VERSION 2.2
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -112,6 +114,7 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <string.h>
+#include <ctype.h>
 #include <libgen.h>
 
 #include "loader.h"
@@ -130,6 +133,8 @@
 
 #define BANKOF(a) ((a) & ~(MEMSIZE - 1))   // get the bank part of a full 16 bit address, 4 bits
 #define BANKNUM(a) (BANKOF(a) >> 12)       // get the bank number of a full 16 bit address
+
+#define LABELSIZE 32    // max symbol length + 1
 
 // Instructions have a 5 bit opcode followed by a 1 bit indirect marker as the high 6 bits of a word
 // IOTs can also have a completion-requested, bit 6 set, 04000.
@@ -156,7 +161,7 @@ typedef struct
     int flags;          // the MEM_x flags
     int instFlags;      // the INSTR_x flags from decodeInstr(), if any
     int refAddr;        // the address of whatever caused this label to be created
-    char label[12];
+    char label[LABELSIZE];
 } Label, *LabelP;
 
 #include "loaderdefs.h"
@@ -205,6 +210,7 @@ void markValidByInstruction(int addr, int word);
 void markTarget(int addr, int creator, bool modified);
 void checkForVariables(FILE *outfP, int addr, int endAddr);
 void showLoaders();
+bool loadSymbols(char *filenameP);
 void usage(void);
 
 extern bool opCanIndirect(int opcode);
@@ -230,7 +236,7 @@ char *ldrArgs[16];
     loaderP = binloader;
 
     // parse our comd line args
-    while( (opt = getopt(argc, argv, "adklmrv?L:o:")) != -1 )
+    while( (opt = getopt(argc, argv, "adklmrv?L:s:o:")) != -1 )
     {
         switch( opt )
         {
@@ -284,6 +290,13 @@ char *ldrArgs[16];
             {
                 fprintf(stderr,"No such loader '%s' is known.\n", optarg);
                 exit(1);
+            }
+            break;
+
+        case 's':
+            if( !loadSymbols(optarg) )
+            {
+                fprintf(stderr,"Can't load sybol file '%s', ignored.\n", optarg);
             }
             break;
 
@@ -356,6 +369,8 @@ char *ldrArgs[16];
     // We don't check for errors because those were already detected by pass one
     state = (rawMode)?RAW:START;
     DIAGNOSTIC(DIAG_PASS, "Pass two started");
+
+    curAddr = 0;
 
     if( skipRim )
     {
@@ -552,7 +567,14 @@ char *ldrArgs[16];
             // word will contain the 18 bit value we read, dump it
             if( state == RAW )
             {
-                fprintf(outfP,"0%06o\n", word);
+                if( asMacro || asAm1 )
+                {
+                    formatInstr(curAddr++, word);
+                }
+                else
+                {
+                    fprintf(outfP,"0%06o\n", word);
+                }
             }
             break;
 
@@ -564,7 +586,7 @@ char *ldrArgs[16];
 
     if( verbose )
     {
-        fprintf(outfP,"Done\n");
+        fprintf(outfP,"\nDone\n");
     }
 
     fclose( fP );
@@ -997,7 +1019,8 @@ LabelP labelP;
             continue;
         }
 
-        if( labelP->flags & MEM_TARGET )
+        // The label might have been preloaded from a symbol file, leave it if so
+        if( (labelP->flags & MEM_TARGET) && !labelP->label[0] )
         {
             // construct the label
             cP = labelP->label;
@@ -1116,10 +1139,75 @@ LoaderMapP mapP;
     }
 }
 
+// Try to load symbol definitions from an am1 format symbol table file.
+// Any lines that don't begin with a digit are ignored.
+// If successful, return true, else false.
+bool
+loadSymbols(char *filenameP)
+{
+int addr;
+int lineNo;
+char *cP, *cP2;
+LabelP labelP;
+FILE *fP;
+char line[256];
+
+    if( !(fP = fopen(filenameP,"r")) )
+    {
+        return( false );
+    }
+
+    lineNo = 3;
+
+    while( fgets(line, sizeof(line), fP) )
+    {
+        ++lineNo;
+
+        if( !isdigit(line[0]) )
+        {
+            continue;
+        }
+
+        if( line[0] == '#' )
+        {
+            continue;       // not currently used, but might be a comment eventually
+        }
+
+        line[strlen(line) - 1] = '\0';   // drop newline
+
+        addr = strtol(line, &cP, 8);    // symbol addrs are always octal
+        // we also ignore the symbol type character, as long as there is some alpha char
+        if( (*cP++ != ' ') || !isalpha(*cP++) || (*cP++ != ' ') )
+        {
+            // Not a valid definition line
+            fprintf(stderr, "Invalid line %d in symbol file.\n", lineNo);
+            fclose(fP);
+            return( false );
+        }
+
+        // cP now points to the symbol name, terminate it
+        cP2 = cP;
+        while( !isspace(*cP2) )
+        {
+            ++cP2;
+        }
+
+        *cP2 = '\0';
+        cP[LABELSIZE-1] = '\0';  // limit the length
+
+        labelP = getLabelPointer(addr & 0xFFFF, true);  // constrain the address just in case
+        strcpy(labelP->label, cP);
+    }
+
+    fclose(fP);
+    return(true);
+}
+
+
 void
 usage()
 {
-    fprintf(stderr,"Usage: disassemble -[?[a|m|v]klrd] [-L loader[,arg...]] [-o outfile] infile\n");
+    fprintf(stderr,"Usage: disassemble -[?[a|m|v]klrd] [-L loader[,arg...]] [-s symfile] [-o outfile] infile\n");
     fprintf(stderr,"where:\n");
     fprintf(stderr,"? - list the supported loaders then exit\n");
     fprintf(stderr,"a - output in am1 assembler form\n");
@@ -1127,6 +1215,7 @@ usage()
     fprintf(stderr,"v - verbose mode, output in listing-style\n");
     fprintf(stderr,"k - keep RIM loader code if seen and in macro mode; normally no because MACRO usually adds it\n");
     fprintf(stderr,"l - output the leader in readable form, only in verbose\n");
+    fprintf(stderr,"s name - symbol definition file to use\n");
     fprintf(stderr,"o name - output file name, defaults to stdout\n");
     fprintf(stderr,"r - raw mode, just dump every binary word as an instruction, no RIM or BIN checking\n");
     fprintf(stderr,"    raw overrides all other flags except d\n");

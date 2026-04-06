@@ -21,6 +21,7 @@
  * 22-Mar-26 wje update to use new decodeInstr()
  * 4-Apr-26 wje add format command to see current format or set it
  * 5-Apr-26 wje add trace command to follow references, including indirects
+ * 6-Apr-26 wje add monitor command to dump an execution sequence to a file
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -72,7 +73,8 @@ Dispatch dispatchTable[] = {
     {"format", 2, FORMAT, formatHelp},
     {"help", 1, HELP, NIL},
     {"list", 1, LIST, listHelp},
-    {"load", 2, LOAD, NIL},
+    {"load", 2, LOAD, loadHelp},
+    {"monitor", 3, MONITOR, monitorHelp},
     {"next", 1, NEXT, nextHelp},
     {"quit", 1, QUIT, exitHelp},
     {"set", 2, SET, setHelp},

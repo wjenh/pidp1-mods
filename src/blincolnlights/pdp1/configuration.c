@@ -174,6 +174,10 @@ char answer[64];
         {
             configSettings.muldivEnabled = onOff;
         }
+        else if( !strcmp(option,"newmemfile") )
+        {
+            configSettings.newMemFile = onOff;
+        }
         else if(!strcmp(option, "shared"))
         {
             // Put the PDP1 struct in shared memory for use with other tools
@@ -229,6 +233,7 @@ char answer[64];
     logger(LOG_CONFIG, "core 1D %d\n", configSettings.core1DEnabled);
     logger(LOG_CONFIG, "all 1D %d\n", configSettings.all1DEnabled);
     logger(LOG_CONFIG, "shm %d\n", configSettings.useShm);
+    logger(LOG_CONFIG, "new mem file %d\n", configSettings.newMemFile);
 
     fclose(fP);
 

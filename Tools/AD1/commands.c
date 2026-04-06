@@ -49,6 +49,7 @@ void setFileFn(char *nameP, bool add);
 void listFn(int lineNo, int fileNo);
 void traceFn(void);
 void loadFn(char *filenameP);
+void monitorFn(int count, char *nameP);
 void setWatchFn(int addr,  int value);
 void deleteWatchFn(int num);
 void enableWatchFn(int num);
@@ -418,7 +419,11 @@ MapEntryP entryP;
         while( count-- > 0 )
         {
             AD1_SET_CONTINUE(pdp1P);
-            usleep(1000);            // plenty of time for completion
+            while( AD1_CONTINUE(pdp1P) )
+            {
+                usleep(1);       // wait for completion
+            }
+
             if( AD1_BREAKPOINT_HIT(pdp1P) || AD1_WATCH_HIT(pdp1P) )
             {
                 return;             // stop now, main loop will detect this
@@ -837,6 +842,55 @@ int addr;
         curStartAddr = addr;
         printf("Load done, starting address set to 0%06o.\n", addr);
     }
+}
+
+// Open a monitor dump file, step for the given count of instructions,
+// writing the address and instruction for each step.
+// The output is in pidp-1 new memory image format.
+// Single step will be turned on if not already and its state restored when done.
+// Breakpoints and watchpoints will not be recognized until completion.
+void
+monitorFn(int count, char *filenameP)
+{
+int addr, word;
+bool singleState;
+FILE *fP;
+
+    if( pdp1P->run )
+    {
+        printf("Must be stopped to begin monitoring.\n");
+        return;
+    }
+
+    if( !(fP = fopen(filenameP, "w")) )
+    {
+        printf("Can't open monitor output file '%s'.\n", filenameP);
+        return;
+    }
+
+    singleState = AD1_SINGLE(pdp1P);
+    AD1_SET_SINGLE(pdp1P);
+
+    printf("Monitoring for %d instruction cycles.\n", count);
+    while( count-- > 0 )
+    {
+        addr = pdp1P->epc | pdp1P->pc;
+        word = pdp1P->core[addr];
+        fprintf(fP, "%06o: %06o\n", addr, word);
+
+        AD1_SET_CONTINUE(pdp1P);
+        while( AD1_CONTINUE(pdp1P) )
+        {
+            usleep(1);       // wait for completion
+        }
+    }
+
+    if( !singleState )
+    {
+        AD1_CLEAR_SINGLE(pdp1P);
+    }
+
+    fclose(fP);
 }
 
 void

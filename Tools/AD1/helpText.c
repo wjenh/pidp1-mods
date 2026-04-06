@@ -51,6 +51,12 @@ char *breakHelp[] = {
     "b foo+10",
     NIL};
 
+char *loadHelp[] = {
+    "The load command loads a tape image to memory which must be in RIM format.",
+    "It is the equivalent of mounting a tape and pressing read-in.",
+    "Example: load foo.rum\n",
+    NIL};
+
 char *listHelp[] = {
     "The list command shows the text frm the .lst or .ad1 file if one is present.",
     "If a file is not given on startup or a different file is wanted, the 'file' command can be used to open it.",
@@ -74,6 +80,17 @@ char *listHelp[] = {
     "li 40:2",
     "list foo:3,2",
     "lis .+10",
+    NIL};
+
+char *monitorHelp[] = {
+    "The monitor command dumps an execution trace to a file.",
+    "The given number of instructions and their addresses are dumped as execution is done.",
+    "The file will contain lines of the form:",
+    "oooooo: iiiiii",
+    "where oooooo is the 6 digit octal address executed and iiiiii is the 6 digit octal word executed.",
+    "This is the same format as pidp-1 memory image files use and can be disassembled.",
+    "The pidp-1 must be in halt state and will be returned to halt state when the monitoring completes.",
+    "Example: mon 300 foo.dmp",
     NIL};
 
 char *windowHelp[] = {
@@ -206,11 +223,13 @@ char *showHelp[] = {
     "i - instruction, the word is decoded as an instruction and the instruction shown",
     "If instead of an address, one of the register names is given, the contents of that register will be shown.",
     "Use help reg for help on registers.",
+    "If no arguments are given, the last show command is repeated.",
     "Examples:",
     "sh loop",
     "sh loop,1",
     "sho loop i",
     "show ac b",
+    "sh",
     NIL};
 
 char *formatHelp[] = {

@@ -12,6 +12,11 @@
 #include "ad1.h"
 #include "pdp1inc.h"
 
+static int lastShowAddress = NONE;
+static int lastShowBase = NONE;
+static int lastShowRegister = NOREG;
+static bool lastShowDeref = false;
+
 extern int curFileNo;
 extern int lastAddr;
 extern int lastFormat;
@@ -63,6 +68,7 @@ extern void setFileFn(char *nameP, bool add);
 extern void listFn(int lineNo, int fileNo);
 extern void traceFn(void);
 extern void loadFn(char *nameP);
+extern void monitorFn(int count, char *nameP);
 extern void setWindowFn(int size);
 extern void debugFn(void);
 %}
@@ -98,6 +104,7 @@ typedef struct argitem_t {
 %token HELP
 %token LIST
 %token LOAD
+%token MONITOR
 %token NEXT
 %token NODEREF
 %token SET
@@ -110,24 +117,6 @@ typedef struct argitem_t {
 %token QUIT
 %token WATCH
 %token WINDOW
-
-%type <cmdP> BASE
-%type <cmdP> BREAK
-%type <cmdP> CONTINUE
-%type <cmdP> DELETE
-%type <cmdP> DISABLE
-%type <cmdP> DOT
-%type <cmdP> ENABLE
-%type <cmdP> HELP
-%type <cmdP> NEXT
-%type <cmdP> QUIT
-%type <cmdP> SET
-%type <cmdP> SHOW
-%type <cmdP> START
-%type <cmdP> STOP
-%type <cmdP> STEP
-%type <cmdP> TRACE
-%type <cmdP> WATCH
 
 /* typed symbols */
 
@@ -288,21 +277,49 @@ cmd		: QUIT
                 {
                     disableWatchFn($5);
                 }
-                | SHOW SEPARATOR address optBase
-                {
-                    showFn($3, ($4 == NONE)?base:$4, false);
-                }
                 | FORMAT optBase
                 {
                     formatFn($2);
                 }
+                | SHOW SEPARATOR address optBase
+                {
+                    lastShowAddress = $3;
+                    lastShowBase = ($4 == NONE)?base:$4;
+                    lastShowDeref = false;
+                    lastShowRegister = NOREG;
+                    showFn(lastShowAddress, lastShowBase, false);
+                }
                 | SHOW SEPARATOR NODEREF address optBase
                 {
+                    lastShowAddress = $4;
+                    lastShowBase = $5;
+                    lastShowDeref = true;
+                    lastShowRegister = NOREG;
                     showFn($4, $5, true);
                 }
                 | SHOW SEPARATOR REGISTER optBase
                 {
+                    lastShowAddress = NONE;
+                    lastShowBase = $4;
+                    lastShowDeref = false;
+                    lastShowRegister = $3;
                     showRegisterFn($3, $4);
+                }
+                | SHOW
+                {
+                    // figure out what to repeat
+                    if( lastShowRegister != NOREG )
+                    {
+                        showRegisterFn(lastShowRegister, lastShowBase);
+                    }
+                    else if( lastShowAddress != NONE )
+                    {
+                        showFn(lastShowAddress, lastShowBase, lastShowDeref);
+                    }
+                    else
+                    {
+                        printf("There was no previous show command to repeat.\n");
+                    }
                 }
                 | SET SEPARATOR address SEPARATOR expr
                 {
@@ -388,6 +405,10 @@ cmd		: QUIT
                 | LOAD FILESTRING
                 {
                     loadFn($2);
+                }
+                | MONITOR SEPARATOR DECINTEGER FILESTRING
+                {
+                    monitorFn($3, $4);
                 }
                 | NEXT
                 {

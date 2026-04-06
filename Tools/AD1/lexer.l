@@ -26,6 +26,7 @@ extern void freeMem(void);
 %s REGARG
 %s BASEARG
 %s FILEARG
+%s MONARG
 
 %%
 ^[a-z]+			{
@@ -55,6 +56,10 @@ extern void freeMem(void);
 				case SETFILE:
 				case LOAD:
 				    BEGIN FILEARG;
+				    break;
+
+				case MONITOR:
+				    BEGIN MONARG;
 				    break;
 				}
 
@@ -204,9 +209,14 @@ ss			{
 			    return(INTEGER);
 			}
 
-[0-9]+			{
+<INITIAL,MONARG,REGARG>[0-9]+			{
 			    // This is always a decimal number.
 			    yylval.ival = atoi(yytext);
+			    // hack for the monitor command
+			    if( YYSTATE == MONARG )
+			    {
+			    	BEGIN FILEARG;
+			    }
 			    return(DECINTEGER);
 			}
 

@@ -40,6 +40,7 @@ typedef struct
     bool core1DEnabled;
     bool all1DEnabled;
     bool useShm;
+    bool newMemFile;
     bool sbs16Enabled;
     bool muldivEnabled;
     int sampleRate;

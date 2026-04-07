@@ -74,8 +74,7 @@ static bool setBits(uint64_t map[], int addr, int count);
 void verror(char *msgP, ...);
 
 // This is a bitmap for tracking used memory locations.
-// Each bit represents one word in memory and is set when a word is placed there.
-// If already set, it's an error.
+// Each bit represents one word in memory.
 uint64_t memMap[((MAXBANK + 1) * BANKSIZE) / sizeof(uint64_t)];
 
 // Walk a tree and emit a binary tape image

@@ -103,10 +103,11 @@
  * 30-Mar-2026 wje - Major rework for full multi-bank support in am1, fix some bugs, drop compatiiblity mode, -c
  * 02-Apr-2026 wje - Another major rework for pluggable loaders, now version 2.0
  * 05-Apr-2026 wje - Add symbol import file
+ * 06-Apr-2026 wje - Add -n flag to eliminate multiple outputs of an address
  *
  */
 
-#define VERSION 2.2
+#define VERSION 2.3
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -115,16 +116,17 @@
 #include <stdarg.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdint.h>
 #include <libgen.h>
 
 #include "loader.h"
 #include "decode_instruction.h"
 
 #define DIAGNOSTIC(enable, args...)
-//#define DIAGNOSTIC(enable, args...) if( diagnostics && enable ) {fprintf(stderr, args); fprintf(stderr, "\n");}
+//#define DIAGNOSTIC(enable, args...) if( enable ) {fprintf(stderr, args); fprintf(stderr, "\n");}
 // Set desired ones to non-zero
 #define DIAG_PASS 0
-#define DIAG_STATE 0
+#define DIAG_STATE 1
 #define DIAG_LDR 0
 #define DIAG_ERR 0
 
@@ -147,6 +149,7 @@
 #define MEM_TARGET   0x2       // this location was seen as the target of a memory reference
 #define MEM_MODIFIED 0x4       // this location was written to
 #define MEM_LOADED   0x8       // this location loaded, not just referenced
+#define MEM_EMITTED  0x10      // this location's label has been printed
 
 // convert a bank-relative address to an absolute address
 #define FULLADDR(x) ((curBank << 12) | (x))
@@ -171,7 +174,7 @@ bool asMacro = false;
 bool asAm1 = false;
 bool rawMode = false;
 bool showLeader = false;
-bool diagnostics = false;
+bool allowRepeat = true;
 bool keepRim = false;
 bool verbose = true;
 bool extendedMem = false;
@@ -188,6 +191,10 @@ FILE *outfP;
 State state;
 LoaderP loaderP;
 char separator[4];          // used in macro mode
+
+// This is a bitmap for tracking used memory locations.
+// Each bit represents one word in memory.
+uint64_t memMap[(BANKS * MEMSIZE) / sizeof(uint64_t)];
 
 // This array is used for tracking labels.
 // The low 9 bits are the label number.
@@ -211,6 +218,8 @@ void markTarget(int addr, int creator, bool modified);
 void checkForVariables(FILE *outfP, int addr, int endAddr);
 void showLoaders();
 bool loadSymbols(char *filenameP);
+bool setBit(uint64_t map[], int addr);
+bool isBitSet(uint64_t map[], int addr);
 void usage(void);
 
 extern bool opCanIndirect(int opcode);
@@ -229,14 +238,14 @@ FILE *fP;
 char filename[256];
 char shortname[256];
 char tmpstr[128];
-char *ldrArgs[16];
+char *ldrArgs[128];
 
     strcpy(separator, "!");         // is a logical or in macro1
     outfP = stdout;
     loaderP = binloader;
 
     // parse our comd line args
-    while( (opt = getopt(argc, argv, "adklmrv?L:s:o:")) != -1 )
+    while( (opt = getopt(argc, argv, "adklmnrv?L:s:o:")) != -1 )
     {
         switch( opt )
         {
@@ -257,16 +266,16 @@ char *ldrArgs[16];
             verbose = false;
             break;
 
-        case 'd':
-            diagnostics = true;
-            break;
-
         case 'k':
             keepRim = true;
             break;
 
         case 'l':
             showLeader = true;
+            break;
+
+        case 'n':
+            allowRepeat = false;
             break;
 
         case 'r':
@@ -402,6 +411,7 @@ char *ldrArgs[16];
             }
         }
 
+        DIAGNOSTIC(DIAG_STATE, "State in pass 2 now %d", state);
         switch( state )
         {
         case START:
@@ -467,7 +477,6 @@ char *ldrArgs[16];
                         tape_loc - 3);
                     fprintf(stderr,"Dumping remaining data as random code.\n");
 
-                    printf("Dumping remainder as random data.\n");
                     formatInstr(0, word);                           // include what we just saw
                     state = DATA;
                 }
@@ -545,12 +554,16 @@ char *ldrArgs[16];
                     extendedMem = true;
                 }
 
-                if( curAddr != (lastAddr + 1) )
+                if( allowRepeat || setBit(memMap, curAddr) )
                 {
-                    checkForVariables(outfP, lastAddr, curAddr);
+                    if( curAddr != (lastAddr + 1) )
+                    {
+                        checkForVariables(outfP, lastAddr, curAddr);
+                    }
+
+                    formatInstr(curAddr, word);
                 }
 
-                formatInstr(curAddr, word);
                 lastAddr = curAddr;
                 break;
 
@@ -621,6 +634,7 @@ int endAddr;               // for BIN loader
     // The state machine loop
     for(;;)
     {
+        DIAGNOSTIC(DIAG_STATE, "State in pass 1 now %d", state);
         switch( state )
         {
         case START:
@@ -841,7 +855,7 @@ void
 printTapeLeader(int ch)
 {
 int i;
-char tmpstr[16];
+char tmpstr[128];
 
     // Assume it's a leader label as punched by macro
     for( i = 0; i < 8; i++ )
@@ -904,7 +918,7 @@ char tmpstr[256];
         }
 
         lastAddr = pc;
-        fprintf(outfP,"%s", (symbolstr[0] != '\0')?symbolstr:"     ");
+        fprintf(outfP,"%s ", (symbolstr[0] != '\0')?symbolstr:"     ");
     }
     else
     {
@@ -913,7 +927,7 @@ char tmpstr[256];
             fprintf(outfP,"%-5d %06o: bank %o\n", tape_loc, pc, curBank);
         }
 
-        fprintf(outfP,"%-5d %06o: %06o %s", tape_loc, pc, word, (symbolstr[0] != '\0')?symbolstr:"     ");
+        fprintf(outfP,"%-5d %06o: %06o %s ", tape_loc, pc, word, (symbolstr[0] != '\0')?symbolstr:"     ");
     }
 
     tmp = OPERATION(word) >> 1;
@@ -1070,8 +1084,9 @@ LabelP labelP;
     {
         if( (labelP = getLabelPointer(addr, false)) )
         {
-            if( !(labelP->flags & MEM_LOADED) && labelP->label[0] )
+            if( !(labelP->flags & (MEM_LOADED | MEM_EMITTED)) && labelP->label[0] )
             {
+                labelP->flags |= MEM_EMITTED;
                 fprintf(outfP, "%s, 0\n", labelP->label);
             }
         }
@@ -1203,11 +1218,44 @@ char line[256];
     return(true);
 }
 
+// Set the bit in the memory map corresponding to the address passed.
+// If it was not already set, return true, else if already set, false.
+bool
+setBit(uint64_t map[], int addr)
+{
+int idx;
+uint64_t bit;
+
+    idx = addr >> 6;            // each map entry is 64 memory locations
+    bit = UINT64_C(1) << (addr & 63);
+
+    if( map[idx] & bit )
+    {
+        return( false );
+    }
+
+    map[idx] |= bit;
+    return(true);
+}
+
+// See if the bit in the memory map corresponding to the address passed is set.
+// If so, return true, else false.
+bool
+isBitSet(uint64_t map[], int addr)
+{
+int idx;
+uint64_t bit;
+
+    idx = addr >> 6;            // each map entry is 64 memory locations
+    bit = UINT64_C(1) << (addr & 63);
+
+    return( (map[idx] & bit)?true:false );
+}
 
 void
 usage()
 {
-    fprintf(stderr,"Usage: disassemble -[?[a|m|v]klrd] [-L loader[,arg...]] [-s symfile] [-o outfile] infile\n");
+    fprintf(stderr,"Usage: disassemble -[?[a|m|v]klnr] [-L loader[,arg...]] [-s symfile] [-o outfile] infile\n");
     fprintf(stderr,"where:\n");
     fprintf(stderr,"? - list the supported loaders then exit\n");
     fprintf(stderr,"a - output in am1 assembler form\n");
@@ -1215,11 +1263,11 @@ usage()
     fprintf(stderr,"v - verbose mode, output in listing-style\n");
     fprintf(stderr,"k - keep RIM loader code if seen and in macro mode; normally no because MACRO usually adds it\n");
     fprintf(stderr,"l - output the leader in readable form, only in verbose\n");
+    fprintf(stderr,"n - don't output a location if it has already been output\n");
     fprintf(stderr,"s name - symbol definition file to use\n");
     fprintf(stderr,"o name - output file name, defaults to stdout\n");
     fprintf(stderr,"r - raw mode, just dump every binary word as an instruction, no RIM or BIN checking\n");
     fprintf(stderr,"    raw overrides all other flags except d\n");
-    fprintf(stderr,"d - enable diagnostics for debugging this progam, not very useful\n");
     fprintf(stderr,"L loader - use the named loader with optional loader arguments\n");
     fprintf(stderr,"Flags can be together, -mid, or separate, -m -i -d\n");
     fprintf(stderr,"Flags that take an argument can be of the form e.g. -L xxx or -Lxxx\n");

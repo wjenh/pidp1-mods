@@ -13,6 +13,7 @@
  * wje 22-Feb-26 massive cleanup was too massive, revert much of it
  * wje 28-Mar-26 add timing logging
  * wje 6-Apr-26 small mod to not clear AD1_STEP until the end of a cycle, use config setting for mem file
+ * wje 7-Apr-26 reload configuration on sigint
 */
 #include <fcntl.h>
 #include <unistd.h>
@@ -48,6 +49,7 @@
 #define NIL 0
 #define Edge(sw) (pdp->sw && !prev_##sw)
 
+void configure(void);
 void updateswitches(PDP1 *pdp, Panel *panel);
 void updatelights(PDP1 *pdp, Panel *panel);
 void lightsoff(Panel *panel);
@@ -526,6 +528,7 @@ sighandler(int sig)
 {
     exit(0);
 }
+
 int
 main(int argc, char *argv[])
 {
@@ -566,31 +569,10 @@ int shmFd;
 
     atexit(exitcleanup);
     signal(SIGPIPE, SIG_IGN);
-    signal(SIGINT, sighandler);
+    signal(SIGINT, configure);
     signal(SIGTERM, sighandler);
 
-    configurationP = loadConfigFile(CONFIG_FILE);
-    pdp->muldiv_sw = configurationP->muldivEnabled;
-    pdp->sbs16 = configurationP->sbs16Enabled;
-    penAperture = configurationP->penAperture;
-    lightpenEnabled = configurationP->lightpenEnabled;
-    sdbEnabled = configurationP->sdbEnabled;
-    dpyShiftEnabled = configurationP->dpyShiftEnabled;
-    audioEnabled = configurationP->audioEnabled;
-    lailiaEnabled = configurationP->lailiaEnabled;
-    core1DEnabled = configurationP->core1DEnabled;
-    all1DEnabled = configurationP->all1DEnabled;
-    useShm = configurationP->useShm;
-    newMemFile = configurationP->newMemFile;
-
-    setMixerGain(configurationP->gain);
-    setAudioTuning(configurationP->tuning);
-    setSampleRate(configurationP->sampleRate);
-    setFilterAlpha(configurationP->alpha);
-    setFilter1Alpha(configurationP->alpha1);
-    setFilter2Alpha(configurationP->alpha2);
-    setFilter3Alpha(configurationP->alpha3);
-    setFilter4Alpha(configurationP->alpha4);
+    configure();
 
     // Now check for shared mem use
     if( configurationP->useShm )
@@ -626,6 +608,10 @@ int shmFd;
     memp = pdp->core;
     memsz = MAXMEM;
     readmem("coremem", memp, memsz);
+
+    // And set a few things we can't set until there is memory allocated
+    pdp->muldiv_sw = configurationP->muldivEnabled;
+    pdp->sbs16 = configurationP->sbs16Enabled;
 
     startpolling();
 
@@ -744,4 +730,38 @@ ConfigurationP
 getConfiguration()     // so other stuff can use our configuration, like IOTs
 {
     return( configurationP );
+}
+
+// Read the config file, set our various settings
+void
+configure()
+{
+    configurationP = loadConfigFile(CONFIG_FILE);
+    penAperture = configurationP->penAperture;
+    lightpenEnabled = configurationP->lightpenEnabled;
+    sdbEnabled = configurationP->sdbEnabled;
+    dpyShiftEnabled = configurationP->dpyShiftEnabled;
+    audioEnabled = configurationP->audioEnabled;
+    lailiaEnabled = configurationP->lailiaEnabled;
+    core1DEnabled = configurationP->core1DEnabled;
+    all1DEnabled = configurationP->all1DEnabled;
+    useShm = configurationP->useShm;
+    newMemFile = configurationP->newMemFile;
+
+    // This will only be used if called from sigint.
+    // pdp1P won't be set yet in the prmary call from main()
+    if( pdp1P )
+    {
+        pdp1P->muldiv_sw = configurationP->muldivEnabled;
+        pdp1P->sbs16 = configurationP->sbs16Enabled;
+    }
+
+    setMixerGain(configurationP->gain);
+    setAudioTuning(configurationP->tuning);
+    setSampleRate(configurationP->sampleRate);
+    setFilterAlpha(configurationP->alpha);
+    setFilter1Alpha(configurationP->alpha1);
+    setFilter2Alpha(configurationP->alpha2);
+    setFilter3Alpha(configurationP->alpha3);
+    setFilter4Alpha(configurationP->alpha4);
 }

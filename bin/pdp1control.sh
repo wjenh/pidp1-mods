@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # start script for pidp1.  
+# 7-Apr-26 wje add reload to have the config file reloaded
 
 # Interface setting - can be 'gui', 'web', or 'apps'
 interface="web"
@@ -109,6 +110,10 @@ do_start() {
 	return $status
 }
 
+do_reload() {
+        pkill -INT 'pdp1$'
+}
+
 do_stop() {
 	#kill any support programs that may be running
 	pkill tapevis
@@ -136,7 +141,6 @@ do_stop() {
 
 	return $status
 }
-
 
 do_set() {
 	if [ -z "$2" ]; then
@@ -249,6 +253,11 @@ case "$1" in
 	sleep 4
 	do_start $1 $2
 	;;
+
+  reload)
+	do_reload
+	;;
+
   set)
 	do_set $1 $2
 	;;
@@ -267,7 +276,7 @@ case "$1" in
 	do_stat
 	;;
   ?)
-	echo "Usage: pdp1control {start|stop|restart|set|panel|status|stat}" || true
+	echo "Usage: pdp1control {start|stop|reload|restart|set|panel|status|stat}" || true
 	exit 1
 	;;
   *)

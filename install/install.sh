@@ -192,6 +192,7 @@ while true; do
 		make -C $INSTALLDIR/src/usb_paper_tape
 		# The disassembler been renamed, get rid of the old one
 		test -f $INSTALLDIR/bin/disassemble_tape && rm $INSTALLDIR/bin/disassemble_tape
+		test -f $INSTALLDIR/bin/disassemble_mem && rm $INSTALLDIR/bin/disassemble_mem
 		test -f /usr/local/bin/disassemble_tape && rm /usr/local/bin/disassemble_tape
 		make -C $INSTALLDIR/Tools install
             

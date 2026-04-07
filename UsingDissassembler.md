@@ -2,7 +2,7 @@
 
 This document describes the disassembler and how to use it.
 
-This is version 1.3 and covers disassembler version 2.3; it will be updated as needed.
+This is version 1.2 and covers disassembler version 2.2; it will be updated as needed.
 
 Edit date 5-Apr-2026
 
@@ -80,7 +80,7 @@ This loader takes no arguments.
 
 ## Usage
 
-**disassemble** [-?] [-a|m|r] [-kln] [-L loader[,arg...]] [-s symfile] [-o outfile] infile
+**disassemble** [-?] [-a|m|r] [-kld] [-L loader[,arg...]] [-s symfile] [-o outfile] infile
 
 - ?, list the supported loaders and exit
 - a, output in **am1** assembler form with bank support
@@ -88,16 +88,13 @@ This loader takes no arguments.
 - r, raw mode, just dump every binary word as an octal value
 - k, output RIM loader code if seen and not in verbose mode; normally no, assemblers usually add it
 - l, output the leader in readable form, only in verbose
-- n, no repeats; if the same address appears more than once, only emit it once
+- d, enable diagnostics for debugging this progam
 - L loader, use the named loader with optional loader-specific arguments, the default is the bin loader
 - s, symbol file to load
 - o, output file to use, the default is stdout
 
 Flags can be together, *-mid*, or separate, *-m -i -d*.\
 Flags that take an argument can be e.g. *-Lloader,arg* or *-L loader,arg*.
-
-The *-n* flag is useful with memory files produced by the **ad1** debugger's *monitor* command
-which generally has repeated addresses since it captured the running execution flow.
 
 Example:
 ```

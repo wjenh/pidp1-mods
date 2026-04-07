@@ -86,6 +86,7 @@
  * 17-Mar-2026 - general cleanup, eliminate empty lines in listing for clarity, make -0 to 0 conversion the default
  * 28-Mar-2026 - add code passing 4K boundary, code overwriting other code checks and error msgs
  * 02-Apr-2026 - fix bug in mem check bitmap, make overwrite by code selectable warning/failure
+ * 07-Apr-2026 - finally figured out how to keep cpp from inserting line info markers, can now use std cpp
  *
 */
 #include <unistd.h>
@@ -1087,7 +1088,8 @@ run_cpp(char *filenameP, char *pfilename)
         }
     }
 
-    sprintf(tmpstr, "%s -nostdinc -isystem %s -traditional-cpp ", CPP_PATH, incroot);
+    //sprintf(tmpstr, "%s -nostdinc -isystem %s -traditional-cpp ", CPP_PATH, incroot);
+    sprintf(tmpstr, "%s -nostdinc -isystem %s -C --no-line-commands ", CPP_PATH, incroot);
     cP = tmpstr + strlen(tmpstr);
 
     while(incsP)

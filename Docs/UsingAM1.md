@@ -2,8 +2,8 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.25 and covers up through am1 version 1.27; it will be updated as needed.\
-Edit date 2-Apr-2026
+This is version 1.26 and covers up through am1 version 1.28; it will be updated as needed.\
+Edit date 7-Apr-2026
 
 ## What is **am1**?
 
@@ -360,7 +360,7 @@ The simple case:
 is essentially identical to the **macro1** *foo=bar*.
 
 However, defining the equivalent of a macro is different. The preprocessor expects the complete definition
-to be one line. This is done by using line continuations and semicolons:
+to be one logical line. This is done by using line continuations and semicolons:
 ```
 #define mymacro(a,b) lio a; cma; lac b
 
@@ -373,21 +373,31 @@ or
 ```
 
 The backslash at the end of the line says 'ignore the end of the line, treat the next line as part of this line'.
-There is one non-obvious and somewhat annoying side-effect of this. Consider:
+There is one non-obvious side-effect of this. Consider:
 ```
 #define mymacro(a,b) \ // This is my macro
     lio a; \
     etc.
 ```
 
-This will fail completely because of the line-joining. What this really looks like is:
+This will fail completely because the comment hides the backslash line continuation.
+What this results in is::
 ```
-#define mymacro(a,b) // This is my macro lio a;...
+#define mymacro(a,b) \
+    lio a; \
+    etc.
 ```
 
-As you can see, everything following the comment appears as part of the comment!
-So, put your comments before the definition.
-Yes, this is annoying.
+The \\ no longer means line continuation and is just passed as-is.
+So, put your comments before the continuation:
+
+```
+#define mymacro(a,b) // This is my macro \
+    lio a; \
+    etc.
+```
+
+Finally, note that the **cpp** preprocessor removes comments from #defines when they are expanded in code.
 
 ## General program structure
 

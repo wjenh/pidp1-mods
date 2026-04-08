@@ -10,7 +10,8 @@ lsw=760060
 
 / Assemble with -r or it will fail
 / This is an extended version of the regular drumloader.
-/ Set sense switch 1 on for write to drum 0 for read from drum.
+/ It saves from bank 0 to the drum or loads into bank 0 from the drum.
+/ Set sense switch 1 on for write to drum, 0 for read from drum.
 / The high 6 test word switches, 0-5, select the drum track, 0-37, to use.
 / Switch 0 is ignored.
 / If the low 12 bits of the test word switches are non-zero when storing they will be
@@ -18,7 +19,7 @@ lsw=760060
 / It will halt when it starts so you can set the appropriate switches.
 / Press continue to proceed.
 / It has a starting address of 7751 if you want it to halt on start.
-/ Start at 7752 run without halting at the start.
+/ Start at 7752 ti run without halting at the start.
 / Note that if a program overwrites this, it won't work. Spacewar will do so.
 7751/
 go,  hlt

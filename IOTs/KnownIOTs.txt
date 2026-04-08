@@ -34,7 +34,7 @@ Those marked with an asterisk are implemented in the pidp1 emulator and are rese
 42
 43
 44
-45
+45 Type 62 and 64 line printers, implemented
 
 47
 50 * dsc
@@ -46,7 +46,7 @@ Those marked with an asterisk are implemented in the pidp1 emulator and are rese
 56 * cbs
 
 60 NOTE 60 is nonstandard and can be used to allow sbs16 to be enabled and disabled
-61 Type 23 Parallel Drum
+61 Type 23 Parallel Drum, implemented
 62 Type 23 Parallel Drum
 63 Type 23 Parallel Drum
 

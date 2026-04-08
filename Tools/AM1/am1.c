@@ -87,6 +87,7 @@
  * 28-Mar-2026 - add code passing 4K boundary, code overwriting other code checks and error msgs
  * 02-Apr-2026 - fix bug in mem check bitmap, make overwrite by code selectable warning/failure
  * 07-Apr-2026 - finally figured out how to keep cpp from inserting line info markers, can now use std cpp
+ * 08-Apr-2026 - fix some formatting issue with trailing comments in macro output
  *
 */
 #include <unistd.h>
@@ -930,6 +931,10 @@ char str[128];
 
         case TERMINATOR:
             printf("<terminator>\n");
+            break;
+
+        case SEMI:
+            printf("<semicolon>\n");
             break;
 
         case EMPTYLINE:

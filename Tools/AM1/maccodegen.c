@@ -3,6 +3,7 @@
 */
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -75,6 +76,7 @@ emitStatements(FILE *outfP, PNodeP nodeP)
 int i, j;
 PNodeP node2P;
 bool noNl = false;
+bool sawTerm = true;    // because we just output the header, which terminated its line
 char *cP;
 char str[128];
 
@@ -83,17 +85,29 @@ char str[128];
         switch( nodeP->type )
         {
         case COMMENT:
-            if( strlen(nodeP->value.strP) > 70 )
+            if( !sawTerm )
+            {
+                // silly macro needs a tab
+                fprintf(outfP,"\t");
+            }
+
+            cP = nodeP->value.strP;
+            while( isspace(*cP) )
+            {
+                ++cP;           // dump leading spaces
+            }
+
+            if( strlen(cP) > 70 )
             {
                 // macro screws up on long lines
-                strncpy(str, nodeP->value.strP, 70);
-                str[71] = 0;
+                strncpy(str, cP, 70);
+                cP[71] = 0;
                 fprintf(outfP, "/ %s\n", str);
-                fprintf(outfP, "/ %s\n", nodeP->value.strP + 70);
+                fprintf(outfP, "/ %s\n", cP + 70);
             }
             else
             {
-                fprintf(outfP, "/ %s\n", nodeP->value.strP);
+                fprintf(outfP, "/ %s\n", cP);
             }
             break;
 
@@ -103,6 +117,10 @@ char str[128];
             {
                 fprintf(outfP," ");
                 emitOperand(outfP, nodeP->rightP);
+            }
+            else
+            {
+                fprintf(outfP, "\n");
             }
             break;
 
@@ -204,6 +222,14 @@ char str[128];
             }
             break;
 
+        case SEMI:
+            fprintf(outfP, "\n");
+            break;
+
+        case EMPTYLINE:
+            noNl = false;
+            break;
+
         case TERMINATOR:
             if( !noNl )
             {
@@ -211,12 +237,18 @@ char str[128];
             }
 
             noNl = false;
+            sawTerm = true;
             break;
 
         default:
             // just ignore
             noNl = true;
             break;
+        }
+
+        if( (nodeP->type != TERMINATOR) && (nodeP->type != COMMENT) )
+        {
+            sawTerm = false;
         }
 
         nodeP = nodeP->leftP;

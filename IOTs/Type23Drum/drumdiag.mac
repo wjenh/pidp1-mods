@@ -1,5 +1,6 @@
 TYPE 23 DRUM DIAGNOSTICS
-/ drum
+/ DEC drum diagnostic DEC-1-137-M
+/ Disassembled from the original rim tape
          eem=724074
          dzm t4
          dzm cl

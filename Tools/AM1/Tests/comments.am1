@@ -2,9 +2,11 @@ Test of comments
 #include "comments.ah"
 100/
     jmp a
-    jmp a  // do we still get comments?
-    jmp a  // now?
+    jmp b  // do we still get comments?
+    jmp c  // now?
     foo(1)
 a, 2
+b, 3
 // or here?
+c, 4
 start 100

@@ -4,7 +4,7 @@
 #include "iotHandler.h"
 
 /*
- * This works with demo1.mac to demonsrate an IOT handler.
+ * This works with demo57.mac to demonsrate an IOT handler.
 */
 
 static FILE *fP;

@@ -72,7 +72,7 @@ extern char *getUnrestrictedFormat(int fmt);
 extern void formatAndPrintOne(int fmt, int value);
 extern void formatAndPrintTwo(int fmt1, int addr, int fmt2,  int value);
 extern char *decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP,
-    char *resultP, int *flagsP);
+    char *resultP, CodeDefP defP);
 
 extern void listSymbols(void);
 
@@ -760,13 +760,17 @@ int val;
 int addr;
 int flags;
 char *cP;
+CodeDef codeDef;
+CodeDefP defP;
 char instr[128];
 char tmpstr[128];
 
     val = pdp1P->core[lastAddr];
+
     // We need to decode to get the flags.
-    decodeInstr(val, 0, false, " ", 0, instr, &flags);
-    if( flags & (INSTR_READS | INSTR_WRITES) )
+    defP = &codeDef;
+    decodeInstr(val, 0, false, " ", 0, instr, defP);
+    if( defP->flags & (INSTR_READS | INSTR_WRITES) )
     {
         addr = (val & 07777) | (curBank << 12);
         if( flags & INSTR_INDIRECT )

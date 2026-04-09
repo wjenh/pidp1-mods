@@ -15,7 +15,7 @@
 #define INSTR_JDA        0x200 // was a jda, not a jsp, jdr, or cal
 
 // Gives instruction-specific details set in the CodeDef.modifiers field.
-typedef enum {NONE, CAN_INDIRECT, IS_SKIP, IS_SHIFT, IS_OPR, IS_OPR2,
+typedef enum {NO_MODS, CAN_INDIRECT, IS_SKIP, IS_SHIFT, IS_OPR, IS_OPR2,
     IS_IOT, IS_IOH, IS_LAW, IS_CALJDA, IS_ILLEGAL} Modifiers;
 
 // Defines one instruction.

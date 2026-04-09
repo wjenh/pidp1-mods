@@ -276,7 +276,7 @@ Special *sP;
 
     switch( instructionP->modifiers )
     {
-    case NONE:
+    case NO_MODS:
         resultP += sprintf(resultP,"%s", instructionP->name);
         break;
 

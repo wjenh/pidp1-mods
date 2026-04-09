@@ -95,7 +95,7 @@ lptType64=false
 # Set the number of lines the spacing field advances for setting 0-7.
 # A setting of 0 means overstrike, -1 means form feed.
 # Note that the Type 62 does overstrikes differently, so setting it here isn't necessary.
-# This if for the Type 62.
+# This is for the Type 62.
 # For the 64, typical would be 0,1,2,3,11,22,33,44,-1
 lptLineSpacing=1,2,3,4,11,22,33,-1
 # Set the lines per page.
@@ -111,6 +111,13 @@ lptNoFF=yes
 # If this is on, the new format will be used, else the old format.
 # If on, old or new format files will be read but saved in the new format.
 # If off, old or new format files will be read but saved in the old format.
-# Basically, this is transparent to pidp-1, its for human convenience.
+# Basically, this is transparent to pidp-1, it's for human convenience.
 newmemfile=true
+
+# Timing statistics can be gathered for the pidp-1 intruction cycle time.
+# If enabled, whenever the pidp-1 enters stop state, the current timing data
+# is written to the file /tmp/pidp1-timing.txt in readable form.
+# The file will grow as long as timing is on, remove it when you are done with it.
+# This is primarily useful for seeing now much time is being used in a cycle.
+pidp1timing=off
 

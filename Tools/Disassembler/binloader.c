@@ -63,10 +63,12 @@ int word;
         state == LOADER_CMD_START;
 
         // Expect a block start addr, DIO xxxx or a terminating JMP xxxx
+        // If none, we're done.
         if( (curAddr = nextWord(fP)) < 0 )
         {
-            state = LOADER_ERROR;
-            return( LOADER_ERROR );
+            state = LOADER_DONE;
+            *addressP = *dataP = 0;
+            return( LOADER_DONE );
         }
 
         *addressP = curAddr & 07777;

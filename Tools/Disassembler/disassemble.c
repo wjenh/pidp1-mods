@@ -104,10 +104,11 @@
  * 02-Apr-2026 wje - Another major rework for pluggable loaders, now version 2.0
  * 05-Apr-2026 wje - Add symbol import file
  * 06-Apr-2026 wje - Add -n flag to eliminate multiple outputs of an address
+ * 09-Apr-2026 wje - Add deduction of more meaningful label names
  *
  */
 
-#define VERSION 2.3
+#define VERSION "2.4"
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -147,9 +148,10 @@
 // Used for label tracking
 #define MEM_USED     0x1       // this location was seen as a load address in RIM or BIN
 #define MEM_TARGET   0x2       // this location was seen as the target of a memory reference
-#define MEM_MODIFIED 0x4       // this location was written to
-#define MEM_LOADED   0x8       // this location loaded, not just referenced
-#define MEM_EMITTED  0x10      // this location's label has been printed
+#define MEM_LOADED   0x4       // this location loaded, not just referenced
+#define MEM_EMITTED  0x8       // this location's label has been printed
+#define MEM_MODIFIED 0x10      // at least one reference has written to this location
+#define MEM_START    0x20      // this location was the target of start
 
 // convert a bank-relative address to an absolute address
 #define FULLADDR(x) ((curBank << 12) | (x))
@@ -182,9 +184,10 @@ bool extendedMem = false;
 int pass = 1;               // first pass
 int curBank = 0;            // used for am1
 int lastAddr = 0;;
-int label_number = 1;       // used with memlocs and labels
-int var_number = 1;         // used with memlocs and labels
-int const_number = 1;       // used with memlocs and labels
+int jmpNumber = 1;          // used with memlocs and labels
+int xctNumber = 1;          // used with memlocs and labels
+int varNumber = 1;          // used with memlocs and labels
+int constNumber = 1;        // used with memlocs and labels
 int tape_loc = 0;
 int saved_word = -1;        // for getWord() pushback
 FILE *outfP;
@@ -213,18 +216,14 @@ void generateLabels(void);
 void printTapeLeader(int);
 void passOne(FILE *infP, FILE *outfP);
 LabelP markValid(int addr, int iFlags);
+LabelP markTarget(int addr, int creator, int flags);
 void markValidByInstruction(int addr, int word);
-void markTarget(int addr, int creator, bool modified);
 void checkForVariables(FILE *outfP, int addr, int endAddr);
 void showLoaders();
 bool loadSymbols(char *filenameP);
 bool setBit(uint64_t map[], int addr);
 bool isBitSet(uint64_t map[], int addr);
 void usage(void);
-
-extern bool opCanIndirect(int opcode);
-extern char *decodeInstr(int word, int addr, bool asMacro, char *separatorP,
-    char *symbolP, char *resultP, int *flagsP);
 
 int
 main(int argc, char **argv)
@@ -283,9 +282,8 @@ char *ldrArgs[128];
             break;
 
         case 'v':
-            verbose = true;
-            asMacro = false;
-            asAm1 = false;
+            printf("Disassemble version %s\n", VERSION);
+            exit(0);
             break;
 
         case 'L':
@@ -512,16 +510,16 @@ char *ldrArgs[128];
                     word = BANKNUM(curAddr);
                     if( word )
                     {
-                        fprintf(outfP,"     start %s:%o\n", tmpstr, word);
+                        fprintf(outfP,"       start %s:%o\n", tmpstr, word);
                     }
                     else
                     {
-                        fprintf(outfP,"     start %s\n", tmpstr);
+                        fprintf(outfP,"       start %s\n", tmpstr);
                     }
                 }
                 else
                 {
-                    fprintf(outfP,"     start %s\n", tmpstr);
+                    fprintf(outfP,"       start %s\n", tmpstr);
                 }
 
                 state = DONE;
@@ -723,7 +721,7 @@ int endAddr;               // for BIN loader
 
         case DONE:
             // Add the start address
-            markTarget(curAddr, 0, false);
+            markTarget(curAddr, 0, 0)->flags |= MEM_START;
             return;
 
         default:
@@ -930,8 +928,7 @@ char tmpstr[256];
         fprintf(outfP,"%-5d %06o: %06o %s ", tape_loc, pc, word, (symbolstr[0] != '\0')?symbolstr:"     ");
     }
 
-    tmp = OPERATION(word) >> 1;
-    if( opCanIndirect(tmp) )
+    if( opCanAccessMemory(word) )
     {
         tmp = BANKOF(pc) | (word & 07777);
         getLabel(tmp, word & 07777, symbolstr);
@@ -954,7 +951,7 @@ LabelP labelP;
     address &= (BANKS * MEMSIZE) - 1 ; // for safety, limit to our supported size
     labelP = getLabelPointer(address, true);
     labelP->flags |= MEM_USED;
-    labelP->instFlags = iFlags;
+    labelP->instFlags |= iFlags;
 
     return(labelP);
 }
@@ -965,31 +962,48 @@ markValidByInstruction(int addr, int word)
 {
 int operand;
 int iFlags;
+CodeDefP defP;
 LabelP labelP;
 char dummy[128];
+CodeDef codeDef;
+
+    defP = &codeDef;
 
     // Unfortunately, we have to decode just for the flags
-    decodeInstr(word,  addr, false, 0, 0, dummy, &iFlags);
-    labelP = markValid(addr, iFlags);            //this address is used
+    decodeInstr(word,  addr, false, 0, 0, dummy, defP);
+    iFlags = defP->flags;
+
+    labelP = markValid(addr, 0);            //this address is used
     labelP->flags |= MEM_LOADED;
     operand = OPERAND(word);
     if( iFlags & (INSTR_READS | INSTR_WRITES) )
     {
         // Indirection isn't a write, it's a read
-        markTarget(FULLADDR(operand), addr, (iFlags & (INSTR_WRITES | INSTR_INDIRECT)) == INSTR_WRITES);
+        markTarget(FULLADDR(operand), addr, iFlags);
     }
 }
 
 // Set memory location as used and the target of an instruction, e.g. JMP address.
 // Record thd address that created this also.
-void
-markTarget(int address, int creator, bool modified)
+// Return the label pointer.
+LabelP
+markTarget(int address, int creator, int iFlags)
 {
+int flags;
 LabelP labelP;
 
     labelP = getLabelPointer(address, true);
     labelP->refAddr = creator;
-    labelP->flags |= MEM_TARGET | MEM_USED | (modified?MEM_MODIFIED:0);
+    labelP->flags |= MEM_TARGET | MEM_USED;
+    labelP->instFlags |= iFlags;
+
+    // An indirect is not a write to this target
+    if( (iFlags & (INSTR_WRITES | INSTR_INDIRECT)) == (INSTR_WRITES | INSTR_INDIRECT) )
+    {
+        labelP->flags |= MEM_MODIFIED;
+    }
+
+    return( labelP );
 }
 
 // Return the label number if the address has been loaded and is the target of a memory reference, else -1
@@ -1022,9 +1036,11 @@ LabelP labelP;
 void
 generateLabels()
 {
+int i;
 int address;
 char *cP;
 LabelP labelP;
+char tmpstr[8];
 
     for( address = 0; address < (MEMSIZE * BANKS); ++address )
     {
@@ -1036,23 +1052,70 @@ LabelP labelP;
         // The label might have been preloaded from a symbol file, leave it if so
         if( (labelP->flags & MEM_TARGET) && !labelP->label[0] )
         {
-            // construct the label
-            cP = labelP->label;
-
-            // Figure out if it's a variable, tranfer target, or data in that order
+            // Construct the label.
+            // Figure out if it's a variable, tranfer target, or data.
             // If a location is both a variable and a transfer target, the name will be VTxxxx.
+            // Naming consists of one or more letters followed by a number.
+            // The naming is decided in the following order:
+            // Possible letter prefixes are:
+            // J  - jmp target, location is jumped to
+            // JS - jsp or cal target
+            // JD - jda target
+            // X  - xct target
+            // V  - variable, location written to, can be preceeded by J, JS, JD, or X, e.g. JSV
+            // G  - go, target of start, appended to any of the above
+            // C  - constant, location read but never written to, only emitted if none of the above apply
+
+            cP = tmpstr;
+            i = 0;
+
+            if( labelP->instFlags & (INSTR_JUMPS | INSTR_CALLS | INSTR_JDA) )
+            {
+                *cP++ = 'J';
+                i = jmpNumber++;
+            }
+
+            if( labelP->instFlags & INSTR_CALLS )
+            {
+                *cP++ = 'S';
+            }
+            else if( labelP->instFlags & INSTR_JDA )
+            {
+                *cP++ = 'D';
+            }
+            else if( labelP->instFlags & INSTR_XCT )
+            {
+                *cP++ = 'X';
+                i = xctNumber++;
+            }
+
             if( labelP->flags & MEM_MODIFIED )
             {
-                sprintf(cP, "V%s%d", (labelP->instFlags & INSTR_VALID)?"T":"", var_number++);
+                *cP++ = 'V';
+                if( i == 0 )
+                {
+                    i = varNumber++;
+                }
             }
-            else if( labelP->instFlags & INSTR_VALID )
+
+            if( labelP->flags & MEM_START )
             {
-                sprintf(cP, "L%d", label_number++);
+                *cP++ = 'G';
+                if( i == 0 )
+                {
+                    i = 1;          // only one start in a program
+                }
             }
-            else
+
+            // Only use C if nothing else was set
+            if( cP == tmpstr )
             {
-                sprintf(cP, "C%d", const_number++);
+                *cP++ = 'C';
+                i = constNumber++;
             }
+
+            *cP = '\0';
+            sprintf(labelP->label, "%s%d", tmpstr, i);
         }
     }
 }
@@ -1255,21 +1318,22 @@ uint64_t bit;
 void
 usage()
 {
-    fprintf(stderr,"Usage: disassemble -[?[a|m|v]klnr] [-L loader[,arg...]] [-s symfile] [-o outfile] infile\n");
+    fprintf(stderr,"Usage: disassemble -[?[a|m|r]klnv] [-L loader[,arg...]] [-s symfile] [-o outfile] infile\n");
     fprintf(stderr,"where:\n");
     fprintf(stderr,"? - list the supported loaders then exit\n");
     fprintf(stderr,"a - output in am1 assembler form\n");
     fprintf(stderr,"m - output in macro assember form, warn about extended memory use\n");
-    fprintf(stderr,"v - verbose mode, output in listing-style\n");
+    fprintf(stderr,"r - raw mode, just dump every binary word as an instruction, no RIM or BIN checking\n");
+    fprintf(stderr,"    raw overrides a and m\n");
     fprintf(stderr,"k - keep RIM loader code if seen and in macro mode; normally no because MACRO usually adds it\n");
     fprintf(stderr,"l - output the leader in readable form, only in verbose\n");
     fprintf(stderr,"n - don't output a location if it has already been output\n");
+    fprintf(stderr,"v - print version number and exit\n");
+    fprintf(stderr,"L loader - use the named loader with optional loader arguments\n");
     fprintf(stderr,"s name - symbol definition file to use\n");
     fprintf(stderr,"o name - output file name, defaults to stdout\n");
-    fprintf(stderr,"r - raw mode, just dump every binary word as an instruction, no RIM or BIN checking\n");
-    fprintf(stderr,"    raw overrides all other flags except d\n");
-    fprintf(stderr,"L loader - use the named loader with optional loader arguments\n");
     fprintf(stderr,"Flags can be together, -mid, or separate, -m -i -d\n");
     fprintf(stderr,"Flags that take an argument can be of the form e.g. -L xxx or -Lxxx\n");
+    fprintf(stderr,"If neither -a or -m is given, verbose output is generated\n");
     exit(1);
 }

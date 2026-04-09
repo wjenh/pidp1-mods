@@ -14,12 +14,16 @@
  * wje 28-Mar-26 add timing logging
  * wje 6-Apr-26 small mod to not clear AD1_STEP until the end of a cycle, use config setting for mem file
  * wje 7-Apr-26 reload configuration on sigint
+ * wje 8-Apr-26 make timing configurable instead of compile time
 */
+
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdbool.h>
 #include <pthread.h>
 #include <signal.h>
+#include <limits.h>
+#include <locale.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
 
@@ -39,17 +43,18 @@
 #define LOG_SHM 0
 #define LOG_WATCH 0
 #define LOG_BREAK 0
-#define LOG_TIMING 0
 
 // If present, will set the startup state of audio, lightpen support, etc.
 // See the distributed one for all settings.
 #define CONFIG_FILE "/opt/pidp1-mods/pidp1.config"
 #define SHM_NAME "/pidp1"
+#define TIMING_FILE "/tmp/pidp1-timing.txt"
 
 #define NIL 0
 #define Edge(sw) (pdp->sw && !prev_##sw)
 
 void configure(void);
+void reconfigure(void);
 void updateswitches(PDP1 *pdp, Panel *panel);
 void updatelights(PDP1 *pdp, Panel *panel);
 void lightsoff(Panel *panel);
@@ -73,6 +78,8 @@ extern bool audioEnabled;
 extern bool lailiaEnabled;
 extern bool core1DEnabled;
 extern bool all1DEnabled;
+
+static bool timingEnabled;
 static bool useShm;
 static bool newMemFile;
 
@@ -97,16 +104,14 @@ extern int getOverflowData(int *);
 
 ConfigurationP configurationP;  // from the config file
 
-#if LOG_TIMING
-// Used to track how long a cycle actually takes
-#include <limits.h>
-#include <locale.h>
+// Used to track how long a cycle actually takes if timing is enabled
+static long precycleTime;
+static long cycleDeltaTime;
 static long slowestTime;
 static long fastestTime = LONG_MAX;
 static long overflowCount;
 static long totalTime;
 static long totalCycles;
-#endif
 
 void
 emu(PDP1 *pdp, Panel *panel)
@@ -117,6 +122,8 @@ bool prev_continue_sw;
 bool prev_examine_sw;
 bool prev_deposit_sw;
 bool prev_readin_sw;
+
+FILE *tmpfP;    // used for timing
 
     pdp->panel = panel;
     pwrclr(pdp);
@@ -240,49 +247,56 @@ bool prev_readin_sw;
                 {
                     pdp->run_enable = 0;
                 }
-#if LOG_TIMING
-                long precycleTime = gettime();
-#endif
+
+                if( timingEnabled )
+                {
+                    precycleTime = gettime();
+                }
                 cycle(pdp);
                 AD1_CLEAR_CONTINUE(pdp1P);      // wje - if we were continuing, clear so ad1 knows we're done
-#if LOG_TIMING
-                long deltaTime = gettime() - precycleTime;
-                if( deltaTime > 5000 )
+
+                if( timingEnabled )
                 {
-                    ++overflowCount;
+                    cycleDeltaTime = gettime() - precycleTime;
+                    if( cycleDeltaTime > 5000 )
+                    {
+                        ++overflowCount;
+                    }
+
+                    if( cycleDeltaTime > slowestTime )
+                    {
+                        slowestTime = cycleDeltaTime;
+                    }
+                    if( cycleDeltaTime < fastestTime )
+                    {
+                        fastestTime = cycleDeltaTime;
+                    }
+
+                    totalTime += cycleDeltaTime;
+                    ++totalCycles;
                 }
 
-                if( deltaTime > slowestTime )
-                {
-                    slowestTime = deltaTime;
-                }
-                if( deltaTime < fastestTime )
-                {
-                    fastestTime = deltaTime;
-                }
-
-                totalTime += deltaTime;
-                ++totalCycles;
-#endif
                 logger(LOG_BREAK, "Post-cycle PC %06o\n", pdp->epc | pdp->pc);
             }
             else
             {
-#if LOG_TIMING
-                if( totalCycles )
+                if( timingEnabled && totalCycles )
                 {
-                    setlocale(LC_NUMERIC,"en_US.utf-8");
-                    logger(LOG_TIMING,
-                        "Fastest time %'ldns; slowest %'ldns; avg %'ldns; cycles %'ld; overflows %'ld:%4.02f%%\n",
-                        fastestTime, slowestTime, totalTime/totalCycles, totalCycles,
-                        overflowCount, ((float)overflowCount/(float)totalCycles) * 100.0);
+                    if( (tmpfP = fopen(TIMING_FILE, "a")) )
+                    {
+                        setlocale(LC_NUMERIC,"en_US.utf-8");
+                        fprintf(tmpfP,
+                            "Fastest time %'ldns; slowest %'ldns; avg %'ldns; cycles %'ld; overflows %'ld:%4.02f%%\n",
+                            fastestTime, slowestTime, totalTime/totalCycles, totalCycles,
+                            overflowCount, ((float)overflowCount/(float)totalCycles) * 100.0);
+                        fclose(tmpfP);
+                    }
                     slowestTime = 0;
                     fastestTime = LONG_MAX;
                     totalTime = 0;
                     overflowCount = 0;
                     totalCycles = 0;
                 }
-#endif
 
                 dynamicIotProcessorStop();           // wje - let dyn IOTs know we transitioned to stop
                 updatelights(pdp, panel);
@@ -569,7 +583,7 @@ int shmFd;
 
     atexit(exitcleanup);
     signal(SIGPIPE, SIG_IGN);
-    signal(SIGINT, configure);
+    signal(SIGINT, reconfigure);
     signal(SIGTERM, sighandler);
 
     configure();
@@ -736,6 +750,8 @@ getConfiguration()     // so other stuff can use our configuration, like IOTs
 void
 configure()
 {
+ConfigurationSettingP configSettingP;
+
     configurationP = loadConfigFile(CONFIG_FILE);
     penAperture = configurationP->penAperture;
     lightpenEnabled = configurationP->lightpenEnabled;
@@ -764,4 +780,18 @@ configure()
     setFilter2Alpha(configurationP->alpha2);
     setFilter3Alpha(configurationP->alpha3);
     setFilter4Alpha(configurationP->alpha4);
+
+    // Extra stuff that is local
+    if( (configSettingP = findConfigurationSetting(configurationP, "pidp1timing")) )
+    {
+        timingEnabled = configSettingP->onOff;
+    }
+}
+
+// Called on SIGINT to reload config file
+void
+reconfigure()
+{
+    reloadConfigFile(CONFIG_FILE);
+    configure();
 }

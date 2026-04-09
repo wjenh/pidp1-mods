@@ -83,20 +83,8 @@
 #define SKP_MASK_SZF 00007
 #define SKP_MASK_SZS 00070
 
-// Indicates instruction-specific additional processing needed
-typedef enum {NONE, CAN_INDIRECT, IS_SKIP, IS_SHIFT, IS_OPR, IS_OPR2,
-    IS_IOT, IS_IOH, IS_LAW, IS_CALJDA, IS_ILLEGAL} Modifiers;
-
 // IOT and other instructions have a number of special behaviors
 typedef enum {UNKNOWN, NORMAL, CAN_WAIT, INVERT_WAIT, IS_DPY, IS_SZF, IS_SZS, IS_SZI, HAS_ID} SpecialMods;
-
-// defines one instruction
-typedef struct
-{
-    char *name;
-    Modifiers modifiers;
-    int flags;              // instruction type flags from decode_instruction.h
-} CodeDef;
 
 // This is used to handle instructions that aren't standard, such as the IOT, OPR, etc. instructions
 typedef struct
@@ -107,8 +95,6 @@ typedef struct
     int mask;               // the bits in the operand to use for comparison to value, value == (oprerand & mask)
     bool notMacro;          // if true, not supported by macro
 } Special;
-
-Special *findSpecial(Special *, int);
 
 // Opcodes use only the high 5 bits, not the indirect bit, which means we only need 32 opcode entries.
 // This generally works, except for the JDA instruction, 17, which is handled specially.
@@ -208,13 +194,16 @@ static Special shifts[] =
         {00000, "sft", UNKNOWN, 0, true}      // special end marker if nothing matches, must be last
     };
 
+static Special *findSpecial(Special *specP, int op);
+
 // Format an instruction into printed form, placing the results in the passed string.
 // If the instruction has an address field and the value matches addr,
 // use the string symbolP if not null instead of the address.
 // If flagsP is not null, return the INSTR_x flags in it.
 // A pointer to the terminating null byte in the result string is returned.
+// If defP is not null, a copy of the CodeDef entry for the opcode will be copied to it.
 char *
-decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP, char *resultP, int *flagsP)
+decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP, char *resultP, CodeDefP defP)
 {
 unsigned int opcode;
 unsigned int operand;
@@ -236,36 +225,43 @@ Special *sP;
     if( opcode > 077 )
     {
         resultP += sprintf(resultP, "%06o", word);
-        if( flagsP )
+        if( defP )
         {
-            *flagsP = INSTR_NOTONE;
+            memcpy(defP, &opcodes[0], sizeof(CodeDef));
         }
+
         return( resultP );
     }
 
     indirect = word & INDIRECT_BIT;
     completion = word & COMPLETION_BIT;
     operand = OPERAND(word);
+    extra = 0;
 
     instructionP = &opcodes[opcode];
-    flags = instructionP-> flags;           // initial flags, can be modified
-    if( indirect )
+
+    // Copy to the passed ptr
+    if( defP )
     {
-        flags |= INSTR_INDIRECT;
+        memcpy(defP, instructionP, sizeof(CodeDef));
     }
 
-    if( flagsP )
+    flags = instructionP-> flags;           // initial flags, can be modified
+    if( indirect && (instructionP->modifiers == CAN_INDIRECT) )
     {
-        *flagsP = flags;
+        flags |= INSTR_INDIRECT;
     }
 
     if( flags & INSTR_NOTONE )
     {
         resultP += sprintf(resultP,"%06o", word);       // this one is easy
+
+        if( defP )
+        {
+            defP->flags = flags;
+        }
         return(resultP);
     }
-
-    flags |= INSTR_VALID;       // assume so
 
     // Just in case the operand is an addr field and matches the passed addr.
     if( ((operand & 07777) == addr) && symbolP && *symbolP )
@@ -294,7 +290,15 @@ Special *sP;
         if( indirect )
         {
             resultP += sprintf(resultP,"jda %s", operandStrP);
+            indirect = 0;
             extra &= ~INDIRECT_BIT;
+            flags &= ~INSTR_INDIRECT;
+            if( defP )
+            {
+                defP->flags &= ~INSTR_INDIRECT;
+            }
+
+            flags |= INSTR_JDA;
         }
         else
         {
@@ -801,27 +805,68 @@ Special *sP;
         break;
     }
 
-    if( flagsP )
+    if( defP )
     {
-        *flagsP = flags;
+        defP->flags |= flags;      // add any updates
     }
 
     return( resultP );
 }
 
-// This expects a 5 bit opcode from the high 6 bits >> 1.
+// This expects a full instruction word.
+// True if the instruction can potentially do indirection.
 bool
-opCanIndirect(int opcode)
+opCanIndirect(int word)
 {
+int opcode;
 CodeDef *instructionP;
+
+    opcode = word >> 13;
+    if( opcode > 037 )
+    {
+        return(false);      // out of bounds
+    }
+
+    instructionP = &opcodes[opcode];
+    return( (instructionP->modifiers == CAN_INDIRECT) );
+}
+
+// This expects a full instruction word.
+// True if the instruction instance does an idirect operation.
+bool
+instructionIndirects(int word)
+{
+int opcode;
+CodeDef *instructionP;
+
+    opcode = word >> 13;
+    if( opcode > 037 )
+    {
+        return(false);      // out of bounds
+    }
+
+    instructionP = &opcodes[opcode];
+    return( (instructionP->modifiers == CAN_INDIRECT) && (word & INDIRECT_BIT) );
+}
+
+
+// This expects a full instruction word.
+// True if the instruction reads or writes memory.
+bool
+opCanAccessMemory(int word)
+{
+int opcode;
+CodeDef *instructionP;
+
+    opcode = word >> 13;
 
     if( opcode > 077 )
     {
         return(false);      // out of bounds
     }
 
-    instructionP = &opcodes[opcode & 037];
-    return( (instructionP->modifiers == CAN_INDIRECT) );
+    instructionP = &opcodes[opcode];
+    return( (instructionP->flags & (INSTR_READS | INSTR_WRITES))?true:false );
 }
 
 Special *

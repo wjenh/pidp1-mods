@@ -2,9 +2,9 @@
 
 This document describes the disassembler and how to use it.
 
-This is version 1.3 and covers disassembler version 2.3; it will be updated as needed.
+This is version 1.4 and covers disassembler version 2.4; it will be updated as needed.
 
-Edit date 5-Apr-2026
+Edit date 9-Apr-2026
 
 ## What is the disassembler?
 
@@ -80,7 +80,7 @@ This loader takes no arguments.
 
 ## Usage
 
-**disassemble** [-?] [-a|m|r] [-kln] [-L loader[,arg...]] [-s symfile] [-o outfile] infile
+**disassemble** [-?] [-a|m|r] [-klnv] [-L loader[,arg...]] [-s symfile] [-o outfile] infile
 
 - ?, list the supported loaders and exit
 - a, output in **am1** assembler form with bank support
@@ -89,6 +89,7 @@ This loader takes no arguments.
 - k, output RIM loader code if seen and not in verbose mode; normally no, assemblers usually add it
 - l, output the leader in readable form, only in verbose
 - n, no repeats; if the same address appears more than once, only emit it once
+- v, print the version number and exit
 - L loader, use the named loader with optional loader-specific arguments, the default is the bin loader
 - s, symbol file to load
 - o, output file to use, the default is stdout
@@ -142,19 +143,24 @@ The second pass then runs, rescanning the file, and the decoded instructions wit
 
 ## Labels
 
+Labels are used to mark any location that is referenced by another instruction.
 During pass one, an attempt is made to determine how a location is used.
-One or two of a possible three prefixes, **T**, **V**, and **C** followed by a number is assigned
-to any location that is referenced by another instruction.
+Depending upon use, one or more letters begin a location's label.
 
-If a location is the **T**arget if a jmp, jsp, jda, or cal instruction, it is labeled with **T**.\
-If a location is written to by any memory-modifying instruction, e.g. *dac*, it is labeled as a **V**ariable.\
-If a location is only read from, e.g. *lac*, then it is labeled as a **C**onstant.
+The following letters can appear in the order listed:
 
-For the common case of a location that is both a target and modified, as for the return from a jsp or jda, then
-it will be labeld with **VT**.
+| Letter | Meaning                |
+|--------|------------------------|
+|J       |jmp target, location is jumped to|
+|JS      |jsp or cal target|
+|JD      |jda target|
+|X       |xct target|
+|V       |variable, location written to, can be preceeded by J, JS, JD, or X, e.g. JSV|
+|G       |go, target of start, appended to any of the above|
+|C       |constant, location read but never written to, only used if none of the above apply|
 
 If an instruction is an indirect instruction, then even though it is modifying some target, it is not modifying
-its direct target, it counds as a read of the target.
+its direct target, it counts as a read of the target.
 
 The labels will then be shown as part of the instruction that targets a location and on the location itself.
 

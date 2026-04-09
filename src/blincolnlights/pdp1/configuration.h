@@ -57,6 +57,7 @@ typedef struct
 #ifndef IN_CONFIGURATION_C
 extern ConfigurationSettingP findConfigurationSetting(ConfigurationP configP, char *nameP);
 extern ConfigurationP getConfiguration(void);
+extern ConfigurationP reloadConfigFile(char *filenameP);
 #endif
 
 #endif

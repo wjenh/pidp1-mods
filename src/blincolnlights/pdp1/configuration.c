@@ -240,6 +240,14 @@ char answer[64];
     return(&configSettings);
 }
 
+// Clear the loaded status, reload settings.
+ConfigurationP
+reloadConfigFile(char *filenameP)
+{
+    isLoaded = false;
+    return( loadConfigFile(filenameP) );
+}
+
 // Look up an extra config setting by name.
 // If found, return the setting, else null.
 ConfigurationSettingP

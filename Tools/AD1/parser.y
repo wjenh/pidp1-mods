@@ -66,7 +66,7 @@ extern void disableWatchFn(int num);
 extern void setBaseFn(int num);
 extern void setFileFn(char *nameP, bool add);
 extern void listFn(int lineNo, int fileNo);
-extern void traceFn(void);
+extern void traceFn(int addr);
 extern void loadFn(char *nameP);
 extern void monitorFn(int count, char *nameP);
 extern void setWindowFn(int size);
@@ -154,6 +154,7 @@ typedef struct argitem_t {
 %type <ival> expr
 %type <ival> dotexpr
 %type <ival> address
+%type <ival> optAddress
 %type <ival> listSym
 
 /* precedence for operators */
@@ -398,9 +399,9 @@ cmd		: QUIT
 
                     listFn(line, NOARG);
                 }
-                | TRACE
+                | TRACE optAddress
                 {
-                    traceFn();
+                    traceFn($2);
                 }
                 | LOAD FILESTRING
                 {
@@ -429,7 +430,7 @@ cmd		: QUIT
                 | DOT
                 {
                     formatAndPrintTwo(SYMBOLIC, lastAddr, base, pdp1P->core[lastAddr]);
-                    printf("\n");
+                    NEWLINE;
                 }
 		;
 
@@ -553,7 +554,7 @@ address         : expr optBREF
                     // An explicit bank ref overrides all
                     if( $2 != NOARG )
                     {
-                        $$ = ($2 << 12) | ADDRESSOF($1);
+                        $$ = FULLADDR($2, $1);
                     }
                     else if( !($1 & 0170000) )
                     {
@@ -561,6 +562,13 @@ address         : expr optBREF
                         $$ |= curBank << 12;
                     }
                 }
+                ;
+
+optAddress      : SEPARATOR address
+                {
+                    $$ = $2;
+                }
+                | { $$ = NOARG; }
                 ;
 
 expr            : MINUS expr %prec UMINUS

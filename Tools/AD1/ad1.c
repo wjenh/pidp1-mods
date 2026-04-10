@@ -22,6 +22,7 @@
  * 4-Apr-26 wje add format command to see current format or set it
  * 5-Apr-26 wje add trace command to follow references, including indirects
  * 6-Apr-26 wje add monitor command to dump an execution sequence to a file
+ * 10-Apr-26 wje use word mask macros for bankd and addr parts of instruction, add optional address for trace
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -362,7 +363,7 @@ char line[256];
                 i = activeBrkP->address;
                 cP = findNameByAddr(i);
                 i = pdp1P->core[i];
-                decodeInstr(i, i & 0777, false, " ", cP, line, 0);
+                decodeInstr(i, ADDRESSOF(i), false, " ", cP, line, 0);
                 printf(": %s\n", line);
             }
 
@@ -386,7 +387,7 @@ char line[256];
                 i = activeBrkP->address;
                 cP = findNameByAddr(i);
                 i = pdp1P->core[i];
-                decodeInstr(i, i & 0777, false, " ", cP, line, 0);
+                decodeInstr(i, ADDRESSOF(i), false, " ", cP, line, 0);
                 printf(": %s\n", line);
             }
 
@@ -543,9 +544,9 @@ char tmpstr[128];
     else if( fmt == INSTRUCTION )
     {
         // Might be an address?
-        addr = (value & 0777) | (curBank << 12);
+        addr = FULLADDR(curBank, value);
         cP = findNameByAddr(addr);
-        decodeInstr(value, value & 0777, false, " ", cP, tmpstr, 0);
+        decodeInstr(value, ADDRESSOF(value), false, " ", cP, tmpstr, 0);
         printf("%s",  tmpstr);
     }
     else if( fmt == ASCII )
@@ -1107,7 +1108,7 @@ Word data;
 int
 getCurrentPC()
 {
-    return( (pdp1P->epc & 0170000) | (pdp1P->pc & 07777) );
+    return( (pdp1P->epc & 0170000) | ADDRESSOF(pdp1P->pc) );
 }
 
 void

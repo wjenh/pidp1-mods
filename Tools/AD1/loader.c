@@ -254,13 +254,13 @@ bool loading;
             if( op == 0320000 )       // DIO, beginning of a block
             {
                 // Only 12 bit addresses for bin loader
-                curAddr = word & 07777;
-                endAddr = getWord(fP) & 07777;
+                curAddr = ADDRESSOF(word);
+                endAddr = ADDRESSOF(getWord(fP));
                 loading = true;
             }
             else if( op == 0600000 )    // JMP starting address, done
             {
-                return( word & 07777 );
+                return( ADDRESSOF(word) );
             }
             else
             {

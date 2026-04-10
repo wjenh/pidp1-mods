@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define VERSION "1.15 6-Apr-2026"
+#define VERSION "1.16 10-Apr-2026"
 
 #define MAXFILES    8    // maximum number of open files we can have
 #define MAXLINES    4000 // max number of lines in a file
@@ -19,6 +19,9 @@
 
 #define BANKOF(x) (((x) >> 12) & 017)
 #define ADDRESSOF(x) ((x) & 07777)
+#define FULLADDR(bank, addr) (((bank) << 12) | ADDRESSOF(addr))
+
+#define INDIRECT_BIT 010000
 
 // flexToAscii() returns
 #define NOCHAR -1

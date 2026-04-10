@@ -2,8 +2,8 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.11 and covers up through ad1 version 1.15; it will be updated as needed.\
-Edit date 6-Apr-2026
+This is version 1.12 and covers up through ad1 version 1.16; it will be updated as needed.\
+Edit date 10-Apr-2026
 
 ## What is **ad1**?
 
@@ -516,6 +516,8 @@ Attept to load the named file as a binary or am1 rim tape.
 If successful, the current start address is set to the starting address unless the tape was an am1
 tape with a *stop* directive, in which case no starting address is set.
 
+It does **not** change the current PC.
+
 ## Monitor count filename
 
 This executes *count* cycles and writes the address and instruction at the pc address
@@ -635,9 +637,11 @@ at the beginning of the next cycle.
 
 This is equivalent to using the stop switch on the front panel, the pidp-1 is halted.
 
-## Trace
+## Trace [address]
 
-If the instruction at the current address reads, writes, or transfers to its address part, show
+If no address is given, the current value of the PC is used.
+
+If the instruction at the given address reads, writes, or transfers to its address part, show
 the target address.
 
 If the instruction is an indirect operation, automatically indirect to the target location.

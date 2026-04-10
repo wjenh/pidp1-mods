@@ -275,11 +275,14 @@ char *stepHelp[] = {
     NIL};
 
 char *traceHelp[] = {
-    "The trace command will follow the target of the instruction if it is one",
-    "that has an address argument.",
+    "The trace command will follow the target of an instruction that has an address argument.",
     "If the instruction is an indirect operation, the target is used to get the actual location.",
     "If the target itself is an indirect reference, a prompt will be given to see if it should be followed.",
-    "Example: t",
+    "If no address is given, the value of the current pc is used.",
+    "Examples:",
+    "t",
+    "trace foo",
+    "tra 100",
     NIL};
 
 // Extra help

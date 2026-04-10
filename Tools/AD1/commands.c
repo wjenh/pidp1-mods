@@ -47,7 +47,7 @@ void disableBpFn(int num);
 void setBaseFn(int num);
 void setFileFn(char *nameP, bool add);
 void listFn(int lineNo, int fileNo);
-void traceFn(void);
+void traceFn(int addr);
 void loadFn(char *filenameP);
 void monitorFn(int count, char *nameP);
 void setWatchFn(int addr,  int value);
@@ -67,6 +67,7 @@ extern int getMapForFileNo(MapEntryP mapP, int fileNo);
 extern MapEntryP getLinesFromAddress(int address);
 extern int getCurrentPC(void);
 extern char *getFormat(int fmt);
+extern char *findNameByAddr(int addr);
 extern char *getFormatName(int fmt);
 extern char *getUnrestrictedFormat(int fmt);
 extern void formatAndPrintOne(int fmt, int value);
@@ -294,7 +295,7 @@ BreakpointP brkP;
                 return;
             }
 
-            pdp1P->pc = value & 07777;    
+            pdp1P->pc = ADDRESSOF(value);
             pdp1P->epc = value & 0170000;    
             pdp1P->exd = (pdp1P->epc != 0);
 
@@ -379,7 +380,7 @@ startFn(int addr)
     else
     {
         pdp1P->run_enable = 0;      // stop it
-        pdp1P->ad1StartAddr = addr & 07777;    
+        pdp1P->ad1StartAddr = ADDRESSOF(addr);
         pdp1P->ad1ExtendedAddr = addr & 0170000;    
         AD1_CLEAR_SINGLE(pdp1P);    // shouldn't be set, but be sure
         AD1_SET_START(pdp1P);
@@ -754,62 +755,82 @@ int i;
 }
 
 void
-traceFn()
+traceFn(int addr)
 {
-int val;
-int addr;
-int flags;
+int word;
+int bank;
+int tmpaddr;
+bool deref;
 char *cP;
 CodeDef codeDef;
 CodeDefP defP;
 char instr[128];
 char tmpstr[128];
 
-    val = pdp1P->core[lastAddr];
+    deref = false;
+    if( addr == NOARG )
+    {
+        addr = lastAddr;
+    }
+
+    tmpaddr = addr;             // used if the instruction doesn't indirect
+    word = pdp1P->core[addr];
 
     // We need to decode to get the flags.
+    bank = curBank;
+    addr = FULLADDR(bank, word);
     defP = &codeDef;
-    decodeInstr(val, 0, false, " ", 0, instr, defP);
+    decodeInstr(word, addr, false, " ", findNameByAddr(addr), instr, defP);
+
     if( defP->flags & (INSTR_READS | INSTR_WRITES) )
     {
-        addr = (val & 07777) | (curBank << 12);
-        if( flags & INSTR_INDIRECT )
+        if( defP->flags & INSTR_INDIRECT )
         {
-            val = pdp1P->core[addr];
-        }
-        else
-        {
-            val = 0;    // nothing to deref
+            printf("%s", instr);
+            printf(" indirects to ");
+            addr = pdp1P->core[addr];
+            formatAndPrintOne(SYMBOLIC, FULLADDR(bank, addr));
+            NEWLINE;
+
+            // The behavior of indirect depends upon whether or not eem is in effect.
+            // If it is, there is no subsequent indirection.
+            if( pdp1P->exd )
+            {
+                bank = BANKOF(addr);
+            }
+            else
+            {
+                deref = true;
+            }
         }
 
-        // The behavior of indirect depends upon whether or not eem is in effect.
-        // If it is, there is no subsequent indirection.
-        if( !pdp1P->exd )
+        // Follow the indirection chain if there is one.
+        // This will never change banks.
+        if( deref )
         {
-            while( val & 010000 )
+            while( addr & INDIRECT_BIT )
             {
-                val = (val & 07777) | (curBank << 12);
+                addr &= ~INDIRECT_BIT;
+                tmpaddr = pdp1P->core[FULLADDR(bank, addr)];
                 printf("The value at address ");
                 formatAndPrintOne(SYMBOLIC, addr);
                 printf(" is an indirect to ");
-                formatAndPrintOne(SYMBOLIC, val);
+                formatAndPrintOne(SYMBOLIC, tmpaddr & ~INDIRECT_BIT);
+                addr = tmpaddr;
                 printf(", follow it, y for yes? ");
                 fgets(tmpstr, sizeof(tmpstr), stdin);
                 if( tmpstr[0] != 'y' )
                 {
                     break;
                 }
-
-                addr = val;
-                val = pdp1P->core[addr];
            }
         }
 
         printf("The target address is ");
         formatAndPrintOne(SYMBOLIC, addr);
-        printf("\n");
+        NEWLINE;
 
-        if( flags & (INSTR_JUMPS | INSTR_CALLS) )
+        if( defP->flags & (INSTR_JUMPS | INSTR_CALLS | INSTR_JDA) )
         {
             cP = strchr(instr, ' ');
             *cP = '\0';
@@ -818,13 +839,13 @@ char tmpstr[128];
             if( tmpstr[0] == 'y' )
             {
                 lastAddr = addr;
-                curBank = (addr >> 12) & 017;
+                curBank = bank;
             }
         }
     }
     else
     {
-        printf("The current instruction does not read or write memory.\n");
+        printf("The instruction at %s does not jump or reference memory.\n", findNameByAddr(tmpaddr));
     }
 }
 

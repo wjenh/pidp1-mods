@@ -24,6 +24,7 @@
  *    This will only happen if a dpy with shift but no wait or completion bits is done.
  *    If a program seems to be doing both, turn one off in the config file, depending upon which one you want active.
  * wje 28-Mar-16 simplify the last one, change the aperture dpy to xx3407, update am1 include file.
+ * wje 11-Apr-16 the light pen really doesn't need a listener thread, just use nonblocking reads
 */
 #include "common.h"
 #include "pdp1.h"
@@ -31,7 +32,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <fcntl.h>
-#include <pthread.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <errno.h>
@@ -118,13 +118,12 @@ bool all1DEnabled = false;
 static bool penDown;
 static int lastPenX;
 static int lastPenY;
-static pthread_mutex_t lightpenLock;
 
 // These added for wje mods
-void *lightpenListener(void *pdp1P);
 static char *onOff(bool flag);
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
+static bool lightpenReader(PDP1P pdp1P);
 static bool checkLightPen(PDP1 *pdp1P);
 extern void setSampleRate(int);
 
@@ -2399,10 +2398,9 @@ int n;
     }
 }
 
-// Although the display semulator, p7sim, sends 'lightpen' updates, there
-// was no code here originally to handle them.
+// convert a 10 bit dpy coordinate to a 2's complement signed int
 int
-cvtDpyToSigned(int dpy)             // convert a 10 bit dpy coordinate to a 2's complement signed int
+cvtDpyToSigned(int dpy)
 {
     // For coordinates, the 1's complement -0 value, 01777, is legitimate, map negative numbers
     // to the range -1 to -512.
@@ -2417,9 +2415,6 @@ cvtDpyToSigned(int dpy)             // convert a 10 bit dpy coordinate to a 2's 
 }
 
 
-// See if there is a light pen hit.
-// If so, return 1.
-// If no hit, return 0.
 // The client sends x,y coordinates whenever the mouse is moved with mouse button 1 down.
 // When the button is releasde, a 'pen lifted' notice is sent.
 // The physical light pen aperture is simulated by having any match within the dot location
@@ -2443,65 +2438,65 @@ cvtDpyToSigned(int dpy)             // convert a 10 bit dpy coordinate to a 2's 
 #define LPUP    0x00100000
 
 // This is the reader thread for the lightpen.
-// See if there is data from the client, update lp status
-void *
-lightpenListener(void *arg)
+// See if there is data from the client, update lp status.
+// Return true if any read, else false.
+bool
+lightpenReader(PDP1P pdp1P)
 {
+int i;
 int count;
-int flag = 1;
+int sockFlag = 1;
 uint32_t cmdBuf[PENBUFSIZE];
 uint32_t cmd;
+bool gotPosition;
 DispCon *dpyP;
-PDP1P pdp1P;
 
-    pdp1P = (PDP1P)arg;
     dpyP = &(pdp1P->dpy[0]);
 
-    // Loop reading all pending commands.
-    // Only the last will be significant.
-    // Return if the fd is closed.
-    for(;;)
+    if( dpyP->fd < 0 )
     {
-        if( (count = read(dpyP->fd, cmdBuf, sizeof(cmdBuf))) < sizeof(uint32_t) )
+        return(false);                          // nothing open yet
+    }
+
+    gotPosition = false;
+
+    // Read all pending commands.
+    // Only the mouse move last will be significant, but we do need to check pen up / pen down for all.
+    while( (count = read(dpyP->fd, cmdBuf, sizeof(cmdBuf))) > 0 )
+    {
+        count /= sizeof(uint32_t);              // convert to index
+        for( i = 0; i < count; ++i )
         {
-            count = 0;                          // some problem, probably fd closed
-            penDown = false;
-            return(0);
-        }
-
-        // Turn on fast ack to minimize delays.
-        // This might or might not improve lightpen performance.
-        setsockopt(dpyP->fd, IPPROTO_TCP, TCP_QUICKACK, &flag, sizeof(flag));
-
-        count /= sizeof(uint32_t);                  // convert to index
-
-        if( count > 0 )
-        {
-            cmd = cmdBuf[count - 1];                // last one
+            cmd = cmdBuf[i];
             if( (cmd & CMDBITS) == LPCMD )  // light pen, just to be sure
             {
                 if( (cmd & PENBITS) == LPUP )   // pen up, done
                 {
                     penDown = false;
+                    gotPosition = false;
                     logger(LOG_LP, "Pen up\n", lastPenX, lastPenY);
                 }
                 else
                 {
                     penDown = true;
                     // We convert to a signed 2's complement integer
-                    // Use a mutex to be sure main thead gets a constent pair, maybe overkill.
-                    pthread_mutex_lock(&lightpenLock);
                     lastPenX = cvtDpyToSigned((cmd >> 10) & 0x3FF);
                     lastPenY = cvtDpyToSigned(cmd & 0x3FF);
-                    pthread_mutex_unlock(&lightpenLock);
+                    gotPosition = true;
                     logger(LOG_LP, "LP received x %d, y %d\n", lastPenX, lastPenY);
                 }
             }
         }
     }
+
+    // Turn on fast ack to minimize delays.
+    // This might or might not improve lightpen performance.
+    setsockopt(dpyP->fd, IPPROTO_TCP, TCP_QUICKACK, &sockFlag, sizeof(sockFlag));
+    return( gotPosition );
 }
 
-// Check for a lightpen hit, return true if so, else false.
+// See if there is a light pen hit.
+// If so, return true, else false.
 bool
 checkLightPen(PDP1 *pdp1P)
 {
@@ -2509,6 +2504,8 @@ int i, sawOne, dpyx, dpyy;
 int delx, dely;
 int lpX, lpY;
 DispCon *dpyP;
+
+    lightpenReader(pdp1P);          // check for any pending input
 
     if( !penDown )
     {
@@ -2519,11 +2516,8 @@ DispCon *dpyP;
     dpyx = cvtDpyToSigned(pdp1P->dbx);
     dpyy = cvtDpyToSigned(pdp1P->dby);
 
-    // Use a mutex to be sure main thead gets a constent pair, maybe overkill.
-    pthread_mutex_lock(&lightpenLock);
     lpX = lastPenX;
     lpY = lastPenY;
-    pthread_mutex_unlock(&lightpenLock);
 
     // Both coordinate pairs have been converted from 10 bit 1's complement to full signed 2's complement.
     // We have to take edge wrapping into account, do nothing if it wrapped.

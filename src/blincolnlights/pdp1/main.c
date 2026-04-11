@@ -15,6 +15,7 @@
  * wje 6-Apr-26 small mod to not clear AD1_STEP until the end of a cycle, use config setting for mem file
  * wje 7-Apr-26 reload configuration on sigint
  * wje 8-Apr-26 make timing configurable instead of compile time
+ * wje 11-Apr-16 the light pen really doesn't need a listener thread, just use nonblocking reads
 */
 
 #include <fcntl.h>
@@ -44,7 +45,7 @@
 #define LOG_WATCH 0
 #define LOG_BREAK 0
 
-// If present, will set the startup state of audio, lightpen support, etc.
+// If present, will set the startup state of audio, etc.
 // See the distributed one for all settings.
 #define CONFIG_FILE "/opt/pidp1-mods/pidp1.config"
 #define SHM_NAME "/pidp1"
@@ -63,7 +64,6 @@ Panel *getpanel(void);
 
 ConfigurationP getConfiguration(void);     // so other stuff can use our configuration, like IOTs
 
-extern void *lightpenListener(void *pdp);
 extern ConfigurationP loadConfigFile(char *filenameP);
 static bool checkBreakpoints(PDP1 *pdp1P);
 static bool checkWatches(PDP1 *pdp1P);
@@ -355,18 +355,27 @@ int n;
 }
 
 void
-connectdpy(PDP1 *pdp, DispCon *d, int fd)
+connectdpy(PDP1 *pdp, DispCon *dispP, int fd)
 {
-    if(d->fd >= 0)
+int fdFlags;
+
+    if( dispP->fd >= 0 )
     {
-        close(fd);
+        close(fd);          // only one connection at a time allowed
     }
     else
     {
-        d->fd = fd;
-        d->last = pdp->simtime;
-        d->agetime = 50 * 1000;
-        nodelay(d->fd);
+        dispP->fd = fd;
+        dispP->last = pdp->simtime;
+        dispP->agetime = 50 * 1000;
+        nodelay(dispP->fd);
+
+        // Lightpen needs nonblocking
+        if( lightpenEnabled )
+        {
+            fdFlags = fcntl(dispP->fd, F_GETFL, 0);
+            fcntl(dispP->fd, F_SETFL, fdFlags | O_NONBLOCK);
+        }
     }
 }
 
@@ -374,14 +383,8 @@ connectdpy(PDP1 *pdp, DispCon *d, int fd)
 void
 handledpy(int fd, void *arg)
 {
-pthread_t lp_thread;
-
     PDP1 *pdp = (PDP1*)arg;
     connectdpy(pdp, &pdp->dpy[0], fd);
-    if( lightpenEnabled )
-    {
-        pthread_create(&lp_thread, NULL, lightpenListener, pdp);
-    }
 }
 
 void

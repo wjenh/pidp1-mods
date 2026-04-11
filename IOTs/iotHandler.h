@@ -6,11 +6,11 @@
 #define IOINHOLD(p) (p->ioh)
 #define IOWANTWAIT(p) ((p->mb & 0014000) == 0010000)
 #define IOWANTCOMPLETE(p) ((p->mb & 0014000) == 0004000)
-#define IOCOMPLETE_IFNEEDED(p, com) ((com)?IOCOMPLETE(p):0)
+#define IOCOMPLETE_IFNEEDED(p, needed) ((needed)?IOCOMPLETE(p):0)
 
-// Convenience macros, USTOCYCLES rounds to the nearest 5 usec cycle
+// Convenience macros, USTOCYCLES rounds DOWN to the nearest 5 usec cycle
 #define MSTOCYCLES(ms) (((ms) * 1000) / 5)
-#define USTOCYCLES(ms) (((us) / 5) + ((((us) % 5) < 2)?1:0))
+#define USTOCYCLES(us) ((us) / 5)
 
 // Include to be used by IOT handler implementations
 int iotHandler(PDP1 *, int device,  int pulse, int completion);

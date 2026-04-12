@@ -1,7 +1,7 @@
 # Switcher
 
 Switcher is a demo program that uses IOT 22, the DCS2 Data Communications Systerm, IOTs 61-63, the Type 23 drum,
-IOT 32, the countdown timer/clock, and am, the advanced assembler, to provide a remote-access program loader.
+IOT 32, the countdown timer/clock, and am1, the advanced assembler, to provide a remote-access program loader.
 
 This example uses the ascii capabilities of am1.
 

@@ -88,6 +88,7 @@
  * 02-Apr-2026 - fix bug in mem check bitmap, make overwrite by code selectable warning/failure
  * 07-Apr-2026 - finally figured out how to keep cpp from inserting line info markers, can now use std cpp
  * 08-Apr-2026 - fix some formatting issue with trailing comments in macro output
+ * 12-Apr-2026 - minor change, turn off cpp warning about unterminated quotes in flex text strings
  *
 */
 #include <unistd.h>
@@ -1094,7 +1095,7 @@ run_cpp(char *filenameP, char *pfilename)
     }
 
     //sprintf(tmpstr, "%s -nostdinc -isystem %s -traditional-cpp ", CPP_PATH, incroot);
-    sprintf(tmpstr, "%s -nostdinc -isystem %s -C --no-line-commands ", CPP_PATH, incroot);
+    sprintf(tmpstr, "%s -nostdinc -isystem %s -C -x assembler-with-cpp --no-line-commands ", CPP_PATH, incroot);
     cP = tmpstr + strlen(tmpstr);
 
     while(incsP)

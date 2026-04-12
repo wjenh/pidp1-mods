@@ -79,12 +79,8 @@ typedef struct
     u16 b3;		// req synchronized
     u16 b4;		// break held
 
-    // 3 high speed channels (but at least sn #6 had 4)
+    // Used to set the h.s. break panel light when high speed channels are active
     int hsc;
-    uint hscn;	// like b3
-    // peripheral interface
-    uint hsc_req;	// like b2
-    uint hsc_brk;	// like sbs_seq but gated by hsc enable
 
     // type 10, multiply-divide
     int muldiv_sw;

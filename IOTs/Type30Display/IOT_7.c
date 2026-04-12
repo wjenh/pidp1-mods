@@ -29,6 +29,7 @@
 
 #define MOVEDELAY 30                // beam move delay, usecs
 #define DRAWDELAY 5                 // intinsification delay,usecs
+#define IDLEDELAY 100               // if not drawing, repeat time for display aging, usecs
 #define APERTURE 6                  // the default, 0.050"
 
 // The light pen came with 6 different aperture masks ranging from 0.05 to 0.30 inches.
@@ -60,6 +61,8 @@ static bool sdbEnabled;
 static bool needCompletion;
 static bool twoscreensEnabled;
 
+static enum {IDLE, DEFLECTION, DRAW} pollState;
+
 static void configure();
 
 extern void display(PDP1P pdp1P, int screenNo, int x, int y, int intensity);
@@ -85,6 +88,7 @@ bool noWait;
 
     noWait = false;
     delayTime = 0;
+
     if( completion )
     {
         needCompletion = true;
@@ -95,16 +99,19 @@ bool noWait;
         pdp1P->curDispX = 0;
         pdp1P->curDispY = 0;
         pdp1P->curDispIntensity = 0;
+        pollState = DRAW;
+
         // Be sure it's set to the current value
         pdp1P->dpy[0].lpRadius2 = penRadius2;
         if( lightpenEnabled )
         {
             pdp1P->cksflags &= ~0400000;  // set by the last dpy completion if lp hit
         }
+
+        return(1);
     }
     else if( lightpenEnabled && (pdp1P->mb & 003777) == 003407 )       // set lightpen aperture
     {
-        noWait = true;
         // The aperture is the diameter in pixels, allow 6 to 63
         // Each pixel corresponds to the original 0.009"
         i = penAperture;                // current value
@@ -118,6 +125,9 @@ bool noWait;
         // We keep a copy in the dpy struct so checkLightpen can find it
         penRadius2 = (penAperture/2) * (penAperture/2);  // radius squared
         pdp1P->dpy[0].lpRadius2 = penRadius2;
+
+        noWait = true;
+        pollState = IDLE;
 
         iotCondLog(LOG_APERTURE,"Aperture was %d, now %d, new radius squared %d\n", i,
             penAperture, pdp1P->dpy[0].lpRadius2);
@@ -151,15 +161,18 @@ bool noWait;
         {
             // This is documented as taking 30 usecs because it doesn't
             // need the addtional time to draw the dot.
-            // But, there is no real reason to do so, so just complete immediately.
-            // Yes, not historically accurate, but neither is using a mouse for a lightpen.
             // All it does is set the intensity and reposition x,y, does not honor completion.
+            // This means code just had to know that 30 usecs had elapsed, there was no way to check.
+            // Just complete immediately.
+            // Yes, not historically accurate, but neither is using a mouse for a lightpen.
             noWait = true;
+            pollState = IDLE;
             iotCondLog(LOG_SDB,"Sdb pdp1P->mb %06o, completion %d\n", pdp1P->mb, completion);
         }
         else
         {
-            delayTime = MOVEDELAY + DRAWDELAY;
+            delayTime = MOVEDELAY;
+            pollState = DEFLECTION;
         }
     }
 
@@ -171,7 +184,11 @@ bool noWait;
 
     if( delayTime )
     {
-        enablePolling( delayTime );
+        enablePolling( USTOCYCLES(delayTime) );
+    }
+    else
+    {
+        enablePolling(0);
     }
 
     return(1);
@@ -197,6 +214,14 @@ iotPoll(PDP1 *pdp1P)
     iotCondLog(LOG_POLL, "IOT 7 poll x %d y %d intensity %d\n",
         pdp1P->curDispX, pdp1P->curDispY, pdp1P->curDispIntensity);
 
+    if( pollState == DEFLECTION )
+    {
+        pollState = DRAW;
+        enablePolling(USTOCYCLES(DRAWDELAY));           // a bit silly, but this is the actual timing
+        return;
+    }
+
+    // This is when the dot is actually sent.
     display(pdp1P, 0, pdp1P->curDispX, pdp1P->curDispY, pdp1P->curDispIntensity);
 
     // There was a 2 screen implementation somewhere that used a hack with the intensity
@@ -210,7 +235,7 @@ iotPoll(PDP1 *pdp1P)
         display(pdp1P, 1, pdp1P->curDispX, pdp1P->curDispY, pdp1P->curDispIntensity);
     }
 
-    if( checkLightpen(pdp1P, pdp1P->curDispX, pdp1P->curDispY) )
+    if( lightpenEnabled && checkLightpen(pdp1P, pdp1P->curDispX, pdp1P->curDispY) )
     {
         iotCondLog(LOG_LIGHTPEN, "Lightpen hit at x %d y %d\n", pdp1P->curDispX, pdp1P->curDispY);
     }
@@ -221,7 +246,8 @@ iotPoll(PDP1 *pdp1P)
         IOCOMPLETE(pdp1P);
     }
 
-    enablePolling(0);           // no need to poll now
+    pollState = IDLE;
+    enablePolling(0); 
 }
 
 // Get our configurations settings, can be called more than once.
@@ -232,7 +258,7 @@ ConfigurationP confP;
 ConfigurationSettingP settingP;
 
     iotCondLog(LOG_CONFIG, "IOT 7 checking configuration\n");
-    lightpenEnabled = sdbEnabled = dpyShiftEnabled = false;
+    lightpenEnabled = sdbEnabled = dpyShiftEnabled = twoscreensEnabled = false;
 
     if( (settingP = findConfigurationSetting(getConfiguration(), "lightpen")) )
     {

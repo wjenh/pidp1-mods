@@ -32,10 +32,6 @@
 #define DOTDELAY    1       // 5 usec cycles between dot updates
 #define DPYDELAY    5000    // setup delay in NANOSECS passed to the dpy code
 
-void drawDot(PDP1P pdp1P, int x, int y);
-
-extern void flushdpy(DispConP dispP);
-extern void dpycmd(PDP1P pdp1P, int screen, int cmd);
 void display(PDP1P pdp1P, int screenNo, int x, int y, int intensity);
 bool checkLightpen(PDP1P pdp1P, int x, int y);
 
@@ -149,65 +145,6 @@ iotStop()
     iotCloseLog();
 }
 
-void
-drawDot(PDP1P pdp1P, int x, int y)
-{
-int cmd, delayTime;
-DispConP dispP;
-
-    /*
-    // Sym gen is only on display 0.
-    dispP = &(pdp1P->dpy[0]);
-
-    if( dispP->fd < 0 )  // no connection open
-    {
-        return;
-    }
-
-    if(x & 01000)           // 1's cmpl PDP-1 wraparound
-    {
-        x++;
-    }
-    if(y & 01000)
-    {
-        y++;
-    }
-
-    x = (x+01000) & 01777;  // why?
-    y = (y+01000) & 01777;
-
-    delayTime = (pdp1P->simtime - pdp1P->dpy[0].last)/1000;
-    cmd = x | (y<<10) | (delayTime<<23);
-    if( intensity == 4 )    // sdb wasn't used, dpy-i 400 was, override
-    {
-        intensity = 0;
-    }
-
-    cmd |= ((intensity + 4) & 7) << 20;
-
-    dispP->last = pdp1P->simtime;
-    dpycmd(pdp1P, 0, cmd);
-
-    if( (dispP->fd >= 0) && (pdp1P->dpy[1].fd >= 0) )    // check for dual screens
-    {
-        if( !!(intensity & 4) != 1 )
-        {
-            return;
-        }
-
-        // unclear what's happening here exactly
-        // spacewar 4.4 uses only intensity 0/4
-        delayTime = (pdp1P->simtime - pdp1P->dpy[1].last)/1000;
-        cmd = x | (y<<10) | (delayTime<<23);
-
-        cmd |= (((intensity & 3) + 4) & 7) << 20;
-        dpycmd(pdp1P, 1, cmd);
-    }
-    */
-
-    display(pdp1P, 0, x, y, intensity);
-}
-
 // Actually put out our dots
 void
 iotPoll(PDP1P pdp1P)
@@ -232,7 +169,7 @@ int totalTime;
                 iotLog("Poll, sr %06o, drawing xctr %d yctr %d, xpos %d ypos %d\n",
                     shiftregister & 0777777, xctr, yctr, xpos, ystart + (yctr * dotSpacing) + subscript);
 
-                drawDot(pdp1P, xpos, ystart + (yctr * dotSpacing) + subscript);
+                display(pdp1P, 0,  xpos, ystart + (yctr * dotSpacing) + subscript, intensity);
             }
 
             if( ++yctr > 6)

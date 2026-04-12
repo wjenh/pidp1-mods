@@ -61,7 +61,6 @@ int n;
 void
 agedisplay(PDP1P pdp1P, int screenNo)
 {
-int ival;
 u64 delayTime;
 DispCon *dspP;
 
@@ -72,21 +71,19 @@ DispCon *dspP;
         return;
     }
 
-    ival =  dspP->agetime;
     delayTime = (pdp1P->simtime -  dspP->last) / 1000;
 
-    if(delayTime >= ival)
+    // Agetime is in microseconds
+    if( delayTime >= dspP->agetime )
     {
         dpycmd(pdp1P, screenNo, 511 << 23);
-        // TODO? theoretically delayTime could be huge,
-        // but if it is you have other problems
         dpycmd(pdp1P, screenNo, delayTime);
         dspP->last = pdp1P->simtime;
         flushdpy(dspP);
 
         // increase interval during fade out
-        // to reduce number of age-commands
-        if( dspP->agetime < 1000 * 1000)
+        // to reduce number of age commands
+        if( dspP->agetime < (1000 * 1000))
         {
              dspP->agetime +=  dspP->agetime / 6;
         }
@@ -112,18 +109,18 @@ DispConP dpyP;
         return;     // not open, don't bother
     }
 
-    // need to make sure dt field doesn't overflow cmd
+    // Agetime is in microseconds
     dpyP->agetime = 510;
     agedisplay(pdp1P, screenNo);
     // reset age interval for every point shown
-    dpyP->agetime = 50 * 1000;
+    dpyP->agetime = 50 * 1000;  // 50 msecs
     delayTime = (pdp1P->simtime - dpyP->last) / 1000;
     dpyP->last = pdp1P->simtime;
 
     // The real hardware used intensity 4 for a brightness that was only
     // visible to the lightpen.
     // Simulate that by just not drawing a point.
-    if( (screenNo != 1) && (intensity == 4) )
+    if( (screenNo == 0) && (intensity == 4) )
     {
         return;
     }

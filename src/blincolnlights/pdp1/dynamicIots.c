@@ -17,8 +17,11 @@
  * void iotStop(void); - called when the emulator transitions to halt state
  *
  * Pseudo-asynchronous behavior can be done by implementing:
- * void iotEnablePoll(int) - 1 to enable polling, 0 to disable, but only if an isPoll() is implemented
- * void iotPoll(void); -called every instruction cycle if enabled
+ * void iotPoll(PDP1P pdp1P); -called every n instruction cycles if enabled/
+ * and then calling:
+ * void enablePolling(int n) - 1..n to enable polling, 0 to disable, but only if an isPoll() is implemented
+ *
+ * 11-Apr-2026 wje fix filename formatting for single-digit IOTs
  */
 
 #include <unistd.h>
@@ -172,7 +175,7 @@ char fname[256];
 
     entryP = &handles[dev];
 
-    sprintf(fname,"/opt/pidp1-mods/IOTs/IOT_%2o.so", dev);
+    sprintf(fname,"/opt/pidp1-mods/IOTs/IOT_%o.so", dev);
 
     if( !(entryP->dlHandleP = dlopen(fname, RTLD_LAZY)) )
     {

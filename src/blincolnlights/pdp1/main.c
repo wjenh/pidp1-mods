@@ -70,10 +70,6 @@ static bool checkWatches(PDP1 *pdp1P);
 
 PDP1P pdp1P;      // Here because dynamic IOT code needs it
 
-extern int penAperture;
-extern bool lightpenEnabled;
-extern bool sdbEnabled;
-extern bool dpyShiftEnabled;
 extern bool audioEnabled;
 extern bool lailiaEnabled;
 extern bool core1DEnabled;
@@ -371,11 +367,8 @@ int fdFlags;
         nodelay(dispP->fd);
 
         // Lightpen needs nonblocking
-        if( lightpenEnabled )
-        {
-            fdFlags = fcntl(dispP->fd, F_GETFL, 0);
-            fcntl(dispP->fd, F_SETFL, fdFlags | O_NONBLOCK);
-        }
+        fdFlags = fcntl(dispP->fd, F_GETFL, 0);
+        fcntl(dispP->fd, F_SETFL, fdFlags | O_NONBLOCK);
     }
 }
 
@@ -756,10 +749,6 @@ configure()
 ConfigurationSettingP configSettingP;
 
     configurationP = loadConfigFile(CONFIG_FILE);
-    penAperture = configurationP->penAperture;
-    lightpenEnabled = configurationP->lightpenEnabled;
-    sdbEnabled = configurationP->sdbEnabled;
-    dpyShiftEnabled = configurationP->dpyShiftEnabled;
     audioEnabled = configurationP->audioEnabled;
     lailiaEnabled = configurationP->lailiaEnabled;
     core1DEnabled = configurationP->core1DEnabled;

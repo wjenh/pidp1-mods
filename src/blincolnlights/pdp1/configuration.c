@@ -33,7 +33,6 @@
 // Once loaded, this is globally available.
 // Some values are preinitialized.
 static Configuration configSettings = {
-    .penAperture = 22,      // default aperture in pixels, is 0.200 for the original Type 30
     // all the audio values have defaults
     .sampleRate = 11428,    // samples/second for SDL
     .alpha1 = 0.687,
@@ -137,22 +136,6 @@ char answer[64];
         else if( !strcmp(option, "tuning") )
         {
             configSettings.tuning = atof(answer);
-        }
-        else if( !strcmp(option,"lightpen") )
-        {
-            configSettings.lightpenEnabled = onOff;
-        }
-        else if( !strcmp(option,"aperture") )
-        {
-            configSettings.penAperture = atoi(answer);
-        }
-        else if( !strcmp(option,"dpyshift") )
-        {
-            configSettings.dpyShiftEnabled = onOff;
-        }
-        else if( !strcmp(option,"sdb") )
-        {
-            configSettings.sdbEnabled = onOff;
         }
         else if( !strcmp(option,"sbs16") )
         {

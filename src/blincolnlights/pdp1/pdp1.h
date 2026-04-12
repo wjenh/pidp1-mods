@@ -6,169 +6,164 @@ typedef u16 Addr;
 #define WORDMASK 0777777
 #define ADDRMASK 07777
 #define EXTMASK 0170000
-//#define MAXMEM (4*1024)
 #define MAXMEM (64*1024)
 
-typedef struct PDP1 PDP1;
-typedef PDP1 *PDP1P;
-typedef struct DispCon DispCon;
 typedef struct Panel Panel;
 
+typedef struct
+{
+    int fd;
+    u64 last;
+    u32 agetime;
+    u32 cmdbuf[128];
+    u32 ncmds;
+    int lpRadius2;      // for the lightpen, the aperture radius squared
+} DispCon, *DispConP;
+
+typedef struct
+{
+    int timernd;
+    Panel *panel;
+
+    Word ac;
+    Word io;
+    Word mb;
+    Word ma;
+    Word pc;
+    Word ir;
+    Word core[MAXMEM];
+
+    Word ta;
+    Word tw;
+
+    bool start_sw;
+    bool sbm_start_sw;
+    bool stop_sw;
+    bool continue_sw;
+    bool examine_sw;
+    bool deposit_sw;
+    bool readin_sw;
+
+    bool power_sw;
+    bool single_cyc_sw;
+    bool single_inst_sw;
+
+    int run, run_enable;
+    int cyc;
+    int df1, df2;
+    int bc;
+    int ov1, ov2;
+    int rim;
+    int sbm;
+    int ioc;
+    int ihs;
+    int ios;
+    int ioh;
+
+    // extensions
+    int lai, lia;
+
+    int ss;
+    int pf;
+
+    int r, rs, w, i;
+
+    // seq break
+    int sbs16;	// 16 channel, type 20
+    // one bit per channel if type 20
+    // lower bits are higher priority for easy bit hacks
+    u16 sbs_seq;	// highest prio channel
+    u16 b1;		// on (only type 20)
+    u16 b2;		// req
+    // only these two for SBS256
+    u16 b3;		// req synchronized
+    u16 b4;		// break held
+
+    // 3 high speed channels (but at least sn #6 had 4)
+    int hsc;
+    uint hscn;	// like b3
+    // peripheral interface
+    uint hsc_req;	// like b2
+    uint hsc_brk;	// like sbs_seq but gated by hsc enable
+
+    // type 10, multiply-divide
+    int muldiv_sw;
+    int scr;
+    int smb, srm;
+
+    // type 15, memory extension
+    int extend_sw;
+    int emc;
+    int exd;
+    Word eta;
+    Word ema;
+    Word epc;
+
+    int cychack;	// for cycle entry past TP0
+    u64 simtime;
+    u64 realtime;
+
+    // display specific, these are here because they are shared by multiple bits of code
+    int curDispX;
+    int curDispY;
+    int curDispIntensity;
+    DispCon dpy[2];
+
+    // reader
+    int rcp;
+    int rb;
+    int rc;
+    int rby;
+    int rcl;
+    int rbs;
+    // simulation
+    int r_fd;
+    u64 r_time;
+    int rim_return;
+    int rim_cycle;		// hack to trigger read-in SP1
+
+    // punch
+    int pcp;
+    int pb;
+    int punon;
+    bool tape_feed;
+    // simulation
+    u64 p_time;
+    u64 feed_time;
+    int p_fd;
+
+    // typewriter
+    int tcp;
+    int tb;
+    int tbs;
+    int tbb;
+    int tyo;
+    // simulation
+    FD typ_fd;
+    u64 typ_time;
+    u64 tyi_wait;
+
+    // spacewar controllers
+    int spcwar1;
+    int spcwar2;
+
+    // wje - extra flags for cks, settable in IOTs
+    int cksflags;
+    // wje - added for ad1
+    int ad1flags;
+    int ad1StartAddr;   // these are used by the start command
+    int ad1ExtendedAddr;
+
+    int ad1brkNo;   // if a breakpoint was hit, which one, index in breakpoint table
+    bool ad1brkHit;  // true if a breakpoint was hit
+    Breakpoint ad1Breakpoints[AD1_NUM_BREAKPOINTS]; // ad1 manages this
+
+    int ad1watchNo;   // if a watch was hit, which one, index in watch table
+    bool ad1watchHit;  // true if a watch was hit
+    Watch ad1Watches[AD1_NUM_WATCHES]; // ad1 manages this
+} PDP1, *PDP1P;
+
 void updatelights(PDP1 *pdp, Panel *panel);
-
-struct DispCon
-{
-	int fd;
-	u64 last;
-	u32 cmdbuf[128];
-	u32 ncmds;
-	u32 agetime;
-};
-
-struct PDP1
-{
-	int timernd;
-	Panel *panel;
-
-	Word ac;
-	Word io;
-	Word mb;
-	Word ma;
-	Word pc;
-	Word ir;
-	Word core[MAXMEM];
-
-	Word ta;
-	Word tw;
-
-	bool start_sw;
-	bool sbm_start_sw;
-	bool stop_sw;
-	bool continue_sw;
-	bool examine_sw;
-	bool deposit_sw;
-	bool readin_sw;
-
-	bool power_sw;
-	bool single_cyc_sw;
-	bool single_inst_sw;
-
-	int run, run_enable;
-	int cyc;
-	int df1, df2;
-	int bc;
-	int ov1, ov2;
-	int rim;
-	int sbm;
-	int ioc;
-	int ihs;
-	int ios;
-	int ioh;
-
-	// extensions
-	int lai, lia;
-
-	int ss;
-	int pf;
-
-	int r, rs, w, i;
-
-	// seq break
-	int sbs16;	// 16 channel, type 20
-	// one bit per channel if type 20
-	// lower bits are higher priority for easy bit hacks
-	u16 sbs_seq;	// highest prio channel
-	u16 b1;		// on (only type 20)
-	u16 b2;		// req
-	// only these two for SBS256
-	u16 b3;		// req synchronized
-	u16 b4;		// break held
-
-	// 3 high speed channels (but at least sn #6 had 4)
-	int hsc;
-	uint hscn;	// like b3
-	// peripheral interface
-	uint hsc_req;	// like b2
-	uint hsc_brk;	// like sbs_seq but gated by hsc enable
-
-	// type 10, multiply-divide
-	int muldiv_sw;
-	int scr;
-	int smb, srm;
-
-	// type 15, memory extension
-	int extend_sw;
-	int emc;
-	int exd;
-	Word eta;
-	Word ema;
-	Word epc;
-
-	int cychack;	// for cycle entry past TP0
-	u64 simtime;
-	u64 realtime;
-
-	// display
-	int dcp;
-	int dbx, dby;
-	int dint;	// no direct schematics for this
-	u64 dpy_defl_time;
-	u64 dpy_time;
-	DispCon dpy[2];
-
-	// reader
-	int rcp;
-	int rb;
-	int rc;
-	int rby;
-	int rcl;
-	int rbs;
-	// simulation
-	int r_fd;
-	u64 r_time;
-	int rim_return;
-	int rim_cycle;		// hack to trigger read-in SP1
-
-	// punch
-	int pcp;
-	int pb;
-	int punon;
-	bool tape_feed;
-	// simulation
-	u64 p_time;
-	u64 feed_time;
-	int p_fd;
-
-	// typewriter
-	int tcp;
-	int tb;
-	int tbs;
-	int tbb;
-	int tyo;
-	// simulation
-	FD typ_fd;
-	u64 typ_time;
-	u64 tyi_wait;
-
-	// spacewar controllers
-	int spcwar1;
-	int spcwar2;
-    
-        // wje - extra flags for cks, settable in IOTs
-        int cksflags;
-        // wje - added for ad1
-        int ad1flags;
-        int ad1StartAddr;   // these are used by the start command
-        int ad1ExtendedAddr;
-
-        int ad1brkNo;   // if a breakpoint was hit, which one, index in breakpoint table
-        bool ad1brkHit;  // true if a breakpoint was hit
-        Breakpoint ad1Breakpoints[AD1_NUM_BREAKPOINTS]; // ad1 manages this
-
-        int ad1watchNo;   // if a watch was hit, which one, index in watch table
-        bool ad1watchHit;  // true if a watch was hit
-        Watch ad1Watches[AD1_NUM_WATCHES]; // ad1 manages this
-};
 
 #define IR pdp->ir
 #define PC pdp->pc

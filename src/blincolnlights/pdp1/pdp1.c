@@ -24,7 +24,9 @@
  *    This will only happen if a dpy with shift but no wait or completion bits is done.
  *    If a program seems to be doing both, turn one off in the config file, depending upon which one you want active.
  * wje 28-Mar-16 simplify the last one, change the aperture dpy to xx3407, update am1 include file.
- * wje 11-Apr-16 the light pen really doesn't need a listener thread, just use nonblocking reads
+ * wje 11-Apr-16 the light pen really doesn't need a listener thread, just use nonblocking reads.
+ * wje 12-Apr-16 major rework, move all the display stuff except fd management into IOT 7 and display.c,
+ *    doesn't belong here.
 */
 #include "common.h"
 #include "pdp1.h"
@@ -32,9 +34,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <fcntl.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <errno.h>
 
 //#define DOLOGGING
 #include "logger.h"
@@ -51,36 +50,6 @@
 #define NOTIOTH
 #include "dynamicIots.h"
 
-// The light pen came with 6 different aperture masks ranging from 0.05 to 0.30 inches.
-// The setting of penAperture, see readLightpen() below, emulates these by defining the distance from the
-// last dpy coordinates to the light pen coordinates such that if the pen coordinates are within
-// penAperture pixels it is considered a hit.
-// The setting of penAperture is used to compute penRadius2, which is what is actually compared against.
-// This simulates a circular aperture.
-// THe nonstandard dpy 3000 extension allows changing the aperture.
-// IO contains the aperture size in pixels, 6-61.
-// Each pixel corresponds to 1/1024th of the display, or 0.009" on the original Type 30 display.
-// APERTURE sets the default value.
-// The emulator didn't seem to actually implement a second display for this.
-//
-// Aperture Setting  Size with 0.009" pixels
-// 0.05     6        0.054
-// 0.10     11       0.111
-// 0.15     17       0.153
-// 0.20     22       0.198
-// 0.25     28       0.252
-// 0.30     33       0.297
-//
-
-#define APERTURE 6                  // the default, 0.050"
-
-#define PENBUFSIZE  64              // read up to this many commands at once
-
-int penAperture = APERTURE;
-int penRadius2 = (APERTURE/2) * ( APERTURE/2);  // radius squared
-bool lightpenEnabled = false;       // we always expose these for loadConfig in main.c
-bool sdbEnabled = false;
-bool dpyShiftEnabled = false;
 bool audioEnabled = false;
 bool lailiaEnabled = false;
 bool core1DEnabled = false;
@@ -115,19 +84,14 @@ bool all1DEnabled = false;
 #define TTI_CHAN 7
 #define TTO_CHAN 8
 
-static bool penDown;
-static int lastPenX;
-static int lastPenY;
+int decflg(int flg);
 
-// These added for wje mods
 static char *onOff(bool flag);
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
-static bool lightpenReader(PDP1P pdp1P);
-static bool checkLightPen(PDP1 *pdp1P);
-extern void setSampleRate(int);
 
 // All for audio
+extern void setSampleRate(int);
 extern void setFilterAlpha(float);
 extern void setFilter1Alpha(float);
 extern void setFilter2Alpha(float);
@@ -303,9 +267,6 @@ pwrclr(PDP1 *pdp)
     pdp->typ_time = NEVER;
     pdp->tyi_wait = 0;
 
-    pdp->dpy_defl_time = NEVER;
-    pdp->dpy_time = NEVER;
-
     // HACK: on power on the next cycle is undefined
     // pressing continue would try to execute from an invalid state.
     // since this emulation does not support such madness
@@ -320,11 +281,6 @@ pwrclr(PDP1 *pdp)
     case 5: pdp->cyc = 1; pdp->bc = 3; break;
     // 6-9: cyc0
     }
-
-    logger(LOG_STARTUP,"Sdb is %s, dpy shift is %s, sbs16 is %s, audio is %s\n",
-        onOff(sdbEnabled), onOff(dpyShiftEnabled), onOff(pdp->sbs16), onOff(audioEnabled));
-    logger(LOG_STARTUP,"Lightpen is %s, aperture is %d, radius^2 is %d\n", onOff(lightpenEnabled), penAperture,
-        penRadius2);
 }
 
 static char *
@@ -833,7 +789,7 @@ start:
     }
 }
 
-static int
+int
 decflg(int n)
 {
     switch(n & 7)
@@ -2068,278 +2024,198 @@ int i, ch;
 
     ch = (MB >> 6) & 077;
 
-    switch(dev)
+    // Try to find a dynamically-loaded IOT first, allows overriding all of the silly baked-in stuff.
+    if( !dynamicIotProcessor(pdp, dev, pulse, nac) )
     {
-    case 000:
-        break;
-
-    case 001:   // rpa
-    case 002:   // rpb
-        if(pulse)
+        switch(dev)
         {
-            pdp->rcp = nac;
+        case 000:
+            break;
 
-            if(dev == 00001)
+        case 001:   // rpa
+        case 002:   // rpb
+            if(pulse)
             {
-                pdp->rby = 0;
-                pdp->rc = 3;
-                pdp->rcl ^= 1;
+                pdp->rcp = nac;
+
+                if(dev == 00001)
+                {
+                    pdp->rby = 0;
+                    pdp->rc = 3;
+                    pdp->rcl ^= 1;
+                }
+                else
+                {
+                    pdp->rby = 1;
+                    pdp->rc = 1;
+                    pdp->rcl = 1;
+                }
+
+                pdp->r_time = pdp->simtime + RDLY;
+                pdp->rb = 0;
+            }
+            break;
+
+        case 003:   // tyo
+            if(!pulse)
+            {
+                if(!pdp->tyo)
+                {
+                    pdp->tb = 0;
+                }
             }
             else
             {
-                pdp->rby = 1;
-                pdp->rc = 1;
-                pdp->rcl = 1;
+                pdp->tcp = nac;
+
+                if(!pdp->tyo)
+                {
+                    pdp->tyo = 1;
+                    pdp->tb |= IO & 077;
+                    pdp->typ_time = pdp->simtime + TYODLY;
+                }
             }
+            break;
 
-            pdp->r_time = pdp->simtime + RDLY;
-            pdp->rb = 0;
-        }
-        break;
-
-    case 003:   // tyo
-        if(!pulse)
-        {
-            if(!pdp->tyo)
+        case 004:   // tyi
+            if(!pulse)
             {
-                pdp->tb = 0;
-            }
-        }
-        else
-        {
-            pdp->tcp = nac;
-
-            if(!pdp->tyo)
-            {
-                pdp->tyo = 1;
-                pdp->tb |= IO & 077;
-                pdp->typ_time = pdp->simtime + TYODLY;
-            }
-        }
-        break;
-
-    case 004:   // tyi
-        if(!pulse)
-        {
-            IO = 0;
-        }
-        else
-        {
-            pdp->tbs = 0;
-            pdp->io |= pdp->tb;
-        }
-        break;
-
-    case 005:   // ppa
-    case 006:   // ppb
-        if(!pulse)
-        {
-            pdp->pb = 0;
-            pdp->punon = 1;
-            pdp->p_time = pdp->simtime + PDLY;
-        }
-        else
-        {
-            pdp->pcp = nac;
-
-            if(dev == 00005)
-            {
-                pdp->pb |= IO & 0377;
+                IO = 0;
             }
             else
             {
-                pdp->pb |= 0200 | (IO >> 12) & 077;
+                pdp->tbs = 0;
+                pdp->io |= pdp->tb;
             }
-        }
-        break;
+            break;
 
-    case 007:   // dpy
-        // Some machines had a variation where the intensity could be set using the
-        // xx03xx bits. Snowflake uses it.
-        // Some had a variant where the display origin could be shifted setting the x origin
-        // to left edge, center, right edge, the y origin to top, center, bottom using the
-        // xx30x bits.
-        // The symbol generator added the sdb variant, invisibly move display point using the value
-        // xx20xx, which conflicts with the origin-shifting.
-        // The aperture variant, added to support the pseudo-lightpen, uses
-        // xx34xx.
-        // This theoretically could conflict with some intensity setting, but no cases of an intensity
-        // of intensity 4 have been found.
-        if(!pulse)
-        {
-            pdp->dbx = 0;
-            pdp->dby = 0;
-            pdp->dint = 0;
-            if( lightpenEnabled )
+        case 005:   // ppa
+        case 006:   // ppb
+            if(!pulse)
             {
-                pdp->cksflags &= ~0400000;  // wje, set by the last dpy completion if lp hit
+                pdp->pb = 0;
+                pdp->punon = 1;
+                pdp->p_time = pdp->simtime + PDLY;
             }
-        }
-        else if( lightpenEnabled && (MB & 003777) == 003407 )       // wje, set lightpen aperture
-        {
-            pdp->dpy_defl_time = NEVER;     // just set aperture
-            pdp->dpy_time = NEVER;
-            pdp->dcp = 0;                   // be sure its not set
-            // The aperture is the diameter in pixels, allow 6 to 63
-            // Each pixel corresponds to the original 0.009"
-            i = penAperture;                // current value
-            penAperture = IO & 077; 
-            if( penAperture < 6 )
+            else
             {
-                penAperture = 6;
-            }
-            penRadius2 = (penAperture/2) * (penAperture/2);  // radius squared
-            logger(LOG_APERTURE,"Aperture was %d, now %d, new radius squared %d\n", i,  penAperture, penRadius2);
-        }
-        else
-        {
-            pdp->dbx |= AC >> 8;
-            pdp->dby |= IO >> 8;
+                pdp->pcp = nac;
 
-            // Emulate the origin shift that was implemented in some systems
-            // It conflicts with sdb, the following test is done.
-            // It checks to see if i or C is set to distiguish it from a program that's using
-            // sdb, will fail if a prog just does a bare dpy with shift and sdb will be assumed.
-            if( dpyShiftEnabled && (ch & 030) )
-            {
-                if(ch & 010)        // origin at bottom
+                if(dev == 00005)
                 {
-                    pdp->dby ^= 01000;
+                    pdp->pb |= IO & 0377;
                 }
-
-                if(ch & 020)        // origin at left
+                else
                 {
-                    pdp->dbx ^= 01000;
+                    pdp->pb |= 0200 | (IO >> 12) & 077;
                 }
-                logger(LOG_DPYSHIFT,"Dpy shift MB %06o\n", MB);
             }
+            break;
 
-            pdp->dpy_defl_time = pdp->simtime + US(35);
-            pdp->dpy_time = pdp->dpy_defl_time + US(15);
-            pdp->dint |= (MB >> 6) & 7;
-            pdp->dcp = nac;
+        case 011:   // spacewar controllers
 
-            if( sdbEnabled && ((MB & 017000) == 02000) )  // sdb is a reposition without drawing a dot
+            // simple but stupid version for now
+            if(pulse)
             {
-                // This is documented as taking 30 usecs because it doesn't
-                // need the addtional time to draw the dot.
-                // But, there is no real reason to do so, so just complete immediately.
-                // Yes, not historically accurate, but neither is using a mouse for a lightpen.
-                // All it does is set the intensity and reposition x,y, does not honor completion.
-                pdp->dpy_defl_time = NEVER;
-                pdp->dpy_time = NEVER;
-                pdp->dcp = 0;
-                logger(LOG_SDB,"Sdb MB %06o\n", MB);
+                // LRTF
+                IO |= pdp->spcwar1 << 14 | pdp->spcwar2;
             }
-        }
-        break;
+            break;
 
-    case 011:   // spacewar controllers
-
-        // simple but stupid version for now
-        if(pulse)
-        {
-            // LRTF
-            IO |= pdp->spcwar1 << 14 | pdp->spcwar2;
-        }
-        break;
-
-    case 030:   // rrb
-        if(pulse)
-        {
-            IO |= pdp->rb;
-            pdp->rbs = 0;
-        }
-        break;
-
-    case 033:   // cks
-        if(pulse)
-        {
-            // TODO: LP (wje - just use a dynamic IOT)
-            IO |= pdp->rbs << 16;
-            IO |= !pdp->tyo << 15;
-            IO |= pdp->tbs << 14;
-            IO |= !pdp->punon << 13;
-            // ..
-            IO |= pdp->sbm << 11;
-            IO |= pdp->cksflags;        // wje - needed to generalize use, many devices use it
-        }
-        break;
-
-    case 050:   // dsc
-        if(!pulse)
-        {
-            if(pdp->sbs16 && ch < 16)
+        case 030:   // rrb
+            if(pulse)
             {
-                pdp->b1 &= ~(1 << ch);
+                IO |= pdp->rb;
+                pdp->rbs = 0;
             }
-        }
-        break;
+            break;
 
-    case 051:   // asc
-        if(!pulse)
-        {
-            if(pdp->sbs16 && ch < 16)
+        case 033:   // cks
+            if(pulse)
             {
-                pdp->b1 |= (1 << ch);
+                // TODO: LP (wje - just use a dynamic IOT)
+                IO |= pdp->rbs << 16;
+                IO |= !pdp->tyo << 15;
+                IO |= pdp->tbs << 14;
+                IO |= !pdp->punon << 13;
+                // ..
+                IO |= pdp->sbm << 11;
+                IO |= pdp->cksflags;        // wje - needed to generalize use, many devices use it
             }
-        }
-        break;
+            break;
 
-    case 052:   // isb
-        if(!pulse)
-        {
-            if(pdp->sbs16 && ch < 16)
+        case 050:   // dsc
+            if(!pulse)
             {
-                pdp->b2 |= (1 << ch);
+                if(pdp->sbs16 && ch < 16)
+                {
+                    pdp->b1 &= ~(1 << ch);
+                }
             }
-        }
-        break;
+            break;
 
-    case 053:   // cac
-        if(!pulse)
-        {
-            if(pdp->sbs16)
+        case 051:   // asc
+            if(!pulse)
             {
-                pdp->b1 = 0;
+                if(pdp->sbs16 && ch < 16)
+                {
+                    pdp->b1 |= (1 << ch);
+                }
             }
-        }
-        break;
+            break;
 
-    case 054:   // lsm
-        if(!pulse)
-        {
-            pdp->sbm = 0;
-        }
-        break;
+        case 052:   // isb
+            if(!pulse)
+            {
+                if(pdp->sbs16 && ch < 16)
+                {
+                    pdp->b2 |= (1 << ch);
+                }
+            }
+            break;
 
-    case 055:   // esm
-        if(!pulse)
-        {
-            pdp->sbm = 1;
-        }
-        break;
+        case 053:   // cac
+            if(!pulse)
+            {
+                if(pdp->sbs16)
+                {
+                    pdp->b1 = 0;
+                }
+            }
+            break;
 
-    case 056:   // cbs
-        if(!pulse)
-        {
-            clr_sbs(pdp);
-        }
-        break;
+        case 054:   // lsm
+            if(!pulse)
+            {
+                pdp->sbm = 0;
+            }
+            break;
 
-    case 074:   // lem/eem
-        if(pulse)
-        {
-            pdp->exd = !!(MB & B6);
-        }
-        break;
+        case 055:   // esm
+            if(!pulse)
+            {
+                pdp->sbm = 1;
+            }
+            break;
 
-    default:
-        if(!dynamicIotProcessor(pdp, dev, pulse, nac))          // wje - see if there is a dynamic IOT to handle this
-        {
+        case 056:   // cbs
+            if(!pulse)
+            {
+                clr_sbs(pdp);
+            }
+            break;
+
+        case 074:   // lem/eem
+            if(pulse)
+            {
+                pdp->exd = !!(MB & B6);
+            }
+            break;
+
+        default:
             printf("unknown IOT %06o\n", MB);
+            break;
         }
-        break;
     }
 }
 
@@ -2379,280 +2255,6 @@ void
 dynamicReq(PDP1 *pdp, int chan)
 {
     req(pdp, chan);             // wje - because req() is private
-}
-
-void
-flushdpy(DispCon *d)
-{
-int sz;
-int n;
-
-    sz = d->ncmds * sizeof(d->cmdbuf[0]);
-    n = write(d->fd, d->cmdbuf, sz);
-    d->ncmds = 0;
-
-    if(n < sz)
-    {
-        close(d->fd);
-        d->fd = -1;
-    }
-}
-
-// convert a 10 bit dpy coordinate to a 2's complement signed int
-int
-cvtDpyToSigned(int dpy)
-{
-    // For coordinates, the 1's complement -0 value, 01777, is legitimate, map negative numbers
-    // to the range -1 to -512.
-    if(dpy & 01000)                 // high bit set means neg 1's cmpl number
-    {
-        return(-(~dpy & 0777) - 1);
-    }
-    else
-    {
-        return(dpy);
-    }
-}
-
-
-// The client sends x,y coordinates whenever the mouse is moved with mouse button 1 down.
-// When the button is releasde, a 'pen lifted' notice is sent.
-// The physical light pen aperture is simulated by having any match within the dot location
-// plus the aperture setting.
-//
-// The algorithm is:
-// If a pen-lifted event is seen, set penDwon to false, no hit cheking will be done.
-// If a coordnate event is see, set penDown to true and save the most recent x, y update.
-// Whenever a dpy completion occurs, check the status and if the pen is down, see if the
-// dpy coordinates match the current position within the aperture boundaries and if so,
-// set the appropriate flags.
-//
-// A command from the client is a 32 bit word:
-// FFpccccc where:
-// p = 0x1 if the pen is up, 0x0 if down
-// c is the packed x, y 10 bit 1's complement coordinates (x << 10) | y
-
-#define CMDBITS 0xFF000000
-#define LPCMD   0xFF000000
-#define PENBITS 0x00F00000
-#define LPUP    0x00100000
-
-// This is the reader thread for the lightpen.
-// See if there is data from the client, update lp status.
-// Return true if any read, else false.
-bool
-lightpenReader(PDP1P pdp1P)
-{
-int i;
-int count;
-int sockFlag = 1;
-uint32_t cmdBuf[PENBUFSIZE];
-uint32_t cmd;
-bool gotPosition;
-DispCon *dpyP;
-
-    dpyP = &(pdp1P->dpy[0]);
-
-    if( dpyP->fd < 0 )
-    {
-        return(false);                          // nothing open yet
-    }
-
-    gotPosition = false;
-
-    // Read all pending commands.
-    // Only the mouse move last will be significant, but we do need to check pen up / pen down for all.
-    while( (count = read(dpyP->fd, cmdBuf, sizeof(cmdBuf))) > 0 )
-    {
-        count /= sizeof(uint32_t);              // convert to index
-        for( i = 0; i < count; ++i )
-        {
-            cmd = cmdBuf[i];
-            if( (cmd & CMDBITS) == LPCMD )  // light pen, just to be sure
-            {
-                if( (cmd & PENBITS) == LPUP )   // pen up, done
-                {
-                    penDown = false;
-                    gotPosition = false;
-                    logger(LOG_LP, "Pen up\n", lastPenX, lastPenY);
-                }
-                else
-                {
-                    penDown = true;
-                    // We convert to a signed 2's complement integer
-                    lastPenX = cvtDpyToSigned((cmd >> 10) & 0x3FF);
-                    lastPenY = cvtDpyToSigned(cmd & 0x3FF);
-                    gotPosition = true;
-                    logger(LOG_LP, "LP received x %d, y %d\n", lastPenX, lastPenY);
-                }
-            }
-        }
-    }
-
-    // Turn on fast ack to minimize delays.
-    // This might or might not improve lightpen performance.
-    setsockopt(dpyP->fd, IPPROTO_TCP, TCP_QUICKACK, &sockFlag, sizeof(sockFlag));
-    return( gotPosition );
-}
-
-// See if there is a light pen hit.
-// If so, return true, else false.
-bool
-checkLightPen(PDP1 *pdp1P)
-{
-int i, sawOne, dpyx, dpyy;
-int delx, dely;
-int lpX, lpY;
-DispCon *dpyP;
-
-    lightpenReader(pdp1P);          // check for any pending input
-
-    if( !penDown )
-    {
-        return(false);
-    }
-
-    dpyP = &(pdp1P->dpy[0]);
-    dpyx = cvtDpyToSigned(pdp1P->dbx);
-    dpyy = cvtDpyToSigned(pdp1P->dby);
-
-    lpX = lastPenX;
-    lpY = lastPenY;
-
-    // Both coordinate pairs have been converted from 10 bit 1's complement to full signed 2's complement.
-    // We have to take edge wrapping into account, do nothing if it wrapped.
-    // Just compare bits outside the range, neg will have the bit set, pos won't
-    if( !((dpyx ^ lpX) & 0x200) && !((dpyy ^ lpY) & 0x200) )
-    {
-        // Use the distance equation for a circle to simulate an actual circular aperture
-        delx = lpX - dpyx;               // Find squared magnitudes of hit offset
-        dely = lpY - dpyy;
-        if( ((delx*delx) + (dely*dely)) < penRadius2 )
-        {
-            logger(LOG_LP, "LP x %d, y %d hit at x %d, y %d aperture %d\n",
-                lpX, lpY, dpyx, dpyy,penAperture);
-            return(true);
-        }
-    }
-
-    return(false);
-}
-
-void
-dpycmd(PDP1 *pdp, int i, u32 cmd)
-{
-    DispCon *d = &pdp->dpy[i];
-    d->cmdbuf[d->ncmds++] = cmd;
-
-    if(d->ncmds == nelem(d->cmdbuf))
-    {
-        flushdpy(d);
-    }
-}
-
-void
-agedisplay(PDP1 *pdp, int i)
-{
-int ival;
-
-    DispCon *d = &pdp->dpy[i];
-
-    if(d->fd < 0)
-    {
-        return;
-    }
-
-    ival = d->agetime;
-    assert(d->last <= pdp->simtime);
-    u64 dt = (pdp->simtime - d->last) / 1000;
-
-    if(dt >= ival)
-    {
-        dpycmd(pdp, i, 511 << 23);
-        // TODO? theoretically dt could be huge,
-        // but if it is you have other problems
-        dpycmd(pdp, i, dt);
-        d->last = pdp->simtime;
-        flushdpy(d);
-
-        // increase interval during fade out
-        // to reduce number of age-commands
-        if(d->agetime < 1000 * 1000)
-        {
-            d->agetime += d->agetime / 6;
-        }
-    }
-}
-
-void
-display(PDP1 *pdp, int screenNo)
-{
-int x, y;
-int dt;
-int cmd;
-int twoscreens;
-int intensity;
-
-    if( (screenNo < 0) || (screenNo > 1) )
-    {
-        return;     // only 2 screens
-    }
-
-    // need to make sure dt field doesn't overflow cmd
-    pdp->dpy[screenNo].agetime = 510;
-    agedisplay(pdp, screenNo);
-    // reset age interval for every point shown
-    pdp->dpy[screenNo].agetime = 50 * 1000;
-
-    if(pdp->dpy[screenNo].fd < 0)
-    {
-        return;
-    }
-
-    x = pdp->dbx;
-    y = pdp->dby;
-    dt = (pdp->simtime - pdp->dpy[screenNo].last) / 1000;
-
-    if( x & 01000 )
-    {
-        x++;
-    }
-
-    if( y & 01000 )
-    {
-        y++;
-    }
-
-    x = (x + 01000) & 01777;
-    y = (y + 01000) & 01777;
-    cmd = x | (y << 10) | (dt << 23);
-    intensity = pdp->dint;
-    // checking fd's is a bit of a hack of course.
-    // this is really a hardware configuration
-    twoscreens = (pdp->dpy[0].fd >= 0) && (pdp->dpy[1].fd >= 0);
-
-    if( twoscreens )
-    {
-        if( (pdp->dint & 4) && !screenNo )
-        {
-            return;         // dpy said second screen, call said first screen
-        }
-
-        // unclear what's happening here exactly
-        // spacewar 4.4 uses only intensity 0/4
-        intensity &= 3;
-    }
-
-    pdp->dpy[screenNo].last = pdp->simtime;
-
-    // The real hardware used intensity 4 for a brightness that was only
-    // visible to the lightpen.
-    // Simulate that by just not drawing a point.
-    if( intensity != 4 )
-    {
-        cmd |= ((intensity + 4) & 7) << 20;
-        dpycmd(pdp, screenNo, cmd);
-    }
 }
 
 void
@@ -2830,31 +2432,6 @@ handleio(PDP1 *pdp)
         // PDP-1 has to keep up, so avoid clobbering TB
         // not sure what a good timeout here is
         pdp->tyi_wait = pdp->simtime + US(25000);
-    }
-
-    /* Display */
-    if(pdp->dpy_defl_time < pdp->simtime)
-    {
-        pdp->dpy_defl_time = NEVER;
-        display(pdp, 0);
-        display(pdp, 1);
-    }
-
-    if(pdp->dpy_time < pdp->simtime)
-    {
-        pdp->dpy_time = NEVER;
-
-        if(pdp->dcp)
-        {
-            // If there was a light pen hit, cks bit 0 is set, and pf3 is set.
-            if( lightpenEnabled && checkLightPen(pdp) )
-            {
-                pdp->cksflags |= 0400000;               // cleared by next dpy
-                pdp->pf |= decflg(3);
-            }
-
-            pdp->ios = 1;
-        }
     }
 }
 

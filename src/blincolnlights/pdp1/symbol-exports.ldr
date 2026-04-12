@@ -2,8 +2,8 @@
     "HSC_request_channel";
     "HSC_get_status";
     "dynamicIotProcessBreak";
-    "dpycmd";
-    "flushdpy";
+    "display";
+    "checkLightpen";
     "getConfiguration";
     "findConfigurationSetting";
 };

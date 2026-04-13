@@ -1,10 +1,11 @@
 Test of includes
+#include "incl2.ah"
+#define foo(x) lac x
 
 100/
-    jda farmemcpy
-    hlt
+    foo(3)
+    bar(4)
 
 200/
-#include <farmemcpy.ac>
 
 start 0100

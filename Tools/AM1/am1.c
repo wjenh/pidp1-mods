@@ -1094,8 +1094,12 @@ run_cpp(char *filenameP, char *pfilename)
         }
     }
 
+    // Multiple tries, finally ok
+    // Real balancing act between obnoxious cpp noise about defines from include files, etc. and
+    // readable code.
     //sprintf(tmpstr, "%s -nostdinc -isystem %s -traditional-cpp ", CPP_PATH, incroot);
-    sprintf(tmpstr, "%s -nostdinc -isystem %s -C -x assembler-with-cpp --no-line-commands ", CPP_PATH, incroot);
+    //sprintf(tmpstr, "%s -nostdinc -isystem %s -C -x assembler-with-cpp --no-line-commands ", CPP_PATH, incroot);
+    sprintf(tmpstr, "%s -nostdinc -isystem %s -C -x assembler-with-cpp ", CPP_PATH, incroot);
     cP = tmpstr + strlen(tmpstr);
 
     while(incsP)

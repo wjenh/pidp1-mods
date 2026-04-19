@@ -3,8 +3,13 @@
     "HSC_get_status";
     "dynamicIotProcessBreak";
     "display";
-    "displayNoOffset";
     "checkLightpen";
+    "setLightpenRadius2";
+    "getLightpenRadius2";
+    "getDisplayData";
+    "setDisplayData";
+    "lockDisplayData";
+    "unlockDisplayData";
     "getConfiguration";
     "findConfigurationSetting";
 };

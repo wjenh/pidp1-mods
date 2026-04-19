@@ -21,7 +21,7 @@
 #include "common.h"
 #include "pdp1.h"
 
-#define DOLOGGING
+//#define DOLOGGING
 #include "logger.h"
 #define LOG_INIT 0
 #define LOG_FD 0

@@ -12,16 +12,6 @@ typedef struct Panel Panel;
 
 typedef struct
 {
-    int fd;
-    u64 last;
-    u32 agetime;
-    u32 cmdbuf[128];
-    u32 ncmds;
-    int lpRadius2;      // for the lightpen, the aperture radius squared
-} DispCon, *DispConP;
-
-typedef struct
-{
     int timernd;
     Panel *panel;
 
@@ -99,12 +89,6 @@ typedef struct
     u64 simtime;
     u64 realtime;
 
-    // display specific, these are here because they are shared by multiple bits of code
-    int curDispX;
-    int curDispY;
-    int curDispIntensity;
-    DispCon dpy[2];
-
     // reader
     int rcp;
     int rb;
@@ -143,9 +127,7 @@ typedef struct
     int spcwar1;
     int spcwar2;
 
-    // wje - extra flags for cks, settable in IOTs
     int cksflags;
-    // wje - added for ad1
     int ad1flags;
     int ad1StartAddr;   // these are used by the start command
     int ad1ExtendedAddr;

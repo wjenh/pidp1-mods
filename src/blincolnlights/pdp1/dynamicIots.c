@@ -234,9 +234,10 @@ char fname[256];
     entryP->pollP = (IotPollP)dlsym(entryP->dlHandleP, "iotPoll");
     if( entryP->pollP )
     {
-        pollEntryP = (PollEntryP)malloc(sizeof(PollEntry));
+        pollEntryP = (PollEntryP)calloc(1, sizeof(PollEntry));
         pollEntryP->iotEntryP = entryP;
         pollEntryP->nextP = pollList;
+        pollEntryP->iotNum = dev;
         pollList = pollEntryP;
     }
 

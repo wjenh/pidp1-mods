@@ -1,0 +1,70 @@
+// Defines for the Type 340 display IOTs
+#ifndef TYPE340DEFS_H
+#define TYPE340DEFS_H
+
+#define dla 0720015
+#define drs 0720115
+#define dcf 0720215
+#define dra 0720016
+#define drc 0720116
+#define dsp 0720117
+#define dss 0720217
+#define dsv 0720417
+#define dsh 0721017
+
+#define NEXTMODE(m) (((m) & 07) << 0d13)
+#define PARAMETER 00
+#define POINT 01
+#define SLAVE 02
+#define CHARACTER 03
+#define VECTOR 04
+#define VCONTINUE 05
+#define INCREMENT 06
+#define SUBROUTINE 07
+
+// These are for PARAMETER
+#define SCALE(s) ((((s) & 03) << 0d4) | 0100)
+#define INTENSITY(i) (((i) & 07) | 010)
+#define LPON 014000
+#define LPOFF 010000
+#define STOP 02000
+#define INTERRUPT 01000
+
+// These are for POINT
+#define POINTX(a) ((a) & 01777)
+#define POINTY(a) (((a) & 01777) | 0200000)
+#define DRAWPOINT 02000
+
+// These are for VECTOR and VCONTINUE
+#define DELTAY(y) (((y) & 0177) << 0d8)
+#define DELTAX(x) ((x) & 0177)
+#define UP 0
+#define DOWN 0100000
+#define LEFT 0200
+#define RIGHT 0
+#define VECVISIBLE 0200000
+#define VECINVISIBLE 0
+#define VECDONE 0400000
+
+// These are for INCREMENT
+#define INCVISIBLE 0200000
+#define INCINVISIBLE 0
+#define SET1(x) ((x) << 0d12)
+#define SET2(x) ((x) << 0d8)
+#define SET3(x) ((x) << 0d4)
+#define SET4(x) (x)
+#define INCUP 0b0010
+#define INCDOWN 0b0011
+#define INCLEFT 0b1100
+#define INCRIGHT 0b1000
+#define INCDONE 0400000
+
+// These are for subroutine mode.
+// JUMP sets the address for the next word to fetch to the addr in the intstruction
+// SAVE puts the return 'address', its addr + 1 in the save register then JUMPs to the addr in the instruction
+// DEPOSIT puts a 'JUMP (save-register-contents) NEXTMODE(PARAMETER) instruction into its target address
+#define JUMP 0400000
+#define SAVE 0600000
+#define DEPOSIT 0200000
+
+#endif

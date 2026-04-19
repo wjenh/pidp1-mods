@@ -14,9 +14,17 @@
 #include "common.h"
 #include "pdp1.h"
 #include "iotHandler.h"
+#include "configuration.h"
 
 //#define DOLOGGING
 #include "iotLogger.h"
+#define LOG_CMD 0
+#define LOG_POLL 0
+#define LOG_IOT 0
+#define LOG_DRAW 0
+#define LOG_BITS 0
+#define LOG_BOUNDS 0
+#define LOG_CONFIG 0
 
 #define GPLBIT 02000
 #define GCFBIT 00100
@@ -32,13 +40,11 @@
 #define DOTDELAY    1       // 5 usec cycles between dot updates
 #define DPYDELAY    5000    // setup delay in NANOSECS passed to the dpy code
 
-void display(PDP1P pdp1P, int screenNo, int x, int y, int intensity);
-bool checkLightpen(PDP1P pdp1P, int x, int y);
-
 static bool needCompletion;
 static bool draw;
 static bool autoSpace;
 static bool charDone;           // a complete gpl, gpr cycle completed
+static bool lightpenEnabled;
 static int subscript;
 static int dotSpacing;          // spacing between pixels inside a char
 static int sepSpacing;          // spacing in pixels between chars when autospacing is on
@@ -50,9 +56,19 @@ static int shiftregister;
 static int bitCtr;
 static int onBits;              // track the number of on bits we saw, for timing computation
 
+static void configure(void);
+
+extern void display(int screenNo, int x, int y, int intensity);
+extern bool checkLightpen(PDP1P pdp1P, int screenNo, int x, int y);
+extern bool lockDisplayData(int screen);
+extern bool unlockDisplayData(int screen);
+extern bool getDisplayData(int screen, int *xP, int *yP, int *intensityP);
+extern bool setDisplayData(int screen, int x, int y, int intensity);
+
 int
 iotHandler(PDP1P pdp1P, int dev, int pulse, int completion)
 {
+int x, y, intensity;
 bool noWait;
 uint64_t utmp;
 
@@ -61,7 +77,7 @@ uint64_t utmp;
         return(1);                  // only on one edge
     }
 
-    iotLog("In iot 27 as %o\n", dev);
+    iotCondLog(LOG_IOT, "In iot 27 as %o\n", dev);
 
     noWait = false;
     needCompletion = completion;
@@ -79,14 +95,18 @@ uint64_t utmp;
             autoSpace = pdp1P->io & 04;
             subscript = 0;
             intensity = 0;      // manual says sets to normal
-            iotLog("Glf, dotspace %d, sepspace %d, auto %d, intensity %d, x %04o y %04o\n",
-                dotSpacing, sepSpacing, autoSpace, intensity, pdp1P->curDispX, pdp1P->curDispY);
+            iotCondLog(LOG_CMD, "Glf, dotspace %d, sepspace %d, auto %d, intensity %d, x %04o y %04o\n",
+                dotSpacing, sepSpacing, autoSpace, intensity, x, y);
         }
         else                                // gsp
         {
             // move right one character width plus one inter-character spacing if autospacing on
-            pdp1P->curDispX += (5 * dotSpacing) + (autoSpace)?sepSpacing:0; 
-            iotLog("Gsp, curDispX now %04o\n", pdp1P->curDispX);
+            lockDisplayData(0);
+            getDisplayData(0, &x, &y, &intensity);
+            x += (5 * dotSpacing) + (autoSpace)?sepSpacing:0; 
+            setDisplayData(0, x, -1, -1);
+            unlockDisplayData(0);
+            iotCondLog(LOG_CMD, "Gsp, x now %04o\n", x);
         }
         break;
 
@@ -97,15 +117,15 @@ uint64_t utmp;
             bitCtr = 17;                    // only 17 bits in left side
             shiftregister = pdp1P->io;
             subscript = (shiftregister & 01)?-dotSpacing * SUBOFFSET:0;
-            xpos = pdp1P->curDispX;
-            ystart = pdp1P->curDispY;
-            intensity = pdp1P->curDispIntensity;        // pick up from last sdb or dpy
+            getDisplayData(0, &x, &y, &intensity);
+            xpos = x;
+            ystart = y;
             xctr = yctr = 0;
             draw = true;
             charDone = false;
             enablePolling(DOTDELAY);
-            iotLog("Gpl, io %06o curDispX %04o curDispY %04o sr %06o\n",
-                pdp1P->io, pdp1P->curDispX, pdp1P->curDispY, shiftregister);
+            iotCondLog(LOG_CMD, "Gpl, io %06o x %04o y %04o sr %06o\n",
+                pdp1P->io, x, y, shiftregister);
         }
         else if( pdp1P->mb & GCFBIT )       // clears light pen flag, cks bit 0400000
         {
@@ -114,10 +134,11 @@ uint64_t utmp;
         }
         else                                // gpr
         {
+            // xctr and yctr were left by gpl in the right state for gpr
             onBits = 0;
             bitCtr = 18;                    // full 18 bits in right side
             shiftregister = pdp1P->io;
-            iotLog("Gpr, io %06o sr %06o\n", pdp1P->io, shiftregister);
+            iotCondLog(LOG_CMD, "Gpr, io %06o sr %06o\n", pdp1P->io, shiftregister);
             draw = true;
             enablePolling(DOTDELAY);
         }
@@ -137,6 +158,7 @@ void
 iotStart()
 {
     iotLog("IOT 27 started\n");
+    configure();
 }
 
 void
@@ -151,6 +173,7 @@ iotPoll(PDP1P pdp1P)
 {
 int bit;
 int totalTime;
+int x, y;
 
     if( draw )
     {
@@ -166,10 +189,15 @@ int totalTime;
             if( bit )
             {
                 onBits++;
-                iotLog("Poll, sr %06o, drawing xctr %d yctr %d, xpos %d ypos %d\n",
+                iotCondLog(LOG_DRAW, "Poll, sr %06o, drawing xctr %d yctr %d, xpos %d ypos %d\n",
                     shiftregister & 0777777, xctr, yctr, xpos, ystart + (yctr * dotSpacing) + subscript);
 
-                display(pdp1P, 0,  xpos, ystart + (yctr * dotSpacing) + subscript, intensity);
+                y = ystart + (yctr * dotSpacing) + subscript;
+                if(  (xpos < 0) || (y < 0) || (xpos > 01777) || (y > 01777) )
+                {
+                    iotCondLog(LOG_BOUNDS, "Boundary, x %d y %d\n", xpos, y);
+                }
+                display( 0, xpos, y, intensity);
             }
 
             if( ++yctr > 6)
@@ -196,23 +224,25 @@ int totalTime;
             }
 
             // We update the global position
-            pdp1P->curDispX = xpos;
+            lockDisplayData(0);
+            setDisplayData(0, xpos, -1, -1);
+            unlockDisplayData(0);
 
             // Wait our remaining delay time, 2 usec for each bit that was off, we already waited
             // 5usec per on bit plus the instruction cycle itself.
             // We will always get called one more time with draw off to complete the operation.
             totalTime = ((35 - onBits) * 2) / 5;    // converted to cycles
-            iotLog("%d on, %d off\n", onBits, 35 - onBits);
+            iotCondLog(LOG_BITS, "%d on, %d off\n", onBits, 35 - onBits);
             if( totalTime > 0 )
             {
                 draw = false;
                 enablePolling(totalTime);
-                iotLog("Delay %d cycles\n", totalTime);
+                iotCondLog(LOG_POLL, "Delay %d cycles\n", totalTime);
                 return;
             }
             else
             {
-                iotLog("No delay\n");
+                iotLog(LOG_POLL, "No delay\n");
             }
         }
 
@@ -227,8 +257,20 @@ int totalTime;
         if( charDone )
         {
             // We already put the dots out, just tell display() to update with no visible dot
-            display(pdp1P, 0, xpos, ystart, 4);
-            checkLightpen(pdp1P, xpos, ystart);
+            iotCondLog(LOG_DRAW, "display invisible xpos %d, ystart %d\n", xpos, ystart);
+            if(  (xpos < 0) || (ystart < 0) || (xpos > 01777) || (ystart > 01777) )
+            {
+                iotCondLog(LOG_BOUNDS, "Done, but Boundary, x %d y %d\n", xpos, ystart);
+            }
+
+            display(0, xpos, ystart, 4);
+            lockDisplayData(0);
+            setDisplayData(0, xpos, ystart, -1);
+            unlockDisplayData(0);
+            if( lightpenEnabled )
+            {
+                checkLightpen(pdp1P, 0, xpos, ystart);
+            }
         }
 
         if( needCompletion )
@@ -236,7 +278,25 @@ int totalTime;
             IOCOMPLETE(pdp1P);
         }
 
-        iotLog("Character display complete, curDispX %04o curDispY %04o\n", pdp1P->curDispX, pdp1P->curDispY);
+        getDisplayData(0, &x, &y, 0);
+        iotCondLog(LOG_DRAW, "Character display complete, x %04o y %04o\n", x, y);
         enablePolling(0);           // no need to poll now
+    }
+}
+
+// Get our configurations settings, can be called more than once.
+void
+configure()
+{
+ConfigurationP confP;
+ConfigurationSettingP settingP;
+
+    iotCondLog(LOG_CONFIG, "IOT 27 checking configuration\n");
+    lightpenEnabled = false;
+
+    if( (settingP = findConfigurationSetting(getConfiguration(), "lightpen")) )
+    {
+        iotCondLog(LOG_CONFIG, "IOT 7 lightpen is enabled\n");
+        lightpenEnabled = settingP->onOff;
     }
 }

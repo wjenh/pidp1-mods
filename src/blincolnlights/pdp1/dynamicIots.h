@@ -58,6 +58,7 @@ typedef struct pollEntry
     IotEntryP iotEntryP;            // the definition for a given IOT
     int numCycles;                  // if not 0, how many cycles between calls
     int curCount;                   // cycles since last entry call
+    int iotNum;                     // just for convenience
 } PollEntry, *PollEntryP;
 
 // Similarly, set a reference back to the IotEntry for an IOT

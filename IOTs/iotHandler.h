@@ -12,6 +12,11 @@
 #define MSTOCYCLES(ms) (((ms) * 1000) / 5)
 #define USTOCYCLES(us) ((us) / 5)
 
+// And same for memory sizes
+#define MAXBANK 15
+#define BANKSIZE 4096
+#define MAXADDR (((MAXBANK + 1) * BANKSIZE) - 1)
+
 // Include to be used by IOT handler implementations
 int iotHandler(PDP1 *, int device,  int pulse, int completion);
 void iotStart(void);

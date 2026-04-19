@@ -27,6 +27,10 @@
  * wje 11-Apr-16 the light pen really doesn't need a listener thread, just use nonblocking reads.
  * wje 12-Apr-16 major rework, move all the display stuff except fd management into IOT 7 and display.c,
  *    doesn't belong here.
+ * wje 19-Apr-16 even more major, all display logic is gone from the emulator, including the low-level code
+ *    The communication with the external display is now in its own thread and runs completely independently
+ *    of the emulator, which is how it should have worked. This allows for much more accurate timing in
+ *    the symbol generator and in the Type 340 display.
 */
 #include "common.h"
 #include "pdp1.h"
@@ -89,6 +93,9 @@ int decflg(int flg);
 static char *onOff(bool flag);
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
+
+extern bool setDisplayFD(int screen, int fd);
+extern int getDisplayFD(int screen);
 
 // All for audio
 extern void setSampleRate(int);
@@ -2634,21 +2641,15 @@ static char resp[1024];
                 port = atoi(args[2]);
             }
 
-            if(pdp->dpy[0].fd >= 0)
-            {
-                close(pdp->dpy[0].fd);
-            }
-
-            pdp->dpy[0].last = pdp->simtime;
-            pdp->dpy[0].fd = dial(host, port);
-
-            if(pdp->dpy[0].fd < 0)
+            setDisplayFD(0, dial(host, port));
+            fd = getDisplayFD(0);
+            if( fd < 0 )
             {
                 strcpy(resp, "can't open display");
             }
             else
             {
-                nodelay(pdp->dpy[0].fd);
+                nodelay(fd);
             }
         }
         else if(strcmp(args[0], "?") == 0 || strcmp(args[0], "help") == 0)

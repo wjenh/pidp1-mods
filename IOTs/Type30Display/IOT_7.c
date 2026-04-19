@@ -54,7 +54,6 @@
 //
 static int penAperture = APERTURE;
 static int penRadius2 = (APERTURE/2) * ( APERTURE/2);  // radius squared
-
 static bool lightpenEnabled;
 static bool dpyShiftEnabled;
 static bool sdbEnabled;
@@ -63,10 +62,16 @@ static bool twoscreensEnabled;
 
 static enum {IDLE, DEFLECTION, DRAW} pollState;
 
-static void configure();
+static void configure(void);
 
-extern void display(PDP1P pdp1P, int screenNo, int x, int y, int intensity);
-extern bool checkLightpen(PDP1P pdp1P, int x, int y);
+extern void display(int screenNo, int x, int y, int intensity);
+extern bool lockDisplayData(int screen);
+extern bool unlockDisplayData(int screen);
+extern bool setDisplayData(int screen, int x, int y, int intensity);
+extern bool getDisplayData(int screen, int *xP, int *yP, int *intensityP);
+extern bool checkLightpen(PDP1P pdp1P, int screenNo, int x, int y);
+extern int getLightpenRadius2(int screen);
+extern void setLightpenRadius2(int screen, int radius2);
 
 // Some machines had a variation where the intensity could be set using the
 // xx03xx bits. Snowflake uses it.
@@ -83,6 +88,7 @@ int
 iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
 {
 int i;
+int curX, curY, intensity;
 int delayTime;
 bool noWait;
 
@@ -96,13 +102,16 @@ bool noWait;
 
     if( !pulse )
     {
-        pdp1P->curDispX = 0;
-        pdp1P->curDispY = 0;
-        pdp1P->curDispIntensity = 0;
+        curX = 0;
+        curY = 0;
+        intensity = 0;
+        lockDisplayData(0);
+        setDisplayData(0, curX, curY, intensity);
+        unlockDisplayData(0);
         pollState = DRAW;
 
         // Be sure it's set to the current value
-        pdp1P->dpy[0].lpRadius2 = penRadius2;
+        setLightpenRadius2(0, penRadius2);
         if( lightpenEnabled )
         {
             pdp1P->cksflags &= ~0400000;  // set by the last dpy completion if lp hit
@@ -124,19 +133,19 @@ bool noWait;
 
         // We keep a copy in the dpy struct so checkLightpen can find it
         penRadius2 = (penAperture/2) * (penAperture/2);  // radius squared
-        pdp1P->dpy[0].lpRadius2 = penRadius2;
+        setLightpenRadius2(0, penRadius2);
 
         noWait = true;
         pollState = IDLE;
 
         iotCondLog(LOG_APERTURE,"Aperture was %d, now %d, new radius squared %d\n", i,
-            penAperture, pdp1P->dpy[0].lpRadius2);
+            penAperture, getLightpenRadius2(0));
     }
     else
     {
-        pdp1P->curDispX = pdp1P->ac >> 8;
-        pdp1P->curDispY = pdp1P->io >> 8;
-        pdp1P->curDispIntensity = (pdp1P->mb >> 6) & 7;
+        curX = pdp1P->ac >> 8;
+        curY = pdp1P->io >> 8;
+        intensity = (pdp1P->mb >> 6) & 7;
 
         // Emulate the origin shift that was implemented in some systems
         // It conflicts with sdb, the following test is done.
@@ -146,16 +155,20 @@ bool noWait;
         {
             if(pdp1P->mb & 01000)        // origin at bottom
             {
-                pdp1P->curDispY ^= 01000;
+                curY ^= 01000;
             }
 
             if(pdp1P->mb & 02000)        // origin at left
             {
-                pdp1P->curDispX ^= 01000;
+                curX ^= 01000;
             }
 
             iotCondLog(LOG_DPYSHIFT,"Dpy shift pdp1P->mb %06o\n", pdp1P->mb);
         }
+
+        lockDisplayData(0);
+        setDisplayData(0, curX, curY, intensity);
+        unlockDisplayData(0);
 
         if( sdbEnabled && ((pdp1P->mb & 017000) == 02000) )  // sdb is a reposition without drawing a dot
         {
@@ -211,8 +224,12 @@ iotStop()
 void
 iotPoll(PDP1 *pdp1P)
 {
+int curX, curY, intensity;
+
+    getDisplayData(0, &curX, &curY, &intensity);
+
     iotCondLog(LOG_POLL, "IOT 7 poll x %d y %d intensity %d\n",
-        pdp1P->curDispX, pdp1P->curDispY, pdp1P->curDispIntensity);
+        curX, curY, intensity);
 
     if( pollState == DEFLECTION )
     {
@@ -222,22 +239,21 @@ iotPoll(PDP1 *pdp1P)
     }
 
     // This is when the dot is actually sent.
-    display(pdp1P, 0, pdp1P->curDispX, pdp1P->curDispY, pdp1P->curDispIntensity);
+    display(0, curX, curY, intensity);
 
     // There was a 2 screen implementation somewhere that used a hack with the intensity
     // to select the second screen.
     // This of course breaks a lot of other stuff, doubtful it even works correctly.
-    if( twoscreensEnabled && (pdp1P->curDispIntensity & 4) )
+    if( twoscreensEnabled && (intensity & 4) )
     {
         // unclear what's happening here exactly
         // spacewar 4.4 uses only intensity 0/4
-        pdp1P->curDispIntensity &= 3;
-        display(pdp1P, 1, pdp1P->curDispX, pdp1P->curDispY, pdp1P->curDispIntensity);
+        intensity &= 3;
+        display(1, curX, curY, intensity & 03);
     }
-
-    if( lightpenEnabled && checkLightpen(pdp1P, pdp1P->curDispX, pdp1P->curDispY) )
+    else if( lightpenEnabled && checkLightpen(pdp1P, 0, curX, curY) )
     {
-        iotCondLog(LOG_LIGHTPEN, "Lightpen hit at x %d y %d\n", pdp1P->curDispX, pdp1P->curDispY);
+        iotCondLog(LOG_LIGHTPEN, "Lightpen hit at x %d y %d\n", curX, curY);
     }
 
     if( needCompletion )

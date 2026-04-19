@@ -3,6 +3,7 @@
     "HSC_get_status";
     "dynamicIotProcessBreak";
     "display";
+    "displayNoOffset";
     "checkLightpen";
     "getConfiguration";
     "findConfigurationSetting";

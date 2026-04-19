@@ -56,15 +56,19 @@
 
 void configure(void);
 void reconfigure(void);
-void updateswitches(PDP1 *pdp, Panel *panel);
-void updatelights(PDP1 *pdp, Panel *panel);
-void lightsoff(Panel *panel);
-void lightson(Panel *panel);
-Panel *getpanel(void);
+
+extern void updateswitches(PDP1 *pdp, Panel *panel);
+extern void updatelights(PDP1 *pdp, Panel *panel);
+extern void lightsoff(Panel *panel);
+extern void lightson(Panel *panel);
+extern Panel *getpanel(void);
 
 ConfigurationP getConfiguration(void);     // so other stuff can use our configuration, like IOTs
 
 extern ConfigurationP loadConfigFile(char *filenameP);
+void initializeDisplaySubsystem();
+bool setDisplayFD(int screen, int fd);
+
 static bool checkBreakpoints(PDP1 *pdp1P);
 static bool checkWatches(PDP1 *pdp1P);
 
@@ -127,10 +131,6 @@ FILE *tmpfP;    // used for timing
 
     inittime();
     pdp->simtime = gettime();
-    pdp->dpy[0].last = pdp->simtime;
-    pdp->dpy[1].last = pdp->simtime;
-    pdp->dpy[0].ncmds = 0;
-    pdp->dpy[1].ncmds = 0;
 
     for(;;)
     {
@@ -294,7 +294,6 @@ FILE *tmpfP;    // used for timing
                     totalCycles = 0;
                 }
 
-                dynamicIotProcessorStop();           // wje - let dyn IOTs know we transitioned to stop
                 updatelights(pdp, panel);
             }
 
@@ -305,6 +304,7 @@ FILE *tmpfP;    // used for timing
         else
         {
             stopaudio();
+            dynamicIotProcessorStop();
             pwrclr(pdp);
 
             /* magic key combo used for shutdown */
@@ -323,8 +323,6 @@ FILE *tmpfP;    // used for timing
             pdp->simtime = gettime();
         }
 
-        agedisplay(pdp, 0);
-        agedisplay(pdp, 1);
         cli(pdp);
     }
 }
@@ -351,40 +349,30 @@ int n;
 }
 
 void
-connectdpy(PDP1 *pdp, DispCon *dispP, int fd)
+connectdpy(int screenNo, int fd)
 {
 int fdFlags;
 
-    if( dispP->fd >= 0 )
-    {
-        close(fd);          // only one connection at a time allowed
-    }
-    else
-    {
-        dispP->fd = fd;
-        dispP->last = pdp->simtime;
-        dispP->agetime = 50 * 1000;
-        nodelay(dispP->fd);
+    nodelay(fd);
 
-        // Lightpen needs nonblocking
-        fdFlags = fcntl(dispP->fd, F_GETFL, 0);
-        fcntl(dispP->fd, F_SETFL, fdFlags | O_NONBLOCK);
-    }
+    // Lightpen needs nonblocking
+    fdFlags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, fdFlags | O_NONBLOCK);
+
+    setDisplayFD(screenNo, fd);
 }
 
 // Called when a connection request comes in
 void
 handledpy(int fd, void *arg)
 {
-    PDP1 *pdp = (PDP1*)arg;
-    connectdpy(pdp, &pdp->dpy[0], fd);
+    connectdpy(0, fd);
 }
 
 void
 handledpy2(int fd, void *arg)
 {
-    PDP1 *pdp = (PDP1*)arg;
-    connectdpy(pdp, &pdp->dpy[1], fd);
+    connectdpy(1, fd);
 }
 
 void
@@ -579,7 +567,7 @@ int shmFd;
 
     atexit(exitcleanup);
     signal(SIGPIPE, SIG_IGN);
-    signal(SIGINT, reconfigure);
+    signal(SIGHUP, reconfigure);
     signal(SIGTERM, sighandler);
 
     configure();
@@ -623,10 +611,8 @@ int shmFd;
     pdp->muldiv_sw = configurationP->muldivEnabled;
     pdp->sbs16 = configurationP->sbs16Enabled;
 
+    initializeDisplaySubsystem();
     startpolling();
-
-    pdp->dpy[0].fd = -1;
-    pdp->dpy[1].fd = -1;
 
     pthread_create(&th, NULL, netthread, pdp);
 
@@ -780,7 +766,7 @@ ConfigurationSettingP configSettingP;
     }
 }
 
-// Called on SIGINT to reload config file
+// Called on SIGHUP to reload config file
 void
 reconfigure()
 {

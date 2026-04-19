@@ -12,6 +12,10 @@ Those marked with an asterisk are implemented in the pidp1 emulator and are rese
 
 11 * spacewar controllers
 
+15 Type 340 Display, implemented
+16 Type 340 Display
+17 Type 340 Display
+
 21
 
 22 Type 30 Data Communications System, implemented

@@ -26,7 +26,7 @@ typedef struct _HSC_ {
     } HSC_Control, *HSC_ControlP;
 
 // called from the emulator run loop
-int processHSChannels(PDP1 *pdp1P);
+bool processHSChannels(PDP1 *pdp1P);
 
 // user methods
 int HSC_request_channel(

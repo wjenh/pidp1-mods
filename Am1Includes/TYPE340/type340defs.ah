@@ -30,6 +30,14 @@
 #define STOP 02000
 #define INTERRUPT 01000
 
+// These are for SLAVE
+#define SETSLAVE1(x) ((x) << 0d9)
+#define SETSLAVE2(x) ((x) << 0d6)
+#define SETSLAVE3(x) ((x) << 0d3)
+#define SETSLAVE4(x) (x)
+#define SLAVEENABLED 01
+#define SLAVELP 06
+
 // These are for POINT
 #define POINTX(a) ((a) & 01777)
 #define POINTY(a) (((a) & 01777) | 0200000)

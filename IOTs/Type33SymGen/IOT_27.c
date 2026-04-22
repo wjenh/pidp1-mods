@@ -4,6 +4,7 @@
  *
  * According to the DEC documentation, it takes approximately 300 usecs per character to render.
  *
+ * Note that we store dpy coords in -511,+511 style, only used by this and the Type 33 symgen.
  */
 
 #include <unistd.h>
@@ -13,6 +14,7 @@
 
 #include "common.h"
 #include "pdp1.h"
+#include "display.h"
 #include "iotHandler.h"
 #include "configuration.h"
 
@@ -58,12 +60,7 @@ static int onBits;              // track the number of on bits we saw, for timin
 
 static void configure(void);
 
-extern void display(int screenNo, int x, int y, int intensity);
-extern bool checkLightpen(PDP1P pdp1P, int screenNo, int x, int y);
-extern bool lockDisplayData(int screen);
-extern bool unlockDisplayData(int screen);
-extern bool getDisplayData(int screen, int *xP, int *yP, int *intensityP);
-extern bool setDisplayData(int screen, int x, int y, int intensity);
+extern int cvtDpyTo1024(int);
 
 int
 iotHandler(PDP1P pdp1P, int dev, int pulse, int completion)
@@ -197,7 +194,7 @@ int x, y;
                 {
                     iotCondLog(LOG_BOUNDS, "Boundary, x %d y %d\n", xpos, y);
                 }
-                display( 0, xpos, y, intensity);
+                display( 0, cvtDpyTo1024(xpos), cvtDpyTo1024(y), type30Intensity(intensity));
             }
 
             if( ++yctr > 6)
@@ -256,20 +253,19 @@ int x, y;
     {
         if( charDone )
         {
-            // We already put the dots out, just tell display() to update with no visible dot
+            // We already put the dots out, just move the current location
             iotCondLog(LOG_DRAW, "display invisible xpos %d, ystart %d\n", xpos, ystart);
             if(  (xpos < 0) || (ystart < 0) || (xpos > 01777) || (ystart > 01777) )
             {
                 iotCondLog(LOG_BOUNDS, "Done, but Boundary, x %d y %d\n", xpos, ystart);
             }
 
-            display(0, xpos, ystart, 4);
             lockDisplayData(0);
             setDisplayData(0, xpos, ystart, -1);
             unlockDisplayData(0);
             if( lightpenEnabled )
             {
-                checkLightpen(pdp1P, 0, xpos, ystart);
+                checkLightpen(pdp1P, 0, cvtDpyTo1024(xpos), cvtDpyTo1024(ystart));
             }
         }
 

@@ -2,7 +2,7 @@ INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib
 %.o:%.c ../iotHandler.h ../Lib/iotLogger.h
 	gcc $(INC) -fPIC -c $< -o $@
 %.so:%.o
-	gcc -shared $< ../Lib/iotLogger.o -o $@
+	gcc -shared $< ../Lib/iotLogger.o ../Lib/display.o -o $@
 
 install: IOT_7.so
 	cp *.so ..

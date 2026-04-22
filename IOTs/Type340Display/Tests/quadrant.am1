@@ -1,0 +1,32 @@
+Test of the Type 340 point display quadrant addressing
+// Draw a dot in the middle, upper left quadrant, lower left quadrant, upper right quadrant, lower right quadrant
+#include <TYPE340/type340defs.ah>
+
+#define CENTER 0d512
+#define XLEFT 0d256
+#define XRIGHT 0d768
+#define YBOTTOM 0d256
+#define YTOP 0d768
+
+100/
+top, lio [prog
+    dla
+    dss
+    jmp .-1
+    jmp top
+
+// Begins in PARAM mode
+prog, SCALE(0) INTENSITY(3) NEXTMODE(POINT)
+    POINTY(CENTER) NEXTMODE(POINT)
+    POINTX(CENTER) DRAWPOINT NEXTMODE(POINT)
+    POINTY(YTOP) NEXTMODE(POINT)
+    POINTX(XLEFT) DRAWPOINT NEXTMODE(POINT)
+    POINTY(YBOTTOM) NEXTMODE(POINT)
+    POINTX(XLEFT) DRAWPOINT NEXTMODE(POINT)
+    POINTY(YTOP) NEXTMODE(POINT)
+    POINTX(XRIGHT) DRAWPOINT NEXTMODE(POINT)
+    POINTY(YBOTTOM) NEXTMODE(POINT)
+    POINTX(XRIGHT) DRAWPOINT NEXTMODE(PARAMETER)
+    STOP
+
+start top

@@ -1,0 +1,27 @@
+Test of the Type 340 display vector mode with scaling
+// Draw a triangle in vector mode, scale 1
+#include <TYPE340/type340defs.ah>
+
+// Remember, range is only signed 8 bits, +128 to -127
+#define HEIGHT 0d109
+#define BASE 0d126
+#define XORIGIN (0d512 - BASE/2)
+#define YORIGIN (0d512 - HEIGHT/2)
+
+100/
+top, lio [prog
+    dla
+    dss
+    jmp .-1
+    jmp top
+
+// Begins in PARAM mode
+prog, SCALE(1) INTENSITY(4) NEXTMODE(POINT)
+    POINTY(YORIGIN) NEXTMODE(POINT)
+    POINTX(XORIGIN) DRAWPOINT NEXTMODE(VECTOR)
+    VECVISIBLE UP DELTAY(HEIGHT) RIGHT DELTAX(BASE/2)
+    VECVISIBLE DOWN DELTAY(HEIGHT) RIGHT DELTAX(BASE/2)
+    VECVISIBLE DELTAY(0) LEFT DELTAX(BASE) VECDONE
+    STOP
+
+start top

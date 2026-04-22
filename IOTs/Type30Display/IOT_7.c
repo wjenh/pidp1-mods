@@ -14,6 +14,7 @@
 
 #include "common.h"
 #include "pdp1.h"
+#include "display.h"
 #include "iotHandler.h"
 #include "configuration.h"
 
@@ -31,6 +32,8 @@
 #define DRAWDELAY 5                 // intinsification delay,usecs
 #define IDLEDELAY 100               // if not drawing, repeat time for display aging, usecs
 #define APERTURE 6                  // the default, 0.050"
+
+extern int cvtDpyTo1024(int);       // from Lib/display.c
 
 // The light pen came with 6 different aperture masks ranging from 0.05 to 0.30 inches.
 // The setting of penAperture, see readLightpen() below, emulates these by defining the distance from the
@@ -63,15 +66,6 @@ static bool twoscreensEnabled;
 static enum {IDLE, DEFLECTION, DRAW} pollState;
 
 static void configure(void);
-
-extern void display(int screenNo, int x, int y, int intensity);
-extern bool lockDisplayData(int screen);
-extern bool unlockDisplayData(int screen);
-extern bool setDisplayData(int screen, int x, int y, int intensity);
-extern bool getDisplayData(int screen, int *xP, int *yP, int *intensityP);
-extern bool checkLightpen(PDP1P pdp1P, int screenNo, int x, int y);
-extern int getLightpenRadius2(int screen);
-extern void setLightpenRadius2(int screen, int radius2);
 
 // Some machines had a variation where the intensity could be set using the
 // xx03xx bits. Snowflake uses it.
@@ -225,6 +219,7 @@ void
 iotPoll(PDP1 *pdp1P)
 {
 int curX, curY, intensity;
+int realX, realY;
 
     getDisplayData(0, &curX, &curY, &intensity);
 
@@ -238,8 +233,12 @@ int curX, curY, intensity;
         return;
     }
 
+    // Display subsystem uses 0-1023 coords
+    realX = cvtDpyTo1024(curX);
+    realY = cvtDpyTo1024(curY);
+
     // This is when the dot is actually sent.
-    display(0, curX, curY, intensity);
+    display(0, realX, realY, type30Intensity(intensity));
 
     // There was a 2 screen implementation somewhere that used a hack with the intensity
     // to select the second screen.
@@ -249,9 +248,9 @@ int curX, curY, intensity;
         // unclear what's happening here exactly
         // spacewar 4.4 uses only intensity 0/4
         intensity &= 3;
-        display(1, curX, curY, intensity & 03);
+        display(1, realX, realX, type30Intensity(intensity & 03));
     }
-    else if( lightpenEnabled && checkLightpen(pdp1P, 0, curX, curY) )
+    else if( lightpenEnabled && checkLightpen(pdp1P, 0, realX, realY) )
     {
         iotCondLog(LOG_LIGHTPEN, "Lightpen hit at x %d y %d\n", curX, curY);
     }

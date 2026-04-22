@@ -1,0 +1,23 @@
+Test of the Type 340 display, vector continue mode
+// Draw a diagonal line
+#include <TYPE340/type340defs.ah>
+
+#define XORIGIN 0
+#define YORIGIN 0
+
+100/
+top, lio [prog
+    dla
+    dss
+    jmp .-1
+    jmp top
+
+// Begins in PARAM mode
+prog, SCALE(0) INTENSITY(3) NEXTMODE(POINT)
+    POINTY(YORIGIN) NEXTMODE(POINT)
+    POINTX(XORIGIN) DRAWPOINT NEXTMODE(VCONTINUE)
+    VECVISIBLE UP DELTAY(0d50) RIGHT DELTAX(0d50)
+    VECDONE
+    STOP
+
+start top

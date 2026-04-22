@@ -1,0 +1,29 @@
+Test of the Type 340 display increment mode
+// Draw a 4 dot square, under its lower left corner, the tip of a 4 dot plus.
+// Under the bottom tip of the plus spaced down 2 spaces, a vertical line of 4 dots.
+#include <TYPE340/type340defs.ah>
+
+#define XORIGIN 0d600
+#define YORIGIN 0d600
+
+100/
+top, lio [prog
+    dla
+    dss
+    jmp .-1
+    jmp top
+
+// Begins in PARAM mode
+prog, SCALE(3) INTENSITY(3) NEXTMODE(POINT)
+    POINTY(YORIGIN) NEXTMODE(POINT)
+    POINTX(XORIGIN) NEXTMODE(INCREMENT)
+
+    INCVISIBLE SET1(INCLEFT) SET2(INCUP) SET3(INCRIGHT) SET4(INCDOWN)
+    INCVISIBLE SET1(INCDOWN|INCLEFT) SET2(INCDOWN|INCRIGHT) SET3(INCDOWN|INCLEFT) SET4(INCUP|INCLEFT)
+    INCINVISIBLE SET1(INCDOWN|INCRIGHT) SET2(INCDOWN) SET3(0) SET4(0)
+    INCVISIBLE SET1(INCDOWN) SET2(INCDOWN) SET3(INCDOWN) SET4(INCDOWN)
+    INCDONE
+
+    STOP
+
+start top

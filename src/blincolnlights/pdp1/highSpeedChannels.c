@@ -5,9 +5,11 @@
  * It does one read/write operation every run cycle, 5us.
  * It can cycle-steal, when it does it takes over for as long as it takes to transfer all data at 5us per
  * word transfer, a simultaenous read/write counts as one word transfer, 5us.
+ *
 */
 
 #include <unistd.h>
+#include <pthread.h>
 
 //#define DOLOGGING
 #define LOG_HSC 0   // logger enable for this
@@ -30,7 +32,7 @@ static void processImmediate(PDP1 *pdp1P, int mode, int count, int memBank, int 
 
 // Service routine called from run loop. Question - did the hardware pause on a halt, or complete?
 // Returns 0 if it took no time, 1 if it did a 'memory cycle' and we are in steal mode.
-int
+bool
 processHSChannels(PDP1 *pdp1P)
 {
 int i;
@@ -42,11 +44,11 @@ HSC_ControlP controlP;
         if( controlP->status == HSC_BUSY )
         {
             processChannel(pdp1P, controlP);
-            return( !!(controlP->mode & HSC_MODE_STEAL) );        // we processed one, maybe steal, maybe not
+            return( controlP->mode & HSC_MODE_STEAL );        // we processed one, maybe steal, maybe not
         }
     }
 
-    return(0);
+    return(false);
 }
 
 // main interaction from user side.
@@ -70,28 +72,41 @@ HSC_ControlP controlP;
         return( HSC_ERR );
     }
     
-    if( (memBank > 15) || (memBank > 15) || (memAddr > 4095) || (memAddr > 4095) || (count > 4096))
+    if( (memBank > 15) || (memBank < 0) || (memAddr > 4095) || (memAddr < 0) || (count > 4096))
     {
-        logger(LOG_HSC, "request_channel called bad bank %d\n", memBank);
+        logger(LOG_HSC, "request_channel called bad addr or countm bank %d addr %d count %d\n",
+            memBank, memAddr, count);
         return( HSC_ERR );
     }
 
-    if( !(mode & 0x3) )
+    if( !(mode & (HSC_MODE_FROMMEM | HSC_MODE_TOMEM)) )
     {
         logger(LOG_HSC, "request_channel called bad mode %x\n", mode);
         return( HSC_ERR );      // no from or to, nothing to do
     } 
 
-    controlP = HSC_chans[chan - 1];
+    if( (mode & HSC_MODE_TOMEM) && (toBufferP == 0) )
+    {
+        return( HSC_ERR );      // bad address
+    }
+
+    if( (mode & HSC_MODE_FROMMEM) && (fromBufferP == 0) )
+    {
+        return( HSC_ERR );      // bad address
+    }
 
     if( mode & HSC_MODE_IMMEDIATE )     // do it now, no -1 timing emulation, don't care if busy
     {
         logger(LOG_HSC, "request_channel immediate transfer\n");
+
         processImmediate(pdp1P, mode, count, memBank, memAddr, toBufferP, fromBufferP);
         controlP->status = HSC_DONE;
+
         logger(LOG_HSC, "request_channel immediate transfer done\n");
         return( HSC_OK );
     }
+
+    controlP = HSC_chans[chan - 1];
 
     if( controlP->status == HSC_BUSY )
     {
@@ -108,6 +123,7 @@ HSC_ControlP controlP;
     controlP->fromBufP = fromBufferP;
 
     controlP->status = HSC_BUSY;
+
     logger(LOG_HSC, "channel %d set to BUSY\n", chan);
     return( HSC_OK );
 }
@@ -163,10 +179,10 @@ int status;
 
 // process one channel, one word.
 // We do a read before a write if both are enabled.
+// Caller will have locked.
 static void
 processChannel(PDP1 *pdp1P, HSC_ControlP controlP)
 {
-Word *memBaseP;
 Word word;
 
     if( controlP->status != HSC_BUSY )
@@ -175,7 +191,7 @@ Word word;
     }
 
     // are we done?
-    if( controlP->count-- <= 0 )
+    if( controlP->count <= 0 )
     {
         logger(LOG_HSC, "processChannel marking DONE\n");
         controlP->status = HSC_DONE;
@@ -183,9 +199,9 @@ Word word;
         return;
     }
 
+    controlP->count--;
     pdp1P->hsc = 1;      // be sure our in-use light is on
-
-    memBaseP = &pdp1P->core[controlP->memBank * 4096];
+    //updatelights(pdp1P, pdp1P->panel);
 
     if( controlP->memAddr > 4095 )
     {
@@ -195,12 +211,12 @@ Word word;
     // We do a read from memory before a write to memory, same as the original hardware
     if( controlP->mode & HSC_MODE_FROMMEM )
     {
-        *(controlP->fromBufP++) = *(memBaseP + controlP->memAddr);
+        *(controlP->fromBufP++) = pdp1P->core[(controlP->memBank * 4096) + controlP->memAddr] & 0777777;
     }
 
     if( controlP->mode & HSC_MODE_TOMEM )
     {
-        *(memBaseP + controlP->memAddr) = *(controlP->toBufP++);
+        pdp1P->core[(controlP->memBank * 4096) + controlP->memAddr] = *(controlP->toBufP++) & 0777777;
     }
 
     controlP->memAddr++;

@@ -4,7 +4,7 @@ Find and follow the lightpen
 #include <LIGHTPEN/lightpen.ah>
 
 #define TEXTSIZE 2
-#define BRIGHTNESS 3
+#define BRIGHTNESS 1
 
 #define MSGX -0d500
 #define MSGY -0d450

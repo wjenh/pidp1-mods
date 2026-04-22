@@ -1,0 +1,35 @@
+Test of the Type 340 display character mode with scaling
+// Display 'HELLO WORLD!' with the lower left in the center of the screen,
+// a right arrow, left arrow, and a filled circle with an x in it one line lower and at the end of the above,
+// 'FROM A PDP-1' one line lower and on the left edge.
+#include <TYPE340/type340defs.ah>
+
+// Remember, range is only signed 8 bits, +128 to -127
+#define XORIGIN (0d512)
+#define YORIGIN (0d512)
+
+100/
+top, lio [prog
+    dla
+    dss
+    jmp .-1
+    jmp top
+
+// Begins in PARAM mode
+prog, SCALE(2) INTENSITY(4) NEXTMODE(POINT)
+    POINTY(YORIGIN) NEXTMODE(POINT)
+    POINTX(XORIGIN) DRAWPOINT NEXTMODE(CHARACTER)
+    100514
+    141740
+    271722
+    140441
+    333647
+    510035
+    343306
+    221715
+    400140
+    200420
+    556137
+    STOP
+
+start top

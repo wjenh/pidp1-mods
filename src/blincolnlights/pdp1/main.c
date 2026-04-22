@@ -66,8 +66,7 @@ extern Panel *getpanel(void);
 ConfigurationP getConfiguration(void);     // so other stuff can use our configuration, like IOTs
 
 extern ConfigurationP loadConfigFile(char *filenameP);
-void initializeDisplaySubsystem();
-bool setDisplayFD(int screen, int fd);
+extern bool setDisplayFD(int screen, int fd);
 
 static bool checkBreakpoints(PDP1 *pdp1P);
 static bool checkWatches(PDP1 *pdp1P);
@@ -222,21 +221,12 @@ FILE *tmpfP;    // used for timing
 
             if(pdp->run)
             {
-                if( audioEnabled )                         // wje - handle new audio stream
+                if( audioEnabled )                   // handle new audio stream
                 {
                     svc_audio(pdp);
                 }
 
-                dynamicIotProcessorStart();          // wje - let dyn IOTs know we transitioned to run
-
-                // A dma transfer can be in STEAL mode, in which case it effectively halts the processor
-                // and transfers all of its requested words at 5us/word. We fake this by just not cycling.
-                while(processHSChannels(pdp))        // wje - handle dma and see if we need to give up cycles
-                {
-                    updatelights(pdp, panel);
-                    pdp->simtime += 5000;
-                    throttle(pdp);
-                }
+                dynamicIotProcessorStart();          // let dyn IOTs know we transitioned to run
 
                 logger(LOG_BREAK, "Pre-cycle PC %06o\n", pdp->epc | pdp->pc);
                 if( checkBreakpoints(pdp) || checkWatches(pdp) )
@@ -248,8 +238,18 @@ FILE *tmpfP;    // used for timing
                 {
                     precycleTime = gettime();
                 }
-                cycle(pdp);
-                AD1_CLEAR_CONTINUE(pdp1P);      // wje - if we were continuing, clear so ad1 knows we're done
+
+                // A dma transfer can be in STEAL mode, in which case it effectively halts the processor
+                // and transfers all of its requested words at 5us/word. We fake this by just not cycling.
+                if( processHSChannels(pdp) )       // need to steal a cycle
+                {
+                    updatelights(pdp, panel);
+                }
+                else
+                {
+                    cycle(pdp);
+                    AD1_CLEAR_CONTINUE(pdp1P);      // if we were continuing, clear so ad1 knows we're done
+                }
 
                 if( timingEnabled )
                 {
@@ -358,7 +358,6 @@ int fdFlags;
     // Lightpen needs nonblocking
     fdFlags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, fdFlags | O_NONBLOCK);
-
     setDisplayFD(screenNo, fd);
 }
 
@@ -611,7 +610,6 @@ int shmFd;
     pdp->muldiv_sw = configurationP->muldivEnabled;
     pdp->sbs16 = configurationP->sbs16Enabled;
 
-    initializeDisplaySubsystem();
     startpolling();
 
     pthread_create(&th, NULL, netthread, pdp);

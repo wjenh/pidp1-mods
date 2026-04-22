@@ -1,0 +1,45 @@
+Test of the Type 340 display subroutine deposit
+// Draw three triangles in vector mode, side by side, via nested subroutines
+#include <TYPE340/type340defs.ah>
+
+#define XORIGIN 0d512
+#define YORIGIN 0d900
+#define SIDE 0d120
+
+100/
+top, lio [prog
+    dla
+    cla
+    dss
+    jmp .-1
+    jmp top
+
+// Begins in PARAM mode
+prog, SCALE(0) INTENSITY(4) NEXTMODE(SUBROUTINE)
+    SAVE subr NEXTMODE(SUBROUTINE)
+    STOP
+
+triangle,
+    VECVISIBLE UP DELTAY(SIDE) RIGHT DELTAX(SIDE/2)
+    VECVISIBLE DOWN DELTAY(SIDE) RIGHT DELTAX(SIDE/2)
+    VECVISIBLE DELTAY(0) LEFT DELTAX(SIDE)
+    VECDONE
+
+subr,
+    DEPOSIT done
+    NEXTMODE(POINT)
+    POINTY(YORIGIN) NEXTMODE(POINT)
+    POINTX(XORIGIN) DRAWPOINT NEXTMODE(SUBROUTINE)
+    SAVE triangle NEXTMODE(VECTOR)
+    NEXTMODE(POINT)
+    POINTY(YORIGIN - SIDE*2) NEXTMODE(POINT)
+    POINTX(XORIGIN) DRAWPOINT NEXTMODE(SUBROUTINE)
+    SAVE triangle NEXTMODE(VECTOR)
+    NEXTMODE(POINT)
+    POINTY(YORIGIN - SIDE*4) NEXTMODE(POINT)
+    POINTX(XORIGIN) DRAWPOINT NEXTMODE(SUBROUTINE)
+    SAVE triangle NEXTMODE(VECTOR)
+    NEXTMODE(SUBROUTINE)
+done, 0
+
+start top

@@ -1,0 +1,30 @@
+Test of the Type 340 display subroutine mode
+// Draw a triangle in vector mode, loop via JUMP
+// This one is a different shape for variety.
+#include <TYPE340/type340defs.ah>
+
+#define XORIGIN 0d512
+#define YORIGIN 0d512
+#define SIDE 0d120
+
+100/
+top, lio [prog
+    dla
+    cla
+loop, idx tmp
+    jmp loop
+tmp, 0
+
+// Begins in PARAM mode
+prog, SCALE(0) INTENSITY(3) NEXTMODE(POINT)
+    POINTY(YORIGIN) NEXTMODE(POINT)
+    POINTX(XORIGIN) DRAWPOINT NEXTMODE(VECTOR)
+    VECVISIBLE UP DELTAY(SIDE) RIGHT DELTAX(SIDE/2)
+    VECVISIBLE DOWN DELTAY(SIDE) RIGHT DELTAX(SIDE/2)
+    VECVISIBLE DELTAY(0) LEFT DELTAX(SIDE)
+    VECDONE
+    NEXTMODE(SUBROUTINE)      // VECDONE sets PARAMETER mode
+    JUMP prog NEXTMODE(PARAMETER)
+    STOP
+
+start top

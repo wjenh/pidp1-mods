@@ -9,6 +9,7 @@
  * display communication.
  *
  * 20-Apr-2026 wje initial implementation
+ * 23-Apr-2026 wje switch to a semaphore for synchronization, more efficient
  *
  */
 
@@ -16,10 +17,12 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <semaphore.h>
 #include <math.h>
 
 #include "common.h"
 #include "pdp1.h"
+#include "highSpeedChannels.h"
 #include "display.h"
 #include "configuration.h"
 #include "type340emu.h"
@@ -32,11 +35,9 @@
 #define LOG_CMD 0
 #define LOG_CONFIG 0
 #define LOG_ERR 0
-#define LOG_IOT 0
 #define LOG_PARAM 0
 #define LOG_SLAVE 0
 #define LOG_DRAW 0
-#define LOG_POLL 0
 #define LOG_POINT 0
 #define LOG_INCREMENT 0
 #define LOG_VECTOR 0
@@ -59,6 +60,8 @@
 #define CH_BS     0010   // Backspace
 #define CH_SUB    0011   // Subscript
 #define CH_SUP    0012   // Superscript
+
+#define HSC_CHAN 3      // randomly selected, drum uses 1
 
 // The interrupt channel in the documentation is 0.
 #define BRKCHAN 0
@@ -189,6 +192,13 @@ typedef struct {
     bool lpEnabled;
     } Slave, *SlaveP;
 
+static HSCChannelP chanP;   // how we get data
+static sem_t waitSemaphore; // how we wait for commands
+
+// Primary state
+static Modes curMode = PARAMETER;
+static Modes curState = STOPPED;
+static BRMState brmState;
 static int curAddress;      // the address set by the dla command, where we will fetch data from
 static int curX, curY;      // current display coordinates
 static int curScale;
@@ -198,25 +208,21 @@ static int flags;           // one of the FLAG x values
 
 static int saveRegister;    // used with the SAVE subroutine subcommand
 static bool saveActive;
+static bool lpEnabled = false;
 static bool slavesEnabled;  // set if we saw a SLAVE command
 
 static bool threadRunning = false;  // emulator thread is set up
 static bool isPaused = false;       // got a PAUSE command
-static bool lpEnabled = false;
 static bool twoCharsets = false;
-static Modes curMode = PARAMETER;
-static Modes curState = STOPPED;
-static BRMState brmState;
 static Slave slaves[NUMSLAVES];    // could be up to 16 slaves, but the core display support is 8
 
+// Communication with the IOT
 static EmuControl emuControl;
 static EmuControlP ctlP = &emuControl;
 
 static void *emulator(void *argP);
-
 static Word getWord(PDP1P pdp1P);
-
-static bool drawAndCheck(bool doLightpen, int x, int y, int intensity);
+static bool drawAndCheck(bool tryLightpen, int x, int y, int intensity);
 static bool brmInitialize(BRMStateP stateP, int initialX, int initialY,
     int dX, int dY, int step, bool draw);
 static Status brmNext(BRMStateP stateP, int *xP, int *yP);
@@ -226,9 +232,13 @@ static void setEdgeViolation(Status status);
 static void emuOrFlags(int newFlags);   // only used internally
 static void emuClearFlag(int flagbit);  // only used internally
 static void nanodelay(int ns);
+static void configure(void);
 
+// Interface to the low-level display subssystem
 extern bool display(int screenNo, int x, int y, int intensity);
 extern bool checkLightpen(PDP1P pdp1P, int screenNo, int x, int y);
+
+// And to the pidp-1 emulator
 extern void initiateBreak(int brkno);
 
 void
@@ -245,7 +255,10 @@ pthread_t thread;
     iotCondLog(LOG_INIT,"initialize called\n");
 
     ctlP->pdp1P = pdp1P;
-    pthread_mutex_init(&(ctlP->mutex), 0);
+    configure();
+
+    chanP = HSCallocateChannel(HSC_CHAN);
+    sem_init(&waitSemaphore, 0, 0);
     ctlP->commandSent = false;
     ctlP->responseSent = false;
     ctlP->response = EMU_RESPONSE_DONE;
@@ -261,6 +274,17 @@ EmuControlP
 getEmuControlP()
 {
     return( ctlP );
+}
+
+// Called by external code to wake up if sleeping
+void
+emuWakeup(EmuControlP ctlP)
+{
+    //if( sem_trywait(&waitSemaphore) )
+    if( isPaused || (curState != RUNNING) )
+    {
+        sem_post(&waitSemaphore);
+    }
 }
 
 // Return the current execution address.
@@ -355,18 +379,25 @@ Status status;
     sawEscape = sawExit = false;
 
     // If the cmmand isn't NONE, ctlP will be locked.
-    while( !sawExit && ((command = get340Command(ctlP)) != EMU_CMD_EXIT) )
+    while( !sawExit )
     {
+        if( isPaused || (curState != RUNNING) )
+        {
+            iotCondLog(LOG_RUN, "Waiting\n");
+            sem_wait(&waitSemaphore);
+            iotCondLog(LOG_RUN, "Woke up\n");
+        }
+
+        if( (command = get340Command(ctlP)) == EMU_CMD_EXIT )
+        {
+            break;      // shut down, kill thread
+        }
+
         switch( command )
         {
-        case EMU_CMD_PAUSE:
-            isPaused = true;
-            iotCondLog(LOG_RUN, "Received pause\n");
-            break;
-
         case EMU_CMD_NONE:
-            // Nothing to do, just idle
-            usleep(15);
+            // Nothing to do, wait for a wakeup
+            curState = STOPPED;
             continue;
 
         case EMU_CMD_RUN:
@@ -381,31 +412,33 @@ Status status;
             curMode = PARAMETER;
             flags = 0;
             slavesEnabled = false;
+            lpEnabled = false;
             memset(slaves, 0, sizeof(slaves));
             iotCondLog(LOG_RUN, "Received start at addr %o\n", curAddress);
             break;
 
         case EMU_CMD_RESUME:
-            // If we were paused, the state remains the same as it was
+            // If we were paused, the state remains the same as it was,
+            // otherwise ignore.
+            // The manual says this also clears the lp enable flag.
+            // Same for slaves? Seems so.
             if( isPaused )
             {
                 emuClearFlag(FLAG_LP);
-                isPaused = false;
+                lpEnabled = isPaused = false;
                 iotCondLog(LOG_RUN, "Received resume while paused\n");
             }
+            break;
+
+        case EMU_CMD_PAUSE:
+            isPaused = true;
+            iotCondLog(LOG_RUN, "Received pause\n");
             break;
 
         case EMU_CMD_STOP:
             curState = STOPPED;
             iotCondLog(LOG_RUN, "Received stop\n");
             break;
-        }
-
-        clearControlLock(ctlP);
-
-        if( isPaused )
-        {
-            continue;           // we do nothing until we get a resume or a new run
         }
 
         iotCondLog(LOG_CMD,"Got command %d\n", command);
@@ -428,8 +461,6 @@ Status status;
                     curState = STOPPED;
                     continue;
                 }
-
-                clearControlLock(ctlP);
             }
 
             switch( curMode )
@@ -469,6 +500,7 @@ Status status;
                     if( PARAM_LP_CHANGE(word) )
                     {
                         lpEnabled = PARAM_LP_ENABLE(word);
+                        iotCondLog(LOG_LP, "lp enabled set to %d in parameter\n", lpEnabled);
                     }
 
                     iotCondLog(LOG_PARAM, "scale %d intensity %d lpon %d\n", curScale, curIntensity, lpEnabled);
@@ -524,6 +556,7 @@ Status status;
                 if( POINT_LP_CHANGE(word) )
                 {
                     lpEnabled = POINT_LP_ENABLE(word);
+                    iotCondLog(LOG_LP, "lp enabled set to %d in point\n", lpEnabled);
                 }
 
                 // Do we actually draw anything?
@@ -774,10 +807,9 @@ Status status;
         if( !isPaused )
         {
             iotCondLog(LOG_CMD,"Stopped, responding done\n");
-            setControlLock(ctlP);
             ctlP->response = EMU_RESPONSE_DONE;
+            emuOrFlags(FLAG_STOP);
             emuResponseSet(ctlP);
-            clearControlLock(ctlP);
         }
     }
 
@@ -1279,9 +1311,10 @@ int curChar;
 // Draw a point and check for a lightpen hit if it is enabled.
 // Display 0 is always the primary display.
 // Set the LP flag if a hit occurred.
+// Even if the lp is not enabled, check for it so the lp queue is emptied.
 // Return true if an lp hit occurred, else false.
 bool
-drawAndCheck(bool doLightpen, int x, int y, int intensity)
+drawAndCheck(bool tryLightpen, int x, int y, int intensity)
 {
 int i;
 bool gotLpHit;
@@ -1299,9 +1332,9 @@ bool gotLpHit;
         {
             iotCondLog(LOG_DRAW, "draw display %d x,y %d,%d intensity %d\n", i, x, y, intensity);
             display(i, x, y, type340Intensity(intensity));
-            if( !gotLpHit && lpEnabled && doLightpen )
+            if( tryLightpen && !gotLpHit )
             {
-                if( (i == 0) || slaves[i-1].lpEnabled )
+                if( ((i == 0) && lpEnabled) || slaves[i-1].lpEnabled )
                 {
                     if( (gotLpHit = checkLightpen(ctlP->pdp1P, i, x, y)) )
                     {
@@ -1320,11 +1353,25 @@ bool gotLpHit;
 Word
 getWord(PDP1P pdp1P)
 {
+Word addr;
 Word val;
-    
-    nanodelay(3500);                // this can cause a reschedule!
-    val = pdp1P->core[curAddress++];
+HSCRequest request;
+Word buffer[8];     // we only use 1, but just to be sure
+
+    addr = curAddress++;
     curAddress %= MAXMEM;
+
+    // We can use cycle-stealing, but the emulator and system latency is terrible and for small
+    // transfers doesn't work well.
+    // THREADED mode fakes the cycle stealing without having to synchronize with the emulator.
+    request.mode = HSC_MODE_FROMMEM | HSC_MODE_THREADED;
+    request.count = 1;
+    request.memBank = (addr >> 12) & 017;
+    request.memAddr = addr & 07777;
+    request.fromBufferP = buffer;
+    HSCexecute(chanP, &request);
+    HSCwait(chanP);
+    val = buffer[0];
     return(val);
 }
 
@@ -1353,12 +1400,12 @@ configure()
 {
 ConfigurationSettingP settingP;
 
-    iotCondLog(LOG_CONFIG, "IOT 15 checking configuration\n");
+    iotCondLog(LOG_CONFIG, "340 emulator checking configuration\n");
 
-    if( (settingP = findConfigurationSetting(getConfiguration(), "two370charsets")) )
+    if( (settingP = findConfigurationSetting(getConfiguration(), "two340charsets")) )
     {
         twoCharsets = settingP->onOff;
-        iotCondLog(LOG_CONFIG, "IOT 15 dual charsets %s\n", (twoCharsets)?"enabled":"disabled");
+        iotCondLog(LOG_CONFIG, "340 emulator dual charsets %s\n", (twoCharsets)?"enabled":"disabled");
     }
 }
 
@@ -1381,11 +1428,9 @@ get340Command(EmuControlP ctlP)
 {
 int command;
 
-    setControlLock(ctlP);
     if( !(ctlP->commandSent) )
     {
         command = EMU_CMD_NONE;
-        clearControlLock(ctlP);
     }
     else
     {
@@ -1404,11 +1449,9 @@ get340Response(EmuControlP ctlP)
 {
 int resp;
 
-    setControlLock(ctlP);
     if( !(ctlP->responseSent) )
     {
         resp = EMU_RESPONSE_NONE;
-        clearControlLock(ctlP);
     }
     else
     {

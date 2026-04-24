@@ -6,218 +6,401 @@
  * It can cycle-steal, when it does it takes over for as long as it takes to transfer all data at 5us per
  * word transfer, a simultaenous read/write counts as one word transfer, 5us.
  *
+ * 23-Apr-2026 wje - rework to make it more realistic
 */
 
 #include <unistd.h>
 #include <pthread.h>
 
 //#define DOLOGGING
-#define LOG_HSC 0   // logger enable for this
+#define LOG_HSC 0
+#define LOG_EXEC 0
+#define LOG_DATA 0
 
 #include "common.h"
 #include "pdp1.h"
 #include "logger.h"
 #include "highSpeedChannels.h"
 
-// Original had three channels, priority ordered 1-3
-static HSC_Control chan1;
-static HSC_Control chan2;
-static HSC_Control chan3;
+typedef struct {
+    bool isInitialized;
+    bool isAssigned;
+    bool isWaiting;
+    int status;
+    int waitDelay;          // if we are in THREADED mode, how long to sleep in HSCwait()
+    sem_t accessSemaphore;   // how we synchrnonize modification of the control structure
+    sem_t waitSemaphore;    // how we synchrnonize completion
+    HSCRequest request;     // pending request if any, copied by execute from user space
+    } HSCControl, *HSCControlP;
 
-static HSC_ControlP HSC_chans[] = {&chan1, &chan2, &chan3};
+// Original had three channels, priority ordered 1-3, we do 5, same priority order
+#define NUMCHANS 5
 
-static void processChannel(PDP1 *pdp1P, HSC_ControlP controlP);
-static void processImmediate(PDP1 *pdp1P, int mode, int count, int memBank, int memAddr,
-    Word *toBufferP, Word *fromBufferP);
+static HSCControl chan1;
+static HSCControl chan2;
+static HSCControl chan3;
+static HSCControl chan4;
+static HSCControl chan5;
+
+static HSCControlP chans[] = {&chan1, &chan2, &chan3, &chan4, &chan5};
+
+static HSCControlP getControlP(HSCChannelP chanP);
+static void lockControl(HSCControlP ctlP);
+static void unlockControl(HSCControlP ctlP);
+static void hscDone(HSCControlP controlP);
+static void processImmediate(HSCRequestP requestP);
+static bool processChannel(HSCControlP controlP);
+
+extern PDP1P pdp1P;     // from main.c
 
 // Service routine called from run loop. Question - did the hardware pause on a halt, or complete?
 // Returns 0 if it took no time, 1 if it did a 'memory cycle' and we are in steal mode.
 bool
-processHSChannels(PDP1 *pdp1P)
+processHSCchannels()
 {
 int i;
-HSC_ControlP controlP;
+HSCControlP ctlP;
 
     // we do in priority order, 0 being highest
-    for( i = 0; controlP = HSC_chans[i++]; i < 3 )
+    for( i = 0; ctlP = chans[i++]; i < NUMCHANS )
     {
-        if( controlP->status == HSC_BUSY )
+        // The channels are scanned from low to high, first one that needs a cycle steal wins.
+        if( ctlP->status == HSC_BUSY )
         {
-            processChannel(pdp1P, controlP);
-            return( controlP->mode & HSC_MODE_STEAL );        // we processed one, maybe steal, maybe not
+            if( processChannel(ctlP) )
+            {
+                return( true );        // we processed one, steal a cycle
+            }
         }
     }
 
     return(false);
 }
 
-// main interaction from user side.
-// Returns HSC_ERR for invalid chan, mode, count > 4096, banks out of range of 0-15 dec.
-int
-HSC_request_channel(
-    PDP1 *pdp1P,        // emulator context
-    int chan,           // channel,1-3, channel 1 being highest priority
-    int mode,           // HSC_MODE_FROMMEM, _TOMEM, _IMMEDIATE (or'd together)
-    int count,          // number of words to transfer, 0-4096
-    int memBank,         // memory bank to copy to, 0-15
-    int memAddr,         // address in bank, 0-4095
-    Word *toBufferP,     // the user buffer to copy to memory, should be 4096 words
-    Word *fromBufferP)   // the user buffer to copy memory into, should be 4096 words
-{
-HSC_ControlP controlP;
+// User side calls.
 
-    if( (chan < 1) || (chan > 3) )
+// Allocate a channel if available and return its channel pointer.
+// The channel object is malloced.
+// If the channel number is invalid or the channel is already allocated, return null,
+// else the channel pointer.
+HSCChannelP
+HSCallocateChannel(int chanNo)
+{
+HSCChannelP chanP;
+HSCControlP ctlP;
+
+    if( (chanNo < 1) || (chanNo > NUMCHANS) )
     {
-        logger(LOG_HSC, "request_channel called bad channel %d\n", chan);
-        return( HSC_ERR );
+        return(NULL);
     }
-    
-    if( (memBank > 15) || (memBank < 0) || (memAddr > 4095) || (memAddr < 0) || (count > 4096))
+
+    ctlP = chans[chanNo-1];
+    if( ctlP->isAssigned )
+    {
+        return(NULL);
+    }
+
+    if( !ctlP->isInitialized )
+    {
+        sem_init(&(ctlP->accessSemaphore), 0, 1);
+        sem_init(&(ctlP->waitSemaphore), 0, 0);
+        ctlP->status = HSC_OK;
+        ctlP->isInitialized = true;
+    }
+
+    ctlP->isAssigned = true;
+    ctlP->isWaiting = false;
+
+    chanP = (HSCChannelP)malloc(sizeof(HSCChannel));
+    chanP->chanNo = chanNo - 1;         // we keep it as an offset in the channel table
+    return(chanP);
+}
+
+// Free a channel.
+// The channel object is also freed and is no longer valid.
+// If the channel number is invalid or the channel is already freed, return false else true.
+bool
+HSCfreeChannel(HSCChannelP chanP)
+{
+HSCControlP ctlP;
+
+    if( !(ctlP = getControlP(chanP)) || !ctlP->isAssigned )
+    {
+        return(false);      // someone is doing something stupid.
+    }
+
+    ctlP->isAssigned = false;
+    free(chanP);
+    return(true);
+}
+
+// Main interaction from user side.
+// Returns HSC_ERR for invalid chan, mode, count > 4096, banks out of range of 0-15 dec.
+// Returns HSC_BUSY if a request is still executing.
+// Returns HSC_OK and locks the channel otherwise.
+int
+HSCexecute(HSCChannelP chanP, HSCRequestP rqstP)
+{
+HSCControlP ctlP;
+
+    if( (rqstP->memBank > 15) || (rqstP->memBank < 0) || (rqstP->memAddr > 4095) || (rqstP->memAddr < 0) ||
+        (rqstP->count > 4096) )
     {
         logger(LOG_HSC, "request_channel called bad addr or countm bank %d addr %d count %d\n",
-            memBank, memAddr, count);
+            rqstP->memBank, rqstP->memAddr, rqstP->count);
         return( HSC_ERR );
     }
 
-    if( !(mode & (HSC_MODE_FROMMEM | HSC_MODE_TOMEM)) )
+    if( !(ctlP = getControlP(chanP)) || !ctlP->isAssigned )
     {
-        logger(LOG_HSC, "request_channel called bad mode %x\n", mode);
+        return( HSC_ERR );
+    }
+
+    if( ctlP->status == HSC_BUSY )
+    {
+        return(HSC_BUSY);           // wait your turn
+    }
+
+    if( !(rqstP->mode & (HSC_MODE_FROMMEM | HSC_MODE_TOMEM)) )
+    {
+        logger(LOG_HSC, "request_channel called bad mode %x\n", rqstP->mode);
         return( HSC_ERR );      // no from or to, nothing to do
     } 
 
-    if( (mode & HSC_MODE_TOMEM) && (toBufferP == 0) )
+    if( (rqstP->mode & HSC_MODE_TOMEM) && (rqstP->toBufferP == 0) )
     {
         return( HSC_ERR );      // bad address
     }
 
-    if( (mode & HSC_MODE_FROMMEM) && (fromBufferP == 0) )
+    if( (rqstP->mode & HSC_MODE_FROMMEM) && (rqstP->fromBufferP == 0) )
     {
         return( HSC_ERR );      // bad address
     }
 
-    if( mode & HSC_MODE_IMMEDIATE )     // do it now, no -1 timing emulation, don't care if busy
+    // Both IMMEDIATE and THREADED handle the tranfer in this call.
+    // The difference is that IMMEDIATE does not check for busy nor does it do any timing emulation.
+    // THREADED operates as if in normal mode, including a 5usc delay per count, with busy and wait.
+    if( rqstP->mode & (HSC_MODE_IMMEDIATE | HSC_MODE_THREADED) )
     {
-        logger(LOG_HSC, "request_channel immediate transfer\n");
+        switch( rqstP->mode & (HSC_MODE_IMMEDIATE | HSC_MODE_THREADED) )
+        {
+        case HSC_MODE_IMMEDIATE:
+            logger(LOG_HSC, "request_channel immediate transfer\n");
+            processImmediate(rqstP);
+            ctlP->status = HSC_DONE;
+            logger(LOG_HSC, "request_channel immediate transfer done\n");
+            return( HSC_OK );
 
-        processImmediate(pdp1P, mode, count, memBank, memAddr, toBufferP, fromBufferP);
-        controlP->status = HSC_DONE;
+        case HSC_MODE_THREADED:
+            logger(LOG_HSC, "request_channel threaded transfer\n");
+            if( ctlP->status == HSC_BUSY )
+            {
+                return( HSC_ERR );      // not now
+            }
 
-        logger(LOG_HSC, "request_channel immediate transfer done\n");
-        return( HSC_OK );
-    }
+            ctlP->waitDelay = rqstP->count * 5;       // 5us per word
+            processImmediate(rqstP);
+            return(HSC_BUSY);
 
-    controlP = HSC_chans[chan - 1];
-
-    if( controlP->status == HSC_BUSY )
-    {
-        logger(LOG_HSC, "request_channel called but still busy\n");
-        return( HSC_BUSY );
+        default:
+            logger(LOG_HSC, "request_channel illegal request\n");
+            return( HSC_ERR );  // can't have both
+        }
     }
 
     // Ok, chan is free, set it up and go.
-    controlP->mode = mode;
-    controlP->count = count;
-    controlP->memBank = memBank;
-    controlP->memAddr = memAddr;
-    controlP->toBufP = toBufferP;
-    controlP->fromBufP = fromBufferP;
-
-    controlP->status = HSC_BUSY;
-
-    logger(LOG_HSC, "channel %d set to BUSY\n", chan);
-    return( HSC_OK );
+    lockControl(ctlP);
+    memcpy(&(ctlP->request), rqstP, sizeof(HSCRequest));
+    ctlP->status = HSC_BUSY;
+    logger(LOG_EXEC, "channel %d set to BUSY, addr %d:%o\n", chanP->chanNo+1, rqstP->memBank, rqstP->memAddr);
+    pdp1P->hsc = 1;      // be sure our in-use light is on
+    unlockControl(ctlP);
+    return( HSC_BUSY );
 }
 
-static void
-processImmediate(
-    PDP1 *pdp1P,        // emulator context
-    int mode,           // HSC_MODE_FROMMEM, _TOMEM, _IMMEDIATE (or'd together)
-    int count,          // number of words to transfer, 0-4096, 0 means 4096
-    int memBank,         // memory bank to copy to, 0-15
-    int memAddr,         // address in bank, 0-4095
-    Word *toBufferP,     // the user buffer to copy to memory, should be 4096 words
-    Word *fromBufferP)   // the user buffer to copy memory into, should be 4096 words
+// Validate a channel and return its control ptr.
+// If invalid, return null.
+HSCControlP
+getControlP(HSCChannelP chanP)
 {
-Word *memBaseP;
+HSCControlP ctlP;
 
-    memBaseP = &pdp1P->core[memBank * 4096];
-
-    while( count-- > 0 )
+    if( !chanP || (chanP->chanNo < 0) || (chanP->chanNo > NUMCHANS) )
     {
-        if( memAddr > 4095 )
-        {
-            memAddr = 0;
-        }
-
-        // Always get from mem first
-        if( mode & HSC_MODE_FROMMEM )
-        {
-            *fromBufferP++ = *(memBaseP + memAddr);
-        }
-
-        if( mode & HSC_MODE_TOMEM )
-        {
-            *(memBaseP + memAddr) = *toBufferP++;
-        }
-
-        ++memAddr;
+        return(NULL);            // someone is cheating
     }
+
+    ctlP = chans[chanP->chanNo];
+    return(ctlP);
 }
 
-int HSC_get_status(int chan)
+// Called from user to wait for a response.
+// Returns a status value or HSC_ERROR if the chanP is invalid.
+int
+HSCwait(HSCChannelP chanP)
 {
 int status;
+HSCControlP ctlP;
 
-    if( (chan < 1) || (chan > 3) )
+    if( !(ctlP = getControlP(chanP)) )
     {
         return( HSC_ERR );
     }
 
-    status = HSC_chans[chan - 1]->status;
+    // Special case for THREADED pseudo-delay
+    if( ctlP->waitDelay > 0 )
+    {
+        pdp1P->hsc = 1;
+        usleep(ctlP->waitDelay);
+        ctlP->waitDelay = 0;
+        pdp1P->hsc = 0;
+        return(HSC_DONE);
+    }
+
+    lockControl(ctlP);
+    if( (ctlP->status == HSC_BUSY) && !(ctlP->isWaiting) )
+    {
+        ctlP->isWaiting = true;
+        unlockControl(ctlP);
+        sem_wait(&(ctlP->waitSemaphore));
+        status = ctlP->status;
+    }
+    else
+    {
+        status = ctlP->status;
+        unlockControl(ctlP);
+    }
+
     return( status );
 }
 
-// process one channel, one word.
-// We do a read before a write if both are enabled.
-// Caller will have locked.
-static void
-processChannel(PDP1 *pdp1P, HSC_ControlP controlP)
+int
+HSCgetStatus(HSCChannelP chanP)
 {
-Word word;
+HSCControlP ctlP;
 
-    if( controlP->status != HSC_BUSY )
+    if( !(ctlP = getControlP(chanP)) )
     {
-        return;
+        return( HSC_ERR );
     }
 
-    // are we done?
-    if( controlP->count <= 0 )
+    return( ctlP->status );
+}
+
+// And how we complete.
+// ctlP should be locked before calling this.
+static void
+HSCdone(HSCControlP ctlP)
+{
+    if( ctlP->isWaiting )
+    {
+        ctlP->isWaiting = false;
+        sem_post(&(ctlP->waitSemaphore));
+    }
+}
+
+static void
+lockControl(HSCControlP ctlP)
+{
+    sem_wait(&(ctlP->accessSemaphore));
+}
+
+static void
+unlockControl(HSCControlP ctlP)
+{
+    sem_post(&(ctlP->accessSemaphore));
+}
+
+// This is a special case.
+// It does not block or wait, it immediately completes.
+// It does not set or clear the hs light.
+static void
+processImmediate(HSCRequestP rqstP)
+{
+Word *memBaseP;
+
+    memBaseP = &pdp1P->core[rqstP->memBank * 4096];
+
+    while( rqstP->count-- > 0 )
+    {
+        if( rqstP->memAddr > 4095 )
+        {
+            rqstP->memAddr = 0;
+        }
+
+        // Always get from mem first
+        if( rqstP->mode & HSC_MODE_FROMMEM )
+        {
+            *(rqstP->fromBufferP++) = *(memBaseP + rqstP->memAddr);
+        }
+
+        if( rqstP->mode & HSC_MODE_TOMEM )
+        {
+            *(memBaseP + rqstP->memAddr) = *(rqstP->toBufferP++);
+        }
+
+        ++(rqstP->memAddr);
+    }
+}
+
+// Process one channel, one word.
+// We do a read before a write if both are enabled.
+// Returns true if a cycle steal is needed, else false.
+static bool
+processChannel(HSCControlP ctlP)
+{
+bool steal;
+Word fullAddr;
+Word data;
+HSCRequestP rqstP;
+
+    steal = false;
+    if( !ctlP->isAssigned || (ctlP->status != HSC_BUSY) )
+    {
+        return(steal);
+    }
+
+    lockControl(ctlP);
+    rqstP = &(ctlP->request);
+
+    if( rqstP->count-- > 0 )
+    {
+        // We wrap
+        if( rqstP->memAddr > 4095 )
+        {
+            rqstP->memAddr = 0;
+        }
+
+        fullAddr = (rqstP->memBank * 4096) + rqstP->memAddr;
+
+        // We do a read from memory before a write to memory, same as the original hardware
+        if( rqstP->mode & HSC_MODE_FROMMEM )
+        {
+            data = pdp1P->core[fullAddr];
+            *(rqstP->fromBufferP++) = data;
+            logger(LOG_DATA,"%06o from core %o\n", data, fullAddr);
+        }
+
+        if( rqstP->mode & HSC_MODE_TOMEM )
+        {
+            data = *(rqstP->toBufferP++) & 0777777;
+            logger(LOG_DATA,"%06o to core %o\n", data, fullAddr);
+            pdp1P->core[fullAddr] = data;
+        }
+
+        rqstP->memAddr++;
+        steal = true;
+    }
+
+    // We might still need to steal a cycle if we completed a transfer, so don't change the steal state.
+    if( rqstP->count <= 0 )
     {
         logger(LOG_HSC, "processChannel marking DONE\n");
-        controlP->status = HSC_DONE;
+        ctlP->status = HSC_DONE;
+        HSCdone(ctlP);
         pdp1P->hsc = 0;
-        return;
     }
 
-    controlP->count--;
-    pdp1P->hsc = 1;      // be sure our in-use light is on
-    //updatelights(pdp1P, pdp1P->panel);
-
-    if( controlP->memAddr > 4095 )
-    {
-        controlP->memAddr = 0;
-    }
-
-    // We do a read from memory before a write to memory, same as the original hardware
-    if( controlP->mode & HSC_MODE_FROMMEM )
-    {
-        *(controlP->fromBufP++) = pdp1P->core[(controlP->memBank * 4096) + controlP->memAddr] & 0777777;
-    }
-
-    if( controlP->mode & HSC_MODE_TOMEM )
-    {
-        pdp1P->core[(controlP->memBank * 4096) + controlP->memAddr] = *(controlP->toBufP++) & 0777777;
-    }
-
-    controlP->memAddr++;
+    unlockControl(ctlP);
+    return( steal );
 }

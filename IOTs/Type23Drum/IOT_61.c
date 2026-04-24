@@ -7,8 +7,16 @@
 #include "highSpeedChannels.h"
 #include "iotHandler.h"
 
-//#define DOLOGGING
+#define DOLOGGING
 #include "iotLogger.h"
+#define LOG_START 0
+#define LOG_IOT 0
+#define LOG_POLL 0
+#define LOG_HSC 0
+#define LOG_TIME 0
+#define LOG_BREAK 0
+#define LOG_READ 0
+#define LOG_WRITE 0
 
 // Flag for busy for the cks instruction
 // DRP set is busy, cleared by operation completion, dia, or dba
@@ -20,6 +28,8 @@
  * It keeps the drum data in a file named 'pdp23drum'.
  * The drum also uses IOTs 62 and 63, so replicate into those.
  */
+
+#define HSC_CHAN 1      // drum uses 1
 
 #define DRUMFILE "/opt/pidp1-mods/pdp23drum"
 #define DRUMADDRTOSEEK(field, offset) (((field * 4096) + (offset)) * sizeof(Word))
@@ -44,6 +54,7 @@ static Word readBuffer[4096];
 static Word writeBuffer[4096];
 
 static int sbsChan = 5;
+static HSCChannelP chanP;   // how we get data
 
 static void readDrumToBuffer(int, Word *, int, int, int);
 static void writeBufferToDrum(int, Word *, int, int, int);
@@ -54,17 +65,18 @@ iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
 int stat;
 int chanFlags;
 Word *memBaseP;
+HSCRequest request;
 
     if( pulse )
     {
         return(1);                  // only on one edge
     }
 
-    iotLog("In iot 61 as %o, inWait %d\n", dev, inWait);
+    iotCondLog(LOG_IOT, "In iot 61 as %o, inWait %d\n", dev, inWait);
 
     if( drumFd < 0 )
     {
-        iotLog("In iot 61, no drumFd\n");
+        iotCondLog(LOG_IOT, "In iot 61, no drumFd\n");
         return(0);                 // sorry, some error with the drum file
     }
 
@@ -94,10 +106,10 @@ Word *memBaseP;
             // dba, using the interrupt system. reqiest break
             // The break happens when the drumCount == the drumAddr
             needBreak = 1;
-            iotLog("dba, break on %o\n", drumAddr);
+            iotCondLog(LOG_IOT, "dba, break on %o\n", drumAddr);
         }
         
-        iotLog("dia done, read %o, rfield %o, daddr %o\n", readMode, drumReadField, drumAddr);
+        iotCondLog(LOG_IOT, "dia done, read %o, rfield %o, daddr %o\n", readMode, drumReadField, drumAddr);
         break;
 
     case 062:            // dwc, drum word count or dra, drum request address
@@ -105,7 +117,7 @@ Word *memBaseP;
         {
             // dra, return current drum 'counter' in the IO register, along with status
             pdp1P->io = drumCount;
-            iotLog("dra drum count %o\n", drumCount);
+            iotCondLog(LOG_IOT, "dra drum count %o\n", drumCount);
         }
         else
         {
@@ -117,7 +129,7 @@ Word *memBaseP;
                 transferCount = 4096;       // 0 means entire track
             }
 
-            iotLog("dwc done, write %d, wfield %d, count %o\n", writeMode, drumWriteField, transferCount);
+            iotCondLog(LOG_IOT, "dwc done, write %d, wfield %d, count %o\n", writeMode, drumWriteField, transferCount);
         }
 
         if( inWait )                    // we don't want to be
@@ -140,7 +152,7 @@ Word *memBaseP;
             {
                 sbsChan = pdp1P->io & 017;
             }
-            iotLog("dss called with setting %02o\n", pdp1P->io & 077);
+            iotCondLog(LOG_IOT, "dss called with setting %02o\n", pdp1P->io & 077);
             break;
         }
         
@@ -150,13 +162,12 @@ Word *memBaseP;
         memBank = (pdp1P->io >> 12) & 017;      // support large memory PDP-1's
         memAddr = pdp1P->io & 07777;
 
-        iotLog("dcl 63 memBank %o memAddr %o\n", memBank, memAddr);
+        iotCondLog(LOG_IOT, "dcl 63 memBank %o memAddr %o\n", memBank, memAddr);
 
         // And away we go.
         // For read-write mode, we read data first, then write.
         // This is the sequence defined in the hardware description.
         // Both the drum address and the memory address can wrap around.
-
         if( !readMode && !writeMode )
         {
             return(0);          // do nothing. An error?
@@ -169,13 +180,13 @@ Word *memBaseP;
         {
             chanFlags |= HSC_MODE_TOMEM;
             readDrumToBuffer(drumFd, readBuffer, drumReadField, drumAddr, transferCount);
-            iotLog("dcl 63 read drum to rbuffer\n");
+            iotCondLog(LOG_IOT, "dcl 63 read drum to rbuffer\n");
         }
 
         if( writeMode )
         {
             chanFlags |= HSC_MODE_FROMMEM;
-            iotLog("dcl 63 requesting write\n");
+            iotCondLog(LOG_IOT, "dcl 63 requesting write\n");
         }
 
         pdp1P->cksflags |= CKS_DRP;
@@ -204,16 +215,24 @@ Word *memBaseP;
 
         // we assume we get it, manual says to check status before calling IOT_61.
         pdp1P->hsc = 1;                     // and we have to manage the light
-        stat = HSC_request_channel(pdp1P, 1, chanFlags, transferCount, memBank, memAddr, readBuffer, writeBuffer);
-        iotLog("HSC_request_channel returned %d, it is done\n", stat);
+
+        request.mode = chanFlags;
+        request.count = transferCount;
+        request.memBank = memBank;
+        request.memAddr = memAddr;
+        request.toBufferP = readBuffer;
+        request.fromBufferP = writeBuffer;
+        stat = HSCexecute(chanP, &request);
+
+        iotCondLog(LOG_HSC, "HSCexecute returned %d\n", stat);
         // We used immediate, so all the data transfer by hsc has completed.
         if( writeMode )
         {
-            iotLog("iotPoll writing writebuf to drum\n");
+            iotCondLog(LOG_POLL, "iotPoll writing writebuf to drum\n");
             writeBufferToDrum(drumFd, writeBuffer, drumWriteField, drumAddr, transferCount);
         }
 
-        iotLog("Completion in %d usecs, ioWait %d\n", (cmdCompletionTime - pdp1P->simtime)/1000);
+        iotCondLog(LOG_TIME, "Completion in %d usecs, ioWait %d\n", (cmdCompletionTime - pdp1P->simtime)/1000);
         ioBusy = 1;
         break;
 
@@ -227,11 +246,17 @@ Word *memBaseP;
 void
 iotStart()
 {
-    iotLog("IOT 61 started\n");
+    iotCondLog(LOG_START, "IOT 61 started\n");
     if( drumFd < 0 )
     {
         drumFd = open(DRUMFILE, O_RDWR + O_CREAT + O_SYNC, 0666);
-        iotLog("IOT 61 drumFd = %d\n", drumFd);
+        iotCondLog(LOG_START, "IOT 61 drumFd = %d\n", drumFd);
+    }
+
+    if( chanP == 0 )
+    {
+        chanP = HSCallocateChannel(HSC_CHAN);
+        iotCondLog(LOG_START, "IOT 61 channel allocation %s\n", (chanP)?"ok":"failed");
     }
 
     needBreak = 0;
@@ -259,11 +284,9 @@ int hsStatus;
 
     if( ioBusy )
     {
-        hsStatus = HSC_get_status(1);
-
-        if( (pdp1P->simtime >= cmdCompletionTime) && (hsStatus != HSC_BUSY) )
+        if( pdp1P->simtime >= cmdCompletionTime )
         {
-            iotLog("iotPoll completing, hs status %d\n", hsStatus);
+            iotCondLog(LOG_POLL, "iotPoll completing\n");
             ioBusy = 0;
 
             pdp1P->cksflags &= ~CKS_DRP;    // and not busy
@@ -271,13 +294,13 @@ int hsStatus;
 
             if( inWait )
             {
-                iotLog("iotPoll posting iocomplete\n");
+                iotCondLog(LOG_POLL, "iotPoll posting iocomplete\n");
                 inWait = 0;
                 IOCOMPLETE(pdp1P);
             }
 
             pdp1P->hsc = 0;               // and light off, aap's HSC used this also, annoying
-            iotLog("IOT 61 completed timeout.\n");
+            iotCondLog(LOG_POLL, "IOT 61 completed timeout.\n");
             enablePolling(0);                               // done for now
         }
     }
@@ -299,7 +322,7 @@ int hsStatus;
             ioBusy = needBreak = 0;
             pdp1P->cksflags &= ~CKS_DRP;    // and not busy
             initiateBreak(5);               // the DEC drum diagnostic seems to use channel 5
-            iotLog("IOT 61 break initiated at drum count %o.\n", drumCount);
+            iotCondLog(LOG_BREAK, "IOT 61 break initiated at drum count %o.\n", drumCount);
         }
     }
 }
@@ -329,7 +352,8 @@ int drumRemainderCount = 0;
         drumRemainderCount = 0;
     }
 
-    iotLog("read drum to buffer, drumSplitCount %d, drumRemainderCount %d\n", drumSplitCount, drumRemainderCount);
+    iotCondLog(LOG_READ, "read drum to buffer, drumSplitCount %d, drumRemainderCount %d\n",
+        drumSplitCount, drumRemainderCount);
 
     lseek(drumFd, DRUMADDRTOSEEK(drumField, drumAddr), SEEK_SET);
     // a read fail is ok, could be an uninitialized drum block. Mem gets buffer content.
@@ -377,13 +401,14 @@ int drumRemainderCount = 0;
         drumRemainderCount = 0;
     }
 
-    iotLog("write buffer to drum, drumSplitCount %d, drumRemainderCount %d\n", drumSplitCount, drumRemainderCount);
+    iotCondLog(LOG_WRITE, "write buffer to drum, drumSplitCount %d, drumRemainderCount %d\n",
+        drumSplitCount, drumRemainderCount);
 
     lseek(drumFd, DRUMADDRTOSEEK(drumField, drumAddr), SEEK_SET);
     write(drumFd, buffer, sizeof(Word) * drumSplitCount);
     if( drumRemainderCount )
     {
-        iotLog("writing remainder from buffer location %d to disk offset %o\n", drumSplitCount,
+        iotCondLog(LOG_WRITE, "writing remainder from buffer location %d to disk offset %o\n", drumSplitCount,
             DRUMADDRTOSEEK(drumField, 0));
         lseek(drumFd, DRUMADDRTOSEEK(drumField, 0), SEEK_SET);
         write(drumFd, buffer + drumSplitCount, sizeof(Word) * drumRemainderCount);

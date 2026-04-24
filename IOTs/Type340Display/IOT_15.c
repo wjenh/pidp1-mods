@@ -12,6 +12,7 @@
  * get responses.
  *
  * 20-Apr-2026 wje initial implementation
+ * 23-Apr-2026 wje switch to a semaphore for synchronization, more efficient
  */
 
 #include <unistd.h>
@@ -84,7 +85,6 @@ EmuControlP ctlP;
         if( cmd & 01 )
         {
             // drs, display resume sequence
-            setControlLock(ctlP);
             ctlP->command = EMU_CMD_RESUME;
             iotCondLog(LOG_IOT, "drs%s\n", (flags)?" and clear flags":"");
         }
@@ -94,18 +94,12 @@ EmuControlP ctlP;
             // This also resets flags via the RUN in the display emulator
             // Get rid of any dangling response, lock if necessary
             // Note that get340Respose sets the lock and leaves it set unless the resonse is NONE.
-            if( get340Response(ctlP) == EMU_RESPONSE_NONE )
-            {
-                setControlLock(ctlP);
-            }
-
             ctlP->address = pdp1P->io;            // This is a full 16 bit address
             ctlP->command = EMU_CMD_RUN;
             iotCondLog(LOG_IOT, "dla %o%s\n", ctlP->address, (flags)?" and clear flags":"");
         }
 
         emuCommandSet(ctlP);
-        clearControlLock(ctlP);
         break;
 
     case IOT2:
@@ -121,12 +115,6 @@ EmuControlP ctlP;
             pdp1P->io = ((x & 01776) << 8) | ((y >> 1) & 0777);
             break;
 
-        case 4:         // dsch, not original, enable/disable second char set
-            setControlLock(ctlP);
-            ctlP->command = EMU_CMD_RESUME;
-            emuCommandSet(ctlP);
-            clearControlLock(ctlP);
-            break;
         default:
             iotCondLog(LOG_ERR,"Iot %o got invalid command %o\n", dev, cmd);
             break;
@@ -188,13 +176,10 @@ EmuControlP ctlP;
     if( emuIsPaused() )
     {
         ctlP = getEmuControlP();
-        setControlLock(ctlP);
         ctlP->command = EMU_CMD_RESUME;
         emuCommandSet(ctlP);
-        clearControlLock(ctlP);
         iotCondLog(LOG_START, "Issuing resume\n", IOT1);
     }
-
 }
 
 void
@@ -206,10 +191,8 @@ EmuControlP ctlP;
     if( emuIsInitialized() )
     {
         ctlP = getEmuControlP();
-        setControlLock(ctlP);
         ctlP->command = EMU_CMD_PAUSE;
         emuCommandSet(ctlP);
-        clearControlLock(ctlP);
         iotCondLog(LOG_START, "Issuing pause\n", IOT1);
     }
 
@@ -217,18 +200,9 @@ EmuControlP ctlP;
 }
 
 // Get our configurations settings, can be called more than once.
+// We have none, placeholder
 void
 configure()
 {
 ConfigurationSettingP settingP;
-
-    iotCondLog(LOG_CONFIG, "IOT 15 checking configuration\n");
-
-    /*
-    if( (settingP = findConfigurationSetting(getConfiguration(), "lightpen")) )
-    {
-        iotCondLog(LOG_CONFIG, "IOT 7 lightpen is enabled\n");
-        lightpenEnabled = settingP->onOff;
-    }
-    */
 }

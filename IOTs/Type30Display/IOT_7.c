@@ -33,6 +33,8 @@
 #define IDLEDELAY 100               // if not drawing, repeat time for display aging, usecs
 #define APERTURE 6                  // the default, 0.050"
 
+static int flagToBits(int f);       // convert flag number to flag bitmask
+
 extern int cvtDpyTo1024(int);       // from Lib/display.c
 
 // The light pen came with 6 different aperture masks ranging from 0.05 to 0.30 inches.
@@ -253,6 +255,8 @@ int realX, realY;
     else if( lightpenEnabled && checkLightpen(pdp1P, 0, realX, realY) )
     {
         iotCondLog(LOG_LIGHTPEN, "Lightpen hit at x %d y %d\n", curX, curY);
+        pdp1P->cksflags |= 0400000;               // cleared by next dpy
+        pdp1P->pf |= flagToBits(3);
     }
 
     if( needCompletion )
@@ -263,6 +267,31 @@ int realX, realY;
 
     pollState = IDLE;
     enablePolling(0); 
+}
+
+// Convert a flag number to the bits needes for program flags
+int
+flagToBits(int bits)
+{
+    switch(bits & 7)
+    {
+    case 1:
+        return(040);
+    case 2:
+        return(020);
+    case 3:
+        return(010);
+    case 4:
+        return(004);
+    case 5:
+        return(002);
+    case 6:
+        return(001);
+    case 7:
+        return(077);
+    }
+
+    return(0);
 }
 
 // Get our configurations settings, can be called more than once.

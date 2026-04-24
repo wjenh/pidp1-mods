@@ -1,42 +1,47 @@
-/**
- * This include defines data structures for the emulation of the Type 19 High Speed Channel Control.
- */
+// This include defines data structures for the emulation of the Type 19 High Speed Channel Control.
+
+#ifndef HSC_H
+#define HSC_H
+#include <stdbool.h>
+#include <semaphore.h>
 
 // Statuses that can be returned
-
 #define HSC_OK      0
-#define HSC_ERR     -1
 #define HSC_BUSY    1
 #define HSC_DONE    2
+#define HSC_ERR     -1
 
 // These are bitflags in the mode field
-#define HSC_MODE_FROMMEM       001
-#define HSC_MODE_TOMEM         002
-#define HSC_MODE_IMMEDIATE     004
-#define HSC_MODE_STEAL         010
+#define HSC_MODE_FROMMEM       001  // from core memory to user space
+#define HSC_MODE_TOMEM         002  // from user space to core memory
+#define HSC_MODE_IMMEDIATE     004  // bypass all the wait states, immediate execution, no reschedule
+#define HSC_MODE_THREADED      010  // immediate execution but check busy and imitate timing
 
-typedef struct _HSC_ {
-    int status;         // one of the HSC_status codes above
+typedef struct {
     int mode;           // current operation mode, from, to, or both
     int count;          // number of words to transfer
     int memBank;        // memory bank to transfer to/from, 0-15 dec
     int memAddr;        // address offset in memory, offset in bank, 0-4095
-    Word *fromBufP;     // should be 4k unless you're sure your count won't exceed the size
-    Word *toBufP;       // ditto
-    } HSC_Control, *HSC_ControlP;
+    Word *fromBufferP;  // should be 4k unless you're sure your count won't exceed the size
+    Word *toBufferP;    // ditto
+    } HSCRequest, *HSCRequestP;
 
-// called from the emulator run loop
-bool processHSChannels(PDP1 *pdp1P);
+// This is just to control access, no execution requests by direct channel number.
+typedef struct {
+    int chanNo;
+    } HSCChannel, *HSCChannelP;
 
-// user methods
-int HSC_request_channel(
-    PDP1 *pdp1P,        // emulator context
-    int chan,           // channel,1-3, channel 1 being highest priority
-    int mode,           // HSC_MODE_FROMMEM, _TOMEM, etc. (or'd together)
-    int count,          // number of words to transfer, 0-4096
-    int memBank,        // memory bank, 0-15
-    int memAddr,        // address in bank, 0-4095
-    Word *toBuffer,     // the user buffer to copy to memory, must be at least count size
-    Word *fromBuffer);  // the user buffer to copy memory into, must be at least count size
+// User methods.
+// Get or free a channel, it is held until freed.
+// The actual hardware dedicated channels to particular devices, but we don't.
+// The device IOTs take control of a channel for as long as they need it.
+// A null channel pointer is returned if a channel can't be allocated.
+HSCChannelP HSCallocateChannel(int chanNo);
+bool HSCfreeChannel(HSCChannelP channelP);
 
-int HSC_get_status(int chan);   // returns one of the HSC statuses
+// Do a channel operation, a read, write, or read/write.
+int HSCexecute(HSCChannelP channelP, HSCRequestP requestP);
+
+int HSCwait(HSCChannelP channelP);       // wait for completion of a request
+int HSCgetStatus(HSCChannelP channelP);   // returns one of the HSC statuses
+#endif

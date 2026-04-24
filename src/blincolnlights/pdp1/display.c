@@ -10,13 +10,16 @@
 // independent of the emulator itself.
 //
 // 12-Apr-2026 wje initial version
+// 23-Apr-2026 wje switch to semaphores, better for this than mutexes
 
 #include <unistd.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
+#include <semaphore.h>
 
 #include "common.h"
 #include "pdp1.h"
@@ -51,10 +54,11 @@ typedef struct {
     uint64_t lastTime;  // used by addDpyCommand();
     uint64_t ageTime;   // used by addDpyCommand() and ageDisplay();
     bool penDown;       // lightpen is on the screen
+    bool lpData;        // set when lp data comes in, cleared when read
     int lpX, lpY;       // last x,y lightpen coordinates received
     int lpRadius2;      // used by the lightpen check
-    pthread_mutex_t controlMutex; // for interlocking with the worker thread
-    pthread_mutex_t dataMutex;    // for locking get/setDisplayData
+    sem_t controlSym; // for interlocking with the worker thread
+    sem_t dataSym;    // for locking get/setDisplayData
 
     int numCommands;
     uint32_t commandBuf[CMDBUFSIZE];
@@ -115,6 +119,7 @@ extern int decflg(int flg);
 bool
 setDisplayFD(int screenNo, int fd)
 {
+int fdFlags;
 DisplayControlP ctlP;
 
     if( !(ctlP = initializeDisplay(screenNo)) )
@@ -127,6 +132,10 @@ DisplayControlP ctlP;
     {
         close(ctlP->fd);
     }
+
+    // Lightpen needs nonblocking
+    fdFlags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, fdFlags | O_NONBLOCK);
 
     ctlP->fd = fd;
     ctlP->now = currentTime();
@@ -162,7 +171,7 @@ DisplayControlP ctlP;
         return(false);
     }
 
-    pthread_mutex_lock(&(ctlP->dataMutex));
+    sem_wait(&(ctlP->dataSym));
     return(true);
 }
 
@@ -176,7 +185,7 @@ DisplayControlP ctlP;
         return(false);
     }
 
-    pthread_mutex_unlock(&(ctlP->dataMutex));
+    sem_post(&(ctlP->dataSym));
 }
 
 // Set the lightpen radius squared for the screen.
@@ -307,34 +316,38 @@ DisplayControlP ctlP;
 bool
 checkLightpen(PDP1P pdp1P, int screenNo, int x, int y)
 {
-DisplayControlP ctlP;
-
 int delx, dely;
+bool gotHit;
+DisplayControlP ctlP;
 
     if( !(ctlP = getDisplayControlP(screenNo)) || !isOpen(ctlP) )
     {
         return(false);
     }
 
-    if( !ctlP->penDown )
+    lockDisplayData(ctlP);
+    if( !ctlP->penDown || !ctlP->lpData )
     {
+        unlockDisplayData(ctlP);
         return(false);
     }
 
     logger(LOG_LP, "LP checking x %d against lp x %d, y %d against lp y %d\n",
             x, ctlP->lpX, y, ctlP->lpY);
+
+    gotHit = false;
     // Use the distance equation for a circle to simulate an actual circular aperture
     delx = ctlP->lpX - x;               // Find squared magnitudes of hit offset
     dely = ctlP->lpY - y;
     if( ((delx*delx) + (dely*dely)) < ctlP->lpRadius2 )
     {
         logger(LOG_LP, "LP hit\n");
-        pdp1P->cksflags |= 0400000;               // cleared by next dpy
-        pdp1P->pf |= decflg(3);
-        return(true);
+        gotHit = true;
+        ctlP->lpData = false;
     }
 
-    return(false);
+    unlockDisplayData(ctlP);
+    return(gotHit);
 }
 
 // End of external functions, these are all internal.
@@ -412,8 +425,6 @@ getDisplayControlP(int screenNo)
 static void
 initializeDisplayControl(DisplayControlP ctlP)
 {
-pthread_mutexattr_t attr;
-
     ctlP->fd = -1;
     ctlP->numCommands = 0;
     ctlP->numDpyCommands = 0;
@@ -423,22 +434,22 @@ pthread_mutexattr_t attr;
     ctlP->curX = ctlP->curY = ctlP->intensity = 0;
     ctlP->lpX = ctlP->lpY = 0;
     ctlP->penDown = false;
+    ctlP->lpData = false;
     ctlP->lpRadius2 = 6*6;      // pretty small, but is overridden later
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    pthread_mutex_init(&(ctlP->controlMutex), &attr);
-    pthread_mutex_init(&(ctlP->dataMutex), &attr);
+    sem_init(&(ctlP->controlSym),0,1);
+    sem_init(&(ctlP->dataSym),0,1);
 }
 
 static void
 lockControl(DisplayControlP ctlP)
 {
-    pthread_mutex_lock(&(ctlP->controlMutex));
+    sem_wait(&(ctlP->controlSym));
 }
 
 static void
 unlockControl(DisplayControlP ctlP)
 {
-    pthread_mutex_unlock(&(ctlP->controlMutex));
+    sem_post(&(ctlP->controlSym));
 }
 
 // This is where all the work is done.
@@ -656,6 +667,7 @@ int cmd;
 
 // This is the update reader for the lightpen.
 // See if there is data from the client, update lp status.
+// Each display has its own buffer and status.
 // Return true if any read, else false.
 static bool
 lightpenReader(DisplayControlP ctlP)
@@ -670,7 +682,7 @@ bool gotPosition;
 static int lastX, lastY;
 static bool penDown;
 
-    if( ctlP->fd < 0 )
+    if( !isOpen(ctlP) )
     {
         ctlP->lpX = ctlP->lpY = 0;
         ctlP->penDown = false;
@@ -714,6 +726,7 @@ static bool penDown;
     {
         ctlP->lpX = lastX;
         ctlP-> lpY = lastY;
+        ctlP->lpData = true;
     }
 
     ctlP->penDown = penDown;

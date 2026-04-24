@@ -59,6 +59,7 @@ static int bitCtr;
 static int onBits;              // track the number of on bits we saw, for timing computation
 
 static void configure(void);
+static int flagToBits(int);
 
 extern int cvtDpyTo1024(int);
 
@@ -263,9 +264,10 @@ int x, y;
             lockDisplayData(0);
             setDisplayData(0, xpos, ystart, -1);
             unlockDisplayData(0);
-            if( lightpenEnabled )
+            if( lightpenEnabled && checkLightpen(pdp1P, 0, cvtDpyTo1024(xpos), cvtDpyTo1024(ystart)) )
             {
-                checkLightpen(pdp1P, 0, cvtDpyTo1024(xpos), cvtDpyTo1024(ystart));
+                pdp1P->cksflags |= 0400000;               // cleared by next dpy
+                pdp1P->pf |= flagToBits(3);
             }
         }
 
@@ -278,6 +280,31 @@ int x, y;
         iotCondLog(LOG_DRAW, "Character display complete, x %04o y %04o\n", x, y);
         enablePolling(0);           // no need to poll now
     }
+}
+
+// Convert a flag number to the bits needes for program flags
+int
+flagToBits(int bits)
+{
+    switch(bits & 7)
+    {
+    case 1:
+        return(040);
+    case 2:
+        return(020);
+    case 3:
+        return(010);
+    case 4:
+        return(004);
+    case 5:
+        return(002);
+    case 6:
+        return(001);
+    case 7:
+        return(077);
+    }
+
+    return(0);
 }
 
 // Get our configurations settings, can be called more than once.

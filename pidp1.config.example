@@ -66,6 +66,11 @@ type30size=1024
 # The default is yes, also via sommand line -n, for no border.
 type30border=yes
 
+# The type 340 display checks this.
+# If two charsets are enabled, then lower-shift characters come from the second one.
+# If not, lower-shift means display characters vertially.
+two340charsets=no
+
 # The following control the audio subsystem.
 # These values give excellent results.
 # It is important to read the UsingAudio.md document in Docs before changing values!!!

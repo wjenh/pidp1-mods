@@ -1,9 +1,8 @@
 // Defines shared data between the IOT layer and the emulator
 #include <pthread.h>
+#include <semaphore.h>
 
-#define setControlLock(ctlP) pthread_mutex_lock(&((ctlP)->mutex))
-#define clearControlLock(ctlP) pthread_mutex_unlock(&((ctlP)->mutex))
-#define emuCommandSet(ctlP) (ctlP->commandSent = true);
+#define emuCommandSet(ctlP) (ctlP->commandSent = true, emuWakeup(ctlP))
 #define emuResponseSet(ctlP) (ctlP->responseSent = true);
 
 #define EMU_CMD_NONE 0      // no command available
@@ -11,7 +10,7 @@
 #define EMU_CMD_RUN 2       // start interpreting, runs until a STOP condition, then sets EMU_DONE
 #define EMU_CMD_STOP 3      // stop interpreting, wait for a RUN
 #define EMU_CMD_RESUME 4    // continue from where we left off
-#define EMU_CMD_PAUSE 5     // just wait for a resume
+#define EMU_CMD_PAUSE 5     // pause interpreter
 
 #define EMU_CMDFLAG_CLEAR 0100  // special flag to combine CLEAR with RUN or RESUME
 
@@ -28,8 +27,7 @@
 typedef struct {
     PDP1P pdp1P;    // pdp-1 access
 
-    // Modification is controlled by a mutex, probably overkill.
-    pthread_mutex_t mutex;
+    sem_t waitSemaphore;    // how we wait when idle
     int address;    // core mem address of program instructions
     int command;    // from above
     int response;   // from above
@@ -42,6 +40,7 @@ void emuInitialize(PDP1P pdp1P);
 bool emuIsInitialized(void);
 bool emuIsPaused(void);
 bool emuIsRunning(void);
+void emuWakeup(EmuControlP ctlP);
 int emuGetAddress(void);
 int emuGetFlags(void);
 void emuClearFlags(void);

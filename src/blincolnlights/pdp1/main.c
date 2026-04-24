@@ -66,6 +66,7 @@ extern Panel *getpanel(void);
 ConfigurationP getConfiguration(void);     // so other stuff can use our configuration, like IOTs
 
 extern ConfigurationP loadConfigFile(char *filenameP);
+extern bool processHSCchannels(void);
 extern bool setDisplayFD(int screen, int fd);
 
 static bool checkBreakpoints(PDP1 *pdp1P);
@@ -241,7 +242,7 @@ FILE *tmpfP;    // used for timing
 
                 // A dma transfer can be in STEAL mode, in which case it effectively halts the processor
                 // and transfers all of its requested words at 5us/word. We fake this by just not cycling.
-                if( processHSChannels(pdp) )       // need to steal a cycle
+                if( processHSCchannels() )          // need to steal a cycle
                 {
                     updatelights(pdp, panel);
                 }
@@ -351,13 +352,7 @@ int n;
 void
 connectdpy(int screenNo, int fd)
 {
-int fdFlags;
-
     nodelay(fd);
-
-    // Lightpen needs nonblocking
-    fdFlags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, fdFlags | O_NONBLOCK);
     setDisplayFD(screenNo, fd);
 }
 
@@ -372,6 +367,18 @@ void
 handledpy2(int fd, void *arg)
 {
     connectdpy(1, fd);
+}
+
+void
+handledpy3(int fd, void *arg)
+{
+    connectdpy(2, fd);
+}
+
+void
+handledpy4(int fd, void *arg)
+{
+    connectdpy(3, fd);
 }
 
 void
@@ -403,6 +410,8 @@ netthread(void *arg)
         { 1043, handleptp },
         { 3400, handledpy },
         { 3401, handledpy2 },
+        { 3402, handledpy3 },
+        { 3403, handledpy4 },
     };
     serveN(ports, nelem(ports), arg);
     return( nil );

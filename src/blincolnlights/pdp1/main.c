@@ -55,7 +55,7 @@
 #define Edge(sw) (pdp->sw && !prev_##sw)
 
 void configure(void);
-void reconfigure(void);
+void reconfigure(int);
 
 extern void updateswitches(PDP1 *pdp, Panel *panel);
 extern void updatelights(PDP1 *pdp, Panel *panel);
@@ -775,7 +775,7 @@ ConfigurationSettingP configSettingP;
 
 // Called on SIGHUP to reload config file
 void
-reconfigure()
+reconfigure(int sig)
 {
     reloadConfigFile(CONFIG_FILE);
     configure();

@@ -42,6 +42,7 @@
 #define PENBUFSIZE  64              // read up to this many lightpen update commands at once
 #define CMDBUFSIZE  64              // buffer this many display commands
 #define DPYBUFSIZE  256             // buffer this many outgoing dpy commands, can be many more than CMDBUFSIZE
+#undef NEVER
 #define NEVER ~((uint64_t)0)        // a long time from now
 #define null 0
 #define isOpen(ctlP) ((ctlP)->fd >= 0)
@@ -100,6 +101,8 @@ static bool lightpenReader(DisplayControlP ctlP);
 static int cvtDpyTo1024(int dpy);
 static uint64_t currentTime(void);
 static void initializeDisplayControl(DisplayControlP ctlP);
+static bool lockDisplayDataByCtlP(DisplayControlP ctlP);
+static bool unlockDisplayDataByCtlP(DisplayControlP ctlP);
 
 // This is the processing thread
 static void *worker(void *);
@@ -171,8 +174,7 @@ DisplayControlP ctlP;
         return(false);
     }
 
-    sem_wait(&(ctlP->dataSym));
-    return(true);
+    return( lockDisplayDataByCtlP(ctlP) );
 }
 
 bool
@@ -185,6 +187,19 @@ DisplayControlP ctlP;
         return(false);
     }
 
+    return( unlockDisplayDataByCtlP(ctlP) );
+}
+
+static bool
+lockDisplayDataByCtlP(DisplayControlP ctlP)
+{
+    sem_wait(&(ctlP->dataSym));
+    return(true);
+}
+
+static bool
+unlockDisplayDataByCtlP(DisplayControlP ctlP)
+{
     sem_post(&(ctlP->dataSym));
 }
 
@@ -202,9 +217,9 @@ DisplayControlP ctlP;
     {
         if( (ctlP = getDisplayControlP(i)) && isOpen(ctlP) )
         {
-            lockDisplayData(ctlP);
+            lockDisplayDataByCtlP(ctlP);
             ctlP->lpRadius2 = radius2;
-            unlockDisplayData(ctlP);
+            lockDisplayDataByCtlP(ctlP);
         }
     }
 }
@@ -325,10 +340,10 @@ DisplayControlP ctlP;
         return(false);
     }
 
-    lockDisplayData(ctlP);
+    lockDisplayDataByCtlP(ctlP);
     if( !ctlP->penDown || !ctlP->lpData )
     {
-        unlockDisplayData(ctlP);
+        lockDisplayDataByCtlP(ctlP);
         return(false);
     }
 
@@ -346,7 +361,7 @@ DisplayControlP ctlP;
         ctlP->lpData = false;
     }
 
-    unlockDisplayData(ctlP);
+    lockDisplayDataByCtlP(ctlP);
     return(gotHit);
 }
 
@@ -721,7 +736,7 @@ static bool penDown;
         }
     }
 
-    lockDisplayData(ctlP);
+    lockDisplayDataByCtlP(ctlP);
     if( gotPosition )
     {
         ctlP->lpX = lastX;
@@ -730,7 +745,7 @@ static bool penDown;
     }
 
     ctlP->penDown = penDown;
-    unlockDisplayData(ctlP);
+    lockDisplayDataByCtlP(ctlP);
 
     // Turn on fast ack to minimize delays.
     // This might or might not improve lightpen performance.

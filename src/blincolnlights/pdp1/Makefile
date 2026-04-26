@@ -1,5 +1,5 @@
 #CC=gcc -w -O3
-CC=gcc -w -g
+CC=gcc -g
 
 INC=-I..
 LIBS=-lpthread -lm -lSDL2

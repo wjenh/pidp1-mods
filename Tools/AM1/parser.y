@@ -38,6 +38,7 @@ extern SymListP constsListP;            // the list of all constant groups
 extern bool noWarn;
 extern bool doMacro;
 extern bool sawBank;
+extern bool dropIncludeText;
 extern bool doSymtab;
 extern int lineno;
 extern char *filenameP;
@@ -69,14 +70,15 @@ void vwarn(int errtype, const char *msgP, ...);
 
 int yylex(void);
 
-extern PNodeP binop(int lineNo, int pc, int value, PNodeP leftP, PNodeP rightP);
-extern PNodeP unop(int lineNo, int pc, int value, PNodeP expP);
-extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 extern int evalExpr(PNodeP);
 extern long int hashExpr(PNodeP);
 extern bool doWarn(int errType);
+extern bool fileIsMain(char *nameP);
 extern void checkPCBound(char *msgP, int pc, int lineNo);
 extern void leave(int);
+extern PNodeP binop(int lineNo, int pc, int value, PNodeP leftP, PNodeP rightP);
+extern PNodeP unop(int lineNo, int pc, int value, PNodeP expP);
+extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 
 %}
 
@@ -594,6 +596,10 @@ terminator      : terminators
                 {
 		    $$ = newnode(lineno, cur_pc, FILENAME, NILP, NILP);
                     $$->value.strP = $1;
+                    if( dropIncludeText && !fileIsMain($1) )
+                    {
+                        $$->flags |= PN_NOTEXT;
+                    }
                     atSol = true;
                 }
                 ;

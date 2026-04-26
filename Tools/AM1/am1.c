@@ -11,6 +11,7 @@
  * -m	generate macro1 source
  * -M	memory overwrite by code is a warning, not a fatal error
  * -n	don't run cpp on input source
+ * -N	don't keep any contents from include files in the listing
  * -r	don't write a loader at the beginning of a tape
  * -s	generate a symbol table file
  * -v   print the current version number and exit
@@ -90,6 +91,7 @@
  * 08-Apr-2026 - fix some formatting issue with trailing comments in macro output
  * 12-Apr-2026 - minor change, turn off cpp warning about unterminated quotes in flex text strings
  * 26-Apr-2026 - add c-style block comments
+ * 26-Apr-2026 - add -N to suppress included file text in listing
  *
 */
 #include <unistd.h>
@@ -128,7 +130,8 @@ Warning warnings[] = {
 Inc_itemP incsP;                // the list of cpp stuff 
 FILE *outfP;                    // where we put our code 
 
-char *filenameP;                // input am1 file 
+char *origFilenameP;            // command line input am1 file 
+char *filenameP;                // current input am1 file 
 char pfilename[128];            // cpp tmp file name
 char ofilename[128];            // output file 
 char basename[64];              // base name 
@@ -149,6 +152,7 @@ bool dumpTree;
 bool sawBank;
 bool noWarn;
 bool noMemFatal;
+bool dropIncludeText;
 int lineno;
 
 extern int yydebug;
@@ -167,13 +171,14 @@ extern char *am1_version;
 extern FILE *yyin;              // lex input file 
 extern int yyparse();
 
-void enableAllWarnings(void);
-void enableWarning(char *nameP);
-bool doWarn(int warnID);
-void add_cpp(char, char *);
-void leave(int);
 int run_cpp(char *, char *);
 int usage();
+bool doWarn(int warnID);
+void add_cpp(char, char *);
+bool fileIsMain(char *nameP);
+void enableAllWarnings(void);
+void enableWarning(char *nameP);
+void leave(int);
 void dumpParseTree(PNodeP);
 void dumpExpr(PNodeP);
 
@@ -197,6 +202,7 @@ SymNodeP symP;
     keepMinusZero = false;
     spaceIsAdd = false;
     noWarn = true;
+    dropIncludeText = false;
 
     for(i = 1; i < NSIG;)
     {
@@ -263,6 +269,10 @@ SymNodeP symP;
 
             case 'n':
                 doCpp = false;
+                break;
+
+            case 'N':
+                dropIncludeText = true;
                 break;
 
             case 'p':
@@ -350,7 +360,7 @@ SymNodeP symP;
         doBinary = true;                                    // default is binary
     }
 
-    filenameP = *argv;                                      // src file name */
+    origFilenameP = filenameP = *argv;                      // src file name */
 
     if((cP = strrchr(filenameP, '/')))
     {
@@ -1015,7 +1025,7 @@ leave(int signo)
 int
 usage()
 {
-    fprintf(stderr, "Usage: am1 [-abdmMlnsvz[xykp]] [-Dsymbol]... [-Ipath]... [-irootpath]\n");
+    fprintf(stderr, "Usage: am1 [-abdmMlnNsvz[xykp]] [-Dsymbol]... [-Ipath]... [-irootpath]\n");
     fprintf(stderr, "  [-W[=warning]]... sourcefile\n\n");
     fprintf(stderr, "  -a treat space in expressions as add, not or\n");
     fprintf(stderr, "  -b generate binary code\n");
@@ -1024,6 +1034,7 @@ usage()
     fprintf(stderr, "  -m generate macro1 code\n");
     fprintf(stderr, "  -M memory overwrite is a warning, not a fatal error\n");
     fprintf(stderr, "  -n don't run cpp\n");
+    fprintf(stderr, "  -N drop any include file text from listing\n");
     fprintf(stderr, "  -r don't write a loader at the beginning of the binary file\n");
     fprintf(stderr, "  -s generate a symbol table file\n");
     fprintf(stderr, "  -v print the am1 version number and exit\n");
@@ -1178,4 +1189,11 @@ WarningP warnP;
     }
 
     return( !noWarn );
+}
+
+// True if the passed name is the same as the name given on the command line, else false.
+bool
+fileIsMain(char *nameP)
+{
+    return( !strcmp(nameP, origFilenameP) );
 }

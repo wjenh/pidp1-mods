@@ -5,16 +5,13 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdbool.h>
+#include <stdarg.h>
 
 #include "am1.h"
 #include "y.tab.h"
 
-extern bool sawBank;
-extern int lineno;
-extern BankContextP banksP;
-
-extern int evalExpr(PNodeP);
-extern char flexoToAscii(char fchar, int *shift);
+static bool doOutput;
 
 static void startLine(bool noValue, FILE *outP, PNodeP nodeP);
 static void listStatements(FILE *, PNodeP);
@@ -26,16 +23,25 @@ static void listVars(FILE *outfP, PNodeP nodeP);
 static void listConstants(FILE *outfP, PNodeP nodeP, SymNodeP symP);
 static void flxToA(FlexText flexText, char *rsltP);
 static void formatCcomment(FILE *outfP, PNodeP nodeP);
+static void output(FILE *fP, bool emit, char *fmtP,  ...);
 
-void verror(char *msgP, ...);
+extern bool sawBank;
+extern bool dropIncludeText;
+extern int lineno;
+extern BankContextP banksP;
+
+extern int evalExpr(PNodeP);
+extern char flexoToAscii(char fchar, int *shift);
+extern void verror(char *msgP, ...);
 
 // Walk a tree and list a listing
 int
 listCodegen(FILE *outfP, PNodeP rootP)
 {
+    doOutput = true;
     // The root is a HEADER.
     // The root lhs is the program body, the rhs the START or STOP at the end of the program.
-    fprintf(outfP,"%s\n", rootP->value.strP);
+    output(outfP, doOutput,"%s\n", rootP->value.strP);
     listStatements(outfP, rootP->leftP);
 
     // Do any trailing constants and vars
@@ -48,7 +54,7 @@ listCodegen(FILE *outfP, PNodeP rootP)
             node.pc = bankP->cur_pc;    // need a node for the pc
             node.bank = bankP->bank;
             node.lineNo = lineno;
-            fprintf(outfP, "// Constants for bank %d\n", bankP->bank);
+            output(outfP, doOutput, "// Constants for bank %d\n", bankP->bank);
             listConstants(outfP, &node, bankP->constSymP);
         }
 
@@ -58,18 +64,18 @@ listCodegen(FILE *outfP, PNodeP rootP)
             node.bank = bankP->bank;
             node.lineNo = lineno;
             node.value.ptr = bankP->varNodesP;
-            fprintf(outfP, "// Variables for bank %d\n", bankP->bank);
+            output(outfP, doOutput, "// Variables for bank %d\n", bankP->bank);
             listVars(outfP, &node);
         }
     }
 
     if( rootP->rightP->type == START )
     {
-        fprintf(outfP,"start %o\n", rootP->rightP->value.ival);
+        output(outfP, doOutput,"start %o\n", rootP->rightP->value.ival);
     }
     else
     {
-        fprintf(outfP,"stop\n");
+        output(outfP, doOutput,"stop\n");
     }
     return(1);
 }
@@ -90,11 +96,11 @@ char str[128];
             if( nodeP->flags & PN_SOL )
             {
                 // The comment was a line by itself
-                fprintf(outfP, "%4d:               //%s\n", nodeP->lineNo, nodeP->value.strP);
+                output(outfP, doOutput, "%4d:               //%s\n", nodeP->lineNo, nodeP->value.strP);
             }
             else
             {
-                fprintf(outfP, "      //%s\n", nodeP->value.strP);
+                output(outfP, doOutput, "      //%s\n", nodeP->value.strP);
             }
             break;
 
@@ -103,19 +109,23 @@ char str[128];
             break;
 
         case FILENAME:
-            fprintf(outfP, "File %s\n", nodeP->value.strP);
+            doOutput = !(nodeP->flags & PN_NOTEXT);
+            if( !dropIncludeText )
+            {
+                output(outfP, doOutput, "File %s\n", nodeP->value.strP);
+            }
             break;
 
         case ORIGIN:
             startLine(true, outfP, nodeP);
-            fprintf(outfP, "%o/", nodeP->value.ival);
+            output(outfP, doOutput, "%o/", nodeP->value.ival);
             if( nodeP->rightP )
             {
                 listOperand(outfP, nodeP->rightP);
             }
             else
             {
-                fprintf(outfP,"\n");
+                output(outfP, doOutput,"\n");
             }
             break;
 
@@ -127,38 +137,38 @@ char str[128];
         case LOCATION:
         case LCLLOCATION:
             startLine((nodeP->rightP)?false:true, outfP, nodeP);
-            fprintf(outfP, "%s,", nodeP->value.symP->name);
+            output(outfP, doOutput, "%s,", nodeP->value.symP->name);
             if( nodeP->rightP )
             {
-                fprintf(outfP," ");
+                output(outfP, doOutput," ");
                 listOperand(outfP, nodeP->rightP);
             }
             break;
 
         case VARS:
-            fprintf(outfP,"// variables\n");
+            output(outfP, doOutput,"// variables\n");
             listVars(outfP, nodeP);
             break;
 
         case BANK:
             startLine(true, outfP, nodeP);
-            fprintf(outfP,"bank %d", nodeP->value.ival );
+            output(outfP, doOutput,"bank %d", nodeP->value.ival );
             break;
 
         case CONSTANTS:
             startLine(true, outfP, nodeP);
-            fprintf(outfP,"constants\n");
+            output(outfP, doOutput,"constants\n");
             listConstants(outfP, nodeP, nodeP->value.symP);
             break;
 
         case TEXT:
-            fprintf(outfP, "// Text table\n");
+            output(outfP, doOutput, "// Text table\n");
             listText(outfP, nodeP, nodeP->value.flexText);
-            fprintf(outfP, "// End\n");
+            output(outfP, doOutput, "// End\n");
             break;
 
         case TABLE:
-            fprintf(outfP,"// table %o\n", nodeP->value.ival);
+            output(outfP, doOutput,"// table %o\n", nodeP->value.ival);
             if( nodeP->rightP )     // has initializer
             {
                 j = evalExpr(nodeP->rightP);
@@ -167,35 +177,35 @@ char str[128];
                 {
                     startLine(false, outfP, nodeP);
                     nodeP->pc++;
-                    fprintf(outfP, "    %o\n", j);
+                    output(outfP, doOutput, "    %o\n", j);
                 }
             }
             else
             {
                 startLine(false, outfP, nodeP);
-                fprintf(outfP, "    . = .+%o\n", nodeP->value.ival);
+                output(outfP, doOutput, "    . = .+%o\n", nodeP->value.ival);
             }
 
-            fprintf(outfP, "// End");
+            output(outfP, doOutput, "// End");
             break;
 
         case ASCII:
-            fprintf(outfP, "// Ascii table\n");
+            output(outfP, doOutput, "// Ascii table\n");
             listAscii(outfP, nodeP, nodeP->value.strP);
-            fprintf(outfP, "// End");
+            output(outfP, doOutput, "// End");
             break;
 
         case SEMI:
-            fprintf(outfP, ";\n");
+            output(outfP, doOutput, ";\n");
             break;
 
         case TERMINATOR:
-            fprintf(outfP, "\n");       // a bare terminator doesn't get a line number if output
+            output(outfP, doOutput, "\n");       // a bare terminator doesn't get a line number if output
             break;
 
         case VAR:
             startLine(true, outfP, nodeP);
-            fprintf(outfP, "var ");
+            output(outfP, doOutput, "var ");
             listVar(outfP, nodeP->rightP);
             break;
 
@@ -203,21 +213,21 @@ char str[128];
             startLine(true, outfP, nodeP);
             if( *(nodeP->value.strP) != '<' )
             {
-                fprintf(outfP, "import \"%s\"", nodeP->value.strP);
+                output(outfP, doOutput, "import \"%s\"", nodeP->value.strP);
             }
             else
             {
-                fprintf(outfP, "import %s", nodeP->value.strP);
+                output(outfP, doOutput, "import %s", nodeP->value.strP);
             }
             break;
 
         case EXPORT:
             startLine(true, outfP, nodeP);
-            fprintf(outfP, "export ");
+            output(outfP, doOutput, "export ");
             for( node2P = nodeP->rightP; node2P; node2P = node2P->leftP )
             {
                 cP = (node2P->type == NAME)?node2P->value.strP:node2P->value.symP->name;
-                fprintf(outfP, "%s%s", cP, (node2P->leftP)?", ":"");
+                output(outfP, doOutput, "%s%s", cP, (node2P->leftP)?", ":"");
             }
             break;
 
@@ -289,7 +299,7 @@ PNodeP node2P;
                 nodeP->value.ival);
         }
 
-        fprintf(outfP,"%s", cP);
+        output(outfP, doOutput,"%s", cP);
         listOperand(outfP, nodeP->rightP);
         break;
 
@@ -297,16 +307,16 @@ PNodeP node2P;
         switch( nodeP->value.ival )
         {
         case PARENS:
-            fprintf(outfP,"(");
+            output(outfP, doOutput,"(");
             listOperand(outfP, nodeP->rightP);
-            fprintf(outfP,")");
+            output(outfP, doOutput,")");
             break;
         case UMINUS:
-            fprintf(outfP,"-");
+            output(outfP, doOutput,"-");
             listOperand(outfP, nodeP->rightP);
             break;
         case CMPL:
-            fprintf(outfP, "~");
+            output(outfP, doOutput, "~");
             listOperand(outfP, nodeP->rightP);
             break;
         default:
@@ -315,71 +325,71 @@ PNodeP node2P;
         break;
 
     case CONSTANT:
-        fprintf(outfP,"[");
+        output(outfP, doOutput,"[");
         listOperand(outfP, nodeP->value.symP->ptr);
-        fprintf(outfP,"]");
+        output(outfP, doOutput,"]");
         if( nodeP->rightP )
         {
             // can only be a comment
-            fprintf(outfP,"  // %s\n", nodeP->rightP->value.strP);
+            output(outfP, doOutput,"  // %s\n", nodeP->rightP->value.strP);
         }
         else
         {
-            fprintf(outfP,"\n");
+            output(outfP, doOutput,"\n");
         }
         break;
 
     case DOT:
-        fprintf(outfP,".");
+        output(outfP, doOutput,".");
         break;
 
     case OPORABLE:
     case OPCODE:
     case OPADDR:
-        fprintf(outfP,"%s", nodeP->value.symP->name );
+        output(outfP, doOutput,"%s", nodeP->value.symP->name );
         break;
 
     case BREF:
-        fprintf(outfP,"%s:%d", nodeP->value.symP->name, nodeP->value2.ival );
+        output(outfP, doOutput,"%s:%d", nodeP->value.symP->name, nodeP->value2.ival );
         break;
 
     case LCLADDR:
         symP = nodeP->value.symP;
-        fprintf(outfP, "%s", symP->name);
+        output(outfP, doOutput, "%s", symP->name);
         break;
 
     case ADDR:
         symP = nodeP->value.symP;
-        fprintf(outfP, "%s", symP->name );
+        output(outfP, doOutput, "%s", symP->name );
         break;
 
     case LITCHAR:
-        fprintf(outfP, "'\\%03o'", nodeP->value.ival);
+        output(outfP, doOutput, "'\\%03o'", nodeP->value.ival);
         break;
 
     case CHAR:
-        fprintf(outfP, "char '%c'", nodeP->value.ival);
+        output(outfP, doOutput, "char '%c'", nodeP->value.ival);
         break;
 
     case FLEXO:
-        fprintf(outfP, "flexo %06o", nodeP->value.ival);
+        output(outfP, doOutput, "flexo %06o", nodeP->value.ival);
         break;
 
     case INTEGER:
-        fprintf(outfP, "%o", nodeP->value.ival & WRDMASK);
+        output(outfP, doOutput, "%o", nodeP->value.ival & WRDMASK);
         break;
 
     case VALUESPEC:
-        fprintf(outfP, "%s", nodeP->value.symP->name);
+        output(outfP, doOutput, "%s", nodeP->value.symP->name);
         break;
 
     case FORCELOC:
-        fprintf(outfP, "%%forcelocal");
+        output(outfP, doOutput, "%%forcelocal");
         break;
 
     case LOCAL:
     case ADDLOCAL:
-        fprintf(outfP, (nodeP->type == LOCAL)?"local":"addlocal");
+        output(outfP, doOutput, (nodeP->type == LOCAL)?"local":"addlocal");
         if( (node2P = nodeP->rightP) )
         {
             while( node2P )
@@ -393,17 +403,17 @@ PNodeP node2P;
                     cP = node2P->value.strP;
                 }
 
-                fprintf(outfP, " %s%s", cP, (node2P->leftP)?",":"");
+                output(outfP, doOutput, " %s%s", cP, (node2P->leftP)?",":"");
                 node2P = node2P->leftP;
             }
         } 
         break;
 
     case ENDLOC:
-        fprintf(outfP, "endloc");
+        output(outfP, doOutput, "endloc");
         if( nodeP->value.ival != -1 )
         {
-            fprintf(outfP, " %d", nodeP->value.ival);
+            output(outfP, doOutput, " %d", nodeP->value.ival);
         }
         break;
 
@@ -418,7 +428,7 @@ listAscii(FILE *outfP, PNodeP nodeP, char *strP)
 {
 int i;
 
-    fprintf(outfP,"// ascii \"%s\"\n", strP);
+    output(outfP, doOutput,"// ascii \"%s\"\n", strP);
     for( i = 0; *strP != 0; i ^= 1 )
     {
         if( !i )
@@ -427,22 +437,22 @@ int i;
             nodeP->pc++;    // because we only get the initial node
         }
 
-        fprintf(outfP, "%03o", *strP++);
+        output(outfP, doOutput, "%03o", *strP++);
 
         if( i )
         {
-            fprintf(outfP, "\n");
+            output(outfP, doOutput, "\n");
         }
     }
 
     if( i )
     {
-        fprintf(outfP, "000\n");
+        output(outfP, doOutput, "000\n");
     }
     else
     {
         startLine(false, outfP, nodeP);
-        fprintf(outfP, " 000000\n");
+        output(outfP, doOutput, " 000000\n");
     }
 }
 
@@ -456,7 +466,7 @@ char *bufP;
 char buf[256];
 
     flxToA(flexText, buf);
-    fprintf(outfP,"// text \"%s\"\n", buf);
+    output(outfP, doOutput,"// text \"%s\"\n", buf);
     bufP = flexText.bufP;
 
     // Node will only have the pc of the first word, adjust as we go
@@ -466,7 +476,7 @@ char buf[256];
         {
             startLine(false, outfP, nodeP);
             nodeP->pc++;
-            fprintf(outfP, " %06o\n", val);
+            output(outfP, doOutput, " %06o\n", val);
             val = 0;
         }
 
@@ -482,12 +492,12 @@ char buf[256];
         }
 
         startLine(false, outfP, nodeP);
-        fprintf(outfP, " %06o\n", val);
+        output(outfP, doOutput, " %06o\n", val);
     }
     else if( (i >= flexText.nchars) && !( i % 3) )
     {
         startLine(false, outfP, nodeP);
-        fprintf(outfP, " %06o\n", val);      // didn't list the word yet
+        output(outfP, doOutput, " %06o\n", val);      // didn't list the word yet
     }
 }
 
@@ -636,14 +646,29 @@ char *nextP;
             *nextP++ = '\0';
         }
 
-        fprintf(outfP, "%4d:           %s", lineNo, curP);
+        output(outfP, doOutput, "%4d:           %s", lineNo, curP);
         curP = nextP;
 
         if( nextP )
         {
-            fprintf(outfP,"\n");
+            output(outfP, doOutput,"\n");
         }
     }
     
-    fprintf(outfP,"*/\n");
+    output(outfP, doOutput,"*/\n");
 }
+
+// Conditionally output a line.
+static void
+output(FILE *fP, bool emit, char *fmtP,  ...)
+{
+va_list argP;
+
+    if( emit )
+    {
+        va_start(argP, fmtP);
+        vfprintf(fP,fmtP,argP);
+        va_end(argP);
+    }
+}
+

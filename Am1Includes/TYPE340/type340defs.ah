@@ -1,6 +1,9 @@
-// Defines for the Type 340 display IOTs
 #ifndef TYPE340DEFS_H
 #define TYPE340DEFS_H
+/* Defines for the Type 340 display IOTs
+ * These don't match the originals, but they were too cryptic.
+ * See the documentation for details on use.
+ */
 
 #define dla 0720015
 #define drs 0720115

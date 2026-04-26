@@ -219,7 +219,7 @@ DisplayControlP ctlP;
         {
             lockDisplayDataByCtlP(ctlP);
             ctlP->lpRadius2 = radius2;
-            lockDisplayDataByCtlP(ctlP);
+            unlockDisplayDataByCtlP(ctlP);
         }
     }
 }
@@ -343,7 +343,7 @@ DisplayControlP ctlP;
     lockDisplayDataByCtlP(ctlP);
     if( !ctlP->penDown || !ctlP->lpData )
     {
-        lockDisplayDataByCtlP(ctlP);
+        unlockDisplayDataByCtlP(ctlP);
         return(false);
     }
 
@@ -361,7 +361,7 @@ DisplayControlP ctlP;
         ctlP->lpData = false;
     }
 
-    lockDisplayDataByCtlP(ctlP);
+    unlockDisplayDataByCtlP(ctlP);
     return(gotHit);
 }
 
@@ -745,7 +745,7 @@ static bool penDown;
     }
 
     ctlP->penDown = penDown;
-    lockDisplayDataByCtlP(ctlP);
+    unlockDisplayDataByCtlP(ctlP);
 
     // Turn on fast ack to minimize delays.
     // This might or might not improve lightpen performance.

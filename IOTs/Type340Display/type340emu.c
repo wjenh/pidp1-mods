@@ -10,6 +10,9 @@
  *
  * 20-Apr-2026 wje initial implementation
  * 23-Apr-2026 wje switch to a semaphore for synchronization, more efficient
+ * 25-Apr-2026 wje switch from nanosleep() to a spin-wait, the resheculing by Linux is just too unpredictable.
+ *    It now uses the spin-wait for all of the short delays, nanosleep() for the 35us dot delay, and lets
+ *    rescheduling happen otherwise by the semaphore wait at the end of a display cycle.
  *
  */
 
@@ -232,6 +235,7 @@ static void setEdgeViolation(Status status);
 static void emuOrFlags(int newFlags);   // only used internally
 static void emuClearFlag(int flagbit);  // only used internally
 static void nanodelay(int ns);
+static void nanopause(int ns);
 static void configure(void);
 
 // Interface to the low-level display subssystem
@@ -542,14 +546,14 @@ Status status;
                     curY = POINT_ADDRESS(word);
                     if( POINT_INTENSIFY(word) )
                     {
-                        nanodelay(35000);           // 35 us positioning and draw delay
+                        nanopause(35000);           // 35 us positioning and draw delay
                     }
                     iotCondLog(LOG_POINT, "vertical 0%d\n", curY);
                 }
                 else
                 {
                     curX = POINT_ADDRESS(word);
-                    nanodelay(35000);               // 35 us delay always
+                    nanopause(35000);               // 35 us delay always
                     iotCondLog(LOG_POINT, "horizontal 0%d\n", curX);
                 }
 
@@ -628,6 +632,10 @@ Status status;
                         {
                             sawEscape = true;
                             iotCondLog(LOG_VECTOR, "vector escape\n");
+                            // In order to minimize reschedulint by Linux, all the waiting is done at the end.
+                            // No, not strictly accurate but the end timing is the same.
+                            // We don't spinwait on each point because a full vector takes 1.5 milliseconds.
+                            nanodelay(brmState.nPoints * 1500);   // 1.5 us/point
                         }
 
                         if( status != COMPLETED )
@@ -670,10 +678,12 @@ Status status;
                             isPaused = true;
                         }
                     }
+                    /*
                     else
                     {
                         nanodelay(1500);             // 1500 ns move time
                     }
+                    */
                 }
                 break;
 
@@ -1409,15 +1419,36 @@ ConfigurationSettingP settingP;
     }
 }
 
-// What it says, wait ns nanoseconds, allow rescheduling
+// Wait ns nanoseconds in a spinloop so we don't reschedule while drawing.
 void
 nanodelay(int ns)
 {
 struct timespec tm;
+uint64_t startTime;
+uint64_t now;
 
+    clock_gettime( CLOCK_MONOTONIC, &tm );
+    startTime = tm.tv_nsec;
+    startTime += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
+
+    for( now = startTime; (now - startTime) < ns; )
+    {
+        clock_gettime( CLOCK_MONOTONIC, &tm );
+        now = tm.tv_nsec;
+        now += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
+    }
+}
+
+// Wait ns nanoseconds, allow rescheduling.
+// This usually means significantly longer than what is requested.
+void
+nanopause(int ns)
+{
+struct timespec tm;
+    
     tm.tv_sec = 0;
     tm.tv_nsec = ns;
-    nanosleep( &tm, nil );
+    nanosleep(&tm, 0);
 }
 
 // See if there is a pending response.

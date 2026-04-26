@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.31 26-Apr-2026"
-#define AM1SHORTVERSION "am1 v1.31"
+#define AM1VERSION "am1 v1.32 26-Apr-2026"
+#define AM1SHORTVERSION "am1 v1.32"
 #define SYMFILEVERSION "V2"             // used for import to check proper version
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -40,6 +40,7 @@
 // PNode flags
 #define PN_NOINC    1   // don't increment pc
 #define PN_SOL      2   // used to signal a comment at the beginning of a line
+#define PN_NOTEXT   4   // used to signal no included text in listing file
 
 // Symbol table flags amd such
 #define SYM_VALUE 1

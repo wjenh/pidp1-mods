@@ -62,10 +62,11 @@ void reset_line(void);
 			}
 
 <CCOMMENT>"*/"		{
-			    BEGIN(INITIAL);
+			    BEGIN BODY;
 			    *commentP = '\0';
 			    yylval.strP = malloc(commentP - commentBuf + 1);
 			    strcpy(yylval.strP, commentBuf);
+			    unput('\n');	// sometimes lookahead screws up start-of-line
 			    return(CSCOMMENT);
 			}
 

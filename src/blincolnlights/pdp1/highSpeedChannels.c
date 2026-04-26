@@ -137,7 +137,7 @@ HSCControlP ctlP;
 // Main interaction from user side.
 // Returns HSC_ERR for invalid chan, mode, count > 4096, banks out of range of 0-15 dec.
 // Returns HSC_BUSY if a request is still executing.
-// Returns HSC_OK and locks the channel otherwise.
+// Returns HSC_OK otherwise.
 int
 HSCexecute(HSCChannelP chanP, HSCRequestP rqstP)
 {
@@ -251,9 +251,11 @@ HSCControlP ctlP;
     if( ctlP->waitDelay > 0 )
     {
         pdp1P->hsc = 1;
+        updatelights(pdp1P, pdp1P->panel);
         usleep(ctlP->waitDelay);
         ctlP->waitDelay = 0;
         pdp1P->hsc = 0;
+        updatelights(pdp1P, pdp1P->panel);
         return(HSC_DONE);
     }
 

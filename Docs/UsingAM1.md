@@ -2,7 +2,7 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.27 and covers up through am1 version 1.31; it will be updated as needed.\
+This is version 1.28 and covers up through am1 version 1.31; it will be updated as needed.\
 Edit date 26-Apr-2026
 
 ## What is **am1**?
@@ -196,7 +196,7 @@ Just type make.
 
 ## Usage
 
-**am1** [-abdmMlnsvz[xykp]] [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
+**am1** [-abdmMlnNsvz[xykp]] [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
 
 - a space means add, default is or
 - b generate binary tape image code, the default action
@@ -205,6 +205,7 @@ Just type make.
 - M memory overwrite by code is a warning, not a fatal error
 - l generate a program listing
 - n don't run **cpp** on the input
+- N don't keep any text from an included file in a listing
 - r don't output an initial rim loader
 - s generate a symbol table, automatic if exports are done
 - v print the version number and exit
@@ -296,8 +297,6 @@ Multiple statements on a line will be listed on separate lines, but the line num
 Empty lines are generally eliminated for clarity, since **cpp** tends to generate a lot of them when its
 directives are processed.
 
-Comments do not show line numbers, only actual statements do so.
-
 #define statements are not listed, but the expansion is.
 
 While a listing can be produced for either macro or binary, the binary value for each location is only
@@ -305,6 +304,9 @@ available if binary has been generated.
 For macro only output, since it is still a source file, no binary value for a location is available.
 Of course, **macro1** will produce its own listing file, so creating one via **am1** is fairly useless other
 than seeing macro expansions.
+
+The *-N* command line flag can be used to reduce clutter by suppressing any text that comes from an included file.
+However, you will not see any information from those. The code in them will still be assembled.
 
 ## Output files
 

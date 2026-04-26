@@ -9,20 +9,25 @@
 #include "symtab.h"
 #include "y.tab.h"
 
-#define STRBUF 1024	/* maximum literal string length */
+#define STRBUF 1024		/* maximum literal string length */
+#define MAXCCOMMENT 4096	/* maximum c-style comment length */
 
-bool decimalMode = false;
-bool inConstant = false;
-bool sawSemi = false;
-bool noIncrement = false;
+static bool decimalMode = false;
+static bool inConstant = false;
+static bool sawSemi = false;
+static bool noIncrement = false;
+
+static char *commentP;
+static char commentBuf[MAXCCOMMENT];
 
 extern int lineno;
 extern char *filenameP;
-
 extern SymNodeP permSymP;
 extern SymNodeP globalSymP;
 
+int countNLs(char *strP);
 SymNodeP resolveLocalSymbol(char *nameP);
+
 extern void verror(char *msgP, ...);
 extern void vwarn(int errtype, char *msgP, ...);
 extern char asciiToFlexo(char, int *);	// in parsefns.c
@@ -35,7 +40,7 @@ void reset_line(void);
 %}
 
 %s BODY
-%x FIRST DOASCII DOTEXT CONST
+%x FIRST DOASCII DOTEXT CONST CCOMMENT
 
 %%
 
@@ -45,6 +50,92 @@ void reset_line(void);
 			    yylval.strP = malloc(strlen(yytext) + 1);
 			    strcpy(yylval.strP, yytext);
 			    return(HEADER);
+			}
+
+^[ \t]*"/*"		{
+			    BEGIN(CCOMMENT);
+			    strcpy(commentBuf, yytext);
+			    commentP = commentBuf + strlen(commentBuf);
+			    *commentP = '\0';
+			    yylval.ival = lineno;
+			    return(CSSTART);
+			}
+
+<CCOMMENT>"*/"		{
+			    BEGIN(INITIAL);
+			    *commentP = '\0';
+			    yylval.strP = malloc(commentP - commentBuf + 1);
+			    strcpy(yylval.strP, commentBuf);
+			    return(CSCOMMENT);
+			}
+
+<CCOMMENT>\n		{
+			    ++lineno;
+
+			    if( commentP >= &commentBuf[MAXCCOMMENT] )
+			    {
+			    	verror("C-style comment exceeds %d characters", MAXCCOMMENT - 1);
+			    }
+
+			    *commentP++ = yytext[0];
+			}
+
+<CCOMMENT>[^*\n]*	{
+			int len;
+
+			    len = strlen(yytext);
+			    if( (commentP + len) >= &commentBuf[MAXCCOMMENT] )
+			    {
+			    	verror("C-style comment exceeds %d characters", MAXCCOMMENT - 1);
+			    }
+
+			    strcpy(commentP, yytext);
+			    commentP += len;
+			}
+
+<CCOMMENT>"*"+[^*/\n]*	{
+			int len;
+
+			    len = strlen(yytext);
+			    if( (commentP + len) >= &commentBuf[MAXCCOMMENT] )
+			    {
+			    	verror("C-style comment exceeds %d characters", MAXCCOMMENT - 1);
+			    }
+
+			    strcpy(commentP, yytext);
+			    commentP += len;
+			}
+
+<CCOMMENT><<EOF>>	{
+			    verror("unterminated C-style comment, missing */", yytext);
+			}
+
+[ \t]*"//".*\n		{
+			char *cP;
+
+			    cP = strchr(yytext, '/') + 2;
+			    yylval.strP = malloc(strlen(cP) + 1);
+			    strcpy(yylval.strP, cP);
+			    *strchr(yylval.strP, '\n') = 0;
+
+			    if( inConstant )
+			    {
+			    	noIncrement = true;	// because we're going to push back a newline
+			    }
+
+			    if( !noIncrement && !sawSemi )
+			    {
+			        ++lineno;
+			    }
+			    noIncrement = sawSemi = false;
+
+			    if( inConstant )
+			    {
+			    	unput('\n');
+			    }
+			    inConstant = false;
+
+			    return(COMMENT);
 			}
 
 \%forcelocal		{ return(FORCELOC); }
@@ -201,34 +292,6 @@ octal			{ decimalMode = false; }
 			    return(ENDCONST);
 			}
 
-[ \t]*"//".*\n		{
-			char *cP;
-
-			    cP = strchr(yytext, '/') + 2;
-			    yylval.strP = malloc(strlen(cP) + 1);
-			    strcpy(yylval.strP, cP);
-			    *strchr(yylval.strP, '\n') = 0;
-
-			    if( inConstant )
-			    {
-			    	noIncrement = true;	// because we're going to push back a newline
-			    }
-
-			    if( !noIncrement && !sawSemi )
-			    {
-			        ++lineno;
-			    }
-			    noIncrement = sawSemi = false;
-
-			    if( inConstant )
-			    {
-			    	unput('\n');
-			    }
-			    inConstant = false;
-
-			    return(COMMENT);
-			}
-
 0x[0-9A-Fa-f]+		{
 			    yylval.ival = (int)strtol(yytext,0,16);
 			    return(INTEGER);
@@ -340,7 +403,7 @@ octal			{ decimalMode = false; }
 			    return(SEPARATOR);
 			}
 
-\/[ \t]*[^a-zA-Z0-9\~\%\[] {
+\/[ \t]*[^a-zA-Z0-9\~\%\[\/] {
 			    int ch;
 
 			    ch = yytext[yyleng-1];

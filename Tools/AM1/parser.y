@@ -111,12 +111,14 @@ extern void leave(int);
 %token <strP> NAME
 %token <strP> LCLNAME
 %token <strP> COMMENT
+%token <strP> CSCOMMENT
 %token <strP> ENDLOC
 %token <strP> HEADER
 %token <strP> STRING
 %token <flexText> TEXT
 %token <strP> FILENAME
 %token <strP> LIBFILE
+%token <ival> CSSTART
 %token <ival> CHAR
 %token <ival> FLEXO
 %token <ival> INTEGER
@@ -561,6 +563,11 @@ one_stmt	: expr
 		    $$ = newnode(lineno, cur_pc, IMPORT, NILP, NILP);
                     $$->value.strP = $2;
                     importSymbols($2);
+                }
+                | CSSTART CSCOMMENT
+                {
+                    $$ = newnode($1, cur_pc, CSCOMMENT, NILP, NILP);
+                    $$->value.strP = $2;
                 }
                 ;
 

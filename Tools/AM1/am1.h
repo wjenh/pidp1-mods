@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.30 12-Apr-2026"
-#define AM1SHORTVERSION "am1 v1.30"
+#define AM1VERSION "am1 v1.31 26-Apr-2026"
+#define AM1SHORTVERSION "am1 v1.31"
 #define SYMFILEVERSION "V2"             // used for import to check proper version
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"

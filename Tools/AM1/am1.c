@@ -89,6 +89,7 @@
  * 07-Apr-2026 - finally figured out how to keep cpp from inserting line info markers, can now use std cpp
  * 08-Apr-2026 - fix some formatting issue with trailing comments in macro output
  * 12-Apr-2026 - minor change, turn off cpp warning about unterminated quotes in flex text strings
+ * 26-Apr-2026 - add c-style block comments
  *
 */
 #include <unistd.h>

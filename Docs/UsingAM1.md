@@ -2,8 +2,8 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.26 and covers up through am1 version 1.28; it will be updated as needed.\
-Edit date 7-Apr-2026
+This is version 1.27 and covers up through am1 version 1.31; it will be updated as needed.\
+Edit date 26-Apr-2026
 
 ## What is **am1**?
 
@@ -399,7 +399,7 @@ So, put your comments before the continuation:
 
 Finally, note that the **cpp** preprocessor removes comments from #defines when they are expanded in code.
 
-## General program structure
+## General program structure and comments
 
 All programs start with a title line. This is mandatory. If you forget it, then whatever the first line is
 in the source will be the title, probably not what was expected.
@@ -416,11 +416,34 @@ Using a semicolon allows multiple statements on one line.
 A semicolon does not change the current line number but does change the current location counter.
 A new line changes both.
 
-Comments are also allowed using the **C** notation:
+Comments are also allowed using the new **C** and **C++** notation:
 
-// comment\
-or\
+```
+// comment
+```
+or
+```
 statement.... // comment
+```
+or block comments are allowed using the traditional **C** notation:
+
+```
+/* comment */
+```
+and
+```
+/* multi
+   line
+   block comment
+*/
+```
+
+However, this form is *only* allowed at the beginning of a line, not within or at the end of a line,
+use the // form for that case.
+This is illegal:
+```
+    cla /* end of line comment */
+```
 
 Each statement generally increments the current location by one, but see more below.
 Comments and empty lines do not affect the current location.

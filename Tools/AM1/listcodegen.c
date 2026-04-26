@@ -25,6 +25,7 @@ static bool listVar(FILE *outfP, PNodeP nodeP);
 static void listVars(FILE *outfP, PNodeP nodeP);
 static void listConstants(FILE *outfP, PNodeP nodeP, SymNodeP symP);
 static void flxToA(FlexText flexText, char *rsltP);
+static void formatCcomment(FILE *outfP, PNodeP nodeP);
 
 void verror(char *msgP, ...);
 
@@ -88,13 +89,17 @@ char str[128];
         case COMMENT:
             if( nodeP->flags & PN_SOL )
             {
-                // the comment was a line by itself
-                fprintf(outfP, "%4d: //%s\n", nodeP->lineNo, nodeP->value.strP);
+                // The comment was a line by itself
+                fprintf(outfP, "%4d:               //%s\n", nodeP->lineNo, nodeP->value.strP);
             }
             else
             {
                 fprintf(outfP, "      //%s\n", nodeP->value.strP);
             }
+            break;
+
+        case CSCOMMENT:
+            formatCcomment(outfP, nodeP);
             break;
 
         case FILENAME:
@@ -610,4 +615,35 @@ char *cP;
     }
 
     *outP = 0;
+}
+
+// Deal with C-style comments which can span lines.
+static void
+formatCcomment(FILE *outfP, PNodeP nodeP)
+{
+int lineNo;
+char *curP;
+char *nextP;
+
+    lineNo = nodeP->lineNo;
+    curP = nextP = nodeP->value.strP;
+
+    while( nextP )
+    {
+        ++lineNo;
+        if( (nextP = strchr(curP, '\n')) )
+        {
+            *nextP++ = '\0';
+        }
+
+        fprintf(outfP, "%4d:           %s", lineNo, curP);
+        curP = nextP;
+
+        if( nextP )
+        {
+            fprintf(outfP,"\n");
+        }
+    }
+    
+    fprintf(outfP,"*/\n");
 }

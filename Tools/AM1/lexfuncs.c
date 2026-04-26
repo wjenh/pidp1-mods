@@ -176,3 +176,17 @@ SymNodeP symP;
 
     return( symP );
 }
+
+// Just returns the count of newlines in a string.
+int
+countNLs(char *strP)
+{
+int count;
+
+    for( count = 0; (strP = strchr(strP, '\n')); ++strP )
+    {
+        ++count;
+    }
+
+    return(count);
+}

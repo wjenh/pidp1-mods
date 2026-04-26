@@ -1,0 +1,9 @@
+Test of C-style comments
+100/
+    lai
+    // and a regular one
+    /* by itself
+     *  spanning lines
+     */
+    cla
+start 100

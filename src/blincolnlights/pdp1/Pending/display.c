@@ -1,0 +1,778 @@
+// All the global code for managing the Type 30 display is here, moved frm pdp1.c.
+// It can't be encapsulated in IOT 7 because other code needs it, such as the symbol generator.
+//
+// The original code was not really correct, a real pdp-1 did not manage the display in its own logic,
+// such as display fadeout. That was an intrinsic property of the display itself and had nothing to do with
+// the pdp-1. Of course, the original displays with P7 phosphors aren't what we use now, but the simulation
+// of it should not have been in the main emulation code. In fact, it should be in the display programs
+// themselves, but that's a problem for another time.
+// The compromise is here, done by moving everything related to aging, etc. into a worker thread that is
+// independent of the emulator itself.
+//
+// 12-Apr-2026 wje initial version
+// 23-Apr-2026 wje switch to semaphores, better for this than mutexes
+
+#include <unistd.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <pthread.h>
+#include <semaphore.h>
+
+#include "common.h"
+#include "pdp1.h"
+
+// No particular limit, but the type 340 with option 343 monitors can use up to 17, the impl restricts it to 9
+#define MAXDISPLAYS 9
+
+//#define DOLOGGING
+#include "logger.h"
+#define LOG_INIT 0
+#define LOG_FD 0
+#define LOG_CMD 0
+#define LOG_DPYCMD 0
+#define LOG_DPYWRITE 0
+#define LOG_LP 0
+#define LOG_BOUNDS 0
+#define LOG_AGEDELAY 0
+
+#define WORKERSLEEPTIME 10          // how often worker thread runs, microseconds
+#define PENBUFSIZE  64              // read up to this many lightpen update commands at once
+#define CMDBUFSIZE  64              // buffer this many display commands
+#define DPYBUFSIZE  256             // buffer this many outgoing dpy commands, can be many more than CMDBUFSIZE
+#undef NEVER
+#define NEVER ~((uint64_t)0)        // a long time from now
+#define null 0
+#define isOpen(ctlP) ((ctlP)->fd >= 0)
+
+typedef struct {
+    int fd;             // file descriptor to use
+    int curX, curY;     // last x,y coordinates set, 0-1023
+    int intensity;      // last intensity set
+    uint64_t now;       // really the time the current worker thead cycle started
+    uint64_t lastTime;  // used by addDpyCommand();
+    uint64_t ageTime;   // used by addDpyCommand() and ageDisplay();
+    bool penDown;       // lightpen is on the screen
+    bool lpData;        // set when lp data comes in, cleared when read
+    int lpX, lpY;       // last x,y lightpen coordinates received
+    int lpRadius2;      // used by the lightpen check
+    sem_t controlSym; // for interlocking with the worker thread
+    sem_t dataSym;    // for locking get/setDisplayData
+
+    int numCommands;
+    uint32_t commandBuf[CMDBUFSIZE];
+
+    int numDpyCommands;
+    uint32_t dpyBuf[CMDBUFSIZE];
+} DisplayControl, *DisplayControlP;
+
+DisplayControlP displays[MAXDISPLAYS];
+
+static bool displayInitialized;
+
+// External calls to manage various things.
+int getDisplayFD(int screenNo);
+bool setDisplayFD(int screenNo, int fd);
+bool getDisplayData(int screenNo, int *xP, int *yP, int *intensityP);
+bool setDisplayData(int screenNo, int x, int y, int intensity);
+bool lockDisplayData(int screenNo);
+bool unlockDisplayData(int screenNo);
+
+// Called to set and get the lightpen radius squared used for hit detection.
+void setLightpenRadius2(int screenNo, int radius2);
+int getLightpenRadius2(int screenNo);
+
+// The outside draWing interface.
+bool display(int screenNo, int x, int y, int intensity);
+
+// The outside inteface for checking the lightpen.
+// It will return true if there was a lightpen hit at the given coordinates, else false.
+bool checkLightpen(PDP1 *pdp1P, int screenNo,  int x, int y);
+
+// Internal functions.
+static void initializeDisplaySubsystem(void);
+static bool isDisplayConfigured(int screenNo);
+
+static DisplayControlP initializeDisplay(int screenNo);
+static DisplayControlP getDisplayControlP(int screenNo);
+static bool lightpenReader(DisplayControlP ctlP);
+static int cvtDpyTo1024(int dpy);
+static uint64_t currentTime(void);
+static void initializeDisplayControl(DisplayControlP ctlP);
+static bool lockDisplayDataByCtlP(DisplayControlP ctlP);
+static bool unlockDisplayDataByCtlP(DisplayControlP ctlP);
+
+// This is the processing thread
+static void *worker(void *);
+static void lockControl(DisplayControlP ctlP);
+static void unlockControl(DisplayControlP ctlP);
+static void flushDisplay(DisplayControlP ctlP);
+static void addCommand(DisplayControlP ctlP, int x, int y, int intensity);
+static void putDpyCommand(DisplayControlP ctlP, unsigned int x, unsigned int y, unsigned int intensity);
+static void addDpyCommand(DisplayControlP ctlP, uint32_t cmd);
+static void ageDisplay(DisplayControlP ctlP);
+
+extern int decflg(int flg);
+
+// Set the fd to use, true if screen is valid, false if out of range.
+// Automatically allocate the display if it isn't already.
+// An fd of -1 just closes the current fd if any.
+bool
+setDisplayFD(int screenNo, int fd)
+{
+int fdFlags;
+DisplayControlP ctlP;
+
+    if( !(ctlP = initializeDisplay(screenNo)) )
+    {
+        return(false);
+    }
+
+    lockControl(ctlP);
+    if( ctlP->fd >= 0 )
+    {
+        close(ctlP->fd);
+    }
+
+    // Lightpen needs nonblocking
+    fdFlags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, fdFlags | O_NONBLOCK);
+
+    ctlP->fd = fd;
+    ctlP->now = currentTime();
+    ctlP->ageTime = 50 *1000;   // initial age time
+    ctlP->lastTime = ctlP->now;
+    unlockControl(ctlP);
+
+    logger(LOG_FD,"screen %d fd now %d\n", screenNo, fd);
+    return(true);
+}
+
+// Get the current fd, -1 if none or out of range.
+int
+getDisplayFD(int screenNo)
+{
+DisplayControlP ctlP;
+
+    if( !(ctlP = getDisplayControlP(screenNo)) )
+    {
+        return( -1 );
+    }
+
+    return(ctlP->fd);
+}
+
+bool
+lockDisplayData(int screenNo)
+{
+DisplayControlP ctlP;
+
+    if( !(ctlP = getDisplayControlP(screenNo)) )
+    {
+        return(false);
+    }
+
+    return( lockDisplayDataByCtlP(ctlP) );
+}
+
+bool
+unlockDisplayData(int screenNo)
+{
+DisplayControlP ctlP;
+
+    if( !(ctlP = getDisplayControlP(screenNo)) )
+    {
+        return(false);
+    }
+
+    return( unlockDisplayDataByCtlP(ctlP) );
+}
+
+static bool
+lockDisplayDataByCtlP(DisplayControlP ctlP)
+{
+    sem_wait(&(ctlP->dataSym));
+    return(true);
+}
+
+static bool
+unlockDisplayDataByCtlP(DisplayControlP ctlP)
+{
+    sem_post(&(ctlP->dataSym));
+}
+
+// Set the lightpen radius squared for the screen.
+// Currently, all screens are updated with the same radius.
+// Not sure it's correct.
+void
+setLightpenRadius2(int screenNo, int radius2)
+{
+int i;
+DisplayControlP ctlP;
+
+    // All screens share the same radius setting?
+    for( i = 0; i < MAXDISPLAYS; ++i )
+    {
+        if( (ctlP = getDisplayControlP(i)) && isOpen(ctlP) )
+        {
+            lockDisplayDataByCtlP(ctlP);
+            ctlP->lpRadius2 = radius2;
+            lockDisplayDataByCtlP(ctlP);
+        }
+    }
+}
+
+// Get the current lightpen radius squared setting for the screen.
+// Return 0 if none.
+int
+getLightpenRadius2(int screenNo)
+{
+DisplayControlP ctlP;
+
+    if( !(ctlP = getDisplayControlP(screenNo)) )
+    {
+        return(0);
+    }
+
+    return( ctlP->lpRadius2 );
+}
+
+// Get the last coordinates and intensity that were set by setDisplayData.
+// If a pointer is 0, it is not set.
+// No mapping of coordinates is done, the meaning is up to the caller.
+// If no data is available, return false, else true.
+bool
+getDisplayData(int screenNo, int *xP, int *yP, int *intensityP)
+{
+DisplayControlP ctlP;
+
+    ctlP = getDisplayControlP(screenNo);
+
+    if( !ctlP )
+    {
+        return(false);      // display not open
+    }
+
+    if( xP )
+    {
+        *xP = ctlP->curX;
+    }
+
+    if( yP )
+    {
+        *yP = ctlP->curY;
+    }
+
+    if( intensityP )
+    {
+        *intensityP = ctlP->intensity;
+    }
+
+    return(true);
+}
+
+// Set the coordinates and intensity that will be returned by getDisplayData();
+// If a value is -1, it is not set.
+// Coordinates will be constrained to 10 bits.
+// If the screen is invalid, return false else true.
+// Caller manages locking.
+bool
+setDisplayData(int screenNo,  int x, int y, int intensity)
+{
+DisplayControlP ctlP;
+
+    if( !(ctlP = getDisplayControlP(screenNo)) )
+    {
+        return(false);
+    }
+
+    if( x >= 0 )
+    {
+        ctlP->curX = x & 01777;
+    }
+
+    if( y >= 0 )
+    {
+        ctlP->curY = y & 01777;
+    }
+
+    if( intensity >= 0 )
+    {
+        ctlP->intensity = intensity;
+    }
+
+    return(true);
+}
+
+// The primary external method.
+// Display a point.
+// Returns true if display is open, else false.
+bool
+display(int screenNo, int x, int y, int intensity)
+{
+DisplayControlP ctlP;
+
+    if( !(ctlP = getDisplayControlP(screenNo)) || !isOpen(ctlP) )
+    {
+        return(false);
+    }
+
+    logger(LOG_CMD,"display(), screen %d x %d y %d intensity %d\n", screenNo, x, y, intensity);
+    addCommand(ctlP, x & 01777, y & 01777, intensity & 07);
+    return(true);
+}
+
+// See if there is a light pen hit in the radius that is set for the screen.
+// The coordinates to check are passed.
+// The coordinates are expected to be in 0-1024 range!
+// If so, return true, else false.
+bool
+checkLightpen(PDP1P pdp1P, int screenNo, int x, int y)
+{
+int delx, dely;
+bool gotHit;
+DisplayControlP ctlP;
+
+    if( !(ctlP = getDisplayControlP(screenNo)) || !isOpen(ctlP) )
+    {
+        return(false);
+    }
+
+    lockDisplayDataByCtlP(ctlP);
+    if( !ctlP->penDown || !ctlP->lpData )
+    {
+        lockDisplayDataByCtlP(ctlP);
+        return(false);
+    }
+
+    logger(LOG_LP, "LP checking x %d against lp x %d, y %d against lp y %d\n",
+            x, ctlP->lpX, y, ctlP->lpY);
+
+    gotHit = false;
+    // Use the distance equation for a circle to simulate an actual circular aperture
+    delx = ctlP->lpX - x;               // Find squared magnitudes of hit offset
+    dely = ctlP->lpY - y;
+    if( ((delx*delx) + (dely*dely)) < ctlP->lpRadius2 )
+    {
+        logger(LOG_LP, "LP hit\n");
+        gotHit = true;
+        ctlP->lpData = false;
+    }
+
+    lockDisplayDataByCtlP(ctlP);
+    return(gotHit);
+}
+
+// End of external functions, these are all internal.
+
+// Called initially to set up everything.
+static void
+initializeDisplaySubsystem()
+{
+pthread_t thread;
+
+    if( displayInitialized )
+    {
+        return;             // already done
+    }
+
+    displayInitialized = true;
+    logger(LOG_INIT,"Display subsystem being initialized\n");
+
+    if( pthread_create(&thread, NULL, worker, null) )
+    {
+        logger(LOG_INIT,"Display worker thread create failed.\n");
+        displayInitialized = false;
+        return;
+    }
+
+    logger(LOG_INIT,"Initialization done.\n");
+}
+
+// Create a control entry for the screen number passed.
+// If it is already created, do nothing.
+// Also initialize the display subsystem if needed.
+// Returns the control pointer or null if the screen number is invalid.
+static DisplayControlP
+initializeDisplay(int screenNo)
+{
+    if( (screenNo < 0) || (screenNo > MAXDISPLAYS) )
+    {
+        return(false);
+    }
+
+    initializeDisplaySubsystem();
+
+    if( !displays[screenNo] )
+    {
+        displays[screenNo] = calloc(1, sizeof(DisplayControl));
+        initializeDisplayControl(displays[screenNo]);
+    }
+
+    return( displays[screenNo] );
+}
+
+// If a display has been opened at least once, return true else false.
+// This means the display control structure has been allcated, not that the fd is necessarily open.
+static bool
+isDisplayConfigured(int screenNo)
+{
+    return( getDisplayControlP(screenNo) != null );
+}
+
+// Return the control ptr for the screen or null if not configured.
+// Also initializes the display subsystem if needed.
+static DisplayControlP
+getDisplayControlP(int screenNo)
+{
+    if( (screenNo < 0) || (screenNo > MAXDISPLAYS) )
+    {
+        return(0);
+    }
+
+    initializeDisplaySubsystem();
+    return( displays[screenNo] );
+}
+
+// Initialize a display setting all of its fields to the default values.
+static void
+initializeDisplayControl(DisplayControlP ctlP)
+{
+    ctlP->fd = -1;
+    ctlP->numCommands = 0;
+    ctlP->numDpyCommands = 0;
+    ctlP->now = currentTime();
+    ctlP->lastTime = ctlP->now;
+    ctlP->ageTime = 50 * 1000;  // 50 microseconds
+    ctlP->curX = ctlP->curY = ctlP->intensity = 0;
+    ctlP->lpX = ctlP->lpY = 0;
+    ctlP->penDown = false;
+    ctlP->lpData = false;
+    ctlP->lpRadius2 = 6*6;      // pretty small, but is overridden later
+    sem_init(&(ctlP->controlSym),0,1);
+    sem_init(&(ctlP->dataSym),0,1);
+}
+
+static void
+lockControl(DisplayControlP ctlP)
+{
+    sem_wait(&(ctlP->controlSym));
+}
+
+static void
+unlockControl(DisplayControlP ctlP)
+{
+    sem_post(&(ctlP->controlSym));
+}
+
+// This is where all the work is done.
+// Commands are u32_t types with the form:
+// 0xIXXXYYY
+// where X and Y are 0-1023 and I is 0-7.
+static void *
+worker(void *argP)
+{
+int i, j;
+int x, y;
+int intensity;
+DisplayControlP ctlP;
+uint32_t cmd;
+
+    while( true )
+    {
+        for( i = 0; i < MAXDISPLAYS; ++i )
+        {
+            if( !(ctlP = getDisplayControlP(i)) || !isOpen(ctlP) )
+            {
+                continue;       // not open
+            }
+
+            lockControl(ctlP);
+            ctlP->now = currentTime();
+
+            // Check for work
+            for( j = 0; j < ctlP->numCommands; ++j )
+            {
+                cmd = ctlP->commandBuf[j];
+                intensity = (cmd >> 24) & 07;
+                x = (cmd >> 12) & 01777;
+                y = cmd & 01777;
+                logger(LOG_CMD,"Worker got screen %d x %d, y %d, intensity %d\n", j, x, y, intensity);
+                putDpyCommand(ctlP, x, y, intensity);
+            }
+
+            ctlP->numCommands = 0;
+            unlockControl(ctlP);
+
+            if( ctlP->numDpyCommands > DPYBUFSIZE )
+            {
+                logger(LOG_BOUNDS,"worker numDpyCommands too big: %d\n", ctlP->numDpyCommands);
+            }
+
+            ageDisplay(ctlP);
+            flushDisplay(ctlP);
+
+            // we read lp data even if not enabled, display could be sending it
+            lightpenReader(ctlP);          // check for any pending input
+        }
+        usleep(WORKERSLEEPTIME);
+    }
+
+    return(0);
+}
+
+// Puts a command into the worker command buffer.
+// X and y will be the usual Type 30 -511,511 10 bit coordinates.
+static void
+addCommand(DisplayControlP ctlP, int x, int y, int intensity)
+{
+int cmd;
+
+    while( ctlP->numCommands >= CMDBUFSIZE )
+    {
+        usleep(5);          // wait for the buffer to drain
+    }
+
+    cmd = (intensity << 24) | (x << 12) | y;
+    lockControl(ctlP);
+    ctlP->commandBuf[ctlP->numCommands++] = cmd;
+    unlockControl(ctlP);
+}
+
+// Puts a dpy-style command into the dpy command buffer
+static void
+addDpyCommand(DisplayControlP ctlP, uint32_t cmd)
+{
+    if( ctlP->numDpyCommands > DPYBUFSIZE )
+    {
+        logger(LOG_BOUNDS,"addDpyCommand numDpy too big: %d\n", ctlP->numDpyCommands);
+    }
+
+    if( ctlP->numDpyCommands >= DPYBUFSIZE )
+    {
+        flushDisplay(ctlP);
+    }
+
+    ctlP->dpyBuf[ctlP->numDpyCommands++] = cmd;
+}
+
+static void
+flushDisplay(DisplayControlP ctlP)
+{
+int size;
+int resp;
+
+    if( ctlP->fd < 0 )
+    {
+        return;     // nothing to do
+    }
+
+    if( ctlP->numDpyCommands > DPYBUFSIZE )
+    {
+        logger(LOG_BOUNDS,"flushDisplay numDpyCommands too big: %d\n", ctlP->numDpyCommands);
+        ctlP->numDpyCommands = 0;
+        return;
+    }
+
+    size = ctlP->numDpyCommands * sizeof(ctlP->dpyBuf[0]);
+    if( size <= 0 )
+    {
+        return;     // nothing to write
+    }
+
+    resp = write(ctlP->fd, ctlP->dpyBuf, size);
+    logger(LOG_DPYWRITE,"flushdisplay wrote %d bytes\n", resp);
+    ctlP->numDpyCommands = 0;
+
+    // Write failed, stop writing
+    if( resp < size )
+    {
+        logger(LOG_FD,"fd %d closed\n", ctlP->fd);
+        close(ctlP->fd);
+        ctlP->fd = -1;
+    }
+}
+
+static void
+ageDisplay(DisplayControlP ctlP)
+{
+uint64_t delayTime;
+
+    if( ctlP->fd < 0 )
+    {
+        // nothing to do
+        return;
+    }
+
+    delayTime = (ctlP->now -  ctlP->lastTime) / 1000;
+
+    // Agetime is in microseconds
+    if( delayTime >= ctlP->ageTime )
+    {
+        logger(LOG_AGEDELAY, "deltay time %d, age time %d\n", delayTime, ctlP->ageTime);
+        addDpyCommand(ctlP, 511 << 23);
+        addDpyCommand(ctlP, delayTime);
+        flushDisplay(ctlP);
+
+        ctlP->lastTime = ctlP->now;
+
+        // increase interval during fade out
+        // to reduce number of age commands
+        if( ctlP->ageTime < (1000 * 1000))
+        {
+             ctlP->ageTime +=  ctlP->ageTime / 6;
+        }
+    }
+}
+
+// Format and add a dpy format command, will be sent to the display.
+static void
+putDpyCommand(DisplayControlP ctlP, unsigned int x, unsigned int y, unsigned int intensity)
+{
+int delayTime;
+int cmd;
+
+    if( ctlP->fd < 0 )
+    {
+        return;     // not open, don't bother
+    }
+
+    // Agetime is in microseconds
+    ctlP->ageTime = 510;
+    ageDisplay(ctlP);
+    // reset age interval for regular aging
+    ctlP->ageTime = 50 * 1000;  // 50 msecs
+    delayTime = (ctlP->now - ctlP->lastTime) / 1000;
+    ctlP->lastTime = ctlP->now;
+
+    if( (x > 01777) || (y > 01777) || (intensity > 7) )
+    {
+        logger(LOG_BOUNDS, "Boundary violation x %d y%d intensity %d\n", x, y, intensity);
+    }
+
+    cmd = x | (y << 10) | (delayTime << 23);
+    cmd |= (intensity & 7) << 20;
+    logger(LOG_DPYCMD,"adding dpy command 0x%08x, x %d y %d\n", cmd, x, y);
+    addDpyCommand(ctlP, cmd);
+}
+
+// The client sends x,y coordinates whenever the mouse is moved with mouse button 1 down.
+// When the button is releasde, a 'pen lifted' notice is sent.
+// The physical light pen aperture is simulated by having any match within the dot location
+// plus the aperture setting.
+//
+// The algorithm is:
+// If a pen-lifted event is seen, set penDwon to false, no hit cheking will be done.
+// If a coordnate event is see, set penDown to true and save the most recent x, y update.
+// Whenever a dpy completion occurs, check the status and if the pen is down, see if the
+// dpy coordinates match the current position within the aperture boundaries and if so,
+// set the appropriate flags.
+//
+// A command from the client is a 32 bit word:
+// FFpccccc where:
+// p = 0x1 if the pen is up, 0x0 if down
+// c is the packed x, y 10 bit 1's complement coordinates (x << 10) | y
+
+#define CMDBITS 0xFF000000
+#define LPCMD   0xFF000000
+#define PENBITS 0x00F00000
+#define LPUP    0x00100000
+
+// This is the update reader for the lightpen.
+// See if there is data from the client, update lp status.
+// Each display has its own buffer and status.
+// Return true if any read, else false.
+static bool
+lightpenReader(DisplayControlP ctlP)
+{
+int i;
+int count;
+int sockFlag = 1;
+uint32_t penBuf[PENBUFSIZE];
+uint32_t cmd;
+bool gotPosition;
+
+static int lastX, lastY;
+static bool penDown;
+
+    if( !isOpen(ctlP) )
+    {
+        ctlP->lpX = ctlP->lpY = 0;
+        ctlP->penDown = false;
+        return(false);                          // nothing open yet
+    }
+
+    gotPosition = false;
+
+    // Read all pending commands.
+    // Only the mouse move last will be significant, but we do need to check pen up / pen down for all.
+    while( (count = read(ctlP->fd, penBuf, sizeof(penBuf))) > 0 )
+    {
+        count /= sizeof(uint32_t);              // convert to index
+        for( i = 0; i < count; ++i )
+        {
+            cmd = penBuf[i];                    // this is shared between displays, ok because access is serialized
+            if( (cmd & CMDBITS) == LPCMD )      // light pen, just to be sure
+            {
+                if( (cmd & PENBITS) == LPUP )   // pen up, done
+                {
+                    penDown = false;
+                    gotPosition = false;
+                    logger(LOG_LP, "Pen up\n");
+                }
+                else
+                {
+                    penDown = true;
+                    gotPosition = true;
+                    // lightpen coordinates come in as dpy coordinates, -511,511 10 bit 1's complement,
+                    // just to confuse things.
+                    lastX = cvtDpyTo1024((cmd >> 10) & 0x3FF);
+                    lastY = cvtDpyTo1024(cmd & 0x3FF);
+                    logger(LOG_LP, "LP received x %d, y %d\n", lastX, lastY);
+                }
+            }
+        }
+    }
+
+    lockDisplayDataByCtlP(ctlP);
+    if( gotPosition )
+    {
+        ctlP->lpX = lastX;
+        ctlP-> lpY = lastY;
+        ctlP->lpData = true;
+    }
+
+    ctlP->penDown = penDown;
+    lockDisplayDataByCtlP(ctlP);
+
+    // Turn on fast ack to minimize delays.
+    // This might or might not improve lightpen performance.
+    setsockopt(ctlP->fd, IPPROTO_TCP, TCP_QUICKACK, &sockFlag, sizeof(sockFlag));
+    return( gotPosition );
+}
+
+// Get current system time in ns.
+static uint64_t
+currentTime()
+{
+struct timespec tm;
+uint64_t time;
+
+    clock_gettime(CLOCK_MONOTONIC, &tm);
+    time = tm.tv_nsec;
+    time += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
+    return( time );
+}
+// Convert a 10 bit 1's complement dpy coordinate to a 2's complement 0-1023 value.
+static int
+cvtDpyTo1024(int dpy)
+{
+    if( dpy & 01000 )
+    {
+        dpy++;
+    }
+
+    return( (dpy + 01000) & 01777);
+}

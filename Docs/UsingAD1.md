@@ -2,8 +2,8 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.12 and covers up through ad1 version 1.16; it will be updated as needed.\
-Edit date 10-Apr-2026
+This is version 1.13 and covers up through ad1 version 1.17; it will be updated as needed.\
+Edit date 27-Apr-2026
 
 ## What is **ad1**?
 
@@ -462,7 +462,8 @@ This is the same as if the name was given on the command line when **ad1** was s
 ## FOrmat [format]
 
 If no argument is given, the current format is shown.\
-Otherwise, the current format is set to the one given.
+Otherwise, the current format is set to the one given.\
+This remains the current format until another format command is given.
 
 The format is the same as for the *SHow* command below.
 
@@ -591,6 +592,9 @@ An optional format can be given, and is one of:
 - i show the value as an instruction
 - a show the value as 2 ascii characters, the first in the high 9 bits, the second in the low 9 bits
 - f show the value as 3 flex characters, packed as 6 bits each
+
+This does not change the current format, it is in effect just for this command instance.\
+If no format is given, then the current format is used.
 
 There is a pseudo-register *sy* that will list all the loaded symbols and their addresses.
 

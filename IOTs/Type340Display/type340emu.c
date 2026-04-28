@@ -13,6 +13,7 @@
  * 25-Apr-2026 wje switch from nanosleep() to a spin-wait, the resheculing by Linux is just too unpredictable.
  *    It now uses the spin-wait for all of the short delays, nanosleep() for the 35us dot delay, and lets
  *    rescheduling happen otherwise by the semaphore wait at the end of a display cycle.
+ * 26-Apr-2026 wje add more timing, interrupt always on lp hit or edge violation
  *
  */
 
@@ -46,11 +47,17 @@
 #define LOG_VECTOR 0
 #define LOG_BRM 0
 #define LOG_SUBROUTINE 0
+#define LOG_JUMP 0
+#define LOG_SAVE 0
+#define LOG_DEPOSIT 0
 #define LOG_CHARACTER 0
 #define LOG_ESCAPE 0
 #define LOG_LP 0
 #define LOG_FLAGS 0
 #define LOG_BOUNDS 0
+
+// This defines the time each command takes to initialize, 1.5 usecs. This might not be accurate.
+#define SETUP_TIME 1500
 
 // Special characters for character mode
 #define CH_LF     0001   // Line feed
@@ -73,9 +80,6 @@
 
 #define CHARWIDTH 6     // char width for scale 0, pixels
 #define CHARHEIGHT 11   // char width for scale 0, pixels
-
-// For checking x, y bounds
-#define OUTOFBOUNDS(x,y) ((x < 0) || (x > 1023) || (y < 0) || (y > 1023))
 
 // Convert a command word mode field to one of the mode enum values
 #define MODE(x) (((x) >> 13) & 07)
@@ -167,6 +171,7 @@ typedef enum {
     VVIOLATION,
     HVVIOLATION,
     COMPLETED,
+    PAUSE,
     ESCAPE
     } Status;
 
@@ -204,6 +209,7 @@ static Modes curState = STOPPED;
 static BRMState brmState;
 static int curAddress;      // the address set by the dla command, where we will fetch data from
 static int curX, curY;      // current display coordinates
+static int lpX, lpY;        // last lp hit display coordinates
 static int curScale;
 static int curIntensity;
 static int shiftState;     // will be 0 for upper shift or 64 for lower shift, first set or second set
@@ -211,11 +217,13 @@ static int flags;           // one of the FLAG x values
 
 static int saveRegister;    // used with the SAVE subroutine subcommand
 static bool saveActive;
+static bool interruptEnabled = false;
 static bool lpEnabled = false;
 static bool slavesEnabled;  // set if we saw a SLAVE command
 
 static bool threadRunning = false;  // emulator thread is set up
 static bool isPaused = false;       // got a PAUSE command
+static bool needBreak = false;      // edge violation occurred and an interrupt is needed
 static bool twoCharsets = false;
 static Slave slaves[NUMSLAVES];    // could be up to 16 slaves, but the core display support is 8
 
@@ -226,12 +234,12 @@ static EmuControlP ctlP = &emuControl;
 static void *emulator(void *argP);
 static Word getWord(PDP1P pdp1P);
 static bool drawAndCheck(bool tryLightpen, int x, int y, int intensity);
+static bool checkBounds(int x, int y);
 static bool brmInitialize(BRMStateP stateP, int initialX, int initialY,
     int dX, int dY, int step, bool draw);
 static Status brmNext(BRMStateP stateP, int *xP, int *yP);
 static Status doIncrement(int dotSpacing, int bits);
 Status doCharacter(int dotSpacing, unsigned char ch);
-static void setEdgeViolation(Status status);
 static void emuOrFlags(int newFlags);   // only used internally
 static void emuClearFlag(int flagbit);  // only used internally
 static void nanodelay(int ns);
@@ -332,12 +340,21 @@ emuOrFlags(int newFlags)
 }
 
 // Return the current x and y coordinates.
-// Note that this is a snapshot, the emulator could be running.
+// Note that unless the emulator is stopped or paused,  this is a snapshot.
+// If paused, it was because of a lightpen hit, so return those coords instead of the curren x and y.
 void
 emuGetXY(int *xP, int *yP)
 {
-    *xP = curX;
-    *yP = curY;
+    if( isPaused )
+    {
+        *xP = lpX;
+        *yP = lpY;
+    }
+    else
+    {
+        *xP = curX;
+        *yP = curY;
+    }
 }
 
 // Return the initialization state.
@@ -375,6 +392,7 @@ int command;
 int word;
 int i, tmp;
 int x, y;
+int pendingDelay;
 int lastdX, lastdY;
 bool sawExit;
 bool sawEscape;
@@ -424,11 +442,10 @@ Status status;
         case EMU_CMD_RESUME:
             // If we were paused, the state remains the same as it was,
             // otherwise ignore.
-            // The manual says this also clears the lp enable flag.
-            // Same for slaves? Seems so.
+            // The manual says this also clears the lp enable flag and the edge violation flags.
             if( isPaused )
             {
-                emuClearFlag(FLAG_LP);
+                emuClearFlags();
                 lpEnabled = isPaused = false;
                 iotCondLog(LOG_RUN, "Received resume while paused\n");
             }
@@ -465,6 +482,12 @@ Status status;
                     curState = STOPPED;
                     continue;
                 }
+            }
+
+            // Every command takes time to initialize
+            if( curState == INITIALIZE )
+            {
+                nanodelay(SETUP_TIME);
             }
 
             switch( curMode )
@@ -508,7 +531,6 @@ Status status;
                     }
 
                     iotCondLog(LOG_PARAM, "scale %d intensity %d lpon %d\n", curScale, curIntensity, lpEnabled);
-                    saveActive = false;
                 }
                 break;
 
@@ -568,7 +590,7 @@ Status status;
                 {
                     if( drawAndCheck(true, curX, curY, curIntensity) )
                     {
-                        emuOrFlags(FLAG_LP);
+                        // FLAG_LP will have been set already
                         isPaused = true;
                     }
                 }
@@ -614,6 +636,9 @@ Status status;
                     // If we can't initialise, ignore it and continue
                     if( brmInitialize(&brmState, curX, curY, x, y, curScale, INTENSIFY(word)) )
                     {
+                        nanopause(2900);        // 2.9 usec setup time
+                        // 1.5 usec if points are being drawn, else 1.0 usec
+                        pendingDelay = brmState.nPoints * (INTENSIFY(word)?1500:1000);
                         curState = RUNNING;
                     }
                     else
@@ -628,32 +653,19 @@ Status status;
                 {
                     if( (status = brmNext(&brmState, &curX, &curY)) != BRMRUNNING )
                     {
-                        if( ESCAPE(word) )
+                        if( status == COMPLETED )
                         {
-                            sawEscape = true;
-                            iotCondLog(LOG_VECTOR, "vector escape\n");
-                            // In order to minimize reschedulint by Linux, all the waiting is done at the end.
-                            // No, not strictly accurate but the end timing is the same.
-                            // We don't spinwait on each point because a full vector takes 1.5 milliseconds.
-                            nanodelay(brmState.nPoints * 1500);   // 1.5 us/point
-                        }
+                            if( ESCAPE(word) )
+                            {
+                                sawEscape = true;
+                                iotCondLog(LOG_VECTOR, "vector escape\n");
+                                // In order to minimize rescheduling by Linux, all the waiting is done at the end.
+                                // No, not strictly accurate but the end timing is the same.
+                                // We don't spinwait on each point because a full vector could take 1.5 milliseconds.
+                                nanodelay(pendingDelay);
+                                curState = INITIALIZE;
+                            }
 
-                        if( status != COMPLETED )
-                        {
-                            // VCONTINUE will have caused an edge violation, go back to param mode
-                            if( curMode == VCONTINUE )
-                            {
-                                curMode = PARAMETER;
-                            }
-                            else
-                            {
-                                curState = STOPPED;
-                                iotCondLog(LOG_BOUNDS, "vector edge violation x, y %d %d\n", curX, curY);
-                                setEdgeViolation(status);
-                            }
-                        }
-                        else
-                        {
                             if( curMode == VCONTINUE )
                             {
                                 // We go back to run mode, updating the start and end points
@@ -667,6 +679,21 @@ Status status;
                             }
                             break;
                         }
+                        else
+                        {
+                            // VCONTINUE will have caused an edge violation, go back to param mode
+                            if( curMode == VCONTINUE )
+                            {
+                                curMode = PARAMETER;
+                                curState = INITIALIZE;
+                            }
+                            else
+                            {
+                                curState = STOPPED;
+                                iotCondLog(LOG_BOUNDS, "vector edge violation x, y %d %d\n", curX, curY);
+                                needBreak = true;
+                            }
+                        }
 
                         iotCondLog(LOG_VECTOR,"vector done, status %d, curX %d curY %d\n", status, curX, curY);
                     }
@@ -674,21 +701,14 @@ Status status;
                     {
                         if( drawAndCheck(true, curX, curY, curIntensity) )
                         {
-                            emuOrFlags(FLAG_LP);
                             isPaused = true;
                         }
                     }
-                    /*
-                    else
-                    {
-                        nanodelay(1500);             // 1500 ns move time
-                    }
-                    */
                 }
                 break;
 
             case INCREMENT:
-                // We just stay in initialize state, which is the state in effect when the first incrment is done.
+                curState == RUNNING;            // not necessary, but do it for consistency
                 word = getWord(ctlP->pdp1P);
 
                 if( ESCAPE(word) )
@@ -697,6 +717,7 @@ Status status;
                     iotCondLog(LOG_INCREMENT, "increment escape\n");
                 }
 
+                pendingDelay = 0;
                 // The word contains 4, 4 bit fields, each moves up, down, left, or right, or diagonally one dotSpacing
                 for( tmp = 12; tmp >= 0; tmp -= 4)
                 {
@@ -704,23 +725,35 @@ Status status;
                     {
                         // Edge violation
                         curState = STOPPED;
-                        setEdgeViolation(status);
+                        needBreak = true;
+                        break;
                     }
                     else
                     {
-                        nanodelay(1500);            // manual says 1.5 usec
-                    }
-
-                    // Actually want to draw it
-                    if( INTENSIFY(word) )
-                    {
-                        if( drawAndCheck(true, curX, curY, curIntensity) )
+                        // Actually want to draw it
+                        if( INTENSIFY(word) )
                         {
-                            emuOrFlags(FLAG_LP);
-                            isPaused = true;
+                            if( drawAndCheck(true, curX, curY, curIntensity) )
+                            {
+                                // Will take effect on the next word
+                                isPaused = true;
+                            }
+
+                            pendingDelay += 1500;            // manual says 1.5 usec
+                        }
+                        else
+                        {
+                            pendingDelay += 1000;            // but only 1 usec if not showing a dot
                         }
                     }
                 }
+
+                if( pendingDelay )
+                {
+                    nanodelay(pendingDelay);
+                }
+                
+                curState = INITIALIZE;
                 break;
 
             case CHARACTER:
@@ -741,14 +774,19 @@ Status status;
                             if( status == ESCAPE )
                             {
                                 curMode = PARAMETER;
+                                curState = INITIALIZE;
+                            }
+                            else if( status == PAUSE )
+                            {
+                                // lp hit, but finish the current loop
+                                isPaused = true;
                             }
                             else
                             {
                                 // Edge violation
                                 curState = STOPPED;
-                                setEdgeViolation(status);
+                                needBreak = true;
                             }
-
                             break;
                         }
                     }
@@ -759,20 +797,20 @@ Status status;
                 word = getWord(ctlP->pdp1P);
                 curMode = MODE(word);
                 curState = INITIALIZE;
-                iotCondLog(LOG_SUBROUTINE,"Subroutine op %d\n", SUBROUTINE_OP(word));
+                iotCondLog(LOG_SUBROUTINE,"Subroutine op %d, mode %d\n", SUBROUTINE_OP(word), curMode);
 
                 switch( SUBROUTINE_OP(word) )
                 {
                 case JUMP:
                     curAddress = SUBROUTINE_ADDR(word);    // 13 bit address, strange. So, bank 0 or 1 only.
-                    iotCondLog(LOG_SUBROUTINE,"JUMP %d\n", curAddress);
+                    iotCondLog(LOG_JUMP,"JUMP %d\n", curAddress);
                     break;
 
                 case JUMPANDSAVE:                          // copy the next address to the save register, then jump
                     saveRegister = curAddress;             // already incremented by getWord()
                     saveActive = true;
                     curAddress = SUBROUTINE_ADDR(word);
-                    iotCondLog(LOG_SUBROUTINE,"SAVE word %0o addr %d, JUMP %d, mode %d\n",
+                    iotCondLog(LOG_SAVE,"SAVE word %0o save addr %o, JUMP %o, mode %d\n",
                         word, saveRegister, curAddress, curMode);
                     break;
 
@@ -785,7 +823,7 @@ Status status;
 
                     tmp = SUBROUTINE_ADDR(word);            // put a jump to saveReg and param mode in the address
                     ctlP->pdp1P->core[tmp] = PUT_SUBROUTINE_OP(JUMP) | PUTMODE(PARAMETER) | saveRegister;
-                    iotCondLog(LOG_SUBROUTINE,"DEPOSIT %o into %d\n", ctlP->pdp1P->core[tmp], tmp);
+                    iotCondLog(LOG_DEPOSIT,"DEPOSIT %o into %d\n", ctlP->pdp1P->core[tmp], tmp);
                     break;
 
                 default:
@@ -800,6 +838,7 @@ Status status;
             {
                 sawEscape = false;
                 curMode = PARAMETER;        // This leaves the current mode, may return to a saved address
+                curState = INITIALIZE;
 
                 if( saveActive )
                 {
@@ -814,7 +853,13 @@ Status status;
             }
         }
 
-        if( !isPaused )
+        // An hp hit or edge violation always interrupts
+        if( isPaused || needBreak )
+        {
+            initiateBreak(BRKCHAN);
+            needBreak = false;
+        }
+        else
         {
             iotCondLog(LOG_CMD,"Stopped, responding done\n");
             ctlP->response = EMU_RESPONSE_DONE;
@@ -969,21 +1014,25 @@ Status brmStatus;
         }
     }
 
-    brmStatus = BRMRUNNING;
-
     // Check for edge violations
-    if( (*xP < 0) || (*xP > 1023) )
+    if( checkBounds(*xP, *yP) )
     {
-        *xP = (*xP < 0)?1023:0;
-        brmStatus = HVIOLATION;
-        iotCondLog(LOG_BRM, "brmNext returning x edge violation\n");
-    }
+        if( flags & FLAG_HEDGE )
+        {
+            *xP = (*xP < 0)?1023:0;
+        }
 
-    if( (*yP < 0) || (*yP > 1023) )
+        if( flags & FLAG_VEDGE )
+        {
+            *yP = (*yP < 0)?1023:0;
+        }
+
+        brmStatus = EDGEVIOLATION;
+        iotCondLog(LOG_BRM, "brmNext returning edge violation\n");
+    }
+    else
     {
-        *yP = (*yP < 0)?1023:0;
-        brmStatus = (brmStatus == HVIOLATION)?HVVIOLATION:VVIOLATION;
-        iotCondLog(LOG_BRM, "brmNext returning y edge violation\n");
+        brmStatus = BRMRUNNING;
     }
 
     iotCondLog(LOG_BRM, "brmNext returning %d\n", brmStatus);
@@ -1023,7 +1072,7 @@ doIncrement(int dotSpacing, int bits)
     }
 
     iotCondLog(LOG_INCREMENT, "final x, y %d %d\n", curX, curY);
-    if( OUTOFBOUNDS(curX, curY) )
+    if( checkBounds(curX, curY) )
     {
         iotCondLog(LOG_BOUNDS, "increment edge violation x, y %d %d\n", curX, curY);
         return( EDGEVIOLATION );
@@ -1178,14 +1227,16 @@ static unsigned char charSet[128][6] = {
  * The 340 could have one or two character sets.
  * If only one was installed, then shifted characters were written vertically, top-to-bottom.
  * Cur x and y are updated on return.
- * Return COMPLETED if ok, else another status.
+ * Return COMPLETED if ok, PAUSE if there is an LP hit,  else another status.
  */
 Status
 doCharacter(int dotSpacing, unsigned char ch)
 {
 int x, y;
+int xTmp, yTmp;
 int flags;
 int curChar;
+bool sawHit;
 
     if( ch > 63 )
     {
@@ -1193,6 +1244,7 @@ int curChar;
         return(COMPLETED);      // invalid char, just stop
     }
 
+    sawHit = false;
     curChar = ch | ((twoCharsets)?shiftState:0);
 
     // Each char has 5 data bytes plus one flag byte.
@@ -1204,11 +1256,10 @@ int curChar;
     case CH_LF:
         // Down one line dotSpacing
         curY -= CHARHEIGHT * dotSpacing;
-        if( OUTOFBOUNDS(curX, curY) )
+
+        if( checkBounds(curX, curY) )
         {
             iotCondLog(LOG_BOUNDS, "character edge violation x, y %d %d\n", curX, curY);
-            curY = 0;
-            setEdgeViolation(HVIOLATION);
             return(EDGEVIOLATION);
         }
         return(COMPLETED);
@@ -1248,7 +1299,6 @@ int curChar;
                 curY += CHARHEIGHT * dotSpacing;     // non dotSpacing character
             }
         }
-
         break;
 
     case CH_D:
@@ -1257,10 +1307,22 @@ int curChar;
 
     case CH_SUB:
         curY -= (CHARHEIGHT * dotSpacing) / 2;    // subscript
+
+        if( checkBounds(curX, curY) )
+        {
+            iotCondLog(LOG_BOUNDS, "character edge violation x, y %d %d\n", curX, curY);
+            return(EDGEVIOLATION);
+        }
         return(COMPLETED);
 
     case CH_SUP:
         curY += (CHARHEIGHT * dotSpacing) / 2;   // superscript
+
+        if( checkBounds(curX, curY) )
+        {
+            iotCondLog(LOG_BOUNDS, "character edge violation x, y %d %d\n", curX, curY);
+            return(EDGEVIOLATION);
+        }
         return(COMPLETED);
 
     case CH_BS:
@@ -1271,6 +1333,12 @@ int curChar;
         else if( !twoCharsets && (shiftState != 0) )
         {
             curY += CHARHEIGHT * dotSpacing;  // backspace
+        }
+
+        if( checkBounds(curX, curY) )
+        {
+            iotCondLog(LOG_BOUNDS, "character edge violation x, y %d %d\n", curX, curY);
+            return(EDGEVIOLATION);
         }
         return(COMPLETED);
 
@@ -1287,9 +1355,19 @@ int curChar;
             // rows 0 to 6, bottom to top
             if( charSet[curChar][x] & (2 << y) )
             {
-                // Bit on, draw it, no lp check
-                drawAndCheck(false, curX + (x * dotSpacing), curY + (y * dotSpacing),
-                    type340Intensity(curIntensity));
+                // Bit on, draw it
+                xTmp = curX + (x * dotSpacing);
+                yTmp = curY + (y * dotSpacing);
+                if( checkBounds(xTmp, yTmp) )
+                {
+                    iotCondLog(LOG_BOUNDS, "character edge violation x, y %d %d\n", xTmp, yTmp);
+                    return(EDGEVIOLATION);
+                }
+
+                if( drawAndCheck(true, xTmp, yTmp, type340Intensity(curIntensity)) )
+                {
+                    sawHit = true;
+                }
             }
         }
     }
@@ -1308,14 +1386,13 @@ int curChar;
         curY += 2 * dotSpacing;     // undo descender
     }
 
-    if( OUTOFBOUNDS(curX, curY) )
+    if( checkBounds(curX, curY) )
     {
         iotCondLog(LOG_BOUNDS, "character edge violation x, y %d %d\n", curX, curY);
-        setEdgeViolation(VVIOLATION);
         return(EDGEVIOLATION);
     }
 
-    return(COMPLETED);
+    return((sawHit)?PAUSE:COMPLETED);
 }
 
 // Draw a point and check for a lightpen hit if it is enabled.
@@ -1348,6 +1425,8 @@ bool gotLpHit;
                 {
                     if( (gotLpHit = checkLightpen(ctlP->pdp1P, i, x, y)) )
                     {
+                        lpX = x;
+                        lpY = y;
                         emuOrFlags(FLAG_LP);
                         iotCondLog(LOG_LP,"lp hit screen %d at x %d y %d\n", i, x, y);
                     }
@@ -1385,23 +1464,50 @@ Word buffer[8];     // we only use 1, but just to be sure
     return(val);
 }
 
-void
-setEdgeViolation(Status status)
+// look for an edge violation.
+// If there is one, set the appropriate flags, reset the offending axis and return true,
+// else return false.
+bool
+checkBounds(int x, int y)
 {
-    switch( status )
+bool xViolation, yViolation;
+
+    xViolation = yViolation = false;
+
+    // Docs say edge is reset to the opposite side
+    if( x < 0 )
     {
-    case HVIOLATION:
-        emuOrFlags(FLAG_STOP | FLAG_HEDGE);
-        break;
-
-    case VVIOLATION:
-        emuOrFlags(FLAG_STOP | FLAG_VEDGE);
-        break;
-
-    case HVVIOLATION:
-        emuOrFlags(FLAG_STOP | FLAG_VEDGE | FLAG_HEDGE);
-        break;
+        curX = 1023;
+        xViolation = true;
     }
+    else if( x > 1023 )
+    {
+        curX = 0;
+        xViolation = true;
+    }
+
+    if( y < 0 )
+    {
+        curY = 1023;
+        yViolation = true;
+    }
+    else if( y > 1023 )
+    {
+        curY = 0;
+        yViolation = true;
+    }
+
+    if( xViolation )
+    {
+        emuOrFlags(FLAG_STOP | FLAG_HEDGE);
+    }
+
+    if( yViolation )
+    {
+        emuOrFlags(FLAG_STOP | FLAG_VEDGE);
+    }
+
+    return( xViolation || yViolation );
 }
 
 // Get our configurations settings, can be called more than once.

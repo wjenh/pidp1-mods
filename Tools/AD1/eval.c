@@ -35,8 +35,6 @@ int twosCompl(int val);
 int adjustZero(int val);
 
 extern char *getFormat(int fmtType);
-extern void formatAndPrintOne(int base, int value);
-extern void printNumber(int value);
 
 // See if this is a valid number, if so, return its value.
 // The base is overridden by explicit base settings in the string, 0x, 0d, 0b, 0o.

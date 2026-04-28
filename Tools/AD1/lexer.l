@@ -24,7 +24,6 @@ extern void freeMem(void);
 /* this is to handle special cases for a few arguments, a hack */
 %s CMDARG
 %s REGARG
-%s BASEARG
 %s FILEARG
 %s MONARG
 
@@ -209,7 +208,7 @@ ss			{
 			    return(INTEGER);
 			}
 
-<INITIAL,MONARG,REGARG>[0-9]+			{
+[0-9]+			{
 			    // This is always a decimal number.
 			    yylval.ival = atoi(yytext);
 			    // hack for the monitor command

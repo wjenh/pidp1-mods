@@ -199,8 +199,6 @@ int val;
         formatAndPrintTwo(ADDRESS, lastAddr, base, val);
         NEWLINE;
     }
-
-    lastFormat = base;
 }
 
 void
@@ -267,7 +265,6 @@ char *nameP;
     printf("%s: ", nameP);
     formatAndPrintOne(base, val);
     NEWLINE;
-    lastFormat = base;
 }
 
 void

@@ -20,7 +20,7 @@ char *helpMsg[] = {
     NIL};
 
 char *dotHelp[] = {
-    "The dot command prints the value of the last used memory address using the last output format used.",
+    "The dot command prints the value of the last used memory address using the last output format set.",
     "When a dot is used in an expression, its value is the last used memory address.",
     "Examples:",
     "As a command, .",
@@ -221,6 +221,7 @@ char *showHelp[] = {
     "a - ascii, 2 chars per word",
     "f - flex, 3 chars per word, shift state remembered until another format is used",
     "i - instruction, the word is decoded as an instruction and the instruction shown",
+    "Using a format here does not change the default format set by the format command",
     "If instead of an address, one of the register names is given, the contents of that register will be shown.",
     "Use help reg for help on registers.",
     "If no arguments are given, the last show command is repeated.",
@@ -243,6 +244,7 @@ char *formatHelp[] = {
     "f - flex, 3 chars per word, shift state remembered until another format is used",
     "i - instruction, the word is decoded as an instruction and the instruction shown",
     "See also show, these are the same format directives.",
+    "The remains the format until anoother format command is used",
     "If no argument is given, the curren format is shown.",
     "Examples:",
     "fo d",

@@ -25,6 +25,9 @@
 #define increment 06
 #define subroutine 07
 
+// Note that there are no modifiers for character mode, all control is embedded
+// in the characters themselves.
+
 // These are for parameter
 #define scale(s) ((((s) & 03) << 0d4) | 0100)
 #define intensity(i) (((i) & 07) | 010)
@@ -51,7 +54,7 @@
 #define visible 0200000
 #define end 0400000
 
-// These are for vector and vcontinuE
+// These are for vector and vcontinue
 #define deltay(y) (((y) & 0177) << 0d8)
 #define deltax(x) ((x) & 0177)
 #define up 0

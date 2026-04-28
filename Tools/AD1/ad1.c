@@ -23,6 +23,7 @@
  * 5-Apr-26 wje add trace command to follow references, including indirects
  * 6-Apr-26 wje add monitor command to dump an execution sequence to a file
  * 10-Apr-26 wje use word mask macros for bankd and addr parts of instruction, add optional address for trace
+ * 27-Apr-26 wje fix lexing issue with decimal-only commands
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -130,7 +131,7 @@ char *getFormatName(int fmt);
 char *getUnrestrictedFormat(int fmt);
 void formatAndPrintOne(int fmt, int value);
 void formatAndPrintTwo(int fmt1, int addr, int fmt2,  int value);
-void printNumber(int value);
+void printNumber(int format, int value);
 void printAscii(char ch);
 bool printFlex(bool shifted, char ch);
 bool loadMemoryFromFile(char *filenameP, Word memory[], Word memSize);
@@ -522,7 +523,7 @@ char tmpstr[128];
         }
         else
         {
-            printNumber(value);
+            printNumber(lastFormat, value);
         }
 
         return;
@@ -574,29 +575,21 @@ char tmpstr[128];
     {
         printf("%d", twosCompl(signExtend(value)));     // always decimal
     }
+    else if( fmt == NONE )
+    {
+        printNumber(lastFormat, value);
+    }
     else
     {
-        printNumber(value);
-    }
-
-    switch( fmt )
-    {
-    case AUTOBASE:
-    case SYMBOLIC:              // should never see this here, but be sure
-    case ADDRESS:               // same
-        return;                 // we don't want to change the last format for these
-
-    default:
-        lastFormat = fmt;
-        break;
+        printNumber(fmt, value);
     }
 }
 
 // Print a number using the current base.
 void
-printNumber(int value)
+printNumber(int format, int value)
 {
-    printf(getFormat(lastFormat), value);
+    printf(getFormat(format), value);
 }
 
 // Print one ascii char, possibly null

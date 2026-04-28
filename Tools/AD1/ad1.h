@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define VERSION "1.16 10-Apr-2026"
+#define VERSION "1.17 27-Apr-2026"
 
 #define MAXFILES    8    // maximum number of open files we can have
 #define MAXLINES    4000 // max number of lines in a file

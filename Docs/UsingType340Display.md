@@ -2,9 +2,9 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.0.
+This is version 1.1.
 
-Edit date 26-Apr-2026
+Edit date 28-Apr-2026
 
 ## What is it?
 
@@ -342,6 +342,184 @@ So, if moving in both axes, set y without visible first, then x.
 If moving only in the y axis, then visible will be set and the 35 usec delay will occur.
 
 Setting both x and y with visible set on both will cause a 70 usec delay!
+
+## The character sets
+
+Two character sets are included.
+
+The second is available if configured via the *two340charsets=yes* directive in the pidp-1 config file.
+If it is not configured, then using a second-set shift means to display the character set 1 text vertically.
+
+Both character sets have special escape characters with specific meanings:
+
+| Character code | Meaning |
+|-----------------|-----------|
+| 033 | linefeed |
+| 034 | carriage return |
+| 035 | upper shift |
+| 036 | lower shift |
+| 037 | end |
+
+Somewhat confusingly, *upper shift* selects character set 1, while *lower shift* selects charater set 2.\
+Using the *end* character is **mandatory** to terminate a character string!
+
+When using the **am1** *type340* directive to create strings of text, the following escape sequences
+can be used:
+
+| Escape sequence | Meaning |
+|-----------------|-----------|
+| \\e | end |
+| \\U | uuper shift |
+| \\L | lower shift |
+| \\b | backspace* |
+| \\n | newline, a carriage return and linefeed |
+| \\l | linefeed |
+| \\r | carriage return |
+| \\s | superscript* |
+| \\u | subscript* |
+
+The characters marked with an asterisk, *, are only valid when character set 2 is in use.
+
+Character set 1
+
+| Octal value | Character |
+|-------------|-----------|
+| 00 | blob |
+| 01 | A |
+| 02 | B |
+| 03 | C |
+| 04 | D |
+| 05 | E |
+| 06 | F |
+| 07 | G |
+| 10 | H |
+| 11 | I |
+| 12 | J |
+| 13 | K |
+| 14 | L |
+| 15 | M |
+| 16 | N |
+| 17 | O |
+| 20 | P |
+| 21 | Q |
+| 22 | R |
+| 23 | S |
+| 24 | T |
+| 25 | U |
+| 26 | V |
+| 27 | W |
+| 30 | X |
+| 31 | Y |
+| 32 | Z |
+| 33 | LF |
+| 34 | CR |
+| 35 | HORIZ |
+| 36 | VERT |
+| 37 | ESC |
+| 40 | space |
+| 41 | ! |
+| 42 | " |
+| 43 | # |
+| 44 | $ |
+| 45 | % |
+| 46 | & |
+| 47 | ' |
+| 50 | ( |
+| 51 | ) |
+| 52 | * |
+| 53 | + |
+| 54 | , |
+| 55 | - |
+| 56 | . |
+| 57 | / |
+| 60 | 0 |
+| 61 | 1 |
+| 62 | 2 |
+| 63 | 3 |
+| 64 | 4 |
+| 65 | 5 |
+| 66 | 6 |
+| 67 | 7 |
+| 70 | 8 |
+| 71 | 9 |
+| 72 | : |
+| 73 | ; |
+| 74 | < |
+| 75 | = |
+| 76 | > |
+| 77 | ? |
+
+Character set 2
+
+| Octal value | character |
+|-------------|-----------|
+| 00 | blob |
+| 01 | a |
+| 02 | b |
+| 03 | c |
+| 04 | d |
+| 05 | e |
+| 06 | f |
+| 07 | g |
+| 10 | h |
+| 11 | i |
+| 12 | j |
+| 13 | k |
+| 14 | l |
+| 15 | m |
+| 16 | n |
+| 17 | o |
+| 20 | p |
+| 21 | q |
+| 22 | r |
+| 23 | s |
+| 24 | t |
+| 25 | u |
+| 26 | v |
+| 27 | w |
+| 30 | x |
+| 31 | y |
+| 32 | z |
+| 33 | LF |
+| 34 | CR |
+| 35 | HORIZ |
+| 36 | VERT |
+| 37 | ESC |
+| 40 | space |
+| 41 | ??? |
+| 42 | ??? |
+| 43 | ~ |
+| 44 | ??? |
+| 45 | ??? |
+| 46 | up arrow |
+| 47 | left arrow |
+| 50 | down arrow |
+| 51 | right arrow |
+| 52 | \ |
+| 53 | [ |
+| 54 | ] |
+| 55 | { |
+| 56 | } |
+| 57 | ??? |
+| 60 | _ |
+| 61 | ??? |
+| 62 | \| |
+| 63 | ??? |
+| 64 | ??? |
+| 65 | ??? |
+| 66 | ` |
+| 67 | ^ |
+| 70 | ??? |
+| 71 | block? |
+| 72 | backspace |
+| 73 | subscript |
+| 74 | ??? |
+| 75 | ??? |
+| 76 | ??? |
+| 77 | superscript |
+
+For the second character set, the *subscript* and *superscript* characters are modal, like the shift characters.
+They stay in effect until the opposite one is used.
 
 ## A real example
 

@@ -1,0 +1,17 @@
+Test of Type 340 character directive
+100/
+    lio [chars
+    hlt
+
+chars,
+    type340 "ABC\n\e"
+chars2,
+    type340 "ABC"
+chars3,
+    type340 "12"
+
+// be sure ascii still works, they share code
+done,
+    ascii "ABC1234"
+
+start 100

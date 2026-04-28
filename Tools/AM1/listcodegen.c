@@ -10,6 +10,7 @@
 
 #include "am1.h"
 #include "y.tab.h"
+#include "type340chars.h"
 
 static bool doOutput;
 
@@ -18,6 +19,7 @@ static void listStatements(FILE *, PNodeP);
 static void listOperand(FILE *, PNodeP);
 static void listAscii(FILE *outfP, PNodeP nodeP, char *strP);
 static void listText(FILE *outfP, PNodeP nodeP, FlexText text);
+static void listType340(FILE *outfP, PNodeP nodeP, char *strP);
 static bool listVar(FILE *outfP, PNodeP nodeP);
 static void listVars(FILE *outfP, PNodeP nodeP);
 static void listConstants(FILE *outfP, PNodeP nodeP, SymNodeP symP);
@@ -164,6 +166,12 @@ char str[128];
         case TEXT:
             output(outfP, doOutput, "// Text table\n");
             listText(outfP, nodeP, nodeP->value.flexText);
+            output(outfP, doOutput, "// End\n");
+            break;
+
+        case TYPE340:
+            output(outfP, doOutput, "// Type 340 table\n");
+            listType340(outfP, nodeP, nodeP->value.strP);
             output(outfP, doOutput, "// End\n");
             break;
 
@@ -498,6 +506,50 @@ char buf[256];
     {
         startLine(false, outfP, nodeP);
         output(outfP, doOutput, " %06o\n", val);      // didn't list the word yet
+    }
+}
+
+// Emit packed Type 340 code
+static void
+listType340(FILE *outfP, PNodeP nodeP, char *strP)
+{
+int i;
+int val;
+
+    // Node will only have the pc of the first word, adjust as we go
+    for( val = i = 0;; )
+    {
+        val <<= 6;
+        val |= *strP;
+
+        if( i == 2 )
+        {
+            startLine(false, outfP, nodeP);
+            nodeP->pc++;
+            output(outfP, doOutput, " %06o\n", val);
+            val = 0;
+        }
+
+        if( ++i > 2 )
+        {
+            i = 0;
+        }
+
+        if( *strP++ == TYPE340END )
+        {
+            break;
+        }
+    }
+
+    if( i != 0 )         // had leftovers, finish the word
+    {
+        while( i++ != 3 )
+        {
+            val <<= 6;
+        }
+
+        startLine(false, outfP, nodeP);
+        output(outfP, doOutput, " %06o\n", val);
     }
 }
 

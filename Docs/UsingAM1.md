@@ -865,6 +865,36 @@ the remainder of the 7th word binary 0.
 
 In both cases the location counter is advanced by 7.
 
+## Type340
+
+The **type340** directive inserts a block of characters from the Type 340 Display character sets
+ packed 3 to a word.
+The location counter is incremented by the number of characters divided by 3, plus 1 if the number of characters
+wasn't a multiple of 3.
+
+The string of characters is always surrounded by double-quotes, ", and some escape sequences supported by
+the Type 340 are provided.
+
+Since it is mandatory for a Type 340 character string to end with an *end* character, one is automatically
+added if it is not provided. Note that placing one in a string immediately ends the string, any following
+characters will be ignored.
+
+Just as for *flex/concise* characters, there are modal shift characters.
+The shift state last given stays in effect until a new one is seen.
+At the beginning of a string, the mode will always be upper-shift.
+
+As a convenience, upper and lower case letters, *A-Za-z* are interchangeable.
+The actual case displayed depends upon the shift state and the character sets that are enabled.
+
+See the *UsingType340Display.md* document for the characters and more information.
+
+Examples:
+```
+   type340 "t\Lhis is TEXT for the \UT\Lype 340 \UD\Lisplay"
+```
+
+This will, assuming the second character set is enabled, display the string *This is text for the Type 340 Display*.
+
 ## Variables and constants
 
 These cause any declared variables or constants to be emitted at the current location.

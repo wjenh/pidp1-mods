@@ -8,6 +8,7 @@
 
 #include "am1.h"
 #include "y.tab.h"
+#include "type340chars.h"
 
 int evalExpr(PNodeP);
 int onesComplAdj(int);
@@ -15,6 +16,9 @@ int twosComplAdj(int);
 int fixMinusZero(int val);
 int countAscii(char *strP);
 int countText(FlexText flexText);
+int countType340(char *t340StrP);
+char processType340Escape(char ch);
+char asciiToType340(char ch);
 
 extern bool keepMinusZero;
 extern bool spaceIsAdd;
@@ -478,4 +482,99 @@ int rslt;
     }
 
     return(rslt);
+}
+
+// This is similar to countText() in that characters are packed 3 to an 18-bit word.
+// The passed string must have already been converted to a TYPE 340 character set string.
+// Note that 0 is NOT the end of a Type 340 string, the TYPE340END character is.
+int
+countType340(char *t340StrP)
+{
+int count;
+
+    for( count = 0; *t340StrP++ != TYPE340END; )
+    {
+        ++count;
+    }
+
+    // One more to include the end char
+    // Adjust for an incomplete word by roundint up
+    count = (++count) / 3;
+    if( count % 3 )
+    {
+        ++count;
+    }
+
+    return(count);
+}
+
+// Handle the backslash-x conversions for type 340 characters.
+// Return the character or 0 if it was a line continuation.
+char
+processType340Escape(char ch)
+{
+    switch( ch )
+    {
+    case '\n':  	// backslash-<newline> ignored, it's a line continuation
+        return(0);
+
+    case 'e':
+        ch = TYPE340END;    // an explicit end marker, we're done
+        break;
+
+    case 'U':
+        ch = TYPE340UPPER;  // upper shift
+        break;
+
+    case 'L':
+        ch = TYPE340LOWER;  // lower shift
+        break;
+
+    case 'b':		    // blob character
+        ch = TYPE340BLOB;
+        break;
+
+    case 'n':
+        ch = TYPE340NL;     // newline, a line feed and cr, special case
+        break;
+
+    case 'l':
+        ch = TYPE340LF;     // newline, a line feed
+        break;
+
+    case 'r':		    // a carriage return
+        ch = TYPE340CR;
+        break;
+
+    default:		    // not supported
+        ch = TYPE340BLOB;
+        break;
+    }
+
+    return(ch);
+}
+
+// Convert an ascii string to Type 340 characters.
+// Backslash escapes are processed separately.
+// Unlike flex/concise characters, these collate nicely in semi-ascii seqence, so no lookup tables needed.
+// Lowercase alpha characters will be mapped to their uppercase equivalents.
+char
+asciiToType340(char ch)
+{
+    if( (ch >= 97) || (ch <= 122) )
+    {
+        ch = ch - 'a' + 'A'; 
+    }
+
+    if( (ch < 32) || (ch > 90) )
+    {
+        ch = TYPE340BLOB;
+    }
+    else if( ch > 63 )
+    {
+        ch -= 64;               // the 340 char is just the ascii char moved down by 64
+    }
+
+    // If not matched above, char is the same
+    return( ch );
 }

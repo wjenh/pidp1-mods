@@ -92,6 +92,7 @@
  * 12-Apr-2026 - minor change, turn off cpp warning about unterminated quotes in flex text strings
  * 26-Apr-2026 - add c-style block comments
  * 26-Apr-2026 - add -N to suppress included file text in listing
+ * 28-Apr-2026 - add type340 character string directive
  *
 */
 #include <unistd.h>
@@ -563,6 +564,9 @@ typeToName(int type)
     case FLEXO:
         return("flexo");
         break;
+    case TYPE340:
+        return("type340");
+        break;
     case CHAR:
         return("char");
         break;
@@ -891,6 +895,10 @@ char str[128];
         case TEXT:
         case ASCII:
             printf("%s (%s)\n", nameP, nodeP->value.strP);
+            break;
+
+        case TYPE340:
+            printf("%s\n", nameP);
             break;
 
         case FLEXO:

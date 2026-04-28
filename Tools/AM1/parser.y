@@ -45,11 +45,6 @@ extern char *filenameP;
 extern char *incroot;
 extern PNodeP rootP;
 
-SymNodeP addLocalSymbol(char *nameP);
-LocalContextP newLocalContext(void);
-BankContextP swapBanks(int newBank);
-int countAscii(char *strP);
-int countText(FlexText text);
 int setConstPC(int pc, SymNodeP constSymP);
 void setConstVal(SymNodeP constSymP);
 void setVarsPC(int bank, PNodeListP varNodesP);
@@ -59,10 +54,10 @@ void resolveWildcards(PNodeListP wildsP, BankContextP banksP);
 bool resolveWildcard(PNodeListP itemP, BankContextP bankP);
 BankContextP findBank(int bank);
 BankContextP addBank(int bank);
+BankContextP swapBanks(int newBank);
+SymNodeP addLocalSymbol(char *nameP);
 SymListP addToSymlist(SymListP listP, SymNodeP symP, int bank, int pc);
 SymNodeP findSymbolInBank(int bank, char *nameP);
-
-extern SymNodeP resolveLocalSymbol(char *);
 
 int yyerror(const char *errstr);
 void verror(const char *msgP, ...);
@@ -71,11 +66,16 @@ void vwarn(int errtype, const char *msgP, ...);
 int yylex(void);
 
 extern int evalExpr(PNodeP);
+extern int countAscii(char *strP);
+extern int countType340(char *strP);
+extern int countText(FlexText text);
 extern long int hashExpr(PNodeP);
 extern bool doWarn(int errType);
 extern bool fileIsMain(char *nameP);
 extern void checkPCBound(char *msgP, int pc, int lineNo);
 extern void leave(int);
+extern LocalContextP newLocalContext(void);
+extern SymNodeP resolveLocalSymbol(char *);
 extern PNodeP binop(int lineNo, int pc, int value, PNodeP leftP, PNodeP rightP);
 extern PNodeP unop(int lineNo, int pc, int value, PNodeP expP);
 extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
@@ -102,6 +102,7 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %token <pnodeP> VARS
 %token <pnodeP> TABLE
 %token <pnodeP> ASCII
+%token <pnodeP> TYPE340
 %token <pnodeP> EXPORT
 %token <pnodeP> IMPORT
 %token <symP> OPCODE
@@ -519,6 +520,14 @@ one_stmt	: expr
                     $$->value.strP = $2;
                     cur_pc += countAscii($2);
                     checkPCBound("Ascii", cur_pc, lineno);
+                }
+                | TYPE340 STRING
+                {
+                    // Will aready have been converted in the lexer.
+		    $$ = newnode(lineno+1, cur_pc, TYPE340, NILP, NILP);
+                    $$->value.strP = $2;
+                    cur_pc += countType340($2);
+                    checkPCBound("Type340", cur_pc, lineno);
                 }
                 | TEXT
                 {

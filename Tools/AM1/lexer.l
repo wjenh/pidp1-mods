@@ -8,6 +8,7 @@
 #include "am1.h"
 #include "symtab.h"
 #include "y.tab.h"
+#include "type340chars.h"
 
 #define STRBUF 1024		/* maximum literal string length */
 #define MAXCCOMMENT 4096	/* maximum c-style comment length */
@@ -16,6 +17,7 @@ static bool decimalMode = false;
 static bool inConstant = false;
 static bool sawSemi = false;
 static bool noIncrement = false;
+static bool type340String = false;
 
 static char *commentP;
 static char commentBuf[MAXCCOMMENT];
@@ -28,12 +30,13 @@ extern SymNodeP globalSymP;
 int countNLs(char *strP);
 SymNodeP resolveLocalSymbol(char *nameP);
 
+extern int processEscape(char);
+extern char processType340Escape(char ch);
+extern char asciiToFlexo(char, int *);	// in parsefns.c
+extern char asciiToType340(char);
+extern void reset_line(void);
 extern void verror(char *msgP, ...);
 extern void vwarn(int errtype, char *msgP, ...);
-extern char asciiToFlexo(char, int *);	// in parsefns.c
-
-int processEscape(char);
-void reset_line(void);
 
 #define YY_USER_INIT BEGIN FIRST
 
@@ -158,8 +161,12 @@ bank[ \t]*		{ return(BANK); }
 ^[ \t]*export[ \t]*	{ return(EXPORT); }
 
 ascii[ \t]+		{ return(ASCII); }
-
 text[ \t]+		{ BEGIN DOTEXT; }
+
+type340[ \t]+		{
+			    type340String = true;
+			    return(TYPE340);
+			}
 
 flexo[ \t][^\n;]{1,3}	{
 			int i, ch, shift, nshifts, nchars;
@@ -575,10 +582,14 @@ octal			{ decimalMode = false; }
 
 \"			{
 			int tmpc;
+			int charCount;
+			bool sawEnd;		// for type 340
 			char *cP;
 			char string[STRBUF];
 
 			    cP = string;
+			    charCount = 0;
+			    sawEnd = false;
 
 			    while( (tmpc = input()) != '"' )
 			    {
@@ -589,25 +600,49 @@ octal			{ decimalMode = false; }
 
 				if( (tmpc == EOF) || (tmpc == '\n') )
 				{
-					verror("unterminated quote in ascii string");
+					verror("unterminated quote in %s string", type340String?"type340":"ascii");
 				}
 
 				if( tmpc == '\\' )
 				{
-				    tmpc = processEscape(input());
+				    tmpc = (type340String)?processType340Escape(input()):processEscape(input());
 				    if( !tmpc )
 				    {
-				    	continue;		// meant a line continuation
+				        continue;		// meant a line continuation
+				    }
+
+				    if( tmpc == TYPE340NL )	// special case, convert
+				    {
+					++charCount;
+				    	*cP++ = TYPE340CR;
+					tmpc = TYPE340LF;
+				    }
+				    else if( tmpc == TYPE340END )
+				    {
+				    	sawEnd = true;
 				    }
 				}
+				else if( type340String )
+				{
+				    tmpc = asciiToType340(tmpc);
+				}
 
+				++charCount;
 			        *cP++ = (char)tmpc;
 			    }
 
-			    *cP = '\0';
+			    if( type340String && !sawEnd )
+			    {
+			    	*cP++ = TYPE340END;
+				++charCount;
+			    }
 
-			    yylval.strP = malloc(strlen(string) + 1);
-			    strcpy(yylval.strP, string);
+			    // We don't use strlen because type 340 chars can be 0
+			    yylval.strP = (char *)malloc(charCount + 1);
+			    yylval.strP[charCount] = '\0';
+			    memcpy(yylval.strP, string, charCount + 1);
+
+			    type340String = false;
 			    return( STRING );
 			}
 

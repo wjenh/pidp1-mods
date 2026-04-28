@@ -6,4 +6,8 @@ Test of C-style comments
      *  spanning lines
      */
     cla
+
+/* by itself
+ *  left justified
+ */
 start 100

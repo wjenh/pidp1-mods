@@ -9,6 +9,7 @@
 
 #include "am1.h"
 #include "y.tab.h"
+#include "type340chars.h"
 
 #define LOADER_HALT 07772       // the halt instruction in our loader, keep in sync with xldr
 
@@ -23,6 +24,7 @@ static void emitStatements(FILE *, PNodeP);
 static void emitOperand(FILE *, PNodeP);
 static void emitAscii(FILE *outfP, char *strP);
 static void emitText(FILE *outfP, FlexText flexText);
+static void emitType340(FILE *outfP, char *strP);
 static void emitVars(FILE *outfP, PNodeListP listP);
 static int emitConstants(FILE *outfP, SymNodeP nodeP);
 
@@ -176,6 +178,13 @@ char str[128];
         case ASCII:
             fprintf(outfP, "/ Ascii table\n");
             emitAscii(outfP, nodeP->value.strP);
+            fprintf(outfP, "/ End\n");
+            noNl = true;
+            break;
+
+        case TYPE340:
+            fprintf(outfP, "/ Type 34 character table\n");
+            emitType340(outfP, nodeP->value.strP);
             fprintf(outfP, "/ End\n");
             noNl = true;
             break;
@@ -523,6 +532,46 @@ char *bufP;
     else if( (i >= flexText.nchars) && !( i % 3) )
     {
         fprintf(outfP, "    %06o\n", val);      // didn't emit the word yet
+    }
+}
+
+// Emit packed Type 340 code
+static void
+emitType340(FILE *outfP, char *strP)
+{
+int i;
+int val;
+
+    for( val = i = 0;; )
+    {
+        val <<= 6;
+        val |= *strP;
+
+        if( i == 2 )
+        {
+            fprintf(outfP, "    %06o\n", val);
+            val = 0;
+        }
+
+        if( ++i > 2 )
+        {
+            i = 0;
+        }
+
+        if( *strP++ == TYPE340END )
+        {
+            break;
+        }
+    }
+
+    if( i != 0 )         // had leftovers, finish the word
+    {
+        while( i++ != 3 )
+        {
+            val <<= 6;
+        }
+
+        fprintf(outfP, "    %06o\n", val);
     }
 }
 

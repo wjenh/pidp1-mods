@@ -2,9 +2,9 @@
 
 This document describes the /opt/pidp1-mods/pdp1.config and how to use it.
 
-This is version 1.0; it will be updated as needed.
+This is version 1.1; it will be updated as needed.
 
-Edit date 7-Apr-2026
+Edit date 28-Apr-2026
 
 ## What is the configuration file?
 
@@ -24,7 +24,7 @@ Anything else is a string option, the string following the *=* is its value.
 Most options are built-in but new ones can be added for use in IOTs.\
 If an option that is not built in is seen, it is added to a list of extra options that
 can be accessed via functions in the .../src/blicolnlights/configuration.c library.
-An example can be found in the source code for IOT_45 line printers.
+An example can be found in the source code for the IOT_45 line printers.
 
 - If it is a boolean setting, the onOff field in the extra option is set.
 - If it is a string of digits 0-9, the ivalue field is set and the fvalue field will be NAN.
@@ -52,6 +52,7 @@ See the sample configuration file in /opt/pidp1-mods for details
 - type30lightpen
 - type30size
 - aperture
+- two340charsets
 - audio
 - alpha
 - gain
@@ -66,3 +67,4 @@ See the sample configuration file in /opt/pidp1-mods for details
 - lptLines
 - lptNoFF
 - newmemfile
+- type340

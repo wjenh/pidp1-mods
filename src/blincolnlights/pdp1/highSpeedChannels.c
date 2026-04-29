@@ -8,6 +8,7 @@
  *
  * 23-Apr-2026 wje - rework to make it more realistic
  * 29-Apr-2026 wje - fix overrun of channel list
+ * 30--Apr-2026 wje - add fake break cycles for THREADED so emulator will skip cycles semi-properly
 */
 
 #include <unistd.h>
@@ -29,7 +30,8 @@ typedef struct {
     bool isWaiting;
     int status;
     int waitDelay;          // if we are in THREADED mode, how long to sleep in HSCwait()
-    sem_t accessSemaphore;   // how we synchrnonize modification of the control structure
+    int brkCount;           // if we are in THREADED mode, simulate break requests, more or less
+    sem_t accessSemaphore;  // how we synchrnonize modification of the control structure
     sem_t waitSemaphore;    // how we synchrnonize completion
     HSCRequest request;     // pending request if any, copied by execute from user space
     } HSCControl, *HSCControlP;
@@ -60,20 +62,33 @@ bool
 processHSCchannels()
 {
 int i;
+bool steal;
 HSCControlP ctlP;
 
     // we do in priority order, 0 being highest
-    for( i = 0; i < NUMCHANS; ++i )
+    for( steal = false, i = 0; i < NUMCHANS; ++i )
     {
         // The channels are scanned from low to high, first one that needs a cycle steal wins.
         ctlP = chans[i];
+
+        // If a THREADED operation was done, fake break cycles
+        if( ctlP->brkCount )
+        {
+            ctlP->brkCount--;
+            steal = true;
+        }
 
         if( ctlP->status == HSC_BUSY )
         {
             if( processChannel(ctlP) )
             {
-                return( true );        // we processed one, steal a cycle
+                steal = true;        // we processed one, steal a cycle
             }
+        }
+
+        if( steal )
+        {
+            return(true);           // we need a pseudo-break cycle
         }
     }
 
@@ -113,6 +128,7 @@ HSCControlP ctlP;
 
     ctlP->isAssigned = true;
     ctlP->isWaiting = false;
+    ctlP->brkCount = 0;
 
     chanP = (HSCChannelP)malloc(sizeof(HSCChannel));
     chanP->chanNo = chanNo - 1;         // we keep it as an offset in the channel table
@@ -202,6 +218,7 @@ HSCControlP ctlP;
             }
 
             ctlP->waitDelay = rqstP->count * 5;       // 5us per word
+            ctlP->brkCount = rqstP->count;  // hack to vaguely simulate the break conditions
             processImmediate(rqstP);
             return(HSC_BUSY);
 

@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <ctype.h>
 
 #include "am1.h"
 #include "y.tab.h"
@@ -19,11 +20,12 @@ int fixMinusZero(int val);
 int countAscii(char *strP);
 int countText(FlexText flexText);
 int countType340(char *t340StrP);
-char processType340Escape(char ch);
+int type340Shift(char ch);
 char asciiToType340(char ch);
 
 extern bool keepMinusZero;
 extern bool spaceIsAdd;
+extern char processType340Escape(char ch);
 
 static int _evalExpr(PNodeP);
 
@@ -515,56 +517,9 @@ int count;
     return(rslt);
 }
 
-// Handle the backslash-x conversions for type 340 characters.
-// Return the character or 0 if it was a line continuation.
-char
-processType340Escape(char ch)
-{
-    switch( ch )
-    {
-    case '\n':  	// backslash-<newline> ignored, it's a line continuation
-        return(0);
-
-    case 'e':
-        ch = TYPE340END;    // an explicit end marker, we're done
-        break;
-
-    case 'U':
-        ch = TYPE340UPPER;  // upper shift
-        break;
-
-    case 'L':
-        ch = TYPE340LOWER;  // lower shift
-        break;
-
-    case 'b':		    // blob character
-        ch = TYPE340BLOB;
-        break;
-
-    case 'n':
-        ch = TYPE340NL;     // newline, a line feed and cr, special case
-        break;
-
-    case 'l':
-        ch = TYPE340LF;     // newline, a line feed
-        break;
-
-    case 'r':		    // a carriage return
-        ch = TYPE340CR;
-        break;
-
-    default:		    // not supported
-        ch = TYPE340BLOB;
-        break;
-    }
-
-    return(ch);
-}
-
 // Convert an ascii string to Type 340 characters.
 // Backslash escapes are processed separately.
 // Unlike flex/concise characters, these collate nicely in semi-ascii seqence, so no lookup tables needed.
-// Lowercase alpha characters will be mapped to their uppercase equivalents.
 char
 asciiToType340(char ch)
 {
@@ -574,15 +529,83 @@ asciiToType340(char ch)
         ch = ch - 'a' + 'A'; 
     }
 
-    if( (ch < ' ') || (ch > 'Z') )
+    if( (ch >= '@') && (ch <= 'Z') )
     {
-        ch = TYPE340BLOB;
+        ch = ch - '@';
     }
-    else if( (ch >= 'A') && (ch <= 'Z') )
+    else if( (ch >= ' ') && (ch <= '?') )
     {
-        ch = ch - 'A' + 1;
+        ;   // keep as is
+    }
+    else
+    {
+        // Ok, a pain
+        switch( ch )
+        {
+        case '~':
+            ch = 043;
+            break;
+        case '\\':
+            ch = 052;
+            break;
+        case '[':
+            ch = 053;
+            break;
+        case ']':
+            ch = 054;
+            break;
+        case '{':
+            ch = 055;
+            break;
+        case '}':
+            ch = 056;
+            break;
+        case '_':
+            ch = 060;
+            break;
+        case '|':
+            ch = 062;
+            break;
+        case '`':
+            ch = 066;
+            break;
+        case '^':
+            ch = 067;
+            break;
+        default:
+            ch = 0; // a blob
+        }
     }
 
-    // If not matched above, char is the same
     return( ch );
+}
+
+// Check an ascii character, determine if it needs upper or lower shift when coverted to a Type 340 character.
+// Returns 1 if needs upper, -1 if needs lower, 0 if unknown.
+int
+type340Shift(char ch)
+{
+    if( islower(ch) )
+    {
+        return(-1);
+    }
+    else if( isupper(ch) )
+    {
+        return(1);
+    }
+    else if( isdigit(ch) )
+    {
+        return(1);
+    }
+    else if( strchr("!\"#$%'()*+,-./i:;<=>?", ch) )
+    {
+        return(1);
+    }
+    else if( strchr("~\\[]{}_|", ch) )
+    {
+        return(-1);
+    }
+
+    // Not categorized
+    return(0);
 }

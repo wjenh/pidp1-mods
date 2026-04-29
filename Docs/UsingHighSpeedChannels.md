@@ -2,9 +2,9 @@
 
 This document describes using the Type 19 High Speed Channel Control emulation.
 
-This is version 2.0
+This is version 2.1
 
-Edit date 24-April-2026
+Edit date 30-April-2026
 
 ## What is it?
 
@@ -57,17 +57,28 @@ The current status of a transfer can be checked by calling *HSCgetStatus*.
 There are three modes of operation, normal, *HSC_MODE_IMMEDIATE* and *HSC_MODE_THREADED*.
 The last two are not standard, but are very useful for implementing device emulations.
 
-The default, normal, mode implements pseudo cycle stealing. While a purist might argue that the real hardware caused
+The default, normal, mode implements pseudo-cycle-stealing. While a purist might argue that the real hardware caused
 break states and set and cleared various internal bits of hardware, this isn't real hardware.
 The apparent functionality is pretty much correct, and that's what is needed.
+In this mode, the emulator checks every machine cycle to see if a transfer is needed and if so bypasses
+execution of the upcoming machine cycle, instead delaying one cycle time.
+
+Since high speed channels have priority over other operations, the cycle delay will repeat as long as there are
+data words to transfer.
 
 Immediate mode completely bypasses the emulator, doesn't steal cycles, and completes immediately.
 Of course, this is not at all like the original but it allows an IOT to implement its own timing or to not bother
 with timing.
 
 Threaded mode can actually be used inside or outside threads.
+It runs in the current thread with no blocking waiting for the emulator.
 It is a compromise between the original cycle-stealing mode and immediate mode.
-It also bypasses the emulator but it enforces a completion delay that matches what the original cycle-stealing did.
+It bypasses the emulator but it enforces a completion delay that matches what the original cycle-stealing did
+and also sets a counter the emulator will see that will cause it to execute a pseudo-break
+for each word transferred.
+
+The break states aren't the actual hardware break states the original -1 did, but they are a 'black box' equivalent,
+and so as far as programs and IOTs are concerned, will appear to work the same way.
 
 So, why have it?
 If you are using threads, Linux scheduling can introduce some pretty big delays because of scheduling.

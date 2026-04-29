@@ -2,6 +2,7 @@
 
 # start script for pidp1.  
 # 7-Apr-26 wje add reload to have the config file reloaded
+# 29-Apr-26 wje change reload to use sighup
 
 # Interface setting - can be 'gui', 'web', or 'apps'
 interface="web"
@@ -111,7 +112,7 @@ do_start() {
 }
 
 do_reload() {
-        pkill -INT 'pdp1$'
+        pkill -HUP 'pdp1$'
 }
 
 do_stop() {

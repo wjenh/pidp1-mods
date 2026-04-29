@@ -35,6 +35,7 @@
 #define lpoff 010000
 #define halt 02000
 #define interrupt 01000
+#define charsets(i) ((((i) & 02) << 6) | 0400)
 
 // These are for slave
 #define group(x) (((x) & 03) << 0d16)

@@ -70,7 +70,7 @@ char tmpstr[1024];
 }
 
 /*
- * Given a charater that immediately followed a backslash, process to complete the
+ * Given a character that immediately followed a backslash, process to complete the
  * escaped char or chars, return the result or EOF.
  * A 0 return means ignore and continue reading.
  */
@@ -146,6 +146,86 @@ int ctr;
     }
 
     return( ch );
+}
+
+// Handle the backslash-x conversions for type 340 characters.
+// Return the character or 0 if it was a line continuation.
+char
+processType340Escape(char ch)
+{
+int number;
+int ctr;
+
+    switch( ch )
+    {
+    case '\n':  	// backslash-<newline> ignored, it's a line continuation
+        return(0);
+
+    case '\\':
+        return(ch);         // a backslash
+
+    case 'e':
+        ch = TYPE340END;    // an explicit end marker, we're done
+        break;
+
+    case 'U':
+        ch = TYPE340UPPER;  // upper shift
+        break;
+
+    case 'L':
+        ch = TYPE340LOWER;  // lower shift
+        break;
+
+    case 'A':
+        ch = TYPE340AUTO;   // back to automatic shift
+        break;
+
+    case 'b':		    // blob character
+        ch = TYPE340BLOB;
+        break;
+
+    case 'n':
+        ch = TYPE340NL;     // newline, a line feed and cr, special case
+        break;
+
+    case 'l':
+        ch = TYPE340LF;     // newline, a line feed
+        break;
+
+    case 'r':		    // a carriage return
+        ch = TYPE340CR;
+        break;
+
+    case '0':		    // numeric escape
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+    case '7':
+	number = ch - '0';
+	ctr = 1;
+
+	ch = input();
+
+	while( isdigit(ch) && (ctr < 2) )
+	{
+	    number = number*8 + (ch - '0');
+	    ++ctr;
+	    ch = input();
+	}
+
+	unput(ch);
+	ch = number;
+	break;
+
+    default:		    // not supported
+        ch = TYPE340BLOB;
+        break;
+    }
+
+    return(ch);
 }
 
 // Search for a symbol in the current and any parent local scopes

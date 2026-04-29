@@ -31,6 +31,7 @@ int countNLs(char *strP);
 SymNodeP resolveLocalSymbol(char *nameP);
 
 extern int processEscape(char);
+extern int type340Shift(char);
 extern char processType340Escape(char ch);
 extern char asciiToFlexo(char, int *);	// in parsefns.c
 extern char asciiToType340(char);
@@ -581,15 +582,19 @@ octal			{ decimalMode = false; }
 			}
 
 \"			{
+			int i;
 			int tmpc;
 			int charCount;
 			bool sawEnd;		// for type 340
+			bool sawForcedShift;	// for type 340
 			char *cP;
+			bool inUpper;		// current shift state, false if lower
 			char string[STRBUF];
 
 			    cP = string;
 			    charCount = 0;
 			    sawEnd = false;
+			    sawForcedShift = inUpper = true;	// we always start in upper for the type 340
 
 			    while( (tmpc = input()) != '"' )
 			    {
@@ -600,7 +605,7 @@ octal			{ decimalMode = false; }
 
 				if( (tmpc == EOF) || (tmpc == '\n') )
 				{
-					verror("unterminated quote in %s string", type340String?"type340":"ascii");
+				    verror("unterminated quote in %s string", type340String?"type340":"ascii");
 				}
 
 				if( tmpc == '\\' )
@@ -611,19 +616,51 @@ octal			{ decimalMode = false; }
 				        continue;		// meant a line continuation
 				    }
 
-				    if( tmpc == TYPE340NL )	// special case, convert
+				    if( type340String )
 				    {
-					++charCount;
-				    	*cP++ = TYPE340CR;
-					tmpc = TYPE340LF;
-				    }
-				    else if( tmpc == TYPE340END )
-				    {
-				    	sawEnd = true;
+				        if( tmpc == TYPE340UPPER )
+				        {
+				    	    inUpper = true;
+					    sawForcedShift = true;
+				        }
+				        else if( tmpc == TYPE340LOWER )
+				        {
+				    	    inUpper = false;
+					    sawForcedShift = true;
+				        }
+				        else if( tmpc == TYPE340LOWER )
+				        {
+					    sawForcedShift = false;
+					    continue;
+				        }
+				        else if( tmpc == TYPE340NL )	// special case, convert
+				        {
+					    ++charCount;
+				    	    *cP++ = TYPE340CR;
+					    tmpc = TYPE340LF;
+				        }
+				        else if( tmpc == TYPE340END )
+				        {
+				    	    sawEnd = true;
+				        }
 				    }
 				}
 				else if( type340String )
 				{
+				    i = type340Shift(tmpc);
+				    if( !sawForcedShift && (i > 0) && !inUpper )
+				    {
+				    	inUpper = true;
+				    	*cP++ = TYPE340UPPER;
+					++charCount;
+				    }
+				    else if( !sawForcedShift && (i < 0) && inUpper )
+				    {
+				    	inUpper = false;
+				    	*cP++ = TYPE340LOWER;
+					++charCount;
+				    }
+
 				    tmpc = asciiToType340(tmpc);
 				}
 

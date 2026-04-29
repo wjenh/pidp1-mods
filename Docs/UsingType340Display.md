@@ -127,6 +127,7 @@ The definitions relevant to this are:
 - next(command) - set the next command to execute, if not set defaults to parameter
 - scale(0-3) - set the spacing between displayed dots, 0 is 1 pixel, 1 is 2, 2 is 4, and 3 is 8 pixels
 - intensity(0-7) - set the intensity, 0 the dimmest, 7 the brightest
+- charsets(1,2) - change between single and dual character sets mode
 - lpon - enable the lightpen
 - lpoff - disable the lightpen
 - halt - enter the stopped state, set the stopped flag
@@ -171,12 +172,17 @@ point x(100) y(500) show next(point)
 
 ## Character
 
-This is one of the special case commands that executes a string o subcommands until it sees an escape
-marker.
-There are up to 2 character sets each with 64 characters, one of which is an escape character, 037.
+This is one of the special case commands that executes a string o subcommands until it sees an end
+character.
+
+Using the *end* character is **mandatory** to terminate a character string!
+
+There are up to 2 character sets each with 64 characters, one of which in each is an escape character, 037.
 Characters are packed 3 to a word. Words will be fetched and displayed until an escape character is seen,
-in which case the mode reverts to *parameter*.\
+in which case the mode reverts to *parameter*.
+
 One or two character sets can be enabled in the */opt/pidp-1/mods/pidp1.config* file, the option is *two340charsets*. 
+Also see the section on *Parameter*.
 
 - character - the mode name
 
@@ -347,8 +353,12 @@ Setting both x and y with visible set on both will cause a 70 usec delay!
 
 Two character sets are included.
 
-The second is available if configured via the *two340charsets=yes* directive in the pidp-1 config file.
-If it is not configured, then using a second-set shift means to display the character set 1 text vertically.
+Somewhat confusingly, *upper shift* selects character set 1, while *lower shift* selects charater set 2.
+
+The second is available if configured via the *two340charsets=yes* directive in the pidp-1 config file
+or it has been set in the *parameter* command.
+
+If it is not enabled, then using a lower case shift means to display the character set 1 text vertically.
 
 Both character sets have special escape characters with specific meanings:
 
@@ -360,25 +370,28 @@ Both character sets have special escape characters with specific meanings:
 | 036 | lower shift |
 | 037 | end |
 
-Somewhat confusingly, *upper shift* selects character set 1, while *lower shift* selects charater set 2.\
-Using the *end* character is **mandatory** to terminate a character string!
-
 When using the **am1** *type340* directive to create strings of text, the following escape sequences
 can be used:
 
 | Escape sequence | Meaning |
 |-----------------|-----------|
 | \\e | end |
-| \\U | uuper shift |
-| \\L | lower shift |
+| \\U | upper shift+ |
+| \\L | lower shift+ |
+| \\A | automatic shift+ |
 | \\b | backspace* |
 | \\n | newline, a carriage return and linefeed |
 | \\l | linefeed |
 | \\r | carriage return |
 | \\s | superscript* |
 | \\u | subscript* |
+| \\00 | 1 or 2 octal digits 0-7 |
 
-The characters marked with an asterisk, *, are only valid when character set 2 is in use.
+The characters marked with an asterisk, *, are only valid when character set 2 is in use.\
+If octal digits are given, the a character of that octal value is inserted.
+
+For the shift escapes, marked with a +, explicitly shifting disables automatic shifting
+until the command completes or until automatic shifting is enabled again.
 
 Character set 1
 

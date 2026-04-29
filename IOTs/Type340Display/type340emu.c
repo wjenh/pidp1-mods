@@ -14,6 +14,7 @@
  *    It now uses the spin-wait for all of the short delays, nanosleep() for the 35us dot delay, and lets
  *    rescheduling happen otherwise by the semaphore wait at the end of a display cycle.
  * 26-Apr-2026 wje add more timing, interrupt always on lp hit or edge violation
+ * 29-Apr-2026 wje add dual charset control via the parameter instruction
  *
  */
 
@@ -106,6 +107,11 @@
 
 #define PARAM_INTENSITY_CHANGE(x) ((x) & 010)
 #define PARAM_INTENSITY(x) ((x) & 07)
+
+// These are nonstandard, but added because we can switch between one and two charsets.
+// These allow overriding of the original config setting.
+#define PARAM_CHARSET_CHANGE(x) ((x) & 0400)
+#define PARAM_CHARSETS(x) ((x) & 0200)
 
 #define SLAVE_GROUP(x) (((x) >> 16) & 03);
 #define SLAVE_GET_FLAGS(x, slave) (((x) >> (3 * (3 - slave))) & 07)
@@ -524,6 +530,13 @@ Status status;
                         curIntensity = PARAM_INTENSITY(word);
                     }
 
+                    if( PARAM_CHARSET_CHANGE(word) )
+                    {
+                        // Added functionality to enable/disable dual charsets on the fly.
+                        // Not standard, but these bits weren't used.
+                        twoCharsets = PARAM_CHARSETS(word)?true:false;
+                    }
+
                     if( PARAM_LP_CHANGE(word) )
                     {
                         lpEnabled = PARAM_LP_ENABLE(word);
@@ -762,33 +775,33 @@ Status status;
                     shiftState = 0;
                     curState = RUNNING;
                 }
-                else
+
+                word = getWord(ctlP->pdp1P);
+                iotCondLog(LOG_CHARACTER,"Char got word %6o\n", word);
+                for( i = 0; i < 3; ++i )
                 {
-                    word = getWord(ctlP->pdp1P);
-                    for( i = 0; i < 3; ++i )
+                    tmp = (word & 0770000) >> 12;
+                    word <<= 6;
+
+                    if( (status = doCharacter(curScale, tmp)) != COMPLETED )
                     {
-                        tmp = (word & 0770000) >> 12;
-                        word <<= 6;
-                        if( (status = doCharacter(curScale, tmp)) != COMPLETED )
+                        if( status == ESCAPE )
                         {
-                            if( status == ESCAPE )
-                            {
-                                curMode = PARAMETER;
-                                curState = INITIALIZE;
-                            }
-                            else if( status == PAUSE )
-                            {
-                                // lp hit, but finish the current loop
-                                isPaused = true;
-                            }
-                            else
-                            {
-                                // Edge violation
-                                curState = STOPPED;
-                                needBreak = true;
-                            }
-                            break;
+                            curMode = PARAMETER;
+                            curState = INITIALIZE;
                         }
+                        else if( status == PAUSE )
+                        {
+                            // lp hit, but finish the current loop
+                            isPaused = true;
+                        }
+                        else
+                        {
+                            // Edge violation
+                            curState = STOPPED;
+                            needBreak = true;
+                        }
+                        break;
                     }
                 }
                 break;
@@ -1198,7 +1211,7 @@ static unsigned char charSet[128][6] = {
     { 0020, 0020, 0124, 0070, 0020, 0 },   // 47 left arrow
     { 0010, 0004, 0376, 0004, 0010, 0 },   // 50 down arrow
     { 0020, 0070, 0124, 0020, 0020, 0 },   // 51 right arrow
-    { 0100, 0040, 0020, 0010, 0004, 0 },   // 52 \
+    { 0100, 0040, 0020, 0010, 0004, 0 },   // 52 backslash
     { 0000, 0376, 0202, 0202, 0000, 0 },   // 53 [
     { 0000, 0202, 0202, 0376, 0000, 0 },   // 54 ]
     { 0000, 0020, 0154, 0202, 0000, 0 },   // 55 {
@@ -1210,8 +1223,8 @@ static unsigned char charSet[128][6] = {
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 63 ???
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 64 ???
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 65 ???
-    { 0000, 0200, 0100, 0040, 0000, CH_NSPC },  // 66 `
-    { 0040, 0100, 0200, 0100, 0040, CH_NSPC },  // 67 ^
+    { 0000, 0200, 0100, 0040, 0000, 0 },  // 66 `
+    { 0040, 0100, 0200, 0100, 0040, 0 },  // 67 ^
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 70 ???
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 71 block?
     { 0000, 0000, 0000, 0000, 0000, CH_BS },  // 72 backspace
@@ -1246,6 +1259,7 @@ bool sawHit;
 
     sawHit = false;
     curChar = ch | ((twoCharsets)?shiftState:0);
+    iotCondLog(LOG_CHARACTER,"Mapped character %o\n", ch);
 
     // Each char has 5 data bytes plus one flag byte.
     flags = charSet[curChar][5];
@@ -1270,13 +1284,13 @@ bool sawHit;
 
     case CH_UC:
         // SHIFT IN (horizontal chars)
-        // apparently upper case in SPCWAR 163
+        // Uppercase characters and some special symbols.
         shiftState = 0;
         return(COMPLETED);
 
     case CH_LC:
         // SHIFT OUT (vertical chars)
-        // apparently lower case in SPCWAR 163
+        // unless two character sets are enabled, then lowercase characters and some more symbols.
         shiftState = 0100;
         return(COMPLETED);
 
@@ -1302,11 +1316,11 @@ bool sawHit;
         break;
 
     case CH_D:
-        curY -= 2 * dotSpacing;            // descender
+        curY -= 2 * dotSpacing;                     // descender
         break;
 
     case CH_SUB:
-        curY -= (CHARHEIGHT * dotSpacing) / 2;    // subscript
+        curY -= (CHARHEIGHT * dotSpacing) / 2;      // subscript
 
         if( checkBounds(curX, curY) )
         {
@@ -1317,23 +1331,6 @@ bool sawHit;
 
     case CH_SUP:
         curY += (CHARHEIGHT * dotSpacing) / 2;   // superscript
-
-        if( checkBounds(curX, curY) )
-        {
-            iotCondLog(LOG_BOUNDS, "character edge violation x, y %d %d\n", curX, curY);
-            return(EDGEVIOLATION);
-        }
-        return(COMPLETED);
-
-    case CH_BS:
-        if( twoCharsets || (shiftState == 0) )
-        {
-            curX -= CHARWIDTH * dotSpacing;  // backspace
-        }
-        else if( !twoCharsets && (shiftState != 0) )
-        {
-            curY += CHARHEIGHT * dotSpacing;  // backspace
-        }
 
         if( checkBounds(curX, curY) )
         {
@@ -1381,7 +1378,24 @@ bool sawHit;
         curY -= CHARHEIGHT * dotSpacing;
     }
 
-    if( flags == CH_D )
+    if( flags == CH_BACKSPACE )
+    {
+        if( twoCharsets || (shiftState == 0) )
+        {
+            curX -= CHARWIDTH * dotSpacing;  // backspace
+        }
+        else if( !twoCharsets && (shiftState != 0) )
+        {
+            curY += CHARHEIGHT * dotSpacing;  // backspace
+        }
+
+        if( checkBounds(curX, curY) )
+        {
+            iotCondLog(LOG_BOUNDS, "character edge violation x, y %d %d\n", curX, curY);
+            return(EDGEVIOLATION);
+        }
+    }
+    else if( flags == CH_D )
     {
         curY += 2 * dotSpacing;     // undo descender
     }

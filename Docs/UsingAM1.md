@@ -883,7 +883,7 @@ Just as for *flex/concise* characters, there are modal shift characters.
 The shift state last given stays in effect until a new one is seen.
 At the beginning of a string, the mode will always be upper-shift.
 
-As a convenience, upper and lower case letters, *A-Za-z* are interchangeable.
+As a convenience, shift characters are automatically added based upon the character.
 The actual case displayed depends upon the shift state and the character sets that are enabled.
 
 See the *UsingType340Display.md* document for the characters and more information.

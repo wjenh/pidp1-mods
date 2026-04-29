@@ -7,6 +7,7 @@
  * word transfer, a simultaenous read/write counts as one word transfer, 5us.
  *
  * 23-Apr-2026 wje - rework to make it more realistic
+ * 29-Apr-2026 wje - fix overrun of channel list
 */
 
 #include <unistd.h>
@@ -62,9 +63,11 @@ int i;
 HSCControlP ctlP;
 
     // we do in priority order, 0 being highest
-    for( i = 0; ctlP = chans[i++]; i < NUMCHANS )
+    for( i = 0; i < NUMCHANS; ++i )
     {
         // The channels are scanned from low to high, first one that needs a cycle steal wins.
+        ctlP = chans[i];
+
         if( ctlP->status == HSC_BUSY )
         {
             if( processChannel(ctlP) )

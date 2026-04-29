@@ -1,5 +1,7 @@
 /*
  * Support for evaluating various parse tree constructs.
+ *
+ * 29-Apr-2026 wje - add type340 support
 */
 #include <stdio.h>
 #include <string.h>
@@ -488,24 +490,29 @@ int rslt;
 // The passed string must have already been converted to a TYPE 340 character set string.
 // Note that 0 is NOT the end of a Type 340 string, the TYPE340END character is.
 int
-countType340(char *t340StrP)
+countType340(char *strP)
 {
+int rslt;
 int count;
 
-    for( count = 0; *t340StrP++ != TYPE340END; )
+    for( count = 0;; )
     {
         ++count;
+        if( *strP++ == TYPE340END )
+        {
+            break;
+        }
     }
 
-    // One more to include the end char
-    // Adjust for an incomplete word by roundint up
-    count = (++count) / 3;
+    // Now have the character count.
+    // If it isn't a multiple of 3, we have an incomplete word.
+    rslt = count / 3;
     if( count % 3 )
     {
-        ++count;
+        ++rslt;
     }
 
-    return(count);
+    return(rslt);
 }
 
 // Handle the backslash-x conversions for type 340 characters.
@@ -561,18 +568,19 @@ processType340Escape(char ch)
 char
 asciiToType340(char ch)
 {
-    if( (ch >= 97) || (ch <= 122) )
+    // Map lower case to upper case
+    if( (ch >= 'a') && (ch <= 'z') )
     {
         ch = ch - 'a' + 'A'; 
     }
 
-    if( (ch < 32) || (ch > 90) )
+    if( (ch < ' ') || (ch > 'Z') )
     {
         ch = TYPE340BLOB;
     }
-    else if( ch > 63 )
+    else if( (ch >= 'A') && (ch <= 'Z') )
     {
-        ch -= 64;               // the 340 char is just the ascii char moved down by 64
+        ch = ch - 'A' + 1;
     }
 
     // If not matched above, char is the same

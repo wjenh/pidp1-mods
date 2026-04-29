@@ -1251,5 +1251,6 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 | stop        |
 | table       |
 | text        |
+| type340     |
 | var         |
 | variables   |

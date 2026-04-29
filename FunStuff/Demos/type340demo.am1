@@ -104,18 +104,12 @@ triangle,
     end
 
 hello,
-    100514
-    141740
-    271722
-    140441
-    370000
+    type340 "Hello world!"
     next(subroutine)
     jump next1 next(parameter)
 
 pdp1,
-    362004
-    206135
-    370000
+    type340 "\LPDP 1"
     next(subroutine)
     jump next2 next(parameter)
 

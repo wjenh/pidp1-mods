@@ -460,7 +460,7 @@ int i;
     else
     {
         startLine(false, outfP, nodeP);
-        output(outfP, doOutput, " 000000\n");
+        output(outfP, doOutput, "000000\n");
     }
 }
 

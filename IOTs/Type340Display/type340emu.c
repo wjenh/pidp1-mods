@@ -230,6 +230,7 @@ static bool slavesEnabled;  // set if we saw a SLAVE command
 static bool threadRunning = false;  // emulator thread is set up
 static bool isPaused = false;       // got a PAUSE command
 static bool needBreak = false;      // edge violation occurred and an interrupt is needed
+static bool origCharsets = false;   // initial twoCharsets from config or default
 static bool twoCharsets = false;
 static Slave slaves[NUMSLAVES];    // could be up to 16 slaves, but the core display support is 8
 
@@ -516,6 +517,7 @@ Status status;
                 {
                     curState = INITIALIZE;
                     emuClearFlags();
+                    twoCharsets = origCharsets; // we revert on each param instruction
 
                     if( PARAM_SCALE_CHANGE(word) )
                     {
@@ -1378,7 +1380,7 @@ bool sawHit;
         curY -= CHARHEIGHT * dotSpacing;
     }
 
-    if( flags == CH_BACKSPACE )
+    if( flags == CH_BS )
     {
         if( twoCharsets || (shiftState == 0) )
         {
@@ -1534,7 +1536,7 @@ ConfigurationSettingP settingP;
 
     if( (settingP = findConfigurationSetting(getConfiguration(), "two340charsets")) )
     {
-        twoCharsets = settingP->onOff;
+        origCharsets = twoCharsets = settingP->onOff;
         iotCondLog(LOG_CONFIG, "340 emulator dual charsets %s\n", (twoCharsets)?"enabled":"disabled");
     }
 }

@@ -17,7 +17,6 @@ static bool decimalMode = false;
 static bool inConstant = false;
 static bool sawSemi = false;
 static bool noIncrement = false;
-static bool type340String = false;
 
 static char *commentP;
 static char commentBuf[MAXCCOMMENT];
@@ -44,7 +43,7 @@ extern void vwarn(int errtype, char *msgP, ...);
 %}
 
 %s BODY
-%x FIRST DOASCII DOTEXT CONST CCOMMENT
+%x FIRST DOASCII DOTEXT CONST CCOMMENT T340STR
 
 %%
 
@@ -165,7 +164,7 @@ ascii[ \t]+		{ return(ASCII); }
 text[ \t]+		{ BEGIN DOTEXT; }
 
 type340[ \t]+		{
-			    type340String = true;
+			    BEGIN T340STR;
 			    return(TYPE340);
 			}
 
@@ -582,19 +581,11 @@ octal			{ decimalMode = false; }
 			}
 
 \"			{
-			int i;
 			int tmpc;
-			int charCount;
-			bool sawEnd;		// for type 340
-			bool sawForcedShift;	// for type 340
 			char *cP;
-			bool inUpper;		// current shift state, false if lower
 			char string[STRBUF];
 
 			    cP = string;
-			    charCount = 0;
-			    sawEnd = false;
-			    sawForcedShift = inUpper = true;	// we always start in upper for the type 340
 
 			    while( (tmpc = input()) != '"' )
 			    {
@@ -605,82 +596,131 @@ octal			{ decimalMode = false; }
 
 				if( (tmpc == EOF) || (tmpc == '\n') )
 				{
-				    verror("unterminated quote in %s string", type340String?"type340":"ascii");
+				    verror("unterminated quote in ascii string");
 				}
 
 				if( tmpc == '\\' )
 				{
-				    tmpc = (type340String)?processType340Escape(input()):processEscape(input());
+				    tmpc = processEscape(input());
+				    if( !tmpc )
+				    {
+				        continue;		// meant a line continuation
+				    }
+				}
+
+			        *cP++ = (char)tmpc;
+			    }
+
+			    *cP = '\0';
+
+			    yylval.strP = (char *)malloc(strlen(string) + 1);
+			    strcpy(yylval.strP, string);
+			    return( STRING );
+			}
+
+<T340STR>\"		{
+			int i;
+			int tmpc;
+			int charCount;
+			bool sawEnd;
+			bool sawForcedShift;
+			char *cP;
+			bool inUpper;		// current shift state, false if lower
+			char string[STRBUF];
+
+			    cP = string;
+			    charCount = 0;
+			    sawEnd = false;
+			    sawForcedShift = false;
+			    inUpper = true;	// we always start in upper for the type 340
+
+			    while( (tmpc = input()) != '"' )
+			    {
+				if( cP >= (string+STRBUF) )
+				{
+				    verror("string too long", 0);
+				}
+
+				if( (tmpc == EOF) || (tmpc == '\n') )
+				{
+				    verror("unterminated quote in type340 string");
+				}
+
+				if( tmpc == '\\' )
+				{
+				    tmpc = processType340Escape(input());
 				    if( !tmpc )
 				    {
 				        continue;		// meant a line continuation
 				    }
 
-				    if( type340String )
+				    if( tmpc == TYPE340UPPER )
 				    {
-				        if( tmpc == TYPE340UPPER )
-				        {
-				    	    inUpper = true;
-					    sawForcedShift = true;
-				        }
-				        else if( tmpc == TYPE340LOWER )
-				        {
-				    	    inUpper = false;
-					    sawForcedShift = true;
-				        }
-				        else if( tmpc == TYPE340LOWER )
-				        {
-					    sawForcedShift = false;
-					    continue;
-				        }
-				        else if( tmpc == TYPE340NL )	// special case, convert
-				        {
-					    ++charCount;
-				    	    *cP++ = TYPE340CR;
-					    tmpc = TYPE340LF;
-				        }
-				        else if( tmpc == TYPE340END )
-				        {
-				    	    sawEnd = true;
-				        }
+				        inUpper = true;
+				        sawForcedShift = true;
+				    }
+				    else if( tmpc == TYPE340LOWER )
+				    {
+				        inUpper = false;
+				        sawForcedShift = true;
+				    }
+				    else if( tmpc == TYPE340AUTO )
+				    {
+				        sawForcedShift = false;
+				        continue;
+				    }
+				    else if( tmpc == TYPE340NOEND )
+				    {
+				        sawEnd = true;		// fake that we had one
+				        continue;
+				    }
+				    else if( tmpc == TYPE340NL )	// special case, convert
+				    {
+				        ++charCount;
+				        *cP++ = TYPE340CR;
+				        tmpc = TYPE340LF;
+				    }
+				    else if( tmpc == TYPE340END )
+				    {
+				        sawEnd = true;
 				    }
 				}
-				else if( type340String )
+				else
 				{
-				    i = type340Shift(tmpc);
-				    if( !sawForcedShift && (i > 0) && !inUpper )
-				    {
-				    	inUpper = true;
-				    	*cP++ = TYPE340UPPER;
-					++charCount;
-				    }
-				    else if( !sawForcedShift && (i < 0) && inUpper )
-				    {
-				    	inUpper = false;
-				    	*cP++ = TYPE340LOWER;
-					++charCount;
-				    }
+			            i = type340Shift(tmpc);
+			            if( !sawForcedShift && (i > 0) && !inUpper )
+			            {
+				        inUpper = true;
+				        *cP++ = TYPE340UPPER;
+				        ++charCount;
+			            }
+			            else if( !sawForcedShift && (i < 0) && inUpper )
+			            {
+				        inUpper = false;
+				        *cP++ = TYPE340LOWER;
+				        ++charCount;
+			            }
 
-				    tmpc = asciiToType340(tmpc);
+			            tmpc = asciiToType340(tmpc);
 				}
 
-				++charCount;
+			        ++charCount;
 			        *cP++ = (char)tmpc;
 			    }
 
-			    if( type340String && !sawEnd )
+			    if( !sawEnd )
 			    {
-			    	*cP++ = TYPE340END;
-				++charCount;
+			        *cP++ = TYPE340END;
+			        ++charCount;
 			    }
 
-			    // We don't use strlen because type 340 chars can be 0
-			    yylval.strP = (char *)malloc(charCount + 1);
-			    yylval.strP[charCount] = '\0';
-			    memcpy(yylval.strP, string, charCount + 1);
+			    // We reuse the Flex struct, this is also a counted string
+			    BEGIN BODY;
+			    yylval.flexText.nchars = charCount;
+			    yylval.flexText.bufP  = (char *)malloc(charCount);
+			    memcpy(yylval.flexText.bufP, string, charCount);
 
-			    type340String = false;
-			    return( STRING );
+			    return( T340STRING );
 			}
 
 \<[a-zA-Z\./_0-9]+\>	{

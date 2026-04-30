@@ -19,7 +19,6 @@ int twosComplAdj(int);
 int fixMinusZero(int val);
 int countAscii(char *strP);
 int countText(FlexText flexText);
-int countType340(char *t340StrP);
 int type340Shift(char ch);
 char asciiToType340(char ch);
 
@@ -481,35 +480,6 @@ int rslt;
     i = flexText.nchars;
     rslt = i / 3;
     if( i % 3 )             // not a full word
-    {
-        ++rslt;
-    }
-
-    return(rslt);
-}
-
-// This is similar to countText() in that characters are packed 3 to an 18-bit word.
-// The passed string must have already been converted to a TYPE 340 character set string.
-// Note that 0 is NOT the end of a Type 340 string, the TYPE340END character is.
-int
-countType340(char *strP)
-{
-int rslt;
-int count;
-
-    for( count = 0;; )
-    {
-        ++count;
-        if( *strP++ == TYPE340END )
-        {
-            break;
-        }
-    }
-
-    // Now have the character count.
-    // If it isn't a multiple of 3, we have an incomplete word.
-    rslt = count / 3;
-    if( count % 3 )
     {
         ++rslt;
     }

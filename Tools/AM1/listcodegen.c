@@ -170,8 +170,9 @@ char str[128];
             break;
 
         case TYPE340:
+            // Can reuse the flex code
             output(outfP, doOutput, "// Type 340 table\n");
-            listType340(outfP, nodeP, nodeP->value.strP);
+            listText(outfP, nodeP, nodeP->value.flexText);
             output(outfP, doOutput, "// End\n");
             break;
 
@@ -473,8 +474,12 @@ int val;
 char *bufP;
 char buf[256];
 
-    flxToA(flexText, buf);
-    output(outfP, doOutput,"// text \"%s\"\n", buf);
+    if( nodeP->type == TEXT )
+    {
+        flxToA(flexText, buf);
+        output(outfP, doOutput,"// text \"%s\"\n", buf);
+    }
+
     bufP = flexText.bufP;
 
     // Node will only have the pc of the first word, adjust as we go

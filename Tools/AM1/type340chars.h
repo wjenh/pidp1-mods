@@ -13,5 +13,6 @@
 #define TYPE340BLOB     000
 #define TYPE340NL       100 // special case, doesn't really exist, just a marker
 #define TYPE340AUTO     101 // special case, doesn't really exist, just a marker
+#define TYPE340NOEND    102 // special case, doesn't really exist, just a marker
 
 #endif

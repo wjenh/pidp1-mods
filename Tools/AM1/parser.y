@@ -118,6 +118,7 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %token <strP> ENDLOC
 %token <strP> HEADER
 %token <strP> STRING
+%token <flexText> T340STRING
 %token <flexText> TEXT
 %token <strP> FILENAME
 %token <strP> LIBFILE
@@ -521,12 +522,13 @@ one_stmt	: expr
                     cur_pc += countAscii($2);
                     checkPCBound("Ascii", cur_pc, lineno);
                 }
-                | TYPE340 STRING
+                | TYPE340 T340STRING
                 {
                     // Will aready have been converted in the lexer.
+                    // We reuse the Flex struct because this is also a counted-length string.
 		    $$ = newnode(lineno+1, cur_pc, TYPE340, NILP, NILP);
-                    $$->value.strP = $2;
-                    cur_pc += countType340($2);
+                    $$->value.flexText = $2;
+                    cur_pc += countText($2);
                     checkPCBound("Type340", cur_pc, lineno);
                 }
                 | TEXT

@@ -68,7 +68,6 @@ static void writeStatements(FILE *, PNodeP);
 static void writeVars(FILE *outfP, PNodeListP listP, int lineNo);
 static void writeConstants(FILE *outfP, SymNodeP nodeP, int lineNo);
 static bool writeText(FILE *outfP, FlexText flexText);
-static bool writeType340(FILE *outfP, char *strP);
 static bool writeAscii(FILE *outfP, char *strP);
 static bool setBit(uint64_t map[], int addr);
 static bool setBits(uint64_t map[], int addr, int count);
@@ -201,7 +200,7 @@ BankContextP bankP;
             break;
 
         case TYPE340:
-            if( !writeType340(outfP, nodeP->value.strP) )
+            if( !writeText(outfP, nodeP->value.flexText) )
             {
                 lineno = nodeP->lineNo;
                 verror("Already used memory address 0%04o would be overwritten by type340.", cur_pc);
@@ -416,59 +415,6 @@ char *bufP;
         if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
         {
             return(false);
-        }
-
-        putBuffer(outfP, outBufP, val);
-        adjustPC(1);
-    }
-
-    return(true);
-}
-
-// Emit packed type 340 code, very similar to text above.
-static bool
-writeType340(FILE *outfP, char *strP)
-{
-int i;
-int val;
-
-    for( val = i = 0;; )
-    {
-        val <<= 6;
-        val |= *strP;
-
-        if( i == 2 )
-        {
-            if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
-            {
-                return(false);
-            }
-
-            putBuffer(outfP, outBufP, val);
-            adjustPC(1);
-        }
-
-        if( ++i > 2 )
-        {
-            i = 0;
-        }
-
-        if( *strP++ == TYPE340END )
-        {
-            break;
-        }
-    }
-
-    if( i != 0 )        // had leftovers, finish the word
-    {
-        if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
-        {
-            return(false);
-        }
-
-        while( i++ != 3 )
-        {
-            val <<= 6;
         }
 
         putBuffer(outfP, outBufP, val);

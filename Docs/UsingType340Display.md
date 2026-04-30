@@ -2,9 +2,9 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.1.
+This is version 1.2
 
-Edit date 28-Apr-2026
+Edit date 30-Apr-2026
 
 ## What is it?
 
@@ -137,6 +137,9 @@ Example:
 ```
 parameter scale(2) intensity(4) lpon next(vector)
 ```
+
+The character set selection automatically resets to the configuration default if *charsets* is not explicitly
+used.
 
 ## Slave
 

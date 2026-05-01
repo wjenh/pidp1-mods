@@ -49,7 +49,7 @@ variables
 
 // Begins in PARAM next
 prog,
-    scale(0) intensity(3) lpon next(slave)
+    charsets(1) scale(0) intensity(3) lpon next(slave)
     slave1(enabled|lpenabled) next(point)
     y(0d500) next(point)
     x(0d252) show next(subroutine)
@@ -78,7 +78,7 @@ next1,
     scale(2) intensity(6) next(point)
     y(0d850) next(point)
     x(0d10) show next(subroutine)
-    jump pdp1 next(character)
+    jump pdp1 next(parameter)
 
 next2,
     next(subroutine)
@@ -109,7 +109,8 @@ hello,
     jump next1 next(parameter)
 
 pdp1,
-    type340 "\LPDP 1"
+    charsets(1) next(character)
+    type340 "pdp 1"
     next(subroutine)
     jump next2 next(parameter)
 

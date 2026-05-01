@@ -11,6 +11,7 @@
 //
 // 12-Apr-2026 wje initial version
 // 23-Apr-2026 wje switch to semaphores, better for this than mutexes
+// 1-May-2026 wje tune buffer sizes for better Type 340 performance
 
 #include <unistd.h>
 #include <stdint.h>
@@ -37,15 +38,19 @@
 #define LOG_LP 0
 #define LOG_BOUNDS 0
 #define LOG_AGEDELAY 0
+#define LOG_FULL 0
 
 #define WORKERSLEEPTIME 10          // how often worker thread runs, microseconds
 #define PENBUFSIZE  64              // read up to this many lightpen update commands at once
-#define CMDBUFSIZE  64              // buffer this many display commands
-#define DPYBUFSIZE  256             // buffer this many outgoing dpy commands, can be many more than CMDBUFSIZE
+#define CMDBUFSIZE  2048            // buffer up to this many display commands
+#define DPYBUFSIZE  256            // buffer up to this many outgoing dpy commands
 #undef NEVER
 #define NEVER ~((uint64_t)0)        // a long time from now
 #define null 0
 #define isOpen(ctlP) ((ctlP)->fd >= 0)
+
+static int curRadius2 = 6*6;        // setLightpenRadius2() will override this
+static bool displayInitialized;
 
 typedef struct {
     int fd;             // file descriptor to use
@@ -63,14 +68,11 @@ typedef struct {
 
     int numCommands;
     uint32_t commandBuf[CMDBUFSIZE];
-
     int numDpyCommands;
-    uint32_t dpyBuf[CMDBUFSIZE];
+    uint32_t dpyBuf[DPYBUFSIZE];
 } DisplayControl, *DisplayControlP;
 
-DisplayControlP displays[MAXDISPLAYS];
-
-static bool displayInitialized;
+static DisplayControlP displays[MAXDISPLAYS];
 
 // External calls to manage various things.
 int getDisplayFD(int screenNo);
@@ -212,7 +214,9 @@ setLightpenRadius2(int screenNo, int radius2)
 int i;
 DisplayControlP ctlP;
 
-    // All screens share the same radius setting?
+    curRadius2 = radius2;       // will be used when a new screen is initialzed
+
+    // All screens share the same radius setting
     for( i = 0; i < MAXDISPLAYS; ++i )
     {
         if( (ctlP = getDisplayControlP(i)) && isOpen(ctlP) )
@@ -347,8 +351,8 @@ DisplayControlP ctlP;
         return(false);
     }
 
-    logger(LOG_LP, "LP checking x %d against lp x %d, y %d against lp y %d\n",
-            x, ctlP->lpX, y, ctlP->lpY);
+    logger(LOG_LP, "LP checking x %d against lp x %d, y %d against lp y %d, r2 %d\n",
+            x, ctlP->lpX, y, ctlP->lpY, ctlP->lpRadius2);
 
     gotHit = false;
     // Use the distance equation for a circle to simulate an actual circular aperture
@@ -436,7 +440,7 @@ getDisplayControlP(int screenNo)
     return( displays[screenNo] );
 }
 
-// Initialize a display setting all of its fields to the default values.
+// Initialize a display, setting all of its fields to the default values.
 static void
 initializeDisplayControl(DisplayControlP ctlP)
 {
@@ -450,7 +454,7 @@ initializeDisplayControl(DisplayControlP ctlP)
     ctlP->lpX = ctlP->lpY = 0;
     ctlP->penDown = false;
     ctlP->lpData = false;
-    ctlP->lpRadius2 = 6*6;      // pretty small, but is overridden later
+    ctlP->lpRadius2 = curRadius2;      // latest setting from config
     sem_init(&(ctlP->controlSym),0,1);
     sem_init(&(ctlP->dataSym),0,1);
 }
@@ -506,11 +510,6 @@ uint32_t cmd;
             ctlP->numCommands = 0;
             unlockControl(ctlP);
 
-            if( ctlP->numDpyCommands > DPYBUFSIZE )
-            {
-                logger(LOG_BOUNDS,"worker numDpyCommands too big: %d\n", ctlP->numDpyCommands);
-            }
-
             ageDisplay(ctlP);
             flushDisplay(ctlP);
 
@@ -532,7 +531,8 @@ int cmd;
 
     while( ctlP->numCommands >= CMDBUFSIZE )
     {
-        usleep(5);          // wait for the buffer to drain
+        logger(LOG_FULL,"addCommand cmd buffer full\n");
+        usleep(15);          // wait for the buffer to drain
     }
 
     cmd = (intensity << 24) | (x << 12) | y;
@@ -547,12 +547,9 @@ addDpyCommand(DisplayControlP ctlP, uint32_t cmd)
 {
     if( ctlP->numDpyCommands > DPYBUFSIZE )
     {
-        logger(LOG_BOUNDS,"addDpyCommand numDpy too big: %d\n", ctlP->numDpyCommands);
-    }
-
-    if( ctlP->numDpyCommands >= DPYBUFSIZE )
-    {
+        logger(LOG_FULL,"addDpyCommand dpy cmd buffer full\n");
         flushDisplay(ctlP);
+        usleep(10);         // delay a bit so display doesn't overrun
     }
 
     ctlP->dpyBuf[ctlP->numDpyCommands++] = cmd;
@@ -567,13 +564,6 @@ int resp;
     if( ctlP->fd < 0 )
     {
         return;     // nothing to do
-    }
-
-    if( ctlP->numDpyCommands > DPYBUFSIZE )
-    {
-        logger(LOG_BOUNDS,"flushDisplay numDpyCommands too big: %d\n", ctlP->numDpyCommands);
-        ctlP->numDpyCommands = 0;
-        return;
     }
 
     size = ctlP->numDpyCommands * sizeof(ctlP->dpyBuf[0]);

@@ -1,0 +1,692 @@
+Disassembled from md
+ioh=iot i
+C2, 0
+4/
+JG1,  szs i 70
+      jmp J2
+      szs 10
+      jmp J4
+      szs 20
+      jmp J14
+      szs 30
+      jmp J25
+      szs 40
+      jmp J29
+      szs 50
+      jmp J51
+      szs 60
+      jmp J59
+      jmp JG1
+J2,   lac C42
+J3,   dac C8
+      lio C8
+      dpy-i
+      add C43
+      sas C44
+      jmp J3
+      jmp JG1
+J4,   law 0107
+      dap C3
+      law 0072
+      dap J13
+      lac C6
+      dac C4
+      lac C7
+      dac C5
+      lat!cli
+      and C45
+      sza
+      jmp J7
+J5,   idx C8
+      cli
+      rcr 5s
+      isp C5
+      jmp J6
+      jmp JG1
+J6,   lac C46
+      dpy
+      cma
+      dpy
+      jmp J5
+J7,   rcr 8s
+J8,   jmp J82
+      idx C3
+      idx J13
+J9,   ril 1s
+      isp C4
+      jmp J8
+      jmp i J13
+J10,  nop
+      nop
+      nop
+      nop
+      nop
+      nop
+      nop
+      cli
+      idx C8
+      rcr 5s
+      lac C44
+      dpy-i
+C3,   jmp J11
+J11,  nop
+      nop
+      nop
+      nop
+      nop
+      nop
+      nop
+      nop
+      isp C5
+      jmp J12
+      jmp JG1
+J12,  lac C46
+      dpy-i
+J13,  jmp J10
+C4,   777767
+C5,   777110
+C6,   777767
+C7,   777000
+C8,   743144
+J14,  lac C47
+J15,  dac C8
+      lio C8
+      dpy
+      sza i
+      jmp J16
+      cma
+      dpy-i
+      cma
+J16,  add C48
+      sas C44
+      jmp J15
+      jmp J17
+J17,  lio C44
+      lac C44
+J18,  dpy-i
+      nop
+      nop
+      nop
+      nop
+      sad C49
+      jmp J19
+      add C48
+      jmp J18
+J19,  lio C50
+      lac C50
+J20,  dpy-i
+      nop
+      nop
+      nop
+      nop
+      sad C51
+      jmp J21
+      sub C48
+      jmp J20
+J21,  lac C44
+      lio C50
+J22,  dpy-i
+      rcl 9s
+      rcl 9s
+      sad C51
+      jmp J23
+      sub C48
+      rcl 9s
+      rcl 9s
+      jmp J22
+J23,  lac C50
+      lio C44
+J24,  dpy-i
+      rcl 9s
+      rcl 9s
+      sad C49
+      jmp JG1
+      add C48
+      rcl 9s
+      rcl 9s
+      jmp J24
+J25,  cli
+      lac C44
+J26,  xct X1
+      xct X1
+X1,   nop
+      sza
+      dpy-i
+      add C52
+      sas C53
+      jmp J26
+      cli
+      lac C44
+J27,  rcl 9s
+      rcl 9s
+      jmp J83
+J28,  sas C53
+      jmp J27
+      jmp JG1
+J29,  lac C54
+      lio C50
+J30,  dpy-i
+      jda JD47
+      add C52
+      sza
+      jmp J30
+      lio C44
+      dpy-i
+      jda JD50
+      lac C55
+J31,  lio C50
+      dpy-i
+      jda JD47
+      add C52
+      sas C50
+      jmp J31
+      cma
+      lio C44
+      dpy-i
+      jda JD50
+      lio C50
+      lac C56
+J32,  rcl 9s
+      rcl 9s
+      sub C52
+      sas C57
+      jmp J32
+      cli
+      lac C44
+      dpy-i
+      jda JD50
+      lio C50
+      lac C58
+J33,  rcl 9s
+      rcl 9s
+      dpy-i
+      jda JD47
+      rcl 9s
+      rcl 9s
+      sub C52
+      sas C44
+      jmp J33
+      dpy-i
+      jda JD50
+      lac C56
+      lio C44
+J34,  dpy-i
+      jda JD47
+      sub C52
+      sas C57
+      jmp J34
+      lio C50
+      dpy-i
+      jda JD50
+      lac C58
+      lio C44
+J35,  dpy-i
+      jda JD47
+      sub C52
+      sas C44
+      jmp J35
+      lac C50
+      lio C50
+      dpy-i
+      jda JD50
+      lio C44
+      lac C54
+J36,  rcl 9s
+      rcl 9s
+      dpy-i
+      jda JD47
+      rcl 9s
+      rcl 9s
+      add C52
+      sas C57
+      jmp J36
+      cli
+      lac C50
+      dpy-i
+      jda JD50
+      lac C55
+      lio C44
+J37,  rcl 9s
+      rcl 9s
+      dpy-i
+      jda JD47
+      rcl 9s
+      rcl 9s
+      add C52
+C9,   sas C50
+      jmp J37
+      dpy-i
+      jda JD50
+      lac C56
+      lio C50
+J38,  dpy-i
+      jda JD47
+      sub C52
+      sza
+      jmp J38
+      cla
+      cli
+      dpy-i
+      jda JD50
+      lac C58
+      lio C50
+J39,  dpy-i
+      jda JD47
+      sub C52
+      sas C44
+      jmp J39
+      cla
+      cli
+      dpy-i
+      jda JD50
+      lio C44
+      lac C56
+J40,  rcl 9s
+      rcl 9s
+      dpy-i
+      jda JD47
+      rcl 9s
+      rcl 9s
+      sub C52
+      sas C57
+      jmp J40
+      cli
+      cla
+      dpy-i
+      jda JD50
+      lio C44
+      lac C58
+J41,  rcl 9s
+      rcl 9s
+      dpy-i
+      jda JD47
+      rcl 9s
+      rcl 9s
+      sub C52
+      sas C44
+      jmp J41
+      cla
+      cli
+      dpy-i
+      jda JD50
+      lac C54
+      lio C44
+J42,  dpy-i
+      jda JD47
+      add C52
+      sas C57
+      jmp J42
+      cla
+      cli
+      dpy-i
+      jda JD50
+      lac C55
+      lio C44
+J43,  dpy-i
+      jda JD47
+      add C52
+      sas C50
+      jmp J43
+      cla
+      cli
+      dpy-i
+      jda JD50
+      lio C50
+      lac C54
+J44,  rcl 9s
+      rcl 9s
+      dpy-i
+      jda JD47
+      rcl 9s
+      rcl 9s
+      add C52
+      sas C57
+      jmp J44
+      cla
+      cli
+      dpy-i
+      jda JD50
+      lac C55
+      lio C50
+J45,  rcl 9s
+      rcl 9s
+      dpy-i
+      jda JD47
+      rcl 9s
+      rcl 9s
+      add C52
+      sas C50
+      jmp J45
+      cla
+      cli
+      dpy-i
+      jda JD50
+J46,  jmp JG1
+JD47, 000000
+      dap C10
+      lat
+J48,  and C59
+      sar 5s
+      dac C11
+J49,  isp C11
+      jmp J49
+      lac JD47
+C10,  jmp J46
+JD50, 000000
+      dap C10
+      lac JD50
+      dac JD47
+      lat
+      ral 9s
+      jmp J48
+C11,  000000
+J51,  law 0001
+      dac C29
+      law 0400
+      dac C41
+      law 1000
+      dac C40
+J52,  lat!cli
+      and C27
+      and C29
+      sza i
+      jmp J54
+      lac C22
+      dac C38
+      lac C24
+      dac C39
+      lac C29
+      rcr 3s
+      sza i
+      jmp J53
+      lac C20
+      dac C38
+      lac C23
+      dac C39
+      lac C29
+      rcr 6s
+      sza i
+      jmp J53
+      lac C19
+      dac C38
+      lac C21
+      dac C39
+      lac C29
+      rcr 9s
+J53,  spi
+      jmp J58
+      ril 1s
+      spi
+      jmp J57
+      jmp J55
+J54,  lac C29
+      sad C28
+      jmp JG1
+      sal 1s
+      dac C29
+      jmp J52
+J55,  lac C13
+      dac C36
+      lac C15
+      dac C37
+      jsp J70
+      jsp J71
+J56,  jsp J70
+      jsp J71
+      lat
+      and C27
+      rar 1s
+      and C29
+      sza i
+      jmp J54
+      lac C14
+      sub C41
+      dac C37
+      jsp J70
+      jmp J54
+J57,  lac C14
+      dac C36
+      lac C17
+      dac C37
+      jsp J70
+      jsp J71
+      jsp J70
+      jsp J71
+      lat
+      and C27
+      rar 1s
+      and C29
+      sza i
+      jmp J54
+      lac C16
+      sub C41
+      dac C37
+      jsp J70
+      jmp J54
+J58,  lac C16
+      dac C36
+      lac C18
+      dac C37
+      jsp J70
+      jsp J71
+      jsp J70
+      jsp J71
+      jmp J54
+J59,  law 0001
+      dac C29
+      law 0400
+      dac C41
+      law 1000
+      dac C40
+J60,  lat
+      and C27
+      and C29
+      sza i
+      jmp J64
+      and C25
+      sza i
+      jmp J62
+      and C26
+      sza i
+      jmp J61
+      lac C19
+      dac C36
+      lac C21
+      dac C37
+      jmp J63
+J61,  lac C20
+      dac C36
+      lac C23
+      dac C37
+      jmp J63
+J62,  lac C22
+      dac C36
+      lac C24
+      dac C37
+J63,  lac C29
+      sar 3s
+      sza i
+      jmp J66
+      sar 3s
+      sza i
+C12,  jmp J68
+      jmp J69
+J64,  law 0400
+      sad C29
+      jmp JG1
+      lac C29
+      sal 3s
+      and C27
+      sza
+      jmp J65
+      lac C29
+      sar 5s
+J65,  dac C29
+      jmp J60
+J66,  lac C18
+      dac C39
+      lac C16
+      dac C38
+      jsp J77
+      jsp J76
+      jsp J77
+      jsp J76
+J67,  lat
+      and C27
+      rar 3s
+      and C29
+      sza i
+      jmp J64
+      lac C17
+      dac C38
+      jsp J77
+      jmp J64
+J68,  lac C17
+      sub C41
+      dac C39
+      lac C14
+      dac C38
+      jsp J77
+      jsp J76
+      jsp J77
+      jsp J76
+      lat
+      and C27
+      rar 3s
+      and C29
+      sza i
+      jmp J64
+      lac C15
+      dac C38
+      jsp J77
+      jmp J64
+J69,  lac C15
+      sub C41
+      dac C39
+      lac C13
+      dac C38
+      jsp J77
+      jsp J76
+      jsp J77
+      jsp J76
+      jmp J64
+C13,  add C9
+C14,  jsp i 5777
+C15,  law 3377
+C16,  xor i 4400
+C17,  142000
+C18,  377400
+C19,  add C12
+C20,  jsp i 5777
+C21,  law 3777
+C22,  xor i 4000
+C23,  142000
+C24,  377000
+C25,  000333
+C26,  000555
+C27,  000777
+C28,  000400
+C29,  000400
+J70,  dap C31
+      lac C60
+      dac C32
+      law 1217
+      dap J72
+      law 1220
+      dap C30
+      jmp J72
+J71,  dap C31
+      lac C61
+      dac C32
+      law 1217
+      dap C30
+      law 1220
+      dap J72
+J72,  lac C37
+J73,  lio C38
+J74,  dpy-i
+      rcl 9s
+      rcl 9s
+      sad C39
+      jmp J75
+      add C40
+      rcl 9s
+      rcl 9s
+      jmp J74
+J75,  rcl 9s
+      rcl 9s
+C30,  sad C36
+C31,  jmp J56
+C32,  sub C41
+      jmp J73
+J76,  dap C34
+      lac C60
+      dac C35
+      law 1221
+      dap J78
+      law 1222
+      dap C33
+      jmp J78
+J77,  dap C34
+      lac C61
+      dac C35
+      law 1221
+      dap C33
+      law 1222
+      dap J78
+J78,  lio C38
+J79,  lac C36
+J80,  dpy-i
+      nop
+      nop
+      nop
+      nop
+      sad C37
+      jmp J81
+      add C40
+      jmp J80
+J81,  rcl 9s
+      rcl 9s
+C33,  sad C39
+C34,  jmp J67
+C35,  add C41
+      rcl 9s
+      rcl 9s
+      jmp J79
+C36,  add C12
+C37,  law 3777
+C38,  xor i 4400
+C39,  377400
+C40,  001000
+C41,  000400
+C42,  add C9
+C43,  000400
+C44,  add 0000
+C45,  000377
+C46,  377777
+C47,  add 7777
+C48,  010000
+C49,  370001
+C50,  377400
+C51,  add 7377
+C52,  002000
+C53,  add 0001
+C54,  iot i!3777	/733777
+C55,  dio i 3400
+C56,  ior 4000
+C57,  000000
+C58,  idx 4000
+C59,  777000
+C60,  add C41
+C61,  sub C41
+J82,  spi
+      idx C3
+      spi
+      idx J13
+      jmp J9
+J83,  dpy-i
+      rcl 9s
+      rcl 9s
+      add C52
+      jmp J28
+       start JG1

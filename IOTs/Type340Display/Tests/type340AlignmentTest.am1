@@ -1,0 +1,77 @@
+Test program for the Type 340 similar to the maindec test for the Type 30
+#include <TYPE340/type340defs.ah>
+
+/*
+ * This draws a box around the borders of the screen at the maximum and minimum coordinates, 0 and 1023,
+ * and an X from corner to corner.
+ *
+ * Finally, a horizontal and line 64 pixels long is drawn with centerpoints at 512,512, making a plus.
+ * The diagonal lines and the plus centerpoint should coincide.
+ *
+ * It causes both vertial and horizontal edge violations and sets pf1 and pf2 respectively.
+ * You should see both on.
+ *
+ * This tests edge violation detection, the binary rate generator, parameter, point, vector and vector continue modes
+ * and coordinate  mapping.
+ *
+ * It's also a good test of the display program to verify it handles edges properly.
+ */
+
+100/
+    clf 7
+
+top,
+    lio [box
+    dla
+    dss
+    jmp .-1
+
+    lio [diags
+    dla
+    dss
+    jmp .-1
+    dsv
+    jmp .+2
+    stf 1
+    dsh
+    jmp .+2
+    stf 2
+
+    jmp top
+
+box, scale(0) intensity(3) next(point)
+    y(0) next(point)
+    show x(0) next(vcontinue)
+    visible deltax(0) deltay(0d127) up      // left side
+    next(vcontinue)                         // coords now 0,0
+    visible deltax(0d127) right deltay(0)   // bottom
+    next(point)                             // coords now 0,0
+    show x(0d1023) next(vcontinue)
+    visible deltax(0) deltay(0d127) up      // right side
+    next(point)                             // coords now 1023,0
+    show y(0d1023) next(vcontinue)
+    visible deltax(0d127) left deltay(0)    // top
+    halt
+
+diags, next(point)
+    y(0) next(point)
+    x(0) show next(vcontinue)
+    visible deltax(0d127) right deltay(0d127) up
+    next(point)
+    y(0d1023) next(vcontinue)
+    visible deltax(0d127) right deltay(0d127) down
+center, scale(0) next(point)
+    y(0d512) next(point)
+    x(0d480) show next(vector)
+    visible deltax(0d64) right deltay(0) end
+    next(point)
+    y(0d480) next(point)
+    x(0d512) show next(vector)
+    visible deltax(0) deltay(0d64) up end
+msg, charsets(2) intensity(4) scale(1) next(point)
+    y(0d506) next(point)
+    x(0d64) next(character)
+    type340 "Type 340 test"
+    halt
+
+start 100

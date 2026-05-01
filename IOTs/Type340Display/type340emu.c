@@ -15,6 +15,7 @@
  *    rescheduling happen otherwise by the semaphore wait at the end of a display cycle.
  * 26-Apr-2026 wje add more timing, interrupt always on lp hit or edge violation
  * 29-Apr-2026 wje add dual charset control via the parameter instruction
+ * 1-May-2026 wje tweak timings to match DEC logic document
  *
  */
 

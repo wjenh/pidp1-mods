@@ -1,0 +1,19 @@
+This exercises the Type 30 display checking bounds, and coordinates.
+The edges are difficult to see because everything is one pixel!
+It is cohtrolled by the sense switches.
+
+All dowwn - draws a full-range diagonal from lower left to upper right
+If multiple are down, the lowest number takes precedence.
+
+1 up - draw dots spaced apart on the left and right edges
+2 up - draW dotted diagonals from corner to corner
+3 up - draW closely spaced dotted horizontal and vertical lines from the edge midpoints, should intersect in the center
+4 up - draW one dot in the center, dotted corner markers, dotted edge markers centered at side midpoints
+5 up - draw a scanning rectangular area depending upon test swith settings.9-11 for the bottom part of the screen,
+       12-14 for the center, 15-17 for the top, each switch controlling one of left, middle, or right.
+       Each area is drawn in turn from left to right.
+       The switches can be combined.
+6 up - draw a scanning rectangular area depending upon test swith settings.9-11 for the bottom part of the screen,
+       12-14 for the center, 15-17 for the top, each switch controlling one of left, middle, or right.
+       Each area is drawn in turn from top downwards.
+       The switches can be combined.

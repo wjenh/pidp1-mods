@@ -15,7 +15,8 @@
  * wje 6-Apr-26 small mod to not clear AD1_STEP until the end of a cycle, use config setting for mem file
  * wje 7-Apr-26 reload configuration on sigint
  * wje 8-Apr-26 make timing configurable instead of compile time
- * wje 11-Apr-16 the light pen really doesn't need a listener thread, just use nonblocking reads
+ * wje 11-Apr-26 the light pen really doesn't need a listener thread, just use nonblocking reads
+ * wje 1-May-26 set radius^2 from config for the Type 340 display
 */
 
 #include <fcntl.h>
@@ -44,6 +45,7 @@
 #define LOG_SHM 0
 #define LOG_WATCH 0
 #define LOG_BREAK 0
+#define LOG_APERTURE 0
 
 // If present, will set the startup state of audio, etc.
 // See the distributed one for all settings.
@@ -62,6 +64,7 @@ extern void updatelights(PDP1 *pdp, Panel *panel);
 extern void lightsoff(Panel *panel);
 extern void lightson(Panel *panel);
 extern Panel *getpanel(void);
+extern void setLightpenRadius2(int screenNo, int radius2);
 
 ConfigurationP getConfiguration(void);     // so other stuff can use our configuration, like IOTs
 
@@ -739,6 +742,7 @@ getConfiguration()     // so other stuff can use our configuration, like IOTs
 void
 configure()
 {
+int i;
 ConfigurationSettingP configSettingP;
 
     configurationP = loadConfigFile(CONFIG_FILE);
@@ -770,6 +774,14 @@ ConfigurationSettingP configSettingP;
     if( (configSettingP = findConfigurationSetting(configurationP, "pidp1timing")) )
     {
         timingEnabled = configSettingP->onOff;
+    }
+
+    // Type 340 has its own aperture control
+    if( (configSettingP = findConfigurationSetting(configurationP, "aperture")) )
+    {
+        i = configSettingP->ivalue;
+        setLightpenRadius2(0, i * i);
+        logger(LOG_APERTURE, "aperture %d\n",i);
     }
 }
 

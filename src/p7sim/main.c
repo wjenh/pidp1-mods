@@ -58,6 +58,8 @@ typedef uint8_t uint8;
 #define nil NULL
 #define nelem(a) (sizeof(a)/sizeof(*a))
 
+#define READBUFSIZE 2048
+#define FRAMETIME 33333 // 30 fps
 #define WIDTH 1024
 #define HEIGHT 1024
 #define BORDER 2
@@ -109,8 +111,6 @@ int border = 1;
 int doLightpen = 0;
 int penx;
 int peny;
-
-uint64 simtime, realtime;
 
 void usage(char *nameP);
 void updatepen(bool penDown, int x, int y);
@@ -232,8 +232,7 @@ int x;
     listen(sockfd, 5);
     len = sizeof(client);
 
-    while(confd = accept(sockfd, (struct sockaddr*)&client, &len),
-            confd >= 0)
+    while(confd = accept(sockfd, (struct sockaddr*)&client, &len), confd >= 0)
     {
         return confd;
     }
@@ -386,82 +385,31 @@ setpvbo(void)
     glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, void_offsetof(PVertex, intensity));
 }
 
-struct
-{
-    pthread_mutex_t mutex;
-    pthread_cond_t wake;
-    int canprocess, candraw;
-} synch;
+pthread_mutex_t mutex;
 
-void init_synch(void)
+void
+init_synch(void)
 {
-    pthread_mutex_init(&synch.mutex, nil);
-    pthread_cond_init(&synch.wake, nil);
-    synch.canprocess = 1;
-    synch.candraw = 0;
+    pthread_mutex_init(&mutex, nil);
 }
 
-void signal_process(void)
+void
+lockData(void)
 {
-    pthread_mutex_lock(&synch.mutex);
-    synch.canprocess = 1;
-    pthread_cond_signal(&synch.wake);
-    pthread_mutex_unlock(&synch.mutex);
+    pthread_mutex_lock(&mutex);
 }
 
-void wait_canprocess(void)
+void
+unlockData(void)
 {
-    pthread_mutex_lock(&synch.mutex);
-
-    while(!synch.canprocess)
-    {
-        pthread_cond_wait(&synch.wake, &synch.mutex);
-    }
-
-    synch.canprocess = 0;
-    pthread_mutex_unlock(&synch.mutex);
-}
-
-void signal_draw(void)
-{
-    pthread_mutex_lock(&synch.mutex);
-    synch.candraw = 1;
-    pthread_mutex_unlock(&synch.mutex);
-}
-
-int candraw(void)
-{
-    int ret;
-    pthread_mutex_lock(&synch.mutex);
-    ret = synch.candraw;
-    synch.candraw = 0;
-    pthread_mutex_unlock(&synch.mutex);
-    return ret;
-}
-
-uint64 time_now;
-uint64 time_prev;
-
-float
-getDeltaTime(void)
-{
-    time_prev = time_now;
-    time_now = SDL_GetPerformanceCounter();
-    return (float)(time_now - time_prev) / SDL_GetPerformanceFrequency();
+    pthread_mutex_unlock(&mutex);
 }
 
 void
 draw(void)
 {
 int w, h;
-float dt;
-float st;
-float rt;
 float xScale, yScale;
-
-    dt = getDeltaTime();
-    st = simtime / 1000000.0f;
-    rt = (float)realtime / SDL_GetPerformanceFrequency();
 
     logger(LOG_DEBUG, "%f %d. %.2f %.2f %.2f\n", dt, npoints, st, rt, rt - st);
 
@@ -495,6 +443,7 @@ float xScale, yScale;
         yScale = yScaling;
     }
 
+    lockData();
     for(i = 0; i < npoints; i++)
     {
         if(vp >= &pverts[nelem(pverts)])
@@ -523,13 +472,11 @@ float xScale, yScale;
         memcpy(&(vp++)->cx, &v->cx, sizeof(PVertex) - sizeof(Vertex));
         memcpy(&(vp++)->cx, &v->cx, sizeof(PVertex) - sizeof(Vertex));
     }
+    unlockData();
 
-// THREAD: signal ready to process
-    signal_process();
     setpvbo();
     glBufferData(GL_ARRAY_BUFFER, i * 6 * sizeof(PVertex), pverts, GL_DYNAMIC_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, i * 6);
-
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDisable(GL_BLEND);
@@ -834,29 +781,32 @@ keydown(SDL_Keysym keysym)
 }
 
 void
-process(int frmtime)
+process(int frametime)
 {
-    Point *p;
-    int i, n, idx;
+Point *pointP;
+Point *newPointP;
+int i, n, idx;
 
-    /* age */
     n = 0;
 
+    // Age the points we have.
+    // Remove ones that have aged out, move down to fill the hole.
     for(i = 0; i < npoints; i++)
     {
-        p = &points[i];
-        p->time += frmtime;
+        pointP = &points[i];
+        pointP->time += frametime;
 
-        if(p->time < 200000)
+        if(pointP->time < 200000)
         {
-            points[idx = n++] = *p;
+            idx = n++;
+            points[idx] = *pointP;
         }
         else
         {
             idx = -1;
         }
 
-        indices[CONSTRAIN_INDEX(p->y) * 1024 + (CONSTRAIN_INDEX(p->x))] = idx;
+        indices[CONSTRAIN_INDEX(pointP->y) * 1024 + (CONSTRAIN_INDEX(pointP->x))] = idx;
     }
 
     npoints = n;
@@ -864,43 +814,39 @@ process(int frmtime)
     /* add new points */
     for(i = 0; i < nnewpoints; i++)
     {
-        Point *np = &newpoints[i];
-        idx = indices[CONSTRAIN_INDEX(np->y) * 1024 + CONSTRAIN_INDEX(np->x)];
+        newPointP = &newpoints[i];
+        idx = indices[CONSTRAIN_INDEX(newPointP->y) * 1024 + CONSTRAIN_INDEX(newPointP->x)];
 
         if(idx < 0)
         {
             idx = npoints++;
-            indices[CONSTRAIN_INDEX(np->y) * 1024 + CONSTRAIN_INDEX(np->x)] = idx;
+            indices[CONSTRAIN_INDEX(newPointP->y) * 1024 + CONSTRAIN_INDEX(newPointP->x)] = idx;
         }
 
-        p = &points[idx];
-        p->x = np->x;
-        p->y = np->y;
-        p->i = np->i;
-        p->time = frmtime - np->time;
+        pointP = &points[idx];
+        pointP->x = newPointP->x;
+        pointP->y = newPointP->y;
+        pointP->i = newPointP->i;
+        pointP->time = frametime - newPointP->time;
     }
 
     nnewpoints = 0;
 }
 
-void*
+void *
 readthread(void *args)
 {
 int ncmds;
 int nbytes;
 int i;
-int x, y, intensity, dt;
+int x, y, intensity, delayTime;
 uint32 cmd;
 uint64 time;
-uint64 frmtime = 33333;
-uint64 realtime_start;
-uint32 cmds[128];
+Point *newPointP;
+uint32 cmds[READBUFSIZE];
 
-realtime_start = SDL_GetPerformanceCounter();
-realtime = realtime_start;
-simtime = 0;
-time = 0;
-int esc = 0;
+    time = 0;
+    int esc = 0;
 
     for(;;)
     {
@@ -918,10 +864,11 @@ int esc = 0;
 
         ncmds = nbytes / 4;
 
+        lockData();
         for(i = 0; i < ncmds; i++)
         {
             cmd = cmds[i];
-            dt = cmd >> 23;
+            delayTime = cmd >> 23;
 
             // escape for longer delays of nothing
             if(esc)
@@ -929,7 +876,7 @@ int esc = 0;
                 esc = 0;
                 time += cmd;
             }
-            else if(dt == 511)
+            else if(delayTime == 511)
             {
                 esc = 1;
             }
@@ -938,49 +885,34 @@ int esc = 0;
                 x = cmd & 01777;
                 y = cmd >> 10 & 01777;
                 intensity = cmd >> 20 & 7;
-                time += dt;
+                time += delayTime;
 
                 if(x || y)
                 {
-                    Point *np = &newpoints[nnewpoints++];
-
-                    // We only have to rescale if we set a fixed smaller window.
-                    // Otherwise, SDL does it.
-                    /*
-                    if( fixedSize )
-                    {
-                        x = (int)((float)x / xScaling);
-                        y = (int)((float)y / yScaling);
-                    }
-                    */
-
-                    np->x = x;
-                    np->y = y;
-                    np->i = intensity;
+                    newPointP = &newpoints[nnewpoints++];
+                    newPointP->x = x;
+                    newPointP->y = y;
+                    newPointP->i = intensity;
 
                     if(intensityOverride != 8)
                     {
-                        np->i = intensityOverride;
+                        newPointP->i = intensityOverride;
                     }
 
-                    np->time = time;
+                    newPointP->time = time;
                 }
             }
+        }
+        unlockData();
 
-            // we hope draw is finished before we decide to flip again
-            // 30fps should be doable
-            while(time > frmtime)
-            {
-                time -= frmtime;
-                simtime += frmtime;
-                realtime = SDL_GetPerformanceCounter() - realtime_start;
-
-// THREAD: wait here until ready
-                wait_canprocess();
-                process(frmtime);
-// THREAD: signal ready to draw
-                signal_draw();
-            }
+        // we hope draw is finished before we decide to flip again
+        // 30fps should be doable
+        while(time > FRAMETIME)
+        {
+            time -= FRAMETIME;
+            lockData();
+            process(FRAMETIME);
+            unlockData();
         }
     }
 
@@ -1359,16 +1291,14 @@ char tmpstr[64];
             }
         }
 
-// THREAD: check for ready to draw, then draw
-        if(candraw())
-        {
-            draw();
+        draw();
 
-            if( (cursortimer > 0) && (--cursortimer == 0) )
-            {
-                SDL_ShowCursor(SDL_DISABLE);
-            }
+        if( (cursortimer > 0) && (--cursortimer == 0) )
+        {
+            SDL_ShowCursor(SDL_DISABLE);
         }
+
+        usleep(FRAMETIME);
     }
 
     SDL_GL_DeleteContext(gl_context);

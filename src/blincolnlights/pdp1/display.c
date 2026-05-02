@@ -12,6 +12,7 @@
 // 12-Apr-2026 wje initial version
 // 23-Apr-2026 wje switch to semaphores, better for this than mutexes
 // 1-May-2026 wje tune buffer sizes for better Type 340 performance
+// 2-May-2026 wje back to mutexes, more buffer tweaking
 
 #include <unistd.h>
 #include <stdint.h>
@@ -42,8 +43,8 @@
 
 #define WORKERSLEEPTIME 10          // how often worker thread runs, microseconds
 #define PENBUFSIZE  64              // read up to this many lightpen update commands at once
-#define CMDBUFSIZE  2048            // buffer up to this many display commands
-#define DPYBUFSIZE  256            // buffer up to this many outgoing dpy commands
+#define CMDBUFSIZE  1024            // buffer up to this many display commands
+#define DPYBUFSIZE  2048            // buffer up to this many outgoing dpy commands
 #undef NEVER
 #define NEVER ~((uint64_t)0)        // a long time from now
 #define null 0
@@ -63,8 +64,8 @@ typedef struct {
     bool lpData;        // set when lp data comes in, cleared when read
     int lpX, lpY;       // last x,y lightpen coordinates received
     int lpRadius2;      // used by the lightpen check
-    sem_t controlSym; // for interlocking with the worker thread
-    sem_t dataSym;    // for locking get/setDisplayData
+    pthread_mutex_t controlLock; // for interlocking with the worker thread
+    pthread_mutex_t dataLock;    // for locking get/setDisplayData
 
     int numCommands;
     uint32_t commandBuf[CMDBUFSIZE];
@@ -195,14 +196,14 @@ DisplayControlP ctlP;
 static bool
 lockDisplayDataByCtlP(DisplayControlP ctlP)
 {
-    sem_wait(&(ctlP->dataSym));
+    pthread_mutex_lock(&(ctlP->dataLock));
     return(true);
 }
 
 static bool
 unlockDisplayDataByCtlP(DisplayControlP ctlP)
 {
-    sem_post(&(ctlP->dataSym));
+    pthread_mutex_unlock(&(ctlP->dataLock));
 }
 
 // Set the lightpen radius squared for the screen.
@@ -221,9 +222,7 @@ DisplayControlP ctlP;
     {
         if( (ctlP = getDisplayControlP(i)) && isOpen(ctlP) )
         {
-            lockDisplayDataByCtlP(ctlP);
             ctlP->lpRadius2 = radius2;
-            unlockDisplayDataByCtlP(ctlP);
         }
     }
 }
@@ -449,26 +448,26 @@ initializeDisplayControl(DisplayControlP ctlP)
     ctlP->numDpyCommands = 0;
     ctlP->now = currentTime();
     ctlP->lastTime = ctlP->now;
-    ctlP->ageTime = 50 * 1000;  // 50 microseconds
+    ctlP->ageTime = 50 * 1000;  // 50 milliseconds
     ctlP->curX = ctlP->curY = ctlP->intensity = 0;
     ctlP->lpX = ctlP->lpY = 0;
     ctlP->penDown = false;
     ctlP->lpData = false;
     ctlP->lpRadius2 = curRadius2;      // latest setting from config
-    sem_init(&(ctlP->controlSym),0,1);
-    sem_init(&(ctlP->dataSym),0,1);
+    pthread_mutex_init(&(ctlP->controlLock), 0);
+    pthread_mutex_init(&(ctlP->dataLock), 0);
 }
 
 static void
 lockControl(DisplayControlP ctlP)
 {
-    sem_wait(&(ctlP->controlSym));
+    pthread_mutex_lock(&(ctlP->controlLock));
 }
 
 static void
 unlockControl(DisplayControlP ctlP)
 {
-    sem_post(&(ctlP->controlSym));
+    pthread_mutex_unlock(&(ctlP->controlLock));
 }
 
 // This is where all the work is done.
@@ -493,6 +492,7 @@ uint32_t cmd;
                 continue;       // not open
             }
 
+            // We have to lock so that the out-of-thread side doesn't mess up our cmd count
             lockControl(ctlP);
             ctlP->now = currentTime();
 
@@ -529,14 +529,17 @@ addCommand(DisplayControlP ctlP, int x, int y, int intensity)
 {
 int cmd;
 
+    cmd = (intensity << 24) | (x << 12) | y;
+
+    lockControl(ctlP);
     while( ctlP->numCommands >= CMDBUFSIZE )
     {
+        unlockControl(ctlP);
         logger(LOG_FULL,"addCommand cmd buffer full\n");
         usleep(15);          // wait for the buffer to drain
+        lockControl(ctlP);
     }
 
-    cmd = (intensity << 24) | (x << 12) | y;
-    lockControl(ctlP);
     ctlP->commandBuf[ctlP->numCommands++] = cmd;
     unlockControl(ctlP);
 }
@@ -545,11 +548,11 @@ int cmd;
 static void
 addDpyCommand(DisplayControlP ctlP, uint32_t cmd)
 {
-    if( ctlP->numDpyCommands > DPYBUFSIZE )
+    if( ctlP->numDpyCommands >= DPYBUFSIZE )
     {
         logger(LOG_FULL,"addDpyCommand dpy cmd buffer full\n");
         flushDisplay(ctlP);
-        usleep(10);         // delay a bit so display doesn't overrun
+        usleep(30);         // delay a bit so display doesn't overrun
     }
 
     ctlP->dpyBuf[ctlP->numDpyCommands++] = cmd;
@@ -604,9 +607,8 @@ uint64_t delayTime;
         logger(LOG_AGEDELAY, "deltay time %d, age time %d\n", delayTime, ctlP->ageTime);
         addDpyCommand(ctlP, 511 << 23);
         addDpyCommand(ctlP, delayTime);
-        flushDisplay(ctlP);
-
         ctlP->lastTime = ctlP->now;
+        flushDisplay(ctlP);
 
         // increase interval during fade out
         // to reduce number of age commands
@@ -635,6 +637,10 @@ int cmd;
     // reset age interval for regular aging
     ctlP->ageTime = 50 * 1000;  // 50 msecs
     delayTime = (ctlP->now - ctlP->lastTime) / 1000;
+    if( delayTime >= 511 )  // would overflow and/or be the same as the extended delay marker
+    {
+        delayTime = 510;
+    }
     ctlP->lastTime = ctlP->now;
 
     if( (x > 01777) || (y > 01777) || (intensity > 7) )
@@ -642,7 +648,7 @@ int cmd;
         logger(LOG_BOUNDS, "Boundary violation x %d y%d intensity %d\n", x, y, intensity);
     }
 
-    cmd = x | (y << 10) | (delayTime << 23);
+    cmd = (x & 0x3FF) | ((y & 0x3FF) << 10) | (delayTime << 23);
     cmd |= (intensity & 7) << 20;
     logger(LOG_DPYCMD,"adding dpy command 0x%08x, x %d y %d\n", cmd, x, y);
     addDpyCommand(ctlP, cmd);
@@ -726,6 +732,7 @@ static bool penDown;
         }
     }
 
+    // This is the only data modified in the display thread that is externally used.
     lockDisplayDataByCtlP(ctlP);
     if( gotPosition )
     {

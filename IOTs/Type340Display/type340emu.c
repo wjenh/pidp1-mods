@@ -57,6 +57,7 @@
 #define LOG_LP 0
 #define LOG_FLAGS 0
 #define LOG_BOUNDS 0
+#define LOG_TIMING 0
 
 // This defines the time each command takes to initialize, 1.5 usecs. This might not be accurate.
 #define SETUP_TIME 1500
@@ -74,6 +75,7 @@
 #define CH_SUP    0012   // Superscript
 
 #define HSC_CHAN 3      // randomly selected, drum uses 1
+#define SPIN_LIMIT 40000   // max ns we will spin for, otherwise use nanosleep()
 
 // The interrupt channel in the documentation is 0.
 #define BRKCHAN 0
@@ -235,6 +237,13 @@ static bool origCharsets = false;   // initial twoCharsets from config or defaul
 static bool twoCharsets = false;
 static Slave slaves[NUMSLAVES];    // could be up to 16 slaves, but the core display support is 8
 
+#if LOG_TIMING
+static uint64_t startTime;
+static int minX, minY;
+static int maxX, maxY;
+static int totalPoints;
+#endif
+
 // Communication with the IOT
 static EmuControl emuControl;
 static EmuControlP ctlP = &emuControl;
@@ -250,8 +259,10 @@ static Status doIncrement(int dotSpacing, int bits);
 Status doCharacter(int dotSpacing, unsigned char ch);
 static void emuOrFlags(int newFlags);   // only used internally
 static void emuClearFlag(int flagbit);  // only used internally
+static void nanowait(int ns);
 static void nanodelay(int ns);
 static void nanopause(int ns);
+static uint64_t getNow(void);
 static void configure(void);
 
 // Interface to the low-level display subssystem
@@ -437,8 +448,14 @@ Status status;
                 iotCondLog(LOG_RUN, "Received run while paused\n");
             }
 
+#if LOG_TIMING
+            startTime = getNow();
+            totalPoints = 0;
+            maxX = maxY = 0;
+            minX = minY = 9999;
+#endif
             curAddress = ctlP->address;
-            curState = RUNNING;
+            curState = INITIALIZE;
             curMode = PARAMETER;
             flags = 0;
             slavesEnabled = false;
@@ -495,7 +512,7 @@ Status status;
             // Every command takes time to initialize
             if( curState == INITIALIZE )
             {
-                nanodelay(SETUP_TIME);
+                nanowait(SETUP_TIME);
             }
 
             switch( curMode )
@@ -584,14 +601,14 @@ Status status;
                     curY = POINT_ADDRESS(word);
                     if( POINT_INTENSIFY(word) )
                     {
-                        nanopause(35000);           // 35 us positioning and draw delay
+                        nanowait(35000);           // 35 us positioning and draw delay
                     }
                     iotCondLog(LOG_POINT, "vertical 0%d\n", curY);
                 }
                 else
                 {
                     curX = POINT_ADDRESS(word);
-                    nanopause(35000);               // 35 us delay always
+                    nanowait(35000);               // 35 us delay always
                     iotCondLog(LOG_POINT, "horizontal 0%d\n", curX);
                 }
 
@@ -652,9 +669,9 @@ Status status;
                     // If we can't initialise, ignore it and continue
                     if( brmInitialize(&brmState, curX, curY, x, y, curScale, INTENSIFY(word)) )
                     {
-                        nanopause(2900);        // 2.9 usec setup time
+                        pendingDelay = 2900;        // 2.9 usec setup time
                         // 1.5 usec if points are being drawn, else 1.0 usec
-                        pendingDelay = brmState.nPoints * (INTENSIFY(word)?1500:1000);
+                        pendingDelay += brmState.nPoints * (INTENSIFY(word)?1500:1000);
                         curState = RUNNING;
                     }
                     else
@@ -677,8 +694,9 @@ Status status;
                                 iotCondLog(LOG_VECTOR, "vector escape\n");
                                 // In order to minimize rescheduling by Linux, all the waiting is done at the end.
                                 // No, not strictly accurate but the end timing is the same.
-                                // We don't spinwait on each point because a full vector could take 1.5 milliseconds.
-                                nanodelay(pendingDelay);
+                                // The worst-case vector, corner-to-corner in vcontinue mode
+                                // takes 2 milliseconds.
+                                nanowait(pendingDelay);
                                 curState = INITIALIZE;
                             }
 
@@ -687,6 +705,7 @@ Status status;
                                 // We go back to run mode, updating the start and end points
                                 brmInitialize(&brmState, curX, curY, lastdX, lastdY,
                                     brmState.dotSpacing, brmState.draw);
+                                pendingDelay += brmState.nPoints * (INTENSIFY(word)?1500:1000);
                                 curState = RUNNING;
                             }
                             else
@@ -709,6 +728,8 @@ Status status;
                                 iotCondLog(LOG_BOUNDS, "vector edge violation x, y %d %d\n", curX, curY);
                                 needBreak = true;
                             }
+
+                            nanowait(pendingDelay);
                         }
 
                         iotCondLog(LOG_VECTOR,"vector done, status %d, curX %d curY %d\n", status, curX, curY);
@@ -764,11 +785,7 @@ Status status;
                     }
                 }
 
-                if( pendingDelay )
-                {
-                    nanodelay(pendingDelay);
-                }
-                
+                nanowait(pendingDelay);
                 curState = INITIALIZE;
                 break;
 
@@ -878,6 +895,15 @@ Status status;
         else
         {
             iotCondLog(LOG_CMD,"Stopped, responding done\n");
+#if LOG_TIMING
+            if( startTime )
+            {
+                uint64_t delta = getNow() - startTime;
+                iotCondLog(LOG_TIMING, "%d points in %d usec, min x,y %d,%d max x,y %d,%d\n",
+                    totalPoints, delta/1000, minX, minY, maxX, maxY);
+                startTime = 0;
+            }
+#endif
             ctlP->response = EMU_RESPONSE_DONE;
             emuOrFlags(FLAG_STOP);
             emuResponseSet(ctlP);
@@ -1251,6 +1277,7 @@ doCharacter(int dotSpacing, unsigned char ch)
 int x, y;
 int xTmp, yTmp;
 int flags;
+int delay;
 int curChar;
 bool sawHit;
 
@@ -1347,7 +1374,7 @@ bool sawHit;
     }
 
     // Finally!
-    for( x = 0; x < 5; x++ )
+    for( delay = x = 0; x < 5; x++ )
     {
         // columns 0 to 4, left to right
         for( y = 0; y < 7; y++ )
@@ -1361,16 +1388,24 @@ bool sawHit;
                 if( checkBounds(xTmp, yTmp) )
                 {
                     iotCondLog(LOG_BOUNDS, "character edge violation x, y %d %d\n", xTmp, yTmp);
+                    nanowait(delay);
                     return(EDGEVIOLATION);
                 }
 
+                delay += 1500;      // only when we draw a dot
                 if( drawAndCheck(true, xTmp, yTmp, type340Intensity(curIntensity)) )
                 {
                     sawHit = true;
                 }
             }
+            else
+            {
+                delay += 1000;      // move time
+            }
         }
     }
+
+    nanowait(delay);
 
     if( twoCharsets || (shiftState == 0) )
     {
@@ -1436,6 +1471,25 @@ bool gotLpHit;
         {
             iotCondLog(LOG_DRAW, "draw display %d x,y %d,%d intensity %d\n", i, x, y, intensity);
             display(i, x, y, type340Intensity(intensity));
+#if LOG_TIMING
+            ++totalPoints;
+            if( x > maxX )
+            {
+                maxX = x;
+            }
+            if( x < minX )
+            {
+                minX = x;
+            }
+            if( y > maxY )
+            {
+                maxY = y;
+            }
+            if( y < minY )
+            {
+                minY = y;
+            }
+#endif
             if( tryLightpen && !gotLpHit )
             {
                 if( ((i == 0) && lpEnabled) || slaves[i-1].lpEnabled )
@@ -1539,6 +1593,36 @@ ConfigurationSettingP settingP;
     {
         origCharsets = twoCharsets = settingP->onOff;
         iotCondLog(LOG_CONFIG, "340 emulator dual charsets %s\n", (twoCharsets)?"enabled":"disabled");
+    }
+}
+
+uint64_t
+getNow()
+{
+uint64_t now;
+struct timespec tm;
+
+    clock_gettime( CLOCK_MONOTONIC, &tm );
+    now = tm.tv_nsec;
+    now += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
+    return(now);
+}
+
+// do a nanodelay() if <= SPIN_LIMIT, else a nanopause()
+void
+nanowait(int ns)
+{
+    if( ns <= 0 )
+    {
+        return;
+    }
+    else if( ns <= SPIN_LIMIT )
+    {
+        nanodelay(ns);
+    }
+    else
+    {
+        nanopause(ns);
     }
 }
 

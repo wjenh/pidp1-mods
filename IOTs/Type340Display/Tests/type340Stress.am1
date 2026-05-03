@@ -1,0 +1,74 @@
+Severe load test
+#include <TYPE340/type340defs.ah>
+
+100/
+top,
+    lio [lines
+    dla
+    dss
+    jmp .-1
+    jmp top
+
+lines, scale(0) intensity(3) next(point)
+    y(0d50) next(point)
+    x(0) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d100) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d150) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d200) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d250) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d300) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d350) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d400) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d450) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d500) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d550) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d600) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d650) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d700) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d750) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d800) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d850) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d900) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+    y(0d950) show next(vcontinue)
+    visible deltax(0d127) right deltay(0)
+    next(point)
+
+    halt
+
+start 100

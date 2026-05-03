@@ -17,6 +17,7 @@
  * wje 27-Mar-26 allow starting with window size 512 and up, limit to phys screen size, don't allow
  *    resizing, makes computing light pen coords a huge mess
  * wje 28-Mar-26 don't constrain size if larger than physical screen
+ * wje 3-May-26 optimizations, increase max pending vertex update list size
  *
 */
 
@@ -63,6 +64,7 @@ typedef uint8_t uint8;
 #define WIDTH 1024
 #define HEIGHT 1024
 #define BORDER 2
+#define MAXUPDATES 250000   // defines the maximum number of vertices that can be updated, extras dropped
 
 // Safety enforecement, all the scaling and rounding could result in an index > 1023
 #define CONSTRAIN_INDEX(i) (((i) > 1023)?1023:(i))
@@ -355,7 +357,10 @@ struct PVertex
     float size, age;
     float intensity;
 };
-PVertex pverts[6 * 10000];
+
+//PVertex pverts[6 * 10000];
+// Each displayed point takes 6 entries here, no idea why
+PVertex pverts[6 * MAXUPDATES];
 
 #define void_offsetof (void*)(uintptr_t)offsetof
 

@@ -755,7 +755,8 @@ Status status;
                 }
 
                 pendingDelay = 0;
-                // The word contains 4, 4 bit fields, each moves up, down, left, or right, or diagonally one dotSpacing
+                // The word contains 4, 4 bit fields, each moves up, down, left, or right, or diagonally
+                // one dotSpacing location. The high bit determines visible/invisible.
                 for( tmp = 12; tmp >= 0; tmp -= 4)
                 {
                     if( (status = doIncrement(curScale, (word >> tmp) & 0xF)) != COMPLETED )
@@ -1374,12 +1375,19 @@ bool sawHit;
     }
 
     // Finally!
+    // The Type 342 character generator didn't scan the display across every point in the 5x7 matrix.
+    // Instead, it moved from each 'on' bit position directly to the next, only doing an intensify
+    // if in visible mode.
+    // So, the delay time is 1 or 1.5 usecs per on bit.
     for( delay = x = 0; x < 5; x++ )
     {
         // columns 0 to 4, left to right
         for( y = 0; y < 7; y++ )
         {
-            // rows 0 to 6, bottom to top
+            // Rows 0 to 6, bottom to top.
+            // The Type 342 character generator didn't scan the display across every point in the 5x7 matrix.
+            // Instead, it moved from each 'on' bit position directly to the next.
+            // So, the delay time is 1.5 usecs per drawm bit.
             if( charSet[curChar][x] & (2 << y) )
             {
                 // Bit on, draw it
@@ -1392,15 +1400,11 @@ bool sawHit;
                     return(EDGEVIOLATION);
                 }
 
-                delay += 1500;      // only when we draw a dot
+                delay += 1500;
                 if( drawAndCheck(true, xTmp, yTmp, type340Intensity(curIntensity)) )
                 {
                     sawHit = true;
                 }
-            }
-            else
-            {
-                delay += 1000;      // move time
             }
         }
     }

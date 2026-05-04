@@ -13,6 +13,7 @@
 // 23-Apr-2026 wje switch to semaphores, better for this than mutexes
 // 1-May-2026 wje tune buffer sizes for better Type 340 performance
 // 2-May-2026 wje back to mutexes, more buffer tweaking
+// 4-May-2026 wje add a timed run/wait semaphore and actually buffer commands
 
 #include <unistd.h>
 #include <stdint.h>
@@ -34,6 +35,7 @@
 #define LOG_INIT 0
 #define LOG_FD 0
 #define LOG_CMD 0
+#define LOG_DISPLAY 0
 #define LOG_DPYCMD 0
 #define LOG_DPYWRITE 0
 #define LOG_LP 0
@@ -41,31 +43,32 @@
 #define LOG_AGEDELAY 0
 #define LOG_FULL 0
 
-#define WORKERSLEEPTIME 10          // how often worker thread runs, microseconds
-#define PENBUFSIZE  64              // read up to this many lightpen update commands at once
-#define CMDBUFSIZE  1024            // buffer up to this many display commands
-#define DPYBUFSIZE  2048            // buffer up to this many outgoing dpy commands
+#define WORKERSLEEPTIME 1000       // max time the worker thread will sleep, usecs
+#define PENBUFSIZE  64             // read up to this many lightpen update commands at once
+#define CMDBUFSIZE  1024           // buffer up to this many display commands
+#define DPYBUFSIZE  2048           // buffer up to this many outgoing dpy commands
 #undef NEVER
-#define NEVER ~((uint64_t)0)        // a long time from now
+#define NEVER ~((uint64_t)0)       // a long time from now
 #define null 0
 #define isOpen(ctlP) ((ctlP)->fd >= 0)
 
-static int curRadius2 = 6*6;        // setLightpenRadius2() will override this
+static int curRadius2 = 6*6;       // setLightpenRadius2() will override this
 static bool displayInitialized;
+static sem_t runLock;
 
 typedef struct {
-    int fd;             // file descriptor to use
-    int curX, curY;     // last x,y coordinates set, 0-1023
-    int intensity;      // last intensity set
-    uint64_t now;       // really the time the current worker thead cycle started
-    uint64_t lastTime;  // used by addDpyCommand();
-    uint64_t ageTime;   // used by addDpyCommand() and ageDisplay();
-    bool penDown;       // lightpen is on the screen
-    bool lpData;        // set when lp data comes in, cleared when read
-    int lpX, lpY;       // last x,y lightpen coordinates received
-    int lpRadius2;      // used by the lightpen check
-    pthread_mutex_t controlLock; // for interlocking with the worker thread
-    pthread_mutex_t dataLock;    // for locking get/setDisplayData
+    int fd;                        // file descriptor to use
+    int curX, curY;                // last x,y coordinates set, 0-1023
+    int intensity;                 // last intensity set
+    uint64_t now;                  // really the time the current worker thead cycle started
+    uint64_t lastTime;             // used by addDpyCommand();
+    uint64_t ageTime;              // used by addDpyCommand() and ageDisplay();
+    bool penDown;                  // lightpen is on the screen
+    bool lpData;                   // set when lp data comes in, cleared when read
+    int lpX, lpY;                  // last x,y lightpen coordinates received
+    int lpRadius2;                 // used by the lightpen check
+    pthread_mutex_t controlLock;   // for interlocking with the worker thread
+    pthread_mutex_t dataLock;      // for locking get/setDisplayData
 
     int numCommands;
     uint32_t commandBuf[CMDBUFSIZE];
@@ -87,7 +90,7 @@ bool unlockDisplayData(int screenNo);
 void setLightpenRadius2(int screenNo, int radius2);
 int getLightpenRadius2(int screenNo);
 
-// The outside draWing interface.
+// The outside draWing interfaces.
 bool display(int screenNo, int x, int y, int intensity);
 
 // The outside inteface for checking the lightpen.
@@ -112,10 +115,11 @@ static void *worker(void *);
 static void lockControl(DisplayControlP ctlP);
 static void unlockControl(DisplayControlP ctlP);
 static void flushDisplay(DisplayControlP ctlP);
-static void addCommand(DisplayControlP ctlP, int x, int y, int intensity);
+static void addCommand(DisplayControlP ctlP, int x, int y, int intensity, bool defer);
 static void putDpyCommand(DisplayControlP ctlP, unsigned int x, unsigned int y, unsigned int intensity);
 static void addDpyCommand(DisplayControlP ctlP, uint32_t cmd);
 static void ageDisplay(DisplayControlP ctlP);
+static void waitForRun(void);
 
 extern int decflg(int flg);
 
@@ -309,9 +313,11 @@ DisplayControlP ctlP;
     return(true);
 }
 
-// The primary external method.
 // Display a point.
+// The primary external method.
 // Returns true if display is open, else false.
+// The point is put into the output buffer to be processed when the worker thread wakes up.
+// It will also be awakened if the buffer is full.
 bool
 display(int screenNo, int x, int y, int intensity)
 {
@@ -322,8 +328,8 @@ DisplayControlP ctlP;
         return(false);
     }
 
-    logger(LOG_CMD,"display(), screen %d x %d y %d intensity %d\n", screenNo, x, y, intensity);
-    addCommand(ctlP, x & 01777, y & 01777, intensity & 07);
+    logger(LOG_DISPLAY,"display(), screen %d x %d y %d intensity %d\n", screenNo, x, y, intensity);
+    addCommand(ctlP, x & 01777, y & 01777, intensity & 07, false);
     return(true);
 }
 
@@ -383,6 +389,8 @@ pthread_t thread;
 
     displayInitialized = true;
     logger(LOG_INIT,"Display subsystem being initialized\n");
+
+    sem_init(&runLock, 0, 0);
 
     if( pthread_create(&thread, NULL, worker, null) )
     {
@@ -485,6 +493,8 @@ uint32_t cmd;
 
     while( true )
     {
+        waitForRun();
+
         for( i = 0; i < MAXDISPLAYS; ++i )
         {
             if( !(ctlP = getDisplayControlP(i)) || !isOpen(ctlP) )
@@ -496,6 +506,11 @@ uint32_t cmd;
             lockControl(ctlP);
             ctlP->now = currentTime();
 
+            if( ctlP->numCommands )
+            {
+                logger(LOG_CMD,"Worker awake for screen %d, %d commands\n", i, ctlP->numCommands);
+            }
+
             // Check for work
             for( j = 0; j < ctlP->numCommands; ++j )
             {
@@ -503,7 +518,6 @@ uint32_t cmd;
                 intensity = (cmd >> 24) & 07;
                 x = (cmd >> 12) & 01777;
                 y = cmd & 01777;
-                logger(LOG_CMD,"Worker got screen %d x %d, y %d, intensity %d\n", j, x, y, intensity);
                 putDpyCommand(ctlP, x, y, intensity);
             }
 
@@ -516,7 +530,6 @@ uint32_t cmd;
             // we read lp data even if not enabled, display could be sending it
             lightpenReader(ctlP);          // check for any pending input
         }
-        usleep(WORKERSLEEPTIME);
     }
 
     return(0);
@@ -524,24 +537,30 @@ uint32_t cmd;
 
 // Puts a command into the worker command buffer.
 // X and y will be the usual Type 30 -511,511 10 bit coordinates.
+// If defer is true, no worker wakeup is issued unless the buffer is full.
 static void
-addCommand(DisplayControlP ctlP, int x, int y, int intensity)
+addCommand(DisplayControlP ctlP, int x, int y, int intensity, bool defer)
 {
 int cmd;
-
-    cmd = (intensity << 24) | (x << 12) | y;
 
     lockControl(ctlP);
     while( ctlP->numCommands >= CMDBUFSIZE )
     {
         unlockControl(ctlP);
         logger(LOG_FULL,"addCommand cmd buffer full\n");
+        sem_post(&runLock);
         usleep(15);          // wait for the buffer to drain
         lockControl(ctlP);
     }
 
+    cmd = (intensity << 24) | (x << 12) | y;
     ctlP->commandBuf[ctlP->numCommands++] = cmd;
     unlockControl(ctlP);
+
+    if( !defer )
+    {
+        sem_post(&runLock);
+    }
 }
 
 // Puts a dpy-style command into the dpy command buffer
@@ -750,6 +769,25 @@ static bool penDown;
     return( gotPosition );
 }
 
+// Do a timed wait.
+// We don't want the worker thread to block forever, needs to run occasionally.
+static void
+waitForRun()
+{
+struct timespec tm;
+
+    // We have to handle ns overflow, lame
+    clock_gettime(CLOCK_MONOTONIC, &tm);
+    tm.tv_nsec += WORKERSLEEPTIME * 1000;   // WORKERSLEEPTIME is in usecs
+    if( tm.tv_nsec > 999999999 )
+    {
+        tm.tv_sec++;
+        tm.tv_nsec -= 999999999;
+    }
+
+    sem_timedwait(&runLock, &tm);
+}
+
 // Get current system time in ns.
 static uint64_t
 currentTime()
@@ -762,6 +800,7 @@ uint64_t time;
     time += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
     return( time );
 }
+
 // Convert a 10 bit 1's complement dpy coordinate to a 2's complement 0-1023 value.
 static int
 cvtDpyTo1024(int dpy)

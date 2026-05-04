@@ -25,6 +25,8 @@
 #include <stdint.h>
 #include <semaphore.h>
 #include <math.h>
+#include <pthread.h>
+#include <sched.h>
 
 #include "common.h"
 #include "pdp1.h"
@@ -74,7 +76,7 @@
 #define CH_SUB    0011   // Subscript
 #define CH_SUP    0012   // Superscript
 
-#define HSC_CHAN 3      // randomly selected, drum uses 1
+#define HSC_CHAN 3         // lowest priority, drum uses 1
 #define SPIN_LIMIT 40000   // max ns we will spin for, otherwise use nanosleep()
 
 // The interrupt channel in the documentation is 0.
@@ -216,6 +218,7 @@ static sem_t waitSemaphore; // how we wait for commands
 static Modes curMode = PARAMETER;
 static Modes curState = STOPPED;
 static BRMState brmState;
+static int pendingDelay;
 static int curAddress;      // the address set by the dla command, where we will fetch data from
 static int curX, curY;      // current display coordinates
 static int lpX, lpY;        // last lp hit display coordinates
@@ -259,9 +262,9 @@ static Status doIncrement(int dotSpacing, int bits);
 Status doCharacter(int dotSpacing, unsigned char ch);
 static void emuOrFlags(int newFlags);   // only used internally
 static void emuClearFlag(int flagbit);  // only used internally
-static void nanowait(int ns);
-static void nanodelay(int ns);
-static void nanopause(int ns);
+static int nanowait(int ns);
+static int nanodelay(int ns);
+static int nanopause(int ns);
 static uint64_t getNow(void);
 static void configure(void);
 
@@ -276,6 +279,8 @@ void
 emuInitialize(PDP1P pdp1P)
 {
 pthread_t thread;
+pthread_attr_t tattr;
+struct sched_param param;
 
     if( threadRunning )
     {
@@ -289,11 +294,18 @@ pthread_t thread;
     configure();
 
     chanP = HSCallocateChannel(HSC_CHAN);
-    sem_init(&waitSemaphore, 0, 0);
     ctlP->commandSent = false;
     ctlP->responseSent = false;
     ctlP->response = EMU_RESPONSE_DONE;
-    if( pthread_create(&thread, NULL, emulator, ctlP) )
+
+    sem_init(&waitSemaphore, 0, 0);
+
+    pthread_attr_init (&tattr);
+    pthread_attr_getschedparam (&tattr, &param);
+    param.sched_priority = -10;
+    pthread_attr_setschedparam (&tattr, &param);
+
+    if( pthread_create(&thread, &tattr, emulator, ctlP) )
     {
         iotCondLog(LOG_INIT,"thread create failed\n");
         threadRunning = false;
@@ -411,7 +423,6 @@ int command;
 int word;
 int i, tmp;
 int x, y;
-int pendingDelay;
 int lastdX, lastdY;
 bool sawExit;
 bool sawEscape;
@@ -491,6 +502,8 @@ Status status;
 
         while( !isPaused && (curState != STOPPED) )
         {
+            pendingDelay = 0;       // we accumuoate the total delay time for one cycle, wait at the end
+
             // We could be running in a continuous loop via JUMP, so check for any commands
             if( (command = get340Command(ctlP)) != EMU_CMD_NONE )
             {
@@ -512,7 +525,7 @@ Status status;
             // Every command takes time to initialize
             if( curState == INITIALIZE )
             {
-                nanowait(SETUP_TIME);
+                pendingDelay = SETUP_TIME;
             }
 
             switch( curMode )
@@ -601,14 +614,14 @@ Status status;
                     curY = POINT_ADDRESS(word);
                     if( POINT_INTENSIFY(word) )
                     {
-                        nanowait(35000);           // 35 us positioning and draw delay
+                        pendingDelay += 35000;           // 35 us positioning and draw delay
                     }
                     iotCondLog(LOG_POINT, "vertical 0%d\n", curY);
                 }
                 else
                 {
                     curX = POINT_ADDRESS(word);
-                    nanowait(35000);               // 35 us delay always
+                    pendingDelay += 35000;               // 35 us delay always
                     iotCondLog(LOG_POINT, "horizontal 0%d\n", curX);
                 }
 
@@ -638,7 +651,10 @@ Status status;
 
             case VECTOR:
             case VCONTINUE:
-                // Continue goes until an edge violation
+                // Vcontinue goes until an edge violation
+                // Linux scheduling really interferes with long vectors, specifically vcontinue.
+                // No good solution yet, can only get a stable display by ignoring timing for vcontine.
+                // Otherwise, defer the delay until the entire vector completes.
                 if( curState == INITIALIZE )
                 {
                     word = getWord(ctlP->pdp1P);
@@ -669,9 +685,6 @@ Status status;
                     // If we can't initialise, ignore it and continue
                     if( brmInitialize(&brmState, curX, curY, x, y, curScale, INTENSIFY(word)) )
                     {
-                        pendingDelay = 2900;        // 2.9 usec setup time
-                        // 1.5 usec if points are being drawn, else 1.0 usec
-                        pendingDelay += brmState.nPoints * (INTENSIFY(word)?1500:1000);
                         curState = RUNNING;
                     }
                     else
@@ -686,17 +699,16 @@ Status status;
                 {
                     if( (status = brmNext(&brmState, &curX, &curY)) != BRMRUNNING )
                     {
+                        // Do our delay at the end of each vector, vcontinue will repeat each subvector.
+                        // The worst-case vector, corner-to-corner in vcontinue mode
+                        // takes 2 milliseconds.
                         if( status == COMPLETED )
                         {
+                            pendingDelay += brmState.nPoints * INTENSIFY(word)?1500:1000;
                             if( ESCAPE(word) )
                             {
                                 sawEscape = true;
                                 iotCondLog(LOG_VECTOR, "vector escape\n");
-                                // In order to minimize rescheduling by Linux, all the waiting is done at the end.
-                                // No, not strictly accurate but the end timing is the same.
-                                // The worst-case vector, corner-to-corner in vcontinue mode
-                                // takes 2 milliseconds.
-                                nanowait(pendingDelay);
                                 curState = INITIALIZE;
                             }
 
@@ -705,7 +717,8 @@ Status status;
                                 // We go back to run mode, updating the start and end points
                                 brmInitialize(&brmState, curX, curY, lastdX, lastdY,
                                     brmState.dotSpacing, brmState.draw);
-                                pendingDelay += brmState.nPoints * (INTENSIFY(word)?1500:1000);
+                                // Just can't get a stable display delaying for this long,
+                                // so timing accuracy goes out the window for vcontinue.
                                 curState = RUNNING;
                             }
                             else
@@ -728,8 +741,6 @@ Status status;
                                 iotCondLog(LOG_BOUNDS, "vector edge violation x, y %d %d\n", curX, curY);
                                 needBreak = true;
                             }
-
-                            nanowait(pendingDelay);
                         }
 
                         iotCondLog(LOG_VECTOR,"vector done, status %d, curX %d curY %d\n", status, curX, curY);
@@ -754,7 +765,6 @@ Status status;
                     iotCondLog(LOG_INCREMENT, "increment escape\n");
                 }
 
-                pendingDelay = 0;
                 // The word contains 4, 4 bit fields, each moves up, down, left, or right, or diagonally
                 // one dotSpacing location. The high bit determines visible/invisible.
                 for( tmp = 12; tmp >= 0; tmp -= 4)
@@ -786,7 +796,6 @@ Status status;
                     }
                 }
 
-                nanowait(pendingDelay);
                 curState = INITIALIZE;
                 break;
 
@@ -885,6 +894,9 @@ Status status;
                     iotCondLog(LOG_ESCAPE,"escape\n");
                 }
             }
+
+            // Delay for the accumulated time from the last operation
+            pendingDelay = nanowait(pendingDelay);
         }
 
         // An hp hit or edge violation always interrupts
@@ -1278,7 +1290,6 @@ doCharacter(int dotSpacing, unsigned char ch)
 int x, y;
 int xTmp, yTmp;
 int flags;
-int delay;
 int curChar;
 bool sawHit;
 
@@ -1378,8 +1389,7 @@ bool sawHit;
     // The Type 342 character generator didn't scan the display across every point in the 5x7 matrix.
     // Instead, it moved from each 'on' bit position directly to the next, only doing an intensify
     // if in visible mode.
-    // So, the delay time is 1 or 1.5 usecs per on bit.
-    for( delay = x = 0; x < 5; x++ )
+    for( x = 0; x < 5; x++ )
     {
         // columns 0 to 4, left to right
         for( y = 0; y < 7; y++ )
@@ -1396,11 +1406,10 @@ bool sawHit;
                 if( checkBounds(xTmp, yTmp) )
                 {
                     iotCondLog(LOG_BOUNDS, "character edge violation x, y %d %d\n", xTmp, yTmp);
-                    nanowait(delay);
                     return(EDGEVIOLATION);
                 }
 
-                delay += 1500;
+                pendingDelay += 1500;
                 if( drawAndCheck(true, xTmp, yTmp, type340Intensity(curIntensity)) )
                 {
                     sawHit = true;
@@ -1408,8 +1417,6 @@ bool sawHit;
             }
         }
     }
-
-    nanowait(delay);
 
     if( twoCharsets || (shiftState == 0) )
     {
@@ -1475,6 +1482,7 @@ bool gotLpHit;
         {
             iotCondLog(LOG_DRAW, "draw display %d x,y %d,%d intensity %d\n", i, x, y, intensity);
             display(i, x, y, type340Intensity(intensity));
+
 #if LOG_TIMING
             ++totalPoints;
             if( x > maxX )
@@ -1612,13 +1620,14 @@ struct timespec tm;
     return(now);
 }
 
-// do a nanodelay() if <= SPIN_LIMIT, else a nanopause()
-void
+// do a nanodelay() if <= SPIN_LIMIT, else a nanopause().
+// Always return 0.
+int
 nanowait(int ns)
 {
     if( ns <= 0 )
     {
-        return;
+        return(0);
     }
     else if( ns <= SPIN_LIMIT )
     {
@@ -1628,10 +1637,13 @@ nanowait(int ns)
     {
         nanopause(ns);
     }
+
+    return(0);
 }
 
 // Wait ns nanoseconds in a spinloop so we don't reschedule while drawing.
-void
+// Always return 0.
+int
 nanodelay(int ns)
 {
 struct timespec tm;
@@ -1648,11 +1660,14 @@ uint64_t now;
         now = tm.tv_nsec;
         now += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
     }
+
+    return(0);
 }
 
 // Wait ns nanoseconds, allow rescheduling.
 // This usually means significantly longer than what is requested.
-void
+// Always return 0.
+int
 nanopause(int ns)
 {
 struct timespec tm;
@@ -1660,6 +1675,8 @@ struct timespec tm;
     tm.tv_sec = 0;
     tm.tv_nsec = ns;
     nanosleep(&tm, 0);
+
+    return(0);
 }
 
 // See if there is a pending response.

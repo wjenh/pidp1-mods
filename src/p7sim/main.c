@@ -18,6 +18,7 @@
  *    resizing, makes computing light pen coords a huge mess
  * wje 28-Mar-26 don't constrain size if larger than physical screen
  * wje 3-May-26 optimizations, increase max pending vertex update list size
+ * wje 3-May-26 decrease the vector list size a bit, 100K seems adequate
  *
 */
 
@@ -64,7 +65,8 @@ typedef uint8_t uint8;
 #define WIDTH 1024
 #define HEIGHT 1024
 #define BORDER 2
-#define MAXUPDATES 250000   // defines the maximum number of vertices that can be updated, extras dropped
+#define MAXUPDATES 100000   // defines the maximum number of vertices that can be updated, extras dropped
+#define DEFAULTPORT 3400
 
 // Safety enforecement, all the scaling and rounding could result in an index > 1023
 #define CONSTRAIN_INDEX(i) (((i) > 1023)?1023:(i))
@@ -79,7 +81,13 @@ float yScaling;
 int fullWidth = (WIDTH + 2*BORDER); // is overridden in main(), but preserve initialization just in case
 int fullHeight = (HEIGHT + 2*BORDER);
 
-#define DEFAULTPORT 3400
+int scalefoo = 0;
+int intensityOverride = 8;
+
+float maxsz = 0.0055f;
+float minsz = 0.0018f;
+float maxbr = 1.00f;
+float minbr = 0.25f;
 
 SDL_Window *window;
 int netfd;
@@ -92,6 +100,28 @@ int i;
 int time;
 };
 
+typedef struct Vertex Vertex;
+struct Vertex
+{
+    float x, y;
+    float u, v;
+};
+
+typedef struct PVertex PVertex;
+struct PVertex
+{
+    float x, y;
+    float u, v;
+    float cx, cy;
+    float size, age;
+    float intensity;
+};
+
+//PVertex pverts[6 * 10000];
+// Each displayed point takes 6 entries here, no idea why
+PVertex pverts[6 * MAXUPDATES];
+
+#define void_offsetof (void*)(uintptr_t)offsetof
 int indices[1024 * 1024];
 Point newpoints[1024 * 1024];
 int nnewpoints;
@@ -333,37 +363,6 @@ linkprogram(GLint vs, GLint fs)
     return program;
 }
 
-int scalefoo = 0;
-int intensityOverride = 8;
-
-float maxsz = 0.0055f;
-float minsz = 0.0018f;
-float maxbr = 1.00f;
-float minbr = 0.25f;
-
-typedef struct Vertex Vertex;
-struct Vertex
-{
-    float x, y;
-    float u, v;
-};
-
-typedef struct PVertex PVertex;
-struct PVertex
-{
-    float x, y;
-    float u, v;
-    float cx, cy;
-    float size, age;
-    float intensity;
-};
-
-//PVertex pverts[6 * 10000];
-// Each displayed point takes 6 entries here, no idea why
-PVertex pverts[6 * MAXUPDATES];
-
-#define void_offsetof (void*)(uintptr_t)offsetof
-
 void
 setvbo(void)
 {
@@ -481,7 +480,7 @@ float xScale, yScale;
 
     setpvbo();
     glBufferData(GL_ARRAY_BUFFER, i * 6 * sizeof(PVertex), pverts, GL_DYNAMIC_DRAW);
-    glDrawArrays(GL_TRIANGLES, 0, i * 6);
+    glDrawArrays(GL_TRIANGLES, 0, i* 6);
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDisable(GL_BLEND);
@@ -491,14 +490,12 @@ float xScale, yScale;
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, yellowTex[flip]);
 
-
     /* draw and age yellow layer */
     setvbo();
     glBindFramebuffer(GL_FRAMEBUFFER, yellowFBO[!flip]);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(excite_program);
     glDrawArrays(GL_TRIANGLES, 0, 6);
-
 
     /* compose final image */
     SDL_GetWindowSize(window, &w, &h);

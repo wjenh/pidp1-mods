@@ -16,6 +16,7 @@
  * 26-Apr-2026 wje add more timing, interrupt always on lp hit or edge violation
  * 29-Apr-2026 wje add dual charset control via the parameter instruction
  * 1-May-2026 wje tweak timings to match DEC logic document
+ * 4-May-2026 wje finally got vector delay to give a stable display, in conjunction with display driver changes
  *
  */
 
@@ -699,9 +700,9 @@ Status status;
                 {
                     if( (status = brmNext(&brmState, &curX, &curY)) != BRMRUNNING )
                     {
-                        // Do our delay at the end of each vector, vcontinue will repeat each subvector.
-                        // The worst-case vector, corner-to-corner in vcontinue mode
-                        // takes 2 milliseconds.
+                        // Do our delay at the end of each vector.
+                        // The worst-case vector, corner-to-corner in vcontinue mode takes 2 milliseconds.
+                        // The delay will happen when it completes, even though it uses repeated short vectors.
                         if( status == COMPLETED )
                         {
                             pendingDelay += brmState.nPoints * INTENSIFY(word)?1500:1000;
@@ -717,8 +718,6 @@ Status status;
                                 // We go back to run mode, updating the start and end points
                                 brmInitialize(&brmState, curX, curY, lastdX, lastdY,
                                     brmState.dotSpacing, brmState.draw);
-                                // Just can't get a stable display delaying for this long,
-                                // so timing accuracy goes out the window for vcontinue.
                                 curState = RUNNING;
                             }
                             else

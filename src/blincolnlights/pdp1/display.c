@@ -14,6 +14,7 @@
 // 1-May-2026 wje tune buffer sizes for better Type 340 performance
 // 2-May-2026 wje back to mutexes, more buffer tweaking
 // 4-May-2026 wje add a timed run/wait semaphore and actually buffer commands
+// 4-May-2026 wje and change clock to REALTIME for sem_timedwait()
 
 #include <unistd.h>
 #include <stdint.h>
@@ -35,6 +36,7 @@
 #define LOG_INIT 0
 #define LOG_FD 0
 #define LOG_CMD 0
+#define LOG_WAIT 1
 #define LOG_DISPLAY 0
 #define LOG_DPYCMD 0
 #define LOG_DPYWRITE 0
@@ -775,9 +777,13 @@ static void
 waitForRun()
 {
 struct timespec tm;
+uint64_t startTime;
+uint64_t endTime;
 
     // We have to handle ns overflow, lame
-    clock_gettime(CLOCK_MONOTONIC, &tm);
+    clock_gettime(CLOCK_REALTIME, &tm);
+    startTime = tm.tv_nsec + tm.tv_sec * 1000 * 1000 * 1000;
+
     tm.tv_nsec += WORKERSLEEPTIME * 1000;   // WORKERSLEEPTIME is in usecs
     if( tm.tv_nsec > 999999999 )
     {
@@ -786,6 +792,12 @@ struct timespec tm;
     }
 
     sem_timedwait(&runLock, &tm);
+
+#if LOG_WAIT
+    clock_gettime(CLOCK_REALTIME, &tm);
+    endTime = tm.tv_nsec + tm.tv_sec * 1000 * 1000 * 1000;
+    logger(LOG_WAIT, "woke up after %d usec\n", (endTime - startTime) / 1000);
+#endif
 }
 
 // Get current system time in ns.

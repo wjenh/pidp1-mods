@@ -17,6 +17,7 @@
  * 29-Apr-2026 wje add dual charset control via the parameter instruction
  * 1-May-2026 wje tweak timings to match DEC logic document
  * 4-May-2026 wje finally got vector delay to give a stable display, in conjunction with display driver changes
+ * 5-May-2026 wje set stop on an increment edge violation
  *
  */
 
@@ -795,7 +796,11 @@ Status status;
                     }
                 }
 
-                curState = INITIALIZE;
+                // Don't lose the edge violation stop
+                if( curState != STOPPED )
+                {
+                    curState = INITIALIZE;
+                }
                 break;
 
             case CHARACTER:

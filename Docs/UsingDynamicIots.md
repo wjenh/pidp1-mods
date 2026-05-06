@@ -2,7 +2,7 @@
 
 This document describes the funcionality and now to create your own IOTs.
 
-Updated 23-Mar-2026
+Updated 6-May-2026
 
 ## What is a dynamic IOT?
 
@@ -107,6 +107,18 @@ start
 Then, when the crash happens, gdb will tell you where and why.
 Most commonly, you forgot to link in a library file in your Makefile
 or you trashed memory.
+
+## Starting and stopping
+
+If your IOT implements *iotStart()*, then whenever the pidp-1 enters run state via the start, continue, or read-in
+switches, it will be called.
+This can be used to do any initialization or reinitialization needed.
+
+If your IOT implements *iotStop()*, then whenever the pidp-1 enters stop state via the halt switch or power off
+switch, this will be called.
+This can be used to clean up any state or connections you need to deal with.
+
+Both are optional methods.
 
 ## Waits, completions, and pulses
 

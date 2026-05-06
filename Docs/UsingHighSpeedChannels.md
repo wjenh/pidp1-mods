@@ -1,31 +1,40 @@
 # Using High Speed Channels
 
-This document describes using the Type 19 High Speed Channel Control emulation.
+This document describes using the Type 19 High Speed Channel emulation.
 
 This is version 2.1
 
-Edit date 30-April-2026
+Edit date 6-May-2026
 
 ## What is it?
 
-The HSCC was a hardware addition that allowed direct memory transfers by devices such as the drums, mag tape drives,
-etc.
-It could perform both a read and a write in one cycle.
-It provided three or more independent channels that had priorites.
+The High Speed Channels were a hardware addition that allowed direct memory transfers by devices
+such as the drums, mag tape drives, etc.
+It could perform both a read and a write in one cycle and transfer up to 4096 words in one request.
+
+It provided three independent channels that had priorites.
 Channel 1 was the highest priority, 3 the lowest.
 What this meant was that if there were multiple channels active, all transfers from a higher priority channel
 would complete before those of lower priority channels.
-It had no accessible interface from the user side but rather was used by the hardware interfaces themselves.
+
+All of the channels had priority higher than any other operation in the system, including sequence breaks.
+
+It had no interface from the user side but rather was used by the hardware interfaces themselves.
 It worked by 'cycle stealing', taking one 5us cycle to do a memory transfer for each word until it was done.
 This meant that the processor was effectively halted while the transfer took place,
 but this was transparent to the user.
+
+However, there was an additional piece of hardware, the High Speed Data Control, Type 131, that provided some
+IOTs for allowing a user program to interact with some devices, at least one of the mag tape drives used it.
+It is of very limited use and has not been implemented. Yet.
+It depended upon the behavior of the device hard-wired to a channel to understand its directives.
 
 ## Why have this emulation?
 
 For more realistic timing and also for convenience for anyone writing new IOTs that need to transfer to/from memory.
 It hides the details of bank selection, presenting a full 16 bit address to the user.
 An example is the IOT_61, 62, and 63 implementation of the Type 23 drum.
-The real drum used the HSCC for all of its transfers.
+The real drum used the HSC for all of its transfers.
 It was also used by the Type 340 display system.
 
 ## How do I use it?
@@ -160,8 +169,9 @@ The possible status returns are:
 
 ```
 - HSC_OK - returned in immediate mode if there was no error, the transfer is already complete
-- HSC_ERR - returned in any mode for an invalid channel, mode combination, count, bank or address.
-- HSC_BUSY   returned for normal and threaded to indicate the transfer is in process
+- HSC_ERR - returned in any mode for an invalid channel, mode combination, count, bank or address
+- HSC_BUSY - returned for normal and threaded to indicate the transfer is in process
+- HSC_ABORT - returned when the pidp-1 is started or stopped, if an in-flight operation is in progress
 ```
 
 It is **mandatory** to call *HSCwait* after a nornal or threaded transfer, it won't wait if the status is done.
@@ -184,6 +194,15 @@ If so, then wait will not block.
 
 Again, you must call *HSCwait* after a normal or threaded request, it doesn't hurt to call it after an immediate
 request.
+
+## Behavior starting and stopping
+
+If a transfer is in progress when the stop, start, continue, examine, or read-in switches are used, any in-flight
+transfer is immediately stopped.
+This is the same behavior as the original hardware.
+When this occurs, the status returned from *HSCwait()* will be HSC_ABORT.
+
+It is good practice to pay attention to the return status.
 
 ## Final notes
 

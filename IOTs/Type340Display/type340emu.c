@@ -43,6 +43,7 @@
 #define LOG_START 0
 #define LOG_RUN 0
 #define LOG_CMD 0
+#define LOG_WAIT 0
 #define LOG_CONFIG 0
 #define LOG_ERR 0
 #define LOG_PARAM 0
@@ -325,8 +326,11 @@ getEmuControlP()
 void
 emuWakeup(EmuControlP ctlP)
 {
+int val;
+
     //if( sem_trywait(&waitSemaphore) )
-    if( isPaused || (curState != RUNNING) )
+    sem_getvalue(&waitSemaphore, &val);
+    if( val <= 0 )      // worker is sleeping
     {
         sem_post(&waitSemaphore);
     }
@@ -420,106 +424,109 @@ emuIsRunning()
 void *
 emulator(void *dummy)
 {
-int newMode;
-int command;
-int word;
-int i, tmp;
-int x, y;
-int lastdX, lastdY;
-bool sawExit;
-bool sawEscape;
-Status status;
+    int newMode;
+    int command;
+    int word;
+    int i, tmp;
+    int x, y;
+    int lastdX, lastdY;
+    bool sawExit;
+    bool sawEscape;
+    Status status;
 
-    sawEscape = sawExit = false;
+        sawEscape = sawExit = false;
 
-    // If the cmmand isn't NONE, ctlP will be locked.
-    while( !sawExit )
-    {
-        if( isPaused || (curState != RUNNING) )
+        // If the cmmand isn't NONE, ctlP will be locked.
+        while( !sawExit )
         {
-            iotCondLog(LOG_RUN, "Waiting\n");
-            sem_wait(&waitSemaphore);
-            iotCondLog(LOG_RUN, "Woke up\n");
-        }
-
-        if( (command = get340Command(ctlP)) == EMU_CMD_EXIT )
-        {
-            break;      // shut down, kill thread
-        }
-
-        switch( command )
-        {
-        case EMU_CMD_NONE:
-            // Nothing to do, wait for a wakeup
-            curState = STOPPED;
-            continue;
-
-        case EMU_CMD_RUN:
-            if( isPaused )
+            if( isPaused || (curState != RUNNING) )
             {
-                isPaused = false;
-                iotCondLog(LOG_RUN, "Received run while paused\n");
+                iotCondLog(LOG_WAIT, "Waiting\n");
+                sem_wait(&waitSemaphore);
+                iotCondLog(LOG_WAIT, "Woke up\n");
             }
 
-#if LOG_TIMING
-            startTime = getNow();
-            totalPoints = 0;
-            maxX = maxY = 0;
-            minX = minY = 9999;
-#endif
-            curAddress = ctlP->address;
-            curState = INITIALIZE;
-            curMode = PARAMETER;
-            flags = 0;
-            slavesEnabled = false;
-            lpEnabled = false;
-            memset(slaves, 0, sizeof(slaves));
-            iotCondLog(LOG_RUN, "Received start at addr %o\n", curAddress);
-            break;
-
-        case EMU_CMD_RESUME:
-            // If we were paused, the state remains the same as it was,
-            // otherwise ignore.
-            // The manual says this also clears the lp enable flag and the edge violation flags.
-            if( isPaused )
+            if( (command = get340Command(ctlP)) == EMU_CMD_EXIT )
             {
-                emuClearFlags();
-                lpEnabled = isPaused = false;
-                iotCondLog(LOG_RUN, "Received resume while paused\n");
+                break;      // shut down, kill thread
             }
-            break;
 
-        case EMU_CMD_PAUSE:
-            isPaused = true;
-            iotCondLog(LOG_RUN, "Received pause\n");
-            break;
-
-        case EMU_CMD_STOP:
-            curState = STOPPED;
-            iotCondLog(LOG_RUN, "Received stop\n");
-            break;
-        }
-
-        iotCondLog(LOG_CMD,"Got command %d\n", command);
-
-        while( !isPaused && (curState != STOPPED) )
-        {
-            pendingDelay = 0;       // we accumuoate the total delay time for one cycle, wait at the end
-
-            // We could be running in a continuous loop via JUMP, so check for any commands
-            if( (command = get340Command(ctlP)) != EMU_CMD_NONE )
+            switch( command )
             {
-                iotCondLog(LOG_CMD,"Got command %d while running\n", command);
+            case EMU_CMD_NONE:
+                // Nothing to do, wait for a wakeup
+                curState = STOPPED;
+                continue;
 
-                switch( command )
+            case EMU_CMD_RUN:
+                if( isPaused )
                 {
-                case EMU_CMD_EXIT:
-                    sawExit = true;
-                    curState = STOPPED;
-                    continue;
+                    isPaused = false;
+                    iotCondLog(LOG_RUN, "Received run while paused\n");
+                }
 
-                case EMU_CMD_STOP:
+    #if LOG_TIMING
+                startTime = getNow();
+                totalPoints = 0;
+                maxX = maxY = 0;
+                minX = minY = 9999;
+    #endif
+                curAddress = ctlP->address;
+                curState = INITIALIZE;
+                curMode = PARAMETER;
+                flags = 0;
+                slavesEnabled = false;
+                lpEnabled = false;
+                memset(slaves, 0, sizeof(slaves));
+                iotCondLog(LOG_RUN, "Received start at addr %o\n", curAddress);
+                break;
+
+            case EMU_CMD_RESUME:
+                // If we were paused, the state remains the same as it was,
+                // otherwise ignore.
+                // The manual says this also clears the lp enable flag and the edge violation flags.
+                if( isPaused )
+                {
+                    emuClearFlags();
+                    lpEnabled = isPaused = false;
+                    iotCondLog(LOG_RUN, "Received resume while paused\n");
+                }
+                break;
+
+            case EMU_CMD_PAUSE:
+                isPaused = true;
+                iotCondLog(LOG_RUN, "Received pause\n");
+                break;
+
+            case EMU_CMD_STOP:
+                curState = STOPPED;
+                iotCondLog(LOG_RUN, "Received stop\n");
+                break;
+            }
+
+            iotCondLog(LOG_CMD,"Got command %d\n", command);
+
+            while( !isPaused && (curState != STOPPED) )
+            {
+                pendingDelay = 0;       // we accumuoate the total delay time for one cycle, wait at the end
+
+                // We could be running in a continuous loop via JUMP, so check for any commands
+                if( (command = get340Command(ctlP)) != EMU_CMD_NONE )
+                {
+                    iotCondLog(LOG_CMD,"Got command %d while running\n", command);
+
+                    switch( command )
+                    {
+                    case EMU_CMD_EXIT:
+                        sawExit = true;
+                        curState = STOPPED;
+                        continue;
+
+                    case EMU_CMD_STOP:
+                        // A stop resets back to stopped and param mode
                     curState = STOPPED;
+                    curMode = PARAMETER;
+                    iotCondLog(LOG_RUN, "Received stop\n");
                     continue;
                 }
             }
@@ -1688,9 +1695,10 @@ struct timespec tm;
     return(0);
 }
 
-// See if there is a pending response.
-// If so leave the control locked and return it.
-// Otherwise, unlock and return NONE.
+// See if there is a pending command.
+// Called from the 340 emulator side.
+// If so, return it.
+// Otherwise,return NONE.
 int
 get340Command(EmuControlP ctlP)
 {
@@ -1703,28 +1711,29 @@ int command;
     else
     {
         command = ctlP->command;
-        ctlP->commandSent = false;
+        ctlP->responseSent = ctlP->commandSent = false;
     }
 
     return(command);
 }
 
 // See if there is a pending response.
-// If so leave the control locked and return it.
-// Otherwise, unlock and return NONE.
+// Called from the IOT side.
+// If so, return it.
+// Otherwise, return NONE.
 int
 get340Response(EmuControlP ctlP)
 {
 int resp;
 
-    if( !(ctlP->responseSent) )
-    {
-        resp = EMU_RESPONSE_NONE;
-    }
-    else
+    if( ctlP->responseSent )
     {
         resp = ctlP->response;
         ctlP->responseSent = false;
+    }
+    else
+    {
+        resp = EMU_RESPONSE_NONE;
     }
 
     return(resp);

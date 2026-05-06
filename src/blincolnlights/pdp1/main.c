@@ -187,7 +187,7 @@ FILE *tmpfP;    // used for timing
                 // We don't check for a bp hit until spec() runs, it sets the pc
                 spec(pdp1P);
                 HSCreset();
-                dynamicIotProcessorStop();
+                dynamicIotProcessorStart();
                 logger(LOG_BREAK, "Spec-cycle PC %06o\n", pdp->epc | pdp->pc);
                 if( checkBreakpoints(pdp) || checkWatches(pdp) )
                 {
@@ -205,6 +205,7 @@ FILE *tmpfP;    // used for timing
                 // Technically, the high speed channels aren't reset until a start, etc. above occur, but
                 // high speed processing needs to be stopped anyway, so do it now also.
                 HSCreset();
+                dynamicIotProcessorStop();
             }
 
             if( Edge(readin_sw) )

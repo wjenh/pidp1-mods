@@ -2,9 +2,9 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.2
+This is version 1.3
 
-Edit date 30-Apr-2026
+Edit date 6-May-2026
 
 ## What is it?
 
@@ -111,6 +111,22 @@ different IOT assignments.
 All of the skip subcommands can be combined, just as for the normal PDP-1 skip instructions, e.g.
 
 dsv dsh dss
+
+## Scale factor
+
+A scale factor can be set via the *parameter* command.
+This can be confusing.
+
+Scaling can be speciifed as 0, 1, 2, or 3 and changes pixel spacing by a factor of 1, 2, 4, or 8.
+It affects only *relative* motion.
+
+An abolute mvve goes to the coordinates specified.\
+For drawing vectors, characters, or increments the spacing between each plotted point is increased by the scaling
+factor.
+
+This has the effect of magnifying what is being drawn.
+For example, a vector command of length 10 will be drawn as 10, 20, 40, or 80 in length and the new position
+will be adjusted accordingly.
 
 ## Command details
 

@@ -83,6 +83,7 @@ See the config file.
 - Improved audio and a control app for it
 - High Speed Channels
 - Type 33 Symbol Generator added iot, sdb
+- New display subsystem
 
 The following IOTs are also built:
 
@@ -91,6 +92,7 @@ The following IOTs are also built:
 - Types 62 and 64 line printers
 - Type 630 Data Communications System
 - BBN-style real time clock
+- Type 340 Vector Graphics Display
 
 These features can be enabled and diabled via the configuration file, as can
 the lightpen, audio, mult/div, PDP-1D extensions,  dpy origin shift, and sdb.
@@ -108,6 +110,7 @@ The visible changes are in the hardware front paenl, gui, and Type 30 display.
 - Type 30 display can start bordered or borderless, command line -n, no border, or config file
 - Type 30 border/borderless can be toggled using the 'b' key while running
 - Improved performance hardware panel driver, panel_pidp1, not configurable. Looks more authentic, too
+- Improved performance of p7sim
 
 ## Lightpen support
 

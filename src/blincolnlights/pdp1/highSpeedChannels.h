@@ -9,6 +9,7 @@
 #define HSC_OK      0
 #define HSC_BUSY    1
 #define HSC_DONE    2
+#define HSC_ABORT   3       // an HSCreset() was done, comes from a stop, start, examine, continue
 #define HSC_ERR     -1
 
 // These are bitflags in the mode field

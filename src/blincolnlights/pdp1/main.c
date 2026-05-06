@@ -69,6 +69,7 @@ extern void setLightpenRadius2(int screenNo, int radius2);
 ConfigurationP getConfiguration(void);     // so other stuff can use our configuration, like IOTs
 
 extern ConfigurationP loadConfigFile(char *filenameP);
+extern void HSCreset(void);
 extern bool processHSCchannels(void);
 extern bool setDisplayFD(int screen, int fd);
 
@@ -185,11 +186,15 @@ FILE *tmpfP;    // used for timing
             {
                 // We don't check for a bp hit until spec() runs, it sets the pc
                 spec(pdp1P);
+                HSCreset();
+                dynamicIotProcessorStop();
                 logger(LOG_BREAK, "Spec-cycle PC %06o\n", pdp->epc | pdp->pc);
                 if( checkBreakpoints(pdp) || checkWatches(pdp) )
                 {
                     pdp->run_enable = 0;
                 }
+
+                // A start, etc. 
                 cycle(pdp1P);
                 AD1_CLEAR_CONTINUE(pdp1P);
             }
@@ -197,6 +202,9 @@ FILE *tmpfP;    // used for timing
             if( Edge(stop_sw) )
             {
                 pdp->run_enable = 0;
+                // Technically, the high speed channels aren't reset until a start, etc. above occur, but
+                // high speed processing needs to be stopped anyway, so do it now also.
+                HSCreset();
             }
 
             if( Edge(readin_sw) )

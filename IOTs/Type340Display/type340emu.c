@@ -18,7 +18,7 @@
  * 1-May-2026 wje tweak timings to match DEC logic document
  * 4-May-2026 wje finally got vector delay to give a stable display, in conjunction with display driver changes
  * 5-May-2026 wje set stop on an increment edge violation
- *
+ * 6-May-2026 wje just a note here, a start or stop of the pdp-1 stops the 340 and reverts to param mode
  */
 
 #include <unistd.h>
@@ -1537,16 +1537,21 @@ Word buffer[8];     // we only use 1, but just to be sure
     addr = curAddress++;
     curAddress %= MAXMEM;
 
-    // We can use cycle-stealing, but the emulator and system latency is terrible and for small
-    // transfers doesn't work well.
+    // We can use cycle-stealing, but the rescheduling interference can be annoying especially
+    // for small transfers like the 340 does.
     // THREADED mode fakes the cycle stealing without having to synchronize with the emulator.
+    // However, if you want to be more 'pure', regular hsc mode is useable.
+    //request.mode = HSC_MODE_FROMMEM;
     request.mode = HSC_MODE_FROMMEM | HSC_MODE_THREADED;
     request.count = 1;
     request.memBank = (addr >> 12) & 017;
     request.memAddr = addr & 07777;
     request.fromBufferP = buffer;
     HSCexecute(chanP, &request);
+
+    // it's possible to get an abort from the hsc, but that comes from a stop, will be handled by the IOT
     HSCwait(chanP);
+
     val = buffer[0];
     return(val);
 }

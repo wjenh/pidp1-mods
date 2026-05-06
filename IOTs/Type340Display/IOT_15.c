@@ -12,7 +12,7 @@
  * get responses.
  *
  * 20-Apr-2026 wje initial implementation
- * 23-Apr-2026 wje switch to a semaphore for synchronization, more efficient
+ * 6-May-2026 wje a stop or start from the pidp-1 stops the 340 and reverts to param mode
  */
 
 #include <unistd.h>
@@ -28,8 +28,8 @@
 //#define DOLOGGING
 #include "iotLogger.h"
 #define LOG_IOT 0
-#define LOG_START 1
-#define LOG_STOP 1
+#define LOG_START 0
+#define LOG_STOP 0
 #define LOG_CONFIG 0
 #define LOG_ERR 0
 
@@ -140,6 +140,7 @@ EmuControlP ctlP;
 
         if( (cmd & 04) && (flags & FLAG_VEDGE) )
         {
+            // dsv, display skip on vertical edgs violation
             needSkip = true;
         }
 
@@ -173,12 +174,12 @@ EmuControlP ctlP;
     iotCondLog(LOG_START, "IOT %o started\n", IOT1);
     configure();
 
-    if( emuIsPaused() )
+    if( emuIsInitialized() )
     {
         ctlP = getEmuControlP();
-        ctlP->command = EMU_CMD_RESUME;
+        ctlP->command = EMU_CMD_STOP;
         emuCommandSet(ctlP);
-        iotCondLog(LOG_START, "Issuing resume\n", IOT1);
+        iotCondLog(LOG_START, "Issuing stop\n", IOT1);
     }
 }
 
@@ -191,9 +192,9 @@ EmuControlP ctlP;
     if( emuIsInitialized() )
     {
         ctlP = getEmuControlP();
-        ctlP->command = EMU_CMD_PAUSE;
+        ctlP->command = EMU_CMD_STOP;
         emuCommandSet(ctlP);
-        iotCondLog(LOG_START, "Issuing pause\n", IOT1);
+        iotCondLog(LOG_START, "Issuing stop\n", IOT1);
     }
 
     iotCloseLog();

@@ -71,13 +71,6 @@ HSCControlP ctlP;
         // The channels are scanned from low to high, first one that needs a cycle steal wins.
         ctlP = chans[i];
 
-        // If a THREADED operation was done, fake break cycles
-        if( ctlP->brkCount )
-        {
-            ctlP->brkCount--;
-            steal = true;
-        }
-
         if( ctlP->status == HSC_BUSY )
         {
             if( processChannel(ctlP) )
@@ -151,6 +144,26 @@ HSCControlP ctlP;
     ctlP->isAssigned = false;
     free(chanP);
     return(true);
+}
+
+// Emulator says to stop everything in progress.
+void
+HSCreset()
+{
+int i;
+HSCControlP ctlP;
+
+    for( i = 0; i < NUMCHANS; ++i )
+    {
+        ctlP = chans[i];
+
+        if( ctlP->isAssigned )
+        {
+            ctlP->status = HSC_ABORT;
+            ctlP->waitDelay = ctlP->brkCount = 0;
+            ctlP->isWaiting = false;
+        }
+    }
 }
 
 // Main interaction from user side.
@@ -267,9 +280,23 @@ HSCControlP ctlP;
         return( HSC_ERR );
     }
 
+    // Emulator said to stop any ongoing transfers
+    if( ctlP->status == HSC_ABORT )
+    {
+        ctlP->status = HSC_DONE;
+        return( HSC_ABORT );
+    }
+
     // Special case for THREADED pseudo-delay
     if( ctlP->waitDelay > 0 )
     {
+        // We aren't necessarily in the same thread as the main emulator,
+        // just idle if it isn't in run state.
+        while( !pdp1P->run )
+        {
+            usleep(100);
+        }
+
         pdp1P->hsc = 1;
         updatelights(pdp1P, pdp1P->panel);
         usleep(ctlP->waitDelay);
@@ -385,6 +412,24 @@ HSCRequestP rqstP;
     lockControl(ctlP);
     rqstP = &(ctlP->request);
 
+    // If a THREADED operation was done, fake break cycles
+    if( ctlP->brkCount > 0 )
+    {
+        ctlP->brkCount--;
+        steal = true;
+
+        if( ctlP->brkCount <= 0 )
+        {
+            logger(LOG_HSC, "processChannel threaded marking DONE\n");
+            ctlP->status = HSC_DONE;
+            HSCdone(ctlP);
+            pdp1P->hsc = 0;
+            unlockControl(ctlP);
+        }
+
+        return(steal);
+    }
+
     if( rqstP->count-- > 0 )
     {
         // We wrap
@@ -417,7 +462,7 @@ HSCRequestP rqstP;
     // We might still need to steal a cycle if we completed a transfer, so don't change the steal state.
     if( rqstP->count <= 0 )
     {
-        logger(LOG_HSC, "processChannel marking DONE\n");
+        logger(LOG_HSC, "processChannel marking DONE\n");       // an HSCreset() was done, comes from a stop, start, examine, continue
         ctlP->status = HSC_DONE;
         HSCdone(ctlP);
         pdp1P->hsc = 0;

@@ -19,6 +19,7 @@
  * 4-May-2026 wje finally got vector delay to give a stable display, in conjunction with display driver changes
  * 5-May-2026 wje set stop on an increment edge violation
  * 6-May-2026 wje just a note here, a start or stop of the pdp-1 stops the 340 and reverts to param mode
+ * 8-May-2026 wje fix some code formatting, adjust vcontinue delay time, slight refactor to simplify resets
  */
 
 #include <unistd.h>
@@ -255,6 +256,7 @@ static EmuControl emuControl;
 static EmuControlP ctlP = &emuControl;
 
 static void *emulator(void *argP);
+static void reset340(void);
 static Word getWord(PDP1P pdp1P);
 static bool drawAndCheck(bool tryLightpen, int x, int y, int intensity);
 static bool checkBounds(int x, int y);
@@ -271,9 +273,9 @@ static int nanopause(int ns);
 static uint64_t getNow(void);
 static void configure(void);
 
-// Interface to the low-level display subssystem
+// Interface to the low-level display subsystem
 extern bool display(int screenNo, int x, int y, int intensity);
-extern bool checkLightpen(PDP1P pdp1P, int screenNo, int x, int y);
+extern bool checkLightpen(int screenNo, int x, int y);
 
 // And to the pidp-1 emulator
 extern void initiateBreak(int brkno);
@@ -424,112 +426,100 @@ emuIsRunning()
 void *
 emulator(void *dummy)
 {
-    int newMode;
-    int command;
-    int word;
-    int i, tmp;
-    int x, y;
-    int lastdX, lastdY;
-    bool sawExit;
-    bool sawEscape;
-    Status status;
+int newMode;
+int command;
+int word;
+int i, tmp;
+int x, y;
+int lastdX, lastdY;
+bool sawExit;
+bool sawEscape;
+Status status;
 
-        sawEscape = sawExit = false;
+    sawEscape = sawExit = false;
 
-        // If the cmmand isn't NONE, ctlP will be locked.
-        while( !sawExit )
+    // If the cmmand isn't NONE, ctlP will be locked.
+    while( !sawExit )
+    {
+        if( isPaused || (curState != RUNNING) )
         {
-            if( isPaused || (curState != RUNNING) )
+            iotCondLog(LOG_WAIT, "Waiting\n");
+            sem_wait(&waitSemaphore);
+            iotCondLog(LOG_WAIT, "Woke up\n");
+        }
+
+        if( (command = get340Command(ctlP)) == EMU_CMD_EXIT )
+        {
+            break;      // shut down, kill thread
+        }
+
+        switch( command )
+        {
+        case EMU_CMD_NONE:
+            // Nothing to do, wait for a wakeup
+            curState = STOPPED;
+            continue;
+
+        case EMU_CMD_RUN:
+#if LOG_TIMING
+            startTime = getNow();
+            totalPoints = 0;
+            maxX = maxY = 0;
+            minX = minY = 9999;
+#endif
+            reset340();
+            curAddress = ctlP->address;
+            curState = INITIALIZE;      // reset340() sets it to STOPPED;
+            iotCondLog(LOG_RUN, "Received start at addr %o\n", curAddress);
+            break;
+
+        case EMU_CMD_RESUME:
+            // If we were paused, the state remains the same as it was,
+            // otherwise ignore.
+            // The manual says this also clears the lp enable flag and the edge violation flags.
+            if( isPaused )
             {
-                iotCondLog(LOG_WAIT, "Waiting\n");
-                sem_wait(&waitSemaphore);
-                iotCondLog(LOG_WAIT, "Woke up\n");
+                emuClearFlags();
+                lpEnabled = isPaused = false;
+                iotCondLog(LOG_RUN, "Received resume while paused\n");
             }
+            break;
 
-            if( (command = get340Command(ctlP)) == EMU_CMD_EXIT )
+        case EMU_CMD_PAUSE:
+            isPaused = true;
+            iotCondLog(LOG_RUN, "Received pause\n");
+            break;
+
+        case EMU_CMD_STOP:
+            reset340();
+            iotCondLog(LOG_RUN, "Received stop\n");
+            break;
+        }
+
+        iotCondLog(LOG_CMD,"Got command %d\n", command);
+
+        while( !isPaused && (curState != STOPPED) )
+        {
+            // We could be running in a continuous loop via JUMP, so check for any commands
+            if( (command = get340Command(ctlP)) != EMU_CMD_NONE )
             {
-                break;      // shut down, kill thread
-            }
+                iotCondLog(LOG_CMD,"Got command %d while running\n", command);
 
-            switch( command )
-            {
-            case EMU_CMD_NONE:
-                // Nothing to do, wait for a wakeup
-                curState = STOPPED;
-                continue;
-
-            case EMU_CMD_RUN:
-                if( isPaused )
+                switch( command )
                 {
-                    isPaused = false;
-                    iotCondLog(LOG_RUN, "Received run while paused\n");
-                }
-
-    #if LOG_TIMING
-                startTime = getNow();
-                totalPoints = 0;
-                maxX = maxY = 0;
-                minX = minY = 9999;
-    #endif
-                curAddress = ctlP->address;
-                curState = INITIALIZE;
-                curMode = PARAMETER;
-                flags = 0;
-                slavesEnabled = false;
-                lpEnabled = false;
-                memset(slaves, 0, sizeof(slaves));
-                iotCondLog(LOG_RUN, "Received start at addr %o\n", curAddress);
-                break;
-
-            case EMU_CMD_RESUME:
-                // If we were paused, the state remains the same as it was,
-                // otherwise ignore.
-                // The manual says this also clears the lp enable flag and the edge violation flags.
-                if( isPaused )
-                {
-                    emuClearFlags();
-                    lpEnabled = isPaused = false;
-                    iotCondLog(LOG_RUN, "Received resume while paused\n");
-                }
-                break;
-
-            case EMU_CMD_PAUSE:
-                isPaused = true;
-                iotCondLog(LOG_RUN, "Received pause\n");
-                break;
-
-            case EMU_CMD_STOP:
-                curState = STOPPED;
-                iotCondLog(LOG_RUN, "Received stop\n");
-                break;
-            }
-
-            iotCondLog(LOG_CMD,"Got command %d\n", command);
-
-            while( !isPaused && (curState != STOPPED) )
-            {
-                pendingDelay = 0;       // we accumuoate the total delay time for one cycle, wait at the end
-
-                // We could be running in a continuous loop via JUMP, so check for any commands
-                if( (command = get340Command(ctlP)) != EMU_CMD_NONE )
-                {
-                    iotCondLog(LOG_CMD,"Got command %d while running\n", command);
-
-                    switch( command )
-                    {
-                    case EMU_CMD_EXIT:
-                        sawExit = true;
-                        curState = STOPPED;
-                        continue;
-
-                    case EMU_CMD_STOP:
-                        // A stop resets back to stopped and param mode
+                case EMU_CMD_EXIT:
+                    sawExit = true;
                     curState = STOPPED;
-                    curMode = PARAMETER;
-                    iotCondLog(LOG_RUN, "Received stop\n");
+                    continue;
+
+                case EMU_CMD_STOP:
+                    // A stop resets back to stopped and param mode
+                    reset340();     // not sure this is strictly correct, but does no harm
                     continue;
                 }
             }
+
+            pendingDelay = 0;       // we accumuoate the total delay time for one cycle, wait at the end
 
             // Every command takes time to initialize
             if( curState == INITIALIZE )
@@ -713,7 +703,6 @@ emulator(void *dummy)
                         // The delay will happen when it completes, even though it uses repeated short vectors.
                         if( status == COMPLETED )
                         {
-                            pendingDelay += brmState.nPoints * INTENSIFY(word)?1500:1000;
                             if( ESCAPE(word) )
                             {
                                 sawEscape = true;
@@ -754,6 +743,8 @@ emulator(void *dummy)
                     }
                     else if( brmState.draw )
                     {
+                        pendingDelay += INTENSIFY(word)?1500:1000;
+
                         if( drawAndCheck(true, curX, curY, curIntensity) )
                         {
                             isPaused = true;
@@ -887,6 +878,9 @@ emulator(void *dummy)
                 break;
             }
 
+            // Delay for the accumulated time from the last operation
+            pendingDelay = nanowait(pendingDelay);
+
             // The instruction completes, then escape is processed
             if( (curState != RUNNING) && sawEscape )
             {
@@ -905,10 +899,17 @@ emulator(void *dummy)
                     iotCondLog(LOG_ESCAPE,"escape\n");
                 }
             }
-
-            // Delay for the accumulated time from the last operation
-            pendingDelay = nanowait(pendingDelay);
         }
+
+#if LOG_TIMING
+        if( startTime )
+        {
+            uint64_t delta = getNow() - startTime;
+            iotCondLog(LOG_TIMING, "%d points in %d usec, min x,y %d,%d max x,y %d,%d\n",
+                totalPoints, delta/1000, minX, minY, maxX, maxY);
+            startTime = 0;
+        }
+#endif
 
         // An hp hit or edge violation always interrupts
         if( isPaused || needBreak )
@@ -919,15 +920,6 @@ emulator(void *dummy)
         else
         {
             iotCondLog(LOG_CMD,"Stopped, responding done\n");
-#if LOG_TIMING
-            if( startTime )
-            {
-                uint64_t delta = getNow() - startTime;
-                iotCondLog(LOG_TIMING, "%d points in %d usec, min x,y %d,%d max x,y %d,%d\n",
-                    totalPoints, delta/1000, minX, minY, maxX, maxY);
-                startTime = 0;
-            }
-#endif
             ctlP->response = EMU_RESPONSE_DONE;
             emuOrFlags(FLAG_STOP);
             emuResponseSet(ctlP);
@@ -937,6 +929,19 @@ emulator(void *dummy)
     iotCondLog(LOG_RUN, "exit seen, terminating thread\n");
     threadRunning = false;
     return(0);
+}
+
+// reset the current state to stopped, clear flags, etc.
+void
+reset340()
+{
+    curState = STOPPED;
+    curMode = PARAMETER;
+    isPaused = false;
+    flags = 0;
+    slavesEnabled = false;
+    lpEnabled = false;
+    memset(slaves, 0, sizeof(slaves));
 }
 
 // A binary rate multiplier implementation, needed for vectors.
@@ -1517,7 +1522,7 @@ bool gotLpHit;
             {
                 if( ((i == 0) && lpEnabled) || slaves[i-1].lpEnabled )
                 {
-                    if( (gotLpHit = checkLightpen(ctlP->pdp1P, i, x, y)) )
+                    if( (gotLpHit = checkLightpen(i, x, y)) )
                     {
                         lpX = x;
                         lpY = y;

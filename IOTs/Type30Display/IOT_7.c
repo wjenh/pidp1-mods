@@ -252,7 +252,7 @@ int realX, realY;
         intensity &= 3;
         display(1, realX, realX, type30Intensity(intensity & 03));
     }
-    else if( lightpenEnabled && checkLightpen(pdp1P, 0, realX, realY) )
+    else if( lightpenEnabled && checkLightpen(0, realX, realY) )
     {
         iotCondLog(LOG_LIGHTPEN, "Lightpen hit at x %d y %d\n", curX, curY);
         pdp1P->cksflags |= 0400000;               // cleared by next dpy

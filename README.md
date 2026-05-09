@@ -9,13 +9,14 @@ Many unused files from the original have been cleaned out and some of the origin
 have some comments and be more readable.
 
 Almost 5,000 lines of documentation in over 20 documents have been added in *MD* format,
-not counting comments in the source code. Commented code? Gasp!
+not counting comments in the source code. Commented code? Legibly formatted commented code? Gasp!
 
 In addition to new emulator features such as lightpen support, high speed channels, and dynamically-loaded IOTs,
 it also adds various tools such as the am1 assembler and include files for am1,
 the ad1 symbolic debuger, drum utilities, documentation, etc.
 
-Implementations of the Type23 drum, the DCS communications system, the Type 33 symbol generator,
+Implementations of the Type23 drum, the DCS communications system, the Type 33 symbol generator, the Type 340
+advanced graphics display with all options and multiterminal support,
 both the Type 62 and Type 64 line printers and the BBN timesharing clock are provided.
 
 A number of demo programs in **am1** assembler are also provided.

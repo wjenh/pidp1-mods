@@ -264,7 +264,7 @@ int x, y;
             lockDisplayData(0);
             setDisplayData(0, xpos, ystart, -1);
             unlockDisplayData(0);
-            if( lightpenEnabled && checkLightpen(pdp1P, 0, cvtDpyTo1024(xpos), cvtDpyTo1024(ystart)) )
+            if( lightpenEnabled && checkLightpen(0, cvtDpyTo1024(xpos), cvtDpyTo1024(ystart)) )
             {
                 pdp1P->cksflags |= 0400000;               // cleared by next dpy
                 pdp1P->pf |= flagToBits(3);

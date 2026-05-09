@@ -15,6 +15,8 @@
 // 2-May-2026 wje back to mutexes, more buffer tweaking
 // 4-May-2026 wje add a timed run/wait semaphore and actually buffer commands
 // 4-May-2026 wje and change clock to REALTIME for sem_timedwait()
+// 7-May-2026 wje reduce buffer sizes, 256 seems to be fine
+// 8-May-2026 wje minor cleanup in lightpen detection code
 
 #include <unistd.h>
 #include <stdint.h>
@@ -47,8 +49,8 @@
 
 #define WORKERSLEEPTIME 1000       // max time the worker thread will sleep, usecs
 #define PENBUFSIZE  64             // read up to this many lightpen update commands at once
-#define CMDBUFSIZE  1024           // buffer up to this many display commands
-#define DPYBUFSIZE  2048           // buffer up to this many outgoing dpy commands
+#define CMDBUFSIZE  256            // buffer up to this many display commands
+#define DPYBUFSIZE  256            // buffer up to this many outgoing dpy commands
 #undef NEVER
 #define NEVER ~((uint64_t)0)       // a long time from now
 #define null 0
@@ -97,7 +99,7 @@ bool display(int screenNo, int x, int y, int intensity);
 
 // The outside inteface for checking the lightpen.
 // It will return true if there was a lightpen hit at the given coordinates, else false.
-bool checkLightpen(PDP1 *pdp1P, int screenNo,  int x, int y);
+bool checkLightpen(int screenNo,  int x, int y);
 
 // Internal functions.
 static void initializeDisplaySubsystem(void);
@@ -340,7 +342,7 @@ DisplayControlP ctlP;
 // The coordinates are expected to be in 0-1024 range!
 // If so, return true, else false.
 bool
-checkLightpen(PDP1P pdp1P, int screenNo, int x, int y)
+checkLightpen(int screenNo, int x, int y)
 {
 int delx, dely;
 bool gotHit;
@@ -707,12 +709,12 @@ lightpenReader(DisplayControlP ctlP)
 int i;
 int count;
 int sockFlag = 1;
+int lastX, lastY;
+bool gotPosition;
+bool penDown;
+
 uint32_t penBuf[PENBUFSIZE];
 uint32_t cmd;
-bool gotPosition;
-
-static int lastX, lastY;
-static bool penDown;
 
     if( !isOpen(ctlP) )
     {

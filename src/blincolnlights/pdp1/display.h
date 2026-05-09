@@ -27,5 +27,5 @@ bool display(int screenNo, int x, int y, int intensity);
 
 // The outside inteface for checking the lightpen.
 // It will return true if there was a lightpen hit at the given coordinates, else false.
-bool checkLightpen(PDP1 *pdp1P, int screenNo,  int x, int y);
+bool checkLightpen(int screenNo,  int x, int y);
 #endif

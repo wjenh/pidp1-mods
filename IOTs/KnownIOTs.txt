@@ -8,7 +8,7 @@ Those marked with an asterisk are implemented in the pidp1 emulator and are rese
 04 * tyi
 05 * ppa
 06 * ppb
-07 * dpy
+07   dpy, now independent of emulator
 
 11 * spacewar controllers
 

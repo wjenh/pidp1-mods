@@ -20,6 +20,7 @@
  * 5-May-2026 wje set stop on an increment edge violation
  * 6-May-2026 wje just a note here, a start or stop of the pdp-1 stops the 340 and reverts to param mode
  * 8-May-2026 wje fix some code formatting, adjust vcontinue delay time, slight refactor to simplify resets
+ * 11-May-2026 wje allow character to complete the current word before a lightpen pause is handled
  */
 
 #include <unistd.h>
@@ -81,7 +82,7 @@
 #define CH_SUP    0012   // Superscript
 
 #define HSC_CHAN 3         // lowest priority, drum uses 1
-#define SPIN_LIMIT 40000   // max ns we will spin for, otherwise use nanosleep()
+#define SPIN_LIMIT 20000   // max ns we will spin for, otherwise use nanosleep()
 
 // The interrupt channel in the documentation is 0.
 #define BRKCHAN 0
@@ -821,6 +822,7 @@ Status status;
                         {
                             curMode = PARAMETER;
                             curState = INITIALIZE;
+                            break;
                         }
                         else if( status == PAUSE )
                         {
@@ -832,8 +834,8 @@ Status status;
                             // Edge violation
                             curState = STOPPED;
                             needBreak = true;
+                            break;
                         }
-                        break;
                     }
                 }
                 break;

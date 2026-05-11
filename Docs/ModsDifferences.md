@@ -1,6 +1,6 @@
 ## Differences between pidp1-mods and the original pidp1 branches
 
-As of 11-Mar-2026
+As of 11-May-2026
 
 Differences fall into these broad categories:
 - Changes that are not visible to code or execution
@@ -64,8 +64,8 @@ These changes are:
 - p7sim additional command-line and config file settings for screen size, lightpen support.
 Note that lightpen support has been added to the main branch now, but without aperture mask settings.
 - lightpen support in the integrated gui, same note as above.
-- changes to the hardware panel driver, vpanel, to greatly reduce cpu load and more closely mimic the appearance of the actual PDP-1.
-This should be interoperable with wither branch, although it has not been tested against the original at this time.
+- changes to the hardware panel driver, panel1, to greatly reduce cpu load and more closely mimic the appearance of the actual PDP-1.
+This should be interoperable with either branch, although it has not been tested against the original at this time.
 
 ## Changes that require the pidp1-mods branch
 

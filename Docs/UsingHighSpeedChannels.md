@@ -99,7 +99,7 @@ But, this is far less susceptible to that.
 
 The hardware version had, and it is implemnted here also, access to all the memory on a system without having to
 worry about extended mode.
-So, be awaare that the bank setting, below, is actually used and is important.
+So, be aware that the bank setting, below, is actually used and is important.
 
 A memory transfer is limited to 4096 words in a call, and the address wraps around in the given bank.
 The Type 23 Drum makes use of this, allowing a full track transfer starting at any location in a bank.
@@ -113,8 +113,8 @@ These statuses can be returned, they are defined in the include file:
 - HSC_ERR - an error occurred
 
 These modes can be passed to *HSCexecute*:
-- HSC_MODE_FROMMEM - data is transferred from core memory to the caller's from buffer
-- HSC_MODE_TOMEM - data is transferred to core memory to the caller's to buffer
+- HSC_MODE_FROMMEM - data is transferred from core memory to the caller's *from* buffer
+- HSC_MODE_TOMEM - data is transferred to core memory from the caller's *to* buffer
 - HSC_MODE_IMMEDIATE - the transfer completes immediately
 - HSC_MODE_THREADED - the transfer completes after the proper per-word transfer time
 

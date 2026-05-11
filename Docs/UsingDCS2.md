@@ -1,7 +1,7 @@
-# Using the Simple(r) Communication System
+# Using the DCS Communication System
 
-This document describes how to use the simplified multi-channel Type 630 Data Communication System replacement.
-Updated 19-Mar-2026
+This document describes how to use the enhanced multi-channel Type 630 Data Communication System replacement.
+Updated 11-May-2026
 
 ## What is DCS2?
 
@@ -10,7 +10,7 @@ serial connections to, e.g. teletypes or modems.
 There were multiple variations covering the number of channels, the transmission speed, full or half duplex, etc.
 However, this really isn't particularly useful in today's world.
 
-This is a simplified version of the new and improved DCS2 which uses sockets instead of serial connections
+This is a modernized version of DCS which uses sockets instead of serial connections
 to allow communicating with any device that has sockets, or any device that can open a remote socket.
 It is full duplex wih separate send and receive buffers and control and can be configured at compile time
 for up to 64 independent channels.
@@ -18,12 +18,13 @@ for up to 64 independent channels.
 The instructions are the same codes as the original and with very similar function, although
 with extensions to manage the sockets associated with each channel.
 
-Unlike the more advanced and totally incompatible SCS version, DCS2 provides only single-character operations.
+As with the original, DCS2 provides only single-character-at-a-time operations, similar to the standard typewriter
+interfaces, tyi and tyo.
 
 The original DCS allowed or-ing 02000 with the IOT to cause the IO register to be cleared before new data was added.
 and the behavior is maintained for rch and rcr.
-This allows multi-character words to be efficiently handled, as with the macro assembler (flexo directive.
-Only the low 6 bits for Flexo mode or 8 bits are used for the commands.
+This allows multi-character words to be efficiently handled, as with the macro assembler **flexo** directive.
+Only the low 6 bits for flexo mode or 8 bits for ascii mode are used for the commands.
 
 For all others the IO register is cleared if data is going to be returned in it.
 
@@ -68,11 +69,11 @@ Only one remote system can connect to a channel and a channel will not be select
 until a channel is connected.
 
 Multiple channels can have the same port in which case they act as a connection pool.
-When a reqest comes in, the first channel in listening state with the requested port will be assigned to that client.
+When a request comes in, the first channel in listening state with the requested port will be assigned to that client.
 
 A channel can be closed to terminate the connection, or the connection itself can be closed by the client.
 If the connection is closed, a server channel will return to listening for a connection.
-A client channel will be closde and can only be used by opening it again.
+A client channel will be close and can only be used by opening it again.
 
 For client mode, when the channel is opened, it tries to connect to the specified host.
 In order to not halt the system while waiting, a non-blocking connect is used.
@@ -132,22 +133,22 @@ For crnl on or off, the incoming characters are passed unchanged, both carriage 
 
 ## Notes on waits, completion pulses, and channel starvation
 
-Only one command, rwe, below, will honor either the wait bit (i) or the completion pulse request.
+Only one command, *rwe*, below, will honor either the wait bit (i) or the completion pulse request.
 All others will always immediately return.
 
 Why? Remember that this is an asynchronous socket communications layer. Blocking in a wait could mean that other
 active channels you have opened would not get serviced until the current wait completed.
 This is not good for the socket world, you could lose data.
 
-So why does rwe wait? Because it isn't waiting on one channel, it responds to any event on any channel and so
+So why does *rwe* wait? Because it isn't waiting on one channel, it responds to any event on any channel and so
 can't result in a service blocking wait.
 
-If you want to not have to check busy flags constantly, you should use rwe or interrupts to know when some
+If you want to not have to check busy flags constantly, you should use *rwe* or interrupts to know when some
 socket event has occurred.
 
 It's also a very bad idea to pay attention to just one channel, assuming you have multiple channels open.
 The primary commands use the current channel and must unlock it for another channel to be automatically selected.
-You can also use the roc command, below, to override channel the current channel and
+You can also use the *roc* command, below, to override the current channel and
 force a new channel to be the active, locked one.
 
 ## Errors
@@ -164,7 +165,7 @@ in extended memory mode.
 
 **Warning**: The mnemonics below are directly from the DEC documentation, but notice there is an *rcr* instruction.
 That conflicts with the rcr that is rotate-combined-right.
-Keep that in mind. The include files provided with m1pp use rchr instead.
+Keep that in mind. The include files provided use rchr instead.
 
 All are implemented via a single IOT, 22 as mentioned.
 The following IOT commands are supported:

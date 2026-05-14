@@ -21,7 +21,8 @@
  * 6-May-2026 wje just a note here, a start or stop of the pdp-1 stops the 340 and reverts to param mode
  * 8-May-2026 wje fix some code formatting, adjust vcontinue delay time, slight refactor to simplify resets
  * 11-May-2026 wje allow character to complete the current word before a lightpen pause is handled
- * 13-May-2026 wje fix edge case of vector with both dx and dy 0, would loop forever
+ * 13-May-2026 wje handle case of both deltas 0 in vectors
+ * 14-May-2026 wje general cleanup, remove unused code, refactor vcontinue to make it more clear
  */
 
 #include <unistd.h>
@@ -44,7 +45,6 @@
 #include "iotLogger.h"
 #define LOG_INIT 0
 #define LOG_START 0
-#define LOG_STOP 0
 #define LOG_RUN 0
 #define LOG_CMD 0
 #define LOG_WAIT 0
@@ -194,10 +194,8 @@ typedef enum {
 typedef struct {
     int startX;
     int startY;
-    int endX;
-    int endY;
-    int deltaX;     // relative to startX
-    int deltaY;     // relative to startY
+    int deltaX;     // relative to startX, accumulated delta
+    int deltaY;     // relative to startY, accumulated delta
     int dotSpacing; // pixel spacing in pixels, not the raw value from the instruction
     int curStep;    // how many points we have consumed
     int nPoints;    // and how many we do
@@ -205,7 +203,6 @@ typedef struct {
     int yRate;      // increment y every yRate points
     bool plusX;     // the x axis endpoint is greater than the initial point
     bool plusY;     // the y axis endpoint is greater than the initial point
-    bool continueMode;  // set up by VCONTINUE
     bool draw;      // if true, the vector is drawn, else just positions
     } BRMState, *BRMStateP;
 
@@ -262,10 +259,12 @@ static bool drawAndCheck(bool tryLightpen, int x, int y, int intensity);
 static bool checkBounds(int x, int y);
 static bool brmInitialize(BRMStateP stateP, int initialX, int initialY,
     int dX, int dY, int step, bool draw);
+static void brmContinue(BRMStateP stateP, int x, int y);
 static Status brmNext(BRMStateP stateP, int *xP, int *yP);
 static Status doIncrement(int dotSpacing, int bits);
 Status doCharacter(int dotSpacing, unsigned char ch);
 static void emuOrFlags(int newFlags);   // only used internally
+static void emuClearFlag(int flagbit);  // only used internally
 static int nanowait(int ns);
 static int nanodelay(int ns);
 static int nanopause(int ns);
@@ -359,6 +358,14 @@ emuClearFlags()
 {
     iotCondLog(LOG_FLAGS,"Clear flags\n");
     flags = 0;
+}
+
+// Clear a flag.
+void
+emuClearFlag(int flagbit)
+{
+    iotCondLog(LOG_FLAGS,"Clear flag %0\n", flagbit);
+    flags &= ~flagbit;
 }
 
 // Ors the passed flag bits into the current flags
@@ -482,9 +489,8 @@ Status status;
             break;
 
         case EMU_CMD_STOP:
-            iotCondLog(LOG_STOP, "Received stop, state %d mode %d curx,y %d,%d dac 0%o flags %x\n",
-                curState, curMode, curX, curY, curAddress, flags);
             reset340();
+            iotCondLog(LOG_RUN, "Received stop\n");
             break;
         }
 
@@ -502,26 +508,13 @@ Status status;
                 case EMU_CMD_EXIT:
                     sawExit = true;
                     curState = STOPPED;
-                    break;
-
-                case EMU_CMD_RUN:
-                    // A dla was issued while we are still executing.
-                    // Force a reset, go into param mode, etc. just as if we were stopped.
-                    reset340();
-                    curAddress = ctlP->address;
-                    curState = INITIALIZE;      // reset340() sets it to STOPPED, we want to keep running
-                    break;
+                    continue;
 
                 case EMU_CMD_STOP:
-                    // A stop resets back to stopped stop state.
-                    iotCondLog(LOG_STOP,
-                        "Received stop while running, state %d mode %d curx,y %d,%d dac 0%o flags %x\n",
-                        curState, curMode, curX, curY, curAddress, flags);
-                    reset340();     // not sure this is strictly correct, what about a front panel continue?
-                    break;
+                    // A stop resets back to stopped and param mode
+                    reset340();     // not sure this is strictly correct, but does no harm
+                    continue;
                 }
-
-                continue;           // start at the top again
             }
 
             pendingDelay = 0;       // we accumuoate the total delay time for one cycle, wait at the end
@@ -655,12 +648,13 @@ Status status;
 
             case VECTOR:
             case VCONTINUE:
-                // Vcontinue goes until an edge violation, then resumes in param mode.
-                // Defer the delay until the entire vector completes.
+                // Vcontinue goes until an edge violation
+                // Linux scheduling really interferes with long vectors, specifically vcontinue.
+                // No good solution yet, can only get a stable display by ignoring timing for vcontine.
+                // Otherwise, defer the delay until the entire vector completes.
                 if( curState == INITIALIZE )
                 {
                     word = getWord(ctlP->pdp1P);
-                    // Escape is meaningless for vcontinue, it always has an implied escape.
                     if( (curMode == VECTOR) && ESCAPE(word) )
                     {
                         sawEscape = true;
@@ -694,7 +688,7 @@ Status status;
                     {
                         iotCondLog(LOG_VECTOR, "vector%s brmInitialize failed\n", 
                             (curMode == VCONTINUE)?" continue":"");
-                        sawEscape = true;       // bail
+                        emuOrFlags(FLAG_STOP);
                         curState = STOPPED;
                     }
                 }
@@ -710,35 +704,29 @@ Status status;
                             if( curMode == VCONTINUE )
                             {
                                 // We stay in run mode, updating the start and end points
-                                if( !brmInitialize(&brmState, curX, curY, lastdX, lastdY,
-                                    brmState.dotSpacing, brmState.draw) )
-                                {
-                                    sawEscape = true;
-                                    curState = STOPPED;
-                                }
+                                brmContinue(&brmState, curX, curY);
                             }
                             else
                             {
-                                // Back to fetching another vector.
-                                // If escape was seen, will be processed at the bottom of the loop.
-                                curState = INITIALIZE;
+                                curState = INITIALIZE;     // back to fetching another vector
                             }
                             break;
                         }
                         else
                         {
+                            // VCONTINUE will have caused an edge violation, go back to param mode.
+                            // It does NOT cause a break.
                             if( curMode == VCONTINUE )
                             {
-                                // VCONTINUE will have caused an edge violation, go back to param mode.
-                                sawEscape = true;
+                                curMode = PARAMETER;
+                                curState = INITIALIZE;
                             }
                             else
                             {
+                                curState = STOPPED;
                                 iotCondLog(LOG_BOUNDS, "vector edge violation x, y %d %d\n", curX, curY);
                                 needBreak = true;
                             }
-
-                            curState = STOPPED;
                         }
 
                         iotCondLog(LOG_VECTOR,"vector done, status %d, curX %d curY %d\n", status, curX, curY);
@@ -884,9 +872,7 @@ Status status;
             // Delay for the accumulated time from the last operation
             pendingDelay = nanowait(pendingDelay);
 
-            // The instruction completes, then escape is processed.
-            // Vcontinue might have set escape, it has already set the proper modes.
-            // Handle it here anyway so a save return will work.
+            // The instruction completes, then escape is processed
             if( (curState != RUNNING) && sawEscape )
             {
                 sawEscape = false;
@@ -916,14 +902,13 @@ Status status;
         }
 #endif
 
-        // A lpen hit always interrupts, an edge violation interrupts except for vcontinue.
+        // An hp hit or edge violation always interrupts
         if( isPaused || needBreak )
         {
             initiateBreak(BRKCHAN);
             needBreak = false;
         }
-
-        if( !isPaused )
+        else
         {
             iotCondLog(LOG_CMD,"Stopped, responding done\n");
             ctlP->response = EMU_RESPONSE_DONE;
@@ -955,12 +940,10 @@ reset340()
 // by a scale factor, essentially fixed-point pseudo-floating-point.
 #define BRMSCALEFACTOR 20.0
 
-// Initialize a brm, expects the origin in initialX and initialY, the realtive lengths in dX and dY,
+// Initialize a brm, expects the origin in initialX and initialY, the realtive lenghts in dX and dY,
 // with a step increment in step.
 // Note that the coordinate system is always positve; the lower left corner is 0,0, upper right 1023,1023.
-// If the data is invalid, such as no dX and dY or no step, return false, else true.
-// The case where the first iteration would cause an edge violation also returns false.
-// This happens with a 0 axis and a negative delta or a 1023 axis and a positive delta.
+// If the data is invalid, such as no dX and dY or no step, return false, else true;
 //
 // Note that the dotSpacing is in pixels, not the raw 2 bit selector from the instruction.
 
@@ -976,21 +959,18 @@ float side, fx, fy;
         return(false);      // nothing to do
     }
 
-    if( ((initialX == 0) && (dX < 0)) || ((initialX >= 1023) && (dX > 0)) ||
-        ((initialY == 0) && (dY < 0)) || ((initialY >= 1023) && (dY > 0)) ||
-        ((dX == 0) && (dY == 0)) )
+    if( (dX == 0) && (dY == 0) )
     {
-        return(false);
+        iotCondLog(LOG_BRM, "brm init both deltas 0\n");
+        return(false);      // nothing to do
     }
 
     stateP->startX =  initialX;
     stateP->startY =  initialY;
-    stateP->endX = initialX + dX;
-    stateP->endY = initialY + dY;
     stateP->deltaX = 0;
     stateP->deltaY = 0;
-    stateP->plusX = (stateP->endX > initialX);
-    stateP->plusY = (stateP->endY > initialY);
+    stateP->plusX = (dX >= 0);
+    stateP->plusY = (dY >= 0);
 
     // Just how far, not the direction
     xSpan = abs(dX);
@@ -1037,6 +1017,19 @@ float side, fx, fy;
     return(true);
 }
 
+// Reinitiialize a brm keeping the same x, y rates.
+// This is used by vcontinue to do the next segment in its vector.
+void
+brmContinue(BRMStateP stateP, int nextX, int nextY)
+{
+    stateP->startX =  nextX;
+    stateP->startY =  nextY;
+    stateP->deltaX = 0;         // current delta offsets from starting point
+    stateP->deltaY = 0;
+    stateP->curStep = 0;
+    iotCondLog(LOG_BRM, "brmContinue new x %d new y %d\n", stateP->startX, stateP->startY);
+}
+
 // Get the next point from the passed brm state.
 // Return RUNNING if there was a point,COMPLETED if done or VIOLATION for an edge violation.
 // If there was an edge violation, the offending axis coordinate will be set to its opposite edge.
@@ -1046,8 +1039,7 @@ brmNext(BRMStateP stateP, int *xP, int *yP)
 bool didOne;
 Status brmStatus;
 
-    iotCondLog(LOG_BRM, "brmNext deltaX %d deltaY %d end x %d end y %d\n", stateP->deltaX, stateP->deltaY,
-        stateP->endX, stateP->endY);
+    iotCondLog(LOG_BRM, "brmNext deltaX %d deltaY %d\n", stateP->deltaX, stateP->deltaY);
 
     didOne = false;
 
@@ -1492,6 +1484,7 @@ bool sawHit;
 // Draw a point and check for a lightpen hit if it is enabled.
 // Display 0 is always the primary display.
 // Set the LP flag if a hit occurred.
+// Even if the lp is not enabled, check for it so the lp queue is emptied.
 // Return true if an lp hit occurred, else false.
 bool
 drawAndCheck(bool tryLightpen, int x, int y, int intensity)
@@ -1501,8 +1494,7 @@ bool gotLpHit;
 
     if( (x < 0) || (x > 1023) || (y < 0) || (y > 1023) )
     {
-        iotCondLog(LOG_DRAW, "drawAndCheck edge violation x, y %d %d\n", x, y);
-        //return(false);
+        iotCondLog(LOG_BOUNDS, "drawAndCheck edge violation x, y %d %d\n", x, y);
     }
 
     gotLpHit = false;

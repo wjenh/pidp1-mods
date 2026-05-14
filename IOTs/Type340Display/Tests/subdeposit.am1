@@ -1,9 +1,9 @@
 Test of the Type 340 display subroutine deposit
-// Draw three triangles in vector mode, side by side, via nested subroutines
+// Draw three triangles vetically in vector mode via nested subroutines
 #include <TYPE340/type340defs.ah>
 
-#define XORIGIN 0d512
-#define YORIGIN 0d900
+#define XORIGIN 0d460
+#define YORIGIN 0d700
 #define SIDE 0d120
 
 100/
@@ -15,31 +15,31 @@ top, lio [prog
     jmp top
 
 // Begins in PARAM mode
-prog, SCALE(0) INTENSITY(4) NEXTMODE(SUBROUTINE)
-    SAVE subr NEXTMODE(SUBROUTINE)
-    STOP
+prog, scale(0) intensity(4) next(subroutine)
+    save subr next(subroutine)
+    halt
 
 triangle,
-    VECVISIBLE UP DELTAY(SIDE) RIGHT DELTAX(SIDE/2)
-    VECVISIBLE DOWN DELTAY(SIDE) RIGHT DELTAX(SIDE/2)
-    VECVISIBLE DELTAY(0) LEFT DELTAX(SIDE)
-    VECDONE
+    visible up deltay(SIDE) right deltax(SIDE/2)
+    visible down deltay(SIDE) right deltax(SIDE/2)
+    visible deltay(0) left deltax(SIDE)
+    end
 
 subr,
-    DEPOSIT done
-    NEXTMODE(POINT)
-    POINTY(YORIGIN) NEXTMODE(POINT)
-    POINTX(XORIGIN) DRAWPOINT NEXTMODE(SUBROUTINE)
-    SAVE triangle NEXTMODE(VECTOR)
-    NEXTMODE(POINT)
-    POINTY(YORIGIN - SIDE*2) NEXTMODE(POINT)
-    POINTX(XORIGIN) DRAWPOINT NEXTMODE(SUBROUTINE)
-    SAVE triangle NEXTMODE(VECTOR)
-    NEXTMODE(POINT)
-    POINTY(YORIGIN - SIDE*4) NEXTMODE(POINT)
-    POINTX(XORIGIN) DRAWPOINT NEXTMODE(SUBROUTINE)
-    SAVE triangle NEXTMODE(VECTOR)
-    NEXTMODE(SUBROUTINE)
+    deposit done
+    next(point)
+    y(YORIGIN) next(point)
+    x(XORIGIN) show next(subroutine)
+    save triangle next(vector)
+    next(point)
+    y(YORIGIN - SIDE*2) next(point)
+    x(XORIGIN) show next(subroutine)
+    save triangle next(vector)
+    next(point)
+    y(YORIGIN - SIDE*4) next(point)
+    x(XORIGIN) show next(subroutine)
+    save triangle next(vector)
+    next(subroutine)
 done, 0
 
 start top

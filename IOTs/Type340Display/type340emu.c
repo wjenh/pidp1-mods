@@ -23,6 +23,7 @@
  * 11-May-2026 wje allow character to complete the current word before a lightpen pause is handled
  * 13-May-2026 wje handle case of both deltas 0 in vectors
  * 14-May-2026 wje general cleanup, remove unused code, refactor vcontinue to make it more clear
+ * 14-May-2026 wje fix wrong mask in PUT_SUBROUTINE_OP()
  */
 
 #include <unistd.h>
@@ -139,7 +140,7 @@
 #define VECTOR_SIGN(x) ((x) & 0200)
 
 #define SUBROUTINE_OP(x) (((x) >> 16) & 03)
-#define PUT_SUBROUTINE_OP(x) (((x) << 16) & 03)
+#define PUT_SUBROUTINE_OP(x) (((x) & 03) << 16)
 #define SUBROUTINE_ADDR(x) ((x) & 017777)
 
 // flags that can be set for skips, etc.

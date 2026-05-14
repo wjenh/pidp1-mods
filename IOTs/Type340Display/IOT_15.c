@@ -92,8 +92,6 @@ EmuControlP ctlP;
         {
             // dla, display load address
             // This also resets flags via the RUN in the display emulator
-            // Get rid of any dangling response, lock if necessary
-            // Note that get340Respose sets the lock and leaves it set unless the resonse is NONE.
             ctlP->address = pdp1P->io;            // This is a full 16 bit address
             ctlP->command = EMU_CMD_RUN;
             iotCondLog(LOG_IOT, "dla %o%s\n", ctlP->address, (flags)?" and clear flags":"");
@@ -173,14 +171,6 @@ EmuControlP ctlP;
 
     iotCondLog(LOG_START, "IOT %o started\n", IOT1);
     configure();
-
-    if( emuIsInitialized() )
-    {
-        ctlP = getEmuControlP();
-        ctlP->command = EMU_CMD_STOP;
-        emuCommandSet(ctlP);
-        iotCondLog(LOG_START, "Issuing stop\n", IOT1);
-    }
 }
 
 void

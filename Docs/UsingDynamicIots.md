@@ -63,8 +63,7 @@ The include file defines macros for the most common ones:
 - SENSE(pdp1P) - the sense switches
 - SWITCHES(pdp1P) - the test word switches
 - PFLAGS(pdp1P) - the program flags
-- CKS(pdp1P) - the flags reported by a cks instruction, read only
-- SETCKS(pdp1P, flags) - or the flags into those reported by a cks instruction
+- CKS(pdp1P) - the flags reported by a cks instruction
 
 The entire memory space is available:
 

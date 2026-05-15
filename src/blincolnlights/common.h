@@ -29,6 +29,7 @@ struct PortHandler
 };
 
 // pollfd.c
+#define FD_STRUCT_H
 typedef struct
 {
     int fd;

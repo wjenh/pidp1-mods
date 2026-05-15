@@ -11,6 +11,7 @@ typedef uint16_t Addr;
 
 // This is normally declared in common.h but we don't want to drag that in everywhere, like IOTs,.
 #ifndef FD_STRUCT_H
+#define FD_STRUCT_H
 typedef struct
 {
     int fd;

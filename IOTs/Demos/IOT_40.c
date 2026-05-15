@@ -1,5 +1,3 @@
-#include "common.h"
-#include "pdp1.h"
 #include "iotHandler.h"
 
 // An example of polling
@@ -12,8 +10,8 @@ iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
 
 void iotPoll(PDP1 *pdp1P)
 {
-    if( pdp1P->ac & 0400000 )
-        pdp1P->ac = 1;          // bit wraparound
+    if( AC(pdp1P) & 0400000 )
+        AC(pdp1P) = 1;          // bit wraparound
     else
-        (pdp1P->ac) <<= 1;
+        (AC(pdp1P)) <<= 1;
 }

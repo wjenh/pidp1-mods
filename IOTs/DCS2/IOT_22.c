@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <string.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <netinet/in.h>
@@ -14,8 +15,6 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#include "common.h"
-#include "pdp1.h"
 #include "iotHandler.h"
 #include "flexlib.h"
 
@@ -25,7 +24,7 @@
 // #define DOLOGGING
 #include "iotLogger.h"
 
-#define getFullAddress(pdp1P, addr) &(pdp1P->core[(pdp1P->ema | (addr & 07777))%MAXMEM])
+#define getFullAddress(pdp1P, addr) &(CORE(pdp1P)[(pdp1P->ema | (addr & 07777))%MAXMEM])
 #define isTrue(f, t) (((f) & (t)) == (t))
 #define hasChar(cP) (((cP->control_flags & CNTL_FLEX) && cP->flexo_rcv_pushback) || (cP->control_flags & CNTL_RREADY))
 #define hasRcvPushback(cP) ((cP->control_flags & CNTL_FLEX) && cP->flexo_rcv_pushback)
@@ -231,7 +230,7 @@ char wbuf[8];
 
         if( (epoll_fd = epoll_create(1)) < 0 )
         {
-            last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_EPOLL | ((errno & 0377) << 4);
+            last_error = IO(pdp1P) = IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_EPOLL | ((errno & 0377) << 4);
             return(1);
         }
 
@@ -250,7 +249,7 @@ char wbuf[8];
         initialized = true;
     }
 
-    cmd = (pdp1P->mb >> 6) & 077;       // see what operation we do
+    cmd = (MB(pdp1P) >> 6) & 077;       // see what operation we do
     clear_io = cmd & 020;
     cmd &= ~020;
     chanP = 0;
@@ -266,11 +265,11 @@ char wbuf[8];
             // Clear the bits that will receive the character
             if( clear_io )
             {
-                pdp1P->io = 0;
+                IO(pdp1P) = 0;
             }
             else
             {
-                pdp1P->io &= (chanP->control_flags & CNTL_FLEX)?077:0xFF;
+                IO(pdp1P) &= (chanP->control_flags & CNTL_FLEX)?077:0xFF;
             }
 
             if( hasRcvPushback(chanP) )
@@ -297,27 +296,27 @@ char wbuf[8];
                 chanP->control_flags &= ~CNTL_RREADY;   // will be reset in poll loop
             }
 
-            pdp1P->io |= ich;
+            IO(pdp1P) |= ich;
         }
         else
         {
             // No active channel, return an error.
-            last_error = pdp1P-> io = IO_ERR_FLAG | IO_ERR_NOCURRENT;
+            last_error = IO(pdp1P) = IO_ERR_FLAG | IO_ERR_NOCURRENT;
         }
 
         if( cmd == RCR ) 
         {
             releaseChannel(pdp1P);
-            pdp1P->cksflags &= ~CKS_CHAN_FLAG;
+            CKS(pdp1P) &= ~CKS_CHAN_FLAG;
         }
         break;
 
     case RRC:                                   // get current channel number, if any
-        last_error = pdp1P->io = (cur_chan == -1)?IO_ERR_FLAG | IO_ERR_NOCURRENT:cur_chan;
+        last_error = IO(pdp1P) = (cur_chan == -1)?IO_ERR_FLAG | IO_ERR_NOCURRENT:cur_chan;
         break;
 
     case RSC:                                   // release current channel, if any
-        pdp1P->io = 0;
+        IO(pdp1P) = 0;
         releaseChannel(pdp1P);
         break;
 
@@ -338,7 +337,7 @@ char wbuf[8];
             if( cur_chan < 0 )
             {
                 iotLog("TCC/TCB has no channel assigned\n");
-                last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_NOCURRENT;
+                last_error = IO(pdp1P) = IO_ERR_FLAG | IO_ERR_NOCURRENT;
                 break;
             }
             else
@@ -350,27 +349,27 @@ char wbuf[8];
         if( !(chanP->control_flags & CNTL_CONNECTED) )
         {
             iotLog("TCC/TCB channel %d is not connected\n", cur_chan);
-            last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_NOTCONNECTED;
+            last_error = IO(pdp1P) = IO_ERR_FLAG | IO_ERR_NOTCONNECTED;
             break;
         }
 
         if( chanP->chan_fd < 0 )
         {
             iotLog("TCC/TCB channel %d has no fd\n", cur_chan);
-            last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_NOCURRENT;
+            last_error = IO(pdp1P) = IO_ERR_FLAG | IO_ERR_NOCURRENT;
             break;
         }
 
         if( chanP->control_flags & CNTL_TFULL )
         {
             iotLog("TCC/TCB has FULL on %d\n", cur_chan);
-            last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_FULL;
+            last_error = IO(pdp1P) = IO_ERR_FLAG | IO_ERR_FULL;
         }
         else
         {
             if( chanP->control_flags & CNTL_FLEX )
             {
-                ich = flexToAscii(pdp1P->io & 077, &(chanP->flexo_snd_shift));
+                ich = flexToAscii(IO(pdp1P) & 077, &(chanP->flexo_snd_shift));
 
                 if( ich == NONE )
                 {
@@ -379,7 +378,7 @@ char wbuf[8];
             }
             else
             {
-                ich = pdp1P->io & 0xFF;
+                ich = IO(pdp1P) & 0xFF;
             }
 
             if( (ich == '\n') && (chanP->control_flags & CNTL_CRLF) )
@@ -402,7 +401,7 @@ char wbuf[8];
                 {
                     iotLog("TCC/TCB got EAGAIN on %d\n", cur_chan);
                     chanP->control_flags |= CNTL_TFULL;
-                    last_error = pdp1P->io |= IO_ERR_FLAG | IO_ERR_FULL;
+                    last_error = IO(pdp1P) |= IO_ERR_FLAG | IO_ERR_FULL;
 
                     if( canPost(pdp1P, chanP, CNTL_IOE) )
                     {
@@ -423,16 +422,16 @@ char wbuf[8];
             }
             else
             {
-                pdp1P->io = 0 ;           // succeeded
+                IO(pdp1P) = 0 ;           // succeeded
             }
         }
         break;
 
     case SSB:                           // select a send channel
-        i = pdp1P->io & 077;
+        i = IO(pdp1P) & 077;
         if( i >= NUM_CHANS )
         {
-            last_error = pdp1P->io |= IO_ERR_FLAG | IO_ERR_CHAN;
+            last_error = IO(pdp1P) |= IO_ERR_FLAG | IO_ERR_CHAN;
         }
         else
         {
@@ -441,23 +440,23 @@ char wbuf[8];
         break;
 
     case SCB:                           // extended command, configure channel
-        pdp1P->io = manageChannelBlock(pdp1P, pdp1P->io);
+        IO(pdp1P) = manageChannelBlock(pdp1P, IO(pdp1P));
         break;
 
     case RLE:                           // extended command, get last error
-        pdp1P->io = last_error;
+        IO(pdp1P) = last_error;
         last_error = 0;
         break;
 
     case RPC:                           // extended command, get chars ready to read
-        ioctl(chanP->chan_fd, FIONREAD, &(pdp1P->io));
+        ioctl(chanP->chan_fd, FIONREAD, &(IO(pdp1P)));
         break;
 
     case RCI:                           // extended command, clear interrupt
-        i = pdp1P->io & 077;
+        i = IO(pdp1P) & 077;
         if( i >= NUM_CHANS )
         {
-            last_error = pdp1P->io |= IO_ERR_FLAG | IO_ERR_CHAN;
+            last_error = IO(pdp1P) |= IO_ERR_FLAG | IO_ERR_CHAN;
         }
         else
         {
@@ -481,63 +480,63 @@ char wbuf[8];
     case RIC:                           // extended command, get last chan that interrupted
         if( last_intr_chan == -1 )
         {
-            pdp1P->io = 0100;
+            IO(pdp1P) = 0100;
         }
         else
         {
-            pdp1P->io = last_intr_chan;
+            IO(pdp1P) = last_intr_chan;
         }
         break;
 
     case RCS:                           // get channel status
-        i = pdp1P->io & 077;            // the channel number
+        i = IO(pdp1P) & 077;            // the channel number
 
         if( i >= NUM_CHANS )
         {
-            pdp1P->io = IO_ERR_FLAG | IO_ERR_CHAN;    // bad channel
+            IO(pdp1P) = IO_ERR_FLAG | IO_ERR_CHAN;    // bad channel
         }
         else
         {
             chanP = &channels[i];
-            pdp1P->io = chanP->control_flags & 077;     // be sure status and control flags say aligned!
+            IO(pdp1P) = chanP->control_flags & 077;     // be sure status and control flags say aligned!
 
             if( chanP->control_flags & CNTL_IE )
             {
-                pdp1P->io |= STATUS_IE;
+                IO(pdp1P) |= STATUS_IE;
             }
 
             if( chanP->control_flags & CNTL_LOST )
             {
-                pdp1P->io |= STATUS_LOST;
+                IO(pdp1P) |= STATUS_LOST;
             }
 
             if( i == cur_chan )
             {
-                pdp1P->io |= STATUS_CHAN;
+                IO(pdp1P) |= STATUS_CHAN;
             }
 
             if( i == last_intr_chan )
             {
                 if( last_intr_reason & CNTL_IOR )
                 {
-                    pdp1P->io |= STATUS_IOR;
+                    IO(pdp1P) |= STATUS_IOR;
                 }
 
                 if( last_intr_reason & CNTL_IOE )
                 {
-                    pdp1P->io |= STATUS_IOE;
+                    IO(pdp1P) |= STATUS_IOE;
                 }
 
                 if( last_intr_reason & CNTL_IOC )
                 {
-                    pdp1P->io |= STATUS_LOST;
+                    IO(pdp1P) |= STATUS_LOST;
                 }
             }
         }
         break;
 
     case RWE:                           // wait for any event
-        iotLog("RWE called, completion %d, ioh %d\n", completion, pdp1P->ioh);
+        iotLog("RWE called, completion %d, ioh %d\n", completion, IO(pdp1P)h);
         if( completion )
         {
             need_general_completion = true;
@@ -546,41 +545,41 @@ char wbuf[8];
         break;
 
     case ROC:                           // override current channel
-        i = pdp1P->io & 077;            // the channel number
+        i = IO(pdp1P) & 077;            // the channel number
 
         if( i >= NUM_CHANS )
         {
-            pdp1P->io = IO_ERR_FLAG | IO_ERR_CHAN;    // bad channel
+            IO(pdp1P) = IO_ERR_FLAG | IO_ERR_CHAN;    // bad channel
         }
         else
         {
             chanP = &channels[i];
             if( !(chanP->control_flags & CNTL_OPEN) )
             {
-                pdp1P->io = IO_ERR_FLAG | IO_ERR_NOTOPEN;
+                IO(pdp1P) = IO_ERR_FLAG | IO_ERR_NOTOPEN;
             }
             else
             {
                 cur_chan = i;
                 cur_chan_locked = true;
-                pdp1P->cksflags |= CKS_CHAN_FLAG;
-                pdp1P->io = 0;
+                CKS(pdp1P) |= CKS_CHAN_FLAG;
+                IO(pdp1P) = 0;
             }
         }
         break;
 
     case RES:                   // enable/disable sbs16
         i = !!pdp1P->sbs16;     // in case it wasn't just 1
-        pdp1P->sbs16 = pdp1P->io & 1;
-        pdp1P->io = i;
+        pdp1P->sbs16 = IO(pdp1P) & 1;
+        IO(pdp1P) = i;
         break;
 
     case RXL:                   // translate to/from flexo and ascii
-        i = pdp1P->io & RXL_SHIFTED;    // shift flag
+        i = IO(pdp1P) & RXL_SHIFTED;    // shift flag
 
-        if( pdp1P->io & RXL_FLEX )      // flex->ascii
+        if( IO(pdp1P) & RXL_FLEX )      // flex->ascii
         {
-            ich = flexToAscii(pdp1P->io & 077, &i);
+            ich = flexToAscii(IO(pdp1P) & 077, &i);
             if( ich == NONE )
             {
                 ich = ASCII_NCHAR;
@@ -588,7 +587,7 @@ char wbuf[8];
         }
         else
         {
-            ich = asciiToFlex(pdp1P->io & 0377, &i);
+            ich = asciiToFlex(IO(pdp1P) & 0377, &i);
             if( ich == NONE )
             {
                 ich = FLEX_NCHAR;
@@ -600,17 +599,17 @@ char wbuf[8];
             i = RXL_SHIFTED;
         }
 
-        if( (pdp1P->io & RXL_SHIFTED) != i )
+        if( (IO(pdp1P) & RXL_SHIFTED) != i )
         {
-            pdp1P->io |= RXL_CHANGE;
+            IO(pdp1P) |= RXL_CHANGE;
         }
         else
         {
-            pdp1P->io &= ~RXL_CHANGE;
+            IO(pdp1P) &= ~RXL_CHANGE;
         }
 
-        pdp1P->io &= ~(RXL_SHIFTED | 077);
-        pdp1P->io |= (i | ich);
+        IO(pdp1P) &= ~(RXL_SHIFTED | 077);
+        IO(pdp1P) |= (i | ich);
         break;
 
     default:
@@ -715,7 +714,7 @@ struct epoll_event event;
                         {
                             cur_chan = data;
                             cur_chan_locked = true;
-                            pdp1P->cksflags |= CKS_CHAN_FLAG;
+                            CKS(pdp1P) |= CKS_CHAN_FLAG;
                         }
 
                         if( canPost(pdp1P, chanP, CNTL_IOR) )
@@ -987,7 +986,7 @@ int i;
     {
         cur_chan = -1;
         cur_chan_locked = 0;
-        pdp1P->cksflags &= ~CKS_CHAN_FLAG;
+        CKS(pdp1P) &= ~CKS_CHAN_FLAG;
     }
 
     if( send_chan == i )
@@ -1133,7 +1132,7 @@ ChannelP chanP;
 
     cur_chan = -1;
     cur_chan_locked = false;
-    pdp1P->cksflags &= ~CKS_CHAN_FLAG;
+    CKS(pdp1P) &= ~CKS_CHAN_FLAG;
 
     // Scan the channel list, set the current channel to the next one that needs attention.
     // If none found, poll will take over.
@@ -1144,7 +1143,7 @@ ChannelP chanP;
         {
             cur_chan = i;
             cur_chan_locked = true;
-            pdp1P->cksflags |= CKS_CHAN_FLAG;
+            CKS(pdp1P) |= CKS_CHAN_FLAG;
             break;
         }
     }
@@ -1187,7 +1186,7 @@ struct epoll_event event;
 
         if ((mapP->primary_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)) < 0)
         {
-            last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_SOCKET | ((errno & 0377) << 4);
+            last_error = IO(pdp1P) = IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_SOCKET | ((errno & 0377) << 4);
             return( 0 );
         }
 
@@ -1200,13 +1199,13 @@ struct epoll_event event;
 
         if( bind(mapP->primary_fd, (struct sockaddr*)&address, sizeof(address)) < 0 )
         {
-            last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_BIND | ((errno & 0377) << 4);
+            last_error = IO(pdp1P) = IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_BIND | ((errno & 0377) << 4);
             return( 0 );
         }
 
         if( listen(mapP->primary_fd, SERVER_BACKLOG) < 0 )
         {
-            last_error = pdp1P->io = IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_BIND | ((errno & 0377) << 4);
+            last_error = IO(pdp1P) = IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_BIND | ((errno & 0377) << 4);
             return( 0 );
         }
 

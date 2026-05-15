@@ -1,10 +1,9 @@
 // This is an implementation of a line printer for the pdp-1, the Type 64 120 column printer.
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 
-#include "common.h"
-#include "pdp1.h"
 #include "configuration.h"
 #include "iotHandler.h"
 #include "flexlib.h"
@@ -105,7 +104,7 @@ bool noWait;
         return(1);
     }
 
-    iotCondLog(LOG45, "In lpt iot mb %o dev %o cmpl %d\n", pdp1P->mb, dev, completion);
+    iotCondLog(LOG45, "In lpt iot mb %o dev %o cmpl %d\n", MB(pdp1P), dev, completion);
     inWait = noWait = fail = false;
 
     if( !configDone )
@@ -126,15 +125,15 @@ bool noWait;
     actions = 0;
     delaytime = 0;  // if 0, no delay, else cycles
 
-    if( (pdp1P->mb & 03700) == 0 )             // 0045
+    if( (MB(pdp1P) & 03700) == 0 )             // 0045
     {
         actions = (type64)?ADD:OVER;
     }
-    else if( (pdp1P->mb & 03000) == 01000 )    // 1x45
+    else if( (MB(pdp1P) & 03000) == 01000 )    // 1x45
     {
         if( type64 )
         {
-            spaceval = (pdp1P->mb >> 6) & 07;
+            spaceval = (MB(pdp1P) >> 6) & 07;
             if( spaceval )
             {
                 actions = PRINT|SPACE;
@@ -149,7 +148,7 @@ bool noWait;
             actions = ADD;
         }
     }
-    else if( (pdp1P->mb & 03000) == 02000 )    // 2x45
+    else if( (MB(pdp1P) & 03000) == 02000 )    // 2x45
     {
         if( type64 )
         {
@@ -158,14 +157,14 @@ bool noWait;
         else
         {
             actions = PRINT|SPACE;
-            spaceval = (pdp1P->mb >> 6) & 07;
+            spaceval = (MB(pdp1P) >> 6) & 07;
         }
     }
-    else if( (pdp1P->mb & 03700) == 03000 )    // 3045
+    else if( (MB(pdp1P) & 03700) == 03000 )    // 3045
     {
         actions = LPF;
     }
-    else if( (pdp1P->mb & 03700) == 03100 )    // 3145
+    else if( (MB(pdp1P) & 03700) == 03100 )    // 3145
     {
         actions = LPM;
     }
@@ -203,7 +202,7 @@ bool noWait;
 
     if( !fail && (actions & ADD) )                     // put chars in buffer
     {
-        word = pdp1P->io;
+        word = IO(pdp1P);
 
         if( asciiMode )
         {
@@ -289,7 +288,7 @@ bool noWait;
     if( !fail && (actions & SPACE) )
     {
         // what to do for spacing
-        i = (type64)?spacing64[(pdp1P->mb >> 6) & 07]:spacing62[(pdp1P->mb >> 6) & 07];
+        i = (type64)?spacing64[(MB(pdp1P) >> 6) & 07]:spacing62[(MB(pdp1P) >> 6) & 07];
         iotCondLog(LOG45FF, "SPACE, spacing %d\n", i);
 
         if( i == -1 )      // form feed
@@ -351,7 +350,7 @@ bool noWait;
             outfP = NULL;
         }
 
-        if( pdp1P->io == 0 )                // just reset the file
+        if( IO(pdp1P) == 0 )                // just reset the file
         {
             if( filenameP != DEFAULTFILE )
             {
@@ -364,8 +363,8 @@ bool noWait;
         else
         {
             // first unpack the file name, we'll use the lp buffer
-            addr = pdp1P->io & (MAXMEM - 1);
-            iotCondLog(LOG45FILE, "Open  file, io %06o, addr %06o\n", pdp1P->io, addr);
+            addr = IO(pdp1P) & (MAXMEM - 1);
+            iotCondLog(LOG45FILE, "Open  file, io %06o, addr %06o\n", IO(pdp1P), addr);
             if( !getFileName(pdp1P, addr, buffer) )
             {
                 fail = true;
@@ -396,13 +395,13 @@ bool noWait;
     // Do even if there was a fail
     if( actions  == LPM )                      // change character mode, close file
     {
-        asciiMode = pdp1P->io & 1;
+        asciiMode = IO(pdp1P) & 1;
         iotCondLog(LOG45FILE, "File mode %d\n", asciiMode);
 
         // This does almost what the Type 64 reset command does, the Type 62 doesn't have a reset,
         // and that's how we close the output file.
         // It does not change ascii mode though, the above bit does that.
-        if( pdp1P->io & 2 )
+        if( IO(pdp1P) & 2 )
         {
             if( outfP )
             {
@@ -439,11 +438,11 @@ bool noWait;
             outfP = NULL;
         }
 
-        pdp1P->io = ERROR;
+        IO(pdp1P) = ERROR;
     }
     else
     {
-        pdp1P->io = 0;
+        IO(pdp1P) = 0;
     }
 
     return(1);

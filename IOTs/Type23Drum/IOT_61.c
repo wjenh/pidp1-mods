@@ -1,9 +1,8 @@
+// This is an implementation of the Type 23 parallel drum
 #include <unistd.h>
+#include <string.h>
 #include <fcntl.h>
 
-#include "common.h"
-#include "panel_pidp1.h"
-#include "pdp1.h"
 #include "highSpeedChannels.h"
 #include "iotHandler.h"
 
@@ -45,8 +44,8 @@ static int writeMode;
 static int ioBusy;
 static int needBreak;
 static int inWait;
-static u64 lastSimtime;         // used in the polling code for drumcount updates
-static u64 cmdCompletionTime;   // relative to pdp1P->simtime
+static uint64_t lastSimtime;         // used in the polling code for drumcount updates
+static uint64_t cmdCompletionTime;   // relative to pdp1P->simtime
 
 static int memBank;
 static int memAddr;
@@ -88,12 +87,12 @@ HSCRequest request;
     {
     case 061:            // dia, drum initial address, in the IO register, or dba, drum break address
         needBreak = ioBusy = 0;             // just to be sure
-        pdp1P->cksflags &= ~CKS_DRP;        // and not busy
+        CKS(pdp1P) &= ~CKS_DRP;        // and not busy
 
-        readMode = pdp1P->io & 0400000;
+        readMode = IO(pdp1P) & 0400000;
         writeMode = 0;
-        drumAddr = pdp1P->io & 07777;
-        drumReadField = (pdp1P->io >> 12) & 037;
+        drumAddr = IO(pdp1P) & 07777;
+        drumReadField = (IO(pdp1P) >> 12) & 037;
 
         if( inWait )                    // we don't want to be
         {
@@ -101,7 +100,7 @@ HSCRequest request;
             IOCOMPLETE(pdp1P);
         }
 
-        if( pdp1P->mb & 02000 )
+        if( MB(pdp1P) & 02000 )
         {
             // dba, using the interrupt system. reqiest break
             // The break happens when the drumCount == the drumAddr
@@ -113,17 +112,17 @@ HSCRequest request;
         break;
 
     case 062:            // dwc, drum word count or dra, drum request address
-        if( pdp1P->mb & 02000 )
+        if( MB(pdp1P) & 02000 )
         {
             // dra, return current drum 'counter' in the IO register, along with status
-            pdp1P->io = drumCount;
+            IO(pdp1P) = drumCount;
             iotCondLog(LOG_IOT, "dra drum count %o\n", drumCount);
         }
         else
         {
-            writeMode = pdp1P->io & 0400000;
-            drumWriteField = (pdp1P->io >> 12) & 037;
-            transferCount = pdp1P->io & 07777;
+            writeMode = IO(pdp1P) & 0400000;
+            drumWriteField = (IO(pdp1P) >> 12) & 037;
+            transferCount = IO(pdp1P) & 07777;
             if( !transferCount )
             {
                 transferCount = 4096;       // 0 means entire track
@@ -140,27 +139,27 @@ HSCRequest request;
         break;
 
     case 063:            // dcl, drum core location and dss, drum set sbs
-        if( pdp1P->mb & 02000 )
+        if( MB(pdp1P) & 02000 )
         {
             // enable/disable sbs16
-            pdp1P->sbs16 = pdp1P->io & 040;
+            pdp1P->sbs16 = IO(pdp1P) & 040;
 
             stat = sbsChan;
 
             // change interrupt channel?
-            if( pdp1P->io & 020 )
+            if( IO(pdp1P) & 020 )
             {
-                sbsChan = pdp1P->io & 017;
+                sbsChan = IO(pdp1P) & 017;
             }
-            iotCondLog(LOG_IOT, "dss called with setting %02o\n", pdp1P->io & 077);
+            iotCondLog(LOG_IOT, "dss called with setting %02o\n", IO(pdp1P) & 077);
             break;
         }
         
         // The manual says mem bank is bits 2, 3, but this isn't correct.
         // The hardware description is.
         // It's adtually bits 2-5 to support up to 16 memory modules.
-        memBank = (pdp1P->io >> 12) & 017;      // support large memory PDP-1's
-        memAddr = pdp1P->io & 07777;
+        memBank = (IO(pdp1P) >> 12) & 017;      // support large memory PDP-1's
+        memAddr = IO(pdp1P) & 07777;
 
         iotCondLog(LOG_IOT, "dcl 63 memBank %o memAddr %o\n", memBank, memAddr);
 
@@ -189,7 +188,7 @@ HSCRequest request;
             iotCondLog(LOG_IOT, "dcl 63 requesting write\n");
         }
 
-        pdp1P->cksflags |= CKS_DRP;
+        CKS(pdp1P) |= CKS_DRP;
 
         // Transferring a full mem bank is special, it can start anywhere, no rotational delay
         if( transferCount != 4096 )
@@ -289,7 +288,7 @@ int hsStatus;
             iotCondLog(LOG_POLL, "iotPoll completing\n");
             ioBusy = 0;
 
-            pdp1P->cksflags &= ~CKS_DRP;    // and not busy
+            CKS(pdp1P) &= ~CKS_DRP;    // and not busy
             drumCount = (drumAddr + transferCount) % 4096;   // sync up the drum count to match the end of the transfer
 
             if( inWait )
@@ -320,7 +319,7 @@ int hsStatus;
         if( needBreak && (drumCount == drumAddr) )
         {
             ioBusy = needBreak = 0;
-            pdp1P->cksflags &= ~CKS_DRP;    // and not busy
+            CKS(pdp1P) &= ~CKS_DRP;    // and not busy
             initiateBreak(5);               // the DEC drum diagnostic seems to use channel 5
             iotCondLog(LOG_BREAK, "IOT 61 break initiated at drum count %o.\n", drumCount);
         }

@@ -26,16 +26,17 @@
  * 14-May-2026 wje fix wrong mask in PUT_SUBROUTINE_OP()
  */
 
+#include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 #include <semaphore.h>
 #include <math.h>
 #include <pthread.h>
 #include <sched.h>
 
-#include "common.h"
 #include "pdp1.h"
 #include "highSpeedChannels.h"
 #include "display.h"

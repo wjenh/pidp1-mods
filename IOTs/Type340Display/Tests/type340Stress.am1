@@ -1,4 +1,5 @@
 Severe load test
+// Draw 19 horizontal full-width vectors using vcontinue.
 #include <TYPE340/type340defs.ah>
 
 100/

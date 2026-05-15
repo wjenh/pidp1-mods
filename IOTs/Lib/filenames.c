@@ -2,11 +2,11 @@
 // Relative paths and a leading ~/ or ~username/ are supported, but wildcarding is not.
 // These can be used from within IOTs.
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <pwd.h>
-
-#include "common.h"
 #include "pdp1.h"
 
 #define MAXLEN 128 // maximum number of words we will fetch to prevent runaway code from user error

@@ -12,8 +12,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "common.h"
-#include "pdp1.h"
 #include "display.h"
 #include "iotHandler.h"
 #include "configuration.h"
@@ -110,17 +108,17 @@ bool noWait;
         setLightpenRadius2(0, penRadius2);
         if( lightpenEnabled )
         {
-            pdp1P->cksflags &= ~0400000;  // set by the last dpy completion if lp hit
+            CKS(pdp1P) &= ~0400000;  // set by the last dpy completion if lp hit
         }
 
         return(1);
     }
-    else if( lightpenEnabled && (pdp1P->mb & 003777) == 003407 )       // set lightpen aperture
+    else if( lightpenEnabled && (MB(pdp1P) & 003777) == 003407 )       // set lightpen aperture
     {
         // The aperture is the diameter in pixels, allow 6 to 63
         // Each pixel corresponds to the original 0.009"
         i = penAperture;                // current value
-        penAperture = pdp1P->io & 077; 
+        penAperture = IO(pdp1P) & 077; 
 
         if( penAperture < 6 )
         {
@@ -139,34 +137,34 @@ bool noWait;
     }
     else
     {
-        curX = pdp1P->ac >> 8;
-        curY = pdp1P->io >> 8;
-        intensity = (pdp1P->mb >> 6) & 7;
+        curX = AC(pdp1P) >> 8;
+        curY = IO(pdp1P) >> 8;
+        intensity = (MB(pdp1P) >> 6) & 7;
 
         // Emulate the origin shift that was implemented in some systems
         // It conflicts with sdb, the following test is done.
         // It checks to see if i or C is set to distiguish it from a program that's using
         // sdb, will fail if a prog just does a bare dpy with shift and sdb will be assumed.
-        if( dpyShiftEnabled && (pdp1P->mb & 03000) )
+        if( dpyShiftEnabled && (MB(pdp1P) & 03000) )
         {
-            if(pdp1P->mb & 01000)        // origin at bottom
+            if(MB(pdp1P) & 01000)        // origin at bottom
             {
                 curY ^= 01000;
             }
 
-            if(pdp1P->mb & 02000)        // origin at left
+            if(MB(pdp1P) & 02000)        // origin at left
             {
                 curX ^= 01000;
             }
 
-            iotCondLog(LOG_DPYSHIFT,"Dpy shift pdp1P->mb %06o\n", pdp1P->mb);
+            iotCondLog(LOG_DPYSHIFT,"Dpy shift MB(pdp1P) %06o\n", MB(pdp1P));
         }
 
         lockDisplayData(0);
         setDisplayData(0, curX, curY, intensity);
         unlockDisplayData(0);
 
-        if( sdbEnabled && ((pdp1P->mb & 017000) == 02000) )  // sdb is a reposition without drawing a dot
+        if( sdbEnabled && ((MB(pdp1P) & 017000) == 02000) )  // sdb is a reposition without drawing a dot
         {
             // This is documented as taking 30 usecs because it doesn't
             // need the addtional time to draw the dot.
@@ -176,7 +174,7 @@ bool noWait;
             // Yes, not historically accurate, but neither is using a mouse for a lightpen.
             noWait = true;
             pollState = IDLE;
-            iotCondLog(LOG_SDB,"Sdb pdp1P->mb %06o, completion %d\n", pdp1P->mb, completion);
+            iotCondLog(LOG_SDB,"Sdb MB(pdp1P) %06o, completion %d\n", MB(pdp1P), completion);
         }
         else
         {
@@ -255,8 +253,8 @@ int realX, realY;
     else if( lightpenEnabled && checkLightpen(0, realX, realY) )
     {
         iotCondLog(LOG_LIGHTPEN, "Lightpen hit at x %d y %d\n", curX, curY);
-        pdp1P->cksflags |= 0400000;               // cleared by next dpy
-        pdp1P->pf |= flagToBits(3);
+        CKS(pdp1P) |= 0400000;               // cleared by next dpy
+        PFLAGS(pdp1P) |= flagToBits(3);
     }
 
     if( needCompletion )

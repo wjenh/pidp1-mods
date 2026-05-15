@@ -1,8 +1,24 @@
+// Primary include file for the emulator, but also used by IOTs and other external code.
+// The bits we don't need externally are eliminated by defining NOT_IN_PDP1 before including this.
+#ifndef PDP1_H
+#define PDP1_H
 #include <stdbool.h>
+#include <stdint.h>
 #include "ad1intf.h"
 
-typedef u32 Word;
-typedef u16 Addr;
+typedef uint32_t Word;
+typedef uint16_t Addr;
+
+// This is normally declared in common.h but we don't want to drag that in everywhere, like IOTs,.
+#ifndef FD_STRUCT_H
+typedef struct
+{
+    int fd;
+    int ready;
+    int id;
+} FD;
+#endif
+
 #define WORDMASK 0777777
 #define ADDRMASK 07777
 #define EXTMASK 0170000
@@ -62,12 +78,12 @@ typedef struct
     int sbs16;	// 16 channel, type 20
     // one bit per channel if type 20
     // lower bits are higher priority for easy bit hacks
-    u16 sbs_seq;	// highest prio channel
-    u16 b1;		// on (only type 20)
-    u16 b2;		// req
+    uint16_t sbs_seq;	// highest prio channel
+    uint16_t b1;		// on (only type 20)
+    uint16_t b2;		// req
     // only these two for SBS256
-    u16 b3;		// req synchronized
-    u16 b4;		// break held
+    uint16_t b3;		// req synchronized
+    uint16_t b4;		// break held
 
     // Used to set the h.s. break panel light when high speed channels are active
     int hsc;
@@ -86,8 +102,8 @@ typedef struct
     Word epc;
 
     int cychack;	// for cycle entry past TP0
-    u64 simtime;
-    u64 realtime;
+    uint64_t simtime;
+    uint64_t realtime;
 
     // reader
     int rcp;
@@ -98,7 +114,7 @@ typedef struct
     int rbs;
     // simulation
     int r_fd;
-    u64 r_time;
+    uint64_t r_time;
     int rim_return;
     int rim_cycle;		// hack to trigger read-in SP1
 
@@ -108,8 +124,8 @@ typedef struct
     int punon;
     bool tape_feed;
     // simulation
-    u64 p_time;
-    u64 feed_time;
+    uint64_t p_time;
+    uint64_t feed_time;
     int p_fd;
 
     // typewriter
@@ -120,8 +136,8 @@ typedef struct
     int tyo;
     // simulation
     FD typ_fd;
-    u64 typ_time;
-    u64 tyi_wait;
+    uint64_t typ_time;
+    uint64_t tyi_wait;
 
     // spacewar controllers
     int spcwar1;
@@ -143,6 +159,8 @@ typedef struct
 
 void updatelights(PDP1 *pdp, Panel *panel);
 
+// Don't define all this stuff unless we're in the emulator.
+#ifndef NOT_IN_PDP1
 #define IR pdp->ir
 #define PC pdp->pc
 #define MA pdp->ma
@@ -185,8 +203,6 @@ void updatelights(PDP1 *pdp, Panel *panel);
 #define IR_OPR1D (IR == 036) // wje - a bunch of 1D-45 additions were done here
 #define IR_OPR (IR == 037)
 #define IR_INCORR (IR==0 || IR==5 || IR==6 || IR==017 || (!all1DEnabled && (IR==036)))
-//#define IR_INCORR (IR==5 || IR==6 || IR==017 || IR==036)
-
 
 void pwrclr(PDP1 *pdp);
 void spec(PDP1 *pdp);
@@ -198,14 +214,16 @@ void handleio(PDP1 *pdp);
 void agedisplay(PDP1 *pdp, int i);
 void throttle(PDP1 *pdp);
 void cli(PDP1 *pdp);
+void typtelnet(int port, int fd);
 char *handlecmd(PDP1 *pdp, char *line);
 
-void typtelnet(int port, int fd);
-
+extern int doaudio;
 void initaudio(void);
 int isAudioInitialized(void);
 void stopaudio(void);
 void startaudio(void);
 void continueaudio(void);
 void svc_audio(PDP1 *pdp);
-extern int doaudio;
+#endif
+
+#endif

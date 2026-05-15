@@ -3,6 +3,7 @@
 #ifndef HSC_H
 #define HSC_H
 #include <stdbool.h>
+#include <stdint.h>
 #include <semaphore.h>
 
 // Statuses that can be returned
@@ -23,8 +24,8 @@ typedef struct {
     int count;          // number of words to transfer
     int memBank;        // memory bank to transfer to/from, 0-15 dec
     int memAddr;        // address offset in memory, offset in bank, 0-4095
-    Word *fromBufferP;  // should be 4k unless you're sure your count won't exceed the size
-    Word *toBufferP;    // ditto
+    uint32_t *fromBufferP;  // should be 4k unless you're sure your count won't exceed the size
+    uint32_t *toBufferP;    // ditto
     } HSCRequest, *HSCRequestP;
 
 // This is just to control access, no execution requests by direct channel number.

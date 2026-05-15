@@ -1,5 +1,4 @@
-#include "common.h"
-#include "pdp1.h"
+// An extended implementation of the BBN timesharing clock
 #include "iotHandler.h"
 
 //#define DOLOGGING
@@ -53,12 +52,12 @@ int i;
         return(1);
     }
 
-    iotLog("In clk iot mb %o dev %o\n", pdp1P->mb, dev);
+    iotLog("In clk iot mb %o dev %o\n", MB(pdp1P), dev);
 
-    if( (pdp1P->mb & 03700) == 02000 )     // IOT 2032, pay attention to rest
+    if( (MB(pdp1P) & 03700) == 02000 )     // IOT 2032, pay attention to rest
     {
-        op = (pdp1P->ac >> 8) & 017;
-        iotLog("In iot 2032 io %o op %o\n", pdp1P->ac, op);
+        op = (AC(pdp1P) >> 8) & 017;
+        iotLog("In iot 2032 io %o op %o\n", AC(pdp1P), op);
         completeNeeded = 0;
 
         if( op & 04 )
@@ -72,14 +71,14 @@ int i;
             if( op & 02 )
             {
                 enable1min = 1;
-                channel1min = (pdp1P->ac & 0360) >> 4;
+                channel1min = (AC(pdp1P) & 0360) >> 4;
                 iotLog("In iot 32 1min interrupt chan %o enabled\n", channel1min);
             }
 
             if( op & 01 )
             {
                 enable32ms = 1;
-                channel32ms = pdp1P->ac & 017;
+                channel32ms = AC(pdp1P) & 017;
                 iotLog("In iot 32 32ms interrupt chan %o enabled\n", channel32ms);
             }
 
@@ -99,16 +98,16 @@ int i;
             pdp1P->sbs16 = 1;
         }
     }
-    else if( (pdp1P->mb & 03700) == 02100 )     // IOT 2132, countdown timer
+    else if( (MB(pdp1P) & 03700) == 02100 )     // IOT 2132, countdown timer
     {
-        pdp1P->cksflags &= ~COUNTER_CKS_FLAG;   // clear in case it was set
+        CKS(pdp1P) &= ~COUNTER_CKS_FLAG;   // clear in case it was set
         i = countdown;
-        countdown = pdp1P->ac & 017777;     // the count
+        countdown = AC(pdp1P) & 017777;     // the count
         if( countdown )
         {
             counterCompleteNeeded = completion;
-            counterChannel = (pdp1P->ac >> 13) & 017;
-            counterInterrupt = pdp1P->ac & 0400000;
+            counterChannel = (AC(pdp1P) >> 13) & 017;
+            counterInterrupt = AC(pdp1P) & 0400000;
             iotLog("IOT 2132, countdown set to %d, completion %d\n", countdown, counterCompleteNeeded);
             if( !enabled )
             {
@@ -128,13 +127,13 @@ int i;
             iotLog("IOT 2132, countdown cleared\n");
         }
 
-        pdp1P->ac = i;
+        AC(pdp1P) = i;
     }
     else
     {
         if( enabled )
         {
-            pdp1P->io = counter;
+            IO(pdp1P) = counter;
         }
     }
 
@@ -190,6 +189,6 @@ void iotPoll(PDP1 *pdp1P)
         }
 
         counterCompleteNeeded = 0;
-        pdp1P->cksflags |= COUNTER_CKS_FLAG;
+        CKS(pdp1P) |= COUNTER_CKS_FLAG;
     }
 }

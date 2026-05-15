@@ -19,8 +19,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "common.h"
-#include "pdp1.h"
 #include "iotHandler.h"
 #include "configuration.h"
 #include "type340emu.h"
@@ -69,7 +67,7 @@ EmuControlP ctlP;
     ctlP = getEmuControlP();
 
     // get the command from the iot instruction
-    cmd = (pdp1P->mb >> 6) & 077;
+    cmd = (MB(pdp1P) >> 6) & 077;
 
     iotCondLog(LOG_IOT, "iot %o cmd %o\n", dev, cmd);
 
@@ -92,7 +90,7 @@ EmuControlP ctlP;
         {
             // dla, display load address
             // This also resets flags via the RUN in the display emulator
-            ctlP->address = pdp1P->io;            // This is a full 16 bit address
+            ctlP->address = IO(pdp1P);            // This is a full 16 bit address
             ctlP->command = EMU_CMD_RUN;
             iotCondLog(LOG_IOT, "dla %o%s\n", ctlP->address, (flags)?" and clear flags":"");
         }
@@ -104,13 +102,13 @@ EmuControlP ctlP;
         switch( cmd )
         {
         case 0:         // dra, display read address counter
-            pdp1P->io = emuGetAddress();
+            IO(pdp1P) = emuGetAddress();
             break;
 
         case 1:         // drc, display read coordinates
             // Note that per documentation, the lsb is lost
             emuGetXY(&x, &y);
-            pdp1P->io = ((x & 01776) << 8) | ((y >> 1) & 0777);
+            IO(pdp1P) = ((x & 01776) << 8) | ((y >> 1) & 0777);
             break;
 
         default:
@@ -150,7 +148,7 @@ EmuControlP ctlP;
 
         if( needSkip )
         {
-            pdp1P->pc = (++(pdp1P->pc) & 0777777);       // constrain to 0-4095
+            PC(pdp1P) = (++(PC(pdp1P)) & 0777777);       // constrain to 0-4095
         }
         break;
     }

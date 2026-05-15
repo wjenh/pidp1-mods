@@ -12,6 +12,7 @@
 */
 
 #include <unistd.h>
+#include <string.h>
 #include <pthread.h>
 
 //#define DOLOGGING
@@ -366,7 +367,7 @@ unlockControl(HSCControlP ctlP)
 static void
 processImmediate(HSCRequestP rqstP)
 {
-Word *memBaseP;
+uint32_t *memBaseP;
 
     memBaseP = &pdp1P->core[rqstP->memBank * 4096];
 
@@ -399,8 +400,8 @@ static bool
 processChannel(HSCControlP ctlP)
 {
 bool steal;
-Word fullAddr;
-Word data;
+uint32_t fullAddr;
+uint32_t data;
 HSCRequestP rqstP;
 
     steal = false;

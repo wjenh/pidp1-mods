@@ -47,7 +47,7 @@ typedef struct {
     bool isSet;
     bool isEnabled;
     int number;     // just a convenience
-    u32 address;
+    uint32_t address;
     int count;      // how many times it has to hit before it fires
     int curCount;   // curent number of times it has been hit
     } Breakpoint, *BreakpointP;
@@ -58,7 +58,7 @@ typedef struct {
     bool isEnabled;
     bool onAny;
     int number;     // just a convenience
-    u32 address;
+    uint32_t address;
     int value;      // value to fire on based on, ignored if onAny is set
     int lastVal;    // for detecting an any change
     } Watch, *WatchP;

@@ -2,7 +2,7 @@
 
 This document describes the funcionality and now to create your own IOTs.
 
-Updated 6-May-2026
+Updated 15-May-2026
 
 ## What is a dynamic IOT?
 
@@ -22,57 +22,90 @@ IOTs are installed in the `opt/pidp1-mods/IOTs` directory and must be named `IOT
 ## How do I install one?
 
 If you have written one in **C**, just put the source \.c file in the above directory and type `make`.<br>
-You can see the required three includes in any of the examples, they are:
+You can see the one required include in any of the examples:
 ```
-#include "common.h"
-#include "pdp1.h"
 #include "iotHandler.h"
 ```
-The Makefile properly adds the paths to those.
 
 Alternatively, you can add a directory as was done for the distributed IOTs, just follow the same
 pattern.
+Make in the IOTs directory will also invoke make in all subdirecories.
 
 ## How do I implement one?
 
-At a minimum, implement the `iotHandler(PDP1 *state, int device, int pulse, int completion)` function or
-if another IOT is going to also handle your new one, iotIsAlias(otherIOTnumber).
-This method is called twice for each time the corresponding IOT is executed.
+At a minimum, implement the `iotHandler(PDP1 *state, int device, int pulse, int completion)` function.
+This method is called twice each time the corresponding IOT is executed.
+
 Why twice? This emulates the way the original hardware worked.
-The first call with the `pulse` argument being 1 mimics the first pulse that would have been sent
-to an actual hardware implementation.
-The second call with the `pulse` argument being 0 mimics the second pulse that would have been sent.
 Technically, the first occurs at hardware subclock time TP7, the second at TP10.
-The function *must* return a 1. If it returns 0, that causes the emulator to treat it as an unknown IOT and halt.
+
+The first call with the `pulse` argument being 0 mimics the first pulse that would have been sent
+to an actual hardware implementation.
+The second call with the `pulse` argument being 1 mimics the second pulse that would have been sent.
+
+In the actual system, the first call was generally used to initialize
+the specific device or set it up for a command.
+The second generally told the hardware to perform an operation.
+However, the hardware could do whatever it wanted during the 2 signals.
+
+The first signal came about 2 microseconds into an instruction cycle, the second at about 5 microseconds.
+
+The function *must* return a 1. If it returns 0, that causes the emulator to treat it as an unknown IOT.
 
 It and several other functions are passed a PDP1 \* argument. This is a pointer to the entire state of the emulator.
-It can be used to access various registers and even change the pc. But, use with care, don't set random things.
+It can be used to access various registers and even change the pc. But, use with care, don't set random things.\
+The include file defines macros for the most common ones:
 
-The typically useful members are:
+- AC(pdp1P) - the accumulator
+- IO(pdp1P) - the IO register
+- MB(pdp1P) - the memory buffer, usually the last word read from memory
+- PC(pdp1P) - the program counter
+- SENSE(pdp1P) - the sense switches
+- SWITCHES(pdp1P) - the test word switches
+- PFLAGS(pdp1P) - the program flags
+- CKS(pdp1P) - the flags reported by a cks instruction, read only
+- SETCKS(pdp1P, flags) - or the flags into those reported by a cks instruction
 
-- ac       the accumulator
-- io       the IO register
-- mb       the memory buffer, usually the last word read from memory
-- pc       the program counter
-- ss       the sense switches
-- pf       the program flags
-- sbs16    enable/disable the 16 chan break system
-- cksflags additional flags to add to the word returned by the `cks` instruction
-- simtime  the current simulator time in nanoseconds
+The entire memory space is available:
+
+- CORE(pdp1)      an array of 64K words, all of memory
+
+This is used as:
+```
+CORE(pdp1P)[address] = value
+value = CORE(pdp1P)[address]
+```
+
+The array is of 32 bit integers, only the low 18 bits are used.
+
+There are 3 #defines that can be used:
+
+- MAXBANK       the number of the highest 4K memory bank, 15 decimal
+- BANKSIZE      the size of a bank, 409 decimal words
+- MAXADDR       the highest valid address, last location in last bank, 65535 decimal
+
+Programs always execute in a bank and cannot access memory ouside the current bank unless extnded memory
+operations are done.
+The value of the pc is always a 12 bit address within the current bank.
+These macros are very useful:
+
+- FULLADDRESS(pdp1P, 12bitaddress)  - converts the local address to the full 16 bit address for CORE()
+- CURBANK(pdp1P) - the current bank number, 0-15 decimal
+- BANKOF(fullAddress) - the bank number from the full address
+- ADDRESSOF(fullAddress) - the bank number from the full address
+
+These are less commonly used:
+- pdp1P->sbs16    enable/disable the 16 chan break system
+- pdp1P->simtime  the current simulator time in nanoseconds
 
 These can be modified by your code, even the pc.
 Adding 1 to the pc will cause the next instruction following your IOT call to be skipped, good for implementing
 skip on some condition functionality.
 There are a number of other members, but be very careful. You need a good knwolege of the internals of the enulator
 to not cause random behavior or total failure.
-Some functions are defined to help with some of the more useful ones, see below.
 
 Note that the panel numbering of the sense switches and the program flags is reversed from the actual bit positions.
 That is, flag or switch 6 is the lsb, 01, 1 is 040.
-
-The state of these 2 is passed in the `completion` argument to your handler.
-if it is 1, then bits 5 and 6 are either 1,0 or 0,1.
-This is consistent with the real PDP-1 behavior, a wait state does just that, waits before proceeding.
 
 Finally, any IOT in the range of 030 - 037 *automatically* has the IO register cleared before it is called.
 This behavior can't be bypassed.
@@ -81,7 +114,7 @@ in the IO register and use an IOT in that range!
 
 ## Be Careful!
 
-Your IOT will running in the pdp1 emulator instance.
+Your IOT will be running in the pdp1 emulator instance.
 If you make a mistake, you can crash it.
 The obvious indication of that is that the panel lights stop and switches do nothing.
 
@@ -122,7 +155,7 @@ Both are optional methods.
 
 ## Waits, completions, and pulses
 
-IOTs are called twice, once at the internal subclock time TP7 with pulse set to 0, and again
+Again, IOTs are called twice, once at the internal subclock time TP7 with pulse set to 0, and again
 at internal subclock time TP10 with pulse set to 1.
 In the original hardware, the first time was intended to have IOT hardware do any setup needed, then the
 second time for it to complete its operation.
@@ -132,15 +165,12 @@ i and c, bits 5 and 6, are 1,0 or 0,1, then you **must** call `IOCOMPLETE()` or 
 at some point, either in the IOT or in a poll.
 Until this is done, the emulator will enter and remain in 'io hold' state.
 
-However, the proper complete status is only passed to IOTs during TP7, so if you don't process your IOT when
-pulse is 0, you won't know a wait was asked for, and if you don't complete what you don't know to complete,
-things will not work out well.
-
 This mostly applies to 'need completion pulse', where the i,c bits are 0,1.
-However, no harm is done if you don't issue completion, it just means that IOT i 0 will hang, but it's rarely used.
+If the i bit was set, then execution will block on the IOT until a completion is issued.
+If the c bit was set, the *ioh* inctruction, *iot i 0* will block until a completion is issued.
 
-The best practice is to always use IOCOMPLETE() or IOTCOMPLETEIFNEEDED() if your IOT is called with completion set
-and to always process during pulse 1, TP10, unless you have some special requirements.
+Always use IOCOMPLETE() or IOTCOMPLETEIFNEEDED() if your IOT is called with completion set
+and process during pulse 1, TP10, unless you have some special requirements.
 
 ## Other common functions
 
@@ -156,15 +186,15 @@ It will be called whenever the pidp1 is halted either by the `hlt` instruction o
 The -1 implements a simple interrupt system that your IOTs can use.
 First, read the -1 documentation on the Sequence Break System.
 A handler can reqest a sequence break by calling the builtin `initiateBreak(int channel)`.
-This is typically called when pulse is 0.
+This is typically called when pulse is 1, but can be called asyncrhonously from an *iotPoll()*.
 
 If the 16 channel break system is installed, the channel numbers are 0-15.
-The channel in question must have been enabled via the activate sequence break IOT `asb`, which has the format
+The channel in question must have been enabled via the enable sequence channel IOT `asc`, which has the format
 `72nn51` where *nn* is the channel number 0-15 decimal, 0-17 octal,
-Similarly, a channel can be disabled with the disable sequence break IOT `dsb`, 72nn50.
+Similarly, a channel can be disabled with the disable sequence break IOT `dsc`, 72nn50.
 
 If the standard one channel sbs is installed, any channel number is ignored and will always be treated as 0.
-IOTs asb, dsb are also ignored in this case.
+IOTs asc, dsc are also ignored in this case.
 
 For either system, sequence break must be enabled in general via the enter system break mode IOT, `esb`, 72xx55.
 It can be disabled via the leave system break moode IOT, `lsb`, 72xx54.
@@ -176,17 +206,20 @@ vs decimal numbers correct.
 That IOT will be loaded if it hasn't already been.
 No other functions need to be implemented, they will be ignored.
 Whenver your alias IOT is executed, the alias target code will actually be invoked.
-It can tell what IOT device code caused the invocation by looking at the `dev` parameter.
+You can tell what IOT device code caused the invocation by looking at the `dev` parameter.
 
-If your code needs to be periodially activated, implement the `iotPoll(PDP1 *hardwareP)` function.
-If polling is enabled in your IOT via `enablePolling()`, then the emulator will call
+The code for the Type 23 Parallel Drum gives examples of this.
+
+If your code needs to be periodially activated, implement the `iotPoll(pdp1P)` function.
+If polling is enabled in your IOT via `enablePolling(when)`, then the emulator will call
 iotPoll() once every specified number of instruction cycles between the end of subclock TP10 and the start of TP0.
-See IOT_40 for an example.
+A `when` of 0 disables polling for your IOT.
 
-The `enablePolling(int value)` method disables polling for your IOT if `value` is 0.
-Otherwise, you will be polled every `value` instruction cycles.
+Until that is done, you will continue to be polled every `when` instruction cycles.
 One cycle is 5 microseconds, so the minimum granularity is that.
 If you don't need to be polled as frequently, set a longer poll interval to reduce processor loading.
+
+See many of the proviedd IOTs for examples.
 
 It's good practice to disable polling if your IOT has finished what it needs to do, you can enable it again
 when necessary.

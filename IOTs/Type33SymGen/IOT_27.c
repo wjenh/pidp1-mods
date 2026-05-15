@@ -12,8 +12,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "common.h"
-#include "pdp1.h"
 #include "display.h"
 #include "iotHandler.h"
 #include "configuration.h"
@@ -83,14 +81,14 @@ uint64_t utmp;
     switch( dev )
     {
     case 026:            // glf, gsp
-        if( pdp1P->mb & GLFBIT )
+        if( MB(pdp1P) & GLFBIT )
         {
             noWait = true;
 
-            charSize = pdp1P->io & 03;
+            charSize = IO(pdp1P) & 03;
             dotSpacing = DOTSPACE + charSize;
             sepSpacing = SEPSPACING + charSize;
-            autoSpace = pdp1P->io & 04;
+            autoSpace = IO(pdp1P) & 04;
             subscript = 0;
             intensity = 0;      // manual says sets to normal
             iotCondLog(LOG_CMD, "Glf, dotspace %d, sepspace %d, auto %d, intensity %d, x %04o y %04o\n",
@@ -109,11 +107,11 @@ uint64_t utmp;
         break;
 
     case 027:           // gpl, gpr, gcf
-        if( pdp1P->mb & GPLBIT )            // draw the left part of a character
+        if( MB(pdp1P) & GPLBIT )            // draw the left part of a character
         {
             onBits = 0;
             bitCtr = 17;                    // only 17 bits in left side
-            shiftregister = pdp1P->io;
+            shiftregister = IO(pdp1P);
             subscript = (shiftregister & 01)?-dotSpacing * SUBOFFSET:0;
             getDisplayData(0, &x, &y, &intensity);
             xpos = x;
@@ -123,11 +121,11 @@ uint64_t utmp;
             charDone = false;
             enablePolling(DOTDELAY);
             iotCondLog(LOG_CMD, "Gpl, io %06o x %04o y %04o sr %06o\n",
-                pdp1P->io, x, y, shiftregister);
+                IO(pdp1P), x, y, shiftregister);
         }
-        else if( pdp1P->mb & GCFBIT )       // clears light pen flag, cks bit 0400000
+        else if( MB(pdp1P) & GCFBIT )       // clears light pen flag, cks bit 0400000
         {
-            pdp1P->cksflags &= ~0400000;
+            CKS(pdp1P) &= ~0400000;
             noWait = true;
         }
         else                                // gpr
@@ -135,8 +133,8 @@ uint64_t utmp;
             // xctr and yctr were left by gpl in the right state for gpr
             onBits = 0;
             bitCtr = 18;                    // full 18 bits in right side
-            shiftregister = pdp1P->io;
-            iotCondLog(LOG_CMD, "Gpr, io %06o sr %06o\n", pdp1P->io, shiftregister);
+            shiftregister = IO(pdp1P);
+            iotCondLog(LOG_CMD, "Gpr, io %06o sr %06o\n", IO(pdp1P), shiftregister);
             draw = true;
             enablePolling(DOTDELAY);
         }
@@ -266,8 +264,8 @@ int x, y;
             unlockDisplayData(0);
             if( lightpenEnabled && checkLightpen(0, cvtDpyTo1024(xpos), cvtDpyTo1024(ystart)) )
             {
-                pdp1P->cksflags |= 0400000;               // cleared by next dpy
-                pdp1P->pf |= flagToBits(3);
+                CKS(pdp1P) |= 0400000;               // cleared by next dpy
+                PFLAGS(pdp1P) |= flagToBits(3);
             }
         }
 

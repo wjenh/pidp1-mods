@@ -35,7 +35,10 @@
 #define lpoff 010000
 #define halt 02000
 #define interrupt 01000
+// Nonstandard, bit 9 enables setting, bit 10 == 0 is one charset, 1 is 2, defaults to config file setting.
 #define charsets(i) ((((i) & 02) << 6) | 0400)
+// Nonstandard. bit 0 enables setting, bit 1 == 0 to disable lp and edge interrupts, 1 to allow, default is allow.
+#define specialinterrupt(i) ((((i) & 01) << 16) | 0400000)
 
 // These are for slave
 #define group(x) (((x) & 03) << 0d16)

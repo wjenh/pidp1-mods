@@ -2,9 +2,9 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.3
+This is version 1.4
 
-Edit date 6-May-2026
+Edit date 16-May-2026
 
 ## What is it?
 
@@ -61,7 +61,7 @@ At any time, the 340 is in one of three states, *halted*, *running*, or *paused*
 It is initially in the halted state.
 
 When a *dla*, *display load address counter* IOT is issued it enters running state and remains in that state
-until it executes a *stop* instruction, an edge violation occurs, or a lightpen hit is seen.
+until it executes a *halt* instruction, an edge violation occurs, or a lightpen hit is seen.
 
 For a stop or edge violation, it enters the halt state and sets the *stop* flag which can be tested with the
 *dss*, *display skip on stop interrupt* IOT.
@@ -91,7 +91,7 @@ This can lead to some interesting displays.
 
 ## The IOTs
 
-The d9splay is controlled by 3 IOTs with a total of 8 subinstructions.
+The display is controlled by 3 IOTs with a total of 8 subinstructions.
 Of these, only one is needed to start a display program.
 The rest are for determining the status of the display.
 
@@ -143,19 +143,33 @@ The definitions relevant to this are:
 - next(command) - set the next command to execute, if not set defaults to parameter
 - scale(0-3) - set the spacing between displayed dots, 0 is 1 pixel, 1 is 2, 2 is 4, and 3 is 8 pixels
 - intensity(0-7) - set the intensity, 0 the dimmest, 7 the brightest
-- charsets(1,2) - change between single and dual character sets mode
 - lpon - enable the lightpen
 - lpoff - disable the lightpen
 - halt - enter the stopped state, set the stopped flag
 - interrupt - if halt is set, also initiate a channel 0 break
+- charsets(1,2) - change between single and dual character sets mode
+- specialinterrupt - enable or disable interrupts from a lightpen hit or edge violation, nonstandard
 
 Example:
 ```
 parameter scale(2) intensity(4) lpon next(vector)
 ```
 
+The added *charsets* setting allows switching between one and two character sets.
+The original hardware could have one or two, but it was a wired-in feature.
+This allows emulating either configuration.
+The default setting comes from the system config file.
+
 The character set selection automatically resets to the configuration default if *charsets* is not explicitly
-used.
+used after a *dla*.
+
+The added *specialinterrupt* setting allows the original unmaskable light pen and
+edge violaton interrupts to be disabled.
+The original was quite inconvenient if other code was using the interrupt system.
+If disabled, a light pen hit will only set the status flag and pause execution, an edge violation
+will set the status flags and hanlt.
+
+The default setting is enabled to match the original behavior.
 
 ## Slave
 
@@ -327,11 +341,13 @@ Any movement past an edge is a hard error.
 This will halt processing and set a horizontal or vertical or both edge violation flag that can be
 checked with the skip IOTs above.
 The display must be restarted with a *dla* to continue.
-A violation will also cause a mandatory interrupt, a *sequence break*, assuming the SBS system has been enabled.
+A violation will also cause an interrupt unless the nonstandard *specialinterrupt* flag has been set via *parameter*,
+a *sequence break*, assuming the SBS system has been enabled.
 
 If enabled, a lightpen hit will also immediately halt the display, but it *can* be resumed via the *drs* IOT.
 If given before a new *dla*, processing will resume from where it left off.
-A mandatory interrupt will also be issued, the same as for an edge violation.
+A mandatory interrupt will also be issued, the same as for an edge violation, unless disabled with the
+nonstandard *specialinterrupt* flag.
 
 When the display halts because of a lightpen hit, the location of the hit can be fetched via the *drc* IOT.
 When resumed, the lightpen is automatically disabled. It must be enabled again via a *parameter* command.
@@ -340,9 +356,11 @@ When resumed, the lightpen is automatically disabled. It must be enabled again v
 
 The Type 340 has some fairly complex timing and most of the drawing commands have variable timing.
 Even more confusing, the timing differed depending upon which computer was the host.
-The PDP-4 was a slow machine and used a 2.8 usec setup time for instructions, the PDP-7 was a much faster
+The PDP-4 was a slow machine and used a 2.8 usec setup time for a dla start command, the PDP-7 was a much faster
 machine, the PDP-1 was in the middle. It is unclear exactly what the setup time for the PDP-1 was, it is assumed
 to be 1.5 usecs.
+
+Each instruction also has a setup time of 500 nanosecods.
 
 Interestingly, the scale factor does not seem to affect the positioning time. The display could apparently
 move its beam up to 8 real pixels within the 1 usec timing window.
@@ -350,7 +368,7 @@ move its beam up to 8 real pixels within the 1 usec timing window.
 Here are some of the basic timings:
 
 - every command fetch from main memory takes 5 usecs via high speed channel 3
-- every command executed has a setup time, as noted above, 1.5 usecs for the pidp-1
+- every command executed has a setup time, as noted above, 0.5 usecs
 - a point command always takes 35 usecs, but see below
 - vector and vector continue x take 1 usec for each position moved, plus 0.5 usec per displayed position
 - increment is similar, each move takes 1 usec, plus 0.5 usecs if the point is displayed.
@@ -361,7 +379,7 @@ When using the point command, the order the x and y coordinates drastically affe
 Setting the y position does not incur the 35 usec delay as long as it does not have the display flag set,
 which should generally be the case.
 
-Setting the y position *always* causes a 35 usec delay.
+Setting the x position *always* causes a 35 usec delay.
 
 So, if moving in both axes, set y without visible first, then x.
 If moving only in the y axis, then visible will be set and the 35 usec delay will occur.

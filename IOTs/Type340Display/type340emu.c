@@ -24,6 +24,7 @@
  * 13-May-2026 wje handle case of both deltas 0 in vectors
  * 14-May-2026 wje general cleanup, remove unused code, refactor vcontinue to make it more clear
  * 14-May-2026 wje fix wrong mask in PUT_SUBROUTINE_OP()
+ * 16-May-2026 wje adjust timings, main loop is only 1us delay after hsc completion, add interrupt disable
  */
 
 #include <stdlib.h>
@@ -70,8 +71,11 @@
 #define LOG_BOUNDS 0
 #define LOG_TIMING 0
 
-// This defines the time each command takes to initialize, 1.5 usecs. This might not be accurate.
-#define SETUP_TIME 1500
+// This defines the time each command takes to initialize, 0.5 usecs. This might not be accurate.
+#define SETUP_TIME 500
+// This defines the time it takes to initialize after a start via dla.
+// The documentation is vague, 2.8 us for a PDP-4, 'faster' for others. Pick 1.5 us.
+#define START_TIME 1500
 
 // Special characters for character mode
 #define CH_LF     0001   // Line feed
@@ -123,9 +127,17 @@
 #define PARAM_INTENSITY(x) ((x) & 07)
 
 // These are nonstandard, but added because we can switch between one and two charsets.
-// These allow overriding of the original config setting.
+// These allow overriding of the original config file setting.
+// Bit 8 == 1 allows setting, bit 9 == 1 selects 2 charsets, 1 selects a single charset.
 #define PARAM_CHARSET_CHANGE(x) ((x) & 0400)
 #define PARAM_CHARSETS(x) ((x) & 0200)
+
+// These are nonstandard, but added to allow turning off the annoying unmaskable insterrupt
+// from a lp hit or an edge violation.
+// The default is allow to match the original behavior.
+// Bit 0 == 1 allows setting, bit 1 == 1 enables interrupts, 0 disables.
+#define PARAM_INTERRUPT_CHANGE(x) ((x) & 0400000)
+#define PARAM_INTERRUPT(x) ((x) & 0200000)
 
 #define SLAVE_GROUP(x) (((x) >> 16) & 03);
 #define SLAVE_GET_FLAGS(x, slave) (((x) >> (3 * (3 - slave))) & 07)
@@ -232,7 +244,7 @@ static int flags;           // one of the FLAG x values
 
 static int saveRegister;    // used with the SAVE subroutine subcommand
 static bool saveActive;
-static bool interruptEnabled = false;
+static bool interruptEnabled = true;    // true to allow lp and edge interrupts, the original behavior
 static bool lpEnabled = false;
 static bool slavesEnabled;  // set if we saw a SLAVE command
 
@@ -330,7 +342,6 @@ emuWakeup(EmuControlP ctlP)
 {
 int val;
 
-    //if( sem_trywait(&waitSemaphore) )
     sem_getvalue(&waitSemaphore, &val);
     if( val <= 0 )      // worker is sleeping
     {
@@ -453,6 +464,8 @@ Status status;
             break;      // shut down, kill thread
         }
 
+        pendingDelay = 0;
+
         switch( command )
         {
         case EMU_CMD_NONE:
@@ -470,12 +483,13 @@ Status status;
             reset340();
             curAddress = ctlP->address;
             curState = INITIALIZE;      // reset340() sets it to STOPPED;
+            pendingDelay = START_TIME;  // when a start occurs, DPY_GO pulse, this setup time occurs.
+            twoCharsets = origCharsets; // we revert on each DPY-GO
             iotCondLog(LOG_RUN, "Received start at addr %o\n", curAddress);
             break;
 
         case EMU_CMD_RESUME:
-            // If we were paused, the state remains the same as it was,
-            // otherwise ignore.
+            // If we were paused, the state remains the same as it was, otherwise ignore.
             // The manual says this also clears the lp enable flag and the edge violation flags.
             if( isPaused )
             {
@@ -519,12 +533,11 @@ Status status;
                 }
             }
 
-            pendingDelay = 0;       // we accumuoate the total delay time for one cycle, wait at the end
-
-            // Every command takes time to initialize
+            // Delay time is accumulated to the end of a cycle, then done.
+            // Every command has a setup time in addition to the hsc request delay that hsc will enforce.
             if( curState == INITIALIZE )
             {
-                pendingDelay = SETUP_TIME;
+                pendingDelay += SETUP_TIME;
             }
 
             switch( curMode )
@@ -547,7 +560,6 @@ Status status;
                 {
                     curState = INITIALIZE;
                     emuClearFlags();
-                    twoCharsets = origCharsets; // we revert on each param instruction
 
                     if( PARAM_SCALE_CHANGE(word) )
                     {
@@ -562,6 +574,12 @@ Status status;
                         curIntensity = PARAM_INTENSITY(word);
                     }
 
+                    if( PARAM_LP_CHANGE(word) )
+                    {
+                        lpEnabled = PARAM_LP_ENABLE(word);
+                        iotCondLog(LOG_LP, "lp enabled set to %d in parameter\n", lpEnabled);
+                    }
+
                     if( PARAM_CHARSET_CHANGE(word) )
                     {
                         // Added functionality to enable/disable dual charsets on the fly.
@@ -569,10 +587,14 @@ Status status;
                         twoCharsets = PARAM_CHARSETS(word)?true:false;
                     }
 
-                    if( PARAM_LP_CHANGE(word) )
+
+                    if( PARAM_INTERRUPT_CHANGE(word) )
                     {
-                        lpEnabled = PARAM_LP_ENABLE(word);
-                        iotCondLog(LOG_LP, "lp enabled set to %d in parameter\n", lpEnabled);
+                        // Added functionality to enable/disable lp and edge violation interrupts.
+                        // Not standard, but these bits weren't used.
+                        // The original had no way to disable these interrupts other than the application
+                        // not enabling sbs.
+                        interruptEnabled = PARAM_INTERRUPT(word)?true:false;
                     }
 
                     iotCondLog(LOG_PARAM, "scale %d intensity %d lpon %d\n", curScale, curIntensity, lpEnabled);
@@ -652,8 +674,7 @@ Status status;
             case VCONTINUE:
                 // Vcontinue goes until an edge violation
                 // Linux scheduling really interferes with long vectors, specifically vcontinue.
-                // No good solution yet, can only get a stable display by ignoring timing for vcontine.
-                // Otherwise, defer the delay until the entire vector completes.
+                // Defer the delay until the entire vector completes.
                 if( curState == INITIALIZE )
                 {
                     word = getWord(ctlP->pdp1P);
@@ -681,7 +702,7 @@ Status status;
 
                     iotCondLog(LOG_VECTOR, "vector%s initialize curx %d cury %d dx %d dy %d\n",
                         (curMode == VCONTINUE)?" continue":"",curX, curY, x, y);
-                    // If we can't initialise, ignore it and continue
+                    // If we can't initialise, ignore it and stop
                     if( brmInitialize(&brmState, curX, curY, x, y, curScale, INTENSIFY(word)) )
                     {
                         curState = RUNNING;
@@ -773,7 +794,7 @@ Status status;
                         {
                             if( drawAndCheck(true, curX, curY, curIntensity) )
                             {
-                                // Will take effect on the next word
+                                // Lp hit, will take effect on the next word
                                 isPaused = true;
                             }
 
@@ -904,10 +925,13 @@ Status status;
         }
 #endif
 
-        // An hp hit or edge violation always interrupts
+        // An lp hit or edge violation always interrupts, unless the special disable has been done.
         if( isPaused || needBreak )
         {
-            initiateBreak(BRKCHAN);
+            if( interruptEnabled )
+            {
+                initiateBreak(BRKCHAN);
+            }
             needBreak = false;
         }
         else
@@ -924,7 +948,7 @@ Status status;
     return(0);
 }
 
-// reset the current state to stopped, clear flags, etc.
+// Reset the current state to stopped, clear flags, etc.
 void
 reset340()
 {
@@ -945,7 +969,7 @@ reset340()
 // Initialize a brm, expects the origin in initialX and initialY, the realtive lenghts in dX and dY,
 // with a step increment in step.
 // Note that the coordinate system is always positve; the lower left corner is 0,0, upper right 1023,1023.
-// If the data is invalid, such as no dX and dY or no step, return false, else true;
+// If the data is invalid, such as no dX and dY or no step, return false, else true.
 //
 // Note that the dotSpacing is in pixels, not the raw 2 bit selector from the instruction.
 
@@ -1119,8 +1143,9 @@ Status brmStatus;
     return( brmStatus );
 }
 
-// Handle one 4 bit increment operation
+// Handle one 4 bit increment operation,
 // The bits are MOVEX, DOWN, MOVEY, LEFT
+// DotSpacing is in pixels.
 // Returns an edge violation or completion.
 Status
 doIncrement(int dotSpacing, int bits)
@@ -1307,6 +1332,7 @@ static unsigned char charSet[128][6] = {
  * The 340 could have one or two character sets.
  * If only one was installed, then shifted characters were written vertically, top-to-bottom.
  * Cur x and y are updated on return.
+ * DotSpacing is in pixels.
  * Return COMPLETED if ok, PAUSE if there is an LP hit,  else another status.
  */
 Status
@@ -1420,9 +1446,8 @@ bool sawHit;
         for( y = 0; y < 7; y++ )
         {
             // Rows 0 to 6, bottom to top.
-            // The Type 342 character generator didn't scan the display across every point in the 5x7 matrix.
-            // Instead, it moved from each 'on' bit position directly to the next.
-            // So, the delay time is 1.5 usecs per drawm bit.
+            // The delay time is 1.5 usecs per drawm bit.
+            // As noted above, there were no moves to undrawn bit positions.
             if( charSet[curChar][x] & (2 << y) )
             {
                 // Bit on, draw it
@@ -1486,7 +1511,6 @@ bool sawHit;
 // Draw a point and check for a lightpen hit if it is enabled.
 // Display 0 is always the primary display.
 // Set the LP flag if a hit occurred.
-// Even if the lp is not enabled, check for it so the lp queue is emptied.
 // Return true if an lp hit occurred, else false.
 bool
 drawAndCheck(bool tryLightpen, int x, int y, int intensity)
@@ -1546,17 +1570,27 @@ bool gotLpHit;
     return(gotLpHit);
 }
 
-// Get the next data word from memory using our global curAddr wrapping curAddr if needed.
+// Get the next data word from memory using our global curAddr, wrapping curAddr if needed.
+// The address can be in any bank without extended mode being enabled.
+// However, it wraps around within the bank it is in.
 Word
 getWord(PDP1P pdp1P)
 {
 Word addr;
 Word val;
 HSCRequest request;
-Word buffer[8];     // we only use 1, but just to be sure
+Word buffer[2];     // we only use 1, but leave space just to be sure
 
-    addr = curAddress++;
-    curAddress %= MAXMEM;
+    addr = curAddress;
+    if( (curAddress & 07777) == 07777 )
+    {
+        // It needs to wrap
+        curAddress &= 0170000;
+    }
+    else
+    {
+        ++curAddress;
+    }
 
     // We can use cycle-stealing, but the rescheduling interference can be annoying especially
     // for small transfers like the 340 does.
@@ -1570,7 +1604,7 @@ Word buffer[8];     // we only use 1, but just to be sure
     request.fromBufferP = buffer;
     HSCexecute(chanP, &request);
 
-    // it's possible to get an abort from the hsc, but that comes from a stop, will be handled by the IOT
+    // it's possible to get an abort from the hsc, but that comes from a machine stop, will be handled by the IOT
     HSCwait(chanP);
 
     val = buffer[0];

@@ -49,7 +49,7 @@ variables
 
 // Begins in PARAM next
 prog,
-    charsets(1) scale(0) intensity(3) lpon next(slave)
+    charsets(1) specialinterrupt(0) scale(0) intensity(3) lpon next(slave)
     slave1(enabled|lpenabled) next(point)
     y(0d500) next(point)
     x(0d252) show next(subroutine)

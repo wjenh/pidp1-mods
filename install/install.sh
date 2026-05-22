@@ -424,6 +424,7 @@ while true; do
             cp $INSTALLDIR/install/tty.desktop /home/$usr/Desktop/
             cp $INSTALLDIR/install/pdp1control.desktop /home/$usr/Desktop/
             cp $INSTALLDIR/install/type30.desktop /home/$usr/Desktop/
+            cp $INSTALLDIR/install/t30dpy.desktop /home/$usr/Desktop/
             cp $INSTALLDIR/install/ptr.desktop /home/$usr/Desktop/
             cp $INSTALLDIR/install/ptp.desktop /home/$usr/Desktop/
 
@@ -434,6 +435,7 @@ while true; do
             chmod u+x /home/$usr/Desktop/tty.desktop
             chmod u+x /home/$usr/Desktop/pdp1control.desktop
             chmod u+x /home/$usr/Desktop/type30.desktop
+            chmod u+x /home/$usr/Desktop/t30dpy.desktop
             chmod u+x /home/$usr/Desktop/ptr.desktop
             chmod u+x /home/$usr/Desktop/ptp.desktop
             chmod u+x /home/$usr/Desktop/audioOn.desktop

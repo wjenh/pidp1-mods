@@ -72,7 +72,7 @@ prog,
     scale(1) intensity(4) next(point)
     y(0d950) next(point)
     x(0d10) show next(subroutine)
-    jump hello next(character)
+    jump hello next(parameter)
 
 next1,
     scale(2) intensity(6) next(point)
@@ -104,6 +104,7 @@ triangle,
     end
 
 hello,
+    charsets(2) next(character)
     type340 "Hello world!"
     next(subroutine)
     jump next1 next(parameter)

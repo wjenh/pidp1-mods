@@ -7,6 +7,7 @@ Docviewer reads and formats documentation tapes that generally show up as 'xxx.b
 Drumupdater contains drumupdater and drumlister, tools for copying executable rim tapes to the drum.
 M1PP contains the macro_1 preprocessor, not maintained now.
 MtoA contains the macro_1 to am1 converter.
+T30dpy contains the new Type 30 display emulator.
 
 Pdp1audio is also installed automatically and is a control app for the extened audio features.
 See the documentation before you change values!

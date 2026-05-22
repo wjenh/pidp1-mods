@@ -183,6 +183,9 @@ while true; do
                 # The drum tools
 		make -C $INSTALLDIR/Tools/Drumupdater install
 		make -C $INSTALLDIR/Tools/Drumupdater clean
+                # The new Type 30 display
+		make -C $INSTALLDIR/Tools/T30dpy install
+		make -C $INSTALLDIR/Tools/T30dpy clean
 
 		# the macro1_1 cross-compiler:
 		gcc $INSTALLDIR/src/macro/macro1_1.c -o $INSTALLDIR/src/macro/macro1_1

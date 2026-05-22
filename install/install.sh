@@ -258,6 +258,7 @@ while true; do
 	    sudo ln -sf $INSTALLDIR/bin/ad1 /usr/local/bin/ad1
 	    sudo ln -sf $INSTALLDIR/bin/drumupdater /usr/local/bin/drumupdater
 	    sudo ln -sf $INSTALLDIR/bin/drumlist /usr/local/bin/drumlist
+	    sudo ln -sf $INSTALLDIR/bin/t30dpy /usr/local/bin/t30dpy
             #
 	    sudo ln -sf $INSTALLDIR/bin/tkaskopenfile /usr/local/bin/tkaskopenfile
 	    sudo ln -sf $INSTALLDIR/bin/tkaskopenfilewrite /usr/local/bin/tkaskopenfilewrite

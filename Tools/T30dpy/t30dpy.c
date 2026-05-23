@@ -27,6 +27,7 @@
  *
  * 20-May-2026 wje initial version
  * 23-May-2026 wje much fiddling to try to get window scaling to give decent visual results
+ * 23-May-2026 wje fix typo assigning to hostNameP from cmd line arg
 */
 
 #include <stdio.h>
@@ -209,7 +210,7 @@ pthread_attr_t tattr;
 
     if( optind < argc )
     {
-        hostNameP -argv[optind];
+        hostNameP = argv[optind];
     }
 
     if( (pdp1FD = openPort(hostNameP, portNum)) < 0 )

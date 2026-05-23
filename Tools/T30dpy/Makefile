@@ -1,4 +1,5 @@
 GCC=gcc -O3 -Wno-unused-result
+#GCC=gcc -g -Wno-unused-result
 
 t30dpy:	t30dpy.o
 	$(GCC) $^ -o t30dpy -lSDL2 -lSDL2main -lm

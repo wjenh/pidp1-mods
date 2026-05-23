@@ -26,6 +26,7 @@
  * This can be freely used, modified, whatever. Please just keep the attribution to me.
  *
  * 20-May-2026 wje initial version
+ * 23-May-2026 wje much fiddling to try to get window scaling to give decent visual results
 */
 
 #include <stdio.h>
@@ -47,7 +48,7 @@
 #define READBUFSIZE 512         // size of the buffer we read from the server into, bytes
 
 #define NUMPOINTS 1024*1024     // Total number of points on screen
-#define KEEPPOINTS 500000       // Total number of points that can be active
+#define KEEPPOINTS NUMPOINTS    // Total number of points that can be active, t30dpy can handle them all
 
 // The alpha values for an intensity are computed using a power law.
 #define BLUEDECAYALPHA  1.5     // intensity = time^-DECAYALPHA (time to the -alpha power) normalized to 0-255
@@ -57,12 +58,12 @@
 // which was nonlinear.
 #define GAMMA 0.7               // gamma applies after an alpha is calculated
 
-#define BLUEFIRSTRGB 101, 40, 255
+#define BLUEFIRSTRGB 201, 140, 255
 #define BLUERGB 61, 0, 255
 #define YELLOWRGB 179, 255, 0
 
 // To help mimic the very bright 50 usec intensity of the original crt, these two do some fakery:
-#define BLUEHOLD 0              // show the initial blue until the lifetime is greater than or equal to this
+#define BLUEHOLD 4              // show the initial blue until the lifetime is greater than or equal to this
 #define YELLOWDEFER 2           // don't show any yellow until the lifetime is greater than or equal to this
 
 // Note that the alpha decay times are based on a lifetime of 255 frames
@@ -74,12 +75,13 @@
 #define XYTOINDEX(x, y) (((x) * 1024) + (y))
 #define INDEXTOX(i) ((i) / 1024)
 #define INDEXTOY(i) ((i) & 1023)
-#define XYTOPTR(base, pitch, x, y) (uint32_t *)((base) + ((y) * (pitch)) + (x * 4))
+#define XYTOPTR(base, pitch, x, y) (uint32_t *)((base) + ((y) * (pitch)) + (x * sizeof(uint32_t)))
 
 #define FRAMETIME 33333000      // nanoseconds between frames, this is 30 fps
 
 typedef unsigned char byte;
 uint64_t totalPoints;
+uint64_t receivedPoints;
 
 // The description of a point to display.
 // It contains the values to compute the intensity over time for the two phospors,
@@ -100,6 +102,8 @@ byte intensityMap[] = {32, 64, 96, 128, 160, 192, 224, 255};
 
 int pdp1FD;
 _Atomic int numPoints;
+unsigned droppedPoints;
+
 bool quit = false;
 
 // We precompute these values, the index is the time from when the point was first displayed, 0-255
@@ -162,7 +166,9 @@ pthread_attr_t tattr;
     border = true;
     fullscreen = false;
     penDown = false;
+    doTiming = false;
     totalPoints = 0;
+    receivedPoints = 0;
     frameMisses = 0;
     frameDelay = 0;
     cursorTime = 0;
@@ -214,20 +220,22 @@ pthread_attr_t tattr;
     }
 
     // init SDL
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "best");
     SDL_Init(SDL_INIT_VIDEO);
     window = SDL_CreateWindow("Type 30 Display",
-        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winSize, winSize, (!border)?SDL_WINDOW_BORDERLESS:0);
+        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winSize, winSize,
+            ((!border)?SDL_WINDOW_BORDERLESS:0) | SDL_WINDOW_ALLOW_HIGHDPI);
 
-    // Regardless of the window size, the logical size is always 1024
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     SDL_RenderSetLogicalSize(renderer, 1024, 1024);
-    SDL_RenderSetIntegerScale(renderer, SDL_TRUE);
 
     // Create a texture, we stream our points to it.
+    // Regardless of the window size, the logical size is always 1024
+    // However, SDL2 is not very good at rendering pixels for some window sizes less than the texture size.
+    // Pixels can be blurry regardless of the scale quality that is set.
+    // Nearest gives the best results.
     texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(texture, SDL_ScaleModeLinear);
+    SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
     pixelFormatP = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA8888);
     rgbaBlack = SDL_MapRGBA(pixelFormatP, 0, 0, 0, 0);
      
@@ -410,10 +418,13 @@ pthread_attr_t tattr;
 
     if( doTiming )
     {
-        lastTime = (now() - startTime) / (1000 * 1000 * 1000);;
+        // lastTime is now a delta
+        lastTime = (now() - startTime) / (1000 * 1000 * 1000);
         printf("%lu points drawn in %lu total seconds, %lu points/sec.\n",
             totalPoints, lastTime, totalPoints/lastTime);
         printf("%u frame late events, max delay %u msecs.\n", frameMisses, frameDelay/1000000);
+        printf("%lu received points, %u dropped points.\n", receivedPoints, droppedPoints);
+        printf("%lu received points/sec.\n", receivedPoints/lastTime);
     }
 
     close(pdp1FD);
@@ -515,8 +526,11 @@ static bool skipOne = false;
 
             if( numPoints > KEEPPOINTS )
             {
+                ++droppedPoints;
                 continue;                   // drop it
             }
+
+            ++receivedPoints;
 
             x = cmd & 01777;
             y = (cmd >> 10) & 01777;

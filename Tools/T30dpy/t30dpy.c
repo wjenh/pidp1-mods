@@ -28,6 +28,8 @@
  * 20-May-2026 wje initial version
  * 23-May-2026 wje much fiddling to try to get window scaling to give decent visual results
  * 23-May-2026 wje fix typo assigning to hostNameP from cmd line arg
+ * 24-May-2026 wje allow setting of gamma, vsync and linear/nearest via command line,
+ *    adjust default gamma to match linear intensity to human-perceived intensity
 */
 
 #include <stdio.h>
@@ -55,16 +57,16 @@
 #define BLUEDECAYALPHA  1.5     // intensity = time^-DECAYALPHA (time to the -alpha power) normalized to 0-255
 #define YELLOWDECAYALPHA  0.85
 
-// After blending, the resulting alpha also has a power law applied to adjust for the response of a crt
-// which was nonlinear.
-#define GAMMA 0.7               // gamma applies after an alpha is calculated
+// After blending, the resulting alpha also has a power law applied to adjust for the response of the eye,
+// which is nonlinear. Smaller values enance the brightness of low alphas, larger dim them.
+#define GAMMA 0.4545             // default gamma, gamma applies after an alpha is calculated
 
 #define BLUEFIRSTRGB 201, 140, 255
 #define BLUERGB 61, 0, 255
 #define YELLOWRGB 179, 255, 0
 
 // To help mimic the very bright 50 usec intensity of the original crt, these two do some fakery:
-#define BLUEHOLD 4              // show the initial blue until the lifetime is greater than or equal to this
+#define BLUEHOLD 6              // show the initial blue until the lifetime is greater than or equal to this
 #define YELLOWDEFER 2           // don't show any yellow until the lifetime is greater than or equal to this
 
 // Note that the alpha decay times are based on a lifetime of 255 frames
@@ -115,7 +117,7 @@ SDL_PixelFormat *pixelFormatP;
 int openPort(char *hostNameP, int port);
 void *reader(void *argP);
 void initializeAlphas(byte blue[], byte yellow[]);
-uint32_t blend(int srcR, int srcG, int srcB, float srcA, int destR, int destG, int destB, float destA);
+uint32_t blend(int srcR, int srcG, int srcB, float srcA, int destR, int destG, int destB, float destA, float gamma);
 void setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y);
 void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity);
 void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
@@ -133,12 +135,15 @@ int x, y;
 int blueAlpha, yellowAlpha;
 int intensity;
 int penx, peny;
+int pitch;
+float gamma;
 bool border;
 bool fullscreen;
 bool penDown;
 bool doTiming;
+bool doLinear;
+bool doVsync;
 char *hostNameP;
-
 uint64_t startTime;
 uint64_t lastTime;
 uint64_t deltaTime;
@@ -151,7 +156,6 @@ uint8_t *pixels;
 uint32_t *pixelP;
 uint32_t rgba;
 uint32_t rgbaBlack;
-int pitch;
 
 SDL_Event event;
 SDL_Window *window;
@@ -167,27 +171,38 @@ pthread_attr_t tattr;
     border = true;
     fullscreen = false;
     penDown = false;
+    doLinear = false;
+    doVsync = false;
     doTiming = false;
     totalPoints = 0;
     receivedPoints = 0;
     frameMisses = 0;
     frameDelay = 0;
     cursorTime = 0;
+    gamma = GAMMA;
 
-    while( (opt = getopt(argc, argv, "p:s:nt")) != -1 )
+    while( (opt = getopt(argc, argv, "g:lnp:s:tv")) != -1 )
     {
         switch( opt )
         {
-        case 'p':
-            portNum = atoi(optarg);
+        case 'g':
+            gamma = atof(optarg);
+            break;
+
+        case 'l':
+            doLinear = true;  // SDL linear scaling, else nearest neighbor
             break;
 
         case 'n':
             border = false;     // no border
             break;
 
+        case 'p':
+            portNum = atoi(optarg);
+            break;
+
         case 's':
-            i = atoi(optarg);     // screen is n * n big
+            i = atoi(optarg);    // screen is n * n big
             if( (i >= 256) )
             {
                 winSize = i;
@@ -200,6 +215,10 @@ pthread_attr_t tattr;
 
         case 't':
             doTiming = true;
+            break;
+
+        case 'v':
+            doVsync = true;     // enable vsync rendering
             break;
 
         default:
@@ -226,17 +245,18 @@ pthread_attr_t tattr;
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winSize, winSize,
             ((!border)?SDL_WINDOW_BORDERLESS:0) | SDL_WINDOW_ALLOW_HIGHDPI);
 
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | (doVsync)?SDL_RENDERER_PRESENTVSYNC:0 );
     SDL_RenderSetLogicalSize(renderer, 1024, 1024);
 
     // Create a texture, we stream our points to it.
     // Regardless of the window size, the logical size is always 1024
     // However, SDL2 is not very good at rendering pixels for some window sizes less than the texture size.
     // Pixels can be blurry regardless of the scale quality that is set.
-    // Nearest gives the best results.
+    // Linear gives the best results balancing small screens vs larger ones but blurs the points some.
+    // Nearest neighbor gives sharper dots, but some screen sizes don't scale well.
     texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
+    SDL_SetTextureScaleMode(texture, (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
     pixelFormatP = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA8888);
     rgbaBlack = SDL_MapRGBA(pixelFormatP, 0, 0, 0, 0);
      
@@ -366,15 +386,15 @@ pthread_attr_t tattr;
 
             // Fadout is done by adjusting the alphas based on time using the precomputed alpha modifiers.
             intensity = intensityMap[pointP->intensity];
-            blueAlpha = (int)((float)intensity * ((float)blueAlphas[pointP->lifetime] / 255.0) + 0.5);
-            yellowAlpha = (int)((float)intensity * ((float)yellowAlphas[pointP->lifetime] / 255.0) + 0.5);
+            blueAlpha = (int)((float)intensity * ((float)blueAlphas[pointP->lifetime] / 255.0));
+            yellowAlpha = (int)((float)intensity * ((float)yellowAlphas[pointP->lifetime] / 255.0));
 
             // Yellow has a looong tailoff, so stop when it gets down to LOWCUTOFF.
             // Also skip adding yellow for the first YELLOWDEFER frames so the blue will show up better.
             if( (yellowAlpha > LOWCUTOFF) && (pointP->lifetime >= YELLOWDEFER) && (blueAlpha > 0) )
             {
                 rgba = blend((pointP->lifetime >= BLUEHOLD)?BLUERGB:BLUEFIRSTRGB, (float)blueAlpha / 255.0,
-                    YELLOWRGB, (float)yellowAlpha / 255.0);
+                    YELLOWRGB, (float)yellowAlpha / 255.0, gamma);
             }
             else if( blueAlpha > 0 )
             {
@@ -383,12 +403,15 @@ pthread_attr_t tattr;
                 // and only 0.5 usecs for the Type 340, and in both cases much brighter than a modern LCD
                 // can replicate.
                 // This bit makes sure the initial display is visible.
-                rgba = SDL_MapRGBA(pixelFormatP, (pointP->lifetime >= BLUEHOLD)?BLUERGB:BLUEFIRSTRGB, blueAlpha);
+                //rgba = SDL_MapRGBA(pixelFormatP, (pointP->lifetime >= BLUEHOLD)?BLUERGB:BLUEFIRSTRGB, blueAlpha);
+                rgba = blend((pointP->lifetime >= BLUEHOLD)?BLUERGB:BLUEFIRSTRGB, (float)blueAlpha / 255.0,
+                    0, 0, 0, 0, gamma);
             }
             else if( yellowAlpha > LOWCUTOFF )
             {
                 // At this point, the blue has totally decayed, no reason to alpha blend now.
-                rgba = SDL_MapRGBA(pixelFormatP, YELLOWRGB, yellowAlpha);
+                //rgba = SDL_MapRGBA(pixelFormatP, YELLOQWRGB, yellowAlpha);
+                rgba = blend(YELLOWRGB, (float)yellowAlpha / 255.0, 0, 0, 0, 0, gamma);
             }
             else
             {
@@ -574,7 +597,7 @@ int i;
 // We use this to know what's going on, and it's a bit more efficient than writing 2 sets of pixels
 // and letting SDL do the blending.
 uint32_t
-blend(int srcR, int srcG, int srcB, float srcAlpha, int destR, int destG, int destB, float destAlpha)
+blend(int srcR, int srcG, int srcB, float srcAlpha, int destR, int destG, int destB, float destAlpha, float gamma)
 {
 int rR, rG, rB, rA;
 float newAlpha;
@@ -584,7 +607,7 @@ uint32_t rslt;
     rG = (int)((srcG * srcAlpha) + (destG * (1.0f - srcAlpha)));
     rB = (int)((srcB * srcAlpha) + (destB * (1.0f - srcAlpha)));
     newAlpha = srcAlpha + (destAlpha * (1.0f - srcAlpha));
-    rA = (int)(powf(newAlpha, GAMMA) * 255.0f + 0.5);
+    rA = (int)(powf(newAlpha, gamma) * 255.0f);
 
     if( rA > 255 )
     {
@@ -608,7 +631,8 @@ setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y)
 
 // Spread a point to simulate beam spread on a crt.
 // The Type 30 doccumentation states a spot diameter of 0.030" max, about 3 pixels on its display.
-// This siumulates it well enogh by drawing extra dots based on the 0-7 intensity level.
+// This siumulates it well enogh by drawing extra dots based on the 0-7 intensity level,
+// currently implemented as all intensities the same size which is more realistic.
 void
 drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity)
 {
@@ -618,27 +642,17 @@ SDL_Rect rect;
     switch( intensity )
     {
     case 7:
-        rect.x = x - 2;
-        rect.y = y - 2;
-        rect.h = 4;
-        rect.w = 4;
-        break;
     case 6:
     case 5:
     case 4:
     case 3:
-        rect.x = x - 1;
-        rect.y = y - 2;
-        rect.h = 3;
-        rect.w = 3;
-        break;
     case 2:
     case 1:
     case 0:
         rect.x = x - 1;
-        rect.y = y - 2;
-        rect.h = 2;
-        rect.w = 2;
+        rect.y = y - 1;
+        rect.h = 3;
+        rect.w = 3;
         break;
     }
 
@@ -755,16 +769,19 @@ uint64_t now;
 void
 usage()
 {
-    fprintf(stderr, "usage: t30dpy [-p port] [-n] [-t] [-s size] [host]\n");
+    fprintf(stderr, "usage: t30dpy [-l] [-n] [-t] [-v] [-g gamma] [-p port] [-s size] [host]\n");
     fprintf(stderr, "where:\n");
-    fprintf(stderr, "-p port, set port to use, default is %d\n", DEFAULTPORT);
+    fprintf(stderr, "-l, use SDL linear scaling, else nearest neighbor\n");
     fprintf(stderr, "-n, start with no border\n");
     fprintf(stderr, "-t, accumulate timing data, display on exit\n");
+    fprintf(stderr, "-v, enable SDL vsync on render\n");
+    fprintf(stderr, "-g gamma, set gamma to use, floating point, default is %.4f\n", GAMMA);
+    fprintf(stderr, "-p port, set port to use, default is %d\n", DEFAULTPORT);
     fprintf(stderr, "-s size, set display size to size pixels, >= 256\n");
     fprintf(stderr, "host, hostname of server to connect to\n");
     fprintf(stderr, "Host defaults to localhost, port to 3400.\n");
     fprintf(stderr, "While running:\n");
     fprintf(stderr, "F11 or the f character go into full screen mode or return from it.\n");
-    fprintf(stderr, "Bhe b character toggles between a bordered and borderless window.\n");
+    fprintf(stderr, "The b character toggles between a bordered and borderless window.\n");
     exit(1);
 }

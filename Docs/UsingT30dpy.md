@@ -58,17 +58,20 @@ The solution is two-fold.
 First, the decay time is stretched considerably to several frames.
 Second the initial frame uses a color value that is brightened considerably by adding red and green, but in the proper
 ratios to essentially add white to the base color.
-This only lasts for one or two frames, then the accurate color is used.
+This only lasts for a few frames, then the accurate color is used.
 
 T30dpy runs at a fixed 30 frames per second and the alpha values for the colors are calibrated to that to give,
 for the secondary phosphor, a 400 millisecond decay to 10%, as specified.
 You will see that it decays signficantly faster than p7sim does.
 
-Finally, the simulated beam spread done by p7sim is overly exaggerated. Take a look at any real CRT with similar resolution, such as an oscilloscope for comparison.
+Finally, the simulated beam spread done by p7sim is overly exaggerated.
+Take a look at any real CRT with similar resolution, such as an oscilloscope for comparison.
 
 DEC stated a beam spot size of 0.030 inches, which works out to about 2 pixels on the original CRT.
-T30dpy uses a simple sparse rectangle ranging from 2 pixels square up to 4 square at the highest intensity.
+T30dpy uses a simple rectangle ranging of 3 pixels square.
 That is a slight exaggeration but again needed to try to get an LCD to look close to the CRT.
+
+Provision exists to vary the rectangle size by intensity, but from experiments it does not seem to be necessary.
 
 ## Implementation
 
@@ -77,30 +80,36 @@ No GL libraries are needed.
 
 It uses a streaming texture for composing the dots which is then passed to the standard renderer for display.
 
-On startup, it computes the alpha values needed at each step in the aging for both phosphors to follow the power law
-decay. The decay parameters are set so that the secondary phosphor drops to 10% of its initial intensity in
+On startup, it computes the alpha values needed at each step in the aging for both phosphors to follow the proper
+power law decay. The decay parameters are set so that the secondary phosphor drops to 10% of its initial intensity in
 400 milliseconds.
 
 256 intensity steps are used occurring at 33.33 millsecond intervals, a frame rate of 30 frames per second.
 Thus, the total aging span is up to 8.4 seconds.
 A power law decay results in a long, low intensity tail and potentially that is simulated.
 However, since LCDs can't duplicate the true analog intensity decay of a CRT, the intensity value drops below
-what the LCD can display fairly rapidly. However, the primary decay interval is apparent.
+what the LCD can display fairly rapidly. However, the decay is apparent.
 
 At each frame step, each phosphor color has its alpha value modified by the alpha aging determined at startup by
 the power law generator.
-Initially, alpha blending is done of the two colors, but once the primary phosphor decays to an insignificant
-value, blending is no longer needed and the secondary color is used by itself.
+Alpha blending is then done of the two colors to get the displayed SDL RGBA8888 value.
+
+Additionally, a gamma correction is made to adjust for the human eye's nonlinear response to intensity.
+Most modern displays also adjust gamma, so t30dpy's gamma can be ajusted or effectively turned off.
 
 A table of point data 1024 x 1024 in size, to match the Type 30 resolution, is kept.
 As points come from the host, the proper cell is marked as in use and its lifetime set to 0.
 Each frame increments the lifetime after the alpha computations are done and if the 256 step limit has been reached
 the point is marked as inactive and will no longer be drawn.
 
-A point is inactivated after its intensity falls to 0 for the primary phosphor and to a very small value for the
-secondary phosphor.
-In practice, the primary value goes to 0 in a relatively few frames, the seconddary dominates as you would expect.
-The secondary termination value is configrable in the code, as are many other values.
+A point is inactivated after its intensity falls to 0.
+In practice, the primary value goes to 0 in a relatively few frames, the secondary trails off slowly
+as you would expect.
+
+Theoretically, the value never reaches 0, but since discrete steps are used, a small value of 1 or 2 can persist
+for the entire aging span but not be visible.
+A minimum value is used to end the lifetime to avoid this.
+The termination value is configrable in the code, as are many other values.
 
 See the source code for much more information, it is well commented and structured.
 
@@ -111,10 +120,26 @@ size was specified, and in full screen mode, whatever size that is.
 
 Unfortunately, SDL2 sometimes doesn't do a very good job of rendering pixels when the window size is less
 than the texture size, it depends on the size.
-Power of 2 submultiples generally seem to work well, e.g. 768, 512.
-But, that doesn't seem to always be the case, experiment.
+But, that doesn't seem to always be the case.
 
-The code uses nearest texture scaling, which seems to work the best.
+The code uses nearest-neighbor texture scaling by default, but if that doesn't give good results for a given
+screen size, linear scaling can be used, which is actually bilinear scaling.
+Bilinear also gives a smoother, softer appearance to dots when scaling occurs.
+
+## Gamma
+
+The human eye does not respond to intensity in a linear fashion.
+However, the 8 intensity levels that are supported are internally a linear progression.
+To make this match what the eye perceives as equal steps, a gamma correction is applied.
+This is another power-law adjustment using a power exponent of 0.4545, the standard value.
+However, modern monitors also do gamma corrections, so the two might interact.
+
+The gamma that t30dpy uses can be changed via the command line.
+Values are generally 1.0 or less.
+1.0 effectively removes any gamma correction, smaller values boost the intensity of dimmer points.
+Values greater than 1.0 diminish the intensity of dimmer points, and can cause the decay trails to disappear.
+
+Experiment to see what works for you and your display.
 
 ## Performance
 
@@ -160,10 +185,12 @@ P7sim uses much more memory.
 
 Finally.
 
-**type30dpy** [*-b*] [*-s size*] [*-p port*] [*-t*] [hostame]
+**type30dpy** [*-b*] [*-g gamma*] [*-l*] [*-s size*] [*-p port*] [*-t*] [hostame]
 
 ```
 b - start borderless
+g gamma - set the gamma value, a floating point value usually in the range 0.4 to 1.0, but any value is allowed
+l - use linear scaling instead of nearest-neighbor
 s size - set the screen size, >= 256, default is 1024
 p port - the port to connect to, default is 3400
 t - accumulate statistics, printed on exit
@@ -180,13 +207,13 @@ These are in the source code, change with care, or just to play around.
 The code values are a good approximation of the original display.
 Not all are listed here, just the ones that are useful for display appearance.
 
-| Name             | Default    | Action                                                   |
-|------------------|------------|----------------------------------------------------------|
-| BLUEDECAYALPHA   | 1.5        | determines the blue fade time, larger is faster |
-| YELLOWDECAYALPHA | 0.85       | determines the yellow fade time |
-| GAMMA            | 0.7        | changes how much dim points are enhanced, smaller is more |
-| BLUEFIRSTRGB     | 101,40,255 | the rgb value for the initial dot color |
-| BLUERGB          | 61,0,255   | the true rgb value for the blue phosphor |
-| YELLOWRGB        | 179,255,0  | the true rgb value for the yellow phosphor |
-| BLUEHOLD         | 6          | how many frames the first blue rgb is used for|
-| YELLOWDEFER      | 2          | how many frames before the yellow rgb is blended in |
+| Name             | Default     | Action                                                   |
+|------------------|-------------|----------------------------------------------------------|
+| BLUEDECAYALPHA   | 1.5         | determines the blue fade time, larger is faster |
+| YELLOWDECAYALPHA | 0.85        | determines the yellow fade time |
+| GAMMA            | 0.4545      | default, changes how much dim points are enhanced, smaller is more |
+| BLUEFIRSTRGB     | 201,140,255 | the rgb value for the initial dot color |
+| BLUERGB          | 61,0,255    | the true rgb value for the blue phosphor |
+| YELLOWRGB        | 179,255,0   | the true rgb value for the yellow phosphor |
+| BLUEHOLD         | 6           | how many frames the first blue rgb is used for|
+| YELLOWDEFER      | 2           | how many frames before the yellow rgb is blended in |

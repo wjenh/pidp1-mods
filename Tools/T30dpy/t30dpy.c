@@ -28,8 +28,10 @@
  * 20-May-2026 wje initial version
  * 23-May-2026 wje much fiddling to try to get window scaling to give decent visual results
  * 23-May-2026 wje fix typo assigning to hostNameP from cmd line arg
- * 24-May-2026 wje allow setting of gamma, vsync and linear/nearest via command line,
- *    adjust default gamma to match linear intensity to human-perceived intensity
+ * 25-May-2026 wje allow setting of gamma, vsync and linear/nearest via command line,
+ *    adjust default gamma to match linear intensity to human-perceived intensity,
+ *    modify dot-size adjustment for best appearance,
+ *    add config file for various settings
 */
 
 #include <stdio.h>
@@ -43,35 +45,45 @@
 #include <netdb.h>
 #include <fcntl.h>
 #include <time.h>
+#include <pwd.h>
 #include <errno.h>
 #include <SDL2/SDL.h>
 
-#define DEFAULTHOST "localhost"
-#define DEFAULTPORT 3400
 #define READBUFSIZE 512         // size of the buffer we read from the server into, bytes
 
 #define NUMPOINTS 1024*1024     // Total number of points on screen
 #define KEEPPOINTS NUMPOINTS    // Total number of points that can be active, t30dpy can handle them all
 
-// The alpha values for an intensity are computed using a power law.
+#define MININTENSITY 16         // Intensity 0 will be this. The rest are linearly scaled to 255 for level 7
+
+// The alpha values for the color intensity over time are computed using a power law.
+// Note that the alpha decay times are based on a lifetime of 255 frames
 #define BLUEDECAYALPHA  1.5     // intensity = time^-DECAYALPHA (time to the -alpha power) normalized to 0-255
 #define YELLOWDECAYALPHA  0.85
+#define BLUEFIRSTRGB 201, 140, 255
+#define BLUERGB 61, 0, 255
+#define YELLOWRGB 139, 225, 0
+#define MAXLIFETIME 255         // number of frames a point will exist unless its alptha falls below LOWCUTOFF
+
+// The following can be overridden by the config file and some also via the command line.
+// For those that have a command line override, it takes precedence.
+// Host, port, gamma, vsync, and linear can be overridden via the command line.
+#define DEFAULTHOST "localhost"
+#define DEFAULTPORT 3400
 
 // After blending, the resulting alpha also has a power law applied to adjust for the response of the eye,
 // which is nonlinear. Smaller values enance the brightness of low alphas, larger dim them.
 #define GAMMA 0.4545             // default gamma, gamma applies after an alpha is calculated
 
-#define BLUEFIRSTRGB 201, 140, 255
-#define BLUERGB 61, 0, 255
-#define YELLOWRGB 179, 255, 0
+// To help mimic the very bright 50 usec intensity of the original crt, these do some fakery.
+// An LCD just can't come close to the actual intensity the CRT did, we have to stretch and boost the blue.
+#define BLUEHOLD 5              // show the initial blue until the lifetime is greater than or equal to this
+#define YELLOWDEFER 3           // don't show any yellow until the lifetime is greater than or equal to this
+#define LOWCUTOFF 5             // alphas less than this are not displayed, value is gamma-corrected first
+#define VSYNC false             // ask SDL renderer to use vsync
+#define LINEAR false            // ask SDL renderer to use linear scaling
 
-// To help mimic the very bright 50 usec intensity of the original crt, these two do some fakery:
-#define BLUEHOLD 6              // show the initial blue until the lifetime is greater than or equal to this
-#define YELLOWDEFER 2           // don't show any yellow until the lifetime is greater than or equal to this
-
-// Note that the alpha decay times are based on a lifetime of 255 frames
-#define MAXLIFETIME 255         // number of frames a point will exist unless its alptha falls below:
-#define LOWCUTOFF 5             // alphas less than this are not displayed
+// End of config and command line settings
 
 #define CURSORTIMEOUT 4000      // If no mouse motion after this many milliseconds, hide it
 
@@ -79,10 +91,14 @@
 #define INDEXTOX(i) ((i) / 1024)
 #define INDEXTOY(i) ((i) & 1023)
 #define XYTOPTR(base, pitch, x, y) (uint32_t *)((base) + ((y) * (pitch)) + (x * sizeof(uint32_t)))
+#define APPLYGAMMA(alpha, gamma) (int)(powf((float)(alpha) / 255.0f, gamma) * 255.0f);
 
-#define FRAMETIME 33333000      // nanoseconds between frames, this is 30 fps
+#define FRAMETIME 33333333      // nanoseconds between frames, this is 30 fps
 
 typedef unsigned char byte;
+
+char *hostNameP;
+int portNum;
 uint64_t totalPoints;
 uint64_t receivedPoints;
 
@@ -100,8 +116,17 @@ typedef struct {
 
 Point pointData[NUMPOINTS];      // where all the data lives
 
-// Map the passed intensity levels 0-7 to the base display intensity levels
-byte intensityMap[] = {32, 64, 96, 128, 160, 192, 224, 255};
+bool doLinear = LINEAR;
+bool doVsync = VSYNC;
+float gammaCorrection = GAMMA;
+int blueHold = BLUEHOLD;
+int yellowDefer = YELLOWDEFER;
+int lowCutoff = LOWCUTOFF;
+
+// Map the passed intensity levels 0-7 to the base display intensity levels.
+// This map is computed along with the alphas in initializeAlphas().
+//byte intensityMap[] = {32, 64, 96, 128, 160, 192, 224, 255};
+byte intensityMap[8];
 
 int pdp1FD;
 _Atomic int numPoints;
@@ -115,35 +140,33 @@ byte yellowAlphas[256];
 SDL_PixelFormat *pixelFormatP;
 
 int openPort(char *hostNameP, int port);
+uint32_t blend(int srcR, int srcG, int srcB, int srcA, int destR, int destG, int destB, int destA);
+uint64_t now(void);
 void *reader(void *argP);
 void initializeAlphas(byte blue[], byte yellow[]);
-uint32_t blend(int srcR, int srcG, int srcB, float srcA, int destR, int destG, int destB, float destA, float gamma);
 void setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y);
-void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity);
+void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity, int lifetime);
 void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
+void loadConfig(void);
 void usage(void);
-uint64_t now(void);
+FILE *getFile(char *nameP);
 
 int
 main(int argc, char **argv)
 {
-int portNum;
 int winSize;
 int i;
 int opt;
 int x, y;
 int blueAlpha, yellowAlpha;
 int intensity;
+int lowcutoff;
 int penx, peny;
 int pitch;
-float gamma;
 bool border;
 bool fullscreen;
 bool penDown;
 bool doTiming;
-bool doLinear;
-bool doVsync;
-char *hostNameP;
 uint64_t startTime;
 uint64_t lastTime;
 uint64_t deltaTime;
@@ -171,22 +194,21 @@ pthread_attr_t tattr;
     border = true;
     fullscreen = false;
     penDown = false;
-    doLinear = false;
-    doVsync = false;
     doTiming = false;
     totalPoints = 0;
     receivedPoints = 0;
     frameMisses = 0;
     frameDelay = 0;
     cursorTime = 0;
-    gamma = GAMMA;
+
+    loadConfig();                   // config overrides defines, command line overrides all
 
     while( (opt = getopt(argc, argv, "g:lnp:s:tv")) != -1 )
     {
         switch( opt )
         {
         case 'g':
-            gamma = atof(optarg);
+            gammaCorrection = atof(optarg);
             break;
 
         case 'l':
@@ -274,6 +296,7 @@ pthread_attr_t tattr;
 
     // display the screen
     startTime = lastTime = now();
+    lowcutoff = APPLYGAMMA(lowCutoff, gammaCorrection);
 
     SDL_ShowCursor(SDL_DISABLE);
 
@@ -387,14 +410,15 @@ pthread_attr_t tattr;
             // Fadout is done by adjusting the alphas based on time using the precomputed alpha modifiers.
             intensity = intensityMap[pointP->intensity];
             blueAlpha = (int)((float)intensity * ((float)blueAlphas[pointP->lifetime] / 255.0));
+            blueAlpha = APPLYGAMMA(blueAlpha, gammaCorrection);
             yellowAlpha = (int)((float)intensity * ((float)yellowAlphas[pointP->lifetime] / 255.0));
+            yellowAlpha = APPLYGAMMA(yellowAlpha, gammaCorrection);
 
-            // Yellow has a looong tailoff, so stop when it gets down to LOWCUTOFF.
-            // Also skip adding yellow for the first YELLOWDEFER frames so the blue will show up better.
-            if( (yellowAlpha > LOWCUTOFF) && (pointP->lifetime >= YELLOWDEFER) && (blueAlpha > 0) )
+            // Yellow has a looong tailoff, so stop when it gets down to lowcutoff.
+            // Also skip adding yellow for the first yellowDefer frames so the blue will show up better.
+            if( (yellowAlpha > lowcutoff) && (pointP->lifetime >= yellowDefer) && (blueAlpha > 0) )
             {
-                rgba = blend((pointP->lifetime >= BLUEHOLD)?BLUERGB:BLUEFIRSTRGB, (float)blueAlpha / 255.0,
-                    YELLOWRGB, (float)yellowAlpha / 255.0, gamma);
+                rgba = blend((pointP->lifetime >= blueHold)?BLUERGB:BLUEFIRSTRGB, blueAlpha, YELLOWRGB, yellowAlpha);
             }
             else if( blueAlpha > 0 )
             {
@@ -403,15 +427,12 @@ pthread_attr_t tattr;
                 // and only 0.5 usecs for the Type 340, and in both cases much brighter than a modern LCD
                 // can replicate.
                 // This bit makes sure the initial display is visible.
-                //rgba = SDL_MapRGBA(pixelFormatP, (pointP->lifetime >= BLUEHOLD)?BLUERGB:BLUEFIRSTRGB, blueAlpha);
-                rgba = blend((pointP->lifetime >= BLUEHOLD)?BLUERGB:BLUEFIRSTRGB, (float)blueAlpha / 255.0,
-                    0, 0, 0, 0, gamma);
+                rgba = SDL_MapRGBA(pixelFormatP, (pointP->lifetime >= BLUEHOLD)?BLUERGB:BLUEFIRSTRGB, blueAlpha);
             }
-            else if( yellowAlpha > LOWCUTOFF )
+            else if( yellowAlpha > lowcutoff )
             {
                 // At this point, the blue has totally decayed, no reason to alpha blend now.
-                //rgba = SDL_MapRGBA(pixelFormatP, YELLOQWRGB, yellowAlpha);
-                rgba = blend(YELLOWRGB, (float)yellowAlpha / 255.0, 0, 0, 0, 0, gamma);
+                rgba = SDL_MapRGBA(pixelFormatP, YELLOWRGB, yellowAlpha);
             }
             else
             {
@@ -421,10 +442,10 @@ pthread_attr_t tattr;
             if( rgba )
             {
                 ++totalPoints;
-                drawPoint(pixels, pitch, rgba, x, y, pointP->intensity);
+                drawPoint(pixels, pitch, rgba, x, y, pointP->intensity, pointP->lifetime);
             }
 
-            if( (yellowAlpha <= LOWCUTOFF) || (pointP->lifetime >= MAXLIFETIME) )
+            if( (yellowAlpha <= lowcutoff) || (pointP->lifetime >= MAXLIFETIME) )
             {
                 pointP->valid = 0;                  // done with this onw
                 --numPoints;
@@ -573,11 +594,20 @@ static bool skipOne = false;
     }
 }
 
-// Precompute the decay alphas.
+// Precompute the decay alphas and the 8 intensity levels.
 void
 initializeAlphas(byte blue[], byte yellow[])
 {
 int i;
+float delta;
+
+    // Initialize the intensity map in linear increments from the base value
+    delta = (float)(255 - MININTENSITY) / 7.0f;
+
+    for( i = 0; i < 8; ++i )
+    {
+        intensityMap[i] = MININTENSITY + (int)((float)i * delta);
+    }
 
     // The blue phosphor had a 25-75 microsecond lifetime to 10% brightness.
     // That is far less than the frame rate and wouldn't be visible, so it is strecthed,
@@ -597,17 +627,20 @@ int i;
 // We use this to know what's going on, and it's a bit more efficient than writing 2 sets of pixels
 // and letting SDL do the blending.
 uint32_t
-blend(int srcR, int srcG, int srcB, float srcAlpha, int destR, int destG, int destB, float destAlpha, float gamma)
+blend(int srcR, int srcG, int srcB, int sAlpha, int destR, int destG, int destB, int dAlpha)
 {
 int rR, rG, rB, rA;
-float newAlpha;
+float srcAlpha, destAlpha,newAlpha;
 uint32_t rslt;
+
+    srcAlpha = (float)sAlpha / 255.0;
+    destAlpha = (float)dAlpha / 255.0;
 
     rR = (int)((srcR * srcAlpha) + (destR * (1.0f - srcAlpha)));
     rG = (int)((srcG * srcAlpha) + (destG * (1.0f - srcAlpha)));
     rB = (int)((srcB * srcAlpha) + (destB * (1.0f - srcAlpha)));
     newAlpha = srcAlpha + (destAlpha * (1.0f - srcAlpha));
-    rA = (int)(powf(newAlpha, gamma) * 255.0f);
+    rA = (int)(newAlpha * 255.0f);
 
     if( rA > 255 )
     {
@@ -631,22 +664,30 @@ setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y)
 
 // Spread a point to simulate beam spread on a crt.
 // The Type 30 doccumentation states a spot diameter of 0.030" max, about 3 pixels on its display.
-// This siumulates it well enogh by drawing extra dots based on the 0-7 intensity level,
-// currently implemented as all intensities the same size which is more realistic.
+// This siumulates it well by drawing extra dots based on the 0-7 intensity level.
+// Lifetime is passed to add the ability to dither the position although tests show that doesn't
+// look great.
 void
-drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity)
+drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity, int lifetime)
 {
 int i, j;
 SDL_Rect rect;
 
+    // Everything starts with a basic 3x3 rectangle
+
+    // Intensities add extra bits
     switch( intensity )
     {
     case 7:
+        //setPixel(pixels, pitch, rgba, x-2, y-2);
     case 6:
+        //setPixel(pixels, pitch, rgba, x-2, y+2);
     case 5:
+        setPixel(pixels, pitch, rgba, x+2, y-2);
     case 4:
     case 3:
     case 2:
+        setPixel(pixels, pitch, rgba, x+2, y+2);
     case 1:
     case 0:
         rect.x = x - 1;
@@ -764,6 +805,146 @@ uint64_t now;
     now += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
 
     return(now);
+}
+
+// See if there is a config file in the user home directory.
+// If not, try the install directory.
+// The file is named '.t30dyconfig' in the home directory,
+// 't30dpyconfig' in the install directory.
+// Lines are of e form 'param=value', empty lines or lines beginning with '#' are ignored, as are any invalid params.
+void
+loadConfig()
+{
+char *cP, *cP2;
+FILE *fP;
+char line[256];
+
+    if( !(fP = getFile("~/.t30dpy.config")) )
+    {
+        if( !(fP = getFile("/opt/pidp1-mods/t30dpy.config")) )
+        {
+            return;         // no config file
+        }
+    }
+
+    while( fgets(line, sizeof(line), fP) )
+    {
+        if( (line[0] == '\n') || (line[0] == '#') )
+        {
+            continue;
+        }
+
+        if( (cP = strchr(line, '=')) )
+        {
+            *cP++ = '\0';
+
+            // ignore embedded spaces
+            while( isspace(*cP) )
+            {
+                ++cP;
+            }
+
+            if( (cP2 = strchr(line, ' ')) )
+            {
+                *cP2 = '\0';
+            }
+
+            if( !strcmp(line, "vsync") )
+            {
+                if( !strcmp(cP, "true") || (*cP == 'y') )
+                {
+                    doVsync = true;
+                }
+            }
+            else if( !strcmp(line, "linear") )
+            {
+                if( !strcmp(cP, "true") || (*cP == 'y') )
+                {
+                    doLinear = true;
+                }
+            }
+            else if( !strcmp(line, "gamma") )
+            {
+                gammaCorrection = atof(cP);
+            }
+            else if( !strcmp(line, "bluehold") )
+            {
+                blueHold = atoi(cP);
+            }
+            else if( !strcmp(line, "yellowdefer") )
+            {
+                yellowDefer = atoi(cP);
+            }
+            else if( !strcmp(line, "cutoff") )
+            {
+                lowCutoff = atoi(cP);
+            }
+            else if( !strcmp(line, "host") )
+            {
+                hostNameP = (char *)malloc(strlen(cP) + 1);
+                strcpy(hostNameP, cP);
+            }
+            else if( !strcmp(line, "port") )
+            {
+                portNum = atoi(cP);
+            }
+        }
+    }
+
+    fclose(fP);
+}
+
+// Given filename, search for it and if found, return the FILE *ptr for it.
+// If the name begins with '~', use the home directory for the caller.
+// If the file isn;'t found, null is returned.
+FILE *
+getFile(char *nameP)
+{
+char *cP;
+char *dirP;
+struct passwd *pwdP;
+char tmpstr[4096];
+char tmpstr2[4096];
+
+    if( *nameP == '~' )      // need to do directory expansion
+    {
+        strcpy(tmpstr, nameP);
+        if( !(cP = strchr(tmpstr, '/')) )
+        {
+            return(NULL);        // malformed
+        }
+
+        *cP++ = 0;
+
+        if( strlen(tmpstr) == 1 )    // ~/... form, user home
+        {
+            if( !(dirP = getenv("HOME")) )
+            {
+                pwdP = getpwuid(getuid());
+                if( !pwdP )
+                {
+                    return(NULL);
+                }
+
+                dirP = pwdP->pw_dir;
+            }
+        }
+        else                        // ~uname/... form, uname's home
+        {
+            pwdP = getpwnam(tmpstr + 1);
+            if( !pwdP )
+            {
+                return(NULL);
+            }
+
+            dirP = pwdP->pw_dir;
+        }
+
+        sprintf(tmpstr2, "%s/%s", dirP, cP);
+        nameP = tmpstr2;
+    }
+
+    return( fopen(nameP, "r") );
 }
 
 void

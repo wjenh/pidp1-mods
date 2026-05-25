@@ -1,8 +1,12 @@
 /*
  * A test program to drive t30dpy in various ways.
  *
- * Test 1 draws adjacent filled squares in ascending intensity, pauses, and repeats
+ * Test 1 draws adjacent filled squares in ascending intensity
+ * Test 2 draws 8 lines in ascending intensity
+ * Test 3 draws adjacent filled squares in ascending intensity
+ * Test 4 draws long rectangles in ascending intensity
  *
+ * Each test runs for TESTTIME seconds.
  * This listens on port 3411.
 */
 #include <stdio.h>
@@ -25,6 +29,7 @@ bool hasElapsed(int msecs);
 bool test1(int fd);
 bool test2(int fd);
 bool test3(int fd);
+bool test4(int fd);
 
 int
 main(int argc, char **argv)
@@ -35,6 +40,7 @@ char line[246];
     printf("Test 1 - intensity strip\n");
     printf("Test 2 - intensity lines\n");
     printf("Test 3 - intensity and space increasing dots\n");
+    printf("Test 3 - intensity increasing long rectangles\n");
     printf("Waiting for t30dpy to connect...\n");
     if( (dpyFD = waitForDpy(3411)) < 0 )
     {
@@ -64,6 +70,10 @@ char line[246];
             test3(dpyFD);
             break;
 
+        case '4':
+            test4(dpyFD);
+            break;
+
         default:
             printf("Test number or q to exit.\n");
             break;
@@ -71,7 +81,7 @@ char line[246];
     }
 }
 
-// Draw 8 filled squares in increasing intensity for 5 seconds.
+// Draw 8 filled squares in increasing intensity
 bool
 test1(int fd)
 {
@@ -101,8 +111,7 @@ int x, y, intensity;
     return(true);
 }
 
-
-// Draw 8 lines in increasing intensity for 5 seconds.
+// Draw 8 lines in increasing intensity
 bool
 test2(int fd)
 {
@@ -130,7 +139,7 @@ int x, y, intensity;
     return(true);
 }
 
-// Draw 8 lines in increasing intensity of increasingly spaced dots  for 5 seconds.
+// Draw 8 lines in increasing intensity of increasingly spaced dots
 bool
 test3(int fd)
 {
@@ -154,6 +163,36 @@ int dotSpace;
             }
 
             y += 20;
+        }
+    }
+
+    return(true);
+}
+
+// Draw 8 filled long rectanges in increasing intensity
+bool
+test4(int fd)
+{
+int i, j;
+int x, y, intensity;
+
+    while( !hasElapsed(TESTTIME * 1000) )
+    {
+        y = 450;
+        for( intensity = 7; intensity >= 0; --intensity, y += 55 )
+        {
+            for( i = y; i <= (y + 20); ++i )
+            {
+                x = 100;
+                j = 900;
+                while( x < j )
+                {
+                    if( !drawDot(fd, x++, i, intensity) )
+                    {
+                        return(false);
+                    }
+                }
+            }
         }
     }
 

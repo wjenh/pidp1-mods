@@ -2,10 +2,10 @@
 
 This document describes the t30dpy simulated Type 30 display.
 
-This is version 1.1
+This is version 1.2
 
-Edit date 23-May-2026\
-Minor typo corrections, more test results
+Edit date 25-May-2026\
+Add config file and more details about gammas
 
 ## What is it?
 
@@ -134,7 +134,7 @@ To make this match what the eye perceives as equal steps, a gamma correction is 
 This is another power-law adjustment using a power exponent of 0.4545, the standard value.
 However, modern monitors also do gamma corrections, so the two might interact.
 
-The gamma that t30dpy uses can be changed via the command line.
+The gamma that t30dpy uses can be changed via the command line or in the configuration file.
 Values are generally 1.0 or less.
 1.0 effectively removes any gamma correction, smaller values boost the intensity of dimmer points.
 Values greater than 1.0 diminish the intensity of dimmer points, and can cause the decay trails to disappear.
@@ -173,6 +173,9 @@ It was run on a middling performance Intel CPU of some age running Ubuntu Linux 
 \** - p7sim can't handle the 150K+ pixels/sec type304lines sends, loses many pixels\
 \*** - this is a brutal test sending over 500K pixels/sec. p7sim fails miserably, dropping many many pixels
 
+The figures for t30dpy are affected by various configuration settings, especially the lifetime of the yellow-green
+phosphor and the gamma corrections.
+
 T30dpy can also report some timing statistics.
 Running type340stress, it is rendering over 5 million dots per second without any lost data.
 Note that these are Type 30 dots, the number of pixels being rendered is over 4 times as many.
@@ -185,23 +188,25 @@ P7sim uses much more memory.
 
 Finally.
 
-**type30dpy** [*-b*] [*-g gamma*] [*-l*] [*-s size*] [*-p port*] [*-t*] [hostame]
+**type30dpy** [*-b*] [*-g gamma*] [*-l*] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
 
 ```
 b - start borderless
 g gamma - set the gamma value, a floating point value usually in the range 0.4 to 1.0, but any value is allowed
-l - use linear scaling instead of nearest-neighbor
+l - ask SDL to use linear scaling instead of nearest-neighbor
 s size - set the screen size, >= 256, default is 1024
 p port - the port to connect to, default is 3400
 t - accumulate statistics, printed on exit
+v - ask SDL to use vsync for frame synchronization
 hostname - the host to connect to, defaults to localhost
 ```
+The defaults can be overridden in the configuration file.
 
 While running the F11 key or the *f* character key toggles between regular and full screen mode.\
 The *b* character key toggles between a bordered and borderless window.\
 The *escape* key exits, as does the window close icon on the window.
 
-## Settings that can be changed
+## Settings that can be changed in code
 
 These are in the source code, change with care, or just to play around.
 The code values are a good approximation of the original display.
@@ -215,5 +220,32 @@ Not all are listed here, just the ones that are useful for display appearance.
 | BLUEFIRSTRGB     | 201,140,255 | the rgb value for the initial dot color |
 | BLUERGB          | 61,0,255    | the true rgb value for the blue phosphor |
 | YELLOWRGB        | 179,255,0   | the true rgb value for the yellow phosphor |
-| BLUEHOLD         | 6           | how many frames the first blue rgb is used for|
-| YELLOWDEFER      | 2           | how many frames before the yellow rgb is blended in |
+| BLUEHOLD         | 5           | how many frames the first blue rgb is used for|
+| YELLOWDEFER      | 3           | how many frames before the yellow rgb is blended in |
+| LOWCUTOFF        | 5           | consider a point done when its intensity falls to this value\* |
+
+\* - the cutoff value is gamma-adjusted before comparison to keep it logically the same across gamma settings.
+
+## The configuration file
+
+T30dpy supports a configuration file that can override some of the settings.
+A search is made first for the file *~/.t30dpy.config*, then for */opt/pidp1-mods/t30dpy.config*.
+
+The file settings override the compiled-in settings but any that have command line equvalents
+are overridden if set on the command line.
+
+If found, the following values can be changed.\
+Lowercase change names are also command-line settable.
+
+| Setting     | Changes     |
+|-------------|-------------|
+| hostname    | hostname    |
+| port        | port        |
+| vsync       | vsync       |
+| linear      | linear      |
+| gamma       | GAMMA       |
+| bluehold    | BLUEHOLD    |
+| yellowdefer | YELLOWDEFER |
+| cutoff      | LOWCUTOFF   |
+
+A sample file is included as */opt/pidp1-mods/t30dpy.config.example* for reference.

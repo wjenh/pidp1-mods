@@ -1,0 +1,50 @@
+# This allows overriding various parameters for the t30dpy display.
+# It is NOT installed by default, copy and edit it.
+# It is searched for in the user home directory, ~/.t3odpy.config, then in /opt/pidp1-mods/t30dpy.config and
+# takes precedence over the builtin values.
+# However, command line overrides take precedence over this for settings that have command line settings.
+# The example values below are the builtin values.
+# Logical values such as vsync can be 'true' or begin with 'y', anything else is false.
+
+# Set the hostname to use, overriden by the command line
+host=localhost
+# Set the port to use, overidden by the command line
+port=3400
+
+# Ask SDL to use vsync, it might or might not
+vsync=yes
+# Ask SDL to use linear scaling, it might or might not
+linear=no
+
+# The eye does not respond linearly to intensity.
+# This adjusts the intensity to correct for that.
+# Smaller values boost lower intensities, larger values decrease lower intensites.
+# Values greater than 1.0 will completely suppress low intensities and reduce high intensities, not useful
+# The default value is the standard correction factor.
+# Also, monitors might also do gamma correction, so this value might need changing depending upon the monitor.
+gamma=0.4545
+
+# The original CRT produced a very bright blue-purple spot for only about 50 microseconds.
+# This is impossible to actually duplicate with modern monitors because they are frame based and because
+# LCDs can't get anywhere near the original intensity.
+# Cheating is done to extend the duration of the blue phosphor and to use an initial rgb value that
+# is brighter but not strictly the proper color.
+# This initial rgb value is used for the below number of display frames which are rendered at 30 fps.
+# After this many frames, the accurate rgb value for the blue phosphor is used.
+bluehold=5
+
+# Additionally, the yellow-green secondary phosphor blending can be deferred for the below number of frames.
+# This prevents it from overly contaminating the primary color, which again would have been far brighter
+# than the secondary color, but for only a very short time.
+yellowdefer=3
+
+# The displayed dots decay in intensity over time following, at least for the secondary phosphor, the
+# correct power-law decay rate specified for the P7 phosphor that was used.
+# However, a power-law decay theoretically never reaches 0.
+# T30dpy uses integer values for intensity ranging from 0-255.
+# In order to prevent very small values, a cutoff is used.
+# If the intensity value falls below the cutoff, the intensity is considered to be zero and the point
+# This directly affects how long the secondary fadeout lasts, higher values shorten the fadeout.
+# is no longer displayed. Note that this value is gamma-corrected before the comparison is made,
+# which keeps it logically the same across different gamma settings.
+cutoff=5

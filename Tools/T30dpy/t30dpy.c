@@ -834,6 +834,7 @@ char line[256];
             continue;
         }
 
+        line[strlen(line) - 1] = '\0';  // drop the annoying newline
         if( (cP = strchr(line, '=')) )
         {
             *cP++ = '\0';

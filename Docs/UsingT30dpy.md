@@ -2,9 +2,9 @@
 
 This document describes the t30dpy simulated Type 30 display.
 
-This is version 1.2
+This is version 1.3
 
-Edit date 25-May-2026\
+Edit date 26-May-2026\
 Add config file and more details about gammas
 
 ## What is it?
@@ -56,7 +56,7 @@ was displayed in 5 microseconds or less at an intensity no LCD can come close to
 
 The solution is two-fold.
 First, the decay time is stretched considerably to several frames.
-Second the initial frame uses a color value that is brightened considerably by adding red and green, but in the proper
+Second, the initial frame uses a color value that is brightened considerably by adding red and green, but in the proper
 ratios to essentially add white to the base color.
 This only lasts for a few frames, then the accurate color is used.
 
@@ -65,10 +65,11 @@ for the secondary phosphor, a 400 millisecond decay to 10%, as specified.
 You will see that it decays signficantly faster than p7sim does.
 
 Finally, the simulated beam spread done by p7sim is overly exaggerated.
-Take a look at any real CRT with similar resolution, such as an oscilloscope for comparison.
+Take a look at any real CRT with similar resolution, such as an oscilloscope, for comparison.
 
 DEC stated a beam spot size of 0.030 inches, which works out to about 2 pixels on the original CRT.
-T30dpy uses a simple rectangle ranging of 3 pixels square.
+T30dpy uses a simple rectangle of 3 pixels square for the lower intensities with more dots added
+for hight ones.
 That is a slight exaggeration but again needed to try to get an LCD to look close to the CRT.
 
 Provision exists to vary the rectangle size by intensity, but from experiments it does not seem to be necessary.
@@ -80,29 +81,37 @@ No GL libraries are needed.
 
 It uses a streaming texture for composing the dots which is then passed to the standard renderer for display.
 
-On startup, it computes the alpha values needed at each step in the aging for both phosphors to follow the proper
-power law decay. The decay parameters are set so that the secondary phosphor drops to 10% of its initial intensity in
-400 milliseconds.
-
+The decay time of a displayed point is based on time from when a point is initially displayed.
 256 intensity steps are used occurring at 33.33 millsecond intervals, a frame rate of 30 frames per second.
 Thus, the total aging span is up to 8.4 seconds.
+
 A power law decay results in a long, low intensity tail and potentially that is simulated.
 However, since LCDs can't duplicate the true analog intensity decay of a CRT, the intensity value drops below
-what the LCD can display fairly rapidly. However, the decay is apparent.
+what the LCD can display fairly rapidly. Still, the decay is apparent and the time is proper for the phosphor.
 
-At each frame step, each phosphor color has its alpha value modified by the alpha aging determined at startup by
-the power law generator.
-Alpha blending is then done of the two colors to get the displayed SDL RGBA8888 value.
-
+On startup, the rgba values needed by SDL at each step in the aging for both phosphors
+following the proper power law decay is computed.
 Additionally, a gamma correction is made to adjust for the human eye's nonlinear response to intensity.
 Most modern displays also adjust gamma, so t30dpy's gamma can be ajusted or effectively turned off.
 
+For each possible aging time which ranges from 0-255 and for each possible pdp-1 intensity which ranges
+from 0-7, the rgba value for that combination is calculated.
+
+Each phosphor color has its alpha value modified by the alpha aging determined by
+the power law generator and the gamma correction factor.
+Alpha blending is then done of the two colors to get the displayed SDL RGBA8888 value.
+
+The decay parameters are set so that the secondary phosphor drops to 10% of its initial intensity in
+400 milliseconds.
+
+The result is kept in a 2 diminsional array, rgbaValues[pdp-1 intensity][lifetime step].
+The main display loop can then get the proper rgba value for a point with no calculations needed.
+
 A table of point data 1024 x 1024 in size, to match the Type 30 resolution, is kept.
 As points come from the host, the proper cell is marked as in use and its lifetime set to 0.
-Each frame increments the lifetime after the alpha computations are done and if the 256 step limit has been reached
-the point is marked as inactive and will no longer be drawn.
+Each frame increments the lifetime after the rgba value is selected and if the 256 step limit has been reached
+or the rgba value is 0, the point is marked as inactive and will no longer be drawn.
 
-A point is inactivated after its intensity falls to 0.
 In practice, the primary value goes to 0 in a relatively few frames, the secondary trails off slowly
 as you would expect.
 
@@ -137,7 +146,7 @@ However, modern monitors also do gamma corrections, so the two might interact.
 The gamma that t30dpy uses can be changed via the command line or in the configuration file.
 Values are generally 1.0 or less.
 1.0 effectively removes any gamma correction, smaller values boost the intensity of dimmer points.
-Values greater than 1.0 diminish the intensity of dimmer points, and can cause the decay trails to disappear.
+Values greater than 1.0 greatly diminish the intensity of dimmer points, and can cause the decay trails to disappear.
 
 Experiment to see what works for you and your display.
 

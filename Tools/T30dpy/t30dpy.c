@@ -4,7 +4,7 @@
  * The major differences are:
  * The color p7sim displayed was not correct for a p7 phosphor, the initial spot was too white.
  * The yellow phosphor decay time was too long.
- * See initializePhosphors() below for more details.
+ * See initializeRgbas() below for more details.
  * The increase in dot size with higher intensities to mimic beam spread was far too much.
  * Finally, p7sim was complex and an immense cpu hog. This version generally uses a fraction as much cpu.
  * It is a pure SDL2 application, no GL, which has benefits and drawbacks. SDL3 would be better, but it's
@@ -22,6 +22,10 @@
  *
  * The variable dot size is handled by drawing a sequence of dots for each intensity.
  *
+ * For maximum efficiency, all of the possible SDL rgba values we need are precomputed in initializeRgbas()
+ * which results in no floating point calculations being done at all (by this code, at least)
+ * while running in the display loop.
+ *
  * Author - Bill Ezell, wje
  * This can be freely used, modified, whatever. Please just keep the attribution to me.
  *
@@ -32,6 +36,7 @@
  *    adjust default gamma to match linear intensity to human-perceived intensity,
  *    modify dot-size adjustment for best appearance,
  *    add config file for various settings
+ * 26-May-2026 wje precompute all possible rgba values, completely avoids floating point calcs while running
 */
 
 #include <stdio.h>
@@ -91,16 +96,12 @@
 #define INDEXTOX(i) ((i) / 1024)
 #define INDEXTOY(i) ((i) & 1023)
 #define XYTOPTR(base, pitch, x, y) (uint32_t *)((base) + ((y) * (pitch)) + (x * sizeof(uint32_t)))
-#define APPLYGAMMA(alpha, gamma) (int)(powf((float)(alpha) / 255.0f, gamma) * 255.0f);
+#define APPLYGAMMA(alpha) (int)(powf((float)(alpha) / 255.0f, gammaCorrection) * 255.0f);
 
 #define FRAMETIME 33333333      // nanoseconds between frames, this is 30 fps
 
 typedef unsigned char byte;
-
-char *hostNameP;
-int portNum;
-uint64_t totalPoints;
-uint64_t receivedPoints;
+typedef uint32_t Rgba;
 
 // The description of a point to display.
 // It contains the values to compute the intensity over time for the two phospors,
@@ -108,42 +109,42 @@ uint64_t receivedPoints;
 // The lifetime field is used to select the alpha for the decay interval and ranges from 0-255.
 // The phosphors decay in intensity by power-law decay, not exponential decay.
 // The intensity field ranges from 0-7 and is used to scale the alpha values, 0 being dimmest, 7 brightest.
+// In the actual display loop, precomputed values are used and are selected by the combination
+// of intensity and lifetime.
 typedef struct {
     byte valid;
     byte intensity;
     int lifetime;
 } Point, *PointP;
 
-Point pointData[NUMPOINTS];      // where all the data lives
+Point pointData[NUMPOINTS];     // where all the data lives
+// Th precomputed rgba values for each possibe pdp-1 intensity and internal time step.
+Rgba rgbaValues[8][256];
 
-bool doLinear = LINEAR;
-bool doVsync = VSYNC;
-float gammaCorrection = GAMMA;
+int pdp1FD;
+int portNum;
+char *hostNameP;
+
 int blueHold = BLUEHOLD;
 int yellowDefer = YELLOWDEFER;
 int lowCutoff = LOWCUTOFF;
+bool quit = false;
+bool doLinear = LINEAR;
+bool doVsync = VSYNC;
+float gammaCorrection = GAMMA;
 
-// Map the passed intensity levels 0-7 to the base display intensity levels.
-// This map is computed along with the alphas in initializeAlphas().
-//byte intensityMap[] = {32, 64, 96, 128, 160, 192, 224, 255};
-byte intensityMap[8];
-
-int pdp1FD;
+uint64_t totalPoints;
+uint64_t receivedPoints;
 _Atomic int numPoints;
 unsigned droppedPoints;
 
-bool quit = false;
-
-// We precompute these values, the index is the time from when the point was first displayed, 0-255
-byte blueAlphas[256];
-byte yellowAlphas[256];
 SDL_PixelFormat *pixelFormatP;
 
 int openPort(char *hostNameP, int port);
 uint32_t blend(int srcR, int srcG, int srcB, int srcA, int destR, int destG, int destB, int destA);
 uint64_t now(void);
 void *reader(void *argP);
-void initializeAlphas(byte blue[], byte yellow[]);
+void initializeRgbas(void);
 void setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y);
 void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity, int lifetime);
 void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
@@ -160,7 +161,6 @@ int opt;
 int x, y;
 int blueAlpha, yellowAlpha;
 int intensity;
-int lowcutoff;
 int penx, peny;
 int pitch;
 bool border;
@@ -282,8 +282,10 @@ pthread_attr_t tattr;
     pixelFormatP = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA8888);
     rgbaBlack = SDL_MapRGBA(pixelFormatP, 0, 0, 0, 0);
      
-    // We also precomupute the alpha values over time
-    initializeAlphas(blueAlphas, yellowAlphas);
+    // The cutoff point has to be gamma adjusted to align with the gamma adjusted rgba values.
+    lowCutoff = APPLYGAMMA(lowCutoff);
+    // Precomupute the possible rgba values over time.
+    initializeRgbas();
 
     // An async thread is used to read incoming data.
     // Lightpen updates are done in the main thread during the display update cycle.
@@ -296,7 +298,6 @@ pthread_attr_t tattr;
 
     // display the screen
     startTime = lastTime = now();
-    lowcutoff = APPLYGAMMA(lowCutoff, gammaCorrection);
 
     SDL_ShowCursor(SDL_DISABLE);
 
@@ -400,6 +401,11 @@ pthread_attr_t tattr;
             x = INDEXTOX(i);
             y = 1023 - INDEXTOY(i);  // sdl 0 is top of screen, not bottom
 
+            // Yes, we need to do this.
+            // The simulated beam spread writes multiple pixels per dot, which are not tracked as
+            // Points and hence would not get aged out.
+            // If not cleared, they would stay forever.
+            // It's fine to clear them every time, because they will be rewritten if the dot is still active.
             if( pointP->valid == 0 )
             {
                 pixelP = XYTOPTR(pixels, pitch, x, y);
@@ -407,52 +413,18 @@ pthread_attr_t tattr;
                 continue;
             }
 
-            // Fadout is done by adjusting the alphas based on time using the precomputed alpha modifiers.
-            intensity = intensityMap[pointP->intensity];
-            blueAlpha = (int)((float)intensity * ((float)blueAlphas[pointP->lifetime] / 255.0));
-            blueAlpha = APPLYGAMMA(blueAlpha, gammaCorrection);
-            yellowAlpha = (int)((float)intensity * ((float)yellowAlphas[pointP->lifetime] / 255.0));
-            yellowAlpha = APPLYGAMMA(yellowAlpha, gammaCorrection);
+            rgba = rgbaValues[pointP->intensity][pointP->lifetime];
 
-            // Yellow has a looong tailoff, so stop when it gets down to lowcutoff.
-            // Also skip adding yellow for the first yellowDefer frames so the blue will show up better.
-            if( (yellowAlpha > lowcutoff) && (pointP->lifetime >= yellowDefer) && (blueAlpha > 0) )
+            if( (rgba != 0) && (pointP->lifetime < MAXLIFETIME) )
             {
-                rgba = blend((pointP->lifetime >= blueHold)?BLUERGB:BLUEFIRSTRGB, blueAlpha, YELLOWRGB, yellowAlpha);
-            }
-            else if( blueAlpha > 0 )
-            {
-                // The first BLUEHOLD frames use an enhanced blue.
-                // Remember that the real thing only intensified the screen dot for 5 usecs for the Type 30,
-                // and only 0.5 usecs for the Type 340, and in both cases much brighter than a modern LCD
-                // can replicate.
-                // This bit makes sure the initial display is visible.
-                rgba = SDL_MapRGBA(pixelFormatP, (pointP->lifetime >= BLUEHOLD)?BLUERGB:BLUEFIRSTRGB, blueAlpha);
-            }
-            else if( yellowAlpha > lowcutoff )
-            {
-                // At this point, the blue has totally decayed, no reason to alpha blend now.
-                rgba = SDL_MapRGBA(pixelFormatP, YELLOWRGB, yellowAlpha);
-            }
-            else
-            {
-                rgba = 0;
-            }
-
-            if( rgba )
-            {
-                ++totalPoints;
                 drawPoint(pixels, pitch, rgba, x, y, pointP->intensity, pointP->lifetime);
-            }
-
-            if( (yellowAlpha <= lowcutoff) || (pointP->lifetime >= MAXLIFETIME) )
-            {
-                pointP->valid = 0;                  // done with this onw
-                --numPoints;
+                pointP->lifetime++;
+                ++totalPoints;
             }
             else
             {
-                pointP->lifetime++;
+                pointP->valid = 0;                  // done with this now
+                --numPoints;
             }
         }
 
@@ -594,20 +566,20 @@ static bool skipOne = false;
     }
 }
 
-// Precompute the decay alphas and the 8 intensity levels.
+// Precompute the rgba values used for displaying points.
+// There are only 256 possible rgba values for each pdp-1 intensity,
+// one per each lifetime value which ranges from 0-255.
 void
-initializeAlphas(byte blue[], byte yellow[])
+initializeRgbas()
 {
-int i;
+int i, j;
+int intensity;
+byte blueAlpha, yellowAlpha;
 float delta;
+Rgba rgba;
 
-    // Initialize the intensity map in linear increments from the base value
+    // The internal 0-255 intensity is in linear increments from the base value.
     delta = (float)(255 - MININTENSITY) / 7.0f;
-
-    for( i = 0; i < 8; ++i )
-    {
-        intensityMap[i] = MININTENSITY + (int)((float)i * delta);
-    }
 
     // The blue phosphor had a 25-75 microsecond lifetime to 10% brightness.
     // That is far less than the frame rate and wouldn't be visible, so it is strecthed,
@@ -615,10 +587,46 @@ float delta;
     // The yellow phosphor had a 400 milisecond lifetime to 10% brightness.
     // At the set 30fps, the decay alpha gives an accurate decay time.
     // This data from the RCA Phosphors TPM-1508A technical note.
-    for( i = 0; i < 256; ++i )
+    // Fadout is done by adjusting the blue and yellow alphas based on lifetime.
+    // 
+    for( i = 0; i < 8; ++i )         // for each pdp1 intensity level
     {
-        blue[i] = (int)(powf((float)i+1, -BLUEDECAYALPHA) * 255.0f);
-        yellow[i] = (int)(powf((float)i+1, -YELLOWDECAYALPHA) * 255.0f);
+        intensity =  MININTENSITY + (int)((float)i * delta);
+
+        for( j = 0; j < 256; ++j )    // for each lifetime value
+        {
+            blueAlpha = (int)(powf((float)j+1, -BLUEDECAYALPHA) * (float)intensity);
+            blueAlpha = APPLYGAMMA(blueAlpha);
+            yellowAlpha = (int)(powf((float)j+1, -YELLOWDECAYALPHA) * (float)intensity);
+            yellowAlpha = APPLYGAMMA(yellowAlpha);
+
+            // Yellow has a looong tailoff, so stop when it gets down to lowCutoff.
+            // Also skip adding yellow for the first yellowDefer frames so the blue will show up better.
+            if( (yellowAlpha > lowCutoff) && (j >= yellowDefer) && (blueAlpha > 0) )
+            {
+                rgba = blend((j >= blueHold)?BLUERGB:BLUEFIRSTRGB, blueAlpha, YELLOWRGB, yellowAlpha);
+            }
+            else if( blueAlpha > 0 )
+            {
+                // The first BLUEHOLD frames use an enhanced blue.
+                // Remember that the real thing only intensified the screen dot for 5 usecs for the Type 30,
+                // and only 0.5 usecs for the Type 340, and in both cases much brighter than a modern LCD
+                // can replicate.
+                // This bit makes sure the initial display is visible.
+                rgba = SDL_MapRGBA(pixelFormatP, (j >= BLUEHOLD)?BLUERGB:BLUEFIRSTRGB, blueAlpha);
+            }
+            else if( yellowAlpha > lowCutoff )
+            {
+                // At this point, the blue has totally decayed, no reason to alpha blend now.
+                rgba = SDL_MapRGBA(pixelFormatP, YELLOWRGB, yellowAlpha);
+            }
+            else
+            {
+                rgba = 0;
+            }
+
+            rgbaValues[i][j] = rgba;
+        }
     }
 }
 

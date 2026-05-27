@@ -189,8 +189,6 @@ while true; do
 
 		# the macro1_1 cross-compiler:
 		gcc $INSTALLDIR/src/macro/macro1_1.c -o $INSTALLDIR/src/macro/macro1_1
-		# monas cross assembler:
-		make -C $INSTALLDIR/src/monas
 		# the usb_paper_tape tool:
 		make -C $INSTALLDIR/src/usb_paper_tape
 		# The disassembler been renamed, get rid of the old one
@@ -208,7 +206,6 @@ while true; do
 
                 ln -sf $INSTALLDIR/src/macro/macro1_1 $INSTALLDIR/bin/macro1_1
                 ln -sf $INSTALLDIR/src/blincolnlights/tools/mkptyfio_telnet $INSTALLDIR/bin/mkptyfio_telnet
-                ln -sf $INSTALLDIR/src/monas/monas $INSTALLDIR/bin/monas
                 ln -sf $INSTALLDIR/src/p7sim/p7sim $INSTALLDIR/bin/p7sim
                 ln -sf $INSTALLDIR/src/p7sim/p7simES $INSTALLDIR/bin/p7simES
                 ln -sf $INSTALLDIR/src/blincolnlights/vpanel_pdp1/panel_pdp1 $INSTALLDIR/bin/vpanel_pdp1
@@ -249,7 +246,6 @@ while true; do
             sudo ln -sf $INSTALLDIR/bin/decode_fiodec /usr/local/bin/decode_fiodec
 	    sudo ln -sf $INSTALLDIR/bin/tape_visualizer /usr/local/bin/tape_visualizer
 	    #
-	    sudo ln -sf $INSTALLDIR/bin/monas /usr/local/bin/monas
 	    sudo ln -sf $INSTALLDIR/bin/macro1_1 /usr/local/bin/macro1_1
 	    sudo ln -sf $INSTALLDIR/bin/macro1_1 /usr/local/bin/macro1
 	    sudo ln -sf $INSTALLDIR/bin/disassemble /usr/local/bin/disassemble

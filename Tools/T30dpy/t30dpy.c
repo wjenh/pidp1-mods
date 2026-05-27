@@ -114,7 +114,7 @@ typedef uint32_t Rgba;
 typedef struct {
     byte valid;
     byte intensity;
-    int lifetime;
+    uint16_t lifetime;
 } Point, *PointP;
 
 Point pointData[NUMPOINTS];     // where all the data lives
@@ -134,6 +134,7 @@ bool doVsync = VSYNC;
 float gammaCorrection = GAMMA;
 
 uint64_t totalPoints;
+uint64_t totalPixels;
 uint64_t receivedPoints;
 _Atomic int numPoints;
 unsigned droppedPoints;
@@ -187,6 +188,7 @@ SDL_Texture *texture;
 
 pthread_t thread;
 pthread_attr_t tattr;
+struct timespec sleepTime;
  
     hostNameP = DEFAULTHOST;
     portNum = DEFAULTPORT;          // and display 0 on the pidp-1
@@ -196,6 +198,7 @@ pthread_attr_t tattr;
     penDown = false;
     doTiming = false;
     totalPoints = 0;
+    totalPixels = 0;
     receivedPoints = 0;
     frameMisses = 0;
     frameDelay = 0;
@@ -372,7 +375,9 @@ pthread_attr_t tattr;
 
         if( deltaTime < FRAMETIME )
         {
-            usleep((FRAMETIME - deltaTime)/1000);
+            sleepTime.tv_sec = 0;
+            sleepTime.tv_nsec = FRAMETIME - deltaTime;
+            nanosleep(&sleepTime, NULL);
         }
         else if( deltaTime > FRAMETIME )
         {
@@ -442,6 +447,7 @@ pthread_attr_t tattr;
         printf("%u frame late events, max delay %u msecs.\n", frameMisses, frameDelay/1000000);
         printf("%lu received points, %u dropped points.\n", receivedPoints, droppedPoints);
         printf("%lu received points/sec.\n", receivedPoints/lastTime);
+        printf("%lu total pixels drawn.\n", totalPixels);
     }
 
     close(pdp1FD);
@@ -692,10 +698,12 @@ SDL_Rect rect;
         //setPixel(pixels, pitch, rgba, x-2, y+2);
     case 5:
         setPixel(pixels, pitch, rgba, x+2, y-2);
+        ++totalPixels;
     case 4:
     case 3:
     case 2:
         setPixel(pixels, pitch, rgba, x+2, y+2);
+        ++totalPixels;
     case 1:
     case 0:
         rect.x = x - 1;
@@ -711,6 +719,7 @@ SDL_Rect rect;
         for( j = 0; j < rect.w; ++j )
         {
             setPixel(pixels, pitch, rgba, rect.x + j, rect.y + i);
+            ++totalPixels;
         }
     }
 }

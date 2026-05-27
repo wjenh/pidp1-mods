@@ -4,9 +4,35 @@ This document describes the t30dpy simulated Type 30 display.
 
 This is version 1.3
 
-Edit date 26-May-2026\
-Add config file and more details about gammas
+Edit date 28-May-2026\
+Move usage to top
 
+## Usage
+
+**t30dpy** [*-b*] [*-g gamma*] [*-l*] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
+
+```
+b - start borderless
+g gamma - set the gamma value, a floating point value usually in the range 0.4 to 1.0
+l - ask SDL to use linear scaling instead of nearest-neighbor
+s size - set the screen size, >= 256, default is 1024
+p port - the port to connect to, default is 3400
+t - accumulate statistics, printed on exit
+v - ask SDL to use vsync for frame synchronization
+hostname - the host to connect to, defaults to localhost
+```
+The defaults can be overridden in the configuration file.
+
+If dots look too saturated, change the gamma setting in the configuration file, see below.\
+The default setting is 0.4545, try 0.6. Higher numbers reduce the saturation but also dim the yellow fadeout faster.
+
+You can also reduce the bluehold setting.\
+The default is 5, try reducing it to 3. This will use the true color of the blue phosphor sooner.
+The initial one is brighter,
+
+While running the F11 key or the *f* character key toggles between regular and full screen mode.\
+The *b* character key toggles between a bordered and borderless window.\
+The *escape* key exits, as does the window close icon on the window title bar.
 ## What is it?
 
 T30dpy is a replacement for the p7sim and p7simES display simulators for the pidp-1.
@@ -15,7 +41,8 @@ It is a completely new implementation with no common code.
 It allows a screen size to be specied at startup, from 256x256 up to whatever your machine and SDL can manage.
 It also supports borderless and full-screen operation and supports the pseudo-lightpen via the mouse.
 
-It will work with any pidp-1 version, or with anything that uses the same display protocol.
+It will work with any pidp-1 version, or with anything that uses the same display protocol.\
+It is highly configurable in the code and via a configuration file and command line switches.
 
 ## Why have it?
 
@@ -69,7 +96,7 @@ Take a look at any real CRT with similar resolution, such as an oscilloscope, fo
 
 DEC stated a beam spot size of 0.030 inches, which works out to about 2 pixels on the original CRT.
 T30dpy uses a simple rectangle of 3 pixels square for the lower intensities with more dots added
-for hight ones.
+for higher ones.
 That is a slight exaggeration but again needed to try to get an LCD to look close to the CRT.
 
 Provision exists to vary the rectangle size by intensity, but from experiments it does not seem to be necessary.
@@ -104,8 +131,9 @@ Alpha blending is then done of the two colors to get the displayed SDL RGBA8888 
 The decay parameters are set so that the secondary phosphor drops to 10% of its initial intensity in
 400 milliseconds.
 
-The result is kept in a 2 diminsional array, rgbaValues[pdp-1 intensity][lifetime step].
-The main display loop can then get the proper rgba value for a point with no calculations needed.
+The results are all computed at startup and kept in a 2 diminsional array,
+*rgbaValues[pdp-1 intensity][lifetime step]*.
+The main display loop can then get the proper rgba value for a point with no floating point calculations needed.
 
 A table of point data 1024 x 1024 in size, to match the Type 30 resolution, is kept.
 As points come from the host, the proper cell is marked as in use and its lifetime set to 0.
@@ -127,12 +155,13 @@ See the source code for much more information, it is well commented and structur
 The texture that is drawn to is always 1024x1024, but the window that the texture is rendered to is whatever
 size was specified, and in full screen mode, whatever size that is.
 
-Unfortunately, SDL2 sometimes doesn't do a very good job of rendering pixels when the window size is less
-than the texture size, it depends on the size.
-But, that doesn't seem to always be the case.
+Unfortunately, SDL2 sometimes doesn't do a very good job of rendering pixels when the window size doesn't
+match the texture size, it depends on the size and seems to be generally worse for screnn sizes lexx
+that 1024x1024.
+But, that isn't always the case.
 
 The code uses nearest-neighbor texture scaling by default, but if that doesn't give good results for a given
-screen size, linear scaling can be used, which is actually bilinear scaling.
+screen size linear scaling can be used, which is actually bilinear scaling.
 Bilinear also gives a smoother, softer appearance to dots when scaling occurs.
 
 ## Gamma
@@ -141,7 +170,8 @@ The human eye does not respond to intensity in a linear fashion.
 However, the 8 intensity levels that are supported are internally a linear progression.
 To make this match what the eye perceives as equal steps, a gamma correction is applied.
 This is another power-law adjustment using a power exponent of 0.4545, the standard value.
-However, modern monitors also do gamma corrections, so the two might interact.
+Some modern monitors also do gamma corrections as do some display drivers,
+so these might interact with the t30dpy setting.
 
 The gamma that t30dpy uses can be changed via the command line or in the configuration file.
 Values are generally 1.0 or less.
@@ -189,36 +219,15 @@ T30dpy can also report some timing statistics.
 Running type340stress, it is rendering over 5 million dots per second without any lost data.
 Note that these are Type 30 dots, the number of pixels being rendered is over 4 times as many.
 
-Tests have also been run on a Raspberry Pi 5 with similar results.
-However, tyoe30dpy seems to get resheduled more often, not clear why.
-P7sim uses much more memory.
-
-## Usage
-
-Finally.
-
-**type30dpy** [*-b*] [*-g gamma*] [*-l*] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
-
-```
-b - start borderless
-g gamma - set the gamma value, a floating point value usually in the range 0.4 to 1.0, but any value is allowed
-l - ask SDL to use linear scaling instead of nearest-neighbor
-s size - set the screen size, >= 256, default is 1024
-p port - the port to connect to, default is 3400
-t - accumulate statistics, printed on exit
-v - ask SDL to use vsync for frame synchronization
-hostname - the host to connect to, defaults to localhost
-```
-The defaults can be overridden in the configuration file.
-
-While running the F11 key or the *f* character key toggles between regular and full screen mode.\
-The *b* character key toggles between a bordered and borderless window.\
-The *escape* key exits, as does the window close icon on the window.
+Tests have also been run on a Raspberry Pi 5 with similar results.\
+On a Pi 4, performance differences are not as extreme.
+This seems to be because the gpu on the Pi 4 is far less capable than that on the Pi 5
+and the SDL library does not optimize its use as well.
 
 ## Settings that can be changed in code
 
 These are in the source code, change with care, or just to play around.
-The code values are a good approximation of the original display.
+The code default values are a good approximation of the original display.
 Not all are listed here, just the ones that are useful for display appearance.
 
 | Name             | Default     | Action                                                   |
@@ -252,7 +261,7 @@ Lowercase change names are also command-line settable.
 | port        | port        |
 | vsync       | vsync       |
 | linear      | linear      |
-| gamma       | GAMMA       |
+| gamma       | gamma       |
 | bluehold    | BLUEHOLD    |
 | yellowdefer | YELLOWDEFER |
 | cutoff      | LOWCUTOFF   |

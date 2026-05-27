@@ -28,6 +28,7 @@
  * 21/03/2026 wje - Print i and C for unknown IOTs
  * 29/03/2026 wje - Exclude symbolic name for iots and 1D instructions not supported by macro if in macro mode
  * 31/03/2026 wje - Add instruction type flags
+ * 27/05/2026 wje - Fix extraneous comments about decimal in am1 output
  *
  */
 #include <stdlib.h>
@@ -317,10 +318,6 @@ Special *sP;
     case IS_LAW:
         // The versions of macro1 floating arund are broken, they don't hande the 'law -n' syntax properly.
         resultP += sprintf(resultP,"%s %s%s", instructionP->name, (indirect)?"i ":"", operandStrP);
-        if( !asMacro )
-        {
-            resultP += sprintf(resultP," (%d dec)", (indirect)?-operand:operand);
-        }
         break;
 
     case IS_SHIFT:
@@ -366,7 +363,7 @@ Special *sP;
                 if( tmp2 != 0 )
                 {
                     // only if we'e actually shifting
-                    resultP += sprintf(resultP,asMacro?" %ds":" %d (decimal)", tmp2);
+                    resultP += sprintf(resultP," %ds", tmp2);
                 }
             }
         }

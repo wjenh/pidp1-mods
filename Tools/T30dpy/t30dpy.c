@@ -37,6 +37,7 @@
  *    modify dot-size adjustment for best appearance,
  *    add config file for various settings
  * 26-May-2026 wje precompute all possible rgba values, completely avoids floating point calcs while running
+ * 31-May-2026 wje add Mike Chaoponis mode, optimize idle time
 */
 
 #include <stdio.h>
@@ -57,8 +58,6 @@
 #define READBUFSIZE 512         // size of the buffer we read from the server into, bytes
 
 #define NUMPOINTS 1024*1024     // Total number of points on screen
-#define KEEPPOINTS NUMPOINTS    // Total number of points that can be active, t30dpy can handle them all
-
 #define MININTENSITY 16         // Intensity 0 will be this. The rest are linearly scaled to 255 for level 7
 
 // The alpha values for the color intensity over time are computed using a power law.
@@ -98,7 +97,7 @@
 #define XYTOPTR(base, pitch, x, y) (uint32_t *)((base) + ((y) * (pitch)) + (x * sizeof(uint32_t)))
 #define APPLYGAMMA(alpha) (int)(powf((float)(alpha) / 255.0f, gammaCorrection) * 255.0f);
 
-#define FRAMETIME 33333333      // nanoseconds between frames, this is 30 fps
+#define FRAMETIME 33333333L      // nanoseconds between frames, this is 30 fps
 
 typedef unsigned char byte;
 typedef uint32_t Rgba;
@@ -128,18 +127,22 @@ char *hostNameP;
 int blueHold = BLUEHOLD;
 int yellowDefer = YELLOWDEFER;
 int lowCutoff = LOWCUTOFF;
+unsigned int droppedPoints;
+
 bool quit = false;
 bool doLinear = LINEAR;
 bool doVsync = VSYNC;
+bool mikecMode = false;
+bool havePoints = false;
+
 float gammaCorrection = GAMMA;
 
+uint32_t rgbaBlack;
 uint64_t totalPoints;
 uint64_t totalPixels;
 uint64_t receivedPoints;
-_Atomic int numPoints;
-unsigned droppedPoints;
 
-SDL_PixelFormat *pixelFormatP;
+SDL_PixelFormat *pixelFormatP;      // We use RGBA8888, set below
 
 int openPort(char *hostNameP, int port);
 uint32_t blend(int srcR, int srcG, int srcB, int srcA, int destR, int destG, int destB, int destA);
@@ -147,7 +150,7 @@ uint64_t now(void);
 void *reader(void *argP);
 void initializeRgbas(void);
 void setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y);
-void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity, int lifetime);
+void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity);
 void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
 void loadConfig(void);
 void usage(void);
@@ -179,7 +182,6 @@ PointP pointP;
 uint8_t *pixels;
 uint32_t *pixelP;
 uint32_t rgba;
-uint32_t rgbaBlack;
 
 SDL_Event event;
 SDL_Window *window;
@@ -215,7 +217,11 @@ struct timespec sleepTime;
             break;
 
         case 'l':
-            doLinear = true;  // SDL linear scaling, else nearest neighbor
+            doLinear = true;     // SDL linear scaling, else nearest neighbor
+            break;
+
+        case 'm':
+            mikecMode = true;    // ok Mike, you wanted it
             break;
 
         case 'n':
@@ -227,7 +233,7 @@ struct timespec sleepTime;
             break;
 
         case 's':
-            i = atoi(optarg);    // screen is n * n big
+            i = atoi(optarg);   // screen is n * n big
             if( (i >= 256) )
             {
                 winSize = i;
@@ -270,8 +276,12 @@ struct timespec sleepTime;
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winSize, winSize,
             ((!border)?SDL_WINDOW_BORDERLESS:0) | SDL_WINDOW_ALLOW_HIGHDPI);
 
+    // Create the renderer, set to black and display.
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | (doVsync)?SDL_RENDERER_PRESENTVSYNC:0 );
     SDL_RenderSetLogicalSize(renderer, 1024, 1024);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+    SDL_RenderClear(renderer);
+    SDL_RenderPresent(renderer);
 
     // Create a texture, we stream our points to it.
     // Regardless of the window size, the logical size is always 1024
@@ -285,8 +295,6 @@ struct timespec sleepTime;
     pixelFormatP = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA8888);
     rgbaBlack = SDL_MapRGBA(pixelFormatP, 0, 0, 0, 0);
      
-    // The cutoff point has to be gamma adjusted to align with the gamma adjusted rgba values.
-    lowCutoff = APPLYGAMMA(lowCutoff);
     // Precomupute the possible rgba values over time.
     initializeRgbas();
 
@@ -395,22 +403,25 @@ struct timespec sleepTime;
             cursorTime = 0;
         }
 
+        if( !havePoints )
+        {
+            continue;           // If we have no points, don't do any window processing
+        }
+
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
         SDL_RenderClear(renderer);
 
         // Go thru the point list, handle each
         SDL_LockTexture(texture, NULL, (void *)(&pixels), &pitch);
 
+        havePoints = false;
         for( pointP = pointData, i = 0; i < NUMPOINTS; ++i, ++pointP )
         {
             x = INDEXTOX(i);
             y = 1023 - INDEXTOY(i);  // sdl 0 is top of screen, not bottom
 
-            // Yes, we need to do this.
-            // The simulated beam spread writes multiple pixels per dot, which are not tracked as
-            // Points and hence would not get aged out.
-            // If not cleared, they would stay forever.
-            // It's fine to clear them every time, because they will be rewritten if the dot is still active.
+            // It's fine to clear these every time, because they will be rewritten if the dot is still active.
+            // No reason to go thru the rest of the code.
             if( pointP->valid == 0 )
             {
                 pixelP = XYTOPTR(pixels, pitch, x, y);
@@ -420,16 +431,16 @@ struct timespec sleepTime;
 
             rgba = rgbaValues[pointP->intensity][pointP->lifetime];
 
-            if( (rgba != 0) && (pointP->lifetime < MAXLIFETIME) )
+            if( (rgba != rgbaBlack) && (pointP->lifetime < MAXLIFETIME) )
             {
-                drawPoint(pixels, pitch, rgba, x, y, pointP->intensity, pointP->lifetime);
+                drawPoint(pixels, pitch, rgba, x, y, pointP->intensity);
                 pointP->lifetime++;
+                havePoints = true;
                 ++totalPoints;
             }
             else
             {
                 pointP->valid = 0;                  // done with this now
-                --numPoints;
             }
         }
 
@@ -547,12 +558,6 @@ static bool skipOne = false;
                 continue;
             }
 
-            if( numPoints > KEEPPOINTS )
-            {
-                ++droppedPoints;
-                continue;                   // drop it
-            }
-
             ++receivedPoints;
 
             x = cmd & 01777;
@@ -560,14 +565,10 @@ static bool skipOne = false;
             intensity = (cmd >> 20) & 7;    // the standard display intensity, 0-7
 
             pointP = &pointData[XYTOINDEX(x, y)];
-            if( !pointP->valid )
-            {
-                ++numPoints;
-            }
-
             pointP->intensity = intensity;
             pointP->lifetime = 0;
             pointP->valid = 1;
+            havePoints = true;
         }
     }
 }
@@ -628,7 +629,7 @@ Rgba rgba;
             }
             else
             {
-                rgba = 0;
+                rgba = rgbaBlack;
             }
 
             rgbaValues[i][j] = rgba;
@@ -674,6 +675,7 @@ setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y)
     }
 
     *XYTOPTR(pixels, pitch, x, y) = rgba;
+    ++totalPixels;
 }
 
 // Spread a point to simulate beam spread on a crt.
@@ -682,49 +684,41 @@ setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y)
 // Lifetime is passed to add the ability to dither the position although tests show that doesn't
 // look great.
 void
-drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity, int lifetime)
+drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity)
 {
-int i, j;
-SDL_Rect rect;
+    // If in Mike C. mode, draw only a single pixel.
+    if( mikecMode )
+    {
+        setPixel(pixels, pitch, rgba, x, y);
+        return;
+    }
 
-    // Everything starts with a basic 3x3 rectangle
-
-    // Intensities add extra bits
+    // Intensities add extra bits.
+    // Max fill is a 3x3 block.
     switch( intensity )
     {
     case 7:
-        //setPixel(pixels, pitch, rgba, x-2, y-2);
     case 6:
-        //setPixel(pixels, pitch, rgba, x-2, y+2);
+        setPixel(pixels, pitch, rgba, x-1, y);
     case 5:
-        setPixel(pixels, pitch, rgba, x+2, y-2);
-        ++totalPixels;
     case 4:
+        setPixel(pixels, pitch, rgba, x, y-1);
+        setPixel(pixels, pitch, rgba, x, y+1);
     case 3:
+        setPixel(pixels, pitch, rgba, x+1, y-1);
+        setPixel(pixels, pitch, rgba, x+1, y+1);
     case 2:
-        setPixel(pixels, pitch, rgba, x+2, y+2);
-        ++totalPixels;
     case 1:
     case 0:
-        rect.x = x - 1;
-        rect.y = y - 1;
-        rect.h = 3;
-        rect.w = 3;
+        setPixel(pixels, pitch, rgba, x, y);
+        setPixel(pixels, pitch, rgba, x-1, y-1);
+        setPixel(pixels, pitch, rgba, x-1, y+1);
+        setPixel(pixels, pitch, rgba, x+1, y);
         break;
-    }
-
-    // Our version of fillRect, not provided for streaming textures
-    for( i = 0; i < rect.h; ++i )
-    {
-        for( j = 0; j < rect.w; ++j )
-        {
-            setPixel(pixels, pitch, rgba, rect.x + j, rect.y + i);
-            ++totalPixels;
-        }
     }
 }
 
-// For the real hardware, the Type 30 hardware would figure out if there was a hit
+// For the real hardware, the Type 30 would figure out if there was a hit
 // at the last drawn pixel when issuing the completion pulse,
 // but that's not possible here, let it be determined back in the pdp1 code.
 // SDL scaling in full screen mode is flaky. It preserves the aspect ratio of the renderer, so if the
@@ -876,10 +870,11 @@ char line[256];
             }
             else if( !strcmp(line, "linear") )
             {
-                if( !strcmp(cP, "true") || (*cP == 'y') )
-                {
-                    doLinear = true;
-                }
+                doLinear = (!strcmp(cP, "true") || (*cP == 'y'));
+            }
+            else if( !strcmp(line, "mikecmode") )
+            {
+                mikecMode = (!strcmp(cP, "true") || (*cP == 'y'));
             }
             else if( !strcmp(line, "gamma") )
             {
@@ -968,9 +963,10 @@ char tmpstr2[4096];
 void
 usage()
 {
-    fprintf(stderr, "usage: t30dpy [-l] [-n] [-t] [-v] [-g gamma] [-p port] [-s size] [host]\n");
+    fprintf(stderr, "usage: t30dpy [-l] [-m] [-n] [-t] [-v] [-g gamma] [-p port] [-s size] [host]\n");
     fprintf(stderr, "where:\n");
     fprintf(stderr, "-l, use SDL linear scaling, else nearest neighbor\n");
+    fprintf(stderr, "-m, Mike C mode, see the documentation\n");
     fprintf(stderr, "-n, start with no border\n");
     fprintf(stderr, "-t, accumulate timing data, display on exit\n");
     fprintf(stderr, "-v, enable SDL vsync on render\n");

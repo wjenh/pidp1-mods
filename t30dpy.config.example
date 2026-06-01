@@ -12,7 +12,7 @@ host=localhost
 port=3400
 
 # Ask SDL to use vsync, it might or might not
-vsync=yes
+vsync=no
 # Ask SDL to use linear scaling, it might or might not
 linear=no
 
@@ -48,3 +48,6 @@ yellowdefer=3
 # is no longer displayed. Note that this value is gamma-corrected before the comparison is made,
 # which keeps it logically the same across different gamma settings.
 cutoff=5
+
+# Read the documentation for this one.
+mikecmode=false

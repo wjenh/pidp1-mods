@@ -4,17 +4,18 @@ This document describes the t30dpy simulated Type 30 display.
 
 This is version 1.3
 
-Edit date 28-May-2026\
-Move usage to top
+Edit date 31-May-2026\
+MikeC mode added
 
 ## Usage
 
-**t30dpy** [*-b*] [*-g gamma*] [*-l*] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
+**t30dpy** [*-b*] [*-g gamma*] [*-l*] [-m] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
 
 ```
 b - start borderless
 g gamma - set the gamma value, a floating point value usually in the range 0.4 to 1.0
 l - ask SDL to use linear scaling instead of nearest-neighbor
+l - use Mike C mode, see below
 s size - set the screen size, >= 256, default is 1024
 p port - the port to connect to, default is 3400
 t - accumulate statistics, printed on exit
@@ -100,6 +101,23 @@ for higher ones.
 That is a slight exaggeration but again needed to try to get an LCD to look close to the CRT.
 
 Provision exists to vary the rectangle size by intensity, but from experiments it does not seem to be necessary.
+
+## Mike C mode?
+
+Say what?
+
+We all owe Mike Cheponis a debt of gratitiude.
+He is responsible for making the last running PDP-1, now at the Computer History Museum in California, a reality.
+Talking with him, he described the issues with the original P7sim Type 30 emulation (and the hardware front panel
+driver).
+Some of the issues are addressed as part of the core t30dpy functionality,
+such as the simulated beam spread being far too much.
+
+This mode is very specific and most people probably won't want to use it.
+It completely disables simulated beam spread. A point is exactly one pixel in a 1024 by1024 screen, no imperfect
+beam spread simulation, even though t30dpy does a better job at trying to simulate it.
+
+However, if you want to see the spaceships in spacewar with the actual detail they were programmed with, give it a try.
 
 ## Implementation
 

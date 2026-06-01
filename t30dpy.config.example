@@ -11,20 +11,27 @@ host=localhost
 # Set the port to use, overidden by the command line
 port=3400
 
-# Ask SDL to use vsync, it might or might not
+# Ask SDL to use vsync, it might or might not.
+# If supported, it can reduce tearing of large rectangles that are rendered at hight speed, such as those
+# produced by the Type 340 vector display.
 vsync=no
-# Ask SDL to use linear scaling, it might or might not
+# Ask SDL to use linear scaling, it might or might not.
+# It can significantly improve scaling artifacts introduced by SDL, but it depends upon the underlying
+# graphics processor and SDL's implementation (or not) of support fot it.
+# It can impact processor load, again depending upon SDL.
 linear=no
 
 # The eye does not respond linearly to intensity.
 # This adjusts the intensity to correct for that.
 # Smaller values boost lower intensities, larger values decrease lower intensites.
 # Values greater than 1.0 will completely suppress low intensities and reduce high intensities, not useful
-# The default value is the standard correction factor.
-# Also, monitors might also do gamma correction, so this value might need changing depending upon the monitor.
+# The default value of 0.4545 is the standard correction factor but can make the final tailoff of intensity
+# last too long. You might find a value close to 1.0, such as 0.9, more to your taste, experiment.
+# Also, monitors might do gamma correction thenselves, so this value might need changing depending upon the monitor.
 gamma=0.4545
 
-# The original CRT produced a very bright blue-purple spot for only about 50 microseconds.
+# The original CRT produced a very bright blue-purple spot for only about 5 microseconds, dropping to
+# 10% of its original brightness in about 50 microseconds..
 # This is impossible to actually duplicate with modern monitors because they are frame based and because
 # LCDs can't get anywhere near the original intensity.
 # Cheating is done to extend the duration of the blue phosphor and to use an initial rgb value that
@@ -44,9 +51,10 @@ yellowdefer=3
 # T30dpy uses integer values for intensity ranging from 0-255.
 # In order to prevent very small values, a cutoff is used.
 # If the intensity value falls below the cutoff, the intensity is considered to be zero and the point
+# is no longer displayed.
 # This directly affects how long the secondary fadeout lasts, higher values shorten the fadeout.
-# is no longer displayed. Note that this value is gamma-corrected before the comparison is made,
-# which keeps it logically the same across different gamma settings.
+# Too high a value leads to an abrupt cutoff of the tail.
+# The gamma setting also affects the visibility, so there is some interactiion.
 cutoff=5
 
 # Read the documentation for this one.

@@ -7,6 +7,7 @@
  * Modified by: Bill Ezell (wje) to reduce load and improve light behavior
  *
  * wje 26-Jan-26 - initial work, reformat (sorry), add timing measurement, tweak some delays and counts
+ * wje 2-Jun-26 - increase usleep in switch read from 10 usecs back to 20 usecs
  *
 */
 #include "common.h"
@@ -134,7 +135,7 @@ u32
 readRow(int a)
 {
     setAddr(a);
-    usleep(10);
+    usleep(20);
     int sw = 0777777;
 
     for(int i = 0; i < nelem(COLUMNS); i++)

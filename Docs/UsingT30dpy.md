@@ -9,10 +9,11 @@ changes to the alpha bending details
 
 ## Usage
 
-**t30dpy** [*-g gamma*] [*-l*] [-m] [-n] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
+**t30dpy** [*-g gamma*] [*-w bias*] [*-l*] [*-m*] [*-n*] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
 
 ```
 g gamma - set the gamma value, a floating point value usually in the range 0.4 to 1.0
+w bias - set the white bias, added to the r and g channels of the blue phospor to increase whiteness
 l - ask SDL to use linear scaling instead of nearest-neighbor
 m - use Mike C mode, see below
 n - start borderless
@@ -130,16 +131,18 @@ Additionally, a gamma correction is made to adjust for the human eye's nonlinear
 Most modern displays also adjust gamma, so t30dpy's gamma can be ajusted or effectively turned off.
 
 For each possible aging time which ranges from 0-255 and for each possible pdp-1 intensity which ranges
-from 0-7, the rgba value for that combination is calculated.
+from 0-7, the rgba value for that combination is calculated and adjusted by the power law decay.
 
-Each phosphor color has its alpha value modified by the alpha aging determined by
-the power law generator and the gamma correction factor.
 Alpha blending is then done of the two colors to get the displayed SDL RGBA8888 value.
+The blended alpha has its value modified by the gamma correction factor and the point displayed.
 
-Additionally, a blending factor is applied to the blue phosphor alpha to balance the blue content.
+Additionally, a white bias is applied to the blue phosphor r and g values to whiten the blue content.
 The original display is almost white because of the mixing of the blue and the yellow-green colors from
 the two phosphors, but not pure white.
-The blending factor controls how much excess blue there is during the blue decay period.
+The bias controls how much excess blue there is for the first displayed frame of a point.
+After that, the normal blending suffices.
+
+Increasing the bias makes increases the whiteness of the point.
 
 The decay parameters are set so that the secondary phosphor drops to 10% of its initial intensity in
 400 milliseconds.
@@ -177,18 +180,21 @@ The code uses nearest-neighbor texture scaling by default, but if that doesn't g
 screen size linear scaling can be used, which is actually bilinear scaling.
 Bilinear also gives a smoother, softer appearance to dots when scaling occurs.
 
-## Blend factor
+## White bias
 
 Rather than a single rgba value for a displayed point, the blue and yellow/greem phosphors are both simulated
-and than alpha-blended to get the displayed color.
+and then alpha-blended to get the displayed color.
 
-However, the blending algorithm can overemphasize the blue value, so a blending factor is used.
-This factor adjusts the blue alpha by (alpha \* blendfactor) before the two colors are blended
-to deemphasize it so that the resulting value is almost white, but with a slight bit of blue.
+However, the blending algorithm can overemphasize the blue color, so a bias factor is added to the r and g
+values for the blue color.
+This factor adjusts the blue color towards white as the bias increases and is internally limited to not
+exceed the maximum value allowed of 255.
 
-If you want more blue, which while not authentic looks pretty nice, increase the blend factor.
-A factor of 1.0 will completely suppress the yellow/green phosphor for the first frame a point is displayed.
-Decreasing it will eliminate blue.
+This is only applied to the point's first frame, then normbal blending is done.
+
+If you want more blue, which while not authentic looks pretty nice, decrease the bias.
+A bias of 0 will be a bright blue-purple, not realistic but pretty.
+A bias near 255 will be pure white.
 
 ## Gamma
 
@@ -201,8 +207,13 @@ so these might interact with the t30dpy setting.
 
 The gamma that t30dpy uses can be changed via the command line or in the configuration file.
 Values are generally 1.0 or less.
-1.0 effectively removes any gamma correction, smaller values boost the intensity of dimmer points.
+1.0 effectively removes any gamma correction, smaller values boost the intensity of dimmer points
+giving a brighter display.
 Values greater than 1.0 greatly diminish the intensity of dimmer points, and can cause the decay trails to disappear.
+
+The actual adjustmwent is new = pow(original, gamma).
+Note that many discussions of gamma use a value greater than 1, then use it as 1/gamma.
+This is not done in t30dpy, a gamma of this form can be converted by setting the t30dpy gamma to 1/gamma.
 
 Experiment to see what works for you and your display.
 
@@ -239,7 +250,7 @@ It was run on a middling performance Intel CPU of some age running Ubuntu Linux 
 \*** - this is a brutal test sending over 500K pixels/sec. p7sim fails miserably, dropping many many pixels
 
 The figures for t30dpy are affected by various configuration settings, especially the lifetime of the yellow-green
-phosphor and the gamma corrections.
+phosphor.
 
 T30dpy can also report some timing statistics.
 Running type340stress, it is rendering over 5 million dots per second without any lost data.
@@ -261,9 +272,9 @@ Not all are listed here, just the ones that are useful for display appearance.
 | BLUEDECAYALPHA   | 1.5         | determines the blue fade time, larger is faster |
 | YELLOWDECAYALPHA | 0.85        | determines the yellow fade time |
 | GAMMA            | 0.4545      | default, changes how much dim points are enhanced, smaller is more |
-| BLUERGB          | 35,0,255    | the true rgb value for the blue phosphor |
-| YELLOWRGB        | 179,255,0   | the true rgb value for the yellow phosphor |
-| BLENDFACTOR      | 0.7         | the alpha adjustment applied to the blue rgb value's alpha |
+| BLUER,G,B        | 35,0,255    | the true r, g, and b values for the blue phosphor |
+| YELLOWRGB        | 179,255,0   | the true rgb value for the yellow phosphor, a combined setting |
+| WHITEBIAS        | 180         | the value added to the blue r and g values |
 | LOWCUTOFF        | 5           | consider a point done when its intensity falls to this value\* |
 
 ## The configuration file
@@ -284,7 +295,7 @@ Lowercase change names are also command-line settable.
 | vsync       | vsync       |
 | linear      | linear      |
 | gamma       | gamma       |
-| blendfactor | BLENDFACTOR |
+| whitebias   | whitebias  |
 | cutoff      | LOWCUTOFF   |
 
 A sample file is included as */opt/pidp1-mods/t30dpy.config.example* for reference.

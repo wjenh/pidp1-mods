@@ -65,25 +65,28 @@
 // The alpha values for the color intensity over time are computed using a power law.
 // Note that the alpha decay times are based on a lifetime of 255 frames
 #define BLUEDECAYALPHA  1.5     // intensity = time^-DECAYALPHA (time to the -alpha power) normalized to 0-255
+#define BLUER 35
+#define BLUEG 0
+#define BLUEB 255
+#define WHITEBIAS 180           // add this to both r and g for the blue phosphor, makes it whiter
+
 #define YELLOWDECAYALPHA  0.85
-#define BLUERGB 35, 0, 255
 #define YELLOWRGB 179, 225, 0
-#define BLENDFACTOR 0.7f        // this determines the alpha blending ratio, see initializeRgbas()
 #define MAXLIFETIME 255         // number of frames a point will exist unless its alptha falls below LOWCUTOFF
+
+// After blending, the resulting alpha also has a power law applied to adjust for the response of the eye,
+// which is nonlinear. Smaller values enance the brightness of low alphas, larger dim them.
+#define GAMMA 0.4545             // default gamma, gamma applies after final alpha is calculated
+
+#define LOWCUTOFF 5             // alphas less than this are not displayed
+#define VSYNC false             // ask SDL renderer to use vsync
+#define LINEAR false            // ask SDL renderer to use linear scaling
 
 // The following can be overridden by the config file and some also via the command line.
 // For those that have a command line override, it takes precedence.
 // Host, port, gamma, vsync, and linear can be overridden via the command line.
 #define DEFAULTHOST "localhost"
 #define DEFAULTPORT 3400
-
-// After blending, the resulting alpha also has a power law applied to adjust for the response of the eye,
-// which is nonlinear. Smaller values enance the brightness of low alphas, larger dim them.
-#define GAMMA 0.4545             // default gamma, gamma applies after an alpha is calculated
-
-#define LOWCUTOFF 5             // alphas less than this are not displayed
-#define VSYNC false             // ask SDL renderer to use vsync
-#define LINEAR false            // ask SDL renderer to use linear scaling
 
 // End of config and command line settings
 
@@ -123,6 +126,7 @@ int portNum;
 char *hostNameP;
 
 int lowCutoff = LOWCUTOFF;
+int whiteBias = WHITEBIAS;
 unsigned int droppedPoints;
 
 bool quit = false;
@@ -132,7 +136,6 @@ bool mikecMode = false;
 bool havePoints = false;
 
 float gammaCorrection = GAMMA;
-float blendFactor = BLENDFACTOR;
 
 uint32_t rgbaBlack;
 uint64_t totalPoints;
@@ -205,7 +208,7 @@ struct timespec sleepTime;
 
     loadConfig();                   // config overrides defines, command line overrides all
 
-    while( (opt = getopt(argc, argv, "g:lnp:s:tv")) != -1 )
+    while( (opt = getopt(argc, argv, "g:lmnp:s:tvw:")) != -1 )
     {
         switch( opt )
         {
@@ -247,6 +250,10 @@ struct timespec sleepTime;
 
         case 'v':
             doVsync = true;     // enable vsync rendering
+            break;
+
+        case 'w':
+            whiteBias = atoi(optarg);
             break;
 
         default:
@@ -583,10 +590,20 @@ initializeRgbas()
 int i, j;
 int intensity;
 int delta;
-Uint8 r, g, b, a;
+Uint8 r, g, b, a, bias;
 Uint8 blueAlpha, yellowAlpha;
 Uint8 origAlpha;
 Rgba rgba;
+
+    if( (whiteBias + BLUER) > 255 )
+    {
+        whiteBias = 255 - BLUER;
+    }
+
+    if( (whiteBias + BLUEG) > 255 )
+    {
+        whiteBias = 255 - BLUEG;
+    }
 
     // The internal 0-255 intensity is in 8 linear increments from the base value.
     delta = (255 - MININTENSITY) / 7;
@@ -602,13 +619,14 @@ Rgba rgba;
     for( i = 7; i >= 0; --i )         // for each pdp1 intensity level
     {
         intensity = MININTENSITY + (i * delta);
+        bias = whiteBias;
 
         for( j = 0; j < 256; ++j )    // for each lifetime value, 0 being initial, 255 being final
         {
             // The blending algorithm will take 100% of the source (blue) value if its alpha is 100% and
             // none of the second (yellow), so we have to adjust the alphas a bit.
             // The blue shouldn't dominate, the real phosphor is only slightly blue when the point
-            // is drawn because of the yellow secondary phospghor blending with it.
+            // is drawn because of the yellow secondary phosphor blending with it.
             blueAlpha = (Uint8)(powf((float)j+1, -BLUEDECAYALPHA) * 255.0f);
             yellowAlpha = (Uint8)(powf((float)j+1, -YELLOWDECAYALPHA) * 255.0f);
 
@@ -616,17 +634,12 @@ Rgba rgba;
             // The blended alpha needs to be gamma adjusted.
             if( yellowAlpha > lowCutoff )
             {
-                // This is a hack so we can normalize the blended-blended alpha back to the original alpha.
-                rgba = blend(BLUERGB, blueAlpha, YELLOWRGB, yellowAlpha);
-                SDL_GetRGBA(rgba, pixelFormatP, &r, &g, &b, &a);
-                origAlpha = APPLYGAMMA(((int)a * intensity) / 255);
-
-                // Now we reblend with the blend factor applied
-                blueAlpha = (Uint8)(powf((float)j+1, -BLUEDECAYALPHA) * blendFactor * 255.0f);
-                rgba = blend(BLUERGB, blueAlpha, YELLOWRGB, yellowAlpha);
+                rgba = blend(BLUER + bias, BLUEG + bias, BLUEB, blueAlpha, YELLOWRGB, yellowAlpha);
                 SDL_GetRGBA(rgba, pixelFormatP, &r, &g, &b, &a);
                 // And use the pre-blended-blended alpha so we get the intensity that was expected.
-                rgba = SDL_MapRGBA(pixelFormatP, r, g, b, origAlpha);
+                a = APPLYGAMMA(((int)a * intensity) / 255);
+                rgba = SDL_MapRGBA(pixelFormatP, r, g, b, a);
+                bias = 0;       // only the first one
             }
             else
             {
@@ -881,13 +894,13 @@ char line[256];
             {
                 gammaCorrection = atof(cP);
             }
+            else if( !strcmp(line, "whitebias") )
+            {
+                whiteBias = atoi(cP);
+            }
             else if( !strcmp(line, "cutoff") )
             {
                 lowCutoff = atoi(cP);
-            }
-            else if( !strcmp(line, "blendfactor") )
-            {
-                blendFactor = atof(cP);
             }
             else if( !strcmp(line, "host") )
             {
@@ -960,7 +973,8 @@ char tmpstr2[4096];
 void
 usage()
 {
-    fprintf(stderr, "usage: t30dpy [-l] [-m] [-n] [-t] [-v] [-g gamma] [-p port] [-s size] [host]\n");
+    fprintf(stderr, "usage: t30dpy [-l] [-m] [-n] [-t] [-v]\n");
+    fprintf(stderr, "              [-g gamma] [-w bias] [-p port] [-s size] [host]\n");
     fprintf(stderr, "where:\n");
     fprintf(stderr, "-l, use SDL linear scaling, else nearest neighbor\n");
     fprintf(stderr, "-m, Mike C mode, see the documentation\n");
@@ -968,6 +982,7 @@ usage()
     fprintf(stderr, "-t, accumulate timing data, display on exit\n");
     fprintf(stderr, "-v, enable SDL vsync on render\n");
     fprintf(stderr, "-g gamma, set gamma to use, floating point, default is %.4f\n", GAMMA);
+    fprintf(stderr, "-w bias, add this to the r and g values for the blue phospor to bias towards white\n");
     fprintf(stderr, "-p port, set port to use, default is %d\n", DEFAULTPORT);
     fprintf(stderr, "-s size, set display size to size pixels, >= 256\n");
     fprintf(stderr, "host, hostname of server to connect to\n");

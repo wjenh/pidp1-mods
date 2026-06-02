@@ -32,11 +32,13 @@ gamma=0.4545
 
 # Since the p7 phosphor is a dual phosphor with both a fast blue component and a yellow-green slow component,
 # even the initial dot is mostly white, only slightly blue.
-# This adjusts the blending of the two colors, reducing the alpha of the blue value by this factor.
-# Increasing it makes the initial display time more blue, decreasing more white.
-# The effect is particularly noticeable if a point is being redrawn faster than the frame rate, the value
-# is a compromise.
-blendfactor=0.7
+# The alpha blending algorithm overemphasizes the blue phosphor in the first frame because it has maximum
+# alpha which means opaque so none of the secondary phosphor is blended.
+# This adds the bias to the r and g components of the blue phosphor making it whiter, but only for the
+# first frame for a point.
+# Decreasing it makes the initial display more blue, increasing it, more white.
+# A value of 0 will give a very noticable blue dot, 255 a pure white dot.
+whitebias=180
 
 # The displayed dots decay in intensity over time following, at least for the secondary phosphor, the
 # correct power-law decay rate specified for the P7 phosphor that was used.

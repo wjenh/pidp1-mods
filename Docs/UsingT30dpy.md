@@ -2,20 +2,20 @@
 
 This document describes the t30dpy simulated Type 30 display.
 
-This is version 1.3
+This is version 1.4
 
-Edit date 31-May-2026\
-MikeC mode added
+Edit date 3-June-2026\
+changes to the alpha bending details
 
 ## Usage
 
-**t30dpy** [*-b*] [*-g gamma*] [*-l*] [-m] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
+**t30dpy** [*-g gamma*] [*-l*] [-m] [-n] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
 
 ```
-b - start borderless
 g gamma - set the gamma value, a floating point value usually in the range 0.4 to 1.0
 l - ask SDL to use linear scaling instead of nearest-neighbor
-l - use Mike C mode, see below
+m - use Mike C mode, see below
+n - start borderless
 s size - set the screen size, >= 256, default is 1024
 p port - the port to connect to, default is 3400
 t - accumulate statistics, printed on exit
@@ -26,10 +26,6 @@ The defaults can be overridden in the configuration file.
 
 If dots look too saturated, change the gamma setting in the configuration file, see below.\
 The default setting is 0.4545, try 0.6. Higher numbers reduce the saturation but also dim the yellow fadeout faster.
-
-You can also reduce the bluehold setting.\
-The default is 5, try reducing it to 3. This will use the true color of the blue phosphor sooner.
-The initial one is brighter,
 
 While running the F11 key or the *f* character key toggles between regular and full screen mode.\
 The *b* character key toggles between a bordered and borderless window.\
@@ -66,7 +62,7 @@ For some reason, p7sim gets aging time updates from the pidp-1.
 This is strange, aging was a characteristic of the display, not of the computer.
 T30dpy ignores the aging commands and handles all aging itself, more true to the original.
 
-As for the p7sim phospor simulation, it does not seem correct.
+As for the p7sim phospor simulation, it needed a bit of adjustment
 
 From the **RCA Phosphors TPM-1508A** technical book from October 1961, the P7 phosphor used in the Type 30
 was a dual phosphor consisting of a blue-purple high intensity phosphor with a 25-75 microsecond decay time to 10%
@@ -74,7 +70,8 @@ of the initial intensity amd a color of 435 nanometers,
 and a secondary yellow-green longer persistence phosphor with a 400 millisecond decay time
 to 10% of intensity and a color of 555 nanometers.
 
-The initial p7sim dot is whiite while the decay time of the yellow-green phosphor is much longer than 400 milliseconds.
+The initial p7sim dot is essentially pure white while the decay time of the yellow-green phosphor
+is much longer than 400 milliseconds.
 
 T30dpy uses the correct power-law decay to give proper decay times, at least for the yellow-green phosphor.
 The blue-purple phosphor also uses the proper decay time, but both p7sim and t30dpy really can't correctly model it.
@@ -82,11 +79,7 @@ The blue-purple phosphor also uses the proper decay time, but both p7sim and t30
 Why? Given the 50 microsecond decay, no LCD monitor can reproduce that short an interval. Additionally, the initial dot
 was displayed in 5 microseconds or less at an intensity no LCD can come close to, which is how it was visible.
 
-The solution is two-fold.
-First, the decay time is stretched considerably to several frames.
-Second, the initial frame uses a color value that is brightened considerably by adding red and green, but in the proper
-ratios to essentially add white to the base color.
-This only lasts for a few frames, then the accurate color is used.
+The solution is to stretch the blue decay time considerably over several frames.
 
 T30dpy runs at a fixed 30 frames per second and the alpha values for the colors are calibrated to that to give,
 for the secondary phosphor, a 400 millisecond decay to 10%, as specified.
@@ -96,11 +89,8 @@ Finally, the simulated beam spread done by p7sim is overly exaggerated.
 Take a look at any real CRT with similar resolution, such as an oscilloscope, for comparison.
 
 DEC stated a beam spot size of 0.030 inches, which works out to about 2 pixels on the original CRT.
-T30dpy uses a simple rectangle of 3 pixels square for the lower intensities with more dots added
-for higher ones.
-That is a slight exaggeration but again needed to try to get an LCD to look close to the CRT.
-
-Provision exists to vary the rectangle size by intensity, but from experiments it does not seem to be necessary.
+T30dpy uses a simple rectangular pattern of pixels with more pixels added as intensity increases.
+Given the scale, this is virtually imperceptible.
 
 ## Mike C mode?
 
@@ -146,6 +136,11 @@ Each phosphor color has its alpha value modified by the alpha aging determined b
 the power law generator and the gamma correction factor.
 Alpha blending is then done of the two colors to get the displayed SDL RGBA8888 value.
 
+Additionally, a blending factor is applied to the blue phosphor alpha to balance the blue content.
+The original display is almost white because of the mixing of the blue and the yellow-green colors from
+the two phosphors, but not pure white.
+The blending factor controls how much excess blue there is during the blue decay period.
+
 The decay parameters are set so that the secondary phosphor drops to 10% of its initial intensity in
 400 milliseconds.
 
@@ -181,6 +176,19 @@ But, that isn't always the case.
 The code uses nearest-neighbor texture scaling by default, but if that doesn't give good results for a given
 screen size linear scaling can be used, which is actually bilinear scaling.
 Bilinear also gives a smoother, softer appearance to dots when scaling occurs.
+
+## Blend factor
+
+Rather than a single rgba value for a displayed point, the blue and yellow/greem phosphors are both simulated
+and than alpha-blended to get the displayed color.
+
+However, the blending algorithm can overemphasize the blue value, so a blending factor is used.
+This factor adjusts the blue alpha by (alpha \* blendfactor) before the two colors are blended
+to deemphasize it so that the resulting value is almost white, but with a slight bit of blue.
+
+If you want more blue, which while not authentic looks pretty nice, increase the blend factor.
+A factor of 1.0 will completely suppress the yellow/green phosphor for the first frame a point is displayed.
+Decreasing it will eliminate blue.
 
 ## Gamma
 
@@ -253,14 +261,10 @@ Not all are listed here, just the ones that are useful for display appearance.
 | BLUEDECAYALPHA   | 1.5         | determines the blue fade time, larger is faster |
 | YELLOWDECAYALPHA | 0.85        | determines the yellow fade time |
 | GAMMA            | 0.4545      | default, changes how much dim points are enhanced, smaller is more |
-| BLUEFIRSTRGB     | 201,140,255 | the rgb value for the initial dot color |
-| BLUERGB          | 61,0,255    | the true rgb value for the blue phosphor |
+| BLUERGB          | 35,0,255    | the true rgb value for the blue phosphor |
 | YELLOWRGB        | 179,255,0   | the true rgb value for the yellow phosphor |
-| BLUEHOLD         | 5           | how many frames the first blue rgb is used for|
-| YELLOWDEFER      | 3           | how many frames before the yellow rgb is blended in |
+| BLENDFACTOR      | 0.7         | the alpha adjustment applied to the blue rgb value's alpha |
 | LOWCUTOFF        | 5           | consider a point done when its intensity falls to this value\* |
-
-\* - the cutoff value is gamma-adjusted before comparison to keep it logically the same across gamma settings.
 
 ## The configuration file
 
@@ -280,8 +284,7 @@ Lowercase change names are also command-line settable.
 | vsync       | vsync       |
 | linear      | linear      |
 | gamma       | gamma       |
-| bluehold    | BLUEHOLD    |
-| yellowdefer | YELLOWDEFER |
+| blendfactor | BLENDFACTOR |
 | cutoff      | LOWCUTOFF   |
 
 A sample file is included as */opt/pidp1-mods/t30dpy.config.example* for reference.

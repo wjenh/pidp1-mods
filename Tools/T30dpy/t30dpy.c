@@ -38,6 +38,8 @@
  *    add config file for various settings
  * 26-May-2026 wje precompute all possible rgba values, completely avoids floating point calcs while running
  * 31-May-2026 wje add Mike Chaoponis mode, optimize idle time
+ * 31-May-2026 wje completely rework blending and eliminate blue hold,
+ *    it was too blue and the blending wasn't quite right
 */
 
 #include <stdio.h>
@@ -64,9 +66,9 @@
 // Note that the alpha decay times are based on a lifetime of 255 frames
 #define BLUEDECAYALPHA  1.5     // intensity = time^-DECAYALPHA (time to the -alpha power) normalized to 0-255
 #define YELLOWDECAYALPHA  0.85
-#define BLUEFIRSTRGB 201, 140, 255
-#define BLUERGB 61, 0, 255
-#define YELLOWRGB 139, 225, 0
+#define BLUERGB 35, 0, 255
+#define YELLOWRGB 179, 225, 0
+#define BLENDFACTOR 0.7f        // this determines the alpha blending ratio, see initializeRgbas()
 #define MAXLIFETIME 255         // number of frames a point will exist unless its alptha falls below LOWCUTOFF
 
 // The following can be overridden by the config file and some also via the command line.
@@ -79,11 +81,7 @@
 // which is nonlinear. Smaller values enance the brightness of low alphas, larger dim them.
 #define GAMMA 0.4545             // default gamma, gamma applies after an alpha is calculated
 
-// To help mimic the very bright 50 usec intensity of the original crt, these do some fakery.
-// An LCD just can't come close to the actual intensity the CRT did, we have to stretch and boost the blue.
-#define BLUEHOLD 5              // show the initial blue until the lifetime is greater than or equal to this
-#define YELLOWDEFER 3           // don't show any yellow until the lifetime is greater than or equal to this
-#define LOWCUTOFF 5             // alphas less than this are not displayed, value is gamma-corrected first
+#define LOWCUTOFF 5             // alphas less than this are not displayed
 #define VSYNC false             // ask SDL renderer to use vsync
 #define LINEAR false            // ask SDL renderer to use linear scaling
 
@@ -124,8 +122,6 @@ int pdp1FD;
 int portNum;
 char *hostNameP;
 
-int blueHold = BLUEHOLD;
-int yellowDefer = YELLOWDEFER;
 int lowCutoff = LOWCUTOFF;
 unsigned int droppedPoints;
 
@@ -136,6 +132,7 @@ bool mikecMode = false;
 bool havePoints = false;
 
 float gammaCorrection = GAMMA;
+float blendFactor = BLENDFACTOR;
 
 uint32_t rgbaBlack;
 uint64_t totalPoints;
@@ -420,6 +417,8 @@ struct timespec sleepTime;
             x = INDEXTOX(i);
             y = 1023 - INDEXTOY(i);  // sdl 0 is top of screen, not bottom
 
+            // This is done to clear the secondary pixels set by the beam spread simulation,
+            // those pixels aren't tracked as valid points.
             // It's fine to clear these every time, because they will be rewritten if the dot is still active.
             // No reason to go thru the rest of the code.
             if( pointP->valid == 0 )
@@ -441,6 +440,8 @@ struct timespec sleepTime;
             else
             {
                 pointP->valid = 0;                  // done with this now
+                pixelP = XYTOPTR(pixels, pitch, x, y);
+                *pixelP = rgbaBlack;                // clear the pixel
             }
         }
 
@@ -581,12 +582,14 @@ initializeRgbas()
 {
 int i, j;
 int intensity;
-byte blueAlpha, yellowAlpha;
-float delta;
+int delta;
+Uint8 r, g, b, a;
+Uint8 blueAlpha, yellowAlpha;
+Uint8 origAlpha;
 Rgba rgba;
 
-    // The internal 0-255 intensity is in linear increments from the base value.
-    delta = (float)(255 - MININTENSITY) / 7.0f;
+    // The internal 0-255 intensity is in 8 linear increments from the base value.
+    delta = (255 - MININTENSITY) / 7;
 
     // The blue phosphor had a 25-75 microsecond lifetime to 10% brightness.
     // That is far less than the frame rate and wouldn't be visible, so it is strecthed,
@@ -596,36 +599,34 @@ Rgba rgba;
     // This data from the RCA Phosphors TPM-1508A technical note.
     // Fadout is done by adjusting the blue and yellow alphas based on lifetime.
     // 
-    for( i = 0; i < 8; ++i )         // for each pdp1 intensity level
+    for( i = 7; i >= 0; --i )         // for each pdp1 intensity level
     {
-        intensity =  MININTENSITY + (int)((float)i * delta);
+        intensity = MININTENSITY + (i * delta);
 
-        for( j = 0; j < 256; ++j )    // for each lifetime value
+        for( j = 0; j < 256; ++j )    // for each lifetime value, 0 being initial, 255 being final
         {
-            blueAlpha = (int)(powf((float)j+1, -BLUEDECAYALPHA) * (float)intensity);
-            blueAlpha = APPLYGAMMA(blueAlpha);
-            yellowAlpha = (int)(powf((float)j+1, -YELLOWDECAYALPHA) * (float)intensity);
-            yellowAlpha = APPLYGAMMA(yellowAlpha);
+            // The blending algorithm will take 100% of the source (blue) value if its alpha is 100% and
+            // none of the second (yellow), so we have to adjust the alphas a bit.
+            // The blue shouldn't dominate, the real phosphor is only slightly blue when the point
+            // is drawn because of the yellow secondary phospghor blending with it.
+            blueAlpha = (Uint8)(powf((float)j+1, -BLUEDECAYALPHA) * 255.0f);
+            yellowAlpha = (Uint8)(powf((float)j+1, -YELLOWDECAYALPHA) * 255.0f);
 
             // Yellow has a looong tailoff, so stop when it gets down to lowCutoff.
-            // Also skip adding yellow for the first yellowDefer frames so the blue will show up better.
-            if( (yellowAlpha > lowCutoff) && (j >= yellowDefer) && (blueAlpha > 0) )
+            // The blended alpha needs to be gamma adjusted.
+            if( yellowAlpha > lowCutoff )
             {
-                rgba = blend((j >= blueHold)?BLUERGB:BLUEFIRSTRGB, blueAlpha, YELLOWRGB, yellowAlpha);
-            }
-            else if( blueAlpha > 0 )
-            {
-                // The first BLUEHOLD frames use an enhanced blue.
-                // Remember that the real thing only intensified the screen dot for 5 usecs for the Type 30,
-                // and only 0.5 usecs for the Type 340, and in both cases much brighter than a modern LCD
-                // can replicate.
-                // This bit makes sure the initial display is visible.
-                rgba = SDL_MapRGBA(pixelFormatP, (j >= BLUEHOLD)?BLUERGB:BLUEFIRSTRGB, blueAlpha);
-            }
-            else if( yellowAlpha > lowCutoff )
-            {
-                // At this point, the blue has totally decayed, no reason to alpha blend now.
-                rgba = SDL_MapRGBA(pixelFormatP, YELLOWRGB, yellowAlpha);
+                // This is a hack so we can normalize the blended-blended alpha back to the original alpha.
+                rgba = blend(BLUERGB, blueAlpha, YELLOWRGB, yellowAlpha);
+                SDL_GetRGBA(rgba, pixelFormatP, &r, &g, &b, &a);
+                origAlpha = APPLYGAMMA(((int)a * intensity) / 255);
+
+                // Now we reblend with the blend factor applied
+                blueAlpha = (Uint8)(powf((float)j+1, -BLUEDECAYALPHA) * blendFactor * 255.0f);
+                rgba = blend(BLUERGB, blueAlpha, YELLOWRGB, yellowAlpha);
+                SDL_GetRGBA(rgba, pixelFormatP, &r, &g, &b, &a);
+                // And use the pre-blended-blended alpha so we get the intensity that was expected.
+                rgba = SDL_MapRGBA(pixelFormatP, r, g, b, origAlpha);
             }
             else
             {
@@ -880,17 +881,13 @@ char line[256];
             {
                 gammaCorrection = atof(cP);
             }
-            else if( !strcmp(line, "bluehold") )
-            {
-                blueHold = atoi(cP);
-            }
-            else if( !strcmp(line, "yellowdefer") )
-            {
-                yellowDefer = atoi(cP);
-            }
             else if( !strcmp(line, "cutoff") )
             {
                 lowCutoff = atoi(cP);
+            }
+            else if( !strcmp(line, "blendfactor") )
+            {
+                blendFactor = atof(cP);
             }
             else if( !strcmp(line, "host") )
             {

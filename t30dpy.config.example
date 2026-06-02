@@ -26,24 +26,17 @@ linear=no
 # Smaller values boost lower intensities, larger values decrease lower intensites.
 # Values greater than 1.0 will completely suppress low intensities and reduce high intensities, not useful
 # The default value of 0.4545 is the standard correction factor but can make the final tailoff of intensity
-# last too long. You might find a value close to 1.0, such as 0.9, more to your taste, experiment.
+# last too long. You might find a value close to 1.0, such as 0.6, more to your taste, experiment.
 # Also, monitors might do gamma correction thenselves, so this value might need changing depending upon the monitor.
 gamma=0.4545
 
-# The original CRT produced a very bright blue-purple spot for only about 5 microseconds, dropping to
-# 10% of its original brightness in about 50 microseconds..
-# This is impossible to actually duplicate with modern monitors because they are frame based and because
-# LCDs can't get anywhere near the original intensity.
-# Cheating is done to extend the duration of the blue phosphor and to use an initial rgb value that
-# is brighter but not strictly the proper color.
-# This initial rgb value is used for the below number of display frames which are rendered at 30 fps.
-# After this many frames, the accurate rgb value for the blue phosphor is used.
-bluehold=5
-
-# Additionally, the yellow-green secondary phosphor blending can be deferred for the below number of frames.
-# This prevents it from overly contaminating the primary color, which again would have been far brighter
-# than the secondary color, but for only a very short time.
-yellowdefer=3
+# Since the p7 phosphor is a dual phosphor with both a fast blue component and a yellow-green slow component,
+# even the initial dot is mostly white, only slightly blue.
+# This adjusts the blending of the two colors, reducing the alpha of the blue value by this factor.
+# Increasing it makes the initial display time more blue, decreasing more white.
+# The effect is particularly noticeable if a point is being redrawn faster than the frame rate, the value
+# is a compromise.
+blendfactor=0.7
 
 # The displayed dots decay in intensity over time following, at least for the secondary phosphor, the
 # correct power-law decay rate specified for the P7 phosphor that was used.

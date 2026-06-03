@@ -2,10 +2,10 @@
 
 This document describes the t30dpy simulated Type 30 display.
 
-This is version 1.4
+This is version 1.5
 
 Edit date 3-June-2026\
-changes to the alpha bending details
+add reload on sighup
 
 ## Usage
 
@@ -24,6 +24,9 @@ v - ask SDL to use vsync for frame synchronization
 hostname - the host to connect to, defaults to localhost
 ```
 The defaults can be overridden in the configuration file.
+
+If a SIGHUP is sent to the running process, the configuration file will be reloaded.
+However, the host, port, and window size cannot be changed dynamically.
 
 If dots look too saturated, change the gamma setting in the configuration file, see below.\
 The default setting is 0.4545, try 0.6. Higher numbers reduce the saturation but also dim the yellow fadeout faster.
@@ -279,23 +282,26 @@ Not all are listed here, just the ones that are useful for display appearance.
 
 ## The configuration file
 
-T30dpy supports a configuration file that can override some of the settings.
+T30dpy supports a configuration file that can override many of the settings.
 A search is made first for the file *~/.t30dpy.config*, then for */opt/pidp1-mods/t30dpy.config*.
 
 The file settings override the compiled-in settings but any that have command line equvalents
 are overridden if set on the command line.
 
-If found, the following values can be changed.\
-Lowercase change names are also command-line settable.
+If found, the following values can be set or changed.\
+If reloadable, a SIGHUP will reset the running t30dpy to use the new values.
 
-| Setting     | Changes     |
-|-------------|-------------|
-| hostname    | hostname    |
-| port        | port        |
-| vsync       | vsync       |
-| linear      | linear      |
-| gamma       | gamma       |
-| whitebias   | whitebias  |
-| cutoff      | LOWCUTOFF   |
+| Setting     | Changes          | Default   | Reloadable? |
+|-------------|------------------|-----------|-------------|
+| hostname    | host name        | localhost | no |
+| port        | port             | 3400      | no |
+| size        | window size      | 1024      | no |
+| border      | bordered window  | true      | yes |
+| vsync       | vsync            | false     | yes |
+| linear      | scaling method   | false     | yes |
+| gamma       | gamma            | 0.4545    | yes |
+| whitebias   | whitebias        | 180       | yes |
+| cutoff      | cutoff threshold | 5         | yes |
+| mikecmode   | read the docs    | false     | yes |
 
 A sample file is included as */opt/pidp1-mods/t30dpy.config.example* for reference.

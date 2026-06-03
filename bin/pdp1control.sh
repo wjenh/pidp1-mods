@@ -115,6 +115,10 @@ do_reload() {
         pkill -HUP 'pdp1$'
 }
 
+do_t30reload() {
+        pkill -HUP 't30dpy'
+}
+
 do_stop() {
 	#kill any support programs that may be running
 	pkill tapevis
@@ -257,6 +261,10 @@ case "$1" in
 
   reload)
 	do_reload
+	;;
+
+  reloadt30)
+	do_t30reload
 	;;
 
   set)

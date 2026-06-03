@@ -5,11 +5,21 @@
 # However, command line overrides take precedence over this for settings that have command line settings.
 # The example values below are the builtin values.
 # Logical values such as vsync can be 'true' or begin with 'y', anything else is false.
+# All values other than host, port, and size can be changed and immediately updated by sending
+# SIGHUP to the running instance or by using *pdp1control.sh reloadt30*.
 
-# Set the hostname to use, overriden by the command line
+# Set the hostname to use, overriden by the command line.
 host=localhost
-# Set the port to use, overidden by the command line
+# Set the port to use, overidden by the command line.
 port=3400
+
+# Set the window size, minimum 256.
+# If smaller, it is ignored.
+# The window is always n X n, square.
+size=1024
+
+# Whether to start bordered or borderless.
+border=true;
 
 # Ask SDL to use vsync, it might or might not.
 # If supported, it can reduce tearing of large rectangles that are rendered at hight speed, such as those

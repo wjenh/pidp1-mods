@@ -40,6 +40,7 @@
  * 31-May-2026 wje add Mike Chaoponis mode, optimize idle time
  * 31-May-2026 wje completely rework blending and eliminate blue hold,
  *    it was too blue and the blending wasn't quite right
+ *  3-Jun-2026 wje add config reload on sighup, clean exit on sigint
 */
 
 #include <stdio.h>
@@ -48,6 +49,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <netinet/tcp.h>
 #include <netdb.h>
@@ -125,11 +127,13 @@ int pdp1FD;
 int portNum;
 char *hostNameP;
 
+int winSize;
 int lowCutoff = LOWCUTOFF;
 int whiteBias = WHITEBIAS;
 unsigned int droppedPoints;
 
 bool quit = false;
+bool border;
 bool doLinear = LINEAR;
 bool doVsync = VSYNC;
 bool mikecMode = false;
@@ -142,6 +146,9 @@ uint64_t totalPoints;
 uint64_t totalPixels;
 uint64_t receivedPoints;
 
+SDL_Window *window;
+SDL_Renderer *renderer;
+SDL_Texture *texture;
 SDL_PixelFormat *pixelFormatP;      // We use RGBA8888, set below
 
 int openPort(char *hostNameP, int port);
@@ -152,14 +159,15 @@ void initializeRgbas(void);
 void setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y);
 void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity);
 void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
-void loadConfig(void);
+void loadConfig(bool full);
+void sighandler(int sig);
+void reconfigure(int sig);
 void usage(void);
 FILE *getFile(char *nameP);
 
 int
 main(int argc, char **argv)
 {
-int winSize;
 int i;
 int opt;
 int x, y;
@@ -167,7 +175,6 @@ int blueAlpha, yellowAlpha;
 int intensity;
 int penx, peny;
 int pitch;
-bool border;
 bool fullscreen;
 bool penDown;
 bool doTiming;
@@ -184,17 +191,14 @@ uint32_t *pixelP;
 uint32_t rgba;
 
 SDL_Event event;
-SDL_Window *window;
-SDL_Renderer *renderer;
-SDL_Texture *texture;
 
 pthread_t thread;
 pthread_attr_t tattr;
 struct timespec sleepTime;
  
     hostNameP = DEFAULTHOST;
-    portNum = DEFAULTPORT;          // and display 0 on the pidp-1
-    winSize = 1024;                 // typical
+    portNum = DEFAULTPORT;        // and display 0 on the pidp-1
+    winSize = 1024;               // typical
     border = true;
     fullscreen = false;
     penDown = false;
@@ -206,7 +210,7 @@ struct timespec sleepTime;
     frameDelay = 0;
     cursorTime = 0;
 
-    loadConfig();                   // config overrides defines, command line overrides all
+    loadConfig(true);             // config overrides defines, command line overrides all
 
     while( (opt = getopt(argc, argv, "g:lmnp:s:tvw:")) != -1 )
     {
@@ -273,6 +277,9 @@ struct timespec sleepTime;
         usage();
         exit(1);
     }
+
+    signal(SIGHUP, reconfigure);
+    signal(SIGTERM, sighandler);
 
     // init SDL
     SDL_Init(SDL_INIT_VIDEO);
@@ -837,9 +844,11 @@ uint64_t now;
 // The file is named '.t30dyconfig' in the home directory,
 // 't30dpyconfig' in the install directory.
 // Lines are of e form 'param=value', empty lines or lines beginning with '#' are ignored, as are any invalid params.
+// A full load is only done at startup, sighup calls with false, some settings can't be changed.
 void
-loadConfig()
+loadConfig(bool full)
 {
+int i;
 char *cP, *cP2;
 FILE *fP;
 char line[256];
@@ -875,12 +884,37 @@ char line[256];
                 *cP2 = '\0';
             }
 
+            if( full )
+            {
+                if( !strcmp(line, "host") )
+                {
+                    hostNameP = (char *)malloc(strlen(cP) + 1);
+                    strcpy(hostNameP, cP);
+                }
+                else if( !strcmp(line, "port") )
+                {
+                    portNum = atoi(cP);
+                }
+                else if( !strcmp(line, "size") )
+                {
+                    i = atoi(cP);      // screen is n * n big
+                    if( i >= 256 )
+                    {
+                        winSize = i;
+                    }
+                }
+            }
+
             if( !strcmp(line, "vsync") )
             {
                 if( !strcmp(cP, "true") || (*cP == 'y') )
                 {
                     doVsync = true;
                 }
+            }
+            else if( !strcmp(line, "border") )
+            {
+                border = (!strcmp(cP, "true") || (*cP == 'y'));
             }
             else if( !strcmp(line, "linear") )
             {
@@ -901,15 +935,6 @@ char line[256];
             else if( !strcmp(line, "cutoff") )
             {
                 lowCutoff = atoi(cP);
-            }
-            else if( !strcmp(line, "host") )
-            {
-                hostNameP = (char *)malloc(strlen(cP) + 1);
-                strcpy(hostNameP, cP);
-            }
-            else if( !strcmp(line, "port") )
-            {
-                portNum = atoi(cP);
             }
         }
     }
@@ -968,6 +993,32 @@ char tmpstr2[4096];
     }
 
     return( fopen(nameP, "r") );
+}
+
+// Just close and exit
+void
+sighandler(int sig)
+{
+    if( pdp1FD )
+    {
+        close(pdp1FD);
+    }
+
+    // Not really necessary, but it's good form.
+    SDL_Quit();
+    exit(0);
+}
+
+// Called on SIGHUP to reload config file, doesn't affect host, poort, size, bordered.
+void
+reconfigure(int sig)
+{
+    loadConfig(false);
+    initializeRgbas();
+    // These might have changed.
+    SDL_SetTextureScaleMode(texture, (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
+    SDL_RenderSetVSync(renderer, doVsync);
+    SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
 }
 
 void

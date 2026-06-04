@@ -2,7 +2,7 @@
  * t30dpy - a replacement for p7sim
  * This is MUCH lighter weight but simulates the Type 30 behavior quite well, better in some ways than p7sim.
  * The major differences are:
- * The color p7sim displayed was not correct for a p7 phosphor, the initial spot was too white.
+ * The color p7sim displayed was not totally correct for a p7 phosphor, the initial spot was too white.
  * The yellow phosphor decay time was too long.
  * See initializeRgbas() below for more details.
  * The increase in dot size with higher intensities to mimic beam spread was far too much.
@@ -16,11 +16,11 @@
  * framerate imposed by modern raster displays is far longer.
  * Two things are done to handle this.
  * First, the duration is extended across multiple frames. This compensates for the lack of intensity.
- * Second, the first frame uses a different rgb value to make it brighter. Unfortunately, this shifts the
+ * Second, the first frame can use a different rgb value to make it brighter. Unfortunately, this shifts the
  * color, but following frames use the correct rgb value.
  * It uses a logical window size of 1024*1024 to match the Type 30 display and lets SDL do the scaling.
  *
- * The variable dot size is handled by drawing a sequence of dots for each intensity.
+ * The variable dot size is handled by drawing a matrix of dots for each intensity.
  *
  * For maximum efficiency, all of the possible SDL rgba values we need are precomputed in initializeRgbas()
  * which results in no floating point calculations being done at all (by this code, at least)
@@ -41,6 +41,7 @@
  * 31-May-2026 wje completely rework blending and eliminate blue hold,
  *    it was too blue and the blending wasn't quite right
  *  3-Jun-2026 wje add config reload on sighup, clean exit on sigint
+ *  4-Jun-2026 wje commentary and code cleanup, remove unused includes, no functional changes
 */
 
 #include <stdio.h>
@@ -50,34 +51,31 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <signal.h>
-#include <sys/socket.h>
 #include <netinet/tcp.h>
 #include <netdb.h>
-#include <fcntl.h>
 #include <time.h>
 #include <pwd.h>
-#include <errno.h>
 #include <SDL2/SDL.h>
 
-#define READBUFSIZE 512         // size of the buffer we read from the server into, bytes
+#define READBUFSIZE 512         // xize of the buffer we read from the server into, bytes
 
-#define NUMPOINTS 1024*1024     // Total number of points on screen
-#define MININTENSITY 16         // Intensity 0 will be this. The rest are linearly scaled to 255 for level 7
+#define NUMPOINTS 1024*1024     // total number of points on screen
+#define MININTENSITY 16         // intensity 0 will be this, the rest are linearly scaled to 255 for level 7
 
 // The alpha values for the color intensity over time are computed using a power law.
-// Note that the alpha decay times are based on a lifetime of 255 frames
+// Note that the alpha decay times are based on a lifetime of 255 frames.
 #define BLUEDECAYALPHA  1.5     // intensity = time^-DECAYALPHA (time to the -alpha power) normalized to 0-255
 #define BLUER 35
 #define BLUEG 0
 #define BLUEB 255
-#define WHITEBIAS 180           // add this to both r and g for the blue phosphor, makes it whiter
+#define WHITEBIAS 180           // add this to both r and g for the blue phosphor in the first frame, makes it whiter
 
 #define YELLOWDECAYALPHA  0.85
-#define YELLOWRGB 179, 225, 0
+#define YELLOWRGB 179, 225, 0   // keep exactly this format, used as 3 args
 #define MAXLIFETIME 255         // number of frames a point will exist unless its alptha falls below LOWCUTOFF
 
-// After blending, the resulting alpha also has a power law applied to adjust for the response of the eye,
-// which is nonlinear. Smaller values enance the brightness of low alphas, larger dim them.
+// After blending, the resulting alpha also has a power law applied to adjust for the nonlinear response of the eye.
+// Smaller values enhance the brightness of low alphas, larger dims them.
 #define GAMMA 0.4545             // default gamma, gamma applies after final alpha is calculated
 
 #define LOWCUTOFF 5             // alphas less than this are not displayed
@@ -86,19 +84,19 @@
 
 // The following can be overridden by the config file and some also via the command line.
 // For those that have a command line override, it takes precedence.
-// Host, port, gamma, vsync, and linear can be overridden via the command line.
+// See usage() below for those that have command line versions.
 #define DEFAULTHOST "localhost"
 #define DEFAULTPORT 3400
 
 // End of config and command line settings
 
-#define CURSORTIMEOUT 4000      // If no mouse motion after this many milliseconds, hide it
+#define CURSORTIMEOUT 4000      // if no mouse motion after this many milliseconds, hide it
 
 #define XYTOINDEX(x, y) (((x) * 1024) + (y))
 #define INDEXTOX(i) ((i) / 1024)
 #define INDEXTOY(i) ((i) & 1023)
 #define XYTOPTR(base, pitch, x, y) (uint32_t *)((base) + ((y) * (pitch)) + (x * sizeof(uint32_t)))
-#define APPLYGAMMA(alpha) (int)(powf((float)(alpha) / 255.0f, gammaCorrection) * 255.0f);
+#define APPLYGAMMA(alpha, gamma) (int)(powf((float)(alpha) / 255.0f, (gamma)) * 255.0f);
 
 #define FRAMETIME 33333333L      // nanoseconds between frames, this is 30 fps
 
@@ -106,17 +104,16 @@ typedef unsigned char byte;
 typedef uint32_t Rgba;
 
 // The description of a point to display.
-// It contains the values to compute the intensity over time for the two phospors,
-// the fast-decay blue and the slow-decay yellow.
+// It contains the values to select the intensity over time for the two phospors,
+// the fast-decay blue-purple and the slow-decay yellow-green.
 // The lifetime field is used to select the alpha for the decay interval and ranges from 0-255.
 // The phosphors decay in intensity by power-law decay, not exponential decay.
-// The intensity field ranges from 0-7 and is used to scale the alpha values, 0 being dimmest, 7 brightest.
-// In the actual display loop, precomputed values are used and are selected by the combination
-// of intensity and lifetime.
+// The intensity field ranges from 0-7 and is used to select scaled alpha values, 0 being dimmest, 7 brightest.
+// In the display loop, precomputed values are used and are selected by the combination of intensity and lifetime.
 typedef struct {
-    byte valid;
+    bool valid;                 // set when the point should be displayed
     byte intensity;
-    uint16_t lifetime;
+    uint16_t lifetime;          // value is only 0-255, but use 16 bits because it would be padded to it anyway
 } Point, *PointP;
 
 Point pointData[NUMPOINTS];     // where all the data lives
@@ -141,7 +138,7 @@ bool havePoints = false;
 
 float gammaCorrection = GAMMA;
 
-uint32_t rgbaBlack;
+uint32_t rgbaBlack;                 // the value is numeric 0, but use the SDL generated version for consistency
 uint64_t totalPoints;
 uint64_t totalPixels;
 uint64_t receivedPoints;
@@ -171,8 +168,6 @@ main(int argc, char **argv)
 int i;
 int opt;
 int x, y;
-int blueAlpha, yellowAlpha;
-int intensity;
 int penx, peny;
 int pitch;
 bool fullscreen;
@@ -197,8 +192,8 @@ pthread_attr_t tattr;
 struct timespec sleepTime;
  
     hostNameP = DEFAULTHOST;
-    portNum = DEFAULTPORT;        // and display 0 on the pidp-1
-    winSize = 1024;               // typical
+    portNum = DEFAULTPORT;        // display 0 on the pidp-1
+    winSize = 1024;               // original Type 30 display size
     border = true;
     fullscreen = false;
     penDown = false;
@@ -278,6 +273,7 @@ struct timespec sleepTime;
         exit(1);
     }
 
+    // SIGHUP will cause reloading of the configuration file, SIGTERM exits cleanly
     signal(SIGHUP, reconfigure);
     signal(SIGTERM, sighandler);
 
@@ -295,18 +291,22 @@ struct timespec sleepTime;
     SDL_RenderPresent(renderer);
 
     // Create a texture, we stream our points to it.
-    // Regardless of the window size, the logical size is always 1024
-    // However, SDL2 is not very good at rendering pixels for some window sizes less than the texture size.
+    // Regardless of the window size, the logical size is always 1024 by 1024.
+    // However, SDL2 is not very good at rendering pixels for some window sizes.
     // Pixels can be blurry regardless of the scale quality that is set.
     // Linear gives the best results balancing small screens vs larger ones but blurs the points some.
     // Nearest neighbor gives sharper dots, but some screen sizes don't scale well.
+    // Select what works best for a given monitor and sceen size vial the command line or config file.
+    // We control intensity by adjusting the alpha value, which is blended with the black the renderer
+    // was originally set to, with alpha 255 being brightest.
+    // Pixels use RGBA8888 representation, which is 32 bits.
     texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(texture, (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
     pixelFormatP = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA8888);
     rgbaBlack = SDL_MapRGBA(pixelFormatP, 0, 0, 0, 0);
      
-    // Precomupute the possible rgba values over time.
+    // Precomupute the possible rgba values over time and the intensity steps.
     initializeRgbas();
 
     // An async thread is used to read incoming data.
@@ -318,10 +318,11 @@ struct timespec sleepTime;
         exit(1);
     }
 
-    // display the screen
+    // Main loop. Check for keyboard and mouse evennts, scan the point matrix for active points,
+    // update and display the screen.
     startTime = lastTime = now();
 
-    SDL_ShowCursor(SDL_DISABLE);
+    SDL_ShowCursor(SDL_DISABLE);            // it is enabled when the mouse moves
 
     while( !quit )
     {
@@ -390,6 +391,9 @@ struct timespec sleepTime;
             }
         }
 
+        // The display update is frame based.
+        // If not time for the next frame, sleep until it is.
+        // All rgba values are comupted for a frame rate of 30fps.
         deltaTime = (now() - lastTime);
 
         if( deltaTime < FRAMETIME )
@@ -400,6 +404,7 @@ struct timespec sleepTime;
         }
         else if( deltaTime > FRAMETIME )
         {
+            // This is just for the timing metrics
             frameMisses++;
             if( deltaTime > frameDelay )
             {
@@ -414,11 +419,15 @@ struct timespec sleepTime;
             cursorTime = 0;
         }
 
+        // During a rendering pass if there are no active points left, clear this.
+        // There is no need to render and display a blank window.
+        // When the receive thread gets a point, havePoints is set.
         if( !havePoints )
         {
             continue;           // If we have no points, don't do any window processing
         }
 
+        // Since we alpha blend, the renderer has to be cleared each time.
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
         SDL_RenderClear(renderer);
 
@@ -433,9 +442,9 @@ struct timespec sleepTime;
 
             // This is done to clear the secondary pixels set by the beam spread simulation,
             // those pixels aren't tracked as valid points.
-            // It's fine to clear these every time, because they will be rewritten if the dot is still active.
+            // It's fine to clear these every time because they will be rewritten if the dot is still active.
             // No reason to go thru the rest of the code.
-            if( pointP->valid == 0 )
+            if( !pointP->valid )
             {
                 pixelP = XYTOPTR(pixels, pitch, x, y);
                 *pixelP = rgbaBlack;        // clear the pixel
@@ -453,7 +462,7 @@ struct timespec sleepTime;
             }
             else
             {
-                pointP->valid = 0;                  // done with this now
+                pointP->valid = false;              // done with this now
                 pixelP = XYTOPTR(pixels, pitch, x, y);
                 *pixelP = rgbaBlack;                // clear the pixel
             }
@@ -466,14 +475,14 @@ struct timespec sleepTime;
 
     if( doTiming )
     {
-        // lastTime is now a delta
+        // lastTime is now a delta in seconds
         lastTime = (now() - startTime) / (1000 * 1000 * 1000);
         printf("%lu points drawn in %lu total seconds, %lu points/sec.\n",
             totalPoints, lastTime, totalPoints/lastTime);
         printf("%u frame late events, max delay %u msecs.\n", frameMisses, frameDelay/1000000);
         printf("%lu received points, %u dropped points.\n", receivedPoints, droppedPoints);
         printf("%lu received points/sec.\n", receivedPoints/lastTime);
-        printf("%lu total pixels drawn.\n", totalPixels);
+        printf("%lu total pixels drawn, %lu pixels/sec.\n", totalPixels, totalPixels/lastTime);
     }
 
     close(pdp1FD);
@@ -569,12 +578,16 @@ static bool skipOne = false;
 
             if( delay == 511 )
             {
-                skipOne = true;
+                skipOne = true;             // some delays take 2 command words, we need to skip the next word
                 continue;
             }
 
             ++receivedPoints;
 
+            // The command word encodes the intensity and position of the point to display.
+            // This is the standard format pidp-1 uses, same as the simh format.
+            // THe x and y coordinates have the origin at the lower left corner, not the Type 30
+            // center of the screen.
             x = cmd & 01777;
             y = (cmd >> 10) & 01777;
             intensity = (cmd >> 20) & 7;    // the standard display intensity, 0-7
@@ -582,7 +595,7 @@ static bool skipOne = false;
             pointP = &pointData[XYTOINDEX(x, y)];
             pointP->intensity = intensity;
             pointP->lifetime = 0;
-            pointP->valid = 1;
+            pointP->valid = true;
             havePoints = true;
         }
     }
@@ -599,9 +612,9 @@ int intensity;
 int delta;
 Uint8 r, g, b, a, bias;
 Uint8 blueAlpha, yellowAlpha;
-Uint8 origAlpha;
 Rgba rgba;
 
+    // Limit to the SDL2 range of 0-255
     if( (whiteBias + BLUER) > 255 )
     {
         whiteBias = 255 - BLUER;
@@ -622,18 +635,21 @@ Rgba rgba;
     // At the set 30fps, the decay alpha gives an accurate decay time.
     // This data from the RCA Phosphors TPM-1508A technical note.
     // Fadout is done by adjusting the blue and yellow alphas based on lifetime.
-    // 
+    // The initial frame has the blue color adjusted by the white bias, see below.
     for( i = 7; i >= 0; --i )         // for each pdp1 intensity level
     {
         intensity = MININTENSITY + (i * delta);
+
+        // The blending algorithm will take 100% of the source (blue) value if its alpha is 100% and
+        // none of the second (yellow), so we have to adjust the alphas a bit.
+        // The blue shouldn't dominate, the real phosphor is only slightly blue when the point
+        // is drawn because of the yellow secondary phosphor blending with it.
+        // However, if a strking visual effect is desired, a low or zero white bias will give
+        // a bright blue-purple inital dot.
         bias = whiteBias;
 
         for( j = 0; j < 256; ++j )    // for each lifetime value, 0 being initial, 255 being final
         {
-            // The blending algorithm will take 100% of the source (blue) value if its alpha is 100% and
-            // none of the second (yellow), so we have to adjust the alphas a bit.
-            // The blue shouldn't dominate, the real phosphor is only slightly blue when the point
-            // is drawn because of the yellow secondary phosphor blending with it.
             blueAlpha = (Uint8)(powf((float)j+1, -BLUEDECAYALPHA) * 255.0f);
             yellowAlpha = (Uint8)(powf((float)j+1, -YELLOWDECAYALPHA) * 255.0f);
 
@@ -643,10 +659,9 @@ Rgba rgba;
             {
                 rgba = blend(BLUER + bias, BLUEG + bias, BLUEB, blueAlpha, YELLOWRGB, yellowAlpha);
                 SDL_GetRGBA(rgba, pixelFormatP, &r, &g, &b, &a);
-                // And use the pre-blended-blended alpha so we get the intensity that was expected.
-                a = APPLYGAMMA(((int)a * intensity) / 255);
+                a = APPLYGAMMA(((int)a * intensity) / 255, gammaCorrection);
                 rgba = SDL_MapRGBA(pixelFormatP, r, g, b, a);
-                bias = 0;       // only the first one
+                bias = 0;           // only the first frame
             }
             else
             {
@@ -662,6 +677,8 @@ Rgba rgba;
 // This is the standard blend algorithm, same as SDL_BLEMDNOME_BLEND.
 // We use this to know what's going on, and it's a bit more efficient than writing 2 sets of pixels
 // and letting SDL do the blending.
+// Note that a source alpha of 100%, 255, is opaque and will totally mask the destination alpha.
+// For our purposes, blue is always the source and yellow the destination.
 uint32_t
 blend(int srcR, int srcG, int srcB, int sAlpha, int destR, int destG, int destB, int dAlpha)
 {
@@ -702,8 +719,6 @@ setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y)
 // Spread a point to simulate beam spread on a crt.
 // The Type 30 doccumentation states a spot diameter of 0.030" max, about 3 pixels on its display.
 // This siumulates it well by drawing extra dots based on the 0-7 intensity level.
-// Lifetime is passed to add the ability to dither the position although tests show that doesn't
-// look great.
 void
 drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity)
 {
@@ -800,6 +815,8 @@ uint32_t cmd;
 
         // SDL has the upper left corner x,y as 0,0, ranging from 0 to 1023.
         // PDP1 is -511,511, ranging from -511 to 511 plus the PDP1 coords are 1's complement.
+        // This really should have used the same 0-1023 range the display coordinates use,
+        // but too many things depend upon it being center-origined.
         pdpX -= 511;
         if( pdpX < 0 )
         {

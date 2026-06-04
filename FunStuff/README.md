@@ -17,3 +17,6 @@ Each directory has a makefile, just type make in one.
 - drawLines, a semi-recreation of the original lightpen line drawing program
 - programSelector, allows picking and running a program from the drum using the light pen
 - findAndTrack, another light pen demo that lets you move a cross around the screen
+- dual, concurrent display of text using both the Type 30/33 and Type 340/342 display systems
+
+A variety of other programs are included, see the am1 file for information.

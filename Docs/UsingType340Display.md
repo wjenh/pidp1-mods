@@ -2,9 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.4
+This is version 1.5
 
-Edit date 16-May-2026
+Edit date 3-June-2026\
+Add details of address for dla
 
 ## What is it?
 
@@ -98,7 +99,7 @@ The rest are for determining the status of the display.
 The assigned IOTs are 15, 16, and 17. It apparently was not unusual for different installations to use
 different IOT assignments.
 
-- dla - display load address, start a display progran at the given address
+- dla - display load address, start a display progran at the address in the IO register - see note
 - drs - display resume sequence, used to resume after a lightpen event
 - dcf - display clear flags, clears the flags following
 - dra - display read address counter, the last address executed
@@ -111,6 +112,9 @@ different IOT assignments.
 All of the skip subcommands can be combined, just as for the normal PDP-1 skip instructions, e.g.
 
 dsv dsh dss
+
+**note** - the address is a full 16 bit address, any location in any bank can be used without
+enabling extended memory.
 
 ## Scale factor
 

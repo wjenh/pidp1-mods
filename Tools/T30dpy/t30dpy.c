@@ -116,7 +116,7 @@ typedef struct {
     uint16_t lifetime;          // value is only 0-255, but use 16 bits because it would be padded to it anyway
 } Point, *PointP;
 
-Point pointData[NUMPOINTS];     // where all the data lives
+Point pointData[NUMPOINTS];     // where all the data lives, enough for every possible point, 1024 x 1024
 // Th precomputed rgba values for each possibe pdp-1 intensity and internal time step.
 Rgba rgbaValues[8][256];
 
@@ -279,7 +279,7 @@ struct timespec sleepTime;
 
     // init SDL
     SDL_Init(SDL_INIT_VIDEO);
-    window = SDL_CreateWindow("Type 30 Display",
+    window = SDL_CreateWindow("T30dpy Type 30 Display",
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winSize, winSize,
             ((!border)?SDL_WINDOW_BORDERLESS:0) | SDL_WINDOW_ALLOW_HIGHDPI);
 
@@ -431,7 +431,10 @@ struct timespec sleepTime;
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
         SDL_RenderClear(renderer);
 
-        // Go thru the point list, handle each
+        // Go thru the point list, handle each.
+        // Pitch is set by SDL, it's the number of bytes in a row.
+        // It's not safe to assume how many there are, some GPUs require padding.
+        // The XYTOPTR() macro uses it to get a pointer to the proper pixel location for an x,y coordinate.
         SDL_LockTexture(texture, NULL, (void *)(&pixels), &pitch);
 
         havePoints = false;
@@ -625,7 +628,7 @@ Rgba rgba;
         whiteBias = 255 - BLUEG;
     }
 
-    // The internal 0-255 intensity is in 8 linear increments from the base value.
+    // The internal 0-255 intensity is in 7 linear increments after the first, intensity 0 is the base value.
     delta = (255 - MININTENSITY) / 7;
 
     // The blue phosphor had a 25-75 microsecond lifetime to 10% brightness.
@@ -635,17 +638,22 @@ Rgba rgba;
     // At the set 30fps, the decay alpha gives an accurate decay time.
     // This data from the RCA Phosphors TPM-1508A technical note.
     // Fadout is done by adjusting the blue and yellow alphas based on lifetime.
-    // The initial frame has the blue color adjusted by the white bias, see below.
+    // The initial value, which corresponds to the first displayed frame,
+    // has the blue color adjusted by the white bias, see below.
     for( i = 7; i >= 0; --i )         // for each pdp1 intensity level
     {
         intensity = MININTENSITY + (i * delta);
 
         // The blending algorithm will take 100% of the source (blue) value if its alpha is 100% and
-        // none of the second (yellow), so we have to adjust the alphas a bit.
+        // none of the second (yellow), so we have to adjust the initial rgba color a bit.
         // The blue shouldn't dominate, the real phosphor is only slightly blue when the point
         // is drawn because of the yellow secondary phosphor blending with it.
+        // The white bias is added to the r and g values of the blue phospor to make it whiter, but only
+        // for the first value. This compensates for the yellow being suppressed.
         // However, if a strking visual effect is desired, a low or zero white bias will give
         // a bright blue-purple inital dot.
+        // The alpha for both colors always starts at 255, 100%, but then drops by the power law for it,
+        // which is why the bias is only needed for the first value.
         bias = whiteBias;
 
         for( j = 0; j < 256; ++j )    // for each lifetime value, 0 being initial, 255 being final
@@ -661,7 +669,7 @@ Rgba rgba;
                 SDL_GetRGBA(rgba, pixelFormatP, &r, &g, &b, &a);
                 a = APPLYGAMMA(((int)a * intensity) / 255, gammaCorrection);
                 rgba = SDL_MapRGBA(pixelFormatP, r, g, b, a);
-                bias = 0;           // only the first frame
+                bias = 0;           // only the first value
             }
             else
             {
@@ -675,8 +683,7 @@ Rgba rgba;
 
 // Blend 2 rgba values into a packed RGBA8888 result.
 // This is the standard blend algorithm, same as SDL_BLEMDNOME_BLEND.
-// We use this to know what's going on, and it's a bit more efficient than writing 2 sets of pixels
-// and letting SDL do the blending.
+// We use this because we don't want to have to have SDL do the blending at display time.
 // Note that a source alpha of 100%, 255, is opaque and will totally mask the destination alpha.
 // For our purposes, blue is always the source and yellow the destination.
 uint32_t
@@ -860,8 +867,9 @@ uint64_t now;
 // If not, try the install directory.
 // The file is named '.t30dyconfig' in the home directory,
 // 't30dpyconfig' in the install directory.
-// Lines are of e form 'param=value', empty lines or lines beginning with '#' are ignored, as are any invalid params.
-// A full load is only done at startup, sighup calls with false, some settings can't be changed.
+// Lines are of the form 'param=value', empty lines or lines beginning with '#' are ignored,
+// as are any invalid params.
+// A full load is only done at startup, sighup calls with false, some settings can't be dynamically changed.
 void
 loadConfig(bool full)
 {
@@ -961,7 +969,7 @@ char line[256];
 
 // Given filename, search for it and if found, return the FILE *ptr for it.
 // If the name begins with '~', use the home directory for the caller.
-// If the file isn;'t found, null is returned.
+// If the file isn't found, null is returned.
 FILE *
 getFile(char *nameP)
 {
@@ -1044,19 +1052,19 @@ usage()
     fprintf(stderr, "usage: t30dpy [-l] [-m] [-n] [-t] [-v]\n");
     fprintf(stderr, "              [-g gamma] [-w bias] [-p port] [-s size] [host]\n");
     fprintf(stderr, "where:\n");
-    fprintf(stderr, "-l, use SDL linear scaling, else nearest neighbor\n");
-    fprintf(stderr, "-m, Mike C mode, see the documentation\n");
-    fprintf(stderr, "-n, start with no border\n");
-    fprintf(stderr, "-t, accumulate timing data, display on exit\n");
-    fprintf(stderr, "-v, enable SDL vsync on render\n");
-    fprintf(stderr, "-g gamma, set gamma to use, floating point, default is %.4f\n", GAMMA);
-    fprintf(stderr, "-w bias, add this to the r and g values for the blue phospor to bias towards white\n");
-    fprintf(stderr, "-p port, set port to use, default is %d\n", DEFAULTPORT);
-    fprintf(stderr, "-s size, set display size to size pixels, >= 256\n");
-    fprintf(stderr, "host, hostname of server to connect to\n");
-    fprintf(stderr, "Host defaults to localhost, port to 3400.\n");
+    fprintf(stderr, "-l, use SDL linear scaling, else nearest neighbor, default neearest\n");
+    fprintf(stderr, "-m, Mike C mode, see the documentation, default false\n");
+    fprintf(stderr, "-n, start with no border, default bordered\n");
+    fprintf(stderr, "-t, accumulate timing data, display on exit, default off\n");
+    fprintf(stderr, "-v, enable SDL vsync on render, default off\n");
+    fprintf(stderr, "-g gamma, set gamma to use, floating point, default %.4f\n", GAMMA);
+    fprintf(stderr, "-w bias, add to the blue phosphor r and g for a dot's first frame, default %d\n",
+        WHITEBIAS);
+    fprintf(stderr, "-p port, set port to use, default %d\n", DEFAULTPORT);
+    fprintf(stderr, "-s size, set display size to size pixels, >= 256, default 1024\n");
+    fprintf(stderr, "host, hostname of server to connect to, default localhost\n");
     fprintf(stderr, "While running:\n");
-    fprintf(stderr, "F11 or the f character go into full screen mode or return from it.\n");
+    fprintf(stderr, "F11 or the f character goes into full screen mode or returns from it.\n");
     fprintf(stderr, "The b character toggles between a bordered and borderless window.\n");
     exit(1);
 }

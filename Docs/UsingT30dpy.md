@@ -5,7 +5,7 @@ This document describes the t30dpy simulated Type 30 display.
 This is version 1.5
 
 Edit date 3-June-2026\
-add reload on sighup
+add dot size discussion
 
 ## Usage
 
@@ -88,6 +88,9 @@ The solution is to stretch the blue decay time considerably over several frames.
 T30dpy runs at a fixed 30 frames per second and the alpha values for the colors are calibrated to that to give,
 for the secondary phosphor, a 400 millisecond decay to 10%, as specified.
 You will see that it decays signficantly faster than p7sim does.
+The real CRT, being analog, could have visible persistence for over a minute, but only in complete darkness.
+Under normal lighting conditions, the implemented curve is accurate; an LCD can't duplicate the very low
+light levels of the CRT after a long fade period.
 
 Finally, the simulated beam spread done by p7sim is overly exaggerated.
 Take a look at any real CRT with similar resolution, such as an oscilloscope, for comparison.
@@ -95,6 +98,53 @@ Take a look at any real CRT with similar resolution, such as an oscilloscope, fo
 DEC stated a beam spot size of 0.030 inches, which works out to about 2 pixels on the original CRT.
 T30dpy uses a simple rectangular pattern of pixels with more pixels added as intensity increases.
 Given the scale, this is virtually imperceptible.
+
+## Dot size, beam spread, how much is enough?
+
+In a traditional CRT the electron beam that draws each pixel is subject to some fairly complex physics.
+The pixels are not a little round dot of uniform intensity.
+One of the dominant factors that affects it is the electostatic repulsion between the electrons that make up
+the beam; like charges repel.
+
+Since a brighter spot means more electrons, the beam spreads more at higher intensities.
+CRT designs had a lot of clever ways to minimize this, and the Type 30 display uses some of them, notably
+dynamic focus and a special beam-forming aperture in the electron gun.
+
+The CRT used was a 16ADP7A, a 16" diameter tube, but the Type 30 only used a 9-3/8" area of 1024 x 1024 pixels.
+This gives 0.009" between pixels. DEC specified the spot size as 0.015" to half power (brightness), with the visual
+detection limit of 0.030". The intensity falloff is basically a Gaussian curve and drops very rapidly from
+center. This amountw to effectively less than 3 pixels.
+
+The 16ADP7A's electron gun aperture also significantly reduced spread at high intensities.
+The absolute worst case spot size, an intensity that would burn the screen very quickly and at the edge where
+focus is poorest seems to have ben about 0.070 full width, 0.035 half power width.
+
+Given the very sharp rolloff and the contrast and brightness limits of modern LCD displays,
+this would amount to about 4-5 pixels.
+
+But, DEC limited the drawing region to the central area of the CRT where beam spread is negligable.
+The Type 340 maintenance manual implies that over the range
+that DEC operated the CRT the spot size change should be insignificant, which makes simulating beam spread
+vs intensity even less important.
+
+So, any complex simulation of a perfect dot with a mathematically correct intensity profile really wouldn't be
+visibly different from a simpler solution.
+
+T30dpy simulates the slight beam spread by using a 3x3 matrix. No Gaussian adjustment is done, but the number
+of dots in the matrix is varied slightly based on the intensity level.
+
+The true intensity over the spot size was calculated using the known parameters and applying a Gaussian distribution
+as the real beam had.
+By 2 pixels from center at any intensity, the screen brightness effectively has gone to zero, so it is pointless
+to deal with more than the above matrix size.
+
+Here is the calculated Gaussian intensity profile for a 3, 5, and 7 pixel dot.
+
+| Pixel spread | Center | 1 pixel out | 2 pixels out | 3 pixels out |
+|--------------|--------|-------------|--------------|--------------|
+| 3            | 100%   | 2%          | 0%           | 0%           |
+| 5            | 100%   | 32%         | 0%           | 0%           |
+| 7            | 100%   | 60%         | 13%          | 1%           |
 
 ## Mike C mode?
 

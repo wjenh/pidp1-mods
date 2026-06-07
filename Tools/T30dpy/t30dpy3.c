@@ -1,15 +1,16 @@
 /*
- * t30dpy - a replacement for p7sim
- * This is MUCH lighter weight but simulates the Type 30 behavior quite well, better in some ways than p7sim.
+ * t30dpy3 - a replacement for p7sim that uses SDL3.
+ * See t30dpy for an SDL2 version.
+ * This is MUCH lighter weight than p7sim and simulates the Type 30 behavior better.
  * The major differences are:
  * The color p7sim displayed was not totally correct for a p7 phosphor, the initial spot was too white.
  * The yellow phosphor decay time was too long.
  * See initializeRgbas() below for more details.
  * The increase in dot size with higher intensities to mimic beam spread was far too much.
  * Finally, p7sim was complex and an immense cpu hog. This version generally uses a fraction as much cpu.
- * It is a pure SDL2 application, no GL, which has benefits and drawbacks. SDL3 would be better, but it's
- * not supported yet on rPi.
- * GL is just too bloody complicated.
+ * It is a pure SDL3 application.
+ * While it generally does not always perform significantly faster than the SDL2 version,
+ * it is much better at smooth rendering and scaling and is current, SDL2 is very dated.
  *
  * Neither this nor p7sim accurately replicate the blue color, modern displays can't duplicate
  * the very short high intensity burst only a few microseconds in duration especially since the
@@ -29,34 +30,25 @@
  * Author - Bill Ezell, wje
  * This can be freely used, modified, whatever. Please just keep the attribution to me.
  *
- * 20-May-2026 wje initial version
- * 23-May-2026 wje much fiddling to try to get window scaling to give decent visual results
- * 23-May-2026 wje fix typo assigning to hostNameP from cmd line arg
- * 25-May-2026 wje allow setting of gamma, vsync and linear/nearest via command line,
- *    adjust default gamma to match linear intensity to human-perceived intensity,
- *    modify dot-size adjustment for best appearance,
- *    add config file for various settings
- * 26-May-2026 wje precompute all possible rgba values, completely avoids floating point calcs while running
- * 31-May-2026 wje add Mike Chaoponis mode, optimize idle time
- * 31-May-2026 wje completely rework blending and eliminate blue hold,
- *    it was too blue and the blending wasn't quite right
- *  3-Jun-2026 wje add config reload on sighup, clean exit on sigint
- *  4-Jun-2026 wje commentary and code cleanup, remove unused includes, no functional changes
- *  7-Jun-2026 wje use the Google AI generated suggestion for the dot matrix vs intensity drawing
+ * 6-Jun-2026 wje initial version, cloned from t30dpy.c
 */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <ctype.h>
 #include <pthread.h>
 #include <signal.h>
 #include <netinet/tcp.h>
 #include <netdb.h>
 #include <time.h>
 #include <pwd.h>
-#include <SDL2/SDL.h>
+#include <math.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 
 #define READBUFSIZE 512         // size of the buffer we read from the server into, bytes
 
@@ -99,7 +91,9 @@
 #define XYTOPTR(base, pitch, x, y) (uint32_t *)((base) + ((y) * (pitch)) + (x * sizeof(uint32_t)))
 #define APPLYGAMMA(alpha, gamma) (int)(powf((float)(alpha) / 255.0f, (gamma)) * 255.0f);
 
-#define FRAMETIME 33333333L      // nanoseconds between frames, this is 30 fps
+#define CONSTRAIN(x) ((x) < 0?0:(((x) > 1023)?1023:(x)))
+
+#define FRAMETIME 33333333.0f      // nanoseconds between frames, this is 30 fps
 
 typedef unsigned char byte;
 typedef uint32_t Rgba;
@@ -113,13 +107,12 @@ typedef uint32_t Rgba;
 // In the display loop, precomputed values are used and are selected by the combination of intensity and lifetime.
 typedef struct {
     bool valid;                 // set when the point should be displayed
-    byte intensity;
+    byte intensity;             // 0 - 7, PDP-1 intensity
     uint16_t lifetime;          // value is only 0-255, but use 16 bits because it would be padded to it anyway
 } Point, *PointP;
 
 Point pointData[NUMPOINTS];     // where all the data lives, enough for every possible point, 1024 x 1024
-// Th precomputed rgba values for each possibe pdp-1 intensity and internal time step.
-Rgba rgbaValues[8][256];
+Rgba rgbaValues[8][256];        // The rgba values for each possibe intensity and internal time step.
 
 int pdp1FD;
 int portNum;
@@ -133,21 +126,31 @@ unsigned int droppedPoints;
 bool quit = false;
 bool border;
 bool doLinear = LINEAR;
-bool doVsync = VSYNC;
 bool mikecMode = false;
 bool havePoints = false;
 
 float gammaCorrection = GAMMA;
 
-uint32_t rgbaBlack;                 // The value is numeric 0, but use the SDL generated version for consistency.
+uint32_t blackPixel;                 // The value is numeric 0, but use the SDL generated version for consistency.
 uint64_t totalPoints;
 uint64_t totalPixels;
 uint64_t receivedPoints;
 
-SDL_PixelFormat *pixelFormatP;      // We use RGBA8888, set below.
+// These are used for loop timing so the frane rate can be kept at 30fps.
+Uint64 currentTicks, prevTicks;
+Uint64 frequency;
+double dtmp;
+double accumulator = 0.0;
+
+// These are all for SDL.
 SDL_Window *window;
 SDL_Renderer *renderer;
-SDL_Texture *texture;
+SDL_Texture *textures[2];           // Double buffered textures so we don't block while it is being processed.
+SDL_Texture *textureP;              // The current texture.
+int textureSelector;
+
+SDL_PixelFormat pixelFormat;        // We will use whatever SDL3 tells us is preferred, set below.
+const SDL_PixelFormatDetails *formatDetailsP;
 
 int openPort(char *hostNameP, int port);
 uint32_t blend(int srcR, int srcG, int srcB, int srcA, int destR, int destG, int destB, int destA);
@@ -170,7 +173,6 @@ int i;
 int opt;
 int x, y;
 int penx, peny;
-int pitch;
 bool fullscreen;
 bool penDown;
 bool doTiming;
@@ -183,14 +185,15 @@ uint32_t frameDelay;
 
 PointP pointP;
 uint8_t *pixels;
-uint32_t *pixelP;
 uint32_t rgba;
+int pitch;
 
 SDL_Event event;
+SDL_PropertiesID props;
 
 pthread_t thread;
 pthread_attr_t tattr;
-struct timespec sleepTime;
+struct timespec sleepTime, remainingTime;
  
     hostNameP = DEFAULTHOST;
     portNum = DEFAULTPORT;        // display 0 on the pidp-1
@@ -249,7 +252,7 @@ struct timespec sleepTime;
             break;
 
         case 'v':
-            doVsync = true;     // enable vsync rendering
+            fprintf(stderr,"Vsync not supported for this SDL3 version, ignored.\n");
             break;
 
         case 'w':
@@ -279,33 +282,51 @@ struct timespec sleepTime;
     signal(SIGTERM, sighandler);
 
     // init SDL
-    SDL_Init(SDL_INIT_VIDEO);
-    window = SDL_CreateWindow("T30dpy Type 30 Display",
-        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winSize, winSize,
-            ((!border)?SDL_WINDOW_BORDERLESS:0) | SDL_WINDOW_ALLOW_HIGHDPI);
+    if( !SDL_Init(SDL_INIT_VIDEO) )
+    {
+        fprintf(stderr,"SDL3 initialization failed, %s\n", SDL_GetError());
+    }
 
-    // Create the renderer, set to black and display.
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | (doVsync)?SDL_RENDERER_PRESENTVSYNC:0 );
-    SDL_RenderSetLogicalSize(renderer, 1024, 1024);
+    if( !SDL_CreateWindowAndRenderer("T30dpy3 Type 30 Display", winSize, winSize,
+        ((!border)?SDL_WINDOW_BORDERLESS:0), &window, &renderer) )
+    {
+        fprintf(stderr,"Can't create window, %s\n", SDL_GetError());
+        exit(1);
+    }
+
+    // Initialize renderer and clear window.
+    SDL_SetRenderLogicalPresentation(renderer, 1024, 1024, SDL_LOGICAL_PRESENTATION_LETTERBOX);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
     SDL_RenderClear(renderer);
     SDL_RenderPresent(renderer);
 
-    // Create the texture we write our points to.
+    // Since we're going to write to GPU vram, we need to use its pixel format for best efficiency.
+    pixelFormat = SDL_PIXELFORMAT_RGBA8888;      // Default fallback
+    props = SDL_GetRendererProperties(renderer);
+    if( props )
+    {
+        // Query the preferred texture format for the specific backend.
+        pixelFormat = ((SDL_PixelFormat *)SDL_GetPointerProperty(props,
+            SDL_PROP_RENDERER_TEXTURE_FORMATS_POINTER, NULL))[0];
+    }
+
+    formatDetailsP = SDL_GetPixelFormatDetails(pixelFormat);
+    textures[0] = SDL_CreateTexture(renderer, pixelFormat, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
+    textures[1] = SDL_CreateTexture(renderer, pixelFormat, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
+
     // Regardless of the window size, the logical size is always 1024 by 1024.
-    // However, SDL2 is not very good at rendering pixels for some window sizes.
-    // Pixels can be blurry regardless of the scale quality that is set.
+    // SDL2 was not very good at rendering pixels for some window sizes, SDL3 is much better at scaling.
     // Linear gives the best results balancing small screens vs larger ones but blurs the points some.
     // Nearest neighbor gives sharper dots, but some screen sizes don't scale well.
     // Select what works best for a given monitor and sceen size vial the command line or config file.
     // We control intensity by adjusting the alpha value, which is blended with the black the renderer
     // was originally set to, with alpha 255 being brightest.
-    // Pixels use RGBA8888 representation, which is 32 bits.
-    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
-    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(texture, (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
-    pixelFormatP = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA8888);
-    rgbaBlack = SDL_MapRGBA(pixelFormatP, 0, 0, 0, 0);
+    SDL_SetTextureBlendMode(textures[0], SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
+    SDL_SetTextureBlendMode(textures[1], SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
+
+    blackPixel = SDL_MapRGBA(formatDetailsP, NULL, 0, 0, 0, 0);
      
     // Precomupute the possible rgba values over time and the intensity steps.
     initializeRgbas();
@@ -321,27 +342,43 @@ struct timespec sleepTime;
 
     // Main loop. Check for keyboard and mouse evennts, scan the point matrix for active points,
     // update and display the screen.
+    // Because of all the complex internal timing SDL3 does, it's much more reliable to use a fixed delay.
     startTime = lastTime = now();
 
-    SDL_ShowCursor(SDL_DISABLE);            // it is enabled when the mouse moves
+    SDL_HideCursor();            // it is enabled when the mouse moves
+
+    prevTicks = SDL_GetPerformanceCounter();
+    frequency = SDL_GetPerformanceFrequency();
 
     while( !quit )
     {
+        // Do some precision loop timekeeping so we mantian our 30fps rate.
+        currentTicks = SDL_GetPerformanceCounter();
+        dtmp = (double)(currentTicks - prevTicks) / frequency;
+        // Prevent "spiral of death" if the window is moved or lags.
+        if( dtmp > 0.25 )
+        {
+            dtmp = 0.25;
+        }
+
+        accumulator += dtmp;
+        prevTicks = currentTicks;
+
         while( SDL_PollEvent(&event) )
         {
             switch(event.type)
             {
-            case SDL_QUIT:
+            case SDL_EVENT_QUIT:
                 quit = true;
                 break;
 
-            case SDL_KEYDOWN:
-                switch( event.key.keysym.scancode )
+            case SDL_EVENT_KEY_DOWN:
+                switch( event.key.scancode )
                 {
                 case SDL_SCANCODE_F11:
                 case SDL_SCANCODE_F:
                     fullscreen = !fullscreen;
-                    SDL_SetWindowFullscreen(window, (fullscreen)?SDL_WINDOW_FULLSCREEN_DESKTOP:0);
+                    SDL_SetWindowFullscreen(window, (fullscreen)?SDL_WINDOW_FULLSCREEN:0);
                     break;
 
                 case SDL_SCANCODE_ESCAPE:
@@ -350,73 +387,67 @@ struct timespec sleepTime;
 
                 case SDL_SCANCODE_B:
                     border = !border;
-                    SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
+                    SDL_SetWindowBordered(window, (border)?true:false);
                     break;
                 }
                 break;
 
-            case SDL_MOUSEMOTION:
-                SDL_ShowCursor(SDL_ENABLE);
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                penDown = true;
+                SDL_ConvertEventToRenderCoordinates(renderer, &event);
+                penx = (int)event.button.x;
+                peny = (int)event.button.y;
+                penx = CONSTRAIN(penx);
+                peny = CONSTRAIN(peny);
+                updatePen(pdp1FD, window, true, penx, peny);
+                SDL_ShowCursor();
+                cursorTime = SDL_GetTicksNS();
+                break;
+                
+            case SDL_EVENT_MOUSE_MOTION:
                 cursorTime = now();
+
                 if( penDown )
                 {
-                    SDL_GetMouseState(&penx, &peny);
+                    SDL_ConvertEventToRenderCoordinates(renderer, &event);
+                    penx = (int)event.motion.x;
+                    peny = (int)event.motion.y;
+                    penx = CONSTRAIN(penx);
+                    peny = CONSTRAIN(peny);
+
                     updatePen(pdp1FD, window, true, penx, peny);
                 }
                 break;
 
-            case SDL_MOUSEBUTTONDOWN:
-                if( event.button.button == 1 )
-                {
-                    penDown = true;
-                    SDL_GetMouseState(&penx, &peny);
-                    updatePen(pdp1FD, window, true, penx, peny);
-                }
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                penDown = false;
+                updatePen(pdp1FD, window, false, penx, peny);
                 break;
-
-            case SDL_MOUSEBUTTONUP:
-                if(event.button.button == 1)
-                {
-                    penDown = false;
-                    updatePen(pdp1FD, window, false, penx, peny);
-                }
-                break;
-
-            case SDL_WINDOWEVENT:
-                switch(event.window.event)
-                {
-                case SDL_WINDOWEVENT_CLOSE:
-                    quit = true;
-                    break;
-                }
             }
         }
 
         // The display update is frame based.
-        // If not time for the next frame, sleep until it is.
         // All rgba values are comupted for a frame rate of 30fps.
-        deltaTime = (now() - lastTime);
-
-        if( deltaTime < FRAMETIME )
+        // Brute force delay, avoids all the SDL3 internal timing issues and is ok for this emualtion.
+        if( accumulator < FRAMETIME )
         {
-            sleepTime.tv_sec = 0;
-            sleepTime.tv_nsec = FRAMETIME - deltaTime;
-            nanosleep(&sleepTime, NULL);
+            SDL_Delay(33 - (uint32_t)(accumulator/1000000.0));  // delay is in msecs
         }
-        else if( deltaTime > FRAMETIME )
+        else if( accumulator > FRAMETIME )
         {
-            // This is just for the timing metrics
             frameMisses++;
-            if( deltaTime > frameDelay )
+            if( accumulator > frameDelay )
             {
-                frameDelay = deltaTime;
+                frameDelay = accumulator;
             }
         }
 
+        accumulator = 0.0;
         lastTime = now();
+
         if( cursorTime && (((lastTime - cursorTime) / 1000000) > CURSORTIMEOUT) )
         {
-            SDL_ShowCursor(SDL_DISABLE);
+            SDL_HideCursor();
             cursorTime = 0;
         }
 
@@ -428,16 +459,17 @@ struct timespec sleepTime;
             continue;           // If we have no points, don't do any window processing
         }
 
-        // Since we alpha blend, the renderer has to be cleared each time.
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-        SDL_RenderClear(renderer);
+        // Swap the active texture buffer.
+        textureP = textures[textureSelector];
+        textureSelector ^= 1;
+
+        if( !SDL_LockTexture(textureP, NULL, (void *)&pixels, &pitch) )
+        {
+            fprintf(stderr, "Can't lock texture, %s\n", SDL_GetError());
+            exit(1);
+        }
 
         // Go thru the point list, handle each.
-        // Pitch is set by SDL, it's the number of bytes in a row.
-        // It's not safe to assume how many there are, some GPUs require padding.
-        // The XYTOPTR() macro uses it to get a pointer to the proper pixel location for an x,y coordinate.
-        SDL_LockTexture(texture, NULL, (void *)(&pixels), &pitch);
-
         havePoints = false;
         for( pointP = pointData, i = 0; i < NUMPOINTS; ++i, ++pointP )
         {
@@ -450,14 +482,13 @@ struct timespec sleepTime;
             // No reason to go thru the rest of the code.
             if( !pointP->valid )
             {
-                pixelP = XYTOPTR(pixels, pitch, x, y);
-                *pixelP = rgbaBlack;        // clear the pixel
+                setPixel(pixels, pitch, blackPixel, x, y);
                 continue;
             }
 
             rgba = rgbaValues[pointP->intensity][pointP->lifetime];
 
-            if( (rgba != rgbaBlack) && (pointP->lifetime < MAXLIFETIME) )
+            if( (rgba != blackPixel) && (pointP->lifetime < MAXLIFETIME) )
             {
                 drawPoint(pixels, pitch, rgba, x, y, pointP->intensity);
                 pointP->lifetime++;
@@ -467,13 +498,14 @@ struct timespec sleepTime;
             else
             {
                 pointP->valid = false;              // done with this now
-                pixelP = XYTOPTR(pixels, pitch, x, y);
-                *pixelP = rgbaBlack;                // clear the pixel
+                setPixel(pixels, pitch, blackPixel, x, y);
             }
         }
 
-        SDL_UnlockTexture(texture);
-        SDL_RenderCopy(renderer, texture, NULL, NULL);
+        SDL_UnlockTexture(textureP);
+
+        SDL_RenderClear(renderer);
+        SDL_RenderTexture(renderer, textureP, NULL, NULL);
         SDL_RenderPresent(renderer);
     }
 
@@ -493,7 +525,6 @@ struct timespec sleepTime;
      
     // clean up SDL.
     // Not really necessary, but it's good form.
-    SDL_FreeFormat(pixelFormatP);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
@@ -618,7 +649,7 @@ Uint8 r, g, b, a, bias;
 Uint8 blueAlpha, yellowAlpha;
 Rgba rgba;
 
-    // Limit to the SDL2 range of 0-255
+    // Limit to the SDL3 range of 0-255
     if( (whiteBias + BLUER) > 255 )
     {
         whiteBias = 255 - BLUER;
@@ -667,14 +698,14 @@ Rgba rgba;
             if( yellowAlpha > lowCutoff )
             {
                 rgba = blend(BLUER + bias, BLUEG + bias, BLUEB, blueAlpha, YELLOWRGB, yellowAlpha);
-                SDL_GetRGBA(rgba, pixelFormatP, &r, &g, &b, &a);
+                SDL_GetRGBA(rgba, formatDetailsP, NULL, &r, &g, &b, &a);
                 a = APPLYGAMMA(((int)a * intensity) / 255, gammaCorrection);
-                rgba = SDL_MapRGBA(pixelFormatP, r, g, b, a);
+                rgba = SDL_MapRGBA(formatDetailsP, NULL, r, g, b, a);
                 bias = 0;           // only the first value
             }
             else
             {
-                rgba = rgbaBlack;
+                rgba = blackPixel;
             }
 
             rgbaValues[i][j] = rgba;
@@ -682,7 +713,7 @@ Rgba rgba;
     }
 }
 
-// Blend 2 rgba values into a packed RGBA8888 result.
+// Blend 2 rgba values into a packed renderer-preferrec result.
 // This is the standard blend algorithm, same as SDL_BLEMDNOME_BLEND.
 // We use this because we don't want to have to have SDL do the blending at display time.
 // Note that a source alpha of 100%, 255, is opaque and will totally mask the destination alpha.
@@ -708,7 +739,7 @@ uint32_t rslt;
         rA = 255;               // keep in bounds
     }
 
-    return( SDL_MapRGBA(pixelFormatP, rR, rG, rB, rA) );
+    return( SDL_MapRGBA(formatDetailsP, NULL, rR, rG, rB, rA) );
 }
 
 // The loweest level, put an rgba pixel value into the texture memory.
@@ -766,85 +797,36 @@ drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity
     }
 }
 
-
 // For the real hardware, the Type 30 would figure out if there was a hit
 // at the last drawn pixel when issuing the completion pulse,
 // but that's not possible here, let it be determined back in the pdp1 code.
-// SDL scaling in full screen mode is flaky. It preserves the aspect ratio of the renderer, so if the
-// height and width of the full screen are different, it pads the sides of the longer dimension but doesn't
-// adjust the mouse coordinaates to match. Silly.
-// We have to determine the offset and apply it during scaling.
+// SDL3 handles the mouse coordinate transforms for scaled windows itself now, unlike all the hoops SDL2 forced.
 void
 updatePen(int sockFD, SDL_Window *window, bool penDown, int mouseX, int mouseY)
 {
-int winX, winY;
-int pdpX, pdpY;
-int offsetX, offsetY;
-float scale;
 uint32_t cmd;
 
     if( penDown )
     {
-        // Window size might not match the logical drawing size of 1024, scale coords.
-        // SDL doesn't properly scale mouse events in full screen mode, we have to use the smaller of the'
-        // reported dimensions.
-        SDL_GetWindowSize(window, &winX, &winY);
-        if( winX > winY )
-        {
-            scale = (float)winY;
-            offsetY = 0;
-            offsetX = (winX - winY) / 2;
-        }
-        else
-        {
-            scale = (float)winX;
-            offsetX = 0;
-            offsetY = (winY - winX) / 2;
-        }
-
-        pdpX = (int)((float)mouseX * (1024.0 / scale)) + offsetX;
-        pdpY = (int)((float)mouseY * (1024.0 / scale)) + offsetY;
-
-        // Constrain the mouse since the SDL stuff is not reliable.
-        if( pdpY < 0 )
-        {
-            pdpY = 0; 
-        }
-
-        if( pdpY > 1023 )
-        {
-            pdpY = 1023;
-        }
-
-        if( pdpX < 0 )
-        {
-            pdpX = 0; 
-        }
-
-        if( pdpX > 1023 )
-        {
-            pdpX = 1023;
-        }
-
         // SDL has the upper left corner x,y as 0,0, ranging from 0 to 1023.
         // PDP1 is -511,511, ranging from -511 to 511 plus the PDP1 coords are 1's complement.
         // This really should have used the same 0-1023 range the display coordinates use,
         // but too many things depend upon it being center-origined.
-        pdpX -= 511;
-        if( pdpX < 0 )
+        mouseX -= 511;
+        if( mouseX < 0 )
         {
-            --pdpX;             // 1's cmpl conversion
+            --mouseX;             // 1's cmpl conversion
         }
 
-        pdpY = 511 - pdpY;
-        if( pdpY < 0 )
+        mouseY = 511 - mouseY;
+        if( mouseY < 0 )
         {
-            --pdpY;             // 1's cmpl conversion
+            --mouseY;             // 1's cmpl conversion
         }
 
         cmd = 0xFF0 << 20;
-        cmd |= (pdpX & 0x3FF) << 10;
-        cmd |= (pdpY & 0x3FF);
+        cmd |= (mouseX & 0x3FF) << 10;
+        cmd |= (mouseY & 0x3FF);
     }
     else
     {
@@ -936,14 +918,7 @@ char line[256];
                 }
             }
 
-            if( !strcmp(line, "vsync") )
-            {
-                if( !strcmp(cP, "true") || (*cP == 'y') )
-                {
-                    doVsync = true;
-                }
-            }
-            else if( !strcmp(line, "border") )
+            if( !strcmp(line, "border") )
             {
                 border = (!strcmp(cP, "true") || (*cP == 'y'));
             }
@@ -1047,22 +1022,21 @@ reconfigure(int sig)
     loadConfig(false);
     initializeRgbas();
     // These might have changed.
-    SDL_SetTextureScaleMode(texture, (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
-    SDL_RenderSetVSync(renderer, doVsync);
-    SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
+    SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
+    SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
+    SDL_SetWindowBordered(window, (border)?true:false);
 }
 
 void
 usage()
 {
-    fprintf(stderr, "usage: t30dpy [-l] [-m] [-n] [-t] [-v]\n");
+    fprintf(stderr, "usage: t30dpy [-l] [-m] [-n] [-t]\n");
     fprintf(stderr, "              [-g gamma] [-w bias] [-p port] [-s size] [host]\n");
     fprintf(stderr, "where:\n");
     fprintf(stderr, "-l, use SDL linear scaling, else nearest neighbor, default neearest\n");
     fprintf(stderr, "-m, Mike C mode, see the documentation, default false\n");
     fprintf(stderr, "-n, start with no border, default bordered\n");
     fprintf(stderr, "-t, accumulate timing data, display on exit, default off\n");
-    fprintf(stderr, "-v, enable SDL vsync on render, default off\n");
     fprintf(stderr, "-g gamma, set gamma to use, floating point, default %.4f\n", GAMMA);
     fprintf(stderr, "-w bias, add to the blue phosphor r and g for a dot's first frame, default %d\n",
         WHITEBIAS);

@@ -4,8 +4,8 @@ This document describes the t30dpy simulated Type 30 display.
 
 This is version 1.5
 
-Edit date 3-June-2026\
-add dot size discussion
+Edit date 7-June-2026\
+add SDL3 version info
 
 ## Usage
 
@@ -97,7 +97,7 @@ Take a look at any real CRT with similar resolution, such as an oscilloscope, fo
 
 DEC stated a beam spot size of 0.030 inches, which works out to about 2 pixels on the original CRT.
 T30dpy uses a simple rectangular pattern of pixels with more pixels added as intensity increases.
-Given the scale, this is virtually imperceptible.
+Given the scale, the use of a parse rectangle is virtually imperceptible.
 
 ## Dot size, beam spread, how much is enough?
 
@@ -108,7 +108,7 @@ the beam; like charges repel.
 
 Since a brighter spot means more electrons, the beam spreads more at higher intensities.
 CRT designs had a lot of clever ways to minimize this, and the Type 30 display uses some of them, notably
-dynamic focus and a special beam-forming aperture in the electron gun.
+a special beam-forming aperture in the electron gun.
 
 The CRT used was a 16ADP7A, a 16" diameter tube, but the Type 30 only used a 9-3/8" area of 1024 x 1024 pixels.
 This gives 0.009" between pixels. DEC specified the spot size as 0.015" to half power (brightness), with the visual
@@ -132,6 +132,7 @@ visibly different from a simpler solution.
 
 T30dpy simulates the slight beam spread by using a 3x3 matrix. No Gaussian adjustment is done, but the number
 of dots in the matrix is varied slightly based on the intensity level.
+THe pattern of the dots is designed to look as much like a circle as is practical.
 
 The true intensity over the spot size was calculated using the known parameters and applying a Gaussian distribution
 as the real beam had.
@@ -165,13 +166,17 @@ However, if you want to see the spaceships in spacewar with the actual detail th
 
 ## Implementation
 
-T30dpy is a pure SDL2 implementation.
-No GL libraries are needed.
+There are two versions of the code.
+T30dpy is a pure SDL2 implementation while t30dpy3 is a modern SDL3 implementation.
+No GL or other graphics libraries are needed for either.
+They are functionally the same, but SDL3 does a much better job of rendering and scaling, giving a much more stable
+display when large areas or many dots are being drawn.
 
-It uses a streaming texture for composing the dots which is then passed to the standard renderer for display.
+Both use a streaming texture for composing the dots which is then passed to the standard renderer for display.
+The SDL3 version also uses double-buffered textures for reduced chances of 'tearing' on some displays.
 
-The decay time of a displayed point is based on time from when a point is initially displayed.
-256 intensity steps are used occurring at 33.33 millsecond intervals, a frame rate of 30 frames per second.
+The decay time of a displayed point is based on the time from when a point is initially displayed.
+256 intensity steps are used occurring at 33 millsecond intervals, a frame rate of 30 frames per second.
 Thus, the total aging span is up to 8.4 seconds.
 
 A power law decay results in a long, low intensity tail and potentially that is simulated.
@@ -188,6 +193,8 @@ from 0-7, the rgba value for that combination is calculated and adjusted by the 
 
 Alpha blending is then done of the two colors to get the displayed SDL RGBA8888 value.
 The blended alpha has its value modified by the gamma correction factor and the point displayed.
+The SDL3 version queries the gpu for its optimal pixel representation and maps the RGBA8888 value to that if
+it is different. This avoids any rendering time conversions in the graphics layer.
 
 Additionally, a white bias is applied to the blue phosphor r and g values to whiten the blue content.
 The original display is almost white because of the mixing of the blue and the yellow-green colors from
@@ -209,7 +216,7 @@ As points come from the host, the proper cell is marked as in use and its lifeti
 Each frame increments the lifetime after the rgba value is selected and if the 256 step limit has been reached
 or the rgba value is 0, the point is marked as inactive and will no longer be drawn.
 
-In practice, the primary value goes to 0 in a relatively few frames, the secondary trails off slowly
+In practice, the primary phosphor goes to 0 in a relatively few frames, the secondary trails off slowly
 as you would expect.
 
 Theoretically, the value never reaches 0, but since discrete steps are used, a small value of 1 or 2 can persist
@@ -232,6 +239,9 @@ But, that isn't always the case.
 The code uses nearest-neighbor texture scaling by default, but if that doesn't give good results for a given
 screen size linear scaling can be used, which is actually bilinear scaling.
 Bilinear also gives a smoother, softer appearance to dots when scaling occurs.
+
+The SDL3 version is much better at scaling but it still allows selection ov nearest-neighbor or linear
+for the visual effect.
 
 ## White bias
 
@@ -276,6 +286,7 @@ Ok, great. What about performance?
 
 Here's a table of average CPU load by program and by display emulator.\
 It was run on a middling performance Intel CPU of some age running Ubuntu Linux with no special graphics hardware.
+THese are figures for the SDL2 version, the SDL3 version has somewhat better performance.
 
 | Program       | Emulator  | CPU load reported by top |
 |---------------|-----------|--------------------------|
@@ -312,7 +323,7 @@ Note that these are Type 30 dots, the number of pixels being rendered is over 4 
 Tests have also been run on a Raspberry Pi 5 with similar results.\
 On a Pi 4, performance differences are not as extreme.
 This seems to be because the gpu on the Pi 4 is far less capable than that on the Pi 5
-and the SDL library does not optimize its use as well.
+and the SDL library does not optimize its use as well for streaming textures.
 
 ## Settings that can be changed in code
 
@@ -353,5 +364,7 @@ If reloadable, a SIGHUP will reset the running t30dpy to use the new values.
 | whitebias   | whitebias        | 180       | yes |
 | cutoff      | cutoff threshold | 5         | yes |
 | mikecmode   | read the docs    | false     | yes |
+
+Vsync is ignored for the SDL3 version.
 
 A sample file is included as */opt/pidp1-mods/t30dpy.config.example* for reference.

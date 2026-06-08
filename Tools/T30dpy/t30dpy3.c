@@ -31,6 +31,7 @@
  * This can be freely used, modified, whatever. Please just keep the attribution to me.
  *
  * 6-Jun-2026 wje initial version, cloned from t30dpy.c
+ * 8-Jun-2026 wje general cleanup, some optimizations
 */
 
 #include <stdio.h>
@@ -72,7 +73,6 @@
 #define GAMMA 0.4545             // default gamma, gamma applies after final alpha is calculated
 
 #define LOWCUTOFF 5             // alphas less than this are not displayed
-#define VSYNC false             // ask SDL renderer to use vsync
 #define LINEAR false            // ask SDL renderer to use linear scaling
 
 // The following can be overridden by the config file and some also via the command line.
@@ -81,19 +81,18 @@
 #define DEFAULTHOST "localhost"
 #define DEFAULTPORT 3400
 
-// End of config and command line settings
-
+#define NSECPERUSEC 1000
+#define NSECPERMSEC 1000000
 #define CURSORTIMEOUT 4000      // if no mouse motion after this many milliseconds, hide it
 
 #define XYTOINDEX(x, y) (((x) * 1024) + (y))
 #define INDEXTOX(i) ((i) / 1024)
 #define INDEXTOY(i) ((i) & 1023)
-#define XYTOPTR(base, pitch, x, y) (uint32_t *)((base) + ((y) * (pitch)) + (x * sizeof(uint32_t)))
+#define XYTOPTR(base, pitch, x, y) (uint32_t *)((base) + ((y) * (pitch)) + ((x) * sizeof(uint32_t)))
 #define APPLYGAMMA(alpha, gamma) (int)(powf((float)(alpha) / 255.0f, (gamma)) * 255.0f);
 
 #define CONSTRAIN(x) ((x) < 0?0:(((x) > 1023)?1023:(x)))
-
-#define FRAMETIME 33333333.0f      // nanoseconds between frames, this is 30 fps
+#define FRAMETIME 33333333L      // nanoseconds between frames, this is 30 fps
 
 typedef unsigned char byte;
 typedef uint32_t Rgba;
@@ -106,7 +105,7 @@ typedef uint32_t Rgba;
 // The intensity field ranges from 0-7 and is used to select scaled alpha values, 0 being dimmest, 7 brightest.
 // In the display loop, precomputed values are used and are selected by the combination of intensity and lifetime.
 typedef struct {
-    bool valid;                 // set when the point should be displayed
+    volatile bool valid;        // set when the point should be displayed
     byte intensity;             // 0 - 7, PDP-1 intensity
     uint16_t lifetime;          // value is only 0-255, but use 16 bits because it would be padded to it anyway
 } Point, *PointP;
@@ -121,7 +120,6 @@ char *hostNameP;
 int winSize;
 int lowCutoff = LOWCUTOFF;
 int whiteBias = WHITEBIAS;
-unsigned int droppedPoints;
 
 bool quit = false;
 bool border;
@@ -133,14 +131,8 @@ float gammaCorrection = GAMMA;
 
 uint32_t blackPixel;                 // The value is numeric 0, but use the SDL generated version for consistency.
 uint64_t totalPoints;
-uint64_t totalPixels;
 uint64_t receivedPoints;
-
-// These are used for loop timing so the frane rate can be kept at 30fps.
-Uint64 currentTicks, prevTicks;
-Uint64 frequency;
-double dtmp;
-double accumulator = 0.0;
+uint64_t totalFrames;
 
 // These are all for SDL.
 SDL_Window *window;
@@ -157,7 +149,6 @@ uint32_t blend(int srcR, int srcG, int srcB, int srcA, int destR, int destG, int
 uint64_t now(void);
 void *reader(void *argP);
 void initializeRgbas(void);
-void setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y);
 void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity);
 void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
 void loadConfig(bool full);
@@ -177,11 +168,14 @@ bool fullscreen;
 bool penDown;
 bool doTiming;
 uint64_t startTime;
+uint64_t currentTime;
 uint64_t lastTime;
 uint64_t deltaTime;
+uint64_t accumulator;       // Used for loop timing so the frane rate can be kept at 30fps.
+
 uint64_t cursorTime;
+uint64_t frameDelay;
 uint32_t frameMisses;
-uint32_t frameDelay;
 
 PointP pointP;
 uint8_t *pixels;
@@ -193,7 +187,6 @@ SDL_PropertiesID props;
 
 pthread_t thread;
 pthread_attr_t tattr;
-struct timespec sleepTime, remainingTime;
  
     hostNameP = DEFAULTHOST;
     portNum = DEFAULTPORT;        // display 0 on the pidp-1
@@ -203,7 +196,6 @@ struct timespec sleepTime, remainingTime;
     penDown = false;
     doTiming = false;
     totalPoints = 0;
-    totalPixels = 0;
     receivedPoints = 0;
     frameMisses = 0;
     frameDelay = 0;
@@ -343,26 +335,19 @@ struct timespec sleepTime, remainingTime;
     // Main loop. Check for keyboard and mouse evennts, scan the point matrix for active points,
     // update and display the screen.
     // Because of all the complex internal timing SDL3 does, it's much more reliable to use a fixed delay.
-    startTime = lastTime = now();
+    startTime = now();          // use system time for this
+    lastTime = SDL_GetTicksNS();
+    accumulator = 0;
 
     SDL_HideCursor();            // it is enabled when the mouse moves
-
-    prevTicks = SDL_GetPerformanceCounter();
-    frequency = SDL_GetPerformanceFrequency();
 
     while( !quit )
     {
         // Do some precision loop timekeeping so we mantian our 30fps rate.
-        currentTicks = SDL_GetPerformanceCounter();
-        dtmp = (double)(currentTicks - prevTicks) / frequency;
-        // Prevent "spiral of death" if the window is moved or lags.
-        if( dtmp > 0.25 )
-        {
-            dtmp = 0.25;
-        }
-
-        accumulator += dtmp;
-        prevTicks = currentTicks;
+        currentTime = SDL_GetTicksNS();
+        deltaTime = currentTime - lastTime;
+        accumulator += deltaTime;
+        lastTime = currentTime;
 
         while( SDL_PollEvent(&event) )
         {
@@ -401,7 +386,7 @@ struct timespec sleepTime, remainingTime;
                 peny = CONSTRAIN(peny);
                 updatePen(pdp1FD, window, true, penx, peny);
                 SDL_ShowCursor();
-                cursorTime = SDL_GetTicksNS();
+                cursorTime = now();
                 break;
                 
             case SDL_EVENT_MOUSE_MOTION:
@@ -426,30 +411,32 @@ struct timespec sleepTime, remainingTime;
             }
         }
 
-        // The display update is frame based.
-        // All rgba values are comupted for a frame rate of 30fps.
-        // Brute force delay, avoids all the SDL3 internal timing issues and is ok for this emualtion.
-        if( accumulator < FRAMETIME )
-        {
-            SDL_Delay(33 - (uint32_t)(accumulator/1000000.0));  // delay is in msecs
-        }
-        else if( accumulator > FRAMETIME )
-        {
-            frameMisses++;
-            if( accumulator > frameDelay )
-            {
-                frameDelay = accumulator;
-            }
-        }
-
-        accumulator = 0.0;
-        lastTime = now();
-
-        if( cursorTime && (((lastTime - cursorTime) / 1000000) > CURSORTIMEOUT) )
+        if( cursorTime && (((now() - cursorTime) / NSECPERMSEC) > CURSORTIMEOUT) )
         {
             SDL_HideCursor();
             cursorTime = 0;
         }
+
+        // The display update is frame based.
+        // All rgba values are comupted for a frame rate of 30fps.
+        // Brute force delay, avoids all the SDL3 internal timing issues and is ok for this emualtion.
+        // The 'accumulator' pattern is used to be sure the frame rate is correct.
+        // This corrects for variations in the SDL rendering time.
+        if( accumulator < FRAMETIME )
+        {
+            SDL_DelayNS(FRAMETIME - accumulator);
+        }
+        else if( doTiming && (accumulator > FRAMETIME) )
+        {
+            frameMisses++;
+            if( (accumulator - FRAMETIME)  > frameDelay )
+            {
+                frameDelay = accumulator - FRAMETIME;
+            }
+        }
+
+        accumulator -= FRAMETIME;   // Any timing error accumulates so it can be corrected for.
+        ++totalFrames;
 
         // During a rendering pass if there are no active points left, clear this.
         // There is no need to render and display a blank window.
@@ -471,10 +458,15 @@ struct timespec sleepTime, remainingTime;
 
         // Go thru the point list, handle each.
         havePoints = false;
-        for( pointP = pointData, i = 0; i < NUMPOINTS; ++i, ++pointP )
+        x = 0;
+        y = 1023;        // sdl 0 is top of screen, not bottom, so we flip
+        for( pointP = pointData, i = 0; i < NUMPOINTS; ++i, ++pointP, --y )
         {
-            x = INDEXTOX(i);
-            y = 1023 - INDEXTOY(i);  // sdl 0 is top of screen, not bottom
+            if( y < 0 )
+            {
+                y = 1023;
+                ++x;
+            }
 
             // This is done to clear the secondary pixels set by the beam spread simulation,
             // those pixels aren't tracked as valid points.
@@ -482,7 +474,7 @@ struct timespec sleepTime, remainingTime;
             // No reason to go thru the rest of the code.
             if( !pointP->valid )
             {
-                setPixel(pixels, pitch, blackPixel, x, y);
+                *XYTOPTR(pixels, pitch, x, y) = blackPixel;
                 continue;
             }
 
@@ -498,7 +490,7 @@ struct timespec sleepTime, remainingTime;
             else
             {
                 pointP->valid = false;              // done with this now
-                setPixel(pixels, pitch, blackPixel, x, y);
+                *XYTOPTR(pixels, pitch, x, y) = blackPixel;
             }
         }
 
@@ -515,10 +507,10 @@ struct timespec sleepTime, remainingTime;
         lastTime = (now() - startTime) / (1000 * 1000 * 1000);
         printf("%lu points drawn in %lu total seconds, %lu points/sec.\n",
             totalPoints, lastTime, totalPoints/lastTime);
-        printf("%u frame late events, max delay %u msecs.\n", frameMisses, frameDelay/1000000);
-        printf("%lu received points, %u dropped points.\n", receivedPoints, droppedPoints);
+        printf("%lu total frames, %lu frames/sec.\n", totalFrames, totalFrames/lastTime);
+        printf("%u frame late events, max delay %lu msecs.\n", frameMisses, frameDelay/1000000);
+        printf("%lu received points\n", receivedPoints);
         printf("%lu received points/sec.\n", receivedPoints/lastTime);
-        printf("%lu total pixels drawn, %lu pixels/sec.\n", totalPixels, totalPixels/lastTime);
     }
 
     close(pdp1FD);
@@ -630,6 +622,7 @@ static bool skipOne = false;
             pointP = &pointData[XYTOINDEX(x, y)];
             pointP->intensity = intensity;
             pointP->lifetime = 0;
+            __sync_synchronize();           // we want to be sure the cpu doesn't reorder, we want valid set last
             pointP->valid = true;
             havePoints = true;
         }
@@ -742,19 +735,6 @@ uint32_t rslt;
     return( SDL_MapRGBA(formatDetailsP, NULL, rR, rG, rB, rA) );
 }
 
-// The loweest level, put an rgba pixel value into the texture memory.
-void
-setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y)
-{
-    if( (x < 0) || (x > 1023) || (y < 0) || (y > 1023) )
-    {
-        return;     // not a valid point
-    }
-
-    *XYTOPTR(pixels, pitch, x, y) = rgba;
-    ++totalPixels;
-}
-
 // Spread a point to simulate beam spread on a crt.
 // The Type 30 doccumentation states a spot diameter of 0.030" max, about 3 pixels on its display.
 // This siumulates it well by drawing extra dots based on the 0-7 intensity level.
@@ -766,7 +746,7 @@ drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity
 {
     if( mikecMode)
     {
-        setPixel(pixels, pitch, rgba, x, y);
+        *XYTOPTR(pixels, pitch, x, y) = rgba;
         return;
     }
 
@@ -775,24 +755,42 @@ drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity
     // Max intensity adds the sharp corners to complete the 3x3 square block
     case 7:
     case 6:
-        setPixel(pixels, pitch, rgba, x-1, y-1);
-        setPixel(pixels, pitch, rgba, x+1, y-1);
-        setPixel(pixels, pitch, rgba, x-1, y+1);
-        setPixel(pixels, pitch, rgba, x+1, y+1);
+        if( (x > 0) && (y > 0) )
+        {
+            *XYTOPTR(pixels, pitch, x-1, y-1) = rgba;
+            *XYTOPTR(pixels, pitch, x+1, y-1) = rgba;
+            *XYTOPTR(pixels, pitch, x-1, y+1) = rgba;
+            *XYTOPTR(pixels, pitch, x+1, y+1) = rgba;
+        }
     // Medium intensity adds the left/right arms to form a wide cross
     case 5:
     case 4:
-        setPixel(pixels, pitch, rgba, x-1, y);
-        setPixel(pixels, pitch, rgba, x+1, y);
+        if( x > 0 )
+        {
+            *XYTOPTR(pixels, pitch, x-1, y) = rgba;
+        }
+
+        if( x < 1023 )
+        {
+            *XYTOPTR(pixels, pitch, x+1, y) = rgba;
+        }
 
     // Lowest intensities always draw the tight vertical core
     case 3:
     case 2:
     case 1:
     case 0:
-        setPixel(pixels, pitch, rgba, x, y);   // Center core
-        setPixel(pixels, pitch, rgba, x, y-1); // Top arm
-        setPixel(pixels, pitch, rgba, x, y+1); // Bottom arm
+        *XYTOPTR(pixels, pitch, x, y) = rgba;       // Center core
+
+        if( y > 0 )
+        {
+            *XYTOPTR(pixels, pitch, x, y-1) = rgba; // Top arm
+        }
+
+        if( y < 1023 )
+        {
+            *XYTOPTR(pixels, pitch, x, y+1) = rgba; // Bottom arm
+        }
         break;
     }
 }
@@ -835,20 +833,6 @@ uint32_t cmd;
 
     // And send to host.
     write(sockFD, &cmd, 4);
-}
-
-// Get the current time in ns.
-uint64_t
-now()
-{
-struct timespec tm;
-uint64_t now;
-
-    clock_gettime( CLOCK_MONOTONIC, &tm );
-    now = tm.tv_nsec;
-    now += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
-
-    return(now);
 }
 
 // See if there is a config file in the user home directory.
@@ -1025,6 +1009,20 @@ reconfigure(int sig)
     SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
     SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
     SDL_SetWindowBordered(window, (border)?true:false);
+}
+
+// Get the current system clock time in ns.
+uint64_t
+now()
+{
+struct timespec tm;
+uint64_t now;
+
+    clock_gettime( CLOCK_MONOTONIC, &tm );
+    now = tm.tv_nsec;
+    now += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
+
+    return(now);
 }
 
 void

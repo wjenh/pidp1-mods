@@ -758,10 +758,23 @@ drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity
         if( (x > 0) && (y > 0) )
         {
             *XYTOPTR(pixels, pitch, x-1, y-1) = rgba;
-            *XYTOPTR(pixels, pitch, x+1, y-1) = rgba;
+        }
+
+        if( (x > 0) && (y < 1023) )
+        {
             *XYTOPTR(pixels, pitch, x-1, y+1) = rgba;
+        }
+
+        if( (x < 1023) && (y > 0) )
+        {
+            *XYTOPTR(pixels, pitch, x+1, y-1) = rgba;
+        }
+
+        if( (x < 1023) && (y < 1023) )
+        {
             *XYTOPTR(pixels, pitch, x+1, y+1) = rgba;
         }
+
     // Medium intensity adds the left/right arms to form a wide cross
     case 5:
     case 4:
@@ -794,6 +807,7 @@ drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity
         break;
     }
 }
+
 
 // For the real hardware, the Type 30 would figure out if there was a hit
 // at the last drawn pixel when issuing the completion pulse,

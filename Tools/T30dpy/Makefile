@@ -1,5 +1,5 @@
-#GCC=gcc -O3 -march=native -Wno-unused-result
-GCC=gcc -g -march=native -Wno-unused-result
+GCC=gcc -O3 -march=native -Wno-unused-result
+#GCC=gcc -g -march=native -Wno-unused-result
 
 all: t30dpy t30dpy3
 
@@ -31,10 +31,3 @@ install: t30dpy
 installdpy3: t30dpy3
 	cp t30dpy3 ../../bin/t30dpy
 	strip ../../bin/t30dpy
-
-t30new:	t30new.o
-	$(GCC) $^ -o t30new -lSDL3 -lm
-
-t30new.o: t30new.c
-	$(GCC) -c t30new.c
-

@@ -43,6 +43,7 @@
  *  3-Jun-2026 wje add config reload on sighup, clean exit on sigint
  *  4-Jun-2026 wje commentary and code cleanup, remove unused includes, no functional changes
  *  7-Jun-2026 wje use the Google AI generated suggestion for the dot matrix vs intensity drawing
+ *  8-Jun-2026 wje and add the Claude enhancements to above, backport the new list optimization from t30dpy3
 */
 
 #include <stdio.h>
@@ -60,7 +61,8 @@
 
 #define READBUFSIZE 512         // size of the buffer we read from the server into, bytes
 
-#define NUMPOINTS 1024*1024     // total number of points on screen
+#define SIZE 1024               // really shouldn't be changed, it's proper for the Type 30
+#define NUMPOINTS (SIZE*SIZE)   // total number of points on screen
 #define MININTENSITY 16         // intensity 0 will be this, the rest are linearly scaled to 255 for level 7
 
 // The alpha values for the color intensity over time are computed using a power law.
@@ -93,10 +95,7 @@
 
 #define CURSORTIMEOUT 4000      // if no mouse motion after this many milliseconds, hide it
 
-#define XYTOINDEX(x, y) (((x) * 1024) + (y))
-#define INDEXTOX(i) ((i) / 1024)
-#define INDEXTOY(i) ((i) & 1023)
-#define XYTOPTR(base, pitch, x, y) (uint32_t *)((base) + ((y) * (pitch)) + (x * sizeof(uint32_t)))
+#define XYTOPTR(base, pitch, x, y) (uint32_t *)((base) + ((y) * (pitch)) + ((x) * sizeof(uint32_t)))
 #define APPLYGAMMA(alpha, gamma) (int)(powf((float)(alpha) / 255.0f, (gamma)) * 255.0f);
 
 #define FRAMETIME 33333333L      // nanoseconds between frames, this is 30 fps
@@ -111,13 +110,28 @@ typedef uint32_t Rgba;
 // The phosphors decay in intensity by power-law decay, not exponential decay.
 // The intensity field ranges from 0-7 and is used to select scaled alpha values, 0 being dimmest, 7 brightest.
 // In the display loop, precomputed values are used and are selected by the combination of intensity and lifetime.
-typedef struct {
+typedef struct Point {
     bool valid;                 // set when the point should be displayed
     byte intensity;
+    uint16_t x;                 // x and y could be computed, but this saves a few cycles
+    uint16_t y;
     uint16_t lifetime;          // value is only 0-255, but use 16 bits because it would be padded to it anyway
+    struct Point *nextP;        // the forward link to the next one in the active list
 } Point, *PointP;
 
-Point pointData[NUMPOINTS];     // where all the data lives, enough for every possible point, 1024 x 1024
+// We keep the active points in a buffer that effectively implements 2 linked lists.
+// One is a list of free Points, the other a list of active points.
+// As points come in, a Point is moved from the free list to the active list.
+// When a Point is no longer displayed, it is moved back to the free list.
+// This way we don't have to check every point location to see if it's valid.
+// Locking is not done between the reader and display threads.
+// When a new item is added to the busy list, it is added to the end and the link atomically updated.
+// When an item is taken from the free list, it is always taken from the head.
+// When an item is moved from the busy list, it is added to the end of the free list.
+PointP activeListP;             // head of the list of points to display in a cycle
+Point pointData[SIZE][SIZE];    // where all the data lives, enough for every possible point, 1024 x 1024
+pthread_mutex_t busyLock = PTHREAD_MUTEX_INITIALIZER;       // for interlocking with the reader thread
+
 // Th precomputed rgba values for each possibe pdp-1 intensity and internal time step.
 Rgba rgbaValues[8][256];
 
@@ -135,11 +149,10 @@ bool border;
 bool doLinear = LINEAR;
 bool doVsync = VSYNC;
 bool mikecMode = false;
-bool havePoints = false;
 
 float gammaCorrection = GAMMA;
 
-uint32_t rgbaBlack;                 // The value is numeric 0, but use the SDL generated version for consistency.
+uint32_t blackPixel;                 // The value is numeric 0, but use the SDL generated version for consistency.
 uint64_t totalPoints;
 uint64_t totalPixels;
 uint64_t receivedPoints;
@@ -147,15 +160,20 @@ uint64_t receivedPoints;
 SDL_PixelFormat *pixelFormatP;      // We use RGBA8888, set below.
 SDL_Window *window;
 SDL_Renderer *renderer;
-SDL_Texture *texture;
+SDL_Texture *textures[2];           // Double buffered textures so we don't block while it is being processed.
+SDL_Texture *textureP;              // The current texture.
+int textureSelector;
 
 int openPort(char *hostNameP, int port);
 uint32_t blend(int srcR, int srcG, int srcB, int srcA, int destR, int destG, int destB, int destA);
 uint64_t now(void);
 void *reader(void *argP);
+void initializePoints(void);
+void addActivePoint(PointP pointP);
+void removeActivePoint(PointP pointP, PointP prevP);
 void initializeRgbas(void);
-void setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y);
-void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity);
+void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, uint16_t x, uint16_t y, int intensity);
+//void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity);
 void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
 void loadConfig(bool full);
 void sighandler(int sig);
@@ -166,10 +184,10 @@ FILE *getFile(char *nameP);
 int
 main(int argc, char **argv)
 {
-int i;
-int opt;
-int x, y;
 int penx, peny;
+int opt;
+uint16_t x, y;
+uint32_t i;
 int pitch;
 bool fullscreen;
 bool penDown;
@@ -182,6 +200,8 @@ uint32_t frameMisses;
 uint32_t frameDelay;
 
 PointP pointP;
+PointP prevPointP;
+PointP nextPointP;
 uint8_t *pixels;
 uint32_t *pixelP;
 uint32_t rgba;
@@ -291,7 +311,8 @@ struct timespec sleepTime;
     SDL_RenderClear(renderer);
     SDL_RenderPresent(renderer);
 
-    // Create the texture we write our points to.
+    // Create the textures we write our points to.
+    // We double-buffer to minimize screen tearing.
     // Regardless of the window size, the logical size is always 1024 by 1024.
     // However, SDL2 is not very good at rendering pixels for some window sizes.
     // Pixels can be blurry regardless of the scale quality that is set.
@@ -301,14 +322,20 @@ struct timespec sleepTime;
     // We control intensity by adjusting the alpha value, which is blended with the black the renderer
     // was originally set to, with alpha 255 being brightest.
     // Pixels use RGBA8888 representation, which is 32 bits.
-    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
-    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(texture, (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
+    textures[0] = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
+    SDL_SetTextureBlendMode(textures[0], SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
+    textures[1] = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
+    SDL_SetTextureBlendMode(textures[1], SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
     pixelFormatP = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA8888);
-    rgbaBlack = SDL_MapRGBA(pixelFormatP, 0, 0, 0, 0);
+    blackPixel = SDL_MapRGBA(pixelFormatP, 0, 0, 0, 0);
      
     // Precomupute the possible rgba values over time and the intensity steps.
     initializeRgbas();
+
+    // Set up the points array and the active list head.
+    initializePoints();
 
     // An async thread is used to read incoming data.
     // Lightpen updates are done in the main thread during the display update cycle.
@@ -420,60 +447,53 @@ struct timespec sleepTime;
             cursorTime = 0;
         }
 
-        // During a rendering pass if there are no active points left, clear this.
-        // There is no need to render and display a blank window.
-        // When the receive thread gets a point, havePoints is set.
-        if( !havePoints )
+        if( !activeListP )
         {
-            continue;           // If we have no points, don't do any window processing
+            continue;               // nothing to do this cycle
         }
 
-        // Since we alpha blend, the renderer has to be cleared each time.
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-        SDL_RenderClear(renderer);
+        textureP = textures[textureSelector];
+        textureSelector ^= 1;
+
+        if( SDL_LockTexture(textureP, NULL, (void *)&pixels, &pitch) != 0 )
+        {
+            fprintf(stderr, "Can't lock texture, %s\n", SDL_GetError());
+            exit(1);
+        }
+
+        // Clearing the entire pixel array seems to be faster than clearing individual points, surprising.
+        memset(pixels, 0, pitch * 1024);
 
         // Go thru the point list, handle each.
-        // Pitch is set by SDL, it's the number of bytes in a row.
-        // It's not safe to assume how many there are, some GPUs require padding.
-        // The XYTOPTR() macro uses it to get a pointer to the proper pixel location for an x,y coordinate.
-        SDL_LockTexture(texture, NULL, (void *)(&pixels), &pitch);
-
-        havePoints = false;
-        for( pointP = pointData, i = 0; i < NUMPOINTS; ++i, ++pointP )
+        // Technically, we should lock over the entire operation, but all that could happen
+        // is that for one cycle the active list head might be off, no big deal.
+        for( pointP = activeListP, prevPointP = NULL; pointP; pointP = nextPointP )
         {
-            x = INDEXTOX(i);
-            y = 1023 - INDEXTOY(i);  // sdl 0 is top of screen, not bottom
-
-            // This is done to clear the secondary pixels set by the beam spread simulation,
-            // those pixels aren't tracked as valid points.
-            // It's fine to clear these every time because they will be rewritten if the dot is still active.
-            // No reason to go thru the rest of the code.
-            if( !pointP->valid )
-            {
-                pixelP = XYTOPTR(pixels, pitch, x, y);
-                *pixelP = rgbaBlack;        // clear the pixel
-                continue;
-            }
-
+            x = pointP->x;
+            y = pointP->y;
             rgba = rgbaValues[pointP->intensity][pointP->lifetime];
 
-            if( (rgba != rgbaBlack) && (pointP->lifetime < MAXLIFETIME) )
+            nextPointP = pointP->nextP;             // Get this now before a possible point removal.
+
+            if( (rgba != blackPixel) && (pointP->lifetime < MAXLIFETIME) )
             {
                 drawPoint(pixels, pitch, rgba, x, y, pointP->intensity);
                 pointP->lifetime++;
-                havePoints = true;
+                prevPointP = pointP;                // Only update if we are not removing this point.
                 ++totalPoints;
             }
             else
             {
-                pointP->valid = false;              // done with this now
-                pixelP = XYTOPTR(pixels, pitch, x, y);
-                *pixelP = rgbaBlack;                // clear the pixel
+                // We don't update prevPointP in this case because that point remains the previous point.
+                // Locking is handled in removeActivePoint().
+                removeActivePoint(pointP, prevPointP);
             }
         }
 
-        SDL_UnlockTexture(texture);
-        SDL_RenderCopy(renderer, texture, NULL, NULL);
+        SDL_UnlockTexture(textureP);
+
+        SDL_RenderClear(renderer);
+        SDL_RenderCopy(renderer, textureP, NULL, NULL);
         SDL_RenderPresent(renderer);
     }
 
@@ -546,13 +566,17 @@ struct addrinfo *resultP;
 // Reader thread to fetch data from server.
 // See if there is data to read.
 // If so, process it and add to the display list.
+// Precompute the rgba values used for displaying points.
+// There are only 256 possible rgba values for each pdp-1 intensity,
+// one per each lifetime value which ranges from 0-255.
 void *
 reader(void *argP)
 {
 int i;
 int count;
 int delay;
-int x, y, intensity;
+uint8_t intensity;
+uint16_t x, y;
 uint32_t cmd;
 PointP pointP;
 uint32_t buffer[READBUFSIZE];
@@ -564,9 +588,12 @@ static bool skipOne = false;
         if( (count = read(pdp1FD, buffer, sizeof(buffer))) <= 0 )
         {
             quit = true;
+            return(0);
         }
 
         count /= sizeof(uint32_t);          // command words
+
+        pthread_mutex_lock(&busyLock);      // since we are reading muliples, lock for the duration
 
         for( i = 0; i < count; i++ )
         {
@@ -593,21 +620,25 @@ static bool skipOne = false;
             // THe x and y coordinates have the origin at the lower left corner, not the Type 30
             // center of the screen.
             x = cmd & 01777;
-            y = (cmd >> 10) & 01777;
-            intensity = (cmd >> 20) & 7;    // the standard display intensity, 0-7
+            y = 1023 - ((cmd >> 10) & 01777);   // SDL y 0 is top of screen, not bottom, flop.
+            intensity = (cmd >> 20) & 7;        // The standard display intensity, 0-7.
 
-            pointP = &pointData[XYTOINDEX(x, y)];
+            // It is possible that this point is already active.
+            // Resetting the lifetime and intensity is all that is needed.
+            pointP = &pointData[y][x];
             pointP->intensity = intensity;
             pointP->lifetime = 0;
-            pointP->valid = true;
-            havePoints = true;
+
+            if( !pointP->valid )                // This is not a currently active point, add to active list
+            {
+                addActivePoint(pointP);
+            }
         }
+
+        pthread_mutex_unlock(&busyLock);
     }
 }
 
-// Precompute the rgba values used for displaying points.
-// There are only 256 possible rgba values for each pdp-1 intensity,
-// one per each lifetime value which ranges from 0-255.
 void
 initializeRgbas()
 {
@@ -674,12 +705,66 @@ Rgba rgba;
             }
             else
             {
-                rgba = rgbaBlack;
+                rgba = blackPixel;
             }
 
             rgbaValues[i][j] = rgba;
         }
     }
+}
+// Initialize the x and y coordinates in the points array.
+// By convention, the first subscript is y, the second x.
+// This matches the SDL convention.
+// The active list is initialized to empty.
+void
+initializePoints()
+{
+int32_t x, y;
+PointP pointP;
+    
+    activeListP = NULL;
+
+    // Each point has its x and y set.
+    // While is might seem redundant, it makes locating the x, y coordinates of
+    // a point when using a pointer to the point easier and faster.
+    for( y = 0; y < SIZE; ++y )
+    {
+        for( x = 0; x < SIZE; ++x )
+        {
+            pointData[y][x].x = x;
+            pointData[y][x].y = y;
+        }
+    }
+}
+
+// Remove a point from the active list, adjusting the head and prior point if needed.
+void
+removeActivePoint(PointP pointP, PointP prevP)
+{
+    pthread_mutex_lock(&busyLock);
+
+    pointP->valid = false;              // done with this now
+
+    if( prevP != NULL )
+    {
+        prevP->nextP = pointP->nextP;
+    }
+    else
+    {
+        activeListP = pointP->nextP;        // If there was no previous point, this point was the head, reset.
+    }
+
+    pthread_mutex_unlock(&busyLock);
+}
+
+// Add a point to the active list as the new head.
+// The lock must be in place before calling!
+void
+addActivePoint(PointP pointP)
+{
+    pointP->valid = true;
+    pointP->nextP = activeListP;
+    activeListP = pointP;
 }
 
 // Blend 2 rgba values into a packed RGBA8888 result.
@@ -691,7 +776,7 @@ uint32_t
 blend(int srcR, int srcG, int srcB, int sAlpha, int destR, int destG, int destB, int dAlpha)
 {
 int rR, rG, rB, rA;
-float srcAlpha, destAlpha,newAlpha;
+float srcAlpha, destAlpha, newAlpha;
 uint32_t rslt;
 
     srcAlpha = (float)sAlpha / 255.0;
@@ -711,19 +796,6 @@ uint32_t rslt;
     return( SDL_MapRGBA(pixelFormatP, rR, rG, rB, rA) );
 }
 
-// The loweest level, put an rgba pixel value into the texture memory.
-void
-setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y)
-{
-    if( (x < 0) || (x > 1023) || (y < 0) || (y > 1023) )
-    {
-        return;     // not a valid point
-    }
-
-    *XYTOPTR(pixels, pitch, x, y) = rgba;
-    ++totalPixels;
-}
-
 // Spread a point to simulate beam spread on a crt.
 // The Type 30 doccumentation states a spot diameter of 0.030" max, about 3 pixels on its display.
 // This siumulates it well by drawing extra dots based on the 0-7 intensity level.
@@ -731,41 +803,70 @@ setPixel(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y)
 // Credit where credit is due, even if it was trained on everyone else's data.
 // Saved me the small effort of figuring it out myself.
 void
-drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity)
+drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, uint16_t x, uint16_t y, int intensity)
 {
     if( mikecMode)
     {
-        setPixel(pixels, pitch, rgba, x, y);
+        *XYTOPTR(pixels, pitch, x, y) = rgba;
         return;
     }
+
+    // Claude suggestion to optimize compiler and cpu register use.
+    const bool notLeftEdge = (x > 0);
+    const bool notRightEdge = (x < 1023);
+    const bool notTopEdge = (y > 0);
+    const bool notBotEdge = (y < 1023);
 
     switch (intensity)
     {
     // Max intensity adds the sharp corners to complete the 3x3 square block
     case 7:
     case 6:
-        setPixel(pixels, pitch, rgba, x-1, y-1);
-        setPixel(pixels, pitch, rgba, x+1, y-1);
-        setPixel(pixels, pitch, rgba, x-1, y+1);
-        setPixel(pixels, pitch, rgba, x+1, y+1);
+        if( notLeftEdge & notTopEdge )
+        {
+            *XYTOPTR(pixels, pitch, x-1, y-1) = rgba;
+        }
+        if( notLeftEdge & notBotEdge )
+        {
+            *XYTOPTR(pixels, pitch, x-1, y+1) = rgba;
+        }
+        if( notRightEdge & notTopEdge )
+        {
+            *XYTOPTR(pixels, pitch, x+1, y-1) = rgba;
+        }
+        if( notRightEdge & notBotEdge )
+        {
+            *XYTOPTR(pixels, pitch, x+1, y+1) = rgba;
+        }
     // Medium intensity adds the left/right arms to form a wide cross
     case 5:
     case 4:
-        setPixel(pixels, pitch, rgba, x-1, y);
-        setPixel(pixels, pitch, rgba, x+1, y);
+        if( notLeftEdge )
+        {
+            *XYTOPTR(pixels, pitch, x-1, y) = rgba;
+        }
+        if( notRightEdge )
+        {
+            *XYTOPTR(pixels, pitch, x+1, y) = rgba;
+        }
 
     // Lowest intensities always draw the tight vertical core
     case 3:
     case 2:
     case 1:
     case 0:
-        setPixel(pixels, pitch, rgba, x, y);   // Center core
-        setPixel(pixels, pitch, rgba, x, y-1); // Top arm
-        setPixel(pixels, pitch, rgba, x, y+1); // Bottom arm
+        *XYTOPTR(pixels, pitch, x, y) = rgba;       // Center core
+        if( notTopEdge )
+        {
+            *XYTOPTR(pixels, pitch, x, y-1) = rgba; // Top arm
+        }
+        if( notBotEdge )
+        {
+            *XYTOPTR(pixels, pitch, x, y+1) = rgba; // Bottom arm
+        }
         break;
     }
 }
-
 
 // For the real hardware, the Type 30 would figure out if there was a hit
 // at the last drawn pixel when issuing the completion pulse,
@@ -1047,7 +1148,8 @@ reconfigure(int sig)
     loadConfig(false);
     initializeRgbas();
     // These might have changed.
-    SDL_SetTextureScaleMode(texture, (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
+    SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
+    SDL_SetTextureScaleMode(textures[2], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
     SDL_RenderSetVSync(renderer, doVsync);
     SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
 }

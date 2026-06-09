@@ -69,6 +69,10 @@ while true; do
 	    sudo apt install -y libsdl2-ttf-dev
             #Install SDL2-image. Strictly speaking, only needed for virtual panel, not PiDP-1
 	    sudo apt install -y libsdl2-image-dev
+            if apt-cache show libsdl3-dev >/dev/null 2>&1; then
+                echo "SDL3 is available, installing."
+                sudo apt install -y libsdl3-dev
+            fi
             #Install ncat
             sudo apt install -y ncat
             #Install readline, used for command-line editing in simh

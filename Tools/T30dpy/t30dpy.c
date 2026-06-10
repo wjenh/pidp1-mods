@@ -203,6 +203,7 @@ uint64_t deltaTime;
 uint64_t cursorTime;
 uint32_t frameMisses;
 uint32_t frameDelay;
+char *cP;
 
 PointP pointP;
 PointP prevPointP;
@@ -307,12 +308,14 @@ struct timespec sleepTime;
     // init SDL
     SDL_Init(SDL_INIT_VIDEO);
 
-    // If wayland is in use, it breaks any rational window enforcement of overlap with the task bar
+    // If wayland/labwc is in use, it breaks any rational window enforcement of overlap with the task bar
     // or any guarantee the window title bar will be visible.
-    // The actual window position on the screen can't even be specified, it is ignored.
-    // That was an incredibly stupid design decision.
+    // The actual window position on the screen can't be specified in wayland, it is ignored.
+    // Labwc doesn't prevent windows overlapping the task bar.
+    // Those were stupid design decisions.
     // This hack is to try to be sure the task bar and the window title bar remain visible.
-    if( SDL_strcmp(SDL_GetCurrentVideoDriver(), "wayland") == 0 )
+    if( ((cP = getenv("XDG_CURRENT_DESKTOP")) && !strncmp(cP,"labwc", 5)) ||
+        (SDL_strcmp(SDL_GetCurrentVideoDriver(), "wayland") == 0) )
     {
         SDL_GetDisplayBounds(0, &bounds);
         if( winSize > (bounds.h - WAYLANDMARGIN) )

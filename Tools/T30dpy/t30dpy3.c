@@ -140,11 +140,13 @@ Rgba rgbaValues[8][256];        // The rgba values for each possibe intensity an
 int pdp1FD;
 int portNum;
 char *hostNameP;
+const char *driverNameP;
 
 int winSize;
 int lowCutoff = LOWCUTOFF;
 int whiteBias = WHITEBIAS;
 
+bool usingLabwc = false;
 bool quit = false;
 bool border;
 bool doLinear = LINEAR;
@@ -199,6 +201,7 @@ int penx, peny;
 uint32_t i;
 bool fullscreen;
 bool penDown;
+char *cP;
 
 uint64_t startTime;
 uint64_t currentTime;
@@ -315,17 +318,20 @@ pthread_attr_t tattr;
         fprintf(stderr,"SDL3 initialization failed, %s\n", SDL_GetError());
     }
 
-    // If wayland is in use, it breaks any rational window enforcement of overlap with the task bar
+    // If wayland/labwc is in use, it breaks any rational window enforcement of overlap with the task bar
     // or any guarantee the window title bar will be visible.
-    // The actual window position on the screen can't even be specified, it is ignored.
-    // That was an incredibly stupid design decision.
+    // The actual window position on the screen can't be specified in wayland, it is ignored.
+    // Labwc doesn't prevent windows overlapping the task bar.
+    // Those were stupid design decisions.
     // This hack is to try to be sure the task bar and the window title bar remain visible.
-    if( SDL_strcmp(SDL_GetCurrentVideoDriver(), "wayland") == 0 )
+    usingLabwc = (cP = getenv("XDG_CURRENT_DESKTOP")) && !strncmp(cP,"labwc", 5);
+    driverNameP = SDL_GetCurrentVideoDriver();
+    if( usingLabwc || (driverNameP && (SDL_strcmp(driverNameP, "wayland") == 0)) )
     {
         SDL_GetDisplayBounds(SDL_GetPrimaryDisplay(), &bounds);
         if( winSize > (bounds.h - WAYLANDMARGIN) )
         {
-            winSize = (bounds.h - WAYLANDMARGIN);
+            winSize = (bounds.h - WAYLANDMARGIN);       // we only care about the vertical dimension
         }
     }
 
@@ -543,6 +549,7 @@ pthread_attr_t tattr;
     {
         // lastTime is now a delta in seconds
         lastTime = (now() - startTime) / (1000 * 1000 * 1000);
+        printf("Video driver is %s%s\n", driverNameP, (usingLabwc)?", using labwc":"");
         printf("%lu points drawn in %lu total seconds, %lu points/sec.\n",
             totalPoints, lastTime, totalPoints/lastTime);
         printf("%lu total frames, %lu frames/sec.\n", totalFrames, totalFrames/lastTime);

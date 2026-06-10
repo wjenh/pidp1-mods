@@ -19,7 +19,7 @@ port=3400
 size=1024
 
 # Whether to start bordered or borderless.
-border=true;
+border=true
 
 # Ask SDL to use vsync, it might or might not.
 # If supported, it can reduce tearing of large rectangles that are rendered at hight speed, such as those

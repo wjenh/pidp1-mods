@@ -37,6 +37,7 @@
  * 8-Jun-2026 wje general cleanup, some optimizations
  * 9-Jun-2026 wje major rework to use an active list instead of full iteration over all points,
  *    add workaround for SDL3 overwriting the meun bar if on the bottom of the screen
+ *  10-Jun-2026 wje add workaround for totally broken wayland/labwc window control
 */
 
 #include <stdio.h>
@@ -58,6 +59,8 @@
 
 #define READBUFSIZE 512         // size of the buffer we read from the server into, bytes
 
+#define MINSIZE 256             // window can't be smaller than this
+#define WAYLANDMARGIN 128       // to work around stupid wayland, the inital window must be physical size - this
 #define LOGICALSIZE 1024        // really should not be changed, this is the authentic value
 #define NUMPOINTS (LOGICALSIZE*LOGICALSIZE)   // total number of points on screen
 #define MININTENSITY 16         // intensity 0 will be this, the rest are linearly scaled to 255 for level 7
@@ -107,6 +110,9 @@ typedef uint32_t Rgba;
 // The phosphors decay in intensity by power-law decay, not exponential decay.
 // The intensity field ranges from 0-7 and is used to select scaled alpha values, 0 being dimmest, 7 brightest.
 // In the display loop, precomputed values are used and are selected by the combination of intensity and lifetime.
+// The use of uint16_t here but int elsewhere is intentional and dome for rather abstract reasons dealing
+// with compiler optimization and allowing it to use optimized cpu instructions.
+// The benefit is minor, but we're potentially dealing with fairly low performance cpus, every little bit helps.
 typedef struct Point {
     bool valid;                 // set when the point should be displayed, 
     byte intensity;             // 0 - 7, PDP-1 intensity
@@ -176,7 +182,7 @@ void addActivePoint(PointP pointP);
 void removeActivePoint(PointP pointP, PointP prevP);
 
 void initializeRgbas(void);
-void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, uint16_t x, uint16_t y, int intensity);
+void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity);
 void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
 void loadConfig(bool full);
 void sighandler(int sig);
@@ -188,7 +194,7 @@ int
 main(int argc, char **argv)
 {
 int opt;
-uint16_t x, y;
+int x, y;
 int penx, peny;
 uint32_t i;
 bool fullscreen;
@@ -259,13 +265,13 @@ pthread_attr_t tattr;
 
         case 's':
             i = atoi(optarg);   // screen is n * n big
-            if( (i >= 256) )
+            if( (i >= MINSIZE) )
             {
                 winSize = i;
             }
             else
             {
-                fprintf(stderr, "Window can't be made less than 256, ignored.\n");
+                fprintf(stderr, "Window can't be made less than %d, ignored.\n", MINSIZE);
             }
             break;
 
@@ -309,21 +315,22 @@ pthread_attr_t tattr;
         fprintf(stderr,"SDL3 initialization failed, %s\n", SDL_GetError());
     }
 
-    // We need to jump thru some hoops to handle cases where the menu bar is not at the top of the screen.
-    SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &bounds);
-
-    if( bounds.h < winSize )
+    // If wayland is in use, it breaks any rational window enforcement of overlap with the task bar
+    // or any guarantee the window title bar will be visible.
+    // The actual window position on the screen can't even be specified, it is ignored.
+    // That was an incredibly stupid design decision.
+    // This hack is to try to be sure the task bar and the window title bar remain visible.
+    if( SDL_strcmp(SDL_GetCurrentVideoDriver(), "wayland") == 0 )
     {
-        winSize = bounds.h;
-    }
-
-    if( bounds.w < winSize )
-    {
-        winSize = bounds.w;
+        SDL_GetDisplayBounds(SDL_GetPrimaryDisplay(), &bounds);
+        if( winSize > (bounds.h - WAYLANDMARGIN) )
+        {
+            winSize = (bounds.h - WAYLANDMARGIN);
+        }
     }
 
     if( !SDL_CreateWindowAndRenderer("T30dpy3 Type 30 Display", winSize, winSize,
-        ((!border)?SDL_WINDOW_BORDERLESS:0), &window, &renderer) )
+        SDL_WINDOW_RESIZABLE|((!border)?SDL_WINDOW_BORDERLESS:0), &window, &renderer) )
     {
         fprintf(stderr,"Can't create window, %s\n", SDL_GetError());
         exit(1);
@@ -502,7 +509,7 @@ pthread_attr_t tattr;
 
         // Go thru the point list, handle each.
         // Technically, we should lock over the entire operation, but all that could happen
-        // is that for one cycle the active list head might be off, no big deal.
+        // is that for one cycle the active list head might not be current, no big deal.
         for( pointP = activeListP, prevPointP = NULL; pointP; pointP = nextPointP )
         {
             x = pointP->x;
@@ -510,7 +517,6 @@ pthread_attr_t tattr;
             rgba = rgbaValues[pointP->intensity][pointP->lifetime];
 
             nextPointP = pointP->nextP;             // Get this now before a possible point removal.
-
             if( (rgba != blackPixel) && (pointP->lifetime < MAXLIFETIME) )
             {
                 drawPoint(pixels, pitch, rgba, x, y, pointP->intensity);
@@ -609,7 +615,7 @@ int i;
 int count;
 int delay;
 uint8_t intensity;
-uint16_t x, y;
+int x, y;
 uint32_t cmd;
 PointP pointP;
 uint32_t buffer[READBUFSIZE];
@@ -853,8 +859,11 @@ uint32_t rslt;
 // The actual pattern is thanks to Google AI and optimized by Claude.
 // Credit where credit is due, even if they were trained on everyone else's data.
 // Saved me the small effort of figuring it out myself.
+// Note that x and y here are explicitly intended to be int, not u16_t.
+// This allows the compiler to use more efficient cpu instructions.
+// Yes, I worry about such things, and more developers should.
 void
-drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, uint16_t x, uint16_t y, int intensity)
+drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity)
 {
     if( mikecMode)
     {
@@ -958,12 +967,32 @@ uint32_t cmd;
     write(sockFD, &cmd, 4);
 }
 
+// Determine if a string represents a true or false value in the config file.
+// If the string starts with 'y', 't', or has a numeric value of 1, it is true, else false.
+// Not declared at the top of the file, only used below.
+bool
+isTrue(char *strP)
+{
+    if( (*strP == 'y') || (*strP == 't') )
+    {
+        return(true);
+    }
+
+    if( isdigit(*strP) && (atoi(strP) == 1) )
+    {
+        return(true);
+    }
+
+    return(false);
+}
+
 // See if there is a config file in the user home directory.
 // If not, try the install directory.
 // The file is named '.t30dyconfig' in the home directory,
 // 't30dpyconfig' in the install directory.
 // Lines are of the form 'param=value', empty lines or lines beginning with '#' are ignored,
 // as are any invalid params.
+// For booleans, isTrue(), above, checks for valid true words.
 // A full load is only done at startup, sighup calls with false, some settings can't be dynamically changed.
 void
 loadConfig(bool full)
@@ -1018,7 +1047,7 @@ char line[256];
                 else if( !strcmp(line, "size") )
                 {
                     i = atoi(cP);      // screen is n * n big
-                    if( i >= 256 )
+                    if( i >= MINSIZE )
                     {
                         winSize = i;
                     }
@@ -1027,15 +1056,15 @@ char line[256];
 
             if( !strcmp(line, "border") )
             {
-                border = (!strcmp(cP, "true") || (*cP == 'y'));
+                border = isTrue(cP);
             }
             else if( !strcmp(line, "linear") )
             {
-                doLinear = (!strcmp(cP, "true") || (*cP == 'y'));
+                doLinear = isTrue(cP);
             }
             else if( !strcmp(line, "mikecmode") )
             {
-                mikecMode = (!strcmp(cP, "true") || (*cP == 'y'));
+                mikecMode = isTrue(cP);
             }
             else if( !strcmp(line, "gamma") )
             {

@@ -1,15 +1,52 @@
 # Using t30dpy
 
-This document describes the t30dpy simulated Type 30 display.
+This document describes the t30dpy and t30dpy3 simulated Type 30 display.
 
-This is version 1.5
+This is version 1.6
 
-Edit date 7-June-2026\
-add SDL3 version info
+Edit date 10-June-2026\
+udpate for wayland fix
+
+## T30dpy, t30dpy3, and Wayland
+
+There are three differences between t30dpy and t30dpy3.
+
+T30dpy is an SDL2 application that does not support window resizing by mouse dragging and does support vsync.\
+T30dpy3 is an SDL3 application that does support window resizing by mouse dragging but does not support vsync.
+
+SDL2 does not adjust mouse coordinates for a window when it is full screen or when it is resized in most cases.
+The logic for computing the corrected location is complex. It was implemented for the modified version of p7sim
+but it was decided to not carry that over, hence no mouse drag resizing.
+
+However, SDL3 takes care of all of that, the mouse coordinates are correctly matched to the rendering area,
+so resizing is allowed in it.
+
+Vsync is not useful in SDL3, it decides itself how to synchronize rendering with the display.
+
+The Wayland graphics system has some serious issues that were intentionally designed in for 'security'.
+It does not allow an application to specify where a window will be positioned and it does not allow
+querying for useful information like the task bar height or location.
+After all, it is clearly a terrible risk to allow such critical information to be revealed. Not.
+
+The labwc window compositor used in the Raspberry Pi Trixie release does not prevent an application window from
+covering the task bar. This is a serious issue if an application window that is larger than the physical display
+is opened. Wayland's automatic positioning plus labwc's lack of task bar protection means an application window can
+completely hide all the controls on the taskbar, not at all useful.
+
+All windowed applications including p7sim are affected by this.
+
+A workaround is implemented for both t30dpy versions when running under Wayland.
+The display size is queried, which fortunately can still be done.
+If the t30 window being opened is larger than the physical screen minus a margin, it is silently resized
+to be the screen size minus the margin.
+
+Why a fixed margin? Because remember that you can't get information about the size of the taskbar!
 
 ## Usage
 
 **t30dpy** [*-g gamma*] [*-w bias*] [*-l*] [*-m*] [*-n*] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
+
+**t30dpy3** [*-g gamma*] [*-w bias*] [*-l*] [*-m*] [*-n*] [*-s size*] [*-p port*] [*-t*] [hostame]
 
 ```
 g gamma - set the gamma value, a floating point value usually in the range 0.4 to 1.0
@@ -20,7 +57,7 @@ n - start borderless
 s size - set the screen size, >= 256, default is 1024
 p port - the port to connect to, default is 3400
 t - accumulate statistics, printed on exit
-v - ask SDL to use vsync for frame synchronization
+v - ask SDL to use vsync for frame synchronization, not in t30dpy3
 hostname - the host to connect to, defaults to localhost
 ```
 The defaults can be overridden in the configuration file.
@@ -286,7 +323,8 @@ Ok, great. What about performance?
 
 Here's a table of average CPU load by program and by display emulator.\
 It was run on a middling performance Intel CPU of some age running Ubuntu Linux with no special graphics hardware.
-THese are figures for the SDL2 version, the SDL3 version has somewhat better performance.
+THese are figures for the SDL2 version, the SDL3 version has better performance.
+For example, t30dpy3 displaying snowflake on a Raspberry pi 5 has a CPU load of 20%.
 
 | Program       | Emulator  | CPU load reported by top |
 |---------------|-----------|--------------------------|
@@ -323,7 +361,7 @@ Note that these are Type 30 dots, the number of pixels being rendered is over 4 
 Tests have also been run on a Raspberry Pi 5 with similar results.\
 On a Pi 4, performance differences are not as extreme.
 This seems to be because the gpu on the Pi 4 is far less capable than that on the Pi 5
-and the SDL library does not optimize its use as well for streaming textures.
+and the SDL libraries do not optimize its use as well for streaming textures.
 
 ## Settings that can be changed in code
 

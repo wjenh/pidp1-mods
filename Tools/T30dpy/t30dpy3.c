@@ -38,6 +38,16 @@
  * 9-Jun-2026 wje major rework to use an active list instead of full iteration over all points,
  *    add workaround for SDL3 overwriting the meun bar if on the bottom of the screen
  *  10-Jun-2026 wje add workaround for totally broken wayland/labwc window control
+ *  11-Jun-2026 wje CPU optimization pass for high active-point counts.
+ *     - replaced the per-screen-position pointData[1024][1024] active list with a compact
+ *       index-linked activePool[] (MAXACTIVEPOINTS) plus a pointIndex[][] lookup table,
+ *       to keep active-list traversal cache-friendly.
+ *     - drawPoint() now computes row base pointers once per point instead of recomputing
+ *       full address arithmetic for every one of the up to 9 pixels it can touch.
+ *     - rgbaValues[][] now stores premultiplied-alpha rgb, allowing
+ *       SDL_BLENDMODE_NONE instead of SDL_BLENDMODE_BLEND and removing the per-frame
+ *       SDL_RenderClear(), eliminating a full-screen blend and a full-screen clear
+ *       every frame.
 */
 
 #include <stdio.h>
@@ -84,6 +94,13 @@
 #define LOWCUTOFF 5             // alphas less than this are not displayed
 #define LINEAR false            // ask SDL renderer to use linear scaling
 
+// MAXACTIVEPOINTS bounds the size of the active-point pool (see ActivePoint below).
+// Worst-case observed live usage has been around 171000 simultaneously active points,
+// so this is set with generous headroom above that.
+// NOINDEX marks end of list or not active in the indexed pool.
+#define MAXACTIVEPOINTS 400000
+#define NOINDEX 0xFFFFFFFFu
+
 // The following can be overridden by the config file and some also via the command line.
 // For those that have a command line override, it takes precedence.
 // See usage() below for those that have command line versions.
@@ -113,26 +130,40 @@ typedef uint32_t Rgba;
 // The use of uint16_t here but int elsewhere is intentional and dome for rather abstract reasons dealing
 // with compiler optimization and allowing it to use optimized cpu instructions.
 // The benefit is minor, but we're potentially dealing with fairly low performance cpus, every little bit helps.
-typedef struct Point {
-    bool valid;                 // set when the point should be displayed, 
-    byte intensity;             // 0 - 7, PDP-1 intensity
+//
+// CACHE LOCALITY NOTE:
+// Earlier versions stored Points by x,y screen position in a 1024x1024 with active points linked thru
+// them.
+// At high active-point counts, walking that list meant chasing pointers scattered across a ~25MB region,
+// causing a cache miss on essentially every node every frame.
+// Instead, ActivePoint records now live in a small, contiguous pool (activePool[]),
+// and the list is threaded via array indices (nextIdx) rather than pointers.
+// A separate, much smaller lookup table (pointIndex[][]) maps a logical (x,y) screen
+// position to its slot in the pool, or to NOINDEX if that position is not currently active.
+// This keeps the working set during traversal limited to roughly
+// (active point count * sizeof(ActivePoint)) instead of the full 25MB grid.
+typedef struct ActivePoint {
     uint16_t x;                 // x and y could be computed, but this saves a few cycles
     uint16_t y;
+    byte intensity;             // 0 - 7, PDP-1 intensity
     uint16_t lifetime;          // value is only 0-255, but use 16 bits because it would be padded to it anyway
-    struct Point *nextP;        // the forward link to the next one in the active list
-} Point, *PointP;
+    uint32_t nextIdx;           // index of the next entry in whichever list (active or free) this entry is on
+} ActivePoint, *ActivePointP;
 
-// We keep the active points in a buffer that effectively implements 2 linked lists.
-// One is a list of free Points, the other a list of active points.
-// As points come in, a Point is moved from the free list to the active list.
-// When a Point is no longer displayed, it is moved back to the free list.
+// We keep the active points in a pool that effectively implements 2 linked lists.
+// One is a list of free pool entries, the other a list of active points.
+// As points come in, an entry is moved from the free list to the active list.
+// When a point is no longer displayed, it is moved back to the free list.
 // This way we don't have to check every point location to see if it's valid.
 // Locking is not done between the reader and display threads.
-// When a new item is added to the busy list, it is added to the end and the link atomically updated.
+// When a new item is added to the busy list, it is added to the head and the link atomically updated.
 // When an item is taken from the free list, it is always taken from the head.
-// When an item is moved from the busy list, it is added to the end of the free list.
-PointP activeListP;             // head of the list of points to display in a cycle
-Point pointData[LOGICALSIZE][LOGICALSIZE];    // where all the data lives, enough for every possible point, 1024 x 1024
+// When an item is moved from the busy list, it is added to the head of the free list.
+ActivePoint activePool[MAXACTIVEPOINTS];     // compact pool of active-point records
+uint32_t pointIndex[LOGICALSIZE][LOGICALSIZE]; // maps screen (y,x) -> pool index, or NOINDEX
+uint32_t activeListHead;                     // head index of the active list, or NOINDEX if empty
+uint32_t freeListHead;                       // head index of the free list, or NOINDEX if exhausted
+uint64_t droppedPoints;                      // counts points dropped because the pool was exhausted
 pthread_mutex_t busyLock = PTHREAD_MUTEX_INITIALIZER;       // for interlocking with the reader thread
 
 Rgba rgbaValues[8][256];        // The rgba values for each possibe intensity and internal time step.
@@ -180,8 +211,8 @@ uint64_t now(void);
 void *reader(void *argP);
 
 void initializePoints(void);
-void addActivePoint(PointP pointP);
-void removeActivePoint(PointP pointP, PointP prevP);
+void addActivePoint(uint16_t x, uint16_t y, byte intensity);
+void removeActivePoint(uint32_t pointIdx, uint32_t prevIdx);
 
 void initializeRgbas(void);
 void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity);
@@ -213,9 +244,10 @@ uint64_t cursorTime;
 uint64_t frameDelay;
 uint32_t frameMisses;
 
-PointP pointP;
-PointP prevPointP;
-PointP nextPointP;
+uint32_t pointIdx;
+uint32_t prevIdx;
+uint32_t nextIdx;
+ActivePointP activePointP;
 uint8_t *pixels;
 uint32_t rgba;
 int pitch;
@@ -367,11 +399,18 @@ pthread_attr_t tattr;
     // Linear gives the best results balancing small screens vs larger ones but blurs the points some.
     // Nearest neighbor gives sharper dots, but some screen sizes don't scale well.
     // Select what works best for a given monitor and sceen size vial the command line or config file.
-    // We control intensity by adjusting the alpha value, which is blended with the black the renderer
-    // was originally set to, with alpha 255 being brightest.
-    SDL_SetTextureBlendMode(textures[0], SDL_BLENDMODE_BLEND);
+    //
+    // Intensity is encoded directly into the rgb values themselves (see initializeRgbas(),
+    // which premultiplies by the desired alpha), rather than relying on the renderer to
+    // blend a separate alpha against the background.
+    // This lets us use SDL_BLENDMODE_NONE, which is a straight pixel copy with no
+    // per-pixel read-modify-write blend math, instead of SDL_BLENDMODE_BLEND.
+    // Because the copy covers the full 1024x1024 logical area every frame, this also makes
+    // the per-frame SDL_RenderClear() unnecessary (see the main loop), saving a second
+    // full-screen fill every frame on top of the blend itself.
+    SDL_SetTextureBlendMode(textures[0], SDL_BLENDMODE_NONE);
     SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
-    SDL_SetTextureBlendMode(textures[1], SDL_BLENDMODE_BLEND);
+    SDL_SetTextureBlendMode(textures[1], SDL_BLENDMODE_NONE);
     SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
 
     blackPixel = SDL_MapRGBA(formatDetailsP, NULL, 0, 0, 0, 0);
@@ -496,7 +535,7 @@ pthread_attr_t tattr;
         accumulator -= FRAMETIME;   // Any timing error accumulates so it can be corrected for.
         ++totalFrames;
 
-        if( !activeListP )
+        if( activeListHead == NOINDEX )
         {
             continue;               // nothing to do this cycle
         }
@@ -513,34 +552,41 @@ pthread_attr_t tattr;
         // Clearing the entire pixel array seems to be faster than clearing individual points, surprising.
         memset(pixels, 0, pitch * 1024);
 
-        // Go thru the point list, handle each.
+        // Go thru the active point list, handle each.
+        // The list is threaded by index through activePool[] (see ActivePoint above), which
+        // keeps traversal localized to a small contiguous pool instead of chasing pointers
+        // across the full 1024x1024 grid.
         // Technically, we should lock over the entire operation, but all that could happen
         // is that for one cycle the active list head might not be current, no big deal.
-        for( pointP = activeListP, prevPointP = NULL; pointP; pointP = nextPointP )
+        for( pointIdx = activeListHead, prevIdx = NOINDEX; pointIdx != NOINDEX; pointIdx = nextIdx )
         {
-            x = pointP->x;
-            y = pointP->y;
-            rgba = rgbaValues[pointP->intensity][pointP->lifetime];
+            activePointP = &activePool[pointIdx];
+            x = activePointP->x;
+            y = activePointP->y;
+            rgba = rgbaValues[activePointP->intensity][activePointP->lifetime];
 
-            nextPointP = pointP->nextP;             // Get this now before a possible point removal.
-            if( (rgba != blackPixel) && (pointP->lifetime < MAXLIFETIME) )
+            nextIdx = activePointP->nextIdx;        // Get this now before a possible point removal.
+            if( (rgba != blackPixel) && (activePointP->lifetime < MAXLIFETIME) )
             {
-                drawPoint(pixels, pitch, rgba, x, y, pointP->intensity);
-                pointP->lifetime++;
-                prevPointP = pointP;                // Only update if we are not removing this point.
+                drawPoint(pixels, pitch, rgba, x, y, activePointP->intensity);
+                activePointP->lifetime++;
+                prevIdx = pointIdx;                 // Only update if we are not removing this point.
                 ++totalPoints;
             }
             else
             {
-                // We don't update prevPointP in this case because that point remains the previous point.
+                // We don't update prevIdx in this case because that point remains the previous point.
                 // Locking is handled in removeActivePoint().
-                removeActivePoint(pointP, prevPointP);
+                removeActivePoint(pointIdx, prevIdx);
             }
         }
 
         SDL_UnlockTexture(textureP);
 
-        SDL_RenderClear(renderer);
+        // No SDL_RenderClear() here: with SDL_BLENDMODE_NONE (set above) this
+        // SDL_RenderTexture() call is a straight copy of the full 1024x1024 logical
+        // area, so every destination pixel is overwritten unconditionally and a
+        // separate clear would be redundant work.
         SDL_RenderTexture(renderer, textureP, NULL, NULL);
         SDL_RenderPresent(renderer);
     }
@@ -557,6 +603,7 @@ pthread_attr_t tattr;
         printf("%lu received points\n", receivedPoints);
         printf("%lu received points/sec\n", receivedPoints/lastTime);
         printf("%lu maximum active points\n", maxActivePoints);
+        printf("%lu points dropped because active-point pool exhausted.\n", droppedPoints);
     }
 
     close(pdp1FD);
@@ -624,7 +671,7 @@ int delay;
 uint8_t intensity;
 int x, y;
 uint32_t cmd;
-PointP pointP;
+uint32_t pointIdx;
 uint32_t buffer[READBUFSIZE];
 
 static bool skipOne = false;
@@ -670,14 +717,19 @@ static bool skipOne = false;
             intensity = (cmd >> 20) & 7;        // The standard display intensity, 0-7.
 
             // It is possible that this point is already active.
-            // Resetting the lifetime and intensity is all that is needed.
-            pointP = &pointData[y][x];
-            pointP->intensity = intensity;
-            pointP->lifetime = 0;
+            // If so, resetting the lifetime and intensity in its existing pool slot is all
+            // that is needed - the active list linkage doesn't change.
+            // If not, a new slot must be pulled from the free list and linked in.
+            pointIdx = pointIndex[y][x];
 
-            if( !pointP->valid )                // This is not a currently active point, add to active list
+            if( pointIdx == NOINDEX )            // This is not a currently active point, add to active list
             {
-                addActivePoint(pointP);
+                addActivePoint((uint16_t)x, (uint16_t)y, intensity);
+            }
+            else
+            {
+                activePool[pointIdx].intensity = intensity;
+                activePool[pointIdx].lifetime = 0;
             }
         }
 
@@ -749,7 +801,17 @@ Rgba rgba;
                 rgba = blend(BLUER + bias, BLUEG + bias, BLUEB, blueAlpha, YELLOWRGB, yellowAlpha);
                 SDL_GetRGBA(rgba, formatDetailsP, NULL, &r, &g, &b, &a);
                 a = APPLYGAMMA(((int)a * intensity) / 255, gammaCorrection);
-                rgba = SDL_MapRGBA(formatDetailsP, NULL, r, g, b, a);
+
+                // Premultiply the alpha into r, g, and b here, once, at table-build time,
+                // and store the result with alpha forced to fully opaque (255).
+                // This lets the display loop use SDL_BLENDMODE_NONE (a plain pixel copy)
+                // instead of SDL_BLENDMODE_BLEND (a per-pixel read-modify-write blend
+                // against the background), since the brightness scaling that alpha used
+                // to provide via blending is now baked directly into r, g, and b.
+                r = (Uint8)(((int)r * (int)a) / 255);
+                g = (Uint8)(((int)g * (int)a) / 255);
+                b = (Uint8)(((int)b * (int)a) / 255);
+                rgba = SDL_MapRGBA(formatDetailsP, NULL, r, g, b, 255);
                 bias = 0;           // only the first value
             }
             else
@@ -762,47 +824,64 @@ Rgba rgba;
     }
 }
 
-// Initialize the x and y coordinates in the points array.
+// Initialize the screen-position lookup table, the active-point pool, and the
+// free/active list heads.
 // By convention, the first subscript is y, the second x.
 // This matches the SDL convention.
-// The active list is initialized to empty.
+// The active list is initialized to empty, and the free list is initialized to
+// thread through every slot in activePool[] in order, 0..MAXACTIVEPOINTS-1.
 void
 initializePoints()
 {
 int32_t x, y;
-PointP pointP;
-    
-    activeListP = NULL;
+uint32_t i;
 
-    // Each point has its x and y set.
-    // While is might seem redundant, it makes locating the x, y coordinates of
-    // a point when using a pointer to the point easier and faster.
+    // No screen position is active yet.
     for( y = 0; y < LOGICALSIZE; ++y )
     {
         for( x = 0; x < LOGICALSIZE; ++x )
         {
-            pointData[y][x].x = x;
-            pointData[y][x].y = y;
+            pointIndex[y][x] = NOINDEX;
         }
     }
+
+    // Thread the free list through the whole pool: each slot's nextIdx points to
+    // the following slot, and the last slot terminates the list with NOINDEX.
+    for( i = 0; i < (MAXACTIVEPOINTS - 1); ++i )
+    {
+        activePool[i].nextIdx = i + 1;
+    }
+    activePool[MAXACTIVEPOINTS - 1].nextIdx = NOINDEX;
+
+    freeListHead = 0;
+    activeListHead = NOINDEX;
+    droppedPoints = 0;
 }
 
-// Remove a point from the active list, adjusting the head and prior point if needed.
+// Remove a point from the active list, adjusting the head and prior point's link if needed,
+// and return its pool slot to the head of the free list for reuse.
+// PointIdx is the pool index of the point being removed; prevIdx is the pool index of the
+// previous entry on the active list, or NOINDEX if pointIdx was the head.
 void
-removeActivePoint(PointP pointP, PointP prevP)
+removeActivePoint(uint32_t pointIdx, uint32_t prevIdx)
 {
     pthread_mutex_lock(&busyLock);
 
-    pointP->valid = false;              // done with this now
+    // This screen position no longer has an active point.
+    pointIndex[activePool[pointIdx].y][activePool[pointIdx].x] = NOINDEX;
 
-    if( prevP != NULL )
+    if( prevIdx != NOINDEX )
     {
-        prevP->nextP = pointP->nextP;
+        activePool[prevIdx].nextIdx = activePool[pointIdx].nextIdx;
     }
     else
     {
-        activeListP = pointP->nextP;        // If there was no previous point, this point was the head, reset.
+        activeListHead = activePool[pointIdx].nextIdx;     // This point was the head, reset.
     }
+
+    // Return this slot to the head of the free list so it can be reused.
+    activePool[pointIdx].nextIdx = freeListHead;
+    freeListHead = pointIdx;
 
     pthread_mutex_unlock(&busyLock);
 
@@ -812,14 +891,40 @@ removeActivePoint(PointP pointP, PointP prevP)
     }
 }
 
-// Add a point to the active list as the new head.
-// The lock must be in place before calling!
+// Add a new point at screen position (x,y) with the given intensity to the active list,
+// pulling a free slot from the pool and linking it in as the new head.
+// The lock must be in place before calling! (the reader thread holds busyLock for the
+// duration of a read batch, which covers this call).
+// If the pool is exhausted (every slot already active - effectively every screen position
+// lit at once, far beyond any realistic load), the new point is silently dropped and
+// droppedPoints is incremented so this condition is observable via timing output.
 void
-addActivePoint(PointP pointP)
+addActivePoint(uint16_t x, uint16_t y, byte intensity)
 {
-    pointP->valid = true;
-    pointP->nextP = activeListP;
-    activeListP = pointP;
+uint32_t newIdx;
+
+    if( freeListHead == NOINDEX )
+    {
+        ++droppedPoints;       // pool exhausted, can't track this point - drop it
+        return;
+    }
+
+    // Pull a slot from the head of the free list.
+    newIdx = freeListHead;
+    freeListHead = activePool[newIdx].nextIdx;
+
+    // Fill in the new active entry.
+    activePool[newIdx].x = x;
+    activePool[newIdx].y = y;
+    activePool[newIdx].intensity = intensity;
+    activePool[newIdx].lifetime = 0;
+
+    // Link it in as the new head of the active list.
+    activePool[newIdx].nextIdx = activeListHead;
+    activeListHead = newIdx;
+
+    // Record where to find this point's pool entry given its screen position.
+    pointIndex[y][x] = newIdx;
 
     if( doTiming )
     {
@@ -831,7 +936,7 @@ addActivePoint(PointP pointP)
     }
 }
 
-// Blend 2 rgba values into a packed renderer-preferrec result.
+// Blend 2 rgba values into a packed renderer-preferred result.
 // This is the standard blend algorithm, same as SDL_BLEMDNOME_BLEND.
 // We use this because we don't want to have to have SDL do the blending at display time.
 // Note that a source alpha of 100%, 255, is opaque and will totally mask the destination alpha.
@@ -872,6 +977,18 @@ uint32_t rslt;
 void
 drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity)
 {
+// Row base pointers and the byte offset of column x within a row.
+// XYTOPTR computes (base + y*pitch + x*sizeof(uint32_t)) from scratch for every pixel;
+// since every pixel touched here is one of (x,y), its row neighbors, or its column
+// neighbors, we can compute the three relevant row starts (this row, the row above,
+// the row below) and the column byte offset just once, then reach every pixel with
+// only an add. This avoids redundant multiplies that previously happened up to 9 times
+// per point.
+uint8_t *rowP;
+uint8_t *aboveRowP;
+uint8_t *belowRowP;
+size_t xOff;
+
     if( mikecMode)
     {
         *XYTOPTR(pixels, pitch, x, y) = rgba;
@@ -884,6 +1001,11 @@ drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity
     const bool notTopEdge = (y > 0);
     const bool notBotEdge = (y < 1023);
 
+    rowP = pixels + ((size_t)y * (size_t)pitch);
+    aboveRowP = rowP - pitch;          // only valid/used when notTopEdge
+    belowRowP = rowP + pitch;          // only valid/used when notBotEdge
+    xOff = (size_t)x * sizeof(uint32_t);
+
     switch (intensity)
     {
     // Max intensity adds the sharp corners to complete the 3x3 square block
@@ -891,44 +1013,44 @@ drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity
     case 6:
         if( notLeftEdge & notTopEdge )
         {
-            *XYTOPTR(pixels, pitch, x-1, y-1) = rgba;
+            *(uint32_t *)(aboveRowP + xOff - sizeof(uint32_t)) = rgba;   // (x-1, y-1)
         }
         if( notLeftEdge & notBotEdge )
         {
-            *XYTOPTR(pixels, pitch, x-1, y+1) = rgba;
+            *(uint32_t *)(belowRowP + xOff - sizeof(uint32_t)) = rgba;   // (x-1, y+1)
         }
         if( notRightEdge & notTopEdge )
         {
-            *XYTOPTR(pixels, pitch, x+1, y-1) = rgba;
+            *(uint32_t *)(aboveRowP + xOff + sizeof(uint32_t)) = rgba;   // (x+1, y-1)
         }
         if( notRightEdge & notBotEdge )
         {
-            *XYTOPTR(pixels, pitch, x+1, y+1) = rgba;
+            *(uint32_t *)(belowRowP + xOff + sizeof(uint32_t)) = rgba;   // (x+1, y+1)
         }
     // Medium intensity adds the left/right arms to form a wide cross
     case 5:
     case 4:
         if( notLeftEdge )
         {
-            *XYTOPTR(pixels, pitch, x-1, y) = rgba;
+            *(uint32_t *)(rowP + xOff - sizeof(uint32_t)) = rgba;        // (x-1, y)
         }
         if( notRightEdge )
         {
-            *XYTOPTR(pixels, pitch, x+1, y) = rgba;
+            *(uint32_t *)(rowP + xOff + sizeof(uint32_t)) = rgba;        // (x+1, y)
         }
     // Lowest intensities always draw the tight vertical core
     case 3:
     case 2:
     case 1:
     case 0:
-        *XYTOPTR(pixels, pitch, x, y) = rgba;       // Center core
+        *(uint32_t *)(rowP + xOff) = rgba;             // Center core
         if( notTopEdge )
         {
-            *XYTOPTR(pixels, pitch, x, y-1) = rgba; // Top arm
+            *(uint32_t *)(aboveRowP + xOff) = rgba;    // Top arm
         }
         if( notBotEdge )
         {
-            *XYTOPTR(pixels, pitch, x, y+1) = rgba; // Bottom arm
+            *(uint32_t *)(belowRowP + xOff) = rgba;    // Bottom arm
         }
         break;
     }

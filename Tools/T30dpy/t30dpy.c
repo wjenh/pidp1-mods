@@ -1048,9 +1048,8 @@ uint32_t cmd;
             offsetY = (winY - winX) / 2;
         }
 
-        pdpX = (int)((float)mouseX * (1024.0 / scale)) + offsetX;
-        pdpY = (int)((float)mouseY * (1024.0 / scale)) + offsetY;
-
+        pdpX = (int)((float)(mouseX - offsetX) * (1024.0 / scale));
+        pdpY = (int)((float)(mouseY - offsetY) * (1024.0 / scale));
         // Constrain the mouse since the SDL stuff is not reliable.
         if( pdpY < 0 )
         {

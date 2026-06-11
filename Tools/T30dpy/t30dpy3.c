@@ -48,6 +48,11 @@
  *       SDL_BLENDMODE_NONE instead of SDL_BLENDMODE_BLEND and removing the per-frame
  *       SDL_RenderClear(), eliminating a full-screen blend and a full-screen clear
  *       every frame.
+ *  11-Jun-2026 wje fix regression from above: in fullscreen with SDL_LOGICAL_PRESENTATION_LETTERBOX,
+ *     removing the per-frame SDL_RenderClear() left the letterbox bars (and edge points'
+ *     scaled bleed into them) uncleared from prior frames, showing as phantom points outside
+ *     the 1024x1024 area. Restored SDL_RenderClear() before SDL_RenderTexture(); the
+ *     SDL_BLENDMODE_NONE / premultiplied-alpha changes are kept since they were not the cause.
 */
 
 #include <stdio.h>
@@ -583,10 +588,14 @@ pthread_attr_t tattr;
 
         SDL_UnlockTexture(textureP);
 
-        // No SDL_RenderClear() here: with SDL_BLENDMODE_NONE (set above) this
-        // SDL_RenderTexture() call is a straight copy of the full 1024x1024 logical
-        // area, so every destination pixel is overwritten unconditionally and a
-        // separate clear would be redundant work.
+        // SDL_RenderClear() is needed here even though SDL_RenderTexture() below
+        // (with SDL_BLENDMODE_NONE) fully overwrites the 1024x1024 logical area:
+        // with SDL_LOGICAL_PRESENTATION_LETTERBOX, the visible window can be larger
+        // than the logical area, and the letterbox bars outside it are part of what
+        // RenderClear repaints. Without this, those bars (and the area around
+        // edge-of-screen points) retained stale content from previous frames,
+        // visible as phantom points outside the 1024x1024 area in fullscreen.
+        SDL_RenderClear(renderer);
         SDL_RenderTexture(renderer, textureP, NULL, NULL);
         SDL_RenderPresent(renderer);
     }
@@ -965,6 +974,7 @@ uint32_t rslt;
     return( SDL_MapRGBA(formatDetailsP, NULL, rR, rG, rB, rA) );
 }
 
+/*
 // Spread a point to simulate beam spread on a crt.
 // The Type 30 doccumentation states a spot diameter of 0.030" max, about 3 pixels on its display.
 // This siumulates it well by drawing extra dots based on the 0-7 intensity level.
@@ -1051,6 +1061,85 @@ size_t xOff;
         if( notBotEdge )
         {
             *(uint32_t *)(belowRowP + xOff) = rgba;    // Bottom arm
+        }
+        break;
+    }
+}
+*/
+
+void
+drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity)
+{
+uint32_t *rowP;          // pointer to (x, y) in the current row
+uint32_t *aboveRowP;     // pointer to (x, y-1), only valid if notTopEdge
+uint32_t *belowRowP;     // pointer to (x, y+1), only valid if notBotEdge
+int stride;              // pixels per row, derived from pitch (which is in bytes)
+
+    if( mikecMode)
+    {
+        *XYTOPTR(pixels, pitch, x, y) = rgba;
+        return;
+    }
+
+    // Claude suggestion to optimize compiler and cpu register use.
+    const bool notLeftEdge = (x > 0);
+    const bool notRightEdge = (x < 1023);
+    const bool notTopEdge = (y > 0);
+    const bool notBotEdge = (y < 1023);
+
+    // Compute the row base pointers once instead of repeating the full
+    // XYTOPTR address arithmetic for every one of the up to 9 pixels touched.
+    stride = pitch / (int)sizeof(uint32_t);
+    rowP = (uint32_t *)(pixels + ((size_t)y * (size_t)pitch)) + x;
+    aboveRowP = rowP - stride;
+    belowRowP = rowP + stride;
+
+    switch (intensity)
+    {
+    // Max intensity adds the sharp corners to complete the 3x3 square block
+    case 7:
+    case 6:
+        if( notLeftEdge & notTopEdge )
+        {
+            *(aboveRowP - 1) = rgba;
+        }
+        if( notLeftEdge & notBotEdge )
+        {
+            *(belowRowP - 1) = rgba;
+        }
+        if( notRightEdge & notTopEdge )
+        {
+            *(aboveRowP + 1) = rgba;
+        }
+        if( notRightEdge & notBotEdge )
+        {
+            *(belowRowP + 1) = rgba;
+        }
+    // Medium intensity adds the left/right arms to form a wide cross
+    case 5:
+    case 4:
+        if( notLeftEdge )
+        {
+            *(rowP - 1) = rgba;
+        }
+        if( notRightEdge )
+        {
+            *(rowP + 1) = rgba;
+        }
+
+    // Lowest intensities always draw the tight vertical core
+    case 3:
+    case 2:
+    case 1:
+    case 0:
+        *rowP = rgba;                // Center core
+        if( notTopEdge )
+        {
+            *aboveRowP = rgba;       // Top arm
+        }
+        if( notBotEdge )
+        {
+            *belowRowP = rgba;       // Bottom arm
         }
         break;
     }

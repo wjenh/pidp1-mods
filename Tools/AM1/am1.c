@@ -92,7 +92,7 @@
  * 12-Apr-2026 - minor change, turn off cpp warning about unterminated quotes in flex text strings
  * 26-Apr-2026 - add c-style block comments
  * 26-Apr-2026 - add -N to suppress included file text in listing
- * 28-Apr-2026 - add type340 character string directive
+ * 12-Jun-2026 - fix incorrect opcode for cmi, should be 770000
  *
 */
 #include <unistd.h>

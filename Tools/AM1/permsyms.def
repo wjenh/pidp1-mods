@@ -93,7 +93,7 @@ lia 1Dop 0760020
 lai 1Dop 0760040
 lsw 1Dop 0760060
 swp 1Dop 0760060
-cmi 1Dop 0764000
+cmi 1Dop 0770000
 sni 1Dop 0644000
 szi 1Dop 0654060
 

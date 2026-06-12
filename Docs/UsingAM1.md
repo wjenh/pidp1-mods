@@ -2,8 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.28 and covers up through am1 version 1.31; it will be updated as needed.\
-Edit date 26-Apr-2026
+This is version 1.29 and covers up through am1 version 1.32; it will be updated as needed.\
+Edit date 12-Jun-2026
+Correct opcode for cmi
 
 ## What is **am1**?
 
@@ -1191,7 +1192,7 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 |lai             | 0760040|
 |lsw             | 0760060|
 |swp             | 0760060|
-|cmi             | 0764000|
+|cmi             | 0770000|
 |sni             | 0644000|
 |szi             | 0654060|
 |scf             | 0740040|

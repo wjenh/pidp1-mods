@@ -51,8 +51,8 @@
  *  11-Jun-2026 wje fix regression from above: in fullscreen with SDL_LOGICAL_PRESENTATION_LETTERBOX,
  *     removing the per-frame SDL_RenderClear() left the letterbox bars (and edge points'
  *     scaled bleed into them) uncleared from prior frames, showing as phantom points outside
- *     the 1024x1024 area. Restored SDL_RenderClear() before SDL_RenderTexture(); the
- *     SDL_BLENDMODE_NONE / premultiplied-alpha changes are kept since they were not the cause.
+ *     the 1024x1024 area. Restored SDL_RenderClear() before SDL_RenderTexture()
+    12-Jun-2026 wje minor code cleanup, remove some unused vars
 */
 
 #include <stdio.h>
@@ -221,7 +221,7 @@ void removeActivePoint(uint32_t pointIdx, uint32_t prevIdx);
 
 void initializeRgbas(void);
 void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity);
-void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
+void updatePen(int sockFD, bool penDown, int winX, int winY);
 void loadConfig(bool full);
 void sighandler(int sig);
 void reconfigure(int sig);
@@ -486,7 +486,7 @@ pthread_attr_t tattr;
                 peny = (int)event.button.y;
                 penx = CONSTRAIN(penx);
                 peny = CONSTRAIN(peny);
-                updatePen(pdp1FD, window, true, penx, peny);
+                updatePen(pdp1FD, true, penx, peny);
                 SDL_ShowCursor();
                 cursorTime = now();
                 break;
@@ -502,13 +502,13 @@ pthread_attr_t tattr;
                     penx = CONSTRAIN(penx);
                     peny = CONSTRAIN(peny);
 
-                    updatePen(pdp1FD, window, true, penx, peny);
+                    updatePen(pdp1FD, true, penx, peny);
                 }
                 break;
 
             case SDL_EVENT_MOUSE_BUTTON_UP:
                 penDown = false;
-                updatePen(pdp1FD, window, false, penx, peny);
+                updatePen(pdp1FD, false, 0, 0);
                 break;
             }
         }
@@ -955,7 +955,6 @@ blend(int srcR, int srcG, int srcB, int sAlpha, int destR, int destG, int destB,
 {
 int rR, rG, rB, rA;
 float srcAlpha, destAlpha,newAlpha;
-uint32_t rslt;
 
     srcAlpha = (float)sAlpha / 255.0;
     destAlpha = (float)dAlpha / 255.0;
@@ -1150,7 +1149,7 @@ int stride;              // pixels per row, derived from pitch (which is in byte
 // but that's not possible here, let it be determined back in the pdp1 code.
 // SDL3 handles the mouse coordinate transforms for scaled windows itself now, unlike all the hoops SDL2 forced.
 void
-updatePen(int sockFD, SDL_Window *window, bool penDown, int mouseX, int mouseY)
+updatePen(int sockFD, bool penDown, int mouseX, int mouseY)
 {
 uint32_t cmd;
 

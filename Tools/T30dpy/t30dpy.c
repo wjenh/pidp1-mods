@@ -55,6 +55,7 @@
  *       SDL_BLENDMODE_NONE instead of SDL_BLENDMODE_BLEND and removing the per-frame
  *       SDL_RenderClear(), eliminating a full-screen blend and a full-screen clear
  *       every frame.
+    12-Jun-2026 wje minor code cleanup, remove some unused vars
 */
 
 #include <stdio.h>
@@ -245,7 +246,6 @@ uint32_t prevIdx;
 uint32_t nextIdx;
 ActivePointP activePointP;
 uint8_t *pixels;
-uint32_t *pixelP;
 uint32_t rgba;
 
 SDL_Event event;
@@ -469,7 +469,7 @@ struct timespec sleepTime;
                 if(event.button.button == 1)
                 {
                     penDown = false;
-                    updatePen(pdp1FD, window, false, penx, peny);
+                    updatePen(pdp1FD, window, false, 0, 0);
                 }
                 break;
 
@@ -907,7 +907,6 @@ blend(int srcR, int srcG, int srcB, int sAlpha, int destR, int destG, int destB,
 {
 int rR, rG, rB, rA;
 float srcAlpha, destAlpha, newAlpha;
-uint32_t rslt;
 
     srcAlpha = (float)sAlpha / 255.0;
     destAlpha = (float)dAlpha / 255.0;
@@ -1311,7 +1310,7 @@ reconfigure(int sig)
     initializeRgbas();
     // These might have changed.
     SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
-    SDL_SetTextureScaleMode(textures[2], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
+    SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
     SDL_RenderSetVSync(renderer, doVsync);
     SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
 }

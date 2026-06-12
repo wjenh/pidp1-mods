@@ -23,14 +23,15 @@
  *    Note that if both are on, the heuristic might fail, doing both when only one was desired.
  *    This will only happen if a dpy with shift but no wait or completion bits is done.
  *    If a program seems to be doing both, turn one off in the config file, depending upon which one you want active.
- * wje 28-Mar-16 simplify the last one, change the aperture dpy to xx3407, update am1 include file.
- * wje 11-Apr-16 the light pen really doesn't need a listener thread, just use nonblocking reads.
- * wje 12-Apr-16 major rework, move all the display stuff except fd management into IOT 7 and display.c,
+ * wje 28-Mar-26 simplify the last one, change the aperture dpy to xx3407, update am1 include file.
+ * wje 11-Apr-26 the light pen really doesn't need a listener thread, just use nonblocking reads.
+ * wje 12-Apr-26 major rework, move all the display stuff except fd management into IOT 7 and display.c,
  *    doesn't belong here.
- * wje 19-Apr-16 even more major, all display logic is gone from the emulator, including the low-level code
+ * wje 19-Apr-26 even more major, all display logic is gone from the emulator, including the low-level code
  *    The communication with the external display is now in its own thread and runs completely independently
  *    of the emulator, which is how it should have worked. This allows for much more accurate timing in
  *    the symbol generator and in the Type 340 display.
+ * wje 12-Jun-26 detailed commentary added, hopefully accurate.
 */
 #include "common.h"
 #include "pdp1.h"
@@ -50,6 +51,9 @@
 #define LOG_BREAK 0
 #define LOG_WATCH 0
 #define LOG_1D 0
+#define LOG_IOT 0
+#define LOG_RIM 0
+#define LOG_TYPEWRITER 0
 
 #define NOTIOTH
 #include "dynamicIots.h"
@@ -59,6 +63,10 @@ bool lailiaEnabled = false;
 bool core1DEnabled = false;
 bool all1DEnabled = false;
 
+// PDP-1 words are 18 bits wide, numbered left to right as bit 0 (sign,
+// most significant) through bit 17 (least significant). These masks
+// pick out a single bit of an 18-bit word (AC, IO, MB, ...) using the
+// machine's own bit numbering, e.g. B5 is "bit 5", not "bit 5 from the LSB".
 #define B0 0400000
 #define B1 0200000
 #define B2 0100000
@@ -78,10 +86,15 @@ bool all1DEnabled = false;
 #define B16 0000002
 #define B17 0000001
 
+// US(us): convert a duration in microseconds to the integer "simtime"
+// units used by pdp->simtime/realtime (1 unit = 1us, -1 fudge to land
+// just under the boundary so periodic events fire at the right rate).
 #define US(us) ((us)*1000 - 1)
-#define RDLY US(2500)       // 400/s
-#define PDLY US(15873)      // 63/s
-#define TYODLY US(100000)   // has to be long enough for MACRO to work
+#define RDLY US(2500)       // tape reader character delay: 400 chars/sec
+#define PDLY US(15873)      // tape punch character delay: 63 chars/sec
+#define TYODLY US(100000)   // typewriter output character delay (10 cps);
+                             // must be long enough for MACRO programs that
+                             // poll the "type out done" flag to keep up
 
 #define RD_CHAN 1
 #define PUN_CHAN 6
@@ -152,27 +165,80 @@ enum
     TP_unreachable = TP10_end
 };
 
+// TP(n): at TP-n, if the random "panel sample point" for this cycle
+// (pdp->timernd) falls before TPn_end, latch the indicator lights from
+// the current machine state and remember that we've done it (by setting
+// timernd to an unreachable value so later TP(n) calls in the same
+// cycle are no-ops). This is how the emulator gets a realistic, jittery
+// snapshot of the front-panel lights once per cycle.
 #define TP(n) if(pdp->timernd < TP##n##_end) { updatelights(pdp, pdp->panel); pdp->timernd = TP_unreachable; }
 
-#define CY0_INST_DONE (!pdp->df1 && pdp->ir >= 030)
+// --- "Is the current instruction finished?" / "can a sequence break
+// interrupt right now?" tests, broken down by which kind of cycle we're
+// currently in (cycle 0 = fetch, defer = indirect-address cycle).
+//
+// CY0_INST_DONE:  in cycle 0, the instruction is complete unless it's
+//                 one that needs a cycle 1 (opcodes < 030 -- memory
+//                 reference instructions) or a defer cycle.
+// CY0_MIDBRK_PERMIT: in cycle 0, a sequence break may be inserted
+//                 mid-instruction only for memory reference instructions
+//                 (opcodes < 030), which haven't altered PC/AC yet.
+// DF_INST_DONE:   in a defer cycle, the instruction is complete unless
+//                 it's a memory reference instruction (needs cycle 1) --
+//                 same test as CY0_INST_DONE, restated for df2.
+// DF_MIDBRK_PERMIT: in a defer cycle, a break may be inserted
+//                 mid-instruction for memory reference instructions, or
+//                 for jmp/jsp while still chasing indirect addresses
+//                 (df2 set).
+#define CY0_INST_DONE ((!pdp->df1) && (pdp->ir >= 030))
 #define CY0_MIDBRK_PERMIT (pdp->ir < 030)
-#define DF_INST_DONE (!pdp->df2 && pdp->ir >= 030)
-#define DF_MIDBRK_PERMIT (pdp->ir < 030 || (IR_JMP || IR_JSP) && pdp->df2)
+#define DF_INST_DONE ((!pdp->df2) && (pdp->ir >= 030))
+#define DF_MIDBRK_PERMIT ((pdp->ir < 030) || ((IR_JMP || IR_JSP) && pdp->df2))
 
-// have to be careful with those at TP10
+// Have to be careful with those at TP10
 // because that's where we choose the next type of cycle.
-// So the exact state of  cyc, df1, df2, bc, hsc  is crucial
-#define CY1 (pdp->cyc && !pdp->df1 && pdp->bc==0)
+// So the exact state of  cyc, df1, df2, bc, hsc  is crucial.
+//
+// CY1: we are about to run (or are running) cycle 1, the execute cycle
+//      of a memory reference instruction (cyc set, not deferring, and
+//      not in a break sequence).
+// DF:  we are in a defer (indirect addressing) cycle.
+// INST_DONE: true once the current instruction has fully retired --
+//      i.e. cycle 0 finished an instruction that needed no cycle 1/defer,
+//      or a defer cycle finished one that needed no cycle 1, or cycle 1
+//      itself just ran -- and we're not in the middle of a break sequence.
+// MIDBRK_PERMIT: true if a sequence break is allowed to interrupt the
+//      instruction in progress (rather than waiting for it to finish),
+//      based on which cycle we're in.
+#define CY1 (pdp->cyc && (!pdp->df1) && (pdp->bc == 0))
 #define DF (pdp->cyc && pdp->df1)
-#define INST_DONE ((!pdp->cyc && CY0_INST_DONE || DF && DF_INST_DONE || CY1) && !pdp->bc)
-#define MIDBRK_PERMIT (!pdp->cyc && CY0_MIDBRK_PERMIT || DF && DF_MIDBRK_PERMIT)
+#define INST_DONE (((!pdp->cyc && CY0_INST_DONE) || (DF && DF_INST_DONE) || CY1) && (!pdp->bc))
+#define MIDBRK_PERMIT ((!pdp->cyc && CY0_MIDBRK_PERMIT) || (DF && DF_MIDBRK_PERMIT))
 
+// SBS_BREAK_REQ / SBS_BREAK: a sequence break (SBS) is being requested --
+// the sequence break system is enabled (sbm) and some channel has a
+// synchronized request pending (sbs_seq). SBS_BREAK is just an alias used
+// at the point where the break is actually taken.
 #define SBS_BREAK_REQ (pdp->sbm && pdp->sbs_seq)
 #define SBS_BREAK (SBS_BREAK_REQ)
-#define MANUAL_RUN (pdp->single_cyc_sw || pdp->single_inst_sw && INST_DONE)
-// IR_INCORR does not apply to break cycles!
+
+// MANUAL_RUN: the front-panel switches call for the machine to stop after
+// this cycle -- either SINGLE CYCLE is down (stop after every cycle), or
+// SINGLE INSTRUCTION is down and the current instruction has just finished.
+#define MANUAL_RUN (pdp->single_cyc_sw || (pdp->single_inst_sw && INST_DONE))
+
+// STOP: the run flip-flop should clear after this cycle -- the
+// instruction register holds an illegal/unassigned opcode (IR_INCORR,
+// which does NOT apply to break cycles -- those don't load IR the same
+// way), or the panel switches call for a stop (MANUAL_RUN), or RUN ENABLE
+// has been cleared some other way.
 #define STOP (IR_INCORR || MANUAL_RUN || !pdp->run_enable)
 
+// Read the core word addressed by (ema|MA) into MB (OR'd in -- callers
+// are expected to have cleared MB first) and destructively clear that
+// core location. This models the real core memory's read-then-restore
+// cycle: a separate writemem() later in the same machine cycle puts the
+// (possibly modified) word back.
 static void
 readmem(PDP1 *pdp)
 {
@@ -180,12 +246,20 @@ readmem(PDP1 *pdp)
     pdp->core[(pdp->ema | MA) % MAXMEM] = 0;
 }
 
+// Restore MB to the core location addressed by (ema|MA), completing the
+// read/restore cycle started by readmem().
 static void
 writemem(PDP1 *pdp)
 {
     pdp->core[(pdp->ema | MA) % MAXMEM] = MB;
 }
 
+// Advance the core-memory read/write/restore/inhibit flip-flop chain by
+// one step: i<-w, w<-rs, rs<-r, r<-!w (computed from the old w, before it
+// was overwritten). These four flags (r, rs, w, i) track where in its
+// read/write cycle each core memory access currently is; this is called
+// once per timing pulse to shift them along. memclr()/inhibit() below
+// reset or perturb the same chain.
 static void mop2379(PDP1 *pdp)
 {
     pdp->i = pdp->w;
@@ -194,11 +268,15 @@ static void mop2379(PDP1 *pdp)
     pdp->r = !pdp->w;   // actually !pdp->rs but already clobbered
 }
 
+// Force the core memory "inhibit" flip-flop on, suppressing the write
+// (restore) pulse for the current cycle's memory access.
 static void inhibit(PDP1 *pdp)
 {
     pdp->i = 1;
 }
 
+// Clear the whole core read/write/restore/inhibit flip-flop chain back
+// to idle, ready for the next memory cycle.
 static void memclr(PDP1 *pdp)
 {
     pdp->r = 0;
@@ -207,7 +285,13 @@ static void memclr(PDP1 *pdp)
     pdp->i = 0;
 }
 
-// Initialize everything to random values on power-on.
+// POWER CLEAR: the real PDP-1's flip-flops come up in an unpredictable
+// state when power is applied, so initialize every register and flag to
+// a random value (this also helps shake out code that assumes a clean
+// reset). The block at the end picks a random but *self-consistent*
+// cyc/df1/df2/bc combination, since cycle()/cycle0()/defer()/cycle1()
+// below assert on certain combinations being impossible and a fully
+// random combination could violate that.
 void
 pwrclr(PDP1 *pdp)
 {
@@ -296,26 +380,36 @@ onOff(bool flag)
     return((flag)?"on":"off");
 }
 
+// Multiply-step shift: shift the 36-bit AC:IO pair one place right
+// (AC's bit 17 feeds into IO's bit 0), used once per step of the
+// multiply algorithm in multiply().
 static void
 mul_shift(PDP1 *pdp)
 {
 int ac;
 
     ac = AC >> 1;
-    IO = (AC & B17) << 17 | IO >> 1;
+    IO = ((AC & B17) << 17) | (IO >> 1);
     AC = ac;
 }
 
+// Divide-step shift: shift the 36-bit AC:IO pair one place left, with
+// IO's old sign feeding AC's bit 17 and AC's old (complemented) sign
+// feeding IO's bit 17. AC's sign bit (B0) is preserved across the shift.
+// Used once per step of the divide algorithm in divide().
 static void
 div_shift(PDP1 *pdp)
 {
 int ac;
 
-    ac = (AC&~B0) << 1 | (IO & B0) >> 17;
-    IO = (IO&~B0) << 1 | (~AC & B0) >> 17;
+    ac = ((AC & ~B0) << 1) | ((IO & B0) >> 17);
+    IO = ((IO & ~B0) << 1) | ((~AC & B0) >> 17);
     AC = ac;
 }
 
+// End-around carry add: AC += MB using the PDP-1's one's-complement
+// "end-around carry" rule -- any carry out of bit 0 wraps back into
+// bit 17 -- then mask to 18 bits.
 static void
 carry(PDP1 *pdp)
 {
@@ -329,6 +423,8 @@ carry(PDP1 *pdp)
     AC &= WORDMASK;
 }
 
+// Increment AC, with the one's-complement quirk that +0 (0777777)
+// increments to -0 (0000000) rather than 1, and -0 increments to +1.
 static void
 inc_ac(PDP1 *pdp)
 {
@@ -345,12 +441,16 @@ inc_ac(PDP1 *pdp)
         AC++;
     }
 }
+// JSP/OPR "store program counter": OR the overflow flag, extend mode
+// flag, extension-of-PC field, and PC itself into AC (bits 0, 1, and
+// the address bits respectively).
 static void
 pc_to_ac(PDP1 *pdp)
 {
-    AC |= pdp->ov1 << 17 | pdp->exd << 16 | pdp->epc | PC;
+    AC |= (pdp->ov1 << 17) | (pdp->exd << 16) | pdp->epc | PC;
 }
 
+// Clear the memory address register (and its extension) to 0.
 static void
 clr_ma(PDP1 *pdp)
 {
@@ -358,6 +458,10 @@ clr_ma(PDP1 *pdp)
     pdp->ema = 0;
 }
 
+// Load MA's address field from MB. The extension (bank) field of MA
+// comes either from MB itself (if extended-memory addressing, "emc", is
+// active for this operand) or is carried forward from the current
+// extended PC (epc) otherwise.
 static void
 mb_to_ma(PDP1 *pdp)
 {
@@ -373,6 +477,8 @@ mb_to_ma(PDP1 *pdp)
     }
 }
 
+// Load MA from PC (for instruction fetch), carrying the current
+// extended-PC bank into MA's extension.
 static void
 pc_to_ma(PDP1 *pdp)
 {
@@ -381,6 +487,7 @@ pc_to_ma(PDP1 *pdp)
 }
 
 
+// Clear the program counter (and its extension) to 0.
 static void
 clr_pc(PDP1 *pdp)
 {
@@ -388,6 +495,10 @@ clr_pc(PDP1 *pdp)
     pdp->epc = 0;
 }
 
+// Load PC's address field from MB (for jmp/jsp). The extension (bank)
+// field of PC comes either from MB itself (if extended addressing is
+// active) or is carried forward from the current effective-address bank
+// (ema) otherwise.
 static void
 mb_to_pc(PDP1 *pdp)
 {
@@ -403,6 +514,8 @@ mb_to_pc(PDP1 *pdp)
     }
 }
 
+// Load PC from MA (used by cal/jda to jump to the computed address),
+// carrying MA's bank into PC's extension.
 static void
 ma_to_pc(PDP1 *pdp)
 {
@@ -410,12 +523,18 @@ ma_to_pc(PDP1 *pdp)
     pdp->epc |= pdp->ema;
 }
 
+// Advance the program counter by one, wrapping within the 12-bit
+// address field (bank/extension is untouched).
 static void
 pc_inc(PDP1 *pdp)
 {
     PC = (PC + 1) & ADDRMASK;
 }
 
+// Undo the speculative pc_inc() done while fetching this instruction,
+// and drop out of any in-progress defer (indirect addressing) chase.
+// Used when a sequence break needs to re-run the interrupted
+// instruction from scratch.
 static void
 inst_cancel(PDP1 *pdp)
 {
@@ -427,12 +546,20 @@ inst_cancel(PDP1 *pdp)
 // TP9A
 // TP10
 
+// Recompute pdp->sbs_seq, the single highest-priority pending-and-not-yet-
+// held sequence break: it's the lowest set bit of b3 (synchronized
+// requests) that is below the lowest set bit of b4 (breaks already being
+// held) -- i.e. the highest-priority request not currently masked by an
+// in-progress higher- or equal-priority break.
 static void
 sbs_calc_req(PDP1 *pdp)
 {
-	pdp->sbs_seq = (pdp->b3 & ~pdp->b3+1) & (pdp->b4 & ~pdp->b4+1)-1;
+	pdp->sbs_seq = (pdp->b3 & (~pdp->b3 + 1)) & ((pdp->b4 & (~pdp->b4 + 1)) - 1);
 }
 
+// CBS (Clear Sequence Breaks): clear all pending/held break state
+// (b3 synchronized requests, b4 held breaks, and for 16-channel SBS also
+// b2 raw requests), then recompute sbs_seq.
 static void
 clr_sbs(PDP1 *pdp)
 {
@@ -443,6 +570,11 @@ clr_sbs(PDP1 *pdp)
 	sbs_calc_req(pdp);
 }
 
+// Called at TP4 of every cycle: synchronize raw channel requests (b2)
+// into b3, and, if a break is currently being taken (bc==1, the "hold
+// break" sub-cycle), mark the chosen channel(s) (sbs_seq) as held in b4
+// and clear them from b3 (16-channel SBS) or clear all of b2 (SBS256).
+// Then recompute sbs_seq for the next cycle's priority decision.
 // SBS256 works differently here
 static void
 sbs_sync(PDP1 *pdp)
@@ -459,6 +591,9 @@ sbs_sync(PDP1 *pdp)
 	sbs_calc_req(pdp);
 }
 
+// Called at TP10 of every cycle (16-channel SBS only): clear any raw
+// request bits (b2) that have already been synchronized into b3, so they
+// don't get synchronized again next cycle.
 static void
 sbs_reset_sync(PDP1 *pdp)
 {
@@ -466,6 +601,11 @@ sbs_reset_sync(PDP1 *pdp)
 		pdp->b2 &= ~pdp->b3;
 }
 
+// SC (clear): the machine's general "clear" pulse, issued on start,
+// deposit, examine, and at the end of each break-cycle sequence. Resets
+// the cycle/defer/break flip-flops, overflow, I/O sync flags, IR, PC,
+// and sequence-break state to their idle values, and clears the I/O
+// extension flags (lai/lia/emc/exd) and typewriter-output flag.
 static void
 sc(PDP1 *pdp)
 {
@@ -491,6 +631,12 @@ sc(PDP1 *pdp)
     pdp->tyo = 0;
 }
 
+// Handle a front-panel pulse from the START, STOP, CONTINUE, EXAMINE, or
+// DEPOSIT switches (whichever of pdp->*_sw is set when this is called).
+// Mirrors the console logic's SP1-SP4 pulse sequence: stop the machine,
+// optionally clear AC/sequence state, load PC/AC from the test
+// address/word switches, fake up the right IR for examine/deposit, and
+// (for start/continue) set run.
 void
 spec(PDP1 *pdp)
 {
@@ -563,6 +709,9 @@ spec(PDP1 *pdp)
     }
 }
 
+// Handle a pulse from the READ IN switch: stop the machine, enter
+// "reading in" (rim) mode with sequence breaks disabled, and arm the
+// special read-in cycle (readin1/readin2) to run on the next cycle.
 void
 start_readin(PDP1 *pdp)
 {
@@ -574,6 +723,10 @@ start_readin(PDP1 *pdp)
     pdp->rim_cycle = 1;
 }
 
+// First half of the special read-in cycle (replaces a normal cycle 0
+// while rim_cycle is set): clear MA, perform an SC clear, and pulse the
+// reader (channel 2, "rpb") to start loading the first word from tape
+// into IO.
 void
 readin1(PDP1 *pdp)
 {
@@ -592,6 +745,11 @@ readin1(PDP1 *pdp)
     }
 }
 
+// Second half of the special read-in cycle: take the word just read into
+// IO, decode it as an instruction into IR/MA. If it's a "dio" (deposit
+// in/out), pulse the reader again to fetch the data word and store it
+// via the dio IOT; if it's a "jmp", treat it as the end-of-tape transfer
+// address, load PC and start the machine running from there.
 void
 readin2(PDP1 *pdp)
 {
@@ -625,6 +783,9 @@ readin2(PDP1 *pdp)
     }
 }
 
+// Clear the type-10 multiply/divide unit's step counter (scr) and sign
+// bookkeeping flags (smb, srm). Called at TP9/TP10 of every normal cycle
+// so they're clean before the next mul/div, if any, runs in cycle1().
 static void
 clrmd(PDP1 *pdp)
 {
@@ -633,6 +794,11 @@ clrmd(PDP1 *pdp)
     pdp->srm = 0;
 }
 
+// Type-10 option: run the entire shift-and-add multiply algorithm
+// (MDP-3..MDP-6 in the option's flow chart) to completion. AC holds one
+// operand, MB the other; the 36-bit product ends up in AC:IO. Also
+// accumulates the extra simulated time the real hardware would have
+// taken for the asynchronous multiply steps.
 static void
 multiply(PDP1 *pdp)
 {
@@ -668,16 +834,21 @@ start:
     while(pdp->scr != 022);
 
     // last cycle is asynchronous
-    pdp->simtime -= lastlong * (200 + 500) + 150;
+    pdp->simtime -= (lastlong * (200 + 500)) + 150;
 
     // MDP-11
-    if(pdp->srm != pdp->smb && !(AC == 0 && IO == 0))
+    if((pdp->srm != pdp->smb) && (!((AC == 0) && (IO == 0))))
     {
         AC ^= WORDMASK;
         IO ^= WORDMASK;
     }
 }
 
+// Type-10 option: run the entire non-restoring divide algorithm
+// (MDP-1..MDP-14 in the option's flow chart) to completion. AC:IO holds
+// the 36-bit dividend, MB the divisor; the quotient ends up in IO and the
+// remainder in AC. Also accumulates the extra simulated time the real
+// hardware would have taken for the asynchronous divide steps.
 static void
 divide(PDP1 *pdp)
 {
@@ -729,7 +900,7 @@ start:
         pdp->simtime += 500;
 
         // MDP-5
-        done = pdp->scr == 022 || pdp->scr == 0 && !(AC & B0);
+        done = (pdp->scr == 022) || ((pdp->scr == 0) && (!(AC & B0)));
         pdp->scr = (pdp->scr + 1) & 037;
     }
     while(!done);
@@ -766,13 +937,13 @@ start:
     // so don't add to simtime from now on
 
     // MDP-10
-    if(!(pdp->scr & 020) && pdp->srm ||
-            (pdp->scr & 020) && IO != 0 && pdp->srm != pdp->smb)
+    if((!(pdp->scr & 020) && pdp->srm) ||
+            ((pdp->scr & 020) && (IO != 0) && (pdp->srm != pdp->smb)))
     {
         IO ^= WORDMASK;
     }
 
-    if(AC != 0 && pdp->srm)
+    if((AC != 0) && pdp->srm)
     {
         AC ^= WORDMASK;
     }
@@ -796,6 +967,10 @@ start:
     }
 }
 
+// Map a 3-bit "skip on program flag" / "set program flag" field (the low
+// 3 bits of MB, as used by the skp and opr program-flag instructions)
+// to the corresponding program-flag bitmask. Field value 0 means "no
+// flag selected"; 1-6 select individual flags pf1-pf6; 7 selects all six.
 int
 decflg(int n)
 {
@@ -820,6 +995,12 @@ decflg(int n)
     return 0;
 }
 
+// Perform one step of a "shift or rotate" (sho/shr-class) instruction.
+// Which of the 12 shift/rotate variants (RAL/RIL/RCL/SAL/SIL/SCL/RAR/
+// RIR/RCR/SAR/SIR/SCR -- rotate/shift, AC/IO/combined, left/right) runs
+// is selected by bits 9-12 of MB, decoded once per call; this is invoked
+// once for each of the (up to 9) shift-count bits set in the instruction
+// word, across several timing pulses in cycle0().
 static void
 shro(PDP1 *pdp)
 {
@@ -831,55 +1012,55 @@ int ac, io;
     switch((MB >> 9) & 017)
     {
     case 001:   // RAL
-        ac = (AC&~B0) << 1 | (AC & B0) >> 17;
+        ac = ((AC & ~B0) << 1) | ((AC & B0) >> 17);
         break;
 
     case 002:   // RIL
-        io = (IO&~B0) << 1 | (IO & B0) >> 17;
+        io = ((IO & ~B0) << 1) | ((IO & B0) >> 17);
         break;
 
     case 003:   // RCL
-        ac = (AC&~B0) << 1 | (IO & B0) >> 17;
-        io = (IO&~B0) << 1 | (AC & B0) >> 17;
+        ac = ((AC & ~B0) << 1) | ((IO & B0) >> 17);
+        io = ((IO & ~B0) << 1) | ((AC & B0) >> 17);
         break;
 
     case 005:   // SAL
-        ac = (AC & B0) | (AC&~(B0 | B1)) << 1 | (AC & B0) >> 17;
+        ac = (AC & B0) | ((AC & ~(B0 | B1)) << 1) | ((AC & B0) >> 17);
         break;
 
     case 006:   // SIL
-        io = (IO & B0) | (IO&~(B0 | B1)) << 1 | (IO & B0) >> 17;
+        io = (IO & B0) | ((IO & ~(B0 | B1)) << 1) | ((IO & B0) >> 17);
         break;
 
     case 007:   // SCL
-        ac = (AC & B0) | (AC&~(B0 | B1)) << 1 | (IO & B0) >> 17;
-        io = (IO&~B0) << 1 | (AC & B0) >> 17;
+        ac = (AC & B0) | ((AC & ~(B0 | B1)) << 1) | ((IO & B0) >> 17);
+        io = ((IO & ~B0) << 1) | ((AC & B0) >> 17);
         break;
 
     case 011:   // RAR
-        ac = (AC & B17) << 17 | AC >> 1;
+        ac = ((AC & B17) << 17) | (AC >> 1);
         break;
 
     case 012:   // RIR
-        io = (IO & B17) << 17 | IO >> 1;
+        io = ((IO & B17) << 17) | (IO >> 1);
         break;
 
     case 013:   // RCR
-        ac = (IO & B17) << 17 | AC >> 1;
-        io = (AC & B17) << 17 | IO >> 1;
+        ac = ((IO & B17) << 17) | (AC >> 1);
+        io = ((AC & B17) << 17) | (IO >> 1);
         break;
 
     case 015:   // SAR
-        ac = (AC & B0) | AC >> 1;
+        ac = (AC & B0) | (AC >> 1);
         break;
 
     case 016:   // SIR
-        io = (IO & B0) | IO >> 1;
+        io = (IO & B0) | (IO >> 1);
         break;
 
     case 017:   // SCR
-        ac = (AC & B0) | AC >> 1;
-        io = (AC & B17) << 17 | IO >> 1;
+        ac = (AC & B0) | (AC >> 1);
+        io = ((AC & B17) << 17) | (IO >> 1);
         break;
     }
 
@@ -887,6 +1068,10 @@ int ac, io;
     IO = io;
 }
 
+// Move the "deferred" overflow indication (ov2, set mid-instruction by
+// add/sub/etc.) into the latched overflow flip-flop (ov1) that the skip-
+// on-overflow test and the overflow indicator lamp actually look at, then
+// clear ov2. Called at TP10 of every cycle.
 static void
 syncov(PDP1 *pdp)
 {
@@ -898,6 +1083,17 @@ syncov(PDP1 *pdp)
     pdp->ov2 = 0;
 }
 
+// CYCLE 0: instruction fetch. Reads the next instruction word from the
+// location addressed by PC into MB/IR, increments PC, and for memory
+// reference instructions either finishes the instruction immediately
+// (operate/skip/etc-class opcodes) or sets up df1/cyc so defer() or
+// cycle1() runs next. Also handles the multi-pulse "sho"/"shr" shift-
+// rotate instructions (one shro() call per set shift-count bit, spread
+// across TP0-TP9A) and the IOT instruction's TP6A/TP7/TP10 pulses.
+//
+// The switch(hack)/case labels let cycle1() jump in here partway through
+// (at TP4, via cychack) to execute an "xct" instruction's target as if it
+// were a normal cycle-0 fetch starting from TP4.
 static void
 cycle0(PDP1 *pdp)
 {
@@ -909,7 +1105,10 @@ int hack;
     switch(hack)
     {
     default:
-        // TP0
+        // TP0: if "sho" with shift-count bit 12 set, do one shift step.
+        // If completing an "lai" (load AC from IO, a 1D extension), merge
+        // IO into MB now so it can be swapped into AC at TP1. Point MA at
+        // PC to fetch the instruction word.
         if(IR_SHRO && (MB & B12))
         {
             shro(pdp);
@@ -924,12 +1123,16 @@ int hack;
         TP(0)
 
     case 1:
-        // TP1
+        // TP1: if "sho" with shift-count bit 11 set, do one shift step.
         if(IR_SHRO && (MB & B11))
         {
             shro(pdp);
         }
 
+        // Complete the 1D "lai"/"lia" register-exchange extensions:
+        // lai+lia together swap AC and MB (via IO); lia alone moves AC
+        // into MB (clearing IO, to be OR'd back at TP2); lai alone loads
+        // AC from MB (the half merged with IO back at TP0).
         if( pdp->lai && pdp->lia)
         {
             int t = MB;
@@ -955,7 +1158,11 @@ int hack;
 
         TP(1)
 
-        // TP2
+        // TP2: advance the core read/write chain, do another shro() step
+        // (bit 10), advance PC past the instruction just fetched, and for
+        // IOT decide whether the I/O completion pulse can fire this
+        // cycle (ioc) based on the in-out sync/hold flags. If completing
+        // "lia", OR the saved AC value (now in MB) into IO.
         mop2379(pdp);
 
         if(IR_SHRO && (MB & B10))
@@ -979,7 +1186,9 @@ int hack;
 
         TP(2)
 
-        // TP3
+        // TP3: advance the core read/write chain, do another shro() step
+        // (bit 9), and clear MB ready to receive the operand word read at
+        // TP4.
         mop2379(pdp);
 
         if(IR_SHRO && (MB & B9))
@@ -991,19 +1200,26 @@ int hack;
         TP(3)
 
     case 4:
-        // TP4
+        // TP4: synchronize sequence-break requests, read the operand
+        // word from the address PC points to into MB, and decode its top
+        // 5 bits into IR (cleared first, then OR'd in at TP5 -- IR isn't
+        // fully valid until TP5).
         sbs_sync(pdp);
         readmem(pdp);
         IR = 0;
         TP(4)
 
-        // TP5
+        // TP5: finish decoding IR from MB, and clear the 1D lai/lia
+        // request flags now that they've been acted on above.
         IR |= MB >> 13;
         pdp->lai = 0;
         pdp->lia = 0;
         TP(5)
 
-        // TP6
+        // TP6: if the indirect-address bit (B5, bit 5) is set and this
+        // is a memory-reference instruction (not sho/skip/law/opr/iot/
+        // cal-jda, which use bit 5 for other purposes), enter the defer
+        // (indirect-addressing) cycle next.
         if((MB & B5) && !IR_SHRO && !IR_SKIP &&
             !IR_LAW && !IR_OPR && !IR_IOT && !IR_CALJDA)
         {
@@ -1012,7 +1228,10 @@ int hack;
 
         TP(6)
 
-        // TP6a
+        // TP6a: for IOT with the no-wait bit (B5) clear, if the I/O
+        // device hasn't yet signalled "in-out halt" (ioh), request the
+        // completion pulse now (ioc) and mark in-out-halt-set (ihs) so
+        // TP7 won't request it again.
         if(IR_IOT && !(MB & B5) && pdp->ioh)
         {
             pdp->ioc = 1;
@@ -1022,7 +1241,12 @@ int hack;
 
         TP(6a)
 
-        // TP7
+        // TP7: advance the core read/write chain and do another shro()
+        // step (bit 17, the last one). Clear AC for jsp/law/opr-clear-AC,
+        // clear IO for opr-clear-IO. For IOT, set the in-out-halt flag
+        // if this iot waits for completion (B5 set) and nothing else has
+        // claimed the cycle, and fire the device's TP7 pulse if ioc is
+        // set.
         mop2379(pdp);
 
         if(IR_SHRO && (MB & B17))
@@ -1030,7 +1254,7 @@ int hack;
             shro(pdp);
         }
 
-        if(IR_JSP && !pdp->df1 || IR_LAW || IR_OPR && (MB & B10))
+        if((IR_JSP && (!pdp->df1)) || IR_LAW || (IR_OPR && (MB & B10)))
         {
             AC = 0;
         }
@@ -1055,7 +1279,11 @@ int hack;
 
         TP(7)
 
-        // TP8
+        // TP8: inhibit the memory write-back (this cycle's MB doesn't go
+        // back to core). For "jsp"/"jmp" with no indirect addressing,
+        // store/clear PC now (if deferring, defer() does this instead).
+        // Run the "skp" skip tests, the remaining shro()/law/opr effects,
+        // and (if enabled) the 1D OPR1D extension instructions.
         inhibit(pdp);
 
         if(!pdp->df1)
@@ -1101,7 +1329,7 @@ int hack;
                 skip = 1;
             }
 
-            if((MB & B11) && AC == 0)
+            if((MB & B11) && (AC == 0))
             {
                 skip = 1;
             }
@@ -1225,7 +1453,13 @@ int hack;
 
         TP(8)
 
-        // TP9
+        // TP9: advance the core read/write chain and write MB back to
+        // core (a no-op since TP8 set inhibit, but kept for symmetry with
+        // the other cycles -- "approximate"). For "jmp"/"jsp" with no
+        // indirect addressing, load PC from MB now. Apply the rest of
+        // "skp"'s overflow-clear, the last shro() step, opr/law AC
+        // complement, iot's in-out-halt clear, and decide whether to halt
+        // (illegal opcode, opr-halt bit, or a stop condition).
         mop2379(pdp);
         writemem(pdp);      // approximate
 
@@ -1244,7 +1478,7 @@ int hack;
             shro(pdp);
         }
 
-        if(IR_OPR && (MB & B8) || IR_LAW && (MB & B5))
+        if((IR_OPR && (MB & B8)) || (IR_LAW && (MB & B5)))
         {
             AC ^= WORDMASK;
         }
@@ -1263,7 +1497,8 @@ int hack;
         clrmd(pdp);
         TP(9)
 
-        // TP9A
+        // TP9A: do another shro() step (bit 14). For an IOT that asked to
+        // halt until completion (ioh set), cancel this instruction (it will be retried once the device finishes).
         if(IR_SHRO && (MB & B14))
         {
             shro(pdp);
@@ -1276,7 +1511,18 @@ int hack;
 
         TP(9a)
 
-        // TP10
+        // TP10: end-of-cycle housekeeping common to all cycle types --
+        // resync sequence-break requests, clear the core read/write
+        // chain, latch the overflow flag, and (if still running) clear MA
+        // for the next fetch. Do the final shro() step (bit 13). For
+        // IOT, update the in-out-halt/sync flags and fire the device's
+        // TP10 completion pulse if ioc is set. Set "sign of MB seen"
+        // (smb) for the multiply/divide unit. If "lai" completed, clear
+        // MB. Finally, decide the next cycle: if a sequence break is
+        // pending, take it (cancelling this instruction first if
+        // mid-instruction breaks are allowed); otherwise, if this
+        // instruction isn't done (it's a memory-reference opcode needing
+        // defer/cycle1), set cyc so defer()/cycle1() runs next.
         sbs_reset_sync(pdp);
         memclr(pdp);
         syncov(pdp);
@@ -1318,7 +1564,7 @@ int hack;
             MB = 0;
         }
 
-	if(SBS_BREAK)
+        if(SBS_BREAK)
         {
             if(MIDBRK_PERMIT)
             {
@@ -1326,23 +1572,34 @@ int hack;
             }
             pdp->bc |= SBS_BREAK;
             pdp->cyc = 1;
-	}
+        }
         else if(!CY0_INST_DONE)
         {
             pdp->cyc = 1;
         }
 
-	TP(10)
+        TP(10)
     }
 }
 
+// DEFER (indirect addressing) CYCLE: runs when cycle0() set df1, meaning
+// the instruction's address word had its indirect bit set. Reads the
+// word MA points to; if *its* indirect bit is also set, df2 stays/gets
+// set and this cycle repeats (chasing the indirect chain) -- otherwise
+// the word becomes the final operand address (for non-jmp/jsp opcodes)
+// or the jump target (for jmp/jsp, which finish here rather than in
+// cycle1()). Also handles the 16-channel-SBS "DEBREAK" special case: a
+// "jmp 1" or "jmp 4n+1" encountered while sbm is set and PC's bank is 0
+// is interpreted as a return-from-break instruction rather than a normal
+// jump.
 static void
 defer(PDP1 *pdp)
 {
 int sbs_restore = 0;
 int mask = 0;
 
-    // TP0
+    // TP0: point MA at the address word (from MB, the instruction word
+    // fetched in cycle0).
     mb_to_ma(pdp);
     TP(0)
 
@@ -1350,7 +1607,13 @@ int mask = 0;
     pdp->emc = 0;
     TP(1)
 
-    // TP2
+    // TP2: advance the core read/write chain. Check for the SBS
+    // "DEBREAK" pseudo-instruction: "jmp" to address 1 (SBS256) or to a
+    // multiple-of-4-plus-1 address naming a channel (16-channel SBS),
+    // executed while in a break (epc==0) with sequence breaks enabled.
+    // If matched, mark the corresponding break as no longer held (b4) and
+    // arrange to restore ov1/exd from the operand word at TP9A instead of
+    // treating this as a real jump.
     mop2379(pdp);
 
     if( pdp->sbm && IR_JMP && (pdp->epc == 0) )
@@ -1359,7 +1622,7 @@ int mask = 0;
         {
             if((MB & 07703) == 1)
             {
-                pdp->b4 &= ~(1<<((MB&074)>>2));
+                pdp->b4 &= ~(1 << ((MB & 074) >> 2));
                 pdp->exd = 1;	// DEBREAK - not in #49 because SBS256
                 sbs_restore = 1;
                 sbs_calc_req(pdp);
@@ -1379,17 +1642,21 @@ int mask = 0;
     }
     TP(2)
 
-    // TP3
+    // TP3: advance the core read/write chain and clear MB ready for the
+    // address word read at TP4.
     mop2379(pdp);
     MB = 0;
     TP(3)
 
-    // TP4
+    // TP4: synchronize sequence-break requests and read the word MA
+    // points to into MB -- this is the (possibly still-indirect) address
+    // word.
     sbs_sync(pdp);
     readmem(pdp);
     TP(4)
 
-    // TP5
+    // TP5: if extend mode is active, extended-memory addressing applies
+    // to this operand too.
     if(pdp->exd)
     {
         pdp->emc = 1;
@@ -1397,7 +1664,11 @@ int mask = 0;
 
     TP(5)
 
-    if(MB & B5 && !pdp->exd)
+    // If the word just read also has its indirect bit (B5) set, and we're
+    // not in extend mode, chase the indirect chain another level: set df2
+    // so this defer cycle repeats, and inhibit the write-back -- nothing
+    // else to do this time around.
+    if((MB & B5) && (!pdp->exd))
     {
         // TP6
         pdp->df2 = 1;
@@ -1410,6 +1681,9 @@ int mask = 0;
     }
     else
     {
+        // This is the final address: for "jsp" clear AC now (its old
+        // value will be stored to AC at TP8 along with PC); advance the
+        // core read/write chain.
         TP(6)
         TP(6a)
 
@@ -1422,7 +1696,8 @@ int mask = 0;
         mop2379(pdp);
         TP(7)
 
-        // TP8
+        // TP8: inhibit the write-back. For "jsp"/"jmp", store/clear PC
+        // now (cycle0() skipped this because df1 was set).
         inhibit(pdp);
 
         if(IR_JSP)
@@ -1437,7 +1712,9 @@ int mask = 0;
 
         TP(8)
 
-        // TP9
+        // TP9: for "jsp"/"jmp", the word just read (MB) is the jump
+        // target -- load it into PC, completing the instruction here
+        // (cycle1() will not run for jmp/jsp).
         if(IR_JSP || IR_JMP)
         {
             mb_to_pc(pdp);
@@ -1446,7 +1723,9 @@ int mask = 0;
         clrmd(pdp);
     }
 
-    // TP9
+    // TP9 (both paths): advance the core read/write chain and write MB
+    // back to core ("approximate" -- a no-op when inhibited). Stop the
+    // machine if a stop condition applies.
     mop2379(pdp);
     writemem(pdp);      // approximate
     if( STOP )
@@ -1457,6 +1736,8 @@ int mask = 0;
     TP(9)
 
     // 3.5us after TP2, shortly before TP9A
+    // If this was a DEBREAK, restore ov1/exd from the operand word's
+    // bits 0/1 (saved by the interrupted program at break time).
     if(sbs_restore)
     {
         pdp->ov1 = !!(MB & B0);
@@ -1465,7 +1746,13 @@ int mask = 0;
 
     TP(9a)
 
-    // TP10
+    // TP10: standard end-of-cycle housekeeping (see cycle0() TP10). If a
+    // sequence break is pending, take it; otherwise, if the instruction
+    // is now fully done (non-jmp/jsp memory reference -- needs cycle1()
+    // is decided by INST_DONE), drop cyc back to 0 for cycle0() to run
+    // next... unless cycle1() still needs to run, in which case cyc stays
+    // set. Either way, df1 is cleared unless we're chasing another level
+    // of indirection (df2 set), and df2 itself is always cleared.
     sbs_reset_sync(pdp);
     memclr(pdp);
     syncov(pdp);
@@ -1502,6 +1789,15 @@ int mask = 0;
     TP(10)
 }
 
+// CYCLE 1: execute cycle for memory-reference instructions (opcodes
+// < 030) that were not jmp/jsp (those finish in cycle0()/defer()).
+// Reads the operand from the (now-resolved) effective address into MB,
+// performs the opcode-specific ALU operation against AC/IO, and writes
+// any result back to MB/core. "xct" is special-cased at TP3 to jump
+// straight into cycle0() (via cychack==4, i.e. starting at TP4) on the
+// target instruction instead of doing a normal cycle1. "mul"/"div"
+// (type 10 option) run their full algorithms at TP10 once the
+// add/subtract-style setup for this cycle has completed.
 static void
 cycle1(PDP1 *pdp)
 {
@@ -1513,7 +1809,11 @@ int hack;
     switch(hack)
     {
     default:
-        // TP0
+        // TP0: "cal"/"jda" force the effective address to 0100 (in bank 0
+        // unless extend mode is active) regardless of the address field;
+        // other memory-reference instructions use the resolved address
+        // from MB. "dis" (divide step) does one div_shift() here as part
+        // of its setup.
         if(IR_CALJDA && !(MB & B5))
         {
             MA |= 0100;
@@ -1541,7 +1841,10 @@ int hack;
         pdp->emc = 0;
         TP(1)
 
-        // TP2
+        // TP2: advance the core read/write chain. "dis" increments AC if
+        // the shifted-out IO bit was 0 (part of the divide-step
+        // correction). "mul" (single-step multiply-by-1 setup) copies AC
+        // into MB and clears IO.
         mop2379(pdp);
 
         if(IR_DIS && !(IO & B17))
@@ -1564,7 +1867,11 @@ int hack;
 
         TP(2)
 
-        // TP3
+        // TP3: advance the core read/write chain. "mul" ORs the saved AC
+        // (now in MB) into IO. Clear MB ready for the operand read at
+        // TP4. "xct": instead of reading an operand here, restart this
+        // cycle as a cycle-0 fetch (from TP4) of the instruction at the
+        // resolved address -- "xct" never reaches its own TP4 onward.
         mop2379(pdp);
 
         if(IR_MUL)
@@ -1584,11 +1891,14 @@ int hack;
 
         TP(3)
 
-        // TP4
+        // TP4: synchronize sequence-break requests and read the operand
+        // into MB. "sub" (and "dis" when its shifted-out bit was 1)
+        // complements AC, turning the upcoming add into a subtract.
+        // "lio" clears IO first so the operand can be OR'd in at TP5.
         sbs_sync(pdp);
         readmem(pdp);
 
-        if(IR_SUB || IR_DIS && (IO & B17))
+        if(IR_SUB || (IR_DIS && (IO & B17)))
         {
             AC ^= WORDMASK;
         }
@@ -1600,7 +1910,11 @@ int hack;
 
         TP(4)
 
-        // TP5
+        // TP5: the main ALU step -- and/ior/load-AC-class instructions
+        // combine MB into AC, "lio" loads IO, dio/dzm clear MB ready to
+        // receive AC/zero at TP7, and add/sub/xor-class instructions
+        // detect overflow (ov2) and/or XOR MB into AC (the "add" half of
+        // the end-around-carry add, completed by carry() at TP6).
         if(IR_AND)
         {
             AC &= MB;
@@ -1626,21 +1940,23 @@ int hack;
             IO |= MB;
         }
 
-        if((IR_ADD || IR_SUB) && (AC & B0) == (MB & B0))
+        if((IR_ADD || IR_SUB) && ((AC & B0) == (MB & B0)))
         {
             pdp->ov2 = 1;
         }
 
         if(IR_XOR || IR_ADD || IR_SUB || IR_SAD || IR_SAS ||
-            IR_DIS || IR_MUS && (IO & B17))
+            IR_DIS || (IR_MUS && (IO & B17)))
         {
             AC ^= MB;
         }
 
         TP(5)
 
-        // TP6
-        if(IR_ADD || IR_SUB || IR_DIS || IR_MUS && (IO & B17))
+        // TP6: complete the end-around-carry add for add/sub/dis/mus
+        // (the latter only on the final multiply-shift step, IO bit 17
+        // set). idx/isp increment AC (the "index" step).
+        if(IR_ADD || IR_SUB || IR_DIS || (IR_MUS && (IO & B17)))
         {
             carry(pdp);
         }
@@ -1653,7 +1969,12 @@ int hack;
         TP(6)
         TP(6a)
 
-        // TP7
+        // TP7: advance the core read/write chain and assemble the value
+        // that will be written back to core at TP9 -- dac/idx/isp store
+        // AC; cal/jda store AC (then clear it, since AC will hold the
+        // saved PC after pc_to_ac() at TP8); dap/dio replace just the
+        // address/instruction half of MB with AC's address field /
+        // instruction-code half; dio replaces all of MB with IO.
         mop2379(pdp);
 
         if(IR_DAC || IR_IDX || IR_ISP)
@@ -1668,12 +1989,12 @@ int hack;
 
         if(IR_DAP)
         {
-            MB = MB & 0770000 | AC & 0007777;
+            MB = (MB & 0770000) | (AC & 0007777);
         }
 
         if(IR_DIP)
         {
-            MB = MB & 0007777 | AC & 0770000;
+            MB = (MB & 0007777) | (AC & 0770000);
         }
 
         if(IR_DIO)
@@ -1683,7 +2004,13 @@ int hack;
 
         TP(7)
 
-        // TP8
+        // TP8: inhibit the write-back if this instruction doesn't
+        // actually store to memory (set unconditionally here; TP9's
+        // writemem() is the no-op "approximate" case for those). "mus"
+        // does one multiply-shift step. "cal"/"jda" save PC into AC (now
+        // cleared) and clear PC, ready to be replaced by the call address
+        // at TP9. The skip-class tests (sas/sad/isp) bump PC past the
+        // next instruction when their condition holds.
         inhibit(pdp);
 
         if(IR_MUS)
@@ -1696,14 +2023,22 @@ int hack;
             pc_to_ac(pdp), clr_pc(pdp);
         }
 
-        if(IR_SAS && AC == 0 || IR_SAD && AC != 0 || IR_ISP && !(AC & B0))
+        if((IR_SAS && (AC == 0)) || (IR_SAD && (AC != 0)) || (IR_ISP && (!(AC & B0))))
         {
             pc_inc(pdp);
         }
 
         TP(8)
 
-        // TP9
+        // TP9: advance the core read/write chain and write MB back to
+        // core (real for dac/dap/dio/dip/idx/isp/cal/jda; "approximate"
+        // no-op for the rest, per TP8's inhibit). "cal"/"jda" load PC
+        // from the call address (MA, set up at TP0). add/sub clear the
+        // deferred-overflow flag if the result's sign matches the
+        // operand's (no overflow after all). sub/dis-with-borrow
+        // complement AC back. sad/sas complete their compare by XORing
+        // the operand back in (restoring AC, with the skip at TP8 already
+        // having recorded the outcome). Check for a stop condition.
         mop2379(pdp);
         writemem(pdp);      // approximate
 
@@ -1712,12 +2047,12 @@ int hack;
             ma_to_pc(pdp);
         }
 
-        if((IR_ADD || IR_SUB) && (AC & B0) == (MB & B0))
+        if((IR_ADD || IR_SUB) && ((AC & B0) == (MB & B0)))
         {
             pdp->ov2 = 0;
         }
 
-        if(IR_SUB || IR_DIS && (IO & B17))
+        if(IR_SUB || (IR_DIS && (IO & B17)))
         {
             AC ^= WORDMASK;
         }
@@ -1735,8 +2070,11 @@ int hack;
         clrmd(pdp);
         TP(9)
 
-        // TP9A
-        if((IR_ADD || IR_DIS) && AC == 0777777)
+        // TP9A: add/dis normalize a result of all-ones (negative zero)
+        // back to positive zero. cal/jda finish by bumping PC past the
+        // call instruction (so the called routine's "return" via that
+        // location resumes after the call).
+        if((IR_ADD || IR_DIS) && (AC == 0777777))
         {
             AC = 0;
         }
@@ -1748,7 +2086,14 @@ int hack;
 
         TP(9a)
 
-        // TP10
+        // TP10: standard end-of-cycle housekeeping (see cycle0() TP10).
+        // cycle1 always returns to cycle0 next (cyc cleared) unless a
+        // sequence break is being taken, in which case bc records it for
+        // brkcycle(). If "mul"/"div" (type 10 option), this is where
+        // their full algorithms actually run: set up AC/IO/MB signs per
+        // the option's flow chart and call multiply()/divide(), then
+        // back out the 200ns "delay to TP0" that would otherwise be
+        // double-counted.
         sbs_reset_sync(pdp);
         memclr(pdp);
         syncov(pdp);
@@ -1764,11 +2109,11 @@ int hack;
             pdp->smb = 1;
         }
 
-	if(SBS_BREAK)
+        if(SBS_BREAK)
         {
             pdp->bc |= SBS_BREAK;
         }
-	else
+        else
         {
             pdp->cyc = 0;
         }
@@ -1816,19 +2161,35 @@ int hack;
     }
 }
 
+// SEQUENCE BREAK CYCLE: runs (instead of cycle0/defer/cycle1) when bc is
+// nonzero, i.e. a sequence break is being serviced. bc walks 1->2->3->0
+// over four consecutive cycles (one brkcycle() call each):
+//   bc==1: save AC and PC to the channel's two memory locations (for
+//          16-channel SBS, also compute the break-entry address from the
+//          requesting channel number).
+//   bc==2: save IO to the next location.
+//   bc==3: save ov1/exd flags to the next location, then return to cyc0.
+//   bc==0: (not actually entered here) normal operation resumes.
+// Each sub-cycle also increments PC, so after all three save cycles PC
+// points at the location after the three saved words -- the start of the
+// channel's interrupt routine.
 static void
 brkcycle(PDP1 *pdp)
 {
 int be;
 int r;
 
-    // TP0
+    // TP0: do a shro() step if mid-instruction (bit 12). For bc==1
+    // (16-channel SBS), compute the break entry address: bits 2-5 of MA
+    // become the requesting channel's number (the position of the lowest
+    // set bit in sbs_seq). For bc==2/3, point MA at PC (the next save
+    // location, following on from where bc==1 left MA).
     if(IR_SHRO && (MB & B12))
     {
         shro(pdp);
     }
 
-    if(pdp->bc == 1 && pdp->sbs16)
+    if((pdp->bc == 1) && pdp->sbs16)
     {
         be = 0;
 
@@ -1847,7 +2208,7 @@ int r;
 
     TP(0)
 
-    // TP1
+    // TP1: another shro() step (bit 11) if mid-instruction.
     if(IR_SHRO && (MB & B11))
     {
         shro(pdp);
@@ -1856,7 +2217,9 @@ int r;
     pdp->emc = 0;
     TP(1)
 
-    // TP2
+    // TP2: advance the core read/write chain, another shro() step
+    // (bit 10), and the same iot in-out sync bookkeeping as cycle0()
+    // TP2 (in case an iot was interrupted by this break).
     mop2379(pdp);
 
     if(IR_SHRO && (MB & B10))
@@ -1872,7 +2235,8 @@ int r;
     pdp->ihs = 0;
     TP(2)
 
-    // TP3
+    // TP3: advance the core read/write chain, another shro() step
+    // (bit 9), and clear MB for the read at TP4.
     mop2379(pdp);
 
     if(IR_SHRO && (MB & B9))
@@ -1883,7 +2247,10 @@ int r;
     MB = 0;
     TP(3)
 
-    // TP4
+    // TP4: synchronize sequence-break requests and read the word at the
+    // save location into MB (its old contents, about to be overwritten).
+    // For bc==1, also clear IR -- the break-entry instruction slot starts
+    // fresh.
     sbs_sync(pdp);
     readmem(pdp);
     if(pdp->bc == 1)
@@ -1892,7 +2259,8 @@ int r;
     }
     TP(4)
 
-    // TP5
+    // TP5: for bc==3 (saving ov1/exd), start with a clear word -- the
+    // flag bits get OR'd in at TP9A.
     if(pdp->bc == 3)
     {
         MB = 0;
@@ -1904,7 +2272,12 @@ int r;
     TP(6)
     TP(6a)
 
-    // TP7
+    // TP7: advance the core read/write chain and load the value to be
+    // saved into MB: bc==1 saves AC (and clears it, ready for pc_to_ac()
+    // at TP8); bc==2 saves AC again... actually IO is saved at bc==2 via
+    // the OR below for bc==3; bc==2 saves AC's *replacement*, which here
+    // is just AC (IO is saved the cycle after); bc==3 ORs IO into the
+    // cleared MB from TP5.
     mop2379(pdp);
 
     if(pdp->bc == 1)
@@ -1924,7 +2297,10 @@ int r;
 
     TP(7)
 
-    // TP8
+    // TP8: inhibit nothing here (the save *is* the write-back at TP9);
+    // for bc==1, store the (overflow/extend/PC) "saved PC" word into AC
+    // and clear PC, ready to be replaced by the break-entry address at
+    // TP9.
     inhibit(pdp);
 
     if(pdp->bc == 1)
@@ -1934,7 +2310,10 @@ int r;
 
     TP(8)
 
-    // TP9
+    // TP9: advance the core read/write chain and write the saved value
+    // (MB) to the save location. For bc==1, load PC with the break-entry
+    // address (MA, computed at TP0). Honor SINGLE CYCLE / RUN ENABLE OFF
+    // by stopping after this sub-cycle.
     mop2379(pdp);
     writemem(pdp);      // approximate
 
@@ -1951,11 +2330,16 @@ int r;
     clrmd(pdp);
     TP(9)
 
-    // TP9A
+    // TP9A: advance PC to the next save location (or, after bc==3, to the
+    // first instruction of the interrupt routine).
     pc_inc(pdp);
     TP(9a)
 
-    // TP10
+    // TP10: standard end-of-cycle housekeeping (see cycle0() TP10). After
+    // bc==1, the entered routine starts in extend mode off. After bc==3,
+    // the break sequence is complete and normal cycle0() execution
+    // resumes (cyc cleared) at the address now in PC. Advance bc to the
+    // next sub-cycle (1->2->3->0).
     sbs_reset_sync(pdp);
     memclr(pdp);
     syncov(pdp);
@@ -1985,6 +2369,12 @@ int r;
     TP(10)
 }
 
+// Top-level dispatcher: run exactly one 5us machine cycle. Picks a
+// random "panel sample point" (timernd) for this cycle so the TP(n)
+// macros latch the front-panel lights at a different timing pulse each
+// time, then runs whichever of brkcycle/cycle0/defer/cycle1 applies to
+// the machine's current state (sequence-break cycle, fetch, indirect
+// defer, or execute, respectively).
 void
 cycle(PDP1 *pdp)
 {
@@ -2022,6 +2412,16 @@ throttle(PDP1 *pdp)
     }
 }
 
+// Fire one pulse (TP7 if pulse==0, TP10 if pulse==1) of the IOT device
+// numbered "dev" (the low 6 bits of the iot instruction's MB), with nac
+// indicating whether the wait bits (B5/B6) were // set.
+// "ch" (bits 6-11 of MB) is the sub-channel/argument field used by devices,
+// the meaning is specific to the device.
+// Each case below implements one device's reaction to this pulse; devices handled by a dynamically
+// loaded IOT sare tried first so it can override any.
+// If not, fall through to built-ins below.
+// If none matches, the IOT is an illegal one and is ignored.
+//
 // pulse=0: TP7
 // pulse=1: TP10
 static void
@@ -2039,8 +2439,8 @@ int i, ch;
         case 000:
             break;
 
-        case 001:   // rpa
-        case 002:   // rpb
+        case 001:   // rpa  -- read perforated tape, alphanumeric (6-bit chars, 3 per word)
+        case 002:   // rpb  -- read perforated tape, binary (full 18-bit word, channel-8 framed)
             if(pulse)
             {
                 pdp->rcp = nac;
@@ -2063,7 +2463,7 @@ int i, ch;
             }
             break;
 
-        case 003:   // tyo
+        case 003:   // tyo -- typewriter out: latch a character into tb for handleio() to print
             if(!pulse)
             {
                 if(!pdp->tyo)
@@ -2084,7 +2484,8 @@ int i, ch;
             }
             break;
 
-        case 004:   // tyi
+        case 004:   // tyi -- typewriter in: clear IO at TP7, then load the last
+                    // typed character (tb, set by handleio()) into IO at TP10
             if(!pulse)
             {
                 IO = 0;
@@ -2096,8 +2497,8 @@ int i, ch;
             }
             break;
 
-        case 005:   // ppa
-        case 006:   // ppb
+        case 005:   // ppa -- punch tape, alphanumeric (8-bit, from IO low byte)
+        case 006:   // ppb -- punch tape, binary (8-bit, from IO bits 6-11 with high bit set)
             if(!pulse)
             {
                 pdp->pb = 0;
@@ -2114,22 +2515,22 @@ int i, ch;
                 }
                 else
                 {
-                    pdp->pb |= 0200 | (IO >> 12) & 077;
+                    pdp->pb |= 0200 | ((IO >> 12) & 077);
                 }
             }
             break;
 
-        case 011:   // spacewar controllers
+        case 011:   // spacewar controllers -- read the two controller boxes' switches into IO
 
             // simple but stupid version for now
             if(pulse)
             {
                 // LRTF
-                IO |= pdp->spcwar1 << 14 | pdp->spcwar2;
+                IO |= (pdp->spcwar1 << 14) | pdp->spcwar2;
             }
             break;
 
-        case 030:   // rrb
+        case 030:   // rrb -- reader read buffer: copy the assembled reader byte/word into IO
             if(pulse)
             {
                 IO |= pdp->rb;
@@ -2137,21 +2538,21 @@ int i, ch;
             }
             break;
 
-        case 033:   // cks
+        case 033:   // cks -- check status: report reader/typewriter/punch/SBS status bits into IO
             if(pulse)
             {
                 // TODO: LP (wje - just use a dynamic IOT)
                 IO |= pdp->rbs << 16;
-                IO |= !pdp->tyo << 15;
+                IO |= (!pdp->tyo) << 15;
                 IO |= pdp->tbs << 14;
-                IO |= !pdp->punon << 13;
+                IO |= (!pdp->punon) << 13;
                 // ..
                 IO |= pdp->sbm << 11;
                 IO |= pdp->cksflags;        // wje - needed to generalize use, many devices use it
             }
             break;
 
-        case 050:   // dsc
+        case 050:   // dsc -- Disable Sequence-break Channel "ch" (16-channel SBS)
             if(!pulse)
             {
                 if(pdp->sbs16 && ch < 16)
@@ -2161,7 +2562,7 @@ int i, ch;
             }
             break;
 
-        case 051:   // asc
+        case 051:   // asc -- Allow (enable) Sequence-break Channel "ch" (16-channel SBS)
             if(!pulse)
             {
                 if(pdp->sbs16 && ch < 16)
@@ -2171,7 +2572,7 @@ int i, ch;
             }
             break;
 
-        case 052:   // isb
+        case 052:   // isb -- Initiate Sequence Break on channel "ch" (16-channel SBS), software-triggered request
             if(!pulse)
             {
                 if(pdp->sbs16 && ch < 16)
@@ -2181,7 +2582,7 @@ int i, ch;
             }
             break;
 
-        case 053:   // cac
+        case 053:   // cac -- Clear All Channels (disable all SBS channels, 16-channel SBS)
             if(!pulse)
             {
                 if(pdp->sbs16)
@@ -2191,28 +2592,28 @@ int i, ch;
             }
             break;
 
-        case 054:   // lsm
+        case 054:   // lsm -- Leave Sequence break Mode (disable sequence breaks)
             if(!pulse)
             {
                 pdp->sbm = 0;
             }
             break;
 
-        case 055:   // esm
+        case 055:   // esm -- Enter Sequence break Mode (enable sequence breaks)
             if(!pulse)
             {
                 pdp->sbm = 1;
             }
             break;
 
-        case 056:   // cbs
+        case 056:   // cbs -- Clear sequence Breaks System (clear all pending/held requests)
             if(!pulse)
             {
                 clr_sbs(pdp);
             }
             break;
 
-        case 074:   // lem/eem
+        case 074:   // lem/eem -- Leave/Enter Extend Mode, selected by MB bit 6
             if(pulse)
             {
                 pdp->exd = !!(MB & B6);
@@ -2220,19 +2621,22 @@ int i, ch;
             break;
 
         default:
-            printf("unknown IOT %06o\n", MB);
+            logger(LOG_IOT, "unknown IOT %06o\n", MB);
             break;
         }
     }
 }
 
+// Decode an IOT instruction's device number and nac, clear, B5/B6) bits from MB,
+// clear IO at TP7 for the 030-037 ("group 3") devices that share that convention,
+// and dispatch the pulse to iot_pulse().
 static void
 iot(PDP1 *pdp, int pulse)
 {
 int nac;
 int dev;
 
-    nac = (MB & (B5 | B6)) == B5 || (MB & (B5 | B6)) == B6;
+    nac = ((MB & (B5 | B6)) == B5) || ((MB & (B5 | B6)) == B6);
     dev = MB & 077;
 
     // 0 -> IO ON IOT also available for other devices
@@ -2244,6 +2648,10 @@ int dev;
     iot_pulse(pdp, pulse, dev, nac);
 }
 
+// Request a sequence break on channel "chan": for 16-channel SBS, set
+// the channel's bit in b2 (the raw-request register) only if that
+// channel is currently enabled (b1); for SBS256, there's only one
+// request line, so just set b2.
 static void
 req(PDP1 *pdp, int chan)
 {
@@ -2264,6 +2672,12 @@ dynamicReq(PDP1 *pdp, int chan)
     req(pdp, chan);             // wje - because req() is private
 }
 
+// Poll IOT devices (called once per cycle from the
+// main loop, independent of cycle()): advance the paper-tape reader by
+// one character once its inter-character delay (r_time) has elapsed,
+// advance the punch/tape-feed similarly, finish a pending typewriter
+// output character and request channel TTO, and read a typed character
+// from the console into tb and request channel TTI.
 void
 handleio(PDP1 *pdp)
 {
@@ -2284,7 +2698,7 @@ handleio(PDP1 *pdp)
         // and we need to synchronize
         write(pdp->r_fd, &c, 1);
 
-        if(pdp->rc && (!pdp->rby || c & 0200))
+        if(pdp->rc && (!pdp->rby || (c & 0200)))
         {
             // STROBE PETR
             pdp->rcl = 0;
@@ -2298,7 +2712,7 @@ handleio(PDP1 *pdp)
             }
 
             // CLR IO
-            if(pdp->rc == 3 && (pdp->rcp || pdp->rim))
+            if((pdp->rc == 3) && (pdp->rcp || pdp->rim))
             {
                 IO = 0;
             }
@@ -2424,7 +2838,7 @@ handleio(PDP1 *pdp)
 
         if(pdp->pf & 040)
         {
-            printf("	char missed <%o>\n", pdp->tb);
+            logger(LOG_TYPEWRITER, "char missed <%o>\n", pdp->tb);
         }
 
         pdp->tb = 0;
@@ -2442,6 +2856,10 @@ handleio(PDP1 *pdp)
     }
 }
 
+// Read one 18-bit word from a RIM-format tape: each word is encoded as
+// three 6-bit characters, each with its high bit (0200) set as a frame
+// marker; skip any unframed bytes (leader/blank tape) before each
+// character. Returns -1 on EOF/error.
 int
 getwrd(int fd)
 {
@@ -2462,12 +2880,18 @@ int w, n;
         }
         while((c & 0200) == 0);
 
-        w = w << 6 | (c & 077);
+        w = (w << 6) | (c & 077);
     }
 
     return( w );
 }
 
+// Load a RIM-format ("read-in mode") tape image directly into core,
+// bypassing the simulated reader/readin1/readin2 cycle -- used by the
+// "l" console command for quickly loading programs. Clears core first,
+// then repeatedly reads a "dio" word (0320000 | address) followed by its
+// data word and stores it, until a "jmp" word (0600000 | start address)
+// marks the end of the tape.
 void
 readrim(PDP1 *pdp, int fd)
 {
@@ -2475,7 +2899,7 @@ int inst, wd;
 
     if(fd < 0)
     {
-        fprintf(stderr, "no tape\n");
+        logger(LOG_RIM, "no tape\n");
         return;
     }
 
@@ -2496,17 +2920,20 @@ int inst, wd;
         }
         else if((inst & 0760000) == 0600000)
         {
-            printf("start: %04o\n", inst & 07777);
+            logger(LOG_RIM, "start: %04o\n", inst & 07777);
             return;
         }
         else
         {
-            printf("rim botch: %06o\n", inst);
+            logger(LOG_RIM, "rim botch: %06o\n", inst);
             return;
         }
     }
 }
 
+// Command-line interface poll: called periodically from the main loop.
+// Every 10000 calls, check (non-blockingly) whether a line is waiting on
+// stdin, and if so read and execute it via handlecmd().
 void
 cli(PDP1 *pdp)
 {
@@ -2538,6 +2965,15 @@ static int timer = 0;
     }
 }
 
+// Parse and execute one console command line. Supported commands:
+//   r [file]       mount/unmount the paper-tape reader
+//   p [file]       mount/unmount the paper-tape punch
+//   l [file]       load a RIM-format tape into core via readrim()
+//   d [host] [port] connect to an external display program
+//   muldiv [on/off] toggle the type-10 multiply/divide option
+//   audio ...      configure/query the audio output subsystem
+//   ?/help          list commands
+// Returns a pointer to a static response buffer.
 char*
 handlecmd(PDP1 *pdp, char *line)
 {

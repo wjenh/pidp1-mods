@@ -40,22 +40,24 @@
  * 31-May-2026 wje add Mike Chaoponis mode, optimize idle time
  * 31-May-2026 wje completely rework blending and eliminate blue hold,
  *    it was too blue and the blending wasn't quite right
- *  3-Jun-2026 wje add config reload on sighup, clean exit on sigint
- *  4-Jun-2026 wje commentary and code cleanup, remove unused includes, no functional changes
- *  7-Jun-2026 wje use the Google AI generated suggestion for the dot matrix vs intensity drawing
- *  8-Jun-2026 wje and add the Claude enhancements to above, backport the new list optimization from t30dpy3
- *  10-Jun-2026 wje add workaround for totally broken wayland/labwc window control
- *  11-Jun-2026 wje CPU optimization pass for high active-point counts.
- *     - replaced the per-screen-position pointData[1024][1024] active list with a compact
- *       index-linked activePool[] (MAXACTIVEPOINTS) plus a pointIndex[][] lookup table,
- *       to keep active-list traversal cache-friendly.
- *     - drawPoint() now computes row base pointers once per point instead of recomputing
- *       full address arithmetic for every one of the up to 9 pixels it can touch.
- *     - rgbaValues[][] now stores premultiplied-alpha rgb, allowing
- *       SDL_BLENDMODE_NONE instead of SDL_BLENDMODE_BLEND and removing the per-frame
- *       SDL_RenderClear(), eliminating a full-screen blend and a full-screen clear
- *       every frame.
-    12-Jun-2026 wje minor code cleanup, remove some unused vars
+ * 3-Jun-2026 wje add config reload on sighup, clean exit on sigint
+ * 4-Jun-2026 wje commentary and code cleanup, remove unused includes, no functional changes
+ * 7-Jun-2026 wje use the Google AI generated suggestion for the dot matrix vs intensity drawing
+ * 8-Jun-2026 wje and add the Claude enhancements to above, backport the new list optimization from t30dpy3
+ * 10-Jun-2026 wje add workaround for totally broken wayland/labwc window control
+ * 11-Jun-2026 wje CPU optimization pass for high active-point counts.
+ *    - replaced the per-screen-position pointData[1024][1024] active list with a compact
+ *      index-linked activePool[] (MAXACTIVEPOINTS) plus a pointIndex[][] lookup table,
+ *      to keep active-list traversal cache-friendly.
+ *    - drawPoint() now computes row base pointers once per point instead of recomputing
+ *      full address arithmetic for every one of the up to 9 pixels it can touch.
+ *    - rgbaValues[][] now stores premultiplied-alpha rgb, allowing
+ *      SDL_BLENDMODE_NONE instead of SDL_BLENDMODE_BLEND and removing the per-frame
+ *      SDL_RenderClear(), eliminating a full-screen blend and a full-screen clear
+ *      every frame.
+ * 12-Jun-2026 wje minor code cleanup, remove some unused vars
+ * 13-Jun-2026 wje (Claude) switch pthread usage to SDL_Thread/_Mutex,
+ *     in preparation for win11 compatibility. No functional change on Linux.
 */
 
 #include <stdio.h>
@@ -63,7 +65,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <unistd.h>
-#include <pthread.h>
 #include <signal.h>
 #include <netinet/tcp.h>
 #include <netdb.h>
@@ -167,7 +168,7 @@ ActivePoint activePool[MAXACTIVEPOINTS];   // the pool of active-point entries, 
 uint32_t pointIndex[SIZE][SIZE];           // pointIndex[y][x] -> activePool[] index, or NOINDEX
 uint32_t activeListHead;                   // head index of the list of points to display in a cycle, or NOINDEX
 uint32_t freeListHead;                     // head index of the free pool entries, or NOINDEX
-pthread_mutex_t busyLock = PTHREAD_MUTEX_INITIALIZER;       // for interlocking with the reader thread
+SDL_mutex *busyLockP;                       // for interlocking with the reader thread
 
 // Th precomputed rgba values for each possibe pdp-1 intensity and internal time step.
 Rgba rgbaValues[8][256];
@@ -210,7 +211,7 @@ int textureSelector;
 int openPort(char *hostNameP, int port);
 uint32_t blend(int srcR, int srcG, int srcB, int srcA, int destR, int destG, int destB, int destA);
 uint64_t now(void);
-void *reader(void *argP);
+int reader(void *argP);
 void initializePoints(void);
 void addActivePoint(uint16_t x, uint16_t y, byte intensity);
 void removeActivePoint(uint32_t pointIdx, uint32_t prevIdx);
@@ -251,8 +252,7 @@ uint32_t rgba;
 SDL_Event event;
 SDL_Rect bounds;
 
-pthread_t thread;
-pthread_attr_t tattr;
+SDL_Thread *threadP;
 struct timespec sleepTime;
  
     hostNameP = DEFAULTHOST;
@@ -403,8 +403,13 @@ struct timespec sleepTime;
 
     // An async thread is used to read incoming data.
     // Lightpen updates are done in the main thread during the display update cycle.
-    pthread_attr_init (&tattr);
-    if( pthread_create(&thread, &tattr, reader, 0) )
+    if( !(busyLockP = SDL_CreateMutex()) )
+    {
+        fprintf(stderr, "Can't create busy-list mutex\n");
+        exit(1);
+    }
+
+    if( !(threadP = SDL_CreateThread(reader, "reader", 0)) )
     {
         fprintf(stderr, "Can't create reader thread\n");
         exit(1);
@@ -586,6 +591,7 @@ struct timespec sleepTime;
     SDL_FreeFormat(pixelFormatP);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    SDL_DestroyMutex(busyLockP);
     SDL_Quit();
      
     return(0);
@@ -639,7 +645,7 @@ struct addrinfo *resultP;
 // Precompute the rgba values used for displaying points.
 // There are only 256 possible rgba values for each pdp-1 intensity,
 // one per each lifetime value which ranges from 0-255.
-void *
+int
 reader(void *argP)
 {
 int i;
@@ -663,7 +669,7 @@ static bool skipOne = false;
 
         count /= sizeof(uint32_t);          // command words
 
-        pthread_mutex_lock(&busyLock);      // since we are reading muliples, lock for the duration
+        SDL_LockMutex(busyLockP);           // since we are reading muliples, lock for the duration
 
         for( i = 0; i < count; i++ )
         {
@@ -708,7 +714,7 @@ static bool skipOne = false;
             }
         }
 
-        pthread_mutex_unlock(&busyLock);
+        SDL_UnlockMutex(busyLockP);
     }
 }
 
@@ -833,7 +839,7 @@ removeActivePoint(uint32_t pointIdx, uint32_t prevIdx)
 {
 ActivePointP pointP;
 
-    pthread_mutex_lock(&busyLock);
+    SDL_LockMutex(busyLockP);
 
     pointP = &activePool[pointIdx];
 
@@ -852,7 +858,7 @@ ActivePointP pointP;
     pointP->nextIdx = freeListHead;
     freeListHead = pointIdx;
 
-    pthread_mutex_unlock(&busyLock);
+    SDL_UnlockMutex(busyLockP);
 }
 
 // Add a point to the active list as the new head, taking a slot from the free list.

@@ -37,22 +37,24 @@
  * 8-Jun-2026 wje general cleanup, some optimizations
  * 9-Jun-2026 wje major rework to use an active list instead of full iteration over all points,
  *    add workaround for SDL3 overwriting the meun bar if on the bottom of the screen
- *  10-Jun-2026 wje add workaround for totally broken wayland/labwc window control
- *  11-Jun-2026 wje CPU optimization pass for high active-point counts.
- *     - replaced the per-screen-position pointData[1024][1024] active list with a compact
- *       index-linked activePool[] (MAXACTIVEPOINTS) plus a pointIndex[][] lookup table,
- *       to keep active-list traversal cache-friendly.
- *     - drawPoint() now computes row base pointers once per point instead of recomputing
- *       full address arithmetic for every one of the up to 9 pixels it can touch.
- *     - rgbaValues[][] now stores premultiplied-alpha rgb, allowing
- *       SDL_BLENDMODE_NONE instead of SDL_BLENDMODE_BLEND and removing the per-frame
- *       SDL_RenderClear(), eliminating a full-screen blend and a full-screen clear
- *       every frame.
- *  11-Jun-2026 wje fix regression from above: in fullscreen with SDL_LOGICAL_PRESENTATION_LETTERBOX,
- *     removing the per-frame SDL_RenderClear() left the letterbox bars (and edge points'
- *     scaled bleed into them) uncleared from prior frames, showing as phantom points outside
- *     the 1024x1024 area. Restored SDL_RenderClear() before SDL_RenderTexture()
-    12-Jun-2026 wje minor code cleanup, remove some unused vars
+ * 10-Jun-2026 wje add workaround for totally broken wayland/labwc window control
+ * 11-Jun-2026 wje CPU optimization pass for high active-point counts.
+ *    - replaced the per-screen-position pointData[1024][1024] active list with a compact
+ *      index-linked activePool[] (MAXACTIVEPOINTS) plus a pointIndex[][] lookup table,
+ *      to keep active-list traversal cache-friendly.
+ *    - drawPoint() now computes row base pointers once per point instead of recomputing
+ *      full address arithmetic for every one of the up to 9 pixels it can touch.
+ *    - rgbaValues[][] now stores premultiplied-alpha rgb, allowing
+ *      SDL_BLENDMODE_NONE instead of SDL_BLENDMODE_BLEND and removing the per-frame
+ *      SDL_RenderClear(), eliminating a full-screen blend and a full-screen clear
+ *      every frame.
+ * 11-Jun-2026 wje fix regression from above: in fullscreen with SDL_LOGICAL_PRESENTATION_LETTERBOX,
+ *    removing the per-frame SDL_RenderClear() left the letterbox bars (and edge points'
+ *    scaled bleed into them) uncleared from prior frames, showing as phantom points outside
+ *    the 1024x1024 area. Restored SDL_RenderClear() before SDL_RenderTexture()
+ * 12-Jun-2026 wje minor code cleanup, remove some unused vars
+ * 13-Jun-2026 wje (Claude) switch pthread usage to SDL_Thread/_Mutex, preparation for win11 compatibility.
+ *    No functional change on Linux.
 */
 
 #include <stdio.h>
@@ -62,7 +64,6 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <ctype.h>
-#include <pthread.h>
 #include <signal.h>
 #include <netinet/tcp.h>
 #include <netdb.h>
@@ -169,7 +170,7 @@ uint32_t pointIndex[LOGICALSIZE][LOGICALSIZE]; // maps screen (y,x) -> pool inde
 uint32_t activeListHead;                     // head index of the active list, or NOINDEX if empty
 uint32_t freeListHead;                       // head index of the free list, or NOINDEX if exhausted
 uint64_t droppedPoints;                      // counts points dropped because the pool was exhausted
-pthread_mutex_t busyLock = PTHREAD_MUTEX_INITIALIZER;       // for interlocking with the reader thread
+SDL_Mutex *busyLockP;                       // for interlocking with the reader thread
 
 Rgba rgbaValues[8][256];        // The rgba values for each possibe intensity and internal time step.
 
@@ -213,7 +214,7 @@ const SDL_PixelFormatDetails *formatDetailsP;
 int openPort(char *hostNameP, int port);
 uint32_t blend(int srcR, int srcG, int srcB, int srcA, int destR, int destG, int destB, int destA);
 uint64_t now(void);
-void *reader(void *argP);
+int reader(void *argP);
 
 void initializePoints(void);
 void addActivePoint(uint16_t x, uint16_t y, byte intensity);
@@ -261,9 +262,8 @@ SDL_Event event;
 SDL_PropertiesID props;
 SDL_Rect bounds;
 
-pthread_t thread;
-pthread_attr_t tattr;
- 
+SDL_Thread *threadP;
+
     hostNameP = DEFAULTHOST;
     portNum = DEFAULTPORT;        // display 0 on the pidp-1
     winSize = 1024;               // original Type 30 display size
@@ -427,8 +427,13 @@ pthread_attr_t tattr;
 
     // An async thread is used to read incoming data.
     // Lightpen updates are done in the main thread during the display update cycle.
-    pthread_attr_init (&tattr);
-    if( pthread_create(&thread, &tattr, reader, 0) )
+    if( !(busyLockP = SDL_CreateMutex()) )
+    {
+        fprintf(stderr, "Can't create busy-list mutex\n");
+        exit(1);
+    }
+
+    if( !(threadP = SDL_CreateThread(reader, "reader", 0)) )
     {
         fprintf(stderr, "Can't create reader thread\n");
         exit(1);
@@ -621,6 +626,7 @@ pthread_attr_t tattr;
     // Not really necessary, but it's good form.
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    SDL_DestroyMutex(busyLockP);
     SDL_Quit();
      
     return(0);
@@ -671,7 +677,7 @@ struct addrinfo *resultP;
 // Reader thread to fetch data from server.
 // See if there is data to read.
 // If so, process it and add to the display list.
-void *
+int
 reader(void *argP)
 {
 int i;
@@ -695,7 +701,7 @@ static bool skipOne = false;
 
         count /= sizeof(uint32_t);          // command words
 
-        pthread_mutex_lock(&busyLock);      // since we are reading muliples, lock for the duration
+        SDL_LockMutex(busyLockP);           // since we are reading muliples, lock for the duration
 
         for( i = 0; i < count; i++ )
         {
@@ -742,7 +748,7 @@ static bool skipOne = false;
             }
         }
 
-        pthread_mutex_unlock(&busyLock);
+        SDL_UnlockMutex(busyLockP);
     }
 }
 
@@ -874,7 +880,7 @@ uint32_t i;
 void
 removeActivePoint(uint32_t pointIdx, uint32_t prevIdx)
 {
-    pthread_mutex_lock(&busyLock);
+    SDL_LockMutex(busyLockP);
 
     // This screen position no longer has an active point.
     pointIndex[activePool[pointIdx].y][activePool[pointIdx].x] = NOINDEX;
@@ -892,7 +898,7 @@ removeActivePoint(uint32_t pointIdx, uint32_t prevIdx)
     activePool[pointIdx].nextIdx = freeListHead;
     freeListHead = pointIdx;
 
-    pthread_mutex_unlock(&busyLock);
+    SDL_UnlockMutex(busyLockP);
 
     if( doTiming )
     {

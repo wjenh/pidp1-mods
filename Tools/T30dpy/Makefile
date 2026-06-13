@@ -1,10 +1,7 @@
-#GCC=gcc -O3 -march=native -Wall -Wextra -Wno-unused-result -Wno-implicit-fallthrough -Wno-switch \
-    -Wno-unused-parameter -fprofile-generate
-#GCC=gcc -O3 -march=native -Wall -Wextra -Wno-unused-result -Wno-implicit-fallthrough -Wno-switch \
-    -Wno-unused-parameter -fprofile-use
 GCC=gcc -O3 -march=native -Wall -Wextra -Wno-unused-result -Wno-implicit-fallthrough -Wno-switch \
     -Wno-unused-parameter
-#GCC=gcc -g -Og -march=native -Wall -Wextra -Wno-unused-result -Wno-implicit-fallthrough -Wno-switch -fsanitize=address,undefined
+#GCC=gcc -g -Og -march=native -Wall -Wextra -Wno-unused-result -Wno-implicit-fallthrough -Wno-switch \
+    -fsanitize=address,undefined
 
 all: t30dpy t30dpy3
 

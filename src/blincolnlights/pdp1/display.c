@@ -17,10 +17,17 @@
 // 4-May-2026 wje and change clock to REALTIME for sem_timedwait()
 // 7-May-2026 wje reduce buffer sizes, 256 seems to be fine
 // 8-May-2026 wje minor cleanup in lightpen detection code
+// 13-Jun-2026 wje (Claude) handle EAGAIN/EWOULDBLOCK in flushDisplay(),
+//    Now EAGAIN/EWOULDBLOCK/EINTR leave the buffered commands in place for a later retry,
+//    partial writes shift the remainder to the front of the buffer,
+//    and addDpyCommand() retries (bounded by DPYFULLRETRIES)
+//    instead of risking a dpyBuf[] overflow if the buffer stays full after a flush.
 
 #include <unistd.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -38,7 +45,7 @@
 #define LOG_INIT 0
 #define LOG_FD 0
 #define LOG_CMD 0
-#define LOG_WAIT 1
+#define LOG_WAIT 0
 #define LOG_DISPLAY 0
 #define LOG_DPYCMD 0
 #define LOG_DPYWRITE 0
@@ -51,6 +58,7 @@
 #define PENBUFSIZE  64             // read up to this many lightpen update commands at once
 #define CMDBUFSIZE  256            // buffer up to this many display commands
 #define DPYBUFSIZE  256            // buffer up to this many outgoing dpy commands
+#define DPYFULLRETRIES 100         // addDpyCommand: max retries while dpy buf is full before dropping a command
 #undef NEVER
 #define NEVER ~((uint64_t)0)       // a long time from now
 #define null 0
@@ -567,25 +575,65 @@ int cmd;
     }
 }
 
-// Puts a dpy-style command into the dpy command buffer
+// Puts a dpy-style command into the dpy command buffer.
+// If the buffer is full, try to flush it to make room. The fd is
+// non-blocking (see setDisplayFD()), so a flush can fail with EAGAIN
+// without freeing any space - in that case retry a bounded number of
+// times with a short delay, giving the client a chance to drain its
+// socket. If the buffer is still full after DPYFULLRETRIES attempts
+// (client far too slow, or stalled), drop this command rather than
+// overflowing dpyBuf[] or blocking the worker thread indefinitely.
 static void
 addDpyCommand(DisplayControlP ctlP, uint32_t cmd)
 {
-    if( ctlP->numDpyCommands >= DPYBUFSIZE )
+int retries;
+
+    retries = 0;
+    while( ctlP->numDpyCommands >= DPYBUFSIZE )
     {
         logger(LOG_FULL,"addDpyCommand dpy cmd buffer full\n");
         flushDisplay(ctlP);
+
+        if( ctlP->fd < 0 )
+        {
+            return;     // connection was closed due to a real error
+        }
+
+        if( ctlP->numDpyCommands < DPYBUFSIZE )
+        {
+            break;      // flush made room
+        }
+
+        if( ++retries >= DPYFULLRETRIES )
+        {
+            // Client can't keep up even after repeated retries.
+            // Drop this command rather than overflow the buffer or
+            // stall the worker thread (and other displays) forever.
+            logger(LOG_FULL,"addDpyCommand giving up, dropping command\n");
+            return;
+        }
+
         usleep(30);         // delay a bit so display doesn't overrun
     }
 
     ctlP->dpyBuf[ctlP->numDpyCommands++] = cmd;
 }
 
+// Write any buffered dpy commands to the display fd.
+// The fd is non-blocking (see setDisplayFD()), so write() can legitimately
+// return -1/EAGAIN (or EWOULDBLOCK) when the socket's send buffer is full.
+// In that case (and on EINTR), leave the buffered commands
+// in place and let the caller retry later.
+// A partial write is also possible on a non-blocking socket; the unsent
+// commands are shifted to the front of the buffer for the next attempt.
+// Any other write() error indicates the connection is gone, so the fd is
+// closed and the buffer discarded.
 static void
 flushDisplay(DisplayControlP ctlP)
 {
 int size;
 int resp;
+int sentCommands;
 
     if( ctlP->fd < 0 )
     {
@@ -599,16 +647,36 @@ int resp;
     }
 
     resp = write(ctlP->fd, ctlP->dpyBuf, size);
-    logger(LOG_DPYWRITE,"flushdisplay wrote %d bytes\n", resp);
-    ctlP->numDpyCommands = 0;
 
-    // Write failed, stop writing
-    if( resp < size )
+    if( resp < 0 )
     {
-        logger(LOG_FD,"fd %d closed\n", ctlP->fd);
+        if( (errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == EINTR) )
+        {
+            // Socket send buffer full or interrupted - not fatal, retry later.
+            logger(LOG_DPYWRITE,"flushDisplay: write would block (errno %d), retrying later\n", errno);
+            return;
+        }
+
+        logger(LOG_FD,"fd %d closed, write error (errno %d)\n", ctlP->fd, errno);
         close(ctlP->fd);
         ctlP->fd = -1;
+        ctlP->numDpyCommands = 0;
+        return;
     }
+
+    logger(LOG_DPYWRITE,"flushdisplay wrote %d bytes\n", resp);
+
+    if( resp == size )
+    {
+        ctlP->numDpyCommands = 0;
+        return;
+    }
+
+    // Partial write: shift the unsent commands down to the front of the
+    // buffer so the next flush attempt picks up where this one left off.
+    sentCommands = resp / (int)sizeof(ctlP->dpyBuf[0]);
+    memmove(ctlP->dpyBuf, &ctlP->dpyBuf[sentCommands], (size_t)(size - resp));
+    ctlP->numDpyCommands -= sentCommands;
 }
 
 static void

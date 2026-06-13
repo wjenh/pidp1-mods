@@ -58,18 +58,28 @@
  * 12-Jun-2026 wje minor code cleanup, remove some unused vars
  * 13-Jun-2026 wje (Claude) switch pthread usage to SDL_Thread/_Mutex,
  *     in preparation for win11 compatibility. No functional change on Linux.
+ * 13-Jun-2026 wje (Claude) add Windows 11 (MSYS2/UCRT64) support via wincompat.h,
+ *     guarded by #ifdef _WIN32. Sockets, signal handling, the monotonic clock and
+ *     home-directory lookup are routed through small macros/wrappers so this
+ *     single source file builds on both Linux and Windows. No functional change
+ *     on Linux.
 */
 
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <unistd.h>
 #include <signal.h>
+#include <time.h>
+#ifdef _WIN32
+#include "wincompat.h"
+#else
+#include <unistd.h>
 #include <netinet/tcp.h>
 #include <netdb.h>
-#include <time.h>
 #include <pwd.h>
+#include "wincompat.h"
+#endif
 #include <SDL2/SDL.h>
 
 #define MINSIZE 256             // window can't be smaller than this
@@ -254,7 +264,15 @@ SDL_Rect bounds;
 
 SDL_Thread *threadP;
 struct timespec sleepTime;
- 
+
+    // On Windows, Winsock must be initialized before any socket call.
+    // winSockStartup() is a no-op returning 0 on Linux.
+    if( winSockStartup() )
+    {
+        fprintf(stderr, "Winsock initialization failed.\n");
+        exit(1);
+    }
+
     hostNameP = DEFAULTHOST;
     portNum = DEFAULTPORT;        // display 0 on the pidp-1
     winSize = 1024;               // original Type 30 display size
@@ -584,8 +602,8 @@ struct timespec sleepTime;
         printf("%lu points dropped because active-point pool exhausted.\n", droppedPoints);
     }
 
-    close(pdp1FD);
-     
+    SOCKCLOSE(pdp1FD);
+
     // clean up SDL.
     // Not really necessary, but it's good form.
     SDL_FreeFormat(pixelFormatP);
@@ -593,7 +611,8 @@ struct timespec sleepTime;
     SDL_DestroyWindow(window);
     SDL_DestroyMutex(busyLockP);
     SDL_Quit();
-     
+    winSockCleanup();
+
     return(0);
 }
 
@@ -618,7 +637,7 @@ struct addrinfo *resultP;
         return(-1);
     }
 
-    if( (sockFD = socket(AF_INET, SOCK_STREAM, 0)) < 0 )
+    if( (sockFD = (int)socket(AF_INET, SOCK_STREAM, 0)) < 0 )
     {
         freeaddrinfo(resultP);
         return(-1);         // fail
@@ -626,7 +645,7 @@ struct addrinfo *resultP;
 
     if( connect(sockFD, resultP->ai_addr, resultP->ai_addrlen) < 0 )
     {
-        close(sockFD);
+        SOCKCLOSE(sockFD);
         freeaddrinfo(resultP);
         return(-1);         // fail
     }
@@ -635,7 +654,10 @@ struct addrinfo *resultP;
 
     // We want mouse events to go out quickly
     i = 1;
-    setsockopt(sockFD, IPPROTO_TCP, TCP_NODELAY, &i, sizeof(i));
+    // Cast to (const char *): Winsock's setsockopt() declares optval as
+    // const char *, while POSIX declares it as const void * (which a
+    // char * also satisfies), so this cast is portable to both.
+    setsockopt(sockFD, IPPROTO_TCP, TCP_NODELAY, (const char *)&i, sizeof(i));
     return(sockFD);
 }
 
@@ -661,7 +683,7 @@ static bool skipOne = false;
 
     for(;;)
     {
-        if( (count = read(pdp1FD, buffer, sizeof(buffer))) <= 0 )
+        if( (count = SOCKREAD(pdp1FD, buffer, sizeof(buffer))) <= 0 )
         {
             quit = true;
             return(0);
@@ -1102,7 +1124,7 @@ uint32_t cmd;
     }
 
     // And send to host.
-    write(sockFD, &cmd, 4);
+    SOCKWRITE(sockFD, &cmd, 4);
 }
 
 // Get the current time in ns.
@@ -1249,7 +1271,9 @@ getFile(char *nameP)
 {
 char *cP;
 char *dirP;
+#ifndef _WIN32
 struct passwd *pwdP;
+#endif
 char tmpstr[4096];
 char tmpstr2[4096];
 
@@ -1267,6 +1291,14 @@ char tmpstr2[4096];
         {
             if( !(dirP = getenv("HOME")) )
             {
+#ifdef _WIN32
+                // No pwd.h on Windows - fall back to %USERPROFILE% etc via wincompat.
+                dirP = (char *)winGetHomeDir();
+                if( !dirP[0] )
+                {
+                    return(NULL);
+                }
+#else
                 pwdP = getpwuid(getuid());
                 if( !pwdP )
                 {
@@ -1274,10 +1306,16 @@ char tmpstr2[4096];
                 }
 
                 dirP = pwdP->pw_dir;
+#endif
             }
         }
         else                        // ~uname/... form, uname's home
         {
+#ifdef _WIN32
+            // No per-username home directory lookup on Windows; only the
+            // "~/..." (current user) form above is supported.
+            return(NULL);
+#else
             pwdP = getpwnam(tmpstr + 1);
             if( !pwdP )
             {
@@ -1285,6 +1323,7 @@ char tmpstr2[4096];
             }
 
             dirP = pwdP->pw_dir;
+#endif
         }
 
         sprintf(tmpstr2, "%s/%s", dirP, cP);
@@ -1300,11 +1339,12 @@ sighandler(int sig)
 {
     if( pdp1FD )
     {
-        close(pdp1FD);
+        SOCKCLOSE(pdp1FD);
     }
 
     // Not really necessary, but it's good form.
     SDL_Quit();
+    winSockCleanup();
     exit(0);
 }
 

@@ -1,6 +1,36 @@
+/*
+ * Translates emulator state (PDP1) to/from the shared front-panel memory
+ * segment (Panel): updateswitches() reads switch positions set by the panel
+ * driver, updatelights() writes the indicator-light bits read by the panel
+ * driver(s).
+ *
+ * wje 14-Jun-26 - in updatelights(), also tally each lamp bit into
+ *                 panel->pwmcount[][] (see panel_pidp1.h) for the new
+ *                 lower-overhead lamp PWM scheme; lights0-lights9 unchanged
+ */
 #include "common.h"
 #include "panel_pidp1.h"
 #include "pdp1.h"
+
+// Add 1 to cnt[i] for each bit i (0-17) of bits that is set, saturating at
+// 255 instead of wrapping. Used by updatelights() to tally per-cycle "on"
+// counts into panel->pwmcount[][]. Saturation guards against the panel
+// driver's read+reset interval occasionally running longer than expected
+// (255 cycles = ~1.275ms) without wrapping pwmcount back to a small value.
+static void
+incrcount(u8 *cnt, u32 bits)
+{
+	for(int i = 0; i < 18; i++)
+	{
+		if((bits >> i) & 1)
+		{
+			if(cnt[i] < 255)
+			{
+				cnt[i]++;
+			}
+		}
+	}
+}
 
 void
 updateswitches(PDP1 *pdp, Panel *panel)
@@ -91,6 +121,20 @@ updatelights(PDP1 *pdp, Panel *panel)
 	panel->lights7 = pdp->rb;
 	panel->lights8 = l8;
 	panel->lights9 = l9;
+
+	// Tally this cycle's lamp snapshot into pwmcount[][] for the panel
+	// driver's PWM scheme (see panel_pidp1.h). Uses the same
+	// lights0-lights9 values just computed above.
+	incrcount(panel->pwmcount[0], panel->lights0);
+	incrcount(panel->pwmcount[1], panel->lights1);
+	incrcount(panel->pwmcount[2], panel->lights2);
+	incrcount(panel->pwmcount[3], panel->lights3);
+	incrcount(panel->pwmcount[4], panel->lights4);
+	incrcount(panel->pwmcount[5], panel->lights5);
+	incrcount(panel->pwmcount[6], panel->lights6);
+	incrcount(panel->pwmcount[7], panel->lights7);
+	incrcount(panel->pwmcount[8], panel->lights8);
+	incrcount(panel->pwmcount[9], panel->lights9);
 }
 
 void

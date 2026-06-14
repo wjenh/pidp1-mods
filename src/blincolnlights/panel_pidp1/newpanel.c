@@ -1,17 +1,28 @@
 /*
- * This is the hardware panel driver for the pidp-1.
- * It uses data set by the emulator in a shared memory segment to update the panel lights
- * and to read the switches.
+ * New hardware panel driver for the pidp-1 -- rework of panel_pidp1.c.
  *
- * Original version: Angelo Papenhoff (aap)
- * Modified by: Bill Ezell (wje) to reduce load and improve light behavior
+ * Like panel_pidp1.c, this uses data set by the emulator in a shared memory
+ * segment to update the panel lights and to read the switches. The
+ * difference is in how lamp brightness is derived:
  *
- * wje 26-Jan-26 - initial work, reformat (sorry), add timing measurement, tweak some delays and counts
- * wje 2-Jun-26 - increase usleep in switch read from 10 usecs back to 20 usecs
- * wje 12-Jun-26 - documentation pass and defensive parenthesization, no logic changes,
- *                 in preparation for a possible future refactor
+ * panel_pidp1.c's lampthread() repeatedly sampled the raw lights0-lights9
+ * bits (NSAMPLES=1000 times, 3us apart) and ran the result through an
+ * asymmetric exponential decay filter to estimate each lamp's duty cycle.
+ * That sampling loop was the dominant CPU consumer of the panel driver.
+ * Additionally, the exponential attack and decay was pointless, the human eye can't
+ * really detect the short interval. It instead integrates over a significantly longer period,
+ * Bloch's law.
  *
-*/
+ * Here, the emulator tallies the on stat, once per 5us emulated cycle by incrementing panel->pwmcount[][].
+ * This driver just periodically reads and resets those counts and uses them directly as the 0-31 PWM
+ * phase-count threshold for lightRow() after applying a global brightness scaling factor (lamp_dim).
+ * There is no per-lamp floating point decay filter now.
+ *
+ * wje 14-Jun-26 - new implementation based on panel_pidp1.c:
+ *    replace lampthread's NSAMPLES sampling/decay filter with
+ *    a periodic read+reset of panel->pwmcount[][]; add global
+ *    lamp_dim brightness scaling factor
+ */
 #include "common.h"
 #include "pinctrl/gpiolib.h"
 #include "panel_pidp1.h"
@@ -31,6 +42,14 @@ int ADDR[] = {4, 17, 27, 22};
 // GPIO pin numbers for the 18 COLUMN lines, one per bit of the selected row.
 // On output these drive lamp segments; on input they read switch positions.
 int COLUMNS[] = {26, 19, 13, 6, 5, 11, 9, 10, 18, 23, 24, 25, 8, 7, 12, 16, 20, 21 };
+
+// Global brightness scaling ("dimmer") factor, applied to every lamp's 0-31
+// PWM count before it's used by lightRow(). 1.0 = full brightness (same as
+// the original driver's maximum). Users have reported the panel is too
+// bright at full brightness; lower values (e.g. 0.5) dim the whole panel.
+// This is just a plain initialized global for now -- the intent is for it
+// to eventually be set from a configuration file at startup.
+float lamp_dim = 1.0f;
 
 // Per-lamp brightness state (0-31, used as a phase-count threshold by lightRow())
 // for the 10 rows x 18 columns of front-panel lamps, plus a pointer to the shared
@@ -96,11 +115,6 @@ setAddr(int a)
     }
 }
 
-// pwmtable[32][31]: precomputed phase-on patterns for each of the 32 possible
-// brightness levels (currently unused by lightRow(), which instead uses a simple
-// phase-count threshold via phase_delays[]; kept here for reference/future use).
-#include "pwmtab.inc"
-
 // Busy-wait for at least dt nanoseconds. Used where nanosleep()'s scheduling
 // jitter would be too coarse. resolution ~50-150ns
 void
@@ -153,9 +167,6 @@ lightRow(int a, u8 *l)
             setPin(COLUMNS[i], !(phase < l[i]));
         }
 
-// The following used to be nsleep(1) followed by xsleep(3000), with the comment 'allowing syscalls takes too long'.
-// But, nsleep() calls nanosleep(), which allows a reschedule. So, the comment made no sense.
-// Replaced with just nsleep().
         nsleep(phase_delays[phase]);
     }
 
@@ -224,158 +235,81 @@ readSwitches(Panel *p)
     (&p->sw0)[i] = readRow(8 + i);
 }
 
-// Accumulate, into on[0..17], a 1 for each bit of 'bits' that is set -- used by
-// lampthread() to tally how many of NSAMPLES samples had each lamp bit on.
-void
-countRow(u32 *on, u32 bits)
-{
-    for(int i = 0; i < 18; i++)
-    {
-        on[i] += (bits >> i) & 1;
-    }
-}
-
-// Decay-filter tuning constants used by lampthread(). 'fall' is the per-second decay
-// factor applied when a lamp's measured "on" fraction is decreasing (dimming);
-// 'rise' is applied when it is increasing (brightening) -- rise is much smaller than
-// fall so lamps brighten quickly but dim more gradually. 'power' is a gamma applied
-// to the filtered intensity before mapping to a 0-31.5 brightness value.
-//float fall = 0.995f;
-float fall = 0.990f;
-//float rise = 0.012f;
-//float rise = 0.040f;
-float rise = 0.030f;
-float power = 1.0f;
-
-// Linear-interpolate x from the range [x1,x2] to the range [y1,y2], then clamp the
-// result to [y1,y2] (handles both y1<y2 and y1>y2 orderings).
-float map(float x, float x1, float x2, float y1, float y2)
-{
-    float t = (((x - x1) / (x2 - x1)) * (y2 - y1)) + y1;
-    return(t < y1 ? y1 : (t > y2 ? y2 : t));
-}
-
 #ifdef TIMINGS
-u64 decayDelta, decayLoopCount;
+u64 pwmDelta, pwmLoopCount;
 #endif
 
-// The following 2 values greatly affect processor loading.
-// The original did a non-rescheduling delay which really chewed up processing time.
-// Switching to a usleep lets a reschedule occur which works fine and dramatically reduces cpu load.
-//
-// Setting NSAMPLES to 1K and SAMPLEDELAY to 3 usecs works well.
+// The period between pwmthread updates, in microseconds. Chosen to match 31
+// emulated cycles (31 * 5us = 155us), so that panel->pwmcount[][] values
+// (incremented at most once per cycle, in panel1.c's updatelights()) land
+// directly in the 0-31 range expected by lightRow(), requiring no scaling
+// beyond the lamp_dim factor below.
+#define PWM_PERIOD_US 155
 
-// The number of times the light array from shared mem is scanned per cycle, originally 10K
-#define NSAMPLES 1000
-
-// The delay between each light array scan, usecs
-#define SAMPLEDELAY 3
-
-// Background thread: repeatedly samples the shared-memory lamp bits NSAMPLES times
-// (with a short delay between samples) to estimate the duty cycle (fraction of time
-// on) of each of the 10x18 lamp bits, then runs that duty-cycle estimate through an
-// asymmetric exponential decay filter (separate rise/fall rates) and a gamma curve
-// to produce the smoothed 0-31.5 brightness values consumed by lightRow() via
-// p->lamps[][]. This sampling/decay loop is the dominant CPU consumer of the panel
-// driver; NSAMPLES and SAMPLEDELAY (below) are the primary tuning knobs.
+// Background thread: every PWM_PERIOD_US, read and reset
+// panel->pwmcount[row][col] for each of the 10x18 lamp bits, scale by
+// lamp_dim, clamp to 0-31, and store into p->lamps[row][col] for lightRow()
+// to use as its phase-count threshold. This replaces panel_pidp1.c's
+// lampthread (NSAMPLES sampling + exponential decay filter).
 void *
-lampthread(void *arg)
+pwmthread(void *arg)
 {
 #ifdef TIMINGS
     u64 lastTime, currentTime;
 #endif
 
 PanelLamps *p = (PanelLamps*)arg;
-Panel cur;
-u32 on[10][18];
-float intensity[10][18];
-u64 now, prev;
-float dt;
+Panel *panel = p->p;
 
-    memset(intensity, 0, sizeof(intensity));
 #ifdef TIMINGS
-    lastTime = now = gettime();
-#else
-    now = gettime();
+    lastTime = gettime();
 #endif
 
     for(;;)
     {
-        memset(on, 0, sizeof(on));
-
-        // Sample the shared lamp-bit registers NSAMPLES times, with a SAMPLEDELAY
-        // (3us) sleep between samples so the OS can reschedule other threads. Each
-        // sample tallies, per lamp bit, whether it was on (countRow accumulates
-        // into on[row][col]).
-        for(int i = 0; i < NSAMPLES; i++)
-        {
-            cur = *p->p;
-            countRow(on[0], cur.lights0);
-            countRow(on[1], cur.lights1);
-            countRow(on[2], cur.lights2);
-            countRow(on[3], cur.lights3);
-            countRow(on[4], cur.lights4);
-            countRow(on[5], cur.lights5);
-            countRow(on[6], cur.lights6);
-            countRow(on[7], cur.lights7);
-            countRow(on[8], cur.lights8);
-            countRow(on[9], cur.lights9);
-            usleep(3);
-        }
-
-        // dt = elapsed wall-clock time (seconds) since the previous decay update,
-        // used to scale the exponential decay/rise rates below.
-        prev = now;
-        now = gettime();
-        dt = (now - prev) / (1000.0f * 1000.0f);
+        usleep(PWM_PERIOD_US);
 
         for(int i = 0; i < 10; i++)
         {
             for(int j = 0; j < 18; j++)
             {
-                // targ = measured duty cycle (0.0-1.0) for this lamp bit over the
-                // NSAMPLES samples just taken.
-                float targ = (float)on[i][j] / NSAMPLES;
+                // Read this lamp's "on" tally for the last period and reset
+                // it for the next one. Not synchronized against pdp1's
+                // concurrent increments (see panel_pidp1.h) -- worst case
+                // an increment is occasionally lost or counted in the next
+                // period, which is not visible at this update rate.
+                u8 count = panel->pwmcount[i][j];
+                panel->pwmcount[i][j] = 0;
 
-                if(targ >= intensity[i][j])
+                int in = (int)((float)count * lamp_dim);
+                if(in < 0)
                 {
-                    // Lamp is brightening: move intensity toward targ using the
-                    // (faster) rise rate, scaled by elapsed time dt.
-                    float t = powf(1.0f - rise, dt);
-                    intensity[i][j] = (intensity[i][j] * t) + (targ * (1 - t));
+                    in = 0;
                 }
-                else
+                if(in > 31)
                 {
-                    // Lamp is dimming: move intensity toward targ using the
-                    // (slower) fall rate, scaled by elapsed time dt.
-                    float t = powf(fall, dt);
-                    intensity[i][j] = (intensity[i][j] * t) + (targ * (1 - t));
+                    in = 31;
                 }
-
-                // Apply gamma ('power'), then map the 0.1-1.0 intensity range to a
-                // 0-31.5 brightness value for lightRow()'s phase-count threshold.
-                float l = intensity[i][j];
-                int in = map(powf(l, power), 0.1f, 1.0f, 0.0f, 31.5f);
                 p->lamps[i][j] = in;
             }
         }
 
 #ifdef TIMINGS
         currentTime = gettime();
-        decayDelta += (currentTime - lastTime) / 1000;  // just usecs
+        pwmDelta += (currentTime - lastTime) / 1000;  // just usecs
         lastTime = currentTime;
-        ++decayLoopCount;
+        ++pwmLoopCount;
 #endif
     }
 }
 
 volatile int doexit;
 
-// Main panel thread, run at SCHED_FIFO real-time priority. Spawns lampthread() to
-// compute lamp brightness in the background, then loops driving the lamp rows
-// (setLights) and reading one switch register per iteration (readSwitches) until
-// doexit is set by sighandler(), at which point GPIO is parked and the process
-// exits.
+// Main panel thread, run at SCHED_FIFO real-time priority. Spawns pwmthread()
+// to periodically turn panel->pwmcount[][] into lamp brightness values, then
+// loops driving the lamp rows (setLights) and reading one switch register
+// per iteration (readSwitches) until doexit is set by sighandler(), at which
+// point GPIO is parked and the process exits.
 void*
 panelthread(void *arg)
 {
@@ -389,7 +323,7 @@ struct sched_param sp;
 
     memset(&panel, 0, sizeof(panel));
     panel.p = (Panel*)arg;
-    pthread_create(&th, nil, lampthread, &panel);
+    pthread_create(&th, nil, pwmthread, &panel);
 
     sp.sched_priority = 99;  // not high, just above the minimum of 1
     int rt = pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) == 0;
@@ -421,10 +355,9 @@ struct sched_param sp;
     printf("Avg main loop time %lu usec over %lu cycles, elapsed time %lu usec, %.2f percent of elapsed time.\n",
         delta, loopCount, elapsed, ((float)(loopCount * delta) / (float)elapsed) * 100.0);
 
-    decayDelta /= decayLoopCount; // now per-loop avg
-    printf("Avg decay loop time %lu usec over %lu cycles, elapsed time %lu usec, %.2f percent of elapsed time.\n",
-        decayDelta, decayLoopCount, elapsed,
-        ((float)(decayDelta * decayLoopCount) / (float)elapsed) * 100.0);
+    pwmDelta /= pwmLoopCount; // now per-loop avg
+    printf("Avg pwm update loop time %lu usec over %lu cycles (target %d usec).\n",
+        pwmDelta, pwmLoopCount, PWM_PERIOD_US);
 #endif
 
     setAddr(8);

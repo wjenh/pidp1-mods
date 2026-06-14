@@ -1,3 +1,10 @@
+/*
+ * Shared-memory layout for the pidp-1 front panel (switches and lamp state),
+ * used by the emulator (pdp1), the hardware panel driver (panel_pidp1), and
+ * the browser-based panel emulator (vpanel_pdp1).
+ *
+ * wje 14-Jun-26 - add pwmcount[][] for emulator-side lamp duty-cycle tallies
+ */
 enum {
 	// sw0
 	SW_EXTEND	= 0400000,
@@ -61,4 +68,28 @@ struct Panel
 
 	// just for convenience
 	int psw2;
+
+	// Per-lamp "on" tallies, added to support a lower-overhead lamp PWM
+	// scheme. updatelights() (in panel1.c) increments pwmcount[row][col]
+	// once per emulated cycle for each lamp bit that is set in that
+	// cycle's lights0-lights9 snapshot (the same once-per-cycle,
+	// randomized-TP sample used to produce lights0-lights9 themselves).
+	// Indexed the same as panel_pidp1's PanelLamps.lamps[10][18]: rows
+	// 0-6 correspond to lights0-lights6 (main panel), rows 7-9 to
+	// lights7-lights9 (I/O panel).
+	//
+	// The panel driver is expected to periodically read and then reset
+	// (zero) these counters -- e.g. roughly every 1ms, ~200 cycles -- and
+	// use the resulting 0-200ish count directly as a PWM "on" duration,
+	// instead of polling lights0-lights9 at a high sample rate. u8 is
+	// large enough for that read interval without overflow.
+	//
+	// Existing lights0-lights9 fields are unchanged and continue to be
+	// updated as before, for the browser-based panel (vpanel_pdp1), which
+	// does its own sampling and does not use pwmcount[][].
+	//
+	// Not synchronized against concurrent updates from pdp1; a reader may
+	// occasionally race an increment by +/-1, which is negligible given
+	// the intended read interval.
+	u8 pwmcount[10][18];
 };

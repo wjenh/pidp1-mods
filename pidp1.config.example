@@ -130,3 +130,9 @@ newmemfile=true
 # This is primarily useful for seeing now much time is being used in a cycle.
 pidp1timing=off
 
+# Adjust the maximum brightness of the hardware panel lights if using the new panel driver.
+# This is a floating point number ranging from 0.0 to 1.0, off to max brightness.
+panelbrightness=1.0
+
+# This determines whether or not the new panel driver sets realtime fifo priority.
+panelrealtime=true

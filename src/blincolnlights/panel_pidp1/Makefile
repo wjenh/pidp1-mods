@@ -1,13 +1,13 @@
-INC=-I..
+INC=-I.. -I../pdp1
 LIBS=-lpthread -lm
-CFLAGS=-O3 -g -Wall
+CFLAGS= $(INC) -O3 -g -Wno-unused-result
 
 PINCTRL := $(wildcard ../pinctrl/*.o)
 
 panel_pidp1: panel_pidp1.c ../common.c
 	cc $(CFLAGS) -o $@ $^ $(INC) $(LIBS) $(PINCTRL)
 
-newpanel: newpanel.c ../common.c
+newpanel: newpanel.c ../common.c ../pdp1/configuration.c
 	cc $(CFLAGS) -o $@ $^ $(INC) $(LIBS) $(PINCTRL)
 
 run: panel_pidp1
@@ -16,5 +16,7 @@ run: panel_pidp1
 runnew: newpanel
 	./newpanel
 
+all: panel_pidp1 newpanel
+
 clean:
-    rm panel_pidp1 newpanel >/dev/null 2>&1
+	rm panel_pidp1 newpanel >/dev/null 2>&1

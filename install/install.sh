@@ -166,7 +166,7 @@ while true; do
     case $yn in
         [Yy]* )
 		make -C $INSTALLDIR/src/blincolnlights/pinctrl 	# pinctrl functions
-		make -C $INSTALLDIR/src/blincolnlights/panel_pidp1 	# panel driver
+		make -C $INSTALLDIR/src/blincolnlights/panel_pidp1 all 	# panel driver
 		make -C $INSTALLDIR/src/blincolnlights/pdp1 	# simulator
 		make -C $INSTALLDIR/src/p7sim			# returns sense switches
 		make -C $INSTALLDIR/src/scanpf 			# returns sense switches
@@ -214,6 +214,7 @@ while true; do
             	sudo chmod +s $INSTALLDIR/src/blincolnlights/panel_pidp1
             	# to run as a RT thread:
             	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1
+            	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel
 
                 ln -sf $INSTALLDIR/src/macro/macro1_1 $INSTALLDIR/bin/macro1_1
                 ln -sf $INSTALLDIR/src/blincolnlights/tools/mkptyfio_telnet $INSTALLDIR/bin/mkptyfio_telnet
@@ -226,7 +227,23 @@ while true; do
                 ln -sf $INSTALLDIR/src/pidp1_test/pidp1_test $INSTALLDIR/bin/pidp1_test
                 ln -sf $INSTALLDIR/src/scanpf/scanpf $INSTALLDIR/bin/scanpf
                 ln -sf $INSTALLDIR/src/blincolnlights/tapevis/tapevis $INSTALLDIR/bin/tapevis
-                ln -sf $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1 $INSTALLDIR/bin/panel_pidp1
+                while true; do
+                    echo
+                    read -p "Use the new PiDP hardware front panel (Y) or the old panel (N)? " yn
+                    case $yn in
+                        [Yy]* )
+                            echo Installed the new PiDP hardware front panel
+                            ln -sf $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel $INSTALLDIR/bin/panel_pidp1
+                            break
+                            ;;
+                        [Nn]* ) 
+                            echo Installed the old PiDP hardware front panel
+                            ln -sf $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1 $INSTALLDIR/bin/panel_pidp1
+                            break
+                            ;;
+                        * ) echo "Please answer yes or no.";;
+                    esac
+                done
 	    	echo Done.
 		break
 		;;

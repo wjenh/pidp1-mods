@@ -7,24 +7,27 @@
  * wje 14-Jun-26 - in updatelights(), also tally each lamp bit into
  *                 panel->pwmcount[][] (see panel_pidp1.h) for the new
  *                 lower-overhead lamp PWM scheme; lights0-lights9 unchanged
+ * wje 14-Jun-26 - in updatelights(), also increment panel->cyclecount once
+ *                 per call, so the panel driver can measure elapsed cycles
+ *                 directly instead of from wall-clock time
  */
 #include "common.h"
 #include "panel_pidp1.h"
 #include "pdp1.h"
 
 // Add 1 to cnt[i] for each bit i (0-17) of bits that is set, saturating at
-// 255 instead of wrapping. Used by updatelights() to tally per-cycle "on"
+// 65535 instead of wrapping. Used by updatelights() to tally per-cycle "on"
 // counts into panel->pwmcount[][]. Saturation guards against the panel
 // driver's read+reset interval occasionally running longer than expected
-// (255 cycles = ~1.275ms) without wrapping pwmcount back to a small value.
+// (65535 cycles = ~327ms) without wrapping pwmcount back to a small value.
 static void
-incrcount(u8 *cnt, u32 bits)
+incrcount(u16 *cnt, u32 bits)
 {
 	for(int i = 0; i < 18; i++)
 	{
 		if((bits >> i) & 1)
 		{
-			if(cnt[i] < 255)
+			if(cnt[i] < 65535)
 			{
 				cnt[i]++;
 			}
@@ -135,6 +138,10 @@ updatelights(PDP1 *pdp, Panel *panel)
 	incrcount(panel->pwmcount[7], panel->lights7);
 	incrcount(panel->pwmcount[8], panel->lights8);
 	incrcount(panel->pwmcount[9], panel->lights9);
+
+	// Tally this call as one emulated cycle, for the panel driver's
+	// expectedCycles calculation (see panel_pidp1.h).
+	panel->cyclecount++;
 }
 
 void

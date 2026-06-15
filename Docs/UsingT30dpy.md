@@ -2,12 +2,12 @@
 
 This document describes the t30dpy and t30dpy3 simulated Type 30 display.
 
-This is version 1.6
+This is version 1.7
 
-Edit date 10-June-2026\
-udpate for wayland fix
+Edit date 15-June-2026\
+udpate for change to wayland/labwc autoresizing
 
-## T30dpy, t30dpy3, and Wayland
+## T30dpy, t30dpy3, and Wayland/labwrc
 
 There are three differences between t30dpy and t30dpy3.
 
@@ -37,10 +37,12 @@ All windowed applications including p7sim are affected by this.
 
 A workaround is implemented for both t30dpy versions when running under Wayland.
 The display size is queried, which fortunately can still be done.
-If the t30 window being opened is larger than the physical screen minus a margin, it is silently resized
-to be the screen size minus the margin.
+If the user *has not explicitly set a window size* and the t30 window being opened is larger
+than the physical screen minus a margin, it is silently resized to be the screen size minus the margin.
 
 Why a fixed margin? Because remember that you can't get information about the size of the taskbar!
+
+However, switching to X11 is recommended. T30dpy is far faster under X11, about 20% of the cpu load under Wayland.
 
 ## Usage
 
@@ -81,6 +83,8 @@ It also supports borderless and full-screen operation and supports the pseudo-li
 
 It will work with any pidp-1 version, or with anything that uses the same display protocol.\
 It is highly configurable in the code and via a configuration file and command line switches.
+
+There is also a Windows 11 version, see below.
 
 ## Why have it?
 
@@ -406,3 +410,13 @@ If reloadable, a SIGHUP will reset the running t30dpy to use the new values.
 Vsync is ignored for the SDL3 version.
 
 A sample file is included as */opt/pidp1-mods/t30dpy.config.example* for reference.
+
+## Running under Windows 11
+
+A compiled t30dpy.exe is available from a separate repository, https://github.com/wjenh/T30dpy-windows.git
+
+It is statically linked, so nothing else is needed.
+
+It can be configured via the same configuration file as above by creating a top-level folder on your Windows
+primary drive, usually C:, named *opt* with a subfolder named *pidp-1*, mirroring the Linux one.
+Create *t30dpy.config* with your favorite text editor.

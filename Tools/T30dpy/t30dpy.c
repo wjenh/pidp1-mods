@@ -64,6 +64,7 @@
  *     single source file builds on both Linux and Windows. No functional change
  *     on Linux.
  * 15-Jun-2026 fix bit setting size error in lightpen commands
+ * 15-Jun-2026 don't apply wayland/labwc fix if user explicitly set a size
 */
 
 #include <stdio.h>
@@ -200,6 +201,7 @@ int lowCutoff = LOWCUTOFF;
 int whiteBias = WHITEBIAS;
 uint64_t droppedPoints;         // count of points dropped because activePool[] was exhausted
 
+bool allowLabwcFix = true;
 bool usingLabwc = false;
 bool quit = false;
 bool border;
@@ -324,6 +326,7 @@ struct timespec sleepTime;
             if( (i >= MINSIZE) )
             {
                 winSize = i;
+                allowLabwcFix = false;
             }
             else
             {
@@ -374,9 +377,10 @@ struct timespec sleepTime;
     // Labwc doesn't prevent windows overlapping the task bar.
     // Those were stupid design decisions.
     // This hack is to try to be sure the task bar and the window title bar remain visible.
+    // But, if the user has explicitly set a size, don't do this, assume they knew what they were doing.
     usingLabwc = (cP = getenv("XDG_CURRENT_DESKTOP")) && !strncmp(cP,"labwc", 5);
     driverNameP = SDL_GetCurrentVideoDriver();
-    if( usingLabwc || (driverNameP && (SDL_strcmp(driverNameP, "wayland") == 0)) )
+    if( allowLabwcFix && (usingLabwc || (driverNameP && (SDL_strcmp(driverNameP, "wayland") == 0))) )
     {
         SDL_GetDisplayBounds(0, &bounds);
         if( winSize > (bounds.h - WAYLANDMARGIN) )
@@ -1231,6 +1235,7 @@ char line[256];
                     if( i >= MINSIZE )
                     {
                         winSize = i;
+                        allowLabwcFix = false;
                     }
                 }
             }

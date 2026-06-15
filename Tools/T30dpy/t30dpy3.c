@@ -61,6 +61,7 @@
  *    single source file builds on both Linux and Windows. No functional change
  *    on Linux.
  * 15-Jun-2026 fix bit setting size error in lightpen commands
+ * 15-Jun-2026 don't apply wayland/labwc fix if user explicitly set a size
 */
 
 #include <stdio.h>
@@ -200,6 +201,7 @@ int winSize;
 int lowCutoff = LOWCUTOFF;
 int whiteBias = WHITEBIAS;
 
+bool allowLabwcFix = true;
 bool usingLabwc = false;
 bool quit = false;
 bool border;
@@ -333,6 +335,7 @@ SDL_Thread *threadP;
             if( (i >= MINSIZE) )
             {
                 winSize = i;
+                allowLabwcFix = false;
             }
             else
             {
@@ -388,7 +391,7 @@ SDL_Thread *threadP;
     // This hack is to try to be sure the task bar and the window title bar remain visible.
     usingLabwc = (cP = getenv("XDG_CURRENT_DESKTOP")) && !strncmp(cP,"labwc", 5);
     driverNameP = SDL_GetCurrentVideoDriver();
-    if( usingLabwc || (driverNameP && (SDL_strcmp(driverNameP, "wayland") == 0)) )
+    if( allowLabwcFix && (usingLabwc || (driverNameP && (SDL_strcmp(driverNameP, "wayland") == 0))) )
     {
         SDL_GetDisplayBounds(SDL_GetPrimaryDisplay(), &bounds);
         if( winSize > (bounds.h - WAYLANDMARGIN) )
@@ -1302,6 +1305,7 @@ char line[256];
                     if( i >= MINSIZE )
                     {
                         winSize = i;
+                        allowLabwcFix = false;
                     }
                 }
             }

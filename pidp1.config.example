@@ -134,5 +134,11 @@ pidp1timing=off
 # This is a floating point number ranging from 0.0 to 1.0, off to max brightness.
 panelbrightness=1.0
 
+# Adjust the light turnon and turnoff times.
+# These are floating point numbers ranging from 0.0 to 1.0, SEE THE DOCUMENTATION.
+panelonalpha=0.45
+paneloffalpha=0.04
+
 # This determines whether or not the new panel driver sets realtime fifo priority.
-panelrealtime=true
+# It is generally not needed, but if flicker is a problem, enable it.
+panelrealtime=false

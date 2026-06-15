@@ -16,32 +16,38 @@
  * Here, the emulator tallies the on state once per 5us emulated cycle by incrementing panel->pwmcount[][].
  * This driver periodically reads and resets those counts and uses them directly as the PWM
  * phase-count threshold for lightRow() after applying a global brightness scaling factor (dimmingFactor).
- * There is no per-light floating point decay filter now.
  *
  * wje 14-Jun-26 - new implementation based on panel_pidp1.c:
  *    replace lightthread's NSAMPLES sampling/decay filter with
- *    a periodic read+reset of panel->pwmcount[][]; add global
- *    dimmingFactor brightness scaling factor
- * wje 14-Jun-26 -  reduce PWM phase count from 31 to NLEVELS (16)
+ *    a periodic read+reset of panel->pwmcount[][]; add brightness scaling.
+ * wje 14-Jun-26 - change PWM phase count from 31 to NLEVELS (16)
  *    and lengthen each phase (init_delays()) so a full row scan takes ~1ms
- *    instead of ~340us, and increase PWM_PERIOD_US from 155 to 1000us. Both
- *    changes make the driver more tolerant of ordinary (non-realtime) scheduling
- *    jitter, with the goal of dropping the SCHED_FIFO/cap_sys_nice
- *    requirement in install.sh.
+ *    instead of ~340us, and increase PWM_PERIOD_US from 155 to 1000us.
+ *    Both changes make the driver more tolerant of ordinary (non-realtime) scheduling jitter.
+ * wje 15-Jun-26 - general code cleanup, add command line args
+ * wje 15-Jun-26 - reduce NLEVELS from 16 to 8. This eliminates an obscure cause of the panel light
+ *    flicker present in p7sim unless running with real time threads. This is not necessary now.
+ * wje 15-Jun-26 - add per-light brightness filter as a simple asymmetric first-order IIR
+ *    low-pass filter with a fast alpha (FILTER_ALPHA_RISE) for brightening and a slow alpha
+ *    (FILTER_ALPHA_FALL) for dimming.
+ *    Unlike the p7sim NSAMPLES/exponential filter this operates on the already-computed intensity values,
+ *    not raw samples, and significantly reduces cpu use.
  */
+#include <stdlib.h>
+#include <stdarg.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <math.h>
+#include <signal.h>
 #include "common.h"
 #include "configuration.h"
 #include "pinctrl/gpiolib.h"
 #include "panel_pidp1.h"
-#include <math.h>
-#include <signal.h>
-#include <unistd.h>
-#include <pthread.h>
 
-// Define this to get the loop timing for the 2 main loops
-//#define TIMINGS
+#define CONFIG_FILE "/opt/pidp1-mods/pidp1.config"
 
-#define CONFIG_FILE "/opy/pidp1-mods/pidp1.config"
+// The sleep time in panelthread after updating the light and switch states in shared memory.
+#define UPDATEDELAY 100
 
 // Number of PWM brightness levels, also the phases used by lightRow)), 0-(NLEVELS-1).
 //
@@ -49,11 +55,20 @@
 // The original panel_pidp1 used a 31-phase scheme, the shortest phase delay and the full 10-row scan were
 // both well within typical non-realtime scheduling jitter, so jitter was a large fraction of every
 // phase and showed up as visible flicker, hence the need to set realtime priority on it.
-// With 16 phases scaled so a full row scan takes ~1ms, a full 10 row pass ~10mx each phase is on the order of
-// microseconds to hundreds of microseconds -- large enough that normal
-// scheduler jitter is a small fraction of each phase and isn't visible.
-// The refresh rate is approximately 100 Hz.
-#define NLEVELS 16
+//
+// Each phase's delay is computed at startup by init_delays() so that the
+// sum of all phase delays for a row totals TARGET_ROW_SCAN_NS (see below),
+// regardless of NLEVELS -- so this can be changed (and may eventually become
+// a runtime/config setting) without having to separately retune the scale.
+//
+#define NLEVELS 8
+
+// Target total time (in ns) for one lightRow() phase loop (i.e. one row's
+// worth of phase delays, before any per-syscall scheduling overhead).
+// init_delays() picks PWM_SCALE so phase_delays[] sums to approximately
+// this. At NLEVELS phases per row and 10 rows/pass, the nominal (zero
+// overhead) full-pass time is TARGET_ROW_SCAN_NS * 10.
+#define TARGET_ROW_SCAN_NS 1000000.0f
 
 // The target period between pwmthread updates, in microseconds.
 //
@@ -66,7 +81,23 @@
 #define PWM_PERIOD_US 1000
 
 #define PWM_BASE 1.3f
-#define PWM_SCALE 4600.0f
+
+// Computed by init_delays() from NLEVELS, PWM_BASE and TARGET_ROW_SCAN_NS, so
+// that phase_delays[] sums to TARGET_ROW_SCAN_NS regardless of NLEVELS.
+float PWM_SCALE;
+
+// Asymmetric IIR filter coefficients applied to each light's intensity in
+// pwmthread, modeling an incandescent lamp's filament.
+// A real one turns on faster than it cools down so an asymmetric filter is used.
+// Higher alpha = faster response, a shorter time constant.
+// FILTER_ALPHA_RISE ~0.45 gives turn-on a time constant of ~2ms.
+// FILTER_ALPHA_FALL ~0.04 gives turn-off a time constant of ~25ms,
+// With a first-order filter the visible afterglow is then roughly 50-100ms, matching the real
+// characteristics.
+#define FILTER_ALPHA_RISE 0.45f
+#define FILTER_ALPHA_FALL 0.04f
+
+#define LIMIT(f) (((f) < 0.0)?0.0:(((f) > 1.0)?1.0:(f)))
 
 typedef Panel *PanelP;      // Panel is in the panel_pidp1.h include file, it's what's in shared memory.
 
@@ -76,16 +107,24 @@ typedef Panel *PanelP;      // Panel is in the panel_pidp1.h include file, it's 
 struct PanelLights
 {
     u8 lights[10][18];
+    float lightsF[10][18];     // filter state for lights[][], see FILTER_ALPHA_RISE/FALL
     PanelP p;
 };
 
 typedef struct PanelLights PanelLights, *PanelLightsP;
 
+volatile int doexit;
 bool setPriority = true;
+bool doTiming = false;
+u64 pwmDelta, pwmLoopCount;     // Used for timing data
 
 // Global brightness scaling ("dimmer") factor, applied to every light's
 // PWM count before it's used by lightRow(). 1.0 = full brightness.
 float dimmingFactor = 1.0f;
+
+// Alpha values
+float onAlpha = FILTER_ALPHA_RISE;
+float offAlpha = FILTER_ALPHA_FALL;
 
 // Table of precomputed phase delays
 u32 phase_delays[NLEVELS];
@@ -99,8 +138,80 @@ int ADDR[] = {4, 17, 27, 22};
 // On output these drive light segments; on input they read switch positions.
 int COLUMNS[] = {26, 19, 13, 6, 5, 11, 9, 10, 18, 23, 24, 25, 8, 7, 12, 16, 20, 21 };
 
-void loadConfig();
 extern ConfigurationP loadConfigFile(char *filenameP);
+
+int getPin(int p);
+u32 readRow(int row);
+void loadConfig();
+void usage();
+void inRow(void);
+void outRow(void);
+void setPin(int p, int val);
+void setRow(int l);
+void setAddr(int a);
+void init_delays(void);
+void lightRow(int row, u8 *l);
+void setLights(PanelLightsP lightsP);
+void readSwitches(PanelP panelP);
+void *pwmthread(void *arg);
+void *panelthread(void *arg);
+void sighandler(int sig);
+int initGPIO(void);
+
+// Create/attach the shared Panel segment, initialize GPIO, then run the panel
+// thread which never returns under normal operation.
+int
+main(int argc, char *argv[])
+{
+int opt;
+PanelP panelP;
+
+    loadConfig();           // get any config parameters
+
+    while( (opt = getopt(argc, argv, "b:tn")) != -1 )
+    {
+        switch( opt )
+        {
+        case 'b':
+            dimmingFactor = atof(optarg);
+            dimmingFactor = LIMIT(dimmingFactor);
+            break;
+
+        case 't':
+            doTiming = true;
+            break;
+
+        case 'n':
+            setPriority = false; // no realtime thread priority set
+            break;
+
+        default:
+            usage();
+            break;
+        }
+    }
+
+    if( optind < argc )
+    {
+        usage();
+    }
+
+    panelP = createseg("/tmp/pdp1_panel", sizeof(Panel));
+
+    if( panelP == nil )
+    {
+        return(1);
+    }
+
+    if(initGPIO())
+    {
+        return(1);
+    }
+
+    panelthread(panelP);
+
+    return(0);      // can't happen
+}
 
 // Switch all 18 COLUMN GPIO pins to inputs, for reading switch positions.
 void
@@ -129,7 +240,8 @@ void setPin(int p, int val)
 }
 
 // Read the current level of a single GPIO pin.
-int getPin(int p)
+int
+getPin(int p)
 {
     return(gpio_get_level(p));
 }
@@ -156,20 +268,6 @@ setAddr(int a)
     }
 }
 
-// Busy-wait for at least dt nanoseconds. Used where nanosleep()'s scheduling
-// jitter would be too coarse. resolution ~50-150ns
-void
-xsleep(u64 dt)
-{
-    u64 t1 = gettime();
-    u64 t2 = gettime();
-
-    while(t1 + dt > t2)
-    {
-        t2 = gettime();
-    }
-}
-
 // Precompute the per-phase delay in ns for each of the NLEVELS PWM phases
 // used by lightRow(): phase_delays[i] = base^i * scale, with base = 1.3 and
 // scale chosen so a full row scan (sum of all phase delays) takes ~1ms.
@@ -179,11 +277,20 @@ void
 init_delays(void)
 {
 float base = PWM_BASE;
-float scale = PWM_SCALE;
+float sum = 0.0f;
+
+    // Sum of base^i for i = 0..NLEVELS-1, so PWM_SCALE can be picked to make
+    // the total phase_delays[] sum equal TARGET_ROW_SCAN_NS regardless of NLEVELS.
+    for(int i = 0; i < NLEVELS; i++)
+    {
+        sum += pow(base, i);
+    }
+
+    PWM_SCALE = TARGET_ROW_SCAN_NS / sum;
 
     for(int i = 0; i < NLEVELS; i++)
     {
-        phase_delays[i] = pow(base, i) * scale;
+        phase_delays[i] = pow(base, i) * PWM_SCALE;
     }
 }
 
@@ -191,13 +298,13 @@ float scale = PWM_SCALE;
 // For each of NLEVELS phases, a column's light is held on while
 // phase < l[i] and turned off once phase reaches l[i] so higher brightness values
 // keep the light lit for more phases, giving a PWM-like intensity effect.
-// After all phases, the row is blanked and ADDR is parked at 8 (idle/switch // row) before returning.
+// After all phases, the row is blanked and ADDR is parked at 8 (idle/switch row) before returning.
 void
 lightRow(int row, u8 *l)
 {
     setRow(~0);
     setAddr(row);
-    usleep(100);
+    usleep(20); // the gpio state chages need time to take effect
 
     for(int phase = 0; phase < NLEVELS; phase++)
     {
@@ -211,7 +318,7 @@ lightRow(int row, u8 *l)
 
     setRow(~0);
     setAddr(8);
-    usleep(100);
+    usleep(30);
 }
 
 // Read one row of 18 switches and return them packed into the low 18 bits of the result, one bit per column.
@@ -227,7 +334,7 @@ readRow(int row)
 
     for(int i = 0; i < nelem(COLUMNS); i++)
     {
-        if(getPin(COLUMNS[i]))
+        if( getPin(COLUMNS[i]) )
         {
             sw &= ~(1 << i);
         }
@@ -279,75 +386,70 @@ setLights(PanelLightsP lightsP)
 void
 readSwitches(PanelP panelP)
 {
-    static u32 cycle = 0;
+static u32 cycle = 0;
 
     inRow();
     int i = (cycle++) % 4;
     (&panelP->sw0)[i] = readRow(8 + i);
 }
 
-#ifdef TIMINGS
-u64 pwmDelta, pwmLoopCount;
-#endif
-
 // Background thread: every ~PWM_PERIOD_US, read and reset panel->pwmcount[row][col]
 // for each of the 10x18 light bits, scale to the 0-(NLEVELS-1) range based on the actual number
-// of emulated cycles elapsed (via // panel->cyclecount), apply dimmingFactor, clight to 0-(NLEVELS-1),
-// and store into // p->lights[row][col] for lightRow() to use as its phase-count threshold.
+// of emulated cycles elapsed (viapanel->cyclecount), apply dimmingFactor, clamp to 0-(NLEVELS-1),
+// and store into p->lights[row][col] for lightRow() to use as its phase-count threshold.
 // This replaces panel_pidp1.c's lightthread NSAMPLES sampling + exponentialdecay filter.
 void *
 pwmthread(void *arg)
 {
-int rt;
+int rt = 0;
 int i, j;
 int intensity;
 u16 count;
 u64 lastCycleCount;
 u64 currentCycleCount;
 u64 expectedCycles;
+u64 currentTime, dbgLastTime;       // used for timing data
 PanelLightsP lightsP;
 PanelP panelP;
 struct sched_param sp;
 
-#ifdef TIMINGS
-    u64 currentTime, dbgLastTime;
-#endif
-
     lightsP = (PanelLightsP)arg;
     panelP = lightsP->p;
 
-    // Run this thread real-time too, scheduling jitter here shows up as
-    // brightness jitter (and flicker) on the panel.
-    // Priority is below panelthread's (99) so the light-row scan still wins
-    // if both are runnable at once.
-    sp.sched_priority = 98;
-    rt = pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) == 0;
+    if( setPriority )
+    {
+        // Run this thread real-time too, scheduling jitter here shows up as
+        // brightness jitter (and flicker) on the panel.
+        // Priority is below panelthread's (99) so the light-row scan still wins
+        // if both are runnable at once.
+        sp.sched_priority = 98;
+        rt = pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) == 0;
+    }
+
     printf("pwmthread realtime: %s\n", rt ? "yes" : "no");
 
     lastCycleCount = panelP->cyclecount;
-#ifdef TIMINGS
-    dbgLastTime = gettime();
-#endif
+    if( doTiming )
+    {
+        dbgLastTime = gettime();
+    }
 
     for(;;)
     {
         usleep(PWM_PERIOD_US);
 
         // Self-calibration: rather than assuming this loop iterates exactly
-        // every 31 emulated cycles (PWM_PERIOD_US / 5us) or inferring the
-        // cycle count from wall-clock time, which assumes pdp1 runs at
-        // exactly 5us/cycle and is sensitive to its scheduling jitter, read
-        // the emulator's own cyclecount and use the delta since our last
-        // reading as the true number of cycles that occurred.
+        // every (PWM_PERIOD_US / 5us) cycles or inferring the cycle count from wall-clock time,
+        // which assumes pdp1 runs at exactly 5us/cycle and is sensitive to its scheduling jitter, read
+        // the emulator's own cyclecount and use the delta since our last reading as the true number of cycles
+        // that occurred.
         // This keeps the scaling correct regardless of pdp1's actual cycle rate.
         currentCycleCount = panelP->cyclecount;
         expectedCycles = currentCycleCount - lastCycleCount;
 
         // pdp1's main loop runs in bursts, pacing itself to 5us/cycle
         // using usleep(1000), so cyclecount advances in chunks of ~200 every ~1ms rather than smoothly.
-        // Many of our ~155us wakeups will land in a gap where cyclecount and
-        // pwmcount[][] haven't advanced at all yet.
-        // If we proceeded with expectedCycles==0 clighted to 1 and count==0, every light would
+        // If we proceeded with expectedCycles==0 clamped to 1 and count==0, every light would
         // compute in=0 for this iteration, a brief blackout.
         // The beat between our period and pdp1's burst/sleep cycle then shows up as
         // a slow, drifting on/off flicker.
@@ -362,12 +464,12 @@ struct sched_param sp;
 
         // Panel->pwmcount[][] is a u16, saturating at 65535
         //If this thread is ever delayed long enough that
-        // expectedCycles would exceed that, clight it to match -- otherwise
+        // expectedCycles would exceed that, clamped it to match -- otherwise
         // a light that's on every cycle (e.g. the PWR light) would read
         // count==65535 but expectedCycles > 65535, making
         // count/expectedCycles < 1 and dimming an "always on" light during
         // long scheduling delays.
-        // At ~5us/cycle this is a ~327ms delay, so in practice this clight is just a safety net.
+        // At ~5us/cycle this is a ~327ms delay, so in practice this clamped is just a safety net.
         if(expectedCycles > 65535)
         {
             expectedCycles = 65535;
@@ -394,81 +496,147 @@ struct sched_param sp;
                     intensity = (NLEVELS - 1);
                 }
 
-                // Smooth across iterations. A single ~200us sample is noisy
-                // enough to snap straight between 0 and 31 from one window to
-                // the next, which strobes visibly against lightRow()'s scan
-                // period. A short moving average filter removes that without
-                // bringing back the old NSAMPLES/exponential filter.
-                lightsP->lights[i][j] = (u8)((((int)lightsP->lights[i][j] * 3) + intensity) / 4);
+                // Smooth across iterations with an asymmetric IIR filter. A
+                // single ~200us sample is noisy enough to snap straight
+                // between 0 and NLEVELS-1 from one window to the next, which
+                // strobes visibly against lightRow()'s scan period. Using a
+                // faster alpha when brightening and a slower alpha when
+                // dimming also models an incandescent lamp's filament,
+                // which heats up faster than it cools, so lamps fade out
+                // rather than snapping off.
+                float *fP = &lightsP->lightsF[i][j];
+                float alpha = ((float)intensity > *fP) ? onAlpha : offAlpha;
+
+                *fP += alpha * ((float)intensity - *fP);
+                lightsP->lights[i][j] = (u8)(*fP + 0.5f);
             }
         }
 
-#ifdef TIMINGS
-        currentTime = gettime();
-        pwmDelta += (currentTime - dbgLastTime) / 1000;  // just usecs
-        dbgLastTime = currentTime;
-        ++pwmLoopCount;
-#endif
+        if( doTiming )
+        {
+            currentTime = gettime();
+            pwmDelta += (currentTime - dbgLastTime) / 1000;  // just usecs
+            dbgLastTime = currentTime;
+            ++pwmLoopCount;
+        }
     }
 }
-
-volatile int doexit;
 
 // Main panel thread, runs at SCHED_FIFO real-time priority. Spawns pwmthread()
 // to periodically turn panel->pwmcount[][] into light brightness values, then
 // loops driving the light rows (setLights) and reading one switch register
 // per iteration (readSwitches) until doexit is set by sighandler(), at which
 // point GPIO is parked and the process exits.
+// Histogram buckets for per-iteration main loop times, used by the -t option
+// to characterize the distribution of panelthread loop times (not just the
+// average), to help distinguish "every pass is fairly consistently slower
+// than ideal" from "most passes are fine but occasional ones spike".
+// loopHistBounds[i] is the upper bound (in usec) of bucket i; the last
+// bucket catches everything >= loopHistBounds[NHISTBUCKETS-2].
+#define NHISTBUCKETS 6
+u64 loopHistBounds[NHISTBUCKETS - 1] = { 12000, 20000, 40000, 100000, 250000 };
+u64 loopHist[NHISTBUCKETS];
+
 void*
 panelthread(void *arg)
 {
-int rt;
+int rt = 0;
+u64 startTime, lastTime, now, delta, elapsed, loopCount;    // timing data
+u64 loopUs, loopMin, loopMax;
 pthread_t th;
 PanelLights panel;
 struct sched_param params;
-
-#ifdef TIMINGS
-u64 startTime, lastTime, now, delta, elapsed, loopCount;
-#endif
 
     memset(&panel, 0, sizeof(panel));
     panel.p = (PanelP)arg;
     pthread_create(&th, nil, pwmthread, &panel);
 
-    params.sched_priority = 99;
-    rt = pthread_setschedparam(pthread_self(), SCHED_FIFO, &params) == 0;
+    if( setPriority )
+    {
+        params.sched_priority = 99;
+        rt = pthread_setschedparam(pthread_self(), SCHED_FIFO, &params) == 0;
+    }
+
     printf("realtime thread: %s\n", rt ? "yes" : "no");
 
     init_delays();
 
-#ifdef TIMINGS
-    startTime = lastTime = gettime();
-    delta = loopCount = 0;
-#endif
+    if( doTiming )
+    {
+        startTime = lastTime = gettime();
+        delta = loopCount = 0;
+        loopMin = ~0ULL;
+        loopMax = 0;
+        memset(loopHist, 0, sizeof(loopHist));
+    }
 
-    while(!doexit)
+    while( !doexit )
     {
         setLights(&panel);
         readSwitches(panel.p);
+        usleep(UPDATEDELAY);
 
-#ifdef TIMINGS
-        now = gettime();
-        delta += (now - lastTime) / 1000;   // just usecs
-        lastTime = now;
-        ++loopCount;
-#endif
+        if( doTiming )
+        {
+            now = gettime();
+            loopUs = (now - lastTime) / 1000;   // just usecs
+            delta += loopUs;
+            lastTime = now;
+            ++loopCount;
+
+            if( loopUs < loopMin )
+            {
+                loopMin = loopUs;
+            }
+
+            if( loopUs > loopMax )
+            {
+                loopMax = loopUs;
+            }
+
+            int bucket = NHISTBUCKETS - 1;
+            for(int b = 0; b < NHISTBUCKETS - 1; b++)
+            {
+                if( loopUs < loopHistBounds[b] )
+                {
+                    bucket = b;
+                    break;
+                }
+            }
+
+            loopHist[bucket]++;
+        }
     }
 
-#ifdef TIMINGS
-    elapsed = (gettime() - startTime) / 1000;   // just usecs
-    delta /= loopCount; // now per-loop avg
-    printf("Avg main loop time %lu usec over %lu cycles, elapsed time %lu usec, %.2f percent of elapsed time.\n",
-        delta, loopCount, elapsed, ((float)(loopCount * delta) / (float)elapsed) * 100.0);
+    if( doTiming )
+    {
+        elapsed = (gettime() - startTime) / 1000;   // just usecs
+        delta /= loopCount; // now per-loop avg
+        printf("Avg main loop time %lu usec over %lu cycles, elapsed time %lu usec, %.2f percent of elapsed time.\n",
+            delta, loopCount, elapsed, ((float)(loopCount * delta) / (float)elapsed) * 100.0);
+        printf("Main loop time min %lu usec, max %lu usec.\n", loopMin, loopMax);
 
-    pwmDelta /= pwmLoopCount; // now per-loop avg
-    printf("Avg pwm update loop time %lu usec over %lu cycles (target %d usec).\n",
-        pwmDelta, pwmLoopCount, PWM_PERIOD_US);
-#endif
+        printf("Main loop time histogram (usec):\n");
+        for(int b = 0; b < NHISTBUCKETS; b++)
+        {
+            u64 lo = (b == 0) ? 0 : loopHistBounds[b - 1];
+
+            if( b < NHISTBUCKETS - 1 )
+            {
+                printf("  [%6lu - %6lu): %lu (%.1f%%)\n",
+                    lo, loopHistBounds[b], loopHist[b], 100.0 * loopHist[b] / loopCount);
+            }
+            else
+            {
+                printf("  [%6lu -    inf): %lu (%.1f%%)\n",
+                    lo, loopHist[b], 100.0 * loopHist[b] / loopCount);
+            }
+        }
+
+        pwmDelta /= pwmLoopCount; // now per-loop avg
+        printf("Avg pwm update loop time %lu usec over %lu cycles (target %d usec).\n",
+            pwmDelta, pwmLoopCount, PWM_PERIOD_US);
+    }
 
     setAddr(8);
     inRow();
@@ -519,38 +687,10 @@ initGPIO(void)
     return(0);
 }
 
-// Create/attach the shared Panel segment, initialize GPIO, then run the panel
-// thread which never returns under normal operation.
-int
-main(int argc, char *argv[])
-{
-PanelP panelP;
-
-    loadConfig();           // get any config parameters
-
-    panelP = createseg("/tmp/pdp1_panel", sizeof(Panel));
-
-    if( panelP == nil )
-    {
-        return(1);
-    }
-
-    if(initGPIO())
-    {
-        return(1);
-    }
-
-    panelthread(panelP);
-
-    return(0);      // can't happen
-}
-
 // Get our settings from the common config file, /opt/pidp1-mods/pidp1.config
 void
 loadConfig()
 {
-int i, ival;
-char *cP;
 ConfigurationP confP;
 ConfigurationSettingP settingP;
 
@@ -562,21 +702,33 @@ ConfigurationSettingP settingP;
     if( (settingP = findConfigurationSetting(confP, "panelbrightness")) )
     {
         dimmingFactor = atof(settingP->strvalueP);
-
-        if( dimmingFactor < 0.0 )
-        {
-            dimmingFactor = 0.0;
-        }
-
-        if( dimmingFactor > 1.0 )
-        {
-            dimmingFactor = 1.0;
-        }
+        dimmingFactor = LIMIT(dimmingFactor);
     }
 
-    // If true, the default, set our thread priority to realtime fifo, else don't.
+    if( (settingP = findConfigurationSetting(confP, "panelonalpha")) )
+    {
+        onAlpha = atof(settingP->strvalueP);
+        onAlpha = LIMIT(onAlpha);
+    }
+
+    if( (settingP = findConfigurationSetting(confP, "paneloffalpha")) )
+    {
+        offAlpha = atof(settingP->strvalueP);
+        offAlpha = LIMIT(offAlpha);
+    }
+
     if( (settingP = findConfigurationSetting(confP, "panelrealtime")) )
     {
         setPriority = settingP->onOff;
     }
+}
+
+void
+usage()
+{
+    printf("Usage: newpanel [-b brightness] [-t] [-n]\n");
+    printf("-b brightness, set max brigtness, 0.0 to 1.0\n");
+    printf("-t, enable timing statistics, printed on exit\n");
+    printf("-n, don't use realtime threads\n");
+    exit(1);
 }

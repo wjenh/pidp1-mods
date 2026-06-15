@@ -60,6 +60,7 @@
  *    home-directory lookup are routed through small macros/wrappers so this
  *    single source file builds on both Linux and Windows. No functional change
  *    on Linux.
+ * 15-Jun-2026 fix bit setting size error in lightpen commands
 */
 
 #include <stdio.h>
@@ -132,6 +133,12 @@
 
 #define CONSTRAIN(x) ((x) < 0?0:(((x) > 1023)?1023:(x)))    // keep a value in the range 0-1023
 #define FRAMETIME 33333333L     // nanoseconds between frames, this is 30 fps
+
+// Commands sent to emulator.
+#define CMDBITS 0xFF000000
+#define LPCMD   0xFF000000
+#define PENBITS 0x00F00000
+#define LPUP    0x00100000
 
 typedef unsigned char byte;
 typedef uint32_t Rgba;
@@ -1199,13 +1206,13 @@ uint32_t cmd;
             --mouseY;             // 1's cmpl conversion
         }
 
-        cmd = 0xFF0 << 20;
+        cmd = CMDBITS;
         cmd |= (mouseX & 0x3FF) << 10;
         cmd |= (mouseY & 0x3FF);
     }
     else
     {
-        cmd = 0xFF1 << 20;  // pen up cmd to host
+        cmd = LPCMD | LPUP;  // pen up cmd to host
     }
 
     // And send to host.

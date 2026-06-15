@@ -2,8 +2,9 @@
 
 This docuemnt describes newpanel, a replacement for panel_pidp1, and how to use it.
 
-This is version 1.0\
-Edit date 15-Jun-2026
+This is version 1.1\
+Edit date 15-Jun-2026\
+Add more details
 
 ## Installing newpanel
 
@@ -31,7 +32,6 @@ You can now manually start the one of your choice by running it from the **build
 
 If you don't see both panel_pidp1 and newpanel there, just type *make*.
 
-
 ## History
 
 Newpanel is a new implementation of the pidp-1 hardware panel driver replacing panel_pidp1.
@@ -58,8 +58,9 @@ The original pidp1 emulator and panel_pidp1 did the communication of light state
 to the driver backwards.
 The emulator set a single bit in shared memory every cycle to indicate whether a bit should be on or off.
 Panel_pidp1 then sampled the state of the light bits in a loop every 3 microseconds doing
-several thousand iterations to build up an average on time.
-But, this is silly. The emulator can easily do this with insignificant overhead.
+several thousand iterations to build up an average over time.
+But, this is silly. The emulator can easily do this with insignificant overhead and completely eliminate
+the overhead in panel_pidp1.
 
 Now, an additional set of values, one per light, has been added to the shared data.
 Each one is an integer counter that is incremented by the emulator every cycle if its associated light
@@ -68,10 +69,37 @@ A cycle counter is also incremented to allow the panel driver to compute the fra
 on between reads of the data. This eliminates the high-overhead loop in the original.
 
 The values are then used to impement a pulse-width-modulator (pwm) for each light.
-A display thread goes through the list of light values, applies a simple iir low-pass filter to the values
-to provide the turn on / turn off characteristics, and updates the leds.
+A display thread goes through the list of light values, applies a simple digital IIR first-order low-pass
+filter to the values to provide the turn on / turn off characteristics, and updates the leds.
 
 The result is a cpu load of only 20% on a Raspberry pi 5 and frequently no need to run with real time priority.
+
+## The simulation error in panel_pidp1
+
+The error is actually an error in the pdp-1 emulator itself.
+The -1 has a number of 'microcycles' within the main 5 usec cycle.
+During that time bits in various registers, especially the AC, can change.
+
+The emulator samples the state of all the light bits at one random subcycle in the main cycle.
+
+It seems the intent was to try to duplicate what the real lights would do, reflecting the microcycle changes
+using a *Monte Carlo* style of statistical averaging.
+
+BUT, sampling at random points ends up biasing the light updates way too much towards the microstate values,
+smearing the light pattern.
+You can think of it as stretching microstates to look like full 5usec states.
+This is the cause of complaints about the unrealistic appearance of the panel lights.
+
+An analysis determines that the microstates, which are fractions of a cycle and actually
+contribute nothing to the real visible lights because they are of such a short interval,
+end up having a signifant contribution to the light intensity.
+
+With the old single-sample approach, that one random-subcycle sample was the displayed lamp state
+so a rare 0.2us transient with a 4% chance of being sampled meant the lamp flickered fully on 4% of the time
+and fully off 96% of the time.
+A stark, visible binary flicker from something that should be imperceptible.
+
+The new algorithm used completely avoids this because of its new sampling technique.
 
 ## Flicker, priority, and power settings
 
@@ -109,7 +137,7 @@ But a warning: this forces the cpu to run at maximum speed and so uses more powe
 ## Alphas
 
 Alphas determine the charactersistics of the low-pass filters used to control turnon and turnoff times.
-These are the classical parameters for a digital iir low-pass filter.
+These are the classical parameters for a digital IIR first-order low-pass filter.
 
 Alpha values range from 0.0 to 1.0, with increasing values giving a shorter delay.
 A value of 1.0 is no delay, 0.0 is infinite delay, not useful.

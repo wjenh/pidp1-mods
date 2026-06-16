@@ -17,6 +17,7 @@
  * wje 8-Apr-26 make timing configurable instead of compile time
  * wje 11-Apr-26 the light pen really doesn't need a listener thread, just use nonblocking reads
  * wje 1-May-26 set radius^2 from config for the Type 340 display
+ * wje 16-Jun-26 many changes so the CHM simple test program displays like the real PDP-1
 */
 
 #include <fcntl.h>
@@ -257,6 +258,7 @@ FILE *tmpfP;    // used for timing
                 if( processHSCchannels() )          // need to steal a cycle
                 {
                     updatelights(pdp, panel);
+                    updatelights_pwm(panel, 1);     // tally one stolen cycle for new panel driver
                 }
                 else
                 {
@@ -308,6 +310,7 @@ FILE *tmpfP;    // used for timing
                 }
 
                 updatelights(pdp, panel);
+                updatelights_pwm(panel, 1);     // tally one halted cycle for new panel driver
             }
 
             throttle(pdp);

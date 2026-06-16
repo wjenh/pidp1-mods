@@ -30,6 +30,7 @@ typedef struct Panel Panel;
 typedef struct
 {
     int timernd;
+    int inst_cyc;       // cycles elapsed since current instruction started, for updatelights_pwm()
     Panel *panel;
 
     Word ac;
@@ -156,9 +157,15 @@ typedef struct
     int ad1watchNo;   // if a watch was hit, which one, index in watch table
     bool ad1watchHit;  // true if a watch was hit
     Watch ad1Watches[AD1_NUM_WATCHES]; // ad1 manages this
+
+    // Emulator-internal fields added after the initial release -- placed here
+    // so that IOT plugins compiled against older pdp1.h remain ABI-compatible
+    // (no existing field offsets change).
+    int sho_deferred;   // non-zero while SHRO's B12-B9 tail shifts are pending in the next cycle
 } PDP1, *PDP1P;
 
 void updatelights(PDP1 *pdp, Panel *panel);
+void updatelights_pwm(Panel *panel, int n);
 
 // Don't define all this stuff unless we're in the emulator.
 #ifndef NOT_IN_PDP1

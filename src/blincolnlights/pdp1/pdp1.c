@@ -32,6 +32,7 @@
  *    of the emulator, which is how it should have worked. This allows for much more accurate timing in
  *    the symbol generator and in the Type 340 display.
  * wje 12-Jun-26 detailed commentary added, hopefully accurate.
+ * wje 16-Jun-26 many changes so the CHM simple test program displays like the real PDP-1
 */
 #include "common.h"
 #include "pdp1.h"
@@ -1197,6 +1198,17 @@ int hack;
         }
 
         MB = 0;
+
+        // If this cycle is completing the last 4 shifts (B12-B9) of a SHRO
+        // instruction deferred from TP10 of the previous cycle, snapshot the
+        // now-settled AC/IO state and flush the deferred tally.
+        if(pdp->sho_deferred)
+        {
+            updatelights(pdp, pdp->panel);
+            updatelights_pwm(pdp->panel, pdp->sho_deferred);
+            pdp->sho_deferred = 0;
+        }
+
         TP(3)
 
     case 4:
@@ -1572,10 +1584,30 @@ int hack;
             }
             pdp->bc |= SBS_BREAK;
             pdp->cyc = 1;
+            pdp->inst_cyc = 0;      // break sequence starting; discard mid-instruction count
         }
         else if(!CY0_INST_DONE)
         {
-            pdp->cyc = 1;
+            pdp->cyc = 1;           // multi-cycle instruction continues; keep accumulating inst_cyc
+        }
+        else
+        {
+            // Instruction complete: tally settled register state n times (once per
+            // cycle the instruction held this state) into pwmcount, then reset.
+            if(IR_SHRO)
+            {
+                // SHRO's remaining 4 shifts (B12-B9) happen at TP0-TP3 of the
+                // next cycle0() call using the OLD MB/IR before the new instruction
+                // is fetched.  Defer the tally until those shifts finish so that
+                // the panel sees the fully-shifted AC/IO, not the intermediate state.
+                pdp->sho_deferred = pdp->inst_cyc;
+                pdp->inst_cyc = 0;   // reset now; the next cycle's count belongs to the following instruction
+            }
+            else
+            {
+                updatelights_pwm(pdp->panel, pdp->inst_cyc);
+                pdp->inst_cyc = 0;
+            }
         }
 
         TP(10)
@@ -1775,10 +1807,13 @@ int mask = 0;
         }
 
         pdp->bc |= SBS_BREAK;
+        pdp->inst_cyc = 0;          // break sequence starting; discard mid-instruction count
     }
     else if(INST_DONE)
     {
         pdp->cyc = 0;
+        updatelights_pwm(pdp->panel, pdp->inst_cyc);
+        pdp->inst_cyc = 0;
     }
 
     if(!pdp->df2)
@@ -2112,10 +2147,13 @@ int hack;
         if(SBS_BREAK)
         {
             pdp->bc |= SBS_BREAK;
+            pdp->inst_cyc = 0;      // break sequence starting; discard mid-instruction count
         }
         else
         {
             pdp->cyc = 0;
+            updatelights_pwm(pdp->panel, pdp->inst_cyc);
+            pdp->inst_cyc = 0;
         }
 
         if(IR_MUL)
@@ -2357,12 +2395,16 @@ int r;
     if( pdp->bc == 1 )
     {
         pdp->exd = 0;
+        pdp->sho_deferred = 0;      // discard any pending deferred SHRO tally
+        pdp->inst_cyc = 0;          // start of break sequence; count break cycles from here
     }
 
     // SBS256: 1->EXD, HOLD BREAK, JSP->IR, 1->df1, JE->MA (delayed)
     if(pdp->bc == 3)
     {
         pdp->cyc = 0;
+        updatelights_pwm(pdp->panel, pdp->inst_cyc);    // tally break sequence cycles
+        pdp->inst_cyc = 0;
     }
 
     pdp->bc = (pdp->bc + 1) & 3;
@@ -2378,6 +2420,7 @@ int r;
 void
 cycle(PDP1 *pdp)
 {
+    pdp->inst_cyc++;
     pdp->timernd = rand() % TP_unreachable;
 
     if(pdp->bc)

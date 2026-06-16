@@ -62,6 +62,7 @@
  *    on Linux.
  * 15-Jun-2026 fix bit setting size error in lightpen commands
  * 15-Jun-2026 don't apply wayland/labwc fix if user explicitly set a size
+ * 16-Jun-2026 ask for centered window, x11 will pay attention to this
 */
 
 #include <stdio.h>
@@ -406,6 +407,9 @@ SDL_Thread *threadP;
         fprintf(stderr,"Can't create window, %s\n", SDL_GetError());
         exit(1);
     }
+
+    // Center window, wayland will ignore this but it centers anyway, x11 will pay attention.
+    SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 
     // Initialize renderer and clear window.
     SDL_SetRenderLogicalPresentation(renderer, 1024, 1024, SDL_LOGICAL_PRESENTATION_LETTERBOX);

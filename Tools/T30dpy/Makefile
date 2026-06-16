@@ -2,6 +2,7 @@ GCC=gcc -O3 -march=native -Wall -Wextra -Wno-unused-result -Wno-implicit-fallthr
     -Wno-unused-parameter
 #GCC=gcc -g -Og -march=native -Wall -Wextra -Wno-unused-result -Wno-implicit-fallthrough -Wno-switch \
     -fsanitize=address,undefined
+#GCC=gcc -g -Og -march=native -Wall -Wextra -Wno-unused-result -Wno-implicit-fallthrough -Wno-switch
 
 all: t30dpy t30dpy3
 

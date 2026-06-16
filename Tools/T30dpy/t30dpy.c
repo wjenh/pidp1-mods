@@ -65,6 +65,7 @@
  *     on Linux.
  * 15-Jun-2026 fix bit setting size error in lightpen commands
  * 15-Jun-2026 don't apply wayland/labwc fix if user explicitly set a size
+ * 16-Jun-2026 ask for centered window, x11 will pay attention to this
 */
 
 #include <stdio.h>
@@ -390,7 +391,7 @@ struct timespec sleepTime;
     }
 
     window = SDL_CreateWindow("T30dpy Type 30 Display",
-        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winSize, winSize,
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winSize, winSize,
             ((!border)?SDL_WINDOW_BORDERLESS:0) | SDL_WINDOW_ALLOW_HIGHDPI);
 
     // Create the renderer, set to black and display.

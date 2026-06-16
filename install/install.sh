@@ -229,7 +229,7 @@ while true; do
                 ln -sf $INSTALLDIR/src/blincolnlights/tapevis/tapevis $INSTALLDIR/bin/tapevis
                 while true; do
                     echo
-                    read -p "Use the new PiDP hardware front panel (Y) or the old panel (N)? " yn
+                    read -p "Install the new PiDP hardware front panel (Y) or the old panel (N)? " yn
                     case $yn in
                         [Yy]* )
                             echo Installed the new PiDP hardware front panel

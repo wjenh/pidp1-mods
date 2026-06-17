@@ -13,6 +13,7 @@
  *
  * 20-Apr-2026 wje initial implementation
  * 6-May-2026 wje a stop or start from the pidp-1 stops the 340 and reverts to param mode
+ * 17-Jun-2026 wje fix a potential arm cortex issue around synchronization with type340emu.
  */
 
 #include <unistd.h>
@@ -48,8 +49,7 @@ int tmp;
 int x, y;
 int flags;
 bool needSkip;
-bool needClear;
-bool needCompletion;
+bool needCompletion = false;    /* must be initialized; completion path only sets it true */
 EmuControlP ctlP;
 
     if( completion )
@@ -74,8 +74,6 @@ EmuControlP ctlP;
     switch( dev )
     {
     case IOT1:
-        flags = 0;
-
         if( cmd & 02 )
         {
             emuClearFlags();
@@ -84,7 +82,7 @@ EmuControlP ctlP;
         {
             // drs, display resume sequence
             ctlP->command = EMU_CMD_RESUME;
-            iotCondLog(LOG_IOT, "drs%s\n", (flags)?" and clear flags":"");
+            iotCondLog(LOG_IOT, "drs%s\n", (cmd & 02)?" and clear flags":"");
         }
         else
         {
@@ -92,7 +90,7 @@ EmuControlP ctlP;
             // This also resets flags via the RUN in the display emulator
             ctlP->address = IO(pdp1P);            // This is a full 16 bit address
             ctlP->command = EMU_CMD_RUN;
-            iotCondLog(LOG_IOT, "dla %o%s\n", ctlP->address, (flags)?" and clear flags":"");
+            iotCondLog(LOG_IOT, "dla %o%s\n", ctlP->address, (cmd & 02)?" and clear flags":"");
         }
 
         emuCommandSet(ctlP);

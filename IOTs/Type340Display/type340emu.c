@@ -25,6 +25,7 @@
  * 14-May-2026 wje general cleanup, remove unused code, refactor vcontinue to make it more clear
  * 14-May-2026 wje fix wrong mask in PUT_SUBROUTINE_OP()
  * 16-May-2026 wje adjust timings, main loop is only 1us delay after hsc completion, add interrupt disable
+ * 17-Jun-2026 wje fix one timing error in vector, off by 500ns. Fix a few minor bugs and one arm cortex issue.
  */
 
 #include <stdlib.h>
@@ -32,6 +33,7 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <semaphore.h>
 #include <math.h>
@@ -103,7 +105,8 @@
 // Convert a command word mode field to one of the mode enum values
 #define MODE(x) (((x) >> 13) & 07)
 // Convert one of the mode enum values to the value to used in a command word.
-#define PUTMODE(x) (((x) << 13) & 07)
+// Mode bits occupy PDP-1 bits 2-4, which are C bits 15-13.
+#define PUTMODE(x) (((x) & 07) << 13)
 
 // Used to terminate vector and increment modes
 #define ESCAPE(x) ((x) & 0400000)
@@ -607,7 +610,7 @@ Status status;
                 i = SLAVE_GROUP(word);
                 if( i < NUMSLAVEGROUPS )
                 {
-                    i += i * 4;     // 4 monitors per group
+                    i *= 4;         // 4 monitors per group: base index for this group's slave array entries
                     for( x = 0; x < 4; ++x )
                     {
                         tmp = SLAVE_GET_FLAGS(word, x);
@@ -756,7 +759,10 @@ Status status;
                     }
                     else if( brmState.draw )
                     {
-                        pendingDelay += INTENSIFY(word)?1500:1000;
+                        // The hardware 0.5 us intensify-s delay always runs, followed by the
+                        // 1.0 us sequence delay, for a fixed 1.5 us per step regardless of
+                        // whether the beam is actually unblanked (BR1 / intensify bit).
+                        pendingDelay += 1500;
 
                         if( drawAndCheck(true, curX, curY, curIntensity) )
                         {
@@ -767,7 +773,7 @@ Status status;
                 break;
 
             case INCREMENT:
-                curState == RUNNING;            // not necessary, but do it for consistency
+                curState = RUNNING;             // not necessary, but do it for consistency
                 word = getWord(ctlP->pdp1P);
 
                 if( ESCAPE(word) )
@@ -790,6 +796,9 @@ Status status;
                     else
                     {
                         // Actually want to draw it
+                        // The hardware always takes 1.5 us per nibble (0.5 us intensify-s
+                        // delay + 1.0 us sequence delay), whether or not the beam is unblanked.
+                        pendingDelay += 1500;
                         if( INTENSIFY(word) )
                         {
                             if( drawAndCheck(true, curX, curY, curIntensity) )
@@ -797,12 +806,6 @@ Status status;
                                 // Lp hit, will take effect on the next word
                                 isPaused = true;
                             }
-
-                            pendingDelay += 1500;            // manual says 1.5 usec
-                        }
-                        else
-                        {
-                            pendingDelay += 1000;            // but only 1 usec if not showing a dot
                         }
                     }
                 }
@@ -1372,7 +1375,16 @@ bool sawHit;
         return(COMPLETED);
 
     case CH_CR:
+        // The hardware clears X to the left edge, then produces nine COUNT pulses that
+        // decrement Y by one dotSpacing each, dropping the beam nine units downward.
         curX = 0;
+        curY -= 9 * dotSpacing;
+
+        if( checkBounds(curX, curY) )
+        {
+            iotCondLog(LOG_BOUNDS, "character CR edge violation x, y %d %d\n", curX, curY);
+            return(EDGEVIOLATION);
+        }
         return(COMPLETED);
 
     case CH_UC:
@@ -1743,41 +1755,60 @@ struct timespec tm;
     return(0);
 }
 
-// See if there is a pending command.
-// Called from the 340 emulator side.
-// If so, return it.
-// Otherwise,return NONE.
+/*
+ * get340Command -- poll for a pending command from the IOT side.
+ * Called from the 340 emulator thread, either in the running poll loop or
+ * after waking from the idle semaphore.
+ *
+ * commandSent is _Atomic bool.  The acquire load here pairs with the release
+ * store in emuCommandSet() (see type340emu.h), guaranteeing that ctlP->command
+ * is fully visible before we read it.  This is essential on ARM (Pi 4) where
+ * the CPU's weakly-ordered memory model otherwise allows the load of command
+ * to be satisfied from a stale cache line even after commandSent reads true.
+ *
+ * The flag clears use relaxed ordering; we already hold the acquire fence from
+ * the commandSent load, so no additional barrier is required for the clears.
+ *
+ * Returns: command code, or EMU_CMD_NONE if nothing is pending.
+ */
 int
 get340Command(EmuControlP ctlP)
 {
 int command;
 
-    if( !(ctlP->commandSent) )
+    if( !(atomic_load_explicit(&ctlP->commandSent, memory_order_acquire)) )
     {
         command = EMU_CMD_NONE;
     }
     else
     {
+        /* commandSent acquire-load above is the barrier; command is now visible */
         command = ctlP->command;
-        ctlP->responseSent = ctlP->commandSent = false;
+        atomic_store_explicit(&ctlP->commandSent,  false, memory_order_relaxed);
+        atomic_store_explicit(&ctlP->responseSent, false, memory_order_relaxed);
     }
 
     return(command);
 }
 
-// See if there is a pending response.
-// Called from the IOT side.
-// If so, return it.
-// Otherwise, return NONE.
+/*
+ * get340Response -- poll for a pending response from the emulator side.
+ * Called from the IOT thread.
+ *
+ * Same acquire/relaxed pattern as get340Command: the acquire load on
+ * responseSent guarantees ctlP->response is visible before we read it.
+ *
+ * Returns: response code, or EMU_RESPONSE_NONE if nothing is pending.
+ */
 int
 get340Response(EmuControlP ctlP)
 {
 int resp;
 
-    if( ctlP->responseSent )
+    if( atomic_load_explicit(&ctlP->responseSent, memory_order_acquire) )
     {
         resp = ctlP->response;
-        ctlP->responseSent = false;
+        atomic_store_explicit(&ctlP->responseSent, false, memory_order_relaxed);
     }
     else
     {

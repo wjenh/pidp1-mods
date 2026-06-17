@@ -65,7 +65,9 @@
  *     on Linux.
  * 15-Jun-2026 fix bit setting size error in lightpen commands
  * 15-Jun-2026 don't apply wayland/labwc fix if user explicitly set a size
- * 16-Jun-2026 ask for centered window, x11 will pay attention to this
+ * 17-Jun-2026 wje (Claude) right-mouse-button drag: SDL_BUTTON_RIGHT down/up sets dragging
+ *     state; SDL_MOUSEMOTION while dragging calls SDL_SetWindowPosition with the delta
+ *     from the button-down origin.
 */
 
 #include <stdio.h>
@@ -275,6 +277,14 @@ SDL_Rect bounds;
 SDL_Thread *threadP;
 struct timespec sleepTime;
 
+bool dragging;              // true while the right mouse button is held for a window drag
+int dragStartGlobalX;       // screen-absolute cursor x when right button was pressed
+int dragStartGlobalY;       // screen-absolute cursor y when right button was pressed
+int dragWinOriginX;         // window screen x when right button was pressed
+int dragWinOriginY;         // window screen y when right button was pressed
+int mouseGlobalX;           // scratch: current screen-absolute cursor x during drag
+int mouseGlobalY;           // scratch: current screen-absolute cursor y during drag
+
     // On Windows, Winsock must be initialized before any socket call.
     // winSockStartup() is a no-op returning 0 on Linux.
     if( winSockStartup() )
@@ -295,6 +305,13 @@ struct timespec sleepTime;
     frameMisses = 0;
     frameDelay = 0;
     cursorTime = 0;
+    dragging = false;
+    dragStartGlobalX = 0;
+    dragStartGlobalY = 0;
+    dragWinOriginX = 0;
+    dragWinOriginY = 0;
+    mouseGlobalX = 0;
+    mouseGlobalY = 0;
 
     loadConfig(true);             // config overrides defines, command line overrides all
 
@@ -391,7 +408,7 @@ struct timespec sleepTime;
     }
 
     window = SDL_CreateWindow("T30dpy Type 30 Display",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winSize, winSize,
+        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winSize, winSize,
             ((!border)?SDL_WINDOW_BORDERLESS:0) | SDL_WINDOW_ALLOW_HIGHDPI);
 
     // Create the renderer, set to black and display.
@@ -489,22 +506,50 @@ struct timespec sleepTime;
                     SDL_GetMouseState(&penx, &peny);
                     updatePen(pdp1FD, window, true, penx, peny);
                 }
+                if( dragging )
+                {
+                    // Use screen-absolute cursor position so the calculation is
+                    // independent of window position. xrel/yrel are not used because
+                    // SDL2 computes them from window-relative coords: after
+                    // SDL_SetWindowPosition shifts the window, the next event's
+                    // window-relative position jumps by the same amount, corrupting
+                    // xrel/yrel and producing wild oscillation.
+                    // new_win = origin_at_drag_start + (cursor_now - cursor_at_drag_start)
+                    SDL_GetGlobalMouseState(&mouseGlobalX, &mouseGlobalY);
+                    SDL_SetWindowPosition(window,
+                        (dragWinOriginX + (mouseGlobalX - dragStartGlobalX)),
+                        (dragWinOriginY + (mouseGlobalY - dragStartGlobalY)));
+                }
                 break;
 
             case SDL_MOUSEBUTTONDOWN:
-                if( event.button.button == 1 )
+                if( event.button.button == SDL_BUTTON_LEFT )
                 {
                     penDown = true;
                     SDL_GetMouseState(&penx, &peny);
                     updatePen(pdp1FD, window, true, penx, peny);
                 }
+                else if( event.button.button == SDL_BUTTON_RIGHT )
+                {
+                    // Snapshot the screen-absolute cursor position and the window's
+                    // screen origin at the moment the drag begins. All subsequent
+                    // motion uses global coords so window-relative drift can't corrupt
+                    // the delta calculation.
+                    dragging = true;
+                    SDL_GetGlobalMouseState(&dragStartGlobalX, &dragStartGlobalY);
+                    SDL_GetWindowPosition(window, &dragWinOriginX, &dragWinOriginY);
+                }
                 break;
 
             case SDL_MOUSEBUTTONUP:
-                if(event.button.button == 1)
+                if( event.button.button == SDL_BUTTON_LEFT )
                 {
                     penDown = false;
                     updatePen(pdp1FD, window, false, 0, 0);
+                }
+                else if( event.button.button == SDL_BUTTON_RIGHT )
+                {
+                    dragging = false;
                 }
                 break;
 

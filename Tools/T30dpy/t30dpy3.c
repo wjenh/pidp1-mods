@@ -62,7 +62,10 @@
  *    on Linux.
  * 15-Jun-2026 fix bit setting size error in lightpen commands
  * 15-Jun-2026 don't apply wayland/labwc fix if user explicitly set a size
- * 16-Jun-2026 ask for centered window, x11 will pay attention to this
+ * 17-Jun-2026 wje (Claude) right-mouse-button drag: SDL_BUTTON_RIGHT down/up sets dragging
+ *    state; SDL_EVENT_MOUSE_MOTION while dragging calls SDL_SetWindowPosition with the
+ *    delta from the button-down origin. Drag coords are captured before any render-space
+ *    conversion so they remain in raw window space.
 */
 
 #include <stdio.h>
@@ -284,6 +287,14 @@ SDL_Rect bounds;
 
 SDL_Thread *threadP;
 
+bool dragging;              // true while the right mouse button is held for a window drag
+int dragStartGlobalX;       // screen-absolute cursor x when right button was pressed
+int dragStartGlobalY;       // screen-absolute cursor y when right button was pressed
+int dragWinOriginX;         // window screen x when right button was pressed
+int dragWinOriginY;         // window screen y when right button was pressed
+float fMouseGlobalX;        // scratch: SDL3 GetGlobalMouseState returns float
+float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
+
     // On Windows, Winsock must be initialized before any socket call.
     // winSockStartup() is a no-op returning 0 on Linux.
     if( winSockStartup() )
@@ -304,6 +315,13 @@ SDL_Thread *threadP;
     frameMisses = 0;
     frameDelay = 0;
     cursorTime = 0;
+    dragging = false;
+    dragStartGlobalX = 0;
+    dragStartGlobalY = 0;
+    dragWinOriginX = 0;
+    dragWinOriginY = 0;
+    fMouseGlobalX = 0.0f;
+    fMouseGlobalY = 0.0f;
 
     loadConfig(true);             // config overrides defines, command line overrides all
 
@@ -407,9 +425,6 @@ SDL_Thread *threadP;
         fprintf(stderr,"Can't create window, %s\n", SDL_GetError());
         exit(1);
     }
-
-    // Center window, wayland will ignore this but it centers anyway, x11 will pay attention.
-    SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 
     // Initialize renderer and clear window.
     SDL_SetRenderLogicalPresentation(renderer, 1024, 1024, SDL_LOGICAL_PRESENTATION_LETTERBOX);
@@ -517,35 +532,63 @@ SDL_Thread *threadP;
                 break;
 
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                penDown = true;
-                SDL_ConvertEventToRenderCoordinates(renderer, &event);
-                penx = (int)event.button.x;
-                peny = (int)event.button.y;
-                penx = CONSTRAIN(penx);
-                peny = CONSTRAIN(peny);
-                updatePen(pdp1FD, true, penx, peny);
-                SDL_ShowCursor();
-                cursorTime = now();
+                if( event.button.button == SDL_BUTTON_LEFT )
+                {
+                    penDown = true;
+                    SDL_ConvertEventToRenderCoordinates(renderer, &event);
+                    penx = CONSTRAIN((int)event.button.x);
+                    peny = CONSTRAIN((int)event.button.y);
+                    updatePen(pdp1FD, true, penx, peny);
+                    SDL_ShowCursor();
+                    cursorTime = now();
+                }
+                else if( event.button.button == SDL_BUTTON_RIGHT )
+                {
+                    // Snapshot screen-absolute cursor position and window origin at
+                    // drag start. SDL3 GetGlobalMouseState returns float.
+                    dragging = true;
+                    SDL_GetGlobalMouseState(&fMouseGlobalX, &fMouseGlobalY);
+                    dragStartGlobalX = (int)fMouseGlobalX;
+                    dragStartGlobalY = (int)fMouseGlobalY;
+                    SDL_GetWindowPosition(window, &dragWinOriginX, &dragWinOriginY);
+                }
                 break;
-                
+
             case SDL_EVENT_MOUSE_MOTION:
                 cursorTime = now();
-
+                if( dragging )
+                {
+                    // Screen-absolute cursor position: independent of window position
+                    // and of SDL3's logical presentation scaling.
+                    // xrel/yrel are not used: SDL computes them from window-relative
+                    // coords, so after SDL_SetWindowPosition shifts the window they
+                    // are corrupted by the negative of the window's movement, causing
+                    // the window to move at half speed and the cursor to drift.
+                    // new_win = origin_at_drag_start + (cursor_now - cursor_at_drag_start)
+                    SDL_GetGlobalMouseState(&fMouseGlobalX, &fMouseGlobalY);
+                    SDL_SetWindowPosition(window,
+                        (dragWinOriginX + ((int)fMouseGlobalX - dragStartGlobalX)),
+                        (dragWinOriginY + ((int)fMouseGlobalY - dragStartGlobalY)));
+                }
                 if( penDown )
                 {
                     SDL_ConvertEventToRenderCoordinates(renderer, &event);
-                    penx = (int)event.motion.x;
-                    peny = (int)event.motion.y;
-                    penx = CONSTRAIN(penx);
-                    peny = CONSTRAIN(peny);
-
+                    penx = CONSTRAIN((int)event.motion.x);
+                    peny = CONSTRAIN((int)event.motion.y);
                     updatePen(pdp1FD, true, penx, peny);
                 }
                 break;
 
             case SDL_EVENT_MOUSE_BUTTON_UP:
-                penDown = false;
-                updatePen(pdp1FD, false, 0, 0);
+                if( event.button.button == SDL_BUTTON_LEFT )
+                {
+                    penDown = false;
+                    updatePen(pdp1FD, false, 0, 0);
+                }
+                else if( event.button.button == SDL_BUTTON_RIGHT )
+                {
+                    dragging = false;
+                }
                 break;
             }
         }

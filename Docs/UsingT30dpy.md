@@ -2,10 +2,10 @@
 
 This document describes the t30dpy and t30dpy3 simulated Type 30 display.
 
-This is version 1.7
+This is version 1.8
 
-Edit date 15-June-2026\
-udpate for change to wayland/labwc autoresizing
+Edit date 17-June-2026\
+udpate for window dragging
 
 ## T30dpy, t30dpy3, and Wayland/labwrc
 
@@ -41,6 +41,8 @@ If the user *has not explicitly set a window size* and the t30 window being open
 than the physical screen minus a margin, it is silently resized to be the screen size minus the margin.
 
 Why a fixed margin? Because remember that you can't get information about the size of the taskbar!
+
+Additionally, the window can be dragged by holding down the right mouse button anywhere in the window.
 
 However, switching to X11 is recommended. T30dpy is far faster under X11, about 20% of the cpu load under Wayland.
 
@@ -267,7 +269,7 @@ The termination value is configrable in the code, as are many other values.
 
 See the source code for much more information, it is well commented and structured.
 
-## Window size and pixel scaling
+## Window size, dragging, and pixel scaling
 
 The texture that is drawn to is always 1024x1024, but the window that the texture is rendered to is whatever
 size was specified, and in full screen mode, whatever size that is.
@@ -283,6 +285,12 @@ Bilinear also gives a smoother, softer appearance to dots when scaling occurs.
 
 The SDL3 version is much better at scaling but it still allows selection ov nearest-neighbor or linear
 for the visual effect.
+
+For both versions, the window can be dragged by holding down the *right* mouse button anywhere in the window,
+very useful for getting around the annoying wayland/labwc behaviors.
+
+The SDL3 version allows window resizing by the usual edge dragging, but note that labwc only provides a **one pixel**
+border, pretty useless for capturing for the resize. Another absurd design decision on the part of labwc.
 
 ## White bias
 

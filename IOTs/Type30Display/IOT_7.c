@@ -5,6 +5,7 @@
  * According to the DEC documentation, it takes approximately 35 microseconds to draw a character,
  * 30 usecs to position the dot, then 5 usecs of intensification.
  *
+ * 17-Jun-2026 wje finally adding a revision hisotry. Fix for the original incorrect code for twe screen mode.
  */
 
 #include <unistd.h>
@@ -94,6 +95,11 @@ bool noWait;
         needCompletion = true;
     }
 
+    // In the original hardware, an IOT instuction caused the associated hardware to be activated twice.
+    // Pulse 0 occured early in the 5usec machine cycle to allow a device to do any initialization
+    // and setup it needed.
+    // Then later in the cycle it was signaled with pulse == 1 to perform the actual operation.
+    // Pulse 0 is used here for the same purpose, initialization.
     if( !pulse )
     {
         curX = 0;
@@ -248,7 +254,7 @@ int realX, realY;
         // unclear what's happening here exactly
         // spacewar 4.4 uses only intensity 0/4
         intensity &= 3;
-        display(1, realX, realX, type30Intensity(intensity & 03));
+        display(1, realX, realY, type30Intensity(intensity & 03));
     }
     else if( lightpenEnabled && checkLightpen(0, realX, realY) )
     {

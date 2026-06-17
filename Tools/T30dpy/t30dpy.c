@@ -65,9 +65,13 @@
  *     on Linux.
  * 15-Jun-2026 fix bit setting size error in lightpen commands
  * 15-Jun-2026 don't apply wayland/labwc fix if user explicitly set a size
+ * 17-Jun-2026 wje (Claude) declare activeListHead, freeListHead, quit as volatile to prevent
+ *     the optimizer from caching them in registers across frames; symptom was display going
+ *     blank after many hours while the program continued running.
  * 17-Jun-2026 wje (Claude) right-mouse-button drag: SDL_BUTTON_RIGHT down/up sets dragging
  *     state; SDL_MOUSEMOTION while dragging calls SDL_SetWindowPosition with the delta
  *     from the button-down origin.
+ * 17-Jun-2026 wje add window resizing. Most of the logic was already around from the work done on p7sim.
 */
 
 #include <stdio.h>
@@ -187,8 +191,8 @@ typedef struct ActivePoint {
 // When an item is moved from the busy list, it is added to the head of the free list.
 ActivePoint activePool[MAXACTIVEPOINTS];   // the pool of active-point entries, indexed by uint32_t
 uint32_t pointIndex[SIZE][SIZE];           // pointIndex[y][x] -> activePool[] index, or NOINDEX
-uint32_t activeListHead;                   // head index of the list of points to display in a cycle, or NOINDEX
-uint32_t freeListHead;                     // head index of the free pool entries, or NOINDEX
+volatile uint32_t activeListHead;          // head index of the list of points to display in a cycle, or NOINDEX
+volatile uint32_t freeListHead;            // head index of the free pool entries, or NOINDEX
 SDL_mutex *busyLockP;                       // for interlocking with the reader thread
 
 // Th precomputed rgba values for each possibe pdp-1 intensity and internal time step.
@@ -206,7 +210,7 @@ uint64_t droppedPoints;         // count of points dropped because activePool[] 
 
 bool allowLabwcFix = true;
 bool usingLabwc = false;
-bool quit = false;
+volatile bool quit = false;
 bool border;
 bool doLinear = LINEAR;
 bool doVsync = VSYNC;
@@ -408,8 +412,8 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
     }
 
     window = SDL_CreateWindow("T30dpy Type 30 Display",
-        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, winSize, winSize,
-            ((!border)?SDL_WINDOW_BORDERLESS:0) | SDL_WINDOW_ALLOW_HIGHDPI);
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winSize, winSize,
+            ((!border)?SDL_WINDOW_BORDERLESS:0) | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
 
     // Create the renderer, set to black and display.
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | (doVsync)?SDL_RENDERER_PRESENTVSYNC:0 );

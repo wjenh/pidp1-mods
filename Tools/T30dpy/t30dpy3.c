@@ -62,6 +62,9 @@
  *    on Linux.
  * 15-Jun-2026 fix bit setting size error in lightpen commands
  * 15-Jun-2026 don't apply wayland/labwc fix if user explicitly set a size
+ * 17-Jun-2026 wje (Claude) declare activeListHead, freeListHead, quit as volatile to prevent
+ *    the optimizer from caching them in registers across frames; symptom was display going
+ *    blank after many hours while the program continued running.
  * 17-Jun-2026 wje (Claude) right-mouse-button drag: SDL_BUTTON_RIGHT down/up sets dragging
  *    state; SDL_EVENT_MOUSE_MOTION while dragging calls SDL_SetWindowPosition with the
  *    delta from the button-down origin. Drag coords are captured before any render-space
@@ -189,8 +192,8 @@ typedef struct ActivePoint {
 // When an item is moved from the busy list, it is added to the head of the free list.
 ActivePoint activePool[MAXACTIVEPOINTS];     // compact pool of active-point records
 uint32_t pointIndex[LOGICALSIZE][LOGICALSIZE]; // maps screen (y,x) -> pool index, or NOINDEX
-uint32_t activeListHead;                     // head index of the active list, or NOINDEX if empty
-uint32_t freeListHead;                       // head index of the free list, or NOINDEX if exhausted
+volatile uint32_t activeListHead;            // head index of the active list, or NOINDEX if empty
+volatile uint32_t freeListHead;              // head index of the free list, or NOINDEX if exhausted
 uint64_t droppedPoints;                      // counts points dropped because the pool was exhausted
 SDL_Mutex *busyLockP;                       // for interlocking with the reader thread
 
@@ -207,7 +210,7 @@ int whiteBias = WHITEBIAS;
 
 bool allowLabwcFix = true;
 bool usingLabwc = false;
-bool quit = false;
+volatile bool quit = false;
 bool border;
 bool doLinear = LINEAR;
 bool mikecMode = false;

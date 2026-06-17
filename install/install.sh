@@ -168,12 +168,13 @@ while true; do
 		make -C $INSTALLDIR/src/blincolnlights/pinctrl 	# pinctrl functions
 		make -C $INSTALLDIR/src/blincolnlights/panel_pidp1 all 	# panel driver
 		make -C $INSTALLDIR/src/blincolnlights/pdp1 	# simulator
-		make -C $INSTALLDIR/src/p7sim			# returns sense switches
+		make -C $INSTALLDIR/src/p7sim			# type 30 displays
 		make -C $INSTALLDIR/src/scanpf 			# returns sense switches
-		make -C $INSTALLDIR/src/blincolnlights/tapevis	# returns sense switches
+		make -C $INSTALLDIR/src/blincolnlights/tapevis	# visualize a rim tape
 		make -C $INSTALLDIR/src/pidp1_test 		# hardware test program
 		make -C $INSTALLDIR/src/pdp1_periph		# unified peripherals
-		make all -C $INSTALLDIR/IOTs			# dynamic IOTs
+		make clean -C $INSTALLDIR/IOTs			# dynamic IOTs, be sure no leftovers
+		make all -C $INSTALLDIR/IOTs			# dynamic IOTs, all of them
 		
 		# this makes the virtual pdp-1 panel, used if no PiDP-1 hardware is attached:
 		make -C $INSTALLDIR/src/blincolnlights/vpanel_pdp1 	# panel driver
@@ -187,6 +188,7 @@ while true; do
                 # The drum tools
 		make -C $INSTALLDIR/Tools/Drumupdater install
 		make -C $INSTALLDIR/Tools/Drumupdater clean
+
                 # The new Type 30 display, either the SDL2 or SDL3 version
                 if dpkg-query -W -f='${Status}' libsdl3-dev 2>/dev/null | grep -q "ok installed"; then
                     echo "SDL3 found, installing type30dpy3 as type30dpy."
@@ -195,7 +197,6 @@ while true; do
                     echo "No SDL3 library is present, installing SDL2 type30dpy."
                     make -C $INSTALLDIR/Tools/T30dpy install
                 fi
-                
 		make -C $INSTALLDIR/Tools/T30dpy clean
 
 		# the macro1_1 cross-compiler:
@@ -214,6 +215,8 @@ while true; do
             	sudo chmod +s $INSTALLDIR/src/blincolnlights/panel_pidp1
             	# to run as a RT thread:
             	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1
+                # newpanel does not require running as an RT thread, but it has the option of doing so
+            	sudo chmod +s $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel
             	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel
 
                 ln -sf $INSTALLDIR/src/macro/macro1_1 $INSTALLDIR/bin/macro1_1

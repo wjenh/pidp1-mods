@@ -117,6 +117,11 @@ do_reload() {
 
 do_t30reload() {
         pkill -HUP 't30dpy'
+        pkill -HUP 't30dpy3'
+}
+
+do_panelreload() {
+        pkill -HUP 'panel_pidp1'
 }
 
 do_stop() {
@@ -267,6 +272,10 @@ case "$1" in
 	do_t30reload
 	;;
 
+  reloadpanel)
+	do_t30reload
+	;;
+
   set)
 	do_set $1 $2
 	;;
@@ -286,6 +295,7 @@ case "$1" in
 	;;
   ?)
 	echo "Usage: pdp1control {start|stop|reload|restart|set|panel|status|stat}" || true
+	echo "       pdp1control {reloadt30dpy|reloadpanel}" || true
 	exit 1
 	;;
   *)

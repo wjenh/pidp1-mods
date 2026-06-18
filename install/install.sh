@@ -466,7 +466,7 @@ while true; do
             chmod u+x /home/$usr/Desktop/ptr.desktop
             chmod u+x /home/$usr/Desktop/ptp.desktop
             chmod u+x /home/$usr/Desktop/audioOn.desktop
-            chmod u+x /home/$usr/audioOff.desktop
+            chmod u+x /home/$usr/Desktop/audioOff.desktop
 
             #make pcmanf run on double click, change its config file
             config_file="/home/$usr/.config/libfm/libfm.conf"

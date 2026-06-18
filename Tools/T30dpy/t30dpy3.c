@@ -69,11 +69,31 @@
  *    state; SDL_EVENT_MOUSE_MOTION while dragging calls SDL_SetWindowPosition with the
  *    delta from the button-down origin. Drag coords are captured before any render-space
  *    conversion so they remain in raw window space.
+ * 18-Jun-2026 wje (Claude) reclaim SIGINT from SDL3: SDL_HINT_NO_SIGNAL_HANDLERS before
+ *    SDL_Init() prevents SDL3 from installing its own SIGINT handler; sighandler()
+ *    registered for SIGINT along with SIGHUP/SIGTERM. SDL_WaitThread() added before
+ *    mutex/SDL_Quit() cleanup to prevent use-after-free if reader thread exits late.
+ * 18-Jun-2026 wje extract reportTiming() function; call from sighandler() and reconfigure()
+ *    so timing data is output on SIGINT and SIGHUP as well as normal exit. Move startTime,
+ *    frameMisses, frameDelay to global scope so reportTiming() can reach them.
+ * 18-Jun-2026 wje (Claude) hardcode SDL_PIXELFORMAT_RGBA8888 instead of querying the
+ *    renderer's preferred format. The software renderer on rpi trixie returns ARGB8888;
+ *    with the premultiplied-alpha scheme (alpha stored as 255, brightness in RGB) the
+ *    0xFF alpha byte lands in a color channel, causing all points to appear at full
+ *    brightness. RGBA8888 matches t30dpy (SDL2) and works on all backends.
+ * 18-Jun-2026 wje (Claude) remove explicit SDL_DestroyRenderer/SDL_DestroyWindow before
+ *    SDL_Quit(). On X11, those calls trigger XTranslateCoordinates on the window after X
+ *    has invalidated the resource, producing a BadWindow error. SDL_Quit() sequences the
+ *    teardown correctly on its own.
+ * 18-Jun-2026 wje (Claude) replace SDL_CreateWindowAndRenderer with
+ *    SDL_CreateWindowWithProperties + SDL_CreateRenderer so SDL_WINDOWPOS_CENTERED can be
+ *    specified. X11 honors this; Wayland ignores it but centers new windows by default.
 */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <ctype.h>
@@ -219,12 +239,17 @@ float gammaCorrection = GAMMA;
 
 uint32_t blackPixel;                 // The value is numeric 0, but use the SDL generated version for consistency.
 
+// These are global only so reportTiming() can see them.
+uint64_t startTime;
+uint64_t frameDelay;
+uint32_t frameMisses;
+
 // These values are used only for timing metrics.
 uint64_t totalPoints;
 uint64_t receivedPoints;
 uint64_t totalFrames;
 uint64_t maxActivePoints;
-uint64_t activePoints;
+_Atomic  uint64_t activePoints;     // overly obsessive to get perfect counts, but only used for timing
 bool doTiming;
 
 // These are all for SDL.
@@ -252,6 +277,7 @@ void updatePen(int sockFD, bool penDown, int winX, int winY);
 void loadConfig(bool full);
 void sighandler(int sig);
 void reconfigure(int sig);
+void reportTiming(void);
 void usage(void);
 FILE *getFile(char *nameP);
 
@@ -266,16 +292,12 @@ bool fullscreen;
 bool penDown;
 char *cP;
 
-uint64_t startTime;
-uint64_t currentTime;
-uint64_t lastTime;
 uint64_t deltaTime;
 uint64_t accumulator;       // Used for loop timing so the frane rate can be kept at 30fps.
+uint64_t currentTime;
+uint64_t lastTime;
 
 uint64_t cursorTime;
-uint64_t frameDelay;
-uint32_t frameMisses;
-
 uint32_t pointIdx;
 uint32_t prevIdx;
 uint32_t nextIdx;
@@ -285,8 +307,8 @@ uint32_t rgba;
 int pitch;
 
 SDL_Event event;
-SDL_PropertiesID props;
 SDL_Rect bounds;
+SDL_PropertiesID winPropsID;    // for SDL_CreateWindowWithProperties
 
 SDL_Thread *threadP;
 
@@ -395,9 +417,18 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
         exit(1);
     }
 
-    // SIGHUP will cause reloading of the configuration file, SIGTERM exits cleanly
+    // Keep SDL out of our interrrupt handling.
+    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+
+    // SIGHUP will cause reloading of the configuration file, SIGTERM and SIGINT exit cleanly.
     signal(SIGHUP, reconfigure);
+    signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
+
+    // We want SDL to use the hardware driver if possible.
+    // But, it gets confused on rpi systems running trixie, give it a hint.
+    //SDL_SetHint(SDL_HINT_RENDER_DRIVER, "wayland,x11")
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
 
     // init SDL
     if( !SDL_Init(SDL_INIT_VIDEO) )
@@ -422,10 +453,36 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
         }
     }
 
-    if( !SDL_CreateWindowAndRenderer("T30dpy3 Type 30 Display", winSize, winSize,
-        SDL_WINDOW_RESIZABLE|((!border)?SDL_WINDOW_BORDERLESS:0), &window, &renderer) )
+    // Create window via properties so SDL_WINDOWPOS_CENTERED can be specified.
+    // X11 honors this and opens the window centered on the primary display.
+    // Wayland ignores application-requested position (the compositor controls placement)
+    // but already centers new windows by default, so this is a no-op there.
+    if( !(winPropsID = SDL_CreateProperties()) )
     {
-        fprintf(stderr,"Can't create window, %s\n", SDL_GetError());
+        fprintf(stderr, "Can't create window properties, %s\n", SDL_GetError());
+        exit(1);
+    }
+
+    SDL_SetStringProperty(winPropsID, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "T30dpy3 Type 30 Display");
+    SDL_SetNumberProperty(winPropsID, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
+    SDL_SetNumberProperty(winPropsID, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED);
+    SDL_SetNumberProperty(winPropsID, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, winSize);
+    SDL_SetNumberProperty(winPropsID, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, winSize);
+    SDL_SetNumberProperty(winPropsID, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER,
+        (Sint64)(SDL_WINDOW_RESIZABLE | ((!border) ? SDL_WINDOW_BORDERLESS : 0)));
+
+    window = SDL_CreateWindowWithProperties(winPropsID);
+    SDL_DestroyProperties(winPropsID);
+
+    if( !window )
+    {
+        fprintf(stderr, "Can't create window, %s\n", SDL_GetError());
+        exit(1);
+    }
+
+    if( !(renderer = SDL_CreateRenderer(window, NULL)) )
+    {
+        fprintf(stderr, "Can't create renderer, %s\n", SDL_GetError());
         exit(1);
     }
 
@@ -435,16 +492,16 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
     SDL_RenderClear(renderer);
     SDL_RenderPresent(renderer);
 
-    // Since we're going to write to GPU vram, we need to use its pixel format for best efficiency.
-    pixelFormat = SDL_PIXELFORMAT_RGBA8888;      // Default fallback
-    props = SDL_GetRendererProperties(renderer);
-    if( props )
-    {
-        // Query the preferred texture format for the specific backend.
-        pixelFormat = ((SDL_PixelFormat *)SDL_GetPointerProperty(props,
-            SDL_PROP_RENDERER_TEXTURE_FORMATS_POINTER, NULL))[0];
-    }
-
+    // Use RGBA8888 unconditionally.
+    // We previously queried SDL_PROP_RENDERER_TEXTURE_FORMATS_POINTER to get the
+    // renderer's preferred native format (e.g., ARGB8888 for the hardware renderer),
+    // hoping to avoid format conversion overhead.  However, the software renderer
+    // returns a different format, and with the premultiplied-alpha scheme (alpha always
+    // stored as 255, brightness baked into RGB) a byte-order mismatch puts the stored
+    // 0xFF alpha byte into a visible color channel, making all points appear at full
+    // brightness.  RGBA8888 is what t30dpy (SDL2) uses and it works on all backends;
+    // SDL will convert internally if the renderer needs a different native format.
+    pixelFormat = SDL_PIXELFORMAT_RGBA8888;
     formatDetailsP = SDL_GetPixelFormatDetails(pixelFormat);
     textures[0] = SDL_CreateTexture(renderer, pixelFormat, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
     textures[1] = SDL_CreateTexture(renderer, pixelFormat, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
@@ -683,27 +740,24 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
         SDL_RenderPresent(renderer);
     }
 
+
     if( doTiming )
     {
-        // lastTime is now a delta in seconds
-        lastTime = (now() - startTime) / (1000 * 1000 * 1000);
-        printf("Video driver is %s%s\n", driverNameP, (usingLabwc)?", using labwc":"");
-        printf("%lu points drawn in %lu total seconds, %lu points/sec.\n",
-            totalPoints, lastTime, totalPoints/lastTime);
-        printf("%lu total frames, %lu frames/sec.\n", totalFrames, totalFrames/lastTime);
-        printf("%u frame late events, max delay %lu msecs.\n", frameMisses, frameDelay/1000000);
-        printf("%lu received points\n", receivedPoints);
-        printf("%lu received points/sec\n", receivedPoints/lastTime);
-        printf("%lu maximum active points\n", maxActivePoints);
-        printf("%lu points dropped because active-point pool exhausted.\n", droppedPoints);
+        reportTiming();
     }
 
     SOCKCLOSE(pdp1FD);
 
-    // clean up SDL.
-    // Not really necessary, but it's good form.
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
+    // Closing the socket unblocks the blocking SOCKREAD in the reader thread, causing
+    // it to see a zero/error return and set quit = true, then exit.
+    // Wait for it here so we do not destroy the mutex while the reader thread might
+    // still be inside SDL_LockMutex() / SDL_UnlockMutex().
+    SDL_WaitThread(threadP, NULL);
+
+    // Do not call SDL_DestroyRenderer / SDL_DestroyWindow explicitly.
+    // On X11, those calls trigger SDL's internal XTranslateCoordinates cleanup
+    // which fires after X has already invalidated the window resource, producing
+    // a BadWindow X error.  SDL_Quit() sequences the teardown correctly on its own.
     SDL_DestroyMutex(busyLockP);
     SDL_Quit();
     winSockCleanup();
@@ -984,7 +1038,7 @@ removeActivePoint(uint32_t pointIdx, uint32_t prevIdx)
 
     if( doTiming )
     {
-        --activePoints;
+        atomic_fetch_sub_explicit(&activePoints, 1, memory_order_relaxed);
     }
 }
 
@@ -999,6 +1053,7 @@ void
 addActivePoint(uint16_t x, uint16_t y, byte intensity)
 {
 uint32_t newIdx;
+uint64_t u64tmp;
 
     if( freeListHead == NOINDEX )
     {
@@ -1025,10 +1080,11 @@ uint32_t newIdx;
 
     if( doTiming )
     {
-        ++activePoints;
-        if( activePoints > maxActivePoints )
+        // A lot of hoop-jumping for just a statistical value, but it will the the correct value.
+        u64tmp = atomic_fetch_add_explicit(&activePoints, 1, memory_order_relaxed) + 1;
+        if( u64tmp  > maxActivePoints )
         {
-            maxActivePoints = activePoints;
+            maxActivePoints = u64tmp;
         }
     }
 }
@@ -1472,6 +1528,11 @@ sighandler(int sig)
     // Not really necessary, but it's good form.
     SDL_Quit();
     winSockCleanup();
+
+    if( doTiming )
+    {
+        reportTiming();
+    }
     exit(0);
 }
 
@@ -1485,6 +1546,12 @@ reconfigure(int sig)
     SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
     SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
     SDL_SetWindowBordered(window, (border)?true:false);
+
+    // We also report timing if being accumulated so a snapshot can be seen without exiting.
+    if( doTiming )
+    {
+        reportTiming();
+    }
 }
 
 // Get the current system clock time in ns.
@@ -1499,6 +1566,23 @@ uint64_t now;
     now += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
 
     return(now);
+}
+
+void
+reportTiming()
+{
+uint64_t delta;
+
+    delta = (now() - startTime) / (1000 * 1000 * 1000);
+    printf("Video driver is %s%s\n", driverNameP, (usingLabwc)?", using labwc":"");
+    printf("%lu points drawn in %lu total seconds, %lu points/sec.\n",
+        totalPoints, delta, totalPoints/delta);
+    printf("%lu total frames, %lu frames/sec.\n", totalFrames, totalFrames/delta);
+    printf("%u frame late events, max delay %lu msecs.\n", frameMisses, frameDelay/1000000);
+    printf("%lu received points\n", receivedPoints);
+    printf("%lu received points/sec\n", receivedPoints/delta);
+    printf("%lu maximum active points\n", maxActivePoints);
+    printf("%lu points dropped because active-point pool exhausted.\n", droppedPoints);
 }
 
 void

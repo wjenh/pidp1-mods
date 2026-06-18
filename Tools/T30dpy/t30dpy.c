@@ -72,10 +72,23 @@
  *     state; SDL_MOUSEMOTION while dragging calls SDL_SetWindowPosition with the delta
  *     from the button-down origin.
  * 17-Jun-2026 wje add window resizing. Most of the logic was already around from the work done on p7sim.
+ * 18-Jun-2026 wje (Claude) reclaim SIGINT from SDL2: SDL_HINT_NO_SIGNAL_HANDLERS before
+ *    SDL_Init() prevents SDL2 from installing its own SIGINT handler; sighandler()
+ *    registered for SIGINT along with SIGHUP/SIGTERM. SDL_WaitThread() added before
+ *    mutex/SDL_Quit() cleanup to prevent use-after-free if reader thread exits late.
+ * 18-Jun-2026 wje extract reportTiming() function; call from sighandler() and reconfigure()
+ *    so timing data is output on SIGINT and SIGHUP as well as normal exit. Move startTime,
+ *    frameMisses, frameDelay to global scope so reportTiming() can reach them.
+ *    instability on rpi trixie.
+ * 18-Jun-2026 wje (Claude) remove explicit SDL_DestroyRenderer/SDL_DestroyWindow before
+ *    SDL_Quit(). On X11, those calls trigger XTranslateCoordinates on the window after X
+ *    has invalidated the resource, producing a BadWindow error. SDL_Quit() sequences the
+ *    teardown correctly on its own.
 */
 
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <signal.h>
@@ -220,6 +233,11 @@ float gammaCorrection = GAMMA;
 
 uint32_t blackPixel;                 // The value is numeric 0, but use the SDL generated version for consistency.
 
+// These are global only so reportTiming() can see them.
+uint64_t startTime;
+uint64_t frameDelay;
+uint32_t frameMisses;
+
 uint64_t totalPoints;
 uint64_t receivedPoints;
 uint64_t totalFrames;
@@ -247,6 +265,7 @@ void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY
 void loadConfig(bool full);
 void sighandler(int sig);
 void reconfigure(int sig);
+void reportTiming(void);
 void usage(void);
 FILE *getFile(char *nameP);
 
@@ -260,12 +279,9 @@ uint32_t i;
 int pitch;
 bool fullscreen;
 bool penDown;
-uint64_t startTime;
 uint64_t lastTime;
 uint64_t deltaTime;
 uint64_t cursorTime;
-uint32_t frameMisses;
-uint64_t frameDelay;
 char *cP;
 
 uint32_t pointIdx;
@@ -386,9 +402,18 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
         exit(1);
     }
 
-    // SIGHUP will cause reloading of the configuration file, SIGTERM exits cleanly
+    // Keep SDL out of our interrupt handling.
+    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
+
+    // SIGHUP will cause reloading of the configuration file, SIGTERM and SIGINT exit cleanly.
     signal(SIGHUP, reconfigure);
+    signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
+
+    // We want SDL to use the hardware driver if possible.
+    // But, it gets confused on rpi systems running trixie, give it a hint.
+    //SDL_SetHint(SDL_HINT_RENDER_DRIVER, "wayland,x11")
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
 
     // init SDL
     SDL_Init(SDL_INIT_VIDEO);
@@ -650,26 +675,22 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
 
     if( doTiming )
     {
-        // lastTime is now a delta in seconds
-        lastTime = (now() - startTime) / (1000 * 1000 * 1000);
-        printf("Video driver is %s%s\n", driverNameP, (usingLabwc)?", using labwc":"");
-        printf("%lu points drawn in %lu total seconds, %lu points/sec.\n",
-            totalPoints, lastTime, totalPoints/lastTime);
-        printf("%lu total frames, %lu frames/sec.\n", totalFrames, totalFrames/lastTime);
-        printf("%u frame late events, max delay %lu msecs.\n", frameMisses, frameDelay/1000000);
-        printf("%lu received points\n", receivedPoints);
-        printf("%lu received points/sec\n", receivedPoints/lastTime);
-        printf("%lu maximum active points\n", maxActivePoints);
-        printf("%lu points dropped because active-point pool exhausted.\n", droppedPoints);
+        reportTiming();
     }
 
     SOCKCLOSE(pdp1FD);
 
-    // clean up SDL.
-    // Not really necessary, but it's good form.
+    // Closing the socket unblocks the blocking SOCKREAD in the reader thread, causing
+    // it to see a zero/error return and set quit = true, then exit.
+    // Wait for it here so we do not destroy the mutex while the reader thread might
+    // still be inside SDL_LockMutex() / SDL_UnlockMutex().
+    SDL_WaitThread(threadP, NULL);
+
+    // Do not call SDL_DestroyRenderer / SDL_DestroyWindow explicitly.
+    // On X11, those calls trigger SDL's internal XTranslateCoordinates cleanup
+    // which fires after X has already invalidated the window resource, producing
+    // a BadWindow X error.  SDL_Quit() sequences the teardown correctly on its own.
     SDL_FreeFormat(pixelFormatP);
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
     SDL_DestroyMutex(busyLockP);
     SDL_Quit();
     winSockCleanup();
@@ -942,6 +963,12 @@ ActivePointP pointP;
     freeListHead = pointIdx;
 
     SDL_UnlockMutex(busyLockP);
+
+    if( doTiming )
+    {
+        // see the corresponding comment in addActivePoint()
+        atomic_fetch_sub_explicit(&activePoints, 1, memory_order_relaxed);
+    }
 }
 
 // Add a point to the active list as the new head, taking a slot from the free list.
@@ -951,6 +978,7 @@ void
 addActivePoint(uint16_t x, uint16_t y, byte intensity)
 {
 uint32_t newIdx;
+uint64_t u64tmp;
 
     if( freeListHead == NOINDEX )
     {
@@ -977,10 +1005,11 @@ uint32_t newIdx;
 
     if( doTiming )
     {
-        ++activePoints;
-        if( activePoints > maxActivePoints )
+        // A lot of hoop-jumping for just a statistical value, but it will the the correct value.
+        u64tmp = atomic_fetch_add_explicit(&activePoints, 1, memory_order_relaxed) + 1;
+        if( u64tmp  > maxActivePoints )
         {
-            maxActivePoints = activePoints;
+            maxActivePoints = u64tmp;
         }
     }
 }
@@ -1407,6 +1436,11 @@ sighandler(int sig)
     // Not really necessary, but it's good form.
     SDL_Quit();
     winSockCleanup();
+
+    if( doTiming )
+    {
+        reportTiming();
+    }
     exit(0);
 }
 
@@ -1421,6 +1455,29 @@ reconfigure(int sig)
     SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
     SDL_RenderSetVSync(renderer, doVsync);
     SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
+
+    // We also report timing if being accumulated so a snapshot can be seen without exiting.
+    if( doTiming )
+    {
+        reportTiming();
+    }
+}
+
+void
+reportTiming()
+{
+uint64_t delta;
+
+    delta = (now() - startTime) / (1000 * 1000 * 1000);
+    printf("Video driver is %s%s\n", driverNameP, (usingLabwc)?", using labwc":"");
+    printf("%lu points drawn in %lu total seconds, %lu points/sec.\n",
+        totalPoints, delta, totalPoints/delta);
+    printf("%lu total frames, %lu frames/sec.\n", totalFrames, totalFrames/delta);
+    printf("%u frame late events, max delay %lu msecs.\n", frameMisses, frameDelay/1000000);
+    printf("%lu received points\n", receivedPoints);
+    printf("%lu received points/sec\n", receivedPoints/delta);
+    printf("%lu maximum active points\n", maxActivePoints);
+    printf("%lu points dropped because active-point pool exhausted.\n", droppedPoints);
 }
 
 void

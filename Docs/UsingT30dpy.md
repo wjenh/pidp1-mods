@@ -2,17 +2,17 @@
 
 This document describes the t30dpy and t30dpy3 simulated Type 30 display.
 
-This is version 1.8
+This is version 1.9
 
 Edit date 17-June-2026\
-udpate for window dragging
+window resizing updated, performance note added
 
 ## T30dpy, t30dpy3, and Wayland/labwrc
 
 There are three differences between t30dpy and t30dpy3.
 
-T30dpy is an SDL2 application that does not support window resizing by mouse dragging and does support vsync.\
-T30dpy3 is an SDL3 application that does support window resizing by mouse dragging but does not support vsync.
+T30dpy is an SDL2 application, while T3dpy3 is an SDL3 application.
+Both support window resizing and dragging
 
 SDL2 does not adjust mouse coordinates for a window when it is full screen or when it is resized in most cases.
 The logic for computing the corrected location is complex. It was implemented for the modified version of p7sim
@@ -42,9 +42,11 @@ than the physical screen minus a margin, it is silently resized to be the screen
 
 Why a fixed margin? Because remember that you can't get information about the size of the taskbar!
 
-Additionally, the window can be dragged by holding down the right mouse button anywhere in the window.
+Additionally, the window can be dragged by holding down the right mouse button anywhere in the window and
+resized in the usual way with the mouse at a window edge.
 
-However, switching to X11 is recommended. T30dpy is far faster under X11, about 20% of the cpu load under Wayland.
+However, switching to X11 is recommended. T30dpy is far faster under X11, about 20% of the cpu load under Wayland,
+and there are none of the silly Wayland/labwc issues.
 
 ## Usage
 
@@ -287,9 +289,9 @@ The SDL3 version is much better at scaling but it still allows selection ov near
 for the visual effect.
 
 For both versions, the window can be dragged by holding down the *right* mouse button anywhere in the window,
-very useful for getting around the annoying wayland/labwc behaviors.
+very useful for getting around the annoying Wayland/labwc behaviors.
 
-The SDL3 version allows window resizing by the usual edge dragging, but note that labwc only provides a **one pixel**
+Both versions allows window resizing by the usual edge dragging, but note that labwc only provides a **one pixel**
 border, pretty useless for capturing for the resize. Another absurd design decision on the part of labwc.
 
 ## White bias
@@ -337,6 +339,10 @@ Here's a table of average CPU load by program and by display emulator.\
 It was run on a middling performance Intel CPU of some age running Ubuntu Linux with no special graphics hardware.
 THese are figures for the SDL2 version, the SDL3 version has better performance.
 For example, t30dpy3 displaying snowflake on a Raspberry pi 5 has a CPU load of 20%.
+
+**NOTE** as of mid-June 2026, major performance improvements have been made. Type30dpy performance is generally
+significantly better than below, the tests have not been rerun.
+For example, snowflake now runs at 20% cpu for type30dpy3.
 
 | Program       | Emulator  | CPU load reported by top |
 |---------------|-----------|--------------------------|

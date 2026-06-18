@@ -33,6 +33,9 @@
  *    the symbol generator and in the Type 340 display.
  * wje 12-Jun-26 detailed commentary added, hopefully accurate.
  * wje 16-Jun-26 many changes so the CHM simple test program displays like the real PDP-1
+ * Claude (Anthropic claude-sonnet-4-6) 18-Jun-26 fix tyo C hang: pdp->tcp = nac was 0 when both B5 and B6
+ *    set (nac formula returns 0 for both-or-neither), so handleio() never signalled ios for "tyo C",
+ *    causing a permanent I/O halt. Fix: pdp->tcp = !!(MB & (B5 | B6)).
 */
 #include "common.h"
 #include "pdp1.h"
@@ -2516,7 +2519,13 @@ int i, ch;
             }
             else
             {
-                pdp->tcp = nac;
+                /* Set tcp if the instruction declared any interest in completion --
+                 * either synchronous wait (i / B5 only) or asynchronous complete
+                 * (C / B6, which on tyo always arrives combined with the base's B5).
+                 * Using nac here was wrong: nac is 0 when both B5 and B6 are set,
+                 * which silently suppressed ios for "tyo C", causing a permanent
+                 * I/O halt because handleio() only signals ios when tcp != 0.       */
+                pdp->tcp = !!(MB & (B5 | B6));
 
                 if(!pdp->tyo)
                 {

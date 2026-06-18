@@ -2,6 +2,9 @@
  * This is a new implementation of the original Type 30 Data Control System using sockets instead of
  * serial connections. It keeps the general spirit of the original but modernized.
  * Some additional features have been added to deal with sockets.
+ *
+ * 14-Nov-2025 wje initial version, updates until 18-Jun-2026 were not recorded
+ * 18-Jun-2026 wje rework client mode, now works correctly
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -286,7 +289,7 @@ char wbuf[8];
                 }
                 else
                 {
-                    ich = IO_ERR_FLAG | (ich == FAIL)?IO_ERR_LOST:IO_ERR_NOCHAR;
+                    ich = IO_ERR_FLAG | ((ich == FAIL)?IO_ERR_LOST:IO_ERR_NOCHAR);
                 }
             }
 
@@ -449,7 +452,17 @@ char wbuf[8];
         break;
 
     case RPC:                           // extended command, get chars ready to read
-        ioctl(chanP->chan_fd, FIONREAD, &(IO(pdp1P)));
+        i = IO(pdp1P) & 077;            // the channel number
+
+        if( i >= NUM_CHANS )
+        {
+            last_error = IO(pdp1P) = IO_ERR_FLAG | IO_ERR_CHAN;
+        }
+        else
+        {
+            chanP = &channels[i];
+            ioctl(chanP->chan_fd, FIONREAD, &(IO(pdp1P)));
+        }
         break;
 
     case RCI:                           // extended command, clear interrupt
@@ -529,14 +542,14 @@ char wbuf[8];
 
                 if( last_intr_reason & CNTL_IOC )
                 {
-                    IO(pdp1P) |= STATUS_LOST;
+                    IO(pdp1P) |= STATUS_IOC;
                 }
             }
         }
         break;
 
     case RWE:                           // wait for any event
-        iotLog("RWE called, completion %d, ioh %d\n", completion, IO(pdp1P)h);
+        iotLog("RWE called, completion %d, io %d\n", completion, IO(pdp1P));
         if( completion )
         {
             need_general_completion = true;
@@ -734,23 +747,87 @@ struct epoll_event event;
                         }
                     }
                 }
-                else if( eventP->events & EPOLLOUT )    // transmit buffer not full
+                else if( eventP->events & EPOLLOUT )    // transmit buffer not full, or client connect() completed
                 {
-                    did_our_event = true;
-                    chanP->control_flags &= ~CNTL_TFULL;
-                    // Turn off POLLOUT until next time we need it
-                    eventP->events &= ~EPOLLOUT;
-                    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, chanP->chan_fd, eventP);
+                struct epoll_event newEvent;
+                int soErr;
+                socklen_t soErrLen;
 
-                    if( canPost(pdp1P, chanP, CNTL_IOR) )
+                    did_our_event = true;
+
+                    if( !(chanP->control_flags & CNTL_CONNECTED) &&
+                        !(chanP->control_flags & CNTL_SERVER) )
                     {
-                        iotLog("Posting IOR connected on chan %d\n",chanP->chan_no);
-                        postInterrupt(chanP, CNTL_IOR);
+                        // Non-blocking connect() completion for a client channel.
+                        // EPOLLOUT fires when the connection is established or fails.
+                        // Use getsockopt(SO_ERROR) to determine which.
+                        soErr = 0;
+                        soErrLen = sizeof(soErr);
+                        getsockopt(chanP->chan_fd, SOL_SOCKET, SO_ERROR, &soErr, &soErrLen);
+
+                        if( soErr == 0 )
+                        {
+                            // Connection established successfully.
+                            chanP->control_flags |= CNTL_CONNECTED;
+                            chanP->control_flags &= ~CNTL_RESET_MASK;
+
+                            // Switch to EPOLLIN only; EPOLLOUT re-enabled on buffer full.
+                            newEvent.events = EPOLLIN;
+                            newEvent.data.u32 = chanP->chan_no;
+                            epoll_ctl(epoll_fd, EPOLL_CTL_MOD, chanP->chan_fd, &newEvent);
+
+                            iotLog("Client channel %d connected\n", chanP->chan_no);
+
+                            if( canPost(pdp1P, chanP, CNTL_IOC) )
+                            {
+                                iotLog("Posting IOC connected on chan %d\n", chanP->chan_no);
+                                postInterrupt(chanP, CNTL_IOC);
+                            }
+                        }
+                        else
+                        {
+                            // Connection failed.
+                            chanP->control_flags |= CNTL_CONNERR;
+                            last_error = chanP->last_err =
+                                IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_SOCKET | ((soErr & 0377) << 4);
+                            iotLog("Client channel %d connect failed, errno %d\n",
+                                chanP->chan_no, soErr);
+
+                            if( canPost(pdp1P, chanP, CNTL_IOE) )
+                            {
+                                iotLog("Posting IOE connect failed on chan %d\n", chanP->chan_no);
+                                postInterrupt(chanP, CNTL_IOE);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Connected channel: transmit buffer is no longer full.
+                        chanP->control_flags &= ~CNTL_TFULL;
+
+                        // Turn off EPOLLOUT until the buffer fills again.
+                        newEvent.events = EPOLLIN;
+                        newEvent.data.u32 = chanP->chan_no;
+                        epoll_ctl(epoll_fd, EPOLL_CTL_MOD, chanP->chan_fd, &newEvent);
+
+                        if( canPost(pdp1P, chanP, CNTL_IOR) )
+                        {
+                            iotLog("Posting IOR buffer available on chan %d\n", chanP->chan_no);
+                            postInterrupt(chanP, CNTL_IOR);
+                        }
                     }
                 }
                 else if( eventP->events & EPOLLHUP )    // connection closed by remote end
                 {
                     did_our_event = true;
+
+                    // Remove from epoll and close the fd immediately.  Without this,
+                    // epoll_wait() would return EPOLLHUP on every call, creating a
+                    // polling storm while the fd remains registered.
+                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, chanP->chan_fd, 0);
+                    close(chanP->chan_fd);
+                    chanP->chan_fd = -1;
+                    chanP->control_flags &= ~(CNTL_CONNECTED | CNTL_TFULL);
                     chanP->control_flags |= CNTL_LOST;
                     last_error = chanP->last_err = IO_ERR_FLAG | IO_ERR_LOST;
 
@@ -762,6 +839,13 @@ struct epoll_event event;
                 }
                 else if( eventP->events & EPOLLERR )    // some error on the connection
                 {
+                    did_our_event = true;
+
+                    // Same cleanup as EPOLLHUP to prevent a polling storm.
+                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, chanP->chan_fd, 0);
+                    close(chanP->chan_fd);
+                    chanP->chan_fd = -1;
+                    chanP->control_flags &= ~(CNTL_CONNECTED | CNTL_TFULL);
                     chanP->control_flags |= CNTL_CONNERR;
                     last_error = chanP->last_err = IO_ERR_FLAG | IO_ERR_SOCKET;
 
@@ -772,11 +856,14 @@ struct epoll_event event;
                     }
                 }
 
-                if( chanP->control_flags & CNTL_TFULL )
+                if( (chanP->control_flags & CNTL_TFULL) && (chanP->chan_fd >= 0) )
                 {
-                    // Turn on POLLOUT so we know when we can send again
-                    eventP->events |= EPOLLOUT;
-                    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, chanP->chan_fd, eventP);
+                struct epoll_event tfEvent;
+
+                    // Re-register EPOLLOUT so we learn when the buffer drains.
+                    tfEvent.events = EPOLLIN | EPOLLOUT;
+                    tfEvent.data.u32 = chanP->chan_no;
+                    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, chanP->chan_fd, &tfEvent);
                 }
             }
         }
@@ -883,14 +970,44 @@ struct epoll_event event;
                 return( last_error );
             }
 
-            event.events = EPOLLIN | EPOLLOUT;
-            event.data.u32 = chan_no;
-            epoll_ctl(epoll_fd, chanP->chan_fd, EPOLL_CTL_ADD, &event);
-
             chanP->address.sin_family = AF_INET;
             chanP->address.sin_addr.s_addr = htonl(i);
             chanP->address.sin_port = htons(port);
-            chanP->control_flags |= CNTL_OPEN;      // poll will establish the connection
+            chanP->control_flags |= CNTL_OPEN;
+
+            // Register with epoll before calling connect() so that the connection-
+            // completion EPOLLOUT event is not missed between the two calls.
+            event.events = EPOLLIN | EPOLLOUT;
+            event.data.u32 = chan_no;
+            epoll_ctl(epoll_fd, EPOLL_CTL_ADD, chanP->chan_fd, &event);   // op and fd were swapped
+
+            // Initiate the non-blocking connection.  EINPROGRESS is expected and
+            // normal; the actual result is signalled via EPOLLOUT in iotPoll().
+            if( connect(chanP->chan_fd,
+                        (struct sockaddr *)&chanP->address,
+                        sizeof(chanP->address)) < 0 )
+            {
+                if( errno != EINPROGRESS )
+                {
+                    // Immediate failure — clean up and report.
+                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, chanP->chan_fd, 0);
+                    close(chanP->chan_fd);
+                    chanP->chan_fd = -1;
+                    chanP->control_flags &= ~CNTL_OPEN;
+                    last_error = IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_SOCKET | ((errno & 0377) << 4);
+                    chanP->last_err = last_error;
+                    return( last_error );
+                }
+                // EINPROGRESS: connection is underway; iotPoll() will handle completion.
+                iotLog("channel %d connect() in progress\n", chan_no);
+            }
+            else
+            {
+                // Immediate connect() success (e.g., loopback).
+                chanP->control_flags |= CNTL_CONNECTED;
+                chanP->control_flags &= ~CNTL_RESET_MASK;
+                iotLog("channel %d connected immediately\n", chan_no);
+            }
         }
 
         if( word & RQST_IE )
@@ -1070,8 +1187,12 @@ char ch, ch2;
 
         if( i == 0 )
         {
-            iotLog("getChar() recv() got no character, RRDY is %d\n", chanP->control_flags & CNTL_RREADY);
-            return( NONE );
+            // recv() returning 0 means the peer performed an orderly shutdown (TCP FIN).
+            // This is not "no data" -- it is a connection close.  Returning NONE would
+            // leave CNTL_RREADY set, causing epoll to keep firing with nothing to read.
+            iotLog("getChar() recv() returned 0, remote closed connection\n");
+            closeRemoteSocket(chanP, 0);
+            return( FAIL );
         }
         else if( i < 0 )
         {
@@ -1128,15 +1249,27 @@ void
 releaseChannel(PDP1P pdp1P)
 {
 int i;
+int old_chan;
 ChannelP chanP;
 
+    // Save the channel being released so the scan can start from the next one.
+    // cur_chan must be cleared BEFORE the scan so that if no ready channel is
+    // found, it remains -1.  Using cur_chan after clearing it caused the loop
+    // termination test (i != cur_chan, i.e. i != -1) to be always true.
+    old_chan = cur_chan;
     cur_chan = -1;
     cur_chan_locked = false;
     CKS(pdp1P) &= ~CKS_CHAN_FLAG;
 
-    // Scan the channel list, set the current channel to the next one that needs attention.
-    // If none found, poll will take over.
-    for( i = (cur_chan + 1) % NUM_CHANS; i != cur_chan; i = (i + 1) % NUM_CHANS)          // handle wraparound
+    if( old_chan < 0 )
+    {
+        return;                 // nothing was current, nothing to scan from
+    }
+
+    // Scan the channel list starting after the just-released channel.
+    // If a channel that is open and has data ready is found, make it current.
+    // If none is found the loop exits cleanly and poll will select the next one.
+    for( i = (old_chan + 1) % NUM_CHANS; i != old_chan; i = (i + 1) % NUM_CHANS )
     {
         chanP = &channels[i];
         if( (chanP->control_flags & (CNTL_OPEN|CNTL_RREADY)) == (CNTL_OPEN|CNTL_RREADY) )
@@ -1257,7 +1390,11 @@ PortMapP mapP;
 }
 
 // Remote side failed on recv(), close things up.
-// The channel becomes avaialbe for a new connection.
+// The channel becomes available for a new connection (server) or stays closed (client).
+// Note: releasePort() is NOT called here.  For server channels the listen socket must
+// remain active so that a new client can connect; the port map entry is only torn down
+// by resetChannel().  For client channels, primaryPortP is NULL so calling releasePort()
+// would crash.
 void
 closeRemoteSocket(ChannelP chanP, int errnum)
 {
@@ -1265,7 +1402,7 @@ closeRemoteSocket(ChannelP chanP, int errnum)
     close( chanP->chan_fd );
     chanP->chan_fd = -1;
     chanP->control_flags |= CNTL_LOST;
-    chanP->control_flags &= ~CNTL_CONNECTED;
-    releasePort(chanP->primaryPortP);
-    last_error = chanP->last_err = IO_ERR_FLAG | IO_ERR_LOST | (errno?(IO_ERR_ERRNO | errno):0);
+    chanP->control_flags &= ~(CNTL_CONNECTED | CNTL_TFULL);
+    last_error = chanP->last_err =
+        IO_ERR_FLAG | IO_ERR_LOST | (errnum?(IO_ERR_ERRNO | ((errnum & 0377) << 4)):0);
 }

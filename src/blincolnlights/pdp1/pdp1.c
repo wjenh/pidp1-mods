@@ -33,9 +33,16 @@
  *    the symbol generator and in the Type 340 display.
  * wje 12-Jun-26 detailed commentary added, hopefully accurate.
  * wje 16-Jun-26 many changes so the CHM simple test program displays like the real PDP-1
- * Claude (Anthropic claude-sonnet-4-6) 18-Jun-26 fix tyo C hang: pdp->tcp = nac was 0 when both B5 and B6
- *    set (nac formula returns 0 for both-or-neither), so handleio() never signalled ios for "tyo C",
- *    causing a permanent I/O halt. Fix: pdp->tcp = !!(MB & (B5 | B6)).
+ * wje/claude 20-Jun-26 many changes to move the typewriter, tape reader, and tape punch into IOTs where
+ *   they belong. Bugfixes in original code to fix tyo C hang, nac logic not correct
+ *   causing a permanent I/O halt. Fix: pdp->tcp = !!(MB & (B5 | B6)).
+ *   Summary:
+ *   RDLY/TYODLY and RD_CHAN/TTI_CHAN/TTO_CHAN were removed along with the builtin reader/
+ *   typewriter code they belonged to -- see handleio()/iot_pulse()'s comments.
+ *   IOTs/Reader/IOT_2.c and IOTs/Typewriter/IOT_3.c, IOT_4.c each keep their own
+ *   local copies of these exact values now.
+ *   PDLY is still used here for the/ front-panel FEED key's tape-feed timing, which has nothing to
+ *   do with the punch IOT -- PUN_CHAN was removed.
 */
 #include "common.h"
 #include "pdp1.h"
@@ -94,16 +101,7 @@ bool all1DEnabled = false;
 // units used by pdp->simtime/realtime (1 unit = 1us, -1 fudge to land
 // just under the boundary so periodic events fire at the right rate).
 #define US(us) ((us)*1000 - 1)
-#define RDLY US(2500)       // tape reader character delay: 400 chars/sec
 #define PDLY US(15873)      // tape punch character delay: 63 chars/sec
-#define TYODLY US(100000)   // typewriter output character delay (10 cps);
-                             // must be long enough for MACRO programs that
-                             // poll the "type out done" flag to keep up
-
-#define RD_CHAN 1
-#define PUN_CHAN 6
-#define TTI_CHAN 7
-#define TTO_CHAN 8
 
 int decflg(int flg);
 
@@ -1420,7 +1418,7 @@ int hack;
             }
         }
 
-        if( all1DEnabled && IR_OPR1D )  // wje - 10 new instructions, most of no use but some are
+        if( all1DEnabled && IR_OPR1D )  // wje - 1D new instructions, most of no use but some are
         {
         int tmp;                // might be needed for IIF, IFI
             // Not actually sure which TP these occurred in, would have to dig out of the schematics.
@@ -2444,7 +2442,7 @@ cycle(PDP1 *pdp)
     }
 
     // update any IOTs regardless of cycle type
-    dynamicIotProcessorDoPoll(pdp);             // wje - handle pseudo-async IOTs
+    dynamicIotProcessorDoPoll(pdp);
 }
 
 // Spin until the 5usec cycle time reached
@@ -2485,95 +2483,7 @@ int i, ch;
         case 000:
             break;
 
-        case 001:   // rpa  -- read perforated tape, alphanumeric (6-bit chars, 3 per word)
-        case 002:   // rpb  -- read perforated tape, binary (full 18-bit word, channel-8 framed)
-            if(pulse)
-            {
-                pdp->rcp = nac;
-
-                if(dev == 00001)
-                {
-                    pdp->rby = 0;
-                    pdp->rc = 3;
-                    pdp->rcl ^= 1;
-                }
-                else
-                {
-                    pdp->rby = 1;
-                    pdp->rc = 1;
-                    pdp->rcl = 1;
-                }
-
-                pdp->r_time = pdp->simtime + RDLY;
-                pdp->rb = 0;
-            }
-            break;
-
-        case 003:   // tyo -- typewriter out: latch a character into tb for handleio() to print
-            if(!pulse)
-            {
-                if(!pdp->tyo)
-                {
-                    pdp->tb = 0;
-                }
-            }
-            else
-            {
-                /* Set tcp if the instruction declared any interest in completion --
-                 * either synchronous wait (i / B5 only) or asynchronous complete
-                 * (C / B6, which on tyo always arrives combined with the base's B5).
-                 * Using nac here was wrong: nac is 0 when both B5 and B6 are set,
-                 * which silently suppressed ios for "tyo C", causing a permanent
-                 * I/O halt because handleio() only signals ios when tcp != 0.       */
-                pdp->tcp = !!(MB & (B5 | B6));
-
-                if(!pdp->tyo)
-                {
-                    pdp->tyo = 1;
-                    pdp->tb |= IO & 077;
-                    pdp->typ_time = pdp->simtime + TYODLY;
-                }
-            }
-            break;
-
-        case 004:   // tyi -- typewriter in: clear IO at TP7, then load the last
-                    // typed character (tb, set by handleio()) into IO at TP10
-            if(!pulse)
-            {
-                IO = 0;
-            }
-            else
-            {
-                pdp->tbs = 0;
-                pdp->io |= pdp->tb;
-            }
-            break;
-
-        case 005:   // ppa -- punch tape, alphanumeric (8-bit, from IO low byte)
-        case 006:   // ppb -- punch tape, binary (8-bit, from IO bits 6-11 with high bit set)
-            if(!pulse)
-            {
-                pdp->pb = 0;
-                pdp->punon = 1;
-                pdp->p_time = pdp->simtime + PDLY;
-            }
-            else
-            {
-                pdp->pcp = nac;
-
-                if(dev == 00005)
-                {
-                    pdp->pb |= IO & 0377;
-                }
-                else
-                {
-                    pdp->pb |= 0200 | ((IO >> 12) & 077);
-                }
-            }
-            break;
-
         case 011:   // spacewar controllers -- read the two controller boxes' switches into IO
-
             // simple but stupid version for now
             if(pulse)
             {
@@ -2593,12 +2503,10 @@ int i, ch;
         case 033:   // cks -- check status: report reader/typewriter/punch/SBS status bits into IO
             if(pulse)
             {
-                // TODO: LP (wje - just use a dynamic IOT)
                 IO |= pdp->rbs << 16;
                 IO |= (!pdp->tyo) << 15;
                 IO |= pdp->tbs << 14;
                 IO |= (!pdp->punon) << 13;
-                // ..
                 IO |= pdp->sbm << 11;
                 IO |= pdp->cksflags;        // wje - needed to generalize use, many devices use it
             }
@@ -2724,114 +2632,11 @@ dynamicReq(PDP1 *pdp, int chan)
     req(pdp, chan);             // wje - because req() is private
 }
 
-// Poll IOT devices (called once per cycle from the
-// main loop, independent of cycle()): advance the paper-tape reader by
-// one character once its inter-character delay (r_time) has elapsed,
-// advance the punch/tape-feed similarly, finish a pending typewriter
-// output character and request channel TTO, and read a typed character
-// from the console into tb and request channel TTI.
+// Used only to drive data to the punch.
 void
 handleio(PDP1 *pdp)
 {
-    /* Reader */
-    // 19-Jun-2026 wje: skip builtin reader servicing if a dynamic IOT now owns device 1 (rpa).
-    // Without this, a Reader plugin's own iotIOPoll servicing of rcl/r_time/etc. would be
-    // double-serviced here too, since this code has no idea the plugin armed those fields.
-    if(pdp->rcl && pdp->r_time < pdp->simtime && pdp->r_fd >= 0 && !dynamicIotOwnsDevice(1))
-    {
-        u8 c;
-        pdp->r_time = pdp->simtime + RDLY;
-
-        if(read(pdp->r_fd, &c, 1) <= 0)
-        {
-            close(pdp->r_fd);
-            pdp->r_fd = -1;
-            return;
-        }
-
-        // write back in case this is over a socket
-        // and we need to synchronize
-        write(pdp->r_fd, &c, 1);
-
-        if(pdp->rc && (!pdp->rby || (c & 0200)))
-        {
-            // STROBE PETR
-            pdp->rcl = 0;
-            pdp->rb |= c & (pdp->rby ? 077 : 0377);
-
-            // SHIFT RB
-            if(pdp->rc != 3)
-            {
-                pdp->rb = (pdp->rb << 6) & WORDMASK;
-                pdp->rcl = 1;
-            }
-
-            // CLR IO
-            if((pdp->rc == 3) && (pdp->rcp || pdp->rim))
-            {
-                IO = 0;
-            }
-
-            // -----
-            // +1 RC
-            if(pdp->rc == 3)
-            {
-                // READER RETURN
-                if(pdp->rcp)
-                {
-                    pdp->ios = 1;
-                }
-                else
-                {
-                    pdp->rbs = 1;
-                }
-
-                if(pdp->rcp || pdp->rim)
-                {
-                    IO |= pdp->rb;
-                    pdp->rbs = 0;
-
-                    if(pdp->rim)
-                    {
-                        pdp->rim_return = 2;
-                    }
-                }
-
-                // not sure about this, but seems annoying
-                if(!pdp->rim)
-                {
-                    req(pdp, RD_CHAN);
-                }
-            }
-
-            pdp->rc = (pdp->rc + 1) & 3;
-        }
-    }
-
-    /* Punch */
-    // 19-Jun-2026 wje: skip builtin punch servicing if a dynamic IOT now owns device 5
-    // (ppa)/6 (ppb). Without this, a Punch plugin's own iotPoll() servicing of
-    // punon/p_time/pb would be double-serviced here too, since this code has no idea
-    // the plugin armed those fields. The tape_feed/feed_time branch below is the
-    // front-panel FEED key, unrelated to any IOT, and is unaffected either way.
-    if(pdp->punon && pdp->p_time < pdp->simtime && !dynamicIotOwnsDevice(5))
-    {
-        pdp->p_time = NEVER;
-
-        if(pdp->p_fd >= 0)
-        {
-            char c = pdp->pb;
-            write(pdp->p_fd, &c, 1);
-        }
-
-        if(pdp->pcp)
-        {
-            pdp->ios = 1;
-        }
-
-        req(pdp, PUN_CHAN);
-    }
-    else if(pdp->tape_feed && pdp->feed_time < pdp->simtime)
+    if(pdp->tape_feed && pdp->feed_time < pdp->simtime)
     {
         pdp->feed_time = pdp->simtime + PDLY;
 
@@ -2840,90 +2645,6 @@ handleio(PDP1 *pdp)
             char c = 0;
             write(pdp->p_fd, &c, 1);
         }
-    }
-
-    /* Typewriter */
-    // 19-Jun-2026 wje: skip builtin tyo servicing if a dynamic IOT now owns device 3
-    // (tyo). Without this, IOTs/Typewriter/IOT_3.c's own iotPoll() servicing of
-    // tyo/tb/tbb/tcp would be double-serviced here too.
-    if(pdp->typ_time < pdp->simtime && !dynamicIotOwnsDevice(3))
-    {
-        // wrong timing
-        pdp->typ_time = NEVER;
-
-        if((pdp->tb & 076) == 034)
-        {
-            pdp->tbb = pdp->tb & 1;
-
-            // hack to synchronize input
-            if(pdp->typ_fd.fd >= 0)
-            {
-                char c = (pdp->tbb << 6) | 060;
-                write(pdp->typ_fd.fd, &c, 1);
-            }
-        }
-        else if(pdp->typ_fd.fd >= 0)
-        {
-            char c = (pdp->tbb << 6) | pdp->tb;
-            write(pdp->typ_fd.fd, &c, 1);
-        }
-
-        // this is really much more complicated
-        // and overlaps with the type-in logic
-        pdp->tyo = 0;
-
-        if(pdp->tcp)
-        {
-            pdp->ios = 1;
-        }
-
-        req(pdp, TTO_CHAN);
-    }
-
-    // 19-Jun-2026 wje: skip builtin tyi servicing if a dynamic IOT now owns device 4
-    // (tyi). Without this, IOTs/Typewriter/IOT_4.c's own iotIOPoll() servicing of
-    // tyi_wait/tb/tbs/pf would be double-serviced here too. Note: if device 3 (tyo)
-    // is plugin-owned but device 4 is NOT (a partial/unsupported load -- the two
-    // ship together), this stall-input check still references typ_time, which the
-    // tyo plugin no longer maintains; that's an accepted limitation of running the
-    // two plugins independently, not something this guard can fix on its own.
-
-    // stall input while we're outputting stuff
-    if(pdp->typ_time != NEVER && !dynamicIotOwnsDevice(4))
-    {
-        pdp->tyi_wait = pdp->simtime + US(25000);
-    }
-
-    if(pdp->tyi_wait < pdp->simtime && pdp->typ_fd.ready && !dynamicIotOwnsDevice(4))
-    {
-    char c;
-
-        if(read(pdp->typ_fd.fd, &c, 1) <= 0)
-        {
-            closefd(&pdp->typ_fd);
-            pdp->typ_fd.fd = -1;
-            return;
-        }
-
-        waitfd(&pdp->typ_fd);
-
-        if(pdp->pf & 040)
-        {
-            logger(LOG_TYPEWRITER, "char missed <%o>\n", pdp->tb);
-        }
-
-        pdp->tb = 0;
-        // STROBE TYPE
-        pdp->tb |= c & 077;
-        //
-        pdp->tbs = 1;
-        // TYPE SYNC
-        pdp->pf |= 040;
-        req(pdp, TTI_CHAN);
-
-        // PDP-1 has to keep up, so avoid clobbering TB
-        // not sure what a good timeout here is
-        pdp->tyi_wait = pdp->simtime + US(25000);
     }
 }
 

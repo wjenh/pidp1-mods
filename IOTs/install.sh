@@ -1,7 +1,7 @@
 cd Lib; make
 cd ..
 
-for F in `find * -type d`; do
+for F in `find * -type d --not Tests`; do
     echo Building $F
     cd $F
     pwd

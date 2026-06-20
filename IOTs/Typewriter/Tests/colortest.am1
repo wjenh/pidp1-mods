@@ -1,0 +1,131 @@
+TYPEWRITER COLOR/SHIFT TEST -- "The quick brown fox jumped over the lazy dog"
+/*
+ * colortest.am1 -- types the classic pangram one line, alternating each word
+ * red/black (first word red), to exercise the ribbon-color fix (IOT_3.c +
+ * typtelnet.c, 20-Jun-2026) independently of case shifting. The first word
+ * ("The") also exercises both Ucs and Lcs in the same word -- capital T, then
+ * lowercase h/e -- so word 1 alone tests color-shift, upper-shift, and
+ * lower-shift together; every word after it stays in lowercase the whole time
+ * (only one Ucs/Lcs pair is needed for the entire line).
+ *
+ * Why this is all raw tyo calls instead of am1's text/ascii/flexo directives:
+ * neither macro1 nor (yet) am1 has any direct notation for the Black/Red
+ * ribbon-color shift codes (034/035 octal) -- text/ascii/flexo only know about
+ * the printable character set plus Lcs/Ucs case shifting. Per the project
+ * owner (20-Jun-2026): am1 will eventually get \R / \B marker escapes inside
+ * flexo/text/ascii strings for this, implemented by the owner, not here. Until
+ * then, color (and for clarity, case) is spelled out explicitly below as a
+ * sequence of direct tyo calls, one flexo code at a time -- see the TYO()
+ * macro just below the title.
+ *
+ * Flexo/concise code reference used here (all octal, all confirmed against
+ * Tools/AM1/parsefns.c's concise2ascii table and bin/decode_fiodec.py /
+ * bin/encode_fiodec.py -- see Claude/CLAUDE.md's "Typewriter" sections):
+ *   072 = Lcs (lower-case shift)      074 = Ucs (upper-case shift)
+ *   034 = Blk (ribbon color: black)   035 = Red (ribbon color: red)
+ *   000 = space                       077 = newline (CRLF)
+ * Letter codes are the SAME 6-bit value for upper and lower case -- e.g. 't'
+ * and 'T' are both code 023; only the current Lcs/Ucs shift STATE (tracked by
+ * typtelnet.c's `ucase`, completely independent of `color`) decides which
+ * glyph is actually printed. That's exactly the real-hardware behavior this
+ * test is meant to confirm: color and case never have to move together.
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 colortest.am1
+ */
+
+octal
+
+// TYO(x): load IO with the literal flexo code x and punch/print it out,
+// synchronous (tyo's base opcode already carries the wait bit -- see
+// Claude/CLAUDE.md's "Typewriter (tyi / tyo / szf / clf)" section). One macro
+// invocation per flexo code emitted -- color shift, case shift, letter, or
+// space are all just "another code" as far as tyo is concerned.
+#define TYO(x) lio [x]; tyo i
+
+100/
+
+begin,
+    // --- "The" -- RED, exercises Ucs (T) then Lcs (h, e) ---
+    TYO(035)           // Red
+    TYO(074)           // Ucs -- shift up
+    TYO(023)           // T
+    TYO(072)           // Lcs -- shift back down
+    TYO(070)           // h
+    TYO(065)           // e
+    TYO(000)           // space
+
+    // --- "quick" -- BLACK ---
+    TYO(034)           // Black
+    TYO(050)           // q
+    TYO(024)           // u
+    TYO(071)           // i
+    TYO(063)           // c
+    TYO(042)           // k
+    TYO(000)
+
+    // --- "brown" -- RED ---
+    TYO(035)           // Red
+    TYO(062)           // b
+    TYO(051)           // r
+    TYO(046)           // o
+    TYO(026)           // w
+    TYO(045)           // n
+    TYO(000)
+
+    // --- "fox" -- BLACK ---
+    TYO(034)           // Black
+    TYO(066)           // f
+    TYO(046)           // o
+    TYO(027)           // x
+    TYO(000)
+
+    // --- "jumped" -- RED ---
+    TYO(035)           // Red
+    TYO(041)           // j
+    TYO(024)           // u
+    TYO(044)           // m
+    TYO(047)           // p
+    TYO(065)           // e
+    TYO(064)           // d
+    TYO(000)
+
+    // --- "over" -- BLACK ---
+    TYO(034)           // Black
+    TYO(046)           // o
+    TYO(025)           // v
+    TYO(065)           // e
+    TYO(051)           // r
+    TYO(000)
+
+    // --- "the" -- RED (already lowercase-shifted, no Ucs/Lcs needed) ---
+    TYO(035)           // Red
+    TYO(023)           // t
+    TYO(070)           // h
+    TYO(065)           // e
+    TYO(000)
+
+    // --- "lazy" -- BLACK ---
+    TYO(034)           // Black
+    TYO(043)           // l
+    TYO(061)           // a
+    TYO(031)           // z
+    TYO(030)           // y
+    TYO(000)
+
+    // --- "dog" -- RED ---
+    TYO(035)           // Red
+    TYO(064)           // d
+    TYO(046)           // o
+    TYO(067)           // g
+
+    TYO(077)           // newline
+
+    // tidy up: leave the typewriter in its default state before halting
+    TYO(034)           // Black (reset color)
+    TYO(072)           // Lcs (reset case)
+
+    hlt                // one line printed; CONTINUE re-runs it
+    jmp begin
+
+start begin

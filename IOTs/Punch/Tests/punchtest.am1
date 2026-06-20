@@ -1,0 +1,78 @@
+PUNCH TEST -- exercises the ppa/ppb dynamic IOT plugin (IOTs/Punch/IOT_5.c, IOT_6.c)
+/*
+ * Operations:
+ *   1. Punch 'A','B' via ppa, synchronous (blocking) mode.
+ *   2. Punch 'C' via ppa in non-blocking ("C") mode, do a little unrelated
+ *      work, then explicitly sync with ioh before punching 'D' (blocking),
+ *      exercises the deferred-completion path through the plugin's pcp/ios
+ *      handling, not just the synchronous path covered by step 1.
+ *   3. Punch one 18-bit binary word via ppb, framed as 3 sequential 6-bit
+ *      bytes (MSB chunk first), each blocking.
+ *   4. Halt.
+ *
+ * Expected tape bytes (in the order they're punched), with the leading 0200
+ * frame bit IOT_6 always ORs in:
+ *
+ *   ppa, alphanumeric (full byte = IO & 0377, no 0200 framing added by the
+ *   device -- ppa just punches the raw low byte):
+ *     'A'  = 0101 octal (65 decimal)
+ *     'B'  = 0102 octal (66 decimal)
+ *     'C'  = 0103 octal (67 decimal)
+ *     'D'  = 0104 octal (68 decimal)
+ *   So the tape's first 4 bytes, read as ASCII, literally spell "ABCD".
+ *
+ *   ppb, binary, word = 123456 octal, split MSB-chunk-first into three 6-bit
+ *   pieces (12, 34, 56 octal) each OR'd with the 0200 channel-8 frame bit:
+ *     byte 5 = 0200|012 = 0212 octal
+ *     byte 6 = 0200|034 = 0234 octal
+ *     byte 7 = 0200|056 = 0256 octal
+ *   Reassembling on the read side: (012<<12)|(034<<6)|056 = 123456 octal,
+ *   confirming the framing math is its own inverse.
+ *
+ *   Total: 7 bytes on the tape, in order: 101 102 103 104 212 234 256 (octal).
+ */
+
+100/
+begin,
+    // --- Section 1: synchronous punches, 'A' then 'B' ---
+    lio ['A']
+    ppa i               // blocks until the byte lands on tape
+    lio ['B']
+    ppa i
+
+    // --- Section 2: non-blocking punch of 'C', some unrelated work, then
+    // an explicit sync before punching 'D' ---
+    lio ['C']
+    ppa-i C             // non-blocking: CPU continues immediately, punch
+                         // completes later in the background via iotPoll()
+    cla                 // unrelated work done while the punch is in flight
+    cla
+    ioh                 // wait here for the 'C' punch above to finish
+    lio ['D']
+    ppa i               // finish the alphanumeric section synchronously
+
+    // --- Section 3: one 18-bit binary word (123456 octal) via ppb, MSB chunk
+    // first. These are assembly-time constant expressions on the literal
+    // value, NOT a memory reference -- a location symbol's value is its
+    // *address*, not its contents, so the word is folded in directly here
+    // rather than stored in a labeled location and loaded back.
+    lio [(123456 & 0770000)]          // top 6 bits (12 octal) already in position
+    ppb i
+    lio [(123456 & 0007700) << 0d6]   // middle 6 bits (34 octal), shifted to top
+    ppb i
+    lio [(123456 & 0000077) << 0d12]  // low 6 bits (56 octal), shifted to top.
+                                       // NOTE: shift counts are themselves parsed in the
+                                       // current radix (octal here), so a bare "12" would
+                                       // mean shift-by-octal-12 = shift-by-10 decimal --
+                                       // wrong by 2 bits. 0d12 forces decimal regardless
+                                       // of the surrounding `octal` directive. Bug found
+                                       // 19-Jun-2026 via real hardware verification of the
+                                       // resulting tape; bare "<< 6" above is unaffected
+                                       // since 6 is the same value in either radix.
+    ppb i
+    hlt                 // tape is complete; IO/AC are free to examine
+    jmp begin           // CONTINUE re-runs the whole test
+
+constants
+
+start begin

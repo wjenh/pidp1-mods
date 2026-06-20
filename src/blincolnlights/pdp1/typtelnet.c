@@ -32,30 +32,35 @@ enum {
 
 #define BAUD 30
 
-// TODO: not all characters map to ascii
+/* TODO: not all characters map to ascii */
 
 #define XXX ((const char*)1)
 #define Lcs ((const char*)2)
 #define Ucs ((const char*)3)
-// shouldn't be sent, so we ignore
-// just for documentation
-#define Red XXX
-#define Blk XXX
+/* 20-Jun-2026 wje: these used to be aliased to XXX ("shouldn't be sent, so we
+ * ignore -- just for documentation"). They ARE sent now -- IOT_3.c (tyo) used to
+ * conflate case (Lcs/Ucs) and ribbon color (Blk/Red) by encoding case into a wire
+ * bit and never forwarding 034/035 at all. Real Flexowriter hardware has these as
+ * two independent shift mechanisms, so IOT_3.c now forwards tb completely raw and
+ * this table (already laid out with Blk/Red in the right slots) is what actually
+ * implements ribbon-color tracking -- see putfio() below. */
+#define Red ((const char*)4)
+#define Blk ((const char*)5)
 
 static const char *fio2uni[] = {
 	" ", "1", "2", "3", "4", "5", "6", "7", "8", "9", XXX, XXX, XXX, XXX, XXX, XXX,
 	"0", "/", "s", "t", "u", "v", "w", "x", "y", "z", XXX, ",", Blk, Red, "\t", XXX,
-	"·", "j", "k", "l", "m", "n", "o", "p", "q", "r", XXX, XXX, "-", ")", "‾", "(",
+	"\xc2\xb7", "j", "k", "l", "m", "n", "o", "p", "q", "r", XXX, XXX, "-", ")", "\xe2\x80\xbe", "(",
 	XXX, "a", "b", "c", "d", "e", "f", "g", "h", "i", Lcs, ".", Ucs, "\b", XXX, "\r\n",
 
-	" ", "\"", "'", "~", "⊃", "∨", "∧", "<", ">", "↑", XXX, XXX, XXX, XXX, XXX, XXX,
-	"→", "?", "S", "T", "U", "V", "W", "X", "Y", "Z", XXX, "=", Blk, Red, "\t", XXX,
+	" ", "\"", "'", "~", "\xe2\x8a\x83", "\xe2\x88\xa8", "\xe2\x88\xa7", "<", ">", "\xe2\x86\x91", XXX, XXX, XXX, XXX, XXX, XXX,
+	"\xe2\x86\x92", "?", "S", "T", "U", "V", "W", "X", "Y", "Z", XXX, "=", Blk, Red, "\t", XXX,
 	"_", "J", "K", "L", "M", "N", "O", "P", "Q", "R", XXX, XXX, "+", "]", "|", "[",
-	XXX, "A", "B", "C", "D", "E", "F", "G", "H", "I", Lcs, "×", Ucs, "\b", XXX, "\r\n",
+	XXX, "A", "B", "C", "D", "E", "F", "G", "H", "I", Lcs, "\xc3\x97", Ucs, "\b", XXX, "\r\n",
 };
 
-// 100 LC
-// 200 UC
+/* 100 LC */
+/* 200 UC */
 static int ascii2fio[] = {
 	  -1,   -1,   -1,   -1,   -1,   -1,   -1,   -1,
 	0075, 0036,   -1,   -1,   -1, 0077,   -1,   -1,
@@ -77,39 +82,44 @@ static int ascii2fio[] = {
 	0147, 0150, 0151, 0122, 0123, 0124, 0125, 0126,
 	0127, 0130, 0131,   -1, 0256,   -1, 0203,   -1,
 
-// missing	replacement
-// 204	⊃	#
-// 205	∨	!
-// 206	∧	&
-// 220	→	\
-// 273	×	*
-// 140	·	@
-// 156	‾	`
+/* missing  replacement
+ * 204  superset-symbol  #
+ * 205  or-symbol  !
+ * 206  and-symbol  &
+ * 220  right-arrow  backslash
+ * 273  times-symbol  *
+ * 140  middle-dot  @
+ * 156  overline  backtick
+ */
 };
 
 static int color;
 static int ucase;
 
+/* 20-Jun-2026 wje: dropped the `col` parameter and the wire-bit6-driven color
+ * switch (col = !!(c&0100); if(color != col) {...}). That encoded IOT_3.c's case
+ * state (tbb) into bit 6 of every byte and used it to drive the ANSI escape --
+ * conflating case and ribbon color, which are independent on real hardware. Color
+ * now changes ONLY on a genuine Blk/Red code from the table, exactly mirroring how
+ * ucase already only changes on a genuine Lcs/Ucs code -- the two state machines
+ * are now symmetric and independent, as they should be. */
 static void
 putfio(int c, int fd)
 {
 	const char *s;
-	int col;
 
-	col = !!(c&0100);
 	c = ucase*0100 + (c&077);
-
-	if(color != col) {
-		color = col;
-		if(color == 0)
-			write(fd, "\e[39;49m", 8);
-		else
-			write(fd, "\e[31m", 5);
-	}
 	s = fio2uni[c];
-// TODO: synchronize ucase?
 	if(s == Lcs) { ucase = 0; return; }
 	if(s == Ucs) { ucase = 1; return; }
+	if(s == Blk) {
+		if(color) { color = 0; write(fd, "\033[39;49m", 8); }
+		return;
+	}
+	if(s == Red) {
+		if(!color) { color = 1; write(fd, "\033[31m", 5); }
+		return;
+	}
 	if(s != XXX) write(fd, s, strlen(s));
 }
 
@@ -129,18 +139,20 @@ getfio(int c, int fd, int localfd)
 	s[n++] = c & 077;
 	write(fd, s, n);
 
-	// local echo
+	/* local echo. 20-Jun-2026 wje: was `putfio(color<<6 | s[i], localfd)` -- the
+	 * color<<6 packing was a leftover of the old wire-bit6 color scheme; putfio()
+	 * no longer looks at that bit at all, so it's just s[i] now. */
 	int i;
 	for(i = 0; i < n; i++)
-		putfio(color<<6 | s[i], localfd);
+		putfio(s[i], localfd);
 }
 
 
 static void
 getascii(int c, int fd, int localfd)
 {
-	// simulate common combinations
-	// didn't actually use to work so well, but maybe fixed now?
+	/* simulate common combinations
+	 * didn't actually use to work so well, but maybe fixed now? */
 	if(c == ';') {
 		getfio(0140, fd, localfd);
 		getfio(033, fd, localfd);
@@ -222,7 +234,7 @@ readwrite(int telfd, int typfd)
 					c = readiac(telfd);
 				if(c < 0)
 					continue;
-				c &= 0177;	// needed?
+				c &= 0177;	/* needed? */
 				getascii(c, typfd, telfd);
 			}
 		}
@@ -255,10 +267,16 @@ telthread(void *arg)
 		cmd(telfd, WILL, SUPRGA);
 		cmd(telfd, WONT, LINEEDIT);
 		cmd(telfd, DONT, LINEEDIT);
-//		write(telfd, "[2J[H", 7);
+		/* Reset a fresh connection to default color if a previous connection left
+		 * it red. 20-Jun-2026 wje: was `putfio(0160, telfd)`, relying on putfio()'s
+		 * old wire-bit6 color logic -- 0160's bit 6 is actually set, so that call
+		 * never really reset anything even before this fix. Now that putfio() only
+		 * changes color on a genuine Blk/Red table entry (060 octal maps to
+		 * XXX/Lcs depending on ucase, never Blk/Red), the reset has to be written
+		 * directly instead of routed through putfio(). */
 		if(color) {
 			color = 0;
-			putfio(0160, telfd);
+			write(telfd, "\033[39;49m", 8);
 		}
 		readwrite(telfd, typfd);
 		close(telfd);

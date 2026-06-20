@@ -88,6 +88,19 @@
  * 18-Jun-2026 wje (Claude) replace SDL_CreateWindowAndRenderer with
  *    SDL_CreateWindowWithProperties + SDL_CreateRenderer so SDL_WINDOWPOS_CENTERED can be
  *    specified. X11 honors this; Wayland ignores it but centers new windows by default.
+ * 19-Jun-2026 wje (Claude) fix the long-standing 12+ hour blank-display/unresponsive hang:
+ *    hold busyLockP for the entire active-point walk in main() instead of only inside
+ *    removeActivePoint(). The unlocked walk let the reader thread's addActivePoint()
+ *    recycle a just-freed slot and relink it into the chain main() was still traversing,
+ *    corrupting nextIdx into a cycle; the for loop then spun forever (confirmed via gdb on
+ *    a live hung process: pegged CPU, main() stuck re-entering removeActivePoint() without
+ *    ever returning). removeActivePoint() no longer locks internally; callers must hold
+ *    busyLockP first, same convention addActivePoint() already used.
+ * 19-Jun-2026 wje (Claude) move ++totalFrames from before the idle-skip check (it was counting
+ *    every loop/timer tick, including cycles with no active points where nothing is drawn or
+ *    presented) to just after SDL_RenderPresent(). Matches t30dpy (SDL2), where totalFrames only
+ *    counts actual rendered/presented frames, so reportTiming()'s frames/sec figure now means
+ *    the same thing in both clients.
 */
 
 #include <stdio.h>
@@ -425,11 +438,6 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
 
-    // We want SDL to use the hardware driver if possible.
-    // But, it gets confused on rpi systems running trixie, give it a hint.
-    //SDL_SetHint(SDL_HINT_RENDER_DRIVER, "wayland,x11")
-    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
-
     // init SDL
     if( !SDL_Init(SDL_INIT_VIDEO) )
     {
@@ -678,7 +686,6 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
         }
 
         accumulator -= FRAMETIME;   // Any timing error accumulates so it can be corrected for.
-        ++totalFrames;
 
         if( activeListHead == NOINDEX )
         {
@@ -701,8 +708,15 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
         // The list is threaded by index through activePool[] (see ActivePoint above), which
         // keeps traversal localized to a small contiguous pool instead of chasing pointers
         // across the full 1024x1024 grid.
-        // Technically, we should lock over the entire operation, but all that could happen
-        // is that for one cycle the active list head might not be current, no big deal.
+        // This entire walk is done under a single lock acquisition, not just the individual
+        // removals: previously, only removeActivePoint() locked, leaving the read of each
+        // node's nextIdx here unprotected.  That let the reader thread's addActivePoint(),
+        // running concurrently, recycle a slot we had just freed and relink it back into the
+        // chain we were still traversing, corrupting nextIdx into a cycle.  The result was an
+        // unbounded loop right here: pegged CPU, a frozen display, and total input
+        // unresponsiveness, confirmed against a live hung process with gdb.
+        SDL_LockMutex(busyLockP);
+
         for( pointIdx = activeListHead, prevIdx = NOINDEX; pointIdx != NOINDEX; pointIdx = nextIdx )
         {
             activePointP = &activePool[pointIdx];
@@ -721,10 +735,13 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
             else
             {
                 // We don't update prevIdx in this case because that point remains the previous point.
-                // Locking is handled in removeActivePoint().
+                // The lock for this whole walk is already held above; removeActivePoint() no
+                // longer locks internally, it relies on its caller to hold busyLockP.
                 removeActivePoint(pointIdx, prevIdx);
             }
         }
+
+        SDL_UnlockMutex(busyLockP);
 
         SDL_UnlockTexture(textureP);
 
@@ -738,6 +755,7 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
         SDL_RenderClear(renderer);
         SDL_RenderTexture(renderer, textureP, NULL, NULL);
         SDL_RenderPresent(renderer);
+        ++totalFrames;
     }
 
 
@@ -1013,11 +1031,11 @@ uint32_t i;
 // and return its pool slot to the head of the free list for reuse.
 // PointIdx is the pool index of the point being removed; prevIdx is the pool index of the
 // previous entry on the active list, or NOINDEX if pointIdx was the head.
+// The lock must be in place before calling! (main()'s point-removal walk holds busyLockP
+// for the entire pass before calling this, same convention as addActivePoint() below).
 void
 removeActivePoint(uint32_t pointIdx, uint32_t prevIdx)
 {
-    SDL_LockMutex(busyLockP);
-
     // This screen position no longer has an active point.
     pointIndex[activePool[pointIdx].y][activePool[pointIdx].x] = NOINDEX;
 
@@ -1033,8 +1051,6 @@ removeActivePoint(uint32_t pointIdx, uint32_t prevIdx)
     // Return this slot to the head of the free list so it can be reused.
     activePool[pointIdx].nextIdx = freeListHead;
     freeListHead = pointIdx;
-
-    SDL_UnlockMutex(busyLockP);
 
     if( doTiming )
     {

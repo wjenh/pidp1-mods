@@ -7,6 +7,22 @@ void dynamicIotProcessorStart(void);
 void dynamicIotProcessorStop(void);
 void dynamicIotProcessorSetPDP1(PDP1 *pdpP);
 void dynamicIotProcessorDoPoll(PDP1 *pdpP);
+
+// 19-Jun-2026 wje added for the rpa/rpb (reader) extraction.
+// dynamicIotOwnsDevice: lets core code (handleio()'s reader/punch/typewriter sections) check,
+// before doing its own builtin servicing of a device, whether a dynamic IOT has been loaded for
+// it (following aliases). Resolves/lazy-loads exactly like dynamicIotProcessor does, but never
+// calls the handler -- it's a pure query. Returns 1 if a real handler is loaded for dev, else 0.
+int dynamicIotOwnsDevice(int dev);
+
+// dynamicIotProcessorDoIOPoll: a second, independent poll hook for devices that need a free-running
+// real-time cadence (paper tape reader/punch, typewriter) rather than the cycle-gated cadence
+// DoPoll above provides. Meant to be called unconditionally once per main-loop iteration, at the
+// same call site as handleio(), regardless of run state -- deliberately NOT gated on 'stopped',
+// because handleio() isn't either (real tape transport doesn't care if the CPU is halted).
+// Uses a separate registration list (see iotIOPoll in iotHandler.h) so it has zero effect on any
+// existing plugin using the original iotPoll/enablePolling mechanism above.
+void dynamicIotProcessorDoIOPoll(PDP1 *pdpP);
 #endif
 
 // Called from an implemented handler
@@ -33,6 +49,13 @@ typedef int (*IotAliasP)();
 typedef void (*IotPollEnableP)(int);
 typedef void (*IotPollP)(PDP1 *);
 
+// 19-Jun-2026 wje added for the rpa/rpb (reader) extraction.
+// If implemented, the handler is to get a call once per main-loop iteration, unconditionally
+// (no enablePolling() needed/used -- every registered iotIOPoll is called every time). Meant for
+// real-time, file-descriptor-backed devices (reader/punch/typewriter) whose timing must keep
+// running even while the CPU is halted, unlike the cycle-gated iotPoll above.
+typedef void (*IotIOPollP)(PDP1 *);
+
 // Additionally, a 'hidden' callback is set up to allow the handler to initiate a sequence break
 // Within the handler, initiateBreak(chan) can be used to signal a break;
 typedef void (*IotSeqBreakP)(int chan);     // same as in iotHandler.h
@@ -48,6 +71,7 @@ typedef struct _IotEntry
     IotStartP startP;
     IotStopP stopP;
     IotPollP pollP;
+    IotIOPollP ioPollP;     // 19-Jun-2026 wje, see IotIOPollP above
     struct _IotEntry *actualEntryP;    // for aliases
 } IotEntry, *IotEntryP;
 
@@ -60,6 +84,15 @@ typedef struct pollEntry
     int curCount;                   // cycles since last entry call
     int iotNum;                     // just for convenience
 } PollEntry, *PollEntryP;
+
+// 19-Jun-2026 wje added for the rpa/rpb (reader) extraction.
+// A much simpler chain than PollEntry above: no cycle-counting, every registered ioPollP gets
+// called on every dynamicIotProcessorDoIOPoll() call, full stop.
+typedef struct ioPollEntry
+{
+    struct ioPollEntry *nextP;
+    IotEntryP iotEntryP;
+} IoPollEntry, *IoPollEntryP;
 
 // Similarly, set a reference back to the IotEntry for an IOT
 typedef void (*IotControlBlockSetterP)(IotEntryP);

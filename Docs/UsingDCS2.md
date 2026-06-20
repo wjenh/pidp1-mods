@@ -1,7 +1,8 @@
 # Using the DCS Communication System
 
 This document describes how to use the enhanced multi-channel Type 630 Data Communication System replacement.
-Updated 11-May-2026
+Updated 18-Jun-2026\
+add info about include file
 
 ## What is DCS2?
 
@@ -166,6 +167,9 @@ in extended memory mode.
 **Warning**: The mnemonics below are directly from the DEC documentation, but notice there is an *rcr* instruction.
 That conflicts with the rcr that is rotate-combined-right.
 Keep that in mind. The include files provided use rchr instead.
+
+An am1 #include file is provided, #include <DCS/dcs2defs.ah> that contains mnenomics for all the commands
+and the bit flags, as used here.
 
 All are implemented via a single IOT, 22 as mentioned.
 The following IOT commands are supported:
@@ -510,3 +514,141 @@ if any bytes are ready to be read, or a transmit buffer is full, controlled by t
 specified when the channel was opened.
 
 If the SBS16 system is in use, different SBS channels can be assigned to each DCS2 channel for convenience.
+
+## What the include file provides
+
+NOTE that rcr in DCS conflicts with rcr, rotate-combined-right.
+It is renamed rchr here.
+
+These are included:
+```
+#define rch iot 0022
+#define rrc iot 0122
+#define rchr iot 1022
+#define rsc iot 1122
+#define tcb iot 4022
+#define ssb iot 4122
+#define tcc iot 5022
+
+// rch and rcr will clear the IO register if
+// this is added to the IOT, else it ors.
+#define rchclr 002000
+
+// Extended commands.
+#define rwe iot 0222
+#define scb iot 4222
+#define rle iot 4322
+#define rpc iot 4422
+#define rci iot 4522
+#define ric iot 4622
+#define rcs iot 4722
+#define rwe iot 5122
+#define roc iot 5222
+#define res iot 5322
+#define rxl iot 5422
+
+// dcfxxx are single bit flags
+// dcmxxx are multibit masks
+// Channel Request Block first word
+// dcfcrnl - turn newline into carriage return, newline on send
+// dcfflex - flexo mode, do automatic conversion
+// dcfecho - echo received characters
+// dcfioc - interrupt on connection open or close
+// dcfioe - interrupt on socket error
+// dcfior - interroupt on character received
+// dcfie -  enable interrupts for channel
+// dcfsrv - server mode
+// rxlfta - flexo to ascii
+// rxlucs - flexo upper case shift
+// rxlchg - flexo shift state changed
+// dcmsbs - bitmask, sbs channel to use
+// dcmcha - bitmask, channel number for this channel
+
+#define dcfcrnl 400000
+#define dcfflex 200000
+#define dcfecho 100000
+#define dcfioc 040000
+#define dcfioe 020000
+#define dcfior 010000
+#define dcfie 004000
+#define dcfsrv 000100
+#define rxlfta 0400000
+#define rxlucs 00400
+#define rxlchg 01000
+
+#define dcmsbs 003600
+#define dcmcha 000077
+
+/// Directives to scb
+#define scbset 010000
+#define scbbnd 020000
+#define scbrst 040000
+#define scbclr 000000
+
+// Channel status flags
+// dsfopn - channel has been opened by scb
+// dsfsvr - channel is a server channel, else client
+// dsfcon - connected to remote host
+// dsfful - socket transmit buffer is full
+// dsfrdy - has characters ready to read
+// dsfser - got a socket error of some kine
+// dsfcls - remote closed connection
+// dsfien - interrupts are enabled
+// dsfior - interrupted because a character was received
+// dsfioc - interrupted because a connection was opened or closed
+// dsfioe - interrupted because transmit buffer full or other socket error
+// dsfcur - is the current channel
+
+#define dsfopn 000001
+#define dsfsvr 000002
+#define dsfcon 000004
+#define dsfful 000010
+#define dsfrdy 000020
+#define dsfser 000040
+#define dsfcls 000100
+#define dsfien 000200
+#define dsfior 000400
+#define dsfioc 001000
+#define dsfioe 002000
+#define dsfcur 004000
+
+// and some combined ones
+#define dssrdy dsfopn+dsfcon
+#define dsserr dsfcls+dsfser+dsfful
+
+// Errors returned in IO, dserr is the error flag
+// dseno - channel not open
+// dseoe - illegal operation on open channel
+// dseic - invalid channel number
+// dsens - server command on non-server channel
+// dseil - illegal command, commdand with illegal options
+// dseso - socket open or operation failed
+// dsebi - server bind to port failed
+// dsecc - rch, rcr, tcb, or tcc done but no current receive or send channel
+// dselo - remote end closed connection
+// dseep - internal error in epoll
+// dsenc - no client connected but operation attempted
+#define dserr 400000
+#define dseno 1
+#define dseoe 2
+#define dseic 3
+#define dsens 4
+#define dseil 5
+#define dseso 6
+#define dsebi 7
+#define dsecc 10
+#define dselo 11
+#define dseep 12
+#define dsenc 13
+
+// check status bit in IO reg
+#define dcfcks 000200
+
+// special flex characters
+#define flxerr 076
+#define flxnch 013
+#define flxetx 013
+#define flxnl 077
+// ascnch is used by rxl
+#define ascnch 077
+```

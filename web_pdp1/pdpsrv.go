@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -49,6 +48,12 @@ type PeriphServer struct {
 	punchData  chan byte
 	dpyCtl     chan int
 	typData    chan byte
+	// 20-Jun-2026 wje: typCtl/punchCtl gate the port-1041/1043 connections the
+	// same way dpyCtl already gates the display connection -- see
+	// handleTypewriter()/handlePunch() and the matching connect/cleanup
+	// handling in handleWebSocket().
+	typCtl   chan int
+	punchCtl chan int
 
 	ptrbuf []byte
 	ptrpos int
@@ -65,13 +70,15 @@ func NewServer(host string) *PeriphServer {
 		punchData:  make(chan byte, 1000),
 		dpyCtl:     make(chan int, 1),
 		typData:    make(chan byte, 1),
+		typCtl:     make(chan int, 1),
+		punchCtl:   make(chan int, 1),
 		wsConn:     make(chan *websocket.Conn, 1),
 		ptrbuf:     nil,
 	}
 }
 
 func assemble(src string) (string, []byte, string) {
-//	fmt.Printf("src: <%s>\n", src)
+	//	fmt.Printf("src: <%s>\n", src)
 
 	tmpDir, err := ioutil.TempDir("", "macro1_")
 	if err != nil {
@@ -211,33 +218,55 @@ func (s *PeriphServer) handleReader() {
 	}
 }
 
+// 20-Jun-2026 wje: same fix as handleTypewriter() below, for the identical
+// "TODO: we should only connect to the emulator when the websocket is
+// connected" this function used to have. Driven by punchCtl exactly like
+// typCtl/dpyCtl -- only connects to port 1043 while a browser is attached,
+// instead of dialing unconditionally at startup and retrying every 5 seconds
+// forever regardless of whether anyone's watching. main.c's handleptp()
+// replaces pdp->p_fd outright on each new connection (closing whatever was
+// there before), so this connection is effectively exclusive the same way the
+// typewriter's is -- no reason for pdpsrv to hold/steal it when no browser is
+// open.
 func (s *PeriphServer) handlePunch() {
-	buf := make([]byte, 1)
-	// TODO: we should only connect to the emulator
-	// when the websocket is connected
-	for {
-		conn, err := net.Dial("tcp", fmt.Sprintf("%s:1043", s.host))
-		if err != nil {
-			log.Printf("Failed to connect to punch: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
+	var conn net.Conn
+	dataChan := make(chan byte, 1)
+	errChan := make(chan error, 1)
 
-		log.Printf("Connected to punch port 1043")
-		for {
-			_, err := conn.Read(buf)
-			if err != nil {
-				log.Printf("Error reading from punch: %v", err)
-				break
+	for {
+		select {
+		case msg := <-s.punchCtl:
+			if conn != nil {
+				conn.Close()
+				conn = nil
 			}
+			if msg == 0 {
+				continue
+			}
+
+			c, err := net.Dial("tcp", fmt.Sprintf("%s:1043", s.host))
+			if err != nil {
+				log.Printf("Failed to connect to punch: %v", err)
+				continue
+			}
+
+			log.Printf("Connected to punch port 1043")
+			conn = c
+			go readBytes(conn, dataChan, errChan)
+
+		case c := <-dataChan:
 			s.sendToWeb(Message{
 				Type:  "punch_data",
-				Value: buf[0],
+				Value: c,
 			})
-		}
-		log.Printf("close punch")
 
-		conn.Close()
+		case err := <-errChan:
+			log.Printf("punch connection lost: %v", err)
+			if conn != nil {
+				conn.Close()
+				conn = nil
+			}
+		}
 	}
 }
 
@@ -308,50 +337,80 @@ func readBytes(conn net.Conn, data chan byte, errCh chan error) {
 	}
 }
 
+// 20-Jun-2026 wje: rewritten to fix the "TODO: we should only connect to the
+// emulator when the websocket is connected" left by the original implementation.
+// The typewriter is an exclusive-use device on the emulator side (port 1041 only
+// ever accepts one connection at a time -- see src/blincolnlights/common.c's
+// serve1(), which closes its listening socket the moment it accepts one client).
+// The old version of this function dialed port 1041 unconditionally from
+// main(), the instant pdpsrv started, and retried every 5 seconds forever --
+// completely independent of whether a browser was ever open. That meant pdpsrv
+// permanently held (or was constantly trying to re-grab) the device's one
+// connection slot, so a direct `telnet`/PuTTY session to port 1041 would almost
+// always lose the race and get connection refused, even right after restarting
+// the emulator with no browser open at all.
+//
+// Now this is driven entirely by s.typCtl, exactly mirroring how handleDisplay()
+// is driven by s.dpyCtl: handleWebSocket() sends typCtl<-1 when a browser
+// connects and typCtl<-0 when it disconnects (see below), so pdpsrv only holds
+// the port-1041 slot while a browser tab actually has the page open -- freeing
+// it the rest of the time for direct telnet/PuTTY access, and reclaiming it
+// (closing out from under) a direct telnet session if a browser connects while
+// one is active, matching "exclusive use, whoever's connected has it."
 func (s *PeriphServer) handleTypewriter() {
-	buf := make([]byte, 1)
+	var conn net.Conn
 	dataChan := make(chan byte, 1)
 	errChan := make(chan error, 1)
-	// TODO: we should only connect to the emulator
-	// when the websocket is connected
+	buf := make([]byte, 1)
+
 	for {
-		conn, err := net.Dial("tcp", fmt.Sprintf("%s:1041", s.host))
-		if err != nil {
-			log.Printf("Failed to connect to typewriter: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
+		select {
+		case msg := <-s.typCtl:
+			if conn != nil {
+				conn.Close()
+				conn = nil
+			}
+			if msg == 0 {
+				continue
+			}
 
-		log.Printf("Connected to typewriter")
+			c, err := net.Dial("tcp", fmt.Sprintf("%s:1041", s.host))
+			if err != nil {
+				log.Printf("Failed to connect to typewriter: %v", err)
+				continue
+			}
 
-		go readBytes(conn, dataChan, errChan)
-	L:
-		for {
-			select {
-			case c := <-dataChan:
-				//				fmt.Printf("got char xxx %v\n", c)
-				s.sendToWeb(Message{
-					Type:  "char",
-					Value: c,
-				})
+			log.Printf("Connected to typewriter")
+			conn = c
+			go readBytes(conn, dataChan, errChan)
 
-			case c := <-s.typData:
-				//				fmt.Printf("typed: %v\n", c)
-				buf[0] = c
-				_, err := conn.Write(buf)
-				if err != nil {
-					log.Printf("Error writing to typewriter: %v", err)
-					break L
-				}
+		case c := <-dataChan:
+			s.sendToWeb(Message{
+				Type:  "char",
+				Value: c,
+			})
 
-			case err := <-errChan:
-				fmt.Printf("got err %v\n", err)
-				break L
+		case c := <-s.typData:
+			if conn == nil {
+				// no active connection (no browser attached, or it raced with
+				// a disconnect) -- nothing to send the keystroke to.
+				continue
+			}
+			buf[0] = c
+			_, err := conn.Write(buf)
+			if err != nil {
+				log.Printf("Error writing to typewriter: %v", err)
+				conn.Close()
+				conn = nil
+			}
+
+		case err := <-errChan:
+			log.Printf("typewriter connection lost: %v", err)
+			if conn != nil {
+				conn.Close()
+				conn = nil
 			}
 		}
-		log.Printf("close typewriter")
-
-		conn.Close()
 	}
 }
 
@@ -381,11 +440,17 @@ func (s *PeriphServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	log.Printf("WebSocket connected")
 
 	s.wsConn <- conn
+	// 20-Jun-2026 wje: claim the typewriter's and punch's exclusive slots for the
+	// duration of this browser session; released in the deferred cleanup below.
+	s.typCtl <- 1
+	s.punchCtl <- 1
 	defer func() {
 		<-s.wsConn
 
 		//s.readerData <- nil
 		s.dpyCtl <- 0
+		s.typCtl <- 0
+		s.punchCtl <- 0
 	}()
 
 	if s.ptrbuf != nil {

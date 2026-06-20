@@ -61,7 +61,7 @@ rs2, cli
      and [dsfopn
      sza
      jmp rs3
-     lio [sbcset ctl]    // not open, do so, listens on port 2022 decimal.
+     lio [scbset ctl]    // not open, do so, listens on port 2022 decimal.
      scb
 
 rs3, cli            // loop waiting for a connection, which will be ready if we got here via the interrupt
@@ -101,7 +101,7 @@ try, say(hl2)
      jmp list
      say(badnum)
      jmp try        // not a recognized command or number, try again
-done, lio [sbcrst]    // completely shut down DCS2
+done, lio [scbrst]    // completely shut down DCS2
      scb
      hlt
      jmp resume     // ok, they really want to continue
@@ -194,7 +194,7 @@ trkok,
      cct        // disable timer
 
 // Close the channel, it will reopen on the next connection
-     lio [sbcbnd
+     lio [scbbnd
      scb
 // be sure things are cleaned up interrupt-wise
      cbs
@@ -204,7 +204,7 @@ trkok,
      farjmp(runprog)   // another cool macro
 
 // we had an error, just rebind and wait
-dcsfal, lio [sbcbnd
+dcsfal, lio [scbbnd
      scb
      hlt
      jmp resume
@@ -212,7 +212,7 @@ dcsfal, lio [sbcbnd
 // We initially reset the DCS system for a clean start
 boot,
     lem
-    lio [sbcrst
+    lio [scbrst
     scb
     jmp resume
 

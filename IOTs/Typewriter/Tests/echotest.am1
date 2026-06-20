@@ -1,0 +1,48 @@
+TYPEWRITER ECHO TEST -- minimal tyi/tyo loop, no DCS2, to isolate IOT_3.c/IOT_4.c
+/*
+ * echotest.am1 -- the simplest possible exercise of the tyi/tyo dynamic IOT plugins
+ * (IOT_3.c = tyo, IOT_4.c = tyi, this directory).
+ *
+ * Purpose: written 19-Jun-2026 to help debug a reported crash where the emulator
+ * process exits immediately (no signal, nothing for gdb to catch) after a single
+ * character round-trips through a DCS2-based echo test (tyi -> dcs2 send -> external
+ * echo program -> dcs2 receive -> tyo). This program removes DCS2 entirely: it just
+ * reads a typed character and echoes it straight back via tyo, in a tight loop, so
+ * the only two dynamic IOTs in play are tyi (device 4) and tyo (device 3) themselves.
+ * If this also exits immediately, the bug is in the Typewriter plugin pair or how
+ * pdp1.c now guards them; if this runs fine indefinitely, the bug is specific to the
+ * DCS2 interaction (timing, or something about IOT 22's own polling interacting with
+ * tyo's cycle-count poll / tyi's unconditional poll).
+ *
+ * Keyboard input idiom (tyi does NOT honour B5/B6 -- see Claude/CLAUDE.md and
+ * IOTs/Reader/Diagnostics doc updates this session): poll PF1 (szf 1 i), read with
+ * bare tyi, then clf 1 -- tyi clears tbs only, never PF1, so the clf 1 is mandatory
+ * or the next poll re-reads the same stale character.
+ *
+ * tyo here uses the plain/i (synchronous, blocking) form deliberately -- the
+ * simplest, safest form -- so this test doesn't also depend on the C/ioh async path
+ * (IOT_3.c's case for that is exercised separately by Diagnostics/punchtest.am1's
+ * punch-side equivalent; keeping this test minimal on purpose).
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 echotest.am1
+ */
+
+octal
+
+100/
+
+loop,
+    local getkey
+getkey,
+    szf 1 i         // skip if PF1 is set (key available in typewriter buffer)
+    jmp getkey      // PF1 clear -- no key yet, keep polling
+    tyi             // PF1 set: IO <- typewriter buffer [bits 0-5]; clears tbs
+    clf 1           // clear PF1 -- REQUIRED; tyi does not clear it
+    endlocal
+
+    tyo i           // echo the character back; blocks until printed
+
+    jmp loop        // forever
+
+start loop

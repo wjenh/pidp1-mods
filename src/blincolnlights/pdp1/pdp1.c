@@ -2734,7 +2734,10 @@ void
 handleio(PDP1 *pdp)
 {
     /* Reader */
-    if(pdp->rcl && pdp->r_time < pdp->simtime && pdp->r_fd >= 0)
+    // 19-Jun-2026 wje: skip builtin reader servicing if a dynamic IOT now owns device 1 (rpa).
+    // Without this, a Reader plugin's own iotIOPoll servicing of rcl/r_time/etc. would be
+    // double-serviced here too, since this code has no idea the plugin armed those fields.
+    if(pdp->rcl && pdp->r_time < pdp->simtime && pdp->r_fd >= 0 && !dynamicIotOwnsDevice(1))
     {
         u8 c;
         pdp->r_time = pdp->simtime + RDLY;
@@ -2806,7 +2809,12 @@ handleio(PDP1 *pdp)
     }
 
     /* Punch */
-    if(pdp->punon && pdp->p_time < pdp->simtime)
+    // 19-Jun-2026 wje: skip builtin punch servicing if a dynamic IOT now owns device 5
+    // (ppa)/6 (ppb). Without this, a Punch plugin's own iotPoll() servicing of
+    // punon/p_time/pb would be double-serviced here too, since this code has no idea
+    // the plugin armed those fields. The tape_feed/feed_time branch below is the
+    // front-panel FEED key, unrelated to any IOT, and is unaffected either way.
+    if(pdp->punon && pdp->p_time < pdp->simtime && !dynamicIotOwnsDevice(5))
     {
         pdp->p_time = NEVER;
 
@@ -2835,7 +2843,10 @@ handleio(PDP1 *pdp)
     }
 
     /* Typewriter */
-    if(pdp->typ_time < pdp->simtime)
+    // 19-Jun-2026 wje: skip builtin tyo servicing if a dynamic IOT now owns device 3
+    // (tyo). Without this, IOTs/Typewriter/IOT_3.c's own iotPoll() servicing of
+    // tyo/tb/tbb/tcp would be double-serviced here too.
+    if(pdp->typ_time < pdp->simtime && !dynamicIotOwnsDevice(3))
     {
         // wrong timing
         pdp->typ_time = NEVER;
@@ -2869,13 +2880,21 @@ handleio(PDP1 *pdp)
         req(pdp, TTO_CHAN);
     }
 
+    // 19-Jun-2026 wje: skip builtin tyi servicing if a dynamic IOT now owns device 4
+    // (tyi). Without this, IOTs/Typewriter/IOT_4.c's own iotIOPoll() servicing of
+    // tyi_wait/tb/tbs/pf would be double-serviced here too. Note: if device 3 (tyo)
+    // is plugin-owned but device 4 is NOT (a partial/unsupported load -- the two
+    // ship together), this stall-input check still references typ_time, which the
+    // tyo plugin no longer maintains; that's an accepted limitation of running the
+    // two plugins independently, not something this guard can fix on its own.
+
     // stall input while we're outputting stuff
-    if(pdp->typ_time != NEVER)
+    if(pdp->typ_time != NEVER && !dynamicIotOwnsDevice(4))
     {
         pdp->tyi_wait = pdp->simtime + US(25000);
     }
 
-    if(pdp->tyi_wait < pdp->simtime && pdp->typ_fd.ready)
+    if(pdp->tyi_wait < pdp->simtime && pdp->typ_fd.ready && !dynamicIotOwnsDevice(4))
     {
     char c;
 

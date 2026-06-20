@@ -2,7 +2,7 @@ ANOTHER SIMPLE DEMO OF THE DATA COMMUNICATIONS SYSTEM MKII
 
 / Listens on port 2022 for a connection, then says hello.
 / It asks for a character, answers it back, loops.
-/ This version uses interrupts busy-test loops, and is the desired
+/ This version uses interrupts and busy-test loops, and is the desired
 / way to use multiple channels.
 rch=0022
 tcb=4022

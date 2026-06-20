@@ -84,6 +84,28 @@
  *    SDL_Quit(). On X11, those calls trigger XTranslateCoordinates on the window after X
  *    has invalidated the resource, producing a BadWindow error. SDL_Quit() sequences the
  *    teardown correctly on its own.
+ * 19-Jun-2026 wje (Claude) fix the long-standing 12+ hour blank-display/unresponsive hang:
+ *    hold busyLockP for the entire active-point walk in main() instead of only inside
+ *    removeActivePoint(). The unlocked walk let the reader thread's addActivePoint()
+ *    recycle a just-freed slot and relink it into the chain main() was still traversing,
+ *    corrupting nextIdx into a cycle; the for loop then spun forever (confirmed via gdb on
+ *    a live hung process: pegged CPU, main() stuck re-entering removeActivePoint() without
+ *    ever returning). removeActivePoint() no longer locks internally; callers must hold
+ *    busyLockP first, same convention addActivePoint() already used.
+ * 19-Jun-2026 wje (Claude) fix corner-artifact glitch on first fullscreen toggle under
+ *    Wayland/labwc: the per-frame fast path skips SDL_RenderClear() since SDL_RenderCopy()
+ *    normally overwrites the entire render target, but that's only true while the window is
+ *    square -- the instant we go fullscreen on a non-square monitor, SDL_RenderSetLogicalSize()
+ *    introduces letterbox/pillarbox bars, and Wayland's asynchronous (compositor round-trip)
+ *    resize meant those bars briefly showed stale/uninitialized backbuffer content. Now force
+ *    two explicit SDL_RenderClear()/SDL_RenderPresent() cycles immediately after
+ *    SDL_SetWindowFullscreen(), flushing both backbuffers of the swap chain regardless of
+ *    resize-event timing.
+ * 19-Jun-2026 wje (Claude) fix totalFrames always reporting 0 in reportTiming(): the counter
+ *    was declared and printed but never incremented anywhere (a leftover from an earlier
+ *    refactor). Added ++totalFrames after SDL_RenderPresent() in the main loop, counting only
+ *    actual rendered/presented frames (not the idle-skip path when there are no active points,
+ *    and not the fullscreen-toggle flush presents, which are clear-only and not content frames).
 */
 
 #include <stdio.h>
@@ -410,11 +432,6 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
 
-    // We want SDL to use the hardware driver if possible.
-    // But, it gets confused on rpi systems running trixie, give it a hint.
-    //SDL_SetHint(SDL_HINT_RENDER_DRIVER, "wayland,x11")
-    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
-
     // init SDL
     SDL_Init(SDL_INIT_VIDEO);
 
@@ -514,6 +531,26 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                 case SDL_SCANCODE_F:
                     fullscreen = !fullscreen;
                     SDL_SetWindowFullscreen(window, (fullscreen)?SDL_WINDOW_FULLSCREEN_DESKTOP:0);
+
+                    // Under Wayland/labwc, a fullscreen toggle is not synchronous: the actual
+                    // resize/configure event from the compositor lands one or more frames later,
+                    // not immediately on return from SDL_SetWindowFullscreen() above. Our normal
+                    // per-frame path skips SDL_RenderClear() (see the comment at the bottom of the
+                    // main loop) on the assumption that SDL_RenderCopy(NULL,NULL) always covers the
+                    // full render target -- true only while the window is square and there are no
+                    // letterbox/pillarbox bars. The instant we go fullscreen on a non-square monitor,
+                    // SDL_RenderSetLogicalSize()'s aspect-preserving scale introduces bars, and until
+                    // the compositor's resize lands, SDL's cached viewport can briefly disagree with
+                    // the freshly (re)allocated backbuffer, leaving stale/uninitialized GPU memory
+                    // visible in the bar regions -- the corner artifacts observed after the first
+                    // toggle. Force two explicit clear+present cycles right here, flushing both
+                    // backbuffers of the double-buffered swap chain, so no stale content is ever
+                    // shown regardless of how the resize event timing falls out.
+                    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+                    SDL_RenderClear(renderer);
+                    SDL_RenderPresent(renderer);
+                    SDL_RenderClear(renderer);
+                    SDL_RenderPresent(renderer);
                     break;
 
                 case SDL_SCANCODE_ESCAPE:
@@ -638,8 +675,15 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
         memset(pixels, 0, pitch * 1024);
 
         // Go thru the point list, handle each.
-        // Technically, we should lock over the entire operation, but all that could happen
-        // is that for one cycle the active list head might be off, no big deal.
+        // This entire walk is done under a single lock acquisition, not just the individual
+        // removals: previously, only removeActivePoint() locked, leaving the read of each
+        // node's nextIdx here unprotected.  That let the reader thread's addActivePoint(),
+        // running concurrently, recycle a slot we had just freed and relink it back into the
+        // chain we were still traversing, corrupting nextIdx into a cycle.  The result was an
+        // unbounded loop right here: pegged CPU, a frozen display, and total input
+        // unresponsiveness, confirmed against a live hung process with gdb.
+        SDL_LockMutex(busyLockP);
+
         for( pointIdx = activeListHead, prevIdx = NOINDEX; pointIdx != NOINDEX; pointIdx = nextIdx )
         {
             activePointP = &activePool[pointIdx];
@@ -659,10 +703,13 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
             else
             {
                 // We don't update prevIdx in this case because that point remains the previous point.
-                // Locking is handled in removeActivePoint().
+                // The lock for this whole walk is already held above; removeActivePoint() no
+                // longer locks internally, it relies on its caller to hold busyLockP.
                 removeActivePoint(pointIdx, prevIdx);
             }
         }
+
+        SDL_UnlockMutex(busyLockP);
 
         SDL_UnlockTexture(textureP);
 
@@ -671,6 +718,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
         // the render target every frame, making a separate clear redundant.
         SDL_RenderCopy(renderer, textureP, NULL, NULL);
         SDL_RenderPresent(renderer);
+        ++totalFrames;
     }
 
     if( doTiming )
@@ -938,12 +986,12 @@ uint32_t i;
 
 // Remove a point from the active list, adjusting the head and prior point if needed,
 // clear its pointIndex[][] entry, and return its pool slot to the free list.
+// The lock must be in place before calling! (main()'s point-removal walk holds busyLockP
+// for the entire pass before calling this, same convention as addActivePoint() below).
 void
 removeActivePoint(uint32_t pointIdx, uint32_t prevIdx)
 {
 ActivePointP pointP;
-
-    SDL_LockMutex(busyLockP);
 
     pointP = &activePool[pointIdx];
 
@@ -961,8 +1009,6 @@ ActivePointP pointP;
     // Return this slot to the head of the free list.
     pointP->nextIdx = freeListHead;
     freeListHead = pointIdx;
-
-    SDL_UnlockMutex(busyLockP);
 
     if( doTiming )
     {

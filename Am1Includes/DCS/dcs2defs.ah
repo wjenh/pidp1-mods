@@ -64,10 +64,10 @@
 #define dcmcha 000077
 
 /// Directives to scb
-#define sbcset 010000
-#define sbcbnd 020000
-#define sbcrst 040000
-#define sbcclr 000000
+#define scbset 010000
+#define scbbnd 020000
+#define scbrst 040000
+#define scbclr 000000
 
 // Channel status flags
 // dsfopn - channel has been opened by scb

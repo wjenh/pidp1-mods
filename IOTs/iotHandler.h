@@ -47,6 +47,10 @@ int iotHandler(PDP1 *, int device,  int pulse, int completion);
 void iotStart(void);
 void iotStop(void);
 void iotPoll(PDP1 *);
+// 19-Jun-2026 wje added for the rpa/rpb (reader) extraction. If implemented, called
+// unconditionally once per main loop iteration -- no enablePolling() needed/used, and unlike
+// iotPoll above this keeps running even while the CPU is halted. See dynamicIots.h/IotIOPollP.
+void iotIOPoll(PDP1 *);
 void initiateBreak(int chan);
 void enablePolling(int cycles);
 int iotIsAlias(void);

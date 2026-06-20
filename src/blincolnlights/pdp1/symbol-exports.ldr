@@ -15,4 +15,6 @@
     "unlockDisplayData";
     "getConfiguration";
     "findConfigurationSetting";
+    "waitfd";
+    "closefd";
 };

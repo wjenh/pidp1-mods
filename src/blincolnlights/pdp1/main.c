@@ -118,6 +118,13 @@ static long overflowCount;
 static long totalTime;
 static long totalCycles;
 
+// The main emulator loop. Runs forever (until exit()/the SIGTERM handler ends the process):
+// each iteration applies any pending AD1 (remote debugger) overrides of the front-panel
+// switches, services start/stop/continue/examine/deposit/readin switch edges (spec()/cycle()/
+// start_readin()/readin1()/readin2()), runs one machine cycle (or steals one for an active
+// high-speed-channel DMA transfer) when pdp->run is set, services the panel lights either way,
+// then services file-descriptor-backed I/O (handleio()/dynamicIotProcessorDoIOPoll()) and the
+// network command listener (cli()). No return value -- this function never returns normally.
 void
 emu(PDP1 *pdp, Panel *panel)
 {
@@ -315,6 +322,10 @@ FILE *tmpfP;    // used for timing
 
             throttle(pdp);
             handleio(pdp);
+            // 19-Jun-2026 wje: independent real-time poll hook for reader/punch/typewriter-style
+            // dynamic IOTs (iotIOPoll), called at the same site as handleio() so plugin-owned
+            // devices keep their cadence regardless of run state. See dynamicIots.h/.c.
+            dynamicIotProcessorDoIOPoll(pdp);
             pdp->simtime += 5000;
         }
         else
@@ -343,6 +354,10 @@ FILE *tmpfP;    // used for timing
     }
 }
 
+// Network command-port connection handler: reads lines from fd (a connected socket), passes
+// each to handlecmd() for processing, and writes the response back followed by a newline.
+// Loops until the peer closes the connection (read() returns <= 0), then closes fd. No return
+// value (void).
 void
 handlenetcmd(int fd, void *arg)
 {
@@ -364,6 +379,8 @@ int n;
     close(fd);
 }
 
+// Attaches a newly-connected display client's socket fd to display screen screenNo (0-3) and
+// puts it in nonblocking mode. No return value (void).
 void
 connectdpy(int screenNo, int fd)
 {
@@ -371,31 +388,39 @@ connectdpy(int screenNo, int fd)
     setDisplayFD(screenNo, fd);
 }
 
-// Called when a connection request comes in
+// Called when a connection request comes in on the screen-0 display port; hooks fd up as
+// screen 0's display client via connectdpy(). No return value (void).
 void
 handledpy(int fd, void *arg)
 {
     connectdpy(0, fd);
 }
 
+// Same as handledpy() above, but for display screen 1. No return value (void).
 void
 handledpy2(int fd, void *arg)
 {
     connectdpy(1, fd);
 }
 
+// Same as handledpy() above, but for display screen 2. No return value (void).
 void
 handledpy3(int fd, void *arg)
 {
     connectdpy(2, fd);
 }
 
+// Same as handledpy() above, but for display screen 3. No return value (void).
 void
 handledpy4(int fd, void *arg)
 {
     connectdpy(3, fd);
 }
 
+// Called when a connection request comes in on the paper-tape-reader network port: closes
+// whatever reader fd pdp currently has open and replaces it with the newly-connected fd (put
+// into nonblocking mode), so the reader now reads from the network connection instead. No
+// return value (void).
 void
 handleptr(int fd, void *arg)
 {
@@ -405,6 +430,8 @@ handleptr(int fd, void *arg)
     nodelay(pdp->r_fd);
 }
 
+// Same as handleptr() above, but for the paper-tape punch (p_fd) instead of the reader. No
+// return value (void).
 void
 handleptp(int fd, void *arg)
 {
@@ -414,6 +441,10 @@ handleptp(int fd, void *arg)
     nodelay(pdp->p_fd);
 }
 
+// Thread entry point that listens on all the network command/display/reader/punch ports
+// (the 'ports' table below) and dispatches accepted connections to the matching handler.
+// Runs for the life of the process; serveN() only returns if all the listeners fail/close.
+// Returns nil (the thread's exit value is unused by pthread_create()'s caller).
 void*
 netthread(void *arg)
 {
@@ -433,6 +464,9 @@ netthread(void *arg)
 }
 
 char *argv0;
+
+// Prints a usage message to stderr and exits the process with status 1. No return value
+// (void) -- exit() means this never actually returns to its caller.
 void
 usage(void)
 {
@@ -533,6 +567,8 @@ static Panel *panel;
 static Word *memp;
 static int memsz;
 
+// Registered via atexit(): saves working memory to the coremem image file, turns the panel
+// lights off, and unlinks the shared-memory segment if it was in use. No return value (void).
 void
 exitcleanup(void)
 {
@@ -544,12 +580,20 @@ exitcleanup(void)
     }
 }
 
+// Signal handler registered for SIGTERM: exits cleanly (status 0), which triggers the
+// atexit()-registered exitcleanup() above. No return value (void).
 void
 sighandler(int sig)
 {
     exit(0);
 }
 
+// Program entry point: parses -h/-p command-line args, finds the operator panel, installs
+// signal handlers and the exitcleanup() atexit hook, loads configuration, sets up shared
+// memory if configured, loads the saved core memory image, starts the polling/network/display
+// threads, opens the default reader/punch/typewriter fds, then calls emu() (which runs forever).
+// Returns 1 if no operator panel could be found (the only normal early-exit path); otherwise
+// returns 0, but only in the unreachable case where emu() were to return, which it doesn't.
 int
 main(int argc, char *argv[])
 {
@@ -744,8 +788,11 @@ WatchP watchP;
     }
 }
 
+// Accessor so other modules (including dynamic IOT plugins) can get at the loaded
+// configuration without needing their own extern of configurationP.
+// Returns the current ConfigurationP (set up by configure(); never NULL after startup).
 ConfigurationP
-getConfiguration()     // so other stuff can use our configuration, like IOTs
+getConfiguration()
 {
     return( configurationP );
 }

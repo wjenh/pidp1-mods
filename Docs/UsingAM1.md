@@ -2,7 +2,7 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.30 and covers up through am1 version 1.35; it will be updated as needed.\
+This is version 1.31 and covers up through am1 version 1.35; it will be updated as needed.\
 Edit date 20-Jun-2026
 New special sequences for flexo and text
 
@@ -850,9 +850,10 @@ The sequences are:
 
 | sequence | effect |
 |----------|--------|
-| \B       | insert a ribbon black-shift code, 034 |
-| \R       | insert a ribbon red-shift code, 035 |
-| \n       | insert a carriage-return code, 077 |
+| \\B      | insert a ribbon black-shift code, 034 |
+| \\R      | insert a ribbon red-shift code, 035 |
+| \\n      | insert a carriage-return code, 077 |
+| \\\\     | an actual backslash, equivalent to shifted 002 |
 
 Example:
 ```

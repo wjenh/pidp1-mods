@@ -200,20 +200,26 @@ flexo[ \t][^\n;]{1,3}	{
 				    {
 				        verror("invalid \\ in flexo, no directive character");
 				    }
-				    else if( *cP == 'B' )
+
+				    switch( *cP )
 				    {
+				    case 'B':
 				    	ch = BLACK;
-				    }
-				    else if( *cP == 'R' )
-				    {
+					break;
+
+				    case 'R':
 				    	ch = RED;
-				    }
-				    else if( *cP == 'n' )
-				    {
+					break;
+
+				    case 'n':
 				    	ch = FLEX_CR;
-				    }
-				    else
-				    {
+					break;
+
+				    case '\\':
+				    	ch = '\\';
+					break;
+
+				    default:
 				        verror("\\%c in text is not valid", *cP);
 				    }
 				}
@@ -805,6 +811,10 @@ octal			{ decimalMode = false; }
 
 				    case 'n':
 				    	rslt = FLEX_CR;
+					break;
+
+				    case '\\':
+				    	rslt = tmpc;
 					break;
 
 				    default:

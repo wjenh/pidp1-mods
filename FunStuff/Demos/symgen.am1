@@ -130,7 +130,7 @@ lineNum,
     text '0123456789'
     013
 lineSym,
-    text x?.,@-+*/()[]<>'"=~_`|#!\x
+    text x?.,@-+*/()[]<>'"=~_`|#!\\x
     013
 lineMix,
     text 'aAbBcCDdEe'

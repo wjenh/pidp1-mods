@@ -1,108 +1,20 @@
-TYPEWRITER COLOR/SHIFT TEST -- "The quick brown fox jumped over the lazy dog"
-/*
- * colortest.am1 -- types the classic one line, alternating each word
- * red/black (first word red), to exercise the ribbon-color and upper/lower shifting.
- * The first word exercises both Ucs and Lcs and color-shift in the same word.
- *
- *
- * Flexo/concise code reference:
- *   072 = Lcs (lower-case shift)      074 = Ucs (upper-case shift)
- *   034 = Blk (ribbon color: black)   035 = Red (ribbon color: red)
- *   000 = space                       077 = newline (CRLF)
- */
-
-octal
-
-// TYO(x): load IO with the literal flexo code x and punch/print it out,
-// synchronous (tyo's base opcode already carries the wait bit -- see
-// Claude/CLAUDE.md's "Typewriter (tyi / tyo / szf / clf)" section). One macro
-// invocation per flexo code emitted -- color shift, case shift, letter, or
-// space are all just "another code" as far as tyo is concerned.
-#define TYO(x) lio [x]; tyo i
+Test of red/black shifts for typewriter
+// This test types "The quick brown fox jumped over the lazy dog"
+// with the words in alternating red and black, beginning with red.
+// It halts after each line and can be continued to print another line.
 
 100/
+top,
+    lac [msg
+    jda typetext
+    hlt
+    jmp top
 
-begin,
-    // --- "The" -- RED, exercises Ucs (T) then Lcs (h, e) ---
-    TYO(035)           // Red
-    TYO(074)           // Ucs -- shift up
-    TYO(023)           // T
-    TYO(072)           // Lcs -- shift back down
-    TYO(070)           // h
-    TYO(065)           // e
-    TYO(000)           // space
+msg,
+text "\RThe\B quick \Rbrown\B fox \Rjumped\B over \Rthe\B lazy \Rdog\B\n"
+    013
 
-    // --- "quick" -- BLACK ---
-    TYO(034)           // Black
-    TYO(050)           // q
-    TYO(024)           // u
-    TYO(071)           // i
-    TYO(063)           // c
-    TYO(042)           // k
-    TYO(000)
+#include <TYO/typetext.ac>
 
-    // --- "brown" -- RED ---
-    TYO(035)           // Red
-    TYO(062)           // b
-    TYO(051)           // r
-    TYO(046)           // o
-    TYO(026)           // w
-    TYO(045)           // n
-    TYO(000)
-
-    // --- "fox" -- BLACK ---
-    TYO(034)           // Black
-    TYO(066)           // f
-    TYO(046)           // o
-    TYO(027)           // x
-    TYO(000)
-
-    // --- "jumped" -- RED ---
-    TYO(035)           // Red
-    TYO(041)           // j
-    TYO(024)           // u
-    TYO(044)           // m
-    TYO(047)           // p
-    TYO(065)           // e
-    TYO(064)           // d
-    TYO(000)
-
-    // --- "over" -- BLACK ---
-    TYO(034)           // Black
-    TYO(046)           // o
-    TYO(025)           // v
-    TYO(065)           // e
-    TYO(051)           // r
-    TYO(000)
-
-    // --- "the" -- RED (already lowercase-shifted, no Ucs/Lcs needed) ---
-    TYO(035)           // Red
-    TYO(023)           // t
-    TYO(070)           // h
-    TYO(065)           // e
-    TYO(000)
-
-    // --- "lazy" -- BLACK ---
-    TYO(034)           // Black
-    TYO(043)           // l
-    TYO(061)           // a
-    TYO(031)           // z
-    TYO(030)           // y
-    TYO(000)
-
-    // --- "dog" -- RED ---
-    TYO(035)           // Red
-    TYO(064)           // d
-    TYO(046)           // o
-    TYO(067)           // g
-
-    TYO(077)           // newline
-
-    // tidy up: leave the typewriter in its default state before halting
-    TYO(034)           // Black (reset color)
-    TYO(072)           // Lcs (reset case)
-
-    hlt                // one line printed; CONTINUE re-runs it
-    jmp begin
-
-start begin
+constants
+start 100

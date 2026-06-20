@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.34 12-Jun-2026"
-#define AM1SHORTVERSION "am1 v1.34"
+#define AM1VERSION "am1 v1.35 20-Jun-2026"
+#define AM1SHORTVERSION "am1 v1.35"
 #define SYMFILEVERSION "V2"             // used for import to check proper version
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -70,7 +70,10 @@
 #define NONE        -1
 #define CUNSHIFT   072
 #define CSHIFT     074
+#define RED        035
+#define BLACK      034
 #define FLEX_SPACE 000
+#define FLEX_CR    077
 
 typedef uint32_t Word;         // minimum needed to hold a PDP-1 word, 18 bits
 

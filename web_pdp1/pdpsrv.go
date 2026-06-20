@@ -337,6 +337,75 @@ func readBytes(conn net.Conn, data chan byte, errCh chan error) {
 	}
 }
 
+// 20-Jun-2026 wje: typtelnet.c's telthread() sends real telnet option-negotiation
+// sequences (IAC WILL/WONT/DO/DONT <option>, 3 bytes each) at the start of every
+// connection to port 1041 -- a real telnet client (telnet(1), PuTTY) consumes
+// these as protocol negotiation and never displays them. pdpsrv used readBytes()
+// (above) for the typewriter too, which has no idea what telnet is and just
+// relays every raw byte to the browser -- including the negotiation bytes. Most
+// of those are invisible control characters and went unnoticed, but the
+// LINEEDIT option's value happens to be 34 (ASCII '"'), sent twice (WONT and
+// DONT LINEEDIT), and the browser's byte decoder (index.html's processbyte())
+// renders any plain byte <128 with its top bit clear as a literal character --
+// hence two stray `"` characters appearing every time a browser opens the
+// typewriter connection, never on a direct telnet connection. Fixed by giving
+// the typewriter (only -- not punch, which has no telnet wrapper at all, see
+// main.c's handleptp()) its own reader that strips IAC sequences before they
+// ever reach the data channel, the same way typtelnet.c's own readiac() strips
+// them in the other direction.
+func readTypewriterBytes(conn net.Conn, data chan byte, errCh chan error) {
+	buf := make([]byte, 1)
+	const (
+		iacWill = 251
+		iacWont = 252
+		iacDo   = 253
+		iacDont = 254
+		iacIAC  = 255
+	)
+	// state: 0 = normal, 1 = just saw IAC, 2 = saw IAC + WILL/WONT/DO/DONT,
+	// expecting the option byte next.
+	state := 0
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			errCh <- err
+			log.Printf("returning from readTypewriterBytes\n")
+			return
+		}
+		if n == 0 {
+			continue
+		}
+		c := buf[0]
+
+		switch state {
+		case 0:
+			if c == iacIAC {
+				state = 1
+				continue
+			}
+			data <- c
+
+		case 1:
+			switch c {
+			case iacWill, iacWont, iacDo, iacDont:
+				state = 2
+			case iacIAC:
+				// IAC IAC is telnet's escape for a literal 0xFF data byte.
+				data <- c
+				state = 0
+			default:
+				// other single-byte telnet commands (NOP, etc.) -- nothing
+				// further to consume, just drop and resume.
+				state = 0
+			}
+
+		case 2:
+			// the option byte for WILL/WONT/DO/DONT -- discard it and resume.
+			state = 0
+		}
+	}
+}
+
 // 20-Jun-2026 wje: rewritten to fix the "TODO: we should only connect to the
 // emulator when the websocket is connected" left by the original implementation.
 // The typewriter is an exclusive-use device on the emulator side (port 1041 only
@@ -382,7 +451,7 @@ func (s *PeriphServer) handleTypewriter() {
 
 			log.Printf("Connected to typewriter")
 			conn = c
-			go readBytes(conn, dataChan, errChan)
+			go readTypewriterBytes(conn, dataChan, errChan)
 
 		case c := <-dataChan:
 			s.sendToWeb(Message{

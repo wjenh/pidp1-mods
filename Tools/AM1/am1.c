@@ -93,6 +93,7 @@
  * 26-Apr-2026 - add c-style block comments
  * 26-Apr-2026 - add -N to suppress included file text in listing
  * 12-Jun-2026 - fix incorrect opcode for cmi, should be 770000
+ * 20-Jun-2026 - add special sequences in flexo and text for ribbon color and carriage return
  *
 */
 #include <unistd.h>

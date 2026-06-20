@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.29 and covers up through am1 version 1.32; it will be updated as needed.\
-Edit date 12-Jun-2026
-Correct opcode for cmi
+This is version 1.30 and covers up through am1 version 1.35; it will be updated as needed.\
+Edit date 20-Jun-2026
+New special sequences for flexo and text
 
 ## What is **am1**?
 
@@ -817,6 +817,9 @@ will not do what you expect.
 That sequence actually requires 6 characters, uppershift, O, lowershift, k, uppershift, ?.
 Unlike **macro1**, this is detected and a warning given.
 
+Flexo supports the same 3 special sequences as *Text*, following.\
+Remember that only 3 characters can be used, each sequence is a character.
+
 ## Text
 
 The **text** directive inserts a block of flex/concise characters packed 3 to a word.
@@ -840,6 +843,21 @@ The location counter is advanced by 5.
 Unlike the *ascii* directive, there is no end marker. You must know in your program how many words were used.
 Safe practice would be to put a marker word following the text with a value to indicate no more words.
 The flex/concise stop code, 013, is a good choice.
+
+Additionally, 3 special sequences are supported.
+These are introduced by a backslash, \\.
+The sequences are:
+
+| sequence | effect |
+|----------|--------|
+| \B       | insert a ribbon black-shift code, 034 |
+| \R       | insert a ribbon red-shift code, 035 |
+| \n       | insert a carriage-return code, 077 |
+
+Example:
+```
+   text "A \Rred\B word\n"
+```
 
 ## Ascii
 

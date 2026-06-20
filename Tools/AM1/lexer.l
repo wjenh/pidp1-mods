@@ -29,6 +29,8 @@ extern SymNodeP globalSymP;
 int countNLs(char *strP);
 SymNodeP resolveLocalSymbol(char *nameP);
 
+void gdbtarget(void);		// this is a do-nothng just to add as a gdb breakpoint target
+
 extern int processEscape(char);
 extern int type340Shift(char);
 extern char processType340Escape(char ch);
@@ -188,7 +190,38 @@ flexo[ \t][^\n;]{1,3}	{
 			    nchars = strlen(cP);
 			    for( nshifts = shift = i = rslt = 0; i < nchars; ++i )
 			    {
-				ch = asciiToFlexo(*cP, &shift);
+
+				if( *cP == '\\' )		// special directive, red, black, newline
+				{
+				    ++cP;
+				    ++i;
+
+				    if( nchars <= 0 )
+				    {
+				        verror("invalid \\ in flexo, no directive character");
+				    }
+				    else if( *cP == 'B' )
+				    {
+				    	ch = BLACK;
+				    }
+				    else if( *cP == 'R' )
+				    {
+				    	ch = RED;
+				    }
+				    else if( *cP == 'n' )
+				    {
+				    	ch = FLEX_CR;
+				    }
+				    else
+				    {
+				        verror("\\%c in text is not valid", *cP);
+				    }
+				}
+				else
+				{
+				    ch = asciiToFlexo(*cP, &shift);
+				}
+
 				if( ch == NONE )
 				{
 				    vwarn(WARN_FLEX,
@@ -751,10 +784,37 @@ octal			{ decimalMode = false; }
 
 				if( (tmpc == EOF) || (tmpc == '\n') )
 				{
-					verror("unterminated %c in text", marker);
+				    verror("unterminated %c in text", marker);
 				}
 
-				rslt = asciiToFlexo(tmpc, &shift);
+				if( tmpc == '\\' )		// special directive, red or black
+				{
+				    if( (tmpc = input()) == marker )
+				    {
+				        verror("invalid \\ in text, no directive character");
+				    }
+				    switch(tmpc)
+				    {
+				    case 'B':
+				    	rslt = BLACK;
+					break;
+
+				    case 'R':
+				    	rslt = RED;
+					break;
+
+				    case 'n':
+				    	rslt = FLEX_CR;
+					break;
+
+				    default:
+				        verror("\\%c in text is not valid", tmpc);
+				    }
+				}
+				else
+				{
+				    rslt = asciiToFlexo(tmpc, &shift);
+				}
 
 				if( rslt == NONE )
 				{
@@ -789,4 +849,10 @@ octal			{ decimalMode = false; }
 			}
 
 %%
+void
+gdbtarget()
+{
+    return;
+}
+
 #include "lexfuncs.c"

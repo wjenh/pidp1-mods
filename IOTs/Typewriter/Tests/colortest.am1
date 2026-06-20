@@ -1,37 +1,14 @@
 TYPEWRITER COLOR/SHIFT TEST -- "The quick brown fox jumped over the lazy dog"
 /*
- * colortest.am1 -- types the classic pangram one line, alternating each word
- * red/black (first word red), to exercise the ribbon-color fix (IOT_3.c +
- * typtelnet.c, 20-Jun-2026) independently of case shifting. The first word
- * ("The") also exercises both Ucs and Lcs in the same word -- capital T, then
- * lowercase h/e -- so word 1 alone tests color-shift, upper-shift, and
- * lower-shift together; every word after it stays in lowercase the whole time
- * (only one Ucs/Lcs pair is needed for the entire line).
+ * colortest.am1 -- types the classic one line, alternating each word
+ * red/black (first word red), to exercise the ribbon-color and upper/lower shifting.
+ * The first word exercises both Ucs and Lcs and color-shift in the same word.
  *
- * Why this is all raw tyo calls instead of am1's text/ascii/flexo directives:
- * neither macro1 nor (yet) am1 has any direct notation for the Black/Red
- * ribbon-color shift codes (034/035 octal) -- text/ascii/flexo only know about
- * the printable character set plus Lcs/Ucs case shifting. Per the project
- * owner (20-Jun-2026): am1 will eventually get \R / \B marker escapes inside
- * flexo/text/ascii strings for this, implemented by the owner, not here. Until
- * then, color (and for clarity, case) is spelled out explicitly below as a
- * sequence of direct tyo calls, one flexo code at a time -- see the TYO()
- * macro just below the title.
  *
- * Flexo/concise code reference used here (all octal, all confirmed against
- * Tools/AM1/parsefns.c's concise2ascii table and bin/decode_fiodec.py /
- * bin/encode_fiodec.py -- see Claude/CLAUDE.md's "Typewriter" sections):
+ * Flexo/concise code reference:
  *   072 = Lcs (lower-case shift)      074 = Ucs (upper-case shift)
  *   034 = Blk (ribbon color: black)   035 = Red (ribbon color: red)
  *   000 = space                       077 = newline (CRLF)
- * Letter codes are the SAME 6-bit value for upper and lower case -- e.g. 't'
- * and 'T' are both code 023; only the current Lcs/Ucs shift STATE (tracked by
- * typtelnet.c's `ucase`, completely independent of `color`) decides which
- * glyph is actually printed. That's exactly the real-hardware behavior this
- * test is meant to confirm: color and case never have to move together.
- *
- * Assembler: am1 v1.28+
- * Assemble:  am1 colortest.am1
  */
 
 octal

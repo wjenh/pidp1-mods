@@ -1,4 +1,10 @@
-// This is an implementation of a line printer for the pdp-1, the Type 64 120 column printer.
+/*
+ * This is an implementation of line printers for the pdp-1, the Type 62 abd Type 64 printers.
+ *
+ * 21-Jun-2026 wje minor revision for some timing changes
+ *
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,11 +28,16 @@
 #define DEFAULTFILE "/tmp/pdp1lpt.txt"
 #define BUFSIZE 120     // 120 column printer
 
+// Some versions of the Type 62 could do 600 lpm.
 #define TYPE62LINEDELAY 16  // milliseconds per
 #define TYPE62PRINTDELAY 84  // milliseconds per
 
 #define TYPE64LINEDELAY 32 // milliseconds per
 #define TYPE64PRINTDELAY 168 // milliseconds per
+
+// Buffer clear/reset (lpc).
+// No documented value could be confirmed, so this is derived from the printer's rated 300 lines/minute.
+#define TYPE64CLEARDELAY 5 // milliseconds
 
 #define ERROR 0777776   // -1 in 1's cmpl 12 bit
 
@@ -35,10 +46,7 @@
 #define SPACE   0x2     // do line spacing
 #define ADD     0x4     // add chars to buffer
 #define OVER    0x10    // set buffer counter to 0
-#define CLOSE   0x20    // close the output file
 #define RESET   0x40    // reset everything
-#define RETURN  0x100   // print an immediate cr
-#define NL      0x200   // print an immediate nl
 #define LPM     0x400   // lpm, same for both 62 and 64
 #define LPF     0x1000  // lpf, same for both 62 and 64
 
@@ -95,7 +103,6 @@ int actions;
 int spaceval;
 int delaytime;
 int fchar, achar;
-char *cP;
 bool fail;
 bool noWait;
 
@@ -140,7 +147,11 @@ bool noWait;
             }
             else
             {
-                actions = PRINT|OVER|RETURN;
+                // x=0 is overstrike.
+                // Like the Type 62 prl, defer the actual write to the
+                // output file until a real line advance happens rather than printing and
+                // clearing the pre-overstrike buffer immediately.
+                actions = OVER;
             }
         }
         else
@@ -186,7 +197,7 @@ bool noWait;
             outfP = NULL;
         }
 
-        delaytime = MSTOCYCLES(30);
+        delaytime = MSTOCYCLES(TYPE64CLEARDELAY);
         inWait = true;
     }
 
@@ -248,23 +259,17 @@ bool noWait;
         noWait = true;                         // immediate
     }
 
-    // This needs to be separate because the 62 and 64 handle overstrikes differently
+    // This needs to be separate because the 62 and 64 handle overstrikes differently.
+    // This is the Type 62 prl path (bare OVER) and the Type 64 pas-with-x=0 path (also bare
+    // OVER, see above).
+    // Neither actually prints anything here, but the real printer still ran
+    // its print cycle (just without advancing the paper), so this needs the same completion
+    // delay as an actual print.
     if( actions & OVER )
     {
         bufLoc = 0;
-    }
-
-    // do thse before PRINT and SPACE
-    if( !fail && (actions & RETURN) )
-    {
-        fputc('\r', outfP);
-    }
-
-    if( !fail && (actions & NL) )
-    {
-        fputc('\n', outfP);
-        ++lineNo;
-        delaytime += (type64)?TYPE64PRINTDELAY:TYPE62PRINTDELAY;
+        delaytime += (type64)?MSTOCYCLES(TYPE64PRINTDELAY):MSTOCYCLES(TYPE62PRINTDELAY);
+        inWait = true;
     }
 
     // do before SPACE
@@ -337,7 +342,6 @@ bool noWait;
         memset(buffer, 0, sizeof(buffer));
 
         fflush(outfP);
-        enablePolling(MSTOCYCLES(200));
         inWait = true;
     }
 
@@ -463,7 +467,6 @@ configure()
 {
 int i, ival;
 char *cP;
-ConfigurationP confP;
 ConfigurationSettingP settingP;
 
     if( (settingP = findConfigurationSetting(getConfiguration(), "lptType64")) )

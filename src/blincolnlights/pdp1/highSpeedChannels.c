@@ -8,7 +8,8 @@
  *
  * 23-Apr-2026 wje - rework to make it more realistic
  * 29-Apr-2026 wje - fix overrun of channel list
- * 30--Apr-2026 wje - add fake break cycles for THREADED so emulator will skip cycles semi-properly
+ * 30-Apr-2026 wje - add fake break cycles for THREADED so emulator will skip cycles semi-properly
+ * 21-Jun-2026 wje/claude - fix minor issue with done synchronization
 */
 
 #include <unistd.h>
@@ -51,7 +52,7 @@ static HSCControlP chans[] = {&chan1, &chan2, &chan3, &chan4, &chan5};
 static HSCControlP getControlP(HSCChannelP chanP);
 static void lockControl(HSCControlP ctlP);
 static void unlockControl(HSCControlP ctlP);
-static void hscDone(HSCControlP controlP);
+static void HSCdone(HSCControlP ctlP);
 static void processImmediate(HSCRequestP requestP);
 static bool processChannel(HSCControlP controlP);
 
@@ -304,6 +305,22 @@ HSCControlP ctlP;
         ctlP->waitDelay = 0;
         pdp1P->hsc = 0;
         updatelights(pdp1P, pdp1P->panel);
+
+        // The real data transfer already happened synchronously back in HSCexecute();
+        // all we were actually waiting out here is the simulated delay. The channel's
+        // status must not be left depending on processChannel()'s fake brkCount countdown
+        // having caught up by now. That countdown exists purely so the rest of the emulator
+        // sees a realistic number of stolen cycles, it's not a
+        // precondition for this channel being usable again.
+        // Without forcing it DONE here, a caller doing HSCexecute()+HSCwait() back to back on the
+        // same channel could see a stale HSC_BUSY or get HSC_ERR from the next THREADED request if brkCount
+        // hadn't finished draining yet, e.g. due to scheduler jitter or a halt during part of the delay.
+        lockControl(ctlP);
+        ctlP->brkCount = 0;
+        ctlP->status = HSC_DONE;
+        HSCdone(ctlP);
+        unlockControl(ctlP);
+
         return(HSC_DONE);
     }
 
@@ -463,7 +480,7 @@ HSCRequestP rqstP;
     // We might still need to steal a cycle if we completed a transfer, so don't change the steal state.
     if( rqstP->count <= 0 )
     {
-        logger(LOG_HSC, "processChannel marking DONE\n");       // an HSCreset() was done, comes from a stop, start, examine, continue
+        logger(LOG_HSC, "processChannel marking DONE\n");
         ctlP->status = HSC_DONE;
         HSCdone(ctlP);
         pdp1P->hsc = 0;

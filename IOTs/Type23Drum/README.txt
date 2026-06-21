@@ -21,19 +21,19 @@ the proper time, 8.5 us per drum location needed to reach the start address plus
 Some sample programs and tests are included.
 Just make to assemble them, make clean to clean up.
 
-drumtest.mac tests the drum implementation, covering all features and edge cases.
+drumtest.mac tests the drum implementation covering some edge cases the maindec drumdiag test doesn't cover.
 When started, it will execute multiple tests, halting after each one.
 The program flags will show the test number, and the values in the AC and IO registers should match.
 Press continue to go on to the next test.
 When all tests have been done, the AC and IO will be zero and program flags will be off.
 
-Also included is the DEC-1-137M diagnostic test program painfully copied and fixed from the manual.
+Also included is the DEC-1-137M diagnostic test program painfully copied and fixed from a listing in the manual.
 Set the test switches to 020000 before you load it. That selects mem bank 2 for the test to use.
 No output on the typewriter is a good sign.  It takes 5-6 minutes and will eventually finish.
 As it was, the test never ends, it loops forever on the final test. This is less than useful.
 The code has been changed to print a done message and halt.
 And yes, the implementation passes. Note that the break system test requires the sbs16 break system which needs
-dynamic IOT_60 to enable.
+to be enabled in the pidp1.config file.
 
 drumloader.mac is a special loader that can save a core image to drum and later restore it.
 It resides in the same space as the default bin loader, 7751-7777.

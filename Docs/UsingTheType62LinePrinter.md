@@ -52,7 +52,7 @@ Configuration of several functions can be done in the pidp1.config file:
 select Type 62 or Type 64 mode, default false
 - lptLines=nn
 sets the mumber of lines per page, default 66
-- lptLineSpacing=n0,n1,n2,n3,n4,n5,n6,n7, default 1,2,3,4,11,22,-1
+- lptLineSpacing=n0,n1,n2,n3,n4,n5,n6,n7, default 1,2,3,4,11,22,33,-1
 sets the line spacing values used with *slp*
 - lptNoFF=true/false
 select between using repeated newlines or a form-feed character, default false
@@ -170,7 +170,7 @@ The actual writing to the output file is done when *slp* is executed.
 
 IO and AC are unchanged.
 ```
-Wait, i, and completion, C are supported and will take (18 * number-of-lines) milliseconds to be issued.
+Wait, i, and completion, C are supported and will take 84 milliseconds to be issued.
 
 ## The lpf instruction
 

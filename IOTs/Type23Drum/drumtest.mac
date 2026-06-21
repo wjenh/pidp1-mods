@@ -9,6 +9,7 @@ dra=722062
 lia=760020
 lai=760040
 
+// The program will test various cases not covered by the maindec drumdiag tests.
 // This will periodically halt.
 // The program flags will show the test number starting from 1
 // When it does, the AC and IO regs should match.

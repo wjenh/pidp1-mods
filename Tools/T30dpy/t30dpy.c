@@ -107,9 +107,7 @@
  *    actual rendered/presented frames (not the idle-skip path when there are no active points,
  *    and not the fullscreen-toggle flush presents, which are clear-only and not content frames).
  * 20-Jun-2026 wje (Claude) create the window initially hidden to avoid sdl window initialization jitter
- * 21-Jun-2026 wje (Claude) idle frames (no active points) now still clear+present every pass
- *    instead of skipping rendering entirely; the old skip left the window showing transparent
- *    content (title bar/border only) whenever the PDP-1 wasn't actively feeding points yet.
+ * 21-Jun-2026 wje when the window is made visible, do a RenderPresent() to get the black background
 */
 
 #include <stdio.h>
@@ -325,7 +323,7 @@ struct timespec sleepTime;
 
 bool dragging;              // true while the right mouse button is held for a window drag
 int dragStartGlobalX;       // screen-absolute cursor x when right button was pressed
-int dragStartGlobalY;       // screen-absolute cursor y when right button was pressed
+int dragStartGlobalY;       // screen-absolute cursor y when right button was pressedwhen the window is made visible, do a RenderPresent() to get the black background
 int dragWinOriginX;         // window screen x when right button was pressed
 int dragWinOriginY;         // window screen y when right button was pressed
 int mouseGlobalX;           // scratch: current screen-absolute cursor x during drag
@@ -472,10 +470,10 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
     SDL_RenderSetLogicalSize(renderer, 1024, 1024);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
     SDL_RenderClear(renderer);
-    SDL_RenderPresent(renderer);
 
-    // Only now, with defined (black) content already presented, make the window visible.
+    // Make the window visible and present it so the black background shows up.
     SDL_ShowWindow(window);
+    SDL_RenderPresent(renderer);
 
     // Create the textures we write our points to.
     // We double-buffer to minimize screen tearing.
@@ -671,15 +669,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
         }
 
         // With nothing active there is nothing to draw, so the expensive per-point work below
-        // (texture lock, full pixel-buffer memset, the locked active-list walk) is skipped. But
-        // we still fall through to clear+present every pass, even when idle -- previously this
-        // case did "continue" here, skipping rendering entirely, which left the window showing
-        // whatever the window system had for it (observed as a persistently transparent content
-        // area, title bar and border only) for as long as the PDP-1 wasn't actively feeding
-        // points, e.g. when the display is started before the emulator begins writing. Idle
-        // frames are cheap (clear+present only, no point work), and we're already waking up
-        // every frame tick regardless for the timing above, so this adds negligible cost and
-        // never exceeds the cost of a normal frame with points active.
+        // (texture lock, full pixel-buffer memset, the locked active-list walk) is skipped.
         if( activeListHead != NOINDEX )
         {
             textureP = textures[textureSelector];
@@ -737,19 +727,9 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
             // pixel buffer fully memset() above, SDL_RenderCopy() fully overwrites
             // the render target every frame, making a separate clear redundant.
             SDL_RenderCopy(renderer, textureP, NULL, NULL);
-        }
-        else
-        {
-            // Nothing active: correct content is just black, and there's no texture update to
-            // composite, but we still need to clear+present so the window keeps showing defined
-            // content instead of going transparent (see comment above). Unlike the active path,
-            // there's no full-texture RenderCopy() here to rely on for covering the whole render
-            // target, so an explicit clear is required.
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-            SDL_RenderClear(renderer);
+            SDL_RenderPresent(renderer);
         }
 
-        SDL_RenderPresent(renderer);
         ++totalFrames;
     }
 

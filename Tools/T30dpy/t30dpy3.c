@@ -507,10 +507,10 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
     SDL_SetRenderLogicalPresentation(renderer, 1024, 1024, SDL_LOGICAL_PRESENTATION_LETTERBOX);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
     SDL_RenderClear(renderer);
-    SDL_RenderPresent(renderer);
 
-    // Only now, with defined (black) content already presented, make the window visible.
+    // Now make the window visible and render the black background.
     SDL_ShowWindow(window);
+    SDL_RenderPresent(renderer);
 
     // Use RGBA8888 unconditionally.
     // We previously queried SDL_PROP_RENDERER_TEXTURE_FORMATS_POINTER to get the
@@ -700,15 +700,7 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
         accumulator -= FRAMETIME;   // Any timing error accumulates so it can be corrected for.
 
         // With nothing active there is nothing to draw, so the expensive per-point work below
-        // (texture lock, full pixel-buffer memset, the locked active-list walk) is skipped. But
-        // we still fall through to clear+present every pass, even when idle -- previously this
-        // case did "continue" here, skipping rendering entirely, which left the window showing
-        // whatever the window system had for it (observed as a persistently transparent content
-        // area, title bar and border only) for as long as the PDP-1 wasn't actively feeding
-        // points, e.g. when the display is started before the emulator begins writing. Idle
-        // frames are cheap (clear+present only, no point work), and we're already waking up
-        // every FRAMETIME regardless for the timing above, so this adds negligible cost and
-        // never exceeds the cost of a normal frame with points active.
+        // (texture lock, full pixel-buffer memset, the locked active-list walk) is skipped.
         if( activeListHead != NOINDEX )
         {
             textureP = textures[textureSelector];
@@ -773,16 +765,9 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
             // visible as phantom points outside the 1024x1024 area in fullscreen.
             SDL_RenderClear(renderer);
             SDL_RenderTexture(renderer, textureP, NULL, NULL);
-        }
-        else
-        {
-            // Nothing active: correct content is just black, and there's no texture update to
-            // composite, but we still need to clear+present so the window keeps showing defined
-            // content instead of going transparent (see comment above).
-            SDL_RenderClear(renderer);
+            SDL_RenderPresent(renderer);
         }
 
-        SDL_RenderPresent(renderer);
         ++totalFrames;
     }
 

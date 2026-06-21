@@ -5,6 +5,10 @@ The DEC document *H-23_parallelDrum_jul64.pdf* is a useful companion, although i
 have some significant errors in the IOT section.
 This documentation is correct.
 
+This is version 1.1
+Edit date 21-Jun-2026
+Minor cleanup
+
 ## What is the Type 23 Parallel Drum?
 
 The original drum was a 32 track add-on mass-memory unit for the PDP-1.
@@ -26,8 +30,7 @@ The three IOTs are used in sequence, and the transfer starts when the third is i
 Two of the IOTs have an additional oprating mode.
 All contol bits are passed in the IO register.
 
--IOT 61, dia, 72xx61, drum initial address
-
+-IOT 61, dia, 72xx61, drum initial address \
 -IOT 2061, dba, 722061, drum break address
 
 One of these is executed first.
@@ -111,4 +114,4 @@ bit 17 will be set if a cks, check status, instruction is executed.
 
 Although the drum uses sbs channel 5, it can still be used in non-SBS16 mode.
 In this case, the interrupt will be to the single channel, channel 0.
-However, in the distibuted modified system, SBS16 is enabled by default.
+SBS16 can be enabled either here or via the pidp1.config file.

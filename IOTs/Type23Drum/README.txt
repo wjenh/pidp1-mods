@@ -84,5 +84,5 @@ It loads into 0-3 and 7751 up in bank 0, and loads its control program into bank
 You can't have it load a program that overwrites either of the bank 0 areas.
 
 IMPORTANT: this also uses IOT_32, the timesharing clock, for the 1 minute interrupt.
-If not, it will fail.
+If not installed, it will fail.
 

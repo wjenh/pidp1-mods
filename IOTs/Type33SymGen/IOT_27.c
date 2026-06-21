@@ -5,12 +5,13 @@
  * According to the DEC documentation, it takes approximately 300 usecs per character to render.
  *
  * Note that we store dpy coords in -511,+511 style, only used by this and the Type 33 symgen.
+ *
+ * 21-Jun-2026 wje cleanup, no functional change
  */
 
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdbool.h>
-#include <stdint.h>
 
 #include "display.h"
 #include "iotHandler.h"
@@ -38,7 +39,6 @@
 #define SEPSPACING  4       // base number of pixel for autospacing between chars
 
 #define DOTDELAY    1       // 5 usec cycles between dot updates
-#define DPYDELAY    5000    // setup delay in NANOSECS passed to the dpy code
 
 static bool needCompletion;
 static bool draw;
@@ -64,9 +64,8 @@ extern int cvtDpyTo1024(int);
 int
 iotHandler(PDP1P pdp1P, int dev, int pulse, int completion)
 {
-int x, y, intensity;
+int x, y;
 bool noWait;
-uint64_t utmp;
 
     if( !pulse )
     {
@@ -96,10 +95,16 @@ uint64_t utmp;
         }
         else                                // gsp
         {
-            // move right one character width plus one inter-character spacing if autospacing on
+            // Move right one character width, plus one inter-character separation if
+            // autospacing is enabled. This completes immediately (no dots are drawn), so
+            // flag it as such. This lets the noWait/needCompletion check below fire
+            // IOCOMPLETE() right away if the caller asked for one (e.g. "gsp C"), instead
+            // of silently dropping the completion pulse forever.
+            noWait = true;
+
             lockDisplayData(0);
             getDisplayData(0, &x, &y, &intensity);
-            x += (5 * dotSpacing) + (autoSpace)?sepSpacing:0; 
+            x += (5 * dotSpacing) + ((autoSpace)?sepSpacing:0);
             setDisplayData(0, x, -1, -1);
             unlockDisplayData(0);
             iotCondLog(LOG_CMD, "Gsp, x now %04o\n", x);
@@ -174,8 +179,6 @@ int x, y;
     if( draw )
     {
         // we draw one dot per poll
-        bit = 0;
-
         while( bitCtr )
         {
             bit = shiftregister & 0400000;
@@ -213,7 +216,7 @@ int x, y;
         {
             draw = false;
             charDone = true;
-        
+
             if( autoSpace )
             {
                 xpos += sepSpacing;
@@ -309,7 +312,6 @@ flagToBits(int bits)
 void
 configure()
 {
-ConfigurationP confP;
 ConfigurationSettingP settingP;
 
     iotCondLog(LOG_CONFIG, "IOT 27 checking configuration\n");

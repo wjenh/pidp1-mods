@@ -1,4 +1,12 @@
-// This is an implementation of the Type 23 parallel drum
+/*
+ * This is an implementation of the PDP-1 Type 23 Parallel Drum.
+ * The drum data is stored in '/opt/pidp1-mods/pdp23drum' and is a binary image of the drum,
+ * stored as 18 bit pdp-1 words per 32 bit image word.
+ * The drum also uses IOTs 62 and 63, which alias to this one.
+ *
+ * wje 20-Jun-2026 - cleanup, begin this revision history, wasn't initially included
+ */
+
 #include <unistd.h>
 #include <string.h>
 #include <fcntl.h>
@@ -17,16 +25,10 @@
 #define LOG_READ 0
 #define LOG_WRITE 0
 
-// Flag for busy for the cks instruction
-// DRP set is busy, cleared by operation completion, dia, or dba
+// Flag for busy for the cks instruction.
+// DRP set is busy, cleared by operation completion, dia, or dba,
 // from the DEC-1-137M diagnostic test program
 #define CKS_DRP 0000001
-
-/*
- * This is an implementation of the PDP-1 Type 23 Parallel Drum.
- * It keeps the drum data in a file named 'pdp23drum'.
- * The drum also uses IOTs 62 and 63, so replicate into those.
- */
 
 #define HSC_CHAN 1      // drum uses 1
 
@@ -39,11 +41,7 @@ static int drumWriteField;
 static int drumAddr;
 static int transferCount;
 static int drumCount;
-static int readMode;
-static int writeMode;
-static int ioBusy;
-static int needBreak;
-static int inWait;
+static int sbsChan = 5;
 static uint64_t lastSimtime;         // used in the polling code for drumcount updates
 static uint64_t cmdCompletionTime;   // relative to pdp1P->simtime
 
@@ -52,7 +50,12 @@ static int memAddr;
 static Word readBuffer[4096];
 static Word writeBuffer[4096];
 
-static int sbsChan = 5;
+static bool readMode;
+static bool writeMode;
+static bool ioBusy;
+static bool needBreak;
+static bool inWait;
+
 static HSCChannelP chanP;   // how we get data
 
 static void readDrumToBuffer(int, Word *, int, int, int);
@@ -63,7 +66,6 @@ iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
 {
 int stat;
 int chanFlags;
-Word *memBaseP;
 HSCRequest request;
 
     if( pulse )
@@ -138,7 +140,13 @@ HSCRequest request;
         }
         break;
 
-    case 063:            // dcl, drum core location and dss, drum set sbs
+    case 063:            // dcl, drum core location
+        // This is nonstandard behavior.
+        // It was added to allow changing the drun's interrupt channel when using sbs16
+        // in case it conflicts with other usage.
+        // In practice, different PDP-1 installations could have different assignments, hardware configured.
+        // If this is executed, the normal dcl setup does not happen.
+        // If the interrupt channel is changed, the  prior channel is returned in the IO register.
         if( MB(pdp1P) & 02000 )
         {
             // enable/disable sbs16
@@ -149,12 +157,16 @@ HSCRequest request;
             // change interrupt channel?
             if( IO(pdp1P) & 020 )
             {
+                // The old value is returned in IO.
                 sbsChan = IO(pdp1P) & 017;
+                IO(pdp1P) = stat;
             }
-            iotCondLog(LOG_IOT, "dss called with setting %02o\n", IO(pdp1P) & 077);
+
+            iotCondLog(LOG_IOT, "dss called with setting %02o, prior chnannel was %020\n", IO(pdp1P) & 077, stat);
             break;
         }
         
+
         // The manual says mem bank is bits 2, 3, but this isn't correct.
         // The hardware description is.
         // It's adtually bits 2-5 to support up to 16 memory modules.
@@ -199,7 +211,9 @@ HSCRequest request;
             }
             else
             {
-                cmdCompletionTime = drumCount - drumAddr;
+                // Target is at or ahead of the current head position, no wraparound needed,
+                // the wait is simply the forward distance from here to there.
+                cmdCompletionTime = drumAddr - drumCount;
             }
         }
         else
@@ -212,7 +226,7 @@ HSCRequest request;
         // Each drum word takes 8.5us
         cmdCompletionTime = pdp1P->simtime + (cmdCompletionTime * 8500);
 
-        // we assume we get it, manual says to check status before calling IOT_61.
+        // we assume we can proceed, manual says to check status before calling IOT_61.
         pdp1P->hsc = 1;                     // and we have to manage the light
 
         request.mode = chanFlags;
@@ -231,7 +245,7 @@ HSCRequest request;
             writeBufferToDrum(drumFd, writeBuffer, drumWriteField, drumAddr, transferCount);
         }
 
-        iotCondLog(LOG_TIME, "Completion in %d usecs, ioWait %d\n", (cmdCompletionTime - pdp1P->simtime)/1000);
+        iotCondLog(LOG_TIME, "Completion in %d usecs, ioWait %d\n", (cmdCompletionTime - pdp1P->simtime)/1000, inWait);
         ioBusy = 1;
         break;
 
@@ -279,8 +293,6 @@ iotStop()
 void
 iotPoll(PDP1 *pdp1P)
 {
-int hsStatus;
-
     if( ioBusy )
     {
         if( pdp1P->simtime >= cmdCompletionTime )
@@ -307,20 +319,20 @@ int hsStatus;
     {
         // The original hardware updated this every 8.5us, be we aren't called with that timing.
         // So the count is updated when simtime % 8500 is zero.
-        // This won't be exact, but the longer the time but the higher the count, the more accurate it will be.
+        // This won't be exact, but the longer the time, thus the higher the count, the more accurate it will be.
         // The worst case will be a 10us interval.
 
         if( pdp1P->simtime >= (lastSimtime + 8500) )
         {
             lastSimtime = pdp1P->simtime;
-            drumCount = ++drumCount % 4096;
+            drumCount = (drumCount + 1) % 4096;
         }
 
         if( needBreak && (drumCount == drumAddr) )
         {
             ioBusy = needBreak = 0;
-            CKS(pdp1P) &= ~CKS_DRP;    // and not busy
-            initiateBreak(5);               // the DEC drum diagnostic seems to use channel 5
+            CKS(pdp1P) &= ~CKS_DRP;             // and not busy
+            initiateBreak(sbsChan);             // the DEC drum diagnostic seems to use channel 5
             iotCondLog(LOG_BREAK, "IOT 61 break initiated at drum count %o.\n", drumCount);
         }
     }

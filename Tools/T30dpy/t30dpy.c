@@ -107,6 +107,9 @@
  *    actual rendered/presented frames (not the idle-skip path when there are no active points,
  *    and not the fullscreen-toggle flush presents, which are clear-only and not content frames).
  * 20-Jun-2026 wje (Claude) create the window initially hidden to avoid sdl window initialization jitter
+ * 21-Jun-2026 wje (Claude) idle frames (no active points) now still clear+present every pass
+ *    instead of skipping rendering entirely; the old skip left the window showing transparent
+ *    content (title bar/border only) whenever the PDP-1 wasn't actively feeding points yet.
 */
 
 #include <stdio.h>
@@ -667,66 +670,85 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
             cursorTime = 0;
         }
 
-        if( activeListHead == NOINDEX )
+        // With nothing active there is nothing to draw, so the expensive per-point work below
+        // (texture lock, full pixel-buffer memset, the locked active-list walk) is skipped. But
+        // we still fall through to clear+present every pass, even when idle -- previously this
+        // case did "continue" here, skipping rendering entirely, which left the window showing
+        // whatever the window system had for it (observed as a persistently transparent content
+        // area, title bar and border only) for as long as the PDP-1 wasn't actively feeding
+        // points, e.g. when the display is started before the emulator begins writing. Idle
+        // frames are cheap (clear+present only, no point work), and we're already waking up
+        // every frame tick regardless for the timing above, so this adds negligible cost and
+        // never exceeds the cost of a normal frame with points active.
+        if( activeListHead != NOINDEX )
         {
-            continue;               // nothing to do this cycle
-        }
+            textureP = textures[textureSelector];
+            textureSelector ^= 1;
 
-        textureP = textures[textureSelector];
-        textureSelector ^= 1;
-
-        if( SDL_LockTexture(textureP, NULL, (void *)&pixels, &pitch) != 0 )
-        {
-            fprintf(stderr, "Can't lock texture, %s\n", SDL_GetError());
-            exit(1);
-        }
-
-        // Clearing the entire pixel array seems to be faster than clearing individual points, surprising.
-        memset(pixels, 0, pitch * 1024);
-
-        // Go thru the point list, handle each.
-        // This entire walk is done under a single lock acquisition, not just the individual
-        // removals: previously, only removeActivePoint() locked, leaving the read of each
-        // node's nextIdx here unprotected.  That let the reader thread's addActivePoint(),
-        // running concurrently, recycle a slot we had just freed and relink it back into the
-        // chain we were still traversing, corrupting nextIdx into a cycle.  The result was an
-        // unbounded loop right here: pegged CPU, a frozen display, and total input
-        // unresponsiveness, confirmed against a live hung process with gdb.
-        SDL_LockMutex(busyLockP);
-
-        for( pointIdx = activeListHead, prevIdx = NOINDEX; pointIdx != NOINDEX; pointIdx = nextIdx )
-        {
-            activePointP = &activePool[pointIdx];
-            x = activePointP->x;
-            y = activePointP->y;
-            rgba = rgbaValues[activePointP->intensity][activePointP->lifetime];
-
-            nextIdx = activePointP->nextIdx;        // Get this now before a possible point removal.
-
-            if( (rgba != blackPixel) && (activePointP->lifetime < MAXLIFETIME) )
+            if( SDL_LockTexture(textureP, NULL, (void *)&pixels, &pitch) != 0 )
             {
-                drawPoint(pixels, pitch, rgba, x, y, activePointP->intensity);
-                activePointP->lifetime++;
-                prevIdx = pointIdx;                 // Only update if we are not removing this point.
-                ++totalPoints;
+                fprintf(stderr, "Can't lock texture, %s\n", SDL_GetError());
+                exit(1);
             }
-            else
+
+            // Clearing the entire pixel array seems to be faster than clearing individual points, surprising.
+            memset(pixels, 0, pitch * 1024);
+
+            // Go thru the point list, handle each.
+            // This entire walk is done under a single lock acquisition, not just the individual
+            // removals: previously, only removeActivePoint() locked, leaving the read of each
+            // node's nextIdx here unprotected.  That let the reader thread's addActivePoint(),
+            // running concurrently, recycle a slot we had just freed and relink it back into the
+            // chain we were still traversing, corrupting nextIdx into a cycle.  The result was an
+            // unbounded loop right here: pegged CPU, a frozen display, and total input
+            // unresponsiveness, confirmed against a live hung process with gdb.
+            SDL_LockMutex(busyLockP);
+
+            for( pointIdx = activeListHead, prevIdx = NOINDEX; pointIdx != NOINDEX; pointIdx = nextIdx )
             {
-                // We don't update prevIdx in this case because that point remains the previous point.
-                // The lock for this whole walk is already held above; removeActivePoint() no
-                // longer locks internally, it relies on its caller to hold busyLockP.
-                removeActivePoint(pointIdx, prevIdx);
+                activePointP = &activePool[pointIdx];
+                x = activePointP->x;
+                y = activePointP->y;
+                rgba = rgbaValues[activePointP->intensity][activePointP->lifetime];
+
+                nextIdx = activePointP->nextIdx;        // Get this now before a possible point removal.
+
+                if( (rgba != blackPixel) && (activePointP->lifetime < MAXLIFETIME) )
+                {
+                    drawPoint(pixels, pitch, rgba, x, y, activePointP->intensity);
+                    activePointP->lifetime++;
+                    prevIdx = pointIdx;                 // Only update if we are not removing this point.
+                    ++totalPoints;
+                }
+                else
+                {
+                    // We don't update prevIdx in this case because that point remains the previous point.
+                    // The lock for this whole walk is already held above; removeActivePoint() no
+                    // longer locks internally, it relies on its caller to hold busyLockP.
+                    removeActivePoint(pointIdx, prevIdx);
+                }
             }
+
+            SDL_UnlockMutex(busyLockP);
+
+            SDL_UnlockTexture(textureP);
+
+            // No SDL_RenderClear() here: with SDL_BLENDMODE_NONE and the texture's
+            // pixel buffer fully memset() above, SDL_RenderCopy() fully overwrites
+            // the render target every frame, making a separate clear redundant.
+            SDL_RenderCopy(renderer, textureP, NULL, NULL);
+        }
+        else
+        {
+            // Nothing active: correct content is just black, and there's no texture update to
+            // composite, but we still need to clear+present so the window keeps showing defined
+            // content instead of going transparent (see comment above). Unlike the active path,
+            // there's no full-texture RenderCopy() here to rely on for covering the whole render
+            // target, so an explicit clear is required.
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+            SDL_RenderClear(renderer);
         }
 
-        SDL_UnlockMutex(busyLockP);
-
-        SDL_UnlockTexture(textureP);
-
-        // No SDL_RenderClear() here: with SDL_BLENDMODE_NONE and the texture's
-        // pixel buffer fully memset() above, SDL_RenderCopy() fully overwrites
-        // the render target every frame, making a separate clear redundant.
-        SDL_RenderCopy(renderer, textureP, NULL, NULL);
         SDL_RenderPresent(renderer);
         ++totalFrames;
     }

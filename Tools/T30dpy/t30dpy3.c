@@ -101,6 +101,7 @@
  *    presented) to just after SDL_RenderPresent(). Matches t30dpy (SDL2), where totalFrames only
  *    counts actual rendered/presented frames, so reportTiming()'s frames/sec figure now means
  *    the same thing in both clients.
+ * 20-Jun-2026 wje (Claude) create the window initially hidden to avoid sdl window initialization jitter
 */
 
 #include <stdio.h>
@@ -471,13 +472,18 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
         exit(1);
     }
 
+    // Create the window hidden without mapping it yet.
+    // SDL_CreateWindow() maps the window immediately,
+    // before the renderer exists and before any clear+present has happened.
+    // This results in 'window flicker' on startup as the window is set up.
+    // Hiding it until the renderer has been created and we have initialized avoids this.
     SDL_SetStringProperty(winPropsID, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "T30dpy3 Type 30 Display");
     SDL_SetNumberProperty(winPropsID, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
     SDL_SetNumberProperty(winPropsID, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED);
     SDL_SetNumberProperty(winPropsID, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, winSize);
     SDL_SetNumberProperty(winPropsID, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, winSize);
     SDL_SetNumberProperty(winPropsID, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER,
-        (Sint64)(SDL_WINDOW_RESIZABLE | ((!border) ? SDL_WINDOW_BORDERLESS : 0)));
+        (Sint64)(SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN | ((!border) ? SDL_WINDOW_BORDERLESS : 0)));
 
     window = SDL_CreateWindowWithProperties(winPropsID);
     SDL_DestroyProperties(winPropsID);
@@ -499,6 +505,9 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
     SDL_RenderClear(renderer);
     SDL_RenderPresent(renderer);
+
+    // Only now, with defined (black) content already presented, make the window visible.
+    SDL_ShowWindow(window);
 
     // Use RGBA8888 unconditionally.
     // We previously queried SDL_PROP_RENDERER_TEXTURE_FORMATS_POINTER to get the

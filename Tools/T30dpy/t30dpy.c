@@ -106,6 +106,7 @@
  *    refactor). Added ++totalFrames after SDL_RenderPresent() in the main loop, counting only
  *    actual rendered/presented frames (not the idle-skip path when there are no active points,
  *    and not the fullscreen-toggle flush presents, which are clear-only and not content frames).
+ * 20-Jun-2026 wje (Claude) create the window initially hidden to avoid sdl window initialization jitter
 */
 
 #include <stdio.h>
@@ -453,9 +454,15 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
         }
     }
 
+    // Create the window hidden without mapping it yet.
+    // SDL_CreateWindow() maps the window immediately,
+    // before the renderer exists and before any clear+present has happened.
+    // This results in 'window flicker' on startup as the window is set up.
+    // Hiding it until the renderer has been created and we have initialized avoids this.
     window = SDL_CreateWindow("T30dpy Type 30 Display",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winSize, winSize,
-            ((!border)?SDL_WINDOW_BORDERLESS:0) | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
+            ((!border)?SDL_WINDOW_BORDERLESS:0) | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
+            | SDL_WINDOW_HIDDEN);
 
     // Create the renderer, set to black and display.
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | (doVsync)?SDL_RENDERER_PRESENTVSYNC:0 );
@@ -463,6 +470,9 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
     SDL_RenderClear(renderer);
     SDL_RenderPresent(renderer);
+
+    // Only now, with defined (black) content already presented, make the window visible.
+    SDL_ShowWindow(window);
 
     // Create the textures we write our points to.
     // We double-buffer to minimize screen tearing.

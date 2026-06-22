@@ -1,20 +1,25 @@
-// This supports a configuration file for setting various parameters for pdp1, IOTs, and other
-// components.
-// The config file has a simple format.
-// Lines starting with '#' are comments and are ignored.
-// Empty lines are ignored.
-// Otherwise, a line of the form 'xxx=yyy' is expected.
-// Embedded spaces are ignored.
-// The meaning of 'yyy' depends upon the option.
-// For an option that is on or off, 'y', 'yes', or 'on' means enable, anything else means disable.
-//
-// If an option that is not built in is seen, it is added to the list of extra options.
-// If it is a boolean setting, the onOff field in the extra option is set.
-// If it is a string of digits 0-9, the ivalue field is set and the fvalue field will be NAN.
-// If it is a string of digits 0-9., the fvalue field is set and the ivalue field is set to the integer part.
-// Otherwise, the setting is kept as a string and the strvalueP field set to it.
-// For any value type not seen, onOff is false, strvalueP is null, fvalue is NAN, ivalue is zero.
-// Use isnan() from math.h to test fvalue.
+/*
+ * This supports a configuration file for setting various parameters for pdp1, IOTs, and other
+ * components.
+ * The config file has a simple format.
+ * Lines starting with '#' are comments and are ignored.
+ * Empty lines are ignored.
+ * Otherwise, a line of the form 'xxx=yyy' is expected.
+ * Embedded spaces are ignored.
+ * The meaning of 'yyy' depends upon the option.
+ * For an option that is on or off, 'y', 'yes', or 'on' means enable, anything else means disable.
+ *
+ * If an option that is not built in is seen, it is added to the list of extra options.
+ * If it is a boolean setting, the onOff field in the extra option is set.
+ * If it is a string of digits 0-9, the ivalue field is set and the fvalue field will be NAN.
+ * If it is a string of digits 0-9., the fvalue field is set and the ivalue field is set to the integer part.
+ * Otherwise, the setting is kept as a string and the strvalueP field set to it.
+ * For any value type not seen, onOff is false, strvalueP is null, fvalue is NAN, ivalue is zero.
+ * Use isnan() from math.h to test fvalue.
+ *
+ * 21-Jun-2026 wje (Claude) - fix gain default (1.5 -> 0.95) to match pidp1.config.example and
+ *    Docs/UsingAudio.md, both of which already documented 0.95 as the default.
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,14 +37,19 @@
 
 // Once loaded, this is globally available.
 // Some values are preinitialized.
+// The alpha values below are roughly what the rc filters PDP-1 at the Computer History Museum
+// have for frequency response, per notes provided by Peter Samson.
+// The actual active value in the config file example is a uniform setting across
+// all channels that gives a more aggressive rolloff, providing a more organ-like sound.
+// See the notes in /opt/pidp1-mods/pidp1.config.example for more details.
 static Configuration configSettings = {
     // all the audio values have defaults
-    .sampleRate = 11428,    // samples/second for SDL
+    .sampleRate = 22000,    // samples/second for SDL
     .alpha1 = 0.687,
     .alpha2 = 0.625,
     .alpha3 = 0.524,
     .alpha4 = 0.524,
-    .gain = 1.5,
+    .gain = 0.95,
     .tuning = 1.0,
     .muldivEnabled = true,
     .core1DEnabled = true

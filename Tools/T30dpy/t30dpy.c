@@ -728,9 +728,8 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
             // the render target every frame, making a separate clear redundant.
             SDL_RenderCopy(renderer, textureP, NULL, NULL);
             SDL_RenderPresent(renderer);
+            ++totalFrames;
         }
-
-        ++totalFrames;
     }
 
     if( doTiming )

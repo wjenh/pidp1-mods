@@ -766,9 +766,9 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
             SDL_RenderClear(renderer);
             SDL_RenderTexture(renderer, textureP, NULL, NULL);
             SDL_RenderPresent(renderer);
+            ++totalFrames;
         }
 
-        ++totalFrames;
     }
 
 

@@ -81,22 +81,38 @@ two340charsets=no
 # gain sets the 4 channel mixer gain, caution, too high and clipping will occur.
 # tuning shifts the frequency, but is not implemented until SDL3 is available.
 audio=off
-alpha=0.20
-gain=0.95
-tuning=1.0
-# samplerate sets how often audio is sent to SDL in rate samples per second.
-# However, the 5 usec cycle time of the emulator is the controlling factor, the rate will have a 5 used
-# granularity.
-# The sample rate also directly affects the frequency response of the filters, adjust both as needed.
-samplerate=22000
 
+alpha=0.20
 # Each channel's alpha can also be set separately.
-# The alphas correspond to a cutoff of 4Khz for pf1, 3Knz for pf2, and 2Khz for pf3 and 4.
-# Probably not enoufh filtering, easier to try different setting using the pidpaudio app.
+# The alphas below correspond to a cutoff of 4Khz for pf1, 3Knz for pf2, and 2Khz for pf3 and 4.
+# These  are roughly what the rc filters PDP-1 at the Computer History Museum
+# have for frequency response, per notes provided by Peter Samson.
+# Not really enough filtering, but these should be the authentic experience.
 #alpha1=0.687
 #alpha2=0.625
 #alpha3=0.524
 #alpha4=0.524
+
+# Gain adjusts the volume, but a value that is too large will cause clipping of the audio, adjust with caution.
+gain=0.95
+
+# The real PDP-1s didn't have a precision clock controlling the 5 usec cycle time.
+# Instead, each had a simple oscillator that was not crystal controlled.
+# This meant that not only did different PDP-1s have slightly different cycle times,
+# a given PDP-1's cycle time drifted over time.
+# Tuning adjusts the precise frequency the emulator uses to simulate the original PDP-1 drift.
+# If you watch any videos of Peter Samson using his music program on the real PDP-1, you'll see him
+# frequently changing switches.
+# He's adjusting the timing of the synthesizer loop in real time. By ear.
+# If you have good pitch recognition and a particular piece of music sounds flat or sharp, adjust this value.
+# This feature only works for the SDL3 version, SDL2 doesn't have the capability.
+tuning=1.0
+
+# samplerate sets how often audio is sent to SDL in rate samples per second.
+# However, the 5 usec cycle time of the emulator is the controlling factor, the rate will have a 5 usec
+# granularity.
+# The sample rate also directly affects the frequency response of the filters, adjust both as needed.
+samplerate=22000
 
 # Settings for the IOT 45 line printer
 # The line printer type defaults to Type 62

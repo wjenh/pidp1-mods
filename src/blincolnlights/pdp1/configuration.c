@@ -45,10 +45,10 @@
 static Configuration configSettings = {
     // all the audio values have defaults
     .sampleRate = 22000,    // samples/second for SDL
-    .alpha1 = 0.687,
-    .alpha2 = 0.625,
-    .alpha3 = 0.524,
-    .alpha4 = 0.524,
+    .alpha1 = 0.6446,
+    .alpha2 = 0.5545,
+    .alpha3 = 0.4267,
+    .alpha4 = 0.4267,
     .gain = 0.95,
     .tuning = 1.0,
     .muldivEnabled = true,

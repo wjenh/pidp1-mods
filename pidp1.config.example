@@ -88,10 +88,10 @@ alpha=0.20
 # These  are roughly what the rc filters PDP-1 at the Computer History Museum
 # have for frequency response, per notes provided by Peter Samson.
 # Not really enough filtering, but these should be the authentic experience.
-#alpha1=0.687
-#alpha2=0.625
-#alpha3=0.524
-#alpha4=0.524
+#alpha1=0.6446
+#alpha2=0.5545
+#alpha3=0.4267
+#alpha4=0.4267
 
 # Gain adjusts the volume, but a value that is too large will cause clipping of the audio, adjust with caution.
 gain=0.95

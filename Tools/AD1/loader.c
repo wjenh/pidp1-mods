@@ -55,7 +55,7 @@ FILE *fP;
 
     if( (kind = skipLoader(fP)) == EOF )
     {
-        printf("File '%s' is not a valid bin or am1 binary tape.\n", filenameP);
+        printf("File '%s' is not a valid macro binary or am1 binary tape.\n", filenameP);
         fclose(fP);
         return(LOADFAILED);
     }

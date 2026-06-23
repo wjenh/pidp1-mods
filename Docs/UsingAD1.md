@@ -2,8 +2,9 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.13 and covers up through ad1 version 1.17; it will be updated as needed.\
-Edit date 27-Apr-2026
+This is version 1.14 and covers up through ad1 version 1.18; it will be updated as needed.\
+Edit date 23-Jun-2026
+added load command changes
 
 ## What is **ad1**?
 
@@ -510,9 +511,10 @@ For example:
 ```
 The first number is the line in the file being viewed and is the line a *list at nn* command will show.
 
-## LOad name
+## LOad [name]
 
-Attept to load the named file as a binary or am1 rim tape.
+Attept to load the named file as an am1 or macro .bin or rim tape.
+If no name is given, use the first opened file name, from the command line or the *file* command.
 
 If successful, the current start address is set to the starting address unless the tape was an am1
 tape with a *stop* directive, in which case no starting address is set.

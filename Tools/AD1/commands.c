@@ -90,6 +90,8 @@ extern void deleteAllWatches(void);
 extern int onesCompl(int val);
 extern bool isFileMapped(int fileno);
 extern FileInfoP newFile(char *nameP);
+extern FileInfoP getFileInfoP(int fileNo);
+
 extern void closeFiles(void);
 extern bool printLine(int fileno, int lineno);
 extern bool printLines(MapEntryP linesP);
@@ -97,6 +99,7 @@ extern bool printNextLine(void);
 extern int getCurrentLineNumber(void);
 extern void setCurrentLineNumber(int lineNo);
 extern int loadTape(char *filenameP);
+extern bool findRimFile(FileInfoP infoP, char *rsltP);
 extern DispatchP findCommand(DispatchP dipatchTable, char *nameP);
 
 void
@@ -611,7 +614,7 @@ setBaseFn(int num)
     }
 }
 
-// User gave a file name, clear any open and use it unless add is true.
+// User gave a file name, clear any that are open and use it unless add is true.
 // In that case, add the file to the current file list.
 // If the name is nil or nul, list the current files.
 void
@@ -846,10 +849,27 @@ char tmpstr[128];
     }
 }
 
+// Load in a rim tape.
+// If no file is given, try the current file.
 void
 loadFn(char *filenameP)
 {
 int addr;
+FileInfoP infoP;
+char filename[1024];
+
+    if( !filenameP && (infoP = getFileInfoP(0)) )     // try using the primary file name as a root
+    {
+        if( findRimFile(infoP, filename) )
+        {
+            filenameP = filename;
+        }
+    }
+
+    if( !filenameP )
+    {
+        printf("There are no current files, use an explicit name.\n");
+    }
 
     if( (addr = loadTape(filenameP)) == LOADFAILED )
     {

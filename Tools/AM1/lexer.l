@@ -341,21 +341,41 @@ octal			{ decimalMode = false; }
 
 0x[0-9A-Fa-f]+		{
 			    yylval.ival = (int)strtol(yytext,0,16);
+			    if( yylval.ival > WRDMASK )
+			    {
+				verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+				return(BAD);
+			    }
 			    return(INTEGER);
 			}
 
 0d[0-9]+		{
 			    yylval.ival = (int)strtol(yytext+2,0,10);
+			    if( yylval.ival > WRDMASK )
+			    {
+				verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+				return(BAD);
+			    }
 			    return(INTEGER);
 			}
 
 0o[0-7]+		{
 			    yylval.ival = (int)strtol(yytext+2,0,8);
+			    if( yylval.ival > WRDMASK )
+			    {
+				verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+				return(BAD);
+			    }
 			    return(INTEGER);
 			}
 
 0b[0-1]+		{
 			    yylval.ival = (int)strtol(yytext+2,0,2);
+			    if( yylval.ival > WRDMASK )
+			    {
+				verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+				return(BAD);
+			    }
 			    return(INTEGER);
 			}
 
@@ -367,6 +387,11 @@ octal			{ decimalMode = false; }
 			    }
 
 			    yylval.ival = (int)strtol(yytext,0,(decimalMode)?10:8);
+			    if( yylval.ival > WRDMASK )
+			    {
+				verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+				return(BAD);
+			    }
 			    return(INTEGER);
 			}
 
@@ -767,7 +792,7 @@ octal			{ decimalMode = false; }
 			    strcpy(yylval.strP, yytext);
 			    return(LIBFILE);
 			}
-			
+
 <DOTEXT>.		{
 			int tmpc, rslt;
 			int count;

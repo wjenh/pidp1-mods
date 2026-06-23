@@ -54,7 +54,9 @@ char *breakHelp[] = {
 char *loadHelp[] = {
     "The load command loads a tape image to memory which must be in RIM format.",
     "It is the equivalent of mounting a tape and pressing read-in.",
-    "Example: load foo.rum\n",
+    "If no file name is given and there is a current file, a RIM for that name will be tried,",
+    "Either a .rim or a .bin file extension can be used, both are searched for.",
+    "Example: load foo.rim\n",
     NIL};
 
 char *listHelp[] = {

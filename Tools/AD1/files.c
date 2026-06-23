@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <sys/stat.h>
 
 #include "ad1.h"
 
@@ -20,6 +21,7 @@ MapEntryPP memMap[MEMBANKS];  // we don't allocate until we need to
 bool openSourceFile(FileInfoP infoP);
 FileInfoP resolveFiles(char *nameP);
 bool loadFileMap(FileInfoP infoP);
+bool findRim(FileInfoP infoP, char *rsltP);
 
 extern bool loadSymbols(FileInfoP infoP);
 
@@ -29,7 +31,7 @@ isFileMapped(int fileNo)
 {
 FileInfoP infoP;
 
-    if( fileNo >= numFiles )
+    if( (fileNo >= numFiles) || (fileNo < 0) )
     {
         return( false );
     }
@@ -113,10 +115,10 @@ char *extP;
 char *cP;
 FileInfoP infoP;
 
-char name[256];
-char am1str[256];
-char lststr[256];
-char symstr[256];
+char name[1024];
+char am1str[1024];
+char lststr[1024];
+char symstr[1024];
 
     if( !nameP || (*nameP == NUL) )
     {
@@ -151,7 +153,7 @@ char symstr[256];
         strcpy(extP, ".sym");
         strcpy(symstr, nameP);
     }
-    else if( !strcmp(extP, ".rim") )
+    else if( !strcmp(extP, ".rim") || !strcmp(extP, ".bin") )
     {
         strcpy(extP, ".am1");
         strcpy(am1str, nameP);
@@ -404,4 +406,47 @@ char tmpbuf[1024];
 
     curLine = -1;
     return(true);
+}
+
+// See if there ia a FileInfo for the given file number.
+// If so, return it.
+// If not, return null.
+FileInfoP
+getFileInfoP(int fileNo)
+{
+    if( (numFiles < 1) || (fileNo >= numFiles) || (fileNo < 0) )
+    {
+        return(NULL);
+    }
+
+    return( files[fileNo] );
+}
+
+// See if a rim or bin file can be found based on the filename in infoP.
+// If so, copy the name into rsltP and return true.
+// If not, return false.
+// The result buffer is also used as a scratch buffer, ignore its contents unless true is returned.
+bool
+findRimFile(FileInfoP infoP, char *rsltP)
+{
+char *cP;
+struct stat statBuf;
+
+    strcpy(rsltP, infoP->am1NameP);
+    cP = strchr(rsltP, '.') + 1;    // we know it's valid
+    strcpy(cP,"rim");
+
+    if( !stat(rsltP, &statBuf) )
+    {
+        return(true);
+    }
+
+    strcpy(cP,"bin");
+
+    if( !stat(rsltP, &statBuf) )
+    {
+        return(true);
+    }
+
+    return(false);          // sorry
 }

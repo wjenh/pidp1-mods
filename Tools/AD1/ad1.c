@@ -24,6 +24,8 @@
  * 6-Apr-26 wje add monitor command to dump an execution sequence to a file
  * 10-Apr-26 wje use word mask macros for bankd and addr parts of instruction, add optional address for trace
  * 27-Apr-26 wje fix lexing issue with decimal-only commands
+ * 23-Jun-26 wje set the current line number to the breakpoint or watch line when it is hit,
+ *   load rim from the current file if no file given, try for a rim or a bin
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -166,7 +168,7 @@ extern int twosCompl(int val);
 extern char *findNameByAddr(u32 addr);
 extern char *decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP, char *resultP, int *flagsP);
 extern bool loadFileMap(bool fromLst, char *filenameP);
-extern bool printLines(MapEntryP entryP);
+extern bool printLine(MapEntryP entryP, int lineNo);
 extern bool printNextLine(void);
 extern int getNumber(char *strP, int base);
 extern void listFn(int arg, MapEntryP mapP);
@@ -356,7 +358,7 @@ char line[256];
                 }
 
                 printf(" at line %d,file %d:\n", mapP->lineNo, mapP->fileNo);
-                printLines(mapP);
+                printLine(mapP, mapP->lineNo);
                 NEWLINE;
             }
             else
@@ -380,7 +382,7 @@ char line[256];
             {
                 printf(" at line %d:\n", mapP->lineNo);
                 curFileNo = mapP->fileNo;
-                printLines(mapP);
+                printLine(mapP, mapP->lineNo);
                 NEWLINE;
             }
             else

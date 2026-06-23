@@ -19,7 +19,7 @@
  *
  * -W	don't print any warnings
  * -W=warning
- *      but do print the given warning, see the documentation 
+ *      but do print the given warning, see the documentation
  *      can be repeated as needed
  * -i path
  *	set the root for all includes not specified by -I
@@ -111,7 +111,7 @@ typedef struct inc_item
 {
     struct inc_item *nextP;
     char *incP;
-    char type;                  // I, D, etc 
+    char type;                  // I, D, etc
 } Inc_item, *Inc_itemP;
 
 // Define the various warnings that can be enabled and disabled.
@@ -129,16 +129,16 @@ Warning warnings[] = {
     {0, 0, false}  // end marker
 };
 
-Inc_itemP incsP;                // the list of cpp stuff 
-FILE *outfP;                    // where we put our code 
+Inc_itemP incsP;                // the list of cpp stuff
+FILE *outfP;                    // where we put our code
 
-char *origFilenameP;            // command line input am1 file 
-char *filenameP;                // current input am1 file 
+char *origFilenameP;            // command line input am1 file
+char *filenameP;                // current input am1 file
 char pfilename[128];            // cpp tmp file name
-char ofilename[128];            // output file 
-char basename[64];              // base name 
+char ofilename[128];            // output file
+char basename[64];              // base name
 char incroot[256];              // root of includes
-char str1[256];                 // scratch strings 
+char str1[256];                 // scratch strings
 char str2[256];
 
 bool doMacro;
@@ -162,15 +162,15 @@ extern int yy_flex_debug;
 
 PNodeP rootP;                   // root of the parse tree
 PNodeListP wildcardsP;          // any wildcarded cross-bank refs
-SymNodeP globalSymP;            // global addresses 
-SymNodeP localSymP;             // local addresses 
+SymNodeP globalSymP;            // global addresses
+SymNodeP localSymP;             // local addresses
 SymNodeP constSymP;             // constants
 SymListP constsListP;           // the list of all constant groups
 
 extern int cur_pc;
 extern BankContextP banksP;
 extern char *am1_version;
-extern FILE *yyin;              // lex input file 
+extern FILE *yyin;              // lex input file
 extern int yyparse();
 
 int run_cpp(char *, char *);
@@ -255,6 +255,7 @@ SymNodeP symP;
                 }
 
                 strcpy(incroot, cP);
+                cP = "";
                 break;
 
             case 'l':
@@ -419,7 +420,7 @@ SymNodeP symP;
     }
 
     fclose(yyin);
-    
+
     if(dumpTree)
     {
         dumpParseTree(rootP);
@@ -1139,7 +1140,7 @@ void
 enableWarning(char *nameP)
 {
 int i;
-    
+
     for( i = 0; warnings[i].id; ++i )
     {
         if( !strcmp(nameP, warnings[i].name) )
@@ -1156,7 +1157,7 @@ void
 enableAllWarnings()
 {
 int i;
-    
+
     for( i = 0; warnings[i].id; ++i )
     {
         warnings[i].enabled = true;

@@ -26,6 +26,15 @@ bool atSol = true;                      // initially true
 int curBank;
 BankContextP banksP;
 
+// Used by the "NAME LOCATION optExpr" rule below to carry the label's own
+// symbol across a mid-rule action, so it can be registered in the symbol
+// table *before* optExpr is parsed instead of after. This fixes a real
+// use-after-free: see Claude/skill-updates/syntax-additions.md, am1 bug 1,
+// for the full root-cause writeup (same-line self-reference, e.g.
+// "foo, jmp foo", confirmed via AddressSanitizer).
+static SymNodeP pendingLabelSymP;
+static int pendingLabelLocType;
+
 static char scratchStr[128];            // and string
 
 static PNodeListP varNodesP;            // unemitted vars
@@ -407,34 +416,46 @@ one_stmt	: expr
 		    $$ = newnode(lineno, cur_pc, ORIGIN, NILP, NILP);
                     $$->value.ival = cur_pc = evalExpr($1);
                 }
-		| NAME LOCATION optExpr
+		| NAME LOCATION
                 {
-                int locType;
-                SymNodeP symP;
-
+                    // Register the label's own symbol HERE, before optExpr
+                    // (below) is parsed. This matters for a same-line
+                    // self-reference like "foo, jmp foo": if registration
+                    // were deferred until after optExpr, the lexer would not
+                    // yet know "foo" when it scans the second occurrence
+                    // inside optExpr, so the bare-NAME expression rule would
+                    // create its own forward-reference SymNode for "foo" and
+                    // a parse tree node would cache a raw pointer to it.
+                    // Registering the label first means that second
+                    // occurrence resolves as an ADDR to this same symbol
+                    // instead, so no duplicate node is ever created (and
+                    // none is later freed out from under a live pointer).
+                    //
                     // Hack used by mactoam1 for symbols in defines.
                     // All new symbols are assumed local.
                     // We're defining this regular symbol in the local context.
                     if( localContextP && (localContextP->flags == CTX_FORCELOCAL) )
                     {
-                        symP = addLocalSymbol($1);
-                        symP->flags = SYMF_RESOLVED | SYMF_FORCED | SYM_LOC;
-                        symP->value = cur_pc;
-                        locType = LCLLOCATION;
+                        pendingLabelSymP = addLocalSymbol($1);
+                        pendingLabelSymP->flags = SYMF_RESOLVED | SYMF_FORCED | SYM_LOC;
+                        pendingLabelSymP->value = cur_pc;
+                        pendingLabelLocType = LCLLOCATION;
                     }
                     else
                     {
-                        symP = sym_make($1, 0);
-                        symP->flags |= SYMF_RESOLVED | SYM_GLOB;
-                        symP->lineno = lineno - 1;
-                        symP->value = cur_pc;
-                        symP->bank = curBank;
-                        sym_add(&globalSymP, symP);
-                        locType = LOCATION;
+                        pendingLabelSymP = sym_make($1, 0);
+                        pendingLabelSymP->flags |= SYMF_RESOLVED | SYM_GLOB;
+                        pendingLabelSymP->lineno = lineno - 1;
+                        pendingLabelSymP->value = cur_pc;
+                        pendingLabelSymP->bank = curBank;
+                        sym_add(&globalSymP, pendingLabelSymP);
+                        pendingLabelLocType = LOCATION;
                     }
-
-                    $$ = newnode(lineno, ($3 && !($3->flags & PN_NOINC))?cur_pc++:cur_pc, locType, NILP, $3);
-                    $$->value.symP = symP;
+                }
+              optExpr
+                {
+                    $$ = newnode(lineno, ($4 && !($4->flags & PN_NOINC))?cur_pc++:cur_pc, pendingLabelLocType, NILP, $4);
+                    $$->value.symP = pendingLabelSymP;
                 }
 		| ADDR LOCATION optExpr
                 {
@@ -746,7 +767,7 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
                     }
                     else
                     {
-                       // This is just a regular global in the current bank 
+                       // This is just a regular global in the current bank
                         symP = sym_make($1, 0);
                         symP->bank = curBank;
                         sym_add(&globalSymP, symP);

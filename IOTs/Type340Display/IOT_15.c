@@ -14,6 +14,7 @@
  * 20-Apr-2026 wje initial implementation
  * 6-May-2026 wje a stop or start from the pidp-1 stops the 340 and reverts to param mode
  * 17-Jun-2026 wje fix a potential arm cortex issue around synchronization with type340emu.
+ * 23-Jun-2026 wje change arm/cortex cpu fencing to be more efficient, was causing display flicker
  */
 
 #include <unistd.h>
@@ -36,8 +37,6 @@
 #define IOT1 015
 #define IOT2 016
 #define IOT3 017
-
-#define MAX_WAIT 6  // max 5us cycles we will wait for a stop to be responded to
 
 static void configure(void);
 
@@ -87,7 +86,8 @@ EmuControlP ctlP;
         else
         {
             // dla, display load address
-            // This also resets flags via the RUN in the display emulator
+            // Clear flags host-side so dss reads after dla see cleared flags immediately.
+            emuClearFlags();
             ctlP->address = IO(pdp1P);            // This is a full 16 bit address
             ctlP->command = EMU_CMD_RUN;
             iotCondLog(LOG_IOT, "dla %o%s\n", ctlP->address, (cmd & 02)?" and clear flags":"");

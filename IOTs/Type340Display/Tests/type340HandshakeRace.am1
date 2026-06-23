@@ -1,0 +1,149 @@
+Regression test for the Type 340 dla/dss command-handshake race (IOTs/Type340Display)
+/*
+ * type340HandshakeRace.am1
+ *
+ * Targets the specific synchronization defect fixed by the posted/acknowledged command
+ * handshake (ackSemaphore / emuCommandAckWait): a `dla` hands EMU_CMD_RUN to the display
+ * worker thread and, without the handshake, returns to the host CPU before the worker has
+ * run reset340()/emuClearFlags().  A program that polls a status IOT (here `dss`, skip on
+ * the stop flag) as its very next instruction can therefore observe the STALE FLAG_STOP
+ * left by the PREVIOUS display program and wrongly conclude the new program has already
+ * halted.
+ *
+ * How this test makes the race observable and self-checking:
+ *
+ *   1. Each pass leaves FLAG_STOP set: progWork ends in a parameter `halt`, and every pass
+ *      drains it to completion via waitStop.  So on entry to the next pass the stop flag is
+ *      genuinely set -- the exact precondition for a stale read.  (A prime run before the
+ *      loop arms the very first measured pass too.)
+ *
+ *   2. The measurement is `dla` immediately followed by `dss`, with NOTHING in between.  In
+ *      the fixed build, `dla` blocks until the worker has consumed the command and cleared
+ *      the flags, so `dss` deterministically reads clear -> no skip -> PASS.  In the broken
+ *      build, `dla` returns early and `dss` frequently still sees the previous program's
+ *      FLAG_STOP -> skip -> FAIL.
+ *
+ *   3. progWork is a multi-vector drawing, not an instant stop.  It cannot reach its own
+ *      `halt` in the few microseconds before the host's `dss` executes, so a stop seen right
+ *      after `dla` can ONLY be the stale flag -- never a legitimately-completed new program.
+ *      This is what lets the test attribute an immediate skip unambiguously to the bug.
+ *
+ *   4. The window is racy (the low-priority worker may, on a multi-core host, occasionally
+ *      clear the flags before the host's `dss`), so a single pass could miss a real defect.
+ *      The measurement is therefore repeated ITERATIONS times; one stale read anywhere fails
+ *      the whole run.  The fixed build passes deterministically regardless of ITERATIONS.
+ *
+ * No panel interaction: every display program ends in an explicit parameter `halt`, so the
+ * dss-poll drain never blocks forever on a correctly functioning display engine.  Result is
+ * reported PASS/FAIL on the typewriter via reportResult, so the run can be judged from the
+ * printed transcript alone.
+ *
+ * 23-Jun-2026 wje (assisted) initial implementation
+ */
+
+#include <TYPE340/type340defs.ah>
+
+// reportResult.ac (included at the end) defines these as cpp macros, but it is included AFTER
+// this code, so re-state them here -- identical redefinition is benign.  See type340FullTest.am1
+// for the same convention.
+#define REPORT_PASS 0
+#define REPORT_FAIL 1
+#define REPORT_SKIP 2
+
+#define ITERATIONS 0d2000      // measured passes; raise to widen the odds of catching a regression
+#define XO 0d300               // box origin (x and y); whole figure lives in [300, 420], no edge hit
+#define LEN 0d120              // vector length per side
+
+var count=0
+
+100/
+main,
+    // Prime: run progWork once and let it halt, so FLAG_STOP is set entering the loop and the
+    // first measured pass is already armed for a stale read.
+    lio [progWork
+    dla
+    jsp waitStop
+
+    dzm count
+loopTop,
+    // --- the race window -------------------------------------------------------------------
+    // Post a fresh program, then read dss as the VERY NEXT host instruction.  progWork cannot
+    // have halted this fast, so any stop flag seen here is the stale one from the prior pass.
+    lio [progWork
+    dla
+    dss
+    jmp armed              // dss did NOT skip -> flags correctly cleared by dla -> good
+    jmp staleSeen          // dss skipped     -> stale FLAG_STOP visible after dla -> BUG
+    // ---------------------------------------------------------------------------------------
+
+armed,
+    jsp waitStop           // let progWork actually finish; re-arms FLAG_STOP for the next pass
+    idx count
+    lac count
+    sad [ITERATIONS        // equal (no skip) -> done; differ (skip) -> keep going
+    jmp passReport
+    jmp loopTop
+
+staleSeen,
+    lac [lblTest
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp finish
+
+passReport,
+    lac [lblTest
+    lio [REPORT_PASS
+    jda reportResult
+
+finish,
+    jsp printSummary
+    lac [doneText
+    jda typetext
+done,
+    jmp done               // run complete, no panel interaction needed
+
+// ---------------------------------------------------------------------------
+// waitStop -- spin on dss until the display halts (FLAG_STOP).  Same idiom every other test
+// in this directory uses; safe because progWork always ends in a parameter halt.
+// ---------------------------------------------------------------------------
+waitStop,
+    local rtn
+    dap rtn
+poll, dss
+    jmp poll
+rtn, jmp .
+    endloc
+
+// ---------------------------------------------------------------------------
+// progWork -- a square traced twice as eight axis-aligned vectors, then halt.  Begins in
+// parameter mode (reset340 leaves the display in parameter mode after dla).  Deliberately
+// several vectors long so it cannot complete before the host's immediate dss runs.  All
+// coordinates stay within [XO, XO+LEN] = [300, 420], well clear of the 0..1023 edges, so no
+// edge violation perturbs the flags.
+// ---------------------------------------------------------------------------
+progWork, scale(0) intensity(3) next(point)
+    y(XO) next(point)
+    x(XO) show next(vector)
+    visible right deltax(LEN) deltay(0)
+    visible up    deltay(LEN) deltax(0)
+    visible left  deltax(LEN) deltay(0)
+    visible down  deltay(LEN) deltax(0)
+    visible right deltax(LEN) deltay(0)
+    visible up    deltay(LEN) deltax(0)
+    visible left  deltax(LEN) deltay(0)
+    visible down  deltay(LEN) deltax(0) end
+    halt
+
+lblTest,
+    text "dla/dss handshake race"
+    13
+doneText,
+    text "Type 340 handshake race test complete\n"
+    13
+
+// Put included code here (grows freely; cpp macros above are restated to avoid needing it early)
+#include <TESTUTIL/reportResult.ac>
+
+constants
+
+start main

@@ -26,6 +26,7 @@
  * 14-May-2026 wje fix wrong mask in PUT_SUBROUTINE_OP()
  * 16-May-2026 wje adjust timings, main loop is only 1us delay after hsc completion, add interrupt disable
  * 17-Jun-2026 wje fix one timing error in vector, off by 500ns. Fix a few minor bugs and one arm cortex issue.
+ * 23-Jun-2026 wje change arm/cortex cpu fencing to be more efficient, was causing display flicker
  */
 
 #include <stdlib.h>
@@ -243,7 +244,7 @@ static int lpX, lpY;        // last lp hit display coordinates
 static int curScale;
 static int curIntensity;
 static int shiftState;     // will be 0 for upper shift or 64 for lower shift, first set or second set
-static int flags;           // one of the FLAG x values
+static volatile int flags;  // one of the FLAG x values; volatile for host/worker concurrent access
 
 static int saveRegister;    // used with the SAVE subroutine subcommand
 static bool saveActive;
@@ -472,7 +473,7 @@ Status status;
         switch( command )
         {
         case EMU_CMD_NONE:
-            // Nothing to do, wait for a wakeup
+            // Spurious wakeup with no pending command; just re-enter the wait.
             curState = STOPPED;
             continue;
 
@@ -532,6 +533,18 @@ Status status;
                 case EMU_CMD_STOP:
                     // A stop resets back to stopped and param mode
                     reset340();     // not sure this is strictly correct, but does no harm
+                    continue;
+
+                case EMU_CMD_RUN:
+                    // A new dla arrived while the display program is running.
+                    // Abort the current program and start the new one without leaving the inner loop. 
+                    sawEscape = false;
+                    reset340();                         // sets curState = STOPPED, clears flags/pause/lp
+                    curAddress = ctlP->address;
+                    curState = INITIALIZE;              // override STOPPED so the inner loop continues
+                    pendingDelay = START_TIME;
+                    twoCharsets = origCharsets;
+                    iotCondLog(LOG_RUN, "Received start while running, new addr %o\n", curAddress);
                     continue;
                 }
             }
@@ -1760,14 +1773,17 @@ struct timespec tm;
  * Called from the 340 emulator thread, either in the running poll loop or
  * after waking from the idle semaphore.
  *
- * commandSent is _Atomic bool.  The acquire load here pairs with the release
- * store in emuCommandSet() (see type340emu.h), guaranteeing that ctlP->command
- * is fully visible before we read it.  This is essential on ARM (Pi 4) where
- * the CPU's weakly-ordered memory model otherwise allows the load of command
- * to be satisfied from a stale cache line even after commandSent reads true.
+ * commandSent is volatile bool (not _Atomic).  The per-iteration test is a
+ * bare volatile load with zero barrier cost on every iteration of the draw
+ * loop.  The acquire fence executes only on the taken branch (when the flag
+ * reads true), pairing with the release fence in emuCommandSet() (see
+ * type340emu.h).  This guarantees that ctlP->command is fully visible before
+ * we read it -- essential on ARM (Pi 4) where the weakly-ordered memory model
+ * would otherwise allow the load of command to be satisfied from a stale cache
+ * line even after commandSent reads true.
  *
- * The flag clears use relaxed ordering; we already hold the acquire fence from
- * the commandSent load, so no additional barrier is required for the clears.
+ * The flag clears are plain stores; the acquire fence already executed above,
+ * so no additional barrier is required for the clears.
  *
  * Returns: command code, or EMU_CMD_NONE if nothing is pending.
  */
@@ -1776,16 +1792,16 @@ get340Command(EmuControlP ctlP)
 {
 int command;
 
-    if( !(atomic_load_explicit(&ctlP->commandSent, memory_order_acquire)) )
+    if( !ctlP->commandSent )
     {
         command = EMU_CMD_NONE;
     }
     else
     {
-        /* commandSent acquire-load above is the barrier; command is now visible */
+        atomic_thread_fence(memory_order_acquire);   // pairs with emuCommandSet's release fence
         command = ctlP->command;
-        atomic_store_explicit(&ctlP->commandSent,  false, memory_order_relaxed);
-        atomic_store_explicit(&ctlP->responseSent, false, memory_order_relaxed);
+        ctlP->commandSent  = false;
+        ctlP->responseSent = false;
     }
 
     return(command);
@@ -1795,8 +1811,11 @@ int command;
  * get340Response -- poll for a pending response from the emulator side.
  * Called from the IOT thread.
  *
- * Same acquire/relaxed pattern as get340Command: the acquire load on
- * responseSent guarantees ctlP->response is visible before we read it.
+ * responseSent is volatile bool (not _Atomic).  Same fence+volatile scheme as
+ * get340Command: the per-iteration test is a bare volatile load; the acquire
+ * fence executes only on the taken branch, pairing with the release fence in
+ * emuResponseSet() (see type340emu.h), guaranteeing ctlP->response is visible
+ * before we read it.
  *
  * Returns: response code, or EMU_RESPONSE_NONE if nothing is pending.
  */
@@ -1805,10 +1824,11 @@ get340Response(EmuControlP ctlP)
 {
 int resp;
 
-    if( atomic_load_explicit(&ctlP->responseSent, memory_order_acquire) )
+    if( ctlP->responseSent )
     {
+        atomic_thread_fence(memory_order_acquire);   // pairs with emuResponseSet's release fence
         resp = ctlP->response;
-        atomic_store_explicit(&ctlP->responseSent, false, memory_order_relaxed);
+        ctlP->responseSent = false;
     }
     else
     {

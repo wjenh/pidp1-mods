@@ -1,0 +1,24 @@
+#ifndef NUMBERTOFIO_H
+#define NUMBERTOFIO_H
+
+// Convert the binary number representing a single decimal digit to its fio-dec character value.
+// IO contains the input value and has the character on return.
+// Uses AC and IO registers.
+// Called via jsp.
+numbertofio,
+    local rtn
+    dap rtn
+    lai
+    spa
+    jmp bad // negative number
+    sub [0d10
+    spa i
+    jmp bad // greater than 9
+    lai     // use the now-validated digit, but 0 is a special case
+    sza i
+    lio [020
+    jmp rtn
+bad, cla    // just return a space
+rtn, jmp .
+    endloc
+#endif

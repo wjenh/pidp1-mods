@@ -1,9 +1,14 @@
 #ifndef TYPETEXT_AC
 #define TYPETEXT_AC
+
+#define shiftUpper() lio [074; tyo i
+#define shiftLower() lio [072; tyo i
+
 // Type a line of characters on the typewriter.
 // The characters consist of a list of words produced by the text pseudo-op, flex code.
 // AC contains the address of the list produced by text.
 // A word following the last entry must be 013, stop.
+// It does not set the initial shift state, it's whatever the typewriter is in.
 // Uses AC and IO registers.
 // Called via jda.
 typetext, 0
@@ -32,4 +37,5 @@ rtn, jmp .
 cnt, 0
 chr, 0
     endloc
+
 #endif

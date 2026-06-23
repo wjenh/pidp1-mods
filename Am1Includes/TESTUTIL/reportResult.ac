@@ -1,0 +1,194 @@
+#ifndef REPORTRESULT_AC
+#define REPORTRESULT_AC
+/*
+ * reportResult -- shared helper for self-checking PDP-1 test programs.
+ *
+ * Prints a caller-supplied label on the typewriter followed by " PASS", " FAIL", or " SKIP"
+ * and a newline, then tallies the result into one of three running counters so a whole test
+ * suite can finish with a printed summary instead of requiring anyone to watch the display or
+ * read panel lights.
+ *
+ * This is meant to be the common reporting idiom for test suites of OTHER components too, not
+ * just the Type 340 display -- it has no Type-340-specific knowledge at all.
+ *
+ * Calling convention for reportResult (matches the existing TYO/typetext.ac idiom, since this
+ * is built directly on it):
+ *   AC -- address of the label's text block. The block must be produced by the 'text' directive
+ *         and followed by a word containing the flex/concise stop code, 013 -- exactly the
+ *         convention typetext.ac itself requires, since the label is just forwarded to it.
+ *   IO -- the result code: REPORT_PASS, REPORT_FAIL, or REPORT_SKIP, below. Any other value is
+ *         treated as REPORT_FAIL, on the theory that an unrecognized code is a bug in the
+ *         caller, not something to silently ignore.
+ * Called via jda. Neither AC nor IO is preserved.
+ *
+ * Example:
+ *   lac [secLabel        // address of a 'text "section name"' block ending in a 013 stop word
+ *   lio [REPORT_PASS
+ *   jda reportResult
+ *
+ * printSummary takes no arguments; it prints the three running totals built up by reportResult
+ * and is called via jsp. Neither AC nor IO is preserved.
+ */
+
+#include <TYO/typetext.ac>
+#include <UTIL/numbertofio.ac>
+
+#define REPORT_PASS 0
+#define REPORT_FAIL 1
+#define REPORT_SKIP 2
+
+// Running totals. Read these directly, or just call printSummary, once all sections have
+// reported in.
+var testPassCount=0, testFailCount=0, testSkipCount=0
+
+// Reset result counters, called via jsp.
+// Preserves IO and AC.
+resetResults,
+    local rtn
+    dap rtn
+    dzm testPassCount
+    dzm testFailCount
+    dzm testSkipCount
+rtn, jmp .
+    endloc
+
+// See usage above.
+reportResult, 0
+    local rtn, doPass, doFail, doSkip
+    dap rtn
+    dio status
+    lac reportResult         // jda deposited the caller's label address here
+    jda typetext              // print the label itself, no suffix yet
+
+    lac status
+    sad [REPORT_PASS
+    jmp doPass
+    sad [REPORT_SKIP
+    jmp doSkip
+    jmp doFail                // anything else, including REPORT_FAIL, counts as a failure
+
+doPass,
+    idx testPassCount
+    lac [passText
+    jda typetext
+    jmp rtn
+doFail,
+    idx testFailCount
+    lac [failText
+    jda typetext
+    jmp rtn
+doSkip,
+    idx testSkipCount
+    lac [skipText
+    jda typetext
+    jmp rtn
+
+rtn, jmp .
+status, 0
+    endloc
+
+passText,
+    text " pass\n"
+    13
+failText,
+    text " \Rfail\B\n"
+    13
+skipText,
+    text " \Rskip\B\n"
+    13
+
+// digitToFlex -- convert a binary digit to its flex/concise typewriter code.
+// Digits 1-9 happen to use flex codes 1-9 (octal 001-011) directly; only 0 is irregular, using
+// flex code 020 octal instead. Verified against Tools/AM1/parsefns.c's ascii2concise table.
+// Called via jsp -- note this is jsp, not jda: there is no reserved word at the entry point to
+// receive an auto-deposited value, so the argument is passed in IO, not AC. AC is NOT a safe
+// channel for an argument across a jsp call: jsp overwrites AC with the return address before
+// the callee's first instruction runs, so anything the caller left in AC is gone by the time
+// this code can look at it. IO survives untouched, which is why it's used here instead -- see
+// Claude/skill-updates/examples-additions.md's "Gotcha: jsp vs jda" note.
+// IO in: digit (0-9, binary). IO out: the flex code. AC is clobbered, not preserved.
+digitToFlex,
+    local rtn
+    dap rtn
+    lai                       // AC <- IO (the digit), only so it can be tested below
+    sza                       // skip if AC == 0 (the one irregular case)
+    jmp rtn                   // AC is 1-9: IO already holds the correct code (== the digit)
+    law 020                   // AC == 0: flex code is 020 octal, not 0
+    lia                       // IO <- AC (020)
+rtn, jmp .
+    endloc
+
+// printCount -- print a count (0-99 assumed) as one or two decimal digits via tyo, with no
+// leading zero and no trailing text.
+// Uses repeated subtraction for divide-by-10 in case hardware multiply/divide is not enabled.
+// Called via jsp. IO in: the count. Neither AC nor IO is preserved across the call.
+printCount,
+    local rtn, units, tens
+    dap rtn
+    dzm tens
+    dio units           // in case there is no tens digit
+    lai                 // AC <- IO (the count)
+    sub [0d10           // one or two digits?
+    spa                 // >= 10, two digits
+    jmp afterTensDigit
+tensLoop,
+    sub [0d10
+    spa                       // skip if AC >= 0, there's room for (at least) one more ten
+    jmp tensDone
+    idx tens
+    jmp tensLoop
+tensDone,
+    add [0d10                 // undo the subtraction that went negative; AC is now 0-9
+    dac units
+    lac tens
+    sza i                      // if tens == 0, don't print it to suppress a leading zero
+    jmp afterTensDigit
+    lio tens
+    jsp numbertofio
+    tyo i
+afterTensDigit,
+    lio units
+    jsp numbertofio
+    tyo i
+rtn, jmp .
+units, 0
+tens, 0
+    endloc
+
+// printSummary -- print the three running totals built up by reportResult, e.g.
+// "14 PASS, 0 FAIL, 2 SKIP" bracketed by newlines.
+// Tyo state is assumed lowershift.
+// Called via jsp. Neither AC nor IO is preserved.
+printSummary,
+    local rtn
+    dap rtn
+    lio [077        // newline
+    tyo i
+    lio testPassCount
+    jsp printCount
+    lac [sumPassText
+    jda typetext
+
+    lio testFailCount
+    jsp printCount
+    lac [sumFailText
+    jda typetext
+
+    lio testSkipCount
+    jsp printCount
+    lac [sumSkipText
+    jda typetext
+rtn, jmp .
+    endloc
+
+sumPassText,
+    text " PASS, "
+    13
+sumFailText,
+    text " FAIL, "
+    13
+sumSkipText,
+    text " SKIP\n"
+    13
+
+#endif

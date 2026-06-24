@@ -1,4 +1,5 @@
 // Process various combinations of filenames and try to set up the list/source and symbol data.
+// 24-Jun-2026 wje remove clearing of filename in openSourceFile(), no idea why it was done
 
 #include <stdlib.h>
 #include <string.h>
@@ -206,7 +207,6 @@ char symstr[1024];
 }
 
 // Try to open a source file, either a .lst or a .am1.
-// Clear the name of the one not opened, if set.
 // Return true if succesful, else false.
 bool
 openSourceFile(FileInfoP infoP)
@@ -218,23 +218,11 @@ openSourceFile(FileInfoP infoP)
 
     if( infoP->lstNameP && (infoP->fP = fopen(infoP->lstNameP, "r")) )
     {
-        if( infoP->am1NameP )
-        {
-            free(infoP->am1NameP);
-        }
-
-        infoP->am1NameP = NIL;
         return( true );
     }
 
     if( infoP->am1NameP && (infoP->fP = fopen(infoP->am1NameP, "r")) )
     {
-        if( infoP->lstNameP )
-        {
-            free(infoP->lstNameP);
-        }
-
-        infoP->lstNameP = NIL;
         return( true );
     }
 

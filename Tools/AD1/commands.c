@@ -91,6 +91,7 @@ extern int onesCompl(int val);
 extern bool isFileMapped(int fileno);
 extern FileInfoP newFile(char *nameP);
 extern FileInfoP getFileInfoP(int fileNo);
+extern bool openSourceFile(FileInfoP infoP);
 
 extern void closeFiles(void);
 extern bool printLine(int fileno, int lineno);
@@ -862,6 +863,7 @@ char filename[1024];
     {
         if( findRimFile(infoP, filename) )
         {
+            openSourceFile(infoP);      // might as well open the source while we're here
             filenameP = filename;
         }
     }

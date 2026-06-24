@@ -51,8 +51,10 @@
 #include "iotLogger.h"
 #define LOG_INIT 0
 #define LOG_START 0
+#define LOG_STOP 0
 #define LOG_RUN 0
 #define LOG_CMD 0
+#define LOG_GETADDR 0
 #define LOG_WAIT 0
 #define LOG_CONFIG 0
 #define LOG_ERR 0
@@ -238,7 +240,7 @@ static Modes curMode = PARAMETER;
 static Modes curState = STOPPED;
 static BRMState brmState;
 static int pendingDelay;
-static int curAddress;      // the address set by the dla command, where we will fetch data from
+static volatile int curAddress;      // the address set by the dla command, where we will fetch data from
 static int curX, curY;      // current display coordinates
 static int lpX, lpY;        // last lp hit display coordinates
 static int curScale;
@@ -358,6 +360,7 @@ int val;
 int
 emuGetAddress()
 {
+    iotCondLog(LOG_GETADDR,"Returning address %o\n", curAddress);
     return( curAddress );
 }
 
@@ -484,7 +487,7 @@ Status status;
             maxX = maxY = 0;
             minX = minY = 9999;
 #endif
-            reset340();
+            reset340();                 // sets curmode to PARAMETER
             curAddress = ctlP->address;
             curState = INITIALIZE;      // reset340() sets it to STOPPED;
             pendingDelay = START_TIME;  // when a start occurs, DPY_GO pulse, this setup time occurs.
@@ -510,7 +513,7 @@ Status status;
 
         case EMU_CMD_STOP:
             reset340();
-            iotCondLog(LOG_RUN, "Received stop\n");
+            iotCondLog(LOG_STOP, "Received stop\n");
             break;
         }
 
@@ -539,7 +542,7 @@ Status status;
                     // A new dla arrived while the display program is running.
                     // Abort the current program and start the new one without leaving the inner loop. 
                     sawEscape = false;
-                    reset340();                         // sets curState = STOPPED, clears flags/pause/lp
+                    reset340();                 // sets curmode to PARAMETER, state to INITIALIZE
                     curAddress = ctlP->address;
                     curState = INITIALIZE;              // override STOPPED so the inner loop continues
                     pendingDelay = START_TIME;
@@ -564,7 +567,6 @@ Status status;
                 iotCondLog(LOG_PARAM, "param word 0%o next mode 0%o\n", word, curMode);
                 if( PARAM_STOP(word) )
                 {
-                    iotCondLog(LOG_PARAM, "param stop\n");
                     curState = STOPPED;
                     emuOrFlags(FLAG_STOP);
                     if( PARAM_STOP_INTERRUPT(word) )
@@ -619,6 +621,7 @@ Status status;
 
             case SLAVE:                        // 16 slave Type 343 terminals? Really? We limit to 8.
                 word = getWord(ctlP->pdp1P);
+                iotCondLog(LOG_SLAVE,"Entered, word %06o\n", word);
                 curMode = MODE(word);
                 i = SLAVE_GROUP(word);
                 if( i < NUMSLAVEGROUPS )
@@ -637,6 +640,7 @@ Status status;
 
                     slavesEnabled = true;
                 }
+                iotCondLog(LOG_SLAVE,"Done, currAddress now %o\n", curAddress);
                 break;
 
             case POINT:

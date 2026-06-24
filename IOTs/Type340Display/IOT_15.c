@@ -30,6 +30,7 @@
 #define LOG_IOT 0
 #define LOG_START 0
 #define LOG_STOP 0
+#define LOG_DRA 0
 #define LOG_CONFIG 0
 #define LOG_ERR 0
 
@@ -101,6 +102,7 @@ EmuControlP ctlP;
         {
         case 0:         // dra, display read address counter
             IO(pdp1P) = emuGetAddress();
+            iotCondLog(LOG_DRA, "DRA, IO is %o\n", IO(pdp1P));
             break;
 
         case 1:         // drc, display read coordinates

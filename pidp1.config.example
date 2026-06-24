@@ -158,3 +158,8 @@ paneloffalpha=0.04
 # This determines whether or not the new panel driver sets realtime fifo priority.
 # It is generally not needed, but if flicker is a problem, enable it.
 panelrealtime=false
+
+# If you get to the point you just can't stand waiting on the (accurately) slow typewriter,
+# you can pretend someone invented a supercharged soroban and up it to 200 chars/sec instead of 10.
+# Heresy? Well, then don't use it.
+fasttyo=false

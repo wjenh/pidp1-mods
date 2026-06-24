@@ -3,8 +3,8 @@
 This docuemnt describes newpanel, a replacement for panel_pidp1, and how to use it.
 
 This is version 1.1\
-Edit date 15-Jun-2026\
-Add more details
+Edit date 23-Jun-2026\
+Add more details for alpha settings
 
 ## Installing newpanel
 
@@ -143,6 +143,13 @@ Alpha values range from 0.0 to 1.0, with increasing values giving a shorter dela
 A value of 1.0 is no delay, 0.0 is infinite delay, not useful.
 
 You can adjust the delays to your preference althogh the default values are the realistic ones.
+If you want lights to turn on slower, make panelonealpha smaller.
+Similarly, if you want them to turn off slower, make paneloffalpah smaller.
+
+However, the slower you maake turn on and turn off, the more 'blurred' the display will be,
+you are effectively averaging more and so missing shorter on/off changes.
+THe default values are correct for the class of light bulb that was used, small incandescent in the 1 watt range,
+but the precise performance of the bulbs used is not known.
 
 The filters are the same as used in the new audio system for the pidp1.
 

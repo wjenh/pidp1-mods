@@ -25,7 +25,8 @@
  * 10-Apr-26 wje use word mask macros for bankd and addr parts of instruction, add optional address for trace
  * 27-Apr-26 wje fix lexing issue with decimal-only commands
  * 23-Jun-26 wje set the current line number to the breakpoint or watch line when it is hit,
- *   load rim from the current file if no file given, try for a rim or a bin
+ *   load rim from the current file if no file given, try for a rim or a bin.
+ *   Rework location printing when a breakpoint or watchpoint is hit.
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -135,6 +136,7 @@ void formatAndPrintOne(int fmt, int value);
 void formatAndPrintTwo(int fmt1, int addr, int fmt2,  int value);
 void printNumber(int format, int value);
 void printAscii(char ch);
+bool printHitText(u32 address);
 bool printFlex(bool shifted, char ch);
 bool loadMemoryFromFile(char *filenameP, Word memory[], Word memSize);
 void usage(void);
@@ -157,22 +159,23 @@ extern char *am1NameP;
 extern char *lstNameP;
 extern char *symNameP;
 
-extern FileInfoP newFile(char *nameP);
-extern void closeFiles(void);
-extern bool isFileMapped(int fileno);
 extern int parseAndExecute(char *lineP);
 extern int getMapForFileNo(MapEntryP mapP, int fileNo);
-extern MapEntryP getLinesFromAddress(int addr);
 extern int signExtend(int oc);
 extern int twosCompl(int val);
+extern int getNumber(char *strP, int base);
+extern int flexToAscii(int ch, bool *shiftP);
+extern bool isFileMapped(int fileno);
+extern bool printLine(int fileNo, int lineNo);
+extern bool printNextLine(void);
 extern char *findNameByAddr(u32 addr);
 extern char *decodeInstr(int word, int addr, bool asMacro, char *separatorP, char *symbolP, char *resultP, int *flagsP);
 extern bool loadFileMap(bool fromLst, char *filenameP);
-extern bool printLine(MapEntryP entryP, int lineNo);
-extern bool printNextLine(void);
-extern int getNumber(char *strP, int base);
+extern void closeFiles(void);
 extern void listFn(int arg, MapEntryP mapP);
-extern int flexToAscii(int ch, bool *shiftP);
+extern MapEntryP getLinesFromAddress(int addr);
+extern FileInfoP newFile(char *nameP);
+extern FileInfoP getFileInfoP(int fileNo);
 
 int
 main(int argc, char **argv)
@@ -349,19 +352,7 @@ char line[256];
             // breakpoint hit
             printf("\nBreakpoint %d hit", activeBrkP->number);
             lastAddr = activeBrkP->address;
-            if( (mapP = getLinesFromAddress(activeBrkP->address)) > 0 )
-            {
-                if( !getMapForFileNo(mapP, curFileNo) )
-                {
-                    // Just use the first one.
-                    curFileNo = mapP->fileNo;
-                }
-
-                printf(" at line %d,file %d:\n", mapP->lineNo, mapP->fileNo);
-                printLine(mapP, mapP->lineNo);
-                NEWLINE;
-            }
-            else
+            if( !printHitText(activeBrkP->address) )
             {
                 i = activeBrkP->address;
                 cP = findNameByAddr(i);
@@ -378,16 +369,9 @@ char line[256];
             // watch hit
             printf("\nWatch %d hit", activeWatchP->number);
             lastAddr = activeWatchP->address;
-            if( (mapP = getLinesFromAddress(activeWatchP->address)) > 0 )
+            if( !printHitText(activeWatchP->address) )
             {
-                printf(" at line %d:\n", mapP->lineNo);
-                curFileNo = mapP->fileNo;
-                printLine(mapP, mapP->lineNo);
-                NEWLINE;
-            }
-            else
-            {
-                i = activeBrkP->address;
+                i = activeWatchP->address;
                 cP = findNameByAddr(i);
                 i = pdp1P->core[i];
                 decodeInstr(i, ADDRESSOF(i), false, " ", cP, line, 0);
@@ -1104,6 +1088,32 @@ int
 getCurrentPC()
 {
     return( (pdp1P->epc & 0170000) | ADDRESSOF(pdp1P->pc) );
+}
+
+// Print the source lines at a location, used to report breapoint and watchpoint hits.
+// Return true if the lines were printed, else false.
+bool
+printHitText(u32 address)
+{
+MapEntryP mapP;
+FileInfoP infoP;
+
+    if( (mapP = getLinesFromAddress(address)) )
+    {
+        curFileNo = mapP->fileNo;
+
+        if( (infoP = getFileInfoP(curFileNo)) )
+        {
+            printf(" at line %d,file %s:\n", mapP->lineNo, infoP->am1NameP);
+            if( printLine(mapP->fileNo, mapP->lineNo) )
+            {
+                NEWLINE;
+                return(true);
+            }
+        }
+    }
+
+    return(false);
 }
 
 void

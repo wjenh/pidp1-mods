@@ -244,6 +244,11 @@ in which case the mode reverts to *parameter*.
 One or two character sets can be enabled in the */opt/pidp-1/mods/pidp1.config* file, the option is *two340charsets*. 
 Also see the section on *Parameter*.
 
+**IMPORTANT** - these *are not* concise/fiexo characters!
+
+The easiest way to create a character string is to use the **am1** *type340* directive.
+See *The character sets* below for the binary character codes.
+
 - character - the mode name
 
 Example:

@@ -153,6 +153,12 @@ but the precise performance of the bulbs used is not known.
 
 The filters are the same as used in the new audio system for the pidp1.
 
+The lights currently being used in the PDP-1 at the Computer History Museum are
+TEC/CM 1762's, a T-1&1/4 28v 40 mA type C-2F filament bulb.
+
+From the published information, the default alpha values give on/off times that are a bit too fast.\
+You can experiment, a good starting point is panelonalpha=0.040, paneloffalpha=0.018.
+
 ## Configuration parameters
 
 Newpanel can have various settings changed in the usual place, */opt/pidp1-mods/pidp1.config*.\

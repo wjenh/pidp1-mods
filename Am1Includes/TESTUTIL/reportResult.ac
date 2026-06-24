@@ -81,8 +81,6 @@ doSkip,
     idx testSkipCount
     lac [skipText
     jda typetext
-    jmp rtn
-
 rtn, jmp .
 status, 0
     endloc

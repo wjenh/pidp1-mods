@@ -712,6 +712,11 @@ int i;
         return;
     }
 
+    if( fileNo == NOARG )
+    {
+        fileNo = curFileNo;
+    }
+
     if( lineNo == NOARG )
     {
         if( curFileNo != fileNo )

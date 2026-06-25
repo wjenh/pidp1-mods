@@ -1,0 +1,69 @@
+Test of the Type 64 line printer
+#include <LPT/type64defs.ah>
+// This will 'print' 4 lines of text in Type 64 mode into ~/lpr.txt
+
+100/
+    lio [fname
+    lpf
+    lpc i
+    lac [lines
+    jda printLines
+    pas i LPT_SP6
+    cli
+    lpf     // test file reset
+    lio [fname  // test ascii mode
+    lpf
+    lpc i
+    lio [1
+    lpm 
+    lac [atext
+    lio [LPT_SP1
+    jda printAscii
+    hlt
+    jmp 100
+
+// Given a pointer to a list of text lines in AC terminated by a 0 word, send to printer
+printLines, 0
+    local rtn, loop
+    dap rtn
+loop,
+    lac i printLines
+    sza i
+    jmp rtn
+    lio [LPT_SP1
+    jda printFlex
+    idx printLines
+    jmp loop
+rtn, jmp .
+    endloc
+
+lines, l1
+    l2
+    l3
+    l4
+    0
+
+l1,
+    text 'This is flex text for the printer'
+    0
+l2,
+    text 'And line 2'
+    0
+l3,
+    text 'Followed by 3'
+    0
+l4,
+    text 'And done!'
+    0
+
+fname,
+    ascii "~/lpr.txt"
+
+atext,
+    ascii "This is a line of ascii text"
+
+#include <LPT/printFlex64.ac>
+#include <LPT/printAscii64.ac>
+
+constants
+start 100

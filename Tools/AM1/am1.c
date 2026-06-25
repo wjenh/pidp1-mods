@@ -14,6 +14,7 @@
  * -N	don't keep any contents from include files in the listing
  * -r	don't write a loader at the beginning of a tape
  * -s	generate a symbol table file
+ * -T   special mode for testing, output the generated binary as ascii octal numbers
  * -v   print the current version number and exit
  * -z   don't convert 1's complement -0 to +0 in math operations
  *
@@ -58,47 +59,46 @@
  *
  * Revision history:
  *
- * 18-Dec-2025 - initial version
- * 02-Jan-2026 - 'production' release
- * 04-Jan-2026 - added tables, masking of math results to 18 bits
- * 05-Jan-2026 - added -z, -a, cleanup, doc updates
- * 06-Jan-2026 - added -s and symbol table output
- * 06-Jan-2026 - final code cleanup, make bank use vs no use consistent instead of no use being a special case
- * 08-Jan-2026 - clean up line numbering in listing, add bank ref wildcard, a:*
- * 12-Jan-2026 - more listing cleanup, rename pause to stop, add import/export, add lshift and rshift,
- *               make opr precedence same as C, update docs
- * 14-Jan-2026 - fix serious bug introduced by the mod operator, can't use a percent
- * 20-Jan-2026 - fix bug in forced locals, rename mod to %%
- * 22-Jan-2026 - add ioh, same as iot i
- * 23-Jan-2026 - fix bug in constants stmt, would clear pc if no constants to emit, fix text stmt
- * 03-Feb-2026 - add C, dpyc, sdb
- * 04-Feb-2026 - predefine AM1 as an ifdef marker for include files, not defined if macro is being produced
- * 06-Feb-2026 - add -r flag
- * 12-Feb-2026 - fix a case of duplicate symbols across banks not resolving correctly
- * 15-Feb-2026 - addlocal directive added, allow nested local to have same name as outer local
- * 16-Feb-2026 - just some warnings about locals hiding other locals or globals
- * 18-Feb-2026 - fix command line parsing, add -W=xxx error control, add line number and version to symbol file
- * 26-Feb-2026 - use extended adresses, bank and pc, in listings
- * 05-Mar-2026 - change import to use V2 symtabs, set correct max bank, 16 not 32
- * 08-Mar-2026 - fix obscure issue with a symbol being used with and without a bank ref in constants
- * 09-Mar-2026 - change constant hash to be sure the last fix returns a 64 bit hash, not a 32 bit hash
- * 10-Mar-2026 - change constant hash again, if it ain't broke, fix it anyway.
- *               Really just to hash resolved symbol values better.
- * 17-Mar-2026 - general cleanup, eliminate empty lines in listing for clarity, make -0 to 0 conversion the default
- * 28-Mar-2026 - add code passing 4K boundary, code overwriting other code checks and error msgs
- * 02-Apr-2026 - fix bug in mem check bitmap, make overwrite by code selectable warning/failure
- * 07-Apr-2026 - finally figured out how to keep cpp from inserting line info markers, can now use std cpp
- * 08-Apr-2026 - fix some formatting issue with trailing comments in macro output
- * 12-Apr-2026 - minor change, turn off cpp warning about unterminated quotes in flex text strings
- * 26-Apr-2026 - add c-style block comments
- * 26-Apr-2026 - add -N to suppress included file text in listing
- * 12-Jun-2026 - fix incorrect opcode for cmi, should be 770000
- * 20-Jun-2026 - add special sequences in flexo and text for ribbon color and carriage return
- * 21-Jun-2026 - labeled location: label and text/ascii/type340 now allowed on same line
- * 24-Jun-2026 - fix WARN_BANK/WARN_BANKS name swap in warnings[] table
- * 25-Jun-2026 - swapBanks refactor: replace four loose globals (cur_pc, globalSymP, constSymP,
- *               varNodesP) with BankContextP curBankP; swapBanks becomes a pointer swap;
- *               initParser() pre-allocates bank-0 context; fix latent uninit bug in importSymbols
+ * 18-Dec-2025 wje - initial version
+ * 02-Jan-2026 wje - 'production' release
+ * 04-Jan-2026 wje - added tables, masking of math results to 18 bits
+ * 05-Jan-2026 wje - added -z, -a, cleanup, doc updates
+ * 06-Jan-2026 wje - added -s and symbol table output
+ * 06-Jan-2026 wje - final code cleanup, make bank use vs no use consistent instead of no use being a special case
+ * 08-Jan-2026 wje - clean up line numbering in listing, add bank ref wildcard, a:*
+ * 12-Jan-2026 wje - more listing cleanup, rename pause to stop, add import/export, add lshift and rshift,
+ *                   make opr precedence same as C, update docs
+ * 14-Jan-2026 wje - fix serious bug introduced by the mod operator, can't use a percent
+ * 20-Jan-2026 wje - fix bug in forced locals, rename mod to %%
+ * 22-Jan-2026 wje - add ioh, same as iot i
+ * 23-Jan-2026 wje - fix bug in constants stmt, would clear pc if no constants to emit, fix text stmt
+ * 03-Feb-2026 wje - add C, dpyc, sdb
+ * 04-Feb-2026 wje - predefine AM1 as an ifdef marker for include files, not defined if macro is being produced
+ * 06-Feb-2026 wje - add -r flag
+ * 12-Feb-2026 wje - fix a case of duplicate symbols across banks not resolving correctly
+ * 15-Feb-2026 wje - addlocal directive added, allow nested local to have same name as outer local
+ * 16-Feb-2026 wje - just some warnings about locals hiding other locals or globals
+ * 18-Feb-2026 wje - fix command line parsing, add -W=xxx error control, add line number and version to symbol file
+ * 26-Feb-2026 wje - use extended adresses, bank and pc, in listings
+ * 05-Mar-2026 wje - change import to use V2 symtabs, set correct max bank, 16 not 32
+ * 08-Mar-2026 wje - fix obscure issue with a symbol being used with and without a bank ref in constants
+ * 09-Mar-2026 wje - change constant hash to be sure the last fix returns a 64 bit hash, not a 32 bit hash
+ * 10-Mar-2026 wje - change constant hash again, if it ain't broke, fix it anyway just to hash resolved symbol values better.
+ * 17-Mar-2026 wje - general cleanup, eliminate empty lines in listing for clarity, make -0 to 0 conversion the default
+ * 28-Mar-2026 wje - add code passing 4K boundary, code overwriting other code checks and error msgs
+ * 02-Apr-2026 wje - fix bug in mem check bitmap, make overwrite by code selectable warning/failure
+ * 07-Apr-2026 wje - finally figured out how to keep cpp from inserting line info markers, can now use std cpp
+ * 08-Apr-2026 wje - fix some formatting issue with trailing comments in macro output
+ * 12-Apr-2026 wje - minor change, turn off cpp warning about unterminated quotes in flex text strings
+ * 26-Apr-2026 wje - add c-style block comments
+ * 26-Apr-2026 wje - add -N to suppress included file text in listing
+ * 12-Jun-2026 wje - fix incorrect opcode for cmi, should be 770000
+ * 20-Jun-2026 wje - add special sequences in flexo and text for ribbon color and carriage return
+ * 21-Jun-2026 wje - labeled location, label and text/ascii/type340 now allowed on same line
+ * 24-Jun-2026 wje - fix WARN_BANK/WARN_BANKS name swap in warnings[] table
+ * 25-Jun-2026 wje - swapBanks refactor, replace cur_pc, globalSymP, constSymP, varNodesP with
+ *                   BankContextP curBankP->x references, it's just cleaner code
+ * 26-Jun-2026 wje - add test output mode
  *
 */
 #include <unistd.h>
@@ -192,6 +192,7 @@ extern int evalExpr(PNodeP);
 extern int macCodegen(FILE *, PNodeP);
 extern int binCodegen(FILE *, PNodeP);
 extern int listCodegen(FILE *, PNodeP);
+extern int testCodegen(FILE *, PNodeP);
 extern BankContextP findBank(int bankNo);
 extern void listSymtab(FILE *outfP, char* filenameP, BankContextP banksP);
 extern void vwarn(int errtype, const char *msgP, ...);
@@ -200,6 +201,7 @@ int
 main(int argc, char **argv)
 {
 int i;
+bool testMode;
 char *cP, *cP2;
 SymNodeP symP;
 
@@ -209,6 +211,7 @@ SymNodeP symP;
     spaceIsAdd = false;
     noWarn = true;
     dropIncludeText = false;
+    testMode = false;
 
     for(i = 1; i < NSIG;)
     {
@@ -294,6 +297,10 @@ SymNodeP symP;
                 doSymtab = true;
                 break;
 
+            case 'T':
+                testMode = true;
+                break;
+
             case 'v':
                 puts(AM1VERSION);
                 exit(0);
@@ -365,6 +372,12 @@ SymNodeP symP;
     if( !doMacro && !doBinary )
     {
         doBinary = true;                                    // default is binary
+    }
+
+    if( testMode )                      // this forces no listing, no macro, no binary, no symtab, do cpp
+    {
+        doCpp = true;
+        doSymtab = doListing = doMacro = doBinary = false;
     }
 
     origFilenameP = filenameP = *argv;                      // src file name */
@@ -453,6 +466,21 @@ SymNodeP symP;
         {
             unlink(ofilename);      // get rid of output
         }
+    }
+
+    if( testMode )
+    {
+        strcpy(ofilename, basename);                         /* output file */
+        strcat(ofilename, ".dmp");
+
+        if(!(outfP = fopen(ofilename, "w")))
+        {
+            fprintf(stderr, "am1: can't open output file '%s'\n", ofilename);
+            leave(0);
+        }
+
+        testCodegen(outfP, rootP);
+        fclose(outfP);      // we don't unlink even if it fails
     }
 
     if( doBinary )
@@ -1061,6 +1089,7 @@ usage()
     fprintf(stderr, "  -y enable yacc debug output on stderr\n");
     fprintf(stderr, "  -k don't delete cpp tmp file\n");
     fprintf(stderr, "  -p dump parse tree to stdout\n");
+    fprintf(stderr, "  -T special test mode, see docs\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "If neither -b nor -m are given, -b is assumed.\n");
     fprintf(stderr, "By default, space is or, -0 is converted to 0.\n");

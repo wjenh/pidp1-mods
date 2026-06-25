@@ -1,0 +1,70 @@
+Test of the Type 62 line printer
+#include <LPT/type62defs.ah>
+// This will 'print' 4 lines of text in Type 62 mode into ~/lpr.txt
+
+100/
+    lio [fname
+    lpf
+    lio [2
+    lpm     // be sure we're in flex mode and our state is reset
+    lac [lines
+    jda printLines
+    slp i LPT_SP2
+    cli
+    lpf     // test file reset
+    hlt
+    lio [fname  // test ascii mode
+    lpf
+    lio [1
+    lpm 
+    lac [atext
+    lio [LPT_SP7
+    jda printAscii
+    hlt
+    jmp 100
+
+// Given a pointer to a list of text lines in AC terminated by a 0 word, send to printer
+printLines, 0
+    local rtn, loop
+    dap rtn
+loop,
+    lac i printLines
+    sza i
+    jmp rtn
+    lio [LPT_SP0
+    jda printFlex
+    idx printLines
+    jmp loop
+rtn, jmp .
+    endloc
+
+lines, l1
+    l2
+    l3
+    l4
+    0
+
+l1,
+    text 'This is flex text for the printer'
+    0
+l2,
+    text 'And line 2'
+    0
+l3,
+    text 'Followed by 3'
+    0
+l4,
+    text 'And done!'
+    0
+
+fname,
+    ascii "~/lpr.txt"
+
+atext,
+    ascii "This is a line of ascii text"
+
+#include <LPT/printFlex.ac>
+#include <LPT/printAscii.ac>
+
+constants
+start 100

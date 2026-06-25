@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.31 and covers up through am1 version 1.35; it will be updated as needed.\
-Edit date 20-Jun-2026
-New special sequences for flexo and text
+This is version 1.33 and covers up through am1 version 1.37; it will be updated as needed.\
+Edit date 26-Jun-2026
+Test mode added
 
 ## What is **am1**?
 
@@ -197,7 +197,7 @@ Just type make.
 
 ## Usage
 
-**am1** [-abdmMlnNsvz[xykp]] [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
+**am1** [-abdmMlnNsTvz[xykp]] [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
 
 - a space means add, default is or
 - b generate binary tape image code, the default action
@@ -209,6 +209,7 @@ Just type make.
 - N don't keep any text from an included file in a listing
 - r don't output an initial rim loader
 - s generate a symbol table, automatic if exports are done
+- T generate test mode output, see below
 - v print the version number and exit
 - z preserve -0 for math operation results, the default is to convert to 0
 - Dsymbol define a symbol for **cpp**, -Dsym or -D sym are both accepted
@@ -241,6 +242,20 @@ The -i flag has priority, followed by the environment variable, followed by the 
 
 At runtime, /usr/bin/cpp must exist if preprocessing is being done.
 
+## Test mode
+
+Test mode is a special mode used to create output suitable for validation tests of **am1** itself.
+
+When used, it overrides generation of macro, binary, list, and symtab files and enables use of cpp.
+A text file named *progname.dmp* is created that has one line of text for every storage word
+that has been generated, basically a loaderless *rim* tape but in ascii.
+
+Each 18 bit word that would be loaded into memory is printed as a 6 digit octal number.
+The last line is the value of the *start* or *end* diretive at the end of the program.
+While technically not a storage word, it is needed for validation.
+
+The resulting file can be used to compare an assembled program's binary representation to a reference copy.
+
 ## Warnings and errors
 
 If enabled, various warnings can be printed.\
@@ -249,7 +264,9 @@ If not stated, the warning is only issued once.
 
 The warnings are:
 - 1Dop, a PDP-1D instruction, lia, lai, lsw, swp, sni, szi, or cmi was used, repeats
-- bank, a bank statement is used but generating macro code
+- bank, a bank statement is used but generating macro code (once per bank directive)
+- banks, bank usage detected at end of assembly while generating macro code, or a cross-bank forward
+reference was created
 - bref, a symbol with a bank reference is used but generating macro code
 - stop, a stop statement is used but generating macro code
 - locals, a local symbol hides a global symbol or an endlocal does not match the scoping depth, repeats

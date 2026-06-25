@@ -96,11 +96,6 @@ setAddr(int a)
     }
 }
 
-// pwmtable[32][31]: precomputed phase-on patterns for each of the 32 possible
-// brightness levels (currently unused by lightRow(), which instead uses a simple
-// phase-count threshold via phase_delays[]; kept here for reference/future use).
-#include "pwmtab.inc"
-
 // Busy-wait for at least dt nanoseconds. Used where nanosleep()'s scheduling
 // jitter would be too coarse. resolution ~50-150ns
 void

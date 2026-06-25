@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.35 20-Jun-2026"
-#define AM1SHORTVERSION "am1 v1.35"
+#define AM1VERSION "am1 v1.36 25-Jun-2026"
+#define AM1SHORTVERSION "am1 v1.36"
 #define SYMFILEVERSION "V2"             // used for import to check proper version
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -60,7 +60,8 @@
 #define SYMF_EMITTED 0x8000     // is a constant that has been emitted
 #define SYMF_IMPORTED 0x10000   // came from an import file
 #define SYMF_EXPORTED 0x20000   // needs to be exported
-#define SYMF_1DOP 0x40000
+#define SYMF_1DOP 0x40000       // is a PDP-1D added instruction
+#define SYMF_LAW 0x100000       // is a law instruction, special case
 
 #define CTX_FORCELOCAL 1        // focelocal is active for this context
 

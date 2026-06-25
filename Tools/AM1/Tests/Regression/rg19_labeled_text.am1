@@ -1,0 +1,11 @@
+Test rg19: label and text/ascii/type340 on same line (labelTrailer grammar fix)
+// Before the labelTrailer fix this was a syntax error
+100/
+msgtbl, text "Hi"
+        013
+dattbl, ascii "AB"
+        013
+gfxtbl, type340 "XY"
+        013
+entry,  jmp entry
+stop

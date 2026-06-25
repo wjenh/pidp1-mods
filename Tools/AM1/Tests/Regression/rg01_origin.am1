@@ -1,0 +1,9 @@
+Test rg01: location assignment (origin)
+// Exercises: numeric origin, dot-relative origin, multiple segments
+100/
+    hlt
+200/
+    cla
+.+5/
+    hlt
+stop

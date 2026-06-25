@@ -1,0 +1,16 @@
+Test rg27: PDP-1D instructions
+// All PDP-1D mnemonics should assemble without error
+100/
+    lia
+    lai
+    lsw
+    swp
+    sni
+    szi
+    scf
+    sci
+    ifi
+    iif
+    ida
+    cmi
+stop

@@ -1,0 +1,6 @@
+Test rg18: char directive (concise character in field l/m/r)
+100/
+    char 1r
+    char 1m
+    char 1l
+stop

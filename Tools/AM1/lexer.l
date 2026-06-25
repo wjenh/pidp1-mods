@@ -10,8 +10,8 @@
 #include "y.tab.h"
 #include "type340chars.h"
 
-#define STRBUF 1024		/* maximum literal string length */
-#define MAXCCOMMENT 4096	/* maximum c-style comment length */
+#define STRBUF 1024        // maximum literal string length
+#define MAXCCOMMENT 4096   // maximum c-style comment length
 
 static bool decimalMode = false;
 static bool inConstant = false;
@@ -24,17 +24,17 @@ static char commentBuf[MAXCCOMMENT];
 extern int lineno;
 extern char *filenameP;
 extern SymNodeP permSymP;
-extern SymNodeP globalSymP;
+extern BankContextP curBankP;
 
 int countNLs(char *strP);
 SymNodeP resolveLocalSymbol(char *nameP);
 
-void gdbtarget(void);		// this is a do-nothng just to add as a gdb breakpoint target
+void gdbtarget(void);    // this is a do-nothng just to add as a gdb breakpoint target
 
 extern int processEscape(char);
 extern int type340Shift(char);
 extern char processType340Escape(char ch);
-extern char asciiToFlexo(char, int *);	// in parsefns.c
+extern char asciiToFlexo(char, int *);    // in parsefns.c
 extern char asciiToType340(char);
 extern void reset_line(void);
 extern void verror(char *msgP, ...);
@@ -51,7 +51,7 @@ extern void vwarn(int errtype, char *msgP, ...);
 
 <FIRST>^[^#].*$		{
 			    BEGIN BODY;
-			    lineno = 1;			// always our first line
+			    lineno = 1;    // always our first line
 			    yylval.strP = malloc(strlen(yytext) + 1);
 			    strcpy(yylval.strP, yytext);
 			    return(HEADER);
@@ -71,11 +71,11 @@ extern void vwarn(int errtype, char *msgP, ...);
 			    *commentP = '\0';
 			    yylval.strP = malloc(commentP - commentBuf + 1);
 			    strcpy(yylval.strP, commentBuf);
-			    unput('\n');	// sometimes lookahead screws up start-of-line
+			    unput('\n');    // sometimes lookahead screws up start-of-line
 			    return(CSCOMMENT);
 			}
 
-<CCOMMENT>\n		{
+<CCOMMENT>\n	{
 			    ++lineno;
 
 			    if( commentP >= &commentBuf[MAXCCOMMENT] )
@@ -116,7 +116,7 @@ extern void vwarn(int errtype, char *msgP, ...);
 			    verror("unterminated C-style comment, missing */", yytext);
 			}
 
-[ \t]*"//".*\n		{
+[ \t]*"//".*\n	{
 			char *cP;
 
 			    cP = strchr(yytext, '/') + 2;
@@ -126,7 +126,7 @@ extern void vwarn(int errtype, char *msgP, ...);
 
 			    if( inConstant )
 			    {
-			    	noIncrement = true;	// because we're going to push back a newline
+			    	noIncrement = true;    // because we're going to push back a newline
 			    }
 
 			    if( !noIncrement && !sawSemi )
@@ -440,7 +440,7 @@ octal			{ decimalMode = false; }
 				yylval.symP = symP;
 				return(LCLADDR);
 			    }
-			    else if( (symP = sym_find(&globalSymP,yytext)) )
+			    else if( (symP = sym_find(&(curBankP->globalSymP),yytext)) )
 			    {
 				yylval.symP = symP;
 				return(ADDR);
@@ -482,14 +482,14 @@ octal			{ decimalMode = false; }
 			    if( ch == '\n' )
 			    {
 			    	++lineno;
-				noIncrement = true;	// we don't want terminator to inc again
+				noIncrement = true;    // we don't want terminator to inc again
 			    }
 
 			    unput( ch );
 
 			    if( ch == '/' )
 			    {
-			    	unput(' ');	// preserve a space between origin and comment
+			    	unput(' ');    // preserve a space between origin and comment
 			    }
 			    return(ORIGIN);
 			}
@@ -525,7 +525,7 @@ octal			{ decimalMode = false; }
 				{
 				    if( !sawSemi )
 				    {
-				        ++lineno;		// only once until real terminator
+				        ++lineno;    // only once until real terminator
 				    }
 
 				    sawSemi = true;
@@ -536,7 +536,7 @@ octal			{ decimalMode = false; }
 				    // not semi terminated
 				    if( sawSemi )
 				    {
-				        sawSemi = false;	// we don't incr here, all one line
+				        sawSemi = false;    // we don't incr here, all one line
 				    }
 				    else if( !noIncrement )
 				    {
@@ -573,11 +573,11 @@ octal			{ decimalMode = false; }
 				    break;
 
 				case 'e':
-				    tmpc = '\033';	/* an escape */
+				    tmpc = '\033';    /* an escape */
 				    break;
 
 				case 'b':
-				    tmpc = '\b';	/* a backspace */
+				    tmpc = '\b';    /* a backspace */
 				    break;
 
 				case '^':		/* ^char */
@@ -585,7 +585,7 @@ octal			{ decimalMode = false; }
 				    break;
 
 				case 'f':
-				    tmpc= '\f';	/* formfeed */
+				    tmpc= '\f';    /* formfeed */
 				    break;
 
 				case 'n':		/* a newline */
@@ -593,7 +593,7 @@ octal			{ decimalMode = false; }
 				    break;
 
 				case 'r':
-				    tmpc = '\r';	/* return */
+				    tmpc = '\r';    /* return */
 				    break;
 
 				case 't':		/* a tab */
@@ -632,7 +632,7 @@ octal			{ decimalMode = false; }
 				}
 			    }
 
-			    yylval.ival = tmpc;		/* in case is a lit */
+			    yylval.ival = tmpc;    /* in case is a lit */
 
 			    if( (tmpc = input()) == '\'' )
 			    {
@@ -668,7 +668,7 @@ octal			{ decimalMode = false; }
 				    tmpc = processEscape(input());
 				    if( !tmpc )
 				    {
-				        continue;		// meant a line continuation
+				        continue;    // meant a line continuation
 				    }
 				}
 
@@ -689,84 +689,84 @@ octal			{ decimalMode = false; }
 			bool sawEnd;
 			bool sawForcedShift;
 			char *cP;
-			bool inUpper;		// current shift state, false if lower
+			bool inUpper;    // current shift state, false if lower
 			char string[STRBUF];
 
 			    cP = string;
 			    charCount = 0;
 			    sawEnd = false;
 			    sawForcedShift = false;
-			    inUpper = true;	// we always start in upper for the type 340
+			    inUpper = true;    // we always start in upper for the type 340
 
 			    while( (tmpc = input()) != '"' )
 			    {
-				if( cP >= (string+STRBUF) )
-				{
-				    verror("string too long", 0);
-				}
+					if( cP >= (string+STRBUF) )
+					{
+						verror("string too long", 0);
+					}
 
-				if( (tmpc == EOF) || (tmpc == '\n') )
-				{
-				    verror("unterminated quote in type340 string");
-				}
+					if( (tmpc == EOF) || (tmpc == '\n') )
+					{
+						verror("unterminated quote in type340 string");
+					}
 
-				if( tmpc == '\\' )
-				{
-				    tmpc = processType340Escape(input());
-				    if( !tmpc )
-				    {
-				        continue;		// meant a line continuation
-				    }
+					if( tmpc == '\\' )
+					{
+						tmpc = processType340Escape(input());
+						if( !tmpc )
+						{
+							continue;    // meant a line continuation
+						}
 
-				    if( tmpc == TYPE340UPPER )
-				    {
-				        inUpper = true;
-				        sawForcedShift = true;
-				    }
-				    else if( tmpc == TYPE340LOWER )
-				    {
-				        inUpper = false;
-				        sawForcedShift = true;
-				    }
-				    else if( tmpc == TYPE340AUTO )
-				    {
-				        sawForcedShift = false;
-				        continue;
-				    }
-				    else if( tmpc == TYPE340NOEND )
-				    {
-				        sawEnd = true;		// fake that we had one
-				        continue;
-				    }
-				    else if( tmpc == TYPE340NL )	// special case, convert
-				    {
-				        ++charCount;
-				        *cP++ = TYPE340CR;
-				        tmpc = TYPE340LF;
-				    }
-				    else if( tmpc == TYPE340END )
-				    {
-				        sawEnd = true;
-				    }
-				}
-				else
-				{
-			            i = type340Shift(tmpc);
-			            if( !sawForcedShift && (i > 0) && !inUpper )
-			            {
-				        inUpper = true;
-				        *cP++ = TYPE340UPPER;
-				        ++charCount;
-			            }
-			            else if( !sawForcedShift && (i < 0) && inUpper )
-			            {
-				        inUpper = false;
-				        *cP++ = TYPE340LOWER;
-				        ++charCount;
-			            }
+						if( tmpc == TYPE340UPPER )
+						{
+							inUpper = true;
+							sawForcedShift = true;
+						}
+						else if( tmpc == TYPE340LOWER )
+						{
+							inUpper = false;
+							sawForcedShift = true;
+						}
+						else if( tmpc == TYPE340AUTO )
+						{
+							sawForcedShift = false;
+							continue;
+						}
+						else if( tmpc == TYPE340NOEND )
+						{
+							sawEnd = true;    // fake that we had one
+							continue;
+						}
+						else if( tmpc == TYPE340NL )	// special case, convert
+						{
+							++charCount;
+							*cP++ = TYPE340CR;
+							tmpc = TYPE340LF;
+						}
+						else if( tmpc == TYPE340END )
+						{
+							sawEnd = true;
+						}
+					}
+					else
+					{
+						i = type340Shift(tmpc);
+						if( !sawForcedShift && (i > 0) && !inUpper )
+						{
+						inUpper = true;
+						*cP++ = TYPE340UPPER;
+						++charCount;
+						}
+						else if( !sawForcedShift && (i < 0) && inUpper )
+						{
+							inUpper = false;
+							*cP++ = TYPE340LOWER;
+							++charCount;
+						}
 
-			            tmpc = asciiToType340(tmpc);
-				}
+						tmpc = asciiToType340(tmpc);
+					}
 
 			        ++charCount;
 			        *cP++ = (char)tmpc;
@@ -808,65 +808,65 @@ octal			{ decimalMode = false; }
 
 			    while( (tmpc = input()) != marker )
 			    {
-				if( cP >= (string+STRBUF) )
-				{
-				    verror("string too long", 0);
-				}
+					if( cP >= (string+STRBUF) )
+					{
+						verror("string too long", 0);
+					}
 
-				if( (tmpc == EOF) || (tmpc == '\n') )
-				{
-				    verror("unterminated %c in text", marker);
-				}
+					if( (tmpc == EOF) || (tmpc == '\n') )
+					{
+						verror("unterminated %c in text", marker);
+					}
 
-				if( tmpc == '\\' )		// special directive, red or black
-				{
-				    if( (tmpc = input()) == marker )
-				    {
-				        verror("invalid \\ in text, no directive character");
-				    }
-				    switch(tmpc)
-				    {
-				    case 'B':
-				    	rslt = BLACK;
-					break;
+					if( tmpc == '\\' )		// special directive, red or black
+					{
+						if( (tmpc = input()) == marker )
+						{
+							verror("invalid \\ in text, no directive character");
+						}
+						switch(tmpc)
+						{
+						case 'B':
+							rslt = BLACK;
+						break;
 
-				    case 'R':
-				    	rslt = RED;
-					break;
+						case 'R':
+							rslt = RED;
+						break;
 
-				    case 'n':
-				    	rslt = FLEX_CR;
-					break;
+						case 'n':
+							rslt = FLEX_CR;
+						break;
 
-				    case '\\':
-				    	rslt = tmpc;
-					break;
+						case '\\':
+							rslt = tmpc;
+						break;
 
-				    default:
-				        verror("\\%c in text is not valid", tmpc);
-				    }
-				}
-				else
-				{
-				    rslt = asciiToFlexo(tmpc, &shift);
-				}
+						default:
+							verror("\\%c in text is not valid", tmpc);
+						}
+					}
+					else
+					{
+						rslt = asciiToFlexo(tmpc, &shift);
+					}
 
-				if( rslt == NONE )
-				{
-				    vwarn(WARN_FLEX,
-				        "The character '%c' is not a Flexo character, replaced with space", tmpc);
-				    rslt = FLEX_SPACE;
-				}
+					if( rslt == NONE )
+					{
+						vwarn(WARN_FLEX,
+							"The character '%c' is not a Flexo character, replaced with space", tmpc);
+						rslt = FLEX_SPACE;
+					}
 
-				if( (rslt == CSHIFT) || (rslt == CUNSHIFT) )
-				{
-				    *cP++ = rslt;
-				    ++count;
-				    rslt = asciiToFlexo(tmpc, &shift);	// get the real char
-				}
+					if( (rslt == CSHIFT) || (rslt == CUNSHIFT) )
+					{
+						*cP++ = rslt;
+						++count;
+						rslt = asciiToFlexo(tmpc, &shift);    // get the real char
+					}
 
 			        *cP++ = (char)rslt;
-				++count;
+				    ++count;
 			    }
 
 			    BEGIN BODY;
@@ -882,7 +882,6 @@ octal			{ decimalMode = false; }
 			        return(yytext[0]);
 			    }
 			}
-
 %%
 void
 gdbtarget()

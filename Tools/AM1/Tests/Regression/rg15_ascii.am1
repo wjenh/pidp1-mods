@@ -1,0 +1,5 @@
+Test rg15: ascii directive (2 bytes per word, null-terminated)
+100/
+    ascii "Hello!"
+    ascii "AB"
+stop

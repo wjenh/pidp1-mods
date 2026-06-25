@@ -1,0 +1,5 @@
+Test rg16: flexo directive (packed 6-bit concise characters)
+100/
+    flexo 123
+    flexo 45
+stop

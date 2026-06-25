@@ -1,0 +1,5 @@
+Test rg04: start directive (start with numeric address)
+100/
+    hlt
+    law 10
+start 100

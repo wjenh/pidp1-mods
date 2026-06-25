@@ -1,0 +1,5 @@
+Test rg26: -a flag (space treated as addition instead of OR)
+// Without -a: iot|10|10 = 720010; with -a: iot+10+10 = 720020
+100/
+    iot 10 10
+stop

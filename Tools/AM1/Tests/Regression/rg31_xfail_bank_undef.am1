@@ -1,0 +1,11 @@
+Test rg31 (XFAIL): symbol not defined in referenced bank -- must fail
+// buf:1 requires buf to be defined in bank 1; it is only in bank 0
+bank 1
+    hlt
+bank 0
+100/
+    lio [buf:1
+buf,
+    table 20
+    constants
+stop

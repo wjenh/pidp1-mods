@@ -212,9 +212,10 @@ while true; do
 		echo Setting required access privileges to pidp1 simulator
 		# make sure pidp1 panel driver has the right privileges
             	# to access GPIO with root privileges:
-            	sudo chmod +s $INSTALLDIR/src/blincolnlights/panel_pidp1
+            	# sudo chmod +s $INSTALLDIR/src/blincolnlights/panel_pidp1
             	# to run as a RT thread:
-            	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1
+                # The old panel is no longer built or installed
+            	# sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1
                 # newpanel does not require running as an RT thread, but it has the option of doing so
             	sudo chmod +s $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel
             	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel
@@ -230,23 +231,7 @@ while true; do
                 ln -sf $INSTALLDIR/src/pidp1_test/pidp1_test $INSTALLDIR/bin/pidp1_test
                 ln -sf $INSTALLDIR/src/scanpf/scanpf $INSTALLDIR/bin/scanpf
                 ln -sf $INSTALLDIR/src/blincolnlights/tapevis/tapevis $INSTALLDIR/bin/tapevis
-                while true; do
-                    echo
-                    read -p "Install the new PiDP hardware front panel (Y) or the old panel (N)? " yn
-                    case $yn in
-                        [Yy]* )
-                            echo Installed the new PiDP hardware front panel
-                            ln -sf $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel $INSTALLDIR/bin/panel_pidp1
-                            break
-                            ;;
-                        [Nn]* ) 
-                            echo Installed the old PiDP hardware front panel
-                            ln -sf $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1 $INSTALLDIR/bin/panel_pidp1
-                            break
-                            ;;
-                        * ) echo "Please answer yes or no.";;
-                    esac
-                done
+                ln -sf $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel $INSTALLDIR/bin/panel_pidp1
 	    	echo Done.
 		break
 		;;

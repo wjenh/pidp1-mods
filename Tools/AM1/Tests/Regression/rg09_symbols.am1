@@ -1,0 +1,9 @@
+Test rg09: location symbols and dot
+// forward refs, backward refs, dot (.) as current location
+100/
+    jmp fwd         // forward reference
+back, hlt
+    jmp back        // backward reference
+    law .           // dot = current location at assembly time
+fwd, hlt
+stop

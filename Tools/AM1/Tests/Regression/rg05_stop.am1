@@ -1,0 +1,5 @@
+Test rg05: stop directive
+100/
+    hlt
+    law 10
+stop

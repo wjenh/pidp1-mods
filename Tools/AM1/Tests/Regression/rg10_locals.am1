@@ -1,0 +1,22 @@
+Test rg10: local scoping
+// predefined locals, addlocal, ad-hoc locals (%x), loc/endloc abbreviations
+100/
+    local a, b
+    jmp a
+    a, hlt
+    b, hlt
+    endlocal
+
+    local c
+    addlocal d
+    jmp %tgt
+    c, hlt
+    d, hlt
+    %tgt, hlt
+    endlocal
+
+    loc e
+    e, hlt
+    endloc
+
+stop

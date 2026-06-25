@@ -1,0 +1,14 @@
+Test rg06: number formats
+// octal (default), explicit prefixes 0o/0d/0x/0b, char literal 'c'
+100/
+    law 0o77        // explicit octal 77
+    law 0d64        // decimal 64 = octal 100
+decimal
+    law 64          // decimal 64 = octal 100
+octal
+    law 0xAB        // hex AB = octal 253
+    law 0b1010      // binary 1010 = octal 12
+    law 'A'         // ascii A
+    law '\n'        // ascii newline
+    law '\t'        // ascii tab
+stop

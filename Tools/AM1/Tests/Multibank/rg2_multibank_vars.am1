@@ -1,0 +1,18 @@
+Test 2: vars in two separate banks (tests curBankP->varNodesP per-bank tracking)
+// If varNodesP substitution was missed, var allocation in the second bank
+// would use the wrong bank's list and produce wrong addresses.
+bank 0
+100/
+    dio va0
+    dio vb0
+    hlt
+var va0, vb0
+
+bank 1
+200/
+    dio va1
+    dio vb1
+    hlt
+var va1, vb1
+
+start 100

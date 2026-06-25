@@ -1,0 +1,6 @@
+Test rg22: symbol imports (requires rg21_exports.sym from rg21)
+100/
+    import "rg21_exports.sym"
+    lio [a:*
+    hlt
+stop

@@ -1,0 +1,11 @@
+Test rg02: comment forms
+// C++ end-of-line comment
+100/
+    hlt     // inline end-of-line comment
+/* block comment on its own line */
+    cla
+/* multi-line
+   block comment
+*/
+    hlt
+stop

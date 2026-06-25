@@ -1,0 +1,7 @@
+Test 1: default PC starts at 4 (initParser initializes cur_pc to 4)
+// No bank directive; bank 0 is implicit.
+// The first instruction should be assembled at address 4 (the default PC).
+// A missed initParser call or wrong initial cur_pc would place code at 0.
+first,  hlt         // expect address 4
+second, hlt         // expect address 5
+stop

@@ -1,0 +1,8 @@
+Test rg11: var directive and variables
+// var with and without initializers; variables emits storage
+100/
+var a, b=10, c
+    dio a
+    lac b
+    variables
+stop

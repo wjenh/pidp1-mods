@@ -1,0 +1,10 @@
+Test rg12: constants pool
+// repeated constant shares one cell; trailing ] optional
+100/
+    lac [17
+    lac [17         // shared -- same pool entry as above
+    lac [37
+    lac [-1
+    hlt
+    constants
+stop

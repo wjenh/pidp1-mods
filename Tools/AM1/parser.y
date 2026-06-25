@@ -12,12 +12,11 @@
 #include "am1.h"
 #include "symtab.h"
 
-int cur_pc = 4;                         // the default if not set
 
 // We maintain a stack of local symtab ptrs for nested local scopes
 int localDepth = 0;
 int maxLocalDepth = 0;                  // the deepest nexting we've seen
-LocalContextP localContextP;	        // used while a local scope is enabled
+LocalContextP localContextP;            // used while a local scope is enabled
 LocalContextP localStack[MAXLOCALS];
 bool sawForceLocal;
 bool atSol = true;                      // initially true
@@ -25,23 +24,33 @@ bool atSol = true;                      // initially true
 // Bank contexts are kept as a linked list, not used often enough to need preallocation
 int curBank;
 BankContextP banksP;
+BankContextP curBankP;
 
-// Used by the "NAME LOCATION optExpr" rule below to carry the label's own
-// symbol across a mid-rule action, so it can be registered in the symbol
-// table *before* optExpr is parsed instead of after. This fixes a real
-// use-after-free: see Claude/skill-updates/syntax-additions.md, am1 bug 1,
-// for the full root-cause writeup (same-line self-reference, e.g.
-// "foo, jmp foo", confirmed via AddressSanitizer).
+// Used by the label rules below to carry the label's own symbol and the PC
+// at the label's location across mid-rule actions.
+//
+// pendingLabelSymP / pendingLabelLocType: carry the symbol and location type
+// so the label is registered in the symbol table *before* labelTrailer is
+// parsed.  This fixes a real use-after-free in the "NAME LOCATION" case: see
+// Claude/skill-updates/syntax-additions.md, am1 bug 1, for the full root-cause
+// writeup (same-line self-reference, e.g. "foo, jmp foo", confirmed via
+// AddressSanitizer).
+//
+// pendingLabelPC: the value of curBankP->cur_pc at the moment the label is defined.
+// It is captured in each label rule's mid-rule action, *before* labelTrailer
+// is parsed.  This is necessary because labelTrailer's TEXT/ASCII/TYPE340
+// alternatives advance curBankP->cur_pc themselves (for the multi-word string), so by
+// the time the final rule action fires curBankP->cur_pc has already moved.  Using
+// pendingLabelPC ensures the LOCATION node always gets the label's starting
+// address, not the post-string address.
 static SymNodeP pendingLabelSymP;
 static int pendingLabelLocType;
+static int pendingLabelPC;
 
 static char scratchStr[128];            // and string
 
-static PNodeListP varNodesP;            // unemitted vars
 extern PNodeListP wildcardsP;           // any wildcarded cross-bank refs
-extern SymNodeP globalSymP;		// global symtab
-extern SymNodeP constSymP;		// literal constants
-extern SymNodeP permSymP;	        // the instructions and other permanent values
+extern SymNodeP permSymP;            // the instructions and other permanent values
 extern SymListP constsListP;            // the list of all constant groups
 
 extern bool noWarn;
@@ -54,9 +63,9 @@ extern char *filenameP;
 extern char *incroot;
 extern PNodeP rootP;
 
-int setConstPC(int pc, SymNodeP constSymP);
-void setConstVal(SymNodeP constSymP);
-void setVarsPC(int bank, PNodeListP varNodesP);
+int setConstPC(int pc, SymNodeP symP);
+void setConstVal(SymNodeP symP);
+void setVarsPC(int bank, PNodeListP listP);
 void addExports(PNodeP nodesP);
 void importSymbols(char *filenameP);
 void resolveWildcards(PNodeListP wildsP, BankContextP banksP);
@@ -64,6 +73,7 @@ bool resolveWildcard(PNodeListP itemP, BankContextP bankP);
 BankContextP findBank(int bank);
 BankContextP addBank(int bank);
 BankContextP swapBanks(int newBank);
+void initParser(void);
 SymNodeP addLocalSymbol(char *nameP);
 SymListP addToSymlist(SymListP listP, SymNodeP symP, int bank, int pc);
 SymNodeP findSymbolInBank(int bank, char *nameP);
@@ -136,7 +146,7 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %token <ival> FLEXO
 %token <ival> INTEGER
 %token <ival> LITCHAR
-%token <ival> BAD			/* returned for lexical errors */
+%token <ival> BAD            /* returned for lexical errors */
 
 /* various symbols */
 %token ORIGIN
@@ -182,6 +192,7 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %type <pnodeP> varnames
 %type <pnodeP> varname
 %type <pnodeP> optExpr
+%type <pnodeP> labelTrailer
 %type <pnodeP> optLocals
 %type <pnodeP> localSymDef
 %type <pnodeP> symList
@@ -214,11 +225,11 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 
 %%
 
-program		: optfilenames HEADER TERMINATOR body start
+program         : optfilenames HEADER TERMINATOR body start
                 {
-                    rootP = newnode(lineno, cur_pc, HEADER, $4, $5);
+                    rootP = newnode(lineno, curBankP->cur_pc, HEADER, $4, $5);
                     rootP->value.strP = $2;
-		}
+                }
 
 optfilenames    : filenames
                 |
@@ -230,58 +241,36 @@ filenames       : FILENAME
 
 start           : START simple_expr TERMINATOR
                 {
-                    $$ = newnode(lineno, cur_pc, START, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, START, NILP, NILP);
                     $$->value.ival = evalExpr($2);
                 }
                 | STOP TERMINATOR
                 {
-                    $$ = newnode(lineno, cur_pc, STOP, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, STOP, NILP, NILP);
                 }
 
-body		: stmt_list
-		{
-                PNodeP nodeP;
+body   : stmt_list
+                {
                 SymListP symlistP;
-                BankContextP bankP;
 
-		    if( $1 )
-		    {
-                        if( !sawBank )
+                    if( $1 )
+                    {
+                        for(BankContextP bp = banksP; bp; bp = bp->nextP)
                         {
-                            // All in bank 0, but make a bank entry for it for consistency
-                            bankP = addBank(0);
-                            bankP->globalSymP = globalSymP;
-                        }
-                        else
-                        {
-                            if( !(bankP = findBank(curBank)) )
+                            if( bp->varNodesP )
                             {
-                                // Happens if there was a bank ref but no bank was set
-                                bankP = addBank(curBank);
-                                bankP->globalSymP = globalSymP;
-                            }
-                        }
-
-                        bankP->cur_pc = cur_pc;
-                        bankP->globalSymP = globalSymP;
-                        bankP->constSymP = constSymP;
-                        bankP->varNodesP = varNodesP;
-
-                        // now update all banks that need it for unemitted consts and vars
-                        for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
-                        {
-                            if( bankP->varNodesP )
-                            {
-                                setVarsPC(bankP->bank, bankP->varNodesP);
+                                curBankP = bp;
+                                setVarsPC(bp->bank, bp->varNodesP);
                             }
 
-                            if( bankP->constSymP )
+                            if( bp->constSymP )
                             {
-                                setConstPC(bankP->cur_pc, bankP->constSymP);
-                                constsListP = addToSymlist(constsListP, bankP->constSymP,
-                                    bankP->bank, bankP->cur_pc);
+                                setConstPC(bp->cur_pc, bp->constSymP);
+                                constsListP = addToSymlist(constsListP, bp->constSymP,
+                                    bp->bank, bp->cur_pc);
                             }
                         }
+                        curBankP = findBank(curBank);
 
                         // Fix any wildcarded brefs
                         resolveWildcards(wildcardsP, banksP);
@@ -292,30 +281,30 @@ body		: stmt_list
                             setConstVal(symlistP->symP);
                         }
 
-			$$ = $1->leftP;		/* recover head link */
-			$1->leftP = NILP;
-		    }
-		    else
-                    {
-			$$ = NILP;
+                        $$ = $1->leftP;        /* recover head link */
+                        $1->leftP = NILP;
                     }
-		}
-		;
+                    else
+                    {
+                        $$ = NILP;
+                    }
+                }
+                ;
 
-stmt_list	: stmt terminator
-		{
+stmt_list       : stmt terminator
+                {
                     $$ = $2;
 
                     if( $1 )
                     {
-                        $2->leftP = $1;		/* keep head */
+                        $2->leftP = $1;        /* keep head */
                         $1->leftP = $2;
                     }
                     else
                     {
                         $2->leftP = $2;
                     }
-		}
+                }
                 | terminator
                 {
                     $$ = $1;
@@ -330,8 +319,8 @@ stmt_list	: stmt terminator
                         $1->leftP = $2;
                     }
                 }
-		| stmt_list stmt terminator
-		{
+                | stmt_list stmt terminator
+                {
                     $$ = $3;
                     if( $2 )
                     {
@@ -352,8 +341,8 @@ stmt_list	: stmt terminator
                     {
                         $$ = $3;
                     }
-		}
-		;
+                }
+                ;
 
 // Many rules have to look ahead a token, and if that's a terminator, the line number will have been incremented.
 // So, newnode() automatically decrements it.
@@ -365,15 +354,15 @@ stmt            : one_stmt
                     atSol = false;
                 }
 
-one_stmt	: expr
-		{
-                    checkPCBound("Code", cur_pc, lineno);
-		    $$ = newnode(lineno, cur_pc, EXPR, NILP, $1);
-		    if( $1 && !($1->flags & PN_NOINC) )
+one_stmt        : expr
+                {
+                    checkPCBound("Code", curBankP->cur_pc, lineno);
+                    $$ = newnode(lineno, curBankP->cur_pc, EXPR, NILP, $1);
+                    if( $1 && !($1->flags & PN_NOINC) )
                     {
-                        ++cur_pc;
+                        ++curBankP->cur_pc;
                     }
-		}
+                }
                 | BANK INTEGER
                 {
                     if( ($2 < 0) || ($2 > MAXBANK) )
@@ -387,58 +376,64 @@ one_stmt	: expr
                         verror("Bank cannot be used inside a local context");
                     }
 
-                    $$ = newnode(lineno+1, cur_pc, BANK, NILP, NILP);
+                    $$ = newnode(lineno+1, curBankP->cur_pc, BANK, NILP, NILP);
                     $$->value.ival = $2;
                     swapBanks($2);
-                    $$->value2.ival = cur_pc;   // is the pc for the new bank
+                    $$->value2.ival = curBankP->cur_pc;   // is the pc for the new bank
                 }
                 | VAR varnames
                 {
-                    $$ = newnode(lineno, cur_pc, VAR, NILP, $2);
+                    $$ = newnode(lineno, curBankP->cur_pc, VAR, NILP, $2);
                 }
                 | VARS
                 {
-                    $$ = newnode(lineno+1, cur_pc, VARS, NILP, NILP);
-                    $$->value.ptr = varNodesP;
-                    if( !varNodesP )
+                    $$ = newnode(lineno+1, curBankP->cur_pc, VARS, NILP, NILP);
+                    $$->value.ptr = curBankP->varNodesP;
+                    if( !curBankP->varNodesP )
                     {
                         vwarn(WARN_VARS, "no variables have been declareed, variables ignored");
                     }
                     else
                     {
-                        setVarsPC(curBank, varNodesP);
-                        checkPCBound("Variables", cur_pc, lineno);
-                        varNodesP = 0;
+                        setVarsPC(curBank, curBankP->varNodesP);
+                        checkPCBound("Variables", curBankP->cur_pc, lineno);
+                        curBankP->varNodesP = 0;
                     }
                 }
                 | simple_expr ORIGIN
                 {
-		    $$ = newnode(lineno, cur_pc, ORIGIN, NILP, NILP);
-                    $$->value.ival = cur_pc = evalExpr($1);
+                    $$ = newnode(lineno, curBankP->cur_pc, ORIGIN, NILP, NILP);
+                    $$->value.ival = curBankP->cur_pc = evalExpr($1);
                 }
-		| NAME LOCATION
+                | NAME LOCATION
                 {
-                    // Register the label's own symbol HERE, before optExpr
+                    // Register the label's own symbol HERE, before labelTrailer
                     // (below) is parsed. This matters for a same-line
                     // self-reference like "foo, jmp foo": if registration
-                    // were deferred until after optExpr, the lexer would not
-                    // yet know "foo" when it scans the second occurrence
-                    // inside optExpr, so the bare-NAME expression rule would
-                    // create its own forward-reference SymNode for "foo" and
-                    // a parse tree node would cache a raw pointer to it.
-                    // Registering the label first means that second
-                    // occurrence resolves as an ADDR to this same symbol
-                    // instead, so no duplicate node is ever created (and
-                    // none is later freed out from under a live pointer).
+                    // were deferred until after labelTrailer, the lexer would
+                    // not yet know "foo" when it scans the second occurrence
+                    // inside labelTrailer, so the bare-NAME expression rule
+                    // would create its own forward-reference SymNode for "foo"
+                    // and a parse tree node would cache a raw pointer to it.
+                    // Registering the label first means that second occurrence
+                    // resolves as an ADDR to this same symbol instead, so no
+                    // duplicate node is ever created (and none is later freed
+                    // out from under a live pointer).
+                    //
+                    // pendingLabelPC is saved here so the final action can
+                    // use the label's starting address even if labelTrailer's
+                    // TEXT/ASCII/TYPE340 alternatives advance curBankP->cur_pc before
+                    // that action fires.
                     //
                     // Hack used by mactoam1 for symbols in defines.
                     // All new symbols are assumed local.
                     // We're defining this regular symbol in the local context.
+                    pendingLabelPC = curBankP->cur_pc;
                     if( localContextP && (localContextP->flags == CTX_FORCELOCAL) )
                     {
                         pendingLabelSymP = addLocalSymbol($1);
                         pendingLabelSymP->flags = SYMF_RESOLVED | SYMF_FORCED | SYM_LOC;
-                        pendingLabelSymP->value = cur_pc;
+                        pendingLabelSymP->value = curBankP->cur_pc;
                         pendingLabelLocType = LCLLOCATION;
                     }
                     else
@@ -446,18 +441,38 @@ one_stmt	: expr
                         pendingLabelSymP = sym_make($1, 0);
                         pendingLabelSymP->flags |= SYMF_RESOLVED | SYM_GLOB;
                         pendingLabelSymP->lineno = lineno - 1;
-                        pendingLabelSymP->value = cur_pc;
+                        pendingLabelSymP->value = curBankP->cur_pc;
                         pendingLabelSymP->bank = curBank;
-                        sym_add(&globalSymP, pendingLabelSymP);
+                        sym_add(&(curBankP->globalSymP), pendingLabelSymP);
                         pendingLabelLocType = LOCATION;
                     }
                 }
-              optExpr
+                labelTrailer
                 {
-                    $$ = newnode(lineno, ($4 && !($4->flags & PN_NOINC))?cur_pc++:cur_pc, pendingLabelLocType, NILP, $4);
+                    // Use pendingLabelPC (captured in the mid-rule action above)
+                    // rather than curBankP->cur_pc here.  If labelTrailer matched a
+                    // TEXT/ASCII/TYPE340 alternative it already advanced curBankP->cur_pc
+                    // and also set PN_NOINC on the node, so this action must
+                    // not increment again.  For a normal expression labelTrailer
+                    // returns a non-PN_NOINC node and curBankP->cur_pc == pendingLabelPC
+                    // (unchanged by a simple expression), so incrementing here
+                    // is correct for that case too.
+                    if( $4 && !($4->flags & PN_NOINC) )
+                    {
+                        ++curBankP->cur_pc;
+                    }
+                    $$ = newnode(lineno, pendingLabelPC, pendingLabelLocType, NILP, $4);
                     $$->value.symP = pendingLabelSymP;
                 }
-		| ADDR LOCATION optExpr
+                | ADDR LOCATION
+                {
+                    // Capture curBankP->cur_pc before labelTrailer is parsed; a
+                    // TEXT/ASCII/TYPE340 alternative in labelTrailer will
+                    // advance curBankP->cur_pc, and we need the label's starting
+                    // address for both the symbol value and the node pc.
+                    pendingLabelPC = curBankP->cur_pc;
+                }
+                labelTrailer
                 {
                     if( $1->flags & SYMF_RESOLVED )
                     {
@@ -471,17 +486,26 @@ one_stmt	: expr
                             // fix it up.
                             $1->flags = SYM_GLOB;
                             $1->symP->flags = SYM_GLOB | SYMF_RESOLVED;
-                            $1->symP->value = cur_pc;
+                            $1->symP->value = pendingLabelPC;
                         }
 
                         $1->lineno = lineno - 1;
                         $1->flags |= SYMF_RESOLVED;
-                        $1->value = cur_pc;
-                        $$ = newnode(lineno, ($3 && !($3->flags & PN_NOINC))?cur_pc++:cur_pc, LOCATION, NILP, $3);
+                        $1->value = pendingLabelPC;
+                        if( $4 && !($4->flags & PN_NOINC) )
+                        {
+                            ++curBankP->cur_pc;
+                        }
+                        $$ = newnode(lineno, pendingLabelPC, LOCATION, NILP, $4);
                         $$->value.symP = $1;
                     }
                 }
-		| LCLNAME LOCATION optExpr
+                | LCLNAME LOCATION
+                {
+                    // Capture curBankP->cur_pc before labelTrailer is parsed.
+                    pendingLabelPC = curBankP->cur_pc;
+                }
+                labelTrailer
                 {
                 SymNodeP symP;
 
@@ -491,11 +515,20 @@ one_stmt	: expr
                     }
 
                     symP->flags = SYMF_RESOLVED | SYM_LOC;
-                    symP->value = cur_pc;
-                    $$ = newnode(lineno, ($3 && !($3->flags & PN_NOINC))?cur_pc++:cur_pc, LCLLOCATION, NILP, $3);
+                    symP->value = pendingLabelPC;
+                    if( $4 && !($4->flags & PN_NOINC) )
+                    {
+                        ++curBankP->cur_pc;
+                    }
+                    $$ = newnode(lineno, pendingLabelPC, LCLLOCATION, NILP, $4);
                     $$->value.symP = symP;
                 }
-		| LCLADDR LOCATION optExpr
+                | LCLADDR LOCATION
+                {  
+                    // Capture curBankP->cur_pc before labelTrailer is parsed.
+                    pendingLabelPC = curBankP->cur_pc;
+                }
+                labelTrailer
                 {
                     if( $1->value2 < localDepth )
                     {
@@ -510,8 +543,12 @@ one_stmt	: expr
                     else
                     {
                         $1->flags |= SYMF_RESOLVED;
-                        $1->value = cur_pc;
-                        $$ = newnode(lineno, ($3 && !($3->flags & PN_NOINC))?cur_pc++:cur_pc, LCLLOCATION, NILP, $3);
+                        $1->value = pendingLabelPC;
+                        if( $4 && !($4->flags & PN_NOINC) )
+                        {
+                            ++curBankP->cur_pc;
+                        }
+                        $$ = newnode(lineno, pendingLabelPC, LCLLOCATION, NILP, $4);
                         $$->value.symP = $1;
                     }
                 }
@@ -520,14 +557,14 @@ one_stmt	: expr
                 SymListP symlistP;
                 BankContextP ctxP;
                     // End this constant scope, if there is one, but include the node for listings
-                    $$ = newnode(lineno+1, cur_pc, CONSTANTS, NILP, NILP);
+                    $$ = newnode(lineno+1, curBankP->cur_pc, CONSTANTS, NILP, NILP);
 
-                    if( constSymP )
+                    if( curBankP->constSymP )
                     {
-                        constsListP = addToSymlist(constsListP, constSymP, curBank, cur_pc);
-                        $$->value.symP = constSymP;
-                        cur_pc = setConstPC(cur_pc, constSymP);
-                        sym_init(&constSymP);
+                        constsListP = addToSymlist(constsListP, curBankP->constSymP, curBank, curBankP->cur_pc);
+                        $$->value.symP = curBankP->constSymP;
+                        curBankP->cur_pc = setConstPC(curBankP->cur_pc, curBankP->constSymP);
+                        sym_init(&(curBankP->constSymP));
 
                         // Be sure we clear from our bank context, if we have one
                         if( (ctxP = findBank(curBank)) )
@@ -538,40 +575,40 @@ one_stmt	: expr
                 }
                 | ASCII STRING
                 {
-		    $$ = newnode(lineno+1, cur_pc, ASCII, NILP, NILP);
+                    $$ = newnode(lineno+1, curBankP->cur_pc, ASCII, NILP, NILP);
                     $$->value.strP = $2;
-                    cur_pc += countAscii($2);
-                    checkPCBound("Ascii", cur_pc, lineno);
+                    curBankP->cur_pc += countAscii($2);
+                    checkPCBound("Ascii", curBankP->cur_pc, lineno);
                 }
                 | TYPE340 T340STRING
                 {
                     // Will aready have been converted in the lexer.
                     // We reuse the Flex struct because this is also a counted-length string.
-		    $$ = newnode(lineno+1, cur_pc, TYPE340, NILP, NILP);
+                    $$ = newnode(lineno+1, curBankP->cur_pc, TYPE340, NILP, NILP);
                     $$->value.flexText = $2;
-                    cur_pc += countText($2);
-                    checkPCBound("Type340", cur_pc, lineno);
+                    curBankP->cur_pc += countText($2);
+                    checkPCBound("Type340", curBankP->cur_pc, lineno);
                 }
                 | TEXT
                 {
-		    $$ = newnode(lineno+1, cur_pc, TEXT, NILP, NILP);
+                    $$ = newnode(lineno+1, curBankP->cur_pc, TEXT, NILP, NILP);
                     $$->value.flexText = $1;
-                    cur_pc += countText($1);
-                    checkPCBound("Text", cur_pc, lineno);
+                    curBankP->cur_pc += countText($1);
+                    checkPCBound("Text", curBankP->cur_pc, lineno);
                 }
                 | TABLE simple_expr
                 {
-                    $$ = newnode(lineno, cur_pc, TABLE, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, TABLE, NILP, NILP);
                     $$->value.ival = evalExpr($2);
-                    cur_pc += $$->value.ival;
-                    checkPCBound("Table", cur_pc, lineno);
+                    curBankP->cur_pc += $$->value.ival;
+                    checkPCBound("Table", curBankP->cur_pc, lineno);
                 }
                 | TABLE simple_expr LOCATION simple_expr
                 {
-                    $$ = newnode(lineno, cur_pc, TABLE, NILP, $4);
+                    $$ = newnode(lineno, curBankP->cur_pc, TABLE, NILP, $4);
                     $$->value.ival = evalExpr($2);
-                    cur_pc += $$->value.ival;
-                    checkPCBound("Table", cur_pc, lineno);
+                    curBankP->cur_pc += $$->value.ival;
+                    checkPCBound("Table", curBankP->cur_pc, lineno);
                 }
                 | EXPORT symList
                 {
@@ -582,25 +619,25 @@ one_stmt	: expr
                     $2->leftP = NILP;
 
                     addExports(nodeP);
-		    $$ = newnode(lineno, cur_pc, EXPORT, NILP, nodeP);
+                    $$ = newnode(lineno, curBankP->cur_pc, EXPORT, NILP, nodeP);
                     $$->flags |= PN_NOINC;
                     doSymtab = true;        // and force output
                 }
                 | IMPORT STRING
                 {
-		    $$ = newnode(lineno, cur_pc, IMPORT, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, IMPORT, NILP, NILP);
                     $$->value.strP = $2;
                     importSymbols($2);
                 }
                 | IMPORT LIBFILE
                 {
-		    $$ = newnode(lineno, cur_pc, IMPORT, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, IMPORT, NILP, NILP);
                     $$->value.strP = $2;
                     importSymbols($2);
                 }
                 | CSSTART CSCOMMENT
                 {
-                    $$ = newnode($1, cur_pc, CSCOMMENT, NILP, NILP);
+                    $$ = newnode($1, curBankP->cur_pc, CSCOMMENT, NILP, NILP);
                     $$->value.strP = $2;
                 }
                 ;
@@ -612,11 +649,11 @@ terminator      : terminators
                 }
                 | SEMI
                 {
-                    $$ = newnode(lineno, cur_pc, SEMI, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, SEMI, NILP, NILP);
                 }
                 | COMMENT
                 {
-                    $$ = newnode(lineno, cur_pc, COMMENT, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, COMMENT, NILP, NILP);
                     $$->value.strP = $1;
                     if( atSol )
                     {
@@ -626,7 +663,7 @@ terminator      : terminators
                 }
                 | FILENAME
                 {
-		    $$ = newnode(lineno, cur_pc, FILENAME, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, FILENAME, NILP, NILP);
                     $$->value.strP = $1;
                     if( dropIncludeText && !fileIsMain($1) )
                     {
@@ -638,11 +675,11 @@ terminator      : terminators
 
 terminators     : TERMINATOR
                 {
-                    $$ = newnode(lineno, cur_pc, TERMINATOR, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, TERMINATOR, NILP, NILP);
                 }
                 | EMPTYLINE
                 {
-                    $$ = newnode(lineno, cur_pc, EMPTYLINE, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, EMPTYLINE, NILP, NILP);
                 }
                 | terminators TERMINATOR
                 {
@@ -661,7 +698,54 @@ optExpr         : expr
                 |
                 {
                     // empty
-		    $$ = NILP;
+            $$ = NILP;
+                }
+                ;
+
+// labelTrailer is used in place of optExpr in the four label rules
+// (NAME LOCATION, ADDR LOCATION, LCLNAME LOCATION, LCLADDR LOCATION).
+// It extends optExpr with TEXT, ASCII STRING, and TYPE340 T340STRING
+// alternatives, allowing constructs like:
+//
+//     msg,  text "hello\n"
+//     data, ascii "abc"
+//     gfx,  type340 "XYZ"
+//
+// on a single line.  The TEXT/ASCII/TYPE340 alternatives:
+//   - create their node with pc = pendingLabelPC (the label's address,
+//     saved by the enclosing label rule's mid-rule action before this
+//     non-terminal is parsed)
+//   - advance curBankP->cur_pc by the string's word count themselves
+//   - set PN_NOINC on the returned node so the enclosing label rule's
+//     final action does not attempt a second curBankP->cur_pc increment
+labelTrailer    : optExpr
+                {
+                    $$ = $1;
+                }
+                | ASCII STRING
+                {
+                    $$ = newnode(lineno+1, pendingLabelPC, ASCII, NILP, NILP);
+                    $$->value.strP = $2;
+                    curBankP->cur_pc += countAscii($2);
+                    checkPCBound("Ascii", curBankP->cur_pc, lineno);
+                    $$->flags |= PN_NOINC;
+                }
+                | TYPE340 T340STRING
+                {
+                    // Will already have been converted in the lexer.
+                    $$ = newnode(lineno+1, pendingLabelPC, TYPE340, NILP, NILP);
+                    $$->value.flexText = $2;
+                    curBankP->cur_pc += countText($2);
+                    checkPCBound("Type340", curBankP->cur_pc, lineno);
+                    $$->flags |= PN_NOINC;
+                }
+                | TEXT
+                {
+                    $$ = newnode(lineno+1, pendingLabelPC, TEXT, NILP, NILP);
+                    $$->value.flexText = $1;
+                    curBankP->cur_pc += countText($1);
+                    checkPCBound("Text", curBankP->cur_pc, lineno);
+                    $$->flags |= PN_NOINC;
                 }
                 ;
 
@@ -679,38 +763,38 @@ expr            : simple_expr               { $$ = $1; }
                 | directive_expr            { $$ = $1; }
                 ;
 
-simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_pc, SEPARATOR, $1, $3); }
-                | MINUS simple_expr %prec UMINUS   { $$ = unop(lineno, cur_pc, UMINUS, $2); }
-                | simple_expr PLUS simple_expr            { $$ = binop(lineno, cur_pc, PLUS, $1, $3); }
-                | simple_expr MINUS simple_expr           { $$ = binop(lineno, cur_pc, MINUS, $1, $3); }
-                | simple_expr MUL simple_expr             { $$ = binop(lineno, cur_pc, MUL, $1, $3); }
-                | simple_expr DIV simple_expr             { $$ = binop(lineno, cur_pc, DIV, $1, $3); }
-                | simple_expr MOD simple_expr             { $$ = binop(lineno, cur_pc, MOD, $1, $3); }
-                | simple_expr AND simple_expr             { $$ = binop(lineno, cur_pc, AND, $1, $3); }
-                | simple_expr OR simple_expr              { $$ = binop(lineno, cur_pc, OR, $1, $3); }
-                | simple_expr XOR simple_expr             { $$ = binop(lineno, cur_pc, XOR, $1, $3); }
-                | simple_expr LSHIFT simple_expr          { $$ = binop(lineno, cur_pc, LSHIFT, $1, $3); }
-                | simple_expr RSHIFT simple_expr          { $$ = binop(lineno, cur_pc, RSHIFT, $1, $3); }
-                | '(' simple_expr ')'              { $$ = unop(lineno, cur_pc, PARENS, $2); }
-                | CMPL simple_expr                 { $$ = unop(lineno, cur_pc, CMPL, $2); }
+simple_expr    : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBankP->cur_pc, SEPARATOR, $1, $3); }
+                | MINUS simple_expr %prec UMINUS   { $$ = unop(lineno, curBankP->cur_pc, UMINUS, $2); }
+                | simple_expr PLUS simple_expr     { $$ = binop(lineno, curBankP->cur_pc, PLUS, $1, $3); }
+                | simple_expr MINUS simple_expr    { $$ = binop(lineno, curBankP->cur_pc, MINUS, $1, $3); }
+                | simple_expr MUL simple_expr      { $$ = binop(lineno, curBankP->cur_pc, MUL, $1, $3); }
+                | simple_expr DIV simple_expr      { $$ = binop(lineno, curBankP->cur_pc, DIV, $1, $3); }
+                | simple_expr MOD simple_expr      { $$ = binop(lineno, curBankP->cur_pc, MOD, $1, $3); }
+                | simple_expr AND simple_expr      { $$ = binop(lineno, curBankP->cur_pc, AND, $1, $3); }
+                | simple_expr OR simple_expr       { $$ = binop(lineno, curBankP->cur_pc, OR, $1, $3); }
+                | simple_expr XOR simple_expr      { $$ = binop(lineno, curBankP->cur_pc, XOR, $1, $3); }
+                | simple_expr LSHIFT simple_expr   { $$ = binop(lineno, curBankP->cur_pc, LSHIFT, $1, $3); }
+                | simple_expr RSHIFT simple_expr   { $$ = binop(lineno, curBankP->cur_pc, RSHIFT, $1, $3); }
+                | '(' simple_expr ')'              { $$ = unop(lineno, curBankP->cur_pc, PARENS, $2); }
+                | CMPL simple_expr                 { $$ = unop(lineno, curBankP->cur_pc, CMPL, $2); }
                 | INTEGER
-		{
-		    $$ = newnode(lineno, cur_pc, INTEGER, NILP, NILP);
-		    $$->value.ival = $1;
-		}
+                {
+                    $$ = newnode(lineno, curBankP->cur_pc, INTEGER, NILP, NILP);
+                    $$->value.ival = $1;
+                }
                 | OPCODE
                 {
-                    $$ = newnode(lineno, cur_pc, OPCODE, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, OPCODE, NILP, NILP);
                     $$->value.symP = $1;
                 }
                 | OPADDR
                 {
-                    $$ = newnode(lineno, cur_pc, OPADDR, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, OPADDR, NILP, NILP);
                     $$->value.symP = $1;
                 }
                 | OPORABLE
                 {
-		    $$ = newnode(lineno, cur_pc, OPORABLE, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, OPORABLE, NILP, NILP);
                     $$->value.symP = $1;
                     if( doMacro && ($1->flags & SYMF_1DOP) )
                     {
@@ -719,42 +803,42 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
                 }
                 | VALUESPEC
                 {
-		    $$ = newnode(lineno, cur_pc, VALUESPEC, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, VALUESPEC, NILP, NILP);
                     $$->value.symP = $1;
                 }
-		| CONSTANT simple_expr endConst
-		{
+                | CONSTANT simple_expr endConst
+                {
                 int hash;
                 SymNodeP symP;
                 char *nameP;
 
                     // Jump thru hoops for constant compression
                     sprintf(scratchStr,"%ld",hashExpr($2));
-                    if( !(symP = sym_find(&constSymP, scratchStr)) )
+                    if( !(symP = sym_find(&(curBankP->constSymP), scratchStr)) )
                     {
                         nameP = malloc(strlen(scratchStr) + 1);
                         strcpy(nameP, scratchStr);
                         symP = sym_make(nameP, 0);
-                        sym_add(&constSymP, symP);
+                        sym_add(&(curBankP->constSymP), symP);
                         symP->ptr = $2;
                     }
-		    $$ = newnode(lineno, cur_pc, CONSTANT, NILP, $3);
+                    $$ = newnode(lineno, curBankP->cur_pc, CONSTANT, NILP, $3);
                     $$->value.symP = symP;
-		}
-		| DOT
+                }
+                | DOT
                 {
-                    $$ = newnode(lineno, cur_pc, DOT, NILP, NILP);
-                    $$->value.ival = cur_pc;
+                    $$ = newnode(lineno, curBankP->cur_pc, DOT, NILP, NILP);
+                    $$->value.ival = curBankP->cur_pc;
                 }
                 | ADDR
                 {
-                    $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = $1;
                 }
                 | INTEGER bref
                 {
-		    $$ = newnode(lineno, cur_pc, INTEGER, NILP, NILP);
-		    $$->value.ival = $1 + ($2 << 12);
+                    $$ = newnode(lineno, curBankP->cur_pc, INTEGER, NILP, NILP);
+                    $$->value.ival = $1 + ($2 << 12);
                 }
                 | NAME bref
                 {
@@ -770,11 +854,11 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
                        // This is just a regular global in the current bank
                         symP = sym_make($1, 0);
                         symP->bank = curBank;
-                        sym_add(&globalSymP, symP);
+                        sym_add(&(curBankP->globalSymP), symP);
                         symP->flags = SYM_GLOB;
                     }
 
-                    $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, BREF, NILP, NILP);
                     $$->value.symP = symP;
                     $$->value2.ival = $2;
                 }
@@ -792,7 +876,7 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
                         symP = $1;
                     }
 
-                    $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, BREF, NILP, NILP);
                     $$->value.symP = symP;
                     $$->value2.ival = $2;
                 }
@@ -800,7 +884,7 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
                 {
                 PNodeListP wildP;
 
-                    $$ = newnode(lineno, cur_pc, WILDREF, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, WILDREF, NILP, NILP);
                     $$->value.strP = $1;
 
                     // We need this for fixup later
@@ -818,14 +902,14 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
                     {
                         // This is a symbol in our own bank, resolve it now
                         symP = $1;
-                        $$ = newnode(lineno, cur_pc, BREF, NILP, NILP);
+                        $$ = newnode(lineno, curBankP->cur_pc, BREF, NILP, NILP);
                         $$->value.symP = $1;
                         $$->value2.ival = curBank;
                     }
                     else
                     {
                         // In another bank, usual wildcard processing
-                        $$ = newnode(lineno, cur_pc, WILDREF, NILP, NILP);
+                        $$ = newnode(lineno, curBankP->cur_pc, WILDREF, NILP, NILP);
                         $$->value.strP = $1->name;
 
                         // We need this for fixup later
@@ -849,17 +933,17 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
                         symP2->symP = symP;
                         symP2->bank = curBank;
                         symP2->flags = SYM_LOC;
-                        sym_add(&globalSymP, symP2);
+                        sym_add(&(curBankP->globalSymP), symP2);
                         symP->flags = symP2->flags = SYMF_FORCED | SYM_LOC;
-                        $$ = newnode(lineno, cur_pc, LCLADDR, NILP, NILP);
+                        $$ = newnode(lineno, curBankP->cur_pc, LCLADDR, NILP, NILP);
                     }
                     else
                     {
                         symP = sym_make($1, 0);
                         symP->bank = curBank;
-                        sym_add(&globalSymP, symP);
+                        sym_add(&(curBankP->globalSymP), symP);
                         symP->flags = SYM_GLOB;
-                        $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
+                        $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
                     }
 
                     $$->value.symP = symP;
@@ -876,27 +960,27 @@ simple_expr	: simple_expr SEPARATOR simple_expr       { $$ = binop(lineno, cur_p
 
                     symP = addLocalSymbol($1);
                     symP->flags = SYM_LOC;
-                    $$ = newnode(lineno, cur_pc, LCLADDR, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, LCLADDR, NILP, NILP);
                     $$->value.symP = symP;
                 }
-		| LCLADDR
+                | LCLADDR
                 {
-                    $$ = newnode(lineno, cur_pc, LCLADDR, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, LCLADDR, NILP, NILP);
                     $$->value.symP = $1;
                 }
                 | FLEXO
                 {
-                    $$ = newnode(lineno, cur_pc, FLEXO, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, FLEXO, NILP, NILP);
                     $$->value.ival = $1;
                 }
                 | CHAR
                 {
-                    $$ = newnode(lineno, cur_pc, CHAR, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, CHAR, NILP, NILP);
                     $$->value.ival = $1;
                 }
                 | LITCHAR
                 {
-                    $$ = newnode(lineno, cur_pc, LITCHAR, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, LITCHAR, NILP, NILP);
                     $$->value.ival = $1;
                 }
                 ;
@@ -910,7 +994,7 @@ directive_expr  : FORCELOC
 
                     localContextP->flags = CTX_FORCELOCAL;
                     sawForceLocal = true;
-		    $$ = newnode(lineno, cur_pc, FORCELOC, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, FORCELOC, NILP, NILP);
                     $$->flags |= PN_NOINC;
                 }
                 | LOCorADDLOC optLocals
@@ -933,7 +1017,7 @@ directive_expr  : FORCELOC
                         nodeP = NILP;
                     }
 
-		    $$ = newnode(lineno, cur_pc, $1?LOCAL:ADDLOCAL, NILP, nodeP);
+                    $$ = newnode(lineno, curBankP->cur_pc, $1?LOCAL:ADDLOCAL, NILP, nodeP);
                     $$->flags |= PN_NOINC;
 
                     if( $1 )
@@ -945,7 +1029,7 @@ directive_expr  : FORCELOC
                         }
 
                         localContextP = newLocalContext();
-                        localContextP->pc = cur_pc;          // will be the origin for the local relative refs
+                        localContextP->pc = curBankP->cur_pc;          // will be the origin for the local relative refs
                         sym_init( &(localContextP->symRootP) );
                     }
                     else
@@ -993,11 +1077,11 @@ directive_expr  : FORCELOC
                         localContextP = localStack[--localDepth];
                     }
 
-		    $$ = newnode(lineno, cur_pc, ENDLOC, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, ENDLOC, NILP, NILP);
                     $$->flags |= PN_NOINC;
                     $$->value.ival = $2;
                 }
-		;
+                ;
 
 endConst        : ENDCONST
                 {
@@ -1005,7 +1089,7 @@ endConst        : ENDCONST
                 }
                 | COMMENT
                 {
-                    $$ = newnode(lineno, cur_pc, COMMENT, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, COMMENT, NILP, NILP);
                     $$->value.strP = $1;
                 }
                 ;
@@ -1060,7 +1144,7 @@ localSymDef     : symbol
                     vwarn(WARN_LOCALS, "local %s will hide a local of the same name defined in scope %d",
                         $1->name, $1->value2);
 
-                    $$ = newnode(lineno, cur_pc, NAME, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, NAME, NILP, NILP);
                     $$->value.strP = $1->name;
                 }
                 ;
@@ -1080,12 +1164,12 @@ symList         : symbol
 
 symbol          : NAME
                 {
-                    $$ = newnode(lineno, cur_pc, NAME, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, NAME, NILP, NILP);
                     $$->value.strP = $1;
                 }
                 | ADDR
                 {
-                    $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = $1;
                 }
                 ;
@@ -1099,8 +1183,8 @@ varnames        : var
                     // Chain it into the list of unemitted vars
                     varP = (PNodeListP)malloc(sizeof(PNodeListItem));
                     varP->nodeP = $$;
-                    varP->nextP = varNodesP;
-                    varNodesP = varP;
+                    varP->nextP = curBankP->varNodesP;
+                    curBankP->varNodesP = varP;
                 }
                 | varnames LOCATION var
                 {
@@ -1112,11 +1196,10 @@ varnames        : var
                     // And chain in the new var
                     varP = (PNodeListP)malloc(sizeof(PNodeListItem));
                     varP->nodeP = $3;
-                    varP->nextP = varNodesP;
-                    varNodesP = varP;
+                    varP->nextP = curBankP->varNodesP;
+                    curBankP->varNodesP = varP;
                 }
                 ;
-
 
 bref            : BREF INTEGER
                 {
@@ -1152,9 +1235,9 @@ varname         : NAME
 
                     symP = sym_make($1, 0);
                     symP->bank = curBank;
-                    sym_add(&globalSymP, symP);
+                    sym_add(&(curBankP->globalSymP), symP);
                     symP->flags = SYM_GLOB | SYMF_VAR;
-                    $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = symP;
                 }
                 | ADDR
@@ -1164,7 +1247,7 @@ varname         : NAME
                         verror("variable %s is already declared", $1->name);
                     }
 
-                    $$ = newnode(lineno, cur_pc, ADDR, NILP, NILP);
+                    $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = $1;
                     $1->lineno = lineno - 1;
                     $1->flags = SYM_GLOB | SYMF_VAR;
@@ -1184,7 +1267,7 @@ SymNodeP symP;
         case NAME:
             symP = sym_make(nodesP->value.strP, 0);     // first time seen, declare it as a global
             symP->bank = curBank;
-            sym_add(&globalSymP, symP);
+            sym_add(&(curBankP->globalSymP), symP);
             symP->flags = SYM_GLOB | SYMF_EXPORTED;
             break;
 
@@ -1269,7 +1352,7 @@ SymNodeP symP;
         {
             symP->lineno = lineno - 1;
             symP->flags |= SYMF_RESOLVED;
-            symP->value = cur_pc++;
+            symP->value = curBankP->cur_pc++;
             symP->bank = bank;
             nodeP->pc = symP->value;
             nodeP->value2.ival = bank;
@@ -1278,7 +1361,7 @@ SymNodeP symP;
         listP = listP->nextP;
     }
 
-    checkPCBound("Variables", cur_pc, lineno);
+    checkPCBound("Variables", curBankP->cur_pc, lineno);
 }
 
 // Process a symbol file, bring in all exported ones.
@@ -1288,7 +1371,7 @@ SymNodeP symP;
 void
 importSymbols(char *filenameP)
 {
-int bank;
+int bank = curBank;
 int origBank;
 int lastBank;
 int lineno;
@@ -1366,7 +1449,7 @@ char symbol[256];
             lastBank = bank;
         }
 
-        if( sym_find(&globalSymP, symbol) )
+        if( sym_find(&(curBankP->globalSymP), symbol) )
         {
             fclose(infP);
             verror("imported symbol '%s' has already been defined", cP);
@@ -1377,7 +1460,7 @@ char symbol[256];
         symP->flags |= SYMF_IMPORTED | SYMF_RESOLVED | SYM_GLOB;
         symP->value = address;
         symP->bank = bank;
-        sym_add(&globalSymP, symP);
+        sym_add(&(curBankP->globalSymP), symP);
     }
 
     if( bank != origBank )
@@ -1455,51 +1538,36 @@ SymNodeP symP;
     return( symP );
 }
 
-// Used when bank is processed to switch between bank states
+// Pre-allocate bank 0 context so curBankP is valid before any grammar action fires.
+void
+initParser(void)
+{
+    curBankP = addBank(0);
+    curBankP->cur_pc = 4;
+    sym_init(&(curBankP->globalSymP));
+    sym_init(&(curBankP->constSymP));
+    curBankP->varNodesP = NILP;
+}
+
+// Switch to newBank: curBankP is already current; just redirect to the new context.
 BankContextP
 swapBanks(int newBank)
 {
 BankContextP newP;
-BankContextP curP;
 
-    if( !(curP = findBank(curBank)) )
+    if( !(newP = findBank(newBank)) )
     {
-        // First time we've left this bank, add an entry.
-        curP = addBank(curBank);
-        sawBank = true;
-    }
-
-    curP->cur_pc = cur_pc;
-    curP->globalSymP = globalSymP;
-    curP->constSymP = constSymP;
-    curP->varNodesP = varNodesP;
-
-    newP = findBank(newBank);
-
-    if( newP )
-    {
-        // we've been here before, restore the state
-        cur_pc = newP->cur_pc;
-        globalSymP = newP->globalSymP;
-        constSymP = newP->constSymP;
-        varNodesP = newP->varNodesP;
-    }
-    else
-    {
-        // fresh start
-        sym_init(&globalSymP);
-        sym_init(&constSymP);
-        varNodesP = NILP;
-        cur_pc = 0;
-
-        // First time we've been to this bank, add an entry.
         newP = addBank(newBank);
-        newP->cur_pc = cur_pc;
-        sawBank = true;
+        sym_init(&(newP->globalSymP));
+        sym_init(&(newP->constSymP));
+        newP->varNodesP = NILP;
+        newP->cur_pc = 0;
     }
 
+    curBankP = newP;
+    sawBank = true;
     curBank = newBank;
-    return( newP );
+    return( curBankP );
 }
 
 BankContextP
@@ -1563,7 +1631,7 @@ SymNodeP symP;
 
 
 int
-yywrap()				/* tell lex to clean up */
+yywrap()                /* tell lex to clean up */
 {
     return(1);
 }
@@ -1604,7 +1672,7 @@ int
 yyerror(const char *errstr)
 {
     fprintf(stderr,"am1: %s\nat line %d, file %s\n",
-	errstr,lineno,filenameP);
+    errstr,lineno,filenameP);
     leave(0);
     // never returns, just to shut up overly-picky c compilers
     return(0);

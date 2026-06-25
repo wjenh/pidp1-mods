@@ -1,0 +1,11 @@
+Test rg23: wildcard cross-bank refs (:*)
+// sym_b1:* resolves to bank 1, the bank where sym_b1 is defined
+100/
+    lio [sym_b1:*
+    hlt
+    constants
+
+bank 1
+sym_b1, 0
+
+start 100

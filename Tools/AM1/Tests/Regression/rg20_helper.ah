@@ -1,0 +1,2 @@
+// Helper include for rg20_cpp regression test
+#define bar(x) law x

@@ -1,0 +1,6 @@
+Test rg03: semicolon separator
+// Multiple statements per line via semicolons
+100/
+    hlt; cla; cma
+    200/; hlt
+stop

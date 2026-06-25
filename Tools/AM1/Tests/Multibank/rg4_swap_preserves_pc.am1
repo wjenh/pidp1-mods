@@ -1,0 +1,19 @@
+Test 4: bank-switch preserves PC per bank (tests new swapBanks pointer swap)
+// If swapBanks saved/restored by value instead of pointer swap, a symbol defined
+// after a return to an earlier bank would get the wrong PC (the PC of the new bank,
+// not the saved PC of the original bank).
+#include <memory.ah>
+
+bank 0
+100/
+    farlac(sym1:1)
+    hlt
+return0, hlt        // should be at 102 (bank 0 resumes after farlac sequence)
+
+bank 1
+200/
+sym1,   0
+        farjmp(return0:0)
+
+constants
+start 100

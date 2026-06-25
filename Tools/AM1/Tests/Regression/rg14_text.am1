@@ -1,0 +1,8 @@
+Test rg14: text directive (flexo-encoded packed strings)
+// text with double-quote delimiter and alternate delimiter
+100/
+    text "12345"
+    013
+    text .abc.
+    013
+stop

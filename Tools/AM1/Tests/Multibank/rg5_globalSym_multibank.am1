@@ -1,0 +1,18 @@
+Test 5: globalSymP maintained per bank (tests curBankP->globalSymP isolation)
+// Symbols defined in bank 0 must be accessible from bank 0 only (not bleed into bank 1).
+// Symbols defined in bank 1 must be addressable via cross-bank refs from bank 0.
+// A missed globalSymP substitution would mix the two banks' symbol tables.
+bank 0
+100/
+    lac alpha
+    hlt
+alpha, 0
+beta,  0
+
+bank 1
+200/
+    lac gamma
+    hlt
+gamma, 0
+
+start 100

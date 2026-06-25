@@ -1,0 +1,9 @@
+Test rg25: -M flag (memory overwrite becomes warning, not error)
+// Without -M this would be a fatal error
+100/
+    cli
+200/
+    cma
+100/
+    cla
+stop

@@ -1,0 +1,10 @@
+Test rg13: table directive
+// table with no initializer and table with initializer
+100/
+    lac tbl
+    hlt
+tbl,
+    table 10
+tbl2,
+    table 5, 123
+stop

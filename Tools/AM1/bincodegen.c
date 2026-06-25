@@ -176,10 +176,45 @@ BankContextP bankP;
         case LCLLOCATION:
             if( canReduce(nodeP->rightP) )
             {
+                // Normal case: a single-word instruction or expression follows
+                // the label on the same line (e.g. "foo, jmp bar").
                 i = reduceOperand(nodeP->rightP);
                 nodeP->value2.ival = i;     // save for listing
                 putBuffer(outfP, outBufP, i);
                 adjustPC(1);
+            }
+            else if( nodeP->rightP )
+            {
+                // Text-directive case: labelTrailer matched a TEXT, ASCII, or
+                // TYPE340 directive on the same line as the label
+                // (e.g. "msg, text \"hello\"").  The write functions advance
+                // cur_pc themselves for the full string length; no adjustPC()
+                // call is needed here.
+                switch( nodeP->rightP->type )
+                {
+                case TEXT:
+                case TYPE340:
+                    if( !writeText(outfP, nodeP->rightP->value.flexText) )
+                    {
+                        lineno = nodeP->rightP->lineNo;
+                        verror("Already used memory address 0%04o would be overwritten.", cur_pc);
+                    }
+                    break;
+
+                case ASCII:
+                    if( !writeAscii(outfP, nodeP->rightP->value.strP) )
+                    {
+                        lineno = nodeP->rightP->lineNo;
+                        verror("Already used memory address 0%04o would be overwritten.", cur_pc);
+                    }
+                    break;
+
+                default:
+                    // canReduce returned 0 for something other than a text type
+                    // (e.g. a pure-directive expression like local/endloc).
+                    // Nothing to emit.
+                    break;
+                }
             }
             break;
 
@@ -293,6 +328,16 @@ canReduce(PNodeP nodeP)
     case ENDLOC:
     case FORCELOC:
     case TERMINATOR:
+        return(0);
+
+    // TEXT, ASCII, and TYPE340 nodes carry multi-word string payloads; they
+    // cannot be reduced to a single integer value by reduceOperand().  They
+    // appear here when labelTrailer matched a text directive on the same line
+    // as a label (e.g. "msg, text \"hello\"").  The LOCATION handler below
+    // has a separate branch that dispatches them to writeText/writeAscii.
+    case TEXT:
+    case ASCII:
+    case TYPE340:
         return(0);
 
     case EXPR:

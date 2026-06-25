@@ -94,6 +94,11 @@
  * 26-Apr-2026 - add -N to suppress included file text in listing
  * 12-Jun-2026 - fix incorrect opcode for cmi, should be 770000
  * 20-Jun-2026 - add special sequences in flexo and text for ribbon color and carriage return
+ * 21-Jun-2026 - labeled location: label and text/ascii/type340 now allowed on same line
+ * 24-Jun-2026 - fix WARN_BANK/WARN_BANKS name swap in warnings[] table
+ * 25-Jun-2026 - swapBanks refactor: replace four loose globals (cur_pc, globalSymP, constSymP,
+ *               varNodesP) with BankContextP curBankP; swapBanks becomes a pointer swap;
+ *               initParser() pre-allocates bank-0 context; fix latent uninit bug in importSymbols
  *
 */
 #include <unistd.h>
@@ -118,12 +123,12 @@ typedef struct inc_item
 // Flags are enabled, repeats, has been issued
 Warning warnings[] = {
     {"1Dop", WARN_1D, false, true, false},
-    {"bank", WARN_BANKS, false, false, false},
+    {"banks", WARN_BANKS, false, false, false},
     {"locals", WARN_LOCALS, false, true, false},
     {"flex", WARN_FLEX, false, true, false},
     {"vars", WARN_VARS, false, true, false},
     {"stop", WARN_STOP, false, false, false},
-    {"banks", WARN_BANK, false, false, false},
+    {"bank", WARN_BANK, false, false, false},
     {"bref", WARN_BREF, false, false, false},
     {"memory", WARN_MEMORY, false, true, false},
     {0, 0, false}  // end marker
@@ -162,13 +167,12 @@ extern int yy_flex_debug;
 
 PNodeP rootP;                   // root of the parse tree
 PNodeListP wildcardsP;          // any wildcarded cross-bank refs
-SymNodeP globalSymP;            // global addresses
 SymNodeP localSymP;             // local addresses
-SymNodeP constSymP;             // constants
 SymListP constsListP;           // the list of all constant groups
 
-extern int cur_pc;
 extern BankContextP banksP;
+extern BankContextP curBankP;
+extern void initParser(void);
 extern char *am1_version;
 extern FILE *yyin;              // lex input file
 extern int yyparse();
@@ -409,9 +413,8 @@ SymNodeP symP;
     }
 
     /* initialize everything */
-    sym_init(&globalSymP);
+    initParser();
     sym_init(&localSymP);
-    sym_init(&constSymP);
 
     if(yyparse())
     {

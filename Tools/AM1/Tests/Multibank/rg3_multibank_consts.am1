@@ -1,0 +1,19 @@
+Test 3: constants in two separate banks (tests curBankP->constSymP per-bank tracking)
+// If constSymP substitution was missed, constant emission in the second bank
+// would use the wrong bank's symbol table and produce wrong addresses or silently
+// drop the constants.
+bank 0
+100/
+    lac [0777
+    and [0377
+    hlt
+    constants
+
+bank 1
+200/
+    lac [07777
+    and [03777
+    hlt
+    constants
+
+start 100

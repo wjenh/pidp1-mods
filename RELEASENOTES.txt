@@ -1,0 +1,8 @@
+The new hardware panel is now installed by default, it is a big improvement.
+The character of the lights is configurable, see the UsingNewpanel.md document and the pidp1.config.example file notes.
+The old panel sources have been moved to the Old subdirectory in src/blincolnligts/panel_pidp1.
+
+The Type 340 emulator has some changes to avoid a potential problem on some Arm/Coretex processors caused by
+the way it does data caching. The pi-4 has such a processor. Some new validation tests are also added.
+
+The AD1 debugger has a few fixes related to showing the source file location when a breakpoint or watchpoint is hit.

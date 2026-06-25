@@ -1,0 +1,8 @@
+Test rg21: symbol exports (generates .sym file; rg22 depends on this)
+100/
+    lac a
+    lac b
+    export a, b
+a, 0
+b, 0
+stop

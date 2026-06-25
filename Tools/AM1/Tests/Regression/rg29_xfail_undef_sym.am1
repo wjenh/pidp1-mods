@@ -1,0 +1,4 @@
+Test rg29 (XFAIL): undefined symbol -- must fail
+100/
+    jmp nosuchsym
+stop

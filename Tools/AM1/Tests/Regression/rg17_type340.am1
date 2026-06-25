@@ -1,0 +1,5 @@
+Test rg17: type340 directive (Type 340 Display characters)
+100/
+    type340 "ABC"
+    type340 "12"
+stop

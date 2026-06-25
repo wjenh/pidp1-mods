@@ -143,7 +143,26 @@ char str[128];
             if( nodeP->rightP )
             {
                 output(outfP, doOutput," ");
-                listOperand(outfP, nodeP->rightP);
+                // TEXT/ASCII/TYPE340 right children come from labelTrailer
+                // matching a text directive on the same line as the label.
+                // They cannot be passed to listOperand (which only handles
+                // expression nodes and would verror on these types), so
+                // dispatch to the appropriate text-listing function instead.
+                switch( nodeP->rightP->type )
+                {
+                case TEXT:
+                case TYPE340:
+                    listText(outfP, nodeP->rightP, nodeP->rightP->value.flexText);
+                    break;
+
+                case ASCII:
+                    listAscii(outfP, nodeP->rightP, nodeP->rightP->value.strP);
+                    break;
+
+                default:
+                    listOperand(outfP, nodeP->rightP);
+                    break;
+                }
             }
             break;
 

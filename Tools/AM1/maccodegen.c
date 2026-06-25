@@ -135,7 +135,25 @@ char str[128];
             if( nodeP->rightP )
             {
                 fprintf(outfP," ");
-                emitOperand(outfP, nodeP->rightP);
+                // TEXT/ASCII/TYPE340 right children come from labelTrailer
+                // matching a text directive on the same line as the label.
+                // They cannot be passed to emitOperand, so dispatch to the
+                // appropriate text-emit function instead.
+                switch( nodeP->rightP->type )
+                {
+                case TEXT:
+                case TYPE340:
+                    emitText(outfP, nodeP->rightP->value.flexText);
+                    break;
+
+                case ASCII:
+                    emitAscii(outfP, nodeP->rightP->value.strP);
+                    break;
+
+                default:
+                    emitOperand(outfP, nodeP->rightP);
+                    break;
+                }
             }
             break;
 
@@ -143,7 +161,22 @@ char str[128];
             if( nodeP->rightP )
             {
                 fprintf(outfP, "    ");
-                emitOperand(outfP, nodeP->rightP);
+                // Same TEXT/ASCII/TYPE340 handling as LOCATION above.
+                switch( nodeP->rightP->type )
+                {
+                case TEXT:
+                case TYPE340:
+                    emitText(outfP, nodeP->rightP->value.flexText);
+                    break;
+
+                case ASCII:
+                    emitAscii(outfP, nodeP->rightP->value.strP);
+                    break;
+
+                default:
+                    emitOperand(outfP, nodeP->rightP);
+                    break;
+                }
             }
             break;
 

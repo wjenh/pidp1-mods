@@ -1,0 +1,10 @@
+Test rg08: ones complement math
+// -1+1 yields negative zero (-0 = 777777), auto-converted to +0 = 0
+// law -1+1 is valid because the expression evaluates to 0 (a legal 12-bit value)
+// For negative law immediates use "law i n" form (sets indirect bit, encodes -n)
+// ~0 is a bitwise operation, not math: not converted, yields 777777
+100/
+    law -1+1        // expression result: 0 (negative zero converted to +0)
+    law i 20        // law immediate -20: correct form for negative law values
+    ~0              // 777777 (bitwise complement, not auto-converted)
+stop

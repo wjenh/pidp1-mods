@@ -1,0 +1,9 @@
+Test rg20: cpp preprocessing (#include and #define macros)
+#include "rg20_helper.ah"
+#define ld(x) lac x
+
+100/
+    ld(a)
+    bar(5)
+a,  hlt
+stop

@@ -4,13 +4,19 @@ CFLAGS= $(INC) -O3 -g -Wno-unused-result
 
 PINCTRL := $(wildcard ../pinctrl/*.o)
 
-all: newpanel
+all: panel_pidp1 newpanel
+
+panel_pidp1: panel_pidp1.c ../common.c
+	cc $(CFLAGS) -o $@ $^ $(INC) $(LIBS) $(PINCTRL)
 
 newpanel: newpanel.c ../common.c ../pdp1/configuration.c
 	cc $(CFLAGS) -o $@ $^ $(INC) $(LIBS) $(PINCTRL)
 
-run: newpanel
+run: panel_pidp1
+	./panel_pidp1
+
+runnew: newpanel
 	./newpanel
 
 clean:
-	rm  newpanel >/dev/null 2>&1
+	rm panel_pidp1 newpanel >/dev/null 2>&1

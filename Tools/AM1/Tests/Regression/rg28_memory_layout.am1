@@ -1,0 +1,11 @@
+Test rg28: memory layout with multiple segments and var/const sections
+var x, y, z
+100/
+    lac [17
+    lac [37
+    hlt
+200/
+    text "abc"
+variables
+constants
+stop

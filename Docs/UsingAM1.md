@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.33 and covers up through am1 version 1.37; it will be updated as needed.\
+This is version 1.34 and covers up through am1 version 1.37; it will be updated as needed.\
 Edit date 26-Jun-2026
-Test mode added
+Test mode changes
 
 ## What is **am1**?
 
@@ -250,9 +250,12 @@ When used, it overrides generation of macro, binary, list, and symtab files and 
 A text file named *progname.dmp* is created that has one line of text for every storage word
 that has been generated, basically a loaderless *rim* tape but in ascii.
 
-Each 18 bit word that would be loaded into memory is printed as a 6 digit octal number.
+Each line consists of two 18-bit octal numbers separated by a space.
+For every 18 bit word that would be loaded into memory its memory address and its value is written.
+
 The last line is the value of the *start* or *end* diretive at the end of the program.
 While technically not a storage word, it is needed for validation.
+Its address and value will both be whatever was specified in the statement in the sourcr program.
 
 The resulting file can be used to compare an assembled program's binary representation to a reference copy.
 

@@ -1,6 +1,7 @@
 /*
  * Process a parse tree to generate a test dump file.
- * The output is each memory location that was generated printed as a 6 digit octal number.
+ * The output is each memory location and value that was generated printed as two space-separated
+ * 6 digit octal numbers.
 */
 #include <stdio.h>
 #include <string.h>
@@ -23,10 +24,11 @@ static int canReduce(PNodeP);
 static int reduceOperand(PNodeP);
 
 static void dumpStatements(FILE *, PNodeP);
-static void dumpVars(FILE *outfP, PNodeListP listP, int lineNo);
-static void dumpConstants(FILE *outfP, SymNodeP nodeP, int lineNo);
+static void dumpVars(FILE *outfP, PNodeP);
+static void dumpConstants(FILE *fP, PNodeP nodeP, SymNodeP symP);
 static bool dumpText(FILE *outfP, FlexText flexText);
 static bool dumpAscii(FILE *outfP, char *strP);
+static void printOne(FILE *fP, PNodeP nodeP, int value);
 
 // Walk a tree and emit the words.
 int
@@ -39,7 +41,7 @@ testCodegen(FILE *outfP, PNodeP rootP)
     dumpStatements(outfP, rootP->leftP);
 
     // We print the value of the START/END, it's not actually a memory value but used for validation.
-    fprintf(outfP, "%06o\n", rootP->rightP->value.ival);
+    fprintf(outfP, "%06o %06o\n", rootP->rightP->value.ival, rootP->rightP->value.ival);
     return(1);
 }
 
@@ -56,14 +58,14 @@ BankContextP bankP;
         {
         case COMMENT:           // none of these output anything
         case TERMINATOR:
-        case ORIGIN:
             break;
 
+        case ORIGIN:
         case EXPR:
             if( canReduce(nodeP->rightP) )
             {
                 i = reduceOperand(nodeP->rightP);
-                fprintf(outfP, "%06o\n", i);
+                printOne(outfP, nodeP->rightP, i);
             }
             break;
 
@@ -74,7 +76,7 @@ BankContextP bankP;
                 // Normal case: a single-word instruction or expression follows
                 // the label on the same line (e.g. "foo, jmp bar").
                 i = reduceOperand(nodeP->rightP);
-                fprintf(outfP, "%06o\n", i);
+                printOne(outfP, nodeP->rightP, i);
             }
             else if( nodeP->rightP )
             {
@@ -104,11 +106,11 @@ BankContextP bankP;
             break;
 
         case VARS:
-            dumpVars(outfP, (PNodeListP)(nodeP->value.ptr), nodeP->lineNo);
+            dumpVars(outfP, nodeP);
             break;
 
         case CONSTANTS:
-            dumpConstants(outfP, nodeP->value.symP, nodeP->lineNo);
+            dumpConstants(outfP, nodeP, nodeP->value.symP);
             break;
 
         case TEXT:
@@ -148,14 +150,21 @@ BankContextP bankP;
     // We now have to emit any constants and vars that didn't have an ending constants statement
     for(bankP = banksP; bankP; bankP = bankP->nextP)
     {
+    PNode node;
+
         if( bankP->constSymP )
         {
-            dumpConstants(outfP, bankP->constSymP, -1);
+            node.pc = bankP->cur_pc;
+            node.bank = bankP->bank;
+            dumpConstants(outfP, &node, bankP->constSymP);
         }
 
         if( bankP->varNodesP )
         {
-            dumpVars(outfP, bankP->varNodesP, -1);
+            node.pc = bankP->cur_pc;
+            node.bank = bankP->bank;
+            node.value.ptr = bankP->varNodesP;
+            dumpVars(outfP, &node);
         }
     }
 }
@@ -296,26 +305,27 @@ char *bufP;
 // Walk a list of variables, emit the storage.
 // If lineNo is -1, this is being called to automatically emit vars that were't emitted explicitly.
 static void
-dumpVars(FILE *fP, PNodeListP listP, int lineNo)
+dumpVars(FILE *fP, PNodeP nodeP)
 {
 int i;
-PNodeP nodeP;
+PNodeListP listP;
 SymNodeP symP;
 
+    listP = (PNodeListP)(nodeP->value.ptr);
     while( listP )
     {
         nodeP = listP->nodeP;
+        symP = nodeP->value.symP;
 
         i = (nodeP->leftP)?reduceOperand(nodeP->leftP):0;
-        fprintf(fP, "%06o\n", i);
+        printOne(fP, nodeP, i);
         listP = listP->nextP;
     }
 }
 
 // Walk a symbol table of constants, emit the values.
-// If lineNo is -1, this is being called to automatically emit vars that were't emitted explicitly.
 static void
-dumpConstants(FILE *fP, SymNodeP symP, int lineNo)
+dumpConstants(FILE *fP, PNodeP nodeP, SymNodeP symP)
 {
     if( !symP )
     {
@@ -325,9 +335,17 @@ dumpConstants(FILE *fP, SymNodeP symP, int lineNo)
     if( !(symP->flags & SYMF_EMITTED) )
     {
         symP->flags |= SYMF_EMITTED;
-        fprintf(fP, "%06o\n", symP->value2);
+        printOne(fP, nodeP, symP->value2);
+        nodeP->pc++;    // because we only get the intial node
     }
 
-    dumpConstants(fP, symP->leftP, lineNo);
-    dumpConstants(fP, symP->rightP, lineNo);
+    dumpConstants(fP, nodeP, symP->leftP);
+    dumpConstants(fP, nodeP, symP->rightP);
+}
+
+// Print an address/value pair using the addressing information in the passed node.
+static void
+printOne(FILE *fP, PNodeP nodeP, int value)
+{
+    fprintf(fP, "%02o%04o %06o\n", nodeP->bank, nodeP->pc, value);
 }

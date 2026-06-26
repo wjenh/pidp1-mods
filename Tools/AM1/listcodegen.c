@@ -646,7 +646,6 @@ SymNodeP symP;
 }
 
 // Walk a symbol table of constants, list the values.
-// If auto is true, this is being called to emit constants when there was no constants statement.
 static void
 listConstants(FILE *fP, PNodeP nodeP, SymNodeP symP)
 {

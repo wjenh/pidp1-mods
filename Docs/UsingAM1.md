@@ -253,9 +253,9 @@ that has been generated, basically a loaderless *rim* tape but in ascii.
 Each line consists of two 18-bit octal numbers separated by a space.
 For every 18 bit word that would be loaded into memory its memory address and its value is written.
 
-The last line is the value of the *start* or *end* diretive at the end of the program.
+The last line is the value of the *start* or *stop* diretive at the end of the program.
 While technically not a storage word, it is needed for validation.
-Its address and value will both be whatever was specified in the statement in the sourcr program.
+Its address and value will both be whatever was specified in the statement in the source program.
 
 The resulting file can be used to compare an assembled program's binary representation to a reference copy.
 

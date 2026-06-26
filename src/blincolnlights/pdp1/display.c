@@ -414,10 +414,6 @@ static void
 initializeDisplaySubsystem()
 {
 pthread_t thread;
-pthread_attr_t attr;
-struct sched_param schedParam;
-bool haveAttr;
-int created;
 
     if( displayInitialized )
     {
@@ -429,41 +425,15 @@ int created;
 
     sem_init(&runLock, 0, 0);
 
-    // The worker thread is the only thread that moves bytes onto the display
-    // socket, so for predictable, low-jitter output it should be the least likely
-    // of the emulator's threads to be starved. Try to create it with a low
-    // real-time priority (SCHED_RR, one above the minimum). This requires
-    // privilege (CAP_SYS_NICE / RLIMIT_RTPRIO); when that is unavailable the
-    // create is retried with default scheduling so a worker always exists.
-    haveAttr = false;
-    if( pthread_attr_init(&attr) == 0 )
-    {
-        if( (pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED) == 0) &&
-            (pthread_attr_setschedpolicy(&attr, SCHED_RR) == 0) )
-        {
-            schedParam.sched_priority = (sched_get_priority_min(SCHED_RR) + 1);
-            if( pthread_attr_setschedparam(&attr, &schedParam) == 0 )
-            {
-                haveAttr = true;
-            }
-        }
-    }
-
-    created = pthread_create(&thread, (haveAttr)?(&attr):(NULL), worker, null);
-    if( created && haveAttr )
-    {
-        // Most likely EPERM: no privilege for real-time scheduling. Fall back to
-        // a default-scheduled worker rather than running without one at all.
-        logger(LOG_INIT,"Display worker RT create failed (err %d), retrying with default scheduling\n", created);
-        created = pthread_create(&thread, NULL, worker, null);
-    }
-
-    if( haveAttr )
-    {
-        pthread_attr_destroy(&attr);
-    }
-
-    if( created )
+    // The worker is created with default (SCHED_OTHER) scheduling. Real-time
+    // priority for this socket-flushing thread was considered and deliberately
+    // NOT used: it requires granting the process special privilege
+    // (CAP_SYS_NICE / RLIMIT_RTPRIO), which the project owner prefers to avoid.
+    // The cost of that choice is a rare (many seconds apart) visual flicker when
+    // the Linux scheduler briefly preempts this thread; that behaviour is
+    // accepted. All other smoothing (coalesced wakeups, batched/Nagle-free
+    // writes, larger buffers, monotonic timed wait) does not depend on priority.
+    if( pthread_create(&thread, NULL, worker, null) )
     {
         logger(LOG_INIT,"Display worker thread create failed.\n");
         displayInitialized = false;

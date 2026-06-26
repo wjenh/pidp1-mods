@@ -124,6 +124,7 @@
 #include <netinet/tcp.h>
 #include <netdb.h>
 #include <pwd.h>
+#include <sys/resource.h>       // setpriority(), PRIO_PROCESS -- voluntary nice-down
 #include "wincompat.h"
 #endif
 #include <SDL2/SDL.h>
@@ -168,6 +169,11 @@
 // See usage() below for those that have command line versions.
 #define DEFAULTHOST "localhost"
 #define DEFAULTPORT 3400
+// Amount to raise our own nice value (lower our scheduling priority) so that when this
+// client shares a CPU with the PDP-1 emulator (e.g. a headless Pi running both, viewed
+// over VNC), the emulator wins CPU contention and keeps feeding display points instead of
+// stalling. 0 disables. Overridable via the config file ("nice=N").
+#define DEFAULTNICE 5
 
 // End of config and command line settings
 
@@ -243,6 +249,7 @@ const char *driverNameP;
 int winSize;
 int lowCutoff = LOWCUTOFF;
 int whiteBias = WHITEBIAS;
+int niceValue = DEFAULTNICE;    // see DEFAULTNICE; 0 disables, config "nice=N" overrides
 uint64_t droppedPoints;         // count of points dropped because activePool[] was exhausted
 
 bool allowLabwcFix = true;
@@ -273,6 +280,8 @@ uint64_t pacedFrames;        // every frame-paced main-loop pass, including idle
 uint64_t renderTimeTotal;    // sum of per-rendered-frame times (ns), for the average
 uint64_t renderTimeMax;      // worst single rendered-frame time (ns)
 uint64_t renderCount;        // number of rendered frames timed
+uint64_t phaseBufferTotal;   // sum of per-frame buffer work (lock + memset + point draw), ns
+uint64_t phasePresentTotal;  // sum of per-frame present work (blit + Present/VNC), ns
 const char *rendererNameP;   // SDL renderer backend name, e.g. "opengl" vs "software"
 bool doTiming;
 
@@ -315,6 +324,7 @@ uint64_t deltaTime;
 uint64_t cursorTime;
 uint64_t renderStart;       // timing: monotonic ns at the start of a rendered frame
 uint64_t renderDelta;       // timing: duration (ns) of a rendered frame
+uint64_t tAfterBuffer;      // timing: monotonic ns after buffer work, before present
 char *cP;
 
 uint32_t pointIdx;
@@ -427,6 +437,25 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
     {
         hostNameP = argv[optind];
     }
+
+#ifndef _WIN32
+    // Voluntarily lower our own scheduling priority so a co-resident PDP-1 emulator wins
+    // CPU contention and keeps feeding display points. When the emulator is starved it
+    // stops issuing points, the phosphor fades to black, and that reads as flicker -- the
+    // failure mode seen running both the emulator and this client on one headless Pi over
+    // VNC. Lowering one's OWN priority needs no privilege (unlike real-time priority), and
+    // it has no effect on an uncontended system, so it is safe to leave on by default.
+    // Done before the reader thread is created so that thread inherits the value.
+    // niceValue 0 disables; the config file "nice=N" setting overrides DEFAULTNICE.
+    if( niceValue != 0 )
+    {
+        if( setpriority(PRIO_PROCESS, 0, niceValue) != 0 )
+        {
+            fprintf(stderr, "Note: could not lower priority to nice %d; continuing at default.\n",
+                niceValue);
+        }
+    }
+#endif
 
     if( (pdp1FD = openPort(hostNameP, portNum)) < 0 )
     {
@@ -745,6 +774,10 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
 
             SDL_UnlockTexture(textureP);
 
+            // Timing split point: everything above is CPU buffer work (lock + memset +
+            // point draw); everything below is present work (blit + Present/VNC).
+            tAfterBuffer = now();
+
             // No SDL_RenderClear() here: with SDL_BLENDMODE_NONE and the texture's
             // pixel buffer fully memset() above, SDL_RenderCopy() fully overwrites
             // the render target every frame, making a separate clear redundant.
@@ -761,6 +794,10 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                 {
                     renderTimeMax = renderDelta;
                 }
+                // Split the frame into buffer work vs present work so we can see which
+                // dominates on a given backend (e.g. the software renderer over VNC).
+                phaseBufferTotal += (tAfterBuffer - renderStart);
+                phasePresentTotal += (renderDelta - (tAfterBuffer - renderStart));
             }
         }
     }
@@ -1409,7 +1446,11 @@ char line[256];
                 }
             }
 
-            if( !strcmp(line, "border") )
+            if( !strcmp(line, "nice") )
+            {
+                niceValue = atoi(cP);
+            }
+            else if( !strcmp(line, "border") )
             {
                 border = isTrue(cP);
             }
@@ -1579,6 +1620,8 @@ uint64_t delta;
     {
         printf("render time: avg %lu usec, max %lu usec, over %lu frames.\n",
             (renderTimeTotal / renderCount) / 1000, renderTimeMax / 1000, renderCount);
+        printf("  of which: buffer (lock+memset+draw) avg %lu usec, present (blit+vnc) avg %lu usec.\n",
+            (phaseBufferTotal / renderCount) / 1000, (phasePresentTotal / renderCount) / 1000);
     }
     printf("%lu received points\n", receivedPoints);
     printf("%lu received points/sec\n", receivedPoints/delta);

@@ -22,10 +22,7 @@
 //    partial writes shift the remainder to the front of the buffer,
 //    and addDpyCommand() retries (bounded by DPYFULLRETRIES)
 //    instead of risking a dpyBuf[] overflow if the buffer stays full after a flush.
-
-// _GNU_SOURCE must be defined before any system header so that sem_clockwait()
-// (glibc >= 2.30) is declared; it is used in waitForRun() to wait on the run
-// semaphore against CLOCK_MONOTONIC instead of CLOCK_REALTIME.
+// 26-Jun-2026 wje (Claude) deep analysis of possible bottlenecks done, tuning changes made
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -171,11 +168,7 @@ DisplayControlP ctlP;
     fcntl(fd, F_SETFL, (fdFlags | O_NONBLOCK));
 
     // Disable Nagle's algorithm. The display stream is latency-sensitive and is
-    // frequently flushed in small batches; with Nagle active a small write() is
-    // held by the kernel until the previous segment is ACKed, which together with
-    // the peer's delayed-ACK timer can stall points by tens of milliseconds.
-    // That is severe for a remote display client and still measurable over
-    // loopback. (TCP_QUICKACK is also set on the read side in lightpenReader().)
+    // frequently flushed in small batches; TCP_QUICKACK is also set on the read side in lightpenReader().
     nodelay = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 
@@ -414,6 +407,10 @@ static void
 initializeDisplaySubsystem()
 {
 pthread_t thread;
+pthread_attr_t attr;
+struct sched_param schedParam;
+bool haveAttr;
+int created;
 
     if( displayInitialized )
     {
@@ -425,15 +422,42 @@ pthread_t thread;
 
     sem_init(&runLock, 0, 0);
 
-    // The worker is created with default (SCHED_OTHER) scheduling. Real-time
-    // priority for this socket-flushing thread was considered and deliberately
-    // NOT used: it requires granting the process special privilege
-    // (CAP_SYS_NICE / RLIMIT_RTPRIO), which the project owner prefers to avoid.
-    // The cost of that choice is a rare (many seconds apart) visual flicker when
-    // the Linux scheduler briefly preempts this thread; that behaviour is
-    // accepted. All other smoothing (coalesced wakeups, batched/Nagle-free
-    // writes, larger buffers, monotonic timed wait) does not depend on priority.
-    if( pthread_create(&thread, NULL, worker, null) )
+    // The worker thread is the only thread that moves bytes onto the display
+    // socket, so the smoothest output comes from it being the least likely of the
+    // emulator's threads to be starved. The real-time-priority path below is
+    // OPTIONAL and self-disabling: it tries to create the worker at a low SCHED_RR
+    // priority, but that requires process privilege (CAP_SYS_NICE / RLIMIT_RTPRIO).
+    // When that privilege is absent, pthread_create() fails with EPERM and we transparently retry with
+    // default (SCHED_OTHER) scheduling, so a worker is always created.
+    haveAttr = false;
+    if( pthread_attr_init(&attr) == 0 )
+    {
+        if( (pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED) == 0) &&
+            (pthread_attr_setschedpolicy(&attr, SCHED_RR) == 0) )
+        {
+            schedParam.sched_priority = (sched_get_priority_min(SCHED_RR) + 1);
+            if( pthread_attr_setschedparam(&attr, &schedParam) == 0 )
+            {
+                haveAttr = true;
+            }
+        }
+    }
+
+    created = pthread_create(&thread, (haveAttr)?(&attr):(NULL), worker, null);
+    if( created && haveAttr )
+    {
+        // Most likely EPERM: no privilege for real-time scheduling. Fall back to a
+        // default-scheduled worker rather than running without one at all.
+        logger(LOG_INIT,"Display worker RT create failed (err %d), retrying with default scheduling\n", created);
+        created = pthread_create(&thread, NULL, worker, null);
+    }
+
+    if( haveAttr )
+    {
+        pthread_attr_destroy(&attr);
+    }
+
+    if( created )
     {
         logger(LOG_INIT,"Display worker thread create failed.\n");
         displayInitialized = false;
@@ -594,11 +618,7 @@ bool hitThreshold;
     while( ctlP->numCommands >= CMDBUFSIZE )
     {
         // Buffer full: signal the worker and yield the CPU to it rather than
-        // sleeping a fixed interval. This runs on the producer thread (e.g. the
-        // Type 340 emulator thread); a usleep() here was a scheduler round-trip
-        // on that hot path and injected jitter into point production.
-        // sched_yield() hands off to a runnable worker without a guaranteed
-        // timer-based deschedule.
+        // sleeping a fixed interval.
         unlockControl(ctlP);
         logger(LOG_FULL,"addCommand cmd buffer full\n");
         sem_post(&runLock);
@@ -612,12 +632,8 @@ bool hitThreshold;
     hitThreshold = (ctlP->numCommands >= (CMDBUFSIZE / 4));
     unlockControl(ctlP);
 
-    // Coalesce wakeups: only wake the worker when the buffer goes from empty to
-    // non-empty, or when a batch has accumulated. This avoids one sem_post() /
-    // thread wakeup (and one tiny socket write) per point, which wasted CPU and
-    // maximised Nagle stalls. Trailing points are still flushed promptly because
-    // the worker's sem_timedwait()/sem_clockwait() caps its sleep at
-    // WORKERSLEEPTIME. (The "defer" caller contract is unchanged.)
+    // Only wake the worker when the buffer goes from empty to
+    // non-empty, or when a batch has accumulated.
     if( !defer && (wasEmpty || hitThreshold) )
     {
         sem_post(&runLock);
@@ -625,12 +641,12 @@ bool hitThreshold;
 }
 
 // Puts a dpy-style command into the dpy command buffer.
-// If the buffer is full, try to flush it to make room. The fd is
-// non-blocking (see setDisplayFD()), so a flush can fail with EAGAIN
-// without freeing any space - in that case retry a bounded number of
-// times with a short delay, giving the client a chance to drain its
-// socket. If the buffer is still full after DPYFULLRETRIES attempts
-// (client far too slow, or stalled), drop this command rather than
+// If the buffer is full, try to flush it to make room.
+// The fd is non-blocking so a flush can fail with EAGAIN
+// without freeing any space.
+// in that case retry a bounded number oftimes with a short delay,
+// giving the client a chance to drain its socket.
+// If the buffer is still full after DPYFULLRETRIES attempts, drop this command rather than
 // overflowing dpyBuf[] or blocking the worker thread indefinitely.
 static void
 addDpyCommand(DisplayControlP ctlP, uint32_t cmd)
@@ -666,9 +682,7 @@ int retries;
         }
 
         // This runs on the worker thread and is waiting for the non-blocking
-        // socket's send buffer to drain (i.e. for the client to read), not for
-        // another runnable thread, so a short sleep -- not sched_yield() -- is
-        // the right primitive here.
+        // socket's send buffer to drain, so a short sleep is fine here.
         usleep(30);         // delay a bit so display doesn't overrun
     }
 
@@ -676,10 +690,9 @@ int retries;
 }
 
 // Write any buffered dpy commands to the display fd.
-// The fd is non-blocking (see setDisplayFD()), so write() can legitimately
-// return -1/EAGAIN (or EWOULDBLOCK) when the socket's send buffer is full.
-// In that case (and on EINTR), leave the buffered commands
-// in place and let the caller retry later.
+// The fd is non-blocking so write() can legitimately return -1/EAGAIN or EWOULDBLOCK when the socket's
+// send buffer is full.
+// In that case, leave the buffered commands in place and let the caller retry later.
 // A partial write is also possible on a non-blocking socket; the unsent
 // commands are shifted to the front of the buffer for the next attempt.
 // Any other write() error indicates the connection is gone, so the fd is
@@ -914,10 +927,7 @@ uint64_t endTime;
 
 #if defined(__GLIBC__) && ((__GLIBC__ > 2) || ((__GLIBC__ == 2) && (__GLIBC_MINOR__ >= 30)))
     // Wait against CLOCK_MONOTONIC so an NTP step or slew of the realtime clock
-    // (common at boot on a headless Pi with no battery-backed RTC) cannot distort
-    // the worker's wakeup cadence: a forward step would make the wait return
-    // immediately (busy spin), a backward step would make it block far longer
-    // than WORKERSLEEPTIME (a visible flush stall). sem_clockwait() is glibc 2.30+.
+    //  can't distort the worker's wakeup cadence.
     clock_gettime(CLOCK_MONOTONIC, &tm);
     tm.tv_nsec += (WORKERSLEEPTIME * 1000);   // WORKERSLEEPTIME is in usecs
     if( tm.tv_nsec > 999999999 )

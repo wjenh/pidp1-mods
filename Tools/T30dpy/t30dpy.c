@@ -267,6 +267,13 @@ uint64_t receivedPoints;
 uint64_t totalFrames;
 uint64_t maxActivePoints;
 uint64_t activePoints;
+// Added for per-platform diagnosis of the frame-rate question (gpu vs software renderer,
+// true loop cadence vs rendered-frame count, and actual render cost per frame).
+uint64_t pacedFrames;        // every frame-paced main-loop pass, including idle passes with no active points
+uint64_t renderTimeTotal;    // sum of per-rendered-frame times (ns), for the average
+uint64_t renderTimeMax;      // worst single rendered-frame time (ns)
+uint64_t renderCount;        // number of rendered frames timed
+const char *rendererNameP;   // SDL renderer backend name, e.g. "opengl" vs "software"
 bool doTiming;
 
 SDL_PixelFormat *pixelFormatP;      // We use RGBA8888, set below.
@@ -306,6 +313,8 @@ bool penDown;
 uint64_t lastTime;
 uint64_t deltaTime;
 uint64_t cursorTime;
+uint64_t renderStart;       // timing: monotonic ns at the start of a rendered frame
+uint64_t renderDelta;       // timing: duration (ns) of a rendered frame
 char *cP;
 
 uint32_t pointIdx;
@@ -467,6 +476,17 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
 
     // Create the renderer, set to black and display.
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | (doVsync)?SDL_RENDERER_PRESENTVSYNC:0 );
+
+    // Record the actual renderer backend (e.g. "opengl", "opengles2", "software") for fps diagnosis.
+    // SDL2 exposes this via SDL_GetRendererInfo; the name string is owned by SDL and persists.
+    {
+        SDL_RendererInfo rendererInfo;
+        if( SDL_GetRendererInfo(renderer, &rendererInfo) == 0 )
+        {
+            rendererNameP = rendererInfo.name;
+        }
+    }
+
     SDL_RenderSetLogicalSize(renderer, 1024, 1024);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
     SDL_RenderClear(renderer);
@@ -662,6 +682,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
         }
 
         lastTime = now();
+        ++pacedFrames;          // counts every paced loop pass (including idle ones): the true cadence
         if( cursorTime && (((lastTime - cursorTime) / 1000000) > CURSORTIMEOUT) )
         {
             SDL_ShowCursor(SDL_DISABLE);
@@ -672,6 +693,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
         // (texture lock, full pixel-buffer memset, the locked active-list walk) is skipped.
         if( activeListHead != NOINDEX )
         {
+            renderStart = now();
             textureP = textures[textureSelector];
             textureSelector ^= 1;
 
@@ -729,6 +751,17 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
             SDL_RenderCopy(renderer, textureP, NULL, NULL);
             SDL_RenderPresent(renderer);
             ++totalFrames;
+
+            if( doTiming )
+            {
+                renderDelta = now() - renderStart;
+                renderTimeTotal += renderDelta;
+                ++renderCount;
+                if( renderDelta > renderTimeMax )
+                {
+                    renderTimeMax = renderDelta;
+                }
+            }
         }
     }
 
@@ -1526,11 +1559,27 @@ reportTiming()
 uint64_t delta;
 
     delta = (now() - startTime) / (1000 * 1000 * 1000);
-    printf("Video driver is %s%s\n", driverNameP, (usingLabwc)?", using labwc":"");
+    if( delta == 0 )
+    {
+        delta = 1;          // avoid divide-by-zero on very short runs
+    }
+
+    printf("Video driver is %s, renderer is %s%s\n",
+        driverNameP, (rendererNameP)?rendererNameP:"?", (usingLabwc)?", using labwc":"");
     printf("%lu points drawn in %lu total seconds, %lu points/sec.\n",
         totalPoints, delta, totalPoints/delta);
-    printf("%lu total frames, %lu frames/sec.\n", totalFrames, totalFrames/delta);
+    // "rendered" frames are passes that actually had active points and were drawn.
+    // "paced" frames are every pass the 30fps pacer ran, including idle passes with nothing to draw.
+    // If paced/sec is ~30 but rendered/sec is lower, the low rendered number is idle dilution,
+    // NOT a slow renderer; if paced/sec itself is below 30, the renderer is the real limit.
+    printf("%lu rendered frames, %lu/sec; %lu paced frames, %lu/sec.\n",
+        totalFrames, totalFrames/delta, pacedFrames, pacedFrames/delta);
     printf("%u frame late events, max delay %lu msecs.\n", frameMisses, frameDelay/1000000);
+    if( renderCount )
+    {
+        printf("render time: avg %lu usec, max %lu usec, over %lu frames.\n",
+            (renderTimeTotal / renderCount) / 1000, renderTimeMax / 1000, renderCount);
+    }
     printf("%lu received points\n", receivedPoints);
     printf("%lu received points/sec\n", receivedPoints/delta);
     printf("%lu maximum active points\n", maxActivePoints);

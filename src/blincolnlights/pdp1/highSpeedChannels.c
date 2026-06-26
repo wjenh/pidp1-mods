@@ -199,7 +199,7 @@ HSCControlP ctlP;
     {
         logger(LOG_HSC, "request_channel called bad mode %x\n", rqstP->mode);
         return( HSC_ERR );      // no from or to, nothing to do
-    } 
+    }
 
     if( (rqstP->mode & HSC_MODE_TOMEM) && (rqstP->toBufferP == 0) )
     {
@@ -260,7 +260,10 @@ getControlP(HSCChannelP chanP)
 {
 HSCControlP ctlP;
 
-    if( !chanP || (chanP->chanNo < 0) || (chanP->chanNo > NUMCHANS) )
+    // chans[] has NUMCHANS entries (valid indices 0..NUMCHANS-1). chanNo is stored
+    // as a 0-based offset, so the upper bound must be >= NUMCHANS, not > NUMCHANS
+    // (which let index NUMCHANS through, one past the array).
+    if( !chanP || (chanP->chanNo < 0) || (chanP->chanNo >= NUMCHANS) )
     {
         return(NULL);            // someone is cheating
     }

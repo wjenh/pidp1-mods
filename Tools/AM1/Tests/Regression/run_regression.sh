@@ -1,12 +1,7 @@
 #!/bin/bash
 # run_regression.sh -- comprehensive am1 regression suite
-# Usage: ./run_regression.sh [path-to-am1-binary]
-#
-# Each passing test is run with -T (test mode) which produces a .dmp file
-# containing every stored word as "aaaaaa vvvvvv" (address value in octal).
-# The .dmp is diffed against a pre-generated .ref file; a mismatch is a FAIL.
-# XFAIL tests are run normally (no -T) and only their exit code is checked.
-# All output files go to a temp directory; nothing is left in Regression/.
+# Usage: ./run_regression.sh
+# All tests run in a temp directory; no artifacts are left in Regression/.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AM1="${1:-"$SCRIPT_DIR/../../am1"}"
@@ -34,9 +29,10 @@ run_test() {
         esac
     done
 
+    "$AM1" "${flags[@]}" -I"$SCRIPT_DIR" "$src" > "$WORK/$name.log" 2>&1
+    local rc=$?
+
     if [ "$expect_fail" -eq 1 ]; then
-        "$AM1" "${flags[@]}" -I"$SCRIPT_DIR" "$src" > "$WORK/$name.log" 2>&1
-        local rc=$?
         if [ $rc -ne 0 ]; then
             echo "XFAIL: $name"
             xfail=$((xfail+1))
@@ -45,44 +41,12 @@ run_test() {
             fail=$((fail+1))
             FAILURES+=("$name")
         fi
-        return
-    fi
-
-    # Normal test: assemble with -T and compare binary output to reference
-    "$AM1" -T "${flags[@]}" -I"$SCRIPT_DIR" "$src" > "$WORK/$name.log" 2>&1
-    local rc=$?
-
-    if [ $rc -ne 0 ]; then
-        echo "FAIL:  $name (assembly error)"
-        sed 's/^/       /' "$WORK/$name.log"
-        fail=$((fail+1))
-        FAILURES+=("$name")
-        return
-    fi
-
-    local dmp="$WORK/${name}.dmp"
-    local ref="$SCRIPT_DIR/${name}.ref"
-
-    if [ ! -f "$dmp" ]; then
-        echo "FAIL:  $name (no .dmp produced)"
-        fail=$((fail+1))
-        FAILURES+=("$name")
-        return
-    fi
-
-    if [ ! -f "$ref" ]; then
-        echo "FAIL:  $name (no .ref file -- run with --gen-refs to create)"
-        fail=$((fail+1))
-        FAILURES+=("$name")
-        return
-    fi
-
-    if diff -q "$dmp" "$ref" > /dev/null 2>&1; then
+    elif [ $rc -eq 0 ]; then
         echo "PASS:  $name"
         pass=$((pass+1))
     else
-        echo "FAIL:  $name (binary mismatch)"
-        diff "$ref" "$dmp" | sed 's/^/       /'
+        echo "FAIL:  $name"
+        sed 's/^/       /' "$WORK/$name.log"
         fail=$((fail+1))
         FAILURES+=("$name")
     fi

@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.34 and covers up through am1 version 1.37; it will be updated as needed.\
-Edit date 26-Jun-2026
-Test mode changes
+This is version 1.35 and covers up through am1 version 1.37; it will be updated as needed.\
+Edit date 27-Jun-2026
+Add newline behavior for type340 directive
 
 ## What is **am1**?
 
@@ -925,6 +925,30 @@ At the beginning of a string, the mode will always be upper-shift.
 
 As a convenience, shift characters are automatically added based upon the character.
 The actual case displayed depends upon the shift state and the character sets that are enabled.
+
+Various special escape sequences can be used inside the string:
+
+| Escape sequence | Meaning |
+|-----------------|-----------|
+| \\e | end |
+| \\U | upper shift+ |
+| \\L | lower shift+ |
+| \\A | automatic shift+ |
+| \\b | backspace* |
+| \\n | newline, a carriage return** |
+| \\l | linefeed |
+| \\r | carriage return** |
+| \\s | superscript* |
+| \\u | subscript* |
+| \\00 | 1 or 2 octal digits 0-7 |
+
+The characters marked with an asterisk, *, are only valid when character set 2 is in use.\
+If octal digits are given, the a character of that octal value is inserted.
+
+** - newline maps to carriage return because the Type 340 treats a cr as cr-lf internally.
+
+For the shift escapes, marked with a +, explicitly shifting disables automatic shifting
+until the command completes or until automatic shifting is enabled again.
 
 See the *UsingType340Display.md* document for the characters and more information.
 

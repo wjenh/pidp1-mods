@@ -738,11 +738,9 @@ octal			{ decimalMode = false; }
 							sawEnd = true;    // fake that we had one
 							continue;
 						}
-						else if( tmpc == TYPE340NL )	// special case, convert
+						else if( tmpc == TYPE340NL )	// convert to a cr, the type340 does a cr/lf for cr
 						{
-							++charCount;
-							*cP++ = TYPE340CR;
-							tmpc = TYPE340LF;
+							tmpc = TYPE340CR;
 						}
 						else if( tmpc == TYPE340END )
 						{

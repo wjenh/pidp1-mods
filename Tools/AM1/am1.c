@@ -99,6 +99,7 @@
  * 25-Jun-2026 wje - swapBanks refactor, replace cur_pc, globalSymP, constSymP, varNodesP with
  *                   BankContextP curBankP->x references, it's just cleaner code
  * 26-Jun-2026 wje - add test output mode
+ * 26-Jun-2026 wje - adjust type340 nl to just insert a cr, the t340 emulator changed, it does cr/lf for cr
  *
 */
 #include <unistd.h>

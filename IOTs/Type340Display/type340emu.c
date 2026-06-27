@@ -27,6 +27,7 @@
  * 16-May-2026 wje adjust timings, main loop is only 1us delay after hsc completion, add interrupt disable
  * 17-Jun-2026 wje fix one timing error in vector, off by 500ns. Fix a few minor bugs and one arm cortex issue.
  * 23-Jun-2026 wje change arm/cortex cpu fencing to be more efficient, was causing display flicker
+ * 27-Jun-2026 wje reverted Claude HSC_IMMEDIATE, didn't actually help and increased cpu loading
  */
 
 #include <stdlib.h>
@@ -102,8 +103,9 @@
 #define NUMSLAVEGROUPS 2
 #define NUMSLAVES (NUMSLAVEGROUPS * 4)
 
-#define CHARWIDTH 6     // char width for scale 0, pixels
-#define CHARHEIGHT 11   // char width for scale 0, pixels
+#define CHARWIDTH 5     // char width for scale 0, pixels
+#define CHARHEIGHT 7    // char height for scale 0, pixels
+#define CHARDELTA 2     // spacing between characters for scale 0, pixels
 
 // Convert a command word mode field to one of the mode enum values
 #define MODE(x) (((x) >> 13) & 07)
@@ -514,8 +516,6 @@ Status status;
 
         iotCondLog(LOG_CMD,"Got command %d\n", command);
 
-        // Turn on the high-speed-channel panel light for the duration of this display-list run.
-        ctlP->pdp1P->hsc = 1;
         while( !isPaused && (curState != STOPPED) )
         {
             // We could be running in a continuous loop via JUMP, so check for any commands
@@ -931,9 +931,6 @@ Status status;
                 }
             }
         }
-
-        // Display-list run has stopped or paused: clear the HSC in-use light.
-        ctlP->pdp1P->hsc = 0;
 
 #if LOG_TIMING
         if( startTime )
@@ -1382,7 +1379,7 @@ bool sawHit;
     {
     case CH_LF:
         // Down one line dotSpacing
-        curY -= CHARHEIGHT * dotSpacing;
+        curY -= (CHARHEIGHT + CHARDELTA) * dotSpacing;
 
         if( checkBounds(curX, curY) )
         {
@@ -1423,16 +1420,16 @@ bool sawHit;
     case CH_NSPC:
         if( twoCharsets || (shiftState == 0) )
         {
-            if( curX >= (CHARWIDTH * dotSpacing) )
+            if( curX >= ((CHARWIDTH + CHARDELTA) * dotSpacing) )
             {
-                curX -= CHARWIDTH * dotSpacing;     // one dotSpacing character width
+                curX -= (CHARWIDTH + CHARDELTA) * dotSpacing;     // one dotSpacing character width
             }
         }
         else if( !twoCharsets && (shiftState != 0) )
         {
-            if( curY <= 1023 - (CHARHEIGHT * dotSpacing) )
+            if( curY <= 1023 - ((CHARHEIGHT + CHARDELTA) * dotSpacing) )
             {
-                curY += CHARHEIGHT * dotSpacing;     // one dotSpacing character height
+                curY += (CHARHEIGHT + CHARDELTA) * dotSpacing;     // one dotSpacing character height
             }
         }
         break;
@@ -1442,7 +1439,7 @@ bool sawHit;
         break;
 
     case CH_SUB:
-        curY -= (CHARHEIGHT * dotSpacing) / 2;      // subscript
+        curY -= ((CHARHEIGHT + CHARDELTA) * dotSpacing) / 2;      // subscript
 
         if( checkBounds(curX, curY) )
         {
@@ -1452,7 +1449,7 @@ bool sawHit;
         return(COMPLETED);
 
     case CH_SUP:
-        curY += (CHARHEIGHT * dotSpacing) / 2;   // superscript
+        curY += ((CHARHEIGHT + CHARDELTA) * dotSpacing) / 2;   // superscript
 
         if( checkBounds(curX, curY) )
         {
@@ -1499,22 +1496,22 @@ bool sawHit;
 
     if( twoCharsets || (shiftState == 0) )
     {
-        curX += CHARWIDTH * dotSpacing;
+        curX += (CHARWIDTH + CHARDELTA) * dotSpacing;
     }
     else if( !twoCharsets && (shiftState != 0) )
     {
-        curY -= CHARHEIGHT * dotSpacing;
+        curY -= (CHARHEIGHT + CHARDELTA) * dotSpacing;
     }
 
     if( flags == CH_BS )
     {
         if( twoCharsets || (shiftState == 0) )
         {
-            curX -= CHARWIDTH * dotSpacing;  // backspace
+            curX -= (CHARWIDTH + CHARDELTA) * dotSpacing;  // backspace
         }
         else if( !twoCharsets && (shiftState != 0) )
         {
-            curY += CHARHEIGHT * dotSpacing;  // backspace
+            curY += (CHARHEIGHT + CHARDELTA) * dotSpacing;  // backspace
         }
 
         if( checkBounds(curX, curY) )
@@ -1621,22 +1618,17 @@ Word buffer[2];     // we only use 1, but leave space just to be sure
         ++curAddress;
     }
 
-    // Fetch the word with hsc IMMEDIATE mode.
-    // This copies the word synchronously with no busy/wait state and, crucially,
-    // no scheduler interaction.
-    // This prevents intermittent long delays that are visible as transient pauses.
-    //
-    // The simulated 5us-per-word memory access time is handled by pendingDelay
-    // below and enforced by the spin-based nanowait() at the end of
-    // the current command, preserving timing realism without a reschedule.
-    request.mode = (HSC_MODE_FROMMEM | HSC_MODE_IMMEDIATE);
+    // Fetch the word with hsc threaded mode.
+    // This also provides the 5usec word-fetch delay the real hardware had.
+    // Note that this might cause rescheduling, but this has not been a significant issue
+    // in deployment, even on a pi4.
+    request.mode = (HSC_MODE_FROMMEM | HSC_MODE_THREADED);
     request.count = 1;
     request.memBank = ((addr >> 12) & 017);
     request.memAddr = (addr & 07777);
     request.fromBufferP = buffer;
-    HSCexecute(chanP, &request);        // synchronous copy; no HSCwait() needed
-
-    pendingDelay += 5000;               // 5us simulated memory-cycle time, spin-waited later
+    HSCexecute(chanP, &request);
+    HSCwait(chanP);     // Here's where the simulation of the hardware hsc delay happens.
 
     val = buffer[0];
     return(val);

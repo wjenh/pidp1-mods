@@ -7,10 +7,10 @@ Draw a lot of characters, 80 lines of 145 characters, 11,600 of them.
 
 #define YORIGIN 0d1014
 #define XORIGIN 0d0
-#define DYORIGIN 0d010
-#define DXORIGIN 0d100
-#define SIZE 2
-#define BRIGHTNESS 3
+#define DYORIGIN 0d100
+#define DXORIGIN 0d0
+#define SIZE 1
+#define BRIGHTNESS 2
 
 #define clrnum dzm ones; dzm tens; dzm hundreds; dzm thousands
 
@@ -259,9 +259,11 @@ type340 " 0123456789ABCDEFGHIJKLMNOPQRSTUVWYZ0123456789ABCDEFGHIJKLMNOPQRSTUVWYZ
  0123456789ABCDEFGHIJKLMNOPQRSTUVWYZ0123456789ABCDEFGHIJKLMNOPQRSTUVWYZ\
 0123456789ABCDEFGHIJKLMNOPQRSTUVWYZ0123456789ABCDEFGHIJKLMNOPQRSTUVWYZ\n"
 
-    charsets(1) scale(2) intensity(6) next(point)
+    charsets(2) scale(2) intensity(6) next(point)
     y(DYORIGIN) next(point)
     x(DXORIGIN) next(character)
+    type340 " I am drawing 11,000+ characters\n "
+    charsets(1) next(character)
     topdigits, 606060
     lastdigit, 603700
     halt

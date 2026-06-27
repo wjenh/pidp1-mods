@@ -81,19 +81,13 @@ thousands, 0
     prog, charsets(2) scale(SIZE) intensity(BRIGHTNESS) next(point)
     y(YORIGIN) next(point)
     x(XORIGIN) next(character)
-
-type340 " The Type 340 Digital Display\n\
- and the Type 342 Symbol Generator\n\
- provide fast man-machine\n\
- communication.\n\
- And I can do other characters also:\n\
- ABCDEFGHIJKLMNOPQRSTUVWXYZ\n\
- abcdefghijklmnopqrstuvwxyz\n\
- 0123456789\n\
- ?.,@-+*/()[]{}<>'\"=~_`|#!\n "
-
-    scale(1) next(character)
-    type340 " In different sizes"
+    type340 " I am the Type 340 Display\n and the Type 342 Symbol Generator\n\n\n"
+    next(character)
+    type340 " ABCDEFGHIJKLMNOPQRSTUVWXYZ\n abcdefghijklmnopqrstuvwxyz\n"
+    next(character)
+    type340 " ?.,@-+*/()[]<>'\"=~_`|#!\\\n "
+    charsets(1) next(character)
+    type340 "vertical also"
 
     charsets(2) scale(SIZE) next(point)
     y(DYORIGIN) next(point)

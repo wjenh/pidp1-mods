@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.5
+This is version 1.6
 
-Edit date 24-June-2026\
-Add details of iots and the registers used
+Edit date 27-June-2026\
+Add explanation of nl and cr mapping
 
 ## What is it?
 
@@ -449,15 +449,17 @@ can be used:
 | \\L | lower shift+ |
 | \\A | automatic shift+ |
 | \\b | backspace* |
-| \\n | newline, a carriage return and linefeed |
+| \\n | newline, a carriage return** |
 | \\l | linefeed |
-| \\r | carriage return |
+| \\r | carriage return** |
 | \\s | superscript* |
 | \\u | subscript* |
 | \\00 | 1 or 2 octal digits 0-7 |
 
 The characters marked with an asterisk, *, are only valid when character set 2 is in use.\
 If octal digits are given, the a character of that octal value is inserted.
+
+** - newline maps to carriage return because the Type 340 treats a cr as cr-lf internally.
 
 For the shift escapes, marked with a +, explicitly shifting disables automatic shifting
 until the command completes or until automatic shifting is enabled again.

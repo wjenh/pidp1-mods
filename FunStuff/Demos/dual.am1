@@ -7,20 +7,22 @@ Demo of Type 30 and 33 with the Type 340 and 342
 #include <TYPE340/type340defs.ah>
 
 #define YSTART 0d300
-#define YDELTA 0d50
+#define YDELTA 0d30
 #define XSTART -0d480
-#define SIZE 2
+#define SIZE33 1
+#define SIZE340 1
 #define AUTOSPACE 4
-#define BRIGHTNESS 3
+#define BRIGHTNESS33 3
+#define BRIGHTNESS340 5
 #define TXORIGIN 0
-#define TYORIGIN 750
+#define TYORIGIN 0d600
 
 100/
 strt,
     lio [prog       // these 2 lines are all the 340 needs and only once
     dla
 
-    law SIZE AUTOSPACE (BRIGHTNESS << 6)
+    law SIZE33 AUTOSPACE (BRIGHTNESS33 << 6)
     lia
     glf
 loop,
@@ -83,15 +85,16 @@ line4,
 # The entire Type 340 program.
 # Once started, it runs completely independently.
 prog,
-    charsets(2) scale(2) intensity(4) next(point)
+    charsets(2) scale(SIZE340) intensity(BRIGHTNESS340) next(point)
     y(TYORIGIN) next(point)
     x(TXORIGIN) next(character)
 
-    type340 " And I'm the Type 340 vector display\n\
- and the Type 342 symbol generator\n\
- also displaying characters\n\
- but with only 2 lines of PDP-1 assembler\n\
- and zero interaction with the program."
+    type340 "  And I'm the Type 340 vector display\n\
+  and the Type 342 symbol generator\n\
+  also drawing characters\n\
+  but with only 2 lines of PDP-1 assembler\n\
+  and zero interaction with the program.\n\
+  I'm also much faster!."
     next(subroutine)
     jump prog next(parameter)
 

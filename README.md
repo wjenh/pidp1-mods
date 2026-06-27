@@ -165,7 +165,7 @@ devices dealt with their specific details without modifiying the main processor 
 
 The new version provides a much cleaner interface and allows easy addition of new devices without having to decipher
 the internal logic. A good example is the complete removal of all of the display related logic from the main
-enulation and into separate independent code.
+emulation and into separate independent code.
 
 New code is commented and formatted, and documentation is provided for all of the new features.
 
@@ -183,7 +183,7 @@ Then, there are features that never existed. These are either for convenience, s
 file, or to interface with the modern world, such as the Data Communications System IOT that now understands
 sockets and ports.
 In all cases, the original core behavior remains as it was, new features are extensions, not replacements.
-For devices for which originnal diagnostic tapes have been found, IOTs have been confirmed to pass those tests.
+For devices for which original diagnostic tapes have been found, IOTs have been confirmed to pass those tests.
 
 Finally, there is new software like the **am1** assembler.
 This falls into the convenience class also.
@@ -194,7 +194,7 @@ The new assembler and related tools is much easier and safter to use, and increa
 Philosophically, this is not wrong.
 We don't use paper tape today.
 We generally don't write in assembler today.
-None of the original developers woudl have refused to use a better assembler because it wasn't the same one
+None of the original developers would have refused to use a better assembler because it wasn't the same one
 that originally existed.
 In fact, there were several other assemblers at the time, such as **concise** and **midas**.
 

@@ -1,0 +1,10 @@
+#ifndef REPORTRESULT_AH
+#define REPORTRESULT_AH
+/*
+ * Defines used with reportResult.ac
+ */
+
+#define REPORT_PASS 0
+#define REPORT_FAIL 1
+#define REPORT_SKIP 2
+#endif

@@ -321,12 +321,8 @@ pthread_t thread;
 
     sem_init(&waitSemaphore, 0, 0);
 
-    // The 340 emulator runs as a plain SCHED_OTHER thread. An earlier attempt to
-    // set sched_priority here was a no-op under SCHED_OTHER (priority must be 0,
-    // and explicit-inheritance was never enabled) and has been removed. Timing
-    // realism comes from the spin-based nanowait(), not from thread priority; the
-    // latency-sensitive socket flushing is the display worker thread's job
-    // (see display.c), so that is the thread given scheduling preference.
+    // The 340 emulator runs as a plain SCHED_OTHER thread.
+    // Timing/ realism comes from the spin-based nanowait().
     if( pthread_create(&thread, NULL, emulator, ctlP) )
     {
         iotCondLog(LOG_INIT,"thread create failed\n");
@@ -518,12 +514,7 @@ Status status;
 
         iotCondLog(LOG_CMD,"Got command %d\n", command);
 
-        // Light the high-speed-channel "in use" indicator for the duration of
-        // this display-list run. The per-word HSC THREADED path (which used to
-        // blink it on every getWord()) was removed (see getWord()); the flag is
-        // set once here and cleared after the run instead. It is a plain store
-        // into shared panel state that the main thread's periodic updatelights()
-        // picks up, so no panel call is made from this thread.
+        // Turn on the high-speed-channel panel light for the duration of this display-list run.
         ctlP->pdp1P->hsc = 1;
         while( !isPaused && (curState != STOPPED) )
         {
@@ -559,7 +550,7 @@ Status status;
             }
 
             // Delay time is accumulated to the end of a cycle, then done.
-            // Every command has a setup time in addition to the hsc request delay that hsc will enforce.
+            // Every command has a setup time in addition to the hsc request delay,
             if( curState == INITIALIZE )
             {
                 pendingDelay += SETUP_TIME;
@@ -1434,14 +1425,14 @@ bool sawHit;
         {
             if( curX >= (CHARWIDTH * dotSpacing) )
             {
-                curX -= CHARWIDTH * dotSpacing;     // non dotSpacing character
+                curX -= CHARWIDTH * dotSpacing;     // one dotSpacing character width
             }
         }
         else if( !twoCharsets && (shiftState != 0) )
         {
             if( curY <= 1023 - (CHARHEIGHT * dotSpacing) )
             {
-                curY += CHARHEIGHT * dotSpacing;     // non dotSpacing character
+                curY += CHARHEIGHT * dotSpacing;     // one dotSpacing character height
             }
         }
         break;
@@ -1630,25 +1621,14 @@ Word buffer[2];     // we only use 1, but leave space just to be sure
         ++curAddress;
     }
 
-    // Fetch the word with IMMEDIATE mode. IMMEDIATE copies the word
-    // synchronously inside HSCexecute() with no busy/wait state and, crucially,
-    // no scheduler interaction. The previous THREADED mode also copied the word
-    // synchronously, but then HSCwait() did a usleep() of the simulated
-    // memory-cycle time on this (the 340) thread for *every* display-list word.
-    // On Linux a few-microsecond usleep() is a full scheduler round-trip (tens
-    // to hundreds of microseconds, highly variable), so it punched a random hole
-    // into the point stream on every word fetch -- the dominant source of Type
-    // 340 display stutter. The same anti-rescheduling reasoning already drove the
-    // switch to spin-waits elsewhere in this file.
+    // Fetch the word with hsc IMMEDIATE mode.
+    // This copies the word synchronously with no busy/wait state and, crucially,
+    // no scheduler interaction.
+    // This prevents intermittent long delays that are visible as transient pauses.
     //
-    // The simulated 5us-per-word memory access time is not lost: it is added to
-    // pendingDelay below and enforced by the spin-based nanowait() at the end of
+    // The simulated 5us-per-word memory access time is handled by pendingDelay
+    // below and enforced by the spin-based nanowait() at the end of
     // the current command, preserving timing realism without a reschedule.
-    //
-    // Trade-off: IMMEDIATE does not drive the main emulator's cycle-steal
-    // accounting (the THREADED brkCount fakery), so the CPU no longer "loses"
-    // cycles to 340 DMA. That accounting was already approximate, and removing it
-    // is well worth eliminating the per-word stutter.
     request.mode = (HSC_MODE_FROMMEM | HSC_MODE_IMMEDIATE);
     request.count = 1;
     request.memBank = ((addr >> 12) & 017);
@@ -1735,7 +1715,7 @@ struct timespec tm;
     return(now);
 }
 
-// do a nanodelay() if <= SPIN_LIMIT, else a nanopause().
+// Eo a nanodelay() if <= SPIN_LIMIT, else a nanopause().
 // Always return 0.
 int
 nanowait(int ns)

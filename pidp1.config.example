@@ -146,12 +146,15 @@ newmemfile=true
 # This is primarily useful for seeing now much time is being used in a cycle.
 pidp1timing=off
 
-# Adjust the maximum brightness of the hardware panel lights if using the new panel driver.
+# Adjust the maximum brightness of the hardware panel lights.
 # This is a floating point number ranging from 0.0 to 1.0, off to max brightness.
-panelbrightness=1.0
+# Many people think full bright is too bright, adjust as you like.
+panelbrightness=0.8
 
 # Adjust the light turnon and turnoff times.
 # These are floating point numbers ranging from 0.0 to 1.0, SEE THE DOCUMENTATION.
+# These values are not correct to closely mimic the original ones, but it looks nice.
+# The proper ones are in the documentation.
 panelonalpha=0.45
 paneloffalpha=0.04
 

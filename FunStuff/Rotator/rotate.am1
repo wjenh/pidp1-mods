@@ -4,6 +4,8 @@ ROTATE THRU SIX PROGRAMS ON THE DRUM
 // It runs in the bank defined by 'bnkno'.
 // It immediately halts to allow the test switches to be set for the first 3 programs.
 // They are specified by 3 groups of 6 switches with the drum track in each group.
+// If the switches are all off, it uses the last loaded values since this program was loaded,
+// defaulting to 2,1,0 9,8,7 decimal. Be sure there are programs on the drum for those!
 // After continue, it halts again to allow setting the next 3 programs.
 // On continue, it then sets up interrupt block 0 in mem bank 0 and overwrites the loader at 7751
 // and configures the clock to interrupt every minute and return to this code.
@@ -37,12 +39,16 @@ bank bnkno
      0
      jmp isr
 
+var pgm=020100, pgm2=111007
+
 // We start at 100
 100/
     lem
     lsm
     hlt
-    lat         // the test switches say which 6 progs to run
+    lat         // the test switches say which 6 progs to run, 0 means no change
+    sza i
+    jmp resume
     dac pgm
     hlt
     lat

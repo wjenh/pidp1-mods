@@ -22,6 +22,8 @@ These changes are:
 - the ability to add new IOTs via shared objects that do not require any changes to emulator code.
 - control of features via a configuration file read at startup.
 - support for the ad1 debuggger in the emulator.
+- clean separation of IOTs and the core emulator
+- high speed channel support
 
 ## Instruction changes
 
@@ -61,6 +63,7 @@ possibly without some new functionality.
 
 These changes are:
 
+- replacements for p7sim, t30dpy and t30dpy3, supports SDL2 and SDL3, lighter weight, lightpen support.
 - p7sim additional command-line and config file settings for screen size, lightpen support.
 Note that lightpen support has been added to the main branch now, but without aperture mask settings.
 - lightpen support in the integrated gui, same note as above.
@@ -72,16 +75,16 @@ This should be interoperable with either branch, although it has not been tested
 These are changes that are not avaialble in the original branch.
 Some of these have been mentioned above.
 
-- emulator startup configuration file to set, enable, and disable many things.
-This is also used by p7sim if it is accessible on the machine running p7sim.
+- emulator startup configuration file to set, enable, and disable many things, used by several devices also.
+- complete replacement for the hardware panel driver, very configurable, lighter weight.
 - improved audio output.
 - extended PDP-1D instructions.
 - extended lightpen functions.
 - any dynamically-loaded IOT, which is all of the ones added in the mods branch.
 - support for the ad1 symbolic source-level debugger.
 - various standalone utilities generally for the Type 23 Parallel Drum.
-- all of the demo programs that are in assembler unless the IOTs they use are (compatibly )
-implemented in the original branch.
+- Type 23 drum, DCS, Type 340 display, Type 33 symbol generator, Type 62 and 64 line printers, BBN clock
+- all of the demo programs that use IOTs not in the original branch
 These also use am1.
 
 ## Additions that are independent of any branch

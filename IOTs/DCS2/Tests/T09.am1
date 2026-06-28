@@ -1,0 +1,264 @@
+T09: DCS2 FLEXO MODE TRANSLATION TEST
+/*
+ * T09.am1 -- Verify Concise<->ASCII translation in a live channel opened
+ *            with dcfflex.
+ *
+ * Harness required:
+ *   ./dcstestharness echo-server 2109
+ *   Start BEFORE this program.  The harness is a plain ASCII echo server;
+ *   DCS2 performs the Concise<->ASCII translation transparently.
+ *
+ * What the program does:
+ *   1. Opens channel 0 as client targeting 127.0.0.1:2109, with dcfflex set.
+ *   2. Waits for the TCP connection.
+ *   3. Sets send channel (ssb ch0).
+ *
+ *   T09-1: Send Concise 061 ('a') via tcb.
+ *          flexToAscii(061, shift=0) -> 'a' (0x61).
+ *          Echo server returns ASCII 'a' (0x61).
+ *          asciiToFlex('a', shift=0) -> 061.
+ *          rch should return Concise 061.
+ *
+ *   T09-2: Send Concise 001 (digit '1') via tcb.
+ *          flexToAscii(001, shift=0) -> '1' (0x31).
+ *          Echo server returns '1' (0x31).
+ *          asciiToFlex('1', shift=0) -> 001.
+ *          rch should return Concise 001.
+ *
+ *   T09-3: The harness sends ASCII LF (0x0A).
+ *          In getChar(), LF is explicitly mapped to flxnch (013) because
+ *          Concise has no linefeed character.
+ *          To trigger this, we briefly use the harness's echo path:
+ *          Send Concise 077 (the Concise carriage-return / newline) via tcb.
+ *          With dcfflex, 077 maps to ASCII '\n' (LF, 0x0A) via flexToAscii.
+ *          The echo server returns '\n' (0x0A).
+ *          asciiToFlex sees LF and returns flxnch (013) per the getChar() LF rule.
+ *          rch should return flxnch (013).
+ *
+ *   4. SCBCLEAR channel 0 and cleanup.
+ *
+ * Concise character mappings used:
+ *   061 = lower-case 'a'       (flexToAscii: 'a' = 0x61)
+ *   001 = digit '1'            (flexToAscii: '1' = 0x31)
+ *   077 = Concise newline/CR   (flexToAscii: '\n' = 0x0A; getChar LF rule returns 013)
+ *   013 = flxnch (no-char marker)
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T09.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define con_a   061     // Concise 'a' (lower case)
+#define con_1   001     // Concise '1'
+#define con_nl  077     // Concise newline (carriage return)
+#define flxnch  013     // no-character marker
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb
+
+// ---- open client channel 0 with dcfflex on port 2109 --------------------
+
+    lio [scbset ctl09]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// ---- wait for TCP connection ---------------------------------------------
+
+waitcon,
+    lio [0]
+    rcs
+    lai
+    and [dsfser dsfcls]
+    sza
+    jmp halterr
+    lio [0]
+    rcs
+    lai
+    and [dsfcon]
+    sza i
+    jmp waitcon
+
+// ---- select send channel ------------------------------------------------
+
+    cli
+    ssb
+
+// ---- T09-1: Concise 061 round-trip --------------------------------------
+//
+// tcb with dcfflex translates Concise 061 to ASCII 'a' before sending.
+// Echo server returns ASCII 'a'.
+// getChar() calls asciiToFlex('a', shift=0) -> Concise 061.
+
+    lio [con_a]
+    tcb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+    local
+pollrdy1,
+    lio [0]; rcs; lai
+    and [dsfcls dsfser]; sza; jmp halterr
+    lio [0]; rcs; lai
+    and [dsfrdy]; sza i; jmp pollrdy1
+    endloc
+
+    rch rchclr
+    lai
+    and [dserr]
+    sza
+    jmp t1_fail
+    lai
+    and [077]               // Concise code is in low 6 bits
+    sub [con_a]
+    sza
+    jmp t1_fail
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+t1_done,
+
+// ---- T09-2: Concise 001 round-trip --------------------------------------
+
+    lio [con_1]
+    tcb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+    local
+pollrdy2,
+    lio [0]; rcs; lai
+    and [dsfcls dsfser]; sza; jmp halterr
+    lio [0]; rcs; lai
+    and [dsfrdy]; sza i; jmp pollrdy2
+    endloc
+
+    rch rchclr
+    lai
+    and [dserr]
+    sza
+    jmp t2_fail
+    lai
+    and [077]
+    sub [con_1]
+    sza
+    jmp t2_fail
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// ---- T09-3: Concise newline -> LF echo -> flxnch ------------------------
+//
+// Concise 077 (newline) maps to ASCII '\n' (0x0A) via flexToAscii.
+// The echo server returns 0x0A.
+// getChar() sees '\n', maps it to flxnch (013) before returning to rch.
+
+    lio [con_nl]            // Concise 077 = newline
+    tcb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+    local
+pollrdy3,
+    lio [0]; rcs; lai
+    and [dsfcls dsfser]; sza; jmp halterr
+    lio [0]; rcs; lai
+    and [dsfrdy]; sza i; jmp pollrdy3
+    endloc
+
+    rch rchclr
+    lai
+    and [dserr]
+    sza
+    jmp t3_fail
+    lai
+    and [077]
+    sub [flxnch]            // should be 013
+    sza
+    jmp t3_fail
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+    jmp t3_done
+t3_fail,
+    lio [REPORT_FAIL]
+    lac [lbl3]
+    jda reportResult
+t3_done,
+
+// ---- cleanup and halt ----------------------------------------------------
+
+    cli
+    scb                     // SCBCLEAR channel 0
+
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    lio testFailCount
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- labels ---------------------------------------------------------------
+
+lbl1,
+    text "T09-1 a round trip"
+    013
+lbl2,
+    text "T09-2 1 round trip"
+    013
+lbl3,
+    text "T09-3 nl to flxnch"
+    013
+
+// ---- channel control block (client, channel 0, dcfflex, port 2109) ------
+//
+// word 0: dcfflex (0200000) | 0 (channel 0) = flags with flex mode enabled
+// word 1: port 2109
+// word 2: IP high = 32512 (127.0)
+// word 3: IP low  = 1 (0.1)
+
+octal
+ctl09,
+    dcfflex         // flex mode enabled, channel 0
+decimal
+    2109
+    32512
+    1
+octal
+
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

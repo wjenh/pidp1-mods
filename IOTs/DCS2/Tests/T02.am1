@@ -1,0 +1,246 @@
+T02: DCS2 SERVER MODE BASIC TEST
+/*
+ * T02.am1 -- End-to-end test of DCS2 server mode (listen, accept, receive,
+ *            echo back, close).
+ *
+ * Harness required:
+ *   ./dcstestharness send-verify-client 127.0.0.1 2102 41
+ *   Start the harness AFTER this program is running and waiting for a
+ *   connection (typewriter will print "T02 listening" when ready).
+ *   The harness sends 0x41 ('A'), expects to receive 0x41 back, exits 0.
+ *
+ * What the program does:
+ *   1. Opens channel 0 as a TCP server listening on port 2102.
+ *   2. Signals readiness by printing "T02 listening" on the typewriter.
+ *   3. Polls rcs until a client connects (dsfcon set).
+ *   4. Sets cur_chan to channel 0 via ROC (override current channel),
+ *      since no data has arrived yet and iotPoll may not have assigned
+ *      cur_chan automatically on the connect event.
+ *   5. Polls rcs until dsfrdy is set (byte from harness has arrived).
+ *   6. Reads the byte via rch rchclr; verifies it == 0x41 (0101 octal).
+ *   7. Echoes the byte back via tcc (transmit current channel).
+ *   8. SCBCLEAR closes channel 0.
+ *
+ * Tests:
+ *   T02-1  Channel reaches CONNECTED state after harness connects
+ *   T02-2  dsfrdy becomes set after harness sends a byte
+ *   T02-3  rch rchclr returns the expected byte (0101)
+ *   T02-4  tcc succeeds (IO = 0 after send)
+ *   T02-5  Channel closes cleanly after SCBCLEAR
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T02.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define byte_A  0101        // 65 decimal = 0x41 = 'A'
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb
+
+// ---- open server channel 0 ------------------------------------------------
+//
+// Control block at ctl02: dcfsrv (server mode), channel 0, port 2102.
+// assignPort() creates the listening socket and registers it with epoll.
+
+    lio [scbset ctl02]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr             // server open failed (port in use?)
+
+// ---- signal readiness on typewriter ---------------------------------------
+
+    lac [rdymsg]
+    jda typetext
+
+// ---- T02-1: wait for client connection ------------------------------------
+
+waitcon,
+    lio [0]
+    rcs
+    lai
+    and [dsfser]            // socket error?
+    sza
+    jmp t1_fail
+    lio [0]
+    rcs
+    lai
+    and [dsfcon]
+    sza i                   // skip if dsfcon != 0 (client has connected)
+    jmp waitcon
+
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+    jmp halterr
+t1_done,
+
+// ---- select channel 0 as current channel via ROC -------------------------
+//
+// After a new client connects to a server channel, iotPoll sets CNTL_RREADY
+// only when data arrives, not at connect time.  cur_chan may still be -1 if
+// no data has arrived yet.  ROC (override current channel) forces cur_chan to
+// channel 0 so that rcs and rch work without waiting for iotPoll to assign it.
+
+    lio [0]                 // IO = 0 (channel 0) -- ROC uses IO & 077 as chan#
+    roc
+    lai
+    and [dserr]
+    sza
+    jmp halterr             // roc should not fail on an open channel
+
+// ---- T02-2: poll until dsfrdy (byte from harness) -------------------------
+
+pollrdy,
+    lio [0]
+    rcs
+    lai
+    and [dsfcls dsfser]
+    sza
+    jmp t2_fail
+    lio [0]
+    rcs
+    lai
+    and [dsfrdy]
+    sza i
+    jmp pollrdy
+
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// ---- T02-3: read and verify the received byte ----------------------------
+
+    rch rchclr
+    lai
+    and [dserr]
+    sza
+    jmp t3_fail
+    lai
+    sub [byte_A]            // should be 0101
+    sza
+    jmp t3_fail
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+    jmp t3_done
+t3_fail,
+    lio [REPORT_FAIL]
+    lac [lbl3]
+    jda reportResult
+t3_done,
+
+// ---- T02-4: echo the byte back via tcc -----------------------------------
+//
+// IO still contains byte_A from the rch.  tcc sends IO & 0xFF to cur_chan.
+// On success IO is cleared to 0.
+
+    lio [byte_A]            // reload the echo byte (rch clears IO via rchclr)
+    tcc                     // transmit current channel
+    lai
+    sza                     // IO should be 0 on success
+    jmp t4_fail
+    lio [REPORT_PASS]
+    lac [lbl4]
+    jda reportResult
+    jmp t4_done
+t4_fail,
+    lio [REPORT_FAIL]
+    lac [lbl4]
+    jda reportResult
+t4_done,
+
+// ---- T02-5: SCBCLEAR and verify closed -----------------------------------
+
+    lio [ctl02]             // IO = addr of ctl02; SCBCLEAR reads chan# from there
+    scb
+
+    local
+waitclosed,
+    lio [0]
+    rcs
+    lai
+    and [dsfopn]
+    sza i                   // skip if still open
+    jmp %closed_ok
+    jmp waitclosed
+%closed_ok,
+    lio [REPORT_PASS]
+    lac [lbl5]
+    jda reportResult
+    endloc
+
+// ---- cleanup and halt ----------------------------------------------------
+
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    lio testFailCount
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- labels and strings --------------------------------------------------
+
+rdymsg,
+    text "T02 listening on 2102\n"
+    013
+
+lbl1,
+    text "T02-1 connected"
+    013
+lbl2,
+    text "T02-2 rdy flag"
+    013
+lbl3,
+    text "T02-3 recv byte"
+    013
+lbl4,
+    text "T02-4 tcc echo"
+    013
+lbl5,
+    text "T02-5 chan closed"
+    013
+
+// ---- channel control block (server mode, channel 0, port 2102) -----------
+//
+// word 0: dcfsrv = 0100 octal = server mode, channel 0 in bits 0-5 = 0
+// word 1: port = 2102
+
+octal
+ctl02,
+    dcfsrv          // server mode, channel 0
+decimal
+    2102
+octal
+
+#include <TYO/typetext.ac>
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

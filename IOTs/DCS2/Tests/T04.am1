@@ -1,0 +1,225 @@
+T04: DCS2 RRC AND ROC TEST
+/*
+ * T04.am1 -- Verify RRC (read current channel) and ROC (override current
+ *            channel) against two simultaneously open client channels.
+ *
+ * Harness required:
+ *   ./dcstestharness two-echo-servers 2104 2144
+ *   Start BEFORE this program.
+ *
+ * What the program does:
+ *   1. Opens channel 0 as client on port 2104 and channel 1 on port 2144.
+ *   2. Waits for both to connect.
+ *   3. Sends one byte on channel 0 (via ssb+tcb) to make ch0 the likely
+ *      first "ready" channel when the echo arrives.
+ *   4. Waits for the echo to arrive on channel 0 (dsfrdy).
+ *
+ *   T04-1: RRC returns channel 0 (iotPoll assigned it when dsfrdy fired).
+ *
+ *   5. Issues ROC with channel 1: forces cur_chan = 1.
+ *
+ *   T04-2: RRC now returns channel 1.
+ *
+ *   6. Read and discard the ch0 echo via direct ROC+rch before closing.
+ *      Send a byte on ch1 and echo-discard it to drain ch1 as well.
+ *   7. Close both channels.
+ *
+ * Note on cur_chan assignment:
+ *   iotPoll() sets cur_chan when EPOLLIN fires on a connected channel.
+ *   Because channel 0's echo arrives before channel 1 has any data,
+ *   iotPoll will assign cur_chan = 0 with cur_chan_locked = true.
+ *   RRC then reads cur_chan = 0.
+ *   ROC overrides cur_chan to 1 regardless of the lock state.
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T04.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define byte_A  0101    // test byte for channel 0
+#define byte_B  0102    // test byte for channel 1
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb
+
+// ---- open channel 0 (port 2104) and channel 1 (port 2144) ---------------
+
+    lio [scbset ctl04_0]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+    lio [scbset ctl04_1]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// ---- wait for both channels to connect -----------------------------------
+
+    local
+wc0,
+    lio [0]; rcs; lai; and [dsfser dsfcls]; sza; jmp halterr
+    lio [0]; rcs; lai; and [dsfcon]; sza i; jmp wc0
+wc1,
+    lio [1]; rcs; lai; and [dsfser dsfcls]; sza; jmp halterr
+    lio [1]; rcs; lai; and [dsfcon]; sza i; jmp wc1
+    endloc
+
+// ---- send byte_A to channel 0 -------------------------------------------
+//
+// This will trigger an echo from the harness.  iotPoll will set dsfrdy
+// on channel 0 and assign cur_chan = 0 when the echo arrives.
+
+    lio [0]
+    ssb
+    lio [byte_A]
+    tcb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// ---- wait for echo on channel 0 -----------------------------------------
+
+    local
+pollrdy,
+    lio [0]; rcs; lai; and [dsfcls dsfser]; sza; jmp halterr
+    lio [0]; rcs; lai; and [dsfrdy]; sza i; jmp pollrdy
+    endloc
+
+// ---- T04-1: RRC should return channel 0 ---------------------------------
+
+    rrc                     // IO = cur_chan or IO_ERR_NOCURRENT
+    lai
+    dac rrc_val1            // save the returned channel number
+    and [dserr]
+    sza                     // skip if no error (AC = 0 means dserr not set)
+    jmp t1_fail             // IO_ERR_NOCURRENT -- no current channel
+    lac rrc_val1
+    sub [0]                 // should be channel 0
+    sza
+    jmp t1_fail
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+t1_done,
+
+// ---- ROC: force cur_chan = 1 ---------------------------------------------
+
+    lio [1]                 // IO = 1 = channel 1
+    roc
+    lai
+    and [dserr]
+    sza
+    jmp halterr             // roc on open channel should never fail
+
+// ---- T04-2: RRC should now return channel 1 -----------------------------
+
+    rrc
+    lai
+    dac rrc_val2
+    and [dserr]
+    sza                     // skip if no error (AC = 0 means dserr not set)
+    jmp t2_fail
+    lac rrc_val2
+    sub [1]                 // should now be channel 1
+    sza
+    jmp t2_fail
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// ---- drain pending echo on ch0 and close both channels ------------------
+//
+// Switch back to ch0 via ROC, drain the echo, then close.
+
+    lio [0]
+    roc
+    rch rchclr              // discard the echo from ch0
+
+    lio [1]
+    ssb
+    lio [byte_B]
+    tcb                     // send something to ch1 to drain it cleanly
+
+    local
+drainb,
+    lio [1]; rcs; lai; and [dsfcls dsfser]; sza; jmp %done_drain
+    lio [1]; rcs; lai; and [dsfrdy]; sza i; jmp drainb
+    lio [1]; roc
+    rch rchclr
+%done_drain,
+    endloc
+
+    // Close both
+    lio [ctl04_0]           // channel 0: addr of ctl04_0; SCBCLEAR reads chan# from there
+    scb                     // SCBCLEAR
+    lio [ctl04_1]           // channel 1: addr of ctl04_1
+    scb                     // SCBCLEAR channel 1
+
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    lio testFailCount
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- scratch storage and labels ------------------------------------------
+
+rrc_val1, 0
+rrc_val2, 0
+
+lbl1,
+    text "T04-1 rrc ch0"
+    013
+lbl2,
+    text "T04-2 roc->rrc ch1"
+    013
+
+// ---- channel control blocks ----------------------------------------------
+
+decimal
+ctl04_0,
+    0       // channel 0, no flags
+    2104
+    32512
+    1
+ctl04_1,
+    1       // channel 1, no flags
+    2144
+    32512
+    1
+octal
+
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

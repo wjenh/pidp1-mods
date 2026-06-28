@@ -1,0 +1,300 @@
+T11: DCS2 SBS INTERRUPT ON RECEIVE TEST
+/*
+ * T11.am1 -- Verify that the DCS2 IOR interrupt path fires when a byte
+ *            arrives on a channel configured with dcfie + dcfior, and that
+ *            the interrupt handler can identify the channel via RIC and
+ *            read the byte via RCH inside the SBS handler.
+ *
+ * Harness required:
+ *   ./dcstestharness interrupt-client 127.0.0.1 2111
+ *   Start AFTER program prints "T11 listening on 2111".
+ *   The harness connects, sends 0x41 ('A'), then waits for the server to
+ *   close the connection before exiting.
+ *
+ * What the program does:
+ *   1. Installs a JMP to irqhandler at location 3 (the 4-channel SBS entry).
+ *   2. Opens channel 0 as server on port 2111, with dcfie + dcfior + SBS
+ *      channel 1 (sbs_chan=1 -> bit 0 of b3).
+ *   3. Prints "T11 listening on 2111" to signal harness start.
+ *   4. Enables SBS via ESM.
+ *   5. Spins in a wait loop until the SBS handler sets int_fired.
+ *
+ * 4-channel SBS mechanics (this emulator, non-sbs16 mode):
+ *   initiateBreak(chan) calls req(pdp, chan) which sets b2 = 1 (always,
+ *   regardless of chan in non-sbs16 mode).  When the next instruction
+ *   completes and SBS_BREAK_REQ is true, the break cycle runs:
+ *     bc=1: saves AC to location 0; PC word (ov1|exd|PC) to location 1.
+ *            PC is cleared and set to MA (= 0 from clr_ma).  pc_inc -> MA=1.
+ *     bc=2: saves AC (= PC word) to location 1.  pc_inc -> MA=2.
+ *     bc=3: saves IO to location 2.  pc_inc -> PC=3.
+ *   CPU resumes at location 3 -- the entry point of the handler.
+ *
+ *   Save locations:
+ *     0: original AC (from the interrupted instruction)
+ *     1: PC word = ov1<<17 | exd<<16 | PC (return address)
+ *     2: IO value at interrupt time
+ *     3: first instruction of handler (we write "jmp irqhandler" here)
+ *
+ * SBS return:
+ *   "jmp i 1" -- indirect JMP through location 1 (= saved return address).
+ *   In the defer() cycle, "jmp i 1" triggers the DEBREAK check because
+ *   the instruction's address field (MB & 07777) = 1.  DEBREAK clears b3
+ *   and b4 (releases the held break) and restores ov1/exd from location 1.
+ *
+ * SBS handler actions:
+ *   a. RIC -> IO = last_intr_chan; save to ric_result (should be 0).
+ *   b. ROC IO=0: forces cur_chan = 0.
+ *   c. RCS IO=0: reads channel 0 status; save to rcs_result.
+ *   d. RCH rchclr: reads the byte; save to rch_result.
+ *   e. RCI IO=0: clears the interrupt.
+ *   f. IDX int_fired: atomically increments int_fired (0 -> 1).
+ *   g. JMP I 1: DEBREAK return to interrupted address.
+ *
+ * Tests (evaluated after int_fired is set):
+ *   T11-1  RIC returned channel 0 (ric_result == 0)
+ *   T11-2  RCS showed dsfior set in rcs_result
+ *   T11-3  RCH returned 0101 (0x41 = 'A')
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T11.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define byte_A  0101    // 0x41 = 'A'
+
+// Control block word 0: dcfie | dcfior | dcfsrv | SBS bits.
+// sbs_chan = (word & REQ_SBS_MSK) >> REQ_SBS_SHIFT = (word & 003600) >> 7.
+// We use sbs_chan = 1 (bit 0 in b3) -> bits 7-10 of word = 1 << 7 = 0200 octal.
+// In non-sbs16 mode all channels route to the same entry; sbs_chan just
+// enables the break and can be any non-zero value < 16.
+
+#define sbs_bits    (dcfie dcfior dcfsrv 0200)
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb
+
+// ---- install SBS entry point at location 3 --------------------------------
+//
+// The 4-channel SBS handler starts at location 3 after the break saves.
+// We write "jmp irqhandler" to location 3 before enabling SBS.
+// [jmp irqhandler] evaluates to the 18-bit instruction word for that jump.
+
+    lac [jmp irqhandler]
+    dac 3
+
+// ---- clear result storage and fired flag ----------------------------------
+
+    dzm ric_result
+    dzm rcs_result
+    dzm rch_result
+    dzm int_fired
+
+// ---- open server channel 0 (port 2111, interrupts enabled) ---------------
+
+    lio [scbset ctl11]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// ---- clear any stale SBS break state before enabling SBS ------------------
+//
+// pwrclr() randomises pdp->b2 at emulator start.  In non-sbs16 mode,
+// clr_sbs() (CBS instruction) clears b2/b3/b4.  sbs_sync() at TP4 does
+// b3 |= b2 every cycle, so a random b2=1 repopulates b3 immediately after
+// CBS if b2 is not also cleared.
+//
+// lsm; cbs here ensures all break state is zeroed before esm enables SBS,
+// preventing a spurious break from firing on the first ESM cycle.
+
+    lsm                         // ensure SBS disabled (safety; scbrst doesn't touch CPU SBS)
+    cbs                         // clear b2, b3, b4 (CBS clears all break state)
+
+// ---- signal readiness -------------------------------------------------------
+
+    lac [rdymsg]
+    jda typetext
+
+// ---- enable SBS and spin until handler fires --------------------------------
+//
+// ESM (Enter Sequence-break Mode): enables the SBS -- sets sbm=1.
+// The spin loop executes instructions continuously; when iotPoll() calls
+// initiateBreak(sbs_chan), the NEXT instruction to complete will trigger
+// bc=1 and the break sequence begins.
+//
+// After the handler fires, sets int_fired=1, and returns via "jmp i 1",
+// the CPU resumes in the spin loop.  The "lac int_fired" reloads AC = 1,
+// "sza i" (skip-if-nonzero) skips the jmp, and execution falls through.
+
+    esm                         // ESM = Enter Sequence-break Mode (enable SBS)
+
+wait_loop,
+    lac int_fired               // AC = 0 (or 1 after handler fires)
+    sza i                       // skip if AC != 0 (int_fired != 0)
+    jmp wait_loop               // not fired yet; keep spinning
+
+// ---- SBS has fired, handler has run -------------------------------------
+
+    lsm                         // LSM = Leave Sequence-break Mode (disable SBS)
+    cbs                         // CBS = Clear all pending/held sequence breaks
+
+// ---- T11-1: RIC returned channel 0 (ric_result == 0) --------------------
+
+    lac ric_result
+    sza                         // skip if ric_result == 0 (channel 0)
+    jmp t1_fail
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+t1_done,
+
+// ---- T11-2: RCS showed dsfior set ----------------------------------------
+
+    lac rcs_result
+    and [dsfior]
+    sza i                       // skip if dsfior was set
+    jmp t2_fail
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// ---- T11-3: received byte was 0x41 (0101 octal) -------------------------
+
+    lac rch_result
+    sub [byte_A]
+    sza
+    jmp t3_fail
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+    jmp t3_done
+t3_fail,
+    lio [REPORT_FAIL]
+    lac [lbl3]
+    jda reportResult
+t3_done,
+
+// ---- close channel and clean up -------------------------------------------
+
+    lio [ctl11]
+    scb                         // SCBCLEAR channel 0
+
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    lio testFailCount
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- SBS level-3 interrupt handler ----------------------------------------
+//
+// Reached via the "jmp irqhandler" we installed at location 3.
+//
+// At entry:
+//   AC = PC word (ov1<<17 | exd<<16 | PC of return address)
+//   Location 0: original AC from interrupted instruction
+//   Location 1: same PC word (return address for "jmp i 1")
+//   Location 2: IO at time of interrupt
+//
+// We do NOT need to preserve AC on entry -- the main code immediately
+// overwrites AC with "lac int_fired" after returning.
+
+irqhandler,
+    // a. RIC: read the interrupting channel number
+    ric                         // IO = last_intr_chan (0 for our channel)
+    lai
+    dac ric_result              // save for T11-1 check
+
+    // b. ROC: explicitly set cur_chan = 0
+    lio [0]
+    roc                         // override: cur_chan = 0
+
+    // c. RCS: read channel 0 status (should show dsfior)
+    lio [0]
+    rcs                         // IO = channel 0 status word
+    lai
+    dac rcs_result              // save for T11-2 check
+
+    // d. RCH: read the received byte
+    rch rchclr                  // IO = byte; rchclr clears dsfrdy
+    lai
+    dac rch_result              // save for T11-3 check
+
+    // e. RCI: clear the interrupt flag for channel 0
+    lio [0]
+    rci
+
+    // f. Set the fired flag so the main code exits its spin loop
+    idx int_fired               // mem[int_fired]++ (0 -> 1); AC = 1
+
+    // g. SBS DEBREAK return:
+    //    "jmp i 1" has address field = 1, which triggers the DEBREAK check
+    //    in defer() (MB & 07777 == 1).  DEBREAK clears b3 and b4 (releases
+    //    the held sequence-break) and restores ov1/exd from location 1.
+    //    The indirect target (value at location 1) is the return PC.
+    jmp i 1
+
+// ---- result storage (set by irqhandler) -----------------------------------
+
+ric_result,     0
+rcs_result,     0
+rch_result,     0
+int_fired,      0
+
+// ---- labels ---------------------------------------------------------------
+
+rdymsg,
+    text "T11 listening on 2111"
+    013
+
+lbl1,
+    text "T11-1 ric=ch0"
+    013
+lbl2,
+    text "T11-2 rcs dsfior"
+    013
+lbl3,
+    text "T11-3 byte 0x41"
+    013
+
+// ---- channel control block (server, channel 0, port 2111) ----------------
+//
+// word 0: dcfie | dcfior | dcfsrv | 0200 (SBS channel 1 encoded in bits 7-10)
+// word 1: port 2111 (decimal)
+
+ctl11,
+    sbs_bits                    // dcfie | dcfior | dcfsrv | 0200
+decimal
+    2111
+octal
+
+#include <TYO/typetext.ac>
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

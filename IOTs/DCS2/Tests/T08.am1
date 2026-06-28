@@ -1,0 +1,196 @@
+T08: DCS2 RWE WAIT-FOR-EVENT TEST
+/*
+ * T08.am1 -- Verify that RWE (wait for any event) blocks the CPU until
+ *            a socket event fires on any channel, then releases.
+ *
+ * Harness required:
+ *   ./dcstestharness delay-connect 127.0.0.1 2108 300
+ *   Start harness AFTER the program prints "T08 rwe wait".
+ *   The harness sleeps 300 ms, connects, holds 500 ms, then closes.
+ *
+ * What the program does:
+ *   1. Opens channel 0 as server on port 2108.
+ *   2. Prints "T08 rwe wait" to signal harness start.
+ *   3. Issues RWE (no modifier) followed by IOH.
+ *      RWE arms need_general_completion (nac=1 because B6 is inherent in
+ *      cmd 051) and completes immediately without blocking.
+ *      IOH (730000) then sets ioh=1 and spins until iotPoll fires IOCOMPLETE
+ *      (ios=1), which clears ioh at TP9 and lets IOH complete.
+ *   4. After waking from IOH, checks dsfcon is set (T08-1).
+ *   5. Verifies dsfopn and dsfcon together in RCS (T08-2).
+ *   6. Waits for the harness to close, verifies dsfcls (T08-3).
+ *   7. SCBCLEAR and cleanup.
+ *
+ * Note on RWE semantics:
+ *   RWE command code 051 has bit 5 of the ch field set, which coincides with
+ *   B6 (004000) in MB.  So B6 is inherently set for every RWE instruction,
+ *   regardless of any modifier.  Adding the i modifier (B5 = 010000) puts
+ *   BOTH B5 and B6 in MB, giving nac=0 and completion=0 -- need_general_
+ *   completion is never set, and the CPU hangs forever on ioh.
+ *
+ *   The correct blocking pattern for RWE is:
+ *     rwe    -- B6 inherent, B5=0 -> nac=1 -> completion=1 in iotHandler
+ *              -> need_general_completion=true; instruction completes (no ioh)
+ *     ioh    -- 730000: sets ioh=1; spins until iotPoll fires IOCOMPLETE
+ *
+ *   This mirrors the "tyo C; ioh" async-overlap pattern in the typewriter.
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T08.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb
+
+// ---- open server channel 0 on port 2108 ----------------------------------
+
+    lio [scbset ctl08]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// ---- signal readiness and issue RWE W ------------------------------------
+//
+// The typetext call must complete BEFORE rwe, since the following ioh will
+// block the CPU until the harness connects (~300 ms later).
+
+    lac [rwemsg]
+    jda typetext
+
+// RWE (no modifier): B6 is inherent in cmd 051, so nac=1 and completion=1
+// in iotHandler on both the TP7 and TP10 calls.  iotHandler sets
+// need_general_completion=true.  The instruction itself does NOT set ioh
+// and completes immediately.
+//
+// IOH (730000): sets ioh=1, spinning until iotPoll fires IOCOMPLETE.
+// iotPoll fires IOCOMPLETE when any epoll fd has an event AND
+// need_general_completion is true.  IOCOMPLETE sets ios=1; TP9 clears ioh.
+//
+// If the socket event arrives between rwe and ioh (iotPoll ran in the gap),
+// ios is already 1 when ioh starts and ioh completes immediately.
+
+    rwe                 // arm need_general_completion (nac=1 from inherent B6 in cmd 051)
+    ioh                 // 730000: block CPU until iotPoll fires IOCOMPLETE
+
+// ---- CPU resumes here after IOH unblocks --------------------------------
+
+// T08-1: verify dsfcon is set immediately after waking
+
+    lio [0]
+    rcs
+    lai
+    and [dsfcon]
+    sza i                   // skip if dsfcon != 0 (connected -- expected)
+    jmp t1_fail
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+t1_done,
+
+// T08-2: verify dsfopn also set (channel is open and connected)
+
+    lio [0]
+    rcs
+    lai
+    dac saved_rcs
+    and [dsfopn]
+    sza i
+    jmp t2_fail
+    lac saved_rcs
+    and [dsfcon]
+    sza i
+    jmp t2_fail
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// T08-3: poll for dsfcls (harness holds 500 ms then closes)
+
+waitcls,
+    lio [0]
+    rcs
+    lai
+    and [dsfser]
+    sza
+    jmp halterr
+    lio [0]
+    rcs
+    lai
+    and [dsfcls]
+    sza i
+    jmp waitcls
+
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+
+// ---- cleanup and halt ----------------------------------------------------
+
+    lio [ctl08]
+    scb                     // SCBCLEAR channel 0
+
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    lio testFailCount
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- scratch storage and labels ------------------------------------------
+
+saved_rcs, 0
+
+rwemsg,
+    text "T08 rwe wait\n"
+    013
+
+lbl1,
+    text "T08-1 dsfcon set"
+    013
+lbl2,
+    text "T08-2 open+conn"
+    013
+lbl3,
+    text "T08-3 dsfcls set"
+    013
+
+// ---- channel control block (server, channel 0, port 2108) ----------------
+
+ctl08,
+    dcfsrv
+decimal
+    2108
+octal
+
+#include <TYO/typetext.ac>
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

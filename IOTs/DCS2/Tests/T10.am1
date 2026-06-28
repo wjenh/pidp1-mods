@@ -1,0 +1,281 @@
+T10: DCS2 RXL STANDALONE TRANSLATE TEST -- no harness required
+/*
+ * T10.am1 -- Verify the RXL IOT (standalone Concise<->ASCII translation).
+ *
+ * No harness or network connection is needed.  RXL translates a character
+ * code in IO and returns the result in IO; no channel needs to be open.
+ *
+ * RXL IO register layout (device 22, sub-command RXL = 5422):
+ *   bit 17 (0400000) = RXL_FLEX: direction flag
+ *                      1 = Concise->ASCII (flex to ascii)
+ *                      0 = ASCII->Concise (ascii to flex)
+ *   bit  8 (0000400) = RXL_SHIFTED: shift state on entry (1 = upper case)
+ *   bit  9 (0001000) = RXL_CHANGE: set by RXL if shift state changed
+ *   bits 0-5         = 6-bit character code (Concise input or ASCII output)
+ *   bits 0-7         = 8-bit ASCII (when direction = ASCII->Concise, input
+ *                      is the 8-bit ASCII value in bits 0-7; output Concise
+ *                      code is in bits 0-5)
+ *
+ * Tests:
+ *   T10-1  ASCII->Concise: 'a' (0x61 = 0141 octal) -> Concise 061, no shift
+ *   T10-2  ASCII->Concise: '1' (0x31 = 061 octal)  -> Concise 001, no shift
+ *   T10-3  Concise->ASCII: Concise 061 (lower 'a') -> ASCII 0x61 = 0141 octal
+ *   T10-4  Concise->ASCII: Concise 001 (digit '1') -> ASCII 0x31 = 061 octal
+ *   T10-5  ASCII->Concise: 'A' (0x41 = 0101 octal) requires upper shift.
+ *          RXL returns CSHIFT (074) and RXL_CHANGE; call again to get 061.
+ *   T10-6  ASCII->Concise: unmappable character (0x01 = SOH) returns flxnch (013).
+ *   T10-7  Concise->ASCII: Concise 072 (CUNSHIFT code) returns NONE so RXL
+ *          returns ascnch (077) and changes shift state from upper to lower.
+ *
+ * Concise character mapping (lower case, unshifted):
+ *   001 = '1', 002 = '2', ..., 011 = '9', 020 = '0'
+ *   061 = 'a', 062 = 'b', ..., 070 = 'h', 071 = 'i'
+ *   072 = LCS (lower-case shift), 074 = UCS (upper-case shift)
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T10.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+// ---- convenience defines --------------------------------------------------
+// rxlfta, rxlucs, rxlchg are defined in dcs2defs.ah (included above).
+
+// Concise codes for test characters
+#define con_a   061         // lower-case 'a'
+#define con_1   001         // digit '1'
+#define con_lcs 072         // CUNSHIFT (lower-case shift code)
+#define con_ucs 074         // CSHIFT (upper-case shift code)
+
+// ASCII codes for test characters
+#define ascii_a 0141        // 'a' = 0x61
+#define ascii_1 061         // '1' = 0x31
+#define ascii_A 0101        // 'A' = 0x41
+#define ascii_soh 001       // SOH = 0x01 (no Concise equivalent)
+
+// Expected results
+#define flxnch  013         // "no character" marker returned for unmappable ASCII
+#define ascnch  077         // returned by RXL when a shift/unshift code is seen
+
+// ---- helper macro: test IO value after RXL --------------------------------
+//
+// verifyRxl checks that IO bits 0-7 match the expected value.
+// (We mask 0377 to ignore the upper bits which carry shift/change flags.)
+//
+// Arguments:
+//   expected -- the expected value in IO[0-7] after RXL
+//   label    -- am1 [constant] address of the result label
+
+#define verifyRxl(expected, label) \
+    local; \
+    lai; \
+    and [0377]; \
+    sub [expected]; \
+    sza; \
+    jmp %fail; \
+    lio [REPORT_PASS]; \
+    lac [label]; \
+    jda reportResult; \
+    jmp %done; \
+%fail, \
+    lio [REPORT_FAIL]; \
+    lac [label]; \
+    jda reportResult; \
+%done, \
+    endloc
+
+// ---- program origin -------------------------------------------------------
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    // Initialize DCS2 and immediately reset (any IOT triggers init).
+    // RXL does not need any open channel but DCS2 must be initialized.
+    lio [scbrst]
+    scb
+
+// ---- T10-1: ASCII->Concise, 'a' -> 061 (no shift change) ----------------
+//
+// IO = 0 | ascii_a : direction=0 (ascii->flex), no shift, char = 'a' (0141)
+// Expected: IO[0-5] = 061, RXL_CHANGE not set, shift stays 0.
+
+    lio [ascii_a]           // IO = 0141 (ASCII 'a', no shift bits set)
+    rxl                     // translate ASCII->Concise
+
+    verifyRxl(con_a, lbl1)
+
+// ---- T10-2: ASCII->Concise, '1' -> 001 (no shift change) ----------------
+
+    lio [ascii_1]           // IO = 061 (ASCII '1')
+    rxl
+
+    verifyRxl(con_1, lbl2)
+
+// ---- T10-3: Concise->ASCII, Concise 061 -> 'a' (0141 octal) -------------
+//
+// IO = rxlfta | 0 | con_a : direction=1 (flex->ascii), no shift, code = 061.
+// Expected: IO[0-7] = 0141 (ASCII 'a').
+
+    lio [rxlfta con_a]      // IO = 0400000 | 061 = flex->ascii, code 061
+    rxl
+
+    verifyRxl(ascii_a, lbl3)
+
+// ---- T10-4: Concise->ASCII, Concise 001 -> '1' (061 octal) --------------
+
+    lio [rxlfta con_1]
+    rxl
+
+    verifyRxl(ascii_1, lbl4)
+
+// ---- T10-5: ASCII->Concise, 'A' requires UCS shift -----------------------
+//
+// 'A' (0101) maps to shifted Concise 061.  RXL detects we are not in upper
+// case (shift=0 on entry) and returns CSHIFT (074) plus RXL_CHANGE instead
+// of the character.
+//
+// Step 1: IO = 0 | ascii_A (no shift on entry).
+//   Expected: IO[0-5] = con_ucs (074), RXL_CHANGE set (001000).
+// Step 2: call RXL again with shift=1 (rxlucs) and 'A'.
+//   Expected: IO[0-5] = con_a (061), RXL_CHANGE NOT set.
+
+    // Step 5a: first call, expect CSHIFT returned (shift change needed)
+    lio [ascii_A]           // IO = 0101 (ASCII 'A', shift=0 on entry)
+    rxl
+
+    // Verify we got CSHIFT code (074)
+    local
+    lai
+    and [077]               // isolate Concise code
+    sub [con_ucs]           // should be 074
+    sza
+    jmp %fail5a
+    // Also verify RXL_CHANGE is set
+    lai
+    and [rxlchg]
+    sza i                   // skip if rxlchg != 0 (it IS set -- expected)
+    jmp %fail5a
+    lio [REPORT_PASS]
+    lac [lbl5a]
+    jda reportResult
+    jmp %t5b
+%fail5a,
+    lio [REPORT_FAIL]
+    lac [lbl5a]
+    jda reportResult
+%t5b,
+    endloc
+
+    // Step 5b: second call with shift=1 (rxlucs), expect Concise 061
+    lio [rxlucs ascii_A]    // IO = 0000400 | 0101 = shift=1, char='A'
+    rxl
+
+    local
+    lai
+    and [077]
+    sub [con_a]             // should be 061 (upper case 'A' maps to Concise 061)
+    sza
+    jmp %fail5b
+    // Also verify RXL_CHANGE is NOT set (shift was already upper)
+    lai
+    and [rxlchg]
+    sza                     // skip if rxlchg == 0 (not set -- expected)
+    jmp %fail5b
+    lio [REPORT_PASS]
+    lac [lbl5b]
+    jda reportResult
+    jmp %t5b_done
+%fail5b,
+    lio [REPORT_FAIL]
+    lac [lbl5b]
+    jda reportResult
+%t5b_done,
+    endloc
+
+// ---- T10-6: ASCII->Concise, unmappable char SOH (0x01) -> flxnch (013) --
+//
+// ascii2concise[0x01] = NONE.  IOT_22.c returns FLEX_NCHAR = flxnch = 013.
+
+    lio [ascii_soh]         // IO = 001 (SOH, no Concise equivalent)
+    rxl
+
+    verifyRxl(flxnch, lbl6)
+
+// ---- T10-7: Concise->ASCII, Concise 072 (CUNSHIFT) -> ascnch (077) ------
+//
+// Concise 072 = CUNSHIFT.  flexToAscii() returns NONE for shift codes (they
+// change shift state but produce no character), so IOT_22.c returns ascnch.
+// Shift state changes: on entry shift=1 (rxlucs), on exit shift=0.
+// RXL_CHANGE should be set.
+
+    lio [rxlfta rxlucs con_lcs]  // IO = 0400000|0000400|072 = flex->ascii, shift=1, code=072
+    rxl
+
+    // Verify ascnch (077) returned
+    local
+    lai
+    and [0377]
+    sub [ascnch]
+    sza
+    jmp %fail7
+    // Verify RXL_CHANGE set (shift state flipped)
+    lai
+    and [rxlchg]
+    sza i
+    jmp %fail7
+    lio [REPORT_PASS]
+    lac [lbl7]
+    jda reportResult
+    jmp %t7done
+%fail7,
+    lio [REPORT_FAIL]
+    lac [lbl7]
+    jda reportResult
+%t7done,
+    endloc
+
+// ---- cleanup and halt ----------------------------------------------------
+
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    lio testFailCount
+    hlt
+    jmp begin
+
+// ---- test labels ---------------------------------------------------------
+
+lbl1,
+    text "T10-1 a->flex"
+    013
+lbl2,
+    text "T10-2 1->flex"
+    013
+lbl3,
+    text "T10-3 flex->a"
+    013
+lbl4,
+    text "T10-4 flex->1"
+    013
+lbl5a,
+    text "T10-5a ucs shift"
+    013
+lbl5b,
+    text "T10-5b after shift"
+    013
+lbl6,
+    text "T10-6 unmappable"
+    013
+lbl7,
+    text "T10-7 cunshift"
+    013
+
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

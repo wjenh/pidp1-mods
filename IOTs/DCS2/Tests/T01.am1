@@ -1,0 +1,295 @@
+T01: DCS2 CLIENT MODE BASIC TEST
+/*
+ * T01.am1 -- End-to-end test of DCS2 client mode (TCP connect, send, receive,
+ *            close).
+ *
+ * Harness required:
+ *   ./dcstestharness echo-server 2101
+ *   Start the harness BEFORE loading/running this program.
+ *
+ * What the program does:
+ *   1. Opens channel 0 as a TCP client targeting 127.0.0.1:2101.
+ *   2. Polls rcs until the TCP connection is established (dsfcon set).
+ *   3. Selects channel 0 as the send channel (ssb).
+ *   4. Sends one test byte (0101 octal = 65 = 'A') via tcb.
+ *   5. Polls rcs until a received character is available (dsfrdy set).
+ *   6. Reads the echoed byte via rch rchclr.
+ *   7. Verifies the received byte == 0101 (the echo test).
+ *   8. Sends a second test byte (0102 = 'B') and verifies its echo.
+ *   9. Issues SCBCLEAR on channel 0 (closes the TCP connection).
+ *  10. Polls rcs until dsfopn clears (channel is fully closed).
+ *
+ * Tests:
+ *   T01-1  Channel reaches CONNECTED state after SCBOPEN
+ *   T01-2  tcb succeeds and returns IO = 0
+ *   T01-3  dsfrdy becomes set after byte is in transit
+ *   T01-4  rch rchclr returns the echoed byte (0101)
+ *   T01-5  Second send/receive round trip (0102 = 'B')
+ *   T01-6  Channel reaches CLOSED state after SCBCLEAR
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T01.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+// ---- test byte values ----------------------------------------------------
+
+#define byte_A  0101        // 65 decimal = ASCII 'A'; used in round-trip 1
+#define byte_B  0102        // 66 decimal = ASCII 'B'; used in round-trip 2
+
+// ---- program origin -------------------------------------------------------
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb                     // init DCS2 then SCBRESET for clean slate
+
+// ---- open client channel 0 ------------------------------------------------
+//
+// Control block at ctl01 (4 words): flags=0, channel=0, port=2101,
+// IP high=32512 (127.0), IP low=1 (0.1).
+// scbset (010000) encodes cmd=SCBOPEN in IO bits 12-14.
+
+    lio [scbset ctl01]
+    scb
+    lai
+    and [dserr]             // check for immediate open error
+    sza
+    jmp halterr             // should not happen; bail if it does
+
+// ---- T01-1: wait for TCP connection (dsfcon) ------------------------------
+//
+// iotPoll() drives the non-blocking connect() in the background.
+// We poll rcs (channel status) until dsfcon is set, watching for errors.
+
+waitcon,
+    lio [0]
+    rcs
+    lai
+    and [dsfser dsfcls]     // any error/lost bits?
+    sza
+    jmp t1_fail             // unexpected error during connect
+    lio [0]
+    rcs
+    lai
+    and [dsfcon]
+    sza i                   // skip if dsfcon != 0 (connected)
+    jmp waitcon             // not yet, keep polling
+
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+    jmp halterr             // connection failed -- no point continuing
+
+t1_done,
+
+// ---- select send channel ---------------------------------------------------
+
+    cli                     // IO = 0 = channel 0
+    ssb                     // send_chan <- 0
+
+// ---- T01-2: send test byte via tcb ----------------------------------------
+//
+// tcb sends IO & 0xFF to send_chan's socket.  On success, IO is cleared to 0.
+
+    lio [byte_A]            // IO = 0101 = byte to send
+    tcb                     // transmit; IO <- 0 or error
+    lai
+    sza                     // skip if IO = 0 (success)
+    jmp t2_fail
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// ---- T01-3: poll until dsfrdy (character available) -----------------------
+//
+// The echo server loops bytes back immediately.  dsfrdy is set by iotPoll()
+// when recv() finds data.
+
+pollrdy1,
+    lio [0]
+    rcs
+    lai
+    and [dsfcls dsfser]     // check for error/close (would loop forever otherwise)
+    sza
+    jmp t3_fail
+    lio [0]
+    rcs
+    lai
+    and [dsfrdy]
+    sza i                   // skip if dsfrdy != 0 (data available)
+    jmp pollrdy1
+
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+    jmp t3_done
+t3_fail,
+    lio [REPORT_FAIL]
+    lac [lbl3]
+    jda reportResult
+t3_done,
+
+// ---- T01-4: read the echo and verify -------------------------------------
+//
+// rch rchclr clears IO first then ORs in the received byte.
+// Verify IO == byte_A (0101).
+
+    rch rchclr              // IO <- received byte (IO cleared first)
+    lai
+    and [dserr]             // check for read error flag
+    sza
+    jmp t4_fail
+    lai
+    sub [byte_A]            // IO should equal the sent byte
+    sza                     // skip if AC = 0 (match)
+    jmp t4_fail
+    lio [REPORT_PASS]
+    lac [lbl4]
+    jda reportResult
+    jmp t4_done
+t4_fail,
+    lio [REPORT_FAIL]
+    lac [lbl4]
+    jda reportResult
+t4_done,
+
+// ---- T01-5: second round trip (byte_B = 0102) ----------------------------
+
+    lio [byte_B]
+    tcb
+
+    pollrdy2,
+        lio [0]
+        rcs
+        lai
+        and [dsfcls dsfser]
+        sza
+        jmp t5_fail
+        lio [0]
+        rcs
+        lai
+        and [dsfrdy]
+        sza i
+        jmp pollrdy2
+
+    rch rchclr
+    lai
+    and [dserr]
+    sza
+    jmp t5_fail
+    lai
+    sub [byte_B]
+    sza
+    jmp t5_fail
+    lio [REPORT_PASS]
+    lac [lbl5]
+    jda reportResult
+    jmp t5_done
+t5_fail,
+    lio [REPORT_FAIL]
+    lac [lbl5]
+    jda reportResult
+t5_done,
+
+// ---- T01-6: SCBCLEAR succeeds (synchronous) --------------------------------
+//
+// SCBCLEAR (scbclr=0, cmd bits 12-14 = 0) calls resetChannel() directly and
+// returns synchronously.  There is no async close phase to wait for.
+// IO must contain the address of the channel control block; SCBCLEAR reads
+// mem[IO & 07777] to extract the channel number from bits 0-5 of word 0.
+// On success IO is 0; on failure dserr is set.
+
+    lio [ctl01]             // IO = address of ctl01; SCBCLEAR reads chan# from there
+    scb                     // SCBCLEAR: calls resetChannel() inline
+    lai
+    and [dserr]             // any error from the close?
+    sza
+    jmp t6_fail
+    lio [REPORT_PASS]
+    lac [lbl6]
+    jda reportResult
+    jmp t6_done
+t6_fail,
+    lio [REPORT_FAIL]
+    lac [lbl6]
+    jda reportResult
+t6_done,
+
+// ---- cleanup and halt ----------------------------------------------------
+
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    lio testFailCount
+    hlt
+    jmp begin
+
+// ---- common halt for unrecoverable errors --------------------------------
+//
+// IO contains the error code from whichever DCS2 call failed.
+// The programmer can read it from the console (EXAMINE IO).
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- test labels ---------------------------------------------------------
+
+lbl1,
+    text "T01-1 connected"
+    013
+lbl2,
+    text "T01-2 tcb send"
+    013
+lbl3,
+    text "T01-3 rdy flag"
+    013
+lbl4,
+    text "T01-4 echo byte A"
+    013
+lbl5,
+    text "T01-5 echo byte B"
+    013
+lbl6,
+    text "T01-6 chan closed"
+    013
+
+// ---- channel control block (client mode, channel 0, port 2101) ----------
+//
+// word 0: flags = 0 (no dcfsrv, no dcfflex, no dcfecho), channel 0
+// word 1: port  = 2101
+// word 2: IP high = 32512 (0x7F00 = 127.0.x.x)
+// word 3: IP low  = 1     (0x0001 = x.x.0.1)
+
+decimal
+ctl01,
+    0           // flags = 0, channel 0
+    2101        // port
+    32512       // IP high = 127.0
+    1           // IP low  = 0.1
+octal
+
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

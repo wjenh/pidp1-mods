@@ -36,13 +36,7 @@
  * wje/claude 20-Jun-26 many changes to move the typewriter, tape reader, and tape punch into IOTs where
  *   they belong. Bugfixes in original code to fix tyo C hang, nac logic not correct
  *   causing a permanent I/O halt. Fix: pdp->tcp = !!(MB & (B5 | B6)).
- *   Summary:
- *   RDLY/TYODLY and RD_CHAN/TTI_CHAN/TTO_CHAN were removed along with the builtin reader/
- *   typewriter code they belonged to -- see handleio()/iot_pulse()'s comments.
- *   IOTs/Reader/IOT_2.c and IOTs/Typewriter/IOT_3.c, IOT_4.c each keep their own
- *   local copies of these exact values now.
- *   PDLY is still used here for the/ front-panel FEED key's tape-feed timing, which has nothing to
- *   do with the punch IOT -- PUN_CHAN was removed.
+ * wje/claude 28-Jan-26 another bug fix in B5/B6 bit handling from original version
 */
 #include "common.h"
 #include "pdp1.h"
@@ -567,8 +561,7 @@ clr_sbs(PDP1 *pdp)
 {
 	pdp->b4 = 0;
 	pdp->b3 = 0;
-	if(pdp->sbs16)
-		pdp->b2 = 0;
+	pdp->b2 = 0;	// clear in all SBS modes: CBS clears all break state (hardware-correct)
 	sbs_calc_req(pdp);
 }
 

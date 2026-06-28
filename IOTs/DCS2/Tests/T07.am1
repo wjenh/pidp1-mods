@@ -1,0 +1,308 @@
+T07: DCS2 SCBREBIND TEST
+/*
+ * T07.am1 -- Verify that a server channel can re-accept a new connection
+ *            after the first client disconnects (SCBREBIND).
+ *
+ * Harness required:
+ *   ./dcstestharness reconnect-client 127.0.0.1 2107
+ *   Start harness AFTER the program prints "T07 listening".
+ *   The harness:
+ *     Round trip 1: connects, sends 0x41, receives echo, disconnects.
+ *     Pauses 500 ms.
+ *     Round trip 2: connects again, sends 0x42, receives echo, disconnects.
+ *   Exit code 0 if both echoes matched.
+ *
+ * What the program does:
+ *   1. Opens channel 0 as server on port 2107.
+ *   2. Prints "T07 listening" to signal harness start.
+ *   3. Round trip 1:
+ *      a. Polls until dsfcon (T07-1).
+ *      b. Sets cur_chan via ROC.
+ *      c. Polls until dsfrdy; reads 0x41; echoes via tcc (T07-2).
+ *      d. Polls until dsfcls (harness disconnected) (T07-3).
+ *   4. Issues SCBREBIND on channel 0.  Verifies no error (T07-4).
+ *   5. Round trip 2 (same as round trip 1 but byte = 0x42):
+ *      a. Polls until dsfcon (T07-5).
+ *      b. Sets cur_chan via ROC.
+ *      c. Polls until dsfrdy; reads 0x42; echoes via tcc (T07-6).
+ *   6. SCBCLEAR cleanup.
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T07.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define byte_A  0101        // first round-trip byte (0x41 = 'A')
+#define byte_B  0102        // second round-trip byte (0x42 = 'B')
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb
+
+// ---- open server channel 0 ------------------------------------------------
+
+    lio [scbset ctl07]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+    lac [rdymsg]
+    jda typetext
+
+// ---- Round trip 1 --------------------------------------------------------
+
+// T07-1: wait for first connect
+
+waitcon1,
+    lio [0]
+    rcs
+    lai
+    and [dsfser]
+    sza
+    jmp halterr
+    lio [0]
+    rcs
+    lai
+    and [dsfcon]
+    sza i
+    jmp waitcon1
+
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+
+// Assign cur_chan via ROC
+
+    lio [0]
+    roc
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// T07-2: read 0x41 and echo it
+
+pollrdy1,
+    lio [0]
+    rcs
+    lai
+    and [dsfcls dsfser]
+    sza
+    jmp halterr
+    lio [0]
+    rcs
+    lai
+    and [dsfrdy]
+    sza i
+    jmp pollrdy1
+
+    rch rchclr
+    lai
+    and [dserr]
+    sza
+    jmp t2_fail
+    lai
+    sub [byte_A]
+    sza
+    jmp t2_fail
+    // echo it back
+    lio [byte_A]
+    tcc
+    lai
+    sza
+    jmp t2_fail
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// T07-3: wait for first client to disconnect (dsfcls)
+
+waitcls1,
+    lio [0]
+    rcs
+    lai
+    and [dsfser]
+    sza
+    jmp halterr
+    lio [0]
+    rcs
+    lai
+    and [dsfcls]
+    sza i
+    jmp waitcls1
+
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+
+// ---- T07-4: SCBREBIND ----------------------------------------------------
+//
+// scbbnd (020000) in IO[12-14] encodes cmd = SCBREBIND (2).
+// IO[0-11] is the channel number (0).
+// On success, IO = 0 (returned by manageChannelBlock()).
+
+    lio [scbbnd]            // IO = 020000 = SCBREBIND, channel 0 in low bits
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp t4_fail
+    lio [REPORT_PASS]
+    lac [lbl4]
+    jda reportResult
+    jmp t4_done
+t4_fail,
+    lio [REPORT_FAIL]
+    lac [lbl4]
+    jda reportResult
+t4_done,
+
+// ---- Round trip 2 --------------------------------------------------------
+
+// T07-5: wait for second connect
+
+waitcon2,
+    lio [0]
+    rcs
+    lai
+    and [dsfser]
+    sza
+    jmp halterr
+    lio [0]
+    rcs
+    lai
+    and [dsfcon]
+    sza i
+    jmp waitcon2
+
+    lio [REPORT_PASS]
+    lac [lbl5]
+    jda reportResult
+
+// Assign cur_chan via ROC
+
+    lio [0]
+    roc
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// T07-6: read 0x42 and echo it
+
+pollrdy2,
+    lio [0]
+    rcs
+    lai
+    and [dsfcls dsfser]
+    sza
+    jmp halterr
+    lio [0]
+    rcs
+    lai
+    and [dsfrdy]
+    sza i
+    jmp pollrdy2
+
+    rch rchclr
+    lai
+    and [dserr]
+    sza
+    jmp t6_fail
+    lai
+    sub [byte_B]
+    sza
+    jmp t6_fail
+    lio [byte_B]
+    tcc
+    lai
+    sza
+    jmp t6_fail
+    lio [REPORT_PASS]
+    lac [lbl6]
+    jda reportResult
+    jmp t6_done
+t6_fail,
+    lio [REPORT_FAIL]
+    lac [lbl6]
+    jda reportResult
+t6_done,
+
+// ---- wait for second client to disconnect then close ----------------------
+
+waitcls2,
+    lio [0]
+    rcs
+    lai
+    and [dsfcls dsfser]
+    sza i
+    jmp waitcls2
+
+    lio [ctl07]
+    scb                     // SCBCLEAR channel 0
+
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    lio testFailCount
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- labels ---------------------------------------------------------------
+
+rdymsg,
+    text "T07 listening on 2107\n"
+    013
+
+lbl1,
+    text "T07-1 first conn"
+    013
+lbl2,
+    text "T07-2 first echo"
+    013
+lbl3,
+    text "T07-3 first close"
+    013
+lbl4,
+    text "T07-4 scbrebind"
+    013
+lbl5,
+    text "T07-5 second conn"
+    013
+lbl6,
+    text "T07-6 second echo"
+    013
+
+// ---- channel control block (server, channel 0, port 2107) ----------------
+
+ctl07,
+    dcfsrv
+decimal
+    2107
+octal
+
+#include <TYO/typetext.ac>
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

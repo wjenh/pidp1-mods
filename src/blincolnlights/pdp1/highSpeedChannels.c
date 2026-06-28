@@ -10,6 +10,7 @@
  * 29-Apr-2026 wje - fix overrun of channel list
  * 30-Apr-2026 wje - add fake break cycles for THREADED so emulator will skip cycles semi-properly
  * 21-Jun-2026 wje/claude - fix minor issue with done synchronization
+ * 28-Jun02026 wje - add HSC_MODE_UPDATEPANEL for use with HSC_MODE_IMMEDIATE
 */
 
 #include <unistd.h>

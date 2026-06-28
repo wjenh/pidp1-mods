@@ -1,0 +1,247 @@
+T06: DCS2 RCS STATUS BIT VERIFICATION
+/*
+ * T06.am1 -- Verify that each RCS status bit (dsfopn, dsfcon, dsfrdy, dsfcls)
+ *            transitions at the expected moment during a server-mode session.
+ *
+ * Harness required:
+ *   ./dcstestharness delay-connect 127.0.0.1 2106 100
+ *   Start harness AFTER the program prints "T06 listening" (channel is open).
+ *   The harness waits 100 ms, connects, holds for 500 ms, then closes.
+ *
+ * What the program does:
+ *   1. Opens channel 0 as a server on port 2106.
+ *   2. Prints "T06 listening" so the operator knows to start the harness.
+ *   3. Reads RCS immediately after open and verifies dsfopn is set,
+ *      dsfcon and dsfrdy are clear (T06-1).
+ *   4. Polls until dsfcon is set (harness has connected), verifies dsfcon
+ *      (T06-2) and dsfopn still set (T06-3).
+ *   5. The harness's delay-connect mode holds the connection for 500 ms and
+ *      then closes without sending any data, so dsfrdy should remain clear
+ *      throughout (T06-4).
+ *   6. Polls until dsfcls is set (harness has closed), verifies dsfcls
+ *      (T06-5) and dsfcon is now clear (T06-6).
+ *   7. SCBCLEAR and cleanup.
+ *
+ * Note on dsfrdy (T06-4):
+ *   The harness does not send any data, so dsfrdy should never be set.
+ *   We verify this by checking dsfrdy just before polling for dsfcls.
+ *   If dsfrdy IS set, that is unexpected and we report FAIL.
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T06.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb
+
+// ---- open server channel 0 on port 2106 ----------------------------------
+
+    lio [scbset ctl06]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// ---- signal readiness ----------------------------------------------------
+
+    lac [rdymsg]
+    jda typetext
+
+// ---- T06-1: verify dsfopn set, dsfcon and dsfrdy clear right after open --
+//
+// No connection has been attempted yet; channel is only listening.
+
+    lio [0]
+    rcs
+    lai
+    dac saved_rcs           // save the status word for multi-bit checks
+
+    // dsfopn must be set
+    and [dsfopn]
+    sza i                   // skip if dsfopn != 0 (set -- expected)
+    jmp t1_fail
+    // dsfcon must be clear
+    lac saved_rcs
+    and [dsfcon]
+    sza                     // skip if dsfcon = 0 (clear -- expected)
+    jmp t1_fail
+    // dsfrdy must be clear
+    lac saved_rcs
+    and [dsfrdy]
+    sza                     // skip if dsfrdy = 0 (clear -- expected)
+    jmp t1_fail
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+t1_done,
+
+// ---- T06-2 + T06-3: poll until dsfcon, then verify dsfopn still set -----
+
+waitcon,
+    lio [0]
+    rcs
+    lai
+    and [dsfser]
+    sza
+    jmp halterr             // unexpected socket error
+    lio [0]
+    rcs
+    lai
+    and [dsfcon]
+    sza i
+    jmp waitcon             // not connected yet
+
+    // T06-2: dsfcon is set
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+
+    // T06-3: dsfopn must still be set
+    lio [0]
+    rcs
+    lai
+    and [dsfopn]
+    sza i                   // skip if dsfopn != 0 (still open)
+    jmp t3_fail
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+    jmp t3_done
+t3_fail,
+    lio [REPORT_FAIL]
+    lac [lbl3]
+    jda reportResult
+t3_done,
+
+// ---- T06-4: verify dsfrdy is clear (harness sends no data) ---------------
+//
+// We do not poll here -- just check the current state once.  The harness
+// holds the connection for 500 ms before closing, so there is time for
+// any spurious dsfrdy to appear.  We check immediately after T06-3.
+
+    lio [0]
+    rcs
+    lai
+    and [dsfrdy]
+    sza                     // skip if dsfrdy = 0 (clear -- expected)
+    jmp t4_fail
+    lio [REPORT_PASS]
+    lac [lbl4]
+    jda reportResult
+    jmp t4_done
+t4_fail,
+    lio [REPORT_FAIL]
+    lac [lbl4]
+    jda reportResult
+t4_done,
+
+// ---- T06-5 + T06-6: poll until dsfcls, then verify dsfcon is clear ------
+
+waitcls,
+    lio [0]
+    rcs
+    lai
+    and [dsfser]
+    sza
+    jmp halterr
+    lio [0]
+    rcs
+    lai
+    and [dsfcls]
+    sza i                   // skip if dsfcls != 0 (remote closed)
+    jmp waitcls
+
+    // T06-5: dsfcls is set
+    lio [REPORT_PASS]
+    lac [lbl5]
+    jda reportResult
+
+    // T06-6: dsfcon should now be clear
+    lio [0]
+    rcs
+    lai
+    and [dsfcon]
+    sza                     // skip if dsfcon = 0 (disconnected)
+    jmp t6_fail
+    lio [REPORT_PASS]
+    lac [lbl6]
+    jda reportResult
+    jmp t6_done
+t6_fail,
+    lio [REPORT_FAIL]
+    lac [lbl6]
+    jda reportResult
+t6_done,
+
+// ---- cleanup and halt ----------------------------------------------------
+
+    lio [ctl06]
+    scb                     // SCBCLEAR channel 0
+
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    lio testFailCount
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- scratch storage and labels ------------------------------------------
+
+saved_rcs, 0               // temporary for multi-bit RCS comparisons
+
+rdymsg,
+    text "T06 listening on 2106\n"
+    013
+
+lbl1,
+    text "T06-1 open bits"
+    013
+lbl2,
+    text "T06-2 dsfcon set"
+    013
+lbl3,
+    text "T06-3 dsfopn held"
+    013
+lbl4,
+    text "T06-4 dsfrdy clr"
+    013
+lbl5,
+    text "T06-5 dsfcls set"
+    013
+lbl6,
+    text "T06-6 dsfcon clr"
+    013
+
+// ---- channel control block (server, channel 0, port 2106) ----------------
+
+ctl06,
+    dcfsrv
+decimal
+    2106
+octal
+
+#include <TYO/typetext.ac>
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

@@ -1,0 +1,315 @@
+T05: DCS2 MULTI-CHANNEL SCANNER ROUND-ROBIN TEST
+/*
+ * T05.am1 -- Verify that the DCS2 scanner cycles through multiple ready
+ *            channels in round-robin order rather than sticking to one.
+ *
+ * Harness required:
+ *   ./dcstestharness two-echo-servers 2105 2145
+ *   Start harness BEFORE this program.  The harness listens on both ports
+ *   simultaneously, accepts one connection on each, and echoes all bytes.
+ *
+ * What the program does:
+ *   1. Opens channel 0 as client targeting 127.0.0.1:2105.
+ *   2. Opens channel 1 as client targeting 127.0.0.1:2145.
+ *   3. Selects channel 0 as send channel (ssb), sends byte 0x41 to port 2105.
+ *   4. Selects channel 1 as send channel (ssb), sends byte 0x42 to port 2145.
+ *   5. Polls until both channels have dsfrdy set (echos arriving).
+ *   6. Uses rcr (read-and-release) to consume from the first ready channel.
+ *      Records which channel was current at the time (rrc).
+ *   7. Uses rcr on the second ready channel.  Records channel again.
+ *   8. Verifies both channels 0 and 1 were visited (T05-1).
+ *   9. Verifies byte from channel 0 == 0x41 and byte from channel 1 == 0x42 (T05-2).
+ *  10. Closes both channels and cleans up.
+ *
+ * Scanner mechanism:
+ *   iotPoll() sets cur_chan to the first ready channel it sees and locks it.
+ *   rcr (read-and-release) reads one character and then calls releaseChannel(),
+ *   which scans forward from old_chan and assigns the next ready channel as
+ *   cur_chan.  If channel 1 is also ready, it will be selected next.
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T05.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define byte_A  0101    // sent to channel 0 (port 2105)
+#define byte_B  0102    // sent to channel 1 (port 2145)
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb
+
+// ---- open channel 0 as client (port 2105) --------------------------------
+
+    lio [scbset ctl05_0]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// ---- open channel 1 as client (port 2145) --------------------------------
+
+    lio [scbset ctl05_1]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// ---- wait for both channels to connect -----------------------------------
+
+waitcon0,
+    lio [0]
+    rcs
+    lai
+    and [dsfser dsfcls]
+    sza
+    jmp halterr
+    lio [0]
+    rcs
+    lai
+    and [dsfcon]
+    sza i
+    jmp waitcon0
+
+waitcon1,
+    lio [1]
+    rcs
+    lai
+    and [dsfser dsfcls]
+    sza
+    jmp halterr
+    lio [1]
+    rcs
+    lai
+    and [dsfcon]
+    sza i
+    jmp waitcon1
+
+// ---- send byte_A to channel 0 (via ssb + tcb) ----------------------------
+
+    lio [0]
+    ssb                     // send_chan = 0
+    lio [byte_A]
+    tcb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// ---- send byte_B to channel 1 (via ssb + tcb) ----------------------------
+
+    lio [1]
+    ssb                     // send_chan = 1
+    lio [byte_B]
+    tcb
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// ---- wait until both channels have dsfrdy --------------------------------
+//
+// Poll both channels' status words until both have dsfrdy set.
+
+    local
+waitboth,
+    lio [0]
+    rcs
+    lai
+    dac %s0
+    lio [1]
+    rcs
+    lai
+    dac %s1
+    lac %s0
+    and [dsfrdy]
+    sza i           // skip if ch0 ready
+    jmp waitboth
+    lac %s1
+    and [dsfrdy]
+    sza i           // skip if ch1 ready
+    jmp waitboth
+%s0, 0
+%s1, 0
+    endloc
+
+// ---- read from each channel using rcr (read-and-release) -----------------
+//
+// The scanner has assigned one of the two channels to cur_chan.
+// We use rrc to find which one, read it with rcr (which also releases it),
+// then the scanner assigns the other.  We store both bytes and channel
+// numbers for the verification step.
+
+// Read first channel: find cur_chan, read, save
+
+    rrc                     // IO = cur_chan (or IO_ERR_NOCURRENT)
+    lai
+    dac first_chan          // save channel number
+    and [dserr]
+    sza                     // skip if AC = 0 (no error -- dserr not set)
+    jmp halterr
+
+    rchr rchclr              // read byte from cur_chan, release it; IO = byte
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+    lai
+    and [0377]
+    dac first_byte          // save the received byte
+
+// Read second channel: scanner should now have selected the other channel
+
+    rrc
+    lai
+    dac second_chan
+    and [dserr]
+    sza                     // skip if AC = 0 (no error)
+    jmp halterr
+
+    rchr rchclr
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+    lai
+    and [0377]
+    dac second_byte
+
+// ---- T05-1: verify both channels were visited ----------------------------
+//
+// first_chan and second_chan must be 0 and 1 (in either order).
+// Check: (first_chan | second_chan) == 1 and (first_chan & second_chan) == 0.
+
+    lac first_chan
+    ior second_chan          // should be 1
+    sub [1]
+    sza
+    jmp t1_fail
+    lac first_chan
+    and second_chan          // should be 0 (they must be different channels)
+    sza
+    jmp t1_fail
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+t1_done,
+
+// ---- T05-2: verify each channel received the correct byte ----------------
+//
+// Channel 0 should have received byte_A (0101).
+// Channel 1 should have received byte_B (0102).
+// Since rcr order depends on scanner, we use the saved chan numbers
+// to figure out which byte came from which channel.
+//
+// Strategy: if first_chan == 0, then first_byte should be byte_A and
+// second_byte should be byte_B; otherwise reversed.
+
+    lac first_chan
+    sza                     // skip if first_chan == 0
+    jmp ch1first
+
+    // first_chan == 0: first_byte must be byte_A
+    lac first_byte
+    sub [byte_A]
+    sza
+    jmp t2_fail
+    lac second_byte
+    sub [byte_B]
+    sza
+    jmp t2_fail
+    jmp t2_pass
+
+ch1first,
+    // first_chan == 1: first_byte must be byte_B
+    lac first_byte
+    sub [byte_B]
+    sza
+    jmp t2_fail
+    lac second_byte
+    sub [byte_A]
+    sza
+    jmp t2_fail
+
+t2_pass,
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// ---- close both channels and clean up ------------------------------------
+
+    lio [ctl05_0]           // channel 0: SCBCLEAR reads chan# from control block
+    scb                     // SCBCLEAR
+    lio [ctl05_1]           // channel 1
+    scb                     // SCBCLEAR
+
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    lio testFailCount
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- scratch storage for scanner verification ----------------------------
+
+first_chan,  0
+first_byte,  0
+second_chan, 0
+second_byte, 0
+
+// ---- labels ---------------------------------------------------------------
+
+lbl1,
+    text "T05-1 both chans"
+    013
+lbl2,
+    text "T05-2 byte order"
+    013
+
+// ---- channel control blocks -----------------------------------------------
+//
+// ctl05_0: client, channel 0, port 2105, IP 127.0.0.1
+// ctl05_1: client, channel 1, port 2145, IP 127.0.0.1
+
+decimal
+ctl05_0,
+    0           // flags = 0, channel 0
+    2105
+    32512
+    1
+ctl05_1,
+    1           // flags = 0, channel 1 (channel number in low 6 bits)
+    2145
+    32512
+    1
+octal
+
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

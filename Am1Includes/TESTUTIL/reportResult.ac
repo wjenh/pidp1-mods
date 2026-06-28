@@ -30,12 +30,9 @@
  * and is called via jsp. Neither AC nor IO is preserved.
  */
 
+#include <TESTUTIL/reportResult.ah>
 #include <TYO/typetext.ac>
 #include <UTIL/numbertofio.ac>
-
-#define REPORT_PASS 0
-#define REPORT_FAIL 1
-#define REPORT_SKIP 2
 
 // Running totals. Read these directly, or just call printSummary, once all sections have
 // reported in.

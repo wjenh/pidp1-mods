@@ -24,7 +24,7 @@
 #define NUM_CHANS   8       // the more chans, the higher the polling overhead
 #define SERVER_BACKLOG  4   // number of incoming connect requests we queue
 
-// #define DOLOGGING
+#define DOLOGGING
 #include "iotLogger.h"
 
 #define getFullAddress(pdp1P, addr) &(CORE(pdp1P)[(pdp1P->ema | (addr & 07777))%MAXMEM])
@@ -210,6 +210,65 @@ int getChar(ChannelP);
 
 extern int flexToAscii(char, int *);
 extern char asciiToFlex(char, int *);
+
+// Called when the emulator transitions to run state (START pressed or program loaded).
+// Performs a full IOT state reset so that each new program run begins with a clean slate,
+// regardless of how the previous run ended (normal HLT, console Stop, crash, etc.).
+// Without this, stale state such as need_general_completion, open channel fds, or a
+// pending SBS break from a previous run can corrupt the next program's execution.
+void
+iotStart()
+{
+int i;
+ChannelP chanP;
+
+    iotLog("DCS2 iotStart\n");
+
+    if( initialized )
+    {
+        enablePolling(0);
+
+        for( i = 0; i < NUM_CHANS; ++i )
+        {
+            chanP = &channels[i];
+            if( (chanP->control_flags & CNTL_OPEN) && chanP->chan_fd != -1 )
+            {
+                epoll_ctl(epoll_fd, EPOLL_CTL_DEL, chanP->chan_fd, 0);
+                shutdown(chanP->chan_fd, SHUT_WR);
+                close(chanP->chan_fd);
+            }
+            memset(chanP, 0, sizeof(Channel));
+            chanP->chan_no = i;
+            chanP->chan_fd = -1;
+        }
+
+        forceReleasePorts();
+
+        if( epoll_fd != -1 )
+        {
+            close(epoll_fd);
+            epoll_fd = -1;
+        }
+
+        last_error = 0;
+        last_intr_chan = -1;
+        last_intr_reason = 0;
+        cur_chan = -1;
+        cur_chan_locked = false;
+        send_chan = -1;
+        need_general_completion = false;
+        initialized = false;
+
+        iotCloseLog();
+    }
+}
+
+void
+iotStop()
+{
+    iotLog("DCS2 iotStop\n");
+    iotCloseLog();
+}
 
 int
 iotHandler(PDP1P pdp1P, int dev, int pulse, int completion)
@@ -444,6 +503,8 @@ char wbuf[8];
 
     case SCB:                           // extended command, configure channel
         IO(pdp1P) = manageChannelBlock(pdp1P, IO(pdp1P));
+        if( IO(pdp1P) & IO_ERR_FLAG )   // propagate error to last_error for RLE
+            last_error = IO(pdp1P);
         break;
 
     case RLE:                           // extended command, get last error
@@ -621,7 +682,7 @@ char wbuf[8];
             IO(pdp1P) &= ~RXL_CHANGE;
         }
 
-        IO(pdp1P) &= ~(RXL_SHIFTED | 077);
+        IO(pdp1P) &= ~(RXL_SHIFTED | 0377);    // clear full 8-bit ASCII field
         IO(pdp1P) |= (i | ich);
         break;
 
@@ -696,7 +757,7 @@ struct epoll_event event;
                                 j |= O_NONBLOCK | O_RDWR;
                                 fcntl(chanP->chan_fd, F_SETFL, j);
 
-                                event.events = EPOLLIN;     // we don't turn on EPOLLUOUT, done on buffer full
+                                event.events = EPOLLIN | EPOLLRDHUP;    // EPOLLRDHUP detects orderly close
                                 event.data.u32 = chanP->chan_no;
                                 j = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, chanP->chan_fd, &event);
 
@@ -722,18 +783,38 @@ struct epoll_event event;
                     did_our_event = true;
                     if( chanP->control_flags & CNTL_CONNECTED )
                     {
-                        chanP->control_flags |= CNTL_RREADY;
-                        if( (cur_chan < 0) || !cur_chan_locked )
+                        if( eventP->events & EPOLLRDHUP )
                         {
-                            cur_chan = data;
-                            cur_chan_locked = true;
-                            CKS(pdp1P) |= CKS_CHAN_FLAG;
-                        }
+                            // Orderly remote shutdown (FIN received): treat as connection close.
+                            // On Linux, EPOLLIN | EPOLLRDHUP fires together when the peer calls close().
+                            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, chanP->chan_fd, 0);
+                            close(chanP->chan_fd);
+                            chanP->chan_fd = -1;
+                            chanP->control_flags &= ~(CNTL_CONNECTED | CNTL_TFULL);
+                            chanP->control_flags |= CNTL_LOST;
+                            last_error = chanP->last_err = IO_ERR_FLAG | IO_ERR_LOST;
 
-                        if( canPost(pdp1P, chanP, CNTL_IOR) )
+                            if( canPost(pdp1P, chanP, CNTL_IOC) )
+                            {
+                                iotLog("Posting IOC orderly close on chan %d\n", chanP->chan_no);
+                                postInterrupt(chanP, CNTL_IOC);
+                            }
+                        }
+                        else
                         {
-                            iotLog("Posting IOR on channel %d\n", data);
-                            postInterrupt(chanP, CNTL_IOR);
+                            chanP->control_flags |= CNTL_RREADY;
+                            if( (cur_chan < 0) || !cur_chan_locked )
+                            {
+                                cur_chan = data;
+                                cur_chan_locked = true;
+                                CKS(pdp1P) |= CKS_CHAN_FLAG;
+                            }
+
+                            if( canPost(pdp1P, chanP, CNTL_IOR) )
+                            {
+                                iotLog("Posting IOR on channel %d\n", data);
+                                postInterrupt(chanP, CNTL_IOR);
+                            }
                         }
                     }
                     else
@@ -771,8 +852,8 @@ struct epoll_event event;
                             chanP->control_flags |= CNTL_CONNECTED;
                             chanP->control_flags &= ~CNTL_RESET_MASK;
 
-                            // Switch to EPOLLIN only; EPOLLOUT re-enabled on buffer full.
-                            newEvent.events = EPOLLIN;
+                            // Switch to EPOLLIN | EPOLLRDHUP; EPOLLOUT re-enabled on buffer full.
+                            newEvent.events = EPOLLIN | EPOLLRDHUP;
                             newEvent.data.u32 = chanP->chan_no;
                             epoll_ctl(epoll_fd, EPOLL_CTL_MOD, chanP->chan_fd, &newEvent);
 
@@ -806,7 +887,7 @@ struct epoll_event event;
                         chanP->control_flags &= ~CNTL_TFULL;
 
                         // Turn off EPOLLOUT until the buffer fills again.
-                        newEvent.events = EPOLLIN;
+                        newEvent.events = EPOLLIN | EPOLLRDHUP;
                         newEvent.data.u32 = chanP->chan_no;
                         epoll_ctl(epoll_fd, EPOLL_CTL_MOD, chanP->chan_fd, &newEvent);
 

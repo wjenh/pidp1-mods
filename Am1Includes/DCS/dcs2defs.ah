@@ -18,7 +18,6 @@
 #define rchclr 002000
 
 // Extended commands.
-#define rwe iot 0222
 #define scb iot 4222
 #define rle iot 4322
 #define rpc iot 4422

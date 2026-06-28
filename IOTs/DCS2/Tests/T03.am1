@@ -1,0 +1,255 @@
+T03: DCS2 ERROR PATH TESTS -- no harness required
+/*
+ * T03.am1 -- Verify DCS2 error detection on operations without a peer.
+ *
+ * No harness (dcstestharness) or network connection is needed.
+ * All tests are self-contained and produce PASS/FAIL on the typewriter.
+ *
+ * Tests:
+ *   T03-1  RCH with no channel open              -> dserr | dsecc in IO
+ *   T03-2  TCB with no send/current channel      -> dserr | dsecc in IO
+ *   T03-3  Double SCBOPEN on the same channel    -> dserr | dseoe in IO
+ *   T03-4  SCBOPEN with invalid channel number   -> dserr | dseic in IO
+ *   T03-5  RLE reads last_error, then 0 on re-read
+ *
+ * For T03-3 a server channel is opened (no remote needed; the channel just
+ * waits for a connection that never arrives).  The server-only control block
+ * uses port 2099 on any local interface.
+ *
+ * Result:
+ *   Typewriter prints each test label followed by PASS or FAIL.
+ *   printSummary prints the final counts.
+ *   Program halts with IO = testFailCount (0 = all pass).
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T03.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+// ---- macros ---------------------------------------------------------------
+//
+// checkError checks that IO contains a DCS2 error with the expected low-6-bit
+// error code, then reports the result via reportResult.
+//
+// Usage (before calling): AC = address of result label, IO = error to verify.
+// The expected error code must be in IO already (from the failing DCS2 IOT).
+// The macro checks:
+//   (a) dserr (bit 0) is set in IO
+//   (b) IO & 077 == expected_code
+// Outputs REPORT_PASS or REPORT_FAIL.
+//
+// Arguments:
+//   expected_code   -- the low-6-bit code (e.g. dsecc, dseoe, dseic)
+//   label_addr      -- am1 [constant] expression for the label address
+//
+// Implementation note: we use sub+sza for the equality test because sad skips
+// when AC != Y, so "sad [X]; jmp pass" would fire on match -- backwards.
+// "sub [X]; sza; jmp fail" fires on mismatch -- the correct sense.
+
+#define checkError(expected_code, label_addr) \
+    /* Scratch storage at start of macro, jumped over by jmp %body.   */ \
+    /* %done is at the END of the macro so jmp %done reaches the      */ \
+    /* first instruction of whatever follows the macro invocation.     */ \
+    local; \
+    jmp %body; \
+%saved, 0; \
+%body, \
+    /* Step 1: verify dserr bit set */ \
+    lai; \
+    dac %saved; \
+    and [dserr]; \
+    sza; \
+    jmp %has_err; \
+    /* dserr NOT set -- IO was 0 or lacked error bit, that is a fail */ \
+    lio [REPORT_FAIL]; \
+    lac [label_addr]; \
+    jda reportResult; \
+    jmp %done; \
+%has_err, \
+    /* Step 2: isolate low 6 bits and compare to expected code */ \
+    lac %saved; \
+    and [077]; \
+    sub [expected_code]; \
+    sza; \
+    jmp %fail_code; \
+    lio [REPORT_PASS]; \
+    lac [label_addr]; \
+    jda reportResult; \
+    jmp %done; \
+%fail_code, \
+    lio [REPORT_FAIL]; \
+    lac [label_addr]; \
+    jda reportResult; \
+%done, \
+    endloc
+
+// ---- program origin -------------------------------------------------------
+
+100/
+
+// ---- begin: clean state ---------------------------------------------------
+//
+// Issue an SCB with scbrst (SCBRESET) encoded.  The first IOT call also
+// triggers initialization (epoll_create, etc.) so SCBRESET always has a
+// valid epoll_fd to close.
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb
+
+// ---- T03-1: RCH with no channel ------------------------------------------
+//
+// No channels are open, so cur_chan == -1.  rch should set IO to
+// dserr | dsecc and should also update last_error.
+
+    cli                     // IO = 0 (channel 0 as arg, though irrelevant)
+    rch rchclr              // should fail: no channel
+
+    checkError(dsecc, lbl1)
+
+// ---- T03-2: TCB with no send channel and no current channel ---------------
+//
+// send_chan == -1, cur_chan == -1 (from clean SCBRESET).
+// tcb falls into tcc logic with chanP = 0, cur_chan < 0 -> IO_ERR_NOCURRENT.
+
+    cli                     // IO = 0
+    tcb                     // should fail: no send/current channel
+
+    checkError(dsecc, lbl2)
+
+// ---- T03-3: Double SCBOPEN ------------------------------------------------
+//
+// Open channel 0 as a server listener on port 2099.
+// The first SCBOPEN should succeed (IO = 0).
+// The second SCBOPEN on the same channel should return dserr | dseoe.
+//
+// After the test, SCBCLEAR channel 0 so the port is freed.
+
+    // First open -- expect success (IO = 0)
+    lio [scbset ctl3]       // SCBOPEN + address of control block
+    scb
+    lai
+    sza                     // skip if IO = 0 (success)
+    jmp t3_first_failed     // IO != 0: first open itself failed
+
+    // Second open -- expect dseoe
+    lio [scbset ctl3]       // same control block, same channel
+    scb
+
+    checkError(dseoe, lbl3)
+    jmp t3_cleanup
+
+t3_first_failed,
+    // First open failed unexpectedly -- force a FAIL report for T03-3
+    lio [REPORT_FAIL]
+    lac [lbl3]
+    jda reportResult
+
+t3_cleanup,
+    // Release channel 0 regardless of test outcome
+    cli                     // IO = 0 -> channel 0
+    scb                     // SCBCLEAR (scbclr = 0, cmd in bits 12-14 = 0)
+
+// ---- T03-4: SCBOPEN with invalid channel number ---------------------------
+//
+// The control block at ctl4 has channel number 8 (= NUM_CHANS, first invalid).
+// manageChannelBlock() returns IO_ERR_FLAG | IO_ERR_CHAN immediately.
+
+    lio [scbset ctl4]
+    scb
+
+    checkError(dseic, lbl4)
+
+// ---- T03-5: RLE reads last_error, then clears it --------------------------
+//
+// After T03-4, last_error = IO_ERR_FLAG | IO_ERR_CHAN.
+// First RLE should return that value; second should return 0.
+
+    // First RLE: expect dserr | dseic
+    rle
+
+    checkError(dseic, lbl5a)
+
+    // Second RLE: expect 0 (cleared)
+    rle
+    lai
+    sza                     // skip if IO = 0 (cleared as expected)
+    jmp t5_fail_clear
+    lio [REPORT_PASS]
+    lac [lbl5b]
+    jda reportResult
+    jmp t5_done
+t5_fail_clear,
+    lio [REPORT_FAIL]
+    lac [lbl5b]
+    jda reportResult
+t5_done,
+
+// ---- final cleanup --------------------------------------------------------
+
+    lio [scbrst]
+    scb
+
+// ---- summary and halt -----------------------------------------------------
+
+    jsp printSummary
+    lio testFailCount
+    hlt
+    jmp begin               // CONTINUE restarts
+
+// ---- test labels (text + stop word 013) ----------------------------------
+
+lbl1,
+    text "T03-1 rch no chan"
+    013
+lbl2,
+    text "T03-2 tcb no chan"
+    013
+lbl3,
+    text "T03-3 double open"
+    013
+lbl4,
+    text "T03-4 bad chan num"
+    013
+lbl5a,
+    text "T03-5a rle value"
+    013
+lbl5b,
+    text "T03-5b rle clears"
+    013
+
+// ---- channel control blocks -----------------------------------------------
+//
+// ctl3: server channel 0, port 2099.  Used by T03-3 (double-open test).
+//   word 0: dcfsrv (0100 octal = 64 decimal), channel 0 in bits 0-5 = 0.
+//   word 1: port 2099.
+//
+// ctl4: channel 8 (invalid, >= NUM_CHANS=8), server mode, port 2099.
+//   word 0: dcfsrv | 010 (channel 8 in bits 0-5).
+//   word 1: port 2099.
+//   manageChannelBlock() rejects channel 8 before attempting any socket op.
+
+octal
+ctl3,
+    dcfsrv              // server mode, channel 0
+decimal
+    2099                // port (first word complete)
+octal
+
+ctl4,
+    dcfsrv 010          // server mode, channel 8 (invalid)
+decimal
+    2099
+octal
+
+// ---- constant pool (for [expr] references) --------------------------------
+
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

@@ -18,6 +18,7 @@
 #define HSC_MODE_TOMEM         002  // from user space to core memory
 #define HSC_MODE_IMMEDIATE     004  // bypass all the wait states, immediate execution, no reschedule
 #define HSC_MODE_THREADED      010  // immediate execution but check busy and imitate timing
+#define HSC_MODE_UPDATEPANEL   020  // only for immediate, hsc controls the hsc cycle light
 
 typedef struct {
     int mode;           // current operation mode, from, to, or both

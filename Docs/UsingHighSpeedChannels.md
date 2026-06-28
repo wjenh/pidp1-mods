@@ -4,7 +4,8 @@ This document describes using the Type 19 High Speed Channel emulation.
 
 This is version 2.1
 
-Edit date 6-May-2026
+Edit date 28-Jun-2026\
+add HSC_MODE_UPDATEPANEL
 
 ## What is it?
 
@@ -116,7 +117,8 @@ These modes can be passed to *HSCexecute*:
 - HSC_MODE_FROMMEM - data is transferred from core memory to the caller's *from* buffer
 - HSC_MODE_TOMEM - data is transferred to core memory from the caller's *to* buffer
 - HSC_MODE_IMMEDIATE - the transfer completes immediately
-- HSC_MODE_THREADED - the transfer completes after the proper per-word transfer time
+- HSC_MODE_THREADED - the data transfer is immediate but the transfer status honors the proper transfer time
+- HSC_MODE_UPDATEPANEL - a modifier for HSC_MODE_IMMEDIATE to request hsc cycle light updating
 
 The from and to modes can be used together or separately.\
 Only one of immediate or threaded can be used.\
@@ -130,6 +132,11 @@ request.bank - the bank number, 0-15
 request.address - the 12 bit address to begin from in the bank
 request.frombufferP - a pointer to space large enough to hold the requested words, integers
 request.tobufferP - a pointer to space holding the words to write, integers
+```
+
+HSC_MODE_UPDATEPANEL is used thusly and has no effect for other modes:
+```
+request.mode = HSC_MODE_IMMEDIATE | HSC_MODE_UPDATEPANEL;
 ```
 
 The buffer pointers can be null if the corresponding mode is not used.
@@ -156,6 +163,14 @@ int HSCexecute(HSCChannelP chanP, HSCRequestP requestP)
 For normal and threaded mode, the return will be one of HSC_ERR or HSC_BUSY.
 
 IMMEDIATE will never steal cycles, the transfer completes when HSCexecute() returns.
+It does not by default control the hsc cycle panel light.
+If HSC_MODE_UPDATEPANEL is added, then the panel light will be cycled by the high speed channel controller.
+However, it might not synchronize with any timing the application code is doing.
+
+It keeps a count based upon the number of words the IMMEDIATE transfer requested, turns on the light at
+when the request is made, then decrements the count every 5 usec emulator cycle, turning it off when it reaches
+zero. However, standard channel priority is enforced; if a higher priority channel is active, the count is not
+updated until this channel has priority.
 
 Normal mode replicates the original behavior fairly closely, stealing all cycles until the transfer is complete.
 Note that the original processing time depended upon the external hardware, it drove read/write timing.

@@ -30,9 +30,11 @@ typedef struct {
     bool isInitialized;
     bool isAssigned;
     bool isWaiting;
+    bool needLightoff;      // HSC_MODE_UPDATE_PANEL was requested
     int status;
     int waitDelay;          // if we are in THREADED mode, how long to sleep in HSCwait()
     int brkCount;           // if we are in THREADED mode, simulate break requests, more or less
+    int offCount;           // HSC_MODE_UPDATEPANEL was usd, number of cycles to keep hsc cylcle on for
     sem_t accessSemaphore;  // how we synchrnonize modification of the control structure
     sem_t waitSemaphore;    // how we synchrnonize completion
     HSCRequest request;     // pending request if any, copied by execute from user space
@@ -68,26 +70,45 @@ bool steal;
 HSCControlP ctlP;
 
     // we do in priority order, 0 being highest
-    for( steal = false, i = 0; i < NUMCHANS; ++i )
+    steal = false;
+    for( i = 0; i < NUMCHANS; ++i )
     {
-        // The channels are scanned from low to high, first one that needs a cycle steal wins.
+        // The channels are scanned from low to high, first one that's busy wins.
+        // If a channel still needs lightoff processing, let that happen,
+        // It means an IMMEDIATE still needs the hsc cycle light to simulate a delay.
         ctlP = chans[i];
 
-        if( ctlP->status == HSC_BUSY )
+        if( (ctlP->status == HSC_BUSY) || ctlP->needLightoff )
         {
             if( processChannel(ctlP) )
             {
                 steal = true;        // we processed one, steal a cycle
             }
-        }
 
-        if( steal )
-        {
-            return(true);           // we need a pseudo-break cycle
+            break;
         }
     }
 
-    return(false);
+    // Keep track of the hsc cycle light state we need.
+    // This isn't synchronized with other threads, no big deal if some light cycles get missed.
+    if( ctlP->needLightoff )
+    {
+        if( --(ctlP->offCount) <= 0 )
+        {
+            ctlP->offCount = 0;
+            ctlP->needLightoff = false;
+            pdp1P->hsc = 0;
+            updatelights(pdp1P, pdp1P->panel);
+        }
+        else if( pdp1P->hsc == 0 )
+        {
+            // It was turned off by a higher priority channel, turn it back on
+            pdp1P->hsc = 1;
+            updatelights(pdp1P, pdp1P->panel);
+        }
+    }
+
+    return(steal);
 }
 
 // User side calls.
@@ -223,6 +244,14 @@ HSCControlP ctlP;
             processImmediate(rqstP);
             ctlP->status = HSC_DONE;
             logger(LOG_HSC, "request_channel immediate transfer done\n");
+            if( rqstP->mode & HSC_MODE_UPDATEPANEL )
+            {
+                // We turn the hsc cycle light on, is turned off in the process loop.
+                pdp1P->hsc = 1;
+                updatelights(pdp1P, pdp1P->panel);
+                ctlP->offCount = rqstP->count;          // keep it on for the number of transfers we do
+                ctlP->needLightoff = true;
+            }
             return( HSC_OK );
 
         case HSC_MODE_THREADED:

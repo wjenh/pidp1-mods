@@ -24,7 +24,7 @@
 #define NUM_CHANS   8       // the more chans, the higher the polling overhead
 #define SERVER_BACKLOG  4   // number of incoming connect requests we queue
 
-#define DOLOGGING
+//#define DOLOGGING
 #include "iotLogger.h"
 
 #define getFullAddress(pdp1P, addr) &(CORE(pdp1P)[(pdp1P->ema | (addr & 07777))%MAXMEM])

@@ -166,3 +166,23 @@ panelrealtime=false
 # you can pretend someone invented a supercharged soroban and up it to 200 chars/sec instead of 10.
 # Heresy? Well, then don't use it.
 fasttyo=false
+
+# Setting a cache size for the Type 340 is totally historically inaccurate.
+# However, the original didn't have to live with the Linux scheduloer.
+# If you get display upate jitter running a high-demand Type 340 program,
+# turning on the cache prevents an instruction fetch every 5us via the high speed channel,
+# which keeps the Linux scheduler from intermittently suspending the 340 emulator itself
+# when it doesn't expect it.
+# You can set the cache up to 1024 Type 340 instructions in size.
+# cycle stealing is not since the instructions are locally cached.
+# The h.s. cycle light is still activated, even though there is no high speed cycle unless there is a
+# cache miss.
+# One downside is that this increases cpu demand since the 340 emulator gets more runtime.
+# If the cache size is changed here, you have to restart the pidp1 emulator for it to be applied.
+# Use of this should be very rare, but an example of a program that can show display jitter is
+# type340demo, it is a demanding rendering program.
+#
+# The overall timing is maintained in terms of displayed points per second, but the high speed channel
+# Finally, one could argue that a cache could have been added to the original hardware, like many
+# other PDP-1 hacks, so you can pretend this is semi-legitimate.
+t340cachesize=0 

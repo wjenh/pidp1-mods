@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.6
+This is version 1.7
 
-Edit date 27-June-2026\
-Add explanation of nl and cr mapping
+Edit date 20-June-2026\
+Add cache setting
 
 ## What is it?
 
@@ -394,17 +394,17 @@ to be 1.5 usecs.
 
 Each instruction also has a setup time of 500 nanosecods.
 
-Interestingly, the scale factor does not seem to affect the positioning time. The display could apparently
-move its beam up to 8 real pixels within the 1 usec timing window.
+Interestingly, the scale factor does not affect the positioning time. The display could apparently
+move its beam up to 8 real pixels within the 1 usec move timing window.
 
 Here are some of the basic timings:
 
 - every command fetch from main memory takes 5 usecs via high speed channel 3
-- every command executed has a setup time, as noted above, 0.5 usecs
+- every command executed has a setup time, as noted above
 - a point command always takes 35 usecs, but see below
 - vector and vector continue x take 1 usec for each position moved, plus 0.5 usec per displayed position
-- increment is similar, each move takes 1 usec, plus 0.5 usecs if the point is displayed.
-- character takes 1 microsecond per position move in the 5x7 matrix plus 0.5 usecs for each visible dot
+- increment is similar, each move takes 1 usec, plus 0.5 usecs if the point is displayed
+- character takes 1 microsecond per position move in the 5x7 matrix plus 0.5 usecs for intensification
 
 When using the point command, the order the x and y coordinates drastically affects the timing.
 
@@ -417,6 +417,29 @@ So, if moving in both axes, set y without visible first, then x.
 If moving only in the y axis, then visible will be set and the 35 usec delay will occur.
 
 Setting both x and y with visible set on both will cause a 70 usec delay!
+
+## Instruction caching
+
+This is a completely non-standard historically incorrect addition, but the original hardware didn't
+have to deal with the Linux scheduler.
+
+A Type 340 program that is running in a 340 program loop can be requesting instructions every 5us.
+The high speed channel request gives the Linux scheduler an opportunity to reschedule the 340 emulator
+when it's not expecting it, resulting in display flicker, sometimes severe on a pi4 or even a pi5.
+
+An instruction cache can be enabled in the pidp1.config file:
+```
+t340cachesize=nnn
+```
+The simulation time to execute a 340 instruction is still accurately enforced, but since the instruction
+is coming from the local cache, the cycle-stealing in the pidp-1 emulator isn't happening, so it will run
+at normal speed.
+This is the significant violation of historical accuracy.
+The H.S. Cycle light is still updated, but not actually tied to a high speed channel operation.
+
+Enabling caching also increases cpu load since the 340 emulator gets more runtime.
+
+The cache size can be set up to 1024 instructions.
 
 ## The character sets
 

@@ -1,24 +1,23 @@
 #ifndef REPORTRESULT_AC
 #define REPORTRESULT_AC
 /*
- * reportResult -- shared helper for self-checking PDP-1 test programs.
+ * reportResult - helper for self-checking PDP-1 test programs.
  *
  * Prints a caller-supplied label on the typewriter followed by " PASS", " FAIL", or " SKIP"
- * and a newline, then tallies the result into one of three running counters so a whole test
- * suite can finish with a printed summary instead of requiring anyone to watch the display or
- * read panel lights.
+ * and a newline, then increments the corresponding running counter so a whole test
+ * suite can finish with a printed summary.
  *
- * This is meant to be the common reporting idiom for test suites of OTHER components too, not
- * just the Type 340 display -- it has no Type-340-specific knowledge at all.
+ * Each counter can also be incremented via the addFail, addPass, and addSkip jsp subroutines, adding one
+ * to the count.
+ * Just remember that reportResult always increments it also.
  *
- * Calling convention for reportResult (matches the existing TYO/typetext.ac idiom, since this
- * is built directly on it):
+ * jsp resetResults reset all the counts to 0.
+ *
+ * Calling convention for reportResult:
  *   AC -- address of the label's text block. The block must be produced by the 'text' directive
- *         and followed by a word containing the flex/concise stop code, 013 -- exactly the
- *         convention typetext.ac itself requires, since the label is just forwarded to it.
- *   IO -- the result code: REPORT_PASS, REPORT_FAIL, or REPORT_SKIP, below. Any other value is
- *         treated as REPORT_FAIL, on the theory that an unrecognized code is a bug in the
- *         caller, not something to silently ignore.
+ *         and followed by a word containing the flex/concise stop code, 013.
+ *   IO -- the result code: REPORT_PASS, REPORT_FAIL, or REPORT_SKIP, defined in reportResult.ah.
+ *          Any other value is treated as REPORT_FAIL.
  * Called via jda. Neither AC nor IO is preserved.
  *
  * Example:
@@ -26,17 +25,17 @@
  *   lio [REPORT_PASS
  *   jda reportResult
  *
- * printSummary takes no arguments; it prints the three running totals built up by reportResult
- * and is called via jsp. Neither AC nor IO is preserved.
+ * The printSummary subroutine takes no arguments.
+ * Tt prints the three running totals accumulated since the last resetResults call on one line.
+ * Called via jsp. Neither AC nor IO is preserved.
  */
 
 #include <TESTUTIL/reportResult.ah>
 #include <TYO/typetext.ac>
 #include <UTIL/numbertofio.ac>
 
-// Running totals. Read these directly, or just call printSummary, once all sections have
-// reported in.
-var testPassCount=0, testFailCount=0, testSkipCount=0
+// Running totals updated by the corresponding jsp calls.
+local testPassCount, testFailCount, testSkipCount
 
 // Reset result counters, called via jsp.
 // Preserves IO and AC.
@@ -46,6 +45,33 @@ resetResults,
     dzm testPassCount
     dzm testFailCount
     dzm testSkipCount
+rtn, jmp .
+    endloc
+
+// Increment the passed count.
+// Called via jsp, preserves IO.
+addPass,
+    local rtn
+    dap rtn
+    idx testPassCount
+rtn, jmp .
+    endloc
+
+// Increment the failed count.
+// Called via jsp, preserves IO.
+addFail,
+    local rtn
+    dap rtn
+    idx testFailCount
+rtn, jmp .
+    endloc
+
+// Increment the skipped count.
+// Called via jsp, preserves IO.
+addSkip,
+    local rtn
+    dap rtn
+    idx testSkipCount
 rtn, jmp .
     endloc
 
@@ -186,4 +212,9 @@ sumSkipText,
     text " SKIP\n"
     13
 
+testPassCount, 0
+testFailCount, 0
+testSkipCount, 0
+
+endloc
 #endif

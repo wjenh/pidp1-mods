@@ -28,6 +28,7 @@
  * 17-Jun-2026 wje fix one timing error in vector, off by 500ns. Fix a few minor bugs and one arm cortex issue.
  * 23-Jun-2026 wje change arm/cortex cpu fencing to be more efficient, was causing display flicker
  * 27-Jun-2026 wje reverted Claude HSC_IMMEDIATE, didn't actually help and increased cpu loading
+ * 29-Jun-2026 wje add optional instruction caching
  */
 
 #include <stdlib.h>
@@ -76,12 +77,15 @@
 #define LOG_FLAGS 0
 #define LOG_BOUNDS 0
 #define LOG_TIMING 0
+#define LOG_CACHE 0
 
 // This defines the time each command takes to initialize, 0.5 usecs. This might not be accurate.
 #define SETUP_TIME 500
 // This defines the time it takes to initialize after a start via dla.
 // The documentation is vague, 2.8 us for a PDP-4, 'faster' for others. Pick 1.5 us.
 #define START_TIME 1500
+
+#define MAXCACHE 1024      // limit the cache to this size
 
 // Special characters for character mode
 #define CH_LF     0001   // Line feed
@@ -256,12 +260,16 @@ static bool interruptEnabled = true;    // true to allow lp and edge interrupts,
 static bool lpEnabled = false;
 static bool slavesEnabled;  // set if we saw a SLAVE command
 
+static int cacheSize = 0;           // if nonzero, size of instruction cache to use, set from config file
+static int cacheBase = -1;          // address cached at the first entry in the cache
 static bool threadRunning = false;  // emulator thread is set up
 static bool isPaused = false;       // got a PAUSE command
 static bool needBreak = false;      // edge violation occurred and an interrupt is needed
 static bool origCharsets = false;   // initial twoCharsets from config or default
 static bool twoCharsets = false;
-static Slave slaves[NUMSLAVES];    // could be up to 16 slaves, but the core display support is 8
+static Slave slaves[NUMSLAVES];     // could be up to 16 slaves, but the core display support is 8
+
+static Word wordCache[MAXCACHE];    // instruction cache, if used
 
 #if LOG_TIMING
 static uint64_t startTime;
@@ -489,6 +497,12 @@ Status status;
             curState = INITIALIZE;      // reset340() sets it to STOPPED;
             pendingDelay = START_TIME;  // when a start occurs, DPY_GO pulse, this setup time occurs.
             twoCharsets = origCharsets; // we revert on each DPY-GO
+
+            if( cacheSize > 0 )         // flush the cache on start
+            {
+                cacheBase = -1;
+            }
+
             iotCondLog(LOG_RUN, "Received start at addr %o\n", curAddress);
             break;
 
@@ -554,6 +568,11 @@ Status status;
             if( curState == INITIALIZE )
             {
                 pendingDelay += SETUP_TIME;
+            }
+
+            if( cacheSize > 0 )
+            {
+                ctlP->pdp1P->hsc = 0;     // best we can do when using cache
             }
 
             switch( curMode )
@@ -1618,19 +1637,49 @@ Word buffer[2];     // we only use 1, but leave space just to be sure
         ++curAddress;
     }
 
-    // Fetch the word with hsc threaded mode.
-    // This also provides the 5usec word-fetch delay the real hardware had.
-    // Note that this might cause rescheduling, but this has not been a significant issue
-    // in deployment, even on a pi4.
-    request.mode = (HSC_MODE_FROMMEM | HSC_MODE_THREADED);
-    request.count = 1;
-    request.memBank = ((addr >> 12) & 017);
-    request.memAddr = (addr & 07777);
-    request.fromBufferP = buffer;
-    HSCexecute(chanP, &request);
-    HSCwait(chanP);     // Here's where the simulation of the hardware hsc delay happens.
+    // See if we're using instruction caching.
+    // If so fetch from the cache, reloading if needed.
+    if( cacheSize > 0 )
+    {
+        if( (addr < cacheBase) || (addr >= (cacheBase + cacheSize)) )
+        {
+            // Fill the cache in immediate mode.
+            request.mode = (HSC_MODE_FROMMEM | HSC_MODE_THREADED);
+            request.count = cacheSize;
+            request.memBank = ((addr >> 12) & 017);
+            request.memAddr = (addr & 07777);
+            request.fromBufferP = wordCache;
+            HSCexecute(chanP, &request);
+            cacheBase = addr;
+            iotCondLog(LOG_CACHE,"cache load of %d words at address %d\n", cacheSize, addr);
+        }
 
-    val = buffer[0];
+        // Using the cache does make the hs cycle light not really reflect reality,
+        // but we'll try to fake it.
+        // The emulator loop will turn it off.
+        pdp1P->hsc = 1;
+
+        // Since we aren't having the high speed channel cycle-steal, best we can do
+        // is add the 5us delay to our running delay.
+        pendingDelay += 5000;
+        val = wordCache[addr - cacheBase];
+    }
+    else
+    {
+        // Fetch the word with hsc threaded mode.
+        // This also provides the 5usec word-fetch delay the real hardware had.
+        // Note that this might cause rescheduling, but this has not been a significant issue
+        // in deployment, even on a pi4.
+        request.mode = (HSC_MODE_FROMMEM | HSC_MODE_THREADED);
+        request.count = 1;
+        request.memBank = ((addr >> 12) & 017);
+        request.memAddr = (addr & 07777);
+        request.fromBufferP = buffer;
+        HSCexecute(chanP, &request);
+        HSCwait(chanP);     // Here's where the simulation of the hardware hsc delay happens.
+        val = buffer[0];
+    }
+
     return(val);
 }
 
@@ -1692,6 +1741,22 @@ ConfigurationSettingP settingP;
     {
         origCharsets = twoCharsets = settingP->onOff;
         iotCondLog(LOG_CONFIG, "340 emulator dual charsets %s\n", (twoCharsets)?"enabled":"disabled");
+    }
+
+    if( (settingP = findConfigurationSetting(getConfiguration(), "t340cachesize")) )
+    {
+        cacheSize = settingP->ivalue;
+        if( cacheSize < 0 )
+        {
+            cacheSize = 0;
+        }
+
+        if( cacheSize > MAXCACHE )
+        {
+            cacheSize = MAXCACHE;
+        }
+
+        iotCondLog(LOG_CONFIG, "340 emulator cache size %d\n", cacheSize);
     }
 }
 

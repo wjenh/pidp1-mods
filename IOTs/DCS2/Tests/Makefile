@@ -6,8 +6,6 @@
 #   T01 ... T11  -- assemble one test program
 #   clean        -- remove all generated files
 #
-# am1 -b generates the binary (.rim), a listing (.lst), and a symbol table (.sym).
-#
 # To run a test:
 #   1. Start the harness in one terminal (see README.md for per-test commands).
 #   2. Read-in load the .rim into the emulator and start it.

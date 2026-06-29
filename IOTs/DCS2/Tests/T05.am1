@@ -267,7 +267,6 @@ t2_done,
     scb
 
     jsp printSummary
-    lio testFailCount
     hlt
     jmp begin
 

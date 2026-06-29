@@ -184,7 +184,6 @@ drainb,
     scb
 
     jsp printSummary
-    lio testFailCount
     hlt
     jmp begin
 

@@ -203,7 +203,6 @@ t3_done,
     scb
 
     jsp printSummary
-    lio testFailCount
     hlt
     jmp begin
 

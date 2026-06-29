@@ -19,7 +19,6 @@ T03: DCS2 ERROR PATH TESTS -- no harness required
  * Result:
  *   Typewriter prints each test label followed by PASS or FAIL.
  *   printSummary prints the final counts.
- *   Program halts with IO = testFailCount (0 = all pass).
  *
  * Assembler: am1 v1.28+
  * Assemble:  am1 -b T03.am1
@@ -198,7 +197,6 @@ t5_done,
 // ---- summary and halt -----------------------------------------------------
 
     jsp printSummary
-    lio testFailCount
     hlt
     jmp begin               // CONTINUE restarts
 

@@ -152,6 +152,7 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %token ORIGIN
 %token EXPR
 %token BANK
+%token THISBANK
 %token LOCATION
 %token LCLLOCATION
 %token LOCAL
@@ -781,6 +782,11 @@ simple_expr    : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBankP
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, INTEGER, NILP, NILP);
                     $$->value.ival = $1;
+                }
+                | THISBANK
+                {
+                    $$ = newnode(lineno, curBankP->cur_pc, INTEGER, NILP, NILP);
+                    $$->value.ival = curBankP->bank << 12;
                 }
                 | OPCODE
                 {

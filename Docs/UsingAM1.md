@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.35 and covers up through am1 version 1.37; it will be updated as needed.\
-Edit date 27-Jun-2026
-Add newline behavior for type340 directive
+This is version 1.37 and covers up through am1 version 1.39; it will be updated as needed.\
+Edit date 30-Jun-2026
+add thisbank
 
 ## What is **am1**?
 
@@ -563,7 +563,7 @@ Additionally, more locals can be defined after the initial *local* directive by 
     local a, b
     .
     .
-    addlocal c, d.
+    addlocal c, d
     ...
 ```
 
@@ -1046,6 +1046,19 @@ The **macro** and **macro1** compilers do not support extended memory,
 so code using banks will generate code that isn't actually usable, but it will be annotated
 to show where banks were switched.
 
+## Thisbank
+
+You can use *thisbank* in any expression.
+It always evaluates to the numeric value of the bank base address for the bank in effect
+when it is used.
+
+For example:
+```
+lac [thisbank
+```
+Lac will be loaded with whatever the current bank is at this point left-shifted by 12 decimal.
+This gives the address of location 0 in the bank, e.g. if in bank 1, *thisbank* will have the value 4096 decimal.
+
 ## Start or stop
 
 The start or stop directive must be the last statement in a program, and this is enforced.
@@ -1315,6 +1328,7 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 | stop        |
 | table       |
 | text        |
+| thisbank    |
 | type340     |
 | var         |
 | variables   |

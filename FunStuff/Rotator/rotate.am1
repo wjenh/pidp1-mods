@@ -11,6 +11,9 @@ ROTATE THRU SIX PROGRAMS ON THE DRUM
 // and configures the clock to interrupt every minute and return to this code.
 // It selects the program to load and fetches it from the drum then transfers control
 // to the start address that drumloader established.
+//
+// Note that it is important to be sure no type 340 program is running before
+// loading the new image. If one is, it will try to execute whatever data overwrites its program.
 
 #include <memory.ah>
 #include <CLOCK/clockdefs.ah>
@@ -57,6 +60,7 @@ var pgm=020100, pgm2=111007
 // Control transfers here on every timeout, we will already be in extended mode.
 // Get the drum pgm to load, 6 sets of 6 bits, high bit in each ignored, and rotate them.
 resume, 
+     jsp type340halt        // in case a 340 program is running, be sure it's stopped
      lac pgm
      lia
      lac pgm2
@@ -83,7 +87,7 @@ resume,
      jda farmemcpy
      0:bnkno
      0
-     law end - isr
+     law lastloc - isr
      jda farmemcpy
      isr:bnkno
      isr
@@ -96,9 +100,12 @@ resume,
      eem
      farjmp(0)
 
+#include <TYPE340/type340halt.ac>
+
 // put this out now so we don't step on high mem
 pgm, 0
 pgm2, 0
+
 constants
 
 // The bank 0 transfer-back code.
@@ -122,7 +129,8 @@ rti, eem
 go,  lac startaddr
      sza
      jmp i startaddr    // transfer to the loaded program
+
 constants
-end,
+lastloc,
 
 start 100:bnkno

@@ -153,6 +153,7 @@ endloc(al)?[ \t]*	{ return(ENDLOC); }
 var[ \t]*		{ return(VAR); }
 table[ \t]*		{ return(TABLE); }
 bank[ \t]*		{ return(BANK); }
+thisbank[ \t]*	{ return(THISBANK); }
 
 \:			{ return(BREF); }
 ^[ \t]*start[ \t]*	{ return(START); }

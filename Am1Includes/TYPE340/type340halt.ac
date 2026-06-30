@@ -1,0 +1,15 @@
+#ifndef TYPE340HALT_AC
+#define TYPE340HALT_AC
+// This is a tiny bit of code that will ensure no Type 340 program is currently running.
+// It doesn't include type340defs.ah to avoid any symbol conflicts.
+// Usage: jsp t340halt
+
+type340halt,
+    local rtn, prog
+    dap rtn
+    lio [prog | thisbank // we need the full 16 bit address, add in
+    iot 015             // avoid using a defined symbol
+rtn, jmp .
+prog, 02000             // parameter halt
+    endloc
+#endif

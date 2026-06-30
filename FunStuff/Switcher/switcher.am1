@@ -28,6 +28,7 @@ bank BNKNO
 
 // Put our included code bits here
 1000/
+#include <TYPE340/type340halt.ac>
 #include <DCS/getach.ac>
 #include <DCS/getaln.ac>
 #include <DCS/textascii.ac>
@@ -77,6 +78,8 @@ rs3, cli            // loop waiting for a connection, which will be ready if we 
      say(hl1)       // we're connected, say hello and proceed
      say(hl1b)
      say(hl1c)
+     
+     jsp type340halt    // in case a type 340 program is running, halt it
 
 // Get the track to load or the command
 // If not valid, ask again

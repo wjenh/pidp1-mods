@@ -44,6 +44,7 @@ var numEntries     // will be one more than the number we have
 
 100/
 strt,
+    jsp type340halt     // just in case a type 340 program is running in bank 0
     law lines
     dac linePtr
     law txtBuf
@@ -361,6 +362,7 @@ msg4,
 
 #include <SYMGEN/drawasctext.ac>
 #include <SYMGEN/drawdigits.ac>
+#include <TYPE340/type340halt.ac>
 
 constants
 start strt:BNKNO

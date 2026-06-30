@@ -100,6 +100,7 @@
  *                   BankContextP curBankP->x references, it's just cleaner code
  * 26-Jun-2026 wje - add test output mode
  * 26-Jun-2026 wje - adjust type340 nl to just insert a cr, the t340 emulator changed, it does cr/lf for cr
+ * 30-Jun-2026 wje - add thisbank keyword
  *
 */
 #include <unistd.h>

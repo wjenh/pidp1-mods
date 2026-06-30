@@ -10,8 +10,9 @@
  * 19-Jun-2026 wje initial version.
  */
 #include "iotHandler.h"
-#include "logger.h"      // for logger()/_logger(), the missed-character diagnostic
 #include <unistd.h>
+//#define DOLOGGING
+#include "iotLogger.h" 
 
 // Keep these in sync with common.h if their signatures ever change.
 void closefd(FD *fd);
@@ -32,6 +33,7 @@ iotHandler(PDP1 *pdp1P, int device, int pulse, int completion)
     {
         pdp1P->tbs = 0;
         IO(pdp1P) |= pdp1P->tb;
+        iotLog("In iot tyi mb %o dev %o, tb %o\n", MB(pdp1P), device, pdp1P->tb);
     }
 
     return(1);
@@ -58,13 +60,13 @@ char c;
     {
         closefd(&pdp1P->typ_fd);
         pdp1P->typ_fd.fd = -1;
+        iotLog("In iot tyi poll, got EOF on read \n");
         return;
     }
 
     waitfd(&pdp1P->typ_fd);
-
-    pdp1P->tb = 0;
-    pdp1P->tb |= c & 077;
+    iotLog("In iot tyi poll, got ch %o\n", c);
+    pdp1P->tb = c & 077;
     pdp1P->tbs = 1;
     pdp1P->pf |= 040;
     initiateBreak(TTI_CHAN);

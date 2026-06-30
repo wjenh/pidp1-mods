@@ -691,6 +691,13 @@ int shmFd;
     waitfd(&pdp->typ_fd);
     typtelnet(1041, fd[1]);
 
+    // Pre-load the tyi IOT (device 4) so its iotIOPoll is registered before the first
+    // character arrives. Without this, iotIOPoll never gets called (PF1 is never set),
+    // so tyi can never execute, so IOT_4 would never lazy-load -- a startup deadlock.
+    // tyo (device 3) does not need this because programs call tyo unconditionally; the
+    // first tyo instruction loads IOT_3 on its own.
+    dynamicIotOwnsDevice(4);
+
     emu(pdp, panel);
     return( 0 );   // can't happen
 }

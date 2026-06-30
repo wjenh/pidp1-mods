@@ -1,10 +1,8 @@
-INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I..
-
-%.o:%.c ../iotHandler.h
-	gcc $(INC) -g -fPIC -c $< -o $@
-
+INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib
+%.o:%.c ../iotHandler.h ../Lib/iotLogger.h
+	gcc $(INC) -fPIC -c $< -o $@
 %.so:%.o
-	gcc -shared $< -o $@
+	gcc -shared $< ../Lib/iotLogger.o -o $@
 
 all: IOT_3.so IOT_4.so
 

@@ -1,0 +1,372 @@
+T01: TIMESHARING CLOCK TEST (IOT_32)
+/*
+ * T01.am1 -- Comprehensive test of the BBN timesharing clock IOT.
+ *
+ * No external harness required.  User interaction:
+ *   Results are printed on the typewriter as each test completes.
+ *   Press any key after the summary to re-run all tests.
+ *
+ * IOTs exercised:
+ *   rck  (720032 / IOT 32)   -- read 1ms counter
+ *   cls  (722032 / IOT 2032) -- set clock parameters via AC
+ *   cct  (722132 / IOT 2132) -- set countdown timer via AC
+ *   cks  (720033)            -- read CKS status bits (checks cctcks flag)
+ *   esm  (720055)            -- enable sequence break master
+ *   cbs  (720056)            -- clear all pending SBS breaks
+ *
+ * Tests:
+ *   T01-1  rck returns 0 when clock is disabled
+ *   T01-2  rck returns non-zero after enabling clock and waiting
+ *   T01-3  Counter advances monotonically between two consecutive reads
+ *   T01-4  Disabling clock causes rck to return 0 again
+ *   T01-5  Countdown timer fires and sets cctcks flag (poll via cks)
+ *   T01-6  Countdown timer completion pulse: cct i blocks until countdown fires
+ *   T01-7  Countdown reset (count=0) clears cctcks status flag
+ *   T01-8  32ms SBS interrupt fires within the expected time window
+ *
+ * SBS setup notes for T01-8 (SBS256, non-SBS16 mode):
+ *   The SBS break sequence saves three words and then begins executing
+ *   at the fourth consecutive location.  For SBS256, that fixed frame
+ *   always starts at address 0:
+ *     loc 0: SBS saves old AC here
+ *     loc 1: SBS saves packed(ov1, exd, PC) here
+ *     loc 2: SBS saves IO here
+ *     loc 3: execution begins here (interrupt handler entry point)
+ *   Return from interrupt: 'jmp i 1' reads the saved PC from loc 1 and
+ *   acts as a DEBREAK, clearing the held-break state.
+ *
+ *   T01-8 assumes sbs16 has NOT been enabled in a prior program.  If it
+ *   has (sbs16 is sticky once set), channel 0 of SBS16 still uses the
+ *   same locations 0-3, so the handler entry and return idiom are
+ *   identical; however SBS16 also requires b1 bit 0 to be armed via
+ *   'asc 0' before ESM for the break to be queued.
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 T01.am1
+ */
+
+#include <CLOCK/clockdefs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+// ---- SBS interrupt handler frame (locations 0-3) -------------------------
+//
+// The break sequence saves: AC at 0, packed-PC+flags at 1, IO at 2,
+// then starts executing from location 3.
+// Return: 'jmp i 1' jumps to the saved PC and asserts DEBREAK.
+
+0/
+    0               // loc 0: SBS saves old AC here during a break
+    0               // loc 1: SBS saves packed(ov1, exd, PC) here
+    0               // loc 2: SBS saves IO here
+    jmp clkInt32ms  // loc 3: dispatch to the 32ms interrupt handler
+
+// ---- program origin ------------------------------------------------------
+
+100/
+
+begin,
+    jsp resetResults
+
+    // Reset all clock state to a known-clean starting condition.
+    // 'cls' with AC=0: op = (AC >> 8) & 017 = 0, so the else branch fires
+    // and sets enabled = enable32ms = enable1min = 0.
+    // 'cct' with AC=0: count=0, the else branch clears the cctcks flag and
+    // counterCompleteNeeded; no IOCOMPLETE is asserted (no modifier).
+    // 'cbs' clears b3 (synchronized), b4 (held), and b2 (raw) break state.
+
+    cla
+    cls                 // disable clock
+    cla
+    cct                 // reset countdown; clears cctcks (no modifier = no hang)
+    cbs                 // clear any pending SBS breaks
+
+    lac [bannerMsg]
+    jda typetext
+
+// ---- T01-1: rck returns 0 when clock is disabled -------------------------
+//
+// All IOTs in the 30-37 device range clear IO before the plugin runs.
+// When enabled=0, IOT_32.c's plain-rck branch leaves IO at 0.
+
+    rck                 // IO = counter if enabled, 0 if disabled
+    lai                 // AC <- IO
+    sza                 // skip if AC == 0 (disabled: expected)
+    jmp t1fail
+    lio [REPORT_PASS]; lac [lbl1]; jda reportResult; jmp t1done
+t1fail,
+    lio [REPORT_FAIL]; lac [lbl1]; jda reportResult
+t1done,
+
+// ---- T01-2: rck returns non-zero after enabling clock --------------------
+//
+// Enable clock with no interrupt flags (clsena only in AC).
+// Spin ~1000 iterations to allow the 1ms counter to accumulate ticks.
+// Each loop iteration costs about 3 instructions at ~5us each, so 1000
+// iterations = ~15ms, giving ~15 ticks guaranteed.
+
+    lac [clsena]        // AC = clsena (2000 octal): enable, no interrupts
+    cls                 // IOT 2032: configure clock
+
+    local spCnt2
+    dzm spCnt2
+spLp2,
+    idx spCnt2          // spCnt2++; AC = spCnt2
+    sad [0d1000]        // skip if AC != 1000 (still looping); no-skip when AC == 1000
+    jmp spLp3           // AC == 1000 (no-skip): done, jump to exit and over storage
+    jmp spLp2           // AC != 1000 (skip case): loop back
+spCnt2, 0               // storage must precede the loop that references it
+    endlocal
+
+spLp3,
+    rck                 // IO = current 1ms counter value (should be > 0)
+    lai                 // AC <- IO
+    sza i               // skip if AC != 0 (counter is running)
+    jmp t2fail
+    lio [REPORT_PASS]; lac [lbl2]; jda reportResult; jmp t2done
+t2fail,
+    lio [REPORT_FAIL]; lac [lbl2]; jda reportResult
+t2done,
+
+// ---- T01-3: counter advances monotonically between two reads -------------
+//
+// Read rck, save the value, spin ~1000 iterations, read rck again.
+// Check: first reading < second reading (counter must have advanced).
+// The 1ms counter runs 0-59999 and then wraps; a 15ms delay cannot wrap.
+
+    rck
+    lai
+    dac firstRead       // save first counter sample
+
+    local spCnt3
+    dzm spCnt3
+spLp3b,
+    idx spCnt3
+    sad [0d1000]        // skip if AC != 1000; no-skip when AC == 1000
+    jmp t3spDone        // AC == 1000 (no-skip): done
+    jmp spLp3b          // AC != 1000 (skip case): loop back
+spCnt3, 0
+    endlocal
+
+t3spDone,
+    rck
+    lai                 // AC = second counter sample
+    dac secondRead
+
+    lac firstRead
+    sub secondRead      // AC = first - second; negative means second > first
+    sma                 // skip if AC < 0 (second > first: counter advanced)
+    jmp t3fail
+    lio [REPORT_PASS]; lac [lbl3]; jda reportResult; jmp t3done
+t3fail,
+    lio [REPORT_FAIL]; lac [lbl3]; jda reportResult
+t3done,
+
+// ---- T01-4: rck returns 0 after disabling clock --------------------------
+//
+// AC=0 -> op=0 -> else branch in IOT_32.c -> enabled=0.
+// Subsequent rck leaves IO at 0 (IO cleared by IOT, not overwritten
+// because the enabled check fails).
+
+    cla
+    cls                 // disable clock
+    rck
+    lai
+    sza                 // skip if AC == 0 (disabled again)
+    jmp t4fail
+    lio [REPORT_PASS]; lac [lbl4]; jda reportResult; jmp t4done
+t4fail,
+    lio [REPORT_FAIL]; lac [lbl4]; jda reportResult
+t4done,
+
+// ---- T01-5: countdown timer fires and sets cctcks (polling) --------------
+//
+// 'cct' with no modifier: completion=0, so counterCompleteNeeded=0 and no
+// ioh stall.  The IOT returns immediately after setting the countdown.
+// When iotPoll() counts down to 0 it sets CKS bit cctcks (000020 octal).
+// Poll 'cks' in a tight loop until that bit appears, with a safety
+// timeout of 5000 iterations (>> the 20ms countdown period).
+// The main clock does not need to be enabled for the countdown to work;
+// IOT_32.c calls enablePolling(200) independently when count > 0.
+
+    lac [0d20]          // countdown value = 20 ms
+    cct                 // IOT 2132: set countdown, no modifier
+
+    local plCnt5
+    dzm plCnt5
+plLp5,
+    cks                 // IO <- CKS status bits (IOTs 30-37 clear IO first)
+    lai                 // AC <- IO
+    and [cctcks]        // isolate countdown-complete flag (000020)
+    sza                 // skip if AC == 0 (cctcks not set: still waiting)
+    jmp t5pass          // jmp fires when AC != 0 (cctcks set: done)
+    idx plCnt5          // still waiting; bump timeout counter
+    lac plCnt5
+    sad [0d5000]        // skip at 5000 iterations (timed out): falls to jmp t5fail
+    jmp t5fail          // timed out: jump to fail and past storage
+    jmp plLp5
+plCnt5, 0
+    endlocal
+
+t5pass,
+    lio [REPORT_PASS]; lac [lbl5]; jda reportResult; jmp t5done
+t5fail,
+    lio [REPORT_FAIL]; lac [lbl5]; jda reportResult
+t5done,
+
+// ---- T01-6: countdown timer completion pulse via ioh wait ----------------
+//
+// 'cct i': B5 set -> nac=1 -> completion=1 -> counterCompleteNeeded=1.
+// B5 also causes pdp1.c to set ioh=1, spinning on the IOT until ios=1.
+// When iotPoll() counts down to 0 it fires IOCOMPLETE (ios=1), releasing
+// the ioh stall.  If execution reaches the next instruction, it passed.
+
+    lac [0d30]          // countdown value = 30 ms
+    cct i               // IOT 2132 with i: set countdown and block until done
+
+    // if we reach here, the ioh was released => completion worked
+    lio [REPORT_PASS]; lac [lbl6]; jda reportResult
+
+// ---- T01-7: countdown reset (count=0) clears the cctcks flag ------------
+//
+// After T01-6's countdown fired, iotPoll set cctcks.  'cct' with AC=0
+// resets: count=0 causes the else branch which calls
+//   CKS(pdp1P) &= ~COUNTER_CKS_FLAG   (line at the top of the handler)
+// before entering the else, so the flag is cleared unconditionally.
+// Immediately poll cks to confirm.
+
+    cla
+    cct                 // reset countdown; AC=0 clears cctcks, no modifier
+
+    cks
+    lai
+    and [cctcks]
+    sza                 // skip if cctcks == 0 (cleared: expected)
+    jmp t7fail
+    lio [REPORT_PASS]; lac [lbl7]; jda reportResult; jmp t7done
+t7fail,
+    lio [REPORT_FAIL]; lac [lbl7]; jda reportResult
+t7done,
+
+// ---- T01-8: 32ms SBS interrupt fires within expected window --------------
+//
+// Setup: the interrupt handler (clkInt32ms) is at location 3, set up
+// by the '0/' block at the top of this program.  The handler increments
+// intFlag and returns via 'jmp i 1' (DEBREAK).
+//
+// The spin loop below uses 3 instructions per iteration; at ~5us/cycle
+// and ~5 cycles per instruction, 5000 iterations take roughly 75ms,
+// which comfortably spans at least two 32ms interrupt periods.
+//
+// After the spin, we disable SBS and the clock BEFORE calling any
+// typewriter output routines: the interrupt handler clobbers AC, so
+// allowing it to fire inside typetext/jda sequences would corrupt them.
+//
+// cls flag encoding for clsena clsims (channel 0):
+//   bit e (2000): enable clock
+//   bit i (0400): enable 32ms interrupt
+//   clfmms (0017): channel field = 0
+//   -> AC = 2000 | 0400 = 2400 octal
+//
+// With sbs16=0 (SBS256), req(pdp, 0) sets b2=1 unconditionally, and the
+// break saves at locations 0-3 regardless of the channel argument.
+
+    dzm intFlag         // clear interrupt count before arming
+
+    esm                 // enable sequence break master (sbm=1)
+    lac [clsena clsims] // AC = 2400 octal: enable clock + 32ms interrupt
+    cls                 // IOT 2032: configure clock; channel32ms = AC & 017 = 0
+
+    local spCnt8
+    dzm spCnt8
+spLp8,
+    idx spCnt8
+    sad [0d5000]        // skip if AC != 5000; no-skip when AC == 5000
+    jmp t8spDone        // AC == 5000 (no-skip): done
+    jmp spLp8           // AC != 5000 (skip case): loop back
+spCnt8, 0
+    endlocal
+
+t8spDone,
+    // Disable SBS and clock before any typewriter I/O.
+    cbs                 // clear b3/b4/b2; sbm stays 1 but no new requests pending
+    cla
+    cls                 // disable clock (AC=0 -> op=0 -> enabled=0)
+
+    lac intFlag
+    sza i               // skip if intFlag != 0 (at least one interrupt fired)
+    jmp t8fail
+    lio [REPORT_PASS]; lac [lbl8]; jda reportResult; jmp t8done
+t8fail,
+    lio [REPORT_FAIL]; lac [lbl8]; jda reportResult
+t8done,
+
+// ---- Summary and re-run prompt -------------------------------------------
+
+    jsp printSummary
+
+    clf 1               // discard any keypress that arrived during the test
+    lac [rerunMsg]
+    jda typetext
+    lsm                 // be sure interrupts are disabled now
+
+    local waitKey
+waitKey,
+    szf 1 i             // skip if PF1 is set (key available)
+    jmp waitKey         // PF1 clear: no key yet, keep waiting
+    tyi                 // read key; clears tbs; IO <- 6-bit key code
+    clf 1               // clear PF1 (tyi clears tbs but NOT PF1)
+    endlocal
+
+    jmp begin           // re-run
+
+// ---- 32ms SBS interrupt handler (T01-8) ----------------------------------
+//
+// Entry point: location 3 (see '0/' block at top of file).
+// On arrival, the break sequence has already saved the interrupted
+// program's AC/PC/IO to locations 0-2.
+// 'idx intFlag' increments the flag word; AC receives the new value
+// (we do not preserve it -- the main spin loop reloads AC at its top).
+// 'jmp i 1' performs DEBREAK: reads the saved PC from location 1,
+// clears b3/b4 (the held-break registers), and jumps to the saved PC.
+
+clkInt32ms,
+    idx intFlag         // intFlag++; AC = new intFlag value
+    jmp i 1             // DEBREAK: restore PC from loc 1, clear held-break state
+
+// ---- Test label strings --------------------------------------------------
+
+bannerMsg, text "\nTIMESHARING CLOCK TEST\n"
+           013
+
+rerunMsg, text "\nPRESS ANY KEY TO RERUN\n"
+          013
+
+lbl1, text "T01-1 rck disabled=0"
+      013
+lbl2, text "T01-2 rck enabled>0"
+      013
+lbl3, text "T01-3 counter advances"
+      013
+lbl4, text "T01-4 rck re-disabled"
+      013
+lbl5, text "T01-5 cctcks poll"
+      013
+lbl6, text "T01-6 cct-i ioh wait"
+      013
+lbl7, text "T01-7 cct reset clears"
+      013
+lbl8, text "T01-8 32ms sbs int"
+      013
+
+// ---- Persistent data words -----------------------------------------------
+
+firstRead,  0           // first rck sample (T01-3)
+secondRead, 0           // second rck sample (T01-3)
+intFlag,    0           // interrupt count; incremented by clkInt32ms (T01-8)
+
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

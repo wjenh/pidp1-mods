@@ -15,6 +15,7 @@
  * It can optionally implement:
  * void iotStart(void); - called when the emulator transitions to run state
  * void iotStop(void); - called when the emulator transitions to halt state
+ * void iotUpdate(void); - called when the emulator gets SIGHUP to reload its configuration
  *
  * Pseudo-asynchronous behavior can be done by implementing:
  * void iotPoll(PDP1P pdp1P); -called every n instruction cycles if enabled/
@@ -136,7 +137,7 @@ dynamicIotOwnsDevice(int dev)
 void
 dynamicIotProcessBreak(int chan)
 {
-    if( chan < 16)
+    if( (chan >= 0) && (chan < 16) )
     {
         dynamicReq(pdp1P, chan);               // signal a break, convoluted because of various unshared bits
     }
@@ -188,6 +189,22 @@ IotStopP stopP;
     stopped = 1;
 }
 
+// Called when the emulator gets SIGHUP so an IOT can reload its configuration.
+void
+dynamicIotProcessorUpdate(void)
+{
+int i;
+IotUpdateP updateP;
+
+    for( i = 0; i < 65; ++i )
+    {
+        if( (updateP = handles[i].updateP) && !handles[i].isAlias )
+        {
+            updateP();
+        }
+    }
+}
+
 // Called every instruction cycle to hande any IOTs with polling.
 void
 dynamicIotProcessorDoPoll(PDP1 *pdp1P)
@@ -233,14 +250,12 @@ IoPollEntryP itemP;
     }
 }
 
-// First-touch resolution of device number dev: dlopen()'s "/opt/pidp1-mods/IOTs/IOT_<dev>.so"
+// Resolution of device number dev: dlopen()'s "/opt/pidp1-mods/IOTs/IOT_<dev>.so"
 // (dev formatted in octal), then looks up its exported iotHandler symbol. If iotHandler isn't
 // exported, checks for an iotAlias symbol instead and, if found, recursively resolves the
 // device number it returns and marks this entry as an alias pointing at that real entry. Also
-// looks up and records the optional iotStart/iotStop/iotPoll/iotIOPoll symbols (registering
-// this entry on pollList/ioPollList if iotPoll/iotIOPoll are present, respectively), and calls
-// the plugin's iotStart() immediately if present, since by the time a device is first touched
-// the emulator is typically already running and iotStart() wouldn't otherwise be called.
+// looks up and records the optional iotStart/iotStop/iotPoll/iotIOPoll/iotUpdate symbols
+// if present and calls the plugin's iotStart() immediately if present.
 // Returns a pointer to the resolved IotEntry (the real entry, alias-followed, with handlerP and
 // the optional hooks populated) on success; returns 0 if the .so can't be opened, or if it
 // exports neither iotHandler nor a usable iotAlias, or if an iotAlias target is out of range or
@@ -312,6 +327,7 @@ char fname[256];
     // not required to be implemented
     entryP->startP = (IotStartP)dlsym(entryP->dlHandleP, "iotStart");
     entryP->stopP = (IotStopP)dlsym(entryP->dlHandleP, "iotStop");
+    entryP->updateP = (IotStopP)dlsym(entryP->dlHandleP, "iotUpdate");
 
     entryP->pollP = (IotPollP)dlsym(entryP->dlHandleP, "iotPoll");
     if( entryP->pollP )

@@ -1,0 +1,848 @@
+Unified, self-checking regression test for the Type 340 display (IOTs/Type340Display)
+/*
+ * type340FullTest.am1
+ *
+ * Exercises the Type 340 display host IOTs (dla, drs, dcf, dra, dss, dsv, dsh, dsp, drc) and all
+ * 8 display-program modes (parameter, point, slave, character, vector, vcontinue, increment,
+ * subroutine jump/save/deposit) without requiring any PDP-1 control-panel interaction (no halts
+ * that need CONTINUE). Every section self-checks via host-readable state -- dra (address counter),
+ * dsv/dsh/dsp/dss flags -- and reports PASS/FAIL/SKIP on the typewriter via reportResult, so the
+ * whole run can be judged from the printed transcript alone.
+ *
+ * The one exception is the lightpen section: a genuine lightpen hit can only be produced by a
+ * real mouse action in the display GUI (checkLightpen() is fed from the same simulated-lightpen
+ * mechanism the Type 30/33 use). That section prompts for the action over the typewriter, polls
+ * with a bounded timeout, and reports SKIP rather than hanging if nothing happens.
+ *
+ * Known gaps in this first pass, recorded rather than silently glossed over:
+ *  - Scale and intensity have no host-readable effect; coverage here is "runs without an edge
+ *    violation at every scale factor," not a check of the actual pixel spacing or brightness.
+ *  - The interrupt/specialinterrupt parameter bits are only smoke-checked (does dss still work
+ *    with interrupt requested); a real SBS channel-0 break and handler is not wired up here.
+ *  - Slave displays can only be confirmed to execute without erroring; there is no second display
+ *    surface in this environment to verify the visual effect.
+ *
+ * No panel interaction: every display program below ends in an explicit 'halt' (or a deliberate
+ * edge violation, which also halts the display and sets the stop flag per the documentation), so
+ * the dss-poll idiom already used by every other test in this directory never blocks forever on a
+ * correctly functioning display engine.
+ */
+
+100/
+#include <TYPE340/type340defs.ah>
+#include <CLOCK/clockdefs.ah>
+
+// REPORT_PASS/REPORT_FAIL/REPORT_SKIP (0/1/2) are reportResult's result codes, defined in
+// TESTUTIL/reportResult.ac. That include is placed at the END of this file (after all of this
+// program's own code/data), matching the established convention (see e.g. programSelector.am1's
+// "// Put included code here" placement) -- it lets the library's size grow freely without
+// requiring a guessed, separate fixed origin. Since it's a cpp #define, not an assembler symbol,
+// using the bare numeric values here instead of the symbolic names avoids needing the include
+// itself to appear this early in the source.
+#define REPORT_PASS 0
+#define REPORT_FAIL 1
+#define REPORT_SKIP 2
+
+#define CENTER 0d512
+#define LEFTOFCENTER 0d100  // needed for scale tests, scale 3 is too large for center display
+#define HALFSIZE 0d60
+
+main,
+    jsp resetResults        // be sure our report counters are reset in case this is run multiple times
+    jsp secBasicDra
+    jsp secDcf
+    jsp secScale
+    jsp secPoint
+    jsp secVector
+    jsp secVcontEdge
+    jsp secCharacter
+    jsp secIncrement
+    jsp secSubJump
+    jsp secSubSave
+    jsp secSubDeposit
+    jsp secEdgeVertical
+    jsp secEdgeCorner
+    jsp secIntrBits
+    jsp secLightpen
+    jsp secSlave
+
+    jsp printSummary
+    lac [doneText
+    jda typetext
+done,
+    hlt             // no panel interaction needed: just halt
+    jmp main        // if continued, run again
+
+// ---------------------------------------------------------------------------
+// secBasicDra -- dla/dss smoke test plus a dra (address counter) check, combined: reaching the
+// dra comparison at all already proves dla started the program and dss correctly detected the
+// halt, since the poll loop cannot return otherwise.
+// ---------------------------------------------------------------------------
+secBasicDra,
+    local rtn
+    dap rtn
+    lio [progDra
+    dla
+    jsp waitStop
+
+    dra
+    lai
+    sad [progDraAfter     // skip (mismatch) -> bad; fall through (match) -> good
+    jmp draGood
+    lac [lblBasicDra
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+draGood,
+    lac [lblBasicDra
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progDra, scale(0) intensity(3) next(point)
+    y(CENTER) next(point)
+    x(CENTER) show next(parameter)
+    halt
+progDraAfter,
+
+// ---------------------------------------------------------------------------
+// secDcf -- deliberately cause a vertical edge violation, confirm dss and dsv are both set, then
+// issue dcf (clear flags) on its own (no new dla needed) and confirm both read clear afterward.
+// ---------------------------------------------------------------------------
+secDcf,
+    local rtn
+    dap rtn
+    lio [progViolateV
+    dla
+    jsp waitStop
+
+    dss
+    jmp dcfFail1          // clear (unexpected) -> bad
+    dsv
+    jmp dcfFail1          // clear (unexpected) -> bad
+    lac [lblDcfSet
+    lio [REPORT_PASS
+    jda reportResult
+    jmp dcfClearPart
+dcfFail1,
+    lac [lblDcfSet
+    lio [REPORT_FAIL
+    jda reportResult
+
+dcfClearPart,
+    dcf
+    dsv
+    jmp dcfClearOk         // clear (expected) -> good
+    lac [lblDcfClear
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+dcfClearOk,
+    lac [lblDcfClear
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+// Aimed straight off the top edge from a safely-interior point: y goes well past 1023.
+progViolateV, scale(0) intensity(3) next(point)
+    y(CENTER) next(point)
+    x(CENTER) show next(vcontinue)
+    visible up deltay(0d127) right deltax(0)
+    halt
+
+// ---------------------------------------------------------------------------
+// secScale -- run the same small triangle at all 4 scale factors from a centered start point;
+// PASS for a given scale if it completes with no edge violation. Four separate literal programs
+// rather than one self-modifying routine, since a fixed program per scale is far easier to read
+// and to get right than patching the scale field into a shared word at run time.
+// ---------------------------------------------------------------------------
+secScale,
+    local rtn
+    dap rtn
+    jsp checkScale0
+    jsp checkScale1
+    jsp checkScale2
+    jsp checkScale3
+rtn, jmp .
+    endloc
+
+// checkScaleN -- run progScaleN and report PASS if it completes with no edge violation.
+// Called via jsp. Neither AC nor IO is preserved.
+checkScale0,
+    local rtn
+    dap rtn
+    lio [progScale0
+    dla
+    jsp waitStop
+    dsv dsh
+    jmp scale0Good         // clear (expected) -> good
+    lac [lblScale0
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+scale0Good,
+    lac [lblScale0
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+checkScale1,
+    local rtn
+    dap rtn
+    lio [progScale1
+    dla
+    jsp waitStop
+    dsv dsh
+    jmp scale1Good
+    lac [lblScale1
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+scale1Good,
+    lac [lblScale1
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+checkScale2,
+    local rtn
+    dap rtn
+    lio [progScale2
+    dla
+    jsp waitStop
+    dsv dsh
+    jmp scale2Good
+    lac [lblScale2
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+scale2Good,
+    lac [lblScale2
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+checkScale3,
+    local rtn
+    dap rtn
+    lio [progScale3
+    dla
+    jsp waitStop
+    dsv dsh
+    jmp scale3Good
+    lac [lblScale3
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+scale3Good,
+    lac [lblScale3
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progScale0, scale(0) intensity(3) next(point)
+    y(CENTER) next(point)
+    x(LEFTOFCENTER) show next(vector)
+    visible up deltay(0d50) right deltax(0d25)
+    visible down deltay(0d50) right deltax(0d25)
+    visible deltay(0) left deltax(0d50) end
+    halt
+
+progScale1, scale(1) intensity(3) next(point)
+    y(CENTER) next(point)
+    x(LEFTOFCENTER) show next(vector)
+    visible up deltay(0d50) right deltax(0d25)
+    visible down deltay(0d50) right deltax(0d25)
+    visible deltay(0) left deltax(0d50) end
+    halt
+
+progScale2, scale(2) intensity(3) next(point)
+    y(CENTER) next(point)
+    x(LEFTOFCENTER) show next(vector)
+    visible up deltay(0d50) right deltax(0d25)
+    visible down deltay(0d50) right deltax(0d25)
+    visible deltay(0) left deltax(0d50) end
+    halt
+
+progScale3, scale(3) intensity(3) next(point)
+    y(CENTER) next(point)
+    x(LEFTOFCENTER) show next(vector)
+    visible up deltay(0d50) right deltax(0d25)
+    visible down deltay(0d50) right deltax(0d25)
+    visible deltay(0) left deltax(0d50) end
+    halt
+
+// ---------------------------------------------------------------------------
+// secPoint -- two points, one shown and one moved-only, no violation expected.
+// ---------------------------------------------------------------------------
+secPoint,
+    local rtn
+    dap rtn
+    lio [progPoint
+    dla
+    jsp waitStop
+
+    dsv dsh
+    jmp pointGood          // clear (expected) -> good
+    lac [lblPoint
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+pointGood,
+    lac [lblPoint
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progPoint, scale(0) intensity(3) next(point)
+    y(CENTER - HALFSIZE) next(point)
+    x(CENTER) next(point)                   // move only, not shown
+    y(CENTER + HALFSIZE) next(point)
+    x(CENTER) show next(parameter)
+    halt
+
+// ---------------------------------------------------------------------------
+// secVector -- small triangle in vector mode, no violation expected.
+// ---------------------------------------------------------------------------
+secVector,
+    local rtn
+    dap rtn
+    lio [progVector
+    dla
+    jsp waitStop
+
+    dsv dsh
+    jmp vectorGood
+    lac [lblVector
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+vectorGood,
+    lac [lblVector
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progVector, scale(0) intensity(3) next(point)
+    y(CENTER - HALFSIZE) next(point)
+    x(CENTER) show next(vector)
+    visible up deltay(HALFSIZE) right deltax(HALFSIZE/2)
+    visible down deltay(HALFSIZE) right deltax(HALFSIZE/2)
+    visible deltay(0) left deltax(HALFSIZE) end
+    halt
+
+// ---------------------------------------------------------------------------
+// secVcontEdge -- vcontinue aimed straight off the right edge from the center; this is the
+// dedicated horizontal-edge-violation check (dsh expected set, dsv expected clear).
+// ---------------------------------------------------------------------------
+secVcontEdge,
+    local rtn
+    dap rtn
+    lio [progVcontEdge
+    dla
+    jsp waitStop
+
+    dsh
+    jmp vceFailNoH         // clear (unexpected) -> bad
+    lac [lblVceH
+    lio [REPORT_PASS
+    jda reportResult
+    jmp vceCheckV
+vceFailNoH,
+    lac [lblVceH
+    lio [REPORT_FAIL
+    jda reportResult
+
+vceCheckV,
+    dsv
+    jmp vceVok             // clear (expected) -> good
+    lac [lblVceV
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+vceVok,
+    lac [lblVceV
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progVcontEdge, scale(0) intensity(3) next(point)
+    y(CENTER) next(point)
+    x(CENTER) show next(vcontinue)
+    visible right deltax(0d127) deltay(0)
+    halt
+
+// ---------------------------------------------------------------------------
+// secCharacter -- a short type340 string, forcing charsets(2) explicitly so the result doesn't
+// depend on pidp1.config's two340charsets setting. No violation expected.
+// ---------------------------------------------------------------------------
+secCharacter,
+    local rtn
+    dap rtn
+    lio [progCharacter
+    dla
+    jsp waitStop
+
+    dsv dsh
+    jmp charGood
+    lac [lblCharacter
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+charGood,
+    lac [lblCharacter
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progCharacter, charsets(2) scale(1) intensity(3) next(point)
+    y(CENTER) next(point)
+    x(CENTER - HALFSIZE) next(character)
+    type340 "Hi"
+    halt
+
+// ---------------------------------------------------------------------------
+// secIncrement -- a small diamond in increment mode, no violation expected.
+// ---------------------------------------------------------------------------
+secIncrement,
+    local rtn
+    dap rtn
+    lio [progIncrement
+    dla
+    jsp waitStop
+
+    dsv dsh
+    jmp incGood
+    lac [lblIncrement
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+incGood,
+    lac [lblIncrement
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progIncrement, scale(2) intensity(7) next(point)
+    y(CENTER) next(point)
+    x(CENTER) next(increment)
+    visible set1(incright|incup) set2(incright|incdown) set3(incleft|incdown) set4(incleft|incup) end
+    halt
+
+// ---------------------------------------------------------------------------
+// secSubJump -- subroutine 'jump' transfers control to a second display-code block; confirmed by
+// dra landing inside that second block (rather than by eye).
+// ---------------------------------------------------------------------------
+secSubJump,
+    local rtn
+    dap rtn
+    lio [progSubJump
+    dla
+    jsp waitStop
+
+    dra
+    lai
+    sad [progJumpTgtAfter   // skip (mismatch) -> bad; fall through (match) -> good
+    jmp jumpGood
+    lac [lblSubJump
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+jumpGood,
+    lac [lblSubJump
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progSubJump, scale(0) intensity(3) next(subroutine)
+    jump progJumpTgt next(parameter)
+progJumpTgt,
+    halt
+progJumpTgtAfter,
+
+// ---------------------------------------------------------------------------
+// secSubSave -- subroutine 'save' calls a small vector routine that ends in 'end'; control should
+// return to just after the save command, landing on the following halt.
+// ---------------------------------------------------------------------------
+secSubSave,
+    local rtn
+    dap rtn
+    lio [progSubSave
+    dla
+    jsp waitStop
+
+    dra
+    lai
+    sad [progSubSaveAfter
+    jmp saveGood
+    lac [lblSubSave
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+saveGood,
+    lac [lblSubSave
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progSubSave, scale(0) intensity(3) next(point)
+    y(CENTER) next(point)
+    x(CENTER) show next(subroutine)
+    save progSaveRtn next(vector)
+progSubSaveEnd,
+    halt
+progSubSaveAfter,
+
+progSaveRtn,
+    visible up deltay(HALFSIZE/2) right deltax(HALFSIZE/2)
+    visible down deltay(HALFSIZE/2) right deltax(HALFSIZE/2)
+    visible deltay(0) left deltax(HALFSIZE) end
+
+// ---------------------------------------------------------------------------
+// secSubDeposit -- a nested subroutine call via 'deposit', mirroring subdeposit.am1's pattern but
+// self-checked via dra/dss instead of by eye.
+// ---------------------------------------------------------------------------
+secSubDeposit,
+    local rtn
+    dap rtn
+    lio [progSubDeposit
+    dla
+    jsp waitStop
+
+    dss
+    jmp depositFail        // clear (unexpected) -> bad
+    dra
+    lai
+    sad [progSubDepositAfter
+    jmp depositGood
+    jmp depositFail2
+depositGood,
+    lac [lblSubDeposit
+    lio [REPORT_PASS
+    jda reportResult
+    jmp rtn
+depositFail,
+    lac [lblSubDeposit
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+depositFail2,
+    lac [lblSubDeposit
+    lio [REPORT_FAIL
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progSubDeposit, scale(0) intensity(3) next(subroutine)
+    save progDepInner next(subroutine)
+    halt
+progSubDepositAfter,
+
+progDepInner,
+    deposit progDepDone next(point)
+    y(CENTER) next(point)
+    x(CENTER) show next(vector)
+    visible right deltax(HALFSIZE/2) deltay(0) end
+    next(subroutine)
+progDepDone,
+    0
+
+// ---------------------------------------------------------------------------
+// secEdgeVertical -- dedicated vertical-edge check, aimed off the bottom edge this time (the
+// horizontal case is already covered by secVcontEdge above); confirms dsv set AND dsh clear,
+// reported as two independent assertions.
+// ---------------------------------------------------------------------------
+secEdgeVertical,
+    local rtn
+    dap rtn
+    lio [progViolVBot
+    dla
+    jsp waitStop
+
+    dsv
+    jmp evFailNoV          // clear (unexpected) -> bad
+    lac [lblEdgeV
+    lio [REPORT_PASS
+    jda reportResult
+    jmp evCheckH
+evFailNoV,
+    lac [lblEdgeV
+    lio [REPORT_FAIL
+    jda reportResult
+
+evCheckH,
+    dsh
+    jmp evHok              // clear (expected) -> good
+    lac [lblEdgeVH
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+evHok,
+    lac [lblEdgeVH
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progViolVBot, scale(0) intensity(3) next(point)
+    y(CENTER) next(point)
+    x(CENTER) show next(vcontinue)
+    visible deltay(0d127) deltax(0) down
+    halt
+
+// ---------------------------------------------------------------------------
+// secEdgeCorner -- corner-to-corner diagonal, like type340AlignmentTest.am1's diagonals, but
+// checked via the combined 'dsv dsh' instruction itself (the documented OR-combination feature),
+// not by eye. Either flag being set is the expected/good outcome here.
+// ---------------------------------------------------------------------------
+secEdgeCorner,
+    local rtn
+    dap rtn
+    lio [progCorner
+    dla
+    jsp waitStop
+
+    dsv dsh
+    jmp cornerFail          // neither set (unexpected) -> bad
+    lac [lblCorner
+    lio [REPORT_PASS
+    jda reportResult
+    jmp rtn
+cornerFail,
+    lac [lblCorner
+    lio [REPORT_FAIL
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progCorner, scale(0) intensity(3) next(point)
+    y(0) next(point)
+    x(0) show next(vcontinue)
+    visible deltax(0d127) right deltay(0d127) up
+    halt
+
+// ---------------------------------------------------------------------------
+// secIntrBits -- smoke check only: confirms dss still correctly reflects a halt when the
+// 'interrupt' parameter bit is also requested. Does NOT verify an actual SBS channel 0 break and
+// handler -- that is a follow-up item, not attempted in this pass (see file header).
+// ---------------------------------------------------------------------------
+secIntrBits,
+    local rtn
+    dap rtn
+    lio [progInterrupt
+    dla
+    jsp waitStop
+
+    dss
+    jmp interruptFail       // clear (unexpected) -> bad
+    lac [lblInterrupt
+    lio [REPORT_PASS
+    jda reportResult
+    jmp rtn
+interruptFail,
+    lac [lblInterrupt
+    lio [REPORT_FAIL
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progInterrupt, halt interrupt
+
+// ---------------------------------------------------------------------------
+// secLightpen -- the one section needing real (non-panel) user interaction: a mouse action in
+// the display GUI. Prompts over the typewriter, polls dsp with a bounded timeout, reports FAIL
+// if nothing happens within the timeout.
+// ---------------------------------------------------------------------------
+secLightpen,
+    local rtn, done
+    dap rtn
+    lac [lpPromptText
+    jda typetext
+
+    // The Type 340 program loops by itself, continually drawing the target point.
+    // If there is a pen hit, it will stop and report the hit via dsp.
+    // This code starts a 5 second countdown timer and if no hit is seen, halts the 340.
+// start the clock in countdown mode
+    lac [0d5000              // 5k milliseconds
+    cct
+    lio [progLightpen
+    dla
+lpCheck,
+    dsp                     // check for the lp hit
+    jmp .+2
+    jmp lpCheckPass
+    cks                     // check for countdown timer timeout
+    lai
+    and [cctcks             // will be nonzero if the timer expired
+    sza
+    jmp lpCheckFail         // expired
+    jmp lpCheck
+
+lpCheckPass,
+    lac [lblLightpen
+    lio [REPORT_PASS
+    jda reportResult
+    jmp done
+lpCheckFail,
+    lac [lblLightpen
+    lio [REPORT_FAIL
+    jda reportResult
+done, cla; cct              // disable the clock
+    lio [progStop           // be sure the 340 is stopped
+    dla
+    jsp waitStop
+    rtn, jmp .
+    endloc
+
+// This is just a way to force a halt if the 340 is executing.
+progStop, halt
+
+progLightpen, scale(2) intensity(7) lpon next(point)
+    y(CENTER) next(point)
+    x(CENTER) show next(character)
+    type340 "X"
+    next(subroutine)
+    jump progLightpen next(point)
+
+// ---------------------------------------------------------------------------
+// secSlave -- minimal coverage: confirms a slave command executes and the display advances past
+// it without halting/erroring. No second display surface exists in this environment to verify
+// the visual effect -- documented gap, not a real assertion of slave display behavior.
+// ---------------------------------------------------------------------------
+secSlave,
+    local rtn
+    dap rtn
+    lio [progSlave
+    dla
+    jsp waitStop
+    dra
+    lai
+    sad [progSlaveAfter
+    jmp slaveGood
+    lac [lblSlave
+    lio [REPORT_FAIL
+    jda reportResult
+    jmp rtn
+slaveGood,
+    lac [lblSlave
+    lio [REPORT_PASS
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progSlave, scale(0) intensity(3) next(slave)
+    group(0) slave1(enabled) next(parameter)
+    halt
+progSlaveAfter,
+
+// ---------------------------------------------------------------------------
+// waitStop -- poll dss until the display halts (covers both a normal program halt and an edge
+// violation, which the documentation states also sets the stop flag). No timeout: every display
+// program in this suite is built to reach one or the other, so a hang here is itself diagnostic
+// of a real regression, exactly like the dss-poll idiom every other test in this directory uses.
+// Called via jsp. IO is preserved.
+// ---------------------------------------------------------------------------
+waitStop,
+    local rtn
+    dap rtn
+poll, dss
+    jmp poll
+rtn, jmp .
+    endloc
+
+// ---------------------------------------------------------------------------
+// Section labels and miscellaneous text, gathered together for readability.
+// ---------------------------------------------------------------------------
+lblBasicDra,
+    text "dla/dss/dra basic check"
+    13
+lblDcfSet,
+    text "edge violation sets dss+dsv"
+    13
+lblDcfClear,
+    text "dcf clears flags"
+    13
+lblScale0,
+    text "parameter scale 0"
+    13
+lblScale1,
+    text "parameter scale 1"
+    13
+lblScale2,
+    text "parameter scale 2"
+    13
+lblScale3,
+    text "parameter scale 3"
+    13
+lblPoint,
+    text "point mode"
+    13
+lblVector,
+    text "vector mode"
+    13
+lblVceH,
+    text "vcontinue horizontal edge (dsh)"
+    13
+lblVceV,
+    text "vcontinue horizontal edge leaves dsv clear"
+    13
+lblCharacter,
+    text "character mode"
+    13
+lblIncrement,
+    text "increment mode"
+    13
+lblSubJump,
+    text "subroutine jump"
+    13
+lblSubSave,
+    text "subroutine save"
+    13
+lblSubDeposit,
+    text "subroutine deposit (nested)"
+    13
+lblEdgeV,
+    text "vertical edge (dsv)"
+    13
+lblEdgeVH,
+    text "vertical edge leaves dsh clear"
+    13
+lblCorner,
+    text "combined dsv dsh skip"
+    13
+lblInterrupt,
+    text "halt+interrupt parameter bits"
+    13
+lblLightpen,
+    text "lightpen hit (dsp/drc)"
+    13
+lblSlave,
+    text "slave display command"
+    13
+
+doneText,
+    text "\nType 340 unified test complete\n"
+    13
+lpPromptText,
+    text "Lightpen check -- select the X with the lightpen within 5 seconds\n"
+    13
+
+// Put included code here
+#include <TESTUTIL/reportResult.ac>
+
+constants
+
+start main

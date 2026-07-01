@@ -1,0 +1,41 @@
+Test of the Type 340 display halt via dla
+// Start a self-looping 340 program, then run a second that just halts the 340.
+// Check that it actually halts the looping program.
+#include <TYPE340/type340defs.ah>
+
+// 340 coordinates are 0,0 to 1023,1023, lower left corner origin
+#define XORIGIN (0d512)
+#define YORIGIN (0d512)
+
+100/
+top, lio [prog
+    dla
+    lac [-0d100000  // let it run for a little while
+    dac count
+wait, 
+    isp count
+    jmp wait
+
+    lio [prog2
+    dla         // dss should happen and we should halt
+    dss
+    jmp .-1
+    hlt
+
+// Begins in PARAM mode
+prog, scale(2) intensity(4) next(point)
+    y(YORIGIN) next(point)
+    x(XORIGIN) show next(character)
+    100514
+    141737
+    next(subroutine)    // character automatically enters parameter mode when it ends
+    jump prog next(parameter)
+    halt
+
+prog2, halt
+
+count, 0
+
+constants
+
+start top

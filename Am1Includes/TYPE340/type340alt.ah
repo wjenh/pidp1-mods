@@ -1,0 +1,22 @@
+#ifndef TYPE340ALT_AH
+#define TYPE340DALT_AH
+/* Alternate IOT defines for the Type 340 display.
+ * These are the same as the documented ones buth with the prefix't340' added.
+ * These avoid conflicts with the defines for the Type 23 Paralled Drum, which
+ * uses some of the same names.
+ *
+ * The defines for the Type 340 processor's instructions are in type340cmds.ah,
+ * allowing them to be included separately.
+ */
+
+#define t340dla 0720015
+#define t340drs 0720115
+#define t340dcf 0720215
+#define t340dra 0720016
+#define t340drc 0720116
+#define t340dsp 0720117
+#define t340dss 0720217
+#define t340dsv 0720417
+#define t340dsh 0721017
+
+#endif

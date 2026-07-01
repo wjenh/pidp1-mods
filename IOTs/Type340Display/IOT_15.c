@@ -182,10 +182,28 @@ EmuControlP ctlP;
         ctlP = getEmuControlP();
         ctlP->command = EMU_CMD_STOP;
         emuCommandSet(ctlP);
-        iotCondLog(LOG_START, "Issuing stop\n", IOT1);
+        iotCondLog(LOG_STOP, "Issuing stop\n", IOT1);
     }
 
     iotCloseLog();
+}
+
+// Called when the pdp-1 core gets a SIGHUP.
+// NOTE: this is an asynchnonous call outside of the normal flow.
+void
+iotUpdate()
+{
+EmuControlP ctlP;
+
+    iotCondLog(LOG_UPDATE, "IOT %o updated\n", IOT1);
+    configure();
+
+    if( emuIsInitialized() )
+    {
+        ctlP = getEmuControlP();
+        ctlP->command = EMU_CMD_UPDATE;
+        emuCommandSet(ctlP);
+    }
 }
 
 // Get our configurations settings, can be called more than once.
@@ -193,5 +211,4 @@ EmuControlP ctlP;
 void
 configure()
 {
-ConfigurationSettingP settingP;
 }

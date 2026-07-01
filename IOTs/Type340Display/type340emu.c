@@ -29,6 +29,7 @@
  * 23-Jun-2026 wje change arm/cortex cpu fencing to be more efficient, was causing display flicker
  * 27-Jun-2026 wje reverted Claude HSC_IMMEDIATE, didn't actually help and increased cpu loading
  * 29-Jun-2026 wje add optional instruction caching
+ * 30-Jun-2026 wje add update processing
  */
 
 #include <stdlib.h>
@@ -269,6 +270,7 @@ static bool origCharsets = false;   // initial twoCharsets from config or defaul
 static bool twoCharsets = false;
 static Slave slaves[NUMSLAVES];     // could be up to 16 slaves, but the core display support is 8
 
+static bool reloadCache;            // used to force a relaod if we get an update command
 static Word wordCache[MAXCACHE];    // instruction cache, if used
 
 #if LOG_TIMING
@@ -323,6 +325,7 @@ pthread_t thread;
 
     ctlP->pdp1P = pdp1P;
     configure();
+    twoCharsets = origCharsets;         // oringCharsets comes from configure() and is the initial mode
 
     chanP = HSCallocateChannel(HSC_CHAN);
     ctlP->commandSent = false;
@@ -526,6 +529,11 @@ Status status;
             reset340();
             iotCondLog(LOG_STOP, "Received stop\n");
             break;
+
+        case EMU_CMD_UPDATE:
+            configure();                 // just relaod the config file
+            twoCharsets = origCharsets; // we're not running, ok to reset this
+            continue;
         }
 
         iotCondLog(LOG_CMD,"Got command %d\n", command);
@@ -547,6 +555,10 @@ Status status;
                 case EMU_CMD_STOP:
                     // A stop resets back to stopped and param mode
                     reset340();     // not sure this is strictly correct, but does no harm
+                    continue;
+
+                case EMU_CMD_UPDATE:
+                    configure();   // just relaod the config file, don't change twoCharsets, current prog might have
                     continue;
 
                 case EMU_CMD_RUN:
@@ -1641,8 +1653,10 @@ Word buffer[2];     // we only use 1, but leave space just to be sure
     // If so fetch from the cache, reloading if needed.
     if( cacheSize > 0 )
     {
-        if( (addr < cacheBase) || (addr >= (cacheBase + cacheSize)) )
+        if( reloadCache || (addr < cacheBase) || (addr >= (cacheBase + cacheSize)) )
         {
+            reloadCache = false;
+
             // Fill the cache in immediate mode.
             request.mode = (HSC_MODE_FROMMEM | HSC_MODE_THREADED);
             request.count = cacheSize;
@@ -1733,18 +1747,20 @@ bool xViolation, yViolation;
 void
 configure()
 {
+int lastSize;
 ConfigurationSettingP settingP;
 
     iotCondLog(LOG_CONFIG, "340 emulator checking configuration\n");
 
     if( (settingP = findConfigurationSetting(getConfiguration(), "two340charsets")) )
     {
-        origCharsets = twoCharsets = settingP->onOff;
+        origCharsets = settingP->onOff;
         iotCondLog(LOG_CONFIG, "340 emulator dual charsets %s\n", (twoCharsets)?"enabled":"disabled");
     }
 
     if( (settingP = findConfigurationSetting(getConfiguration(), "t340cachesize")) )
     {
+        lastSize = cacheSize;
         cacheSize = settingP->ivalue;
         if( cacheSize < 0 )
         {
@@ -1754,6 +1770,11 @@ ConfigurationSettingP settingP;
         if( cacheSize > MAXCACHE )
         {
             cacheSize = MAXCACHE;
+        }
+
+        if( cacheSize != lastSize )
+        {
+            reloadCache = true;     // tell getWord() to flush and reload, size changed.
         }
 
         iotCondLog(LOG_CONFIG, "340 emulator cache size %d\n", cacheSize);
@@ -1836,14 +1857,12 @@ struct timespec tm;
  * Called from the 340 emulator thread, either in the running poll loop or
  * after waking from the idle semaphore.
  *
- * commandSent is volatile bool (not _Atomic).  The per-iteration test is a
- * bare volatile load with zero barrier cost on every iteration of the draw
- * loop.  The acquire fence executes only on the taken branch (when the flag
- * reads true), pairing with the release fence in emuCommandSet() (see
- * type340emu.h).  This guarantees that ctlP->command is fully visible before
- * we read it -- essential on ARM (Pi 4) where the weakly-ordered memory model
- * would otherwise allow the load of command to be satisfied from a stale cache
- * line even after commandSent reads true.
+ * commandSent is volatile bool)
+ * The per-iteration test is a bare volatile load with zero barrier cost on every iteration of the draw loop.
+ * The acquire fence executes only when the flag is true, pairing with the release fence in emuCommandSet().
+ * This guarantees that ctlP->command is fully visible beforewe read it, essential on ARM (Pi 4)
+ * where the weakly-ordered memory model would otherwise allow the load of command to be satisfied
+ * from a stale cache line even after commandSent reads true.
  *
  * The flag clears are plain stores; the acquire fence already executed above,
  * so no additional barrier is required for the clears.

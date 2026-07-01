@@ -14,13 +14,13 @@ top, lio [prog
 
 // Begins in PARAM mode
 prog,
-    SCALE(3) INTENSITY(3) NEXTMODE(POINT)
-    POINTX(XORIGIN) NEXTMODE(POINT)
-    POINTY(YORIGIN) NEXTMODE(SUBROUTINE)
-    INCVISIBLE SET1(INCRIGHT|INCUP) SET2(INCRIGHT|INCUP) SET3(INCRIGHT|INCUP) SET4(INCRIGHT|INCUP)
-    INCVISIBLE SET1(INCRIGHT|INCDOWN) SET2(INCRIGHT|INCDOWN) SET3(INCRIGHT|INCDOWN) SET4(INCRIGHT|INCDOWN)
-    INCVISIBLE SET1(INCLEFT|INCDOWN) SET2(INCLEFT|INCDOWN) SET3(INCLEFT|INCDOWN) SET4(INCLEFT|INCDOWN)
-    INCVISIBLE SET1(INCLEFT|INCUP) SET2(INCLEFT|INCUP) SET3(INCLEFT|INCUP) SET4(INCLEFT|INCUP) INCDONE
-    STOP
+    scale(3) intensity(3) next(point)
+    x(XORIGIN) next(point)
+    y(YORIGIN) next(subroutine)
+    visible set1(incright|incup) set2(incright|incup) set3(incright|incup) set4(incright|incup)
+    visible set1(incright|incdown) set2(incright|incdown) set3(incright|incdown) set4(incright|incdown)
+    visible set1(incleft|incdown) set2(incleft|incdown) set3(incleft|incdown) set4(incleft|incdown)
+    visible set1(incleft|incup) set2(incleft|incup) set3(incleft|incup) set4(incleft|incup) end
+    halt
 
 start top

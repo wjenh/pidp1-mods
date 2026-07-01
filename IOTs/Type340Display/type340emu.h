@@ -1,35 +1,28 @@
 // Defines shared data between the IOT layer and the emulator
 #include <pthread.h>
+#include <semaphore.h>
 #include <stdatomic.h>
 
 /*
- * The logic around emuCommandSet() and emuResponseSet() is critical to avoid jitter caused by
- * the linux scheduler and to avoid an issue on some ARM cortex cpus.
- * The IOT side sets the command word BEFORE calling this macro.
- * A release fence orders the prior write to ctlP->command before the plain
- * volatile store to commandSent, guaranteeing that the command value is fully
- * visible before any thread observes commandSent == true.
- * This matters on weakly-ordered ARM cpus (Pi 4).
- *
- * commandSent is volatile,specifically not _Atomic.
- * The release fence here pairs with the acquire fence in get340Command's taken branch.
- * The per-iteration load of commandSent in get340Command is a bare volatile
- * read with zero barrier cost; the acquire fence executes only when the flag
- * reads true.
- * This is the standard ARM/GCC idiom chosen deliberately over atomics for timing fidelity.
+ * emuCommandSet -- IOT side sets the command word BEFORE calling this macro.
+ * The atomic release store on commandSent acts as a write barrier: it guarantees
+ * that the prior write to ctlP->command is globally visible before any thread
+ * observes commandSent == true.  This matters on weakly-ordered ARM (Pi 4).
+ * emuWakeup() follows so that a sleeping emulator thread is unblocked.
+ * Fire-and-forget: dla clears flags host-side before calling this macro, so
+ * no cross-thread ack is needed for correct dss reads after dla.
  */
 #define emuCommandSet(ctlP) \
-    (atomic_thread_fence(memory_order_release), \
-     (ctlP)->commandSent = true, \
+    (atomic_store_explicit(&(ctlP)->commandSent, true, memory_order_release), \
      emuWakeup(ctlP))
 
 /*
- * The emulator side sets the response word BEFORE calling this macro.
- * The same release-fence logic as emuCommandSet applies.
+ * emuResponseSet -- emulator side sets the response word BEFORE calling this
+ * macro.  Same release-barrier logic as emuCommandSet, ensuring ctlP->response
+ * is visible before responseSent is seen as true by the IOT side.
  */
 #define emuResponseSet(ctlP) \
-    (atomic_thread_fence(memory_order_release), \
-     (ctlP)->responseSent = true)
+    atomic_store_explicit(&(ctlP)->responseSent, true, memory_order_release)
 
 #define EMU_CMD_NONE 0      // no command available
 #define EMU_CMD_EXIT 1      // terminate the emulator thread
@@ -37,6 +30,7 @@
 #define EMU_CMD_STOP 3      // stop interpreting, wait for a RUN
 #define EMU_CMD_RESUME 4    // continue from where we left off
 #define EMU_CMD_PAUSE 5     // pause interpreter
+#define EMU_CMD_UPDATE 6    // rescan the config file
 
 #define EMU_CMDFLAG_CLEAR 0100  // special flag to combine CLEAR with RUN or RESUME
 
@@ -51,12 +45,18 @@
 #define FLAG_LP 010
 
 typedef struct {
-    PDP1P pdp1P;                // pdp-1 access
-    int address;                // core mem address of program instructions
-    int command;                // command word -- written before commandSent set
-    int response;               // response word -- written before responseSent set
-    volatile bool commandSent;  // IOT->emulator: new command is ready, must be a volatile
-    volatile bool responseSent; // emulator->IOT: new response is ready, must be a volatile
+    PDP1P pdp1P;            /* pdp-1 access                                  */
+    int address;            /* core mem address of program instructions       */
+    int command;            /* command word -- written before commandSent set */
+    int response;           /* response word -- written before responseSent set */
+    _Atomic bool commandSent;   /* IOT→emulator: new command is ready        */
+    _Atomic bool responseSent;  /* emulator→IOT: new response is ready       */
+    /*
+     * NOTE: The semaphore used for idle-wait lives as a file-static in
+     * type340emu.c (static sem_t waitSemaphore).  No semaphore field is needed
+     * here; the former sem_t waitSemaphore member was vestigial and has been
+     * removed to avoid confusion.
+     */
 } EmuControl, *EmuControlP;
 
 EmuControlP getEmuControlP(void);

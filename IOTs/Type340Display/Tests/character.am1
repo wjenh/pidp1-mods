@@ -16,9 +16,9 @@ top, lio [prog
     jmp top
 
 // Begins in PARAM mode
-prog, SCALE(2) INTENSITY(4) NEXTMODE(POINT)
-    POINTY(YORIGIN) NEXTMODE(POINT)
-    POINTX(XORIGIN) DRAWPOINT NEXTMODE(CHARACTER)
+prog, scale(2) intensity(4) next(point)
+    y(YORIGIN) next(point)
+    x(XORIGIN) show next(character)
     100514
     141740
     271722
@@ -30,6 +30,6 @@ prog, SCALE(2) INTENSITY(4) NEXTMODE(POINT)
     400140
     200420
     556137
-    STOP
+    halt
 
 start top

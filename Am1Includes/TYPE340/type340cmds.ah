@@ -1,0 +1,77 @@
+#ifndef TYPE340CMDS_AH
+#define TYPE340CMDS_AH
+/* Defines for the Type 340 display's rendering instructions.
+ * These don't match the originals, but they were too cryptic.
+ * See the documentation for details on use.
+ */
+
+#define next(m) (((m) & 07) << 0d13)
+#define parameter 00
+#define point 01
+#define slave 02
+#define character 03
+#define vector 04
+#define vcontinue 05
+#define increment 06
+#define subroutine 07
+
+// Note that there are no modifiers for character mode, all control is embedded
+// in the characters themselves.
+
+// These are for parameter
+#define scale(s) ((((s) & 03) << 0d4) | 0100)
+#define intensity(i) (((i) & 07) | 010)
+#define lpon 014000
+#define lpoff 010000
+#define halt 02000
+#define interrupt 01000
+// Nonstandard, bit 9 enables setting, bit 10 == 0 is one charset, 1 is 2, defaults to config file setting.
+#define charsets(i) ((((i) & 02) << 6) | 0400)
+// Nonstandard. bit 0 enables setting, bit 1 == 0 to disable lp and edge interrupts, 1 to allow, default is allow.
+#define specialinterrupt(i) ((((i) & 01) << 16) | 0400000)
+
+// These are for slave
+#define group(x) (((x) & 03) << 0d16)
+#define slave1(x) ((x) << 0d9)
+#define slave2(x) ((x) << 0d6)
+#define slave3(x) ((x) << 0d3)
+#define slave4(x) (x)
+#define enabled 01
+#define lpenabled 06
+
+// These are for point
+#define x(a) ((a) & 01777)
+#define y(a) (((a) & 01777) | 0200000)
+#define show 02000
+
+// These are for vector, vcontinue, and increment
+#define visible 0200000
+#define end 0400000
+
+// These are for vector and vcontinue
+#define deltay(y) (((y) & 0177) << 0d8)
+#define deltax(x) ((x) & 0177)
+#define up 0
+#define down 0100000
+#define left 0200
+#define right 0
+
+// These are for increment
+#define set1(x) ((x) << 0d12)
+#define set2(x) ((x) << 0d8)
+#define set3(x) ((x) << 0d4)
+#define set4(x) (x)
+#define incup 0b0010
+#define incdown 0b0011
+#define incleft 0b1100
+#define incright 0b1000
+
+// These are for subroutine mode.
+// Jump sets the address for the next word to fetch to the addr in the intstruction
+// Save puts the return 'address', its addr + 1 in the save register then JUMPs to the addr in the instruction
+// Deposit puts a 'jump (save-register-contents) mode(parameter) instruction into its target address
+#define jump 0400000
+#define save 0600000
+#define deposit 0200000
+
+#endif

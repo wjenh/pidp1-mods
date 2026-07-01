@@ -10,45 +10,45 @@ top, lio [prog
     jmp top
 
 // Begins in PARAM mode
-prog, SCALE(0) INTENSITY(0) NEXTMODE(POINT)
-    POINTY(0d512) NEXTMODE(POINT)
-    POINTX(0d512) DRAWPOINT NEXTMODE(VECTOR)
-    VECVISIBLE UP DELTAY(0) RIGHT DELTAX(0d120) VECDONE
+prog, scale(0) intensity(0) next(point)
+    y(0d512) next(point)
+    x(0d512) show next(vector)
+    visible up deltay(0) right deltax(0d120) end
 
-    SCALE(0) INTENSITY(1) NEXTMODE(POINT)
-    POINTY(0d524) NEXTMODE(POINT)
-    POINTX(0d512) DRAWPOINT NEXTMODE(VECTOR)
-    VECVISIBLE UP DELTAY(0) RIGHT DELTAX(0d120) VECDONE
+    scale(0) intensity(1) next(point)
+    y(0d524) next(point)
+    x(0d512) show next(vector)
+    visible up deltay(0) right deltax(0d120) end
 
-    SCALE(0) INTENSITY(2) NEXTMODE(POINT)
-    POINTY(0d534) NEXTMODE(POINT)
-    POINTX(0d512) DRAWPOINT NEXTMODE(VECTOR)
-    VECVISIBLE UP DELTAY(0) RIGHT DELTAX(0d120) VECDONE
+    scale(0) intensity(2) next(point)
+    y(0d534) next(point)
+    x(0d512) show next(vector)
+    visible up deltay(0) right deltax(0d120) end
 
-    SCALE(0) INTENSITY(3) NEXTMODE(POINT)
-    POINTY(0d544) NEXTMODE(POINT)
-    POINTX(0d512) DRAWPOINT NEXTMODE(VECTOR)
-    VECVISIBLE UP DELTAY(0) RIGHT DELTAX(0d120) VECDONE
+    scale(0) intensity(3) next(point)
+    y(0d544) next(point)
+    x(0d512) show next(vector)
+    visible up deltay(0) right deltax(0d120) end
 
-    SCALE(0) INTENSITY(4) NEXTMODE(POINT)
-    POINTY(0d554) NEXTMODE(POINT)
-    POINTX(0d512) DRAWPOINT NEXTMODE(VECTOR)
-    VECVISIBLE UP DELTAY(0) RIGHT DELTAX(0d120) VECDONE
+    scale(0) intensity(4) next(point)
+    y(0d554) next(point)
+    x(0d512) show next(vector)
+    visible up deltay(0) right deltax(0d120) end
 
-    SCALE(0) INTENSITY(5) NEXTMODE(POINT)
-    POINTY(0d564) NEXTMODE(POINT)
-    POINTX(0d512) DRAWPOINT NEXTMODE(VECTOR)
-    VECVISIBLE UP DELTAY(0) RIGHT DELTAX(0d120) VECDONE
+    scale(0) intensity(5) next(point)
+    y(0d564) next(point)
+    x(0d512) show next(vector)
+    visible up deltay(0) right deltax(0d120) end
 
-    SCALE(0) INTENSITY(6) NEXTMODE(POINT)
-    POINTY(0d574) NEXTMODE(POINT)
-    POINTX(0d512) DRAWPOINT NEXTMODE(VECTOR)
-    VECVISIBLE UP DELTAY(0) RIGHT DELTAX(0d120) VECDONE
+    scale(0) intensity(6) next(point)
+    y(0d574) next(point)
+    x(0d512) show next(vector)
+    visible up deltay(0) right deltax(0d120) end
 
-    SCALE(0) INTENSITY(7) NEXTMODE(POINT)
-    POINTY(0d584) NEXTMODE(POINT)
-    POINTX(0d512) DRAWPOINT NEXTMODE(VECTOR)
-    VECVISIBLE UP DELTAY(0) RIGHT DELTAX(0d120) VECDONE
-    STOP
+    scale(0) intensity(7) next(point)
+    y(0d584) next(point)
+    x(0d512) show next(vector)
+    visible up deltay(0) right deltax(0d120) end
+    halt
 
 start top

@@ -5,6 +5,7 @@
 int dynamicIotProcessor(PDP1 *pdpP, int device, int pulse, int completion);
 void dynamicIotProcessorStart(void);
 void dynamicIotProcessorStop(void);
+void dynamicIotProcessorUpdate(void);
 void dynamicIotProcessorSetPDP1(PDP1 *pdpP);
 void dynamicIotProcessorDoPoll(PDP1 *pdpP);
 
@@ -56,6 +57,11 @@ typedef void (*IotPollP)(PDP1 *);
 // running even while the CPU is halted, unlike the cycle-gated iotPoll above.
 typedef void (*IotIOPollP)(PDP1 *);
 
+
+// If implemented, will be called when the pdp1 emulator gets a SIGHUP.
+// Note that this is an asynchronous event, IOT implementations need to be aware of any threading issues.
+typedef void (*IotUpdateP)();
+
 // Additionally, a 'hidden' callback is set up to allow the handler to initiate a sequence break
 // Within the handler, initiateBreak(chan) can be used to signal a break;
 typedef void (*IotSeqBreakP)(int chan);     // same as in iotHandler.h
@@ -70,6 +76,7 @@ typedef struct _IotEntry
     IotHandlerP handlerP;
     IotStartP startP;
     IotStopP stopP;
+    IotUpdateP updateP;
     IotPollP pollP;
     IotIOPollP ioPollP;     // 19-Jun-2026 wje, see IotIOPollP above
     struct _IotEntry *actualEntryP;    // for aliases

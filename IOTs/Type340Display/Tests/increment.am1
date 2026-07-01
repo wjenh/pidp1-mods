@@ -14,16 +14,16 @@ top, lio [prog
     jmp top
 
 // Begins in PARAM mode
-prog, SCALE(3) INTENSITY(3) NEXTMODE(POINT)
-    POINTY(YORIGIN) NEXTMODE(POINT)
-    POINTX(XORIGIN) NEXTMODE(INCREMENT)
+prog, scale(3) intensity(3) next(point)
+    y(YORIGIN) next(point)
+    x(XORIGIN) next(increment)
 
-    INCVISIBLE SET1(INCLEFT) SET2(INCUP) SET3(INCRIGHT) SET4(INCDOWN)
-    INCVISIBLE SET1(INCDOWN|INCLEFT) SET2(INCDOWN|INCRIGHT) SET3(INCDOWN|INCLEFT) SET4(INCUP|INCLEFT)
-    INCINVISIBLE SET1(INCDOWN|INCRIGHT) SET2(INCDOWN) SET3(0) SET4(0)
-    INCVISIBLE SET1(INCDOWN) SET2(INCDOWN) SET3(INCDOWN) SET4(INCDOWN)
-    INCDONE
+    visible set1(incleft) set2(incup) set3(incright) set4(incdown)
+    visible set1(incdown|incleft) set2(incdown|incright) set3(incdown|incleft) set4(incup|incleft)
+    set1(incdown|incright) set2(incdown) set3(0) set4(0)
+    visible set1(incdown) set2(incdown) set3(incdown) set4(incdown)
+    end
 
-    STOP
+    halt
 
 start top

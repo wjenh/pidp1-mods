@@ -3,8 +3,8 @@ Test of the Type 340 point display quadrant addressing
 #include <TYPE340/type340defs.ah>
 
 #define CENTER 0d512
-#define XLEFT 0d256
-#define XRIGHT 0d768
+#define Xleft 0d256
+#define Xright 0d768
 #define YBOTTOM 0d256
 #define YTOP 0d768
 
@@ -16,17 +16,17 @@ top, lio [prog
     jmp top
 
 // Begins in PARAM mode
-prog, SCALE(0) INTENSITY(3) NEXTMODE(POINT)
-    POINTY(CENTER) NEXTMODE(POINT)
-    POINTX(CENTER) DRAWPOINT NEXTMODE(POINT)
-    POINTY(YTOP) NEXTMODE(POINT)
-    POINTX(XLEFT) DRAWPOINT NEXTMODE(POINT)
-    POINTY(YBOTTOM) NEXTMODE(POINT)
-    POINTX(XLEFT) DRAWPOINT NEXTMODE(POINT)
-    POINTY(YTOP) NEXTMODE(POINT)
-    POINTX(XRIGHT) DRAWPOINT NEXTMODE(POINT)
-    POINTY(YBOTTOM) NEXTMODE(POINT)
-    POINTX(XRIGHT) DRAWPOINT NEXTMODE(PARAMETER)
-    STOP
+prog, scale(0) intensity(3) next(point)
+    y(CENTER) next(point)
+    x(CENTER) show next(point)
+    y(YTOP) next(point)
+    x(Xleft) show next(point)
+    y(YBOTTOM) next(point)
+    x(Xleft) show next(point)
+    y(YTOP) next(point)
+    x(Xright) show next(point)
+    y(YBOTTOM) next(point)
+    x(Xright) show next(parameter)
+    halt
 
 start top

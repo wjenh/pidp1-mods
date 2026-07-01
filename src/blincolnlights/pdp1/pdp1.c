@@ -1087,8 +1087,9 @@ syncov(PDP1 *pdp)
 // across TP0-TP9A) and the IOT instruction's TP6A/TP7/TP10 pulses.
 //
 // The switch(hack)/case labels let cycle1() jump in here partway through
-// (at TP4, via cychack) to execute an "xct" instruction's target as if it
+// at TP4, via cychack to execute an "xct" instruction's target as if it
 // were a normal cycle-0 fetch starting from TP4.
+// Rather messy.
 static void
 cycle0(PDP1 *pdp)
 {

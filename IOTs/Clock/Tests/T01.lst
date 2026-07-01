@@ -1,0 +1,841 @@
+T01: TIMESHARING CLOCK TEST (IOT_32)
+   2:           /*
+   3:            * T01.am1 -- Comprehensive test of the BBN timesharing clock IOT.
+   4:            *
+   5:            * No external harness required.  User interaction:
+   6:            *   Results are printed on the typewriter as each test completes.
+   7:            *   Press any key after the summary to re-run all tests.
+   8:            *
+   9:            * IOTs exercised:
+  10:            *   rck  (720032 / IOT 32)   -- read 1ms counter
+  11:            *   cls  (722032 / IOT 2032) -- set clock parameters via AC
+  12:            *   cct  (722132 / IOT 2132) -- set countdown timer via AC
+  13:            *   cks  (720033)            -- read CKS status bits (checks cctcks flag)
+  14:            *   esm  (720055)            -- enable sequence break master
+  15:            *   cbs  (720056)            -- clear all pending SBS breaks
+  16:            *
+  17:            * Tests:
+  18:            *   T01-1  rck returns 0 when clock is disabled
+  19:            *   T01-2  rck returns non-zero after enabling clock and waiting
+  20:            *   T01-3  Counter advances monotonically between two consecutive reads
+  21:            *   T01-4  Disabling clock causes rck to return 0 again
+  22:            *   T01-5  Countdown timer fires and sets cctcks flag (poll via cks)
+  23:            *   T01-6  Countdown timer completion pulse: cct i blocks until countdown fires
+  24:            *   T01-7  Countdown reset (count=0) clears cctcks status flag
+  25:            *   T01-8  32ms SBS interrupt fires within the expected time window
+  26:            *
+  27:            * SBS setup notes for T01-8 (SBS256, non-SBS16 mode):
+  28:            *   The SBS break sequence saves three words and then begins executing
+  29:            *   at the fourth consecutive location.  For SBS256, that fixed frame
+  30:            *   always starts at address 0:
+  31:            *     loc 0: SBS saves old AC here
+  32:            *     loc 1: SBS saves packed(ov1, exd, PC) here
+  33:            *     loc 2: SBS saves IO here
+  34:            *     loc 3: execution begins here (interrupt handler entry point)
+  35:            *   Return from interrupt: 'jmp i 1' reads the saved PC from loc 1 and
+  36:            *   acts as a DEBREAK, clearing the held-break state.
+  37:            *
+  38:            *   T01-8 assumes sbs16 has NOT been enabled in a prior program.  If it
+  39:            *   has (sbs16 is sticky once set), channel 0 of SBS16 still uses the
+  40:            *   same locations 0-3, so the handler entry and return idiom are
+  41:            *   identical; however SBS16 also requires b1 bit 0 to be armed via
+  42:            *   'asc 0' before ESM for the break to be queued.
+  43:            *
+  44:            * Assembler: am1 v1.28+
+  45:            * Assemble:  am1 T01.am1
+  46:            */
+
+File /home/wje/PDP-1/pidp1-mods/Am1Includes/CLOCK/clockdefs.ah
+   4:               // Defines for the IOT_32 timesharing clock
+   5:               // Use as iot rck, etc.
+   6:               // rck - read 1ms clock
+   7:               // cls - set clock parameters
+   8:               // cct - set countdown timer
+  14:               // Flags in AC for cls, not compatible with macro, only macro1
+  15:               // clss16 - enable SBS16, can't disable
+  16:               // clsena - enable clock, must be set to use, including clr
+  17:               // clsimn - enable minute interrupt
+  18:               // clsims - enable 32ms interrupt
+  25:               // And the channel masks
+  26:               // clfmmn - minute channel
+  27:               // clmffs - 32 millisecond channel
+  31:               // NOTE for cct, enable SBS16 via iot cls cls16.
+  32:               // Flags in AC for cct, not compatible with macro, only macro1
+  33:               // cctie - enable interrupt
+  37:               // And the channel and timer masks
+  38:               // cctich - interrupt channel
+  39:               // cctcnt - countdown timer
+  43:               // The cks flag for the countdown timer
+File T01.am1
+File /home/wje/PDP-1/pidp1-mods/Am1Includes/TESTUTIL/reportResult.ah
+   3:           /*
+   4:            * Defines used with reportResult.ac
+   5:            */
+
+File T01.am1
+  53:               // ---- SBS interrupt handler frame (locations 0-3) -------------------------
+  54:               //
+  55:               // The break sequence saves: AC at 0, packed-PC+flags at 1, IO at 2,
+  56:               // then starts executing from location 3.
+  57:               // Return: 'jmp i 1' jumps to the saved PC and asserts DEBREAK.
+  59: 000004        0/
+  60: 000000 000000 0      // loc 0: SBS saves old AC here during a break
+  61: 000001 000000 0      // loc 1: SBS saves packed(ov1, exd, PC) here
+  62: 000002 000000 0      // loc 2: SBS saves IO here
+  63: 000003 600323 jmp clkInt32ms      // loc 3: dispatch to the 32ms interrupt handler
+  65:               // ---- program origin ------------------------------------------------------
+  67: 000004        100/
+  69: 000100        begin,
+  70: 000100 620525 jsp resetResults
+  72:               // Reset all clock state to a known-clean starting condition.
+  73:               // 'cls' with AC=0: op = (AC >> 8) & 017 = 0, so the else branch fires
+  74:               // and sets enabled = enable32ms = enable1min = 0.
+  75:               // 'cct' with AC=0: count=0, the else branch clears the cctcks flag and
+  76:               // counterCompleteNeeded; no IOCOMPLETE is asserted (no modifier).
+  77:               // 'cbs' clears b3 (synchronized), b4 (held), and b2 (raw) break state.
+  79: 000101 760200 cla
+  80: 000102 722032 iot 2032      // disable clock
+  81: 000103 760200 cla
+  82: 000104 722132 iot 2132      // reset countdown; clears cctcks (no modifier = no hang)
+  83: 000105 720056 cbs      // clear any pending SBS breaks
+  85: 000106 200706 lac [bannerMsg]
+
+  86: 000107 170462 jda typetext
+  88:               // ---- T01-1: rck returns 0 when clock is disabled -------------------------
+  89:               //
+  90:               // All IOTs in the 30-37 device range clear IO before the plugin runs.
+  91:               // When enabled=0, IOT_32.c's plain-rck branch leaves IO at 0.
+  93: 000110 720032 iot 32      // IO = counter if enabled, 0 if disabled
+  94: 000111 760040 lai      // AC <- IO
+  95: 000112 640100 sza      // skip if AC == 0 (disabled: expected)
+  96: 000113 600120 jmp t1fail
+  97: 000114 220707 lio [0]
+;
+  97: 000115 200722 lac [lbl1]
+;
+  97: 000116 170543 jda reportResult;
+  97: 000117 600123 jmp t1done
+  98: 000120        t1fail,
+  99: 000120 220710 lio [1]
+;
+  99: 000121 200722 lac [lbl1]
+;
+  99: 000122 170543 jda reportResult
+ 100: 000123        t1done,
+ 102:               // ---- T01-2: rck returns non-zero after enabling clock --------------------
+ 103:               //
+ 104:               // Enable clock with no interrupt flags (clsena only in AC).
+ 105:               // Spin ~1000 iterations to allow the 1ms counter to accumulate ticks.
+ 106:               // Each loop iteration costs about 3 instructions at ~5us each, so 1000
+ 107:               // iterations = ~15ms, giving ~15 ticks guaranteed.
+ 109: 000123 200711 lac [2000]
+      // AC = clsena (2000 octal): enable, no interrupts
+ 110: 000124 722032 iot 2032      // IOT 2032: configure clock
+ 112: 000125 000000 local spCnt2
+ 113: 000125 340132 dzm spCnt2
+ 114: 000126        spLp2,
+ 115: 000126 440132 idx spCnt2      // spCnt2++; AC = spCnt2
+ 116: 000127 500712 sad [1750]
+      // skip if AC != 1000 (still looping); no-skip when AC == 1000
+ 117: 000130 600133 jmp spLp3      // AC == 1000 (no-skip): done, jump to exit and over storage
+ 118: 000131 600126 jmp spLp2      // AC != 1000 (skip case): loop back
+ 119: 000132 000000 spCnt2, 0      // storage must precede the loop that references it
+ 120: 000133 000000 endloc
+ 122: 000133        spLp3,
+ 123: 000133 720032 iot 32      // IO = current 1ms counter value (should be > 0)
+ 124: 000134 760040 lai      // AC <- IO
+ 125: 000135 650100 sza i      // skip if AC != 0 (counter is running)
+ 126: 000136 600143 jmp t2fail
+ 127: 000137 220707 lio [0]
+;
+ 127: 000140 200723 lac [lbl2]
+;
+ 127: 000141 170543 jda reportResult;
+ 127: 000142 600146 jmp t2done
+ 128: 000143        t2fail,
+ 129: 000143 220710 lio [1]
+;
+ 129: 000144 200723 lac [lbl2]
+;
+ 129: 000145 170543 jda reportResult
+ 130: 000146        t2done,
+ 132:               // ---- T01-3: counter advances monotonically between two reads -------------
+ 133:               //
+ 134:               // Read rck, save the value, spin ~1000 iterations, read rck again.
+ 135:               // Check: first reading < second reading (counter must have advanced).
+ 136:               // The 1ms counter runs 0-59999 and then wraps; a 15ms delay cannot wrap.
+ 138: 000146 720032 iot 32
+ 139: 000147 760040 lai
+ 140: 000150 240457 dac firstRead      // save first counter sample
+ 142: 000151 000000 local spCnt3
+ 143: 000151 340156 dzm spCnt3
+ 144: 000152        spLp3b,
+ 145: 000152 440156 idx spCnt3
+ 146: 000153 500712 sad [1750]
+      // skip if AC != 1000; no-skip when AC == 1000
+ 147: 000154 600157 jmp t3spDone      // AC == 1000 (no-skip): done
+ 148: 000155 600152 jmp spLp3b      // AC != 1000 (skip case): loop back
+ 149: 000156 000000 spCnt3, 0
+ 150: 000157 000000 endloc
+ 152: 000157        t3spDone,
+ 153: 000157 720032 iot 32
+ 154: 000160 760040 lai      // AC = second counter sample
+ 155: 000161 240460 dac secondRead
+ 157: 000162 200457 lac firstRead
+ 158: 000163 420460 sub secondRead      // AC = first - second; negative means second > first
+ 159: 000164 640400 sma      // skip if AC < 0 (second > first: counter advanced)
+ 160: 000165 600172 jmp t3fail
+ 161: 000166 220707 lio [0]
+;
+ 161: 000167 200724 lac [lbl3]
+;
+ 161: 000170 170543 jda reportResult;
+ 161: 000171 600175 jmp t3done
+ 162: 000172        t3fail,
+ 163: 000172 220710 lio [1]
+;
+ 163: 000173 200724 lac [lbl3]
+;
+ 163: 000174 170543 jda reportResult
+ 164: 000175        t3done,
+ 166:               // ---- T01-4: rck returns 0 after disabling clock --------------------------
+ 167:               //
+ 168:               // AC=0 -> op=0 -> else branch in IOT_32.c -> enabled=0.
+ 169:               // Subsequent rck leaves IO at 0 (IO cleared by IOT, not overwritten
+ 170:               // because the enabled check fails).
+ 172: 000175 760200 cla
+ 173: 000176 722032 iot 2032      // disable clock
+ 174: 000177 720032 iot 32
+ 175: 000200 760040 lai
+ 176: 000201 640100 sza      // skip if AC == 0 (disabled again)
+ 177: 000202 600207 jmp t4fail
+ 178: 000203 220707 lio [0]
+;
+ 178: 000204 200725 lac [lbl4]
+;
+ 178: 000205 170543 jda reportResult;
+ 178: 000206 600212 jmp t4done
+ 179: 000207        t4fail,
+ 180: 000207 220710 lio [1]
+;
+ 180: 000210 200725 lac [lbl4]
+;
+ 180: 000211 170543 jda reportResult
+ 181: 000212        t4done,
+ 183:               // ---- T01-5: countdown timer fires and sets cctcks (polling) --------------
+ 184:               //
+ 185:               // 'cct' with no modifier: completion=0, so counterCompleteNeeded=0 and no
+ 186:               // ioh stall.  The IOT returns immediately after setting the countdown.
+ 187:               // When iotPoll() counts down to 0 it sets CKS bit cctcks (000020 octal).
+ 188:               // Poll 'cks' in a tight loop until that bit appears, with a safety
+ 189:               // timeout of 5000 iterations (>> the 20ms countdown period).
+ 190:               // The main clock does not need to be enabled for the countdown to work;
+ 191:               // IOT_32.c calls enablePolling(200) independently when count > 0.
+ 193: 000212 200714 lac [24]
+      // countdown value = 20 ms
+ 194: 000213 722132 iot 2132      // IOT 2132: set countdown, no modifier
+ 196: 000214 000000 local plCnt5
+ 197: 000214 340227 dzm plCnt5
+ 198: 000215        plLp5,
+ 199: 000215 720033 cks      // IO <- CKS status bits (IOTs 30-37 clear IO first)
+ 200: 000216 760040 lai      // AC <- IO
+ 201: 000217 020715 and [20]
+      // isolate countdown-complete flag (000020)
+ 202: 000220 640100 sza      // skip if AC == 0 (cctcks not set: still waiting)
+ 203: 000221 600230 jmp t5pass      // jmp fires when AC != 0 (cctcks set: done)
+ 204: 000222 440227 idx plCnt5      // still waiting; bump timeout counter
+ 205: 000223 200227 lac plCnt5
+ 206: 000224 500726 sad [11610]
+      // skip at 5000 iterations (timed out): falls to jmp t5fail
+ 207: 000225 600234 jmp t5fail      // timed out: jump to fail and past storage
+ 208: 000226 600215 jmp plLp5
+ 209: 000227 000000 plCnt5, 0
+ 210: 000230 000000 endloc
+ 212: 000230        t5pass,
+ 213: 000230 220707 lio [0]
+;
+ 213: 000231 200727 lac [lbl5]
+;
+ 213: 000232 170543 jda reportResult;
+ 213: 000233 600237 jmp t5done
+ 214: 000234        t5fail,
+ 215: 000234 220710 lio [1]
+;
+ 215: 000235 200727 lac [lbl5]
+;
+ 215: 000236 170543 jda reportResult
+ 216: 000237        t5done,
+ 218:               // ---- T01-6: countdown timer completion pulse via ioh wait ----------------
+ 219:               //
+ 220:               // 'cct i': B5 set -> nac=1 -> completion=1 -> counterCompleteNeeded=1.
+ 221:               // B5 also causes pdp1.c to set ioh=1, spinning on the IOT until ios=1.
+ 222:               // When iotPoll() counts down to 0 it fires IOCOMPLETE (ios=1), releasing
+ 223:               // the ioh stall.  If execution reaches the next instruction, it passed.
+ 225: 000237 200730 lac [36]
+      // countdown value = 30 ms
+ 226: 000240 732132 iot 2132 i      // IOT 2132 with i: set countdown and block until done
+ 228:               // if we reach here, the ioh was released => completion worked
+ 229: 000241 220707 lio [0]
+;
+ 229: 000242 200731 lac [lbl6]
+;
+ 229: 000243 170543 jda reportResult
+ 231:               // ---- T01-7: countdown reset (count=0) clears the cctcks flag ------------
+ 232:               //
+ 233:               // After T01-6's countdown fired, iotPoll set cctcks.  'cct' with AC=0
+ 234:               // resets: count=0 causes the else branch which calls
+ 235:               //   CKS(pdp1P) &= ~COUNTER_CKS_FLAG   (line at the top of the handler)
+ 236:               // before entering the else, so the flag is cleared unconditionally.
+ 237:               // Immediately poll cks to confirm.
+ 239: 000244 760200 cla
+ 240: 000245 722132 iot 2132      // reset countdown; AC=0 clears cctcks, no modifier
+ 242: 000246 720033 cks
+ 243: 000247 760040 lai
+ 244: 000250 020715 and [20]
+
+ 245: 000251 640100 sza      // skip if cctcks == 0 (cleared: expected)
+ 246: 000252 600257 jmp t7fail
+ 247: 000253 220707 lio [0]
+;
+ 247: 000254 200732 lac [lbl7]
+;
+ 247: 000255 170543 jda reportResult;
+ 247: 000256 600262 jmp t7done
+ 248: 000257        t7fail,
+ 249: 000257 220710 lio [1]
+;
+ 249: 000260 200732 lac [lbl7]
+;
+ 249: 000261 170543 jda reportResult
+ 250: 000262        t7done,
+ 252:               // ---- T01-8: 32ms SBS interrupt fires within expected window --------------
+ 253:               //
+ 254:               // Setup: the interrupt handler (clkInt32ms) is at location 3, set up
+ 255:               // by the '0/' block at the top of this program.  The handler increments
+ 256:               // intFlag and returns via 'jmp i 1' (DEBREAK).
+ 257:               //
+ 258:               // The spin loop below uses 3 instructions per iteration; at ~5us/cycle
+ 259:               // and ~5 cycles per instruction, 5000 iterations take roughly 75ms,
+ 260:               // which comfortably spans at least two 32ms interrupt periods.
+ 261:               //
+ 262:               // After the spin, we disable SBS and the clock BEFORE calling any
+ 263:               // typewriter output routines: the interrupt handler clobbers AC, so
+ 264:               // allowing it to fire inside typetext/jda sequences would corrupt them.
+ 265:               //
+ 266:               // cls flag encoding for clsena clsims (channel 0):
+ 267:               //   bit e (2000): enable clock
+ 268:               //   bit i (0400): enable 32ms interrupt
+ 269:               //   clfmms (0017): channel field = 0
+ 270:               //   -> AC = 2000 | 0400 = 2400 octal
+ 271:               //
+ 272:               // With sbs16=0 (SBS256), req(pdp, 0) sets b2=1 unconditionally, and the
+ 273:               // break saves at locations 0-3 regardless of the channel argument.
+ 275: 000262 340461 dzm intFlag      // clear interrupt count before arming
+ 277: 000263 720055 esm      // enable sequence break master (sbm=1)
+ 278: 000264 200716 lac [2000 400]
+      // AC = 2400 octal: enable clock + 32ms interrupt
+ 279: 000265 722032 iot 2032      // IOT 2032: configure clock; channel32ms = AC & 017 = 0
+ 281: 000266 000000 local spCnt8
+ 282: 000266 340273 dzm spCnt8
+ 283: 000267        spLp8,
+ 284: 000267 440273 idx spCnt8
+ 285: 000270 500726 sad [11610]
+      // skip if AC != 5000; no-skip when AC == 5000
+ 286: 000271 600274 jmp t8spDone      // AC == 5000 (no-skip): done
+ 287: 000272 600267 jmp spLp8      // AC != 5000 (skip case): loop back
+ 288: 000273 000000 spCnt8, 0
+ 289: 000274 000000 endloc
+ 291: 000274        t8spDone,
+ 292:               // Disable SBS and clock before any typewriter I/O.
+ 293: 000274 720056 cbs      // clear b3/b4/b2; sbm stays 1 but no new requests pending
+ 294: 000275 760200 cla
+ 295: 000276 722032 iot 2032      // disable clock (AC=0 -> op=0 -> enabled=0)
+ 297: 000277 200461 lac intFlag
+ 298: 000300 650100 sza i      // skip if intFlag != 0 (at least one interrupt fired)
+ 299: 000301 600306 jmp t8fail
+ 300: 000302 220707 lio [0]
+;
+ 300: 000303 200733 lac [lbl8]
+;
+ 300: 000304 170543 jda reportResult;
+ 300: 000305 600311 jmp t8done
+ 301: 000306        t8fail,
+ 302: 000306 220710 lio [1]
+;
+ 302: 000307 200733 lac [lbl8]
+;
+ 302: 000310 170543 jda reportResult
+ 303: 000311        t8done,
+ 305:               // ---- Summary and re-run prompt -------------------------------------------
+ 307: 000311 620647 jsp printSummary
+ 309: 000312 760001 clf 1      // discard any keypress that arrived during the test
+ 310: 000313 200734 lac [rerunMsg]
+
+ 311: 000314 170462 jda typetext
+ 312: 000315 720054 lsm      // be sure interrupts are disabled now
+ 314: 000316 000000 local waitKey
+ 315: 000316        waitKey,
+ 316: 000316 650001 szf 1 i      // skip if PF1 is set (key available)
+ 317: 000317 600316 jmp waitKey      // PF1 clear: no key yet, keep waiting
+ 318: 000320 720004 tyi      // read key; clears tbs; IO <- 6-bit key code
+ 319: 000321 760001 clf 1      // clear PF1 (tyi clears tbs but NOT PF1)
+ 320: 000322 000000 endloc
+ 322: 000322 600100 jmp begin      // re-run
+ 324:               // ---- 32ms SBS interrupt handler (T01-8) ----------------------------------
+ 325:               //
+ 326:               // Entry point: location 3 (see '0/' block at top of file).
+ 327:               // On arrival, the break sequence has already saved the interrupted
+ 328:               // program's AC/PC/IO to locations 0-2.
+ 329:               // 'idx intFlag' increments the flag word; AC receives the new value
+ 330:               // (we do not preserve it -- the main spin loop reloads AC at its top).
+ 331:               // 'jmp i 1' performs DEBREAK: reads the saved PC from location 1,
+ 332:               // clears b3/b4 (the held-break registers), and jumps to the saved PC.
+ 334: 000323        clkInt32ms,
+ 335: 000323 440461 idx intFlag      // intFlag++; AC = new intFlag value
+ 336: 000324 610001 jmp i 1      // DEBREAK: restore PC from loc 1, clear held-break state
+ 338:               // ---- Test label strings --------------------------------------------------
+ 339: 000325 000000 bannerMsg, // text "
+TIMESHARING CLOCK TEST
+"
+ 340: 000325 000000  777423
+ 340: 000326 000000  714465
+ 340: 000327 000000  227061
+ 340: 000330 000000  517145
+ 340: 000331 000000  670063
+ 340: 000332 000000  434663
+ 340: 000333 000000  420023
+ 340: 000334 000000  652223
+ 340: 000335 000000  770000
+
+ 341: 000336 000013 13
+ 342: 000337 000000 rerunMsg, // text "
+PRESS ANY KEY TO RERUN
+"
+ 343: 000337 000000  777447
+ 343: 000340 000000  516522
+ 343: 000341 000000  220061
+ 343: 000342 000000  453000
+ 343: 000343 000000  426530
+ 343: 000344 000000  002346
+ 343: 000345 000000  005165
+ 343: 000346 000000  512445
+ 343: 000347 000000  770000
+
+ 344: 000350 000013 13
+ 345: 000351 000000 lbl1, // text "T01-1 rck disabled=0"
+ 346: 000351 000000  742372
+ 346: 000352 000000  200154
+ 346: 000353 000000  010051
+ 346: 000354 000000  634200
+ 346: 000355 000000  647122
+ 346: 000356 000000  616243
+ 346: 000357 000000  656474
+ 346: 000360 000000  337220
+
+ 347: 000361 000013 13
+ 347: 000362 000000 lbl2, // text "T01-2 rck enabled>0"
+ 348: 000362 000000  742372
+ 348: 000363 000000  200154
+ 348: 000364 000000  020051
+ 348: 000365 000000  634200
+ 348: 000366 000000  654561
+ 348: 000367 000000  624365
+ 348: 000370 000000  647410
+ 348: 000371 000000  722000
+
+ 349: 000372 000013 13
+ 349: 000373 000000 lbl3, // text "T01-3 counter advances"
+ 350: 000373 000000  742372
+ 350: 000374 000000  200154
+ 350: 000375 000000  030063
+ 350: 000376 000000  462445
+ 350: 000377 000000  236551
+ 350: 000400 000000  006164
+ 350: 000401 000000  256145
+ 350: 000402 000000  636522
+
+ 351: 000403 000013 13
+ 351: 000404 000000 lbl4, // text "T01-4 rck re-disabled"
+ 352: 000404 000000  742372
+ 352: 000405 000000  200154
+ 352: 000406 000000  040051
+ 352: 000407 000000  634200
+ 352: 000410 000000  516554
+ 352: 000411 000000  647122
+ 352: 000412 000000  616243
+ 352: 000413 000000  656400
+
+ 353: 000414 000013 13
+ 353: 000415 000000 lbl5, // text "T01-5 cctcks poll"
+ 354: 000415 000000  742372
+ 354: 000416 000000  200154
+ 354: 000417 000000  050063
+ 354: 000420 000000  632363
+ 354: 000421 000000  422200
+ 354: 000422 000000  474643
+ 354: 000423 000000  430000
+
+ 355: 000424 000013 13
+ 355: 000425 000000 lbl6, // text "T01-6 cct-i ioh wait"
+ 356: 000425 000000  742372
+ 356: 000426 000000  200154
+ 356: 000427 000000  060063
+ 356: 000430 000000  632354
+ 356: 000431 000000  710071
+ 356: 000432 000000  467000
+ 356: 000433 000000  266171
+ 356: 000434 000000  230000
+
+ 357: 000435 000013 13
+ 357: 000436 000000 lbl7, // text "T01-7 cct reset clears"
+ 358: 000436 000000  742372
+ 358: 000437 000000  200154
+ 358: 000440 000000  070063
+ 358: 000441 000000  632300
+ 358: 000442 000000  516522
+ 358: 000443 000000  652300
+ 358: 000444 000000  634365
+ 358: 000445 000000  615122
+
+ 359: 000446 000013 13
+ 359: 000447 000000 lbl8, // text "T01-8 32ms sbs int"
+ 360: 000447 000000  742372
+ 360: 000450 000000  200154
+ 360: 000451 000000  100003
+ 360: 000452 000000  024422
+ 360: 000453 000000  002262
+ 360: 000454 000000  220071
+ 360: 000455 000000  452300
+
+ 361: 000456 000013 13
+ 363:               // ---- Persistent data words -----------------------------------------------
+ 365: 000457 000000 firstRead, 0      // first rck sample (T01-3)
+ 366: 000460 000000 secondRead, 0      // second rck sample (T01-3)
+ 367: 000461 000000 intFlag, 0      // interrupt count; incremented by clkInt32ms (T01-8)
+File /home/wje/PDP-1/pidp1-mods/Am1Includes/TESTUTIL/reportResult.ac
+   3:           /*
+   4:            * reportResult - helper for self-checking PDP-1 test programs.
+   5:            *
+   6:            * Prints a caller-supplied label on the typewriter followed by " PASS", " FAIL", or " SKIP"
+   7:            * and a newline, then increments the corresponding running counter so a whole test
+   8:            * suite can finish with a printed summary.
+   9:            *
+  10:            * Each counter can also be incremented via the addFail, addPass, and addSkip jsp subroutines, adding one
+  11:            * to the count.
+  12:            * Just remember that reportResult always increments it also.
+  13:            *
+  14:            * jsp resetResults reset all the counts to 0.
+  15:            *
+  16:            * Calling convention for reportResult:
+  17:            *   AC -- address of the label's text block. The block must be produced by the 'text' directive
+  18:            *         and followed by a word containing the flex/concise stop code, 013.
+  19:            *   IO -- the result code: REPORT_PASS, REPORT_FAIL, or REPORT_SKIP, defined in reportResult.ah.
+  20:            *          Any other value is treated as REPORT_FAIL.
+  21:            * Called via jda. Neither AC nor IO is preserved.
+  22:            *
+  23:            * Example:
+  24:            *   lac [secLabel        // address of a 'text "section name"' block ending in a 013 stop word
+  25:            *   lio [REPORT_PASS
+  26:            *   jda reportResult
+  27:            *
+  28:            * The printSummary subroutine takes no arguments.
+  29:            * Tt prints the three running totals accumulated since the last resetResults call on one line.
+  30:            * Called via jsp. Neither AC nor IO is preserved.
+  31:            */
+
+File /home/wje/PDP-1/pidp1-mods/Am1Includes/TYO/typetext.ac
+   7:               // Type a line of characters on the typewriter.
+   8:               // The characters consist of a list of words produced by the text pseudo-op, flex code.
+   9:               // AC contains the address of the list produced by text.
+  10:               // A word following the last entry must be 013, stop.
+  11:               // It does not set the initial shift state, it's whatever the typewriter is in.
+  12:               // Uses AC and IO registers.
+  13:               // Called via jda.
+  14: 000462 000000 typetext, 0
+  15: 000463 000000 local rtn, cnt, chr, top, loop, nxt
+  16: 000463 260505 dap rtn
+  17: 000464 210462 top, lac i typetext      // fetch next word from text
+  18: 000465 500717 sad [13]
+  19: 000466 600505 jmp rtn      // end marker
+  20: 000467 240507 dac chr      // we have to dig out the 3 chars
+  21: 000470 200721 lac [-3]
+  22: 000471 240506 dac cnt
+  23: 000472 440462 idx typetext      // set up for next word
+  24: 000473        loop,
+  25: 000473 200507 lac chr
+  26: 000474 764000 cli
+  27: 000475 663077 rcl 6s      // lop off the top 6 bits, into IO
+  28: 000476 240507 dac chr
+  29: 000477 760040 lai      // original high 6 bits now in AC low 6 bits
+  30: 000500 760020 lia
+  31: 000501 730003 tyo i
+  32: 000502 460506 nxt, isp cnt
+  33: 000503 600473 jmp loop
+  34: 000504 600464 jmp top
+  35: 000505 600505 rtn, jmp .
+  37: 000506 000000 cnt, 0
+  38: 000507 000000 chr, 0
+  39: 000510 000000 endloc
+File /home/wje/PDP-1/pidp1-mods/Am1Includes/TESTUTIL/reportResult.ac
+File /home/wje/PDP-1/pidp1-mods/Am1Includes/UTIL/numbertofio.ac
+   4:               // Convert the binary number representing a single decimal digit to its fio-dec character value.
+   5:               // IO contains the input value and has the character on return.
+   6:               // Uses AC and IO registers.
+   7:               // Called via jsp.
+   8: 000510        numbertofio,
+   9: 000510 000000 local rtn
+  10: 000510 260524 dap rtn
+  11: 000511 760040 lai
+  12: 000512 640200 spa
+  13: 000513 600523 jmp bad      // negative number
+  14: 000514 420713 sub [12]
+  15: 000515 650200 spa i
+  16: 000516 600523 jmp bad      // greater than 9
+  17: 000517 760040 lai      // use the now-validated digit, but 0 is a special case
+  18: 000520 650100 sza i
+  19: 000521 220715 lio [20]
+  20: 000522 600524 jmp rtn
+  21: 000523 760200 bad, cla      // just return a space
+  22: 000524 600524 rtn, jmp .
+  23: 000525 000000 endloc
+File /home/wje/PDP-1/pidp1-mods/Am1Includes/TESTUTIL/reportResult.ac
+  37:               // Running totals updated by the corresponding jsp calls.
+  38: 000525 000000 local testPassCount, testFailCount, testSkipCount
+  40:               // Reset result counters, called via jsp.
+  41:               // Preserves IO and AC.
+  42: 000525        resetResults,
+  43: 000525 000000 local rtn
+  44: 000525 260531 dap rtn
+  45: 000526 340703 dzm testPassCount
+  46: 000527 340704 dzm testFailCount
+  47: 000530 340705 dzm testSkipCount
+  48: 000531 600531 rtn, jmp .
+  49: 000532 000000 endloc
+  51:               // Increment the passed count.
+  52:               // Called via jsp, preserves IO.
+  53: 000532        addPass,
+  54: 000532 000000 local rtn
+  55: 000532 260534 dap rtn
+  56: 000533 440703 idx testPassCount
+  57: 000534 600534 rtn, jmp .
+  58: 000535 000000 endloc
+  60:               // Increment the failed count.
+  61:               // Called via jsp, preserves IO.
+  62: 000535        addFail,
+  63: 000535 000000 local rtn
+  64: 000535 260537 dap rtn
+  65: 000536 440704 idx testFailCount
+  66: 000537 600537 rtn, jmp .
+  67: 000540 000000 endloc
+  69:               // Increment the skipped count.
+  70:               // Called via jsp, preserves IO.
+  71: 000540        addSkip,
+  72: 000540 000000 local rtn
+  73: 000540 260542 dap rtn
+  74: 000541 440705 idx testSkipCount
+  75: 000542 600542 rtn, jmp .
+  76: 000543 000000 endloc
+  78:               // See usage above.
+  79: 000543 000000 reportResult, 0
+  80: 000544 000000 local rtn, doPass, doFail, doSkip
+  81: 000544 260571 dap rtn
+  82: 000545 320572 dio status
+  83: 000546 200543 lac reportResult      // jda deposited the caller's label address here
+  84: 000547 170462 jda typetext      // print the label itself, no suffix yet
+  86: 000550 200572 lac status
+  87: 000551 500707 sad [0]
+  88: 000552 600556 jmp doPass
+  89: 000553 500720 sad [2]
+  90: 000554 600566 jmp doSkip
+  91: 000555 600562 jmp doFail      // anything else, including REPORT_FAIL, counts as a failure
+  93: 000556        doPass,
+  94: 000556 440703 idx testPassCount
+  95: 000557 200735 lac [passText]
+  96: 000560 170462 jda typetext
+  97: 000561 600571 jmp rtn
+  98: 000562        doFail,
+  99: 000562 440704 idx testFailCount
+ 100: 000563 200736 lac [failText]
+ 101: 000564 170462 jda typetext
+ 102: 000565 600571 jmp rtn
+ 103: 000566        doSkip,
+ 104: 000566 440705 idx testSkipCount
+ 105: 000567 200737 lac [skipText]
+ 106: 000570 170462 jda typetext
+ 107: 000571 600571 rtn, jmp .
+ 108: 000572 000000 status, 0
+ 109: 000573 000000 endloc
+ 111: 000573        passText,
+// Text table
+// text " pass
+"
+ 112: 000573 000000  004761
+ 112: 000574 000000  222277
+// End
+
+ 113: 000575 000013 13
+ 114: 000576        failText,
+// Text table
+// text " fail
+"
+ 115: 000576 000000  003566
+ 115: 000577 000000  617143
+ 115: 000600 000000  347700
+// End
+
+ 116: 000601 000013 13
+ 117: 000602        skipText,
+// Text table
+// text " skip
+"
+ 118: 000602 000000  003522
+ 118: 000603 000000  427147
+ 118: 000604 000000  347700
+// End
+
+ 119: 000605 000013 13
+ 121:               // digitToFlex -- convert a binary digit to its flex/concise typewriter code.
+ 122:               // Digits 1-9 happen to use flex codes 1-9 (octal 001-011) directly; only 0 is irregular, using
+ 123:               // flex code 020 octal instead. Verified against Tools/AM1/parsefns.c's ascii2concise table.
+ 124:               // Called via jsp -- note this is jsp, not jda: there is no reserved word at the entry point to
+ 125:               // receive an auto-deposited value, so the argument is passed in IO, not AC. AC is NOT a safe
+ 126:               // channel for an argument across a jsp call: jsp overwrites AC with the return address before
+ 127:               // the callee's first instruction runs, so anything the caller left in AC is gone by the time
+ 128:               // this code can look at it. IO survives untouched, which is why it's used here instead -- see
+ 129:               // Claude/skill-updates/examples-additions.md's "Gotcha: jsp vs jda" note.
+ 130:               // IO in: digit (0-9, binary). IO out: the flex code. AC is clobbered, not preserved.
+ 131: 000606        digitToFlex,
+ 132: 000606 000000 local rtn
+ 133: 000606 260614 dap rtn
+ 134: 000607 760040 lai      // AC <- IO (the digit), only so it can be tested below
+ 135: 000610 640100 sza      // skip if AC == 0 (the one irregular case)
+ 136: 000611 600614 jmp rtn      // AC is 1-9: IO already holds the correct code (== the digit)
+ 137: 000612 700020 law 20      // AC == 0: flex code is 020 octal, not 0
+ 138: 000613 760020 lia      // IO <- AC (020)
+ 139: 000614 600614 rtn, jmp .
+ 140: 000615 000000 endloc
+ 142:               // printCount -- print a count (0-99 assumed) as one or two decimal digits via tyo, with no
+ 143:               // leading zero and no trailing text.
+ 144:               // Uses repeated subtraction for divide-by-10 in case hardware multiply/divide is not enabled.
+ 145:               // Called via jsp. IO in: the count. Neither AC nor IO is preserved across the call.
+ 146: 000615        printCount,
+ 147: 000615 000000 local rtn, units, tens
+ 148: 000615 260644 dap rtn
+ 149: 000616 340646 dzm tens
+ 150: 000617 320645 dio units      // in case there is no tens digit
+ 151: 000620 760040 lai      // AC <- IO (the count)
+ 152: 000621 420713 sub [12]  //  one or two digits?
+ 153: 000622 640200 spa      // >= 10, two digits
+ 154: 000623 600641 jmp afterTensDigit
+ 155: 000624        tensLoop,
+ 156: 000624 420713 sub [12]
+ 157: 000625 640200 spa      // skip if AC >= 0, there's room for (at least) one more ten
+ 158: 000626 600631 jmp tensDone
+ 159: 000627 440646 idx tens
+ 160: 000630 600624 jmp tensLoop
+ 161: 000631        tensDone,
+ 162: 000631 400713 add [12]  //  undo the subtraction that went negative; AC is now 0-9
+ 163: 000632 240645 dac units
+ 164: 000633 200646 lac tens
+ 165: 000634 650100 sza i      // if tens == 0, don't print it to suppress a leading zero
+ 166: 000635 600641 jmp afterTensDigit
+ 167: 000636 220646 lio tens
+ 168: 000637 620510 jsp numbertofio
+ 169: 000640 730003 tyo i
+ 170: 000641        afterTensDigit,
+ 171: 000641 220645 lio units
+ 172: 000642 620510 jsp numbertofio
+ 173: 000643 730003 tyo i
+ 174: 000644 600644 rtn, jmp .
+ 175: 000645 000000 units, 0
+ 176: 000646 000000 tens, 0
+ 177: 000647 000000 endloc
+ 179:               // printSummary -- print the three running totals built up by reportResult, e.g.
+ 180:               // "14 PASS, 0 FAIL, 2 SKIP" bracketed by newlines.
+ 181:               // Tyo state is assumed lowershift.
+ 182:               // Called via jsp. Neither AC nor IO is preserved.
+ 183: 000647        printSummary,
+ 184: 000647 000000 local rtn
+ 185: 000647 260666 dap rtn
+ 186: 000650 220743 lio [77]  //  newline
+ 187: 000651 730003 tyo i
+ 188: 000652 220703 lio testPassCount
+ 189: 000653 620615 jsp printCount
+ 190: 000654 200740 lac [sumPassText]
+ 191: 000655 170462 jda typetext
+ 193: 000656 220704 lio testFailCount
+ 194: 000657 620615 jsp printCount
+ 195: 000660 200741 lac [sumFailText]
+ 196: 000661 170462 jda typetext
+ 198: 000662 220705 lio testSkipCount
+ 199: 000663 620615 jsp printCount
+ 200: 000664 200742 lac [sumSkipText]
+ 201: 000665 170462 jda typetext
+ 202: 000666 600666 rtn, jmp .
+ 203: 000667 000000 endloc
+ 205: 000667        sumPassText,
+// Text table
+// text " PASS, "
+ 206: 000667 000000  007447
+ 206: 000670 000000  612222
+ 206: 000671 000000  723300
+// End
+
+ 207: 000672 000013 13
+ 208: 000673        sumFailText,
+// Text table
+// text " FAIL, "
+ 209: 000673 000000  007466
+ 209: 000674 000000  617143
+ 209: 000675 000000  723300
+// End
+
+ 210: 000676 000013 13
+ 211: 000677        sumSkipText,
+// Text table
+// text " SKIP
+"
+ 212: 000677 000000  007422
+ 212: 000700 000000  427147
+ 212: 000701 000000  770000
+// End
+
+ 213: 000702 000013 13
+ 215: 000703 000000 testPassCount, 0
+ 216: 000704 000000 testFailCount, 0
+ 217: 000705 000000 testSkipCount, 0
+ 219: 000706 000000 endloc
+File T01.am1
+ 370: 000706        constants
+ 370: 000706 000325 
+ 370: 000707 000000 
+ 370: 000710 000001 
+ 370: 000711 002000 
+ 370: 000712 001750 
+ 370: 000713 000012 
+ 370: 000714 000024 
+ 370: 000715 000020 
+ 370: 000716 002400 
+ 370: 000717 000013 
+ 370: 000720 000002 
+ 370: 000721 777774 
+ 370: 000722 000351 
+ 370: 000723 000362 
+ 370: 000724 000373 
+ 370: 000725 000404 
+ 370: 000726 011610 
+ 370: 000727 000415 
+ 370: 000730 000036 
+ 370: 000731 000425 
+ 370: 000732 000436 
+ 370: 000733 000447 
+ 370: 000734 000337 
+ 370: 000735 000573 
+ 370: 000736 000576 
+ 370: 000737 000602 
+ 370: 000740 000667 
+ 370: 000741 000673 
+ 370: 000742 000677 
+ 370: 000743 000077 
+
+start 100

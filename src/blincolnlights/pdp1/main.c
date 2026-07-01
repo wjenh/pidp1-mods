@@ -118,13 +118,15 @@ static long overflowCount;
 static long totalTime;
 static long totalCycles;
 
-// The main emulator loop. Runs forever (until exit()/the SIGTERM handler ends the process):
-// each iteration applies any pending AD1 (remote debugger) overrides of the front-panel
-// switches, services start/stop/continue/examine/deposit/readin switch edges (spec()/cycle()/
-// start_readin()/readin1()/readin2()), runs one machine cycle (or steals one for an active
-// high-speed-channel DMA transfer) when pdp->run is set, services the panel lights either way,
-// then services file-descriptor-backed I/O (handleio()/dynamicIotProcessorDoIOPoll()) and the
-// network command listener (cli()). No return value -- this function never returns normally.
+// The main emulator loop.
+// Runs forever or until exit() or the SIGTERM handler ends the process:
+// Each iteration applies any pending AD1 (remote debugger) overrides of the front-panel
+// switches, services start/stop/continue/examine/deposit/readin switch edges via
+// spec()/cycle()/start_readin()/readin1()/readin2(), runs one machine cycle  or steals one for an active
+// high-speed-channel DMA transfer when pdp->run is set, services the panel lights in all states,
+// then services file-descriptor-backed I/O via handleio() and dynamicIotProcessorDoIOPoll() and the
+// network command listener cli().
+// No return value -- this function never returns normally.
 void
 emu(PDP1 *pdp, Panel *panel)
 {
@@ -218,6 +220,9 @@ FILE *tmpfP;    // used for timing
 
             if( Edge(readin_sw) )
             {
+                // And the same for readin
+                HSCreset();
+                dynamicIotProcessorStop();
                 start_readin(pdp);
             }
 
@@ -857,4 +862,5 @@ reconfigure(int sig)
 {
     reloadConfigFile(CONFIG_FILE);
     configure();
+    dynamicIotProcessorUpdate();
 }

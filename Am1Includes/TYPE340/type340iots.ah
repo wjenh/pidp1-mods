@@ -1,0 +1,24 @@
+#ifndef TYPE340IOTS_AH
+#define TYPE340DIOTS_AH
+/* Just the IOT defines for the Type 340 display.
+ * These don't match the originals, but they were too cryptic.
+ * See the documentation for details on use.
+ * The defines for the Type 340 processor's instructions are in type340cmds.ah,
+ * allowing them to be included separately.
+ *
+ * IMPORTANT - the Type 23 Parallel Drum uses some of the name names for its IOTs.
+ * If you use both, you can instead include type340alt.ah which will avoid conflicts
+ * but won't match the historic three-letter style.
+ */
+
+#define dla 0720015
+#define drs 0720115
+#define dcf 0720215
+#define dra 0720016
+#define drc 0720116
+#define dsp 0720117
+#define dss 0720217
+#define dsv 0720417
+#define dsh 0721017
+
+#endif

@@ -15,24 +15,24 @@ top, lio [prog
     jmp top
 
 // Begins in PARAM mode
-prog, SCALE(0) INTENSITY(4) NEXTMODE(POINT)
-    POINTY(YORIGIN) NEXTMODE(POINT)
-    POINTX(XORIGIN) DRAWPOINT NEXTMODE(SUBROUTINE)
-    SAVE triangle NEXTMODE(VECTOR)
-    NEXTMODE(POINT)
-    POINTY(YORIGIN - SIDE*2) NEXTMODE(POINT)
-    POINTX(XORIGIN + SIDE) DRAWPOINT NEXTMODE(SUBROUTINE)
-    SAVE triangle NEXTMODE(VECTOR)
-    NEXTMODE(POINT)
-    POINTY(YORIGIN - SIDE*4) NEXTMODE(POINT)
-    POINTX(XORIGIN + SIDE*2) DRAWPOINT NEXTMODE(SUBROUTINE)
-    SAVE triangle NEXTMODE(VECTOR)
-    STOP
+prog, scale(0) intensity(4) next(point)
+    y(YORIGIN) next(point)
+    x(XORIGIN) show next(subroutine)
+    save triangle next(vector)
+    next(point)
+    y(YORIGIN - SIDE*2) next(point)
+    x(XORIGIN + SIDE) show next(subroutine)
+    save triangle next(vector)
+    next(point)
+    y(YORIGIN - SIDE*4) next(point)
+    x(XORIGIN + SIDE*2) show next(subroutine)
+    save triangle next(vector)
+    halt
 
 triangle,
-    VECVISIBLE UP DELTAY(SIDE) RIGHT DELTAX(SIDE/2)
-    VECVISIBLE DOWN DELTAY(SIDE) RIGHT DELTAX(SIDE/2)
-    VECVISIBLE DELTAY(0) LEFT DELTAX(SIDE)
-    VECDONE
+    visible up deltay(SIDE) right deltax(SIDE/2)
+    visible down deltay(SIDE) right deltax(SIDE/2)
+    visible deltay(0) left deltax(SIDE)
+    end
 
 start top

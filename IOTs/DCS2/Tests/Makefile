@@ -37,7 +37,7 @@ dcstestharness: dcstestharness.c
 # ---- assembler targets -----------------------------------------------------
 
 %.rim: %.am1
-	$(AM1) -b $<
+	$(AM1) $<
 
 # Convenience phony targets: make T01 assembles T01.am1 only
 T01: T01.rim

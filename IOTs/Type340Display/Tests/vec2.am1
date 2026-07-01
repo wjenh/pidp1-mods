@@ -13,11 +13,11 @@ top, lio [prog
     jmp top
 
 // Begins in PARAM mode
-prog, SCALE(0) INTENSITY(3) NEXTMODE(POINT)
-    POINTY(YORIGIN) NEXTMODE(POINT)
-    POINTX(XORIGIN) DRAWPOINT NEXTMODE(VCONTINUE)
-    VECVISIBLE UP DELTAY(0d50) RIGHT DELTAX(0d50)
-    VECDONE
-    STOP
+prog, scale(0) intensity(3) next(point)
+    y(YORIGIN) next(point)
+    x(XORIGIN) show next(vcontinue)
+    visible up deltay(0d50) right deltax(0d50)
+    end
+    halt
 
 start top

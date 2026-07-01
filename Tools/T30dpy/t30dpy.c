@@ -108,6 +108,13 @@
  *    and not the fullscreen-toggle flush presents, which are clear-only and not content frames).
  * 20-Jun-2026 wje (Claude) create the window initially hidden to avoid sdl window initialization jitter
  * 21-Jun-2026 wje when the window is made visible, do a RenderPresent() to get the black background
+ * 01-Jul-2026 wje (Claude) fix new points being overwritten by nearby aging points.
+ *    DrawPoint() previously did a flat overwrite for every pixel, so whichever
+ *    point happened to be walked last in the active list won. A solid freshly drawn line would show gaps
+ *    wherever an older, dimmer, still-aging point's glow spread overlapped it.
+ *    DrawPoint() now compares against brightBuffer[][] point if any
+ *    and only overwrites a pixel if the new point is at least as bright.
+ *    Adjust point pattern vs intensity for more realistic rendering.
 */
 
 #include <stdio.h>
@@ -181,6 +188,9 @@
 
 #define XYTOPTR(base, pitch, x, y) (uint32_t *)((base) + ((y) * (pitch)) + ((x) * sizeof(uint32_t)))
 #define APPLYGAMMA(alpha, gamma) (int)(powf((float)(alpha) / 255.0f, (gamma)) * 255.0f);
+#define DRAWIFBRIGHTER(pixP, brightP) \
+    if(bright >= *(brightP)) {*(pixP) = rgba; *(brightP) = (uint8_t)bright;}
+
 
 #define FRAMETIME 33333333L      // nanoseconds between frames, this is 30 fps
 
@@ -241,6 +251,21 @@ SDL_mutex *busyLockP;                       // for interlocking with the reader 
 // Th precomputed rgba values for each possibe pdp-1 intensity and internal time step.
 Rgba rgbaValues[8][256];
 
+// Perceptual brightness (the pre-premultiply alpha, i.e. before it is baked into rgbaValues'
+// r/g/b and forced to 255) for each possible intensity and lifetime. This is the score
+// drawPoint() uses to decide whether a point should override a pixel some other point already
+// wrote this frame: see brightBuffer below.
+uint8_t brightValues[8][256];
+
+// Tracks the brightest value written to each screen pixel so far in the current frame.
+// drawPoint()'s glow spread can touch a pixel that some other active point's spread also
+// touches; without this, whichever point happened to be walked last in the active list won
+// that pixel outright, regardless of brightness, since points are inserted at the list head and
+// so are drawn before everything already active. A freshly plotted point must remain visible
+// on top of a dimmer, still-aging existing point, not be silently erased by it.
+// Cleared to 0 alongside the pixel buffer at the start of each rendered frame.
+uint8_t brightBuffer[SIZE][SIZE];
+
 int pdp1FD;
 int portNum;
 char *hostNameP;
@@ -300,7 +325,7 @@ void initializePoints(void);
 void addActivePoint(uint16_t x, uint16_t y, byte intensity);
 void removeActivePoint(uint32_t pointIdx, uint32_t prevIdx);
 void initializeRgbas(void);
-void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity);
+void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity, int bright);
 void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
 void loadConfig(bool full);
 void sighandler(int sig);
@@ -735,6 +760,12 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
             // Clearing the entire pixel array seems to be faster than clearing individual points, surprising.
             memset(pixels, 0, pitch * 1024);
 
+            // Cleared alongside the pixel buffer: tracks the brightest value written to each
+            // pixel so far this frame, so drawPoint() can tell a freshly drawn point apart from
+            // an existing one it overlaps and let the brighter of the two win (see brightBuffer
+            // declaration above).
+            memset(brightBuffer, 0, sizeof(brightBuffer));
+
             // Go thru the point list, handle each.
             // This entire walk is done under a single lock acquisition, not just the individual
             // removals: previously, only removeActivePoint() locked, leaving the read of each
@@ -756,7 +787,8 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
 
                 if( (rgba != blackPixel) && (activePointP->lifetime < MAXLIFETIME) )
                 {
-                    drawPoint(pixels, pitch, rgba, x, y, activePointP->intensity);
+                    drawPoint(pixels, pitch, rgba, x, y, activePointP->intensity,
+                        brightValues[activePointP->intensity][activePointP->lifetime]);
                     activePointP->lifetime++;
                     prevIdx = pointIdx;                 // Only update if we are not removing this point.
                     ++totalPoints;
@@ -1023,10 +1055,13 @@ Rgba rgba;
                 b = (Uint8)(((int)b * (int)a) / 255);
                 rgba = SDL_MapRGBA(pixelFormatP, r, g, b, 255);
                 bias = 0;           // only the first value
+
+                brightValues[i][j] = a;    // pre-premultiply alpha, see brightValues declaration
             }
             else
             {
                 rgba = blackPixel;
+                brightValues[i][j] = 0;
             }
 
             rgbaValues[i][j] = rgba;
@@ -1173,18 +1208,18 @@ float srcAlpha, destAlpha, newAlpha;
 // Spread a point to simulate beam spread on a crt.
 // The Type 30 doccumentation states a spot diameter of 0.030" max, about 3 pixels on its display.
 // This siumulates it well by drawing extra dots based on the 0-7 intensity level.
-// The actual pattern is thanks to Google AI.
-// Credit where credit is due, even if it was trained on everyone else's data.
-// Saved me the small effort of figuring it out myself.
-// Note that x and y here are explicitly intended to be int, not u16_t.
-// This allows the compiler to use more efficient cpu instructions.
-// Yes, I worry about such things, and more developers should.
+// The actual pattern is thanks to Claude/Sonnet5,credit where credit is due.
+// Write rgba to *pixP, but only if bright is at least as bright as the brightness already
+// recorded at *brightP for this frame; otherwise leave both alone.
 void
-drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity)
+drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity, int bright)
 {
 uint32_t *rowP;          // pointer to (x, y) in the current row
 uint32_t *aboveRowP;     // pointer to (x, y-1), only valid if notTopEdge
 uint32_t *belowRowP;     // pointer to (x, y+1), only valid if notBotEdge
+uint8_t *brightRowP;     // pointer to brightBuffer[y][x]
+uint8_t *brightAboveP;   // pointer to brightBuffer[y-1][x], only valid if notTopEdge
+uint8_t *brightBelowP;   // pointer to brightBuffer[y+1][x], only valid if notBotEdge
 int stride;              // pixels per row, derived from pitch (which is in bytes)
 
     if( mikecMode)
@@ -1206,6 +1241,12 @@ int stride;              // pixels per row, derived from pitch (which is in byte
     aboveRowP = rowP - stride;
     belowRowP = rowP + stride;
 
+    // Same idea as rowP/aboveRowP/belowRowP above, but into brightBuffer[][] (a plain
+    // SIZE-wide 2D array, so the row stride is just SIZE, not pitch-derived).
+    brightRowP = &brightBuffer[y][x];
+    brightAboveP = brightRowP - SIZE;
+    brightBelowP = brightRowP + SIZE;
+
     switch (intensity)
     {
     // Max intensity adds the sharp corners to complete the 3x3 square block
@@ -1213,46 +1254,52 @@ int stride;              // pixels per row, derived from pitch (which is in byte
     case 6:
         if( notLeftEdge & notTopEdge )
         {
-            *(aboveRowP - 1) = rgba;
+            DRAWIFBRIGHTER(aboveRowP - 1, brightAboveP - 1);
         }
         if( notLeftEdge & notBotEdge )
         {
-            *(belowRowP - 1) = rgba;
+            DRAWIFBRIGHTER(belowRowP - 1, brightBelowP - 1);
         }
         if( notRightEdge & notTopEdge )
         {
-            *(aboveRowP + 1) = rgba;
+            DRAWIFBRIGHTER(aboveRowP + 1, brightAboveP + 1);
         }
         if( notRightEdge & notBotEdge )
         {
-            *(belowRowP + 1) = rgba;
+            DRAWIFBRIGHTER(belowRowP + 1, brightBelowP + 1);
         }
-    // Medium intensity adds the left/right arms to form a wide cross
+    // Medium intensity adds the left/right and top/bottom arms, completing a symmetric
+    // plus/cross with the base tier's center pixel below. On a 3x3 grid, 1 pixel (center
+    // alone) and 5 pixels (this plus/cross) are the only two dot sizes smaller than the
+    // full 3x3 block that are still rotationally symmetric; any other pixel count drawn
+    // from this neighborhood (e.g. center+top+bottom without left/right, as this used to
+    // be split) biases the dot toward one axis instead of looking round.
     case 5:
     case 4:
         if( notLeftEdge )
         {
-            *(rowP - 1) = rgba;
+            DRAWIFBRIGHTER(rowP - 1, brightRowP - 1);
         }
         if( notRightEdge )
         {
-            *(rowP + 1) = rgba;
+            DRAWIFBRIGHTER(rowP + 1, brightRowP + 1);
+        }
+        if( notTopEdge )
+        {
+            DRAWIFBRIGHTER(aboveRowP, brightAboveP);
+        }
+        if( notBotEdge )
+        {
+            DRAWIFBRIGHTER(belowRowP, brightBelowP);
         }
 
-    // Lowest intensities always draw the tight vertical core
+    // Lowest intensities draw only the center pixel -- see the note above on why a lone
+    // center pixel, not a 3-pixel vertical bar, is the correct smallest round dot here.
     case 3:
     case 2:
     case 1:
     case 0:
-        *rowP = rgba;                // Center core
-        if( notTopEdge )
-        {
-            *aboveRowP = rgba;       // Top arm
-        }
-        if( notBotEdge )
-        {
-            *belowRowP = rgba;       // Bottom arm
-        }
+        DRAWIFBRIGHTER(rowP, brightRowP);           // Center core
         break;
     }
 }

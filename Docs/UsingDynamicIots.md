@@ -1,8 +1,9 @@
 # Using Dynamic Iots
 
-This document describes the funcionality and now to create your own IOTs.
+This document describes the funcionality and how to create your own IOTs.
 
-Updated 15-May-2026
+Updated 1-Jul-2026
+Add new featues, iotUpdate(), iotIOPoll(), etc.
 
 ## What is a dynamic IOT?
 
@@ -152,6 +153,15 @@ This can be used to clean up any state or connections you need to deal with.
 
 Both are optional methods.
 
+## Update notifications from a SIGHUP
+
+The main emulator uses SIGHUP to mean *reload the config file settings now*.
+An IOT can also be notified of this by implementing the *iotUpdate()* routine.
+When the pidp1 gets SIGHUP, it will also call this function if it is defined, it's optional.
+
+One word of caution, it is called asynchronously from within the signal handler.
+This can have implications in an IOT implementation, so keep this in mind.
+
 ## Waits, completions, and pulses
 
 Again, IOTs are called twice, once at the internal subclock time TP7 with pulse set to 0, and again
@@ -198,27 +208,39 @@ IOTs asc, dsc are also ignored in this case.
 For either system, sequence break must be enabled in general via the enter system break mode IOT, `esb`, 72xx55.
 It can be disabled via the leave system break moode IOT, `lsb`, 72xx54.
 
-## Special functions
+## Aliases
+
 If the IOT being inmplemented should be processed by another IOT, just implement the `iotAlias()`
 function, which should return the IOT number of the handler to actually process it. Remember to keep your octal
 vs decimal numbers correct.
+
 That IOT will be loaded if it hasn't already been.
+
 No other functions need to be implemented, they will be ignored.
 Whenver your alias IOT is executed, the alias target code will actually be invoked.
 You can tell what IOT device code caused the invocation by looking at the `dev` parameter.
 
 The code for the Type 23 Parallel Drum gives examples of this.
 
+## Periodic activation
+
 If your code needs to be periodially activated, implement the `iotPoll(pdp1P)` function.
 If polling is enabled in your IOT via `enablePolling(when)`, then the emulator will call
 iotPoll() once every specified number of instruction cycles between the end of subclock TP10 and the start of TP0.
 A `when` of 0 disables polling for your IOT.
-
-Until that is done, you will continue to be polled every `when` instruction cycles.
 One cycle is 5 microseconds, so the minimum granularity is that.
 If you don't need to be polled as frequently, set a longer poll interval to reduce processor loading.
+Until that is done, you will continue to be polled every `when` instruction cycles.
 
-See many of the proviedd IOTs for examples.
+However, it is only called while the emulator is in run mode.
+
+If you need your IOT to be called even when the pidp1 is halted, implement `iotIOPoll()`.
+Unlike *iotPoll()*, it is called every 5 microsecond cycle time regardless of the pidp-1 run state.
+There is no cycle count setting.
+
+Both of these can be implemented in the same IOT, and both are optional.
+
+See many of the provided IOTs for examples.
 
 It's good practice to disable polling if your IOT has finished what it needs to do, you can enable it again
 when necessary.
@@ -237,17 +259,23 @@ A logging facility is provided:
 ```
 within your code:
 ```
-iotLog(boolean enable, "format like printf", ....);
+iotLog("format like printf", ....);
 ```
+This will unconditionally log the message.
+
+You can also use:
+```
+iotCondLog(boolean enable, "format like printf", ....);
+```
+This will only log the message if *enable* is true.
 
 You can use `iotCloseLog()` to close the log file but it's not actually required.
 The output to the log file is flushed after each log call.
 The debug output will be written to the file `/tmp/iot.dbg`.
 
-You can log different kinds of events, controlled by the `enable` flag. If it is 0, nothing will be logged,
-nonzero, the message will be logged. See some of the provided IOTs for examples.
+See most of the provided IOTs for examples.
 
-If DOLOGGING is not defined then any log statements are dropped.
+If DOLOGGING is not defined then any log statements are dropped, no code is generated at all.
 This allows debugging to be turned on and off.
 
 ## Configuration for your IOTs
@@ -267,8 +295,10 @@ See the code in the Type62and64 directory for examples.
 - int iotHandler(PDP1 \*hardwareP, int device, int pulse, int completion)
 - void iotStart(void)
 - void iotStop(void)
+- void iotUpdate(void)
 - void enablePolling(int cycles)
 - void iotPoll(PDP1 \*hardwareP)
+- void iotIOPoll(PDP1 \*hardwareP)
 - void initiateBreak(int chan)
 - int iotIsAlias(void)
 

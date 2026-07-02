@@ -3,7 +3,7 @@
 This contains files modified from https://github.com/obsolescence/pidp1 to add new functionality and fix some issues.
 Note that this no longer tracks the original repo since this branch has diverged too much for automatic tracking.
 The link was removed on 3-Feb-26 to make this a fully-independent repository.
-Selective updates from the original branch are made now.
+Selective updates will be added from original branch if any are made.
 
 Many unused files from the original have been cleaned out and some of the original **C** files updated to
 have some comments and be more readable.
@@ -18,6 +18,15 @@ the ad1 symbolic debuger, drum utilities, documentation, etc.
 Implementations of the Type23 drum, the DCS communications system, the Type 33 symbol generator, the Type 340
 advanced graphics display with all options and multiterminal support,
 both the Type 62 and Type 64 line printers and the BBN timesharing clock are provided.
+
+Full-coverage test suites have been created for the added devices, etc. and are in the repository
+
+Deep analysis and verification of the entire end-to-end execution flow including thread interactions has been done.
+Verification of the pdp1 emulator functionality and validatiion of the simulated timing for devices has been done
+using all available original documentation and maindec programs.
+
+All of the analysis was done with the assistance of that new-fangled AI stuff, Claude/sonnet and Claude/Opus;
+it would have been a virtually impossible task for one person to do alone.
 
 A number of demo programs in **am1** assembler are also provided.
 Note that **am1** can generate **macro_1** code if you really want to use it, but there is no reason to do so.

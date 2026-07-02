@@ -2,15 +2,24 @@
 
 This docuemnt describes newpanel, a replacement for panel_pidp1, and how to use it.
 
-This is version 1.1\
-Edit date 23-Jun-2026\
-Add more details for alpha settings
+This is version 1.2\
+Edit date 2-Jul-2026\
+more flicker notes
+
+## An important note about flicker and panel light blips
+
+See the section below!
+
+However, be sure you actually have a problem.
+
+It could just be the running program's normal use of instructions.
+The definitive way to tell is if lights that should be on constantly, such as the power light, flicker or
+occasionally blink.
 
 ## Installing newpanel
 
 Installation is integrated into the *install.sh* script.\
-During installation you will be prompted for the version to use, the old panel_pidp1 or newpanel.\
-Whicever is selected is installed as panel_pidp1 so existing scripts will still work.
+Newpanel is installed by default.
 
 ## Running from the command line
 
@@ -27,7 +36,7 @@ Find the *pid* for panel_pidp1, then:
 sudo kill the-pid
 ```
 
-You can now manually start the one of your choice by running it from the **build** directory,
+Now start the one of your choice by running it from the **build** directory,
 /opt/pidp1-mods/src/blicolnlights/panel_pidp1.
 
 If you don't see both panel_pidp1 and newpanel there, just type *make*.
@@ -35,7 +44,7 @@ If you don't see both panel_pidp1 and newpanel there, just type *make*.
 ## History
 
 Newpanel is a new implementation of the pidp-1 hardware panel driver replacing panel_pidp1.
-It uses much less cpu resources, replacing the floating-point operations of exponential decay done constantly
+It uses much less cpu resources, replacing the floating-point calculations of exponential decay done constantly
 with much simpler logic involving only one floating point multiply and one add per light.
 It also has a completely new method for the pidp1 emulator to update it which is far more efficient.
 
@@ -46,11 +55,9 @@ It also suffers from a simulation error, described below.
 
 The hardware panel uses modern LED lights, but the PDP-1 used incansecent lights.
 Those took time to turn on and to turn off, and this needs to be simulated.
-The exact turn on and turn off characteristcs of the specific lights that were used is unknown,
-but some research gives figures for the same class of light as a turn-on time of a few milliseconds and
-a turn-off time of about 50 milliseconds.
+The exact turn on and turn off characteristcs of the original lights are discussed in the Alpah section below.
 
-The default filter values used replicate this but can be adjusted for personal preference.
+The filter values used can be adjusted for personal preference.
 
 ## General algorithm
 
@@ -101,38 +108,28 @@ A stark, visible binary flicker from something that should be imperceptible.
 
 The new algorithm used completely avoids this because of its new sampling technique.
 
-## Flicker, priority, and power settings
+## Flicker, the Linux scheduler, and priority
 
-The human eye is very sensitive to flicker when the flicker rate is relatively low, on the order of 20-50 Hz, the
-*flicker fusion rate*.
-This varies by individual.
+The human eye is very sensitive to flicker and intermittent intensity changes, sensitivity varies by individual.
+
+Unlike the original PDP-1, the panel driver has to live with the Linux scheduler which can suspend it at random
+times causing intermittent, very brief, update blips.
 
 Panel_pidp1 and to a lesser extent newpanel are subject to this.
-Panel_pidp1 forced use of high-priority threads to solve this.
-Newpanel is much less subject to flicker, but depending upon what else is running on a device it can be
+Panel_pidp1 forced use of high-priority threads to solve this because of its high cpu demand.
+
+Newpanel is much less subject to this, major work has been put into it to optimize performance around
+scheduling interaction, but depending upon what else is running on a device it can be
 noticeable to some people.
+If you're running everything on the pi, pdp1, newpanel, t30dpy, all at once, you are much more likely
+to see it.
+If you connect the display remotely, you probably won't have an issue.
 
-Newpanel has use of elevated thread priority a configurable parameter and so can be adjusted as needed.
+Newpanel has use of elevated thread priority, a configurable parameter, and so can be adjusted as needed.
+While not usually needed, it has no significant impact on cpu loading, it just means it gets scheduled
+when it needs it, not randomly.
 
-There is also an alternative solution, but one that is more invasive.
-By default, the pi 5 and other pi variants do agressive pwoer management, dynamically dropping cpu speed frequently.
-But, if it is in a low speed state and an application uses gpio, there is a significant ramp-up time to get the cpu
-and gpio back to the levels needed.
-
-This is one of the causes of the flicker issues.
-
-By default, the cpu runs in *ondemand* mode, which is the agressive power-saving mode.
-You can turn this off temporarily by giving the command:
-```
-echo "performance" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-```
-and revert it by:
-```
-echo "ondemand" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-```
-You can make it the default by editing the file */etc/rc.local* and adding the above commant at the end, before the *exit(0)*.
-
-But a warning: this forces the cpu to run at maximum speed and so uses more power and could even require the use of a cpu fan, but it's an option.
+So, use it if you have flicker issues!
 
 ## Alphas
 
@@ -156,7 +153,7 @@ The filters are the same as used in the new audio system for the pidp1.
 The lights currently being used in the PDP-1 at the Computer History Museum are
 TEC/CM 1762's, a T-1&1/4 28v 40 mA type C-2F filament bulb.
 
-From the published information, the default alpha values give on/off times that are a bit too fast.\
+From the published information, the default alpha values in newpanel give on/off times that are a bit too fast.\
 You can experiment, a good starting point is panelonalpha=0.040, paneloffalpha=0.018.
 
 ## Configuration parameters

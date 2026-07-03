@@ -1,0 +1,243 @@
+T01: HSC GATEWAY ALLOC/FREE LIFECYCLE
+/*
+ * T01.am1 -- Exercises HSCallocateChannel()/HSCfreeChannel() via the IOT 44 Test Gateway
+ *            (IOTs/TestGateway/IOT_44.c), with no data transfer involved.
+ *
+ * Harness required: none.
+ *
+ * Uses HSC channel 2 throughout (channel 1 is reserved for the Type 23 Drum and channel 3
+ * for the Type 340 Display in normal emulator operation -- channel 2 is never touched by
+ * any other device, so it's safe for testing even if this program runs alongside a
+ * configuration that has those devices installed).
+ *
+ * IMPORTANT cross-test note: the HSC channel-assignment table in
+ * src/blincolnlights/pdp1/highSpeedChannels.c is process-lifetime static state, not cleared
+ * between .rim loads (same reason reportResult's resetResults must be called manually every
+ * run -- see Am1Includes/TESTUTIL/reportResult.ac). If this program halts or is re-run
+ * without a full emulator restart, channel 2 could be left allocated. Every path through
+ * this program, pass or fail, frees channel 2 before halting -- see the "cleanup" label.
+ * A defensive hgf is also issued before T01-1 in case a previous run left it allocated.
+ *
+ * Tests:
+ *   T01-1  hga on a free channel succeeds (IO = HSC_OK)
+ *   T01-2  hga on an already-allocated channel fails (IO = HSC_ERR)
+ *   T01-3  hga with an out-of-range channel number (0) fails
+ *   T01-4  hga with an out-of-range channel number (6) fails
+ *   T01-5  hgf on an allocated channel succeeds
+ *   T01-6  hgf on an already-freed channel fails
+ *   T01-7  hgs on a freed (not allocated by us) channel returns HSC_ERR
+ *   T01-8  a freed channel can be reallocated
+ *
+ * Assembler: am1
+ * Assemble:  am1 T01.am1
+ */
+
+#include <HSC/hscgatewaydefs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define TESTCHAN 2      // channel used throughout this test
+
+100/
+
+begin,
+    jsp resetResults
+
+    // Defensive cleanup in case a previous run in this emulator session left TESTCHAN
+    // allocated (see the file header note above). Result intentionally ignored.
+    lio [TESTCHAN]
+    hgf
+
+// ---- T01-1: hga succeeds on a free channel --------------------------------
+
+    lio [TESTCHAN]
+    hga
+    lai
+    sub [HSC_OK]
+    sza
+    jmp t1_fail
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+t1_done,
+
+// ---- T01-2: hga on an already-allocated channel fails ---------------------
+
+    lio [TESTCHAN]
+    hga
+    lai
+    sub [HSC_ERR]
+    sza
+    jmp t2_fail
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// ---- T01-3: hga with channel 0 (out of range) fails -----------------------
+
+    cli                     // IO = 0, an invalid channel number
+    hga
+    lai
+    sub [HSC_ERR]
+    sza
+    jmp t3_fail
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+    jmp t3_done
+t3_fail,
+    lio [REPORT_FAIL]
+    lac [lbl3]
+    jda reportResult
+t3_done,
+
+// ---- T01-4: hga with channel 6 (out of range, only 1-5 exist) fails -------
+
+    lio [6]
+    hga
+    lai
+    sub [HSC_ERR]
+    sza
+    jmp t4_fail
+    lio [REPORT_PASS]
+    lac [lbl4]
+    jda reportResult
+    jmp t4_done
+t4_fail,
+    lio [REPORT_FAIL]
+    lac [lbl4]
+    jda reportResult
+t4_done,
+
+// ---- T01-5: hgf succeeds on the channel we allocated in T01-1 -------------
+
+    lio [TESTCHAN]
+    hgf
+    lai
+    sub [HSC_OK]
+    sza
+    jmp t5_fail
+    lio [REPORT_PASS]
+    lac [lbl5]
+    jda reportResult
+    jmp t5_done
+t5_fail,
+    lio [REPORT_FAIL]
+    lac [lbl5]
+    jda reportResult
+t5_done,
+
+// ---- T01-6: hgf again on the now-freed channel fails ----------------------
+
+    lio [TESTCHAN]
+    hgf
+    lai
+    sub [HSC_ERR]
+    sza
+    jmp t6_fail
+    lio [REPORT_PASS]
+    lac [lbl6]
+    jda reportResult
+    jmp t6_done
+t6_fail,
+    lio [REPORT_FAIL]
+    lac [lbl6]
+    jda reportResult
+t6_done,
+
+// ---- T01-7: hgs on a channel not allocated by us returns HSC_ERR ----------
+//
+// IOT_44.c's own bookkeeping (isAllocatedChanNo()) catches this before ever calling
+// HSCgetStatus(), so this also verifies the gateway's use-after-free guard, not just HSC's.
+
+    lio [TESTCHAN]
+    hgs
+    lai
+    sub [HSC_ERR]
+    sza
+    jmp t7_fail
+    lio [REPORT_PASS]
+    lac [lbl7]
+    jda reportResult
+    jmp t7_done
+t7_fail,
+    lio [REPORT_FAIL]
+    lac [lbl7]
+    jda reportResult
+t7_done,
+
+// ---- T01-8: a freed channel can be reallocated ----------------------------
+
+    lio [TESTCHAN]
+    hga
+    lai
+    sub [HSC_OK]
+    sza
+    jmp t8_fail
+    lio [REPORT_PASS]
+    lac [lbl8]
+    jda reportResult
+    jmp t8_done
+t8_fail,
+    lio [REPORT_FAIL]
+    lac [lbl8]
+    jda reportResult
+t8_done,
+
+// ---- cleanup and halt ------------------------------------------------------
+//
+// Free TESTCHAN so later test programs loaded in the same emulator session see a clean
+// starting state (see file header note). Result ignored -- if T01-8 failed and the channel
+// was never (re)allocated, this hgf will itself return HSC_ERR, which is harmless here.
+
+cleanup,
+    lio [TESTCHAN]
+    hgf
+
+    jsp printSummary
+    hlt
+    jmp begin
+
+// ---- test labels -----------------------------------------------------------
+
+lbl1,
+    text "T01-1 alloc free chan"
+    013
+lbl2,
+    text "T01-2 double alloc"
+    013
+lbl3,
+    text "T01-3 chan 0 invalid"
+    013
+lbl4,
+    text "T01-4 chan 6 invalid"
+    013
+lbl5,
+    text "T01-5 free allocated"
+    013
+lbl6,
+    text "T01-6 double free"
+    013
+lbl7,
+    text "T01-7 status after free"
+    013
+lbl8,
+    text "T01-8 realloc after free"
+    013
+
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

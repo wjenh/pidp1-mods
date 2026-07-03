@@ -1,3 +1,13 @@
+// gpiochip_bcm2712.c -- GPIO_CHIP_T implementations for the BCM2712 SoC (Pi 5), which splits
+// GPIO handling across two device-tree nodes: a "brcmstb,gpio"-style level/direction block
+// (bcm2712GpioInterface) and a separate pinctrl block for function-select/pull
+// (bcm2712PinctrlInterface, registered once per C0/D0 stepping x AON/main-bank combination).
+// The two sides share per-SoC-instance state (BCM2712_INST_T, in bcm2712Instances[]) matched
+// up by AON-ness as each side probes. All functions/types here are file-local (static) and
+// have been renamed to the project's camelHump convention; the DECLARE_GPIO_CHIP() invocation
+// names (brcmstb, bcm2712, bcm2712_aon, etc.) are left as-is since they form the
+// externally-visible *_chip linker-section symbol names.
+
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
@@ -9,7 +19,7 @@
 #include "gpiochip.h"
 #include "util.h"
 
-#define ARRAY_SIZE(_a) (sizeof(_a)/sizeof(_a[0]))
+#define ARRAY_SIZE(_a) (sizeof(_a) / sizeof(_a[0]))
 
 /* 2712 definitions */
 
@@ -29,22 +39,25 @@
 #define FLAGS_GPIO             8
 #define FLAGS_PINCTRL          16
 
-struct bcm2712_inst
+// Per-SoC-instance state shared between a BCM2712 "gpio" chip registration and its matching
+// "pinctrl" chip registration (matched up by AON-ness as each side probes -- see
+// bcm2712CreateInstance()/bcm2712PinctrlCreateInstance()).
+typedef struct
 {
-    volatile uint32_t *gpio_base;
-    volatile uint32_t *pinmux_base;
-    unsigned pad_offset;
-    uint32_t *bank_widths;
+    volatile uint32_t *gpioBaseP;
+    volatile uint32_t *pinmuxBaseP;
+    unsigned padOffset;
+    uint32_t *bankWidthsP;
     unsigned flags;
-    unsigned num_gpios;
-    unsigned num_banks;
-};
+    unsigned numGpios;
+    unsigned numBanks;
+} BCM2712_INST_T;
 
-static unsigned num_instances;
-static struct bcm2712_inst bcm2712_instances[BCM2712_MAX_INSTANCES] = { 0 };
-static unsigned shared_flags;
+static unsigned numInstances;
+static BCM2712_INST_T bcm2712Instances[BCM2712_MAX_INSTANCES] = { 0 };
+static unsigned sharedFlags;
 
-static const char *bcm2712_c0_gpio_alt_names[][BCM2712_FSEL_COUNT - 1] =
+static const char *bcm2712C0GpioAltNames[][BCM2712_FSEL_COUNT - 1] =
 {
     { "BSC_M3_SDA"             , "VC_SDA0"          , "GPCLK0"           , "ENET0_LINK"        , "VC_PWM1_0"             , "VC_SPI0_CE1_N"         , "IR_IN"          , }, // 0
     { "BSC_M3_SCL"             , "VC_SCL0"          , "GPCLK1"           , "ENET0_ACTIVITY"    , "VC_PWM1_1"             , "SR_EDM_SENSE"          , "VC_SPI0_CE0_N"  , "VC_TXD3"       , }, // 1
@@ -102,7 +115,7 @@ static const char *bcm2712_c0_gpio_alt_names[][BCM2712_FSEL_COUNT - 1] =
     { "SC0_PRES"               , "ENET0_RGMII_RX_OK", "EXT_SC_CLK"       , }, // 53
 };
 
-static const char *bcm2712_d0_gpio_alt_names[][BCM2712_FSEL_COUNT - 1] =
+static const char *bcm2712D0GpioAltNames[][BCM2712_FSEL_COUNT - 1] =
 {
     { "" }, // 0
     { "VC_SCL0"                , "USB_PWRFLT"       , "GPCLK0"           , "SD_CARD_LED_E"    , "VC_SPI3_CE1_N"          , "SR_EDM_SENSE"          , "VC_SPI0_CE0_N"    , "VC_TXD0"       , }, // 1
@@ -142,7 +155,7 @@ static const char *bcm2712_d0_gpio_alt_names[][BCM2712_FSEL_COUNT - 1] =
     { "SD2_DAT3"               , "VC_SPI3_MISO"     , "VC_SCL5"          , }, // 35
 };
 
-static const char *bcm2712_c0_aon_gpio_alt_names[][BCM2712_FSEL_COUNT - 1] =
+static const char *bcm2712C0AonGpioAltNames[][BCM2712_FSEL_COUNT - 1] =
 {
     { "IR_IN"           , "VC_SPI0_CE1_N"     , "VC_TXD3"          , "VC_SDA3"           , "TE0"          , "VC_SDA0"         , }, // 0
     { "VC_PWM0_0"       , "VC_SPI0_CE0_N"     , "VC_RXD3"          , "VC_SCL3"           , "TE1"          , "AON_PWM0"        , "VC_SCL0"       , "VC_PWM1_0"     , }, // 1
@@ -174,7 +187,7 @@ static const char *bcm2712_c0_aon_gpio_alt_names[][BCM2712_FSEL_COUNT - 1] =
     { "AVS_PMU_BSC_SDA", "BSC_M2_SDA", "VC_SDA5", }, // sgpio 5
 };
 
-static const char *bcm2712_d0_aon_gpio_alt_names[][BCM2712_FSEL_COUNT - 1] =
+static const char *bcm2712D0AonGpioAltNames[][BCM2712_FSEL_COUNT - 1] =
 {
     { "IR_IN"           , "VC_SPI0_CE1_N"     , "VC_TXD0"          , "VC_SDA3"           , "UART_TXD_0"   , "VC_SDA0"         , }, // 0
     { "VC_PWM0_0"       , "VC_SPI0_CE0_N"     , "VC_RXD0"          , "VC_SCL3"           , "UART_RXD_0"   , "AON_PWM0"        , "VC_SCL0"       , "VC_PWM1_0"     , }, // 1
@@ -205,7 +218,7 @@ static const char *bcm2712_d0_aon_gpio_alt_names[][BCM2712_FSEL_COUNT - 1] =
     { "AVS_PMU_BSC_SDA", "BSC_M2_SDA", "VC_SDA3", }, // sgpio 5
 };
 
-static const int bcm2712_gpio_d0_to_c0[] =
+static const int bcm2712GpioD0ToC0[] =
 {
     -1, 0, 1, 2, 3, -1, -1, -1, -1, -1,
     4, 5, 6, 7, 8, 9, -1, -1, 10, 11,
@@ -213,7 +226,7 @@ static const int bcm2712_gpio_d0_to_c0[] =
     22, 23, 24, 25, 26, 27
 };
 
-static const int bcm2712_gpio_aon_d0_to_c0[] =
+static const int bcm2712GpioAonD0ToC0[] =
 {
     0, 1, 2, 3, 4, 5, 6, -1, 7, 8,
     -1, -1, 9, 10, 11, -1, -1, -1, -1, -1,
@@ -222,226 +235,333 @@ static const int bcm2712_gpio_aon_d0_to_c0[] =
     32, 33, 34, 35, 36, 37
 };
 
-static volatile uint32_t *bcm2712_gpio_base(struct bcm2712_inst *inst,
-                                            unsigned gpio,
-                                            unsigned int *bit)
+// Returns a pointer to the 32-bit GPIO data/level register bank that GPIO 'gpio' lives in,
+// with its bit position within that register written to *bitP. Returns NULL if 'gpio' is out
+// of range for this instance, or if the instance's GPIO register window was never mapped.
+static volatile uint32_t *
+bcm2712GpioBase(BCM2712_INST_T *instP, unsigned gpio, unsigned int *bitP)
 {
-    unsigned bank = gpio / 32;
+unsigned bank;
 
+    bank = gpio / 32;
     gpio %= 32;
 
-    if ((bank >= inst->num_banks) || (gpio >= inst->bank_widths[bank]) ||
-        !inst->gpio_base)
-        return NULL;
+    if( (bank >= instP->numBanks) || (gpio >= instP->bankWidthsP[bank]) || !instP->gpioBaseP )
+    {
+        return(NULL);
+    }
 
-    *bit = gpio;
-    return inst->gpio_base + bank * (0x20 / 4);
+    *bitP = gpio;
+    return(instP->gpioBaseP + bank * (0x20 / 4));
 }
 
-static volatile uint32_t *bcm2712_pinmux_base(struct bcm2712_inst *inst,
-                                              unsigned gpio,
-                                              unsigned int *bit)
+// Returns a pointer to the 32-bit pinmux register holding GPIO 'gpio's function-select
+// field, with the field's bit offset written to *bitP. Handles the D0-stepping GPIO
+// renumbering (translated back to C0 numbering via bcm2712GpioD0ToC0[]/
+// bcm2712GpioAonD0ToC0[] before indexing) and the AON bank's irregular register layout.
+// Returns NULL if 'gpio' is out of range, the pinmux register window was never mapped, or
+// (D0 only) 'gpio' has no C0-numbering equivalent.
+static volatile uint32_t *
+bcm2712PinmuxBase(BCM2712_INST_T *instP, unsigned gpio, unsigned int *bitP)
 {
-    unsigned bank, gpio_offset;
+unsigned bank, gpioOffset;
 
-    if (gpio >= inst->num_gpios || !inst->pinmux_base)
-        return NULL;
-
-    if (inst->flags & FLAGS_D0)
+    if( (gpio >= instP->numGpios) || !instP->pinmuxBaseP )
     {
-        if (inst->flags & FLAGS_AON)
-            gpio = bcm2712_gpio_aon_d0_to_c0[gpio];
+        return(NULL);
+    }
+
+    if( instP->flags & FLAGS_D0 )
+    {
+        if( instP->flags & FLAGS_AON )
+        {
+            gpio = bcm2712GpioAonD0ToC0[gpio];
+        }
         else
-            gpio = bcm2712_gpio_d0_to_c0[gpio];
-        if ((int)gpio < 0)
-            return NULL;
+        {
+            gpio = bcm2712GpioD0ToC0[gpio];
+        }
+
+        if( (int)gpio < 0 )
+        {
+            return(NULL);
+        }
     }
 
     bank = gpio / 32;
-    gpio_offset = gpio % 32;
+    gpioOffset = gpio % 32;
 
-    if ((bank >= inst->num_banks) || (gpio_offset >= inst->bank_widths[bank]))
-        return NULL;
-
-    if (inst->flags & FLAGS_AON)
+    if( (bank >= instP->numBanks) || (gpioOffset >= instP->bankWidthsP[bank]) )
     {
-        if (bank == 1)
+        return(NULL);
+    }
+
+    if( instP->flags & FLAGS_AON )
+    {
+        if( bank == 1 )
         {
-            if (gpio_offset == 4)
+            if( gpioOffset == 4 )
             {
-                *bit = 0;
-                return inst->pinmux_base + 1;
+                *bitP = 0;
+                return(instP->pinmuxBaseP + 1);
             }
-            else if (gpio_offset == 5)
+            else if( gpioOffset == 5 )
             {
-                *bit = 0;
-                return inst->pinmux_base + 2;
+                *bitP = 0;
+                return(instP->pinmuxBaseP + 2);
             }
             else
             {
-                *bit = gpio_offset * 4;
-                return inst->pinmux_base;
+                *bitP = gpioOffset * 4;
+                return(instP->pinmuxBaseP);
             }
         }
-        *bit = (gpio_offset % 8) * 4;
-        return inst->pinmux_base + 3 + (gpio_offset / 8);
+
+        *bitP = (gpioOffset % 8) * 4;
+        return(instP->pinmuxBaseP + 3 + (gpioOffset / 8));
     }
-    *bit = (gpio_offset % 8) * 4;
-    return inst->pinmux_base + (bank * 4) + (gpio_offset / 8);
+
+    *bitP = (gpioOffset % 8) * 4;
+    return(instP->pinmuxBaseP + (bank * 4) + (gpioOffset / 8));
 }
 
-static volatile uint32_t *bcm2712_pad_base(struct bcm2712_inst *inst,
-                                           unsigned gpio,
-                                           unsigned int *bit)
+// Returns a pointer to the 32-bit pad-control register holding GPIO 'gpio's pull setting,
+// with the field's bit offset written to *bitP. Same D0-numbering translation as
+// bcm2712PinmuxBase(). Returns NULL if 'gpio' is out of range, the pad register window was
+// never mapped, (D0 only) 'gpio' has no C0-numbering equivalent, or the instance is an AON
+// SGPIO bank (which this project has found no pad control for).
+static volatile uint32_t *
+bcm2712PadBase(BCM2712_INST_T *instP, unsigned gpio, unsigned int *bitP)
 {
-    unsigned bank, gpio_offset;
+unsigned bank, gpioOffset;
 
-    if (gpio >= inst->num_gpios || !inst->pinmux_base)
-        return NULL;
-
-    if (inst->flags & FLAGS_D0)
+    if( (gpio >= instP->numGpios) || !instP->pinmuxBaseP )
     {
-        if (inst->flags & FLAGS_AON)
-            gpio = bcm2712_gpio_aon_d0_to_c0[gpio];
+        return(NULL);
+    }
+
+    if( instP->flags & FLAGS_D0 )
+    {
+        if( instP->flags & FLAGS_AON )
+        {
+            gpio = bcm2712GpioAonD0ToC0[gpio];
+        }
         else
-            gpio = bcm2712_gpio_d0_to_c0[gpio];
-        if ((int)gpio < 0)
-            return NULL;
+        {
+            gpio = bcm2712GpioD0ToC0[gpio];
+        }
+
+        if( (int)gpio < 0 )
+        {
+            return(NULL);
+        }
     }
 
     bank = gpio / 32;
-    gpio_offset = gpio % 32;
+    gpioOffset = gpio % 32;
 
-    if ((bank >= inst->num_banks) || (gpio_offset >= inst->bank_widths[bank]))
-        return NULL;
-
-    if ((inst->flags & FLAGS_AON) && (bank > 0))
+    if( (bank >= instP->numBanks) || (gpioOffset >= instP->bankWidthsP[bank]) )
     {
-        /* There is no SGPIO pad control (that I know of) */
-        return NULL;
+        return(NULL);
     }
 
-    gpio = gpio_offset + inst->pad_offset;
-    *bit = (gpio % 15) * 2;
-    return inst->pinmux_base + (gpio / 15);
+    if( (instP->flags & FLAGS_AON) && (bank > 0) )
+    {
+        /* There is no SGPIO pad control (that I know of) */
+        return(NULL);
+    }
+
+    gpio = gpioOffset + instP->padOffset;
+    *bitP = (gpio % 15) * 2;
+    return(instP->pinmuxBaseP + (gpio / 15));
 }
 
-static int bcm2712_gpio_get_level(void *priv, unsigned gpio)
+// Returns the observed input level (0 or 1) of GPIO 'gpio', or -1 if 'gpio' is out of range.
+static int
+bcm2712GetLevel(void *priv, unsigned gpio)
 {
-    struct bcm2712_inst *inst = priv;
-    unsigned int bit;
-    volatile uint32_t *gpio_base = bcm2712_gpio_base(inst, gpio, &bit);
+BCM2712_INST_T *instP;
+unsigned int bit;
+volatile uint32_t *gpioBaseP;
 
-    if (!gpio_base)
-        return -1;
+    instP = priv;
+    gpioBaseP = bcm2712GpioBase(instP, gpio, &bit);
 
-    return !!(gpio_base[BCM2712_GIO_DATA / 4] & (1 << bit));
+    if( !gpioBaseP )
+    {
+        return(-1);
+    }
+
+    return( !!(gpioBaseP[BCM2712_GIO_DATA / 4] & (1 << bit)) );
 }
 
-static void bcm2712_gpio_set_drive(void *priv, unsigned gpio, GPIO_DRIVE_T drv)
+// Drives GPIO 'gpio' high or low via the BCM2712's GIO_DATA register. No return value; does
+// nothing if 'gpio' is out of range.
+static void
+bcm2712SetDrive(void *priv, unsigned gpio, GPIO_DRIVE_T drv)
 {
-    struct bcm2712_inst *inst = priv;
-    unsigned int bit;
-    volatile uint32_t *gpio_base = bcm2712_gpio_base(inst, gpio, &bit);
-    uint32_t gpio_val;
+BCM2712_INST_T *instP;
+unsigned int bit;
+volatile uint32_t *gpioBaseP;
+uint32_t gpioVal;
 
-    if (!gpio_base)
+    instP = priv;
+    gpioBaseP = bcm2712GpioBase(instP, gpio, &bit);
+
+    if( !gpioBaseP )
+    {
         return;
+    }
 
-    gpio_val = gpio_base[BCM2712_GIO_DATA / 4];
-    gpio_val = (gpio_val & ~(1U << bit)) | (drv << bit);
-    gpio_base[BCM2712_GIO_DATA / 4] = gpio_val;
+    gpioVal = gpioBaseP[BCM2712_GIO_DATA / 4];
+    gpioVal = (gpioVal & ~(1U << bit)) | (drv << bit);
+    gpioBaseP[BCM2712_GIO_DATA / 4] = gpioVal;
 }
 
-static GPIO_DRIVE_T bcm2712_gpio_get_drive(void *priv, unsigned gpio)
+// Returns the current drive level (DRIVE_LOW/DRIVE_HIGH) of GPIO 'gpio' as last written to
+// GIO_DATA, or DRIVE_MAX if 'gpio' is out of range.
+static GPIO_DRIVE_T
+bcm2712GetDrive(void *priv, unsigned gpio)
 {
-    struct bcm2712_inst *inst = priv;
-    unsigned int bit;
-    volatile uint32_t *gpio_base = bcm2712_gpio_base(inst, gpio, &bit);
-    uint32_t gpio_val;
+BCM2712_INST_T *instP;
+unsigned int bit;
+volatile uint32_t *gpioBaseP;
+uint32_t gpioVal;
 
-    if (!gpio_base)
-        return DRIVE_MAX;
+    instP = priv;
+    gpioBaseP = bcm2712GpioBase(instP, gpio, &bit);
 
-    gpio_val = gpio_base[BCM2712_GIO_DATA / 4];
-    return (gpio_val & (1U << bit)) ? DRIVE_HIGH : DRIVE_LOW;
+    if( !gpioBaseP )
+    {
+        return(DRIVE_MAX);
+    }
+
+    gpioVal = gpioBaseP[BCM2712_GIO_DATA / 4];
+    return( (gpioVal & (1U << bit)) ? DRIVE_HIGH : DRIVE_LOW );
 }
 
-static void bcm2712_gpio_set_dir(void *priv, unsigned gpio, GPIO_DIR_T dir)
+// Sets the direction of GPIO 'gpio' via the BCM2712's GIO_IODIR register. No return value;
+// does nothing if 'gpio' is out of range.
+static void
+bcm2712SetDir(void *priv, unsigned gpio, GPIO_DIR_T dir)
 {
-    struct bcm2712_inst *inst = priv;
-    unsigned int bit;
-    volatile uint32_t *gpio_base = bcm2712_gpio_base(inst, gpio, &bit);
-    uint32_t gpio_val;
+BCM2712_INST_T *instP;
+unsigned int bit;
+volatile uint32_t *gpioBaseP;
+uint32_t gpioVal;
 
-    if (!gpio_base)
+    instP = priv;
+    gpioBaseP = bcm2712GpioBase(instP, gpio, &bit);
+
+    if( !gpioBaseP )
+    {
         return;
+    }
 
-    gpio_val = gpio_base[BCM2712_GIO_IODIR / 4];
-    gpio_val &= ~(1U << bit);
-    gpio_val |= ((dir == DIR_INPUT) << bit);
-    gpio_base[BCM2712_GIO_IODIR / 4] = gpio_val;
+    gpioVal = gpioBaseP[BCM2712_GIO_IODIR / 4];
+    gpioVal &= ~(1U << bit);
+    gpioVal |= ((dir == DIR_INPUT) << bit);
+    gpioBaseP[BCM2712_GIO_IODIR / 4] = gpioVal;
 }
 
-static GPIO_DIR_T bcm2712_gpio_get_dir(void *priv, unsigned gpio)
+// Returns the current direction (DIR_INPUT/DIR_OUTPUT) of GPIO 'gpio', or DIR_MAX if 'gpio'
+// is out of range.
+static GPIO_DIR_T
+bcm2712GetDir(void *priv, unsigned gpio)
 {
-    struct bcm2712_inst *inst = priv;
-    unsigned int bit;
-    volatile uint32_t *gpio_base = bcm2712_gpio_base(inst, gpio, &bit);
-    uint32_t gpio_val;
+BCM2712_INST_T *instP;
+unsigned int bit;
+volatile uint32_t *gpioBaseP;
+uint32_t gpioVal;
 
-    if (!gpio_base)
-        return DIR_MAX;
+    instP = priv;
+    gpioBaseP = bcm2712GpioBase(instP, gpio, &bit);
 
-    gpio_val = gpio_base[BCM2712_GIO_IODIR / 4];
-    return (gpio_val & (1U << bit)) ? DIR_INPUT : DIR_OUTPUT;
+    if( !gpioBaseP )
+    {
+        return(DIR_MAX);
+    }
+
+    gpioVal = gpioBaseP[BCM2712_GIO_IODIR / 4];
+    return( (gpioVal & (1U << bit)) ? DIR_INPUT : DIR_OUTPUT );
 }
 
-static GPIO_FSEL_T bcm2712_pinctrl_get_fsel(void *priv, unsigned gpio)
+// Returns the current function-select value of GPIO 'gpio', decoded from the pinmux
+// register's 4-bit field: 0 maps to GPIO_FSEL_GPIO, 0xf maps to GPIO_FSEL_NONE, and anything
+// else in range maps to GPIO_FSEL_FUNC1 onward. Returns -1 if the pinmux register is
+// unavailable (see bcm2712PinmuxBase()) or the raw field value is otherwise unrecognized.
+static GPIO_FSEL_T
+bcm2712GetFsel(void *priv, unsigned gpio)
 {
-    struct bcm2712_inst *inst = priv;
-    unsigned int pinmux_bit;
-    volatile uint32_t *pinmux_base = bcm2712_pinmux_base(inst, gpio, &pinmux_bit);
-    int fsel;
+BCM2712_INST_T *instP;
+unsigned int pinmuxBit;
+volatile uint32_t *pinmuxBaseP;
+int fsel;
 
-    if (!pinmux_base)
-        return -1;
+    instP = priv;
+    pinmuxBaseP = bcm2712PinmuxBase(instP, gpio, &pinmuxBit);
 
-    fsel = ((*pinmux_base >> pinmux_bit) & 0xf);
+    if( !pinmuxBaseP )
+    {
+        return(-1);
+    }
 
-    if (fsel == 0)
-        return GPIO_FSEL_GPIO;
-    else if (fsel < BCM2712_FSEL_COUNT)
-        return GPIO_FSEL_FUNC1 + (fsel - 1);
-    else if (fsel == 0xf) // Choose one value as a considered NONE
-        return GPIO_FSEL_NONE;
+    fsel = ((*pinmuxBaseP >> pinmuxBit) & 0xf);
+
+    if( fsel == 0 )
+    {
+        return(GPIO_FSEL_GPIO);
+    }
+    else if( fsel < BCM2712_FSEL_COUNT )
+    {
+        return(GPIO_FSEL_FUNC1 + (fsel - 1));
+    }
+    else if( fsel == 0xf ) // Choose one value as a considered NONE
+    {
+        return(GPIO_FSEL_NONE);
+    }
 
     /* Unknown FSEL */
-    return -1;
+    return(-1);
 }
 
-static void bcm2712_pinctrl_set_fsel(void *priv, unsigned gpio, const GPIO_FSEL_T func)
+// Sets the function-select of GPIO 'gpio' to 'func'. A request for INPUT/OUTPUT/GPIO is
+// treated as "last/current GPIO direction" (fsel raw value 0), additionally updating the
+// GIO_IODIR direction bit for INPUT/OUTPUT; a request for FUNC0-FUNC8 sets the corresponding
+// raw alternate-function code directly. No return value; does nothing if the pinmux register
+// is unavailable, or 'func' is neither of the above.
+static void
+bcm2712SetFsel(void *priv, unsigned gpio, const GPIO_FSEL_T func)
 {
-    struct bcm2712_inst *inst = priv;
-    unsigned int pinmux_bit;
-    volatile uint32_t *pinmux_base = bcm2712_pinmux_base(inst, gpio, &pinmux_bit);
-    uint32_t pinmux_val;
-    int fsel;
+BCM2712_INST_T *instP;
+unsigned int pinmuxBit;
+volatile uint32_t *pinmuxBaseP;
+uint32_t pinmuxVal;
+int fsel;
 
-    if (!pinmux_base)
+    instP = priv;
+    pinmuxBaseP = bcm2712PinmuxBase(instP, gpio, &pinmuxBit);
+
+    if( !pinmuxBaseP )
+    {
         return;
+    }
 
-    if (func == GPIO_FSEL_INPUT || func == GPIO_FSEL_OUTPUT || func == GPIO_FSEL_GPIO)
+    if( (func == GPIO_FSEL_INPUT) || (func == GPIO_FSEL_OUTPUT) || (func == GPIO_FSEL_GPIO) )
     {
         // Set direction before switching
         // N.B. We explicitly interpret a request for FUNC_A0/GPIO as "last/current GPIO dir"
         fsel = 0;
-        if (func == GPIO_FSEL_INPUT)
-            bcm2712_gpio_set_dir(priv, gpio, DIR_INPUT);
-        else if (func == GPIO_FSEL_OUTPUT)
-            bcm2712_gpio_set_dir(priv, gpio, DIR_OUTPUT);
+        if( func == GPIO_FSEL_INPUT )
+        {
+            bcm2712SetDir(priv, gpio, DIR_INPUT);
+        }
+        else if( func == GPIO_FSEL_OUTPUT )
+        {
+            bcm2712SetDir(priv, gpio, DIR_OUTPUT);
+        }
     }
-    else if (func >= GPIO_FSEL_FUNC0 && func <= GPIO_FSEL_FUNC8)
+    else if( (func >= GPIO_FSEL_FUNC0) && (func <= GPIO_FSEL_FUNC8) )
     {
         fsel = func - GPIO_FSEL_FUNC0;
     }
@@ -450,305 +570,420 @@ static void bcm2712_pinctrl_set_fsel(void *priv, unsigned gpio, const GPIO_FSEL_
         return;
     }
 
-    pinmux_val = *pinmux_base;
-    pinmux_val &= ~(0xf << pinmux_bit);
-    pinmux_val |= (fsel << pinmux_bit);
-    *pinmux_base = pinmux_val;
+    pinmuxVal = *pinmuxBaseP;
+    pinmuxVal &= ~(0xf << pinmuxBit);
+    pinmuxVal |= (fsel << pinmuxBit);
+    *pinmuxBaseP = pinmuxVal;
 }
 
-static GPIO_PULL_T bcm2712_pinctrl_get_pull(void *priv, unsigned gpio)
+// Returns the current pull resistor setting of GPIO 'gpio' from the pad-control register.
+// Returns PULL_MAX if the pad register is unavailable (see bcm2712PadBase()) or the raw
+// field value is otherwise unrecognized.
+static GPIO_PULL_T
+bcm2712GetPull(void *priv, unsigned gpio)
 {
-    struct bcm2712_inst *inst = priv;
-    unsigned int bit;
-    volatile uint32_t *pad_base = bcm2712_pad_base(inst, gpio, &bit);
-    uint32_t pad_val;
+BCM2712_INST_T *instP;
+unsigned int bit;
+volatile uint32_t *padBaseP;
+uint32_t padVal;
 
-    if (!pad_base)
-        return PULL_MAX;
+    instP = priv;
+    padBaseP = bcm2712PadBase(instP, gpio, &bit);
 
-    pad_val = (*pad_base >> bit) & 0x3;
-    switch (pad_val)
+    if( !padBaseP )
+    {
+        return(PULL_MAX);
+    }
+
+    padVal = (*padBaseP >> bit) & 0x3;
+    switch( padVal )
     {
     case BCM2712_PAD_PULL_OFF:
-        return PULL_NONE;
+        return(PULL_NONE);
+
     case BCM2712_PAD_PULL_DOWN:
-        return PULL_DOWN;
+        return(PULL_DOWN);
+
     case BCM2712_PAD_PULL_UP:
-        return PULL_UP;
+        return(PULL_UP);
+
     default:
-        return PULL_MAX; /* This is an error */
+        return(PULL_MAX); /* This is an error */
     }
 }
 
-static void bcm2712_pinctrl_set_pull(void *priv, unsigned gpio, GPIO_PULL_T pull)
+// Sets the pull resistor setting of GPIO 'gpio' via the pad-control register. No return
+// value; does nothing if the pad register is unavailable (see bcm2712PadBase()). Asserts if
+// 'pull' is not a valid GPIO_PULL_T value.
+static void
+bcm2712SetPull(void *priv, unsigned gpio, GPIO_PULL_T pull)
 {
-    struct bcm2712_inst *inst = priv;
-    unsigned int bit = 0;
-    volatile uint32_t *pad_base = bcm2712_pad_base(inst, gpio, &bit);
-    uint32_t padval;
-    int val;
+BCM2712_INST_T *instP;
+unsigned int bit;
+volatile uint32_t *padBaseP;
+uint32_t padVal;
+int val;
 
-    if (!pad_base)
+    bit = 0;
+    instP = priv;
+    padBaseP = bcm2712PadBase(instP, gpio, &bit);
+
+    if( !padBaseP )
+    {
         return;
+    }
 
-    switch (pull)
+    switch( pull )
     {
     case PULL_NONE:
         val = BCM2712_PAD_PULL_OFF;
         break;
+
     case PULL_DOWN:
         val = BCM2712_PAD_PULL_DOWN;
         break;
+
     case PULL_UP:
         val = BCM2712_PAD_PULL_UP;
         break;
+
     default:
         assert(0);
         return;
     }
 
-    padval = *pad_base;
-    padval &= ~(3 << bit);
-    padval |= (val << bit);
+    padVal = *padBaseP;
+    padVal &= ~(3 << bit);
+    padVal |= (val << bit);
 
-    *pad_base = padval;
+    *padBaseP = padVal;
 }
 
-static void *bcm2712_gpio_create_instance(const GPIO_CHIP_T *chip,
-                                          const char *dtnode)
+// Allocates/locates the shared BCM2712_INST_T for a "gpio"-side device-tree node: reads the
+// per-bank GPIO widths from 'dtnode', infers AON/C0/D0 flags from the bank layout (falling
+// back to inspecting gpio-line-names when a full 32+ wide non-AON bank could be either C0 or
+// D0), then matches (by AON-ness) or allocates an instance shared with the corresponding
+// pinctrl-side registration. Returns the instance cast to (void *) as the chip's 'priv'
+// value, or NULL if the device-tree data is missing/invalid, a duplicate gpio node is found,
+// or the instance table (BCM2712_MAX_INSTANCES) is full.
+static void *
+bcm2712CreateInstance(const GPIO_CHIP_T *chip, const char *dtnode)
 {
-    struct bcm2712_inst *inst = NULL;
-    uint32_t *widths;
-    unsigned num_banks, inst_gpios;
-    unsigned flags = FLAGS_GPIO | chip->data;
-    unsigned bank;
-    unsigned i;
+BCM2712_INST_T *instP;
+uint32_t *widthsP;
+unsigned numBanks, instGpios;
+unsigned flags;
+unsigned bank;
+unsigned i;
 
-    widths = dt_read_cells(dtnode, "brcm,gpio-bank-widths", &num_banks);
-    if (!widths)
-        return NULL;
+    instP = NULL;
+    flags = FLAGS_GPIO | chip->data;
 
-    inst_gpios = 0;
-    for (bank = 0; bank < num_banks; bank++)
+    widthsP = dt_read_cells(dtnode, "brcm,gpio-bank-widths", &numBanks);
+    if( !widthsP )
     {
-        inst_gpios = ROUND_UP(inst_gpios, 32) + widths[bank];
+        return(NULL);
     }
 
-    flags |= shared_flags;
-    if (widths[0] < 32)
+    instGpios = 0;
+    for( bank = 0; bank < numBanks; bank++ )
+    {
+        instGpios = ROUND_UP(instGpios, 32) + widthsP[bank];
+    }
+
+    flags |= sharedFlags;
+    if( widthsP[0] < 32 )
     {
         flags |= FLAGS_AON;
-        if (widths[0] == 15)
+        if( widthsP[0] == 15 )
+        {
             flags |= FLAGS_D0;
+        }
         else
+        {
             flags |= FLAGS_C0;
+        }
     }
-    else if (!(flags & (FLAGS_C0 | FLAGS_D0)))
+    else if( !(flags & (FLAGS_C0 | FLAGS_D0)) )
     {
-        size_t names_len;
-        char *names = dt_read_prop(dtnode, "gpio-line-names", &names_len);
-        if (!names[0])
+        size_t namesLen;
+        char *namesP;
+
+        namesP = dt_read_prop(dtnode, "gpio-line-names", &namesLen);
+        if( !namesP[0] )
+        {
             flags |= FLAGS_D0;
-        dt_free(names);
+        }
+
+        dt_free(namesP);
     }
 
-    shared_flags |= (flags & (FLAGS_C0 | FLAGS_D0));
+    sharedFlags |= (flags & (FLAGS_C0 | FLAGS_D0));
 
     /* look for a corresponding pinctrl instance */
-    for (i = 0; i < num_instances; i++)
+    for( i = 0; i < numInstances; i++ )
     {
-        struct bcm2712_inst *pinctrl_inst = &bcm2712_instances[i];
-        pinctrl_inst->flags |= shared_flags;
-        if (!((pinctrl_inst->flags ^ flags) & FLAGS_AON))
+        BCM2712_INST_T *pinctrlInstP;
+
+        pinctrlInstP = &bcm2712Instances[i];
+        pinctrlInstP->flags |= sharedFlags;
+
+        if( !((pinctrlInstP->flags ^ flags) & FLAGS_AON) )
         {
-            if (pinctrl_inst->flags & FLAGS_GPIO)
+            if( pinctrlInstP->flags & FLAGS_GPIO )
             {
                 assert(!"duplicate gpio nodes?");
-                return NULL;
+                return(NULL);
             }
-            inst = pinctrl_inst;
+
+            instP = pinctrlInstP;
             break;
         }
     }
 
-    if (!inst)
+    if( !instP )
     {
-        if (num_instances == BCM2712_MAX_INSTANCES)
-            return NULL;
+        if( numInstances == BCM2712_MAX_INSTANCES )
+        {
+            return(NULL);
+        }
 
-        inst = &bcm2712_instances[num_instances++];
+        instP = &bcm2712Instances[numInstances++];
     }
 
-    inst->num_gpios = inst_gpios;
-    inst->num_banks = num_banks;
-    inst->bank_widths = widths;
-    inst->flags |= flags;
+    instP->numGpios = instGpios;
+    instP->numBanks = numBanks;
+    instP->bankWidthsP = widthsP;
+    instP->flags |= flags;
 
-    return (void *)inst;
+    return( (void *)instP );
 }
 
-static int bcm2712_gpio_count(void *priv)
+// Returns the number of GPIOs this "gpio"-side instance provides.
+static int
+bcm2712GpioCount(void *priv)
 {
-    struct bcm2712_inst *inst = priv;
+BCM2712_INST_T *instP;
 
-    return inst->num_gpios;
+    instP = priv;
+
+    return(instP->numGpios);
 }
 
-static void *bcm2712_gpio_probe_instance(void *priv, volatile uint32_t *base)
+// Completes "gpio"-side instance setup once the physical GPIO register window has been
+// mmap()'d to 'base'. Returns the instance, never NULL.
+static void *
+bcm2712ProbeInstance(void *priv, volatile uint32_t *base)
 {
-    struct bcm2712_inst *inst = priv;
+BCM2712_INST_T *instP;
 
-    inst->gpio_base = base;
+    instP = priv;
+    instP->gpioBaseP = base;
 
-    return inst;
+    return(instP);
 }
 
-static void *bcm2712_pinctrl_create_instance(const GPIO_CHIP_T *chip,
-                                             const char *dtnode)
+// Allocates/locates the shared BCM2712_INST_T for a "pinctrl"-side device-tree node,
+// cross-checking the node's declared register-window size against the AON/C0/D0 flags baked
+// into this chip's DECLARE_GPIO_CHIP() registration (see the DECLARE_GPIO_CHIP() calls at the
+// bottom of this file). Returns the instance cast to (void *) as the chip's 'priv' value, or
+// NULL if the device-tree data is missing/invalid, a duplicate pinctrl node is found, or the
+// instance table (BCM2712_MAX_INSTANCES) is full.
+static void *
+bcm2712PinctrlCreateInstance(const GPIO_CHIP_T *chip, const char *dtnode)
 {
-    struct bcm2712_inst *inst = NULL;
-    unsigned flags = FLAGS_PINCTRL | chip->data;
-    unsigned reg_cells, reg_size;
-    uint32_t *reg;
-    unsigned i;
+BCM2712_INST_T *instP;
+unsigned flags;
+unsigned regCells, regSize;
+uint32_t *regP;
+unsigned i;
 
-    if (dtnode)
+    instP = NULL;
+    flags = FLAGS_PINCTRL | chip->data;
+
+    if( dtnode )
     {
-        reg = dt_read_cells(dtnode, "reg", &reg_cells);
-        if (!reg || reg_cells < 2)
-            return NULL;
+        regP = dt_read_cells(dtnode, "reg", &regCells);
+        if( !regP || (regCells < 2) )
+        {
+            return(NULL);
+        }
 
-        reg_size = (reg_cells > 1) ? reg[reg_cells - 1] : 0;
-        dt_free(reg);
+        regSize = (regCells > 1) ? regP[regCells - 1] : 0;
+        dt_free(regP);
 
-        switch (reg_size)
+        switch( regSize )
         {
         case 0x1c:
             assert((flags & FLAGS_AON) && (flags & FLAGS_D0));
             break;
+
         case 0x20:
-            assert(((flags & FLAGS_AON) && !(flags & FLAGS_D0)) ||
-                   (!(flags & FLAGS_AON) && (flags & FLAGS_D0)));
+            assert( ((flags & FLAGS_AON) && !(flags & FLAGS_D0)) ||
+                (!(flags & FLAGS_AON) && (flags & FLAGS_D0)) );
             break;
+
         case 0x30:
             assert(!(flags & FLAGS_AON) && !(flags & FLAGS_D0));
             break;
+
         default:
             assert(0);
         }
     }
 
-    shared_flags |= (flags & (FLAGS_C0 | FLAGS_D0));
+    sharedFlags |= (flags & (FLAGS_C0 | FLAGS_D0));
 
     /* look for a corresponding gpio instance */
-    for (i = 0; i < num_instances; i++)
+    for( i = 0; i < numInstances; i++ )
     {
-        struct bcm2712_inst *gpio_inst = &bcm2712_instances[i];
-        gpio_inst->flags |= shared_flags;
-        if (!((gpio_inst->flags ^ flags) & FLAGS_AON))
+        BCM2712_INST_T *gpioInstP;
+
+        gpioInstP = &bcm2712Instances[i];
+        gpioInstP->flags |= sharedFlags;
+
+        if( !((gpioInstP->flags ^ flags) & FLAGS_AON) )
         {
-            if (gpio_inst->flags & FLAGS_PINCTRL)
+            if( gpioInstP->flags & FLAGS_PINCTRL )
             {
                 assert(!"duplicate pinctrl nodes?");
-                return NULL;
+                return(NULL);
             }
-            inst = gpio_inst;
+
+            instP = gpioInstP;
             break;
         }
     }
 
-    if (!inst)
+    if( !instP )
     {
-        if (num_instances == BCM2712_MAX_INSTANCES)
-            return NULL;
+        if( numInstances == BCM2712_MAX_INSTANCES )
+        {
+            return(NULL);
+        }
 
-        inst = &bcm2712_instances[num_instances++];
+        instP = &bcm2712Instances[numInstances++];
     }
 
-    inst->flags |= flags;
+    instP->flags |= flags;
 
-    return (void *)inst;
+    return( (void *)instP );
 }
 
-static int bcm2712_pinctrl_count(void *priv)
+// Returns the number of GPIOs this "pinctrl"-side instance provides. A pinctrl node paired
+// with a "gpio" node contributes 0 (the gpio side already counted them); a standalone
+// pinctrl node (no gpio side registered) infers the count from its AON/C0/D0 flags.
+static int
+bcm2712PinctrlCount(void *priv)
 {
-    struct bcm2712_inst *inst = priv;
+BCM2712_INST_T *instP;
 
-    if (inst->flags & FLAGS_GPIO)
-        return 0;  /* Don't occupy any GPIO space */
+    instP = priv;
 
-    if (!inst->num_gpios)
+    if( instP->flags & FLAGS_GPIO )
     {
-        switch (inst->flags & (FLAGS_AON | FLAGS_C0 | FLAGS_D0))
+        return(0);  /* Don't occupy any GPIO space */
+    }
+
+    if( !instP->numGpios )
+    {
+        switch( instP->flags & (FLAGS_AON | FLAGS_C0 | FLAGS_D0) )
         {
         case 0:
         case FLAGS_C0:
-            inst->num_gpios = 54;
+            instP->numGpios = 54;
             break;
+
         case FLAGS_D0:
-            inst->num_gpios = 36;
+            instP->numGpios = 36;
             break;
+
         case FLAGS_AON:
         case FLAGS_AON | FLAGS_D0:
         case FLAGS_AON | FLAGS_C0:
-            inst->num_gpios = 38;
+            instP->numGpios = 38;
             break;
+
         default:
             break;
         }
     }
-    return inst->num_gpios;
+
+    return(instP->numGpios);
 }
 
-static void *bcm2712_pinctrl_probe_instance(void *priv, volatile uint32_t *base)
+// Completes "pinctrl"-side instance setup once the physical pinmux register window has been
+// mmap()'d to 'base', and derives the pad-control offset (into that same window) for this
+// AON/C0/D0 combination. Returns the instance, never NULL.
+static void *
+bcm2712PinctrlProbeInstance(void *priv, volatile uint32_t *base)
 {
-    struct bcm2712_inst *inst = priv;
-    unsigned pad_offset;
+BCM2712_INST_T *instP;
+unsigned padOffset;
 
-    inst->pinmux_base = base;
-    switch (inst->flags & (FLAGS_D0 | FLAGS_C0 | FLAGS_AON))
+    instP = priv;
+    instP->pinmuxBaseP = base;
+
+    switch( instP->flags & (FLAGS_D0 | FLAGS_C0 | FLAGS_AON) )
     {
     case FLAGS_C0:
     default:
-        pad_offset = 112;
+        padOffset = 112;
         break;
+
     case FLAGS_D0:
-        pad_offset = 65;
+        padOffset = 65;
         break;
+
     case FLAGS_AON:
     case FLAGS_C0 | FLAGS_AON:
-        pad_offset = 100;
+        padOffset = 100;
         break;
+
     case FLAGS_D0 | FLAGS_AON:
-        pad_offset = 84;
+        padOffset = 84;
         break;
     }
 
-    inst->pad_offset = pad_offset;
+    instP->padOffset = padOffset;
 
-    return inst;
+    return(instP);
 }
 
-static const char *bcm2712_pinctrl_get_fsel_name(void *priv, unsigned gpio, GPIO_FSEL_T fsel)
+// Returns a human-readable name for what function-select value 'fsel' means on GPIO 'gpio'
+// specifically: "gpio" for GPIO_FSEL_GPIO/FUNC0, "input"/"output"/"none" for the
+// corresponding portable requests, or a chip/stepping-specific alternate-function name (from
+// whichever of the four bcm2712*AltNames tables matches this instance's AON/C0/D0
+// combination) for FUNC1-FUNC8. Returns NULL if 'fsel' is not recognized or 'gpio' is out of
+// range.
+static const char *
+bcm2712GetFselName(void *priv, unsigned gpio, GPIO_FSEL_T fsel)
 {
-    struct bcm2712_inst *inst = priv;
-    const char *name = NULL;
+BCM2712_INST_T *instP;
+const char *nameP;
 
-    switch (fsel)
+    instP = priv;
+    nameP = NULL;
+
+    switch( fsel )
     {
     case GPIO_FSEL_GPIO:
     case GPIO_FSEL_FUNC0:
-        name = "gpio";
+        nameP = "gpio";
         break;
+
     case GPIO_FSEL_INPUT:
-        name = "input";
+        nameP = "input";
         break;
+
     case GPIO_FSEL_OUTPUT:
-        name = "output";
+        nameP = "output";
         break;
+
     case GPIO_FSEL_NONE:
-        name = "none";
+        nameP = "none";
         break;
+
     case GPIO_FSEL_FUNC1:
     case GPIO_FSEL_FUNC2:
     case GPIO_FSEL_FUNC3:
@@ -757,119 +992,136 @@ static const char *bcm2712_pinctrl_get_fsel_name(void *priv, unsigned gpio, GPIO
     case GPIO_FSEL_FUNC6:
     case GPIO_FSEL_FUNC7:
     case GPIO_FSEL_FUNC8:
-        if (gpio < inst->num_gpios)
+        if( gpio < instP->numGpios )
         {
-            switch (inst->flags & (FLAGS_AON | FLAGS_C0 | FLAGS_D0))
+            switch( instP->flags & (FLAGS_AON | FLAGS_C0 | FLAGS_D0) )
             {
             case FLAGS_C0 | FLAGS_AON:
             case FLAGS_AON:
-                name = bcm2712_c0_aon_gpio_alt_names[gpio][fsel - 1];
+                nameP = bcm2712C0AonGpioAltNames[gpio][fsel - 1];
                 break;
+
             case FLAGS_C0:
             case 0:
-                name = bcm2712_c0_gpio_alt_names[gpio][fsel - 1];
+                nameP = bcm2712C0GpioAltNames[gpio][fsel - 1];
                 break;
+
             case FLAGS_D0 | FLAGS_AON:
-                name = bcm2712_d0_aon_gpio_alt_names[gpio][fsel - 1];
+                nameP = bcm2712D0AonGpioAltNames[gpio][fsel - 1];
                 break;
+
             case FLAGS_D0:
-                name = bcm2712_d0_gpio_alt_names[gpio][fsel - 1];
+                nameP = bcm2712D0GpioAltNames[gpio][fsel - 1];
                 break;
             }
-            if (!name)
-                name = "-";
+
+            if( !nameP )
+            {
+                nameP = "-";
+            }
         }
         break;
+
     default:
         break;
     }
-    return name;
+
+    return(nameP);
 }
 
-static const char *bcm2712_gpio_get_name(void *priv, unsigned gpio)
+// Returns a human-readable name for GPIO 'gpio' ("GPIOn"/"AON_GPIOn"/"AON_SGPIOn" as
+// appropriate), formatted into a static buffer (matches the original tool's behavior -- not
+// reentrant/thread-safe). Returns NULL if 'gpio' has no alternate-function name at all (used
+// as a proxy for "not a real pin on this instance"), or is out of range for a "gpio"-side
+// instance's declared bank widths.
+static const char *
+bcm2712GetName(void *priv, unsigned gpio)
 {
-    struct bcm2712_inst *inst = priv;
-    const char *fsel_name;
-    static char name_buf[16];
-    unsigned gpio_offset;
-    unsigned bank;
+BCM2712_INST_T *instP;
+const char *fselNameP;
+static char nameBuf[16];
+unsigned gpioOffset;
+unsigned bank;
 
-    fsel_name = bcm2712_pinctrl_get_fsel_name(priv, gpio, GPIO_FSEL_FUNC1);
-    if (!fsel_name || !fsel_name[0])
-        return NULL;
+    instP = priv;
+
+    fselNameP = bcm2712GetFselName(priv, gpio, GPIO_FSEL_FUNC1);
+    if( !fselNameP || !fselNameP[0] )
+    {
+        return(NULL);
+    }
 
     bank = gpio / 32;
-    gpio_offset = gpio % 32;
+    gpioOffset = gpio % 32;
 
-    if ((inst->flags & FLAGS_GPIO) &&
-        ((bank >= inst->num_banks) ||
-         (gpio_offset >= inst->bank_widths[bank])))
-        return NULL;
-
-    if (inst->flags & FLAGS_AON)
+    if( (instP->flags & FLAGS_GPIO) &&
+        ((bank >= instP->numBanks) || (gpioOffset >= instP->bankWidthsP[bank])) )
     {
-        if (bank == 1)
-            sprintf(name_buf, "AON_SGPIO%d", gpio_offset);
+        return(NULL);
+    }
+
+    if( instP->flags & FLAGS_AON )
+    {
+        if( bank == 1 )
+        {
+            sprintf(nameBuf, "AON_SGPIO%d", gpioOffset);
+        }
         else
-            sprintf(name_buf, "AON_GPIO%d", gpio_offset);
+        {
+            sprintf(nameBuf, "AON_GPIO%d", gpioOffset);
+        }
     }
     else
     {
-        sprintf(name_buf, "GPIO%d", gpio);
+        sprintf(nameBuf, "GPIO%d", gpio);
     }
-    return name_buf;
+
+    return(nameBuf);
 }
 
-static const GPIO_CHIP_INTERFACE_T bcm2712_gpio_interface =
+static const GPIO_CHIP_INTERFACE_T bcm2712GpioInterface =
 {
-    .gpio_create_instance = bcm2712_gpio_create_instance,
-    .gpio_count = bcm2712_gpio_count,
-    .gpio_probe_instance = bcm2712_gpio_probe_instance,
-    .gpio_get_fsel = bcm2712_pinctrl_get_fsel,
-    .gpio_set_fsel = bcm2712_pinctrl_set_fsel,
-    .gpio_set_drive = bcm2712_gpio_set_drive,
-    .gpio_set_dir = bcm2712_gpio_set_dir,
-    .gpio_get_dir = bcm2712_gpio_get_dir,
-    .gpio_get_level = bcm2712_gpio_get_level,
-    .gpio_get_drive = bcm2712_gpio_get_drive,
-    .gpio_get_pull = bcm2712_pinctrl_get_pull,
-    .gpio_set_pull = bcm2712_pinctrl_set_pull,
-    .gpio_get_name = bcm2712_gpio_get_name,
-    .gpio_get_fsel_name = bcm2712_pinctrl_get_fsel_name,
+    .gpio_create_instance = bcm2712CreateInstance,
+    .gpio_count = bcm2712GpioCount,
+    .gpio_probe_instance = bcm2712ProbeInstance,
+    .gpio_get_fsel = bcm2712GetFsel,
+    .gpio_set_fsel = bcm2712SetFsel,
+    .gpio_set_drive = bcm2712SetDrive,
+    .gpio_set_dir = bcm2712SetDir,
+    .gpio_get_dir = bcm2712GetDir,
+    .gpio_get_level = bcm2712GetLevel,
+    .gpio_get_drive = bcm2712GetDrive,
+    .gpio_get_pull = bcm2712GetPull,
+    .gpio_set_pull = bcm2712SetPull,
+    .gpio_get_name = bcm2712GetName,
+    .gpio_get_fsel_name = bcm2712GetFselName,
 };
 
-DECLARE_GPIO_CHIP(brcmstb, "brcm,brcmstb-gpio",
-                  &bcm2712_gpio_interface, 0x40, 0);
+DECLARE_GPIO_CHIP(brcmstb, "brcm,brcmstb-gpio", &bcm2712GpioInterface, 0x40, 0);
 
-static const GPIO_CHIP_INTERFACE_T bcm2712_pinctrl_interface =
+static const GPIO_CHIP_INTERFACE_T bcm2712PinctrlInterface =
 {
-    .gpio_create_instance = bcm2712_pinctrl_create_instance,
-    .gpio_count = bcm2712_pinctrl_count,
-    .gpio_probe_instance = bcm2712_pinctrl_probe_instance,
-    .gpio_get_fsel = bcm2712_pinctrl_get_fsel,
-    .gpio_set_fsel = bcm2712_pinctrl_set_fsel,
-    .gpio_set_drive = bcm2712_gpio_set_drive,
-    .gpio_set_dir = bcm2712_gpio_set_dir,
-    .gpio_get_dir = bcm2712_gpio_get_dir,
-    .gpio_get_level = bcm2712_gpio_get_level,
-    .gpio_get_drive = bcm2712_gpio_get_drive,
-    .gpio_get_pull = bcm2712_pinctrl_get_pull,
-    .gpio_set_pull = bcm2712_pinctrl_set_pull,
-    .gpio_get_name = bcm2712_gpio_get_name,
-    .gpio_get_fsel_name = bcm2712_pinctrl_get_fsel_name,
+    .gpio_create_instance = bcm2712PinctrlCreateInstance,
+    .gpio_count = bcm2712PinctrlCount,
+    .gpio_probe_instance = bcm2712PinctrlProbeInstance,
+    .gpio_get_fsel = bcm2712GetFsel,
+    .gpio_set_fsel = bcm2712SetFsel,
+    .gpio_set_drive = bcm2712SetDrive,
+    .gpio_set_dir = bcm2712SetDir,
+    .gpio_get_dir = bcm2712GetDir,
+    .gpio_get_level = bcm2712GetLevel,
+    .gpio_get_drive = bcm2712GetDrive,
+    .gpio_get_pull = bcm2712GetPull,
+    .gpio_set_pull = bcm2712SetPull,
+    .gpio_get_name = bcm2712GetName,
+    .gpio_get_fsel_name = bcm2712GetFselName,
 };
 
-DECLARE_GPIO_CHIP(bcm2712, "brcm,bcm2712-pinctrl",
-                  &bcm2712_pinctrl_interface, 0x30, 0);
-DECLARE_GPIO_CHIP(bcm2712_aon, "brcm,bcm2712-aon-pinctrl",
-                  &bcm2712_pinctrl_interface, 0x20, FLAGS_AON);
+DECLARE_GPIO_CHIP(bcm2712, "brcm,bcm2712-pinctrl", &bcm2712PinctrlInterface, 0x30, 0);
+DECLARE_GPIO_CHIP(bcm2712_aon, "brcm,bcm2712-aon-pinctrl", &bcm2712PinctrlInterface, 0x20, FLAGS_AON);
 
-DECLARE_GPIO_CHIP(bcm2712c0, "brcm,bcm2712c0-pinctrl",
-                  &bcm2712_pinctrl_interface, 0x30, FLAGS_C0);
-DECLARE_GPIO_CHIP(bcm2712c0_aon, "brcm,bcm2712c0-aon-pinctrl",
-                  &bcm2712_pinctrl_interface, 0x20, FLAGS_C0 | FLAGS_AON);
+DECLARE_GPIO_CHIP(bcm2712c0, "brcm,bcm2712c0-pinctrl", &bcm2712PinctrlInterface, 0x30, FLAGS_C0);
+DECLARE_GPIO_CHIP(bcm2712c0_aon, "brcm,bcm2712c0-aon-pinctrl", &bcm2712PinctrlInterface, 0x20, FLAGS_C0 | FLAGS_AON);
 
-DECLARE_GPIO_CHIP(bcm2712d0, "brcm,bcm2712d0-pinctrl",
-                  &bcm2712_pinctrl_interface, 0x20, FLAGS_D0);
-DECLARE_GPIO_CHIP(bcm2712d0_aon, "brcm,bcm2712d0-aon-pinctrl",
-                  &bcm2712_pinctrl_interface, 0x1c, FLAGS_D0 | FLAGS_AON);
+DECLARE_GPIO_CHIP(bcm2712d0, "brcm,bcm2712d0-pinctrl", &bcm2712PinctrlInterface, 0x20, FLAGS_D0);
+DECLARE_GPIO_CHIP(bcm2712d0_aon, "brcm,bcm2712d0-aon-pinctrl", &bcm2712PinctrlInterface, 0x1c, FLAGS_D0 | FLAGS_AON);

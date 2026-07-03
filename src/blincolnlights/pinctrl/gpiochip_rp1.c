@@ -1,3 +1,9 @@
+// gpiochip_rp1.c -- GPIO_CHIP_T implementation for the RP1 southbridge chip (Pi 5's I/O
+// companion, exposing IO_BANKn/SYS_RIO_BANKn/PADS_BANKn register blocks per GPIO bank). All
+// functions/types here are file-local (static) and have been renamed to the project's
+// camelHump convention; the DECLARE_GPIO_CHIP() invocation name ("rp1") is left as-is since
+// it forms the externally-visible rp1_chip linker-section symbol name.
+
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,17 +49,17 @@
 #define RP1_GPIO_SYS_RIO_REG_OE_OFFSET         0x4
 #define RP1_GPIO_SYS_RIO_REG_SYNC_IN_OFFSET    0x8
 
-#define rp1_gpio_write32(base, peri_offset, reg_offset, value) \
-    base[(peri_offset + reg_offset)/4] = value
+#define rp1GpioWrite32(base, peri_offset, reg_offset, value) \
+    base[(peri_offset + reg_offset) / 4] = value
 
-#define rp1_gpio_read32(base, peri_offset, reg_offset) \
-    base[(peri_offset + reg_offset)/4]
+#define rp1GpioRead32(base, peri_offset, reg_offset) \
+    base[(peri_offset + reg_offset) / 4]
 
 typedef struct
 {
-   uint32_t io[3];
-   uint32_t pads[3];
-   uint32_t sys_rio[3];
+    uint32_t io[3];
+    uint32_t pads[3];
+    uint32_t sys_rio[3];
 } GPIO_STATE_T;
 
 typedef enum
@@ -72,15 +78,16 @@ typedef enum
     RP1_FSEL_NULL       = 0x1f
 } RP1_FSEL_T;
 
-static const GPIO_STATE_T gpio_state = {
-    .io = {RP1_IO_BANK0_OFFSET, RP1_IO_BANK1_OFFSET, RP1_IO_BANK2_OFFSET},
-    .pads = {RP1_PADS_BANK0_OFFSET, RP1_PADS_BANK1_OFFSET, RP1_PADS_BANK2_OFFSET},
-    .sys_rio = {RP1_SYS_RIO_BANK0_OFFSET, RP1_SYS_RIO_BANK1_OFFSET, RP1_SYS_RIO_BANK2_OFFSET},
+static const GPIO_STATE_T gpioState =
+{
+    .io = { RP1_IO_BANK0_OFFSET, RP1_IO_BANK1_OFFSET, RP1_IO_BANK2_OFFSET },
+    .pads = { RP1_PADS_BANK0_OFFSET, RP1_PADS_BANK1_OFFSET, RP1_PADS_BANK2_OFFSET },
+    .sys_rio = { RP1_SYS_RIO_BANK0_OFFSET, RP1_SYS_RIO_BANK1_OFFSET, RP1_SYS_RIO_BANK2_OFFSET },
 };
 
-static const int rp1_bank_base[] = {0, 28, 34};
+static const int rp1BankBase[] = { 0, 28, 34 };
 
-static const char *rp1_gpio_fsel_names[RP1_NUM_GPIOS][RP1_FSEL_COUNT] =
+static const char *rp1GpioFselNames[RP1_NUM_GPIOS][RP1_FSEL_COUNT] =
 {
     { "SPI0_SIO3" , "DPI_PCLK"     , "TXD1"         , "SDA0"         , 0              , "SYS_RIO00" , "PROC_RIO00" , "PIO0"       , "SPI2_CE0" , },
     { "SPI0_SIO2" , "DPI_DE"       , "RXD1"         , "SCL0"         , 0              , "SYS_RIO01" , "PROC_RIO01" , "PIO1"       , "SPI2_SIO1", },
@@ -138,309 +145,470 @@ static const char *rp1_gpio_fsel_names[RP1_NUM_GPIOS][RP1_FSEL_COUNT] =
     { "SPI8_CE1"  , "SPI7_CE0"     , 0              , "PCIE_CLKREQ_N", "VBUS_OC3"     , "SYS_RIO219", "PROC_RIO219", },
 };
 
-static void rp1_gpio_get_bank(int num, int *bank, int *offset)
+// Resolves absolute GPIO number 'num' into its bank index and per-bank offset (*bankP/
+// *offsetP), using rp1BankBase[] to find which of the 3 banks 'num' falls in. No return
+// value; asserts (and leaves *bankP/*offsetP at 0) if 'num' is out of range.
+static void
+rp1GpioGetBank(int num, int *bankP, int *offsetP)
 {
-    *bank = *offset = 0;
-    if (num >= RP1_NUM_GPIOS)
+    *bankP = 0;
+    *offsetP = 0;
+
+    if( num >= RP1_NUM_GPIOS )
     {
         assert(0);
         return;
     }
 
-    if (num < rp1_bank_base[1])
-        *bank = 0;
-    else if (num < rp1_bank_base[2])
-        *bank = 1;
+    if( num < rp1BankBase[1] )
+    {
+        *bankP = 0;
+    }
+    else if( num < rp1BankBase[2] )
+    {
+        *bankP = 1;
+    }
     else
-        *bank = 2;
+    {
+        *bankP = 2;
+    }
 
-   *offset = num - rp1_bank_base[*bank];
+    *offsetP = num - rp1BankBase[*bankP];
 }
 
-static uint32_t rp1_gpio_ctrl_read(volatile uint32_t *base, int bank, int offset)
+// Reads the IO_BANKn CTRL register for GPIO offset 'offset' in bank 'bank' (fsel, override
+// bits, etc.).
+static uint32_t
+rp1GpioCtrlRead(volatile uint32_t *baseP, int bank, int offset)
 {
-    return rp1_gpio_read32(base, gpio_state.io[bank], RP1_GPIO_IO_REG_CTRL_OFFSET(offset));
+    return( rp1GpioRead32(baseP, gpioState.io[bank], RP1_GPIO_IO_REG_CTRL_OFFSET(offset)) );
 }
 
-static void rp1_gpio_ctrl_write(volatile uint32_t *base, int bank, int offset,
-                                uint32_t value)
+// Writes 'value' to the IO_BANKn CTRL register for GPIO offset 'offset' in bank 'bank'. No
+// return value.
+static void
+rp1GpioCtrlWrite(volatile uint32_t *baseP, int bank, int offset, uint32_t value)
 {
-    rp1_gpio_write32(base, gpio_state.io[bank], RP1_GPIO_IO_REG_CTRL_OFFSET(offset), value);
+    rp1GpioWrite32(baseP, gpioState.io[bank], RP1_GPIO_IO_REG_CTRL_OFFSET(offset), value);
 }
 
-static uint32_t rp1_gpio_pads_read(volatile uint32_t *base, int bank, int offset)
+// Reads the PADS_BANKn register for GPIO offset 'offset' in bank 'bank' (pull/drive-strength/
+// input-enable bits).
+static uint32_t
+rp1GpioPadsRead(volatile uint32_t *baseP, int bank, int offset)
 {
-    return rp1_gpio_read32(base, gpio_state.pads[bank], RP1_GPIO_PADS_REG_OFFSET(offset));
+    return( rp1GpioRead32(baseP, gpioState.pads[bank], RP1_GPIO_PADS_REG_OFFSET(offset)) );
 }
 
-static void rp1_gpio_pads_write(volatile uint32_t *base, int bank, int offset,
-                                uint32_t value)
+// Writes 'value' to the PADS_BANKn register for GPIO offset 'offset' in bank 'bank'. No
+// return value.
+static void
+rp1GpioPadsWrite(volatile uint32_t *baseP, int bank, int offset, uint32_t value)
 {
-    rp1_gpio_write32(base, gpio_state.pads[bank], RP1_GPIO_PADS_REG_OFFSET(offset), value);
+    rp1GpioWrite32(baseP, gpioState.pads[bank], RP1_GPIO_PADS_REG_OFFSET(offset), value);
 }
 
-static uint32_t rp1_gpio_sys_rio_out_read(volatile uint32_t *base, int bank,
-                                          int offset)
-{
-    UNUSED(offset);
-    return rp1_gpio_read32(base, gpio_state.sys_rio[bank], RP1_GPIO_SYS_RIO_REG_OUT_OFFSET);
-}
-
-static uint32_t rp1_gpio_sys_rio_sync_in_read(volatile uint32_t *base, int bank,
-                                              int offset)
-{
-    UNUSED(offset);
-    return rp1_gpio_read32(base, gpio_state.sys_rio[bank],
-                           RP1_GPIO_SYS_RIO_REG_SYNC_IN_OFFSET);
-}
-
-
-static void rp1_gpio_sys_rio_out_write(volatile uint32_t *base, int bank,
-                                       int offset, uint32_t value)
+// Reads the SYS_RIO_BANKn OUT register (the last value driven to every GPIO in 'bank' via
+// the RIO output-set/output-clear mechanism).
+static uint32_t
+rp1GpioSysRioOutRead(volatile uint32_t *baseP, int bank, int offset)
 {
     UNUSED(offset);
-    rp1_gpio_write32(base, gpio_state.sys_rio[bank],
-                     RP1_GPIO_SYS_RIO_REG_OUT_OFFSET, value);
+    return( rp1GpioRead32(baseP, gpioState.sys_rio[bank], RP1_GPIO_SYS_RIO_REG_OUT_OFFSET) );
 }
 
-static uint32_t rp1_gpio_sys_rio_oe_read(volatile uint32_t *base, int bank)
+// Reads the SYS_RIO_BANKn SYNC_IN register (the synchronized observed input level for every
+// GPIO in 'bank').
+static uint32_t
+rp1GpioSysRioSyncInRead(volatile uint32_t *baseP, int bank, int offset)
 {
-    return rp1_gpio_read32(base, gpio_state.sys_rio[bank],
-                           RP1_GPIO_SYS_RIO_REG_OE_OFFSET);
+    UNUSED(offset);
+    return( rp1GpioRead32(baseP, gpioState.sys_rio[bank], RP1_GPIO_SYS_RIO_REG_SYNC_IN_OFFSET) );
 }
 
-static void rp1_gpio_sys_rio_oe_clr(volatile uint32_t *base, int bank, int offset)
+// wje 02-Jul-26 - replaced rp1_gpio_sys_rio_out_write() with SET/CLR-register equivalents.
+//  RP1's register blocks expose RW/XOR/SET/CLR variants at fixed offsets
+//  precisely so a single GPIO can be changed with one atomic write and no read.
+
+// Atomically drives GPIO offset 'offset' in bank 'bank' high via the SYS_RIO OUT SET-alias
+// register. No return value.
+static void
+rp1GpioSysRioOutSet(volatile uint32_t *baseP, int bank, int offset)
 {
-    rp1_gpio_write32(base, gpio_state.sys_rio[bank],
-                     RP1_GPIO_SYS_RIO_REG_OE_OFFSET + RP1_CLR_OFFSET,
-                     1U << offset);
+    rp1GpioWrite32(baseP, gpioState.sys_rio[bank],
+        RP1_GPIO_SYS_RIO_REG_OUT_OFFSET + RP1_SET_OFFSET, 1U << offset);
 }
 
-static void rp1_gpio_sys_rio_oe_set(volatile uint32_t *base, int bank, int offset)
+// Atomically drives GPIO offset 'offset' in bank 'bank' low via the SYS_RIO OUT CLR-alias
+// register. No return value.
+static void
+rp1GpioSysRioOutClr(volatile uint32_t *baseP, int bank, int offset)
 {
-    rp1_gpio_write32(base, gpio_state.sys_rio[bank],
-                     RP1_GPIO_SYS_RIO_REG_OE_OFFSET + RP1_SET_OFFSET,
-                     1U << offset);
+    rp1GpioWrite32(baseP, gpioState.sys_rio[bank],
+        RP1_GPIO_SYS_RIO_REG_OUT_OFFSET + RP1_CLR_OFFSET, 1U << offset);
 }
 
-static void rp1_gpio_set_dir(void *priv, uint32_t gpio, GPIO_DIR_T dir)
+// Reads the SYS_RIO_BANKn OE register (the output-enable state for every GPIO in 'bank').
+static uint32_t
+rp1GpioSysRioOeRead(volatile uint32_t *baseP, int bank)
 {
-    volatile uint32_t *base = priv;
-    int bank, offset;
+    return( rp1GpioRead32(baseP, gpioState.sys_rio[bank], RP1_GPIO_SYS_RIO_REG_OE_OFFSET) );
+}
 
-    rp1_gpio_get_bank(gpio, &bank, &offset);
+// Atomically disables (input mode) the output-enable bit for GPIO offset 'offset' in bank
+// 'bank' via the SYS_RIO OE CLR-alias register. No return value.
+static void
+rp1GpioSysRioOeClr(volatile uint32_t *baseP, int bank, int offset)
+{
+    rp1GpioWrite32(baseP, gpioState.sys_rio[bank],
+        RP1_GPIO_SYS_RIO_REG_OE_OFFSET + RP1_CLR_OFFSET, 1U << offset);
+}
 
-    if (dir == DIR_INPUT)
-        rp1_gpio_sys_rio_oe_clr(base, bank, offset);
-    else if (dir == DIR_OUTPUT)
-        rp1_gpio_sys_rio_oe_set(base, bank, offset);
+// Atomically enables (output mode) the output-enable bit for GPIO offset 'offset' in bank
+// 'bank' via the SYS_RIO OE SET-alias register. No return value.
+static void
+rp1GpioSysRioOeSet(volatile uint32_t *baseP, int bank, int offset)
+{
+    rp1GpioWrite32(baseP, gpioState.sys_rio[bank],
+        RP1_GPIO_SYS_RIO_REG_OE_OFFSET + RP1_SET_OFFSET, 1U << offset);
+}
+
+// Sets the direction of GPIO 'gpio' via the SYS_RIO OE set/clear registers. No return value;
+// asserts if 'dir' is neither DIR_INPUT nor DIR_OUTPUT.
+static void
+rp1SetDir(void *priv, uint32_t gpio, GPIO_DIR_T dir)
+{
+volatile uint32_t *baseP;
+int bank, offset;
+
+    baseP = priv;
+
+    rp1GpioGetBank(gpio, &bank, &offset);
+
+    if( dir == DIR_INPUT )
+    {
+        rp1GpioSysRioOeClr(baseP, bank, offset);
+    }
+    else if( dir == DIR_OUTPUT )
+    {
+        rp1GpioSysRioOeSet(baseP, bank, offset);
+    }
     else
+    {
         assert(0);
+    }
 }
 
-static GPIO_DIR_T rp1_gpio_get_dir(void *priv, unsigned gpio)
+// Returns the current direction (DIR_INPUT/DIR_OUTPUT) of GPIO 'gpio' from the SYS_RIO OE
+// register.
+static GPIO_DIR_T
+rp1GetDir(void *priv, unsigned gpio)
 {
-    volatile uint32_t *base = priv;
-    int bank, offset;
-    GPIO_DIR_T dir;
-    uint32_t reg;
+volatile uint32_t *baseP;
+int bank, offset;
+GPIO_DIR_T dir;
+uint32_t reg;
 
-    rp1_gpio_get_bank(gpio, &bank, &offset);
-    reg = rp1_gpio_sys_rio_oe_read(base, bank);
+    baseP = priv;
+
+    rp1GpioGetBank(gpio, &bank, &offset);
+    reg = rp1GpioSysRioOeRead(baseP, bank);
 
     dir = (reg & (1U << offset)) ? DIR_OUTPUT : DIR_INPUT;
 
-    return dir;
+    return(dir);
 }
 
-static GPIO_FSEL_T rp1_gpio_get_fsel(void *priv, unsigned gpio)
+// Returns the current function-select value of GPIO 'gpio', decoded from the IO_BANKn CTRL
+// register's FSEL field: the RP1_FSEL_SYS_RIO raw value maps to GPIO_FSEL_GPIO,
+// RP1_FSEL_NULL maps to GPIO_FSEL_NONE, and any other in-range raw value maps directly to
+// the corresponding GPIO_FSEL_T. Returns GPIO_FSEL_MAX if the raw field value is out of
+// range.
+static GPIO_FSEL_T
+rp1GetFsel(void *priv, unsigned gpio)
 {
-    volatile uint32_t *base = priv;
-    int bank, offset;
-    uint32_t reg;
-    GPIO_FSEL_T fsel;
-    RP1_FSEL_T rsel;
+volatile uint32_t *baseP;
+int bank, offset;
+uint32_t reg;
+GPIO_FSEL_T fsel;
+RP1_FSEL_T rsel;
 
-    rp1_gpio_get_bank(gpio, &bank, &offset);
-    reg = rp1_gpio_ctrl_read(base, bank, offset);
+    baseP = priv;
+
+    rp1GpioGetBank(gpio, &bank, &offset);
+    reg = rp1GpioCtrlRead(baseP, bank, offset);
     rsel = ((reg & RP1_GPIO_CTRL_FSEL_MASK) >> RP1_GPIO_CTRL_FSEL_LSB);
-    if (rsel == RP1_FSEL_SYS_RIO)
-        fsel = GPIO_FSEL_GPIO;
-    else if (rsel == RP1_FSEL_NULL)
-        fsel = GPIO_FSEL_NONE;
-    else if (rsel < RP1_FSEL_COUNT)
-        fsel = (GPIO_FSEL_T)rsel;
-    else
-        fsel = GPIO_FSEL_MAX;
 
-    return fsel;
+    if( rsel == RP1_FSEL_SYS_RIO )
+    {
+        fsel = GPIO_FSEL_GPIO;
+    }
+    else if( rsel == RP1_FSEL_NULL )
+    {
+        fsel = GPIO_FSEL_NONE;
+    }
+    else if( rsel < RP1_FSEL_COUNT )
+    {
+        fsel = (GPIO_FSEL_T)rsel;
+    }
+    else
+    {
+        fsel = GPIO_FSEL_MAX;
+    }
+
+    return(fsel);
 }
 
-static void rp1_gpio_set_fsel(void *priv, unsigned gpio, const GPIO_FSEL_T func)
+// Sets the function-select of GPIO 'gpio' to 'func' via the IO_BANKn CTRL register's FSEL
+// field, additionally updating the SYS_RIO direction (for INPUT/OUTPUT requests) and the
+// PADS_BANKn input-enable/open-drain bits to match whether 'func' selects a real peripheral
+// function or leaves the pin unconnected (RP1_FSEL_NULL). No return value; does nothing if
+// 'func' has no RP1 raw-fsel encoding.
+static void
+rp1SetFsel(void *priv, unsigned gpio, const GPIO_FSEL_T func)
 {
-    volatile uint32_t *base = priv;
-    int bank, offset;
-    uint32_t ctrl_reg;
-    uint32_t pad_reg;
-    uint32_t old_pad_reg;
-    RP1_FSEL_T rsel;
+volatile uint32_t *baseP;
+int bank, offset;
+uint32_t ctrlReg;
+uint32_t padReg;
+uint32_t oldPadReg;
+RP1_FSEL_T rsel;
 
-    if (func < (GPIO_FSEL_T)RP1_FSEL_COUNT)
+    baseP = priv;
+
+    if( func < (GPIO_FSEL_T)RP1_FSEL_COUNT )
+    {
         rsel = (RP1_FSEL_T)func;
-    else if (func == GPIO_FSEL_INPUT ||
-             func == GPIO_FSEL_OUTPUT ||
-             func == GPIO_FSEL_GPIO)
+    }
+    else if( (func == GPIO_FSEL_INPUT) || (func == GPIO_FSEL_OUTPUT) || (func == GPIO_FSEL_GPIO) )
+    {
         rsel = RP1_FSEL_SYS_RIO;
-    else if (func == GPIO_FSEL_NONE)
+    }
+    else if( func == GPIO_FSEL_NONE )
+    {
         rsel = RP1_FSEL_NULL;
+    }
     else
+    {
         return;
+    }
 
-    rp1_gpio_get_bank(gpio, &bank, &offset);
-    if (func == GPIO_FSEL_INPUT)
-        rp1_gpio_set_dir(priv, gpio, DIR_INPUT);
-    else if (func == GPIO_FSEL_OUTPUT)
-        rp1_gpio_set_dir(priv, gpio, DIR_OUTPUT);
+    rp1GpioGetBank(gpio, &bank, &offset);
 
-    ctrl_reg = rp1_gpio_ctrl_read(base, bank, offset) & ~RP1_GPIO_CTRL_FSEL_MASK;
-    ctrl_reg |= rsel << RP1_GPIO_CTRL_FSEL_LSB;
-    rp1_gpio_ctrl_write(base, bank, offset, ctrl_reg);
+    if( func == GPIO_FSEL_INPUT )
+    {
+        rp1SetDir(priv, gpio, DIR_INPUT);
+    }
+    else if( func == GPIO_FSEL_OUTPUT )
+    {
+        rp1SetDir(priv, gpio, DIR_OUTPUT);
+    }
 
-    pad_reg = rp1_gpio_pads_read(base, bank, offset);
-    old_pad_reg = pad_reg;
-    if (rsel == RP1_FSEL_NULL)
+    ctrlReg = rp1GpioCtrlRead(baseP, bank, offset) & ~RP1_GPIO_CTRL_FSEL_MASK;
+    ctrlReg |= rsel << RP1_GPIO_CTRL_FSEL_LSB;
+    rp1GpioCtrlWrite(baseP, bank, offset, ctrlReg);
+
+    padReg = rp1GpioPadsRead(baseP, bank, offset);
+    oldPadReg = padReg;
+
+    if( rsel == RP1_FSEL_NULL )
     {
         // Disable input
-        pad_reg &= ~RP1_PADS_IE_SET;
+        padReg &= ~RP1_PADS_IE_SET;
     }
     else
     {
         // Enable input
-        pad_reg |= RP1_PADS_IE_SET;
+        padReg |= RP1_PADS_IE_SET;
     }
 
-    if (rsel != RP1_FSEL_NULL)
+    if( rsel != RP1_FSEL_NULL )
     {
         // Enable peripheral func output
-        pad_reg &= ~RP1_PADS_OD_SET;
+        padReg &= ~RP1_PADS_OD_SET;
     }
     else
     {
         // Disable peripheral func output
-        pad_reg |= RP1_PADS_OD_SET;
+        padReg |= RP1_PADS_OD_SET;
     }
 
-    if (pad_reg != old_pad_reg)
-        rp1_gpio_pads_write(base, bank, offset, pad_reg);
+    if( padReg != oldPadReg )
+    {
+        rp1GpioPadsWrite(baseP, bank, offset, padReg);
+    }
 }
 
-static int rp1_gpio_get_level(void *priv, unsigned gpio)
+// Returns the observed input level (0 or 1) of GPIO 'gpio' from the SYS_RIO SYNC_IN register,
+// or -1 if the pad's input-enable bit is not set (matches the original tool's behavior of
+// treating a disabled input as "no reading available").
+static int
+rp1GetLevel(void *priv, unsigned gpio)
 {
-    volatile uint32_t *base = priv;
-    int bank, offset;
-    uint32_t pad_reg;
-    uint32_t reg;
-    int level;
+volatile uint32_t *baseP;
+int bank, offset;
+uint32_t padReg;
+uint32_t reg;
+int level;
 
-    rp1_gpio_get_bank(gpio, &bank, &offset);
-    pad_reg = rp1_gpio_pads_read(base, bank, offset);
-    if (!(pad_reg & RP1_PADS_IE_SET))
-	return -1;
-    reg = rp1_gpio_sys_rio_sync_in_read(base, bank, offset);
+    baseP = priv;
+
+    rp1GpioGetBank(gpio, &bank, &offset);
+    padReg = rp1GpioPadsRead(baseP, bank, offset);
+
+    if( !(padReg & RP1_PADS_IE_SET) )
+    {
+        return(-1);
+    }
+
+    reg = rp1GpioSysRioSyncInRead(baseP, bank, offset);
     level = (reg & (1U << offset)) ? 1 : 0;
 
-    return level;
+    return(level);
 }
 
-static void rp1_gpio_set_drive(void *priv, unsigned gpio, GPIO_DRIVE_T drv)
+// Drives GPIO 'gpio' high or low via the SYS_RIO OUT set/clear registers. No return value;
+// does nothing if 'drv' is neither DRIVE_HIGH nor DRIVE_LOW.
+static void
+rp1SetDrive(void *priv, unsigned gpio, GPIO_DRIVE_T drv)
 {
-    volatile uint32_t *base = priv;
-    uint32_t reg;
-    int bank, offset;
+volatile uint32_t *baseP;
+int bank, offset;
 
-    rp1_gpio_get_bank(gpio, &bank, &offset);
-    reg = rp1_gpio_sys_rio_out_read(base, bank, offset);
-    if (drv == DRIVE_HIGH)
-        reg |= (1U << offset);
-    else if (drv == DRIVE_LOW)
-        reg &= ~(1U << offset);
-    rp1_gpio_sys_rio_out_write(base, bank, offset, reg);
+    baseP = priv;
+
+    rp1GpioGetBank(gpio, &bank, &offset);
+
+    if( drv == DRIVE_HIGH )
+    {
+        rp1GpioSysRioOutSet(baseP, bank, offset);
+    }
+    else if( drv == DRIVE_LOW )
+    {
+        rp1GpioSysRioOutClr(baseP, bank, offset);
+    }
 }
 
-static void rp1_gpio_set_pull(void *priv, unsigned gpio, GPIO_PULL_T pull)
+// Sets the pull resistor setting of GPIO 'gpio' via the PADS_BANKn PUE/PDE bits. No return
+// value; a 'pull' of PULL_NONE (or any other unrecognized value) clears both bits.
+static void
+rp1SetPull(void *priv, unsigned gpio, GPIO_PULL_T pull)
 {
-    volatile uint32_t *base = priv;
-    uint32_t reg;
-    int bank, offset;
+volatile uint32_t *baseP;
+uint32_t reg;
+int bank, offset;
 
-    rp1_gpio_get_bank(gpio, &bank, &offset);
-    reg = rp1_gpio_pads_read(base, bank, offset);
+    baseP = priv;
+
+    rp1GpioGetBank(gpio, &bank, &offset);
+    reg = rp1GpioPadsRead(baseP, bank, offset);
     reg &= ~(RP1_PADS_PDE_SET | RP1_PADS_PUE_SET);
-    if (pull == PULL_UP)
+
+    if( pull == PULL_UP )
+    {
         reg |= RP1_PADS_PUE_SET;
-    else if (pull == PULL_DOWN)
+    }
+    else if( pull == PULL_DOWN )
+    {
         reg |= RP1_PADS_PDE_SET;
-    rp1_gpio_pads_write(base, bank, offset, reg);
+    }
+
+    rp1GpioPadsWrite(baseP, bank, offset, reg);
 }
 
-static GPIO_PULL_T rp1_gpio_get_pull(void *priv, unsigned gpio)
+// Returns the current pull resistor setting of GPIO 'gpio' from the PADS_BANKn PUE/PDE bits.
+// Returns PULL_NONE if neither bit is set.
+static GPIO_PULL_T
+rp1GetPull(void *priv, unsigned gpio)
 {
-    volatile uint32_t *base = priv;
-    uint32_t reg;
-    GPIO_PULL_T pull = PULL_NONE;
-    int bank, offset;
+volatile uint32_t *baseP;
+uint32_t reg;
+GPIO_PULL_T pull;
+int bank, offset;
 
-    rp1_gpio_get_bank(gpio, &bank, &offset);
-    reg = rp1_gpio_pads_read(base, bank, offset);
-    if (reg & RP1_PADS_PUE_SET)
+    baseP = priv;
+    pull = PULL_NONE;
+
+    rp1GpioGetBank(gpio, &bank, &offset);
+    reg = rp1GpioPadsRead(baseP, bank, offset);
+
+    if( reg & RP1_PADS_PUE_SET )
+    {
         pull = PULL_UP;
-    else if (reg & RP1_PADS_PDE_SET)
+    }
+    else if( reg & RP1_PADS_PDE_SET )
+    {
         pull = PULL_DOWN;
+    }
 
-    return pull;
+    return(pull);
 }
 
-static GPIO_DRIVE_T rp1_gpio_get_drive(void *priv, unsigned gpio)
+// Returns the current drive level (DRIVE_LOW/DRIVE_HIGH) of GPIO 'gpio' as last written to
+// SYS_RIO OUT.
+static GPIO_DRIVE_T
+rp1GetDrive(void *priv, unsigned gpio)
 {
-    volatile uint32_t *base = priv;
-    uint32_t reg;
-    int bank, offset;
+volatile uint32_t *baseP;
+uint32_t reg;
+int bank, offset;
 
-    rp1_gpio_get_bank(gpio, &bank, &offset);
-    reg = rp1_gpio_sys_rio_out_read(base, bank, offset);
-    return (reg & (1U << offset)) ? DRIVE_HIGH : DRIVE_LOW;
+    baseP = priv;
+
+    rp1GpioGetBank(gpio, &bank, &offset);
+    reg = rp1GpioSysRioOutRead(baseP, bank, offset);
+
+    return( (reg & (1U << offset)) ? DRIVE_HIGH : DRIVE_LOW );
 }
 
-static const char *rp1_gpio_get_name(void *priv, unsigned gpio)
+// Returns a human-readable "GPIOn" name for GPIO 'gpio', formatted into a static buffer
+// (matches the original tool's behavior -- not reentrant/thread-safe). Returns NULL if
+// 'gpio' is out of range.
+static const char *
+rp1GetName(void *priv, unsigned gpio)
 {
-    static char name_buf[16];
+static char nameBuf[16];
+
     UNUSED(priv);
 
-    if (gpio >= RP1_NUM_GPIOS)
-        return NULL;
+    if( gpio >= RP1_NUM_GPIOS )
+    {
+        return(NULL);
+    }
 
-    sprintf(name_buf, "GPIO%d", gpio);
-    return name_buf;
+    sprintf(nameBuf, "GPIO%d", gpio);
+    return(nameBuf);
 }
 
-static const char *rp1_gpio_get_fsel_name(void *priv, unsigned gpio, GPIO_FSEL_T fsel)
+// Returns a human-readable name for what function-select value 'fsel' means on RP1 GPIO
+// 'gpio' specifically (looked up in rp1GpioFselNames for alternate functions), or NULL if
+// 'fsel' is not a recognized function-select value.
+static const char *
+rp1GetFselName(void *priv, unsigned gpio, GPIO_FSEL_T fsel)
 {
-    const char *name = NULL;
+const char *nameP;
+
+    nameP = NULL;
     UNUSED(priv);
-    switch (fsel)
+
+    switch( fsel )
     {
     case GPIO_FSEL_GPIO:
-        name = "gpio";
+        nameP = "gpio";
         break;
+
     case GPIO_FSEL_INPUT:
-        name = "input";
+        nameP = "input";
         break;
+
     case GPIO_FSEL_OUTPUT:
-        name = "output";
+        nameP = "output";
         break;
+
     case GPIO_FSEL_NONE:
-        name = "none";
+        nameP = "none";
         break;
+
     case GPIO_FSEL_FUNC0:
     case GPIO_FSEL_FUNC1:
     case GPIO_FSEL_FUNC2:
@@ -450,55 +618,68 @@ static const char *rp1_gpio_get_fsel_name(void *priv, unsigned gpio, GPIO_FSEL_T
     case GPIO_FSEL_FUNC6:
     case GPIO_FSEL_FUNC7:
     case GPIO_FSEL_FUNC8:
-        if (gpio < RP1_NUM_GPIOS)
+        if( gpio < RP1_NUM_GPIOS )
         {
-            name = rp1_gpio_fsel_names[gpio][fsel - GPIO_FSEL_FUNC0];
-            if (!name)
-                name = "-";
+            nameP = rp1GpioFselNames[gpio][fsel - GPIO_FSEL_FUNC0];
+            if( !nameP )
+            {
+                nameP = "-";
+            }
         }
         break;
+
     default:
-        return NULL;
+        return(NULL);
     }
-    return name;
+
+    return(nameP);
 }
 
-static void *rp1_gpio_create_instance(const GPIO_CHIP_T *chip,
-                                      const char *dtnode)
+// Allocates a per-instance state block for an RP1 chip instance. This chip has no
+// per-instance state beyond the GPIO_CHIP_T itself, so it just hands 'chip' back as the
+// opaque 'priv' pointer other callbacks receive. Never returns NULL (device-tree node
+// 'dtnode' is unused/ignored).
+static void *
+rp1CreateInstance(const GPIO_CHIP_T *chip, const char *dtnode)
 {
     UNUSED(dtnode);
-    return (void *)chip;
+    return( (void *)chip );
 }
 
-static int rp1_gpio_count(void *priv)
+// Returns the number of GPIOs this chip instance provides (fixed at RP1_NUM_GPIOS).
+static int
+rp1GpioCount(void *priv)
 {
     UNUSED(priv);
-    return RP1_NUM_GPIOS;
+    return(RP1_NUM_GPIOS);
 }
 
-static void *rp1_gpio_probe_instance(void *priv, volatile uint32_t *base)
+// Completes instance setup once the physical register window has been mmap()'d to 'base';
+// this chip just uses the mapped base pointer directly as its 'priv' value for every
+// subsequent callback. Never returns NULL.
+static void *
+rp1ProbeInstance(void *priv, volatile uint32_t *base)
 {
     UNUSED(priv);
-    return (void *)base;
+    return( (void *)base );
 }
 
-static const GPIO_CHIP_INTERFACE_T rp1_gpio_interface =
+static const GPIO_CHIP_INTERFACE_T rp1GpioInterface =
 {
-    .gpio_create_instance = rp1_gpio_create_instance,
-    .gpio_count = rp1_gpio_count,
-    .gpio_probe_instance = rp1_gpio_probe_instance,
-    .gpio_get_fsel = rp1_gpio_get_fsel,
-    .gpio_set_fsel = rp1_gpio_set_fsel,
-    .gpio_set_drive = rp1_gpio_set_drive,
-    .gpio_set_dir = rp1_gpio_set_dir,
-    .gpio_get_dir = rp1_gpio_get_dir,
-    .gpio_get_level = rp1_gpio_get_level,
-    .gpio_get_drive = rp1_gpio_get_drive,
-    .gpio_get_pull = rp1_gpio_get_pull,
-    .gpio_set_pull = rp1_gpio_set_pull,
-    .gpio_get_name = rp1_gpio_get_name,
-    .gpio_get_fsel_name = rp1_gpio_get_fsel_name,
+    .gpio_create_instance = rp1CreateInstance,
+    .gpio_count = rp1GpioCount,
+    .gpio_probe_instance = rp1ProbeInstance,
+    .gpio_get_fsel = rp1GetFsel,
+    .gpio_set_fsel = rp1SetFsel,
+    .gpio_set_drive = rp1SetDrive,
+    .gpio_set_dir = rp1SetDir,
+    .gpio_get_dir = rp1GetDir,
+    .gpio_get_level = rp1GetLevel,
+    .gpio_get_drive = rp1GetDrive,
+    .gpio_get_pull = rp1GetPull,
+    .gpio_set_pull = rp1SetPull,
+    .gpio_get_name = rp1GetName,
+    .gpio_get_fsel_name = rp1GetFselName,
 };
 
-DECLARE_GPIO_CHIP(rp1, "raspberrypi,rp1-gpio",
-                  &rp1_gpio_interface, 0x30000, 0);
+DECLARE_GPIO_CHIP(rp1, "raspberrypi,rp1-gpio", &rp1GpioInterface, 0x30000, 0);

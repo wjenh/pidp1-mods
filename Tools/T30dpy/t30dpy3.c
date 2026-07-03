@@ -88,30 +88,19 @@
  * 18-Jun-2026 wje (Claude) replace SDL_CreateWindowAndRenderer with
  *    SDL_CreateWindowWithProperties + SDL_CreateRenderer so SDL_WINDOWPOS_CENTERED can be
  *    specified. X11 honors this; Wayland ignores it but centers new windows by default.
- * 19-Jun-2026 wje (Claude) fix the long-standing 12+ hour blank-display/unresponsive hang:
- *    hold busyLockP for the entire active-point walk in main() instead of only inside
- *    removeActivePoint(). The unlocked walk let the reader thread's addActivePoint()
- *    recycle a just-freed slot and relink it into the chain main() was still traversing,
- *    corrupting nextIdx into a cycle; the for loop then spun forever (confirmed via gdb on
- *    a live hung process: pegged CPU, main() stuck re-entering removeActivePoint() without
- *    ever returning). removeActivePoint() no longer locks internally; callers must hold
- *    busyLockP first, same convention addActivePoint() already used.
- * 19-Jun-2026 wje (Claude) move ++totalFrames from before the idle-skip check (it was counting
- *    every loop/timer tick, including cycles with no active points where nothing is drawn or
- *    presented) to just after SDL_RenderPresent(). Matches t30dpy (SDL2), where totalFrames only
- *    counts actual rendered/presented frames, so reportTiming()'s frames/sec figure now means
- *    the same thing in both clients.
- * 20-Jun-2026 wje (Claude) create the window initially hidden to avoid sdl window initialization jitter
- * 21-Jun-2026 wje (Claude) idle frames (no active points) now still clear+present every pass
- *    instead of skipping rendering entirely; the old skip left the window showing transparent
- *    content (title bar/border only) whenever the PDP-1 wasn't actively feeding points yet.
+ * 19-Jun-2026 wje (Claude) fix the long-standing 12+ hour blank-display/unresponsive hang.
+ *    Hold busyLockP for the entire active-point walk in main() instead of only inside
+ *    removeActivePoint().
+ * 20-Jun-2026 wje create the window initially hidden to avoid sdl window initialization jitter
  * 01-Jul-2026 wje (Claude) fix new points being overwritten by nearby aging points.
  *    DrawPoint() previously did a flat overwrite for every pixel, so whichever
- *    point happened to be walked last in the active list won. A solid freshly drawn line would show gaps
- *    wherever an older, dimmer, still-aging point's glow spread overlapped it.
- *    DrawPoint() now compares against brightBuffer[][] point if any
- *    and only overwrites a pixel if the new point is at least as bright.
+ *    point happened to be walked last in the active list won.
  *    Adjust point pattern vs intensity for more realistic rendering.
+ * 02-Jul-2026 wje (Claude) performance pass, part 1:
+ *    SDL_RenderClear() is only needed when the visible window's aspect ratio
+ *    differs from the 1024x1024 logical area since SDL_RenderTexture() with SDL_BLENDMODE_NONE already
+ *    overwrites every pixel of a non-letterboxed target.
+ *    Pre-fault brightBuffer[][] so its pages are resident before the first rendered frame runs.
 */
 
 #include <stdio.h>
@@ -347,6 +336,9 @@ int penx, peny;
 uint32_t i;
 bool fullscreen;
 bool penDown;
+bool isLetterboxed;         // true when the window's aspect ratio differs from the 1024x1024
+                             // logical area, so SDL_LOGICAL_PRESENTATION_LETTERBOX is adding
+                             // bars that need to be cleared each frame; see the render block below
 char *cP;
 
 uint64_t deltaTime;
@@ -393,6 +385,12 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
     winSize = 1024;               // original Type 30 display size
     border = true;
     fullscreen = false;
+    // The window is always created with the same winSize value used for both width and
+    // height (see the SDL_CreateWindowWithProperties() call below and the Wayland-margin
+    // fix, which only ever adjusts winSize as a single value), so it starts out square and
+    // therefore never letterboxed. SDL_EVENT_WINDOW_RESIZED updates this if the user resizes
+    // to a non-square shape or toggles fullscreen on a non-square display.
+    isLetterboxed = false;
     penDown = false;
     doTiming = false;
     totalPoints = 0;
@@ -658,6 +656,16 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
                 quit = true;
                 break;
 
+            // Fires for both user-driven edge-dragging resizes and SDL_SetWindowFullscreen()
+            // (fullscreen entry/exit resizes the window to/from the display resolution, which
+            // triggers this same event). data1/data2 are the new width/height in window
+            // coordinates. Recompute whether the window's aspect ratio still matches the
+            // square 1024x1024 logical area; if it does, SDL_LOGICAL_PRESENTATION_LETTERBOX
+            // adds no bars and the per-frame SDL_RenderClear() below can be skipped.
+            case SDL_EVENT_WINDOW_RESIZED:
+                isLetterboxed = (event.window.data1 != event.window.data2);
+                break;
+
             case SDL_EVENT_KEY_DOWN:
                 switch( event.key.scancode )
                 {
@@ -836,14 +844,21 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
             // point draw); everything below is present work (clear + scaled blit + VNC).
             tAfterBuffer = now();
 
-            // SDL_RenderClear() is needed here even though SDL_RenderTexture() below
-            // (with SDL_BLENDMODE_NONE) fully overwrites the 1024x1024 logical area:
-            // with SDL_LOGICAL_PRESENTATION_LETTERBOX, the visible window can be larger
-            // than the logical area, and the letterbox bars outside it are part of what
-            // RenderClear repaints. Without this, those bars (and the area around
-            // edge-of-screen points) retained stale content from previous frames,
-            // visible as phantom points outside the 1024x1024 area in fullscreen.
-            SDL_RenderClear(renderer);
+            // SDL_RenderClear() only earns its keep when the window's aspect ratio differs
+            // from the square 1024x1024 logical area: with SDL_LOGICAL_PRESENTATION_LETTERBOX,
+            // the visible window can then be larger than the logical area, and the letterbox
+            // bars outside it are part of what RenderClear repaints. Without clearing in that
+            // case, those bars (and the area around edge-of-screen points) retain stale content
+            // from previous frames, visible as phantom points outside the 1024x1024 area.
+            // When the window IS square (the common case: default 1024x1024 window, or any
+            // square resize), there are no bars, and SDL_RenderTexture() right below (with
+            // SDL_BLENDMODE_NONE) already overwrites every pixel of the target -- clearing
+            // first is then pure wasted work, skipped via isLetterboxed (see
+            // SDL_EVENT_WINDOW_RESIZED handling above).
+            if( isLetterboxed )
+            {
+                SDL_RenderClear(renderer);
+            }
             SDL_RenderTexture(renderer, textureP, NULL, NULL);
             SDL_RenderPresent(renderer);
             ++totalFrames;
@@ -1132,6 +1147,12 @@ uint32_t i;
         activePool[i].nextIdx = i + 1;
     }
     activePool[MAXACTIVEPOINTS - 1].nextIdx = NOINDEX;
+
+    // Pre-fault brightBuffer[][] here at startup instead of letting the first rendered
+    // frame's memset() in main() take the minor page faults for its ~256 4K pages. This
+    // keeps that fault cost off the first frame that actually has active points to draw,
+    // where it would otherwise show up as unexplained extra latency on that one frame.
+    memset(brightBuffer, 0, sizeof(brightBuffer));
 
     freeListHead = 0;
     activeListHead = NOINDEX;

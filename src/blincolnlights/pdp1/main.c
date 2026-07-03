@@ -204,7 +204,7 @@ FILE *tmpfP;    // used for timing
                     pdp->run_enable = 0;
                 }
 
-                // A start, etc. 
+                // A start, etc.
                 cycle(pdp1P);
                 AD1_CLEAR_CONTINUE(pdp1P);
             }
@@ -763,7 +763,7 @@ WatchP watchP;
     hit = false;
     watchP = pdp1P->ad1Watches;
 
-    for( i = 0; i < AD1_NUM_WATCHES; ++i )
+    for( i = 0; i < AD1_NUM_WATCHES; ++i, ++watchP )
     {
         if( watchP->isSet && watchP->isEnabled )
         {
@@ -788,6 +788,11 @@ WatchP watchP;
             watchP->lastVal = curVal;
         }
 
+        // audit H3: return-on-first-hit is fine and stays INSIDE the loop, but
+        // watchP is now advanced in the loop header (was never incremented before,
+        // so every pass re-examined watch 0), and the false-fallthrough return
+        // moved OUTSIDE the loop below so all AD1_NUM_WATCHES entries get scanned
+        // instead of the function returning after entry 0 unconditionally.
         if( hit )
         {
             AD1_SET_WATCH_HIT(pdp1P);
@@ -795,9 +800,9 @@ WatchP watchP;
             logger(LOG_WATCH, "watch %d hit\n", i+1);
             return(true);
         }
-
-        return(false);
     }
+
+    return(false);
 }
 
 // Accessor so other modules (including dynamic IOT plugins) can get at the loaded

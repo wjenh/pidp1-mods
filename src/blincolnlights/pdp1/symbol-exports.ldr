@@ -1,9 +1,10 @@
 {
     "HSCallocateChannel";
-    "HSCFreeChannel";
+    "HSCfreeChannel";
     "HSCexecute";
     "HSCwait";
     "HSCgetStatus";
+    "HSCreset";
     "dynamicIotProcessBreak";
     "display";
     "checkLightpen";

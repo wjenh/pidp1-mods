@@ -1,3 +1,12 @@
+// gpiolib.c -- Implementation of the per-GPIO-pin API declared in gpiolib.h. Locates every
+// GPIO_CHIP_T linked into the binary (see gpiochip.h) via device-tree probing, builds a flat
+// GPIO-number space across however many chips are found (chip 0 at GPIO 0, chip 1 starting
+// at the next round-hundred boundary, etc.), and dispatches every gpio_*() call to whichever
+// chip instance owns that GPIO number. Function names declared in gpiolib.h are kept as-is
+// (external callers, e.g. newpanel.c, depend on them); everything else here (statics, file-
+// scope globals, and the locally-defined GPIO_CHIP_INSTANCE_T) is local to this file and
+// follows the project's camelHump + pointer-P-suffix convention.
+
 #define _FILE_OFFSET_BITS 64
 #include <assert.h>
 #include <errno.h>
@@ -12,30 +21,33 @@
 #include "gpiochip.h"
 #include "util.h"
 
-#define ARRAY_SIZE(_a) (sizeof(_a)/sizeof(_a[0]))
+#define ARRAY_SIZE(_a) (sizeof(_a) / sizeof(_a[0]))
 
 #define MAX_GPIO_CHIPS 8
 
+// One probed-and-instantiated GPIO chip: which GPIO_CHIP_T it is, its device-tree node and
+// physical register address, the /dev/gpiomemN fd (if any) used to map it, and the flat
+// GPIO-number range [base, base+numGpios) it occupies in this process's GPIO space.
 typedef struct GPIO_CHIP_INSTANCE_
 {
-    const GPIO_CHIP_T *chip;
-    const char *name;
-    const char *dtnode;
-    int mem_fd;
-    void *priv;
-    uint64_t phys_addr;
-    unsigned num_gpios;
+    const GPIO_CHIP_T *chipP;
+    const char *nameP;
+    const char *dtnodeP;
+    int memFd;
+    void *privP;
+    uint64_t physAddr;
+    unsigned numGpios;
     uint32_t base;
 } GPIO_CHIP_INSTANCE_T;
 
-static unsigned num_gpio_chips;
-static GPIO_CHIP_INSTANCE_T gpio_chips[MAX_GPIO_CHIPS];
+static unsigned numGpioChips;
+static GPIO_CHIP_INSTANCE_T gpioChips[MAX_GPIO_CHIPS];
 
-static unsigned num_gpios;
-static unsigned first_hdr_pin = GPIO_INVALID;
-static unsigned last_hdr_pin = GPIO_INVALID;
-static const char *gpio_names[MAX_GPIO_PINS];
-static unsigned hdr_gpios[NUM_HDR_PINS + 1];
+static unsigned numGpios;
+static unsigned firstHdrPin = GPIO_INVALID;
+static unsigned lastHdrPin = GPIO_INVALID;
+static const char *gpioNames[MAX_GPIO_PINS];
+static unsigned hdrGpios[NUM_HDR_PINS + 1];
 
 const char *pull_names[] = { "pn", "pd", "pu", "--" };
 const char *drive_names[] = { "dl", "dh", "--" };
@@ -48,660 +60,878 @@ const char *fsel_names[] =
 
 void (*verbose_callback)(const char *);
 
-static GPIO_CHIP_INSTANCE_T *gpio_create_instance(const GPIO_CHIP_T *chip,
-                                                  uint64_t phys_addr,
-                                                  const char *name,
-                                                  const char *dtnode)
+// Instantiates chip (calling its gpio_create_instance() interface method with dtnodeP) and
+// records it in the gpioChips[] table at slot numGpioChips. Returns a pointer to the new
+// slot, or NULL if the table is already full (assert(0)'d -- MAX_GPIO_CHIPS should always be
+// generous enough not to hit this on real hardware) or the chip's own instantiation failed.
+static GPIO_CHIP_INSTANCE_T *
+gpioCreateInstance(const GPIO_CHIP_T *chipP, uint64_t physAddr, const char *nameP,
+    const char *dtnodeP)
 {
-    GPIO_CHIP_INSTANCE_T *inst = &gpio_chips[num_gpio_chips];
+GPIO_CHIP_INSTANCE_T *instP;
 
-    if (num_gpio_chips >= MAX_GPIO_CHIPS)
+    if( numGpioChips >= MAX_GPIO_CHIPS )
     {
         assert(0);
-        return NULL;
+        return(NULL);
     }
 
-    inst->chip = chip;
-    inst->name = name ? name : chip->name;
-    inst->dtnode = dtnode;
-    inst->phys_addr = phys_addr;
-    inst->priv = NULL;
-    inst->base = 0;
+    instP = &gpioChips[numGpioChips];
 
-    inst->priv = chip->interface->gpio_create_instance(chip, dtnode);
-    if (!inst->priv)
-        return NULL;
+    instP->chipP = chipP;
+    instP->nameP = nameP ? nameP : chipP->name;
+    instP->dtnodeP = dtnodeP;
+    instP->physAddr = physAddr;
+    instP->privP = NULL;
+    instP->base = 0;
 
-    num_gpio_chips++;
+    instP->privP = chipP->interface->gpio_create_instance(chipP, dtnodeP);
+    if( !instP->privP )
+    {
+        return(NULL);
+    }
 
-    return inst;
+    numGpioChips++;
+
+    return(instP);
 }
 
-static int gpio_get_interface(unsigned gpio,
-                              const GPIO_CHIP_INTERFACE_T **iface_ptr,
-                              void **priv, unsigned *offset)
+// Finds which probed chip instance owns GPIO number 'gpio' and resolves the interface/priv
+// pointer plus per-chip offset a gpio_*() call needs to dispatch to it. Returns 0 and fills
+// in *ifacePP/*privPP/*offsetP on success, -1 if 'gpio' is not owned by any probed chip
+// (*ifacePP is left NULL in that case too, so callers can check either return value).
+static int
+gpioGetInterface(unsigned gpio, const GPIO_CHIP_INTERFACE_T **ifacePP, void **privPP,
+    unsigned *offsetP)
 {
-    unsigned i;
+unsigned i;
+GPIO_CHIP_INSTANCE_T *instP;
+const GPIO_CHIP_T *chipP;
 
-    *iface_ptr = NULL;
-    for (i = 0; i < num_gpio_chips; i++)
+    *ifacePP = NULL;
+
+    for( i = 0; i < numGpioChips; i++ )
     {
-        GPIO_CHIP_INSTANCE_T *inst = &gpio_chips[i];
-        const GPIO_CHIP_T *chip = inst->chip;
-        if (gpio >= inst->base && gpio < (inst->base + inst->num_gpios))
+        instP = &gpioChips[i];
+        chipP = instP->chipP;
+
+        if( (gpio >= instP->base) && (gpio < (instP->base + instP->numGpios)) )
         {
-            *iface_ptr = chip->interface;
-            *priv = inst->priv;
-            *offset = gpio - inst->base;
-            return 0;
+            *ifacePP = chipP->interface;
+            *privPP = instP->privP;
+            *offsetP = gpio - instP->base;
+            return(0);
         }
     }
-    return -1;
+
+    return(-1);
 }
 
-int gpio_num_is_valid(unsigned gpio)
+// See gpiolib.h.
+int
+gpio_num_is_valid(unsigned gpio)
 {
-    return gpio < MAX_GPIO_PINS && !!gpio_names[gpio];
+    return( (gpio < MAX_GPIO_PINS) && !!gpioNames[gpio] );
 }
 
-GPIO_DIR_T gpio_get_dir(unsigned gpio)
+// See gpiolib.h.
+GPIO_DIR_T
+gpio_get_dir(unsigned gpio)
 {
-    const GPIO_CHIP_INTERFACE_T *iface = NULL;
-    unsigned gpio_offset;
-    void *priv;
+const GPIO_CHIP_INTERFACE_T *ifaceP;
+unsigned gpioOffset;
+void *privP;
 
-    if (gpio_get_interface(gpio, &iface, &priv, &gpio_offset) == 0)
-        return iface->gpio_get_dir(priv, gpio_offset);
-    return DIR_MAX;
-}
+    ifaceP = NULL;
 
-void gpio_set_dir(unsigned gpio, GPIO_DIR_T dir)
-{
-    const GPIO_CHIP_INTERFACE_T *iface = NULL;
-    unsigned gpio_offset;
-    void *priv;
-
-    if (gpio_get_interface(gpio, &iface, &priv, &gpio_offset) == 0)
-        iface->gpio_set_dir(priv, gpio_offset, dir);
-}
-
-GPIO_FSEL_T gpio_get_fsel(unsigned gpio)
-{
-    const GPIO_CHIP_INTERFACE_T *iface = NULL;
-    GPIO_FSEL_T fsel = GPIO_FSEL_MAX;
-    unsigned gpio_offset;
-    void *priv;
-
-    if (gpio_get_interface(gpio, &iface, &priv, &gpio_offset) == 0)
-        fsel = iface->gpio_get_fsel(priv, gpio_offset);
-
-    if (fsel == GPIO_FSEL_GPIO)
+    if( gpioGetInterface(gpio, &ifaceP, &privP, &gpioOffset) == 0 )
     {
-        if (gpio_get_dir(gpio) == DIR_OUTPUT)
-            fsel = GPIO_FSEL_OUTPUT;
-        else
-            fsel = GPIO_FSEL_INPUT;
+        return( ifaceP->gpio_get_dir(privP, gpioOffset) );
     }
 
-    return fsel;
+    return(DIR_MAX);
 }
 
-void gpio_set_fsel(unsigned gpio, const GPIO_FSEL_T func)
+// See gpiolib.h. No return value.
+void
+gpio_set_dir(unsigned gpio, GPIO_DIR_T dir)
 {
-    const GPIO_CHIP_INTERFACE_T *iface = NULL;
-    unsigned gpio_offset;
-    void *priv;
+const GPIO_CHIP_INTERFACE_T *ifaceP;
+unsigned gpioOffset;
+void *privP;
 
-    if (gpio_get_interface(gpio, &iface, &priv, &gpio_offset) == 0)
-        iface->gpio_set_fsel(priv, gpio_offset, func);
-}
+    ifaceP = NULL;
 
-void gpio_set_drive(unsigned gpio, GPIO_DRIVE_T drv)
-{
-    const GPIO_CHIP_INTERFACE_T *iface = NULL;
-    unsigned gpio_offset;
-    void *priv;
-
-    if (gpio_get_interface(gpio, &iface, &priv, &gpio_offset) == 0)
-        iface->gpio_set_drive(priv, gpio_offset, drv);
-}
-
-void gpio_set(unsigned gpio)
-{
-    const GPIO_CHIP_INTERFACE_T *iface = NULL;
-    unsigned gpio_offset;
-    void *priv;
-
-    if (gpio_get_interface(gpio, &iface, &priv, &gpio_offset) == 0)
+    if( gpioGetInterface(gpio, &ifaceP, &privP, &gpioOffset) == 0 )
     {
-        iface->gpio_set_drive(priv, gpio_offset, 1);
-        iface->gpio_set_dir(priv, gpio_offset, DIR_OUTPUT);
+        ifaceP->gpio_set_dir(privP, gpioOffset, dir);
     }
 }
 
-void gpio_clear(unsigned gpio)
+// See gpiolib.h.
+GPIO_FSEL_T
+gpio_get_fsel(unsigned gpio)
 {
-    const GPIO_CHIP_INTERFACE_T *iface = NULL;
-    unsigned gpio_offset;
-    void *priv;
+const GPIO_CHIP_INTERFACE_T *ifaceP;
+GPIO_FSEL_T fsel;
+unsigned gpioOffset;
+void *privP;
 
-    if (gpio_get_interface(gpio, &iface, &priv, &gpio_offset) == 0)
+    ifaceP = NULL;
+    fsel = GPIO_FSEL_MAX;
+
+    if( gpioGetInterface(gpio, &ifaceP, &privP, &gpioOffset) == 0 )
     {
-        iface->gpio_set_drive(priv, gpio_offset, 0);
-        iface->gpio_set_dir(priv, gpio_offset, DIR_OUTPUT);
+        fsel = ifaceP->gpio_get_fsel(privP, gpioOffset);
     }
-}
 
-int gpio_get_level(unsigned gpio)
-{
-    const GPIO_CHIP_INTERFACE_T *iface = NULL;
-    unsigned gpio_offset;
-    void *priv;
-
-    if (gpio_get_interface(gpio, &iface, &priv, &gpio_offset) == 0)
-        return iface->gpio_get_level(priv, gpio_offset);
-    return 0;
-}
-
-GPIO_DRIVE_T gpio_get_drive(unsigned gpio)
-{
-    const GPIO_CHIP_INTERFACE_T *iface = NULL;
-    unsigned gpio_offset;
-    void *priv;
-
-    if (gpio_get_interface(gpio, &iface, &priv, &gpio_offset) == 0)
-        return iface->gpio_get_drive(priv, gpio_offset);
-    return DRIVE_MAX;
-}
-
-GPIO_PULL_T gpio_get_pull(unsigned gpio)
-{
-    const GPIO_CHIP_INTERFACE_T *iface = NULL;
-    unsigned gpio_offset;
-    void *priv;
-
-    if (gpio_get_interface(gpio, &iface, &priv, &gpio_offset) == 0)
-        return iface->gpio_get_pull(priv, gpio_offset);
-    return PULL_MAX;
-}
-
-void gpio_set_pull(unsigned gpio, GPIO_PULL_T pull)
-{
-    const GPIO_CHIP_INTERFACE_T *iface = NULL;
-    unsigned gpio_offset;
-    void *priv;
-
-    if (gpio_get_interface(gpio, &iface, &priv, &gpio_offset) == 0)
-        iface->gpio_set_pull(priv, gpio_offset, pull);
-}
-
-void gpio_get_pin_range(unsigned *first, unsigned *last)
-{
-    if (first_hdr_pin == GPIO_INVALID)
+    if( fsel == GPIO_FSEL_GPIO )
     {
-        unsigned i;
-
-        for (i = 0; i < num_gpio_chips; i++)
+        if( gpio_get_dir(gpio) == DIR_OUTPUT )
         {
-            if (!strncmp(gpio_chips[i].name, "bcm2", 4) ||
-                !strcmp(gpio_chips[i].name, "rp1"))
+            fsel = GPIO_FSEL_OUTPUT;
+        }
+        else
+        {
+            fsel = GPIO_FSEL_INPUT;
+        }
+    }
+
+    return(fsel);
+}
+
+// See gpiolib.h. No return value.
+void
+gpio_set_fsel(unsigned gpio, const GPIO_FSEL_T func)
+{
+const GPIO_CHIP_INTERFACE_T *ifaceP;
+unsigned gpioOffset;
+void *privP;
+
+    ifaceP = NULL;
+
+    if( gpioGetInterface(gpio, &ifaceP, &privP, &gpioOffset) == 0 )
+    {
+        ifaceP->gpio_set_fsel(privP, gpioOffset, func);
+    }
+}
+
+// See gpiolib.h. No return value.
+void
+gpio_set_drive(unsigned gpio, GPIO_DRIVE_T drv)
+{
+const GPIO_CHIP_INTERFACE_T *ifaceP;
+unsigned gpioOffset;
+void *privP;
+
+    ifaceP = NULL;
+
+    if( gpioGetInterface(gpio, &ifaceP, &privP, &gpioOffset) == 0 )
+    {
+        ifaceP->gpio_set_drive(privP, gpioOffset, drv);
+    }
+}
+
+// See gpiolib.h. No return value.
+void
+gpio_set(unsigned gpio)
+{
+const GPIO_CHIP_INTERFACE_T *ifaceP;
+unsigned gpioOffset;
+void *privP;
+
+    ifaceP = NULL;
+
+    if( gpioGetInterface(gpio, &ifaceP, &privP, &gpioOffset) == 0 )
+    {
+        ifaceP->gpio_set_drive(privP, gpioOffset, 1);
+        ifaceP->gpio_set_dir(privP, gpioOffset, DIR_OUTPUT);
+    }
+}
+
+// See gpiolib.h. No return value.
+void
+gpio_clear(unsigned gpio)
+{
+const GPIO_CHIP_INTERFACE_T *ifaceP;
+unsigned gpioOffset;
+void *privP;
+
+    ifaceP = NULL;
+
+    if( gpioGetInterface(gpio, &ifaceP, &privP, &gpioOffset) == 0 )
+    {
+        ifaceP->gpio_set_drive(privP, gpioOffset, 0);
+        ifaceP->gpio_set_dir(privP, gpioOffset, DIR_OUTPUT);
+    }
+}
+
+// See gpiolib.h.
+int
+gpio_get_level(unsigned gpio)
+{
+const GPIO_CHIP_INTERFACE_T *ifaceP;
+unsigned gpioOffset;
+void *privP;
+
+    ifaceP = NULL;
+
+    if( gpioGetInterface(gpio, &ifaceP, &privP, &gpioOffset) == 0 )
+    {
+        return( ifaceP->gpio_get_level(privP, gpioOffset) );
+    }
+
+    return(0);
+}
+
+// See gpiolib.h.
+GPIO_DRIVE_T
+gpio_get_drive(unsigned gpio)
+{
+const GPIO_CHIP_INTERFACE_T *ifaceP;
+unsigned gpioOffset;
+void *privP;
+
+    ifaceP = NULL;
+
+    if( gpioGetInterface(gpio, &ifaceP, &privP, &gpioOffset) == 0 )
+    {
+        return( ifaceP->gpio_get_drive(privP, gpioOffset) );
+    }
+
+    return(DRIVE_MAX);
+}
+
+// See gpiolib.h.
+GPIO_PULL_T
+gpio_get_pull(unsigned gpio)
+{
+const GPIO_CHIP_INTERFACE_T *ifaceP;
+unsigned gpioOffset;
+void *privP;
+
+    ifaceP = NULL;
+
+    if( gpioGetInterface(gpio, &ifaceP, &privP, &gpioOffset) == 0 )
+    {
+        return( ifaceP->gpio_get_pull(privP, gpioOffset) );
+    }
+
+    return(PULL_MAX);
+}
+
+// See gpiolib.h. No return value.
+void
+gpio_set_pull(unsigned gpio, GPIO_PULL_T pull)
+{
+const GPIO_CHIP_INTERFACE_T *ifaceP;
+unsigned gpioOffset;
+void *privP;
+
+    ifaceP = NULL;
+
+    if( gpioGetInterface(gpio, &ifaceP, &privP, &gpioOffset) == 0 )
+    {
+        ifaceP->gpio_set_pull(privP, gpioOffset, pull);
+    }
+}
+
+// See gpiolib.h. No return value.
+void
+gpio_get_pin_range(unsigned *first, unsigned *last)
+{
+unsigned i;
+uint32_t base;
+
+    if( firstHdrPin == GPIO_INVALID )
+    {
+        for( i = 0; i < numGpioChips; i++ )
+        {
+            if( !strncmp(gpioChips[i].nameP, "bcm2", 4) || !strcmp(gpioChips[i].nameP, "rp1") )
             {
                 // Assume it's the standard RPi 40-pin header layout
-                uint32_t base = gpio_chips[i].base;
+                base = gpioChips[i].base;
 
-                hdr_gpios[3] = base + 2;
-                hdr_gpios[5] = base + 3;
-                hdr_gpios[7] = base + 4;
-                hdr_gpios[8] = base + 14;
-                hdr_gpios[10] = base + 15;
-                hdr_gpios[11] = base + 17;
-                hdr_gpios[12] = base + 18;
-                hdr_gpios[13] = base + 27;
-                hdr_gpios[15] = base + 22;
-                hdr_gpios[16] = base + 23;
-                hdr_gpios[18] = base + 24;
-                hdr_gpios[19] = base + 10;
-                hdr_gpios[21] = base + 9;
-                hdr_gpios[18] = base + 24;
-                hdr_gpios[22] = base + 25;
-                hdr_gpios[23] = base + 11;
-                hdr_gpios[24] = base + 8;
-                hdr_gpios[26] = base + 7;
-                hdr_gpios[27] = base + 0;
-                hdr_gpios[28] = base + 1;
-                hdr_gpios[29] = base + 5;
-                hdr_gpios[31] = base + 6;
-                hdr_gpios[32] = base + 12;
-                hdr_gpios[33] = base + 13;
-                hdr_gpios[35] = base + 19;
-                hdr_gpios[36] = base + 16;
-                hdr_gpios[37] = base + 26;
-                hdr_gpios[38] = base + 20;
-                hdr_gpios[40] = base + 21;
+                hdrGpios[3] = base + 2;
+                hdrGpios[5] = base + 3;
+                hdrGpios[7] = base + 4;
+                hdrGpios[8] = base + 14;
+                hdrGpios[10] = base + 15;
+                hdrGpios[11] = base + 17;
+                hdrGpios[12] = base + 18;
+                hdrGpios[13] = base + 27;
+                hdrGpios[15] = base + 22;
+                hdrGpios[16] = base + 23;
+                hdrGpios[18] = base + 24;
+                hdrGpios[19] = base + 10;
+                hdrGpios[21] = base + 9;
+                hdrGpios[18] = base + 24;
+                hdrGpios[22] = base + 25;
+                hdrGpios[23] = base + 11;
+                hdrGpios[24] = base + 8;
+                hdrGpios[26] = base + 7;
+                hdrGpios[27] = base + 0;
+                hdrGpios[28] = base + 1;
+                hdrGpios[29] = base + 5;
+                hdrGpios[31] = base + 6;
+                hdrGpios[32] = base + 12;
+                hdrGpios[33] = base + 13;
+                hdrGpios[35] = base + 19;
+                hdrGpios[36] = base + 16;
+                hdrGpios[37] = base + 26;
+                hdrGpios[38] = base + 20;
+                hdrGpios[40] = base + 21;
 
-                first_hdr_pin = 1;
-                last_hdr_pin = 40;
+                firstHdrPin = 1;
+                lastHdrPin = 40;
                 break;
             }
         }
     }
-    if (first)
-        *first = first_hdr_pin;
-    if (last)
-        *last = last_hdr_pin;
-}
 
-unsigned gpio_for_pin(int pin)
-{
-    if (pin >= 1 && pin <= NUM_HDR_PINS)
-        return hdr_gpios[pin];
-    return GPIO_INVALID;
-}
-
-int gpio_to_pin(unsigned gpio)
-{
-    int i;
-
-    for (i = 1; i <= NUM_HDR_PINS; i++)
+    if( first )
     {
-        if (hdr_gpios[i] == gpio)
-            return i;
+        *first = firstHdrPin;
     }
-    return -1;
+
+    if( last )
+    {
+        *last = lastHdrPin;
+    }
 }
 
-unsigned gpio_get_gpio_by_name(const char *name, int name_len)
+// See gpiolib.h.
+unsigned
+gpio_for_pin(int pin)
 {
-    unsigned gpio;
-
-    if (!name_len)
-        name_len = strlen(name);
-    for (gpio = 0; gpio < num_gpios; gpio++)
+    if( (pin >= 1) && (pin <= NUM_HDR_PINS) )
     {
-        const char *gpio_name = gpio_names[gpio];
-        const char *p;
+        return(hdrGpios[pin]);
+    }
 
-        if (!gpio_name)
-            continue;
+    return(GPIO_INVALID);
+}
 
-        for (p = gpio_name; *p; )
+// See gpiolib.h.
+int
+gpio_to_pin(unsigned gpio)
+{
+int i;
+
+    for( i = 1; i <= NUM_HDR_PINS; i++ )
+    {
+        if( hdrGpios[i] == gpio )
         {
-            int len = strcspn(p, "/");
-            if (len == name_len && memcmp(name, p, name_len) == 0)
-                return gpio;
-            p += len;
-            if (*p == '/')
-                p++;
+            return(i);
         }
     }
 
-    return GPIO_INVALID;
+    return(-1);
 }
 
-const char *gpio_get_name(unsigned gpio)
+// See gpiolib.h.
+unsigned
+gpio_get_gpio_by_name(const char *name, int name_len)
 {
-    if (gpio < num_gpios)
-        return gpio_names[gpio];
-    switch (gpio)
+unsigned gpio;
+const char *gpioNameP;
+const char *pP;
+int len;
+
+    if( !name_len )
+    {
+        name_len = strlen(name);
+    }
+
+    for( gpio = 0; gpio < numGpios; gpio++ )
+    {
+        gpioNameP = gpioNames[gpio];
+        if( !gpioNameP )
+        {
+            continue;
+        }
+
+        // A GPIO's recorded name can be a "primary/alias" pair (see gpiolib_init()'s
+        // arch_name-merging logic below); check each '/'-separated component in turn.
+        for( pP = gpioNameP; *pP; )
+        {
+            len = strcspn(pP, "/");
+            if( (len == name_len) && (memcmp(name, pP, name_len) == 0) )
+            {
+                return(gpio);
+            }
+
+            pP += len;
+            if( *pP == '/' )
+            {
+                pP++;
+            }
+        }
+    }
+
+    return(GPIO_INVALID);
+}
+
+// See gpiolib.h.
+const char *
+gpio_get_name(unsigned gpio)
+{
+    if( gpio < numGpios )
+    {
+        return(gpioNames[gpio]);
+    }
+
+    switch( gpio )
     {
     case GPIO_INVALID:
-        return "-";
+        return("-");
+
     case GPIO_GND:
-        return "gnd";
+        return("gnd");
+
     case GPIO_5V:
-        return "5v";
+        return("5v");
+
     case GPIO_3V3:
-        return "3v3";
+        return("3v3");
+
     case GPIO_1V8:
-        return "1v8";
+        return("1v8");
+
     case GPIO_OTHER:
     default:
-        return "???";
+        return("???");
     }
 }
 
-const char *gpio_get_gpio_fsel_name(unsigned gpio, GPIO_FSEL_T fsel)
+// See gpiolib.h.
+const char *
+gpio_get_gpio_fsel_name(unsigned gpio, GPIO_FSEL_T fsel)
 {
-    const GPIO_CHIP_INTERFACE_T *iface = NULL;
-    unsigned gpio_offset;
-    void *priv;
+const GPIO_CHIP_INTERFACE_T *ifaceP;
+unsigned gpioOffset;
+void *privP;
 
-    if (gpio_get_interface(gpio, &iface, &priv, &gpio_offset) == 0)
-        return iface->gpio_get_fsel_name(priv, gpio_offset, fsel);
-    return NULL;
-}
+    ifaceP = NULL;
 
-const char *gpio_get_fsel_name(GPIO_FSEL_T fsel)
-{
-    if ((unsigned)fsel < ARRAY_SIZE(fsel_names))
-        return fsel_names[fsel];
-    return NULL;
-}
-
-const char *gpio_get_pull_name(GPIO_PULL_T pull)
-{
-    if ((unsigned)pull < ARRAY_SIZE(pull_names))
-        return pull_names[pull];
-    return NULL;
-}
-
-const char *gpio_get_drive_name(GPIO_DRIVE_T drive)
-{
-    if ((unsigned)drive < ARRAY_SIZE(drive_names))
-        return drive_names[drive];
-    return NULL;
-}
-
-static const GPIO_CHIP_T *gpio_find_chip(const char *name)
-{
-    const GPIO_CHIP_T *chip;
-
-    for (chip = &__start_gpiochips; name && chip < &__stop_gpiochips; chip++) {
-        if (!strcmp(name, chip->name) ||
-            !strcmp(name, chip->compatible))
-            return chip;
+    if( gpioGetInterface(gpio, &ifaceP, &privP, &gpioOffset) == 0 )
+    {
+        return( ifaceP->gpio_get_fsel_name(privP, gpioOffset, fsel) );
     }
 
-    return NULL;
+    return(NULL);
 }
 
-int gpiolib_init(void)
+// See gpiolib.h.
+const char *
+gpio_get_fsel_name(GPIO_FSEL_T fsel)
 {
-    const GPIO_CHIP_T *chip;
-    GPIO_CHIP_INSTANCE_T *inst;
-    char pathbuf[FILENAME_MAX];
-    char gpiomem_idx[4];
-    const char *dtpath = "/proc/device-tree";
-    const char *p;
-    char *alias = NULL, *names, *end, *compatible;
-    uint64_t phys_addr;
-    size_t names_len;
-    unsigned gpio_base;
-    unsigned pin, i;
+    if( (unsigned)fsel < ARRAY_SIZE(fsel_names) )
+    {
+        return(fsel_names[fsel]);
+    }
 
-    for (pin = 0; pin <= NUM_HDR_PINS; pin++)
-        hdr_gpios[pin] = GPIO_INVALID;
+    return(NULL);
+}
+
+// See gpiolib.h.
+const char *
+gpio_get_pull_name(GPIO_PULL_T pull)
+{
+    if( (unsigned)pull < ARRAY_SIZE(pull_names) )
+    {
+        return(pull_names[pull]);
+    }
+
+    return(NULL);
+}
+
+// See gpiolib.h.
+const char *
+gpio_get_drive_name(GPIO_DRIVE_T drive)
+{
+    if( (unsigned)drive < ARRAY_SIZE(drive_names) )
+    {
+        return(drive_names[drive]);
+    }
+
+    return(NULL);
+}
+
+// Searches every GPIO_CHIP_T in the linker-provided "gpiochips" section (see gpiochip.h)
+// for one whose "name" or "compatible" string matches 'name'. Returns a pointer to the
+// matching GPIO_CHIP_T, or NULL if 'name' is NULL or no chip matches.
+static const GPIO_CHIP_T *
+gpioFindChip(const char *name)
+{
+const GPIO_CHIP_T *chipP;
+
+    for( chipP = &__start_gpiochips; name && (chipP < &__stop_gpiochips); chipP++ )
+    {
+        if( !strcmp(name, chipP->name) || !strcmp(name, chipP->compatible) )
+        {
+            return(chipP);
+        }
+    }
+
+    return(NULL);
+}
+
+// See gpiolib.h. Returns the total number of GPIOs found across every probed chip (which
+// may be 0 on a system with no recognized GPIO controller), or -1 if a chip was found but
+// its address could not be resolved or its instance could not be created, or if the total
+// GPIO count exceeds MAX_GPIO_PINS.
+int
+gpiolib_init(void)
+{
+const GPIO_CHIP_T *chipP;
+GPIO_CHIP_INSTANCE_T *instP;
+char pathBuf[FILENAME_MAX];
+char gpiomemIdx[4];
+const char *dtPath = "/proc/device-tree";
+const char *pP;
+char *aliasP, *namesP, *endP, *compatibleP;
+uint64_t physAddr;
+size_t namesLen;
+unsigned gpioBase;
+unsigned pin, i, gpio;
+char nameBuf[32];
+const char *nameP, *archNameP;
+
+    aliasP = NULL;
+
+    for( pin = 0; pin <= NUM_HDR_PINS; pin++ )
+    {
+        hdrGpios[pin] = GPIO_INVALID;
+    }
 
     // There is currently only one header layout
-    hdr_gpios[1] = GPIO_3V3;
-    hdr_gpios[17] = GPIO_3V3;
-    hdr_gpios[2] = GPIO_5V;
-    hdr_gpios[4] = GPIO_5V;
-    hdr_gpios[6] = GPIO_GND;
-    hdr_gpios[9] = GPIO_GND;
-    hdr_gpios[14] = GPIO_GND;
-    hdr_gpios[20] = GPIO_GND;
-    hdr_gpios[25] = GPIO_GND;
-    hdr_gpios[30] = GPIO_GND;
-    hdr_gpios[34] = GPIO_GND;
-    hdr_gpios[39] = GPIO_GND;
+    hdrGpios[1] = GPIO_3V3;
+    hdrGpios[17] = GPIO_3V3;
+    hdrGpios[2] = GPIO_5V;
+    hdrGpios[4] = GPIO_5V;
+    hdrGpios[6] = GPIO_GND;
+    hdrGpios[9] = GPIO_GND;
+    hdrGpios[14] = GPIO_GND;
+    hdrGpios[20] = GPIO_GND;
+    hdrGpios[25] = GPIO_GND;
+    hdrGpios[30] = GPIO_GND;
+    hdrGpios[34] = GPIO_GND;
+    hdrGpios[39] = GPIO_GND;
 
-    if (verbose_callback)
-        (*verbose_callback)("GPIO chips:\n");
-
-    dt_set_path(dtpath);
-
-    for (i = 0; ; i++)
+    if( verbose_callback )
     {
-        sprintf(pathbuf, "gpio%d", i);
-        sprintf(gpiomem_idx, "%d", i);
-        alias = dt_read_prop("/aliases", pathbuf, NULL);
-        if (!alias && i == 0)
-        {
-            alias = dt_read_prop("/aliases", "gpio", NULL);
-            gpiomem_idx[0] = 0;
-        }
-        if (!alias)
-            break;
-
-        compatible = dt_read_prop(alias, "compatible", NULL);
-        if (!compatible)
-        {
-            sprintf(pathbuf, "%s/..", alias);
-            compatible = dt_read_prop(pathbuf, "compatible", NULL);
-        }
-
-        chip = gpio_find_chip(compatible);
-        dt_free(compatible);
-
-        if (!chip)
-        {
-            // Skip the unknown gpio chip
-            dt_free(alias);
-            continue;
-        }
-
-        phys_addr = dt_parse_addr(alias);
-        if (phys_addr == INVALID_ADDRESS)
-        {
-            dt_free(alias);
-            return -1;
-        }
-
-        inst = gpio_create_instance(chip, phys_addr, NULL, alias);
-        if (!inst)
-        {
-            dt_free(alias);
-            return -1;
-        }
-
-        sprintf(pathbuf, "/dev/gpiomem%s", gpiomem_idx);
-        inst->mem_fd = open(pathbuf, O_RDWR|O_SYNC);
+        (*verbose_callback)("GPIO chips:\n");
     }
 
-    gpio_base = 0;
-    num_gpios = 0;
+    dt_set_path(dtPath);
 
-    for (i = 0; i < num_gpio_chips; i++)
+    for( i = 0; ; i++ )
     {
-        unsigned gpio;
+        sprintf(pathBuf, "gpio%d", i);
+        sprintf(gpiomemIdx, "%d", i);
 
-        inst = &gpio_chips[i];
-        inst->base = gpio_base;
-        chip = inst->chip;
-        inst->num_gpios = chip->interface->gpio_count(inst->priv);
-
-        if (verbose_callback)
+        aliasP = dt_read_prop("/aliases", pathBuf, NULL);
+        if( !aliasP && (i == 0) )
         {
-            char msg_buf[100];
-            snprintf(msg_buf, sizeof(msg_buf), "  %" PRIx64 ": %s (%d gpios)\n",
-                     inst->phys_addr, chip->name, inst->num_gpios);
-            (*verbose_callback)(msg_buf);
+            aliasP = dt_read_prop("/aliases", "gpio", NULL);
+            gpiomemIdx[0] = 0;
         }
 
-        if (!inst->num_gpios)
-            continue;
-        num_gpios = gpio_base + inst->num_gpios;
-        gpio_base = ROUND_UP(num_gpios, 100);
-
-        if (num_gpios > MAX_GPIO_PINS)
-            return -1;
-
-        names = dt_read_prop(inst->dtnode, "gpio-line-names", &names_len);
-        end = names + names_len;
-
-        for (gpio = 0, p = names; gpio < inst->num_gpios; gpio++)
+        if( !aliasP )
         {
-            static const char *names[] = { "ID_SD", "ID_SC" };
-            static const int pins[] = { 27, 28 };
-            char name_buf[32];
-            const char *name = "-", *arch_name;
+            break;
+        }
 
-            if (p && p < end)
+        compatibleP = dt_read_prop(aliasP, "compatible", NULL);
+        if( !compatibleP )
+        {
+            sprintf(pathBuf, "%s/..", aliasP);
+            compatibleP = dt_read_prop(pathBuf, "compatible", NULL);
+        }
+
+        chipP = gpioFindChip(compatibleP);
+        dt_free(compatibleP);
+
+        if( !chipP )
+        {
+            // Skip the unknown gpio chip
+            dt_free(aliasP);
+            continue;
+        }
+
+        physAddr = dt_parse_addr(aliasP);
+        if( physAddr == INVALID_ADDRESS )
+        {
+            dt_free(aliasP);
+            return(-1);
+        }
+
+        instP = gpioCreateInstance(chipP, physAddr, NULL, aliasP);
+        if( !instP )
+        {
+            dt_free(aliasP);
+            return(-1);
+        }
+
+        sprintf(pathBuf, "/dev/gpiomem%s", gpiomemIdx);
+        instP->memFd = open(pathBuf, O_RDWR | O_SYNC);
+    }
+
+    gpioBase = 0;
+    numGpios = 0;
+
+    for( i = 0; i < numGpioChips; i++ )
+    {
+        instP = &gpioChips[i];
+        instP->base = gpioBase;
+        chipP = instP->chipP;
+        instP->numGpios = chipP->interface->gpio_count(instP->privP);
+
+        if( verbose_callback )
+        {
+            char msgBuf[100];
+
+            snprintf(msgBuf, sizeof(msgBuf), "  %" PRIx64 ": %s (%d gpios)\n",
+                instP->physAddr, chipP->name, instP->numGpios);
+            (*verbose_callback)(msgBuf);
+        }
+
+        if( !instP->numGpios )
+        {
+            continue;
+        }
+
+        numGpios = gpioBase + instP->numGpios;
+        gpioBase = ROUND_UP(numGpios, 100);
+
+        if( numGpios > MAX_GPIO_PINS )
+        {
+            return(-1);
+        }
+
+        namesP = dt_read_prop(instP->dtnodeP, "gpio-line-names", &namesLen);
+        endP = namesP + namesLen;
+
+        for( gpio = 0, pP = namesP; gpio < instP->numGpios; gpio++ )
+        {
+            // Fallback mapping for the two ID_SD/ID_SC EEPROM-ID pins, which some
+            // device trees name explicitly instead of via a "PINnn" line-name.
+            static const char *idNames[] = { "ID_SD", "ID_SC" };
+            static const int idPins[] = { 27, 28 };
+
+            nameP = "-";
+
+            if( pP && (pP < endP) )
             {
-                name = p;
-                p += strlen(p) + 1;
-                if (sscanf(name, "PIN%u", &pin) != 1 ||
-                    pin < 1 || pin > NUM_HDR_PINS)
+                nameP = pP;
+                pP += strlen(pP) + 1;
+
+                if( (sscanf(nameP, "PIN%u", &pin) != 1) || (pin < 1) || (pin > NUM_HDR_PINS) )
                 {
-                    unsigned i;
                     pin = 0;
-                    for (i = 0; i < ARRAY_SIZE(names); i++)
+                    for( i = 0; i < ARRAY_SIZE(idNames); i++ )
                     {
-                        if (strcmp(name, names[i]) == 0)
+                        if( strcmp(nameP, idNames[i]) == 0 )
                         {
-                            pin = pins[i];
+                            pin = idPins[i];
                             break;
                         }
                     }
                 }
 
-                if (pin >= 1)
+                if( pin >= 1 )
                 {
-                    hdr_gpios[pin] = inst->base + gpio;
-                    if ((pin < first_hdr_pin) || (first_hdr_pin == GPIO_INVALID))
-                        first_hdr_pin = pin;
-                    if ((pin > last_hdr_pin) || (last_hdr_pin == GPIO_INVALID))
-                        last_hdr_pin = pin;
+                    hdrGpios[pin] = instP->base + gpio;
+
+                    if( (pin < firstHdrPin) || (firstHdrPin == GPIO_INVALID) )
+                    {
+                        firstHdrPin = pin;
+                    }
+
+                    if( (pin > lastHdrPin) || (lastHdrPin == GPIO_INVALID) )
+                    {
+                        lastHdrPin = pin;
+                    }
                 }
             }
 
-            arch_name = chip->interface->gpio_get_name(inst->priv, gpio);
-            if (!name[0] || !arch_name)
+            archNameP = chipP->interface->gpio_get_name(instP->privP, gpio);
+            if( !nameP[0] || !archNameP )
             {
-                gpio_names[inst->base + gpio] = NULL;
+                gpioNames[instP->base + gpio] = NULL;
                 continue;
             }
 
-            if (strcmp(name, arch_name) != 0)
+            if( strcmp(nameP, archNameP) != 0 )
             {
-                if (strcmp(name, "-") == 0)
+                if( strcmp(nameP, "-") == 0 )
                 {
-                    name = arch_name;
+                    nameP = archNameP;
                 }
                 else
                 {
-                    if (snprintf(name_buf, sizeof(name_buf), "%s/%s",
-                                 name, arch_name) >= (int)sizeof(name_buf))
-                        name_buf[sizeof(name_buf) - 1] = '\0';
-                    name = name_buf;
+                    if( snprintf(nameBuf, sizeof(nameBuf), "%s/%s", nameP, archNameP) >=
+                        (int)sizeof(nameBuf) )
+                    {
+                        nameBuf[sizeof(nameBuf) - 1] = '\0';
+                    }
+
+                    nameP = nameBuf;
                 }
             }
 
-            gpio_names[inst->base + gpio] = strdup(name);
+            gpioNames[instP->base + gpio] = strdup(nameP);
         }
 
-        dt_free(names);
+        dt_free(namesP);
     }
 
     // On a board with PINs, show pins 1-40
-    if (first_hdr_pin == 3)
-        first_hdr_pin = 1;
+    if( firstHdrPin == 3 )
+    {
+        firstHdrPin = 1;
+    }
 
-    return (int)num_gpios;
+    return( (int)numGpios );
 }
 
-
-int gpiolib_init_by_name(const char *name)
+// See gpiolib.h. Returns the chip's GPIO count on success (may be 0), or 0 if no chip
+// named 'name' is registered, or -1 if the chip was found but its instance could not be
+// created.
+int
+gpiolib_init_by_name(const char *name)
 {
-    const GPIO_CHIP_T *chip;
-    GPIO_CHIP_INSTANCE_T *inst;
-    unsigned gpio;
-    int pin;
+const GPIO_CHIP_T *chipP;
+GPIO_CHIP_INSTANCE_T *instP;
+unsigned gpio;
+int pin;
+const char *nameP;
 
-    for (pin = 0; pin <= NUM_HDR_PINS; pin++)
-        hdr_gpios[pin] = GPIO_INVALID;
-
-    if (verbose_callback)
-        (*verbose_callback)("GPIO chips:\n");
-
-    chip = gpio_find_chip(name);
-    if (!chip)
-        return 0;
-
-    inst = gpio_create_instance(chip, 0, NULL, NULL);
-    if (!inst)
-        return -1;
-
-    inst->num_gpios = chip->interface->gpio_count(inst->priv);
-
-    num_gpios = inst->num_gpios;
-
-    for (gpio = 0; gpio < inst->num_gpios; gpio++)
+    for( pin = 0; pin <= NUM_HDR_PINS; pin++ )
     {
-        const char *name = chip->interface->gpio_get_name(inst->priv, gpio);
-        if (!name)
+        hdrGpios[pin] = GPIO_INVALID;
+    }
+
+    if( verbose_callback )
+    {
+        (*verbose_callback)("GPIO chips:\n");
+    }
+
+    chipP = gpioFindChip(name);
+    if( !chipP )
+    {
+        return(0);
+    }
+
+    instP = gpioCreateInstance(chipP, 0, NULL, NULL);
+    if( !instP )
+    {
+        return(-1);
+    }
+
+    instP->numGpios = chipP->interface->gpio_count(instP->privP);
+    numGpios = instP->numGpios;
+
+    for( gpio = 0; gpio < instP->numGpios; gpio++ )
+    {
+        nameP = chipP->interface->gpio_get_name(instP->privP, gpio);
+        if( !nameP )
         {
-            gpio_names[inst->base + gpio] = NULL;
+            gpioNames[instP->base + gpio] = NULL;
             continue;
         }
 
-        gpio_names[gpio] = strdup(name);
+        gpioNames[gpio] = strdup(nameP);
     }
 
-    if (inst->num_gpios && verbose_callback)
+    if( instP->numGpios && verbose_callback )
     {
-        char msg_buf[100];
-        snprintf(msg_buf, sizeof(msg_buf), "  %s (%d gpios)\n",
-                 chip->name, inst->num_gpios);
-        (*verbose_callback)(msg_buf);
+        char msgBuf[100];
+
+        snprintf(msgBuf, sizeof(msgBuf), "  %s (%d gpios)\n", chipP->name, instP->numGpios);
+        (*verbose_callback)(msgBuf);
     }
 
-    return (int)num_gpios;
+    return( (int)numGpios );
 }
 
-int gpiolib_mmap(void)
+// See gpiolib.h. Returns 0 on success, or errno (via open()/mmap() failure) or -1 (a chip's
+// gpio_probe_instance() failed) otherwise.
+int
+gpiolib_mmap(void)
 {
-    int pagesize = getpagesize();
-    int mem_fd = -1;
-    unsigned i;
+int pageSize;
+int memFd;
+unsigned i, align;
+GPIO_CHIP_INSTANCE_T *instP;
+const GPIO_CHIP_T *chipP;
+void *gpioMapP;
+void *newPrivP;
 
-    for (i = 0; i < num_gpio_chips; i++)
+    pageSize = getpagesize();
+    memFd = -1;
+
+    for( i = 0; i < numGpioChips; i++ )
     {
-        GPIO_CHIP_INSTANCE_T *inst;
-        const GPIO_CHIP_T *chip;
-        void *gpio_map;
-        void *new_priv;
-        unsigned align;
+        instP = &gpioChips[i];
+        chipP = instP->chipP;
 
-        inst = &gpio_chips[i];
-        chip = inst->chip;
+        align = instP->physAddr & (pageSize - 1);
 
-        align = inst->phys_addr & (pagesize - 1);
-
-        if (inst->mem_fd >= 0)
+        if( instP->memFd >= 0 )
         {
-            gpio_map = mmap(
+            gpioMapP = mmap(
                 NULL,                   /* Any address in our space will do */
-                chip->size + align,     /* Map length */
+                chipP->size + align,    /* Map length */
                 PROT_READ | PROT_WRITE, /* Enable reading & writing */
                 MAP_SHARED,             /* Shared with other processes */
-                inst->mem_fd,           /* File to map */
+                instP->memFd,           /* File to map */
                 0                       /* Offset to GPIO peripheral */
                 );
         }
         else
         {
-            if (mem_fd < 0)
+            if( memFd < 0 )
             {
-                mem_fd = open("/dev/mem", O_RDWR|O_SYNC);
-                if (mem_fd < 0)
-                    return errno;
+                memFd = open("/dev/mem", O_RDWR | O_SYNC);
+                if( memFd < 0 )
+                {
+                    return(errno);
+                }
             }
-            gpio_map = mmap(
-                NULL,                   /* Any address in our space will do */
-                chip->size + align,     /* Map length */
-                PROT_READ | PROT_WRITE, /* Enable reading & writing */
-                MAP_SHARED,             /* Shared with other processes */
-                mem_fd,                 /* File to map */
-                inst->phys_addr - align /* Offset to GPIO peripheral */
+
+            gpioMapP = mmap(
+                NULL,                     /* Any address in our space will do */
+                chipP->size + align,      /* Map length */
+                PROT_READ | PROT_WRITE,   /* Enable reading & writing */
+                MAP_SHARED,               /* Shared with other processes */
+                memFd,                    /* File to map */
+                instP->physAddr - align   /* Offset to GPIO peripheral */
                 );
         }
 
-        if (gpio_map == MAP_FAILED)
-            return errno;
+        if( gpioMapP == MAP_FAILED )
+        {
+            return(errno);
+        }
 
-        new_priv = chip->interface->gpio_probe_instance(inst->priv,
-                                                        (void *)((char *)gpio_map + align));
-        if (!new_priv)
-            return -1;
-        inst->priv = new_priv;
+        newPrivP = chipP->interface->gpio_probe_instance(instP->privP,
+            (void *)((char *)gpioMapP + align));
+        if( !newPrivP )
+        {
+            return(-1);
+        }
+
+        instP->privP = newPrivP;
     }
 
-    return 0;
+    return(0);
 }
 
-void gpiolib_set_verbose(void (*callback)(const char *))
+// See gpiolib.h. No return value.
+void
+gpiolib_set_verbose(void (*callback)(const char *))
 {
     verbose_callback = callback;
 }

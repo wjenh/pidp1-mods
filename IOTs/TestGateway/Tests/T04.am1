@@ -1,0 +1,283 @@
+T04: HSC GATEWAY NORMAL (CYCLE-STEALING) MODE
+/*
+ * T04.am1 -- Exercises HSC "normal" mode (neither HSC_MODE_IMMEDIATE nor HSC_MODE_THREADED
+ *            set) via the IOT 44 Test Gateway. This is the real cycle-stealing path --
+ *            src/blincolnlights/pdp1/highSpeedChannels.c's processChannel(), driven once per
+ *            main-loop iteration from main.c, transferring exactly one word per call at the
+ *            hardware's real 5us-per-word rate -- and, per the project's HSC conformance
+ *            review (02-Jul-26), it had NO exercise anywhere in the codebase before this
+ *            test: the Type 23 Drum and Type 340 Display both use IMMEDIATE/THREADED only.
+ *
+ * Harness required: none.
+ *
+ * Uses HSC channel 2 (see T01.am1's header comment). Defensive hgf first, hgf again before
+ * halting.
+ *
+ * Why hgs is checked only once, right after hgx, and always finds HSC_DONE rather than
+ * HSC_BUSY: while a channel is HSC_BUSY, main.c's "if (processHSCchannels()) steal;
+ * else cycle();" dispatch steals a cycle EVERY main-loop iteration instead of running the
+ * CPU, so this program's own next instruction cannot execute at all until the transfer is
+ * completely finished. By the time hgs's own iot instruction actually runs, the transfer is
+ * necessarily already done -- this is the correct, faithful behavior (real cycle stealing
+ * is transparent to the running program specifically because the CPU doesn't advance during
+ * it), not a gap in this test. See IOTs/TestGateway/Tests/README.md for more, including why
+ * this same property makes true 2-channel priority arbitration untestable from a single
+ * straight-line PDP-1 program.
+ *
+ * Tests:
+ *   T04-1  hgx TOMEM (normal mode) returns IO = HSC_BUSY
+ *   T04-2  hgs immediately afterward reports HSC_DONE (the transfer already completed via
+ *          cycle stealing, invisibly to this program, before the next instruction could run)
+ *   T04-3  first written word matches the staged source data
+ *   T04-4  last written word matches the staged source data
+ *   T04-5  hgx FROMMEM (normal mode), reading the data back, returns IO = HSC_BUSY
+ *   T04-6  first word read back (via hgd) matches
+ *   T04-7  last word read back (via hgd) matches
+ *
+ * Assembler: am1
+ * Assemble:  am1 T04.am1
+ */
+
+#include <HSC/hscgatewaydefs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define TESTCHAN 2
+
+100/
+
+begin,
+    jsp resetResults
+    lio [TESTCHAN]
+    hgf                     // defensive cleanup, see file header
+
+    lio [TESTCHAN]
+    hga
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+    lac [ctlLoadSrc]
+    lio [TESTCHAN]
+    hgl
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+// ---- T04-1: hgx TOMEM (normal mode) returns HSC_BUSY ----------------------
+
+    lac [ctlExecWrite]
+    lio [TESTCHAN]
+    hgx
+    lai
+    sub [HSC_BUSY]
+    sza
+    jmp t1_fail
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+t1_done,
+
+// ---- T04-2: hgs immediately afterward reports HSC_DONE --------------------
+
+    lio [TESTCHAN]
+    hgs
+    lai
+    sub [HSC_DONE]
+    sza
+    jmp t2_fail
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// ---- T04-3: first written word matches -------------------------------------
+
+    lac destN0
+    sub [0151515]
+    sza
+    jmp t3_fail
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+    jmp t3_done
+t3_fail,
+    lio [REPORT_FAIL]
+    lac [lbl3]
+    jda reportResult
+t3_done,
+
+// ---- T04-4: last written word matches ---------------------------------------
+
+    lac destN3
+    sub [0636363]
+    sza
+    jmp t4_fail
+    lio [REPORT_PASS]
+    lac [lbl4]
+    jda reportResult
+    jmp t4_done
+t4_fail,
+    lio [REPORT_FAIL]
+    lac [lbl4]
+    jda reportResult
+t4_done,
+
+// ---- T04-5: hgx FROMMEM (normal mode) returns HSC_BUSY --------------------
+
+    lac [ctlExecRead]
+    lio [TESTCHAN]
+    hgx
+    lai
+    sub [HSC_BUSY]
+    sza
+    jmp t5_fail
+    lio [REPORT_PASS]
+    lac [lbl5]
+    jda reportResult
+    jmp t5_done
+t5_fail,
+    lio [REPORT_FAIL]
+    lac [lbl5]
+    jda reportResult
+t5_done,
+
+// ---- dump fromBuf[2] into readBackN0-readBackN3 via hgd --------------------
+
+    lac [ctlDumpDest]
+    lio [TESTCHAN]
+    hgd
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+// ---- T04-6: read-back first word matches -----------------------------------
+
+    lac readBackN0
+    sub [0151515]
+    sza
+    jmp t6_fail
+    lio [REPORT_PASS]
+    lac [lbl6]
+    jda reportResult
+    jmp t6_done
+t6_fail,
+    lio [REPORT_FAIL]
+    lac [lbl6]
+    jda reportResult
+t6_done,
+
+// ---- T04-7: read-back last word matches -------------------------------------
+
+    lac readBackN3
+    sub [0636363]
+    sza
+    jmp t7_fail
+    lio [REPORT_PASS]
+    lac [lbl7]
+    jda reportResult
+    jmp t7_done
+t7_fail,
+    lio [REPORT_FAIL]
+    lac [lbl7]
+    jda reportResult
+t7_done,
+
+// ---- cleanup and halt ---------------------------------------------------------
+
+cleanup,
+    lio [TESTCHAN]
+    hgf
+
+    jsp printSummary
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- test labels ---------------------------------------------------------
+
+lbl1,
+    text "T04-1 hgx returns busy"
+    013
+lbl2,
+    text "T04-2 status done"
+    013
+lbl3,
+    text "T04-3 first word"
+    013
+lbl4,
+    text "T04-4 last word"
+    013
+lbl5,
+    text "T04-5 frommem busy"
+    013
+lbl6,
+    text "T04-6 readback first"
+    013
+lbl7,
+    text "T04-7 readback last"
+    013
+
+// ---- source data, destination area, and readback area -----------------------
+
+srcData,
+    0151515
+    0272727
+    0454545
+    0636363
+
+destN0,
+    table 3
+destN3,
+    table 1
+
+readBackN0,
+    table 3
+readBackN3,
+    table 1
+
+// ---- control blocks -----------------------------------------------------------
+
+ctlLoadSrc,
+    4
+    0
+    srcData
+
+ctlExecWrite,
+    HSC_MODE_TOMEM
+    4
+    0
+    destN0
+
+ctlExecRead,
+    HSC_MODE_FROMMEM
+    4
+    0
+    destN0
+
+ctlDumpDest,
+    4
+    0
+    readBackN0
+
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

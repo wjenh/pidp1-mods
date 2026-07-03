@@ -47,4 +47,8 @@ int HSCexecute(HSCChannelP channelP, HSCRequestP requestP);
 
 int HSCwait(HSCChannelP channelP);       // wait for completion of a request
 int HSCgetStatus(HSCChannelP channelP);   // returns one of the HSC statuses
+
+// Emulator-wide abort: stops any in-flight transfer on every assigned channel and mark with HSC_ABORT.
+// Normally called from main.c on a stop/start/continue/examine/read-in switch edge.
+void HSCreset(void);
 #endif

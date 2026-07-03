@@ -1,0 +1,369 @@
+T02: HSC GATEWAY IMMEDIATE MODE DATA MOVEMENT
+/*
+ * T02.am1 -- Exercises HSC_MODE_IMMEDIATE data movement (both directions plus within-bank
+ *            address wraparound) via the IOT 44 Test Gateway.
+ *
+ * Harness required: none.
+ *
+ * Uses HSC channel 2 (see T01.am1's header comment for why). A defensive hgf runs first,
+ * and channel 2 is freed again before halting -- see T01.am1 for the cross-test-contamination
+ * rationale (HSC channel state is process-lifetime static, not cleared between .rim loads).
+ *
+ * All destination addresses used here (destW0-destW7, and the wraparound targets 07777/0/1)
+ * are picked to sit outside this program's own code/data, so a transfer bug that wrote too
+ * much or to the wrong place would land somewhere harmless rather than corrupting the
+ * running program -- except for the deliberate wraparound test, which targets addresses
+ * 0 and 1 on purpose (see its comment below for why that's safe in this codebase).
+ *
+ * Tests:
+ *   T02-1  hgx TOMEM|IMMEDIATE completes with IO = HSC_OK
+ *   T02-2  hgs immediately after an IMMEDIATE transfer reports HSC_DONE
+ *   T02-3  first written word (destW0) matches the staged source data
+ *   T02-4  last written word (destW7) matches the staged source data
+ *   T02-5  hgx FROMMEM|IMMEDIATE (reading back what T02-1 wrote) completes with IO = HSC_OK
+ *   T02-6  first word read back (via hgd) matches destW0
+ *   T02-7  last word read back (via hgd) matches destW7
+ *   T02-8  TOMEM|IMMEDIATE wraparound: count=3 starting at address 07777 wraps to 07777,0,1;
+ *          verify the word at address 0 (the wrapped middle word)
+ *   T02-9  wraparound: verify the word at address 1 (the wrapped last word)
+ *
+ * Assembler: am1
+ * Assemble:  am1 T02.am1
+ */
+
+#include <HSC/hscgatewaydefs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define TESTCHAN 2
+
+100/
+
+begin,
+    jsp resetResults
+    lio [TESTCHAN]
+    hgf                     // defensive cleanup, see file header
+
+    lio [TESTCHAN]
+    hga
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr             // can't test anything further without the channel
+
+// ---- stage source data into toBuf[2] via hgl ------------------------------
+
+    lac [ctlLoadSrc]
+    lio [TESTCHAN]
+    hgl
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+// ---- T02-1: hgx TOMEM|IMMEDIATE ---------------------------------------
+
+    lac [ctlExecWrite]
+    lio [TESTCHAN]
+    hgx
+    lai
+    sub [HSC_OK]
+    sza
+    jmp t1_fail
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+t1_done,
+
+// ---- T02-2: hgs reports HSC_DONE immediately (IMMEDIATE never leaves BUSY) --
+
+    lio [TESTCHAN]
+    hgs
+    lai
+    sub [HSC_DONE]
+    sza
+    jmp t2_fail
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// ---- T02-3: first written word matches ------------------------------------
+
+    lac destW0
+    sub [0111111]
+    sza
+    jmp t3_fail
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+    jmp t3_done
+t3_fail,
+    lio [REPORT_FAIL]
+    lac [lbl3]
+    jda reportResult
+t3_done,
+
+// ---- T02-4: last written word matches --------------------------------------
+
+    lac destW7
+    sub [0470101]
+    sza
+    jmp t4_fail
+    lio [REPORT_PASS]
+    lac [lbl4]
+    jda reportResult
+    jmp t4_done
+t4_fail,
+    lio [REPORT_FAIL]
+    lac [lbl4]
+    jda reportResult
+t4_done,
+
+// ---- T02-5: hgx FROMMEM|IMMEDIATE, reading destW0-destW7 back -------------
+
+    lac [ctlExecRead]
+    lio [TESTCHAN]
+    hgx
+    lai
+    sub [HSC_OK]
+    sza
+    jmp t5_fail
+    lio [REPORT_PASS]
+    lac [lbl5]
+    jda reportResult
+    jmp t5_done
+t5_fail,
+    lio [REPORT_FAIL]
+    lac [lbl5]
+    jda reportResult
+t5_done,
+
+// ---- dump fromBuf[2] into readBackW0-readBackW7 via hgd -------------------
+
+    lac [ctlDumpDest]
+    lio [TESTCHAN]
+    hgd
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+// ---- T02-6: read-back first word matches ----------------------------------
+
+    lac readBackW0
+    sub [0111111]
+    sza
+    jmp t6_fail
+    lio [REPORT_PASS]
+    lac [lbl6]
+    jda reportResult
+    jmp t6_done
+t6_fail,
+    lio [REPORT_FAIL]
+    lac [lbl6]
+    jda reportResult
+t6_done,
+
+// ---- T02-7: read-back last word matches ------------------------------------
+
+    lac readBackW7
+    sub [0470101]
+    sza
+    jmp t7_fail
+    lio [REPORT_PASS]
+    lac [lbl7]
+    jda reportResult
+    jmp t7_done
+t7_fail,
+    lio [REPORT_FAIL]
+    lac [lbl7]
+    jda reportResult
+t7_done,
+
+// ---- stage 3-word wraparound source ----------------------------------------
+
+    lac [ctlLoadWrap]
+    lio [TESTCHAN]
+    hgl
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+// ---- hgx TOMEM|IMMEDIATE, count 3, starting address 07777 (wraps) --------
+//
+// Words land at 07777, 0, 1 in that order. Addresses 0 and 1 are used here
+// deliberately -- IOTs/Type23Drum/Tests/drumtest.am1 uses address 0 as scratch the same
+// way, and this codebase's test programs don't rely on any hardware use of low memory
+// (no sequence-break vectors are active in the default test configuration).
+
+    lac [ctlExecWrap]
+    lio [TESTCHAN]
+    hgx
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+// ---- T02-8: wrapped word at address 0 --------------------------------------
+
+    lac 0
+    sub [0222222]
+    sza
+    jmp t8_fail
+    lio [REPORT_PASS]
+    lac [lbl8]
+    jda reportResult
+    jmp t8_done
+t8_fail,
+    lio [REPORT_FAIL]
+    lac [lbl8]
+    jda reportResult
+t8_done,
+
+// ---- T02-9: wrapped word at address 1 --------------------------------------
+
+    lac 1
+    sub [0333333]
+    sza
+    jmp t9_fail
+    lio [REPORT_PASS]
+    lac [lbl9]
+    jda reportResult
+    jmp t9_done
+t9_fail,
+    lio [REPORT_FAIL]
+    lac [lbl9]
+    jda reportResult
+t9_done,
+
+// ---- cleanup and halt -------------------------------------------------------
+
+cleanup,
+    lio [TESTCHAN]
+    hgf
+
+    jsp printSummary
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- test labels -------------------------------------------------------
+
+lbl1,
+    text "T02-1 tomem immediate"
+    013
+lbl2,
+    text "T02-2 status done"
+    013
+lbl3,
+    text "T02-3 first word"
+    013
+lbl4,
+    text "T02-4 last word"
+    013
+lbl5,
+    text "T02-5 frommem immediate"
+    013
+lbl6,
+    text "T02-6 readback first"
+    013
+lbl7,
+    text "T02-7 readback last"
+    013
+lbl8,
+    text "T02-8 wrap word 0"
+    013
+lbl9,
+    text "T02-9 wrap word 1"
+    013
+
+// ---- source data (8 words, distinct patterns) ------------------------------
+
+srcData,
+    0111111
+    0222222
+    0333333
+    0444444
+    0505050
+    0606060
+    0707070
+    0470101
+
+// ---- destination area for the TOMEM transfer, and source for FROMMEM ------
+
+destW0,
+    table 7             // destW0 plus 7 more words = destW0..destW6
+destW7,
+    table 1             // the 8th word
+
+// ---- destination area for the read-back dump -------------------------------
+
+readBackW0,
+    table 7
+readBackW7,
+    table 1
+
+// ---- 3-word wraparound source data ------------------------------------------
+
+wrapSrc,
+    0111111
+    0222222
+    0333333
+
+// ---- control blocks ----------------------------------------------------------
+//
+// hgx block: mode, count, bank, addr.  hgl/hgd block: count, bank, addr.
+
+ctlLoadSrc,
+    010                 // count = 8 decimal
+    0
+    srcData
+
+ctlExecWrite,
+    HSC_MODE_TOMEM HSC_MODE_IMMEDIATE
+    010                 // count = 8 decimal
+    0
+    destW0
+
+ctlExecRead,
+    HSC_MODE_FROMMEM HSC_MODE_IMMEDIATE
+    010                 // count = 8 decimal
+    0
+    destW0
+
+ctlDumpDest,
+    010                 // count = 8 decimal
+    0
+    readBackW0
+
+ctlLoadWrap,
+    3
+    0
+    wrapSrc
+
+ctlExecWrap,
+    HSC_MODE_TOMEM HSC_MODE_IMMEDIATE
+    3
+    0
+    07777
+
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

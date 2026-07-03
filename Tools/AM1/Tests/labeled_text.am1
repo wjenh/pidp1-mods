@@ -1,0 +1,33 @@
+Test of label + text/ascii/type340 on the same line
+
+// Verify that a location label and a text directive can appear on the same
+// line.  Before the labelTrailer grammar fix this was a syntax error; the
+// only workarounds were to split onto two lines or use a semicolon
+// (e.g. msg,; text "hi").
+//
+// Three constructs tested:
+//   msgtbl,  text  "Hi\n"       -- TEXT token (flexo-encoded)
+//   dattbl,  ascii "AB"         -- ASCII STRING (two-token form)
+//   gfxtbl,  type340 "XY"       -- TYPE340 T340STRING
+//
+// Each labeled block ends with a 013 stop-word.
+// The final case confirms the ordinary label+instruction form still works.
+
+100/
+
+// Labeled text on the same line:
+msgtbl, text "Hi\n"
+        013
+
+// Labeled ascii on the same line:
+dattbl, ascii "AB"
+        013
+
+// Labeled type340 on the same line:
+gfxtbl, type340 "XY"
+        013
+
+// Ordinary label + instruction on same line (must still work):
+entry,  jmp entry
+
+stop

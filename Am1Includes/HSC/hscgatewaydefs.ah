@@ -1,0 +1,53 @@
+#ifndef HSCGATEWAYDEFS_AH
+#define HSCGATEWAYDEFS_AH
+
+// Defines for IOT 44, the Test Gateway (IOTs/TestGateway/IOT_44.c).
+//
+// This is NOT a real device -- there is no Type 44 hardware, and the real Type 19 High
+// Speed Channel had no interface reachable from user code at all. This IOT and these
+// defines exist solely to let an am1 test program drive the emulator's internal HSC
+// implementation (src/blincolnlights/pdp1/highSpeedChannels.c) directly, for testing.
+// See IOTs/TestGateway/README.txt and the header comment in IOT_44.c for the full
+// rationale, including a deadlock hazard around hgw that any caller must respect.
+//
+// Sub-commands are selected via the "ch" field (MB bits 6-11), the same DCS2-style
+// "iot ccdd" encoding dcs2defs.ah uses (cc = 2-octal-digit ch value, dd = 2-octal-digit
+// device number, here always 44).
+//
+// Every command takes its HSC channel number (1-5) in IO bits 0-5 before the iot is
+// executed. hgx, hgl, and hgd additionally take a flat core address (bank*4096+offset) of
+// a control block in AC -- see IOT_44.c for the exact word layout of each control block.
+
+#define hga iot 0044        // allocate channel; IO out: HSC_OK or HSC_ERR
+#define hgf iot 0144        // free channel; IO out: HSC_OK or HSC_ERR
+#define hgx iot 0244        // execute; AC = control block addr; IO out: raw HSCexecute() value
+#define hgs iot 0344        // get status; IO out: raw HSCgetStatus() value, or HSC_ERR
+#define hgw iot 0444        // wait; IO out: raw HSCwait() value, or HSC_ERR -- see deadlock note above
+#define hgl iot 0544        // load scratch buffer from core; AC = control block addr
+#define hgd iot 0644        // dump scratch buffer to core; AC = control block addr
+#define hgr iot 0744        // reset (simulated front-panel abort); no params; IO out: HSC_OK
+
+// Status/error codes, copied from src/blincolnlights/pdp1/highSpeedChannels.h so am1 test
+// programs don't need a separate mechanism to reach a C header. Keep these in sync if the
+// HSC status enum ever changes.
+#define HSC_OK 0
+#define HSC_BUSY 1
+#define HSC_DONE 2
+#define HSC_ABORT 3
+
+// HSC_ERR is -1 as a plain C int on the highSpeedChannels.h side. IOT_44.c's setIO() masks
+// every register write to 18 bits (WORDMASK) before storing it, so what actually shows up
+// in IO is octal 0777777 (all 18 bits set) -- NOT the bit pattern am1's own 1's-complement
+// constant folding would generate for a literal "[-1]" (which is 0777776, since am1 emulates
+// real PDP-1 1's-complement arithmetic -- see am1-syntax.md). Always compare against this
+// symbol, never against a literal "-1", to avoid that mismatch.
+#define HSC_ERR 0777777
+
+// Mode bitflags for the hgx control block's word 0, also copied from highSpeedChannels.h.
+#define HSC_MODE_FROMMEM 001
+#define HSC_MODE_TOMEM 002
+#define HSC_MODE_IMMEDIATE 004
+#define HSC_MODE_THREADED 010
+#define HSC_MODE_UPDATEPANEL 020
+
+#endif

@@ -1,0 +1,217 @@
+T03: HSC GATEWAY THREADED MODE
+/*
+ * T03.am1 -- Exercises HSC_MODE_THREADED via the IOT 44 Test Gateway: HSCexecute()'s
+ *            immediate-BUSY-return contract, HSCwait()'s bounded completion, and that the
+ *            data itself (moved synchronously inside HSCexecute(), same as IMMEDIATE) ends
+ *            up correct.
+ *
+ * Harness required: none.
+ *
+ * Uses HSC channel 2 (see T01.am1's header comment). Defensive hgf first, hgf again before
+ * halting.
+ *
+ * Why this test does NOT try to observe HSC_BUSY via hgs before calling hgw: once
+ * HSCexecute() sets the channel busy, the emulator's main loop steals a cycle every
+ * iteration until the fake break count (src/blincolnlights/pdp1/highSpeedChannels.c's
+ * brkCount) drains to 0 -- and while any channel is busy, the main loop *never* calls
+ * cycle() for the CPU (see main.c's "if (processHSCchannels()) steal; else cycle();"
+ * dispatch). That means this program's own next instruction, whatever it is, simply cannot
+ * execute until the channel is already done -- the CPU is genuinely frozen for the
+ * duration, exactly like real cycle-stealing hardware. So polling for BUSY from a
+ * single-threaded PDP-1 program is not possible for THREADED (or NORMAL) mode; see
+ * IOTs/TestGateway/Tests/README.md for the full explanation and why true multi-channel
+ * priority arbitration needs a native-code test harness instead (a separate, deferred task).
+ *
+ * Tests:
+ *   T03-1  hgx TOMEM|THREADED returns IO = HSC_BUSY (not HSC_OK -- THREADED always reports
+ *          busy immediately, unlike IMMEDIATE)
+ *   T03-2  hgw on that channel returns IO = HSC_DONE
+ *   T03-3  hgs after hgw reports HSC_DONE
+ *   T03-4  first written word matches the staged source data
+ *   T03-5  second (last) written word matches the staged source data
+ *
+ * Assembler: am1
+ * Assemble:  am1 T03.am1
+ */
+
+#include <HSC/hscgatewaydefs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define TESTCHAN 2
+
+100/
+
+begin,
+    jsp resetResults
+    lio [TESTCHAN]
+    hgf                     // defensive cleanup, see file header
+
+    lio [TESTCHAN]
+    hga
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+    lac [ctlLoadSrc]
+    lio [TESTCHAN]
+    hgl
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+// ---- T03-1: hgx TOMEM|THREADED returns HSC_BUSY ---------------------------
+//
+// Keep the count small (2 words): hgw below will busy-wait/spin the emulator's main thread
+// for count*5us, and this same thread is also driving the main loop's own break-count
+// countdown before hgw even gets a chance to run (see file header) -- see IOT_44.c's
+// per-command comment on hgx for why large THREADED counts should be avoided here.
+
+    lac [ctlExecWrite]
+    lio [TESTCHAN]
+    hgx
+    lai
+    sub [HSC_BUSY]
+    sza
+    jmp t1_fail
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+t1_done,
+
+// ---- T03-2: hgw returns HSC_DONE -------------------------------------------
+
+    lio [TESTCHAN]
+    hgw
+    lai
+    sub [HSC_DONE]
+    sza
+    jmp t2_fail
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// ---- T03-3: hgs after hgw reports HSC_DONE --------------------------------
+
+    lio [TESTCHAN]
+    hgs
+    lai
+    sub [HSC_DONE]
+    sza
+    jmp t3_fail
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+    jmp t3_done
+t3_fail,
+    lio [REPORT_FAIL]
+    lac [lbl3]
+    jda reportResult
+t3_done,
+
+// ---- T03-4: first written word matches -------------------------------------
+
+    lac destT0
+    sub [0121212]
+    sza
+    jmp t4_fail
+    lio [REPORT_PASS]
+    lac [lbl4]
+    jda reportResult
+    jmp t4_done
+t4_fail,
+    lio [REPORT_FAIL]
+    lac [lbl4]
+    jda reportResult
+t4_done,
+
+// ---- T03-5: second written word matches ------------------------------------
+
+    lac destT1
+    sub [0343434]
+    sza
+    jmp t5_fail
+    lio [REPORT_PASS]
+    lac [lbl5]
+    jda reportResult
+    jmp t5_done
+t5_fail,
+    lio [REPORT_FAIL]
+    lac [lbl5]
+    jda reportResult
+t5_done,
+
+// ---- cleanup and halt -------------------------------------------------------
+
+cleanup,
+    lio [TESTCHAN]
+    hgf
+
+    jsp printSummary
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- test labels -------------------------------------------------------
+
+lbl1,
+    text "T03-1 hgx returns busy"
+    013
+lbl2,
+    text "T03-2 hgw returns done"
+    013
+lbl3,
+    text "T03-3 status after wait"
+    013
+lbl4,
+    text "T03-4 first word"
+    013
+lbl5,
+    text "T03-5 second word"
+    013
+
+// ---- source data and destination area --------------------------------------
+
+srcData,
+    0121212
+    0343434
+
+destT0,
+    table 1
+destT1,
+    table 1
+
+// ---- control blocks ---------------------------------------------------------
+
+ctlLoadSrc,
+    2
+    0
+    srcData
+
+ctlExecWrite,
+    HSC_MODE_TOMEM HSC_MODE_THREADED
+    2
+    0
+    destT0
+
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

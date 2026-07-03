@@ -34,15 +34,19 @@
  *    not raw samples, and significantly reduces cpu use.
  * wje 16-Jun-26 - reload config on sighup
  * wje 26-Jun-26 - improve performance a bit, fix some rare potential failure points
- * wje 02-Jul-26 - double-buffer PanelLights.lights[][] (lightsReadyIdx) so setLights()'s
+ * wje 01-Jul-26 - double-buffer PanelLights.lights[][] (lightsReadyIdx) so setLights()'s
  *    per-pass snapshot can never tear against pwmthread's concurrent writes; a torn read
  *    could show up as a brief, spuriously-bright flash on one pass.
- *    LightRow()'s phase sleeps now target absolute per-row deadlines
- *    instead of chained relative nsleep() calls, so a late wakeup in one phase no longer pushes
- *    every later phase/row of the pass out with it.
- *    Clamping added to keep the pwm count from exceeding the dimming factor.
- *    The gpio interaction was optimized to work better with the pi 5, no effect on the pi 4.
- *    Extensive testing shows the use of real time thread use is not expensive, keeping the capability.
+ * wje 01-Jul-26 - lightRow()'s phase sleeps now target absolute per-row deadlines
+ *    instead of chained relative nsleep() calls, so a late wakeup in one phase no longer pushes every
+ *    later phase/row of the pass out with it.
+ *    Fixed a bug in the original gpio code running on a Pi 5.
+ *    Rp1_gpio_set_drive() did a read-modify-write on the shared bank OUT register instead of using
+ *    RP1's atomic SET/CLR registers.
+ *    LightRow() optimized to only update the gpio light state if the light actually changed.
+ * wje 02-Jul-26 - testing of rt thread priority shows no significant cpu impact and it does
+ *    eliminate any residual light flashes caused by the Linux scheduler.
+ *    Updated the documentation to indicate this, and give an ok to use if needed.
  */
 #include <stdlib.h>
 #include <stdarg.h>
@@ -89,8 +93,8 @@
 //
 // Pwmcount[][] is a u16 and at the pdp1's nominal 5us/cycle 1000us corresponds to ~200 cycles,
 // giving pwmthread a much longer integration window.
-// This both reduces pwmthread's wakeup rate and combined with the phase delays above
-// makes the pipeline less sensitive to non-realtime scheduling jitter.
+// This both reduces pwmthread's wakeup rate (lower CPU load) and combined with the longer lightRow()
+// phase delays above, makes the whole pipeline far less sensitive to non-realtime scheduling jitter.
 // Pwmthread measures the actual number of elapsed cycles via panelP->cyclecount and scales
 // counts accordingly rather than assuming a fixed cycle count.
 // This sets the approximate update loop cycle time, the update sleeps this long after each cycle.
@@ -102,8 +106,9 @@
 #define MIN_PWM_PERIOD_US 100
 #define MIN_SCAN_US 100
 
-// Real-time (SCHED_FIFO) priorities for the two panel threads.
-// Panelthread is one above pwmthread so it wins if both are runnable at once.
+// Real-time (SCHED_FIFO) priorities for the two panel threads. Deliberately below the
+// maximum (99) so kernel housekeeping RT threads still get to run.
+// The panel will win over the pidp1 emulator, which is what we want.
 #define PANEL_RT_PRIO 80
 #define PWM_RT_PRIO 79
 
@@ -120,11 +125,11 @@
 #define FILTER_ALPHA_RISE 0.45f
 #define FILTER_ALPHA_FALL 0.04f
 
-#define NPWMHISTBUCKETS 6   // used for timing
+// Used for timing, number of histogram buckets to keep.
+#define NPWMHISTBUCKETS 6
 #define NPHASEHISTBUCKETS 6
 
 #define FLIMIT(f) (((f) < 0.0)?0.0:(((f) > 1.0)?1.0:(f)))
-#define ELEMENTS(x) ((int)(sizeof(x)/sizeof(x[0])))
 
 typedef Panel *PanelP;      // Panel is in the panel_pidp1.h include file, it's what's in shared memory.
 
@@ -132,11 +137,7 @@ typedef Panel *PanelP;      // Panel is in the panel_pidp1.h include file, it's 
 // for the 10 rows x 18 columns of front-panel lights, plus a pointer to the shared
 // memory Panel struct used to exchange switch/light data with the emulator.
 //
-// lights[][] is double-buffered so that pwmthread (writer) and setLights()/panelthread (reader)
-// never touch the same buffer at once.
-// Pwmthread computes a full pass into the pending buffer then publishes it by storing its
-// index into lightsReadyIdx with a release fence.
-// SetLights() loads lightsReadyIdx with an acquire fence and copies from that buffer.i
+// lights[][] is double-buffered so that pwmthread and panelthread don't modify the same buffer at the same time.
 struct PanelLights
 {
     u8 lights[2][10][18];
@@ -151,36 +152,24 @@ volatile int doexit;
 volatile sig_atomic_t reconfigRequested;    // set by the SIGHUP handler, serviced in panelthread's loop
 
 bool setPriority = false;
-bool doTiming = false;
-u64 startTime;
-u64 pwmDelta, pwmLoopCount;     // Used for timing data
-u64 loopDelta, loopCount, loopMin, loopMax;
 
-// Timing data for just the 10x18 read/scale/filter compute loop inside pwmthread.
+// Timing data, only used if timing is enabled.
+bool doTiming = false;
+u64 transitionStallCount, transitionStallNsSum;
+int worstPhaseStallRow = -1, worstPhaseStallPhase = -1;   // -1 means "no stall recorded yet"
+int worstTransitionStallNCols;   // how many of the 18 columns were transitioning at that phase
+int worstTransitionStallRow = -1, worstTransitionStallPhase = -1;
+u64 pwmDelta, pwmLoopCount;
 u64 pwmCompUs, pwmCompMin, pwmCompMax;
+u64 worstPhaseStallNs;
+u64 worstTransitionStallNs;
 u64 pwmHistBounds[NPWMHISTBUCKETS - 1] = { 100, 300, 1000, 5000, 20000 }; // usec
 u64 pwmHist[NPWMHISTBUCKETS];
 u64 phaseStallCount, phaseStallNsSum, phaseStallMinNs, phaseStallMaxNs;
 u64 phaseHistBoundsUs[NPHASEHISTBUCKETS - 1] = { 20, 100, 500, 2000, 10000 }; // usec
 u64 phaseHist[NPHASEHISTBUCKETS];
-int worstPhaseStallRow = -1, worstPhaseStallPhase = -1;   // -1 means "no stall recorded yet"
-u64 worstPhaseStallNs;
 u8 worstPhaseStallCols[18];    // l[] snapshot at the worst stall seen so far
-
-// "Transitioning" variant of the above.
-// The worst-by-raw-lateness sample isn't necessarily the most diagnostic one, a stall can
-// land on a phase where no column's l[i] equals that phase, in which case nothing was
-// actually held on past its intended time, the row/pass was merely delayed. This variant
-// only counts/tracks samples where at least one column DOES have l[i]==phase, i.e. a real
-// OFF-transition was pending and that column (or columns, since several often share the
-// same brightness level) was actually held on ns nanoseconds longer than intended for one pass.
-// This is the metric that most directly demonstrates a visible-brightness-impact
-// stall rather than just a delayed-but-harmless one.
-u64 transitionStallCount, transitionStallNsSum;
-int worstTransitionStallRow = -1, worstTransitionStallPhase = -1;
-u64 worstTransitionStallNs;
 u8 worstTransitionStallCols[18];
-int worstTransitionStallNCols;   // how many of the 18 columns were transitioning at that phase
 
 // Global brightness scaling ("dimmer") factor, applied to every light's
 // PWM count before it's used by lightRow(). 1.0 = full brightness.
@@ -229,7 +218,6 @@ void *pwmthread(void *arg);
 void *panelthread(void *arg);
 void sighandler(int sig);
 void sigReconfigure(int sig);
-void reportTiming();
 int initGPIO(void);
 
 // Create/attach the shared Panel segment, initialize GPIO, then run the panel
@@ -291,9 +279,7 @@ PanelP panelP;
 void
 inRow(void)
 {
-int i;
-
-    for(i = 0; i < ELEMENTS(COLUMNS); i++)
+    for(int i = 0; i < nelem(COLUMNS); i++)
     {
         gpio_set_fsel(COLUMNS[i], GPIO_FSEL_INPUT);
     }
@@ -303,9 +289,7 @@ int i;
 void
 outRow(void)
 {
-int i;
-
-    for(i = 0; i < ELEMENTS(COLUMNS); i++)
+    for(int i = 0; i < nelem(COLUMNS); i++)
     {
         gpio_set_fsel(COLUMNS[i], GPIO_FSEL_OUTPUT);
     }
@@ -329,7 +313,7 @@ getPin(int p)
 void
 setRow(int l)
 {
-    for(int i = 0; i < ELEMENTS(COLUMNS); i++)
+    for(int i = 0; i < nelem(COLUMNS); i++)
     {
         setPin(COLUMNS[i], (l >> i) & 1);
     }
@@ -340,7 +324,7 @@ setRow(int l)
 void
 setAddr(int a)
 {
-    for(int i = 0; i < ELEMENTS(ADDR); i++)
+    for(int i = 0; i < nelem(ADDR); i++)
     {
         setPin(ADDR[i], (a >> i) & 1);
     }
@@ -389,12 +373,7 @@ tsAddNs(struct timespec *ts, u64 ns)
     }
 }
 
-// Return (a - b) in nanoseconds. Used to measure how late a clock_nanosleep()
-// wakeup was relative to the absolute deadline it targeted (a = actual wakeup
-// time, b = intended deadline). Defensively returns 0 if a is not actually
-// later than b (a wakeup can never be early against CLOCK_MONOTONIC, but
-// timer-granularity rounding could in principle land a==b, and returning 0
-// rather than wrapping to a huge unsigned value keeps this safe regardless).
+// Return (a - b) in nanoseconds.
 static u64
 tsDiffNs(struct timespec *a, struct timespec *b)
 {
@@ -417,23 +396,8 @@ long sec, nsec;
     return(((u64)sec * 1000000000ULL) + (u64)nsec);
 }
 
-// Record one lightRow() phase-wakeup lateness sample (see the block comment
-// above phaseStallCount/phaseHist near the top of this file). Only called
-// when doTiming is set. row/phase identify which row and which PWM phase
-// this sample is for; ns is the lateness in nanoseconds computed by the
-// caller via tsDiffNs(); l is the row's current brightness-threshold array,
-// snapshotted into worstPhaseStallCols[] whenever this sample becomes the
-// new worst one seen, so the affected column(s) (those with l[i]==phase)
-// can be identified after the fact.
-//
-// Also checks whether any column actually had l[i]==phase, i.e. whether
-// an OFF-transition was actually pending at the exact phase this stall
-// delayed and if so separately tracks that as a "transitioning" stall.
-// A stall that lands on a phase with nothing
-// pending only delays the row/pass; a "transitioning" stall actually holds
-// a lit column on ns nanoseconds longer than intended, which is the case
-// that can produce a visible brightness spike.
-//
+// Record one lightRow() phase-wakeup lateness sample.
+// Only called when doTiming is set.
 static void
 recordPhaseStall(int row, int phase, u64 ns, u8 *l)
 {
@@ -461,7 +425,7 @@ int nTransitioning;
         worstPhaseStallRow = row;
         worstPhaseStallPhase = phase;
 
-        for(i = 0; i < ELEMENTS(COLUMNS); i++)
+        for(i = 0; i < nelem(COLUMNS); i++)
         {
             worstPhaseStallCols[i] = l[i];
         }
@@ -486,7 +450,7 @@ int nTransitioning;
     // nanoseconds past their intended off-time by this specific stall.
     nTransitioning = 0;
 
-    for(i = 0; i < ELEMENTS(COLUMNS); i++)
+    for(i = 0; i < nelem(COLUMNS); i++)
     {
         if( l[i] == phase )
         {
@@ -506,7 +470,7 @@ int nTransitioning;
             worstTransitionStallPhase = phase;
             worstTransitionStallNCols = nTransitioning;
 
-            for(i = 0; i < ELEMENTS(COLUMNS); i++)
+            for(i = 0; i < nelem(COLUMNS); i++)
             {
                 worstTransitionStallCols[i] = l[i];
             }
@@ -521,10 +485,9 @@ int nTransitioning;
 // After all phases, the row is blanked and ADDR is parked at 8 (idle/switch row) before returning.
 //
 // Each phase's wakeup is scheduled against an absolute deadline computed from a single timestamp taken at the
-// start of the row, and each column's on/off pin state only changes once per row update.
-// It starts on if l[i] > 0, then turns off at phase == l[i].
-// Minimizing updates is especially important on the Pi 5 to reduce overheadm, every GPIO write is a
-// round trip to a separate controller over the pci bus to reduce overhead.
+// start of the row.
+// A relative sleep can only ever run long, never short.
+// One bad wakeup stays local to that phase instead of compounding through the rest of the 10-row pass.
 void
 lightRow(int row, u8 *l)
 {
@@ -537,7 +500,7 @@ struct timespec now;
     usleep(20); // the gpio state chages need time to take effect
 
     // Establish phase-0 state once: on iff l[i] > 0.
-    for(int i = 0; i < ELEMENTS(COLUMNS); i++)
+    for(int i = 0; i < nelem(COLUMNS); i++)
     {
         setPin(COLUMNS[i], !(0 < l[i]));
     }
@@ -557,7 +520,7 @@ struct timespec now;
 
             // Only columns transitioning off exactly at this phase need touching;
             // everything else already holds the state it needs from a prior pass.
-            for(int i = 0; i < ELEMENTS(COLUMNS); i++)
+            for(int i = 0; i < nelem(COLUMNS); i++)
             {
                 if( l[i] == phase )
                 {
@@ -576,8 +539,7 @@ struct timespec now;
 }
 
 // Read one row of 18 switches and return them packed into the low 18 bits of the result, one bit per column.
-// Switches read active-low; a high pin level means the switch is "off", so that bit is cleared in sw
-// which starts as as all-1s).
+// Switches read active-low; a high pin level means the switch is "off", so that bit is cleared in sw.
 // ADDR is parked at 8 (idle row) before returning.
 u32
 readRow(int row)
@@ -586,7 +548,7 @@ readRow(int row)
     usleep(20);
     int sw = 0777777;
 
-    for(int i = 0; i < ELEMENTS(COLUMNS); i++)
+    for(int i = 0; i < nelem(COLUMNS); i++)
     {
         if( getPin(COLUMNS[i]) )
         {
@@ -605,14 +567,10 @@ readRow(int row)
 //
 // p->lights[][] is updated concurrently by pwmthread roughly every pwmCycleTime,
 // while a full pass here takes ~10ms (10 rows * ~1ms/row);
-// Snapshot p->lights[][] once per pass so every row is driven from a single,
-// internally-consistent set of values.
+// Snapshot p->lights[][] once per pass so every row is driven from a single,internally-consistent set of values.
 // This avoids random display intensity jitter.
 //
-// The snapshot is taken from whichever of the two lights[][] buffers lightsReadyIdx
-// (loaded with an acquire fence) currently points to; pwmthread never writes that buffer
-// until it has a newer one fully ready, so this memcpy can't observe a half-written mix
-// of an old and new pass.
+// The snapshot is taken from whichever of the two lights[][] buffers lightsReadyIdx currently points to.
 void
 setLights(PanelLightsP lightsP)
 {
@@ -637,10 +595,9 @@ setLights(PanelLightsP lightsP)
 }
 
 // Read one of the 4 switch registers (rows 8-11) per call, cycling round-robin via
-// the static 'cycle' counter, and store the result into the corresponding sw0-sw3
-// field of the shared Panel struct. COLUMNS is switched to input first via inRow().
-// One register is read per call so that the cost of reading switches is spread across
-// multiple panelthread iterations.
+// the static 'cycle' counter, and store the result into the corresponding sw0-sw3 field of the Panel struct.
+// COLUMNS is switched to input first via inRow().
+// One register is read per call so that the cost of reading switches is spread across multiple iterations.
 void
 readSwitches(PanelP panelP)
 {
@@ -655,11 +612,12 @@ static u32 cycle = 0;
 // for each of the 10x18 light bits, scale to the 0-numLevels range based on the actual number
 // of emulated cycles elapsed, apply dimmingFactor, clamp to 0-numLevels,
 // and store into p->lights[row][col] for lightRow() to use as its phase-count threshold.
-// This replaces the old panel_pidp1.c's lightthread NSAMPLES sampling + exponentialdecay filter.
 void *
 pwmthread(void *arg)
 {
+int rt = 0;
 int i, j;
+int writeIdx;
 int intensity;
 u16 count;
 u64 lastCycleCount;
@@ -681,7 +639,7 @@ struct sched_param sp;
         // Priority is one below panelthread's so the light-row scan still wins
         // if both are runnable at once.
         sp.sched_priority = PWM_RT_PRIO;
-        pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
+        rt = pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) == 0;
     }
 
     lastCycleCount = panelP->cyclecount;
@@ -699,14 +657,13 @@ struct sched_param sp;
 
         // Self-calibration: rather than assuming this loop iterates exactly
         // every (pwmCycleTime / 5us) cycles or inferring the cycle count from wall-clock time,
-        // which assumes pdp1 runs at exactly 5us/cycle and is sensitive to its scheduling jitter, read
-        // the emulator's own cyclecount and use the delta since our last reading as the true number of cycles
+        // read the emulator cyclecount and use the delta since our last reading as the true number of cycles
         // that occurred.
         // This keeps the scaling correct regardless of pdp1's actual cycle rate.
         currentCycleCount = panelP->cyclecount;
         expectedCycles = currentCycleCount - lastCycleCount;
 
-        // The pdp1's main loop runs in bursts, pacing itself to 5us/cycle
+        // pdp1's main loop runs in bursts, pacing itself to 5us/cycle
         // using usleep(1000), so cyclecount advances in chunks of ~200 every ~1ms rather than smoothly.
         // If we proceeded with expectedCycles==0 clamped to 1 and count==0, every light would
         // compute in=0 for this iteration, a brief blackout.
@@ -721,18 +678,9 @@ struct sched_param sp;
 
         lastCycleCount = currentCycleCount;
 
-        // Compute this pass into the buffer NOT currently marked ready, so setLights()'s
-        // concurrent reads of the ready buffer are never disturbed. Published below via
-        // lightsReadyIdx once the whole 10x18 pass is written.
-        int writeIdx = 1 - atomic_load_explicit(&lightsP->lightsReadyIdx, memory_order_relaxed);
+        // Compute this pass into the inactive buffer.
+        writeIdx = 1 - atomic_load_explicit(&lightsP->lightsReadyIdx, memory_order_relaxed);
 
-        // Panel->pwmcount[][] is a u16, saturating at 65535
-        // If this thread is ever delayed long enough that
-        // expectedCycles would exceed that, clamp it to match.
-        // Otherwise a light that's on every cycle (e.g. the PWR light) would read
-        // count==65535 but expectedCycles > 65535, making count/expectedCycles < 1 and
-        // dimming an "always on" light during long scheduling delays.
-        // At ~5us/cycle this is a ~327ms delay, so in practice this clamp is just a safety net.
         if(expectedCycles > 65535)
         {
             expectedCycles = 65535;
@@ -754,7 +702,6 @@ struct sched_param sp;
                 count = panelP->pwmcount[i][j];
                 panelP->pwmcount[i][j] = 0;
 
-                // Clamp the count, scheduling delays could result in an invalid value.
                 if( count > expectedCycles )
                 {
                     count = (u16)expectedCycles; // expectedCycles is already clamped to <=65535 above
@@ -787,8 +734,7 @@ struct sched_param sp;
             }
         }
 
-        // Publish this pass: readers loading lightsReadyIdx with acquire semantics are now
-        // guaranteed to see the fully-written buffer above, not a partial one.
+        // Done with the update.
         atomic_store_explicit(&lightsP->lightsReadyIdx, writeIdx, memory_order_release);
 
         if( doTiming )
@@ -825,7 +771,7 @@ struct sched_param sp;
     }
 }
 
-// Main panel thread, can run with normal SCHED_FIFO real-time priority.
+// Main panel thread, can run with normal or SCHED_FIFO real-time priority.
 // Spawns pwmthread() to periodically turn panelP->pwmcount[][] into light brightness values, then
 // loops driving the light rows (setLights) and reading one switch register
 // per iteration (readSwitches) until doexit is set by sighandler(), at which
@@ -840,8 +786,8 @@ void*
 panelthread(void *arg)
 {
 int rt = 0;
-u64 lastTime, now;              // timing data
-u64 loopUs;
+u64 startTime, lastTime, now, delta, elapsed, loopCount;    // timing data
+u64 loopUs, loopMin, loopMax;
 pthread_t th;
 PanelLights panel;
 struct sched_param params;
@@ -878,7 +824,7 @@ struct sched_param params;
     if( doTiming )
     {
         startTime = lastTime = gettime();
-        loopDelta = loopCount = 0;
+        delta = loopCount = 0;
         loopMin = ~0ULL;
         loopMax = 0;
         memset(loopHist, 0, sizeof(loopHist));
@@ -918,7 +864,7 @@ struct sched_param params;
         {
             now = gettime();
             loopUs = (now - lastTime) / 1000;   // just usecs
-            loopDelta += loopUs;
+            delta += loopUs;
             lastTime = now;
             ++loopCount;
 
@@ -946,141 +892,129 @@ struct sched_param params;
         }
     }
 
-    // If collecting timing data, print it.
-    if( doTiming  )
+    if( doTiming )
     {
-        reportTiming();
+        elapsed = (gettime() - startTime) / 1000;   // just usecs
+        delta /= loopCount; // now per-loop avg
+        printf("Avg main loop time %lu usec over %lu cycles, elapsed time %lu usec, %.2f percent of elapsed time.\n",
+            delta, loopCount, elapsed, ((float)(loopCount * delta) / (float)elapsed) * 100.0);
+        printf("Main loop time min %lu usec, max %lu usec.\n", loopMin, loopMax);
+
+        printf("Main loop time histogram (usec):\n");
+        for(int b = 0; b < NHISTBUCKETS; b++)
+        {
+            u64 lo = (b == 0) ? 0 : loopHistBounds[b - 1];
+
+            if( b < NHISTBUCKETS - 1 )
+            {
+                printf("  [%6lu - %6lu): %lu (%.1f%%)\n",
+                    lo, loopHistBounds[b], loopHist[b], 100.0 * loopHist[b] / loopCount);
+            }
+            else
+            {
+                printf("  [%6lu -    inf): %lu (%.1f%%)\n",
+                    lo, loopHist[b], 100.0 * loopHist[b] / loopCount);
+            }
+        }
+
+        pwmDelta /= pwmLoopCount; // now per-loop avg
+        printf("Avg pwm update loop time %lu usec over %lu cycles (target %d usec).\n",
+            pwmDelta, pwmLoopCount, pwmCycleTime);
+
+        // Timing for just the 10x18 read/scale/filter compute loop.
+        printf("Pwm compute-loop time avg %lu usec, min %lu usec, max %lu usec, over %lu cycles.\n",
+            pwmCompUs / pwmLoopCount, pwmCompMin, pwmCompMax, pwmLoopCount);
+
+        printf("Pwm compute-loop time histogram (usec):\n");
+        for(int b = 0; b < NPWMHISTBUCKETS; b++)
+        {
+            u64 lo = (b == 0) ? 0 : pwmHistBounds[b - 1];
+
+            if( b < NPWMHISTBUCKETS - 1 )
+            {
+                printf("  [%6lu - %6lu): %lu (%.1f%%)\n",
+                    lo, pwmHistBounds[b], pwmHist[b], 100.0 * pwmHist[b] / pwmLoopCount);
+            }
+            else
+            {
+                printf("  [%6lu -    inf): %lu (%.1f%%)\n",
+                    lo, pwmHist[b], 100.0 * pwmHist[b] / pwmLoopCount);
+            }
+        }
+
+        if( phaseStallCount )
+        {
+            printf("Lightrow phase-stall lateness avg %lu usec, min %lu usec, max %lu usec, over %lu samples.\n",
+                (phaseStallNsSum / phaseStallCount) / 1000, phaseStallMinNs / 1000, phaseStallMaxNs / 1000,
+                phaseStallCount);
+
+            printf("Lightrow phase-stall lateness histogram (usec):\n");
+            for(int b = 0; b < NPHASEHISTBUCKETS; b++)
+            {
+                u64 lo = (b == 0) ? 0 : phaseHistBoundsUs[b - 1];
+
+                if( b < NPHASEHISTBUCKETS - 1 )
+                {
+                    printf("  [%6lu - %6lu): %lu (%.1f%%)\n",
+                        lo, phaseHistBoundsUs[b], phaseHist[b], 100.0 * phaseHist[b] / phaseStallCount);
+                }
+                else
+                {
+                    printf("  [%6lu -    inf): %lu (%.1f%%)\n",
+                        lo, phaseHist[b], 100.0 * phaseHist[b] / phaseStallCount);
+                }
+            }
+
+            if( worstPhaseStallRow >= 0 )
+            {
+                printf("Worst lightrow phase stall (any phase): row %d phase %d, %lu usec late, "
+                    "row's l[] at that time (18 columns):",
+                    worstPhaseStallRow, worstPhaseStallPhase, worstPhaseStallNs / 1000);
+
+                for(int i = 0; i < nelem(COLUMNS); i++)
+                {
+                    printf(" %u", worstPhaseStallCols[i]);
+                }
+
+                printf("\n");
+            }
+
+            // These are the subset of the above where a column was actually held on late,
+            // not just a harmlessly-delayed idle phase.
+            if( transitionStallCount )
+            {
+                printf("Of those, %lu (%.1f%%) coincided with an actual pending OFF-transition "
+                    "(i.e. held a lit column on late), avg %lu usec late.\n",
+                    transitionStallCount, 100.0 * transitionStallCount / phaseStallCount,
+                    (transitionStallNsSum / transitionStallCount) / 1000);
+
+                printf("Worst TRANSITIONING lightrow phase stall: row %d phase %d, %lu usec late, "
+                    "%d column(s) held on late, row's l[] at that time (18 columns):",
+                    worstTransitionStallRow, worstTransitionStallPhase, worstTransitionStallNs / 1000,
+                    worstTransitionStallNCols);
+
+                for(int i = 0; i < nelem(COLUMNS); i++)
+                {
+                    printf(" %u", worstTransitionStallCols[i]);
+                }
+
+                printf("\n");
+            }
+            else
+            {
+                printf("Of those, none coincided with an actual pending OFF-transition -- "
+                    "every stall this run landed on an already-idle phase.\n");
+            }
+        }
+        else
+        {
+            printf("Lightrow phase-stall: no samples recorded (numLevels <= 1?).\n");
+        }
     }
 
     setAddr(8);
     inRow();
     exit(0);
-}
-
-// Print our massively-detailed timing data.
-void
-reportTiming()
-{
-u64 elapsed;
-
-    elapsed = (gettime() - startTime) / 1000;   // just usecs
-    printf(
-        "Avg main loop time %lu usec over %lu cycles, elapsed time %lu usec, %.2f percent of elapsed time.\n",
-        loopDelta, loopCount, elapsed, ((float)(loopCount * loopDelta) / (float)elapsed) * 100.0);
-    printf("Main loop time min %lu usec, max %lu usec.\n", loopMin, loopMax);
-
-    printf("Main loop time histogram (usec):\n");
-    for(int b = 0; b < NHISTBUCKETS; b++)
-    {
-        u64 lo = (b == 0) ? 0 : loopHistBounds[b - 1];
-
-        if( b < NHISTBUCKETS - 1 )
-        {
-            printf("  [%6lu - %6lu): %lu (%.1f%%)\n",
-                lo, loopHistBounds[b], loopHist[b], 100.0 * loopHist[b] / loopCount);
-        }
-        else
-        {
-            printf("  [%6lu -    inf): %lu (%.1f%%)\n",
-                lo, loopHist[b], 100.0 * loopHist[b] / loopCount);
-        }
-    }
-
-    pwmDelta /= pwmLoopCount; // now per-loop avg
-    printf("Avg pwm update loop time %lu usec over %lu cycles (target %d usec).\n",
-        pwmDelta, pwmLoopCount, pwmCycleTime);
-
-    // Timing for just the 10x18 read/scale/filter compute loop (see pwmCompUs comment) --
-    // this is the section vulnerable to the stale-expectedCycles overshoot; a max here
-    // anywhere near pwmCycleTime means pwmthread itself got descheduled mid-pass.
-    printf("Pwm compute-loop time avg %lu usec, min %lu usec, max %lu usec, over %lu cycles.\n",
-        pwmCompUs / pwmLoopCount, pwmCompMin, pwmCompMax, pwmLoopCount);
-
-    printf("Pwm compute-loop time histogram (usec):\n");
-    for(int b = 0; b < NPWMHISTBUCKETS; b++)
-    {
-        u64 lo = (b == 0) ? 0 : pwmHistBounds[b - 1];
-
-        if( b < NPWMHISTBUCKETS - 1 )
-        {
-            printf("  [%6lu - %6lu): %lu (%.1f%%)\n",
-                lo, pwmHistBounds[b], pwmHist[b], 100.0 * pwmHist[b] / pwmLoopCount);
-        }
-        else
-        {
-            printf("  [%6lu -    inf): %lu (%.1f%%)\n",
-                lo, pwmHist[b], 100.0 * pwmHist[b] / pwmLoopCount);
-        }
-    }
-
-    if( phaseStallCount )
-    {
-        printf("Lightrow phase-stall lateness avg %lu usec, min %lu usec, max %lu usec, over %lu samples.\n",
-            (phaseStallNsSum / phaseStallCount) / 1000, phaseStallMinNs / 1000, phaseStallMaxNs / 1000,
-            phaseStallCount);
-
-        printf("Lightrow phase-stall lateness histogram (usec):\n");
-        for(int b = 0; b < NPHASEHISTBUCKETS; b++)
-        {
-            u64 lo = (b == 0) ? 0 : phaseHistBoundsUs[b - 1];
-
-            if( b < NPHASEHISTBUCKETS - 1 )
-            {
-                printf("  [%6lu - %6lu): %lu (%.1f%%)\n",
-                    lo, phaseHistBoundsUs[b], phaseHist[b], 100.0 * phaseHist[b] / phaseStallCount);
-            }
-            else
-            {
-                printf("  [%6lu -    inf): %lu (%.1f%%)\n",
-                    lo, phaseHist[b], 100.0 * phaseHist[b] / phaseStallCount);
-            }
-        }
-
-        if( worstPhaseStallRow >= 0 )
-        {
-            printf("Worst lightrow phase stall (any phase): row %d phase %d, %lu usec late, "
-                "row's l[] at that time (18 columns):",
-                worstPhaseStallRow, worstPhaseStallPhase, worstPhaseStallNs / 1000);
-
-            for(int i = 0; i < ELEMENTS(COLUMNS); i++)
-            {
-                printf(" %u", worstPhaseStallCols[i]);
-            }
-
-            printf("\n");
-        }
-
-        // These are the subset of the above where a column was actually held on late,
-        // not just a harmlessly-delayed idle phase.
-        if( transitionStallCount )
-        {
-            printf("Of those, %lu (%.1f%%) coincided with an actual pending OFF-transition "
-                "(i.e. held a lit column on late), avg %lu usec late.\n",
-                transitionStallCount, 100.0 * transitionStallCount / phaseStallCount,
-                (transitionStallNsSum / transitionStallCount) / 1000);
-
-            printf("Worst TRANSITIONING lightrow phase stall: row %d phase %d, %lu usec late, "
-                "%d column(s) held on late, row's l[] at that time (18 columns):",
-                worstTransitionStallRow, worstTransitionStallPhase, worstTransitionStallNs / 1000,
-                worstTransitionStallNCols);
-
-            for(int i = 0; i < ELEMENTS(COLUMNS); i++)
-            {
-                printf(" %u", worstTransitionStallCols[i]);
-            }
-
-            printf("\n");
-        }
-        else
-        {
-            printf("Of those, none coincided with an actual pending OFF-transition -- "
-                "every stall this run landed on an already-idle phase.\n");
-        }
-    }
-    else
-    {
-        printf("Lightrow phase-stall: no samples recorded (numLevels <= 1?).\n");
-    }
 }
 
 // SIGINT/SIGTERM handler: requests a clean shutdown of panelthread()'s main loop.
@@ -1091,16 +1025,10 @@ sighandler(int sig)
 }
 
 // SIGHUP triggers this to reload the configuration and recompute all the phase delays.
-// If timing data is being accumlated, print a snapshot.
 void
 sigReconfigure(int sig)
 {
     reconfigRequested = 1;
-
-    if( doTiming )
-    {
-        reportTiming();
-    }
 }
 
 // Initialize the GPIO subsystem: map GPIO registers, configure the 4 ADDR pins as
@@ -1110,10 +1038,7 @@ sigReconfigure(int sig)
 int
 initGPIO(void)
 {
-int i;
-int ngpio;
-
-    ngpio = gpiolib_init();
+    int ngpio = gpiolib_init();
 
     if(ngpio <= 0)
     {
@@ -1125,12 +1050,12 @@ int ngpio;
         return(1);
     }
 
-    for(i = 0; i < ELEMENTS(ADDR); i++)
+    for(int i = 0; i < nelem(ADDR); i++)
     {
         gpio_set_fsel(ADDR[i], GPIO_FSEL_OUTPUT);
     }
 
-    for(i = 0; i < ELEMENTS(COLUMNS); i++)
+    for(int i = 0; i < nelem(COLUMNS); i++)
     {
         gpio_set_pull(COLUMNS[i], PULL_UP);
     }

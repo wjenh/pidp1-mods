@@ -1,0 +1,287 @@
+T05: HSC GATEWAY ERROR HANDLING, RESET, AND STATUS-PERSISTENCE QUIRK
+/*
+ * T05.am1 -- Exercises HSCexecute()'s own parameter validation, the IOT_44.c
+ *            use-after-free guard, HSCreset() (hgr), and a real, previously-undocumented
+ *            behavior found while writing this test suite (02-Jul-26): a channel's HSC
+ *            status is NOT reset to HSC_OK on every hga -- only the very first allocation of
+ *            a given channel number, ever, in the emulator process's lifetime, initializes
+ *            status to HSC_OK (see HSCallocateChannel()'s "if (!ctlP->isInitialized)"
+ *            guard in src/blincolnlights/pdp1/highSpeedChannels.c). Every later hgf+hga
+ *            cycle on that same channel number leaves status exactly where the last
+ *            operation left it (e.g. HSC_DONE from a completed transfer, or HSC_ABORT from
+ *            a prior HSCreset()) until the next real transfer changes it.
+ *
+ * Harness required: none.
+ *
+ * Uses HSC channel 2 (see T01.am1's header comment). Defensive hgf first, hgf again before
+ * halting. Every bad-parameter case below uses HSC_MODE_IMMEDIATE so the call can never
+ * leave the channel BUSY -- an intentionally-invalid NORMAL or THREADED request would be
+ * just as invalid, but there would be no way to safely recover if HSCexecute() somehow
+ * accepted it anyway (see T03.am1/T04.am1's header comments on why a BUSY channel can't be
+ * observed or recovered from mid-test in a single-threaded PDP-1 program).
+ *
+ * Not tested here (deliberately out of scope for an am1 program): calling hgx on a channel
+ * that is *already* HSC_BUSY. Setting up that precondition requires a second, independent
+ * HSC request to be in flight while the CPU is still running -- but the instant any channel
+ * goes BUSY, the emulator's main loop steals every cycle until it's done, so the CPU cannot
+ * execute a second hgx (or anything else) in the meantime. See
+ * IOTs/TestGateway/Tests/README.md for why this -- and true multi-channel priority
+ * arbitration -- needs a native-code test harness instead.
+ *
+ * Tests:
+ *   T05-1  hgx with count > 4096 returns HSC_ERR
+ *   T05-2  hgx with bank > 15 returns HSC_ERR
+ *   T05-3  hgx with address > 4095 returns HSC_ERR
+ *   T05-4  hgx on a channel not allocated by this plugin returns HSC_ERR
+ *   T05-5  after free + reallocate, hgs reports the channel's leftover status (HSC_DONE from
+ *          an earlier transfer in this same test), not HSC_OK -- the persistence quirk
+ *   T05-6  hgr (HSCreset simulating a front-panel abort) sets an allocated channel's status
+ *          to HSC_ABORT, observed via hgs, even though no transfer was in progress
+ *
+ * Assembler: am1
+ * Assemble:  am1 T05.am1
+ */
+
+#include <HSC/hscgatewaydefs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define TESTCHAN 2
+
+100/
+
+begin,
+    jsp resetResults
+    lio [TESTCHAN]
+    hgf                     // defensive cleanup, see file header
+
+    lio [TESTCHAN]
+    hga
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+// ---- T05-1: hgx with count > 4096 (4096 decimal) fails ---------------------
+
+    lac [ctlBadCount]
+    lio [TESTCHAN]
+    hgx
+    lai
+    sub [HSC_ERR]
+    sza
+    jmp t1_fail
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+t1_done,
+
+// ---- T05-2: hgx with bank > 15 (decimal) fails -----------------------------
+
+    lac [ctlBadBank]
+    lio [TESTCHAN]
+    hgx
+    lai
+    sub [HSC_ERR]
+    sza
+    jmp t2_fail
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp t2_done
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+t2_done,
+
+// ---- T05-3: hgx with address > 4095 (decimal) fails ------------------------
+
+    lac [ctlBadAddr]
+    lio [TESTCHAN]
+    hgx
+    lai
+    sub [HSC_ERR]
+    sza
+    jmp t3_fail
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+    jmp t3_done
+t3_fail,
+    lio [REPORT_FAIL]
+    lac [lbl3]
+    jda reportResult
+t3_done,
+
+// ---- free the channel, then T05-4: hgx on an unallocated channel fails ----
+
+    lio [TESTCHAN]
+    hgf
+
+    lac [ctlGoodExec]
+    lio [TESTCHAN]
+    hgx
+    lai
+    sub [HSC_ERR]
+    sza
+    jmp t4_fail
+    lio [REPORT_PASS]
+    lac [lbl4]
+    jda reportResult
+    jmp t4_done
+t4_fail,
+    lio [REPORT_FAIL]
+    lac [lbl4]
+    jda reportResult
+t4_done,
+
+// ---- reallocate and run one real transfer, so status becomes HSC_DONE -----
+
+    lio [TESTCHAN]
+    hga
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+    lac [ctlGoodExec]
+    lio [TESTCHAN]
+    hgx
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+// ---- free again, then reallocate a second time -----------------------------
+//
+// This is the same channel number this test has now used (and completed a transfer on)
+// once already in this run, so isInitialized is already true for it -- the reallocation
+// below must NOT reset status back to HSC_OK.
+
+    lio [TESTCHAN]
+    hgf
+    lio [TESTCHAN]
+    hga
+    lai
+    sub [HSC_OK]
+    sza
+    jmp halterr
+
+// ---- T05-5: status persistence quirk ---------------------------------------
+
+    lio [TESTCHAN]
+    hgs
+    lai
+    sub [HSC_DONE]
+    sza
+    jmp t5_fail
+    lio [REPORT_PASS]
+    lac [lbl5]
+    jda reportResult
+    jmp t5_done
+t5_fail,
+    lio [REPORT_FAIL]
+    lac [lbl5]
+    jda reportResult
+t5_done,
+
+// ---- T05-6: hgr aborts an allocated, idle channel --------------------------
+
+    hgr
+    lio [TESTCHAN]
+    hgs
+    lai
+    sub [HSC_ABORT]
+    sza
+    jmp t6_fail
+    lio [REPORT_PASS]
+    lac [lbl6]
+    jda reportResult
+    jmp t6_done
+t6_fail,
+    lio [REPORT_FAIL]
+    lac [lbl6]
+    jda reportResult
+t6_done,
+
+// ---- cleanup and halt ---------------------------------------------------------
+
+cleanup,
+    lio [TESTCHAN]
+    hgf
+
+    jsp printSummary
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- test labels ---------------------------------------------------------
+
+lbl1,
+    text "T05-1 bad count"
+    013
+lbl2,
+    text "T05-2 bad bank"
+    013
+lbl3,
+    text "T05-3 bad addr"
+    013
+lbl4,
+    text "T05-4 unallocated chan"
+    013
+lbl5,
+    text "T05-5 status persists"
+    013
+lbl6,
+    text "T05-6 hgr sets abort"
+    013
+
+// ---- scratch data/destination for the one real transfer -------------------
+
+goodSrc,
+    0161616
+goodDest,
+    table 1
+
+// ---- control blocks ---------------------------------------------------------
+//
+// hgx block: mode, count, bank, addr.
+
+ctlBadCount,
+    HSC_MODE_TOMEM HSC_MODE_IMMEDIATE
+    0d5000              // count > 4096, invalid
+    0
+    goodDest
+
+ctlBadBank,
+    HSC_MODE_TOMEM HSC_MODE_IMMEDIATE
+    1
+    20                  // bank > 15 decimal, invalid
+    goodDest
+
+ctlBadAddr,
+    HSC_MODE_TOMEM HSC_MODE_IMMEDIATE
+    1
+    0
+    010000              // 4096 decimal, > 4095, invalid
+
+ctlGoodExec,
+    HSC_MODE_FROMMEM HSC_MODE_IMMEDIATE
+    1
+    0
+    goodSrc
+
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

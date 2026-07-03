@@ -84,37 +84,18 @@
  *    SDL_Quit(). On X11, those calls trigger XTranslateCoordinates on the window after X
  *    has invalidated the resource, producing a BadWindow error. SDL_Quit() sequences the
  *    teardown correctly on its own.
- * 19-Jun-2026 wje (Claude) fix the long-standing 12+ hour blank-display/unresponsive hang:
- *    hold busyLockP for the entire active-point walk in main() instead of only inside
- *    removeActivePoint(). The unlocked walk let the reader thread's addActivePoint()
- *    recycle a just-freed slot and relink it into the chain main() was still traversing,
- *    corrupting nextIdx into a cycle; the for loop then spun forever (confirmed via gdb on
- *    a live hung process: pegged CPU, main() stuck re-entering removeActivePoint() without
- *    ever returning). removeActivePoint() no longer locks internally; callers must hold
- *    busyLockP first, same convention addActivePoint() already used.
- * 19-Jun-2026 wje (Claude) fix corner-artifact glitch on first fullscreen toggle under
- *    Wayland/labwc: the per-frame fast path skips SDL_RenderClear() since SDL_RenderCopy()
- *    normally overwrites the entire render target, but that's only true while the window is
- *    square -- the instant we go fullscreen on a non-square monitor, SDL_RenderSetLogicalSize()
- *    introduces letterbox/pillarbox bars, and Wayland's asynchronous (compositor round-trip)
- *    resize meant those bars briefly showed stale/uninitialized backbuffer content. Now force
- *    two explicit SDL_RenderClear()/SDL_RenderPresent() cycles immediately after
- *    SDL_SetWindowFullscreen(), flushing both backbuffers of the swap chain regardless of
- *    resize-event timing.
- * 19-Jun-2026 wje (Claude) fix totalFrames always reporting 0 in reportTiming(): the counter
- *    was declared and printed but never incremented anywhere (a leftover from an earlier
- *    refactor). Added ++totalFrames after SDL_RenderPresent() in the main loop, counting only
- *    actual rendered/presented frames (not the idle-skip path when there are no active points,
- *    and not the fullscreen-toggle flush presents, which are clear-only and not content frames).
- * 20-Jun-2026 wje (Claude) create the window initially hidden to avoid sdl window initialization jitter
+ * 19-Jun-2026 wje (Claude) hold busyLockP for the entire active-point walk in main().
+ *    RemoveActivePoint() no longer locks internally, callers must hold busyLockP first.
+ *    Fix corner-artifact glitch on first fullscreen toggle under Wayland/labwc.
+ * 20-Jun-2026 wje create the window initially hidden to avoid sdl window initialization jitter
  * 21-Jun-2026 wje when the window is made visible, do a RenderPresent() to get the black background
  * 01-Jul-2026 wje (Claude) fix new points being overwritten by nearby aging points.
  *    DrawPoint() previously did a flat overwrite for every pixel, so whichever
- *    point happened to be walked last in the active list won. A solid freshly drawn line would show gaps
- *    wherever an older, dimmer, still-aging point's glow spread overlapped it.
- *    DrawPoint() now compares against brightBuffer[][] point if any
- *    and only overwrites a pixel if the new point is at least as bright.
+ *    point happened to be walked last in the active list won.
  *    Adjust point pattern vs intensity for more realistic rendering.
+ *    Pre-fault brightBuffer[][] so its 256 pages are resident before the first rendered frame runs.
+ * 02-Jul-2026 wje (Claude) fix letterbox/pillarbox bars never being cleared when a window is
+ *    edge-dragged into a non-square shape without ever going through the F11/F fullscreen toggle.
 */
 
 #include <stdio.h>
@@ -213,18 +194,6 @@ typedef uint32_t Rgba;
 // The use of uint16_t here but int elsewhere is intentional and dome for rather abstract reasons dealing
 // with compiler optimization and allowing it to use optimized cpu instructions.
 // The benefit is minor, but we're potentially dealing with fairly low performance cpus, every little bit helps.
-//
-// CACHE LOCALITY NOTE:
-// Earlier versions stored Points by x,y screen position in a 1024x1024 with active points linked thru
-// them.
-// At high active-point counts, walking that list meant chasing pointers scattered across a ~25MB region,
-// causing a cache miss on essentially every node every frame.
-// Instead, ActivePoint records now live in a small, contiguous pool (activePool[]),
-// and the list is threaded via array indices (nextIdx) rather than pointers.
-// A separate, much smaller lookup table (pointIndex[][]) maps a logical (x,y) screen
-// position to its slot in the pool, or to NOINDEX if that position is not currently active.
-// This keeps the working set during traversal limited to roughly
-// (active point count * sizeof(ActivePoint)) instead of the full 25MB grid.
 typedef struct ActivePoint {
     uint16_t x;
     uint16_t y;
@@ -258,12 +227,8 @@ Rgba rgbaValues[8][256];
 uint8_t brightValues[8][256];
 
 // Tracks the brightest value written to each screen pixel so far in the current frame.
-// drawPoint()'s glow spread can touch a pixel that some other active point's spread also
-// touches; without this, whichever point happened to be walked last in the active list won
-// that pixel outright, regardless of brightness, since points are inserted at the list head and
-// so are drawn before everything already active. A freshly plotted point must remain visible
-// on top of a dimmer, still-aging existing point, not be silently erased by it.
-// Cleared to 0 alongside the pixel buffer at the start of each rendered frame.
+// drawPoint() can touch a pixel that some other active point's spread also touches.
+// Without this, whichever point happened to be walked last in the active list wins.
 uint8_t brightBuffer[SIZE][SIZE];
 
 int pdp1FD;
@@ -287,20 +252,18 @@ bool mikecMode = false;
 
 float gammaCorrection = GAMMA;
 
-uint32_t blackPixel;                 // The value is numeric 0, but use the SDL generated version for consistency.
+uint32_t blackPixel;           // The value is numeric 0, but use the SDL generated version for consistency.
 
-// These are global only so reportTiming() can see them.
+// These are global for timing data accumulation.
+bool doTiming;
 uint64_t startTime;
 uint64_t frameDelay;
 uint32_t frameMisses;
-
 uint64_t totalPoints;
 uint64_t receivedPoints;
 uint64_t totalFrames;
 uint64_t maxActivePoints;
 uint64_t activePoints;
-// Added for per-platform diagnosis of the frame-rate question (gpu vs software renderer,
-// true loop cadence vs rendered-frame count, and actual render cost per frame).
 uint64_t pacedFrames;        // every frame-paced main-loop pass, including idle passes with no active points
 uint64_t renderTimeTotal;    // sum of per-rendered-frame times (ns), for the average
 uint64_t renderTimeMax;      // worst single rendered-frame time (ns)
@@ -308,7 +271,6 @@ uint64_t renderCount;        // number of rendered frames timed
 uint64_t phaseBufferTotal;   // sum of per-frame buffer work (lock + memset + point draw), ns
 uint64_t phasePresentTotal;  // sum of per-frame present work (blit + Present/VNC), ns
 const char *rendererNameP;   // SDL renderer backend name, e.g. "opengl" vs "software"
-bool doTiming;
 
 SDL_PixelFormat *pixelFormatP;      // We use RGBA8888, set below.
 SDL_Window *window;
@@ -327,6 +289,7 @@ void removeActivePoint(uint32_t pointIdx, uint32_t prevIdx);
 void initializeRgbas(void);
 void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity, int bright);
 void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
+void flushLetterboxBars(void);
 void loadConfig(bool full);
 void sighandler(int sig);
 void reconfigure(int sig);
@@ -367,7 +330,7 @@ struct timespec sleepTime;
 
 bool dragging;              // true while the right mouse button is held for a window drag
 int dragStartGlobalX;       // screen-absolute cursor x when right button was pressed
-int dragStartGlobalY;       // screen-absolute cursor y when right button was pressedwhen the window is made visible, do a RenderPresent() to get the black background
+int dragStartGlobalY;       // screen-absolute cursor y when right button was pressed
 int dragWinOriginX;         // window screen x when right button was pressed
 int dragWinOriginY;         // window screen y when right button was pressed
 int mouseGlobalX;           // scratch: current screen-absolute cursor x during drag
@@ -465,13 +428,8 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
 
 #ifndef _WIN32
     // Voluntarily lower our own scheduling priority so a co-resident PDP-1 emulator wins
-    // CPU contention and keeps feeding display points. When the emulator is starved it
-    // stops issuing points, the phosphor fades to black, and that reads as flicker -- the
-    // failure mode seen running both the emulator and this client on one headless Pi over
-    // VNC. Lowering one's OWN priority needs no privilege (unlike real-time priority), and
-    // it has no effect on an uncontended system, so it is safe to leave on by default.
-    // Done before the reader thread is created so that thread inherits the value.
-    // niceValue 0 disables; the config file "nice=N" setting overrides DEFAULTNICE.
+    // CPU contention and keeps feeding display points.
+    // The config file "nice=N" setting overrides DEFAULTNICE.
     if( niceValue != 0 )
     {
         if( setpriority(PRIO_PROCESS, 0, niceValue) != 0 )
@@ -557,12 +515,9 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
     // Linear gives the best results balancing small screens vs larger ones but blurs the points some.
     // Nearest neighbor gives sharper dots, but some screen sizes don't scale well.
     // Select what works best for a given monitor and sceen size vial the command line or config file.
-    // We control intensity by adjusting the alpha value, which is blended with the black the renderer
-    // was originally set to, with alpha 255 being brightest.
+    // We control intensity by adjusting the alpha value.
+    // This allows use of SDL_BLENDMODE_NONE, avoiding all the runtime blending SDL would otherwiae have to do.
     // Pixels use RGBA8888 representation, which is 32 bits.
-    // rgbaValues[][] (see initializeRgbas()) is premultiplied with alpha forced to 255,
-    // so the texture can use SDL_BLENDMODE_NONE (a plain copy) instead of
-    // SDL_BLENDMODE_BLEND (a per-pixel blend), saving a full-screen blend every frame.
     textures[0] = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 1024, 1024);
     SDL_SetTextureBlendMode(textures[0], SDL_BLENDMODE_NONE);
     SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
@@ -617,25 +572,11 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                     fullscreen = !fullscreen;
                     SDL_SetWindowFullscreen(window, (fullscreen)?SDL_WINDOW_FULLSCREEN_DESKTOP:0);
 
-                    // Under Wayland/labwc, a fullscreen toggle is not synchronous: the actual
+                    // Note that under Wayland/labwc, a fullscreen toggle is not synchronous: the actual
                     // resize/configure event from the compositor lands one or more frames later,
-                    // not immediately on return from SDL_SetWindowFullscreen() above. Our normal
-                    // per-frame path skips SDL_RenderClear() (see the comment at the bottom of the
-                    // main loop) on the assumption that SDL_RenderCopy(NULL,NULL) always covers the
-                    // full render target -- true only while the window is square and there are no
-                    // letterbox/pillarbox bars. The instant we go fullscreen on a non-square monitor,
-                    // SDL_RenderSetLogicalSize()'s aspect-preserving scale introduces bars, and until
-                    // the compositor's resize lands, SDL's cached viewport can briefly disagree with
-                    // the freshly (re)allocated backbuffer, leaving stale/uninitialized GPU memory
-                    // visible in the bar regions -- the corner artifacts observed after the first
-                    // toggle. Force two explicit clear+present cycles right here, flushing both
-                    // backbuffers of the double-buffered swap chain, so no stale content is ever
-                    // shown regardless of how the resize event timing falls out.
-                    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-                    SDL_RenderClear(renderer);
-                    SDL_RenderPresent(renderer);
-                    SDL_RenderClear(renderer);
-                    SDL_RenderPresent(renderer);
+                    // not immediately on return from SDL_SetWindowFullscreen().
+                    // Did I mention that wayland is obnoxious?
+                    flushLetterboxBars();
                     break;
 
                 case SDL_SCANCODE_ESCAPE:
@@ -661,11 +602,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                 {
                     // Use screen-absolute cursor position so the calculation is
                     // independent of window position. xrel/yrel are not used because
-                    // SDL2 computes them from window-relative coords: after
-                    // SDL_SetWindowPosition shifts the window, the next event's
-                    // window-relative position jumps by the same amount, corrupting
-                    // xrel/yrel and producing wild oscillation.
-                    // new_win = origin_at_drag_start + (cursor_now - cursor_at_drag_start)
+                    // SDL2 computes them from window-relative coords.
                     SDL_GetGlobalMouseState(&mouseGlobalX, &mouseGlobalY);
                     SDL_SetWindowPosition(window,
                         (dragWinOriginX + (mouseGlobalX - dragStartGlobalX)),
@@ -709,6 +646,12 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                 {
                 case SDL_WINDOWEVENT_CLOSE:
                     quit = true;
+                    break;
+
+                case SDL_WINDOWEVENT_RESIZED:
+                    // Fires for every resize that actually changes the window's size, whether
+                    // edge-drag or compositor-driven, handles the delayed wayland update.
+                    flushLetterboxBars();
                     break;
                 }
             }
@@ -762,18 +705,11 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
 
             // Cleared alongside the pixel buffer: tracks the brightest value written to each
             // pixel so far this frame, so drawPoint() can tell a freshly drawn point apart from
-            // an existing one it overlaps and let the brighter of the two win (see brightBuffer
-            // declaration above).
+            // an existing one it overlaps and let the brighter of the two win.
             memset(brightBuffer, 0, sizeof(brightBuffer));
 
             // Go thru the point list, handle each.
-            // This entire walk is done under a single lock acquisition, not just the individual
-            // removals: previously, only removeActivePoint() locked, leaving the read of each
-            // node's nextIdx here unprotected.  That let the reader thread's addActivePoint(),
-            // running concurrently, recycle a slot we had just freed and relink it back into the
-            // chain we were still traversing, corrupting nextIdx into a cycle.  The result was an
-            // unbounded loop right here: pegged CPU, a frozen display, and total input
-            // unresponsiveness, confirmed against a live hung process with gdb.
+            // This entire walk is done under a single lock acquisition.
             SDL_LockMutex(busyLockP);
 
             for( pointIdx = activeListHead, prevIdx = NOINDEX; pointIdx != NOINDEX; pointIdx = nextIdx )
@@ -796,18 +732,15 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                 else
                 {
                     // We don't update prevIdx in this case because that point remains the previous point.
-                    // The lock for this whole walk is already held above; removeActivePoint() no
-                    // longer locks internally, it relies on its caller to hold busyLockP.
                     removeActivePoint(pointIdx, prevIdx);
                 }
             }
 
             SDL_UnlockMutex(busyLockP);
-
             SDL_UnlockTexture(textureP);
 
-            // Timing split point: everything above is CPU buffer work (lock + memset +
-            // point draw); everything below is present work (blit + Present/VNC).
+            // Timing split point, everything above is CPU buffer work (lock + memset + point draw),
+            // everything below is presentation work (blit + Present/VNC).
             tAfterBuffer = now();
 
             // No SDL_RenderClear() here: with SDL_BLENDMODE_NONE and the texture's
@@ -827,7 +760,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                     renderTimeMax = renderDelta;
                 }
                 // Split the frame into buffer work vs present work so we can see which
-                // dominates on a given backend (e.g. the software renderer over VNC).
+                // dominates on a given backend.
                 phaseBufferTotal += (tAfterBuffer - renderStart);
                 phasePresentTotal += (renderDelta - (tAfterBuffer - renderStart));
             }
@@ -849,14 +782,26 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
 
     // Do not call SDL_DestroyRenderer / SDL_DestroyWindow explicitly.
     // On X11, those calls trigger SDL's internal XTranslateCoordinates cleanup
-    // which fires after X has already invalidated the window resource, producing
-    // a BadWindow X error.  SDL_Quit() sequences the teardown correctly on its own.
+    // which fires after X has already invalidated the window resource, producing a BadWindow X error.
+    // SDL_Quit() sequences the teardown correctly on its own.
     SDL_FreeFormat(pixelFormatP);
     SDL_DestroyMutex(busyLockP);
     SDL_Quit();
     winSockCleanup();
 
     return(0);
+}
+
+// Force two explicit clear+present cycles, flushing both backbuffers of the double-buffered
+// SDL swap chain so no stale/uninitialized content is ever shown in the letterbox/pillarbox bars.
+void
+flushLetterboxBars()
+{
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+    SDL_RenderClear(renderer);
+    SDL_RenderPresent(renderer);
+    SDL_RenderClear(renderer);
+    SDL_RenderPresent(renderer);
 }
 
 // We are a client, try to open the display port on the pidp-1.
@@ -896,10 +841,10 @@ struct addrinfo *resultP;
     freeaddrinfo(resultP);
 
     // We want mouse events to go out quickly
+    // Cast i to (const char *) because Winsock's setsockopt() declares optval as
+    // const char *, while POSIX declares it as const void *.
+    // This cast is portable to both.
     i = 1;
-    // Cast to (const char *): Winsock's setsockopt() declares optval as
-    // const char *, while POSIX declares it as const void * (which a
-    // char * also satisfies), so this cast is portable to both.
     setsockopt(sockFD, IPPROTO_TCP, TCP_NODELAY, (const char *)&i, sizeof(i));
     return(sockFD);
 }
@@ -1046,10 +991,9 @@ Rgba rgba;
                 a = APPLYGAMMA(((int)a * intensity) / 255, gammaCorrection);
 
                 // Premultiply the alpha into rgb here, at table-build time, and force
-                // the stored alpha to fully opaque (255). This lets the texture use
-                // SDL_BLENDMODE_NONE (a plain copy) instead of SDL_BLENDMODE_BLEND
-                // (a per-pixel blend) at display time, and lets us skip the per-frame
-                // SDL_RenderClear() since every pixel is now fully written every frame.
+                // the stored alpha to fully opaque (255).
+                // This lets the texture use SDL_BLENDMODE_NONE instead of SDL_BLENDMODE_BLEND,
+                //  and lets us skip the per-frame SDL_RenderClear().
                 r = (Uint8)(((int)r * (int)a) / 255);
                 g = (Uint8)(((int)g * (int)a) / 255);
                 b = (Uint8)(((int)b * (int)a) / 255);
@@ -1098,6 +1042,9 @@ uint32_t i;
 
     activePool[MAXACTIVEPOINTS - 1].nextIdx = NOINDEX;
     freeListHead = 0;
+
+    // Pre-fault brightBuffer[][] here, primes the cpu's page cache.
+    memset(brightBuffer, 0, sizeof(brightBuffer));
 }
 
 // Remove a point from the active list, adjusting the head and prior point if needed,
@@ -1426,8 +1373,7 @@ isTrue(char *strP)
 
 // See if there is a config file in the user home directory.
 // If not, try the install directory.
-// The file is named '.t30dyconfig' in the home directory,
-// 't30dpyconfig' in the install directory.
+// The file is named '.t30dpyconfig' in the home directory, 't30dpy.config' in the install directory.
 // Lines are of the form 'param=value', empty lines or lines beginning with '#' are ignored,
 // as are any invalid params.
 // For booleans, isTrue(), above, checks for valid true words.
@@ -1440,7 +1386,7 @@ char *cP, *cP2;
 FILE *fP;
 char line[256];
 
-    if( !(fP = getFile("~/.t30dpy.config")) )
+    if( !(fP = getFile("~/.t30dpyconfig")) )
     {
         if( !(fP = getFile("/opt/pidp1-mods/t30dpy.config")) )
         {

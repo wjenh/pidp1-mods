@@ -138,7 +138,9 @@ updatelights(PDP1 *pdp, Panel *panel)
 void
 updatelights_pwm(Panel *panel, int n)
 {
-    for(int i = 0; i < n; i++)
+int i;
+
+    for(i = 0; i < n; i++)
     {
         incrcount(panel->pwmcount[0], panel->lights0);
         incrcount(panel->pwmcount[1], panel->lights1);

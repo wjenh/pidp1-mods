@@ -1,3 +1,11 @@
+// gpiochip_bcm2835.c -- GPIO_CHIP_T implementations for the BCM2835/BCM2711 SoCs (Pi Zero/1/2/3
+// and Pi 4 respectively), registered into the "gpiochips" linker section via
+// DECLARE_GPIO_CHIP() (see gpiochip.h). All functions here are file-local (static, or in one
+// case non-static but still referenced only from this file -- see the note at
+// bcm2835GetDrive() below) and have been renamed to the project's camelHump convention; the
+// two DECLARE_GPIO_CHIP() invocation names ("bcm2835"/"bcm2711") are left as-is since they
+// form the externally-visible bcm2835_chip/bcm2711_chip linker-section symbol names.
+
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
@@ -8,7 +16,7 @@
 #include "gpiochip.h"
 #include "util.h"
 
-#define ARRAY_SIZE(_a) (sizeof(_a)/sizeof(_a[0]))
+#define ARRAY_SIZE(_a) (sizeof(_a) / sizeof(_a[0]))
 
 #define BCM2835_NUM_GPIOS 54
 #define BCM2835_ALT_COUNT 6
@@ -39,7 +47,7 @@
 #define GPPUPPDN2    59        /* Pin pull-up/down for pins 47:32 */
 #define GPPUPPDN3    60        /* Pin pull-up/down for pins 57:48 */
 
-static const char *bcm2835_gpio_alt_names[BCM2835_NUM_GPIOS][BCM2835_ALT_COUNT] =
+static const char *bcm2835GpioAltNames[BCM2835_NUM_GPIOS][BCM2835_ALT_COUNT] =
 {
     { "SDA0"      , "SA5"        , "PCLK"      , "AVEOUT_VCLK"   , "AVEIN_VCLK" , 0           , },
     { "SCL0"      , "SA4"        , "DE"        , "AVEOUT_DSYNC"  , "AVEIN_DSYNC", 0           , },
@@ -97,7 +105,7 @@ static const char *bcm2835_gpio_alt_names[BCM2835_NUM_GPIOS][BCM2835_ALT_COUNT] 
     { "SD0_DAT3"  , "PWM1"       , "PCM_DOUT"  , "SD1_DAT3"      , "ARM_TMS"    , 0           , },
 };
 
-static const char *bcm2711_gpio_alt_names[BCM2711_NUM_GPIOS][BCM2711_ALT_COUNT] =
+static const char *bcm2711GpioAltNames[BCM2711_NUM_GPIOS][BCM2711_ALT_COUNT] =
 {
     { "SDA0"      , "SA5"        , "PCLK"      , "SPI3_CE0_N"    , "TXD2"            , "SDA6"        , },
     { "SCL0"      , "SA4"        , "DE"        , "SPI3_MISO"     , "RXD2"            , "SCL6"        , },
@@ -155,40 +163,53 @@ static const char *bcm2711_gpio_alt_names[BCM2711_NUM_GPIOS][BCM2711_ALT_COUNT] 
     { "SD0_DAT3"  , "PWM0_1"     , "PCM_DOUT"  , "SD1_DAT3"      , "ARM_TMS"         , 0             , },
 };
 
-static GPIO_FSEL_T bcm2835_gpio_get_fsel(void *priv, unsigned gpio)
+// Returns the current function-select value of GPIO 'gpio' on the BCM2835/2711 (they share
+// the same GPFSEL register layout), decoded from the raw 3-bit field into the portable
+// GPIO_FSEL_T codes. Returns GPIO_FSEL_MAX if 'gpio' is out of range.
+static GPIO_FSEL_T
+bcm2835GetFsel(void *priv, unsigned gpio)
 {
-    volatile uint32_t *base = priv;
-    /* GPFSEL0-5 with 10 sels per reg, 3 bits per sel (so bits 0:29 used) */
-    uint32_t reg = GPFSEL0 + (gpio / 10);
-    uint32_t lsb = (gpio % 10) * 3;
+volatile uint32_t *baseP;
+uint32_t reg, lsb;
 
-    if (gpio < BCM2835_NUM_GPIOS)
+    baseP = priv;
+    /* GPFSEL0-5 with 10 sels per reg, 3 bits per sel (so bits 0:29 used) */
+    reg = GPFSEL0 + (gpio / 10);
+    lsb = (gpio % 10) * 3;
+
+    if( gpio < BCM2835_NUM_GPIOS )
     {
-        switch ((base[reg] >> lsb) & 7)
+        switch( (baseP[reg] >> lsb) & 7 )
         {
-        case 0: return GPIO_FSEL_INPUT;
-        case 1: return GPIO_FSEL_OUTPUT;
-        case 2: return GPIO_FSEL_FUNC5;
-        case 3: return GPIO_FSEL_FUNC4;
-        case 4: return GPIO_FSEL_FUNC0;
-        case 5: return GPIO_FSEL_FUNC1;
-        case 6: return GPIO_FSEL_FUNC2;
-        case 7: return GPIO_FSEL_FUNC3;
+        case 0: return(GPIO_FSEL_INPUT);
+        case 1: return(GPIO_FSEL_OUTPUT);
+        case 2: return(GPIO_FSEL_FUNC5);
+        case 3: return(GPIO_FSEL_FUNC4);
+        case 4: return(GPIO_FSEL_FUNC0);
+        case 5: return(GPIO_FSEL_FUNC1);
+        case 6: return(GPIO_FSEL_FUNC2);
+        case 7: return(GPIO_FSEL_FUNC3);
         }
     }
 
-    return GPIO_FSEL_MAX;
+    return(GPIO_FSEL_MAX);
 }
 
-static void bcm2835_gpio_set_fsel(void *priv, unsigned gpio, const GPIO_FSEL_T func)
+// Sets the function-select of GPIO 'gpio' to 'func' on the BCM2835/2711. No return value;
+// silently does nothing if 'func' has no raw-register encoding, or if 'gpio' is out of range.
+static void
+bcm2835SetFsel(void *priv, unsigned gpio, const GPIO_FSEL_T func)
 {
-    volatile uint32_t *base = priv;
-    /* GPFSEL0-5 with 10 sels per reg, 3 bits per sel (so bits 0:29 used) */
-    uint32_t reg = GPFSEL0 + (gpio / 10);
-    uint32_t lsb = (gpio % 10) * 3;
-    int fsel;
+volatile uint32_t *baseP;
+uint32_t reg, lsb;
+int fsel;
 
-    switch (func)
+    baseP = priv;
+    /* GPFSEL0-5 with 10 sels per reg, 3 bits per sel (so bits 0:29 used) */
+    reg = GPFSEL0 + (gpio / 10);
+    lsb = (gpio % 10) * 3;
+
+    switch( func )
     {
     case GPIO_FSEL_INPUT: fsel = 0; break;
     case GPIO_FSEL_OUTPUT: fsel = 1; break;
@@ -202,261 +223,376 @@ static void bcm2835_gpio_set_fsel(void *priv, unsigned gpio, const GPIO_FSEL_T f
         return;
     }
 
-    if (gpio < BCM2835_NUM_GPIOS)
-        base[reg] = (base[reg] & ~(0x7 << lsb)) | (fsel << lsb);
+    if( gpio < BCM2835_NUM_GPIOS )
+    {
+        baseP[reg] = (baseP[reg] & ~(0x7 << lsb)) | (fsel << lsb);
+    }
 }
 
-static GPIO_DIR_T bcm2835_gpio_get_dir(void *priv, unsigned gpio)
+// Returns the current direction (DIR_INPUT/DIR_OUTPUT) of GPIO 'gpio', inferred from its
+// fsel; returns DIR_MAX if 'gpio' is currently set to an alternate function (neither plain
+// input nor plain output).
+static GPIO_DIR_T
+bcm2835GetDir(void *priv, unsigned gpio)
 {
-    GPIO_FSEL_T fsel = bcm2835_gpio_get_fsel(priv, gpio);
-    if (fsel == GPIO_FSEL_INPUT)
-        return DIR_INPUT;
-    else if (fsel == GPIO_FSEL_OUTPUT)
-        return DIR_OUTPUT;
+GPIO_FSEL_T fsel;
+
+    fsel = bcm2835GetFsel(priv, gpio);
+
+    if( fsel == GPIO_FSEL_INPUT )
+    {
+        return(DIR_INPUT);
+    }
+    else if( fsel == GPIO_FSEL_OUTPUT )
+    {
+        return(DIR_OUTPUT);
+    }
     else
-        return DIR_MAX;
+    {
+        return(DIR_MAX);
+    }
 }
 
-static void bcm2835_gpio_set_dir(void *priv, unsigned gpio, GPIO_DIR_T dir)
+// Sets the direction of GPIO 'gpio' by setting its fsel to plain input or plain output. No
+// return value; does nothing if 'dir' is neither DIR_INPUT nor DIR_OUTPUT.
+static void
+bcm2835SetDir(void *priv, unsigned gpio, GPIO_DIR_T dir)
 {
-    GPIO_FSEL_T fsel;
-    if (dir == DIR_INPUT)
+GPIO_FSEL_T fsel;
+
+    if( dir == DIR_INPUT )
+    {
         fsel = GPIO_FSEL_INPUT;
-    else if (dir == DIR_OUTPUT)
+    }
+    else if( dir == DIR_OUTPUT )
+    {
         fsel = GPIO_FSEL_OUTPUT;
+    }
     else
+    {
         return;
+    }
 
-    bcm2835_gpio_set_fsel(priv, gpio, fsel);
+    bcm2835SetFsel(priv, gpio, fsel);
 }
 
-static int bcm2835_gpio_get_level(void *priv, unsigned gpio)
+// Returns the observed input level (0 or 1) of GPIO 'gpio' from the GPLEV0/1 registers, or
+// -1 if 'gpio' is out of range.
+static int
+bcm2835GetLevel(void *priv, unsigned gpio)
 {
-    volatile uint32_t *base = priv;
+volatile uint32_t *baseP;
 
-    if (gpio >= BCM2835_NUM_GPIOS)
-        return -1;
+    baseP = priv;
 
-    return (base[GPLEV0 + (gpio / 32)] >> (gpio % 32)) & 1;
+    if( gpio >= BCM2835_NUM_GPIOS )
+    {
+        return(-1);
+    }
+
+    return( (baseP[GPLEV0 + (gpio / 32)] >> (gpio % 32)) & 1 );
 }
 
-GPIO_DRIVE_T bcm2835_gpio_get_drive(void *priv, unsigned gpio)
+// This BCM2835/2711 GPSET/GPCLR mechanism is write-only, so the current drive level cannot
+// be read back; always returns DRIVE_MAX. Note: unlike its siblings in this file, this
+// function is not declared 'static' in the original source (a pre-existing inconsistency,
+// left as-is since nothing outside this file references it -- confirmed via grep).
+GPIO_DRIVE_T
+bcm2835GetDrive(void *priv, unsigned gpio)
 {
     /* This is a write-only mechanism */
     UNUSED(priv);
     UNUSED(gpio);
-    return DRIVE_MAX;
+    return(DRIVE_MAX);
 }
 
-static void bcm2835_gpio_set_drive(void *priv, unsigned gpio, GPIO_DRIVE_T drv)
+// Drives GPIO 'gpio' high or low via the write-only GPSET0/1 / GPCLR0/1 registers. No return
+// value; does nothing if 'gpio' is out of range or 'drv' is not DRIVE_LOW/DRIVE_HIGH.
+static void
+bcm2835SetDrive(void *priv, unsigned gpio, GPIO_DRIVE_T drv)
 {
-    volatile uint32_t *base = priv;
+volatile uint32_t *baseP;
 
-    if (gpio < BCM2835_NUM_GPIOS && drv <= DRIVE_HIGH)
-        base[(drv ? GPSET0 : GPCLR0) + (gpio / 32)] = (1 << (gpio % 32));
+    baseP = priv;
+
+    if( (gpio < BCM2835_NUM_GPIOS) && (drv <= DRIVE_HIGH) )
+    {
+        baseP[(drv ? GPSET0 : GPCLR0) + (gpio / 32)] = (1 << (gpio % 32));
+    }
 }
 
-static GPIO_PULL_T bcm2835_gpio_get_pull(void *priv, unsigned gpio)
+// This BCM2835 GPPUD/GPPUDCLK mechanism is write-only, so the current pull setting cannot be
+// read back; always returns PULL_MAX.
+static GPIO_PULL_T
+bcm2835GetPull(void *priv, unsigned gpio)
 {
     /* This is a write-only mechanism */
     UNUSED(priv);
     UNUSED(gpio);
-    return PULL_MAX;
+    return(PULL_MAX);
 }
 
-static void bcm2835_gpio_set_pull(void *priv, unsigned gpio, GPIO_PULL_T pull)
+// Sets the pull resistor setting of GPIO 'gpio' via the BCM2835's GPPUD/GPPUDCLK
+// clocked-shift-register mechanism (the fixed delay/clock sequence documented in the BCM2835
+// peripherals datasheet). No return value; does nothing if 'gpio' is out of range or 'pull'
+// is not a valid GPIO_PULL_T value.
+static void
+bcm2835SetPull(void *priv, unsigned gpio, GPIO_PULL_T pull)
 {
-    volatile uint32_t *base = priv;
-    int clkreg = GPPUDCLK0 + (gpio / 32);
-    int clkbit = 1 << (gpio % 32);
+volatile uint32_t *baseP;
+int clkreg, clkbit;
 
-    if (gpio >= BCM2835_NUM_GPIOS || pull < PULL_NONE || pull > PULL_UP)
+    baseP = priv;
+    clkreg = GPPUDCLK0 + (gpio / 32);
+    clkbit = 1 << (gpio % 32);
+
+    if( (gpio >= BCM2835_NUM_GPIOS) || (pull < PULL_NONE) || (pull > PULL_UP) )
+    {
         return;
+    }
 
-    base[GPPUD] = pull;
+    baseP[GPPUD] = pull;
     usleep(10);
-    base[clkreg] = clkbit;
+    baseP[clkreg] = clkbit;
     usleep(10);
-    base[GPPUD] = 0;
+    baseP[GPPUD] = 0;
     usleep(10);
-    base[clkreg] = 0;
+    baseP[clkreg] = 0;
     usleep(10);
 }
 
-static const char *bcm2835_gpio_get_name(void *priv, unsigned gpio)
+// Returns a human-readable "GPIOn" name for GPIO 'gpio', formatted into a static buffer
+// (matches the original tool's behavior -- not reentrant/thread-safe).
+static const char *
+bcm2835GetName(void *priv, unsigned gpio)
 {
-    static char name_buf[16];
+static char nameBuf[16];
+
     UNUSED(priv);
-    sprintf(name_buf, "GPIO%d", gpio);
-    return name_buf;
+    sprintf(nameBuf, "GPIO%d", gpio);
+    return(nameBuf);
 }
 
-static const char *bcm2835_gpio_get_fsel_name(void *priv, unsigned gpio, GPIO_FSEL_T fsel)
+// Returns a human-readable name for what function-select value 'fsel' means on BCM2835 GPIO
+// 'gpio' specifically (looked up in bcm2835GpioAltNames for alternate functions), or NULL if
+// 'fsel' is not a recognized function-select value.
+static const char *
+bcm2835GetFselName(void *priv, unsigned gpio, GPIO_FSEL_T fsel)
 {
-    const char *name = NULL;
+const char *nameP;
+
+    nameP = NULL;
     UNUSED(priv);
-    switch (fsel)
+
+    switch( fsel )
     {
     case GPIO_FSEL_INPUT:
-        name = "input";
+        nameP = "input";
         break;
+
     case GPIO_FSEL_OUTPUT:
-        name = "output";
+        nameP = "output";
         break;
+
     case GPIO_FSEL_FUNC0:
     case GPIO_FSEL_FUNC1:
     case GPIO_FSEL_FUNC2:
     case GPIO_FSEL_FUNC3:
     case GPIO_FSEL_FUNC4:
     case GPIO_FSEL_FUNC5:
-        if (gpio < BCM2835_NUM_GPIOS)
+        if( gpio < BCM2835_NUM_GPIOS )
         {
-            name = bcm2835_gpio_alt_names[gpio][fsel];
-            if (!name)
-                name = "-";
+            nameP = bcm2835GpioAltNames[gpio][fsel];
+            if( !nameP )
+            {
+                nameP = "-";
+            }
         }
         break;
+
     default:
         break;
     }
-    return name;
+
+    return(nameP);
 }
 
-static GPIO_PULL_T bcm2711_gpio_get_pull(void *priv, unsigned gpio)
+// Returns the current pull resistor setting of GPIO 'gpio' on the BCM2711, which (unlike the
+// BCM2835) supports read-back via the GPPUPPDN0-3 registers. Returns PULL_MAX if 'gpio' is
+// out of range.
+static GPIO_PULL_T
+bcm2711GetPull(void *priv, unsigned gpio)
 {
-    volatile uint32_t *base = priv;
-    int reg = GPPUPPDN0 + (gpio / 16);
-    int lsb = (gpio % 16) * 2;
+volatile uint32_t *baseP;
+int reg, lsb;
 
-    if (gpio < BCM2711_NUM_GPIOS)
+    baseP = priv;
+    reg = GPPUPPDN0 + (gpio / 16);
+    lsb = (gpio % 16) * 2;
+
+    if( gpio < BCM2711_NUM_GPIOS )
     {
-        switch ((base[reg] >> lsb) & 3)
+        switch( (baseP[reg] >> lsb) & 3 )
         {
-        case 0: return PULL_NONE;
-        case 1: return PULL_UP;
-        case 2: return PULL_DOWN;
+        case 0: return(PULL_NONE);
+        case 1: return(PULL_UP);
+        case 2: return(PULL_DOWN);
         }
     }
 
-    return PULL_MAX;
+    return(PULL_MAX);
 }
 
-static void bcm2711_gpio_set_pull(void *priv, unsigned gpio, GPIO_PULL_T pull)
+// Sets the pull resistor setting of GPIO 'gpio' on the BCM2711 via the GPPUPPDN0-3 registers.
+// No return value; does nothing if 'gpio' is out of range or 'pull' is not a valid
+// GPIO_PULL_T value.
+static void
+bcm2711SetPull(void *priv, unsigned gpio, GPIO_PULL_T pull)
 {
-    volatile uint32_t *base = priv;
-    int reg = GPPUPPDN0 + (gpio / 16);
-    int lsb = (gpio % 16) * 2;
-    int pull_val;
+volatile uint32_t *baseP;
+int reg, lsb;
+int pullVal;
 
-    if (gpio >= BCM2711_NUM_GPIOS)
+    baseP = priv;
+    reg = GPPUPPDN0 + (gpio / 16);
+    lsb = (gpio % 16) * 2;
+
+    if( gpio >= BCM2711_NUM_GPIOS )
+    {
         return;
+    }
 
-    switch (pull)
+    switch( pull )
     {
     case PULL_NONE:
-        pull_val = 0;
+        pullVal = 0;
         break;
+
     case PULL_UP:
-        pull_val = 1;
+        pullVal = 1;
         break;
+
     case PULL_DOWN:
-        pull_val = 2;
+        pullVal = 2;
         break;
+
     default:
         return;
     }
 
-    base[reg] = (base[reg] & ~(3 << lsb)) | (pull_val << lsb);
+    baseP[reg] = (baseP[reg] & ~(3 << lsb)) | (pullVal << lsb);
 }
 
-static const char *bcm2711_gpio_get_fsel_name(void *priv, unsigned gpio, GPIO_FSEL_T fsel)
+// Returns a human-readable name for what function-select value 'fsel' means on BCM2711 GPIO
+// 'gpio' specifically (looked up in bcm2711GpioAltNames for alternate functions), or NULL if
+// 'fsel' is not a recognized function-select value.
+static const char *
+bcm2711GetFselName(void *priv, unsigned gpio, GPIO_FSEL_T fsel)
 {
-    const char *name = NULL;
+const char *nameP;
+
+    nameP = NULL;
     UNUSED(priv);
-    switch (fsel)
+
+    switch( fsel )
     {
     case GPIO_FSEL_INPUT:
-        name = "input";
+        nameP = "input";
         break;
+
     case GPIO_FSEL_OUTPUT:
-        name = "output";
+        nameP = "output";
         break;
+
     case GPIO_FSEL_FUNC0:
     case GPIO_FSEL_FUNC1:
     case GPIO_FSEL_FUNC2:
     case GPIO_FSEL_FUNC3:
     case GPIO_FSEL_FUNC4:
     case GPIO_FSEL_FUNC5:
-        if (gpio < BCM2711_NUM_GPIOS)
+        if( gpio < BCM2711_NUM_GPIOS )
         {
-            name = bcm2711_gpio_alt_names[gpio][fsel];
-            if (!name)
-                name = "-";
+            nameP = bcm2711GpioAltNames[gpio][fsel];
+            if( !nameP )
+            {
+                nameP = "-";
+            }
         }
         break;
+
     default:
         break;
     }
-    return name;
+
+    return(nameP);
 }
 
-static void *bcm2835_gpio_create_instance(const GPIO_CHIP_T *chip,
-                                          const char *dtnode)
+// Allocates a per-instance state block for a BCM2835/2711 chip instance. This chip has no
+// per-instance state beyond the GPIO_CHIP_T itself, so it just hands 'chip' back as the
+// opaque 'priv' pointer other callbacks receive. Never returns NULL (device-tree node
+// 'dtnode' is unused/ignored).
+static void *
+bcm2835CreateInstance(const GPIO_CHIP_T *chip, const char *dtnode)
 {
     UNUSED(dtnode);
-    return (void *)chip;
+    return( (void *)chip );
 }
 
-static int bcm2835_gpio_count(void *priv)
+// Returns the number of GPIOs this chip instance provides (fixed at BCM2835_NUM_GPIOS for
+// both BCM2835 and BCM2711).
+static int
+bcm2835GpioCount(void *priv)
 {
     UNUSED(priv);
-    return BCM2835_NUM_GPIOS;
+    return(BCM2835_NUM_GPIOS);
 }
 
-static void *bcm2835_gpio_probe_instance(void *priv, volatile uint32_t *base)
+// Completes instance setup once the physical register window has been mmap()'d to 'base';
+// this chip just uses the mapped base pointer directly as its 'priv' value for every
+// subsequent callback. Never returns NULL.
+static void *
+bcm2835ProbeInstance(void *priv, volatile uint32_t *base)
 {
     UNUSED(priv);
-    return (void *)base;
+    return( (void *)base );
 }
 
-static const GPIO_CHIP_INTERFACE_T bcm2835_gpio_interface =
+static const GPIO_CHIP_INTERFACE_T bcm2835GpioInterface =
 {
-    .gpio_create_instance = bcm2835_gpio_create_instance,
-    .gpio_count = bcm2835_gpio_count,
-    .gpio_probe_instance = bcm2835_gpio_probe_instance,
-    .gpio_get_fsel = bcm2835_gpio_get_fsel,
-    .gpio_set_fsel = bcm2835_gpio_set_fsel,
-    .gpio_set_drive = bcm2835_gpio_set_drive,
-    .gpio_set_dir = bcm2835_gpio_set_dir,
-    .gpio_get_dir = bcm2835_gpio_get_dir,
-    .gpio_get_level = bcm2835_gpio_get_level,
-    .gpio_get_drive = bcm2835_gpio_get_drive,
-    .gpio_get_pull = bcm2835_gpio_get_pull,
-    .gpio_set_pull = bcm2835_gpio_set_pull,
-    .gpio_get_name = bcm2835_gpio_get_name,
-    .gpio_get_fsel_name = bcm2835_gpio_get_fsel_name,
+    .gpio_create_instance = bcm2835CreateInstance,
+    .gpio_count = bcm2835GpioCount,
+    .gpio_probe_instance = bcm2835ProbeInstance,
+    .gpio_get_fsel = bcm2835GetFsel,
+    .gpio_set_fsel = bcm2835SetFsel,
+    .gpio_set_drive = bcm2835SetDrive,
+    .gpio_set_dir = bcm2835SetDir,
+    .gpio_get_dir = bcm2835GetDir,
+    .gpio_get_level = bcm2835GetLevel,
+    .gpio_get_drive = bcm2835GetDrive,
+    .gpio_get_pull = bcm2835GetPull,
+    .gpio_set_pull = bcm2835SetPull,
+    .gpio_get_name = bcm2835GetName,
+    .gpio_get_fsel_name = bcm2835GetFselName,
 };
 
-DECLARE_GPIO_CHIP(bcm2835, "brcm,bcm2835-gpio", &bcm2835_gpio_interface,
-                  0x30000, 0);
+DECLARE_GPIO_CHIP(bcm2835, "brcm,bcm2835-gpio", &bcm2835GpioInterface, 0x30000, 0);
 
-static const GPIO_CHIP_INTERFACE_T bcm2711_gpio_interface =
+static const GPIO_CHIP_INTERFACE_T bcm2711GpioInterface =
 {
-    .gpio_create_instance = bcm2835_gpio_create_instance,
-    .gpio_count = bcm2835_gpio_count,
-    .gpio_probe_instance = bcm2835_gpio_probe_instance,
-    .gpio_get_fsel = bcm2835_gpio_get_fsel,
-    .gpio_set_fsel = bcm2835_gpio_set_fsel,
-    .gpio_set_drive = bcm2835_gpio_set_drive,
-    .gpio_set_dir = bcm2835_gpio_set_dir,
-    .gpio_get_dir = bcm2835_gpio_get_dir,
-    .gpio_get_level = bcm2835_gpio_get_level,
-    .gpio_get_drive = bcm2835_gpio_get_drive,
-    .gpio_get_pull = bcm2711_gpio_get_pull,
-    .gpio_set_pull = bcm2711_gpio_set_pull,
-    .gpio_get_name = bcm2835_gpio_get_name,
-    .gpio_get_fsel_name = bcm2711_gpio_get_fsel_name,
+    .gpio_create_instance = bcm2835CreateInstance,
+    .gpio_count = bcm2835GpioCount,
+    .gpio_probe_instance = bcm2835ProbeInstance,
+    .gpio_get_fsel = bcm2835GetFsel,
+    .gpio_set_fsel = bcm2835SetFsel,
+    .gpio_set_drive = bcm2835SetDrive,
+    .gpio_set_dir = bcm2835SetDir,
+    .gpio_get_dir = bcm2835GetDir,
+    .gpio_get_level = bcm2835GetLevel,
+    .gpio_get_drive = bcm2835GetDrive,
+    .gpio_get_pull = bcm2711GetPull,
+    .gpio_set_pull = bcm2711SetPull,
+    .gpio_get_name = bcm2835GetName,
+    .gpio_get_fsel_name = bcm2711GetFselName,
 };
 
-DECLARE_GPIO_CHIP(bcm2711, "brcm,bcm2711-gpio",
-                  &bcm2711_gpio_interface, 0x30000, 0);
+DECLARE_GPIO_CHIP(bcm2711, "brcm,bcm2711-gpio", &bcm2711GpioInterface, 0x30000, 0);

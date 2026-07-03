@@ -11,11 +11,14 @@
  * 30-Apr-2026 wje - add fake break cycles for THREADED so emulator will skip cycles semi-properly
  * 21-Jun-2026 wje/claude - fix minor issue with done synchronization
  * 28-Jun02026 wje - add HSC_MODE_UPDATEPANEL for use with HSC_MODE_IMMEDIATE
+ * 02-Jul-2026 wje/claude - HSCwait() THREADED-mode delay now busy-spins (hscSpinWait())
+ *    for delays at or below HSC_SPIN_LIMIT_US. Testing showed usleep() was wildly inconsistent.
 */
 
 #include <unistd.h>
 #include <string.h>
 #include <pthread.h>
+#include <time.h>
 
 //#define DOLOGGING
 #define LOG_HSC 0
@@ -44,6 +47,9 @@ typedef struct {
 // Original had three channels, priority ordered 1-3, we do 5, same priority order
 #define NUMCHANS 5
 
+// THe threshold where we usleep() instead of spin-wait.
+#define HSC_SPIN_LIMIT_US 20
+
 static HSCControl chan1;
 static HSCControl chan2;
 static HSCControl chan3;
@@ -58,6 +64,7 @@ static void unlockControl(HSCControlP ctlP);
 static void HSCdone(HSCControlP ctlP);
 static void processImmediate(HSCRequestP requestP);
 static bool processChannel(HSCControlP controlP);
+static void hscSpinWait(int us);
 
 extern PDP1P pdp1P;     // from main.c
 
@@ -92,7 +99,7 @@ HSCControlP ctlP;
 
     // Keep track of the hsc cycle light state we need.
     // This isn't synchronized with other threads, no big deal if some light cycles get missed.
-    if( ctlP->needLightoff )
+    if( (i < NUMCHANS) && ctlP->needLightoff )
     {
         if( --(ctlP->offCount) <= 0 )
         {
@@ -262,6 +269,11 @@ HSCControlP ctlP;
                 return( HSC_ERR );      // not now
             }
 
+            // Mark the channel busy so processHSCchannels() will process it.
+            // This is deliberately a BEST-EFFORT steal, not an exact one, the caller typically
+            // manages its apparent delay independently, this only slows the main emulator to match.
+            ctlP->status = HSC_BUSY;
+
             ctlP->waitDelay = rqstP->count * 5;       // 5us per word
             ctlP->brkCount = rqstP->count;  // hack to vaguely simulate the break conditions
             processImmediate(rqstP);
@@ -290,9 +302,6 @@ getControlP(HSCChannelP chanP)
 {
 HSCControlP ctlP;
 
-    // chans[] has NUMCHANS entries (valid indices 0..NUMCHANS-1). chanNo is stored
-    // as a 0-based offset, so the upper bound must be >= NUMCHANS, not > NUMCHANS
-    // (which let index NUMCHANS through, one past the array).
     if( !chanP || (chanP->chanNo < 0) || (chanP->chanNo >= NUMCHANS) )
     {
         return(NULL);            // someone is cheating
@@ -334,20 +343,24 @@ HSCControlP ctlP;
 
         pdp1P->hsc = 1;
         updatelights(pdp1P, pdp1P->panel);
-        usleep(ctlP->waitDelay);
+
+        // Enforce the simulated transfer delay.
+        // Short delays busy-spin, longer usleep().
+        if( ctlP->waitDelay <= HSC_SPIN_LIMIT_US )
+        {
+            hscSpinWait(ctlP->waitDelay);
+        }
+        else
+        {
+            usleep(ctlP->waitDelay);
+        }
+
         ctlP->waitDelay = 0;
         pdp1P->hsc = 0;
         updatelights(pdp1P, pdp1P->panel);
 
-        // The real data transfer already happened synchronously back in HSCexecute();
-        // all we were actually waiting out here is the simulated delay. The channel's
-        // status must not be left depending on processChannel()'s fake brkCount countdown
-        // having caught up by now. That countdown exists purely so the rest of the emulator
-        // sees a realistic number of stolen cycles, it's not a
-        // precondition for this channel being usable again.
-        // Without forcing it DONE here, a caller doing HSCexecute()+HSCwait() back to back on the
-        // same channel could see a stale HSC_BUSY or get HSC_ERR from the next THREADED request if brkCount
-        // hadn't finished draining yet, e.g. due to scheduler jitter or a halt during part of the delay.
+        // The real data transfer already happened synchronously back in HSCexecute(),
+        // all we were waiting for here is the simulated delay completion.
         lockControl(ctlP);
         ctlP->brkCount = 0;
         ctlP->status = HSC_DONE;
@@ -409,6 +422,29 @@ static void
 unlockControl(HSCControlP ctlP)
 {
     sem_post(&(ctlP->accessSemaphore));
+}
+
+// Busy-wait for approximately the given number of microseconds.
+static void
+hscSpinWait(int us)
+{
+struct timespec tm;
+uint64_t startNs;
+uint64_t nowNs;
+uint64_t targetNs;
+
+    clock_gettime( CLOCK_MONOTONIC, &tm );
+    startNs = tm.tv_nsec;
+    startNs += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
+    targetNs = (uint64_t)us * 1000;
+
+    nowNs = startNs;
+    while( (nowNs - startNs) < targetNs )
+    {
+        clock_gettime( CLOCK_MONOTONIC, &tm );
+        nowNs = tm.tv_nsec;
+        nowNs += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
+    }
 }
 
 // This is a special case.
@@ -475,9 +511,9 @@ HSCRequestP rqstP;
             ctlP->status = HSC_DONE;
             HSCdone(ctlP);
             pdp1P->hsc = 0;
-            unlockControl(ctlP);
         }
 
+        unlockControl(ctlP);
         return(steal);
     }
 

@@ -1452,7 +1452,7 @@ int hack;
             if( MB & B9 )       // IDA, increment AC
             {
                 logger(LOG_1D, "ida");
-                pdp->ac++;
+                inc_ac(pdp);
             }
 
             logger(LOG_1D, "\n");

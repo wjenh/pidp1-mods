@@ -1,4 +1,4 @@
-CC=gcc -O3
+CC=gcc -O0 -g
 //CC=gcc
 
 all: drumupdater drumlist 

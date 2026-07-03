@@ -587,7 +587,7 @@ Word i;
         }
     }
 
-    fclose(f);
+    fclose(fP);
 }
 
 // a bit ugly...

@@ -564,7 +564,7 @@ dumpmem(const char *fileNameP, Word *mem, Word size)
 FILE *fP;
 Word i;
 
-    if( (fP = fopen(fileNameP, "w")), f == nil )
+    if( !(fP = fopen(fileNameP, "w")) )
     {
         return;
     }

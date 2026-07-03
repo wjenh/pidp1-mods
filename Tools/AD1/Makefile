@@ -1,5 +1,5 @@
 CC=gcc -O3 -Wno-unused-result
-#CC=gcc -O0 -g
+#CC=gcc -g
 BISONFLAGS=
 #CONFLICTS=-Wcounterexamples
 

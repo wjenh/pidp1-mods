@@ -1,6 +1,6 @@
 INC=-I.. -I../pdp1
 LIBS=-lpthread -lm
-CFLAGS= $(INC) -O3 -g -Wno-unused-result
+CFLAGS= $(INC) -O3 -Wno-unused-result
 
 PINCTRL := $(wildcard ../pinctrl/*.o)
 

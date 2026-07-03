@@ -2,6 +2,7 @@
  * This is an implementation of line printers for the pdp-1, the Type 62 abd Type 64 printers.
  *
  * 21-Jun-2026 wje minor revision for some timing changes
+ * 3-Jul-2026 wje minor cleanup, also avoid extraneous IO completions
  *
 */
 
@@ -88,11 +89,12 @@ static bool asciiMode;
 static bool noFF;
 
 static bool inWait;                 // completion delay in effect
+static bool wantCompletion;         // did the instruction that armed the current delay actually request IOCOMPLETE?
 
 static void configure(void);
 
 extern int flexToAscii(char fc, int *shiftP);
-extern int getFileName(PDP1P pdp1P, unsigned int addr, char *bufP);
+extern char *getFileName(PDP1P pdp1P, unsigned int addr, char *bufP, size_t bufLen);
 
 int
 iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
@@ -369,7 +371,7 @@ bool noWait;
             // first unpack the file name, we'll use the lp buffer
             addr = IO(pdp1P) & (MAXMEM - 1);
             iotCondLog(LOG45FILE, "Open  file, io %06o, addr %06o\n", IO(pdp1P), addr);
-            if( !getFileName(pdp1P, addr, buffer) )
+            if( !getFileName(pdp1P, addr, buffer, sizeof(buffer)) )
             {
                 fail = true;
             }
@@ -386,9 +388,13 @@ bool noWait;
                 enablePolling(0);                   // just in case
                 if( inWait )
                 {
-                    // Handle a pending iot C, we clear it
+                    // If there is a pending completion requrest, post it.
                     inWait = false;
-                    IOCOMPLETE(pdp1P);
+                    if( wantCompletion )
+                    {
+                        wantCompletion = false;
+                        IOCOMPLETE(pdp1P);
+                    }
                 }
             }
         }
@@ -425,6 +431,7 @@ bool noWait;
 
     if( !fail && delaytime && !noWait )
     {
+        wantCompletion = completion;
         enablePolling(delaytime);
     }
 
@@ -458,8 +465,14 @@ void
 iotPoll(PDP1 *pdp1P)
 {
     inWait = false;
-    enablePolling(0);
-    IOCOMPLETE(pdp1P);
+    enablePolling(0);                  // always disable polling regardless of completion
+
+    // Post complete if one is pending.
+    if( wantCompletion )
+    {
+        wantCompletion = false;
+        IOCOMPLETE(pdp1P);
+    }
 }
 
 void

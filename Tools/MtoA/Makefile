@@ -1,5 +1,5 @@
 .PRECIOUS: *.c
-CC=gcc -O0 -g
+CC=gcc -O3
 
 mactoam1: mactoam1.l symtab.o
 	flex --outfile mactoam1.c mactoam1.l

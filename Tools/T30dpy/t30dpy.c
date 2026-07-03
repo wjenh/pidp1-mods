@@ -96,6 +96,7 @@
  *    Pre-fault brightBuffer[][] so its 256 pages are resident before the first rendered frame runs.
  * 02-Jul-2026 wje (Claude) fix letterbox/pillarbox bars never being cleared when a window is
  *    edge-dragged into a non-square shape without ever going through the F11/F fullscreen toggle.
+ * 04-Jul-2026 wje make SIGHUP processing thread-safe
 */
 
 #include <stdio.h>
@@ -264,13 +265,15 @@ uint64_t receivedPoints;
 uint64_t totalFrames;
 uint64_t maxActivePoints;
 uint64_t activePoints;
-uint64_t pacedFrames;        // every frame-paced main-loop pass, including idle passes with no active points
+uint64_t pacedFrames;        // every frame-paced main-loop pass, including idle passes with nothing to draw
 uint64_t renderTimeTotal;    // sum of per-rendered-frame times (ns), for the average
 uint64_t renderTimeMax;      // worst single rendered-frame time (ns)
 uint64_t renderCount;        // number of rendered frames timed
 uint64_t phaseBufferTotal;   // sum of per-frame buffer work (lock + memset + point draw), ns
 uint64_t phasePresentTotal;  // sum of per-frame present work (blit + Present/VNC), ns
 const char *rendererNameP;   // SDL renderer backend name, e.g. "opengl" vs "software"
+
+volatile sig_atomic_t reconfigRequested;    // used to synchronize SIGHUP and reconfigure, thread safe
 
 SDL_PixelFormat *pixelFormatP;      // We use RGBA8888, set below.
 SDL_Window *window;
@@ -292,7 +295,8 @@ void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY
 void flushLetterboxBars(void);
 void loadConfig(bool full);
 void sighandler(int sig);
-void reconfigure(int sig);
+void sigReconfigure(int sig);
+void reconfigure(void);
 void reportTiming(void);
 void usage(void);
 FILE *getFile(char *nameP);
@@ -451,7 +455,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
 
     // SIGHUP will cause reloading of the configuration file, SIGTERM and SIGINT exit cleanly.
-    signal(SIGHUP, reconfigure);
+    signal(SIGHUP, sigReconfigure);
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
 
@@ -486,9 +490,6 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
             ((!border)?SDL_WINDOW_BORDERLESS:0) | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE
             | SDL_WINDOW_HIDDEN);
 
-    // Create the renderer, set to black and display.
-    // audit M2: '|' binds tighter than '?:' in C, so the un-parenthesized form always
-    // requested SDL_RENDERER_PRESENTVSYNC regardless of doVsync. Parenthesize both operations.
     renderer = SDL_CreateRenderer(window, -1, (SDL_RENDERER_ACCELERATED | ((doVsync)?SDL_RENDERER_PRESENTVSYNC:0)));
 
     // Record the actual renderer backend (e.g. "opengl", "opengles2", "software") for fps diagnosis.
@@ -529,7 +530,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
 
     pixelFormatP = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA8888);
     blackPixel = SDL_MapRGBA(pixelFormatP, 0, 0, 0, 0);
-     
+
     // Precomupute the possible rgba values over time and the intensity steps.
     initializeRgbas();
 
@@ -558,6 +559,12 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
 
     while( !quit )
     {
+        if( reconfigRequested )
+        {
+            reconfigRequested = 0;
+            reconfigure();
+        }
+
         while( SDL_PollEvent(&event) )
         {
             switch(event.type)
@@ -1293,7 +1300,7 @@ uint32_t cmd;
         // Constrain the mouse since the SDL stuff is not reliable.
         if( pdpY < 0 )
         {
-            pdpY = 0; 
+            pdpY = 0;
         }
 
         if( pdpY > 1023 )
@@ -1303,7 +1310,7 @@ uint32_t cmd;
 
         if( pdpX < 0 )
         {
-            pdpX = 0; 
+            pdpX = 0;
         }
 
         if( pdpX > 1023 )
@@ -1570,9 +1577,14 @@ sighandler(int sig)
     exit(0);
 }
 
-// Called on SIGHUP to reload config file, doesn't affect host, poort, size, bordered.
 void
-reconfigure(int sig)
+sigReconfigure(int sig)
+{
+    reconfigRequested = 1;
+}
+
+void
+reconfigure(void)
 {
     loadConfig(false);
     initializeRgbas();

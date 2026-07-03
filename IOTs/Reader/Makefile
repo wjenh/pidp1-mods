@@ -1,7 +1,7 @@
 INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I..
 
 %.o:%.c ../iotHandler.h
-	gcc $(INC) -g -fPIC -c $< -o $@
+	gcc $(INC) -O3 -fPIC -c $< -o $@
 
 %.so:%.o
 	gcc -shared $< -o $@

@@ -101,6 +101,7 @@
  *    differs from the 1024x1024 logical area since SDL_RenderTexture() with SDL_BLENDMODE_NONE already
  *    overwrites every pixel of a non-letterboxed target.
  *    Pre-fault brightBuffer[][] so its pages are resident before the first rendered frame runs.
+ * 04-Jul-2026 wje make SIGHUP processing thread-safe
 */
 
 #include <stdio.h>
@@ -296,6 +297,8 @@ uint64_t renderCount;        // number of rendered frames timed
 uint64_t phaseBufferTotal;   // sum of per-frame buffer work (lock + memset + point draw), ns
 uint64_t phasePresentTotal;  // sum of per-frame present work (RenderClear + scaled blit + Present/VNC), ns
 const char *rendererNameP;   // SDL renderer backend name, e.g. "opengl"/"opengles2" vs "software"
+
+volatile sig_atomic_t reconfigRequested;        // used for SIGHUP synchronization, thread-safe
 bool doTiming;
 
 // These are all for SDL.
@@ -322,7 +325,8 @@ void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int inte
 void updatePen(int sockFD, bool penDown, int winX, int winY);
 void loadConfig(bool full);
 void sighandler(int sig);
-void reconfigure(int sig);
+void sigReconfigure(int sig);
+void reconfigure(void);
 void reportTiming(void);
 void usage(void);
 FILE *getFile(char *nameP);
@@ -498,7 +502,7 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
 
     // SIGHUP will cause reloading of the configuration file, SIGTERM and SIGINT exit cleanly.
-    signal(SIGHUP, reconfigure);
+    signal(SIGHUP, sigReconfigure);
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
 
@@ -611,7 +615,7 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
     SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
 
     blackPixel = SDL_MapRGBA(formatDetailsP, NULL, 0, 0, 0, 0);
-     
+
     // Precomupute the possible rgba values over time and the intensity steps.
     initializeRgbas();
     // Set up the points array and the active list head.
@@ -642,6 +646,12 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
 
     while( !quit )
     {
+        if( reconfigRequested )
+        {
+            reconfigRequested = 0;
+            reconfigure();
+        }
+
         // Do some precision loop timekeeping so we mantian our 30fps rate.
         currentTime = SDL_GetTicksNS();
         deltaTime = currentTime - lastTime;
@@ -1610,9 +1620,14 @@ sighandler(int sig)
     exit(0);
 }
 
-// Called on SIGHUP to reload config file, doesn't affect host, poort, size, bordered.
 void
-reconfigure(int sig)
+sigReconfigure(int sig)
+{
+    reconfigRequested = 1;
+}
+
+void
+reconfigure(void)
 {
     loadConfig(false);
     initializeRgbas();

@@ -58,7 +58,8 @@
 #define Edge(sw) (pdp->sw && !prev_##sw)
 
 void configure(void);
-void reconfigure(int);
+void reconfigure(void);
+void sigReconfigure(int);
 
 extern void updateswitches(PDP1 *pdp, Panel *panel);
 extern void updatelights(PDP1 *pdp, Panel *panel);
@@ -87,6 +88,8 @@ extern bool all1DEnabled;
 static bool timingEnabled;
 static bool useShm;
 static bool newMemFile;
+
+static volatile sig_atomic_t reconfigRequested;     // SIGHUP synchronization, thread-safe
 
 // All for audio
 extern void setFilterAlpha(float);
@@ -148,6 +151,12 @@ FILE *tmpfP;    // used for timing
 
     for(;;)
     {
+        if( reconfigRequested )
+        {
+            reconfigRequested = 0;
+            reconfigure();
+        }
+
         prev_start_sw = pdp->start_sw;
         prev_stop_sw = pdp->stop_sw;
         prev_continue_sw = pdp->continue_sw;
@@ -371,8 +380,6 @@ char *r;
 char line[1024];
 int n;
 
-    // audit M8: leave room for the '\0' terminator below -- a full 1024-byte
-    // read followed by line[n] = 0 would write one byte past the end of line[].
     while( (n = read(fd, line, (sizeof(line) - 1))), n > 0 )
     {
         line[n] = 0;
@@ -653,7 +660,7 @@ int shmFd;
 
     atexit(exitcleanup);
     signal(SIGPIPE, SIG_IGN);
-    signal(SIGHUP, reconfigure);
+    signal(SIGHUP, sigReconfigure);
     signal(SIGTERM, sighandler);
 
     configure();
@@ -802,11 +809,6 @@ WatchP watchP;
             watchP->lastVal = curVal;
         }
 
-        // audit H3: return-on-first-hit is fine and stays INSIDE the loop, but
-        // watchP is now advanced in the loop header (was never incremented before,
-        // so every pass re-examined watch 0), and the false-fallthrough return
-        // moved OUTSIDE the loop below so all AD1_NUM_WATCHES entries get scanned
-        // instead of the function returning after entry 0 unconditionally.
         if( hit )
         {
             AD1_SET_WATCH_HIT(pdp1P);
@@ -875,9 +877,14 @@ ConfigurationSettingP configSettingP;
     }
 }
 
-// Called on SIGHUP to reload config file
 void
-reconfigure(int sig)
+sigReconfigure(int sig)
+{
+    reconfigRequested = 1;
+}
+
+void
+reconfigure(void)
 {
     reloadConfigFile(CONFIG_FILE);
     configure();

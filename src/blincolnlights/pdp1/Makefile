@@ -1,5 +1,5 @@
-#CC=gcc -w -O3
-CC=gcc -g
+CC=gcc -w -O3
+#CC=gcc -g
 
 INC=-I..
 

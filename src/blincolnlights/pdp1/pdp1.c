@@ -36,7 +36,8 @@
  * wje/claude 20-Jun-26 many changes to move the typewriter, tape reader, and tape punch into IOTs where
  *   they belong. Bugfixes in original code to fix tyo C hang, nac logic not correct
  *   causing a permanent I/O halt. Fix: pdp->tcp = !!(MB & (B5 | B6)).
- * wje/claude 28-Jan-26 another bug fix in B5/B6 bit handling from original version
+ * wje/claude 28-Jun-26 another bug fix in B5/B6 bit handling from original version
+ * wje 3-Jul-26 minor cosmetic fix in help message
 */
 #include "common.h"
 #include "pdp1.h"
@@ -2883,7 +2884,7 @@ static char resp[1024];
             p += sprintf(p, "p filename            mount tape in punch\n");
             p += sprintf(p, "l filename            load memory from RIM-file\n");
             p += sprintf(p, "d [host] [port]       connect to display program\n");
-            p += sprintf(p, "muldiv [on/off]       set/toggle type 10 mul-div option");
+            p += sprintf(p, "muldiv [on/off]       set/toggle type 10 mul-div option\n");
             p += sprintf(p, "audio [on/off]        set/toggle audio output");
         }
         else if(strcmp(args[0], "muldiv") == 0)

@@ -7,6 +7,7 @@
  * Note that we store dpy coords in -511,+511 style, only used by this and the Type 33 symgen.
  *
  * 21-Jun-2026 wje cleanup, no functional change
+ * 4-Jul-2026 wje more cleanup, minor fixes, no significant functional change
  */
 
 #include <unistd.h>
@@ -90,6 +91,7 @@ bool noWait;
             autoSpace = IO(pdp1P) & 04;
             subscript = 0;
             intensity = 0;      // manual says sets to normal
+            x = y = 0;
             iotCondLog(LOG_CMD, "Glf, dotspace %d, sepspace %d, auto %d, intensity %d, x %04o y %04o\n",
                 dotSpacing, sepSpacing, autoSpace, intensity, x, y);
         }
@@ -241,7 +243,7 @@ int x, y;
             }
             else
             {
-                iotLog(LOG_POLL, "No delay\n");
+                iotCondLog(LOG_POLL, "No delay\n");
             }
         }
 

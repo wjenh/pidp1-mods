@@ -21,7 +21,14 @@ _iotLog(char *fmt, ...)
     if( !fP )
     {
         fP = fopen("/tmp/iot.dbg", "a");
-        fprintf(fP,"Logging started\n");
+        if( fP )
+        {
+            fprintf(fP,"Logging started\n");
+        }
+        else
+        {
+            return;     // nothing we can do, no file
+        }
     }
 
     va_list args;
@@ -39,7 +46,14 @@ _iotCondLog(int enable, char *fmt, ...)
         if( !fP )
         {
             fP = fopen("/tmp/iot.dbg", "a");
-            fprintf(fP,"Logging started\n");
+            if( fP )
+            {
+                fprintf(fP,"Logging started\n");
+            }
+            else
+            {
+                return;     // nothing we can do, no file
+            }
         }
 
         va_list args;

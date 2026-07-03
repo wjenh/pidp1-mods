@@ -5,6 +5,7 @@
  * The drum also uses IOTs 62 and 63, which alias to this one.
  *
  * wje 20-Jun-2026 - cleanup, begin this revision history, wasn't initially included
+ * wje 3-Jul-2026 - set TE error if a write fails
  */
 
 #include <unistd.h>
@@ -14,7 +15,7 @@
 #include "highSpeedChannels.h"
 #include "iotHandler.h"
 
-#define DOLOGGING
+//#define DOLOGGING
 #include "iotLogger.h"
 #define LOG_START 0
 #define LOG_IOT 0
@@ -33,7 +34,7 @@
 #define HSC_CHAN 1      // drum uses 1
 
 #define DRUMFILE "/opt/pidp1-mods/pdp23drum"
-#define DRUMADDRTOSEEK(field, offset) (((field * 4096) + (offset)) * sizeof(Word))
+#define DRUMADDRTOSEEK(field, offset) (((field * 4096) + (offset)) * (int)sizeof(Word))
 
 static int drumFd = -1;
 static int drumReadField;
@@ -42,6 +43,7 @@ static int drumAddr;
 static int transferCount;
 static int drumCount;
 static int sbsChan = 5;
+static int draStatusBits = 0;        // use the TE error if a file read or write fails
 static uint64_t lastSimtime;         // used in the polling code for drumcount updates
 static uint64_t cmdCompletionTime;   // relative to pdp1P->simtime
 
@@ -55,6 +57,7 @@ static bool writeMode;
 static bool ioBusy;
 static bool needBreak;
 static bool inWait;
+static bool teError;
 
 static HSCChannelP chanP;   // how we get data
 
@@ -118,6 +121,12 @@ HSCRequest request;
         {
             // dra, return current drum 'counter' in the IO register, along with status
             IO(pdp1P) = drumCount;
+            if( teError )
+            {
+                // Manual says we set bits 0 and 2, we use it for any write error.
+                IO(pdp1P) |= 0500000;
+                teError = false;
+            }
             iotCondLog(LOG_IOT, "dra drum count %o\n", drumCount);
         }
         else
@@ -367,24 +376,28 @@ int drumRemainderCount = 0;
         drumSplitCount, drumRemainderCount);
 
     lseek(drumFd, DRUMADDRTOSEEK(drumField, drumAddr), SEEK_SET);
-    // a read fail is ok, could be an uninitialized drum block. Mem gets buffer content.
-    // But, the rest of the buffer is set to 0.
-    wantbytes = sizeof(Word) * drumSplitCount;
-    gotbytes = read(drumFd, buffer, wantbytes);
+    // A read fail is ok, could be an uninitialized drum block.
+    // Mem gets buffer content, but the rest of the buffer is set to 0.
+    wantbytes = (int)sizeof(Word) * drumSplitCount;
+    if( (gotbytes = read(drumFd, buffer, wantbytes)) < 0 )
+    {
+        gotbytes = 0;
+    }
+
     if( gotbytes != wantbytes )
     {
-        memset(buffer + (gotbytes / sizeof(Word)), 0, wantbytes - gotbytes);
+        memset(buffer + (gotbytes / (int)sizeof(Word)), 0, wantbytes - gotbytes);
     }
 
     if( drumRemainderCount )
     {
-        wantbytes = sizeof(Word) * drumRemainderCount;
+        wantbytes = (int)sizeof(Word) * drumRemainderCount;
         lseek(drumFd, DRUMADDRTOSEEK(drumField, 0), SEEK_SET);
         gotbytes = read(drumFd, buffer + drumSplitCount, wantbytes);
 
         if( gotbytes != wantbytes )
         {
-            memset(buffer + drumSplitCount + (gotbytes / sizeof(Word)), 0, wantbytes - gotbytes);
+            memset(buffer + drumSplitCount + (gotbytes / (int)sizeof(Word)), 0, wantbytes - gotbytes);
         }
     }
 }
@@ -400,6 +413,7 @@ writeBufferToDrum(
 {
 int drumSplitCount = 0;
 int drumRemainderCount = 0;
+int writeCount;
 
     if( (drumAddr + transferCount) > 4095 )
     {
@@ -415,13 +429,25 @@ int drumRemainderCount = 0;
     iotCondLog(LOG_WRITE, "write buffer to drum, drumSplitCount %d, drumRemainderCount %d\n",
         drumSplitCount, drumRemainderCount);
 
+    // An error will set teError true.
     lseek(drumFd, DRUMADDRTOSEEK(drumField, drumAddr), SEEK_SET);
-    write(drumFd, buffer, sizeof(Word) * drumSplitCount);
+    writeCount = (int)sizeof(Word) * drumSplitCount;
+    if( write(drumFd, buffer, writeCount) != writeCount )
+    {
+        teError = true;
+        return;
+    }
+
     if( drumRemainderCount )
     {
         iotCondLog(LOG_WRITE, "writing remainder from buffer location %d to disk offset %o\n", drumSplitCount,
             DRUMADDRTOSEEK(drumField, 0));
         lseek(drumFd, DRUMADDRTOSEEK(drumField, 0), SEEK_SET);
-        write(drumFd, buffer + drumSplitCount, sizeof(Word) * drumRemainderCount);
+        writeCount = (int)sizeof(Word) * drumRemainderCount;
+        if( write(drumFd, buffer, writeCount) != writeCount )
+        {
+            teError = true;
+            return;
+        }
     }
 }

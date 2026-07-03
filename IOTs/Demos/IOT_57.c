@@ -14,7 +14,10 @@ int chan;
 
     if( !fP )
     {
-        fP = fopen("/tmp/iot", "a");
+        if( !(fP = fopen("/tmp/iot", "a")) )
+        {
+            return(0);      // this will fail us, emulator will see nothing is implemented.
+        }
     }
 
     if( pulse )     // we are in clock cycle TP10

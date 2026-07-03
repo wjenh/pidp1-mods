@@ -30,10 +30,7 @@
  * 27-Jun-2026 wje reverted Claude HSC_IMMEDIATE, didn't actually help and increased cpu loading
  * 29-Jun-2026 wje add optional instruction caching
  * 30-Jun-2026 wje add update processing
- * 02-Jul-2026 wje/claude add LOG_HSCTIMING instrumentation to measure actual wall-clock
- *    latency of the uncached getWord() HSC fetch (HSCexecute()+HSCwait()), to quantify how
- *    far the Linux scheduler strays from the intended 5us word-fetch delay. See
- *    IOTs/Type340Display/CLAUDE.md for the display-jitter root-cause analysis this supports.
+ * 04-Jul-2026 wje check HSCexecute status, just for completeness
  */
 
 #include <stdlib.h>
@@ -286,15 +283,10 @@ static int totalPoints;
 #endif
 
 #if LOG_HSCTIMING
-// Statistics for the uncached getWord() HSC fetch round trip (HSCexecute()+HSCwait()).
-// Reset at the start of each display run (EMU_CMD_RUN), reported when the run ends.
-// See getWord() for where these are sampled, and IOTs/Type340Display/CLAUDE.md for why.
 static uint64_t hscFetchCount;        // number of uncached fetches timed this run
 static uint64_t hscFetchTotalNs;      // sum of elapsed ns, for computing the average
 static uint64_t hscFetchMinNs;        // smallest elapsed time seen this run
 static uint64_t hscFetchMaxNs;        // largest elapsed time seen this run
-// Histogram buckets, upper bound each: <=5us (on target), <=10us, <=20us (SPIN_LIMIT),
-// <=50us, <=100us, and anything slower than 100us.
 static uint64_t hscBucketCounts[6];
 #endif
 
@@ -1433,7 +1425,7 @@ doCharacter(int dotSpacing, unsigned char ch)
 {
 int x, y;
 int xTmp, yTmp;
-int flags;
+int chFlags;
 int curChar;
 bool sawHit;
 
@@ -1448,10 +1440,10 @@ bool sawHit;
     iotCondLog(LOG_CHARACTER,"Mapped character %o\n", ch);
 
     // Each char has 5 data bytes plus one flag byte.
-    flags = charSet[curChar][5];
+    chFlags = charSet[curChar][5];
 
-    iotCondLog(LOG_CHARACTER,"curChar %o flags %o\n", curChar, flags);
-    switch( flags )
+    iotCondLog(LOG_CHARACTER,"curChar %o flags %o\n", curChar, chFlags);
+    switch( chFlags )
     {
     case CH_LF:
         // Down one line dotSpacing
@@ -1579,7 +1571,7 @@ bool sawHit;
         curY -= (CHARHEIGHT + CHARDELTA) * dotSpacing;
     }
 
-    if( flags == CH_BS )
+    if( chFlags == CH_BS )
     {
         if( twoCharsets || (shiftState == 0) )
         {
@@ -1596,7 +1588,7 @@ bool sawHit;
             return(EDGEVIOLATION);
         }
     }
-    else if( flags == CH_D )
+    else if( chFlags == CH_D )
     {
         curY += 2 * dotSpacing;     // undo descender
     }
@@ -1707,27 +1699,14 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
         {
             reloadCache = false;
 
-            // Fill the cache in immediate mode. This must be HSC_MODE_IMMEDIATE, not
-            // HSC_MODE_THREADED (the comment always said "immediate" even when the code
-            // said otherwise -- found 02-Jul-26): this call site never calls HSCwait()
-            // afterward, and the per-word 5us cost is charged separately, once per word
-            // actually consumed from the cache (see "pendingDelay += 5000" below), not once
-            // per word fetched here. HSC_MODE_THREADED requires a matching HSCwait() to
-            // clear the channel's busy state (now enforced -- see HSCexecute()'s
-            // HSC_MODE_THREADED case in highSpeedChannels.c); without one, the channel would
-            // be left permanently HSC_BUSY, and would also never self-heal a stray
-            // HSC_ABORT left by an HSCreset() (start/stop/examine/deposit switch action).
-            // HSC_MODE_IMMEDIATE has neither problem: it unconditionally sets the channel
-            // back to HSC_DONE on every call, exactly like the Type 23 Drum's own use of
-            // IMMEDIATE, and never expects a matching HSCwait(). No change to the actual
-            // cache-fill timing/behavior -- this only fixes how the channel's internal
-            // status bookkeeping is left afterward.
+            // Fill the cache in immediate mode.
+            // The whole point of the cache is to not hit the pdp1 emulator thread.
             request.mode = (HSC_MODE_FROMMEM | HSC_MODE_IMMEDIATE);
             request.count = cacheSize;
             request.memBank = ((addr >> 12) & 017);
             request.memAddr = (addr & 07777);
             request.fromBufferP = wordCache;
-            HSCexecute(chanP, &request);
+            HSCexecute(chanP, &request);        // really nothing to check, it always works
             cacheBase = addr;
             iotCondLog(LOG_CACHE,"cache load of %d words at address %d\n", cacheSize, addr);
         }
@@ -1763,7 +1742,11 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
         hscStartNs = getNow();
 #endif
 
-        HSCexecute(chanP, &request);
+        if( !HSCexecute(chanP, &request) )
+        {
+            return(0);          // we need to return something, 0 is generally safe.
+        }
+
         HSCwait(chanP);     // Here's where the simulation of the hardware hsc delay happens.
 
 #if LOG_HSCTIMING

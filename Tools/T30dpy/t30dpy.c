@@ -264,7 +264,7 @@ uint64_t totalPoints;
 uint64_t receivedPoints;
 uint64_t totalFrames;
 uint64_t maxActivePoints;
-uint64_t activePoints;
+_Atomic  uint64_t activePoints;     // overly obsessive to get perfect counts, but only used for timing
 uint64_t pacedFrames;        // every frame-paced main-loop pass, including idle passes with nothing to draw
 uint64_t renderTimeTotal;    // sum of per-rendered-frame times (ns), for the average
 uint64_t renderTimeMax;      // worst single rendered-frame time (ns)

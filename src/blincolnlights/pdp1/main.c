@@ -18,6 +18,7 @@
  * wje 11-Apr-26 the light pen really doesn't need a listener thread, just use nonblocking reads
  * wje 1-May-26 set radius^2 from config for the Type 340 display
  * wje 16-Jun-26 many changes so the CHM simple test program displays like the real PDP-1
+ * wje 3-Jul-26 code cleanup, add a few safety checks, no functional change
 */
 
 #include <fcntl.h>
@@ -519,6 +520,7 @@ char buf[100];
 
     // Handle both old and new file formats.
     // New is addr: word, old has each on a separate line.
+    addr = 0;
     while( (strP = fgets(buf, 100, fileP)) )
     {
         val = strtol(strP, &strP, 8);
@@ -557,12 +559,12 @@ char buf[100];
 // Dump working memory to the memory image file.
 // Reworked by wje to keep the address and data on one line, much more readable.
 void
-dumpmem(const char *file, Word *mem, Word size)
+dumpmem(const char *fileNameP, Word *mem, Word size)
 {
-FILE *f;
+FILE *fP;
 Word i;
 
-    if( (f = fopen("coremem", "w")), f == nil )
+    if( (fP = fopen(fileNameP, "w")), f == nil )
     {
         return;
     }
@@ -574,13 +576,13 @@ Word i;
             if( newMemFile )
             {
                 // Just put it on one line, jeez
-                fprintf(f, "%06o: %06o\n", i, mem[i]);
+                fprintf(fP, "%06o: %06o\n", i, mem[i]);
             }
             else
             {
                 // Why 2 lines? Silly.
-                fprintf(f, "%06o:\n", i);
-                fprintf(f, "%06o\n", mem[i]);
+                fprintf(fP, "%06o:\n", i);
+                fprintf(fP, "%06o\n", mem[i]);
             }
         }
     }
@@ -679,7 +681,7 @@ int shmFd;
             ftruncate(shmFd, sizeof(PDP1));
             pdp = mmap(NIL, sizeof(PDP1), PROT_READ | PROT_WRITE, MAP_SHARED, shmFd, 0);
             pdp1P = pdp;
-            if( pdp == NIL )
+            if( pdp == MAP_FAILED )
             {
                 logger(LOG_SHM, "mmap failed, using local memoryry\n");
                 useShm = false;

@@ -5,6 +5,7 @@
  *
  * 14-Nov-2025 wje initial version, updates until 18-Jun-2026 were not recorded
  * 18-Jun-2026 wje rework client mode, now works correctly
+ * 3-Jul-2026 wje add a safety check for ioctl
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -522,7 +523,14 @@ char wbuf[8];
         else
         {
             chanP = &channels[i];
-            ioctl(chanP->chan_fd, FIONREAD, &(IO(pdp1P)));
+            if( chanP->chan_fd >= 0 )
+            {
+                ioctl(chanP->chan_fd, FIONREAD, &(IO(pdp1P)));
+            }
+            else
+            {
+                IO(pdp1P) = 0;
+            }
         }
         break;
 

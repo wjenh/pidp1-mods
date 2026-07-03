@@ -30,6 +30,10 @@
  * 27-Jun-2026 wje reverted Claude HSC_IMMEDIATE, didn't actually help and increased cpu loading
  * 29-Jun-2026 wje add optional instruction caching
  * 30-Jun-2026 wje add update processing
+ * 02-Jul-2026 wje/claude add LOG_HSCTIMING instrumentation to measure actual wall-clock
+ *    latency of the uncached getWord() HSC fetch (HSCexecute()+HSCwait()), to quantify how
+ *    far the Linux scheduler strays from the intended 5us word-fetch delay. See
+ *    IOTs/Type340Display/CLAUDE.md for the display-jitter root-cause analysis this supports.
  */
 
 #include <stdlib.h>
@@ -79,6 +83,7 @@
 #define LOG_BOUNDS 0
 #define LOG_TIMING 0
 #define LOG_CACHE 0
+#define LOG_HSCTIMING 0    // measure uncached getWord() HSC fetch latency, see getWord()
 
 // This defines the time each command takes to initialize, 0.5 usecs. This might not be accurate.
 #define SETUP_TIME 500
@@ -278,6 +283,19 @@ static uint64_t startTime;
 static int minX, minY;
 static int maxX, maxY;
 static int totalPoints;
+#endif
+
+#if LOG_HSCTIMING
+// Statistics for the uncached getWord() HSC fetch round trip (HSCexecute()+HSCwait()).
+// Reset at the start of each display run (EMU_CMD_RUN), reported when the run ends.
+// See getWord() for where these are sampled, and IOTs/Type340Display/CLAUDE.md for why.
+static uint64_t hscFetchCount;        // number of uncached fetches timed this run
+static uint64_t hscFetchTotalNs;      // sum of elapsed ns, for computing the average
+static uint64_t hscFetchMinNs;        // smallest elapsed time seen this run
+static uint64_t hscFetchMaxNs;        // largest elapsed time seen this run
+// Histogram buckets, upper bound each: <=5us (on target), <=10us, <=20us (SPIN_LIMIT),
+// <=50us, <=100us, and anything slower than 100us.
+static uint64_t hscBucketCounts[6];
 #endif
 
 // Communication with the IOT
@@ -495,6 +513,13 @@ Status status;
             maxX = maxY = 0;
             minX = minY = 9999;
 #endif
+#if LOG_HSCTIMING
+            hscFetchCount = 0;
+            hscFetchTotalNs = 0;
+            hscFetchMinNs = 0;
+            hscFetchMaxNs = 0;
+            memset(hscBucketCounts, 0, sizeof(hscBucketCounts));
+#endif
             reset340();                 // sets curmode to PARAMETER
             curAddress = ctlP->address;
             curState = INITIALIZE;      // reset340() sets it to STOPPED;
@@ -563,7 +588,7 @@ Status status;
 
                 case EMU_CMD_RUN:
                     // A new dla arrived while the display program is running.
-                    // Abort the current program and start the new one without leaving the inner loop. 
+                    // Abort the current program and start the new one without leaving the inner loop.
                     sawEscape = false;
                     reset340();                 // sets curmode to PARAMETER, state to INITIALIZE
                     curAddress = ctlP->address;
@@ -757,7 +782,7 @@ Status status;
                     }
                     else
                     {
-                        iotCondLog(LOG_VECTOR, "vector%s brmInitialize failed\n", 
+                        iotCondLog(LOG_VECTOR, "vector%s brmInitialize failed\n",
                             (curMode == VCONTINUE)?" continue":"");
                         emuOrFlags(FLAG_STOP);
                         curState = STOPPED;
@@ -970,6 +995,26 @@ Status status;
             iotCondLog(LOG_TIMING, "%d points in %d usec, min x,y %d,%d max x,y %d,%d\n",
                 totalPoints, delta/1000, minX, minY, maxX, maxY);
             startTime = 0;
+        }
+#endif
+
+#if LOG_HSCTIMING
+        // Report uncached HSC fetch latency stats for the run that just finished, if any
+        // uncached fetches happened (a fully cached run leaves hscFetchCount at 0).
+        if( hscFetchCount )
+        {
+            iotCondLog(LOG_HSCTIMING,
+                "hsc fetch: %llu words, avg %llu ns, min %llu ns, max %llu ns\n",
+                (unsigned long long)hscFetchCount,
+                (unsigned long long)(hscFetchTotalNs / hscFetchCount),
+                (unsigned long long)hscFetchMinNs,
+                (unsigned long long)hscFetchMaxNs);
+            iotCondLog(LOG_HSCTIMING,
+                "hsc fetch buckets (ns): <=5000 %llu  <=10000 %llu  <=20000 %llu  "
+                "<=50000 %llu  <=100000 %llu  >100000 %llu\n",
+                (unsigned long long)hscBucketCounts[0], (unsigned long long)hscBucketCounts[1],
+                (unsigned long long)hscBucketCounts[2], (unsigned long long)hscBucketCounts[3],
+                (unsigned long long)hscBucketCounts[4], (unsigned long long)hscBucketCounts[5]);
         }
 #endif
 
@@ -1234,7 +1279,7 @@ doIncrement(int dotSpacing, int bits)
     return( COMPLETED );
 }
 
-/* 
+/*
  * Character set for the Type 342 character generator.
  * Shamelessly stolen from Phil Budne and Lars Brinkhoff from the simh version.
  * A character is represented by 5 bytes plus one flag byte that make up a 5x7 matrix.
@@ -1610,7 +1655,7 @@ bool gotLpHit;
 #endif
             if( tryLightpen && !gotLpHit )
             {
-                if( ((i == 0) && lpEnabled) || slaves[i-1].lpEnabled )
+                if( (i == 0) ? lpEnabled : (slaves[i-1].lpEnabled != 0) )        // audit M1: avoid slaves[-1] OOB read when i==0
                 {
                     if( (gotLpHit = checkLightpen(i, x, y)) )
                     {
@@ -1637,6 +1682,11 @@ Word addr;
 Word val;
 HSCRequest request;
 Word buffer[2];     // we only use 1, but leave space just to be sure
+#if LOG_HSCTIMING
+uint64_t hscStartNs;     // getNow() timestamp taken just before HSCexecute()+HSCwait()
+uint64_t hscElapsedNs;   // measured wall time for the uncached fetch round trip
+int hscBucket;           // which hscBucketCounts[] histogram bucket this sample falls in
+#endif
 
     addr = curAddress;
     if( (curAddress & 07777) == 07777 )
@@ -1657,8 +1707,22 @@ Word buffer[2];     // we only use 1, but leave space just to be sure
         {
             reloadCache = false;
 
-            // Fill the cache in immediate mode.
-            request.mode = (HSC_MODE_FROMMEM | HSC_MODE_THREADED);
+            // Fill the cache in immediate mode. This must be HSC_MODE_IMMEDIATE, not
+            // HSC_MODE_THREADED (the comment always said "immediate" even when the code
+            // said otherwise -- found 02-Jul-26): this call site never calls HSCwait()
+            // afterward, and the per-word 5us cost is charged separately, once per word
+            // actually consumed from the cache (see "pendingDelay += 5000" below), not once
+            // per word fetched here. HSC_MODE_THREADED requires a matching HSCwait() to
+            // clear the channel's busy state (now enforced -- see HSCexecute()'s
+            // HSC_MODE_THREADED case in highSpeedChannels.c); without one, the channel would
+            // be left permanently HSC_BUSY, and would also never self-heal a stray
+            // HSC_ABORT left by an HSCreset() (start/stop/examine/deposit switch action).
+            // HSC_MODE_IMMEDIATE has neither problem: it unconditionally sets the channel
+            // back to HSC_DONE on every call, exactly like the Type 23 Drum's own use of
+            // IMMEDIATE, and never expects a matching HSCwait(). No change to the actual
+            // cache-fill timing/behavior -- this only fixes how the channel's internal
+            // status bookkeeping is left afterward.
+            request.mode = (HSC_MODE_FROMMEM | HSC_MODE_IMMEDIATE);
             request.count = cacheSize;
             request.memBank = ((addr >> 12) & 017);
             request.memAddr = (addr & 07777);
@@ -1689,8 +1753,65 @@ Word buffer[2];     // we only use 1, but leave space just to be sure
         request.memBank = ((addr >> 12) & 017);
         request.memAddr = (addr & 07777);
         request.fromBufferP = buffer;
+
+#if LOG_HSCTIMING
+        // Bracket the fetch-plus-simulated-delay round trip. HSCwait() enforces the 5us
+        // word-fetch time via usleep(), a real kernel sleep/reschedule point -- unlike
+        // nanodelay()'s spin-wait used for every other sub-SPIN_LIMIT delay in this file --
+        // so actual elapsed time here is at the mercy of the Linux scheduler, not just the
+        // requested delay. See IOTs/Type340Display/CLAUDE.md for the full analysis.
+        hscStartNs = getNow();
+#endif
+
         HSCexecute(chanP, &request);
         HSCwait(chanP);     // Here's where the simulation of the hardware hsc delay happens.
+
+#if LOG_HSCTIMING
+        hscElapsedNs = (getNow() - hscStartNs);
+        ++hscFetchCount;
+        hscFetchTotalNs += hscElapsedNs;
+
+        if( (hscFetchCount == 1) || (hscElapsedNs < hscFetchMinNs) )
+        {
+            hscFetchMinNs = hscElapsedNs;
+        }
+
+        if( hscElapsedNs > hscFetchMaxNs )
+        {
+            hscFetchMaxNs = hscElapsedNs;
+        }
+
+        // Classify into a histogram bucket so the shape of the tail is visible, not just
+        // the min/max/average -- the average alone can hide an occasional large scheduling
+        // stall behind a majority of on-time fetches.
+        if( hscElapsedNs <= 5000 )
+        {
+            hscBucket = 0;
+        }
+        else if( hscElapsedNs <= 10000 )
+        {
+            hscBucket = 1;
+        }
+        else if( hscElapsedNs <= 20000 )
+        {
+            hscBucket = 2;
+        }
+        else if( hscElapsedNs <= 50000 )
+        {
+            hscBucket = 3;
+        }
+        else if( hscElapsedNs <= 100000 )
+        {
+            hscBucket = 4;
+        }
+        else
+        {
+            hscBucket = 5;
+        }
+
+        ++(hscBucketCounts[hscBucket]);
+#endif
+
         val = buffer[0];
     }
 
@@ -1844,7 +1965,7 @@ int
 nanopause(int ns)
 {
 struct timespec tm;
-    
+
     tm.tv_sec = 0;
     tm.tv_nsec = ns;
     nanosleep(&tm, 0);

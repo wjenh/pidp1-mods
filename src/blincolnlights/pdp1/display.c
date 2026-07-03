@@ -861,6 +861,9 @@ uint32_t cmd;
     }
 
     gotPosition = false;
+    lastX = 0;                                  // audit M10: hygiene init, gotPosition guards real use
+    lastY = 0;
+    penDown = ctlP->penDown;                    // audit M10: preserve current state across a no-data pass
 
     // Read all pending commands.
     // Only the mouse move last will be significant, but we do need to check pen up / pen down for all.

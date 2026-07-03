@@ -148,7 +148,7 @@ EmuControlP ctlP;
 
         if( needSkip )
         {
-            PC(pdp1P) = (++(PC(pdp1P)) & 0777777);       // constrain to 0-4095
+            PC(pdp1P) = ((PC(pdp1P) + 1) & 07777);       // audit M4: constrain to 0-4095 (12-bit wrap, matches pdp1.c's pc_inc())
         }
         break;
     }

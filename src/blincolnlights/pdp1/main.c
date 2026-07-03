@@ -371,14 +371,28 @@ char *r;
 char line[1024];
 int n;
 
-    while( (n = read(fd, line, sizeof(line))), n > 0 )
+    // audit M8: leave room for the '\0' terminator below -- a full 1024-byte
+    // read followed by line[n] = 0 would write one byte past the end of line[].
+    while( (n = read(fd, line, (sizeof(line) - 1))), n > 0 )
     {
         line[n] = 0;
         r = handlecmd(pdp, line);
         n = strlen(r);
-        r[n] = '\n';
-        r[n + 1] = '\0';
-        write(fd, r, strlen(r));
+
+        // handlecmd() returns a pointer to its own static 1024-byte response
+        // buffer (see pdp1.c). Only append our own newline terminator when
+        // doing so cannot walk past the end of that buffer; otherwise send
+        // the response as-is rather than risk an out-of-bounds write.
+        if( (n + 2) <= 1024 )
+        {
+            r[n] = '\n';
+            r[n + 1] = '\0';
+            write(fd, r, (n + 1));
+        }
+        else
+        {
+            write(fd, r, n);
+        }
     }
 
     close(fd);

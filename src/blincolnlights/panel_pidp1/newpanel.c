@@ -1083,19 +1083,22 @@ ConfigurationSettingP settingP;
 
     if( (settingP = findConfigurationSetting(confP, "panelbrightness")) )
     {
-        dimmingFactor = settingP->fvalue;
+        // audit M11: fvalue is NAN when the config value had no decimal point
+        // (configuration.c only sets fvalue for values containing '.'); fall
+        // back to the integer value in that case.
+        dimmingFactor = (isnan(settingP->fvalue))?(float)settingP->ivalue:settingP->fvalue;
         dimmingFactor = FLIMIT(dimmingFactor);
     }
 
     if( (settingP = findConfigurationSetting(confP, "panelonalpha")) )
     {
-        onAlpha = settingP->fvalue;
+        onAlpha = (isnan(settingP->fvalue))?(float)settingP->ivalue:settingP->fvalue;     // audit M11
         onAlpha = FLIMIT(onAlpha);
     }
 
     if( (settingP = findConfigurationSetting(confP, "paneloffalpha")) )
     {
-        offAlpha = settingP->fvalue;
+        offAlpha = (isnan(settingP->fvalue))?(float)settingP->ivalue:settingP->fvalue;    // audit M11
         offAlpha = FLIMIT(offAlpha);
     }
 

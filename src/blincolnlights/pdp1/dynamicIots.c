@@ -155,7 +155,7 @@ IotStartP startP;
         return;             // already done
     }
 
-    for( i = 0; i < 65; ++i )
+    for( i = 0; i < 64; ++i )                  // audit M9: handles[] has 64 entries (device numbers 0-63)
     {
         if( (startP = handles[i].startP) && !handles[i].isAlias )
         {
@@ -178,7 +178,7 @@ IotStopP stopP;
         return;             // already done
     }
 
-    for( i = 0; i < 65; ++i )
+    for( i = 0; i < 64; ++i )                  // audit M9: handles[] has 64 entries (device numbers 0-63)
     {
         if( (stopP = handles[i].stopP) && !handles[i].isAlias )
         {
@@ -196,7 +196,7 @@ dynamicIotProcessorUpdate(void)
 int i;
 IotUpdateP updateP;
 
-    for( i = 0; i < 65; ++i )
+    for( i = 0; i < 64; ++i )                  // audit M9: handles[] has 64 entries (device numbers 0-63)
     {
         if( (updateP = handles[i].updateP) && !handles[i].isAlias )
         {
@@ -289,7 +289,7 @@ char fname[256];
         {
             // we need to have this alias point to the real one
             i = aliasP();
-            if( (i < 1) && (i > 63) )
+            if( (i < 1) || (i > 63) )          // audit M9: was "&&", could never be true -- no range check at all
             {
                 return(0);      // out of range
             }

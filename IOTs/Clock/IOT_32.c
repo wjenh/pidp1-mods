@@ -91,6 +91,11 @@ int i;
         else
         {
             enabled = enable32ms = enable1min = 0;
+
+            if( !countdown )                     // audit M6/G1-2: nothing left needing polling
+            {
+                enablePolling(0);
+            }
         }
 
         if( op & 010 )
@@ -148,7 +153,7 @@ void iotPoll(PDP1 *pdp1P)
     {
         ++counter;
 
-        if( enable32ms && ((counter & 0x3F) == 0x20) )  // 32 msecs
+        if( enable32ms && ((counter & 0x1F) == 0x10) )  // audit M6: fires every 32 ticks of the 1ms counter
         {
             initiateBreak(channel32ms);
             completeNeeded = 0;

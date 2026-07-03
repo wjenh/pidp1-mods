@@ -487,7 +487,9 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
             | SDL_WINDOW_HIDDEN);
 
     // Create the renderer, set to black and display.
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | (doVsync)?SDL_RENDERER_PRESENTVSYNC:0 );
+    // audit M2: '|' binds tighter than '?:' in C, so the un-parenthesized form always
+    // requested SDL_RENDERER_PRESENTVSYNC regardless of doVsync. Parenthesize both operations.
+    renderer = SDL_CreateRenderer(window, -1, (SDL_RENDERER_ACCELERATED | ((doVsync)?SDL_RENDERER_PRESENTVSYNC:0)));
 
     // Record the actual renderer backend (e.g. "opengl", "opengles2", "software") for fps diagnosis.
     // SDL2 exposes this via SDL_GetRendererInfo; the name string is owned by SDL and persists.

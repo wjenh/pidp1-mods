@@ -147,9 +147,10 @@ newmemfile=true
 pidp1timing=off
 
 # Adjust the maximum brightness of the hardware panel lights.
-# This is a floating point number ranging from 0.0 to 1.0, off to max brightness.
+# This is an integer number ranging from 0 to 100, off to max brightness.
 # Many people think full bright is too bright, adjust as you like.
-panelbrightness=0.8
+# This is a brightness cap, not a scaliing factor, so dimmer lights will still appear as they should.
+panelbrightness=80
 
 # Adjust the light turnon and turnoff times.
 # These are floating point numbers ranging from 0.0 to 1.0, SEE THE DOCUMENTATION.
@@ -160,6 +161,7 @@ paneloffalpha=0.04
 
 # This determines whether or not the new panel driver sets realtime fifo priority.
 # It is generally not needed, but if flicker is a problem, enable it.
+# It has essentially no cpu loading impact.
 panelrealtime=false
 
 # If you get to the point you just can't stand waiting on the (accurately) slow typewriter,

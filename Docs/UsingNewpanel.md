@@ -2,9 +2,9 @@
 
 This docuemnt describes newpanel, a replacement for panel_pidp1, and how to use it.
 
-This is version 1.2\
-Edit date 2-Jul-2026\
-more flicker notes
+This is version 1.3\
+Edit date 4-Jul-2026\
+update for new brightness control
 
 ## An important note about flicker and panel light blips
 
@@ -23,9 +23,23 @@ Newpanel is installed by default.
 
 ## Running from the command line
 
+If started frm the command line, the following switches can be used, they are also settable in the
+pidp1.config file.
+Command line switches override configuration file settings.
+
+**panel_pidp1** [-b brightness] [-r] [-t]
+
+- b set the maximum brightness, 0-100%
+- r run with real-time thread priority set
+- t enable timing statistics, only used for testing
+
+Note that if you run from the build directory, /opt/pidp1-mods/src/blincolnlights/panel_pidp1, the program
+name is *newpanel*, /opt/pidp-1/bin/panel_pidp1 is a link to this.
+
 You can switch between old and new manually if you want to see the difference.
 
 Start the emulator as usual via either autobooting or the pidp1-control icon.
+Build the old panel by typing *make* in the Old subdirectory in panel_pidp1.
 
 To manually switch, find and kill the current panel:
 ```
@@ -36,10 +50,9 @@ Find the *pid* for panel_pidp1, then:
 sudo kill the-pid
 ```
 
-Now start the one of your choice by running it from the **build** directory,
-/opt/pidp1-mods/src/blicolnlights/panel_pidp1.
-
-If you don't see both panel_pidp1 and newpanel there, just type *make*.
+You can now start the old oneby running it from its directory, /opt/pidp1-mods/src/blicolnlights/Old/panel_pidp1.\
+It will not have the ability to run with real time priority unless you run the *setpriv.sh* script in its
+directory.
 
 ## History
 
@@ -163,7 +176,7 @@ These settings are available:
 
 | parameter | values | default | effect |
 |-----------|--------|---------|--------|
-| panelbrigtness | 0.0 to 1.0 | 1.0 | change the maximum brightness, 0.0 off to 1.0 brightest |
+| panelbrightness | 0 to 100 | 100 | change the maximum brightness, 0 off to 100 full intensity |
 | panelrealtime | true, false | false | use or don't real time thread priority |
 | panelonalpha | 0.0 - 1.0 | 0.45 | change the turn on time, larger numbers are shorter times |
 | paneloffalpha | 0.0 - 1.0 | 0.04 | change the turn off time, larger numbers are shorter times |

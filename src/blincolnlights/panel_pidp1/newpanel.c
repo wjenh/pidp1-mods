@@ -15,7 +15,8 @@
  *
  * Here, the emulator tallies the on state once per 5us emulated cycle by incrementing panelP->pwmcount[][].
  * This driver periodically reads and resets those counts and uses them directly as the PWM
- * phase-count threshold for lightRow() after applying a global brightness scaling factor (dimmingFactor).
+ * phase-count threshold for lightRow(), after capping against maxBrightness (a 0-100 percent
+ * ceiling -- values below the cap are left untouched, only the top end is clamped).
  *
  * wje 14-Jun-26 - new implementation based on panel_pidp1.c:
  *    replace lightthread's NSAMPLES sampling/decay filter with
@@ -47,6 +48,9 @@
  * wje 02-Jul-26 - testing of rt thread priority shows no significant cpu impact and it does
  *    eliminate any residual light flashes caused by the Linux scheduler.
  *    Updated the documentation to indicate this, and give an ok to use if needed.
+ * wje 04-Jul-26 - changed dimmingFactor, an intensity scaling factor, with maxBrightness, a 0-100 int percent ceiling.
+ *    This accomplishes the desired effect, limiting the max brightness without suppressing lower intensity
+ *    lights, it is a clamp, not a scaling.
  */
 #include <stdlib.h>
 #include <stdarg.h>
@@ -131,6 +135,9 @@
 
 #define FLIMIT(f) (((f) < 0.0)?0.0:(((f) > 1.0)?1.0:(f)))
 
+// Clamp an integer percentage (e.g. maxBrightness) to 0-100.
+#define ILIMIT(i) (((i) < 0)?0:(((i) > 100)?100:(i)))
+
 typedef Panel *PanelP;      // Panel is in the panel_pidp1.h include file, it's what's in shared memory.
 
 // Per-light brightness state used as a phase-count threshold by lightRow()
@@ -171,9 +178,10 @@ u64 phaseHist[NPHASEHISTBUCKETS];
 u8 worstPhaseStallCols[18];    // l[] snapshot at the worst stall seen so far
 u8 worstTransitionStallCols[18];
 
-// Global brightness scaling ("dimmer") factor, applied to every light's
-// PWM count before it's used by lightRow(). 1.0 = full brightness.
-float dimmingFactor = 1.0f;
+// Maximum brightness ceiling, as a percent (0-100) of numLevels.
+// Lights whose computed intensity exceeds this are clamped down to it; intensities
+// already at or below the cap are left unchanged. 100 = no cap (full brightness allowed).
+int maxBrightness = 100;
 
 // Alpha values
 float onAlpha = FILTER_ALPHA_RISE;
@@ -235,8 +243,8 @@ PanelP panelP;
         switch( opt )
         {
         case 'b':
-            dimmingFactor = atof(optarg);
-            dimmingFactor = FLIMIT(dimmingFactor);
+            maxBrightness = atoi(optarg);
+            maxBrightness = ILIMIT(maxBrightness);
             break;
 
         case 't':
@@ -610,7 +618,7 @@ static u32 cycle = 0;
 
 // Background thread: every ~pwmCycleTime, read and reset panelP->pwmcount[row][col]
 // for each of the 10x18 light bits, scale to the 0-numLevels range based on the actual number
-// of emulated cycles elapsed, apply dimmingFactor, clamp to 0-numLevels,
+// of emulated cycles elapsed, clamp to 0-numLevels, clamp again to the maxBrightness ceiling,
 // and store into p->lights[row][col] for lightRow() to use as its phase-count threshold.
 void *
 pwmthread(void *arg)
@@ -709,7 +717,7 @@ struct sched_param sp;
 
                 // Scale the duty fraction (count/expectedCycles, 0..1) to a phase threshold of
                 // 0..numLevels. Scaling to numLevels lets an always-on light reach full brightness.
-                intensity = (int)(((float)count * (float)numLevels / (float)expectedCycles) * dimmingFactor);
+                intensity = (int)((float)count * (float)numLevels / (float)expectedCycles);
                 if( intensity < 0 )
                 {
                     intensity = 0;
@@ -717,6 +725,18 @@ struct sched_param sp;
                 if( intensity > numLevels )
                 {
                     intensity = numLevels;
+                }
+
+                // Cap against maxBrightness (percent of numLevels). This only pulls down
+                // intensities that exceed the cap, it never changes values already at or
+                // below it.
+                if( maxBrightness < 100 )
+                {
+                    int capLevel = (numLevels * maxBrightness + 50) / 100;
+                    if( intensity > capLevel )
+                    {
+                        intensity = capLevel;
+                    }
                 }
 
                 // Smooth across iterations with an asymmetric IIR filter.
@@ -1083,11 +1103,7 @@ ConfigurationSettingP settingP;
 
     if( (settingP = findConfigurationSetting(confP, "panelbrightness")) )
     {
-        // audit M11: fvalue is NAN when the config value had no decimal point
-        // (configuration.c only sets fvalue for values containing '.'); fall
-        // back to the integer value in that case.
-        dimmingFactor = (isnan(settingP->fvalue))?(float)settingP->ivalue:settingP->fvalue;
-        dimmingFactor = FLIMIT(dimmingFactor);
+        maxBrightness = ILIMIT(settingP->ivalue));
     }
 
     if( (settingP = findConfigurationSetting(confP, "panelonalpha")) )
@@ -1143,7 +1159,7 @@ void
 usage()
 {
     printf("Usage: newpanel [-b brightness] [-t] [-r]\n");
-    printf("-b brightness, set max brigtness, 0.0 to 1.0\n");
+    printf("-b brightness, set max brightness percent, 0 to 100\n");
     printf("-t, enable timing statistics, printed on exit\n");
     printf("-r, use realtime threads\n");
     exit(1);

@@ -6,6 +6,8 @@
  * 14-Nov-2025 wje initial version, updates until 18-Jun-2026 were not recorded
  * 18-Jun-2026 wje rework client mode, now works correctly
  * 3-Jul-2026 wje add a safety check for ioctl
+ * 4-Jul-2026 wje (Claude) - handle a short send() of the CR/LF pair in TCC/TCB
+ *    instead of silently dropping the un-sent byte
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -113,7 +115,7 @@
 #define RQST_SRV            0000100
 
 // Request fields in word 0 of a channel control request not used above
-#define REQ_CHAN_MSK    0000077     
+#define REQ_CHAN_MSK    0000077
 #define REQ_SBS_MSK     0003600
 #define REQ_SBS_SHIFT   7
 
@@ -180,6 +182,8 @@ struct sockaddr_in address; // who we're talking to for a client channel
 int flexo_snd_shift;        // we're doing flexo translation and a shift code is in effect on the sending side
 int flexo_rcv_shift;        // we're doing flexo translation and a shift code is in effect on the receiving side
 int flexo_rcv_pushback;     // we got a case change and returned a shift char, this is the pending real char
+char pendingBuf[2];         // un-sent tail byte(s) from a short send(), e.g. a split CR/LF pair
+int pendingLen;             // valid byte count in pendingBuf, 0 if nothing is queued
 } Channel, *ChannelP;
 
 static bool initialized;    // we have been started
@@ -367,7 +371,7 @@ char wbuf[8];
             last_error = IO(pdp1P) = IO_ERR_FLAG | IO_ERR_NOCURRENT;
         }
 
-        if( cmd == RCR ) 
+        if( cmd == RCR )
         {
             releaseChannel(pdp1P);
             CKS(pdp1P) &= ~CKS_CHAN_FLAG;
@@ -482,6 +486,31 @@ char wbuf[8];
                     last_error = chanP->last_err = IO_ERR_FLAG | IO_ERR_ERRNO | errno;
                     break;
                 }
+            }
+            else if( j < i )
+            {
+                // Short send -- e.g. the CR/LF pair from a CNTL_CRLF
+                // only got its '\r' onto the wire.
+                // Report FULL exactly as the EAGAIN case above does, but also queue the un-sent tail so
+                // iotPoll() can flush it the next time EPOLLOUT fires.
+                // Without // this the tail byte would simply be lost.
+                iotLog("TCC/TCB short send on %d, %d of %d bytes\n", cur_chan, j, i);
+
+                memcpy(chanP->pendingBuf, wbuf + j, i - j);
+                chanP->pendingLen = i - j;
+
+                chanP->control_flags |= CNTL_TFULL;
+                last_error = IO(pdp1P) |= IO_ERR_FLAG | IO_ERR_FULL;
+
+                if( canPost(pdp1P, chanP, CNTL_IOE) )
+                {
+                    postInterrupt(chanP, CNTL_IOE);
+                }
+
+                // we now want notification when we can write again.
+                event.events = EPOLLIN | EPOLLOUT;
+                event.data.u32 = chanP->chan_no;
+                epoll_ctl(epoll_fd, EPOLL_CTL_MOD, chanP->chan_fd, &event);
             }
             else
             {
@@ -891,18 +920,51 @@ struct epoll_event event;
                     }
                     else
                     {
-                        // Connected channel: transmit buffer is no longer full.
-                        chanP->control_flags &= ~CNTL_TFULL;
-
-                        // Turn off EPOLLOUT until the buffer fills again.
-                        newEvent.events = EPOLLIN | EPOLLRDHUP;
-                        newEvent.data.u32 = chanP->chan_no;
-                        epoll_ctl(epoll_fd, EPOLL_CTL_MOD, chanP->chan_fd, &newEvent);
-
-                        if( canPost(pdp1P, chanP, CNTL_IOR) )
+                        // The socket is writable again.
+                        // If a previous send() left an un-transmitted tail queued,
+                        // e.g. a split CR/LF pair, drain that first.
+                        if( chanP->pendingLen > 0 )
                         {
-                            iotLog("Posting IOR buffer available on chan %d\n", chanP->chan_no);
-                            postInterrupt(chanP, CNTL_IOR);
+                            j = send(chanP->chan_fd, chanP->pendingBuf, chanP->pendingLen, MSG_NOSIGNAL);
+
+                            if( j < 0 )
+                            {
+                                if( errno != EAGAIN )
+                                {
+                                    iotLog("iotPoll pending-tail send errno %d on chan %d\n",
+                                        errno, chanP->chan_no);
+                                    last_error = chanP->last_err = IO_ERR_FLAG | IO_ERR_ERRNO | errno;
+                                    chanP->pendingLen = 0;    // give up on the tail, connection is failing
+                                }
+                                // Else still full, leave pendingLen/CNTL_TFULL/EPOLLOUT
+                                // armed as-is and retry next time EPOLLOUT fires.
+                            }
+                            else if( j < chanP->pendingLen )
+                            {
+                                memmove(chanP->pendingBuf, chanP->pendingBuf + j, chanP->pendingLen - j);
+                                chanP->pendingLen -= j;
+                            }
+                            else
+                            {
+                                chanP->pendingLen = 0;
+                            }
+                        }
+
+                        if( chanP->pendingLen == 0 )
+                        {
+                            // Transmit buffer is no longer full.
+                            chanP->control_flags &= ~CNTL_TFULL;
+
+                            // Turn off EPOLLOUT until the buffer fills again.
+                            newEvent.events = EPOLLIN | EPOLLRDHUP;
+                            newEvent.data.u32 = chanP->chan_no;
+                            epoll_ctl(epoll_fd, EPOLL_CTL_MOD, chanP->chan_fd, &newEvent);
+
+                            if( canPost(pdp1P, chanP, CNTL_IOR) )
+                            {
+                                iotLog("Posting IOR buffer available on chan %d\n", chanP->chan_no);
+                                postInterrupt(chanP, CNTL_IOR);
+                            }
                         }
                     }
                 }
@@ -1043,7 +1105,7 @@ struct epoll_event event;
                 chanP->last_err = last_error;
                 return( last_error );
             }
-            
+
             chanP->control_flags |= CNTL_OPEN;      // poll will establish the connection
             iotLog("channel %d open in server mode, waiting for a connection\n", chan_no);
         }
@@ -1147,7 +1209,7 @@ struct epoll_event event;
         break;
 
     default:
-        return( IO_ERR_FLAG | IO_ERR_ILLEGAL ); 
+        return( IO_ERR_FLAG | IO_ERR_ILLEGAL );
     }
 
     return(0);

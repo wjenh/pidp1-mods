@@ -19,6 +19,9 @@
  *
  * 21-Jun-2026 wje (Claude) - fix gain default (1.5 -> 0.95) to match pidp1.config.example and
  *    Docs/UsingAudio.md, both of which already documented 0.95 as the default.
+ * 4-Jul-2026 wje (Claude) - bound the sscanf() line parse, honor onOff for "shared", and
+ *    reset all state to a known baseline before each (re)load instead of leaving stale values or
+ *    duplicate list nodes across a SIGHUP-triggered reload.
 */
 
 #include <stdio.h>
@@ -42,7 +45,7 @@
 // The actual active value in the config file example is a uniform setting across
 // all channels that gives a more aggressive rolloff, providing a more organ-like sound.
 // See the notes in /opt/pidp1-mods/pidp1.config.example for more details.
-static Configuration configSettings = {
+static const Configuration defaultConfigSettings = {
     // all the audio values have defaults
     .sampleRate = 22000,    // samples/second for SDL
     .alpha1 = 0.6446,
@@ -55,7 +58,31 @@ static Configuration configSettings = {
     .core1DEnabled = true
 };
 
+// The live settings.  Reset from defaultConfigSettings at the top of every
+// (re)load -- see loadConfigFile() -- so a reload never leaves a built-in
+// field at its previous value just because the new file happened to omit it.
+static Configuration configSettings;
+
 static bool isLoaded;
+
+// Free every node on the extra-settings list and reset the head to NULL.
+// Called at the top of loadConfigFile() so that a reload replaces the list
+// instead of prepending a second copy of every unrecognized setting onto it
+static void
+freeExtraSettings(void)
+{
+ConfigurationSettingP settingP, nextP;
+
+    for( settingP = configSettings.settingsP; settingP; settingP = nextP )
+    {
+        nextP = settingP->nextP;
+        free(settingP->nameP);
+        free(settingP->strvalueP);    // free(NULL) is a no-op if it was never set
+        free(settingP);
+    }
+
+    configSettings.settingsP = NULL;
+}
 
 ConfigurationP
 loadConfigFile(char *filenameP)
@@ -75,6 +102,12 @@ char answer[64];
 
     isLoaded = true;
 
+    // Reset to a known baseline before parsing.
+    // every built-in field goes back to its default and the extra-settings list is freed.
+    // This makes a reload authoritative, not just additive.
+    freeExtraSettings();
+    configSettings = defaultConfigSettings;
+
     if( !(fP = fopen(filenameP, "r")) )
     {
         return(&configSettings);        // use the defaults
@@ -88,7 +121,7 @@ char answer[64];
         }
 
         logger(LOG_CONFIG, "%s", line);
-        if( (i = sscanf(line, "%[a-zA-Z0-9] = %s", option, answer)) != 2 )
+        if( (i = sscanf(line, "%63[a-zA-Z0-9] = %63s", option, answer)) != 2 )
         {
             logger(LOG_CONFIG, "invalid\n");
             fprintf(stderr, "Invalid config file line %d, %s", i, line);
@@ -174,7 +207,7 @@ char answer[64];
         else if(!strcmp(option, "shared"))
         {
             // Put the PDP1 struct in shared memory for use with other tools
-            configSettings.useShm = true;
+            configSettings.useShm = onOff;
         }
         else
         {
@@ -196,7 +229,7 @@ char answer[64];
                 settingP->fvalue = atof(answer);
                 settingP->ivalue = atoi(answer);    // we set this anyway to the int part
             }
-            else if( !sawOnOff ) 
+            else if( !sawOnOff )
             {
                 settingP->strvalueP = (char *)malloc(strlen(answer) + 1);
                 strcpy(settingP->strvalueP, answer);

@@ -1103,7 +1103,7 @@ ConfigurationSettingP settingP;
 
     if( (settingP = findConfigurationSetting(confP, "panelbrightness")) )
     {
-        maxBrightness = ILIMIT(settingP->ivalue));
+        maxBrightness = ILIMIT(settingP->ivalue);
     }
 
     if( (settingP = findConfigurationSetting(confP, "panelonalpha")) )

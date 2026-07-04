@@ -1,10 +1,7 @@
-// gpiochip_bcm2835.c -- GPIO_CHIP_T implementations for the BCM2835/BCM2711 SoCs (Pi Zero/1/2/3
-// and Pi 4 respectively), registered into the "gpiochips" linker section via
-// DECLARE_GPIO_CHIP() (see gpiochip.h). All functions here are file-local (static, or in one
-// case non-static but still referenced only from this file -- see the note at
-// bcm2835GetDrive() below) and have been renamed to the project's camelHump convention; the
-// two DECLARE_GPIO_CHIP() invocation names ("bcm2835"/"bcm2711") are left as-is since they
-// form the externally-visible bcm2835_chip/bcm2711_chip linker-section symbol names.
+/*
+ * GPIO_CHIP_T implementations for the BCM2835/BCM2711 SoCs (Pi Zero/1/2/3 and Pi 4 respectively),
+ * registered into the "gpiochips" linker section via/ DECLARE_GPIO_CHIP().
+*/
 
 #include <ctype.h>
 #include <errno.h>
@@ -163,9 +160,8 @@ static const char *bcm2711GpioAltNames[BCM2711_NUM_GPIOS][BCM2711_ALT_COUNT] =
     { "SD0_DAT3"  , "PWM0_1"     , "PCM_DOUT"  , "SD1_DAT3"      , "ARM_TMS"         , 0             , },
 };
 
-// Returns the current function-select value of GPIO 'gpio' on the BCM2835/2711 (they share
-// the same GPFSEL register layout), decoded from the raw 3-bit field into the portable
-// GPIO_FSEL_T codes. Returns GPIO_FSEL_MAX if 'gpio' is out of range.
+// Returns the current function-select value of GPIO 'gpio' on the BCM2835/2711.
+// Returns GPIO_FSEL_MAX if 'gpio' is out of range.
 static GPIO_FSEL_T
 bcm2835GetFsel(void *priv, unsigned gpio)
 {
@@ -195,8 +191,8 @@ uint32_t reg, lsb;
     return(GPIO_FSEL_MAX);
 }
 
-// Sets the function-select of GPIO 'gpio' to 'func' on the BCM2835/2711. No return value;
-// silently does nothing if 'func' has no raw-register encoding, or if 'gpio' is out of range.
+// Sets the function-select of GPIO 'gpio' to 'func' on the BCM2835/2711.
+// Silently does nothing if 'func' has no raw-register encoding, or if 'gpio' is out of range.
 static void
 bcm2835SetFsel(void *priv, unsigned gpio, const GPIO_FSEL_T func)
 {
@@ -230,8 +226,8 @@ int fsel;
 }
 
 // Returns the current direction (DIR_INPUT/DIR_OUTPUT) of GPIO 'gpio', inferred from its
-// fsel; returns DIR_MAX if 'gpio' is currently set to an alternate function (neither plain
-// input nor plain output).
+// fsel.
+// Returns DIR_MAX if 'gpio' is currently set to an alternate function.
 static GPIO_DIR_T
 bcm2835GetDir(void *priv, unsigned gpio)
 {
@@ -253,8 +249,8 @@ GPIO_FSEL_T fsel;
     }
 }
 
-// Sets the direction of GPIO 'gpio' by setting its fsel to plain input or plain output. No
-// return value; does nothing if 'dir' is neither DIR_INPUT nor DIR_OUTPUT.
+// Sets the direction of GPIO 'gpio' by setting its fsel to plain input or plain output.
+// Does nothing if 'dir' is neither DIR_INPUT nor DIR_OUTPUT.
 static void
 bcm2835SetDir(void *priv, unsigned gpio, GPIO_DIR_T dir)
 {
@@ -294,10 +290,8 @@ volatile uint32_t *baseP;
 }
 
 // This BCM2835/2711 GPSET/GPCLR mechanism is write-only, so the current drive level cannot
-// be read back; always returns DRIVE_MAX. Note: unlike its siblings in this file, this
-// function is not declared 'static' in the original source (a pre-existing inconsistency,
-// left as-is since nothing outside this file references it -- confirmed via grep).
-GPIO_DRIVE_T
+// be read back, always returns DRIVE_MAX.
+static GPIO_DRIVE_T
 bcm2835GetDrive(void *priv, unsigned gpio)
 {
     /* This is a write-only mechanism */
@@ -306,8 +300,8 @@ bcm2835GetDrive(void *priv, unsigned gpio)
     return(DRIVE_MAX);
 }
 
-// Drives GPIO 'gpio' high or low via the write-only GPSET0/1 / GPCLR0/1 registers. No return
-// value; does nothing if 'gpio' is out of range or 'drv' is not DRIVE_LOW/DRIVE_HIGH.
+// Drives GPIO 'gpio' high or low via the write-only GPSET0/1 / GPCLR0/1 registers.
+// Does nothing if 'gpio' is out of range or 'drv' is not DRIVE_LOW/DRIVE_HIGH.
 static void
 bcm2835SetDrive(void *priv, unsigned gpio, GPIO_DRIVE_T drv)
 {
@@ -321,8 +315,66 @@ volatile uint32_t *baseP;
     }
 }
 
+// Drives 'count' GPIOs high or low in as few GPSET0/1 / GPCLR0/1 writes as possible.
+// BCM2835_NUM_GPIOS spans at most 2 words, so/ every entry's target bit is first folded
+// into one of two set-masks / two clear-masks, then at most 4 register writes cover
+// the whole batch regardless of 'count'.
+// A word whose mask stays 0 is skipped entirely so a batch that only
+// touches one word never writes the other.
+// Entries with an out-of-range gpio or a drv other than DRIVE_LOW/DRIVE_HIGH are silently skipped,
+// matching bcm2835SetDrive()'s bounds behavior.
+static void
+bcm2835SetMultiDrive(void *priv, const uint32_t *gpios, const GPIO_DRIVE_T *drvs, int count)
+{
+volatile uint32_t *baseP;
+uint32_t setMask[2];
+uint32_t clrMask[2];
+unsigned gpio, word, bit;
+int i;
+
+    baseP = priv;
+    setMask[0] = 0;
+    setMask[1] = 0;
+    clrMask[0] = 0;
+    clrMask[1] = 0;
+
+    for(i = 0; i < count; i++)
+    {
+        gpio = gpios[i];
+
+        if( (gpio < BCM2835_NUM_GPIOS) && (drvs[i] <= DRIVE_HIGH) )
+        {
+            word = gpio / 32;
+            bit = gpio % 32;
+
+            if( drvs[i] == DRIVE_HIGH )
+            {
+                setMask[word] |= (1U << bit);
+            }
+            else
+            {
+                clrMask[word] |= (1U << bit);
+            }
+        }
+    }
+
+    for(word = 0; word < 2; word++)
+    {
+        if( setMask[word] )
+        {
+            baseP[GPSET0 + word] = setMask[word];
+        }
+
+        if( clrMask[word] )
+        {
+            baseP[GPCLR0 + word] = clrMask[word];
+        }
+    }
+}
+
 // This BCM2835 GPPUD/GPPUDCLK mechanism is write-only, so the current pull setting cannot be
-// read back; always returns PULL_MAX.
+// read back,
+// Always returns PULL_MAX.
 static GPIO_PULL_T
 bcm2835GetPull(void *priv, unsigned gpio)
 {
@@ -333,9 +385,8 @@ bcm2835GetPull(void *priv, unsigned gpio)
 }
 
 // Sets the pull resistor setting of GPIO 'gpio' via the BCM2835's GPPUD/GPPUDCLK
-// clocked-shift-register mechanism (the fixed delay/clock sequence documented in the BCM2835
-// peripherals datasheet). No return value; does nothing if 'gpio' is out of range or 'pull'
-// is not a valid GPIO_PULL_T value.
+// clocked-shift-register mechanism.
+// Does nothing if 'gpio' is out of range or 'pull' is not a valid GPIO_PULL_T value.
 static void
 bcm2835SetPull(void *priv, unsigned gpio, GPIO_PULL_T pull)
 {
@@ -361,8 +412,7 @@ int clkreg, clkbit;
     usleep(10);
 }
 
-// Returns a human-readable "GPIOn" name for GPIO 'gpio', formatted into a static buffer
-// (matches the original tool's behavior -- not reentrant/thread-safe).
+// Returns a human-readable "GPIOn" name for GPIO 'gpio' formatted into a static buffer.
 static const char *
 bcm2835GetName(void *priv, unsigned gpio)
 {
@@ -374,8 +424,7 @@ static char nameBuf[16];
 }
 
 // Returns a human-readable name for what function-select value 'fsel' means on BCM2835 GPIO
-// 'gpio' specifically (looked up in bcm2835GpioAltNames for alternate functions), or NULL if
-// 'fsel' is not a recognized function-select value.
+// or NULL if 'fsel' is not a recognized function-select value.
 static const char *
 bcm2835GetFselName(void *priv, unsigned gpio, GPIO_FSEL_T fsel)
 {
@@ -417,9 +466,9 @@ const char *nameP;
     return(nameP);
 }
 
-// Returns the current pull resistor setting of GPIO 'gpio' on the BCM2711, which (unlike the
-// BCM2835) supports read-back via the GPPUPPDN0-3 registers. Returns PULL_MAX if 'gpio' is
-// out of range.
+// Returns the current pull resistor setting of GPIO 'gpio' on the BCM2711, which unlike the
+// BCM2835 supports read-back via the GPPUPPDN0-3 registers.
+// Returns PULL_MAX if 'gpio' is out of range.
 static GPIO_PULL_T
 bcm2711GetPull(void *priv, unsigned gpio)
 {
@@ -444,8 +493,7 @@ int reg, lsb;
 }
 
 // Sets the pull resistor setting of GPIO 'gpio' on the BCM2711 via the GPPUPPDN0-3 registers.
-// No return value; does nothing if 'gpio' is out of range or 'pull' is not a valid
-// GPIO_PULL_T value.
+// Does nothing if 'gpio' is out of range or 'pull' is not a valid GPIO_PULL_T value.
 static void
 bcm2711SetPull(void *priv, unsigned gpio, GPIO_PULL_T pull)
 {
@@ -484,7 +532,7 @@ int pullVal;
 }
 
 // Returns a human-readable name for what function-select value 'fsel' means on BCM2711 GPIO
-// 'gpio' specifically (looked up in bcm2711GpioAltNames for alternate functions), or NULL if
+// 'gpio' looked up in bcm2711GpioAltNames for alternate functions, or NULL if
 // 'fsel' is not a recognized function-select value.
 static const char *
 bcm2711GetFselName(void *priv, unsigned gpio, GPIO_FSEL_T fsel)
@@ -527,10 +575,10 @@ const char *nameP;
     return(nameP);
 }
 
-// Allocates a per-instance state block for a BCM2835/2711 chip instance. This chip has no
-// per-instance state beyond the GPIO_CHIP_T itself, so it just hands 'chip' back as the
-// opaque 'priv' pointer other callbacks receive. Never returns NULL (device-tree node
-// 'dtnode' is unused/ignored).
+// Allocates a per-instance state block for a BCM2835/2711 chip instance.
+// This chip has no per-instance state beyond the GPIO_CHIP_T itself, so it just hands 'chip' back as the
+// opaque 'priv' pointer other callbacks receive.
+// Never returns NULL.
 static void *
 bcm2835CreateInstance(const GPIO_CHIP_T *chip, const char *dtnode)
 {
@@ -538,8 +586,8 @@ bcm2835CreateInstance(const GPIO_CHIP_T *chip, const char *dtnode)
     return( (void *)chip );
 }
 
-// Returns the number of GPIOs this chip instance provides (fixed at BCM2835_NUM_GPIOS for
-// both BCM2835 and BCM2711).
+// Returns the number of GPIOs this chip instance provides,fixed at BCM2835_NUM_GPIOS for
+// both BCM2835 and BCM2711.
 static int
 bcm2835GpioCount(void *priv)
 {
@@ -547,9 +595,10 @@ bcm2835GpioCount(void *priv)
     return(BCM2835_NUM_GPIOS);
 }
 
-// Completes instance setup once the physical register window has been mmap()'d to 'base';
-// this chip just uses the mapped base pointer directly as its 'priv' value for every
-// subsequent callback. Never returns NULL.
+// Completes instance setup once the physical register window has been mmap()'d to 'base'.
+// This chip just uses the mapped base pointer directly as its 'priv' value for every
+// subsequent callback.
+// Never returns NULL.
 static void *
 bcm2835ProbeInstance(void *priv, volatile uint32_t *base)
 {
@@ -565,6 +614,7 @@ static const GPIO_CHIP_INTERFACE_T bcm2835GpioInterface =
     .gpio_get_fsel = bcm2835GetFsel,
     .gpio_set_fsel = bcm2835SetFsel,
     .gpio_set_drive = bcm2835SetDrive,
+    .gpio_set_multi_drive = bcm2835SetMultiDrive,
     .gpio_set_dir = bcm2835SetDir,
     .gpio_get_dir = bcm2835GetDir,
     .gpio_get_level = bcm2835GetLevel,
@@ -585,6 +635,7 @@ static const GPIO_CHIP_INTERFACE_T bcm2711GpioInterface =
     .gpio_get_fsel = bcm2835GetFsel,
     .gpio_set_fsel = bcm2835SetFsel,
     .gpio_set_drive = bcm2835SetDrive,
+    .gpio_set_multi_drive = bcm2835SetMultiDrive,
     .gpio_set_dir = bcm2835SetDir,
     .gpio_get_dir = bcm2835GetDir,
     .gpio_get_level = bcm2835GetLevel,

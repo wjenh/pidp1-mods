@@ -86,6 +86,20 @@ struct GPIO_CHIP_INTERFACE_
     // Returns a human-readable name for what function-select value 'fsel' means on this
     // specific GPIO/chip combination, or NULL if unknown.
     const char * (*gpio_get_fsel_name)(void *priv, uint32_t gpio, GPIO_FSEL_T fsel);
+
+    // Sets the output drive level of 'count' GPIOs at once (audit O4, Phase 5). 'gpios' and
+    // 'drvs' are parallel arrays of length 'count', giving this chip instance's own
+    // (zero-based) GPIO numbers and the drive level to set each one to. Must behave
+    // identically to calling gpio_set_drive() once per array entry, in order -- the only
+    // difference callers may rely on is that a chip whose registers support it can do this
+    // in far fewer underlying register writes (e.g. one bank-masked SET write plus one
+    // bank-masked CLR write per register bank touched, instead of one write per GPIO). A
+    // chip with no such register support (or as an always-correct fallback) may implement
+    // this by simply looping gpio_set_drive() internally. No return value. Added at the end
+    // of this struct so every existing designated-initializer table stays valid without
+    // needing every field re-listed.
+    void (*gpio_set_multi_drive)(void *priv, const uint32_t *gpios, const GPIO_DRIVE_T *drvs,
+        int count);
 };
 
 // Linker-provided bounds of the "gpiochips" section: every GPIO_CHIP_T placed there by

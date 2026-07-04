@@ -1,12 +1,15 @@
-// gpiochip_bcm2712.c -- GPIO_CHIP_T implementations for the BCM2712 SoC (Pi 5), which splits
-// GPIO handling across two device-tree nodes: a "brcmstb,gpio"-style level/direction block
-// (bcm2712GpioInterface) and a separate pinctrl block for function-select/pull
-// (bcm2712PinctrlInterface, registered once per C0/D0 stepping x AON/main-bank combination).
-// The two sides share per-SoC-instance state (BCM2712_INST_T, in bcm2712Instances[]) matched
-// up by AON-ness as each side probes. All functions/types here are file-local (static) and
-// have been renamed to the project's camelHump convention; the DECLARE_GPIO_CHIP() invocation
-// names (brcmstb, bcm2712, bcm2712_aon, etc.) are left as-is since they form the
-// externally-visible *_chip linker-section symbol names.
+/*
+ *  GPIO_CHIP_T implementations for the BCM2712 SoC (Pi 5), that splits
+ *  GPIO handling across two device-tree nodes, a "brcmstb,gpio"-style level/direction block
+ *  (bcm2712GpioInterface) and a separate pinctrl block for function-select/pull
+ *  (bcm2712PinctrlInterface), registered once per C0/D0 stepping x AON/main-bank combination).
+ *  The two sides share per-SoC-instance state (BCM2712_INST_T, in bcm2712Instances[]) matched
+ *  up by AON-ness as each side probes.
+ *  All functions/types here are file-local and have been renamed to match the wje coding conventions.
+ *  However, externally visible names have been left in the orginal form
+ *
+ * 04-Jul-2026 wje initial rework
+*/
 
 #include <assert.h>
 #include <ctype.h>
@@ -40,8 +43,7 @@
 #define FLAGS_PINCTRL          16
 
 // Per-SoC-instance state shared between a BCM2712 "gpio" chip registration and its matching
-// "pinctrl" chip registration (matched up by AON-ness as each side probes -- see
-// bcm2712CreateInstance()/bcm2712PinctrlCreateInstance()).
+// "pinctrl" chip registration.
 typedef struct
 {
     volatile uint32_t *gpioBaseP;
@@ -236,8 +238,9 @@ static const int bcm2712GpioAonD0ToC0[] =
 };
 
 // Returns a pointer to the 32-bit GPIO data/level register bank that GPIO 'gpio' lives in,
-// with its bit position within that register written to *bitP. Returns NULL if 'gpio' is out
-// of range for this instance, or if the instance's GPIO register window was never mapped.
+// with its bit position within that register written to *bitP.
+// Returns NULL if 'gpio' is out of range for this instance, or if the instance's GPIO register
+// window was never mapped.
 static volatile uint32_t *
 bcm2712GpioBase(BCM2712_INST_T *instP, unsigned gpio, unsigned int *bitP)
 {
@@ -256,8 +259,8 @@ unsigned bank;
 }
 
 // Returns a pointer to the 32-bit pinmux register holding GPIO 'gpio's function-select
-// field, with the field's bit offset written to *bitP. Handles the D0-stepping GPIO
-// renumbering (translated back to C0 numbering via bcm2712GpioD0ToC0[]/
+// field, with the field's bit offset written to *bitP.
+// Handles the D0-stepping GPIO renumbering (translated back to C0 numbering via bcm2712GpioD0ToC0[]/
 // bcm2712GpioAonD0ToC0[] before indexing) and the AON bank's irregular register layout.
 // Returns NULL if 'gpio' is out of range, the pinmux register window was never mapped, or
 // (D0 only) 'gpio' has no C0-numbering equivalent.
@@ -325,11 +328,12 @@ unsigned bank, gpioOffset;
     return(instP->pinmuxBaseP + (bank * 4) + (gpioOffset / 8));
 }
 
-// Returns a pointer to the 32-bit pad-control register holding GPIO 'gpio's pull setting,
-// with the field's bit offset written to *bitP. Same D0-numbering translation as
-// bcm2712PinmuxBase(). Returns NULL if 'gpio' is out of range, the pad register window was
-// never mapped, (D0 only) 'gpio' has no C0-numbering equivalent, or the instance is an AON
-// SGPIO bank (which this project has found no pad control for).
+// Returns a pointer to the 32-bit pad-control register holding GPIO 'gpio's pull setting
+// with the field's bit offset written to *bitP.
+// Same D0-numbering translation as bcm2712PinmuxBase().
+// Returns NULL if 'gpio' is out of range, the pad register window was never mapped,
+// (D0 only) 'gpio' has no C0-numbering equivalent, or the instance is an AON
+// SGPIO bank.
 static volatile uint32_t *
 bcm2712PadBase(BCM2712_INST_T *instP, unsigned gpio, unsigned int *bitP)
 {
@@ -395,8 +399,7 @@ volatile uint32_t *gpioBaseP;
     return( !!(gpioBaseP[BCM2712_GIO_DATA / 4] & (1 << bit)) );
 }
 
-// Drives GPIO 'gpio' high or low via the BCM2712's GIO_DATA register. No return value; does
-// nothing if 'gpio' is out of range.
+// Drives GPIO 'gpio' high or low via the BCM2712's GIO_DATA register.
 static void
 bcm2712SetDrive(void *priv, unsigned gpio, GPIO_DRIVE_T drv)
 {
@@ -416,6 +419,22 @@ uint32_t gpioVal;
     gpioVal = gpioBaseP[BCM2712_GIO_DATA / 4];
     gpioVal = (gpioVal & ~(1U << bit)) | (drv << bit);
     gpioBaseP[BCM2712_GIO_DATA / 4] = gpioVal;
+}
+
+// Drives 'count' GPIOs high or low.
+// This chip's GIO_DATA register is a read-modify-write, not a SET/CLR-alias pair like BCM2835/2711 or RP1,
+// so there is no cheap masked-write path here worth building.
+// Implemented as a plain loop over/ bcm2712SetDrive() purely so gpio_set_multi_drive is never
+// a NULL function pointer for a chip that implements the rest of this interface.
+static void
+bcm2712SetMultiDrive(void *priv, const uint32_t *gpios, const GPIO_DRIVE_T *drvs, int count)
+{
+int i;
+
+    for(i = 0; i < count; i++)
+    {
+        bcm2712SetDrive(priv, gpios[i], drvs[i]);
+    }
 }
 
 // Returns the current drive level (DRIVE_LOW/DRIVE_HIGH) of GPIO 'gpio' as last written to
@@ -488,8 +507,8 @@ uint32_t gpioVal;
 
 // Returns the current function-select value of GPIO 'gpio', decoded from the pinmux
 // register's 4-bit field: 0 maps to GPIO_FSEL_GPIO, 0xf maps to GPIO_FSEL_NONE, and anything
-// else in range maps to GPIO_FSEL_FUNC1 onward. Returns -1 if the pinmux register is
-// unavailable (see bcm2712PinmuxBase()) or the raw field value is otherwise unrecognized.
+// else in range maps to GPIO_FSEL_FUNC1 onward.
+// Returns -1 if the pinmux register is unavailable or the raw field value is otherwise unrecognized.
 static GPIO_FSEL_T
 bcm2712GetFsel(void *priv, unsigned gpio)
 {
@@ -525,11 +544,11 @@ int fsel;
     return(-1);
 }
 
-// Sets the function-select of GPIO 'gpio' to 'func'. A request for INPUT/OUTPUT/GPIO is
-// treated as "last/current GPIO direction" (fsel raw value 0), additionally updating the
-// GIO_IODIR direction bit for INPUT/OUTPUT; a request for FUNC0-FUNC8 sets the corresponding
-// raw alternate-function code directly. No return value; does nothing if the pinmux register
-// is unavailable, or 'func' is neither of the above.
+// Sets the function-select of GPIO 'gpio' to 'func'.
+// A request for INPUT/OUTPUT/GPIO is treated as "last/current GPIO direction" (fsel raw value 0),
+// additionally updating the/ GIO_IODIR direction bit for INPUT/OUTPUT.
+// A request for FUNC0-FUNC8 sets the corresponding raw alternate-function code directly.
+// Does nothing if the pinmux register/ is unavailable or 'func' is neither of the above.
 static void
 bcm2712SetFsel(void *priv, unsigned gpio, const GPIO_FSEL_T func)
 {
@@ -612,9 +631,9 @@ uint32_t padVal;
     }
 }
 
-// Sets the pull resistor setting of GPIO 'gpio' via the pad-control register. No return
-// value; does nothing if the pad register is unavailable (see bcm2712PadBase()). Asserts if
-// 'pull' is not a valid GPIO_PULL_T value.
+// Sets the pull resistor setting of GPIO 'gpio' via the pad-control register.
+// Does nothing if the pad register is unavailable.
+// Asserts if/ 'pull' is not a valid GPIO_PULL_T value.
 static void
 bcm2712SetPull(void *priv, unsigned gpio, GPIO_PULL_T pull)
 {
@@ -659,13 +678,13 @@ int val;
     *padBaseP = padVal;
 }
 
-// Allocates/locates the shared BCM2712_INST_T for a "gpio"-side device-tree node: reads the
-// per-bank GPIO widths from 'dtnode', infers AON/C0/D0 flags from the bank layout (falling
+// Allocates/locates the shared BCM2712_INST_T for a "gpio"-side device-tree node.
+// Reads the per-bank GPIO widths from 'dtnode', infers AON/C0/D0 flags from the bank layout,falling
 // back to inspecting gpio-line-names when a full 32+ wide non-AON bank could be either C0 or
-// D0), then matches (by AON-ness) or allocates an instance shared with the corresponding
-// pinctrl-side registration. Returns the instance cast to (void *) as the chip's 'priv'
-// value, or NULL if the device-tree data is missing/invalid, a duplicate gpio node is found,
-// or the instance table (BCM2712_MAX_INSTANCES) is full.
+// D0, then matches by AON-ness or allocates an instance shared with the corresponding
+// pinctrl-side registration.
+// Returns the instance cast to (void *) as the chip's 'priv' value, or NULL if the device-tree data
+// is missing/invalid, a duplicate gpio node is found, or the instance table (BCM2712_MAX_INSTANCES) is full.
 static void *
 bcm2712CreateInstance(const GPIO_CHIP_T *chip, const char *dtnode)
 {
@@ -771,7 +790,8 @@ BCM2712_INST_T *instP;
 }
 
 // Completes "gpio"-side instance setup once the physical GPIO register window has been
-// mmap()'d to 'base'. Returns the instance, never NULL.
+// mmap()'d to 'base'.
+// Returns the instance, never NULL.
 static void *
 bcm2712ProbeInstance(void *priv, volatile uint32_t *base)
 {
@@ -785,8 +805,8 @@ BCM2712_INST_T *instP;
 
 // Allocates/locates the shared BCM2712_INST_T for a "pinctrl"-side device-tree node,
 // cross-checking the node's declared register-window size against the AON/C0/D0 flags baked
-// into this chip's DECLARE_GPIO_CHIP() registration (see the DECLARE_GPIO_CHIP() calls at the
-// bottom of this file). Returns the instance cast to (void *) as the chip's 'priv' value, or
+// into this chip's DECLARE_GPIO_CHIP() registration.
+// Returns the instance cast to (void *) as the chip's 'priv' value, or
 // NULL if the device-tree data is missing/invalid, a duplicate pinctrl node is found, or the
 // instance table (BCM2712_MAX_INSTANCES) is full.
 static void *
@@ -870,9 +890,9 @@ unsigned i;
     return( (void *)instP );
 }
 
-// Returns the number of GPIOs this "pinctrl"-side instance provides. A pinctrl node paired
-// with a "gpio" node contributes 0 (the gpio side already counted them); a standalone
-// pinctrl node (no gpio side registered) infers the count from its AON/C0/D0 flags.
+// Returns the number of GPIOs this "pinctrl"-side instance provides.
+// A pinctrl node paired with a "gpio" node contributes 0, the gpio side already counted them.
+// A standalone pinctrl node infers the count from its AON/C0/D0 flags.
 static int
 bcm2712PinctrlCount(void *priv)
 {
@@ -913,8 +933,9 @@ BCM2712_INST_T *instP;
 }
 
 // Completes "pinctrl"-side instance setup once the physical pinmux register window has been
-// mmap()'d to 'base', and derives the pad-control offset (into that same window) for this
-// AON/C0/D0 combination. Returns the instance, never NULL.
+// mmap()'d to 'base', and derives the pad-control offset into that same window for this
+// AON/C0/D0 combination.
+// Returns the instance, never NULL.
 static void *
 bcm2712PinctrlProbeInstance(void *priv, volatile uint32_t *base)
 {
@@ -950,12 +971,12 @@ unsigned padOffset;
     return(instP);
 }
 
-// Returns a human-readable name for what function-select value 'fsel' means on GPIO 'gpio'
-// specifically: "gpio" for GPIO_FSEL_GPIO/FUNC0, "input"/"output"/"none" for the
-// corresponding portable requests, or a chip/stepping-specific alternate-function name (from
+// Returns a human-readable name for what function-select value 'fsel' means on GPIO 'gpio'.
+// Ppecifically: "gpio" for GPIO_FSEL_GPIO/FUNC0, "input"/"output"/"none" for the
+// corresponding portable requests, or a chip/stepping-specific alternate-function name from
 // whichever of the four bcm2712*AltNames tables matches this instance's AON/C0/D0
-// combination) for FUNC1-FUNC8. Returns NULL if 'fsel' is not recognized or 'gpio' is out of
-// range.
+// combination for FUNC1-FUNC8.
+// Returns NULL if 'fsel' is not recognized or 'gpio' is out of range.
 static const char *
 bcm2712GetFselName(void *priv, unsigned gpio, GPIO_FSEL_T fsel)
 {
@@ -1029,10 +1050,9 @@ const char *nameP;
     return(nameP);
 }
 
-// Returns a human-readable name for GPIO 'gpio' ("GPIOn"/"AON_GPIOn"/"AON_SGPIOn" as
-// appropriate), formatted into a static buffer (matches the original tool's behavior -- not
-// reentrant/thread-safe). Returns NULL if 'gpio' has no alternate-function name at all (used
-// as a proxy for "not a real pin on this instance"), or is out of range for a "gpio"-side
+// Returns a human-readable name for GPIO 'gpio', "GPIOn"/"AON_GPIOn"/"AON_SGPIOn" as
+// appropriate), formatted into a static buffer.
+// Returns NULL if 'gpio' has no alternate-function name at all, or is out of range for a "gpio"-side
 // instance's declared bank widths.
 static const char *
 bcm2712GetName(void *priv, unsigned gpio)
@@ -1087,6 +1107,7 @@ static const GPIO_CHIP_INTERFACE_T bcm2712GpioInterface =
     .gpio_get_fsel = bcm2712GetFsel,
     .gpio_set_fsel = bcm2712SetFsel,
     .gpio_set_drive = bcm2712SetDrive,
+    .gpio_set_multi_drive = bcm2712SetMultiDrive,
     .gpio_set_dir = bcm2712SetDir,
     .gpio_get_dir = bcm2712GetDir,
     .gpio_get_level = bcm2712GetLevel,
@@ -1107,6 +1128,7 @@ static const GPIO_CHIP_INTERFACE_T bcm2712PinctrlInterface =
     .gpio_get_fsel = bcm2712GetFsel,
     .gpio_set_fsel = bcm2712SetFsel,
     .gpio_set_drive = bcm2712SetDrive,
+    .gpio_set_multi_drive = bcm2712SetMultiDrive,
     .gpio_set_dir = bcm2712SetDir,
     .gpio_get_dir = bcm2712GetDir,
     .gpio_get_level = bcm2712GetLevel,

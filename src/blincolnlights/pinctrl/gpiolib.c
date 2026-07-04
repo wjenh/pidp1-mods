@@ -1,11 +1,10 @@
-// gpiolib.c -- Implementation of the per-GPIO-pin API declared in gpiolib.h. Locates every
-// GPIO_CHIP_T linked into the binary (see gpiochip.h) via device-tree probing, builds a flat
-// GPIO-number space across however many chips are found (chip 0 at GPIO 0, chip 1 starting
-// at the next round-hundred boundary, etc.), and dispatches every gpio_*() call to whichever
-// chip instance owns that GPIO number. Function names declared in gpiolib.h are kept as-is
-// (external callers, e.g. newpanel.c, depend on them); everything else here (statics, file-
-// scope globals, and the locally-defined GPIO_CHIP_INSTANCE_T) is local to this file and
-// follows the project's camelHump + pointer-P-suffix convention.
+/*
+ * Implementation of the per-GPIO-pin API declared in gpiolib.h.
+ * Locates every GPIO_CHIP_T linked into the binary via device-tree probing, builds a flat
+ * GPIO-number space across however many chips are found, chip 0 at GPIO 0, chip 1 starting
+ * at the next round-hundred boundary, etc., and dispatches every gpio_*() call to whichever
+ * chip instance owns that GPIO number.
+*/
 
 #define _FILE_OFFSET_BITS 64
 #include <assert.h>
@@ -25,7 +24,7 @@
 
 #define MAX_GPIO_CHIPS 8
 
-// One probed-and-instantiated GPIO chip: which GPIO_CHIP_T it is, its device-tree node and
+// One probed-and-instantiated GPIO chip; which GPIO_CHIP_T it is, its device-tree node and
 // physical register address, the /dev/gpiomemN fd (if any) used to map it, and the flat
 // GPIO-number range [base, base+numGpios) it occupies in this process's GPIO space.
 typedef struct GPIO_CHIP_INSTANCE_
@@ -60,10 +59,10 @@ const char *fsel_names[] =
 
 void (*verbose_callback)(const char *);
 
-// Instantiates chip (calling its gpio_create_instance() interface method with dtnodeP) and
-// records it in the gpioChips[] table at slot numGpioChips. Returns a pointer to the new
-// slot, or NULL if the table is already full (assert(0)'d -- MAX_GPIO_CHIPS should always be
-// generous enough not to hit this on real hardware) or the chip's own instantiation failed.
+// Instantiates chip calling its gpio_create_instance() interface method with dtnodeP and
+// records it in the gpioChips[] table at slot numGpioChips.
+// Returns a pointer to the new slot, or NULL if the table is already full.
+// MAX_GPIO_CHIPS should always be generous enough not to hit this on real hardware.
 static GPIO_CHIP_INSTANCE_T *
 gpioCreateInstance(const GPIO_CHIP_T *chipP, uint64_t physAddr, const char *nameP,
     const char *dtnodeP)
@@ -97,9 +96,9 @@ GPIO_CHIP_INSTANCE_T *instP;
 }
 
 // Finds which probed chip instance owns GPIO number 'gpio' and resolves the interface/priv
-// pointer plus per-chip offset a gpio_*() call needs to dispatch to it. Returns 0 and fills
-// in *ifacePP/*privPP/*offsetP on success, -1 if 'gpio' is not owned by any probed chip
-// (*ifacePP is left NULL in that case too, so callers can check either return value).
+// pointer plus per-chip offset a gpio_*() call needs to dispatch to it.
+// Returns 0 and fills in *ifacePP/*privPP/*offsetP on success, -1 if 'gpio' is not owned by any probed chip.
+// *ifacePP is left NULL in that case also.
 static int
 gpioGetInterface(unsigned gpio, const GPIO_CHIP_INTERFACE_T **ifacePP, void **privPP,
     unsigned *offsetP)
@@ -152,7 +151,7 @@ void *privP;
     return(DIR_MAX);
 }
 
-// See gpiolib.h. No return value.
+// See gpiolib.h.
 void
 gpio_set_dir(unsigned gpio, GPIO_DIR_T dir)
 {
@@ -200,7 +199,7 @@ void *privP;
     return(fsel);
 }
 
-// See gpiolib.h. No return value.
+// See gpiolib.h.
 void
 gpio_set_fsel(unsigned gpio, const GPIO_FSEL_T func)
 {
@@ -216,7 +215,7 @@ void *privP;
     }
 }
 
-// See gpiolib.h. No return value.
+// See gpiolib.h.
 void
 gpio_set_drive(unsigned gpio, GPIO_DRIVE_T drv)
 {
@@ -232,7 +231,61 @@ void *privP;
     }
 }
 
-// See gpiolib.h. No return value.
+// See gpiolib.h.
+// Asserts if 'count' exceeds GPIO_MULTI_MAX_PINS.
+void
+gpio_set_multi_drive(const int *gpios, const GPIO_DRIVE_T *drvs, int count)
+{
+uint32_t chipGpios[MAX_GPIO_CHIPS][GPIO_MULTI_MAX_PINS];
+GPIO_DRIVE_T chipDrvs[MAX_GPIO_CHIPS][GPIO_MULTI_MAX_PINS];
+int chipCount[MAX_GPIO_CHIPS];
+GPIO_CHIP_INSTANCE_T *instP;
+unsigned gpio;
+unsigned c;
+int i;
+
+    assert(count <= GPIO_MULTI_MAX_PINS);
+
+    for(c = 0; c < numGpioChips; c++)
+    {
+        chipCount[c] = 0;
+    }
+
+    // Bucket each entry by which probed chip instance owns it  translating to that instance's
+    // own zero-based GPIO numbering along the way.
+    for(i = 0; i < count; i++)
+    {
+        gpio = (unsigned)gpios[i];
+
+        for(c = 0; c < numGpioChips; c++)
+        {
+            instP = &gpioChips[c];
+
+            if( (gpio >= instP->base) && (gpio < (instP->base + instP->numGpios)) )
+            {
+                chipGpios[c][chipCount[c]] = gpio - instP->base;
+                chipDrvs[c][chipCount[c]] = drvs[i];
+                chipCount[c]++;
+                break;
+            }
+        }
+    }
+
+    // One batched call per chip instance actually touched.
+    // An instance nothing landed on is skipped entirely,
+    // so a single-chip batch, the common case, issues exactly one call.
+    for(c = 0; c < numGpioChips; c++)
+    {
+        if( chipCount[c] )
+        {
+            instP = &gpioChips[c];
+            instP->chipP->interface->gpio_set_multi_drive(instP->privP, chipGpios[c],
+                chipDrvs[c], chipCount[c]);
+        }
+    }
+}
+
+// See gpiolib.h.
 void
 gpio_set(unsigned gpio)
 {
@@ -249,7 +302,7 @@ void *privP;
     }
 }
 
-// See gpiolib.h. No return value.
+// See gpiolib.h.
 void
 gpio_clear(unsigned gpio)
 {
@@ -320,7 +373,7 @@ void *privP;
     return(PULL_MAX);
 }
 
-// See gpiolib.h. No return value.
+// See gpiolib.h.
 void
 gpio_set_pull(unsigned gpio, GPIO_PULL_T pull)
 {
@@ -336,7 +389,7 @@ void *privP;
     }
 }
 
-// See gpiolib.h. No return value.
+// See gpiolib.h.
 void
 gpio_get_pin_range(unsigned *first, unsigned *last)
 {
@@ -451,8 +504,8 @@ int len;
             continue;
         }
 
-        // A GPIO's recorded name can be a "primary/alias" pair (see gpiolib_init()'s
-        // arch_name-merging logic below); check each '/'-separated component in turn.
+        // A GPIO's recorded name can be a "primary/alias" pair.
+        // Check each '/'-separated component in turn.
         for( pP = gpioNameP; *pP; )
         {
             len = strcspn(pP, "/");
@@ -558,9 +611,9 @@ gpio_get_drive_name(GPIO_DRIVE_T drive)
     return(NULL);
 }
 
-// Searches every GPIO_CHIP_T in the linker-provided "gpiochips" section (see gpiochip.h)
-// for one whose "name" or "compatible" string matches 'name'. Returns a pointer to the
-// matching GPIO_CHIP_T, or NULL if 'name' is NULL or no chip matches.
+// Searches every GPIO_CHIP_T in the linker-provided "gpiochips" section
+// for one whose "name" or "compatible" string matches 'name'.'
+// Returns a pointer to the matching GPIO_CHIP_T, or NULL if 'name' is NULL or no chip matches.
 static const GPIO_CHIP_T *
 gpioFindChip(const char *name)
 {
@@ -577,8 +630,9 @@ const GPIO_CHIP_T *chipP;
     return(NULL);
 }
 
-// See gpiolib.h. Returns the total number of GPIOs found across every probed chip (which
-// may be 0 on a system with no recognized GPIO controller), or -1 if a chip was found but
+// See gpiolib.h.
+// Returns the total number of GPIOs found across every probed chip, which
+// may be 0 on a system with no recognized GPIO controller, or -1 if a chip was found but
 // its address could not be resolved or its instance could not be created, or if the total
 // GPIO count exceeds MAX_GPIO_PINS.
 int
@@ -796,7 +850,8 @@ const char *nameP, *archNameP;
     return( (int)numGpios );
 }
 
-// See gpiolib.h. Returns the chip's GPIO count on success (may be 0), or 0 if no chip
+// See gpiolib.h.
+// Returns the chip's GPIO count on success (may be 0), or 0 if no chip
 // named 'name' is registered, or -1 if the chip was found but its instance could not be
 // created.
 int
@@ -856,8 +911,9 @@ const char *nameP;
     return( (int)numGpios );
 }
 
-// See gpiolib.h. Returns 0 on success, or errno (via open()/mmap() failure) or -1 (a chip's
-// gpio_probe_instance() failed) otherwise.
+// See gpiolib.h.
+// Returns 0 on success, or errno via open()/mmap() failure or -1 if a chip's
+// gpio_probe_instance() failed.
 int
 gpiolib_mmap(void)
 {
@@ -929,7 +985,7 @@ void *newPrivP;
     return(0);
 }
 
-// See gpiolib.h. No return value.
+// See gpiolib.h.
 void
 gpiolib_set_verbose(void (*callback)(const char *))
 {

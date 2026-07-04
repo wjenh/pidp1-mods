@@ -1,8 +1,5 @@
-// util.c -- Small device-tree and raw-file-read helpers used by the pinctrl/gpiolib code.
-// See util.h for the architectural scope and per-function contracts. Function/API names
-// declared in util.h are kept as-is here (external callers, e.g. gpiolib.c, depend on
-// them); purely local names (the static helper functions and their internal locals) follow
-// the project's camelHump convention.
+// Small device-tree and raw-file-read helpers used by the pinctrl/gpiolib code.
+// See util.h for the architectural scope and per-function contracts.
 
 #include <assert.h>
 #include <dirent.h>

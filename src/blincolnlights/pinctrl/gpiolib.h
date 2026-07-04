@@ -12,6 +12,12 @@
 #define NUM_HDR_PINS 40
 #define MAX_GPIO_PINS 300
 
+// Largest 'count' gpio_set_multi_drive() accepts in one call (audit O4, Phase 5). Generous
+// for this project's actual use (the PiDP-1 panel's widest single batch is the 18-pin
+// COLUMNS bus); kept as a fixed bound rather than a dynamic allocation since this call sits
+// in the panel driver's per-row hot path.
+#define GPIO_MULTI_MAX_PINS 64
+
 // Sentinel "GPIO number" values returned by gpio_for_pin() for header pins that are not a
 // general-purpose GPIO (ground, a fixed supply rail, or something chip-specific).
 #define GPIO_INVALID (~0U)
@@ -102,6 +108,20 @@ void gpio_set_fsel(unsigned gpio, const GPIO_FSEL_T func);
 
 // Sets the output drive level (DRIVE_LOW/DRIVE_HIGH) of 'gpio'. No return value.
 void gpio_set_drive(unsigned gpio, GPIO_DRIVE_T drv);
+
+// Sets the output drive level of 'count' GPIOs at once (audit O4, Phase 5). 'gpios' and
+// 'drvs' are parallel arrays of length 'count' ('count' must not exceed
+// GPIO_MULTI_MAX_PINS above). Behavior is identical to calling gpio_set_drive() once per
+// entry, in order; the only difference callers may rely on is that this can complete in far
+// fewer underlying register writes when every entry lands on a chip whose registers support
+// batching (see gpio_set_multi_drive in GPIO_CHIP_INTERFACE_T, gpiochip.h). A single call
+// may span multiple probed chip instances (e.g. pins split across a "main" GPIO chip and an
+// AON chip); each instance touched is still batched separately. 'gpios' is declared as
+// "const int *", not "const unsigned *" like every scalar gpio_*() function above -- this
+// matches how callers such as newpanel.c already keep their own pin-number arrays (e.g.
+// COLUMNS[]/ADDR[]) typed "int", avoiding a cast at every call site for what is always a
+// small non-negative pin number. No return value.
+void gpio_set_multi_drive(const int *gpios, const GPIO_DRIVE_T *drvs, int count);
 
 // Drives 'gpio' high. No return value. Equivalent to gpio_set_drive(gpio, DRIVE_HIGH).
 void gpio_set(unsigned gpio);

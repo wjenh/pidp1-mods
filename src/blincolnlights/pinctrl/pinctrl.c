@@ -1,13 +1,9 @@
-// pinctrl.c -- Standalone CLI tool (upstream raspberrypi-utils "pinctrl") for inspecting and
-// driving GPIO pins directly through gpiolib.h, plus (from the "int cols[12]" block onward) an
-// ad hoc PiDP-1 panel LED/switch matrix scan added by a prior developer. Entry point is
-// xmain(), not main() -- nothing else in this tree references xmain, xprogram_name, or any
+// Standalone CLI tool for inspecting and
+// driving GPIO pins directly through gpiolib.h, plus an ad hoc PiDP-1 panel LED/switch matrix scan added
+// by a prior developer.
+// Entry point is/ xmain(), not main(). nothing else in this tree references xmain, xprogram_name, or any
 // other symbol here (confirmed by grep), so this file does not currently link into a runnable
-// executable via this directory's Makefile (which only builds .o files, no link step).
-// Formatting/naming here follows the project standard for everything local to this file;
-// xmain()/xprogram_name are left as-is since their external ("x"-prefixed, non-static)
-// linkage looks like a deliberate convention for whatever wrapper eventually supplies a real
-// main() and calls xmain(argc, argv) from it.
+// executable via this directory's Makefile, which only builds .o files, no link step.
 //
 // FIX (03-Jul-26): the PiDP-1 panel scan block below (starting at "int cols[12]") used to run
 // unconditionally and end in a "do { ... } while(1)" loop with no break, which made the

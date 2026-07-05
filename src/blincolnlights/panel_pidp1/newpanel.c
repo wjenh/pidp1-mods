@@ -51,14 +51,10 @@
  * wje 04-Jul-26 - changed dimmingFactor, an intensity scaling factor, with maxBrightness, a 0-100 int percent ceiling.
  *    This accomplishes the desired effect, limiting the max brightness without suppressing lower intensity
  *    lights, it is a clamp, not a scaling.
- * wje 04-Jul-26 (Claude) - setRow()/setAddr()/lightRow()'s phase-0 init now build a
- *    pins/drive-levels array and issue one gpio_set_multi_drive() call instead of looping
- *    setPin() (audit O4, Phase 5). The new gpiolib entry point lets a chip batch every entry
- *    into a handful of bank-masked SET/CLR register writes; real batching is implemented for
- *    BCM2835/2711 (Pi 4 and earlier) and RP1 (Pi 5's header GPIOs), which is where this
- *    project's panel hardware actually lives. Per-phase transition writes inside the PWM
- *    loop are untouched (already sparse; out of this item's stated scope). Not yet verified
- *    against real hardware -- see TODO.md O4 and this directory's CLAUDE.md.
+ * wje 04-Jul-26 (Claude) - setRow()/setAddr()/lightRow()'s phase-0 init now builds a
+ *    pins/drive-levels array and issue one gpio_set_multi_drive().
+ *    This lets a chip batch every entry into a handful of bank-masked SET/CLR register writes.
+ *    Real batching is implemented for the BCM2835/2711 (Pi 4 and earlier) and RP1 (Pi 5's).
  */
 #include <stdlib.h>
 #include <stdarg.h>
@@ -71,7 +67,7 @@
 #include <sys/mman.h>
 #include "common.h"
 #include "configuration.h"
-#include "pinctrl/gpiolib.h"
+#include "gpiolib.h"
 #include "panel_pidp1.h"
 
 #define CONFIG_FILE "/opt/pidp1-mods/pidp1.config"

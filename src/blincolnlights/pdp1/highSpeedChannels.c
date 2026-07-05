@@ -13,7 +13,8 @@
  * 28-Jun02026 wje - add HSC_MODE_UPDATEPANEL for use with HSC_MODE_IMMEDIATE
  * 02-Jul-2026 wje/claude - HSCwait() THREADED-mode delay now busy-spins (hscSpinWait())
  *    for delays at or below HSC_SPIN_LIMIT_US. Testing showed usleep() was wildly inconsistent.
- * 05-Jul-2026 wje fix a hsc light issue where a single-cycle hsc fetch would miss setting the hsc light on
+ * 05-Jul-2026 wje - extended HSC_MODE_UPDATEPANEL to HSC_MODE_THREADED.
+ *    Rework light control to be more robust, allow pulse stretching so the hsc state will show up better.
 */
 
 #include <unistd.h>
@@ -30,6 +31,11 @@
 #include "pdp1.h"
 #include "logger.h"
 #include "highSpeedChannels.h"
+
+// Stretch any high speed transfer request of < HSC_STRETCH words to this.
+// Otherwise, we would rarely see the light wen using the type340 which
+// does single-word transfers.
+#define HSC_STRETCH 20
 
 typedef struct {
     bool isInitialized;
@@ -69,51 +75,64 @@ static void hscSpinWait(int us);
 
 extern PDP1P pdp1P;     // from main.c
 
-// Service routine called from run loop. Question - did the hardware pause on a halt, or complete?
+// Service routine called from run loop.
+// This happens every simulated 5 microsecond cycle.
 // Returns 0 if it took no time, 1 if it did a 'memory cycle' and we are in steal mode.
 bool
 processHSCchannels()
 {
 int i;
-bool steal;
+bool done, steal;
 HSCControlP ctlP;
 
-    // we do in priority order, 0 being highest
-    steal = false;
+    // We do in priority order, 0 being highest.
+    done = steal = false;
     for( i = 0; i < NUMCHANS; ++i )
     {
         // The channels are scanned from low to high, first one that's busy wins.
         // If a channel still needs lightoff processing, let that happen,
-        // It means an IMMEDIATE still needs the hsc cycle light to simulate a delay.
+        // Any THREADED or IMMEDATE mode that dis not specify HSC_MODE_UPDATEPANEL
+        // has to do its own.
         ctlP = chans[i];
 
-        if( (ctlP->status == HSC_BUSY) || ctlP->needLightoff )
+        // Check to see if the light needs turning off.
+        if( ctlP->needLightoff )
         {
+            if( ctlP->offCount-- <= 0 )
+            {
+                ctlP->offCount = 0;
+                ctlP->needLightoff = false;
+                pdp1P->hsc = 0;
+                updatelights(pdp1P, pdp1P->panel);
+                updatelights_pwm(pdp1P->panel, 1);
+            }
+            else if( pdp1P->hsc == 0 )
+            {
+                // It was turned off by a higher priority channel, turn it back on
+                pdp1P->hsc = 1;
+                updatelights(pdp1P, pdp1P->panel);
+                updatelights_pwm(pdp1P->panel, 1);
+            }
+        }
+
+        if( ctlP->status == HSC_BUSY )
+        {
+            if( ctlP->offCount > 0 )
+            {
+                pdp1P->hsc = 1;         // be sure the light is on
+            }
+
             if( processChannel(ctlP) )
             {
                 steal = true;        // we processed one, steal a cycle
             }
+            
+            done = true;                // finished processing
+        }
 
+        if( done )
+        {
             break;
-        }
-    }
-
-    // Keep track of the hsc cycle light state we need.
-    // This isn't synchronized with other threads, no big deal if some light cycles get missed.
-    if( (i < NUMCHANS) && ctlP->needLightoff )
-    {
-        if( --(ctlP->offCount) <= 0 )
-        {
-            ctlP->offCount = 0;
-            ctlP->needLightoff = false;
-            pdp1P->hsc = 0;
-            updatelights(pdp1P, pdp1P->panel);
-        }
-        else if( pdp1P->hsc == 0 )
-        {
-            // It was turned off by a higher priority channel, turn it back on
-            pdp1P->hsc = 1;
-            updatelights(pdp1P, pdp1P->panel);
         }
     }
 
@@ -196,6 +215,9 @@ HSCControlP ctlP;
             ctlP->isWaiting = false;
         }
     }
+
+    // Including the lights, will get updated in the halt loop.
+    pdp1P->hsc = 0;
 }
 
 // Main interaction from user side.
@@ -258,7 +280,12 @@ HSCControlP ctlP;
                 // We turn the hsc cycle light on, is turned off in the process loop.
                 pdp1P->hsc = 1;
                 updatelights(pdp1P, pdp1P->panel);
+                updatelights_pwm(pdp1P->panel, 1);
                 ctlP->offCount = rqstP->count;          // keep it on for the number of transfers we do
+                if( ctlP->offCount < HSC_STRETCH )
+                {
+                    ctlP->offCount = HSC_STRETCH;
+                }
                 ctlP->needLightoff = true;
             }
             return( HSC_OK );
@@ -277,6 +304,20 @@ HSCControlP ctlP;
 
             ctlP->waitDelay = rqstP->count * 5;       // 5us per word
             ctlP->brkCount = rqstP->count;  // hack to vaguely simulate the break conditions
+
+            if( rqstP->mode & HSC_MODE_UPDATEPANEL )
+            {
+                pdp1P->hsc = 1;
+                updatelights(pdp1P, pdp1P->panel);
+                updatelights_pwm(pdp1P->panel, 1);
+                ctlP->offCount = rqstP->count;
+                if( ctlP->offCount < HSC_STRETCH )
+                {
+                    ctlP->offCount = HSC_STRETCH;
+                }
+                ctlP->needLightoff = true;
+            }
+
             processImmediate(rqstP);
             return(HSC_BUSY);
 
@@ -292,6 +333,8 @@ HSCControlP ctlP;
     ctlP->status = HSC_BUSY;
     logger(LOG_EXEC, "channel %d set to BUSY, addr %d:%o\n", chanP->chanNo+1, rqstP->memBank, rqstP->memAddr);
     pdp1P->hsc = 1;      // be sure our in-use light is on
+    ctlP->offCount = rqstP->count;
+    ctlP->needLightoff = true;
     unlockControl(ctlP);
     return( HSC_BUSY );
 }
@@ -342,9 +385,6 @@ HSCControlP ctlP;
             usleep(100);
         }
 
-        pdp1P->hsc = 1;
-        updatelights(pdp1P, pdp1P->panel);
-
         // Enforce the simulated transfer delay.
         // Short delays busy-spin, longer usleep().
         if( ctlP->waitDelay <= HSC_SPIN_LIMIT_US )
@@ -357,8 +397,6 @@ HSCControlP ctlP;
         }
 
         ctlP->waitDelay = 0;
-        pdp1P->hsc = 0;
-        updatelights(pdp1P, pdp1P->panel);
 
         // The real data transfer already happened synchronously back in HSCexecute(),
         // all we were waiting for here is the simulated delay completion.
@@ -501,9 +539,6 @@ HSCRequestP rqstP;
     rqstP = &(ctlP->request);
 
     // If a THREADED operation was done, fake break cycles.
-    // This is pure cycle-steal bookkeeping -- the hsc light for THREADED mode is owned
-    // entirely by HSCwait().
-    // Do NOT touch pdp1P->hsc here, it will intefere with HSCwait()'s control of the light.
     if( ctlP->brkCount > 0 )
     {
         ctlP->brkCount--;
@@ -554,8 +589,8 @@ HSCRequestP rqstP;
     {
         logger(LOG_HSC, "processChannel marking DONE\n");
         ctlP->status = HSC_DONE;
+        ctlP->needLightoff = true;
         HSCdone(ctlP);
-        pdp1P->hsc = 0;
     }
 
     unlockControl(ctlP);

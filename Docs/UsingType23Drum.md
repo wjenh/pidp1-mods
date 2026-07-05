@@ -5,9 +5,9 @@ The DEC document *H-23_parallelDrum_jul64.pdf* is a useful companion, although i
 have some significant errors in the IOT section.
 This documentation is correct.
 
-This is version 1.1
-Edit date 21-Jun-2026
-Minor cleanup
+This is version 1.2
+Edit date 5-Jul-2026
+Add more detail on include file
 
 ## What is the Type 23 Parallel Drum?
 
@@ -25,10 +25,32 @@ These IOTs duplicate the original behavior, even to the timing, and pass DEC's d
 
 ## How does it work?
 
+Just like the original drum, this implementation uses a high speed channel to handle all transfers.
+It faithfully reproduces the behavior and timing (more or less) of the original.
+
+However, there is debate as to if the Type 23 drum was ever deployed on a PDP-1, but it seems quite likely
+that it was used for the BBN timesharing system implementation and probably the MIT PDP-1X.
+
+Where the doubt enters in is that the drum has a word transfer time of 8.5 microseconds per word, but the PDP-1
+memory cycle time is 5 microseconds per word.
+It is unclear how the mismatch was handled.
+
+This directly leads to the simulated timing for small transfers being off, 5 us doesn't fit 8.5 us.
+However, over a large transfer the error is very small.
+For all cases, the timing is computed as (total words * 8.5) / 5 PDP-1 cycles.
+
+## How do I use it?
+
 The programming interface is remarkably simple and easy to use.
-The three IOTs are used in sequence, and the transfer starts when the third is issued.
-Two of the IOTs have an additional oprating mode.
+
+The three IOTs are used in sequence, and the transfer starts when the third is issued.\
+Two of the IOTs have an additional oprating mode.\
 All contol bits are passed in the IO register.
+
+The <DRUM>/type23drumdefs.ah> include file defines the mnemonics used here.
+
+**WARNING!** - there is overlap between mnemonics used by the drum and those used by the DSC2 Data Communications
+System. If you use both, be careful.
 
 -IOT 61, dia, 72xx61, drum initial address \
 -IOT 2061, dba, 722061, drum break address
@@ -39,10 +61,16 @@ IO register bits
 ```
 bit 0, 1 to enable a read
 bits 1-5, the drum field to read from, 0-37 octal
-bits 6-17, the drum address to start reading from and/or writing to, 0-7777 octal, 0-4095 decimal
+bits 6-17, the drum address to start reading from and/or writing to, 0-7777 octal
 ```
+The define *drmrd* is 0400000, bit 0.
+
 The difference between the two is that the latter will initiate a sequence break on channel 5
 when the drum address specified is reached. A dwc and dcl should then be executed.
+
+This is a bit strange because by the time the break is processed the drum will have gone past the set address.
+Best assumption is that an address purposely earlier than the real start address was used, then a *dia* issued
+along with the remaining instructions for the actual transfer.
 
 -IOT 62, dwc, 72xx62, drum word count
 
@@ -52,9 +80,10 @@ IO register bits
 ```
 bit 0, 1 to enable a write
 bits 1-5, the drum field to write to, 0-37 octal
-bits 6-17, the number of words to read from and/or write to the drum, 0-7777 octal, 0-4095 decimal
+bits 6-17, the number of words to read from and/or write to the drum, 0-7777 octal
     A value of 0 means the full track, all 4096 words.
 ```
+The define *drmwrt* is also 0400000, bit 0.
 
 -IOT 63, dcl, 72xx63, drum core location
 
@@ -86,7 +115,8 @@ bit 1, 1 for a parity error
 bit 2, 1 for transfer incomplete
 bits 6-17, the current drum address, 0-7777 octal, 0-4095 decimal
 ```
-An error will never occur, this is a software drum, not a hardware drum.
+An error should never occur, this is a software drum, not a hardware drum.
+However, if a write to disk fails, bits 0 and 2 will be set to indicate a transfer error.
 
 ## One nonstandard IOT
 
@@ -105,13 +135,21 @@ bits 14-17, the new interrupt channel to use
 ```
 On return, the IO register will contain the prior channel number
 
+The define *drms16* is 040, bit 12.\
+The define *drmsch* is 020, bit 13.
+
 ## How do I know it's done?
 
 If you aren't using the interrupt mode, the only indication is that
 bit 17 will be set if a cks, check status, instruction is executed.
 
+The define *cksdrm* is 01, bit 17.
+
+Note that this information came directly from the DEC maindec drum verification program.
+
 ## Interrupts aka Sequence Breaks
 
-Although the drum uses sbs channel 5, it can still be used in non-SBS16 mode.
+Although the drum uses sbs channel 5 or whatever was set by *dss*, it can still be used in non-SBS16 mode.
 In this case, the interrupt will be to the single channel, channel 0.
+
 SBS16 can be enabled either here or via the pidp1.config file.

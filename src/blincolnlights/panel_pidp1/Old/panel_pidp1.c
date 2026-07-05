@@ -13,7 +13,7 @@
  *
 */
 #include "common.h"
-#include "pinctrl/gpiolib.h"
+#include "gpiolib.h"
 #include "panel_pidp1.h"
 #include <math.h>
 #include <signal.h>

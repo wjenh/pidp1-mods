@@ -63,7 +63,7 @@
 #include <sys/mman.h>
 #include "common.h"
 #include "configuration.h"
-#include "pinctrl/gpiolib.h"
+#include "Pinctrl/gpiolib.h"
 #include "panel_pidp1.h"
 
 #define CONFIG_FILE "/opt/pidp1-mods/pidp1.config"

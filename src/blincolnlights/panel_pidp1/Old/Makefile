@@ -1,8 +1,8 @@
-INC=-I../.. -I../../pdp1
+INC=-I../.. -I../../pdp1 -I../Pinctrl
 LIBS=-lpthread -lm
 CFLAGS= $(INC) -O3 -Wno-unused-result
 
-PINCTRL := $(wildcard ../../pinctrl/*.o)
+PINCTRL := $(wildcard ../Pinctrl/*.o)
 
 all: panel_pidp1
 

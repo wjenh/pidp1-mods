@@ -5,7 +5,7 @@ CFLAGS= -O3
 %.o:%.c ../iotHandler.h ../Lib/iotLogger.h type340emu.h
 	gcc $(INC) $(CFLAGS) -fPIC -c $< -o $@
 
-%.so:%.o
+%.so:%.o type340emu.o
 	gcc -shared $< ../Lib/iotLogger.o type340emu.o -o $@
 
 all: IOT_15.so IOT_16.so IOT_17.so

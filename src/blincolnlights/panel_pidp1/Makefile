@@ -7,7 +7,7 @@ PINCTRL := $(wildcard ../pinctrl/*.o)
 all: newpanel
 
 newpanel: newpanel.c ../common.c ../pdp1/configuration.c $(PINCTRL)
-	cc $(CFLAGS) -o $@ $^ $(INC) $(LIBS) $(PINCTRL)
+	cc $(CFLAGS) -o $@ $^ $(INC) $(LIBS)
 
 run: newpanel
 	./newpanel

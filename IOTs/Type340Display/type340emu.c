@@ -601,7 +601,7 @@ Status status;
 
             if( cacheSize > 0 )
             {
-                ctlP->pdp1P->hsc = 0;     // best we can do when using cache
+                //ctlP->pdp1P->hsc = 0;     // best we can do when using cache
             }
 
             switch( curMode )
@@ -1701,7 +1701,7 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
 
             // Fill the cache in immediate mode.
             // The whole point of the cache is to not hit the pdp1 emulator thread.
-            request.mode = (HSC_MODE_FROMMEM | HSC_MODE_IMMEDIATE);
+            request.mode = (HSC_MODE_FROMMEM | HSC_MODE_IMMEDIATE | HSC_MODE_UPDATEPANEL);
             request.count = cacheSize;
             request.memBank = ((addr >> 12) & 017);
             request.memAddr = (addr & 07777);
@@ -1714,7 +1714,7 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
         // Using the cache does make the hs cycle light not really reflect reality,
         // but we'll try to fake it.
         // The emulator loop will turn it off.
-        pdp1P->hsc = 1;
+        //pdp1P->hsc = 1;
 
         // Since we aren't having the high speed channel cycle-steal, best we can do
         // is add the 5us delay to our running delay.
@@ -1727,7 +1727,7 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
         // This also provides the 5usec word-fetch delay the real hardware had.
         // Note that this might cause rescheduling, but this has not been a significant issue
         // in deployment, even on a pi4.
-        request.mode = (HSC_MODE_FROMMEM | HSC_MODE_THREADED);
+        request.mode = (HSC_MODE_FROMMEM | HSC_MODE_THREADED | HSC_MODE_UPDATEPANEL);
         request.count = 1;
         request.memBank = ((addr >> 12) & 017);
         request.memAddr = (addr & 07777);

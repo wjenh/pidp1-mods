@@ -13,6 +13,7 @@
  * 28-Jun02026 wje - add HSC_MODE_UPDATEPANEL for use with HSC_MODE_IMMEDIATE
  * 02-Jul-2026 wje/claude - HSCwait() THREADED-mode delay now busy-spins (hscSpinWait())
  *    for delays at or below HSC_SPIN_LIMIT_US. Testing showed usleep() was wildly inconsistent.
+ * 05-Jul-2026 wje fix a hsc light issue where a single-cycle hsc fetch would miss setting the hsc light on
 */
 
 #include <unistd.h>
@@ -499,7 +500,10 @@ HSCRequestP rqstP;
     lockControl(ctlP);
     rqstP = &(ctlP->request);
 
-    // If a THREADED operation was done, fake break cycles
+    // If a THREADED operation was done, fake break cycles.
+    // This is pure cycle-steal bookkeeping -- the hsc light for THREADED mode is owned
+    // entirely by HSCwait().
+    // Do NOT touch pdp1P->hsc here, it will intefere with HSCwait()'s control of the light.
     if( ctlP->brkCount > 0 )
     {
         ctlP->brkCount--;
@@ -510,7 +514,6 @@ HSCRequestP rqstP;
             logger(LOG_HSC, "processChannel threaded marking DONE\n");
             ctlP->status = HSC_DONE;
             HSCdone(ctlP);
-            pdp1P->hsc = 0;
         }
 
         unlockControl(ctlP);

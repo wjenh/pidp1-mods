@@ -51,6 +51,14 @@
  * wje 04-Jul-26 - changed dimmingFactor, an intensity scaling factor, with maxBrightness, a 0-100 int percent ceiling.
  *    This accomplishes the desired effect, limiting the max brightness without suppressing lower intensity
  *    lights, it is a clamp, not a scaling.
+ * wje 04-Jul-26 (Claude) - setRow()/setAddr()/lightRow()'s phase-0 init now build a
+ *    pins/drive-levels array and issue one gpio_set_multi_drive() call instead of looping
+ *    setPin() (audit O4, Phase 5). The new gpiolib entry point lets a chip batch every entry
+ *    into a handful of bank-masked SET/CLR register writes; real batching is implemented for
+ *    BCM2835/2711 (Pi 4 and earlier) and RP1 (Pi 5's header GPIOs), which is where this
+ *    project's panel hardware actually lives. Per-phase transition writes inside the PWM
+ *    loop are untouched (already sparse; out of this item's stated scope). Not yet verified
+ *    against real hardware -- see TODO.md O4 and this directory's CLAUDE.md.
  */
 #include <stdlib.h>
 #include <stdarg.h>
@@ -63,7 +71,7 @@
 #include <sys/mman.h>
 #include "common.h"
 #include "configuration.h"
-#include "Pinctrl/gpiolib.h"
+#include "pinctrl/gpiolib.h"
 #include "panel_pidp1.h"
 
 #define CONFIG_FILE "/opt/pidp1-mods/pidp1.config"
@@ -317,25 +325,37 @@ getPin(int p)
 }
 
 // Drive the 18 COLUMN pins from the low 18 bits of l, one bit per column,
-// bit 0 -> COLUMNS[0], bit 1 -> COLUMNS[1], etc.
+// bit 0 -> COLUMNS[0], bit 1 -> COLUMNS[1], etc. Batched into a single
+// gpio_set_multi_drive() call (audit O4, Phase 5) instead of 18 individual setPin() calls.
 void
 setRow(int l)
 {
-    for(int i = 0; i < nelem(COLUMNS); i++)
+GPIO_DRIVE_T drvs[nelem(COLUMNS)];
+int i;
+
+    for(i = 0; i < nelem(COLUMNS); i++)
     {
-        setPin(COLUMNS[i], (l >> i) & 1);
+        drvs[i] = ((l >> i) & 1) ? DRIVE_HIGH : DRIVE_LOW;
     }
+
+    gpio_set_multi_drive(COLUMNS, drvs, nelem(COLUMNS));
 }
 
 // Drive the 4 ADDR select pins from the low 4 bits of a, selecting which
-// row of lights/switches is connected to the COLUMNS bus.
+// row of lights/switches is connected to the COLUMNS bus. Batched into a single
+// gpio_set_multi_drive() call (audit O4, Phase 5) instead of 4 individual setPin() calls.
 void
 setAddr(int a)
 {
-    for(int i = 0; i < nelem(ADDR); i++)
+GPIO_DRIVE_T drvs[nelem(ADDR)];
+int i;
+
+    for(i = 0; i < nelem(ADDR); i++)
     {
-        setPin(ADDR[i], (a >> i) & 1);
+        drvs[i] = ((a >> i) & 1) ? DRIVE_HIGH : DRIVE_LOW;
     }
+
+    gpio_set_multi_drive(ADDR, drvs, nelem(ADDR));
 }
 
 // Precompute the per-phase delay in ns for each of the numLevels PWM phases
@@ -502,16 +522,21 @@ lightRow(int row, u8 *l)
 u64 lateNs;
 struct timespec deadline;
 struct timespec now;
+GPIO_DRIVE_T drvs[nelem(COLUMNS)];
 
     setRow(~0);
     setAddr(row);
     usleep(20); // the gpio state chages need time to take effect
 
-    // Establish phase-0 state once: on iff l[i] > 0.
+    // Establish phase-0 state once: on iff l[i] > 0. Batched into a single
+    // gpio_set_multi_drive() call (audit O4, Phase 5) instead of 18 individual setPin()
+    // calls.
     for(int i = 0; i < nelem(COLUMNS); i++)
     {
-        setPin(COLUMNS[i], !(0 < l[i]));
+        drvs[i] = (0 < l[i]) ? DRIVE_LOW : DRIVE_HIGH;
     }
+
+    gpio_set_multi_drive(COLUMNS, drvs, nelem(COLUMNS));
 
     clock_gettime(CLOCK_MONOTONIC, &deadline);
 

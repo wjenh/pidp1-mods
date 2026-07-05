@@ -1,4 +1,25 @@
-
+/*
+ * elements.inc -- per-lamp/switch/key layout table for the vpanel_pdp1
+ * virtual front panel, #include'd directly into main.c (see the #include
+ * site there for why this is split out).
+ *
+ * Each table entry is `{ tex, grid, x, y, state, active }` (main.c's
+ * Element struct; the trailing `r` field is left to zero-init and filled
+ * in later by putongrid()). `x`,`y` are hand-tuned design-time coordinates
+ * in "grid units" on the panel artwork -- NOT pixels -- which init() (in
+ * main.c) converts to pixels via grid1/grid2's per-axis offset+scale
+ * derived from a fixed mm-to-pixel factor. The local `G` macro is just a
+ * shorthand so each block of entries doesn't have to repeat `&grid1`/
+ * `&grid2`; it is #define'd immediately before a run of entries and
+ * #undef'd immediately after, so it never leaks into surrounding code.
+ *
+ * The three arrays (lights[], switches[], keys[]) are flat and
+ * unstructured beyond the `//` group comments below -- main.c's init()
+ * carves each array into named per-register pointer ranges (pc_l, ta_sw,
+ * ...) purely by element count, so a group's entry count here must stay in
+ * exact sync with the corresponding `e += n` line in main.c's init(). There
+ * is no shared constant or other check tying the two together.
+ */
 Element lights[] = {
 #define G &grid1
 	// PC
@@ -189,6 +210,16 @@ Element switches[] = {
 
 #define G &grid2
 	// run, single step, single inst
+	// NOTE: comment appears copy-pasted from the lights[] group above at
+	// the same grid position (which legitimately IS run/sstep/sinst
+	// status lamps). These three are the SWITCHES at that spot, and
+	// main.c's initpanel()/updatepanel() bind the first one (misc_sw[0])
+	// to SW_POWER, not to any "run" control -- there is no run switch in
+	// the panel_pidp1.h bit enum, only the L5_RUN status-light bit. The
+	// other two (misc_sw[1], misc_sw[2]) ARE single-step/single-instruction
+	// as labeled. Likely a stale/misleading comment rather than a
+	// functional bug, but flagging since the label doesn't match what the
+	// code actually does with the first switch.
 	{ hswitchtex, G, 30.5, 3, 0, 0 },
 	{ hswitchtex, G, 30.5, 4, 0, 0 },
 	{ hswitchtex, G, 30.5, 5, 0, 0 },

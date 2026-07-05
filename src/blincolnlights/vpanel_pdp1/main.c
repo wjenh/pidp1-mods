@@ -1,3 +1,25 @@
+/*
+ * Browser/desktop-free "virtual" front panel for the pidp-1 emulator.
+ *
+ * Renders a bitmap image of the PDP-1 console, paneltex, baked in
+ * from ../art/pdp1art.inc and overlays clickable lamp/switch/key sprites on
+ * top of it at hand-tuned grid coordinates.
+ * Mouse clicks toggle the on-screen switches and keys.
+ * The resulting switch/key state is packed into the shared-memory Panel struct the emulator reads.
+ * Lamp state is read but NOT via a live sample of panel->lightsN.
+ * S single once-per-frame read of panel->lightsN would alias against any lamp activity
+ * faster than this loop's ~30ms cadence, showing a lamp that's mostly on as off,
+ * or vice versa, purely by bad luck of what the register held at the sampled
+ * instant.
+ * Instead this program reads panel->pwmcount[][]/panel->cyclecount added for the new hardware panel.
+ * It already uses this derive a true duty-cycle-based brightness.
+ * The brightess percentage is then collapsed to a boolean via a fixed threshold, PWM_ON_THRESHOLD,
+ * once per frame, since this front end has no brightness ramp, only one on/off sprite pair per
+ * lamp.
+ * NOTE that this and the hardware panel cannot be run simultaneously, they would step on the pwm data.
+ *
+ * 5-Jul-2026 wje rework to fix the incorrectly labeled H.S CYCLE light name, add the new pwm logic.
+ */
 #include <stdio.h>
 #include "common.h"
 
@@ -9,9 +31,17 @@
 static SDL_Window *window;
 static SDL_Renderer *renderer;
 
+// Baked-in PNG resource byte arrays for the panel background and lamp/switch/key
+// sprite pairs generated offline from source art and saved as C byte
+// arrays so this program has no runtime asset-file dependency.
 #include "../art/panelart.inc"
 #include "../art/pdp1art.inc"
 
+// A Grid maps abstract "panel units" (roughly millimeters on the physical
+// console artwork, see init()'s `scl` conversion) to on-screen pixels via a
+// simple per-axis offset+scale pair. Two grids exist (grid1, grid2) because
+// the main panel and the narrower right-hand sense-switch/IR column use
+// slightly different spacing constants in the source artwork.
 typedef struct Grid Grid;
 struct Grid
 {
@@ -19,6 +49,16 @@ struct Grid
 	float xscl, yscl;
 };
 
+// One clickable/drawable panel element (a single lamp, toggle switch, or
+// key). `tex` points at a 2-entry (lamps/switches) or 3-entry (keys)
+// texture array indexed by `state`, so `state` doubles as both the visible
+// on/off (or up/down/neutral for keys) sprite index and the logical bit
+// value read back in getnswitches()/updatepanel(). `grid`+`x`,`y` are the
+// element's fixed design-time position (set once in elements.inc); putongrid()
+// converts that into the actual pixel rectangle `r` used for hit-testing and
+// drawing. `active` is a one-shot debounce latch used only for switches (see
+// mouse()) so a single mouse-down doesn't toggle a switch on every frame the
+// button stays held over it.
 typedef struct Element Element;
 struct Element
 {
@@ -29,12 +69,29 @@ struct Element
 	SDL_Rect r;
 };
 
+// Named sub-ranges into the `lights[]` array (elements.inc), one pointer per
+// PDP-1 register/indicator group. Each pointer is set in init() to point at
+// the first Element of its group; the group's element count is implied by
+// the corresponding setnlights() call in updatepanel() (there is no stored
+// length here, so the ranges must stay in lock-step with both elements.inc's
+// ordering and init()'s carve-up below).
 Element *pc_l, *ma_l;
 Element *mb_l, *ac_l, *io_l;
 Element *ff_l, *misc_l, *ss_l, *pf_l, *ir_l;
+// Named sub-ranges into the `switches[]` array (elements.inc), analogous to
+// the lights pointers above but for the input side (toggle switches).
 Element *ta_sw, *tw_sw, *ext_sw;
 Element *misc_sw, *ss_sw;
 
+// Decodes a baked-in PNG byte array (one of the pdp1art.inc/panelart.inc
+// arrays) into a renderer-owned SDL_Texture. Wraps the raw bytes in an
+// SDL_RWops "file" backed by the in-memory buffer so SDL_image can load it
+// without ever touching the filesystem. Terminates the process via panic()
+// (see common.c) if either the RWops wrapper or the image decode fails --
+// there is no recoverable-failure path, since a missing panel sprite means
+// the program cannot usefully continue.
+// Returns: a valid, non-NULL SDL_Texture* owned by `renderer` (never
+// returns on failure -- panic() calls exit()).
 SDL_Texture*
 loadtex(unsigned char *data, int sz)
 {
@@ -51,16 +108,35 @@ loadtex(unsigned char *data, int sz)
 	return tex;
 }
 
+// Panel background and per-element sprite textures, populated by init()
+// via loadtex(). lamptex/switchtex/hswitchtex are [off,on] (or
+// [down,up]) pairs; keytex has a third entry for keys with a
+// spring-loaded "up" position distinct from neutral and "down"
+// (see the state==2 cases in mouse()/updatepanel()).
 SDL_Texture *paneltex;
 SDL_Texture *lamptex[2];
 SDL_Texture *switchtex[2];
 SDL_Texture *hswitchtex[2];
 SDL_Texture *keytex[3];
 
+// grid1 covers the main panel body (PC/MA/MB/AC/IO/flip-flop lamps, the
+// EXTEND/TA/TW switch rows, and the key row); grid2 covers the narrower
+// right-hand column (run/sstep/sinst, sense switches, program flags, IR).
+// Both are derived from the same `scl` mm-to-pixel factor in init().
 Grid grid1, grid2;
 
+// Pulls in the static Element tables (lights[], switches[], keys[]) that
+// enumerate every lamp/switch/key on the panel along with its design-time
+// grid position. Kept in a separate file because it is a long, mostly
+// declarative data table rather than logic; see elements.inc's own header
+// comment for the coordinate convention it uses.
 #include "elements.inc"
 
+// Debug helper: overlays a grid of red lines spaced g->xscl/g->yscl apart
+// over `tex`, used during panel-art development to visually check element
+// alignment against the background image. Not called anywhere in the
+// current build (see the commented-out call in draw() below) -- dead code
+// left in from that development process.
 void
 drawgrid(SDL_Texture *tex, Grid *g)
 {
@@ -74,6 +150,16 @@ drawgrid(SDL_Texture *tex, Grid *g)
 		SDL_RenderDrawLine(renderer, 0, y, w, y);
 }
 
+// Computes the on-screen pixel rectangle (e->r) for element `e` from its
+// fixed grid-unit position (e->x, e->y) and its current texture's natural
+// size, then stores it back into `e` for later use by ismouseover() (hit
+// testing) and drawelement() (blit destination). Must be called once per
+// element after every texture is loaded and before the first draw/mouse
+// event; called from init() for every lamp/switch/key.
+// Note: w/2 and h/2 are integer divisions of the texture's pixel
+// dimensions, so odd-width/height sprites are rounded down by up to half a
+// pixel relative to the float-based grid math used for the rest of the
+// placement; visually negligible at this panel's resolution.
 void
 putongrid(Element *e)
 {
@@ -85,12 +171,21 @@ putongrid(Element *e)
 	e->r.h = h;
 }
 
+// Blits element `e`'s current-state sprite (e->tex[e->state]) into its
+// precomputed screen rectangle (e->r, set by putongrid()). No return value;
+// draw() calls this once per lamp/switch/key every frame.
 void
 drawelement(Element *e)
 {
 	SDL_RenderCopy(renderer, e->tex[e->state], nil, &e->r);
 }
 
+// Renders one complete frame: panel background, then every lamp, switch,
+// and key sprite on top in that order (so switches/keys visually sit above
+// the background art, and lamps are drawn first so a switch/key sprite at
+// the same grid position -- e.g. the sense-switch lamp+toggle pair -- can
+// overlay it), then presents the frame. Called once per main-loop
+// iteration after updatepanel() has refreshed every element's `state`.
 void
 draw(void)
 {
@@ -107,6 +202,18 @@ draw(void)
 	SDL_RenderPresent(renderer);
 }
 
+// One-time SDL/panel setup, called once from main() before the event loop
+// starts. Loads every sprite texture, derives grid1/grid2's pixel scale
+// from a fixed mm-to-pixel conversion factor tuned against the panel art,
+// positions every Element in lights[]/switches[]/keys[] onto its grid, and
+// finally carves each of those flat arrays into the named per-register
+// sub-ranges (pc_l, ma_l, ta_sw, ...) used by initpanel()/updatepanel().
+// The carve-up below is purely pointer arithmetic over the arrays defined
+// in elements.inc and encodes an implicit, unchecked dependency on that
+// file's element ordering and group sizes -- reordering or resizing a
+// group in elements.inc without updating the matching `e +=` line here (or
+// vice versa) will silently misattribute lamps/switches to the wrong
+// register with no compile-time or run-time check.
 void
 init(void)
 {
@@ -159,6 +266,8 @@ init(void)
 	ss_sw = e; e += 6;
 }
 
+// Returns non-zero if screen point (x,y) falls within element `e`'s current
+// hit rectangle (e->r, set by putongrid()), zero otherwise.
 int
 ismouseover(Element *e, int x, int y)
 {
@@ -166,8 +275,44 @@ ismouseover(Element *e, int x, int y)
 		y >= e->r.y && y < e->r.y+e->r.h;
 }
 
+// Bitmask of currently-held mouse buttons, updated in main()'s event loop:
+// bit0 (1) = left/SDL_BUTTON_LEFT, bit1 (2) = middle/SDL_BUTTON_MIDDLE,
+// bit2 (4) = right/SDL_BUTTON_RIGHT (from `1 << (ev.button.button-1)`,
+// since SDL numbers these buttons 1,2,3). Any higher SDL button number
+// (e.g. the X1/X2 side buttons, button 4/5) would set bit3/bit4, which no
+// code below ever tests, so those buttons are silently inert here rather
+// than rejected -- harmless, but unremarked upon in the original source.
 int buttonstate;
 
+// Called on every mouse-motion and mouse-button SDL event with the
+// pointer's current window coordinates; updates every switch's and key's
+// `state` field to reflect the current mouse position/button combination.
+// No return value.
+//
+// Switches (toggle-style) use `active` as a one-shot debounce latch: the
+// state change (toggle/force-on/force-off, chosen by which button is held)
+// is applied only on the frame the button first goes down over the
+// element (the `!e->active` transition), not on every subsequent frame the
+// button stays held there -- otherwise a switch would flicker rapidly
+// while the mouse sits still with the button down (this function is
+// called on every motion event, not just on press/release edges).
+// `active` is cleared as soon as the button is released or the pointer
+// leaves the element, re-arming the latch for the next click.
+//
+// Keys (momentary pushbuttons) intentionally have no such debounce: their
+// `state` is simply the current button/hover condition every frame
+// (0 = neutral, released or off the element), so releasing the mouse or
+// moving off the key immediately returns it to neutral (state 0), matching
+// a physical momentary key rather than a persistent toggle.
+//
+// Button-to-state mapping: for switches, left-click toggles the current
+// state, middle-click forces "up"/on (state 1), right-click forces
+// "down"/off (state 0). For keys, left-click sets state 1 ("down") and
+// right-click sets state 2 ("up") -- middle-click has no effect on keys.
+// If more than one button is held at once the if/else-if chain below gives
+// left priority over middle over right; this precedence is arbitrary
+// (chording is not an expected real input) and undocumented in the
+// original source.
 void
 mouse(int x, int y)
 {
@@ -201,11 +346,42 @@ mouse(int x, int y)
 
 
 
+// Shared-memory Panel struct definition and the sw0/sw1/sw2 bit-field enum
+// (SW_*, KEY_*, L5_*), also used by the emulator (pdp1/panel1.c) and the
+// hardware panel driver (panel_pidp1/newpanel.c). See that header's own
+// comments for the full field layout; the bit constants referenced below
+// (e.g. SW_EXTEND, KEY_START) come from it.
 #include "panel_pidp1.h"
 
 Panel *panel;
 
-void    
+// Duty-cycle fraction (0.0-1.0), computed per lamp per frame from
+// panel->pwmcount[][] (see computelightword()), at or above which a lamp is
+// drawn "on". vpanel_pdp1 has only one on/off sprite pair per lamp (no
+// brightness ramp, unlike panel_pidp1/newpanel.c's pwmthread()), so the
+// continuous duty fraction has to collapse to a single boolean somewhere;
+// this is that threshold. 0.5 ("lit more than half the window") is a
+// reasonable starting point, not a value derived from anything -- adjust to
+// taste if lamps that flicker briefly should read as on/off more or less
+// readily than that.
+#define PWM_ON_THRESHOLD 0.5f
+
+// panel->cyclecount as of the end of the last computelightword() pass over
+// all seven main-panel rows, used to compute expectedcycles (see
+// updatepanel()) -- the true number of emulated cycles elapsed since then.
+// Primed from the segment's current value in initpanel() so the first real
+// pass in updatepanel() measures only cycles that occur after this program
+// attaches, not since whatever process created/last reset the segment.
+u64 lastcyclecount;
+
+// Packs `n` consecutive bits of `b`, starting at `bit` and shifting right
+// by one each iteration, into the `state` field of `l[0..n-1]` (one bit per
+// Element, most-significant of the range first). Used in initpanel() to
+// seed each switch Element's on-screen state from whatever the shared
+// segment already holds (e.g. a prior session's switch positions), and in
+// updatepanel() to fan the emulator's per-cycle light registers out into
+// the individual lamp Elements that draw() will render. No return value.
+void
 setnlights(int b, Element *l, int n, int bit)
 {
 	int i;
@@ -213,9 +389,17 @@ setnlights(int b, Element *l, int n, int bit)
 		l[i].state = !!(b & bit);
 }
 
+// Inverse of setnlights(): scans `n` consecutive Elements in `sw[]` and, for
+// each one whose `state` equals `state`, sets the corresponding bit
+// (starting at `bit` and shifting right by one per element, matching
+// setnlights()'s bit ordering) in the returned word. Used in updatepanel()
+// to collapse each row of on-screen toggle-switch Elements back into the
+// packed integer word the emulator expects in panel->sw0/sw1/sw2.
+// Returns: the OR of all matching bits (0 if no element in the range is
+// currently in `state`).
 int
 getnswitches(Element *sw, int bit, int n, int state)
-{               
+{
 	int b, i;
 	b = 0;
 	for(i = 0; i < n; i++, bit >>= 1)
@@ -224,6 +408,27 @@ getnswitches(Element *sw, int bit, int n, int state)
 	return b;
 }
 
+// Attaches (creating if necessary) the /tmp/pdp1_panel shared-memory
+// segment and seeds every switch Element's on-screen state from whatever
+// is already in it, so a freshly-started vpanel_pdp1 reflects switch
+// positions left by a previous run/process rather than resetting them to
+// "all down". Calls exit(1) if the segment cannot be mapped at all.
+//
+// Note: createseg() (common.c) always ftruncate()s the segment to
+// sizeof(Panel), even when the file already exists and is already mapped
+// by another live process (e.g. the emulator, or the hardware panel
+// driver, both of which may be running concurrently against the same
+// path). If this binary and the other process(es) sharing the segment
+// were built against different versions of panel_pidp1.h -- and therefore
+// disagree on sizeof(Panel) -- whichever process opens the segment second
+// will resize the underlying file out from under the process(es) that
+// already have it mmap'd, rather than failing loudly. Neither this
+// function nor createseg() checks the existing file's size against
+// sizeof(Panel) before truncating. The project's own struct-versioning
+// convention (new fields appended at the end only, see Claude/CLAUDE.md)
+// mitigates the practical risk but does not eliminate it, since nothing
+// here verifies that convention was actually followed by whichever binary
+// created the segment first.
 void
 initpanel(void)
 {
@@ -238,12 +443,102 @@ initpanel(void)
 	misc_sw[0].state = !!(panel->sw0 & SW_POWER);
 	misc_sw[1].state = !!(panel->sw2 & SW_SSTEP);
 	misc_sw[2].state = !!(panel->sw2 & SW_SINST);
+
+	// Prime the PWM integration baseline (see computelightword() and
+	// updatepanel()) to the segment's current cyclecount, so the first
+	// real pass measures only cycles that elapse after this program
+	// attaches, not cycles counted since whatever process created/last
+	// reset the segment.
+	lastcyclecount = panel->cyclecount;
 }
 
+// Reads and destructively resets one main-panel light row's worth (18
+// columns) of panel->pwmcount[][] -- pwmrow must be panel->pwmcount[row] for
+// some row in 0-6 (vpanel_pdp1 has no Elements for the I/O panel's rows
+// 7-9, see updatepanel()) -- and packs a boolean-per-column "on" word from
+// it, suitable for passing to setnlights() exactly like the corresponding
+// raw panel->lightsN word used to be (see updatepanel()'s previous form).
+//
+// Each column's fractional on-time over the last window (count/
+// expectedcycles) is compared against PWM_ON_THRESHOLD; columns at or above
+// it set their bit. Column-to-bit mapping matches panel1.c's incrcount(),
+// which is what originally wrote these tallies: column i is bit value
+// (1<<i), i.e. LSB-first, column 0 = bit 1. This is the same word format
+// setnlights() already expects from its `bit`-and-shift-right walk, so no
+// change to setnlights(), elements.inc, or any call site's n/bit arguments
+// was needed to switch from a live lightsN sample to this.
+//
+// expectedcycles is the number of emulated cycles elapsed since this row
+// was last drained (same value used for every row in a given frame -- see
+// updatepanel()); the caller guarantees it is nonzero and already clamped
+// to <= 65535 to match pwmrow[]'s u16 range (panel1.c's incrcount() clamps
+// the same way, for the same reason). A column's count can exceed
+// expectedcycles if this program's last pass was skipped (expectedcycles
+// was 0 that frame, see updatepanel()) while pwmrow[] kept accumulating in
+// the meantime with its own saturating-add -- clamped here before dividing
+// so the fraction never exceeds 1.0.
+//
+// Destructive: zeroes pwmrow[col] for every column as it reads it, so this
+// must be called exactly once per row per frame (updatepanel() caches each
+// row's returned word locally and reuses it for that row's multiple
+// setnlights() calls -- e.g. row 5 feeds both ff_l and misc_l -- rather
+// than calling this twice for the same row, which would see an
+// already-drained zero the second time).
+//
+// Not synchronized against pdp1's concurrent increments into pwmrow[] (same
+// caveat panel1.c's own comment on pwmcount[][] documents) -- worst case an
+// increment is occasionally lost or counted in the next window, negligible
+// at this read rate. Also not safe against a second destructive reader of
+// the same shared pwmcount[][] (panel_pidp1/newpanel.c's pwmthread()) --
+// see this directory's CLAUDE.md; the project owner has confirmed
+// vpanel_pdp1 and the hardware panel driver are not intended to run
+// concurrently against the same segment and will document this for users
+// rather than have this code defend against it.
+int
+computelightword(u16 *pwmrow, u64 expectedcycles)
+{
+	int col, word;
+	u16 count;
+
+	word = 0;
+	for(col = 0; col < 18; col++) {
+		count = pwmrow[col];
+		pwmrow[col] = 0;
+		if(count > expectedcycles)
+			count = (u16)expectedcycles;	// expectedcycles already <= 65535, see caller
+		if((float)count >= PWM_ON_THRESHOLD * (float)expectedcycles)
+			word |= 1 << col;
+	}
+	return word;
+}
+
+// Called once per main-loop iteration, after mouse() has updated every
+// switch/key Element's `state` from the current input, and before draw().
+// Two jobs: (1) collapse the on-screen switch/key state into panel->sw0-2
+// (read by the emulator's updateswitches(), pdp1/panel1.c) so mouse clicks
+// here actually affect the running machine, and (2) fan panel->lights0-6
+// (written by the emulator's updatelights() every emulated cycle) back out
+// into the individual lamp Elements' `state` so draw() shows the machine's
+// current register/indicator contents. No return value.
+//
+// The sw0/sw1/sw2 bit layout and the lights0/lights6 packing below must
+// stay in lock-step with pdp1/panel1.c's updateswitches()/updatelights()
+// and with the SW_*/KEY_*/L5_* bit constants in panel_pidp1.h; verified
+// against panel1.c while commenting this file and found consistent (e.g.
+// ta_sw's 16 bits at 0100000 cover both the eta extension bits and the
+// 12-bit ta address together, matching pdp->eta/pdp->ta's combined width;
+// ir_l/ss_l/pf_l's bit ranges match the "IR: 400000-020000 / SS:
+// 004000-000100 / PF: 000040-000001" layout documented in panel_pidp1.h).
+//
+// DEP is intentionally wired ONLY to state==2 ("up"/right-click) below,
+// with no state==1 ("down"/left-click) case.
+// This mimics the pdp-1 deposit switch operation by lifting it up.
 void
 updatepanel(void)
 {
 	int sw;
+	int w0, w1, w2, w3, w4, w5, w6;
+	u64 currentcyclecount, expectedcycles;
 
 	sw = getnswitches(ta_sw, 0100000, 16, 1);
 	if(ext_sw->state) sw |= SW_EXTEND;
@@ -260,7 +555,7 @@ updatepanel(void)
 	if(keys[1].state == 1) sw |= KEY_STOP;
 	if(keys[2].state == 1) sw |= KEY_CONT;
 	if(keys[3].state == 1) sw |= KEY_EXAM;
-	if(keys[4].state == 2) sw |= KEY_DEP;
+	if(keys[4].state == 2) sw |= KEY_DEP;	// "up" only, by design -- real hardware safety interlock (see comment above)
 	if(keys[5].state == 1) sw |= KEY_READIN;
 	if(keys[6].state == 1) sw |= KEY_READER;
 	if(keys[6].state == 2) sw |= KEY_READER_UP;
@@ -269,20 +564,87 @@ updatepanel(void)
 
 	panel->sw3 = 0;	// no spacewar controllers for now
 
-	setnlights(panel->lights0, pc_l, 16, 0100000);
-	setnlights(panel->lights1, ma_l, 16, 0100000);
-	setnlights(panel->lights2, mb_l, 18, 0400000);
-	setnlights(panel->lights3, ac_l, 18, 0400000);
-	setnlights(panel->lights4, io_l, 18, 0400000);
-	setnlights(panel->lights5, ff_l, 13, L5_RUN);
-	setnlights(panel->lights5, misc_l, 3, L5_PWR);
-	setnlights(panel->lights6, ir_l, 5, 0400000);
-	setnlights(panel->lights6, ss_l, 6, 0004000);
-	setnlights(panel->lights6, pf_l, 6, 0000040);
+	// lights7-lights9 (the I/O panel, see panel_pidp1.h) are never read
+	// here -- vpanel_pdp1 has no Element entries for them at all (none
+	// are declared in elements.inc), so the I/O panel's indicators are
+	// simply not represented in this front end, unlike the hardware
+	// panel driver's presumably fuller coverage. Consequently only
+	// pwmcount[][] rows 0-6 are drained below, not rows 7-9.
+	//
+	// Lamp state is derived from panel->pwmcount[][]'s duty-cycle tally
+	// rather than sampled directly from panel->lightsN -- see this
+	// file's header comment and computelightword()'s header comment for
+	// why (a single once-per-frame lightsN read aliases against lamp
+	// activity faster than this loop's ~30ms cadence).
+	//
+	// expectedcycles is the true number of emulated cycles elapsed since
+	// the last pass (panel->cyclecount is monotonic, never reset, so
+	// this doesn't depend on the ~30ms sleep actually having been
+	// ~30ms). If it comes out to 0 -- this loop woke up before the
+	// emulator advanced even one cycle -- skip the lamp update entirely
+	// for this frame and leave every lamp Element's state as it was last
+	// frame; panel->pwmcount[][] simply keeps accumulating untouched
+	// until a later frame where expectedcycles is nonzero. This mirrors
+	// panel_pidp1/newpanel.c's pwmthread(), which guards against the
+	// same beat/blackout condition for the same reason.
+	currentcyclecount = panel->cyclecount;
+	expectedcycles = currentcyclecount - lastcyclecount;
+	if(expectedcycles != 0) {
+		if(expectedcycles > 65535)
+			expectedcycles = 65535;	// pwmcount[][] is u16; matches panel1.c's incrcount() saturation
+		lastcyclecount = currentcyclecount;
+
+		// Each row is drained into a word exactly once, then reused for
+		// every setnlights() call that reads that row (row 5 feeds both
+		// ff_l and misc_l; row 6 feeds ir_l, ss_l, and pf_l) --
+		// computelightword() destructively resets pwmcount[][] as it
+		// reads it, so calling it twice for the same row would see an
+		// already-drained zero the second time.
+		w0 = computelightword(panel->pwmcount[0], expectedcycles);
+		w1 = computelightword(panel->pwmcount[1], expectedcycles);
+		w2 = computelightword(panel->pwmcount[2], expectedcycles);
+		w3 = computelightword(panel->pwmcount[3], expectedcycles);
+		w4 = computelightword(panel->pwmcount[4], expectedcycles);
+		w5 = computelightword(panel->pwmcount[5], expectedcycles);
+		w6 = computelightword(panel->pwmcount[6], expectedcycles);
+
+		setnlights(w0, pc_l, 16, 0100000);
+		setnlights(w1, ma_l, 16, 0100000);
+		setnlights(w2, mb_l, 18, 0400000);
+		setnlights(w3, ac_l, 18, 0400000);
+		setnlights(w4, io_l, 18, 0400000);
+		setnlights(w5, ff_l, 13, L5_RUN);
+		setnlights(w5, misc_l, 3, L5_PWR);
+		setnlights(w6, ir_l, 5, 0400000);
+		setnlights(w6, ss_l, 6, 0004000);
+		setnlights(w6, pf_l, 6, 0000040);
+	}
 }
 
 
 
+// Entry point. Initializes SDL/SDL_image and the fixed 800x448 window,
+// loads and positions every panel Element (init()), attaches the shared
+// Panel segment (initpanel()), then runs the display loop forever: drain
+// input events (updating buttonstate and each Element's state via
+// mouse()), push the current switch/key state to the emulator and pull the
+// current lamp state back from it (updatepanel()), redraw the panel
+// (draw()), and sleep ~30ms before repeating. Exits via SDL_QUIT (normal
+// window close) or panic()/exit() on unrecoverable setup failure; there is
+// no other way out of the for(;;) loop.
+// Returns: 0 is unreachable in practice (the loop only exits via exit()),
+// kept only to satisfy main()'s int return type.
+//
+// Robustness notes: neither SDL_Init()'s nor IMG_Init()'s return value is
+// checked here, unlike SDL_CreateWindowAndRenderer() a few lines below
+// which does panic() on failure. If SDL or the PNG image plugin fail to
+// initialize, execution continues into init(), and the first sign of
+// trouble is loadtex()'s own panic() when IMG_LoadTexture_RW() fails --
+// still a hard stop, just with a less specific error message than a direct
+// check here would give. Also, there is no cleanup on exit (no
+// SDL_DestroyRenderer/Window, no IMG_Quit/SDL_Quit, no munmap of the
+// shared panel segment); the process simply exit()s and relies on the OS
+// to reclaim everything.
 int
 main()
 {
@@ -320,7 +682,7 @@ main()
 		updatepanel();
 		draw();
 
-		SDL_Delay(30);
+		SDL_Delay(30);	// ~33fps fixed refresh; not synced to the emulator's cycle rate
 	}
 
 	return 0;

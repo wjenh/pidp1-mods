@@ -19,14 +19,14 @@
 #include "highSpeedChannels.h"
 #include "iotHandler.h"
 
-#define DOLOGGING
+//#define DOLOGGING
 #include "iotLogger.h"
 #define LOG_START 0
 #define LOG_IOT 0
 #define LOG_POLL 0
 #define LOG_HSC 0
 #define LOG_TIME 0
-#define LOG_TOTALTIME 1
+#define LOG_TOTALTIME 0
 #define LOG_BREAK 0
 #define LOG_READ 0
 #define LOG_WRITE 0

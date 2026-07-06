@@ -15,6 +15,10 @@
  *    for delays at or below HSC_SPIN_LIMIT_US. Testing showed usleep() was wildly inconsistent.
  * 05-Jul-2026 wje - extended HSC_MODE_UPDATEPANEL to HSC_MODE_THREADED.
  *    Rework light control to be more robust, allow pulse stretching so the hsc state will show up better.
+ * 06-Jul-2026 wje/claude - fix HSCwait() double-counting the THREADED waitDelay.
+ *    HSCwait() didn't check for done and always slept the full waitDelay regardless, adding a redundant
+ *    delay on top of whatever real time had already elapsed.
+ *    Now skipped if the channel is already done.
 */
 
 #include <unistd.h>
@@ -45,7 +49,7 @@ typedef struct {
     int status;
     int waitDelay;          // if we are in THREADED mode, how long to sleep in HSCwait()
     int brkCount;           // if we are in THREADED mode, simulate break requests, more or less
-    int offCount;           // HSC_MODE_UPDATEPANEL was usd, number of cycles to keep hsc cylcle on for
+    int onCount;            // HSC_MODE_UPDATEPANEL was usd, number of cycles to keep hsc cylcle on for
     sem_t accessSemaphore;  // how we synchrnonize modification of the control structure
     sem_t waitSemaphore;    // how we synchrnonize completion
     HSCRequest request;     // pending request if any, copied by execute from user space
@@ -98,9 +102,9 @@ HSCControlP ctlP;
         // Check to see if the light needs turning off.
         if( ctlP->needLightoff )
         {
-            if( ctlP->offCount-- <= 0 )
+            if( ctlP->onCount-- <= 0 )
             {
-                ctlP->offCount = 0;
+                ctlP->onCount = 0;
                 ctlP->needLightoff = false;
                 pdp1P->hsc = 0;
                 updatelights(pdp1P, pdp1P->panel);
@@ -117,7 +121,7 @@ HSCControlP ctlP;
 
         if( ctlP->status == HSC_BUSY )
         {
-            if( ctlP->offCount > 0 )
+            if( ctlP->onCount > 0 )
             {
                 pdp1P->hsc = 1;         // be sure the light is on
             }
@@ -265,7 +269,7 @@ HSCControlP ctlP;
 
     // Both IMMEDIATE and THREADED handle the tranfer in this call.
     // The difference is that IMMEDIATE does not check for busy nor does it do any timing emulation.
-    // THREADED operates as if in normal mode, including a 5usc delay per count, with busy and wait.
+    // THREADED operates as if in normal mode, including a 5usec delay per count, with busy and wait.
     if( rqstP->mode & (HSC_MODE_IMMEDIATE | HSC_MODE_THREADED) )
     {
         switch( rqstP->mode & (HSC_MODE_IMMEDIATE | HSC_MODE_THREADED) )
@@ -281,10 +285,10 @@ HSCControlP ctlP;
                 pdp1P->hsc = 1;
                 updatelights(pdp1P, pdp1P->panel);
                 updatelights_pwm(pdp1P->panel, 1);
-                ctlP->offCount = rqstP->count;          // keep it on for the number of transfers we do
-                if( ctlP->offCount < HSC_STRETCH )
+                ctlP->onCount = rqstP->count;          // keep it on for the number of transfers we do
+                if( ctlP->onCount < HSC_STRETCH )
                 {
-                    ctlP->offCount = HSC_STRETCH;
+                    ctlP->onCount = HSC_STRETCH;
                 }
                 ctlP->needLightoff = true;
             }
@@ -310,10 +314,10 @@ HSCControlP ctlP;
                 pdp1P->hsc = 1;
                 updatelights(pdp1P, pdp1P->panel);
                 updatelights_pwm(pdp1P->panel, 1);
-                ctlP->offCount = rqstP->count;
-                if( ctlP->offCount < HSC_STRETCH )
+                ctlP->onCount = rqstP->count;
+                if( ctlP->onCount < HSC_STRETCH )
                 {
-                    ctlP->offCount = HSC_STRETCH;
+                    ctlP->onCount = HSC_STRETCH;
                 }
                 ctlP->needLightoff = true;
             }
@@ -333,7 +337,7 @@ HSCControlP ctlP;
     ctlP->status = HSC_BUSY;
     logger(LOG_EXEC, "channel %d set to BUSY, addr %d:%o\n", chanP->chanNo+1, rqstP->memBank, rqstP->memAddr);
     pdp1P->hsc = 1;      // be sure our in-use light is on
-    ctlP->offCount = rqstP->count;
+    ctlP->onCount = rqstP->count;
     ctlP->needLightoff = true;
     unlockControl(ctlP);
     return( HSC_BUSY );
@@ -378,6 +382,13 @@ HSCControlP ctlP;
     // Special case for THREADED pseudo-delay
     if( ctlP->waitDelay > 0 )
     {
+        // If the channel already reached HSC_DONE on its own, we're done.
+        if( ctlP->status == HSC_DONE )
+        {
+            ctlP->waitDelay = 0;
+            return(HSC_DONE);
+        }
+
         // We aren't necessarily in the same thread as the main emulator,
         // just idle if it isn't in run state.
         while( !pdp1P->run )

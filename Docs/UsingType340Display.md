@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.7
+This is version 1.8
 
-Edit date 20-June-2026\
-Add cache setting
+Edit date 7-Jul-2026\
+Fix error in drc description
 
 ## What is it?
 
@@ -103,7 +103,7 @@ different IOT assignments.
 - drs - display resume sequence, used to resume after a lightpen event
 - dcf - display clear flags, clears the flags following
 - dra - display read address counter, the last address executed
-- drc - display read coordinates, the x and y position of the lipthpen hit
+- drc - display read coordinates, the x and y position of the lightpen hit
 - dsp - display skip on lightpen flag
 - dss - display skip on stop
 - dsv - display skip on vertical edge violation
@@ -113,7 +113,7 @@ different IOT assignments.
 In more detail:
 
 Only one IOT, dra, takes a value passed in the IO register.\
-Only two IOTs return a value, dra in the IO register, drc in the IO and AC registers.
+Only two IOTs return a value, dra and drc, both in the IO register.
 
 | IOT | pdp-1 opcode | input | output | notes |
 |-----|--------------|-------|--------|-------|
@@ -121,7 +121,7 @@ Only two IOTs return a value, dra in the IO register, drc in the IO and AC regis
 | drs | 720115 | none | none | use after lightpen hit or edge violation to resume execution |
 | dcf | 720215 | none | none | clears the 340 dkip flags |
 | dra | 720o16 | none | IO has current execution address | if the 340 is halted, will be the next location to execute |
-| drc | 720116 | none | IO and AC have the last lightpen hit coordinates | see note 2 |
+| drc | 720116 | none | IO has the last lightpen hit coordinates | see note 2 |
 | dsp | 720117 | none | none | dsp, dss, dsv, dsh can be combined, see note 3 |
 | dss | 720217 | none | none ||
 | dsv | 720417 | none | none ||
@@ -133,7 +133,7 @@ Memory access by the 340 is via a high speed dma channel and is independent of a
 
 **Note 2** - The x and y coordinates do not include the least-significant-bit of the screen coordinate, the values
 are x >> 1 and y >> 1.
-The x coordinate is in IO bits 0-8, the y coordinate in AC bits 0-8.
+The x coordinate is in IO bits 0-8, the y coordinate in bits 9-17.
 The values are indeterminate if there has not been a lightpen hit.
 
 **Note 3** - All of the skip subcommands can be combined, just as for the normal PDP-1 skip instructions, e.g.\

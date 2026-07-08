@@ -81,7 +81,7 @@ next.
 
 The *vector*, *vector continue*, *character*, and *increment* commands always set *parameter* as the next mode
 when they complete.
-This is because they execute a sequence of their own operations until a *done* flag is seen in their current
+This is because they execute a sequence of their own operations until a *end* flag is seen in their current
 subcommand.
 That command completes, then parameter mode is entered automatically.
 
@@ -120,7 +120,7 @@ Only two IOTs return a value, dra and drc, both in the IO register.
 | dla | 720015 | IO has prgram adress | none | full 16 bit address, see note 1 |
 | drs | 720115 | none | none | use after lightpen hit or edge violation to resume execution |
 | dcf | 720215 | none | none | clears the 340 dkip flags |
-| dra | 720o16 | none | IO has current execution address | if the 340 is halted, will be the next location to execute |
+| dra | 720016 | none | IO has current execution address | if the 340 is halted, will be the next location to execute |
 | drc | 720116 | none | IO has the last lightpen hit coordinates | see note 2 |
 | dsp | 720117 | none | none | dsp, dss, dsv, dsh can be combined, see note 3 |
 | dss | 720217 | none | none ||
@@ -308,7 +308,7 @@ This will draw a vector at the same angle as the example above, but it will cont
 ## Increment
 
 This is an interesting command. Like *vector* etc, it is a list of subcommands that are executed until a word
-with the *done* flag is executed.
+with the *end* flag is executed.
 Each word contains 4 subfields, each of which, in succession, moves the current display point one position in
 any of 8 different directions and optionally displays it.
 This can be used to draw sprites or complex shapes. It is how the sine wave is displayed in the *type340demo.am1*
@@ -324,12 +324,12 @@ example.
 - incleft - move left
 - incright - move right
 - visible - the 4 points are displayed, applies to all of them
-- done - finish and return to *parameter* mode
+- end - finish and return to *parameter* mode
 
 Example:
 ```
 parameter mode(increment)
-visible set1(incup) set2(incdown|incright) set3(incdown|incleft) set4(incup|incleft) done
+visible set1(incup) set2(incdown|incright) set3(incdown|incleft) set4(incup|incleft) end
 ```
 
 Draws 4 points in a diamond shape and returns to *parameter* mode.
@@ -359,7 +359,7 @@ Examples:
 For *jump*, control transfers to the commands ar location foo, exactly the same as a normal PDP-1 *jmp*.
 
 The *save* subcommand only works if the final command in the code it calls is a *vector*, *character*, or *increment*
-command that specifies *done*. When this happens, control transfers back to the location one after the original *save*
+command that specifies *end*. When this happens, control transfers back to the location one after the original *save*
 and *parameter* mode is set.
 
 The *deposit* subcommand places a constucted command in the location it addresses which will be

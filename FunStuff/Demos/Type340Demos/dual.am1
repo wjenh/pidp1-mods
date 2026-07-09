@@ -7,13 +7,13 @@ Demo of Type 30 and 33 with the Type 340 and 342
 #include <TYPE340/type340defs.ah>
 
 #define YSTART 0d300
-#define YDELTA 0d30
+#define YDELTA 0d40
 #define XSTART -0d480
-#define SIZE33 1
-#define SIZE340 1
+#define SIZE33 2
+#define SIZE340 2
 #define AUTOSPACE 4
 #define BRIGHTNESS33 3
-#define BRIGHTNESS340 5
+#define BRIGHTNESS340 7
 #define TXORIGIN 0
 #define TYORIGIN 0d600
 
@@ -89,12 +89,12 @@ prog,
     y(TYORIGIN) next(point)
     x(TXORIGIN) next(character)
 
-    type340 "  And I'm the Type 340 vector display\n\
-  and the Type 342 symbol generator\n\
-  also drawing characters\n\
-  but with only 2 lines of PDP-1 assembler\n\
-  and zero interaction with the program.\n\
-  I'm also much faster!."
+    type340 " And I'm the Type 340 display\n\
+ and the Type 342 symbol generator\n\
+ also drawing characters but\n\
+ with only 2 lines of assembler and\n\
+ zero interaction with the program.\n\
+ I'm also much faster!."
     next(subroutine)
     jump prog next(parameter)
 

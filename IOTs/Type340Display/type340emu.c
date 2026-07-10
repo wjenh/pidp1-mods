@@ -31,6 +31,7 @@
  * 29-Jun-2026 wje add optional instruction caching
  * 30-Jun-2026 wje add update processing
  * 04-Jul-2026 wje check HSCexecute status, just for completeness
+ * 08-Jul-2026 wje just continue for a vector of 0 length, but stop for a vcontinue of 0 length
  */
 
 #include <stdlib.h>
@@ -774,10 +775,11 @@ Status status;
                     }
                     else
                     {
-                        iotCondLog(LOG_VECTOR, "vector%s brmInitialize failed\n",
+                        // Stay in initialize mode unless this is a vcontinue, in which case stop.
+                        iotCondLog(LOG_VECTOR, "vector%s brmInitialize nothint to do, complete\n",
                             (curMode == VCONTINUE)?" continue":"");
-                        emuOrFlags(FLAG_STOP);
-                        curState = STOPPED;
+
+                        curState = (curMode == VCONTINUE)?STOPPED:INITIALIZE;
                     }
                 }
                 else

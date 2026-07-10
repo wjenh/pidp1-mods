@@ -52,6 +52,7 @@ Lightpen-draggable wireframe cube on the Type 340 display, vertices computed liv
 // wje/Claude 8-Jul-2026 - initial version
 
 #include <TYPE340/type340defs.ah>
+#include <TYPE340/trackingTarget.ah>
 #include <LIGHTPEN/lightpen.ah>
 
 #define H 0d60
@@ -60,7 +61,7 @@ Lightpen-draggable wireframe cube on the Type 340 display, vertices computed liv
 #define MAXSTEP 0d32
 
 // Lightpe aperture to use.
-#define APERTURE APERTURE150
+#define APERTURE APERTURE250
 
 // CUBE BOUNDS
 #define CENTERX 0d250
@@ -69,8 +70,6 @@ Lightpen-draggable wireframe cube on the Type 340 display, vertices computed liv
 
 // Where the drag target is placed,its bounding box size, its scale, and its arm length.
 // The location and bounding box are computed from the location of the cube and the size of the target.
-#define TARGETSCALE 1   // The Type 340 scale factor, powers of 2
-#define TARGETARM 0d16  // length of the target arms from the center to the outer point
 #define TARGETBOXSIZE (0d1000 - (EXTENTX + 0d20))
 #define TARGETX (EXTENTX + (TARGETBOXSIZE / 2))
 #define TARGETY CENTERY
@@ -82,12 +81,17 @@ Lightpen-draggable wireframe cube on the Type 340 display, vertices computed liv
 // i.e. center+180/
 // TARGETXMAX prevents any right-edge collision.
 // The y extents are similarly bounded.
-#define TARGETXMIN (TARGETX - (TARGETBOXSIZE/2) + (TARGETARM * 2^TARGETSCALE))
+
+/*
+#define TARGETXMIN (TARGETX - (TARGETBOXSIZE/2) + (TARGETARM * 2*TARGETSCALE))
 #define TARGETXMAX (TARGETX + (TARGETBOXSIZE/2) - (TARGETARM * 2^TARGETSCALE))
 #define TARGETYMIN (TARGETY - (TARGETBOXSIZE/2) + (TARGETARM * 2^TARGETSCALE))
 #define TARGETYMAX (TARGETY + (TARGETBOXSIZE/2) - (TARGETARM * 2^TARGETSCALE))
-
-#define TGTINTENSITY 7
+*/
+#define TARGETXMIN (TARGETX - (TARGETBOXSIZE/2) + (TARGETSPAN / 2))
+#define TARGETXMAX (TARGETX + (TARGETBOXSIZE/2) - (TARGETSPAN / 2))
+#define TARGETYMIN (TARGETY - (TARGETBOXSIZE/2) + (TARGETSPAN / 2))
+#define TARGETYMAX (TARGETY + (TARGETBOXSIZE/2) - (TARGETSPAN / 2))
 
 // CLAMPTHRESH uses the same Q1.17 fraction convention as the matrix entries, 0200000 = 0.5.
 // Any old matrix entry with |value| below this can cross zero via an ordinary small update.
@@ -846,33 +850,13 @@ prog,
 
 // Separate lightpen drag target drawn every pass.
 target,
-   scale(TARGETSCALE) intensity(TGTINTENSITY) lpon next(point)
+   scale(TARGETSCALE) intensity(TARGETINTENSITY) lpon next(point)
 // The origin point, tgtx,tgty is modified by the pdp-1 code.
 // These are placeholders.
 tgty, y(TARGETY) next(point)
 tgtx, show x(TARGETX) next(parameter)
 
-    scale(1) intensity(TGTINTENSITY) next(vector)
-    // right arm: out visible, back invisible
-    deltax(TARGETARM) deltay(0d0) right visible
-    // move to left arm start, invisible
-    deltax(TARGETARM*2) deltay(0d0) left
-    // and back to center
-    deltax(TARGETARM) deltay(0d0) right visible
-
-    // repeat for the vertical
-    deltax(0d0) deltay(TARGETARM) up visible
-    deltax(0d0) deltay(TARGETARM*2) down
-    deltax(0d0) deltay(TARGETARM) up visible
-
-    // center -> SW tip (invisible)
-    deltax(TARGETARM) deltay(TARGETARM) left down
-    // SW -> NE, through center (visible)
-    visible deltax(TARGETARM*2) deltay(TARGETARM*2) up up
-    // NE -> SE tip (invisible)
-    deltax(0) deltay(TARGETARM*2) down
-    // SE -> NW, through center (visible), escapes back to PARAMETER mode
-    visible deltax(TARGETARM*2) deltay(TARGETARM*2) left up end
+#include <TYPE340/trackingTarget.ac>
 
     next(point) charsets(2) scale(1) intensity(5) lpoff
     y(MSGY) next(point)

@@ -1,0 +1,34 @@
+#ifndef TRACKINGTARGET_AC
+#define TRACKINGTARGET_AC
+// This is a set of Type 340 instructions to draw a tracking target.
+// Include it in your display list wherever you want the target to be rendered.
+// NOTE that it changes the scale and intensity, reset in your display list if needed.
+// Parameter mode must be in effect when entered, will leave the 340 in
+// parameter mode with the lightpen enabled.
+
+// Might not have been included yet, do so.
+#include <TYPE340/trackingTarget.ah>
+
+    scale(TARGETSCALE) intensity(TARGETINTENSITY) lpon next(vector)
+    // right arm: out visible, back invisible
+    deltax(TARGETARM) deltay(0d0) right visible
+    // move to left arm start, invisible
+    deltax(TARGETARM*2) deltay(0d0) left
+    // and back to center
+    deltax(TARGETARM) deltay(0d0) right visible
+
+    // repeat for the vertical
+    deltax(0d0) deltay(TARGETARM) up visible
+    deltax(0d0) deltay(TARGETARM*2) down
+    deltax(0d0) deltay(TARGETARM) up visible
+
+    // center -> SW tip (invisible)
+    deltax(TARGETARM) deltay(TARGETARM) left down
+    // SW -> NE, through center (visible)
+    deltax(TARGETARM*2) deltay(TARGETARM*2) up up visible
+    // NE -> SE tip (invisible)
+    deltax(0) deltay(TARGETARM*2) down
+    // SE -> NW, through center (visible), escapes back to PARAMETER mode
+    deltax(TARGETARM*2) deltay(TARGETARM*2) left up visible end
+
+#endif

@@ -4,8 +4,8 @@ This document describes the Type 340 display and how to use it.
 
 This is version 1.8
 
-Edit date 7-Jul-2026\
-Fix error in drc description
+Edit date 11-Jul-2026\
+More explanation of interrupts, lightpen, edge violations
 
 ## What is it?
 
@@ -285,15 +285,27 @@ up deltay(10) right deltax(50) visible end
 ```
 Draw a line from the current location to a point 10 display points up and 50 to the right.
 
+If a vector runs off any edge, this causes an *edge violation*, which stops processing.\
+If interrupts are enabled, a break request will also occur.
+
+The current x and/or y positions will be reset to the edge of the opposite side from the violation.\
+For example, running off the right side of the screen will reset x to 0, the opposite side.
+
 But why is there an invisible vector modoe? Why not just use *point*?
+
 It's because it takes the vector operation only 1 microsecond per pixel to move, while *point* takes
 a fixed 35 microseconds. So, for short moves, vector is faster.
+
+**NOTE** A request with with a length of 0 will draw nothing, but is still a valid vector,
+execution continues as normal.
 
 ## Vector continue
 
 This is very similar to *vector*, except the endpoints only establish the angle.
 A line will be drawn from the starting point until it hits an edge.
 It is a single-word command, hitting an edge returns to *parameter* mode.
+
+It *does not* cause an edge violation or interrupt!
 
 - vcontinue - the mode name
 - visible - display the vector, else just move
@@ -304,6 +316,9 @@ parameter next(vcontinue)
 up deltay(10) right deltax(50) visible
 ```
 This will draw a vector at the same angle as the example above, but it will continue until it hits an edge.
+
+**NOTE** A request with a length of 0 will draw nothing, it will just return to *parameter* mode.
+No edge violations will occur.
 
 ## Increment
 
@@ -368,7 +383,7 @@ See the *Type 340 Programming Manual*, noted above, to see just how this makes s
 
 ## Edge violations and lightpen hits
 
-Unlike the Type 30 display, there is no automtic wraparound at the edges of the screen.
+Unlike the Type 30 display, there is no automatic wraparound at the edges of the screen.
 Any movement past an edge is a hard error.
 This will halt processing and set a horizontal or vertical or both edge violation flag that can be
 checked with the skip IOTs above.

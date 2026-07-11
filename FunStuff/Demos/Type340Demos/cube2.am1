@@ -82,12 +82,6 @@ Lightpen-draggable wireframe cube on the Type 340 display, vertices computed liv
 // TARGETXMAX prevents any right-edge collision.
 // The y extents are similarly bounded.
 
-/*
-#define TARGETXMIN (TARGETX - (TARGETBOXSIZE/2) + (TARGETARM * 2*TARGETSCALE))
-#define TARGETXMAX (TARGETX + (TARGETBOXSIZE/2) - (TARGETARM * 2^TARGETSCALE))
-#define TARGETYMIN (TARGETY - (TARGETBOXSIZE/2) + (TARGETARM * 2^TARGETSCALE))
-#define TARGETYMAX (TARGETY + (TARGETBOXSIZE/2) - (TARGETARM * 2^TARGETSCALE))
-*/
 #define TARGETXMIN (TARGETX - (TARGETBOXSIZE/2) + (TARGETSPAN / 2))
 #define TARGETXMAX (TARGETX + (TARGETBOXSIZE/2) - (TARGETSPAN / 2))
 #define TARGETYMIN (TARGETY - (TARGETBOXSIZE/2) + (TARGETSPAN / 2))

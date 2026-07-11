@@ -58,6 +58,7 @@
 #define LOG_START 0
 #define LOG_STOP 0
 #define LOG_RUN 0
+#define LOG_BREAK 0
 #define LOG_CMD 0
 #define LOG_GETADDR 0
 #define LOG_WAIT 0
@@ -768,17 +769,17 @@ Status status;
 
                     iotCondLog(LOG_VECTOR, "vector%s initialize curx %d cury %d dx %d dy %d\n",
                         (curMode == VCONTINUE)?" continue":"",curX, curY, x, y);
-                    // If we can't initialise, ignore it and stop
+
                     if( brmInitialize(&brmState, curX, curY, x, y, curScale, INTENSIFY(word)) )
                     {
                         curState = RUNNING;
                     }
                     else
                     {
-                        // Stay in initialize mode unless this is a vcontinue, in which case stop.
-                        iotCondLog(LOG_VECTOR, "vector%s brmInitialize nothint to do, complete\n",
-                            (curMode == VCONTINUE)?" continue":"");
-
+                        // Initialize failed, got a zero-length vector.
+                        // Treat vector as just a normal one, drawing nothing.
+                        // Treat vcontinue as a competed one, but no edge violation? Unsure about this one.
+                        iotCondLog(LOG_VECTOR, "vector brmInitialize zero length vector\n");
                         curState = (curMode == VCONTINUE)?STOPPED:INITIALIZE;
                     }
                 }
@@ -804,8 +805,9 @@ Status status;
                         }
                         else
                         {
-                            // VCONTINUE will have caused an edge violation, go back to param mode.
-                            // It does NOT cause a break.
+                            // The only error that can be returned is an edge violation.
+                            // VCONTINUE does NOT cause a break, it just enters param mode.
+                            // VECTOR stops and breaks if enabled.
                             if( curMode == VCONTINUE )
                             {
                                 curMode = PARAMETER;
@@ -813,9 +815,10 @@ Status status;
                             }
                             else
                             {
-                                curState = STOPPED;
                                 iotCondLog(LOG_BOUNDS, "vector edge violation x, y %d %d\n", curX, curY);
+                                curState = STOPPED;
                                 needBreak = true;
+                                continue;
                             }
                         }
 
@@ -830,7 +833,7 @@ Status status;
 
                         if( drawAndCheck(true, curX, curY, curIntensity) )
                         {
-                            isPaused = true;
+                            isPaused = true;    // A lightpen hit was detected
                         }
                     }
                 }
@@ -1017,6 +1020,7 @@ Status status;
         {
             if( interruptEnabled )
             {
+                iotCondLog(LOG_BREAK,"Requesting a break\n");
                 initiateBreak(BRKCHAN);
             }
             needBreak = false;
@@ -1208,18 +1212,8 @@ Status brmStatus;
     // Check for edge violations
     if( checkBounds(*xP, *yP) )
     {
-        if( flags & FLAG_HEDGE )
-        {
-            *xP = (*xP < 0)?1023:0;
-        }
-
-        if( flags & FLAG_VEDGE )
-        {
-            *yP = (*yP < 0)?1023:0;
-        }
-
         brmStatus = EDGEVIOLATION;
-        iotCondLog(LOG_BRM, "brmNext returning edge violation\n");
+        iotCondLog(LOG_BOUNDS, "brmNext returning edge violation, x %d, y %d\n", *xP, *yP);
     }
     else
     {

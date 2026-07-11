@@ -32,6 +32,7 @@
  * 30-Jun-2026 wje add update processing
  * 04-Jul-2026 wje check HSCexecute status, just for completeness
  * 08-Jul-2026 wje just continue for a vector of 0 length, but stop for a vcontinue of 0 length
+ * 11-Jul-2026 wje unbreak the last change
  */
 
 #include <stdlib.h>
@@ -780,7 +781,15 @@ Status status;
                         // Treat vector as just a normal one, drawing nothing.
                         // Treat vcontinue as a competed one, but no edge violation? Unsure about this one.
                         iotCondLog(LOG_VECTOR, "vector brmInitialize zero length vector\n");
-                        curState = (curMode == VCONTINUE)?STOPPED:INITIALIZE;
+                        if( curMode == VCONTINUE )
+                        {
+                            emuOrFlags(FLAG_STOP);
+                            curState = STOPPED;
+                        }
+                        else
+                        {
+                            curState = INITIALIZE;
+                        }
                     }
                 }
                 else

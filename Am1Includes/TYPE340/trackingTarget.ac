@@ -7,7 +7,7 @@
 // parameter mode with the lightpen enabled.
 
 // Might not have been included yet, do so.
-#include <TYPE340/trackingTarget.ah>
+//#include <TYPE340/trackingTarget.ah>
 
     scale(TARGETSCALE) intensity(TARGETINTENSITY) lpon next(vector)
     // right arm: out visible, back invisible

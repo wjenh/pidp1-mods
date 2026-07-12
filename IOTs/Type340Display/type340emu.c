@@ -33,6 +33,7 @@
  * 04-Jul-2026 wje check HSCexecute status, just for completeness
  * 08-Jul-2026 wje just continue for a vector of 0 length, but stop for a vcontinue of 0 length
  * 11-Jul-2026 wje unbreak the last change
+ * 12-Jul-2026 wje EMU_CMD_NONE shoud not set stop, breaks resume. Just ignore it.
  */
 
 #include <stdlib.h>
@@ -60,6 +61,7 @@
 #define LOG_STOP 0
 #define LOG_RUN 0
 #define LOG_BREAK 0
+#define LOG_PAUSE 0
 #define LOG_CMD 0
 #define LOG_GETADDR 0
 #define LOG_WAIT 0
@@ -497,8 +499,7 @@ Status status;
         switch( command )
         {
         case EMU_CMD_NONE:
-            // Spurious wakeup with no pending command; just re-enter the wait.
-            curState = STOPPED;
+            // Spurious wakeup with no pending command; just ignore
             continue;
 
         case EMU_CMD_RUN:
@@ -536,13 +537,13 @@ Status status;
             {
                 emuClearFlags();
                 lpEnabled = isPaused = false;
-                iotCondLog(LOG_RUN, "Received resume while paused\n");
+                iotCondLog(LOG_PAUSE, "Received resume while paused\n");
             }
             break;
 
         case EMU_CMD_PAUSE:
             isPaused = true;
-            iotCondLog(LOG_RUN, "Received pause\n");
+            iotCondLog(LOG_PAUSE, "Received pause\n");
             break;
 
         case EMU_CMD_STOP:
@@ -570,6 +571,7 @@ Status status;
                 case EMU_CMD_EXIT:
                     sawExit = true;
                     curState = STOPPED;
+                    iotCondLog(LOG_STOP, "EMU_CMD_EXIT set stop\n");
                     continue;
 
                 case EMU_CMD_STOP:
@@ -617,6 +619,7 @@ Status status;
                 {
                     curState = STOPPED;
                     emuOrFlags(FLAG_STOP);
+                    iotCondLog(LOG_STOP, "Parameter set stop\n");
                     if( PARAM_STOP_INTERRUPT(word) )
                     {
                         initiateBreak(BRKCHAN);
@@ -727,6 +730,7 @@ Status status;
                     {
                         // FLAG_LP will have been set already
                         isPaused = true;
+                        iotCondLog(LOG_PAUSE, "LP hit in point, pausing\n");
                     }
                 }
 
@@ -783,6 +787,7 @@ Status status;
                         iotCondLog(LOG_VECTOR, "vector brmInitialize zero length vector\n");
                         if( curMode == VCONTINUE )
                         {
+                            iotCondLog(LOG_STOP, "vector contine, zero length vector stop\n");
                             emuOrFlags(FLAG_STOP);
                             curState = STOPPED;
                         }
@@ -825,6 +830,7 @@ Status status;
                             else
                             {
                                 iotCondLog(LOG_BOUNDS, "vector edge violation x, y %d %d\n", curX, curY);
+                                iotCondLog(LOG_STOP, "vector stop, edge violation x, y %d %d\n", curX, curY);
                                 curState = STOPPED;
                                 needBreak = true;
                                 continue;
@@ -843,6 +849,7 @@ Status status;
                         if( drawAndCheck(true, curX, curY, curIntensity) )
                         {
                             isPaused = true;    // A lightpen hit was detected
+                            iotCondLog(LOG_PAUSE, "LP hit in vector, pausing\n");
                         }
                     }
                 }
@@ -865,6 +872,7 @@ Status status;
                     if( (status = doIncrement(curScale, (word >> tmp) & 0xF)) != COMPLETED )
                     {
                         // Edge violation
+                        iotCondLog(LOG_STOP, "Increment set stop\n");
                         curState = STOPPED;
                         needBreak = true;
                         break;
@@ -881,6 +889,7 @@ Status status;
                             {
                                 // Lp hit, will take effect on the next word
                                 isPaused = true;
+                                iotCondLog(LOG_PAUSE, "LP hit in increment, pausing\n");
                             }
                         }
                     }
@@ -919,10 +928,12 @@ Status status;
                         {
                             // lp hit, but finish the current loop
                             isPaused = true;
+                            iotCondLog(LOG_PAUSE, "LP hit in character, pausing\n");
                         }
                         else
                         {
                             // Edge violation
+                            iotCondLog(LOG_STOP, "Character set stop\n");
                             curState = STOPPED;
                             needBreak = true;
                             break;
@@ -1038,6 +1049,7 @@ Status status;
         {
             iotCondLog(LOG_CMD,"Stopped, responding done\n");
             ctlP->response = EMU_RESPONSE_DONE;
+            iotCondLog(LOG_STOP, "Stop condition seen, curMode %d, curState %d\n", curMode, curState);
             emuOrFlags(FLAG_STOP);
             emuResponseSet(ctlP);
         }
@@ -1652,7 +1664,7 @@ bool gotLpHit;
 #endif
             if( tryLightpen && !gotLpHit )
             {
-                if( (i == 0) ? lpEnabled : (slaves[i-1].lpEnabled != 0) )        // audit M1: avoid slaves[-1] OOB read when i==0
+                if( (i == 0) ? lpEnabled : (slaves[i-1].lpEnabled != 0) )
                 {
                     if( (gotLpHit = checkLightpen(i, x, y)) )
                     {

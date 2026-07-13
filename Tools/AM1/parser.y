@@ -158,6 +158,7 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %token LOCAL
 %token ADDLOCAL
 %token FORCELOC
+%token PRIVATE
 %token DOT
 %token SLASH
 %token AND
@@ -203,7 +204,7 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %type <pnodeP> endConst
 %type <ival> optINTEGER
 %type <ival> bref
-%type <ival> LOCorADDLOC
+%type <ival> LOCorADDLOCorPRIVATE
 
 /* precedence for operators */
 
@@ -531,10 +532,10 @@ one_stmt        : expr
                 }
                 labelTrailer
                 {
-                    if( $1->value2 < localDepth )
+                    if( ($1->value2 < localDepth) && !($1->flags & SYMF_PRIVATE) )
                     {
                         verror(
-                            "local label %s is defined in outer scope %d, this is scope %d, can't be declared here",
+                    "local label %s is defined in outer scope %d, this is scope %d, can't be declared here",
                             $1->name, $1->value2, localDepth);
                     }
                     else if( $1->flags & SYMF_RESOLVED )
@@ -1003,16 +1004,17 @@ directive_expr  : FORCELOC
                     $$ = newnode(lineno, curBankP->cur_pc, FORCELOC, NILP, NILP);
                     $$->flags |= PN_NOINC;
                 }
-                | LOCorADDLOC optLocals
+                | LOCorADDLOCorPRIVATE optLocals
                 {
                 SymNodeP symP;
                 PNodeP nodeP;
                 char *cP;
 
-                    // This can be a local, or an addlocal.
+                    // This can be a local, private, or an addlocal.
                     // If local, push any current local scope, establish a new one.
                     // locaSymlPP can be null if there is no current scope.
                     // If addlocal, the scope must exist and the symbols are added to it
+                    // If private, if a scope exists, add to it, otherwise establish a new one.
                     if( $2 )
                     {
                         nodeP = $2->leftP;      // recover head link
@@ -1023,10 +1025,10 @@ directive_expr  : FORCELOC
                         nodeP = NILP;
                     }
 
-                    $$ = newnode(lineno, curBankP->cur_pc, $1?LOCAL:ADDLOCAL, NILP, nodeP);
+                    $$ = newnode(lineno, curBankP->cur_pc, $1, NILP, nodeP);
                     $$->flags |= PN_NOINC;
 
-                    if( $1 )
+                    if( $1 == LOCAL )
                     {
                         localStack[localDepth++] = localContextP;
                         if( localDepth > maxLocalDepth )
@@ -1035,14 +1037,30 @@ directive_expr  : FORCELOC
                         }
 
                         localContextP = newLocalContext();
-                        localContextP->pc = curBankP->cur_pc;          // will be the origin for the local relative refs
+                        localContextP->pc = curBankP->cur_pc;    // will be the origin for any local relative refs
                         sym_init( &(localContextP->symRootP) );
                     }
-                    else
+                    else if( $1 == ADDLOCAL )
                     {
                         if( !localContextP )
                         {
                             verror("addlocal but not in a local context");
+                        }
+                    }
+                    else if( $1 == PRIVATE )
+                    {
+                        // If there's not a context, start one.
+                        if( !localContextP )
+                        {
+                            localStack[localDepth++] = localContextP;
+                            if( localDepth > maxLocalDepth )
+                            {
+                                maxLocalDepth = localDepth;
+                            }
+
+                            localContextP = newLocalContext();
+                            localContextP->pc = curBankP->cur_pc;
+                            sym_init( &(localContextP->symRootP) );
                         }
                     }
 
@@ -1059,6 +1077,11 @@ directive_expr  : FORCELOC
 
                         symP = addLocalSymbol(cP);
                         symP->flags = SYM_LOC;
+                        if( $1 == PRIVATE )
+                        {
+                            symP->flags |= SYMF_PRIVATE;
+                        }
+
                         nodeP = nodeP->leftP;
                     }
                 }
@@ -1100,13 +1123,17 @@ endConst        : ENDCONST
                 }
                 ;
 
-LOCorADDLOC     : LOCAL
+LOCorADDLOCorPRIVATE : LOCAL
                 {
-                    $$ = 1;
+                    $$ = LOCAL;
                 }
                 | ADDLOCAL
                 {
-                    $$ = 0;
+                    $$ = ADDLOCAL;
+                }
+                | PRIVATE
+                {
+                    $$ = PRIVATE;
                 }
                 ;
 

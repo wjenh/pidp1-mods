@@ -182,6 +182,7 @@ canReduce(PNodeP nodeP)
     {
     case ORIGIN:
     case LOCAL:
+    case PRIVATE:
     case ADDLOCAL:
     case ENDLOC:
     case FORCELOC:

@@ -9,6 +9,7 @@
  * wje 6-Jul-2026 - completely rework drum timing, now based on real time, the drum was always spinning,
  *    switch to THREADED mode so real cycle-stealing happens,
  *    change dcl completion timing to account for the cycle-stealing the high speed channel does.
+ * wje 14-Jul-2026 - cks drp setting fix, check for HSCexecute() returning busy, fix lost static on transferCount.
  */
 
 #include <unistd.h>
@@ -45,6 +46,7 @@ static int drumFd = -1;
 static int drumReadField;
 static int drumWriteField;
 static int drumAddr;
+static int transferCount;           // set by dwc, consumed by dcl
 static int sbsChan = 5;
 static int draStatusBits = 0;       // use the TE error if a file read or write fails
 static uint64_t drumTime;           // actual running time since drum was started, not simtime
@@ -80,7 +82,6 @@ iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
 int stat;
 int chanFlags;
 int wordCount;
-int transferCount;
 HSCRequest request;
 
     if( pulse )
@@ -132,7 +133,7 @@ HSCRequest request;
             wordCount = (int)(((float)wordCount * 8500.0) / 5000.0) + 1;    // round up, could end up off by 1, ok
             enablePolling(wordCount);
         }
-        
+
         iotCondLog(LOG_IOT, "dia done, read %o, rfield %o, daddr %o\n", readMode, drumReadField, drumAddr);
         break;
 
@@ -191,7 +192,7 @@ HSCRequest request;
             iotCondLog(LOG_IOT, "dss called with setting %02o, prior chnannel was %020\n", IO(pdp1P) & 077, stat);
             break;
         }
-        
+
 
         // The manual says mem bank is bits 2, 3, but this isn't correct.
         // The hardware description is.
@@ -256,6 +257,17 @@ HSCRequest request;
         request.fromBufferP = writeBuffer;
         stat = HSCexecute(chanP, &request);
 
+        if( stat == HSC_BUSY )
+        {
+            // The channel is still draining a prior threaded transfer's cycle-stealing
+            // bookkeeping (HSCexecute() does NOT copy any data in this case). The real drum
+            // can't service two overlapping requests either, so wait for the previous one to
+            // genuinely finish, then retry, rather than silently dropping this transfer.
+            iotCondLog(LOG_HSC, "HSCexecute busy, waiting for prior transfer to finish\n");
+            HSCwait(chanP);
+            stat = HSCexecute(chanP, &request);
+        }
+
         iotCondLog(LOG_HSC, "HSCexecute returned %d\n", stat);
         // We used threaded, all the data transfer by hsc has completed, no need to wait.
         if( writeMode )
@@ -265,6 +277,7 @@ HSCRequest request;
         }
 
         ioBusy = 1;
+        CKS(pdp1P) |= CKS_DRP;                 // busy until iotPoll signals real completion
         // Each drum word takes 8.5us; wordCount here is the rotational latency, if any, plus the transfer itself.
         // This uses a real wall-clock completion time rather than a cycle count, gives pefect timing accuracy.
         cmdCompletionTime = now() + ((uint64_t)wordCount * 8500ULL);
@@ -367,7 +380,7 @@ iotPoll(PDP1 *pdp1P)
         }
 
         HSCwait(chanP);                     // this will just complete the hsd request, won't wait
-        CKS(pdp1P) |= CKS_DRP;              // set done status for cks
+        CKS(pdp1P) &= ~CKS_DRP;             // and not busy
         iotCondLog(LOG_POLL, "IOT 61 completed timeout.\n");
 #ifdef LOG_TOTALTIME
         // update timing stats

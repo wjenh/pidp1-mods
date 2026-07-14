@@ -94,6 +94,7 @@ int word;
     {
         // End of block, next one or a start/stop
         state = LOADER_CMD_START;
+        return( LOADER_MORE );
     }
     else
     {

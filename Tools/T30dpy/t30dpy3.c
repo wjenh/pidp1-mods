@@ -96,11 +96,9 @@
  *    DrawPoint() previously did a flat overwrite for every pixel, so whichever
  *    point happened to be walked last in the active list won.
  *    Adjust point pattern vs intensity for more realistic rendering.
- * 02-Jul-2026 wje (Claude) performance pass, part 1:
- *    SDL_RenderClear() is only needed when the visible window's aspect ratio
- *    differs from the 1024x1024 logical area since SDL_RenderTexture() with SDL_BLENDMODE_NONE already
- *    overwrites every pixel of a non-letterboxed target.
- *    Pre-fault brightBuffer[][] so its pages are resident before the first rendered frame runs.
+ * 02-Jul-2026 wje SDL_RenderClear() is only needed when the visible window's aspect ratio
+ *    differs from the 1024x1024 logical area.
+ * 14-Jul-2026 wje Process mouse events in subframe intervals, faster lightpen updats.
 */
 
 #include <stdio.h>
@@ -165,10 +163,10 @@
 // See usage() below for those that have command line versions.
 #define DEFAULTHOST "localhost"
 #define DEFAULTPORT 3400
-// Amount to raise our own nice value (lower our scheduling priority) so that when this
-// client shares a CPU with the PDP-1 emulator (e.g. a headless Pi running both, viewed
-// over VNC), the emulator wins CPU contention and keeps feeding display points instead of
-// stalling. 0 disables. Overridable via the config file ("nice=N").
+// Amount to raise our own nice value, lowerer our scheduling priority) so that when this
+// client shares a CPU with the PDP-1 emulator, the emulator wins CPU contention and keeps
+// feeding display points instead of stalling.
+// 0 disables, overridable via the config file "nice=N".
 #define DEFAULTNICE 5
 
 #define NSECPERUSEC 1000
@@ -179,7 +177,10 @@
 #define APPLYGAMMA(alpha, gamma) (int)(powf((float)(alpha) / 255.0f, (gamma)) * 255.0f);
 
 #define CONSTRAIN(x) ((x) < 0?0:(((x) > 1023)?1023:(x)))    // keep a value in the range 0-1023
-#define FRAMETIME 33333333L     // nanoseconds between frames, this is 30 fps
+#define FRAMETIME 33333333L         // nanoseconds between frames, this is 30 fps
+#define EVENTPOLLNS NSECPERMSEC     // Instead of waiting for each frame to update mouse events,
+                                    // we update this often in the idle wait loop.
+                                    // Matches the granularity of the poll time on the pdp-1 side.
 #define DRAWIFBRIGHTER(pixP, brightP) \
     if(bright >= *(brightP)) {*(pixP) = rgba; *(brightP) = (uint8_t)bright;}
 
@@ -203,14 +204,9 @@ typedef uint32_t Rgba;
 // with compiler optimization and allowing it to use optimized cpu instructions.
 // The benefit is minor, but we're potentially dealing with fairly low performance cpus, every little bit helps.
 //
-// CACHE LOCALITY NOTE:
-// Earlier versions stored Points by x,y screen position in a 1024x1024 with active points linked thru
-// them.
-// At high active-point counts, walking that list meant chasing pointers scattered across a ~25MB region,
-// causing a cache miss on essentially every node every frame.
-// Instead, ActivePoint records now live in a small, contiguous pool (activePool[]),
+// ActivePoint records live in a small, contiguous pool, activePool[],
 // and the list is threaded via array indices (nextIdx) rather than pointers.
-// A separate, much smaller lookup table (pointIndex[][]) maps a logical (x,y) screen
+// A separate, much smaller lookup table, pointIndex[][], maps a logical (x,y) screen
 // position to its slot in the pool, or to NOINDEX if that position is not currently active.
 // This keeps the working set during traversal limited to roughly
 // (active point count * sizeof(ActivePoint)) instead of the full 25MB grid.
@@ -231,28 +227,21 @@ typedef struct ActivePoint {
 // When a new item is added to the busy list, it is added to the head and the link atomically updated.
 // When an item is taken from the free list, it is always taken from the head.
 // When an item is moved from the busy list, it is added to the head of the free list.
-ActivePoint activePool[MAXACTIVEPOINTS];     // compact pool of active-point records
-uint32_t pointIndex[LOGICALSIZE][LOGICALSIZE]; // maps screen (y,x) -> pool index, or NOINDEX
-volatile uint32_t activeListHead;            // head index of the active list, or NOINDEX if empty
-volatile uint32_t freeListHead;              // head index of the free list, or NOINDEX if exhausted
-uint64_t droppedPoints;                      // counts points dropped because the pool was exhausted
-SDL_Mutex *busyLockP;                       // for interlocking with the reader thread
+ActivePoint activePool[MAXACTIVEPOINTS];        // compact pool of active-point records
+uint32_t pointIndex[LOGICALSIZE][LOGICALSIZE];  // maps screen (y,x) -> pool index, or NOINDEX
+volatile uint32_t activeListHead;               // head index of the active list, or NOINDEX if empty
+volatile uint32_t freeListHead;                 // head index of the free list, or NOINDEX if exhausted
+uint64_t droppedPoints;                         // counts points dropped because the pool was exhausted
+SDL_Mutex *busyLockP;                           // for interlocking with the reader thread
 
 Rgba rgbaValues[8][256];        // The rgba values for each possibe intensity and internal time step.
 
-// Perceptual brightness (the pre-premultiply alpha, i.e. before it is baked into rgbaValues'
-// r/g/b and forced to 255) for each possible intensity and lifetime. This is the score
-// drawPoint() uses to decide whether a point should override a pixel some other point already
-// wrote this frame: see brightBuffer below.
+// Perceptual brightness for each possible intensity and lifetime.
+// This is the value drawPoint() uses to decide whether a point should override a pixel some other point already
+// wrote this frame.
 uint8_t brightValues[8][256];
 
 // Tracks the brightest value written to each screen pixel so far in the current frame.
-// drawPoint()'s glow spread can touch a pixel that some other active point's spread also
-// touches; without this, whichever point happened to be walked last in the active list won
-// that pixel outright, regardless of brightness, since points are inserted at the list head and
-// so are drawn before everything already active. A freshly plotted point must remain visible
-// on top of a dimmer, still-aging existing point, not be silently erased by it.
-// Cleared to 0 alongside the pixel buffer at the start of each rendered frame.
 uint8_t brightBuffer[LOGICALSIZE][LOGICALSIZE];
 
 int pdp1FD;
@@ -287,8 +276,6 @@ uint64_t receivedPoints;
 uint64_t totalFrames;
 uint64_t maxActivePoints;
 _Atomic  uint64_t activePoints;     // overly obsessive to get perfect counts, but only used for timing
-// Added for per-platform diagnosis of the frame-rate question (gpu vs software renderer,
-// true loop cadence vs rendered-frame count, and actual render cost per frame).
 uint64_t pacedFrames;        // every frame-paced main-loop pass, including idle passes with no active points
 uint64_t renderTimeTotal;    // sum of per-rendered-frame times (ns), for the average
 uint64_t renderTimeMax;      // worst single rendered-frame time (ns)
@@ -327,18 +314,30 @@ void reportTiming(void);
 void usage(void);
 FILE *getFile(char *nameP);
 
+// Keep track of what needs to be shared between the event processor and the main code.
+typedef struct EventState {
+    bool fullscreen;
+    bool isLetterboxed;          // true when the window's aspect ratio differs from the 1024x1024
+    bool penDown;
+    int  penx, peny;
+    bool dragging;               // true while the right mouse button is held for a window drag
+    int  dragStartGlobalX;       // screen-absolute cursor x when right button was pressed
+    int  dragStartGlobalY;       // screen-absolute cursor y when right button was pressed
+    int  dragWinOriginX;         // window screen x when right button was pressed
+    int  dragWinOriginY;         // window screen y when right button was pressed
+    float fMouseGlobalX;         // scratch: SDL3 GetGlobalMouseState returns float
+    float fMouseGlobalY;         // scratch: SDL3 GetGlobalMouseState returns float
+    uint64_t cursorTime;
+} EventState, *EventStateP;
+
+static void handleEvent(SDL_Event *eventP, EventStateP stateP);
+
 int
 main(int argc, char **argv)
 {
 int opt;
 int x, y;
-int penx, peny;
 uint32_t i;
-bool fullscreen;
-bool penDown;
-bool isLetterboxed;         // true when the window's aspect ratio differs from the 1024x1024
-                             // logical area, so SDL_LOGICAL_PRESENTATION_LETTERBOX is adding
-                             // bars that need to be cleared each frame; see the render block below
 char *cP;
 
 uint64_t deltaTime;
@@ -348,8 +347,9 @@ uint64_t lastTime;
 uint64_t renderStart;       // timing: monotonic ns at the start of a rendered frame
 uint64_t renderDelta;       // timing: duration (ns) of a rendered frame
 uint64_t tAfterBuffer;      // timing: monotonic ns after buffer work, before present
+uint64_t sleepRemaining;    // ns still left to wait before the next frame is due
+uint64_t thisSleep;         // ns to sleep this slice of the wait, see EVENTPOLLNS
 
-uint64_t cursorTime;
 uint32_t pointIdx;
 uint32_t prevIdx;
 uint32_t nextIdx;
@@ -364,13 +364,7 @@ SDL_PropertiesID winPropsID;    // for SDL_CreateWindowWithProperties
 
 SDL_Thread *threadP;
 
-bool dragging;              // true while the right mouse button is held for a window drag
-int dragStartGlobalX;       // screen-absolute cursor x when right button was pressed
-int dragStartGlobalY;       // screen-absolute cursor y when right button was pressed
-int dragWinOriginX;         // window screen x when right button was pressed
-int dragWinOriginY;         // window screen y when right button was pressed
-float fMouseGlobalX;        // scratch: SDL3 GetGlobalMouseState returns float
-float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
+EventState evState;         // see typedef above main(): bundles the old penDown/dragging/etc locals
 
     // On Windows, Winsock must be initialized before any socket call.
     // winSockStartup() is a no-op returning 0 on Linux.
@@ -384,27 +378,26 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
     portNum = DEFAULTPORT;        // display 0 on the pidp-1
     winSize = 1024;               // original Type 30 display size
     border = true;
-    fullscreen = false;
-    // The window is always created with the same winSize value used for both width and
-    // height (see the SDL_CreateWindowWithProperties() call below and the Wayland-margin
-    // fix, which only ever adjusts winSize as a single value), so it starts out square and
-    // therefore never letterboxed. SDL_EVENT_WINDOW_RESIZED updates this if the user resizes
+    evState.fullscreen = false;
+    // The window is always created with the same winSize value used for both width and height.
+    // adn is therefore never letterboxed.
+    // SDL_EVENT_WINDOW_RESIZED updates this if the user resizes
     // to a non-square shape or toggles fullscreen on a non-square display.
-    isLetterboxed = false;
-    penDown = false;
+    evState.isLetterboxed = false;
+    evState.penDown = false;
     doTiming = false;
     totalPoints = 0;
     receivedPoints = 0;
     frameMisses = 0;
     frameDelay = 0;
-    cursorTime = 0;
-    dragging = false;
-    dragStartGlobalX = 0;
-    dragStartGlobalY = 0;
-    dragWinOriginX = 0;
-    dragWinOriginY = 0;
-    fMouseGlobalX = 0.0f;
-    fMouseGlobalY = 0.0f;
+    evState.cursorTime = 0;
+    evState.dragging = false;
+    evState.dragStartGlobalX = 0;
+    evState.dragStartGlobalY = 0;
+    evState.dragWinOriginX = 0;
+    evState.dragWinOriginY = 0;
+    evState.fMouseGlobalX = 0.0f;
+    evState.fMouseGlobalY = 0.0f;
 
     loadConfig(true);             // config overrides defines, command line overrides all
 
@@ -527,7 +520,7 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
 
     // Create window via properties so SDL_WINDOWPOS_CENTERED can be specified.
     // X11 honors this and opens the window centered on the primary display.
-    // Wayland ignores application-requested position (the compositor controls placement)
+    // Wayland ignores application-requested position
     // but already centers new windows by default, so this is a no-op there.
     if( !(winPropsID = SDL_CreateProperties()) )
     {
@@ -578,13 +571,6 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
     SDL_RenderPresent(renderer);
 
     // Use RGBA8888 unconditionally.
-    // We previously queried SDL_PROP_RENDERER_TEXTURE_FORMATS_POINTER to get the
-    // renderer's preferred native format (e.g., ARGB8888 for the hardware renderer),
-    // hoping to avoid format conversion overhead.  However, the software renderer
-    // returns a different format, and with the premultiplied-alpha scheme (alpha always
-    // stored as 255, brightness baked into RGB) a byte-order mismatch puts the stored
-    // 0xFF alpha byte into a visible color channel, making all points appear at full
-    // brightness.  RGBA8888 is what t30dpy (SDL2) uses and it works on all backends;
     // SDL will convert internally if the renderer needs a different native format.
     pixelFormat = SDL_PIXELFORMAT_RGBA8888;
     formatDetailsP = SDL_GetPixelFormatDetails(pixelFormat);
@@ -597,14 +583,10 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
     // Nearest neighbor gives sharper dots, but some screen sizes don't scale well.
     // Select what works best for a given monitor and sceen size vial the command line or config file.
     //
-    // Intensity is encoded directly into the rgb values themselves (see initializeRgbas(),
-    // which premultiplies by the desired alpha), rather than relying on the renderer to
+    // Intensity is encoded directly into the rgb values themselves rather than relying on the renderer to
     // blend a separate alpha against the background.
     // This lets us use SDL_BLENDMODE_NONE, which is a straight pixel copy with no
-    // per-pixel read-modify-write blend math, instead of SDL_BLENDMODE_BLEND.
-    // Because the copy covers the full 1024x1024 logical area every frame, this also makes
-    // the per-frame SDL_RenderClear() unnecessary (see the main loop), saving a second
-    // full-screen fill every frame on top of the blend itself.
+    // per-pixel read-modify-write blend math instead of SDL_BLENDMODE_BLEND.
     SDL_SetTextureBlendMode(textures[0], SDL_BLENDMODE_NONE);
     SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
     SDL_SetTextureBlendMode(textures[1], SDL_BLENDMODE_NONE);
@@ -650,108 +632,13 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
 
         while( SDL_PollEvent(&event) )
         {
-            switch(event.type)
-            {
-            case SDL_EVENT_QUIT:
-                quit = true;
-                break;
-
-            // Fires for both user-driven edge-dragging resizes and SDL_SetWindowFullscreen()
-            // (fullscreen entry/exit resizes the window to/from the display resolution, which
-            // triggers this same event). data1/data2 are the new width/height in window
-            // coordinates. Recompute whether the window's aspect ratio still matches the
-            // square 1024x1024 logical area; if it does, SDL_LOGICAL_PRESENTATION_LETTERBOX
-            // adds no bars and the per-frame SDL_RenderClear() below can be skipped.
-            case SDL_EVENT_WINDOW_RESIZED:
-                isLetterboxed = (event.window.data1 != event.window.data2);
-                break;
-
-            case SDL_EVENT_KEY_DOWN:
-                switch( event.key.scancode )
-                {
-                case SDL_SCANCODE_F11:
-                case SDL_SCANCODE_F:
-                    fullscreen = !fullscreen;
-                    SDL_SetWindowFullscreen(window, (fullscreen)?SDL_WINDOW_FULLSCREEN:0);
-                    break;
-
-                case SDL_SCANCODE_ESCAPE:
-                    quit = true;
-                    break;
-
-                case SDL_SCANCODE_B:
-                    border = !border;
-                    SDL_SetWindowBordered(window, (border)?true:false);
-                    break;
-                }
-                break;
-
-            case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                if( event.button.button == SDL_BUTTON_LEFT )
-                {
-                    penDown = true;
-                    SDL_ConvertEventToRenderCoordinates(renderer, &event);
-                    penx = CONSTRAIN((int)event.button.x);
-                    peny = CONSTRAIN((int)event.button.y);
-                    updatePen(pdp1FD, true, penx, peny);
-                    SDL_ShowCursor();
-                    cursorTime = now();
-                }
-                else if( event.button.button == SDL_BUTTON_RIGHT )
-                {
-                    // Snapshot screen-absolute cursor position and window origin at
-                    // drag start. SDL3 GetGlobalMouseState returns float.
-                    dragging = true;
-                    SDL_GetGlobalMouseState(&fMouseGlobalX, &fMouseGlobalY);
-                    dragStartGlobalX = (int)fMouseGlobalX;
-                    dragStartGlobalY = (int)fMouseGlobalY;
-                    SDL_GetWindowPosition(window, &dragWinOriginX, &dragWinOriginY);
-                }
-                break;
-
-            case SDL_EVENT_MOUSE_MOTION:
-                cursorTime = now();
-                if( dragging )
-                {
-                    // Screen-absolute cursor position: independent of window position
-                    // and of SDL3's logical presentation scaling.
-                    // xrel/yrel are not used: SDL computes them from window-relative
-                    // coords, so after SDL_SetWindowPosition shifts the window they
-                    // are corrupted by the negative of the window's movement, causing
-                    // the window to move at half speed and the cursor to drift.
-                    // new_win = origin_at_drag_start + (cursor_now - cursor_at_drag_start)
-                    SDL_GetGlobalMouseState(&fMouseGlobalX, &fMouseGlobalY);
-                    SDL_SetWindowPosition(window,
-                        (dragWinOriginX + ((int)fMouseGlobalX - dragStartGlobalX)),
-                        (dragWinOriginY + ((int)fMouseGlobalY - dragStartGlobalY)));
-                }
-                if( penDown )
-                {
-                    SDL_ConvertEventToRenderCoordinates(renderer, &event);
-                    penx = CONSTRAIN((int)event.motion.x);
-                    peny = CONSTRAIN((int)event.motion.y);
-                    updatePen(pdp1FD, true, penx, peny);
-                }
-                break;
-
-            case SDL_EVENT_MOUSE_BUTTON_UP:
-                if( event.button.button == SDL_BUTTON_LEFT )
-                {
-                    penDown = false;
-                    updatePen(pdp1FD, false, 0, 0);
-                }
-                else if( event.button.button == SDL_BUTTON_RIGHT )
-                {
-                    dragging = false;
-                }
-                break;
-            }
+            handleEvent(&event, &evState);
         }
 
-        if( cursorTime && (((now() - cursorTime) / NSECPERMSEC) > CURSORTIMEOUT) )
+        if( evState.cursorTime && (((now() - evState.cursorTime) / NSECPERMSEC) > CURSORTIMEOUT) )
         {
             SDL_HideCursor();
-            cursorTime = 0;
+            evState.cursorTime = 0;
         }
 
         // The display update is frame based.
@@ -759,9 +646,24 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
         // Brute force delay, avoids all the SDL3 internal timing issues and is ok for this emualtion.
         // The 'accumulator' pattern is used to be sure the frame rate is correct.
         // This corrects for variations in the SDL rendering time.
+        //
+        // The wait is sliced into EVENTPOLLNS-sized chunks, acting on any events
+        // queued during each slice, lightpen motion in particular.
+        // Slicing bounds the worst case update delay to about EVENTPOLLNS.
         if( accumulator < FRAMETIME )
         {
-            SDL_DelayNS(FRAMETIME - accumulator);
+            sleepRemaining = FRAMETIME - accumulator;
+            while( (sleepRemaining > 0) && !quit )
+            {
+                thisSleep = (sleepRemaining < EVENTPOLLNS) ? sleepRemaining : EVENTPOLLNS;
+                SDL_DelayNS(thisSleep);
+                sleepRemaining -= thisSleep;
+
+                while( SDL_PollEvent(&event) )
+                {
+                    handleEvent(&event, &evState);
+                }
+            }
         }
         else if( doTiming && (accumulator > FRAMETIME) )
         {
@@ -775,8 +677,7 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
         accumulator -= FRAMETIME;   // Any timing error accumulates so it can be corrected for.
         ++pacedFrames;              // counts every paced loop pass (including idle ones): the true cadence
 
-        // With nothing active there is nothing to draw, so the expensive per-point work below
-        // (texture lock, full pixel-buffer memset, the locked active-list walk) is skipped.
+        // With nothing active there is nothing to draw, so the expensive per-point work below is skipped.
         if( activeListHead != NOINDEX )
         {
             renderStart = now();
@@ -792,23 +693,16 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
             // Clearing the entire pixel array seems to be faster than clearing individual points, surprising.
             memset(pixels, 0, pitch * 1024);
 
-            // Cleared alongside the pixel buffer: tracks the brightest value written to each
+            // Cleared alongside the pixel buffer, tracks the brightest value written to each
             // pixel so far this frame, so drawPoint() can tell a freshly drawn point apart from
-            // an existing one it overlaps and let the brighter of the two win (see brightBuffer
-            // declaration above).
+            // an existing one it overlaps and let the brighter of the two win.
             memset(brightBuffer, 0, sizeof(brightBuffer));
 
             // Go thru the active point list, handle each.
-            // The list is threaded by index through activePool[] (see ActivePoint above), which
+            // The list is threaded by index through activePool[] which
             // keeps traversal localized to a small contiguous pool instead of chasing pointers
             // across the full 1024x1024 grid.
-            // This entire walk is done under a single lock acquisition, not just the individual
-            // removals: previously, only removeActivePoint() locked, leaving the read of each
-            // node's nextIdx here unprotected.  That let the reader thread's addActivePoint(),
-            // running concurrently, recycle a slot we had just freed and relink it back into the
-            // chain we were still traversing, corrupting nextIdx into a cycle.  The result was an
-            // unbounded loop right here: pegged CPU, a frozen display, and total input
-            // unresponsiveness, confirmed against a live hung process with gdb.
+            // This entire walk is done under a single lock acquisition, not just the individual removals.
             SDL_LockMutex(busyLockP);
 
             for( pointIdx = activeListHead, prevIdx = NOINDEX; pointIdx != NOINDEX; pointIdx = nextIdx )
@@ -830,32 +724,27 @@ float fMouseGlobalY;        // scratch: SDL3 GetGlobalMouseState returns float
                 else
                 {
                     // We don't update prevIdx in this case because that point remains the previous point.
-                    // The lock for this whole walk is already held above; removeActivePoint() no
-                    // longer locks internally, it relies on its caller to hold busyLockP.
+                    // The lock for this whole walk is already held above.
                     removeActivePoint(pointIdx, prevIdx);
                 }
             }
 
             SDL_UnlockMutex(busyLockP);
-
             SDL_UnlockTexture(textureP);
 
-            // Timing split point: everything above is CPU buffer work (lock + memset +
-            // point draw); everything below is present work (clear + scaled blit + VNC).
+            // Timing split point.
+            // Everything above is CPU buffer work, everything below is presentation work.
             tAfterBuffer = now();
 
             // SDL_RenderClear() only earns its keep when the window's aspect ratio differs
-            // from the square 1024x1024 logical area: with SDL_LOGICAL_PRESENTATION_LETTERBOX,
-            // the visible window can then be larger than the logical area, and the letterbox
-            // bars outside it are part of what RenderClear repaints. Without clearing in that
-            // case, those bars (and the area around edge-of-screen points) retain stale content
+            // from the square 1024x1024 logical area.
+            // With SDL_LOGICAL_PRESENTATION_LETTERBOX the visible window can be larger than the logical area
+            // and the letterbox bars outside it are part of what RenderClear repaints.
+            // Without clearing in that case, those bars retain stale content
             // from previous frames, visible as phantom points outside the 1024x1024 area.
-            // When the window IS square (the common case: default 1024x1024 window, or any
-            // square resize), there are no bars, and SDL_RenderTexture() right below (with
-            // SDL_BLENDMODE_NONE) already overwrites every pixel of the target -- clearing
-            // first is then pure wasted work, skipped via isLetterboxed (see
-            // SDL_EVENT_WINDOW_RESIZED handling above).
-            if( isLetterboxed )
+            // When the window IS square there are no bars, and SDL_RenderTexture()
+            //  already overwrites every pixel of the target, so clearing is just wasted cycles.
+            if( evState.isLetterboxed )
             {
                 SDL_RenderClear(renderer);
             }
@@ -1353,6 +1242,105 @@ int stride;              // pixels per row, derived from pitch (which is in byte
         if( notBotEdge )
         {
             DRAWIFBRIGHTER(belowRowP, brightBelowP);    // Bottom arm
+        }
+        break;
+    }
+}
+
+// Handles one SDL event during the main loop.
+// It is called both from the once-per-frame loop and short slices of the frame-wait.
+// This allows lightpen motion to be queued much faster, needed for the new predicive lightpen code.
+static void
+handleEvent(SDL_Event *eventP, EventStateP stateP)
+{
+    switch(eventP->type)
+    {
+    case SDL_EVENT_QUIT:
+        quit = true;
+        break;
+
+    // Fires for both user-driven edge-dragging resizes and SDL_SetWindowFullscreen() coordinates.
+    // Recompute whether the window's aspect ratio still matches the square 1024x1024 logical area.
+    // If it does, SDL_LOGICAL_PRESENTATION_LETTERBOX adds no bars and the per-frame SDL_RenderClear()
+    // below can be skipped.
+    case SDL_EVENT_WINDOW_RESIZED:
+        stateP->isLetterboxed = (eventP->window.data1 != eventP->window.data2);
+        break;
+
+    case SDL_EVENT_KEY_DOWN:
+        switch( eventP->key.scancode )
+        {
+        case SDL_SCANCODE_F11:
+        case SDL_SCANCODE_F:
+            stateP->fullscreen = !stateP->fullscreen;
+            SDL_SetWindowFullscreen(window, (stateP->fullscreen)?SDL_WINDOW_FULLSCREEN:0);
+            break;
+
+        case SDL_SCANCODE_ESCAPE:
+            quit = true;
+            break;
+
+        case SDL_SCANCODE_B:
+            border = !border;
+            SDL_SetWindowBordered(window, (border)?true:false);
+            break;
+        }
+        break;
+
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        if( eventP->button.button == SDL_BUTTON_LEFT )
+        {
+            stateP->penDown = true;
+            SDL_ConvertEventToRenderCoordinates(renderer, eventP);
+            stateP->penx = CONSTRAIN((int)eventP->button.x);
+            stateP->peny = CONSTRAIN((int)eventP->button.y);
+            updatePen(pdp1FD, true, stateP->penx, stateP->peny);
+            SDL_ShowCursor();
+            stateP->cursorTime = now();
+        }
+        else if( eventP->button.button == SDL_BUTTON_RIGHT )
+        {
+            // Snapshot screen-absolute cursor position and window origin at
+            // drag start.
+            stateP->dragging = true;
+            SDL_GetGlobalMouseState(&stateP->fMouseGlobalX, &stateP->fMouseGlobalY);
+            stateP->dragStartGlobalX = (int)stateP->fMouseGlobalX;
+            stateP->dragStartGlobalY = (int)stateP->fMouseGlobalY;
+            SDL_GetWindowPosition(window, &stateP->dragWinOriginX, &stateP->dragWinOriginY);
+        }
+        break;
+
+    case SDL_EVENT_MOUSE_MOTION:
+        stateP->cursorTime = now();
+        if( stateP->dragging )
+        {
+            // Screen-absolute cursor position, independent of window position
+            // and of SDL3's logical presentation scaling.
+            // SDL computes position from window-relative coords, so after SDL_SetWindowPosition
+            // shifts the window they are corrupted by the negative of the window's movement.
+            SDL_GetGlobalMouseState(&stateP->fMouseGlobalX, &stateP->fMouseGlobalY);
+            SDL_SetWindowPosition(window,
+                (stateP->dragWinOriginX + ((int)stateP->fMouseGlobalX - stateP->dragStartGlobalX)),
+                (stateP->dragWinOriginY + ((int)stateP->fMouseGlobalY - stateP->dragStartGlobalY)));
+        }
+        if( stateP->penDown )
+        {
+            SDL_ConvertEventToRenderCoordinates(renderer, eventP);
+            stateP->penx = CONSTRAIN((int)eventP->motion.x);
+            stateP->peny = CONSTRAIN((int)eventP->motion.y);
+            updatePen(pdp1FD, true, stateP->penx, stateP->peny);
+        }
+        break;
+
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        if( eventP->button.button == SDL_BUTTON_LEFT )
+        {
+            stateP->penDown = false;
+            updatePen(pdp1FD, false, 0, 0);
+        }
+        else if( eventP->button.button == SDL_BUTTON_RIGHT )
+        {
+            stateP->dragging = false;
         }
         break;
     }

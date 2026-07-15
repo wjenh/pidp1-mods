@@ -90,12 +90,13 @@
  * 20-Jun-2026 wje create the window initially hidden to avoid sdl window initialization jitter
  * 21-Jun-2026 wje when the window is made visible, do a RenderPresent() to get the black background
  * 01-Jul-2026 wje (Claude) fix new points being overwritten by nearby aging points.
- *    DrawPoint() previously did a flat overwrite for every pixel, so whichever
- *    point happened to be walked last in the active list won.
  *    Adjust point pattern vs intensity for more realistic rendering.
  *    Pre-fault brightBuffer[][] so its 256 pages are resident before the first rendered frame runs.
- * 02-Jul-2026 wje (Claude) fix letterbox/pillarbox bars never being cleared when a window is
+ * 02-Jul-2026 wje fix letterbox bars never being cleared when a window is
  *    edge-dragged into a non-square shape without ever going through the F11/F fullscreen toggle.
+ * 11-Jul-2026 wje (Claude) read the pen position from the
+ *    events x/y fields instead of a fresh SDL_GetMouseState() query, ported from t30dpy3.c.
+ * 14-Jul-2026 - port the fast mouse update logic from t30dpy3, the motion prediction lib needs faster updates.
 */
 
 #include <stdio.h>
@@ -158,9 +159,9 @@
 #define DEFAULTHOST "localhost"
 #define DEFAULTPORT 3400
 // Amount to raise our own nice value (lower our scheduling priority) so that when this
-// client shares a CPU with the PDP-1 emulator (e.g. a headless Pi running both, viewed
-// over VNC), the emulator wins CPU contention and keeps feeding display points instead of
-// stalling. 0 disables. Overridable via the config file ("nice=N").
+// client shares a CPU with the PDP-1 emulator, the emulator wins CPU contention and keeps feeding
+// display points instead of stalling.
+// 0 disables, Overridable via the config file ("nice=N").
 #define DEFAULTNICE 5
 
 // End of config and command line settings
@@ -215,20 +216,17 @@ ActivePoint activePool[MAXACTIVEPOINTS];   // the pool of active-point entries, 
 uint32_t pointIndex[SIZE][SIZE];           // pointIndex[y][x] -> activePool[] index, or NOINDEX
 volatile uint32_t activeListHead;          // head index of the list of points to display in a cycle, or NOINDEX
 volatile uint32_t freeListHead;            // head index of the free pool entries, or NOINDEX
-SDL_mutex *busyLockP;                       // for interlocking with the reader thread
+SDL_mutex *busyLockP;                      // for interlocking with the reader thread
 
 // Th precomputed rgba values for each possibe pdp-1 intensity and internal time step.
 Rgba rgbaValues[8][256];
 
-// Perceptual brightness (the pre-premultiply alpha, i.e. before it is baked into rgbaValues'
-// r/g/b and forced to 255) for each possible intensity and lifetime. This is the score
-// drawPoint() uses to decide whether a point should override a pixel some other point already
-// wrote this frame: see brightBuffer below.
+// Perceptual brightness for each possible intensity and lifetime.
+// This is the value drawPoint() uses to decide whether a point should override a pixel some other point already
+// wrote this frame.
 uint8_t brightValues[8][256];
 
 // Tracks the brightest value written to each screen pixel so far in the current frame.
-// drawPoint() can touch a pixel that some other active point's spread also touches.
-// Without this, whichever point happened to be walked last in the active list wins.
 uint8_t brightBuffer[SIZE][SIZE];
 
 int pdp1FD;
@@ -239,7 +237,7 @@ const char *driverNameP;
 int winSize;
 int lowCutoff = LOWCUTOFF;
 int whiteBias = WHITEBIAS;
-int niceValue = DEFAULTNICE;    // see DEFAULTNICE; 0 disables, config "nice=N" overrides
+int niceValue = DEFAULTNICE;
 uint64_t droppedPoints;         // count of points dropped because activePool[] was exhausted
 
 bool allowLabwcFix = true;
@@ -489,7 +487,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
     // Create the renderer, set to black and display.
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | (doVsync)?SDL_RENDERER_PRESENTVSYNC:0 );
 
-    // Record the actual renderer backend (e.g. "opengl", "opengles2", "software") for fps diagnosis.
+    // Record the actual renderer backend for fps diagnosis.
     // SDL2 exposes this via SDL_GetRendererInfo; the name string is owned by SDL and persists.
     {
         SDL_RendererInfo rendererInfo;
@@ -527,7 +525,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
 
     pixelFormatP = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA8888);
     blackPixel = SDL_MapRGBA(pixelFormatP, 0, 0, 0, 0);
-     
+
     // Precomupute the possible rgba values over time and the intensity steps.
     initializeRgbas();
 
@@ -595,14 +593,15 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                 cursorTime = now();
                 if( penDown )
                 {
-                    SDL_GetMouseState(&penx, &peny);
+                    // Use the event's own x/y, not a SDL_GetMouseState() query.
+                    penx = event.motion.x;
+                    peny = event.motion.y;
                     updatePen(pdp1FD, window, true, penx, peny);
                 }
                 if( dragging )
                 {
                     // Use screen-absolute cursor position so the calculation is
-                    // independent of window position. xrel/yrel are not used because
-                    // SDL2 computes them from window-relative coords.
+                    // independent of window position.
                     SDL_GetGlobalMouseState(&mouseGlobalX, &mouseGlobalY);
                     SDL_SetWindowPosition(window,
                         (dragWinOriginX + (mouseGlobalX - dragStartGlobalX)),
@@ -614,14 +613,15 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                 if( event.button.button == SDL_BUTTON_LEFT )
                 {
                     penDown = true;
-                    SDL_GetMouseState(&penx, &peny);
+                    penx = event.button.x;
+                    peny = event.button.y;
                     updatePen(pdp1FD, window, true, penx, peny);
                 }
                 else if( event.button.button == SDL_BUTTON_RIGHT )
                 {
                     // Snapshot the screen-absolute cursor position and the window's
-                    // screen origin at the moment the drag begins. All subsequent
-                    // motion uses global coords so window-relative drift can't corrupt
+                    // screen origin at the moment the drag begins.
+                    // All subsequent motion uses global coords so window-relative drift can't corrupt
                     // the delta calculation.
                     dragging = true;
                     SDL_GetGlobalMouseState(&dragStartGlobalX, &dragStartGlobalY);
@@ -739,13 +739,10 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
             SDL_UnlockMutex(busyLockP);
             SDL_UnlockTexture(textureP);
 
-            // Timing split point, everything above is CPU buffer work (lock + memset + point draw),
-            // everything below is presentation work (blit + Present/VNC).
+            // Timing split point, everything above is CPU buffer work,
+            // everything below is presentation work.
             tAfterBuffer = now();
 
-            // No SDL_RenderClear() here: with SDL_BLENDMODE_NONE and the texture's
-            // pixel buffer fully memset() above, SDL_RenderCopy() fully overwrites
-            // the render target every frame, making a separate clear redundant.
             SDL_RenderCopy(renderer, textureP, NULL, NULL);
             SDL_RenderPresent(renderer);
             ++totalFrames;
@@ -759,7 +756,7 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                 {
                     renderTimeMax = renderDelta;
                 }
-                // Split the frame into buffer work vs present work so we can see which
+                // Split the frame into buffer work vs presentation work so we can see which
                 // dominates on a given backend.
                 phaseBufferTotal += (tAfterBuffer - renderStart);
                 phasePresentTotal += (renderDelta - (tAfterBuffer - renderStart));
@@ -1291,7 +1288,7 @@ uint32_t cmd;
         // Constrain the mouse since the SDL stuff is not reliable.
         if( pdpY < 0 )
         {
-            pdpY = 0; 
+            pdpY = 0;
         }
 
         if( pdpY > 1023 )
@@ -1301,7 +1298,7 @@ uint32_t cmd;
 
         if( pdpX < 0 )
         {
-            pdpX = 0; 
+            pdpX = 0;
         }
 
         if( pdpX > 1023 )

@@ -11,6 +11,9 @@ the small-angle sin/cos approximation applied to the cube's vertices to compute 
 Impressive that a PDP-1 can do this with cycles to spare.
 Of course, the Type 340 offloads all the display drawing, freeing up all those cycles for the math calculations.
 
+fastCube is a really amazing version that adds a predictive motion filter to give fast lightpen tracking.
+The math involved is impressive.
+
 Bounce is another classic, a bouncing ball that uses real physics.
 The lower 6 test switches can be used to vary gravity.
 All off uses the built-in default.

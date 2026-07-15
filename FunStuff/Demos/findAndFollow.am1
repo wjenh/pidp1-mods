@@ -16,6 +16,9 @@ strt,
     law APERTURE200
     lia
     dpy-i LIGHTPEN
+    jsp resetFindParameters
+    jsp resetPenParameters
+    jsp resetTrackParameters
     jsp findPen
     jsp follow
     jmp strt

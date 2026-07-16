@@ -42,8 +42,8 @@ octal
 
 // ---- open the client channel ----------------------------------------------
 //
-// IO is loaded with  scbset | address-of-ctl  before executing scb.
-// scbset (010000) encodes the SCBOPEN command in IO bits 12-14 as seen by
+// IO is loaded with  sbcset | address-of-ctl  before executing scb.
+// sbcset (010000) encodes the SCBOPEN command in IO bits 12-14 as seen by
 // manageChannelBlock():  cmd = (io >> 12) & 07  →  1 = SCBOPEN.
 // The low 12 bits are the address of the control block in the current bank.
 //
@@ -51,7 +51,7 @@ octal
 // We isolate just the error flag bit and halt if it is nonzero.
 
 begin,
-    lio [scbset ctl]    // IO = scbset | address(ctl) -- open command + CB addr
+    lio [sbcset ctl]    // IO = sbcset | address(ctl) -- open command + CB addr
     scb                 // execute SCB; IO <- 0 or error code
     lai                 // AC <- IO  (move result to AC for test)
     and [dserr]         // isolate error flag bit

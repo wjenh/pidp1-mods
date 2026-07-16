@@ -4,7 +4,7 @@ Super-enhanced cube2 for the Type 340 that uses interrupts and predictive moveme
 // on a lightpen hit.
 // The predictive movement filters are then applied and the target moved to the new position,
 // also passing the values to the cube rotation logic.
-// The filter algorithm used is a exponential moving averag filter for velocity, which
+// The filter algorithm used is a exponential moving average filter for velocity, which
 // then chains to a dual slope one for acceleration, one slope for acceleration, one for deceleration.
 // Finally, those results are passed to a nonlinear motion predictor to give the predicted location.
 // Two sets are used, one set for each axis.

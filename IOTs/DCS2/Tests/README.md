@@ -313,6 +313,44 @@ T11-3 byte 0x41 pass
 
 ---
 
+## T12 -- Telnet mode (port 2112)
+
+**What it tests:** A channel opened with dcftel (server mode, ascii) sends the
+character-mode greeting on accept; an unsolicited option offer from the peer
+is refused (WONT/DONT); an escaped IAC pair unescapes to a literal 0xFF; a
+cr/lf pair collapses to one line-end character on input, a bare lf passes
+through unchanged, and a bare cr (no following lf) also passes through
+unchanged; each decoded character is echoed back out, re-escaping the 0xFF
+and re-expanding lf to cr/lf on the way out.
+
+**Harness:**
+```
+./dcstestharness telnet-echo-client 127.0.0.1 2112
+```
+Start harness AFTER the program prints `T12 listening on 2112`.
+The harness verifies the greeting, the negotiation refusal, and the full
+round-tripped byte stream; it exits 0 only if every step matched.
+
+**Load:** `T12.rim`
+
+**Expected output:**
+```
+T12 listening on 2112
+T12-1 connected pass
+T12-2 byte0 0xff pass
+T12-3 byte1 A pass
+T12-4 byte2 lf pass
+T12-5 byte3 B pass
+T12-6 byte4 lf pass
+T12-7 byte5 C pass
+T12-8 byte6 cr pass
+T12-9 byte7 D pass
+T12-10 chan closed pass
+10 PASS, 0 FAIL, 0 SKIP
+```
+
+---
+
 ## Legacy tests
 
 `dcstest.am1` and `dcsecho.c` are the original interactive tests and remain
@@ -341,7 +379,8 @@ Load `dcstest.rim`, type characters on the typewriter; they are echoed back.
 | `T09.am1` | Flexo mode |
 | `T10.am1` | RXL standalone |
 | `T11.am1` | SBS interrupt on receive |
+| `T12.am1` | Telnet mode |
 | `dcstestharness.c` | C test peer (all modes) |
 | `dcstest.am1` | Legacy interactive client test |
 | `dcsecho.c` | Legacy simple echo server |
-| `RESUME.md` | Session resume file (for development continuity) |
+| `RESUME.md` | Session resume file (for development cont

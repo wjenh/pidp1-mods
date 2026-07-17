@@ -60,7 +60,7 @@ char *loadHelp[] = {
     NIL};
 
 char *listHelp[] = {
-    "The list command shows the text from the .lst or .am1 file if one is present.",
+    "The list command shows the text frm the .lst or .ad1 file if one is present.",
     "If a file is not given on startup or a different file is wanted, the 'file' command can be used to open it.",
     "For full functionality, the actual file should be produced by am1 with the -d switch.",
     "If just the original source file is available, only positioning by line number will be available.",
@@ -97,7 +97,7 @@ char *monitorHelp[] = {
 
 char *windowHelp[] = {
     "The window command sets the number of lines before and after the line being displayed by",
-    "the line command. The default is 6",
+    "the line command. The default is 3",
     "The number is always a decimal number.",
     "If the window would cause lines before the first or after the last to be displayed,",
     "only valid lines will be displayed,",
@@ -158,10 +158,10 @@ char *enableHelp[] = {
 char *fileHelp[] = {
     "The file command with no argument lists the current file number and the available open files.",
     "If given a number and that number is that of an open file, the current file becomes that file.",
-    "If given a file basename, name.rim, .am1, .lst, or .sym, it asks for confirmation then closes",
+    "If given a file basename, name.rim, .ad1, .lst, or .sym, it asks for confirmation then closes",
     "all open files and deletes all symbols and line mappings, then loads the new file.",
-    "This will actually attempt to open name.lst, and if that is not found, name.am1.",
-    "If only name.am1 can be opened, then no address-related operations can be done.",
+    "This will actually attempt to open name.lst, and if that is not found, name.ad1.",
+    "If only name.ad1 can be opened, then no address-related operations can be done.",
     "An attempt to open name.sym is alsd done and if found symbol operations are then available.",
     "Howver, if the name is prefixed with '+', the current files are preserved and the new file opened",
     "and added to the list of files.",

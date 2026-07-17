@@ -1,6 +1,5 @@
 /* Support routines used by many programs. */
-// 8-Apr-2026 wje initial cleanup */
-// 14-Jul-2026 wje more cleaning, no warning now
+/* 8-Apr-2026 wje initial cleanup */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -159,7 +158,9 @@ struct sockaddr_in client;
     return( -1 );
 }
 
-/* listen on multiple ports */
+/* =====================================================================================================================
+    listen on multiple ports
+ ======================================================================================================================= */
 void
 serveN( struct PortHandler *ports, int nports, void *arg )
 {
@@ -257,14 +258,7 @@ mode_t mask;
         return( nil );
     }
 
-    if( ftruncate( fd, sz ) < 0 )
-    {
-        // Segment couldn't be sized; mapping it anyway risks a short mapping
-        // (SIGBUS on access past the actual file size).
-        fprintf( stderr, "couldn't size file %s to %zu bytes\n", name, sz );
-        return( nil );
-    }
-
+    ftruncate( fd, sz );
     p = mmap( nil, sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0 );
 
     if( p == MAP_FAILED )
@@ -337,6 +331,9 @@ isdelim( char c )
     return( (c == '\0') || (strchr(" \t\n;'\"", c) != nil) );
 }
 
+/* =====================================================================================================================
+    have to free argv[0] and argv to clean up
+ ======================================================================================================================= */
 char **
 split( char *line, int *pargc )
 {

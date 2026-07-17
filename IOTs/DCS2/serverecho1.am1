@@ -143,9 +143,9 @@ top, lac i txt
      jmp top
 rtn, 0
 
-// server port, flex, echo, and telnet mode on channel 0
+// server port, flex, echo, and crlf on channel 0
 // listen on port 2022
-ctl, dcftel dcfecho dcfflex dcfsrv
+ctl, dcfcrnl dcfecho dcfflex dcfsrv
      03746
 
 hlo,

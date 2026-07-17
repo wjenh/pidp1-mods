@@ -31,9 +31,6 @@
  * 29-Jun-2026 wje add optional instruction caching
  * 30-Jun-2026 wje add update processing
  * 04-Jul-2026 wje check HSCexecute status, just for completeness
- * 08-Jul-2026 wje just continue for a vector of 0 length, but stop for a vcontinue of 0 length
- * 11-Jul-2026 wje unbreak the last change
- * 12-Jul-2026 wje EMU_CMD_NONE shoud not set stop, breaks resume. Just ignore it.
  */
 
 #include <stdlib.h>
@@ -60,8 +57,6 @@
 #define LOG_START 0
 #define LOG_STOP 0
 #define LOG_RUN 0
-#define LOG_BREAK 0
-#define LOG_PAUSE 0
 #define LOG_CMD 0
 #define LOG_GETADDR 0
 #define LOG_WAIT 0
@@ -499,7 +494,8 @@ Status status;
         switch( command )
         {
         case EMU_CMD_NONE:
-            // Spurious wakeup with no pending command; just ignore
+            // Spurious wakeup with no pending command; just re-enter the wait.
+            curState = STOPPED;
             continue;
 
         case EMU_CMD_RUN:
@@ -537,13 +533,13 @@ Status status;
             {
                 emuClearFlags();
                 lpEnabled = isPaused = false;
-                iotCondLog(LOG_PAUSE, "Received resume while paused\n");
+                iotCondLog(LOG_RUN, "Received resume while paused\n");
             }
             break;
 
         case EMU_CMD_PAUSE:
             isPaused = true;
-            iotCondLog(LOG_PAUSE, "Received pause\n");
+            iotCondLog(LOG_RUN, "Received pause\n");
             break;
 
         case EMU_CMD_STOP:
@@ -571,7 +567,6 @@ Status status;
                 case EMU_CMD_EXIT:
                     sawExit = true;
                     curState = STOPPED;
-                    iotCondLog(LOG_STOP, "EMU_CMD_EXIT set stop\n");
                     continue;
 
                 case EMU_CMD_STOP:
@@ -606,7 +601,7 @@ Status status;
 
             if( cacheSize > 0 )
             {
-                //ctlP->pdp1P->hsc = 0;     // best we can do when using cache
+                ctlP->pdp1P->hsc = 0;     // best we can do when using cache
             }
 
             switch( curMode )
@@ -619,7 +614,6 @@ Status status;
                 {
                     curState = STOPPED;
                     emuOrFlags(FLAG_STOP);
-                    iotCondLog(LOG_STOP, "Parameter set stop\n");
                     if( PARAM_STOP_INTERRUPT(word) )
                     {
                         initiateBreak(BRKCHAN);
@@ -730,7 +724,6 @@ Status status;
                     {
                         // FLAG_LP will have been set already
                         isPaused = true;
-                        iotCondLog(LOG_PAUSE, "LP hit in point, pausing\n");
                     }
                 }
 
@@ -774,27 +767,17 @@ Status status;
 
                     iotCondLog(LOG_VECTOR, "vector%s initialize curx %d cury %d dx %d dy %d\n",
                         (curMode == VCONTINUE)?" continue":"",curX, curY, x, y);
-
+                    // If we can't initialise, ignore it and stop
                     if( brmInitialize(&brmState, curX, curY, x, y, curScale, INTENSIFY(word)) )
                     {
                         curState = RUNNING;
                     }
                     else
                     {
-                        // Initialize failed, got a zero-length vector.
-                        // Treat vector as just a normal one, drawing nothing.
-                        // Treat vcontinue as a competed one, but no edge violation? Unsure about this one.
-                        iotCondLog(LOG_VECTOR, "vector brmInitialize zero length vector\n");
-                        if( curMode == VCONTINUE )
-                        {
-                            iotCondLog(LOG_STOP, "vector contine, zero length vector stop\n");
-                            emuOrFlags(FLAG_STOP);
-                            curState = STOPPED;
-                        }
-                        else
-                        {
-                            curState = INITIALIZE;
-                        }
+                        iotCondLog(LOG_VECTOR, "vector%s brmInitialize failed\n",
+                            (curMode == VCONTINUE)?" continue":"");
+                        emuOrFlags(FLAG_STOP);
+                        curState = STOPPED;
                     }
                 }
                 else
@@ -819,9 +802,8 @@ Status status;
                         }
                         else
                         {
-                            // The only error that can be returned is an edge violation.
-                            // VCONTINUE does NOT cause a break, it just enters param mode.
-                            // VECTOR stops and breaks if enabled.
+                            // VCONTINUE will have caused an edge violation, go back to param mode.
+                            // It does NOT cause a break.
                             if( curMode == VCONTINUE )
                             {
                                 curMode = PARAMETER;
@@ -829,11 +811,9 @@ Status status;
                             }
                             else
                             {
-                                iotCondLog(LOG_BOUNDS, "vector edge violation x, y %d %d\n", curX, curY);
-                                iotCondLog(LOG_STOP, "vector stop, edge violation x, y %d %d\n", curX, curY);
                                 curState = STOPPED;
+                                iotCondLog(LOG_BOUNDS, "vector edge violation x, y %d %d\n", curX, curY);
                                 needBreak = true;
-                                continue;
                             }
                         }
 
@@ -848,8 +828,7 @@ Status status;
 
                         if( drawAndCheck(true, curX, curY, curIntensity) )
                         {
-                            isPaused = true;    // A lightpen hit was detected
-                            iotCondLog(LOG_PAUSE, "LP hit in vector, pausing\n");
+                            isPaused = true;
                         }
                     }
                 }
@@ -872,7 +851,6 @@ Status status;
                     if( (status = doIncrement(curScale, (word >> tmp) & 0xF)) != COMPLETED )
                     {
                         // Edge violation
-                        iotCondLog(LOG_STOP, "Increment set stop\n");
                         curState = STOPPED;
                         needBreak = true;
                         break;
@@ -889,7 +867,6 @@ Status status;
                             {
                                 // Lp hit, will take effect on the next word
                                 isPaused = true;
-                                iotCondLog(LOG_PAUSE, "LP hit in increment, pausing\n");
                             }
                         }
                     }
@@ -928,12 +905,10 @@ Status status;
                         {
                             // lp hit, but finish the current loop
                             isPaused = true;
-                            iotCondLog(LOG_PAUSE, "LP hit in character, pausing\n");
                         }
                         else
                         {
                             // Edge violation
-                            iotCondLog(LOG_STOP, "Character set stop\n");
                             curState = STOPPED;
                             needBreak = true;
                             break;
@@ -1040,7 +1015,6 @@ Status status;
         {
             if( interruptEnabled )
             {
-                iotCondLog(LOG_BREAK,"Requesting a break\n");
                 initiateBreak(BRKCHAN);
             }
             needBreak = false;
@@ -1049,7 +1023,6 @@ Status status;
         {
             iotCondLog(LOG_CMD,"Stopped, responding done\n");
             ctlP->response = EMU_RESPONSE_DONE;
-            iotCondLog(LOG_STOP, "Stop condition seen, curMode %d, curState %d\n", curMode, curState);
             emuOrFlags(FLAG_STOP);
             emuResponseSet(ctlP);
         }
@@ -1233,8 +1206,18 @@ Status brmStatus;
     // Check for edge violations
     if( checkBounds(*xP, *yP) )
     {
+        if( flags & FLAG_HEDGE )
+        {
+            *xP = (*xP < 0)?1023:0;
+        }
+
+        if( flags & FLAG_VEDGE )
+        {
+            *yP = (*yP < 0)?1023:0;
+        }
+
         brmStatus = EDGEVIOLATION;
-        iotCondLog(LOG_BOUNDS, "brmNext returning edge violation, x %d, y %d\n", *xP, *yP);
+        iotCondLog(LOG_BRM, "brmNext returning edge violation\n");
     }
     else
     {
@@ -1664,7 +1647,7 @@ bool gotLpHit;
 #endif
             if( tryLightpen && !gotLpHit )
             {
-                if( (i == 0) ? lpEnabled : (slaves[i-1].lpEnabled != 0) )
+                if( (i == 0) ? lpEnabled : (slaves[i-1].lpEnabled != 0) )        // audit M1: avoid slaves[-1] OOB read when i==0
                 {
                     if( (gotLpHit = checkLightpen(i, x, y)) )
                     {
@@ -1718,7 +1701,7 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
 
             // Fill the cache in immediate mode.
             // The whole point of the cache is to not hit the pdp1 emulator thread.
-            request.mode = (HSC_MODE_FROMMEM | HSC_MODE_IMMEDIATE | HSC_MODE_UPDATEPANEL);
+            request.mode = (HSC_MODE_FROMMEM | HSC_MODE_IMMEDIATE);
             request.count = cacheSize;
             request.memBank = ((addr >> 12) & 017);
             request.memAddr = (addr & 07777);
@@ -1731,7 +1714,7 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
         // Using the cache does make the hs cycle light not really reflect reality,
         // but we'll try to fake it.
         // The emulator loop will turn it off.
-        //pdp1P->hsc = 1;
+        pdp1P->hsc = 1;
 
         // Since we aren't having the high speed channel cycle-steal, best we can do
         // is add the 5us delay to our running delay.
@@ -1744,7 +1727,7 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
         // This also provides the 5usec word-fetch delay the real hardware had.
         // Note that this might cause rescheduling, but this has not been a significant issue
         // in deployment, even on a pi4.
-        request.mode = (HSC_MODE_FROMMEM | HSC_MODE_THREADED | HSC_MODE_UPDATEPANEL);
+        request.mode = (HSC_MODE_FROMMEM | HSC_MODE_THREADED);
         request.count = 1;
         request.memBank = ((addr >> 12) & 017);
         request.memAddr = (addr & 07777);

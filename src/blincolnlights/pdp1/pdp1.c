@@ -38,7 +38,6 @@
  *   causing a permanent I/O halt. Fix: pdp->tcp = !!(MB & (B5 | B6)).
  * wje/claude 28-Jun-26 another bug fix in B5/B6 bit handling from original version
  * wje 3-Jul-26 minor cosmetic fix in help message
- * wje 14-Jul-2026 wje some more cleanup done
 */
 #include "common.h"
 #include "pdp1.h"
@@ -101,6 +100,7 @@ bool all1DEnabled = false;
 
 int decflg(int flg);
 
+static char *onOff(bool flag);
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
 
@@ -369,6 +369,12 @@ pwrclr(PDP1 *pdp)
     case 5: pdp->cyc = 1; pdp->bc = 3; break;
     // 6-9: cyc0
     }
+}
+
+static char *
+onOff(bool flag)
+{
+    return((flag)?"on":"off");
 }
 
 // Multiply-step shift: shift the 36-bit AC:IO pair one place right
@@ -799,7 +805,7 @@ int lastlong;
 
     do
     {
-        if( (lastlong = (IO & B17)) )      // deliberate assignment-and-test, not a stray ==
+        if( lastlong = (IO & B17) )
         {
             // MDP-3
             AC ^= MB;
@@ -1112,7 +1118,6 @@ int hack;
 
         pc_to_ma(pdp);
         TP(0)
-        __attribute__((fallthrough));      // deliberate TP-state fall-through, not missing a break
 
     case 1:
         // TP1: if "sho" with shift-count bit 11 set, do one shift step.
@@ -1201,7 +1206,6 @@ int hack;
         }
 
         TP(3)
-        __attribute__((fallthrough));      // deliberate TP-state fall-through, not missing a break
 
     case 4:
         // TP4: synchronize sequence-break requests, read the operand
@@ -1620,6 +1624,7 @@ static void
 defer(PDP1 *pdp)
 {
 int sbs_restore = 0;
+int mask = 0;
 
     // TP0: point MA at the address word (from MB, the instruction word
     // fetched in cycle0).
@@ -1861,7 +1866,6 @@ int hack;
         }
 
         TP(0)
-        __attribute__((fallthrough));      // deliberate TP-state fall-through, not missing a break
 
     case 1:
         // TP1
@@ -2403,26 +2407,6 @@ int r;
     TP(10)
 }
 
-// Fast, non-cryptographic 32-bit PRNG (Marsaglia xorshift), used only to
-// pick cycle()'s per-cycle panel sample point (see TP() above and
-// cycle() below). Statistical quality is irrelevant for that purpose;
-// the point is to avoid rand()/random()'s process-wide glibc lock and a
-// modulo divide on this 200kHz hot path (audit O1, Phase 5). Statically
-// seeded with a fixed nonzero constant -- true randomness is not needed
-// here, and a zero seed would leave xorshift stuck at zero forever.
-// Returns the next 32-bit value in the sequence.
-static uint32_t
-xorshift32(void)
-{
-    static uint32_t state = 2463534242u;    // fixed nonzero seed
-
-    state ^= state << 13;
-    state ^= state >> 17;
-    state ^= state << 5;
-
-    return(state);
-}
-
 // Top-level dispatcher: run exactly one 5us machine cycle. Picks a
 // random "panel sample point" (timernd) for this cycle so the TP(n)
 // macros latch the front-panel lights at a different timing pulse each
@@ -2433,10 +2417,7 @@ void
 cycle(PDP1 *pdp)
 {
     pdp->inst_cyc++;
-    // audit O1: xorshift32() plus a multiply-shift range reduction
-    // (Lemire-style) replaces rand() % TP_unreachable here; see
-    // xorshift32()'s header comment above for the rationale.
-    pdp->timernd = (int)(((uint64_t)xorshift32() * TP_unreachable) >> 32);
+    pdp->timernd = rand() % TP_unreachable;
 
     if(pdp->bc)
     {
@@ -2485,7 +2466,7 @@ throttle(PDP1 *pdp)
 static void
 iot_pulse(PDP1 *pdp, int pulse, int dev, int nac)
 {
-int ch;
+int i, ch;
 
     ch = (MB >> 6) & 077;
 
@@ -2657,8 +2638,7 @@ handleio(PDP1 *pdp)
         if(pdp->p_fd >= 0)
         {
             char c = 0;
-            ssize_t wr = write(pdp->p_fd, &c, 1);      // best-effort blank-tape feed byte
-            (void)wr;
+            write(pdp->p_fd, &c, 1);
         }
     }
 }
@@ -2759,11 +2739,11 @@ static int timer = 0;
         return;
     }
 
-    char line[1024];
+    char line[1024], *p;
 
     n = read(0, line, sizeof(line));
 
-    if(n > 0 && n < (int)sizeof(line))
+    if(n > 0 && n < sizeof(line))
     {
         line[n] = '\0';
 

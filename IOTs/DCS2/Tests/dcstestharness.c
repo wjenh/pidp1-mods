@@ -53,25 +53,6 @@
  *       on clean server-side close, 1 on timeout or error.
  *       Used by: T11 (SBS interrupt on receive).
  *
- *   telnet-echo-client <host> <port>
- *       Connect to <host>:<port>, where a dcftel SERVER channel (e.g. T12.am1)
- *       is listening, and exercise its telnet layer end to end:
- *         1. Read exactly 15 bytes and verify they match the character-mode
- *            greeting DCS2 sends on accept (IAC WILL ECHO, WILL SGA, DO SGA,
- *            WONT LINEMODE, DONT LINEMODE).
- *         2. Send a negotiation probe for an option DCS2 never initiated
- *            (IAC DO 46) and a 10-byte data stream (an escaped IAC pair
- *            representing a literal 0xFF, then "A\r\nB\nC\rD" mixing a
- *            cr/lf pair, a bare lf, and a bare cr) in one write.
- *         3. Read exactly 3 bytes and verify DCS2 refused the probe
- *            (IAC DONT 46).
- *         4. Read exactly 11 bytes and verify the round-tripped data: the
- *            PDP-1 side (T12.am1) echoes back whatever it decoded, so this
- *            also confirms cr/lf collapsing on input and cr/lf expansion
- *            plus IAC escaping on output all agree with each other.
- *       Exit code: 0 if every step matched, 1 on any mismatch or socket error.
- *       Used by: T12 (telnet mode).
- *
  * Architecture:
  *   Single-file, blocking I/O throughout except where noted.  select(2) is
  *   used in two-echo-servers to multiplex two listeners without threads.
@@ -887,190 +868,6 @@ modeInterruptClient(const char *hostP, int port)
 }
 
 /* =========================================================================
- * Mode: telnet-echo-client <host> <port>
- * ========================================================================= */
-
-/* Telnet protocol bytes (RFC 854) used to build/verify the negotiation and
- * escaping exchanged with a dcftel channel.  Kept local to this mode, same
- * as IOT_22.c keeps its own copy -- there is no shared telnet header. */
-#define TN_IAC      255
-#define TN_WILL     251
-#define TN_WONT     252
-#define TN_DO       253
-#define TN_DONT     254
-#define TELOPT_ECHO     1
-#define TELOPT_SGA      3
-#define TELOPT_LINEMODE 34
-
-/* An option number DCS2 never initiates negotiation for, used purely to
- * confirm that an unsolicited DO is refused with a matching DONT. */
-#define TELNET_PROBE_OPTION 46
-
-/*
- * readExact -- read exactly n bytes from fd into buf, retrying on short reads.
- * Returns 0 on success, 1 on premature close or socket error.
- */
-static int
-readExact(int fd, unsigned char *bufP, int n)
-{
-    int nRecv;
-    int total;
-
-    total = 0;
-
-    while( total < n )
-    {
-        nRecv = (int)recv(fd, (bufP + total), (size_t)(n - total), 0);
-
-        if( nRecv == 0 )
-        {
-            fprintf(stderr, "%s: telnet-echo-client: connection closed early "
-                    "(got %d of %d bytes)\n", progName, total, n);
-            return(1);
-        }
-
-        if( nRecv < 0 )
-        {
-            fprintf(stderr, "%s: telnet-echo-client: recv() failed: %s\n",
-                    progName, strerror(errno));
-            return(1);
-        }
-
-        total += nRecv;
-    }
-
-    return(0);
-}
-
-/*
- * checkBytes -- compare received bytes against expected, print a diagnostic
- * on mismatch.  Returns 0 if they match, 1 otherwise.
- */
-static int
-checkBytes(const char *labelP, const unsigned char *gotP,
-           const unsigned char *wantP, int n)
-{
-    int i;
-
-    for( i = 0; i < n; i++ )
-    {
-        if( gotP[i] != wantP[i] )
-        {
-            fprintf(stderr, "%s: telnet-echo-client: %s mismatch at byte %d: "
-                    "got 0x%02X want 0x%02X\n",
-                    progName, labelP, i,
-                    (unsigned int)gotP[i], (unsigned int)wantP[i]);
-            return(1);
-        }
-    }
-
-    fprintf(stdout, "%s: telnet-echo-client: %s OK\n", progName, labelP);
-    fflush(stdout);
-    return(0);
-}
-
-/*
- * modeTelnetEchoClient -- see the mode's usage comment near the top of this
- * file for the full step-by-step description.
- * Returns 0 if every step matched, 1 on any mismatch or socket error.
- */
-static int
-modeTelnetEchoClient(const char *hostP, int port)
-{
-    int             connFd;
-    int             result;
-    unsigned char   buf[16];
-    unsigned char   probeAndData[13];
-    ssize_t         wr;
-
-    static const unsigned char expectGreeting[15] = {
-        TN_IAC, TN_WILL, TELOPT_ECHO,
-        TN_IAC, TN_WILL, TELOPT_SGA,
-        TN_IAC, TN_DO,   TELOPT_SGA,
-        TN_IAC, TN_WONT, TELOPT_LINEMODE,
-        TN_IAC, TN_DONT, TELOPT_LINEMODE
-    };
-
-    static const unsigned char expectReply[3] = {
-        TN_IAC, TN_DONT, TELNET_PROBE_OPTION
-    };
-
-    /* Negotiation probe (3 bytes) followed immediately by the data stream
-     * (10 bytes): an escaped IAC pair (one literal 0xFF), then
-     * 'A' CR LF 'B' LF 'C' CR 'D' -- a cr/lf pair, a bare lf, and a bare cr,
-     * mixed so all three input collapsing rules get exercised. */
-    static const unsigned char probeAndDataInit[13] = {
-        TN_IAC, TN_DO, TELNET_PROBE_OPTION,
-        TN_IAC, TN_IAC,
-        'A', '\r', '\n', 'B', '\n', 'C', '\r', 'D'
-    };
-
-    /* Expected echo: the PDP-1 side decodes the above to 8 characters
-     * (0xFF, 'A', LF, 'B', LF, 'C', CR, 'D') and echoes each one straight
-     * back out through the same telnet-mode channel, which re-escapes the
-     * 0xFF and re-expands each bare LF to CR LF. */
-    static const unsigned char expectEcho[11] = {
-        TN_IAC, TN_IAC, 'A', '\r', '\n', 'B', '\r', '\n', 'C', '\r', 'D'
-    };
-
-    connFd   = -1;
-    result   = 0;
-    memcpy(probeAndData, probeAndDataInit, sizeof(probeAndData));
-
-    if( (connFd = connectTo(hostP, port)) < 0 )
-    {
-        return(1);
-    }
-
-    if( readExact(connFd, buf, sizeof(expectGreeting)) != 0 )
-    {
-        close(connFd);
-        return(1);
-    }
-
-    if( checkBytes("greeting", buf, expectGreeting, sizeof(expectGreeting)) != 0 )
-    {
-        result = 1;
-    }
-
-    wr = send(connFd, probeAndData, sizeof(probeAndData), MSG_NOSIGNAL);
-
-    if( wr != (ssize_t)sizeof(probeAndData) )
-    {
-        fprintf(stderr, "%s: telnet-echo-client: send() of probe+data failed: %s\n",
-                progName, strerror(errno));
-        close(connFd);
-        return(1);
-    }
-
-    if( readExact(connFd, buf, sizeof(expectReply)) != 0 )
-    {
-        close(connFd);
-        return(1);
-    }
-
-    if( checkBytes("negotiation reply", buf, expectReply, sizeof(expectReply)) != 0 )
-    {
-        result = 1;
-    }
-
-    if( readExact(connFd, buf, sizeof(expectEcho)) != 0 )
-    {
-        close(connFd);
-        return(1);
-    }
-
-    if( checkBytes("echoed data", buf, expectEcho, sizeof(expectEcho)) != 0 )
-    {
-        result = 1;
-    }
-
-    close(connFd);
-    fprintf(stdout, "%s: telnet-echo-client done\n", progName);
-    return(result);
-}
-
-/* =========================================================================
  * Usage
  * ========================================================================= */
 
@@ -1089,8 +886,7 @@ printUsage(void)
         "  two-echo-servers <port1> <port2>\n"
         "  delay-connect <host> <port> <delay_ms>\n"
         "  reconnect-client <host> <port>\n"
-        "  interrupt-client <host> <port>\n"
-        "  telnet-echo-client <host> <port>\n",
+        "  interrupt-client <host> <port>\n",
         progName);
 }
 
@@ -1204,19 +1000,6 @@ main(int argc, char *argv[])
 
         port = atoi(argv[3]);
         return(modeInterruptClient(argv[2], port));
-    }
-
-    /* ---- telnet-echo-client <host> <port> ---- */
-    if( strcmp(modeP, "telnet-echo-client") == 0 )
-    {
-        if( argc != 4 )
-        {
-            fprintf(stderr, "%s: telnet-echo-client requires <host> <port>\n", progName);
-            return(1);
-        }
-
-        port = atoi(argv[3]);
-        return(modeTelnetEchoClient(argv[2], port));
     }
 
     fprintf(stderr, "%s: unknown mode '%s'\n", progName, modeP);

@@ -256,9 +256,9 @@ prttrk, 0
     tcb
 prtrtn, jmp .
 
-// server port, ascii, echo, and telnet mode on channel 0, interrupt on connect or disconnect
+// server port, ascii, echo, and crlf on channel 0, interrupt on connect or disconnect
 // listen on port 2022
-ctl, dcftel dcfecho dcfsrv dcfie dcfioe dcfioc
+ctl, dcfcrnl dcfecho dcfsrv dcfie dcfioe dcfioc
      0d2022
 
 // put our contants out here so they don't mess up high memory

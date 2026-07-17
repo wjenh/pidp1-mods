@@ -1,13 +1,5 @@
-# Build artifacts from the src/blincolnlights/*/Makefile dependency-tracking pattern
-# (-MMD/-MP object and header-dependency files). Added 16-Jul-2026 during the source-tree
-# refactor's phase 3 Makefile modernization, which is what first exposed this gap: no
-# .o/.d files were tracked in git before this, so the gap had simply never surfaced.
-*.o
-*.d
-
 /pidp1.config
 /pdp23drum
-/src/blincolnlights/pdp1/sdl3.h
 /bin/am1
 /bin/pdp1audio
 /bin/disassemble_tape

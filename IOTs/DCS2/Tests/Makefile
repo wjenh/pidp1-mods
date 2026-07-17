@@ -3,7 +3,7 @@
 # Targets:
 #   all          -- build all .rim files and dcstestharness (default)
 #   harness      -- compile dcstestharness only
-#   T01 ... T12  -- assemble one test program
+#   T01 ... T11  -- assemble one test program
 #   clean        -- remove all generated files
 #
 # To run a test:
@@ -17,12 +17,12 @@ AM1     = am1
 
 # All test programs
 AM1_SRCS = T01.am1 T02.am1 T03.am1 T04.am1 T05.am1 \
-           T06.am1 T07.am1 T08.am1 T09.am1 T10.am1 T11.am1 T12.am1
+           T06.am1 T07.am1 T08.am1 T09.am1 T10.am1 T11.am1
 
 AM1_RIMS = $(AM1_SRCS:.am1=.rim)
 
 .PHONY: all harness clean \
-        T01 T02 T03 T04 T05 T06 T07 T08 T09 T10 T11 T12 \
+        T01 T02 T03 T04 T05 T06 T07 T08 T09 T10 T11 \
         dcstest dcsecho
 
 all: $(AM1_RIMS) dcstestharness
@@ -51,7 +51,6 @@ T08: T08.rim
 T09: T09.rim
 T10: T10.rim
 T11: T11.rim
-T12: T12.rim
 
 # ---- legacy targets (kept for backward compatibility) ----------------------
 

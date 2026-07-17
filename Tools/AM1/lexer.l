@@ -148,7 +148,6 @@ extern void vwarn(int errtype, char *msgP, ...);
 
 loc(al)?[ \t]*		{ return(LOCAL); }
 addloc(al)?[ \t]*	{ return(ADDLOCAL); }
-priv(ate)?[ \t]*	{ return(PRIVATE); }
 endloc(al)?[ \t]*	{ return(ENDLOC); }
 
 var[ \t]*		{ return(VAR); }

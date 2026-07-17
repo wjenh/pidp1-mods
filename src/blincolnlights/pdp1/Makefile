@@ -1,5 +1,5 @@
-CC=gcc -O3 -Wall -Wextra
-#CC=gcc -g -Wall -Wextra
+CC=gcc -w -O3
+#CC=gcc -g
 
 INC=-I..
 

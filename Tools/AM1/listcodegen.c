@@ -417,20 +417,7 @@ PNodeP node2P;
 
     case LOCAL:
     case ADDLOCAL:
-    case PRIVATE:
-        if( nodeP->type == LOCAL )
-        {
-            output(outfP, doOutput, "local");
-        }
-        else if( nodeP->type == PRIVATE )
-        {
-            output(outfP, doOutput, "private");
-        }
-        else
-        {
-            output(outfP, doOutput, "addlocal");
-        }
-
+        output(outfP, doOutput, (nodeP->type == LOCAL)?"local":"addlocal");
         if( (node2P = nodeP->rightP) )
         {
             while( node2P )

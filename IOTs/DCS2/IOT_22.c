@@ -8,15 +8,6 @@
  * 3-Jul-2026 wje add a safety check for ioctl
  * 4-Jul-2026 wje (Claude) - handle a short send() of the CR/LF pair in TCC/TCB
  *    instead of silently dropping the un-sent byte
- * 15-Jul-2026 wje (Claude) - expand bit 0 into full telnet mode.
- *    It provides limited IAC parsing/escaping on the wire, WILL/WONT/DO/DONT refused,
- *    SB..SE subnegotiation skipped, IAC IAC unescaped.
- *    A one-time character-mode greeting is sent to a newly-accepted server connection
- *    and symmetric cr/lf collapsing on input is done.
- *    None of this is visible to the PDP-1 program, it still only ever sees plain
- *    Flex or ASCII data characters.
- *    Renamed CNTL_CRLF/RQST_CRLF to CNTL_TELNET/RQST_TELNET to reflect the wider scope.
- *    The dcs2defs.ah file was updated with the new mnemonic dcftel.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -108,13 +99,13 @@
 #define CNTL_IOC        0040000 // interrupt on connect, connection lost
 #define CNTL_ECHO       0100000 // echo input to output
 #define CNTL_FLEX       0200000 // Concise<->ascii translation is enabled
-#define CNTL_TELNET     0400000 // telnet mode, cr/lf framing both ways plus limited IAC handling
+#define CNTL_CRLF       0400000 // convert a carraige return to carriage return and a line feed on output
 
 // The reset mask is the bits we should clear when a channel is opened, in case there were leftovers
 #define CNTL_RESET_MASK     (CNTL_LOST | CNTL_CONNERR | CNTL_TFULL | CNTL_RREADY)
 #define CNTL_COMMON_MASK    0374000 // mask for the common bits with rcs
 
-#define RQST_TELNET         0400000 // telnet mode bit in the scb control word
+#define RQST_CRLF           0400000 // cr/lf bit in the scb control word
 #define RQST_FLEX           0200000 // etc
 #define RQST_ECHO           0100000
 #define RQST_IOC            0040000
@@ -164,38 +155,6 @@
 // This is used with epoll() to mark the type of poll entry
 #define EP_SERVER       0100000
 
-// Telnet protocol bytes (RFC 854) needed for the limited IAC support telnet mode provides.
-// Only enough of the option-negotiation dance is implemented to refuse
-// everything cleanly and not choke on the framing, no option is ever actually honored.
-#define TN_SE           240
-#define TN_NOP          241
-#define TN_BRK          243
-#define TN_IP           244
-#define TN_AO           245
-#define TN_AYT          246
-#define TN_EC           247
-#define TN_EL           248
-#define TN_GA           249
-#define TN_SB           250
-#define TN_WILL         251
-#define TN_WONT         252
-#define TN_DO           253
-#define TN_DONT         254
-#define TN_IAC          255
-
-// Telnet options used only by sendTelnetGreeting()'s canned character-mode request.
-#define TELOPT_ECHO     1
-#define TELOPT_SGA      3
-#define TELOPT_LINEMODE 34
-
-// telnet_rstate values, incoming IAC parser state, resumable across getChar() calls
-// since a non-blocking recv() can run dry mid-sequence.
-#define TNS_DATA        0   // ordinary data, not inside any telnet sequence
-#define TNS_IAC         1   // saw IAC, waiting for the command byte
-#define TNS_OPT         2   // saw WILL/WONT/DO/DONT, waiting for the option byte
-#define TNS_SUBNEG      3   // inside IAC SB ... , discarding until IAC SE
-#define TNS_SUBNEG_IAC  4   // inside a subnegotiation, just saw IAC, SE ends it, else escaped byte
-
 // These are flags in the IO register for RXL
 #define RXL_FLEX            0400000
 #define RXL_CHANGE          0001000
@@ -225,10 +184,6 @@ int flexo_rcv_shift;        // we're doing flexo translation and a shift code is
 int flexo_rcv_pushback;     // we got a case change and returned a shift char, this is the pending real char
 char pendingBuf[2];         // un-sent tail byte(s) from a short send(), e.g. a split CR/LF pair
 int pendingLen;             // valid byte count in pendingBuf, 0 if nothing is queued
-int telnet_rstate;          // TNS_x, incoming telnet IAC parser state
-int telnet_reply_cmd;       // TN_WONT or TN_DONT pending once a WILL/DO's option byte arrives, 0 if none
-bool crlf_stash_valid;      // true if crlf_stash holds an already-fetched, already-echoed data byte
-int crlf_stash;             // stashed data-plane byte bumped by a cr/lf lookahead, see getCollapsedByte()
 } Channel, *ChannelP;
 
 static bool initialized;    // we have been started
@@ -257,10 +212,6 @@ void releaseChannel(PDP1P );
 bool canPost(PDP1P , ChannelP, int);
 void postInterrupt(ChannelP, int);
 int getChar(ChannelP);
-int telnetFilter(ChannelP, unsigned char);
-int getDataByte(ChannelP);
-int getCollapsedByte(ChannelP);
-void sendTelnetGreeting(ChannelP);
 
 extern int flexToAscii(char, int *);
 extern char asciiToFlex(char, int *);
@@ -406,13 +357,8 @@ char wbuf[8];
                 }
             }
 
-            // getChar() might have added pushback, or getCollapsedByte()'s
-            // cr/lf lookahead might have already pulled the next real byte off the wire
-            // and stashed it in crlf_stash because it turned out not to be part of this
-            // line ending.
-            //  Either way there is a character ready now with no
-            // further socket event ever going to arrive for it, so RREADY must stay set.
-            if( !hasRcvPushback(chanP) && !chanP->crlf_stash_valid )
+            // getChar() might have added pushback
+            if( !hasRcvPushback(chanP) )
             {
                 chanP->control_flags &= ~CNTL_RREADY;   // will be reset in poll loop
             }
@@ -502,18 +448,10 @@ char wbuf[8];
                 ich = IO(pdp1P) & 0xFF;
             }
 
-            if( (ich == '\n') && (chanP->control_flags & CNTL_TELNET) )
+            if( (ich == '\n') && (chanP->control_flags & CNTL_CRLF) )
             {
                 wbuf[0] = '\r';
                 wbuf[1] = ich;
-                i = 2;
-            }
-            else if( (ich == TN_IAC) && (chanP->control_flags & CNTL_TELNET) )
-            {
-                // A literal 0377 data byte must be doubled on the wire so the
-                // remote telnet layer doesn't mistake it for the start of a command.
-                wbuf[0] = TN_IAC;
-                wbuf[1] = TN_IAC;
                 i = 2;
             }
             else
@@ -551,7 +489,7 @@ char wbuf[8];
             }
             else if( j < i )
             {
-                // Short send -- e.g. the CR/LF pair from a CNTL_TELNET
+                // Short send -- e.g. the CR/LF pair from a CNTL_CRLF
                 // only got its '\r' onto the wire.
                 // Report FULL exactly as the EAGAIN case above does, but also queue the un-sent tail so
                 // iotPoll() can flush it the next time EPOLLOUT fires.
@@ -861,12 +799,6 @@ struct epoll_event event;
                                 j = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, chanP->chan_fd, &event);
 
                                 iotLog("Client connected to channel %d\n", chanP->chan_no);
-
-                                if( chanP->control_flags & CNTL_TELNET )
-                                {
-                                    sendTelnetGreeting(chanP);
-                                }
-
                                 if( canPost(pdp1P, chanP, CNTL_IOC) )
                                 {
                                     iotLog("Posting IOC connected on chan %d\n",chanP->chan_no);
@@ -907,65 +839,18 @@ struct epoll_event event;
                         }
                         else
                         {
-                        bool haveRealData;
-                        int peeked;
-
-                            haveRealData = true;
-
-                            if( chanP->control_flags & CNTL_TELNET )
+                            chanP->control_flags |= CNTL_RREADY;
+                            if( (cur_chan < 0) || !cur_chan_locked )
                             {
-                                // In telnet mode, EPOLLIN can fire purely because option
-                                // negotiation or other IAC framing arrived.
-                                // getDataByte() strips that and sends any negotiation replies internally
-                                // and may find no real character behind it yet.
-                                // Peek now so CNTL_RREADY keeps its contract of "a real character
-                                // is actually available".
-                                peeked = getDataByte(chanP);
-
-                                if( peeked == FAIL )
-                                {
-                                    // Connection died while draining -- closeRemoteSocket()
-                                    // already updated chanP; report it the same way the
-                                    // sibling RDHUP/HUP/ERR branches do.
-                                    haveRealData = false;
-
-                                    if( canPost(pdp1P, chanP, CNTL_IOC) )
-                                    {
-                                        iotLog("Posting IOC connection lost draining telnet "
-                                            "framing on chan %d\n", chanP->chan_no);
-                                        postInterrupt(chanP, CNTL_IOC);
-                                    }
-                                }
-                                else if( peeked == NONE )
-                                {
-                                    // Nothing real behind the protocol bytes yet.
-                                    haveRealData = false;
-                                }
-                                else
-                                {
-                                    // A real byte is waiting -- stash it so getChar() returns
-                                    // exactly this byte next time instead of re-reading the
-                                    // socket (same stash getCollapsedByte() itself uses).
-                                    chanP->crlf_stash = peeked;
-                                    chanP->crlf_stash_valid = true;
-                                }
+                                cur_chan = data;
+                                cur_chan_locked = true;
+                                CKS(pdp1P) |= CKS_CHAN_FLAG;
                             }
 
-                            if( haveRealData )
+                            if( canPost(pdp1P, chanP, CNTL_IOR) )
                             {
-                                chanP->control_flags |= CNTL_RREADY;
-                                if( (cur_chan < 0) || !cur_chan_locked )
-                                {
-                                    cur_chan = data;
-                                    cur_chan_locked = true;
-                                    CKS(pdp1P) |= CKS_CHAN_FLAG;
-                                }
-
-                                if( canPost(pdp1P, chanP, CNTL_IOR) )
-                                {
-                                    iotLog("Posting IOR on channel %d\n", data);
-                                    postInterrupt(chanP, CNTL_IOR);
-                                }
+                                iotLog("Posting IOR on channel %d\n", data);
+                                postInterrupt(chanP, CNTL_IOR);
                             }
                         }
                     }
@@ -1203,7 +1088,7 @@ struct epoll_event event;
         chanP->control_flags |= (word & RQST_IOC)?CNTL_IOC:0;
         chanP->control_flags |= (word & RQST_ECHO)?CNTL_ECHO:0;
         chanP->control_flags |= (word & RQST_FLEX)?CNTL_FLEX:0;
-        chanP->control_flags |= (word & RQST_TELNET)?CNTL_TELNET:0;
+        chanP->control_flags |= (word & RQST_CRLF)?CNTL_CRLF:0;
 
         port = *rqstP++;
 
@@ -1426,263 +1311,6 @@ postInterrupt(ChannelP chanP, int kind)
     }
 }
 
-// Send the initial telnet option negotiation for a newly-accepted server connection.
-// Best-effort only, same as echo elsewhere in this file.
-// A dropped negotiation byte is not worth failing the connection over
-// and no reply is expected or required from the remote end.
-// This is what asks a real telnet client to switch out of line-buffered,
-// locally-echoed mode, we will echo.
-// Client-mode (outbound) channels stay silent until the remote side speaks first.
-// telnetFilter() then just refuses whatever it offers.
-void
-sendTelnetGreeting(ChannelP chanP)
-{
-unsigned char greeting[] = {
-    TN_IAC, TN_WILL, TELOPT_ECHO,
-    TN_IAC, TN_WILL, TELOPT_SGA,
-    TN_IAC, TN_DO,   TELOPT_SGA,
-    TN_IAC, TN_WONT, TELOPT_LINEMODE,
-    TN_IAC, TN_DONT, TELOPT_LINEMODE
-};
-
-    send(chanP->chan_fd, greeting, sizeof(greeting), MSG_NOSIGNAL);
-}
-
-// Advance the incoming telnet IAC parser by one raw wire byte.
-// Returns NONE if the byte was fully consumed by the protocol layer.
-// State is kept in the channel so this survives a non-blocking recv() running dry
-// mid-sequence, exactly as flexo_rcv_pushback already does for Flex shift codes.
-// Scope is deliberately limited, every offered option is refused (WONT/DONT), and
-// subnegotiation content is discarded rather than interpreted.
-// That is enough to interoperate without choking on the framing.
-// No option is ever actually honored.
-int
-telnetFilter(ChannelP chanP, unsigned char c)
-{
-unsigned char reply[3];
-
-    switch( chanP->telnet_rstate )
-    {
-    case TNS_DATA:
-        if( c == TN_IAC )
-        {
-            chanP->telnet_rstate = TNS_IAC;
-            return( NONE );
-        }
-        return( c );
-
-    case TNS_IAC:
-        chanP->telnet_rstate = TNS_DATA;
-
-        if( c == TN_IAC )
-        {
-            return( c );            // escaped 0377, a literal data byte
-        }
-
-        if( (c == TN_WILL) || (c == TN_DO) )
-        {
-            // The refusal reply to a WILL is DONT (not WONT); the refusal reply to a
-            // DO is WONT (not DONT).
-            chanP->telnet_reply_cmd = (c == TN_WILL)?TN_DONT:TN_WONT;
-            chanP->telnet_rstate = TNS_OPT;
-            return( NONE );
-        }
-
-        if( (c == TN_WONT) || (c == TN_DONT) )
-        {
-            chanP->telnet_reply_cmd = 0;     // no reply needed, just consume the option byte
-            chanP->telnet_rstate = TNS_OPT;
-            return( NONE );
-        }
-
-        if( c == TN_SB )
-        {
-            chanP->telnet_rstate = TNS_SUBNEG;
-            return( NONE );
-        }
-
-        // NOP, BRK, IP, AO, AYT, EC, EL, GA, or anything unrecognized, a bare two-byte
-        // command, nothing further to consume.
-        return( NONE );
-
-    case TNS_OPT:
-        chanP->telnet_rstate = TNS_DATA;
-
-        if( chanP->telnet_reply_cmd )
-        {
-            reply[0] = TN_IAC;
-            reply[1] = (unsigned char)chanP->telnet_reply_cmd;
-            reply[2] = c;
-            send(chanP->chan_fd, reply, sizeof(reply), MSG_NOSIGNAL);   // best-effort
-        }
-        return( NONE );
-
-    case TNS_SUBNEG:
-        if( c == TN_IAC )
-        {
-            chanP->telnet_rstate = TNS_SUBNEG_IAC;
-        }
-        return( NONE );
-
-    case TNS_SUBNEG_IAC:
-        if( c == TN_SE )
-        {
-            chanP->telnet_rstate = TNS_DATA;
-        }
-        else
-        {
-            // Either an escaped IAC (0377) inside the subnegotiation payload, or a
-            // protocol violation.
-            // Either way, keep discarding the subnegotiation.
-            chanP->telnet_rstate = TNS_SUBNEG;
-        }
-        return( NONE );
-
-    default:
-        chanP->telnet_rstate = TNS_DATA;
-        return( NONE );
-    }
-}
-
-// Fetch the next data-plane byte, a raw socket byte with telnet IAC framing stripped
-// if CNTL_TELNET and echoed if CNTL_ECHO, or a byte stashed by a prior cr/lf
-// lookahead in getCollapsedByte().
-// Protocol bytes consumed by telnetFilter() are never echoed.
-// Returns NONE if nothing is available right now, FAIL on error/close, else the byte, 0-255.
-int
-getDataByte(ChannelP chanP)
-{
-int i;
-int resolved;
-unsigned char ch;
-
-    if( chanP->crlf_stash_valid )
-    {
-        chanP->crlf_stash_valid = false;
-        return( chanP->crlf_stash );
-    }
-
-    for( ;; )
-    {
-        if( !(chanP->control_flags & CNTL_CONNECTED) )
-        {
-            return( FAIL );
-        }
-
-        i = recv(chanP->chan_fd, &ch, sizeof(ch), 0);
-
-        if( i == 0 )
-        {
-            // recv() returning 0 means the peer performed an orderly shutdown, TCP FIN.
-            // This is not "no data", it is a connection close.
-            // Returning NONE would leave CNTL_RREADY set causing epoll to keep firing with nothing to read.
-            iotLog("getDataByte() recv() returned 0, remote closed connection\n");
-            closeRemoteSocket(chanP, 0);
-            return( FAIL );
-        }
-        else if( i < 0 )
-        {
-            if( errno == EAGAIN )
-            {
-                return( NONE );
-            }
-            else
-            {
-                iotLog("getDataByte() recv() returned %d\n", errno);
-                closeRemoteSocket(chanP, errno);
-                return( FAIL );
-            }
-        }
-
-        if( chanP->control_flags & CNTL_TELNET )
-        {
-            resolved = telnetFilter(chanP, ch);
-
-            if( resolved == NONE )
-            {
-                continue;            // fully consumed telnet protocol byte, get another
-            }
-
-            ch = (unsigned char)resolved;
-        }
-
-        if( chanP->control_flags & CNTL_ECHO )
-        {
-            send(chanP->chan_fd, &ch, sizeof(ch), MSG_NOSIGNAL);
-        }
-
-        return( ch );
-    }
-}
-
-// Apply telnet cr/lf collapsing on top of getDataByte() so the rest of getChar() only
-// ever sees one character per line ending, regardless of whether the wire sent cr/lf,
-// a bare cr, or (leniently, in Flex mode) a bare lf.
-// Only active when CNTL_TELNET is set, otherwise this is a pass-through.
-//
-// A bare cr always resolves immediately as cr which asciiToFlex() below turns into
-// flexo cr in Flex mode.
-// It does not wait for a possible following lf, since in character-mode interactive telnet a cr often
-// arrives with no lf ever following, and holding it would delay delivery of the keystroke.
-// Instead, a single non-blocking lookahead is tried right here.
-// If more data is already available and it's an lf, the pair collapses to one character.
-// If it's some other byte, that byte has already been pulled off the wire so it is stashed for the
-// next getDataByte() call rather than lost.
-int
-getCollapsedByte(ChannelP chanP)
-{
-int ch;
-int peek;
-bool isFlex;
-
-    ch = getDataByte(chanP);
-
-    if( (ch == NONE) || (ch == FAIL) )
-    {
-        return( ch );
-    }
-
-    if( !(chanP->control_flags & CNTL_TELNET) )
-    {
-        return( ch );
-    }
-
-    isFlex = (chanP->control_flags & CNTL_FLEX) != 0;
-
-    if( ch == '\r' )
-    {
-        peek = getDataByte(chanP);
-
-        if( peek == '\n' )
-        {
-            // cr/lf pair -- collapses to a single line-end character.
-            return( isFlex?'\r':'\n' );
-        }
-
-        if( (peek != NONE) && (peek != FAIL) )
-        {
-            // Got a real byte that isn't part of this cr's line ending.
-            // Stash it so it isn't lost, and resolve the cr on its own.
-            chanP->crlf_stash = peek;
-            chanP->crlf_stash_valid = true;
-        }
-
-        // peek == NONE, nothing more buffered right now or FAIL.
-        // either way there is nothing to stash, the bare cr just resolves by itself.
-        return( '\r' );
-    }
-
-    if( (ch == '\n') && isFlex )
-    {
-        // A bare linefeed in Flex mode is treated leniently as a line ending too, since
-        // Concise has no linefeed of its own. Not strictly conforming telnet, but a
-        // practical accommodation -- see Docs/UsingDCS2.md.
-        return( '\r' );
-    }
-
-    return( ch );
-}
-
 // Fetch the next char from the channel's fd.
 // If echo needed, echo it.
 // If in Flexo, translate it.
@@ -1701,14 +1329,41 @@ char ch, ch2;
     }
     else
     {
-        i = getCollapsedByte(chanP);
-
-        if( i < 0 )
+        if( !(chanP->control_flags & CNTL_CONNECTED) )
         {
-            return( i );            // NONE or FAIL
+            return( FAIL );
         }
 
-        ch = (char)i;
+        i = recv(chanP->chan_fd, &ch, sizeof(ch), 0);
+
+        if( i == 0 )
+        {
+            // recv() returning 0 means the peer performed an orderly shutdown (TCP FIN).
+            // This is not "no data" -- it is a connection close.  Returning NONE would
+            // leave CNTL_RREADY set, causing epoll to keep firing with nothing to read.
+            iotLog("getChar() recv() returned 0, remote closed connection\n");
+            closeRemoteSocket(chanP, 0);
+            return( FAIL );
+        }
+        else if( i < 0 )
+        {
+            if( errno == EAGAIN )
+            {
+                iotLog("getChar() recv() has no data\n");
+                return(NONE);
+            }
+            else
+            {
+                iotLog("getChar() recv() returned %d\n", errno);
+                closeRemoteSocket(chanP, errno);
+                return(FAIL);
+            }
+        }
+
+        if( chanP->control_flags & CNTL_ECHO )
+        {
+            send(chanP->chan_fd, &ch, sizeof(ch), MSG_NOSIGNAL);
+        }
     }
 
     if( chanP->control_flags & CNTL_FLEX )

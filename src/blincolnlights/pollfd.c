@@ -1,6 +1,3 @@
-// Handle fd async polling for ports.
-// 14-Jul-2026 wje cleanup, no warning now, still needs printf logging removed, real logging added.
-
 #include <unistd.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -37,15 +34,7 @@ struct FDmsg msg;
 FD *fd;
 int i, n;
 
-    if( pipe( pollpipe ) < 0 )
-    {
-        // Without this pipe, startpolling()'s "wait for thread to start" loop spins
-        // forever (pollpipe[0] never becomes >= 0), so at least leave a diagnostic
-        // breadcrumb for what would otherwise be a silent, unexplained hang.
-        perror( "pollfds: pipe" );
-        return;
-    }
-
+    pipe( pollpipe );
     pfds[0].fd = pollpipe[0];
     pfds[0].events = POLLIN;
     nfds = 1;
@@ -61,11 +50,7 @@ int i, n;
         /* someone wants us to watch their fd or has closed it */
         if( pfds[0].revents & POLLIN )
         {
-            if( read( pfds[0].fd, &msg, sizeof(msg) ) != sizeof(msg) )
-            {
-                continue;       // short/failed read; msg isn't valid, wait for the next event
-            }
-
+            read( pfds[0].fd, &msg, sizeof(msg) );
             fd = msg.fd;
             switch( msg.msg )
             {
@@ -91,7 +76,7 @@ int i, n;
                         }
                     }
 
-                    assert( i < (int)nelem(pfds) );
+                    assert( i < nelem(pfds) );
                     if( i == nfds )
                     {
                         nfds++;
@@ -159,7 +144,6 @@ int i, n;
 static void *
 pollthread( void *arg )
 {
-    (void)arg;
     pollfds();
     return( nil );
 }
@@ -191,10 +175,7 @@ struct FDmsg msg;
     fd->ready = 0;
     msg.msg = 1;
     msg.fd = fd;
-    if( write( pollpipe[1], &msg, sizeof(msg) ) != sizeof(msg) )
-    {
-        perror( "waitfd: write" );
-    }
+    write( pollpipe[1], &msg, sizeof(msg) );
 }
 
 void
@@ -206,13 +187,7 @@ struct FDmsg msg;
     i = fd->id;
     msg.msg = 2;
     msg.fd = fd;
-    if( write( pollpipe[1], &msg, sizeof(msg) ) != sizeof(msg) )
-    {
-        // The poll thread will never see this removal request, so the "wait for
-        // thread to notice" loop below would spin forever; bail out instead.
-        perror( "closefd: write" );
-        return;
-    }
+    write( pollpipe[1], &msg, sizeof(msg) );
 
     /* wait for thread to notice */
     while( ((volatile FD **)fds)[i] != nil )

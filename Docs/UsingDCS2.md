@@ -1,8 +1,8 @@
 # Using the DCS Communication System
 
 This document describes how to use the enhanced multi-channel Type 630 Data Communication System replacement.
-Updated 15-Jul-2026\
-telent handling description added
+Updated 18-Jun-2026\
+add info about include file
 
 ## What is DCS2?
 
@@ -119,19 +119,18 @@ If echo mode is on, the incoming character is immediately echoed back to the rem
 If it's off, then no echoing is done.
 
 If flexo mode is on, the rules are simple.
-Flexo does not have a linefeed character, only carriage return, 077.
-If telnet cr/lf  is not on, this will be converted to lf, the newline character, on output.
+Concise/flexo does not have a linefeed character, only carriage return, 077.
+If crnl is not on, then this will be converted to the newline character on output.
 
 A carriage return on input will be converted to flexo 077. A newline will be ignored.
-If telnet cr/lf is on, then sending a flexo carriage return will result in sending an ascii
+If crnl is on, then sending a flexo carriage return will result in sending an ascii
 carriage return followed by an ascii newline.
 
 If flexo mode is off, then the rules are a bit different.
-If telnet cr/lf is on, then sending an ascii carriage return will result in a carriage return followed by a newline
-being sent.
-Sending a newline does not have any special meaning, it is sent as it is.
+If crnl is on, then sending an ascii carriage return will result in a carriage return followed by a newline
+being sent. Sending a newline does not have any special meaning, it is sent as it is.
 
-See the section on Telnet cr/lf procesing for more detail.
+For crnl on or off, the incoming characters are passed unchanged, both carriage return and newline.
 
 ## Notes on waits, completion pulses, and channel starvation
 
@@ -387,20 +386,17 @@ nfECerissssmcccccc
 
 where:
 ```
-bit 0, n        use telnet protocol
-                See below for details.
-bit 1, f        do Flexo conversion
-                Outgoing characters are converted to ascii from Flexo,
-                the reverse for incoming ones if there is a mapping,
-                0 to just pass the data unchanged 8 bit binary unless
-                telnet cr/lf mode is on.
+bit 0, n        convert carriage return to carriage return and a linefeed on output
+                This is the telnet standard, and note that the Concise character set does not have
+                linefeed so it will be dropped on input when Flexo mode is on.
+bit 1, f        do Flexo conversion; outgoing characters are converted to ascii from Flexo,
+                the reverse for incoming ones, 0 to just pass the data unchanged as 8 bit binary
 bit 2, E        echo input
 bit 3, C        interrupt on connecton established or lost
 bit 4, e        interrupt on a socket error other than established or lost
 bit 5, r        interrupt on recieved characters available
 bit 6, i        1 to allow interrupts
-bits 7-10, ssss if i is 1, the SBS channel to use to interrupt,
-                always treated as 0 if no SBS16
+bits 7-10, ssss if i is 1, the SBS channel to use to interrupt, always treated as 0 if no SBS16
 bit 11, m       1 for server, 0 for client
 bits 12-17, cccccc the channel number up to 63 depending upon configuration
 ```
@@ -431,22 +427,6 @@ For server mode, allocate multiple channels with the same port to allow multiple
 If there is no channel available to accept a connection request, the request will be processed when a channel
 becomes available for the associated port.
 Note that the client might abandon the request after some time limit.
-
-## Telnet  mode rules
-
-Enabling telnet is transparent to the pdp-1 program side.
-It handles protocl negotiation in both active and passive modes and transforms
-cr and lf characters internally.
-
-On output, Flexo carriage return is converted to cr/lf.\
-Ascii carriage return is sent as-is, lf, aka newline, is converted to cr/lf on output.
-
-On input, in Flexo mode cr/lf is converted to Flexo carriage return.\
-A linefeed with no carriage return is also converted to Flexo carriage return, not strictly conforming.\
-In ascii mode cr/lf is converted to lf, a newline.\
-A bare lf is left unchanged.
-
-This is close to the telnet standard, but sightly relaxed
 
 ## Channel status bits
 
@@ -570,7 +550,7 @@ These are included:
 // dcfxxx are single bit flags
 // dcmxxx are multibit masks
 // Channel Request Block first word
-// dcftel - telnet mode
+// dcfcrnl - turn newline into carriage return, newline on send
 // dcfflex - flexo mode, do automatic conversion
 // dcfecho - echo received characters
 // dcfioc - interrupt on connection open or close

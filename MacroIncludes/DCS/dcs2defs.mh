@@ -15,6 +15,7 @@ tcc=5022
 rchclr=002000
 
 / Extended commands.
+rwe=0222
 scb=4222
 rle=4322
 rpc=4422
@@ -30,9 +31,7 @@ rxl=5422
 / dcfxxx are single bit flags
 / dcmxxx are multibit masks
 / Channel Request Block first word
-/ dcftel - enable telnet mode: symmetric cr/lf framing on send and receive plus
-/          limited IAC handling (option negotiation refused, IAC escaping honored).
-/          See Docs/UsingDCS2.md.
+/ dcfcrnl - turn newline into carriage return, newline on send
 / dcfflex - flexo mode, do automatic conversion
 / dcfecho - echo received characters
 / dcfioc - interrupt on connection open or close
@@ -46,7 +45,7 @@ rxl=5422
 / dcmsbs - bitmask, sbs channel to use
 / dcmcha - bitmask, channel number for this channel
 
-dcftel=400000
+dcfcrnl=400000
 dcfflex=200000
 dcfecho=100000
 dcfioc=040000
@@ -123,8 +122,8 @@ dselo=11
 dseep=12
 dsenc=13
 
-/ check status bit in IO reg -- CKS bit 16 (PDP-1 notation), bit 1 from LSB = 000002 octal
-dcfcks=000002
+/ check status bit in IO reg
+dcfcks=000200
 
 / special flex characters
 flxerr=076

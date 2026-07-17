@@ -1,5 +1,4 @@
-CC=gcc -O3
-*CC=gcc -g
+CC=gcc -O0 -g
 
 all: disassemble
 

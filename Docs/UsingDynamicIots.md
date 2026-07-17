@@ -2,8 +2,8 @@
 
 This document describes the funcionality and how to create your own IOTs.
 
-Updated 6-Jul-2026
-Add warning about cycle-stealing.
+Updated 1-Jul-2026
+Add new featues, iotUpdate(), iotIOPoll(), etc.
 
 ## What is a dynamic IOT?
 
@@ -244,26 +244,6 @@ See many of the provided IOTs for examples.
 
 It's good practice to disable polling if your IOT has finished what it needs to do, you can enable it again
 when necessary.
-
-## Warning when High Speed Channels are in use!
-
-If a High Speed Channel in cycle-stealing mode,
-you cannot depend upon iotPoll() being called in uniform 5 microsecond increments, it is called only when
-a regular machine cycle is happening.
-
-When channel-stealing is in effect, polling will be delayed by however many cycles are needed to fulfill
-the HSC request that is in-flight.
-
-This matters if your IOT is using the polling call to track real time, it won't.
-
-Rule of thumb: if your IOT needs to track a delay whose length matters,
-track it against a real timestamp, not an `enablePolling()` cycle count.
-Cycle counts are fine for delays that don't need strict real-time adherence.
-
-You can also use iotIOPoll(), above, which will always be called every 5 usecs regardless of run/stop/stealing state.
-However, you can't disable it; if it's implemented, it will be called.
-
-The Type 23 Drum in particular will cause this, it will cycle-steal for up to 35 milliseconds at a time.
 
 ## Library code
 

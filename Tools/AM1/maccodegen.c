@@ -486,7 +486,6 @@ PNodeP node2P;
         break;
 
     case LOCAL:
-    case PRIVATE:
     case ADDLOCAL:
     case ENDLOC:
     case FORCELOC:

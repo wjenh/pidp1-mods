@@ -118,6 +118,7 @@ bool checkLightpen(int screenNo,  int x, int y);
 
 // Internal functions.
 static void initializeDisplaySubsystem(void);
+static bool isDisplayConfigured(int screenNo);
 
 static DisplayControlP initializeDisplay(int screenNo);
 static DisplayControlP getDisplayControlP(int screenNo);
@@ -244,8 +245,6 @@ setLightpenRadius2(int screenNo, int radius2)
 int i;
 DisplayControlP ctlP;
 
-    (void)screenNo;             // kept in the signature to mirror getLightpenRadius2()'s
-                                 // per-screen API, but every screen shares one radius (see below)
     curRadius2 = radius2;       // will be used when a new screen is initialzed
 
     // All screens share the same radius setting
@@ -494,6 +493,14 @@ initializeDisplay(int screenNo)
     return( displays[screenNo] );
 }
 
+// If a display has been opened at least once, return true else false.
+// This means the display control structure has been allcated, not that the fd is necessarily open.
+static bool
+isDisplayConfigured(int screenNo)
+{
+    return( getDisplayControlP(screenNo) != null );
+}
+
 // Return the control ptr for the screen or null if not configured.
 // Also initializes the display subsystem if needed.
 static DisplayControlP
@@ -552,8 +559,6 @@ int x, y;
 int intensity;
 DisplayControlP ctlP;
 uint32_t cmd;
-
-    (void)argP;         // unused; pthread_create() is always called with null here
 
     while( true )
     {

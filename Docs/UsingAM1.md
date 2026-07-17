@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.38 and covers up through am1 version 1.40; it will be updated as needed.\
-Edit date 13-Jul-2026
-Add more detail on locals, add private
+This is version 1.37 and covers up through am1 version 1.39; it will be updated as needed.\
+Edit date 30-Jun-2026
+add thisbank
 
 ## What is **am1**?
 
@@ -439,7 +439,7 @@ Using a semicolon allows multiple statements on one line.
 A semicolon does not change the current line number but does change the current location counter.
 A new line changes both.
 
-Comments are also allowed using the new **C** and **C++** notations:
+Comments are also allowed using the new **C** and **C++** notation:
 
 ```
 // comment
@@ -537,7 +537,7 @@ It is *resolved* when it is used as a location.
 In the example, the first use of *foo* is a definition, the second is the resolution.
 The second form is also called a *location asssignment*.
 
-## Local and private symbols
+## Local symbols
 
 Local symbols are a variation of location symbols.
 They are defined between *local* and *endlocal* directives and come in two forms, *predefined* and *ad-hoc*.
@@ -572,38 +572,15 @@ These act in all respects just as if they were added in the original *local* dir
 Unlike **macro1** where all symbols are global and so all symbols must be unique or they will be
 redefined,
 local symbols allow code to be written that won't clash with other code.
-The local symbol exists only within the local block and nested local blocks.
+The local symbol exists only within the local block and the generated code uses pc-relative
+addressing to access it.
 
 Local blocks can be nested up to 1024 deep.
 A local symbol in an enclosing block can be referenced within a nested block, and regular location symbols
 can be used and declared within local blocks.
 
-If a local symbol is defined in a *local* or *addlocal* directive but never referenced, it will be ignored,
+Uf a local symbol is defined in a *local* or *addlocal* directive but never referenced, it will be ignored,
 no code will be generated for it.
-
-*Private* symbols are a variation of local symbols.\
-The only difference is where they are defined and where they can be resolved.
-
-A private symbol can be *declared* in an outer scope, but its *resolution* happens on the *first* use seen in
-the defining scope or an inner scope.
-
-If there is an existing local scope, the private symbols are added to it.
-
-If no local scope exists, one is created just as if *local* had been used.
-This will only happen at the top level of a program where no local scope will exist.
-
-Why is this useful?
-It allows an outer scope to access a symbol in an inner scope while hiding it from sopes outside the
-declaring scope.
-
-A common case is peculiar to the PDP-1's ability to modify its own code.
-An instruction in a nested scope can be modified by an outer scope, useful for dynamic modifications
-of locations.
-
-**IMPORTANT** - understand that these statements just declare a symbol as local or private,
-they do *not* allocate any storage or assign addresses.
-That still needs to be done just like regular location symbols.
-This isn't **C**.
 
 ## Symbol exports and imports
 
@@ -1332,24 +1309,21 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 |isb | 0720052|
 |cac | 0720053|
 
-If a keyword has parentheses, e.g. loc(al), the part in the parentheses is optional.
-
 | Keywords    |
 |-------------|
 | %forcelocal |
-| addloc(al)  |
+| addlocal    |
 | ascii       |
 | bank        |
 | char        |
 | constants   |
 | decimal     |
-| endloc(al)  |
+| endlocal    |
 | export      |
 | flexo       |
 | import      |
-| loc(al)     |
+| local       |
 | octal       |
-| priv(ate)   |
 | start       |
 | stop        |
 | table       |

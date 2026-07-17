@@ -83,8 +83,7 @@
  * 05-Mar-2026 wje - change import to use V2 symtabs, set correct max bank, 16 not 32
  * 08-Mar-2026 wje - fix obscure issue with a symbol being used with and without a bank ref in constants
  * 09-Mar-2026 wje - change constant hash to be sure the last fix returns a 64 bit hash, not a 32 bit hash
- * 10-Mar-2026 wje - change constant hash again, if it ain't broke, fix it anyway just to hash
- *                   resolved symbol values better.
+ * 10-Mar-2026 wje - change constant hash again, if it ain't broke, fix it anyway just to hash resolved symbol values better.
  * 17-Mar-2026 wje - general cleanup, eliminate empty lines in listing for clarity, make -0 to 0 conversion the default
  * 28-Mar-2026 wje - add code passing 4K boundary, code overwriting other code checks and error msgs
  * 02-Apr-2026 wje - fix bug in mem check bitmap, make overwrite by code selectable warning/failure
@@ -102,7 +101,6 @@
  * 26-Jun-2026 wje - add test output mode
  * 26-Jun-2026 wje - adjust type340 nl to just insert a cr, the t340 emulator changed, it does cr/lf for cr
  * 30-Jun-2026 wje - add thisbank keyword
- * 13-Jul-2026 wje - add private keyword
  *
 */
 #include <unistd.h>

@@ -3,8 +3,8 @@
 This docuemnt describes newpanel, a replacement for panel_pidp1, and how to use it.
 
 This is version 1.3\
-Edit date 17-Jul-2026\
-minor update for build directory change
+Edit date 4-Jul-2026\
+update for new brightness control
 
 ## An important note about flicker and panel light blips
 
@@ -33,7 +33,7 @@ Command line switches override configuration file settings.
 - r run with real-time thread priority set
 - t enable timing statistics, only used for testing
 
-Note that if you run from the build directory, /opt/pidp1-mods/src/blincolnlights/panel/driver, the program
+Note that if you run from the build directory, /opt/pidp1-mods/src/blincolnlights/panel_pidp1, the program
 name is *newpanel*, /opt/pidp-1/bin/panel_pidp1 is a link to this.
 
 You can switch between old and new manually if you want to see the difference.

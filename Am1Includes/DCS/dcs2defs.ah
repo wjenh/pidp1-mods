@@ -33,9 +33,7 @@
 // dcfxxx are single bit flags
 // dcmxxx are multibit masks
 // Channel Request Block first word
-// dcftel - enable telnet mode: symmetric cr/lf framing on send and receive plus
-//          limited IAC handling (option negotiation refused, IAC escaping honored).
-//          See Docs/UsingDCS2.md.
+// dcfcrnl - turn newline into carriage return, newline on send
 // dcfflex - flexo mode, do automatic conversion
 // dcfecho - echo received characters
 // dcfioc - interrupt on connection open or close
@@ -49,7 +47,7 @@
 // dcmsbs - bitmask, sbs channel to use
 // dcmcha - bitmask, channel number for this channel
 
-#define dcftel 400000
+#define dcfcrnl 400000
 #define dcfflex 200000
 #define dcfecho 100000
 #define dcfioc 040000

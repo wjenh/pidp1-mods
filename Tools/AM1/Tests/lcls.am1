@@ -1,7 +1,6 @@
 Test of local scoping
 100/
     var a=2
-    private d
 
     loc a, b
     addlocal x, y
@@ -13,14 +12,11 @@ Test of local scoping
         jmp a
     b, 0
         endloc 2
-    d, jmp b        // nested address declaration of outer scope declared but not resolved local
-       jmp d
     %a, 0
     a, 1
     b, 0
     x, 0
     endloc
-    endloc        // and the outermost scope closed
 
 c, 3
 

@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.8
+This is version 1.7
 
-Edit date 11-Jul-2026\
-More explanation of interrupts, lightpen, edge violations
+Edit date 20-June-2026\
+Add cache setting
 
 ## What is it?
 
@@ -81,7 +81,7 @@ next.
 
 The *vector*, *vector continue*, *character*, and *increment* commands always set *parameter* as the next mode
 when they complete.
-This is because they execute a sequence of their own operations until a *end* flag is seen in their current
+This is because they execute a sequence of their own operations until a *done* flag is seen in their current
 subcommand.
 That command completes, then parameter mode is entered automatically.
 
@@ -103,7 +103,7 @@ different IOT assignments.
 - drs - display resume sequence, used to resume after a lightpen event
 - dcf - display clear flags, clears the flags following
 - dra - display read address counter, the last address executed
-- drc - display read coordinates, the x and y position of the lightpen hit
+- drc - display read coordinates, the x and y position of the lipthpen hit
 - dsp - display skip on lightpen flag
 - dss - display skip on stop
 - dsv - display skip on vertical edge violation
@@ -113,15 +113,15 @@ different IOT assignments.
 In more detail:
 
 Only one IOT, dra, takes a value passed in the IO register.\
-Only two IOTs return a value, dra and drc, both in the IO register.
+Only two IOTs return a value, dra in the IO register, drc in the IO and AC registers.
 
 | IOT | pdp-1 opcode | input | output | notes |
 |-----|--------------|-------|--------|-------|
 | dla | 720015 | IO has prgram adress | none | full 16 bit address, see note 1 |
 | drs | 720115 | none | none | use after lightpen hit or edge violation to resume execution |
 | dcf | 720215 | none | none | clears the 340 dkip flags |
-| dra | 720016 | none | IO has current execution address | if the 340 is halted, will be the next location to execute |
-| drc | 720116 | none | IO has the last lightpen hit coordinates | see note 2 |
+| dra | 720o16 | none | IO has current execution address | if the 340 is halted, will be the next location to execute |
+| drc | 720116 | none | IO and AC have the last lightpen hit coordinates | see note 2 |
 | dsp | 720117 | none | none | dsp, dss, dsv, dsh can be combined, see note 3 |
 | dss | 720217 | none | none ||
 | dsv | 720417 | none | none ||
@@ -133,7 +133,7 @@ Memory access by the 340 is via a high speed dma channel and is independent of a
 
 **Note 2** - The x and y coordinates do not include the least-significant-bit of the screen coordinate, the values
 are x >> 1 and y >> 1.
-The x coordinate is in IO bits 0-8, the y coordinate in bits 9-17.
+The x coordinate is in IO bits 0-8, the y coordinate in AC bits 0-8.
 The values are indeterminate if there has not been a lightpen hit.
 
 **Note 3** - All of the skip subcommands can be combined, just as for the normal PDP-1 skip instructions, e.g.\
@@ -285,27 +285,15 @@ up deltay(10) right deltax(50) visible end
 ```
 Draw a line from the current location to a point 10 display points up and 50 to the right.
 
-If a vector runs off any edge, this causes an *edge violation*, which stops processing.\
-If interrupts are enabled, a break request will also occur.
-
-The current x and/or y positions will be reset to the edge of the opposite side from the violation.\
-For example, running off the right side of the screen will reset x to 0, the opposite side.
-
 But why is there an invisible vector modoe? Why not just use *point*?
-
 It's because it takes the vector operation only 1 microsecond per pixel to move, while *point* takes
 a fixed 35 microseconds. So, for short moves, vector is faster.
-
-**NOTE** A request with with a length of 0 will draw nothing, but is still a valid vector,
-execution continues as normal.
 
 ## Vector continue
 
 This is very similar to *vector*, except the endpoints only establish the angle.
 A line will be drawn from the starting point until it hits an edge.
 It is a single-word command, hitting an edge returns to *parameter* mode.
-
-It *does not* cause an edge violation or interrupt!
 
 - vcontinue - the mode name
 - visible - display the vector, else just move
@@ -317,13 +305,10 @@ up deltay(10) right deltax(50) visible
 ```
 This will draw a vector at the same angle as the example above, but it will continue until it hits an edge.
 
-**NOTE** A request with a length of 0 will draw nothing, it will just return to *parameter* mode.
-No edge violations will occur.
-
 ## Increment
 
 This is an interesting command. Like *vector* etc, it is a list of subcommands that are executed until a word
-with the *end* flag is executed.
+with the *done* flag is executed.
 Each word contains 4 subfields, each of which, in succession, moves the current display point one position in
 any of 8 different directions and optionally displays it.
 This can be used to draw sprites or complex shapes. It is how the sine wave is displayed in the *type340demo.am1*
@@ -339,12 +324,12 @@ example.
 - incleft - move left
 - incright - move right
 - visible - the 4 points are displayed, applies to all of them
-- end - finish and return to *parameter* mode
+- done - finish and return to *parameter* mode
 
 Example:
 ```
 parameter mode(increment)
-visible set1(incup) set2(incdown|incright) set3(incdown|incleft) set4(incup|incleft) end
+visible set1(incup) set2(incdown|incright) set3(incdown|incleft) set4(incup|incleft) done
 ```
 
 Draws 4 points in a diamond shape and returns to *parameter* mode.
@@ -374,7 +359,7 @@ Examples:
 For *jump*, control transfers to the commands ar location foo, exactly the same as a normal PDP-1 *jmp*.
 
 The *save* subcommand only works if the final command in the code it calls is a *vector*, *character*, or *increment*
-command that specifies *end*. When this happens, control transfers back to the location one after the original *save*
+command that specifies *done*. When this happens, control transfers back to the location one after the original *save*
 and *parameter* mode is set.
 
 The *deposit* subcommand places a constucted command in the location it addresses which will be
@@ -383,7 +368,7 @@ See the *Type 340 Programming Manual*, noted above, to see just how this makes s
 
 ## Edge violations and lightpen hits
 
-Unlike the Type 30 display, there is no automatic wraparound at the edges of the screen.
+Unlike the Type 30 display, there is no automtic wraparound at the edges of the screen.
 Any movement past an edge is a hard error.
 This will halt processing and set a horizontal or vertical or both edge violation flag that can be
 checked with the skip IOTs above.

@@ -11,10 +11,6 @@
  * wje 12-Jun-26 - documentation pass and defensive parenthesization, no logic changes,
  *                 in preparation for a possible future refactor
  *
- * Archived 16-Jul-26 (source-tree reorganization, phase 1/2): moved from
- * panel_pidp1/Old/ to Archive/panel_pidp1_Old/. Superseded by newpanel.c; kept here only as
- * the historical comparison point for the panel-flicker investigation referenced in
- * panel_pidp1/CLAUDE.md. Not part of any build target.
 */
 #include "common.h"
 #include "gpiolib.h"

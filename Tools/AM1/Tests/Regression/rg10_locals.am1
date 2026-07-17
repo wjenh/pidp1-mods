@@ -1,6 +1,5 @@
 Test rg10: local scoping
-// predefined locals, addlocal, ad-hoc locals (%x), loc/endloc abbreviations,
-// privates
+// predefined locals, addlocal, ad-hoc locals (%x), loc/endloc abbreviations
 100/
     local a, b
     jmp a
@@ -18,13 +17,6 @@ Test rg10: local scoping
 
     loc e
     e, hlt
-    endloc
-
-    private f
-    local g
-    f, 10
-    endloc
-    lac f
     endloc
 
 stop

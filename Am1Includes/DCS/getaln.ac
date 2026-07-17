@@ -26,12 +26,10 @@ local
         dio i %glamem
         sad ['\r'
         jmp %gladon
-        sad ['\n'
-        jmp %gladon
         idx %glamem
         jmp %glalp
 %gladon,  cli
-// overwrite the cr or lf with 0
+// overwrite the cr with 0
         dzm i %glamem
 %glabad,  lac getaln
 %glartn,  jmp .

@@ -1,0 +1,151 @@
+# Source-tree refactor tracking file (src/blincolnlights, phase 1 + phase 2)
+# Started 16-Jul-2026.
+#
+# Purpose: record every file/directory operation from this refactor pass as a flat list,
+# so the same operations can later be replayed (by hand, or via a generated script) against
+# a parallel copy of this repository. Format is one operation per line:
+#   DELETE <path>              remove this file or (now-empty) directory
+#   COPY <old-path> <new-path> copy old-path to new-path, creating new-path's directory
+#                               if needed (content already verified identical at time
+#                               of writing; new-path may have had small path-only edits,
+#                               noted below)
+#
+# STATUS NOTE: this Cowork sandbox session was not able to actually delete files inside
+# the connected pidp1-mods folder -- rm fails with "Operation not permitted", and the
+# delete-permission tool that normally grants this only recognizes the scratch outputs
+# folder, not connected project folders. So the COPY lines below (the Archive relocation)
+# have already been done. The DELETE lines have NOT been done yet and need to be run by
+# hand (or by whoever executes this file as a script) from the repository root:
+#
+#   xargs -I{} rm -v {} < <(grep '^DELETE ' REFACTOR-CHANGES.txt | cut -d' ' -f2)
+#
+# or just run the individual rm/rmdir commands listed under each DELETE line's comment.
+
+# --- Phase 1: dead code removal ---
+# Each of these was confirmed via grep (source, headers, all Makefiles) to have zero
+# references anywhere else in src/blincolnlights before being listed here.
+
+# gpio.c/gpio.h: direct BCM2835-only register access, superseded by the Pinctrl library
+# (panel_pidp1/Pinctrl), which also supports BCM2711/2712/RP1. Nothing includes gpio.h.
+DELETE src/blincolnlights/gpio.c
+DELETE src/blincolnlights/gpio.h
+
+# checkConfig.c: old ad hoc config-file reader (getConfig/checkConfig), fully superseded
+# by pdp1/configuration.c. Not referenced by any Makefile or source file.
+DELETE src/blincolnlights/checkConfig.c
+
+# pinctrl.c: vendored copy of the standalone "pinctrl" CLI tool. Entry point is xmain(),
+# not main(); this directory's Makefile only builds .o files with no link step, so this
+# file produces no executable. Only gpiolib.c/gpiochip_*.c/util.c from this directory are
+# actually linked into newpanel.
+DELETE src/blincolnlights/panel_pidp1/Pinctrl/pinctrl.c
+
+# mkptyfio_telnet.c: no Makefile target anywhere in src/blincolnlights (tools/Makefile only
+# builds mkptyfio and mkptyfl). NOTE: install/install.sh (outside this refactor's scope)
+# still symlinks a binary by this name -- that reference will dangle after this delete and
+# was already stale before it (the file was never built by this Makefile in the first
+# place). Flagging again since it contradicts "no known use" at the install-script level;
+# the project owner reviewed this and asked for the delete anyway.
+DELETE src/blincolnlights/tools/mkptyfio_telnet.c
+
+# --- Phase 2: panel_pidp1/Old relocation ---
+# Old/ was a previous-generation panel_pidp1.c, not invoked by any parent Makefile, kept
+# only as a historical comparison point for the panel-flicker investigation referenced in
+# panel_pidp1/CLAUDE.md. Moved out of the live build tree into Archive/.
+#
+# Content is byte-identical except: Makefile's INC/PINCTRL paths were updated for the new
+# directory depth (../Pinctrl -> ../../panel_pidp1/Pinctrl, since the sibling directory is
+# no longer panel_pidp1), and setpriv.sh's two hardcoded paths were updated to the new
+# location. panel_pidp1.c itself is unchanged except for one added comment noting the move.
+COPY src/blincolnlights/panel_pidp1/Old/panel_pidp1.c src/blincolnlights/Archive/panel_pidp1_Old/panel_pidp1.c
+COPY src/blincolnlights/panel_pidp1/Old/Makefile src/blincolnlights/Archive/panel_pidp1_Old/Makefile
+COPY src/blincolnlights/panel_pidp1/Old/setpriv.sh src/blincolnlights/Archive/panel_pidp1_Old/setpriv.sh
+
+# Old copies at the original location, plus the now-redundant directory, still need removal:
+DELETE src/blincolnlights/panel_pidp1/Old/panel_pidp1.c
+DELETE src/blincolnlights/panel_pidp1/Old/Makefile
+DELETE src/blincolnlights/panel_pidp1/Old/setpriv.sh
+DELETE src/blincolnlights/panel_pidp1/Old
+
+# --- Phase 4: physical directory renames (17-Jul-2026) ---
+# panel_pidp1/ -> panel/driver/, and its Pinctrl/ subdirectory out to the sibling
+# panel/gpio/ (previously a child of panel_pidp1/, now a sibling of panel/driver/).
+# art/'s contents folded into vpanel_pdp1/ (vpanel_pdp1/ itself was NOT renamed, by
+# explicit decision). Same STATUS NOTE as above applies: COPY lines are done (via `cp`,
+# which does not need the delete permission this sandbox lacks); DELETE lines of the old
+# locations still need to be run by hand.
+#
+# panel_pidp1/ -> panel/driver/: content identical except Makefile (paths gained an extra
+# "../" for the added directory depth, and "Pinctrl"/"pinctrl:" references became
+# "../gpio"/"gpio:"), setpriv.sh (two hardcoded install-path references updated), and
+# CLAUDE.md (phase 4 history note added). newpanel.c itself is byte-identical; it includes
+# "gpiolib.h" with no path prefix, resolved entirely through the Makefile's -I flag.
+COPY src/blincolnlights/panel_pidp1/newpanel.c src/blincolnlights/panel/driver/newpanel.c
+COPY src/blincolnlights/panel_pidp1/setpriv.sh src/blincolnlights/panel/driver/setpriv.sh
+DELETE src/blincolnlights/panel_pidp1/newpanel.c
+DELETE src/blincolnlights/panel_pidp1/setpriv.sh
+DELETE src/blincolnlights/panel_pidp1/Makefile
+DELETE src/blincolnlights/panel_pidp1/CLAUDE.md
+
+# panel_pidp1/Pinctrl/ -> panel/gpio/: content identical, including Makefile (already
+# self-contained via wildcard *.c with no relative paths, so it needed no edits beyond the
+# move itself).
+COPY src/blincolnlights/panel_pidp1/Pinctrl/gpiochip.h src/blincolnlights/panel/gpio/gpiochip.h
+COPY src/blincolnlights/panel_pidp1/Pinctrl/gpiochip_bcm2712.c src/blincolnlights/panel/gpio/gpiochip_bcm2712.c
+COPY src/blincolnlights/panel_pidp1/Pinctrl/gpiochip_bcm2835.c src/blincolnlights/panel/gpio/gpiochip_bcm2835.c
+COPY src/blincolnlights/panel_pidp1/Pinctrl/gpiochip_rp1.c src/blincolnlights/panel/gpio/gpiochip_rp1.c
+COPY src/blincolnlights/panel_pidp1/Pinctrl/gpiolib.c src/blincolnlights/panel/gpio/gpiolib.c
+COPY src/blincolnlights/panel_pidp1/Pinctrl/gpiolib.h src/blincolnlights/panel/gpio/gpiolib.h
+COPY src/blincolnlights/panel_pidp1/Pinctrl/util.c src/blincolnlights/panel/gpio/util.c
+COPY src/blincolnlights/panel_pidp1/Pinctrl/util.h src/blincolnlights/panel/gpio/util.h
+COPY src/blincolnlights/panel_pidp1/Pinctrl/Makefile src/blincolnlights/panel/gpio/Makefile
+COPY src/blincolnlights/panel_pidp1/Pinctrl/Test/test_gpio_multi_pi4.c src/blincolnlights/panel/gpio/Test/test_gpio_multi_pi4.c
+DELETE src/blincolnlights/panel_pidp1/Pinctrl/gpiochip.h
+DELETE src/blincolnlights/panel_pidp1/Pinctrl/gpiochip_bcm2712.c
+DELETE src/blincolnlights/panel_pidp1/Pinctrl/gpiochip_bcm2835.c
+DELETE src/blincolnlights/panel_pidp1/Pinctrl/gpiochip_rp1.c
+DELETE src/blincolnlights/panel_pidp1/Pinctrl/gpiolib.c
+DELETE src/blincolnlights/panel_pidp1/Pinctrl/gpiolib.h
+DELETE src/blincolnlights/panel_pidp1/Pinctrl/util.c
+DELETE src/blincolnlights/panel_pidp1/Pinctrl/util.h
+DELETE src/blincolnlights/panel_pidp1/Pinctrl/Makefile
+DELETE src/blincolnlights/panel_pidp1/Pinctrl/Test/test_gpio_multi_pi4.c
+DELETE src/blincolnlights/panel_pidp1/Pinctrl/Test
+DELETE src/blincolnlights/panel_pidp1/Pinctrl
+DELETE src/blincolnlights/panel_pidp1
+
+# art/ -> vpanel_pdp1/: the .png/.svg files are source reference only (not used at build
+# or runtime -- panelart.inc/pdp1art.inc's baked-in C byte arrays were generated from them
+# offline). main.c's two #include lines dropped their "../art/" prefix accordingly.
+COPY src/blincolnlights/art/key_d.png src/blincolnlights/vpanel_pdp1/key_d.png
+COPY src/blincolnlights/art/key_n.png src/blincolnlights/vpanel_pdp1/key_n.png
+COPY src/blincolnlights/art/key_u.png src/blincolnlights/vpanel_pdp1/key_u.png
+COPY src/blincolnlights/art/lamp_off.png src/blincolnlights/vpanel_pdp1/lamp_off.png
+COPY src/blincolnlights/art/lamp_on.png src/blincolnlights/vpanel_pdp1/lamp_on.png
+COPY src/blincolnlights/art/pdp1.svg src/blincolnlights/vpanel_pdp1/pdp1.svg
+COPY src/blincolnlights/art/switch_d.png src/blincolnlights/vpanel_pdp1/switch_d.png
+COPY src/blincolnlights/art/switch_l.png src/blincolnlights/vpanel_pdp1/switch_l.png
+COPY src/blincolnlights/art/switch_r.png src/blincolnlights/vpanel_pdp1/switch_r.png
+COPY src/blincolnlights/art/switch_u.png src/blincolnlights/vpanel_pdp1/switch_u.png
+COPY src/blincolnlights/art/pdp1_panel.png src/blincolnlights/vpanel_pdp1/pdp1_panel.png
+COPY src/blincolnlights/art/panelart.inc src/blincolnlights/vpanel_pdp1/panelart.inc
+COPY src/blincolnlights/art/pdp1art.inc src/blincolnlights/vpanel_pdp1/pdp1art.inc
+DELETE src/blincolnlights/art/key_d.png
+DELETE src/blincolnlights/art/key_n.png
+DELETE src/blincolnlights/art/key_u.png
+DELETE src/blincolnlights/art/lamp_off.png
+DELETE src/blincolnlights/art/lamp_on.png
+DELETE src/blincolnlights/art/pdp1.svg
+DELETE src/blincolnlights/art/switch_d.png
+DELETE src/blincolnlights/art/switch_l.png
+DELETE src/blincolnlights/art/switch_r.png
+DELETE src/blincolnlights/art/switch_u.png
+DELETE src/blincolnlights/art/pdp1_panel.png
+DELETE src/blincolnlights/art/panelart.inc
+DELETE src/blincolnlights/art/pdp1art.inc
+DELETE src/blincolnlights/art
+
+# Unrelated stray cleanup found during phase 4 research: an empty, untracked, top-level
+# src/blincolnlights/pinctrl/ (lowercase) directory, distinct from the panel_pidp1/Pinctrl/
+# above -- 0 files in it, not a symlink. Cause unknown; swept up per user direction.
+DELETE src/blincolnlights/pinctrl

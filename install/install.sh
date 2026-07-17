@@ -165,7 +165,7 @@ while true; do
     read -p "Make required PiDP-1 binaries? " yn
     case $yn in
         [Yy]* )
-		make -C $INSTALLDIR/src/blincolnlights/panel_pidp1 all 	# panel driver
+		make -C $INSTALLDIR/src/blincolnlights/panel/driver all 	# panel driver
 		make -C $INSTALLDIR/src/blincolnlights/pdp1 	# simulator
 		make -C $INSTALLDIR/src/p7sim			# type 30 displays
 		make -C $INSTALLDIR/src/scanpf 			# returns sense switches
@@ -216,8 +216,8 @@ while true; do
                 # The old panel is no longer built or installed
             	# sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/panel_pidp1
                 # newpanel does not require running as an RT thread, but it has the option of doing so
-            	sudo chmod +s $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel
-            	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel
+            	sudo chmod +s $INSTALLDIR/src/blincolnlights/panel/driver/newpanel
+            	sudo setcap cap_sys_nice+ep $INSTALLDIR/src/blincolnlights/panel/driver/newpanel
 
                 ln -sf $INSTALLDIR/src/macro/macro1_1 $INSTALLDIR/bin/macro1_1
                 ln -sf $INSTALLDIR/src/blincolnlights/tools/mkptyfio_telnet $INSTALLDIR/bin/mkptyfio_telnet
@@ -230,7 +230,7 @@ while true; do
                 ln -sf $INSTALLDIR/src/pidp1_test/pidp1_test $INSTALLDIR/bin/pidp1_test
                 ln -sf $INSTALLDIR/src/scanpf/scanpf $INSTALLDIR/bin/scanpf
                 ln -sf $INSTALLDIR/src/blincolnlights/tapevis/tapevis $INSTALLDIR/bin/tapevis
-                ln -sf $INSTALLDIR/src/blincolnlights/panel_pidp1/newpanel $INSTALLDIR/bin/panel_pidp1
+                ln -sf $INSTALLDIR/src/blincolnlights/panel/driver/newpanel $INSTALLDIR/bin/panel_pidp1
 	    	echo Done.
 		break
 		;;

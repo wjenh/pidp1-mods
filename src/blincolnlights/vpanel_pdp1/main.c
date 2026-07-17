@@ -42,8 +42,11 @@
 // Baked-in PNG resource byte arrays for the panel background and lamp/switch/key
 // sprite pairs generated offline from source art and saved as C byte
 // arrays so this program has no runtime asset-file dependency.
-#include "../art/panelart.inc"
-#include "../art/pdp1art.inc"
+// 17-Jul-2026 wje (Claude) - source-tree refactor phase 4: the source art/ directory
+// (the original .png/.svg files these arrays were generated from) folded into this
+// directory, so the include path dropped its "../art/" prefix.
+#include "panelart.inc"
+#include "pdp1art.inc"
 
 static SDL_Window *window;
 static SDL_Renderer *renderer;

@@ -1,0 +1,52 @@
+Continuing a source-tree refactor of `src/blincolnlights` in this repo (PiDP-1 emulator). Read `CLAUDE.md` at the repo root first for project-wide rules (ASCII files, no `--` em-dash separators, never `git commit`/`push`, the sandbox stale-read gotcha, the SDL sandbox-libs bootstrap).
+
+**State so far (17-Jul-2026): phases 1 through 4 are all complete.** `REFACTOR-CHANGES.txt` (repo root) has the full COPY/DELETE record for phases 1, 2, and 4. Phase 3 (Makefile modernization, `-MMD`/`-MP` dependency tracking) is done for all five build targets; each directory's own `CLAUDE.md` carries that history instead of `REFACTOR-CHANGES.txt` since it was Makefile-only edits, not file moves.
+
+Phase 4 (physical directory renames), just finished this session:
+- `panel_pidp1/` -> `panel/driver/`. Makefile paths gained an extra `../` for the added
+  depth; `setpriv.sh`'s two install-path references updated; `CLAUDE.md` carried over with a
+  phase-4 note appended.
+- `panel_pidp1/Pinctrl/` -> `panel/gpio/` (a sibling of `panel/driver/` now, not a child).
+  Its Makefile was already self-contained (`wildcard *.c`, no relative paths) so needed no
+  path edits, just the move. `panel/driver/`'s Makefile now reaches it via `-I../gpio` and
+  `cd ../gpio; make` instead of `-IPinctrl`/`cd Pinctrl; make`.
+- `art/`'s contents (all `.png`/`.svg` plus `panelart.inc`/`pdp1art.inc`) copied into
+  `vpanel_pdp1/`. **`vpanel_pdp1/` itself was explicitly NOT renamed** (confirmed with the
+  user; only `art/`'s contents moved). `main.c`'s two `#include "../art/..."` lines dropped
+  the `../art/` prefix. The `.png`/`.svg` files are source reference only, not used at build
+  or runtime (the `.inc` files' baked-in C byte arrays were generated from them offline).
+- Unrelated stray cleanup swept up at the same time (confirmed with the user): an empty,
+  untracked, top-level `src/blincolnlights/pinctrl/` (lowercase, distinct from the real
+  `panel_pidp1/Pinctrl/`) with 0 files in it, cause unknown.
+- Also updated: `src/blincolnlights/Makefile` (top-level orchestrator), `install/install.sh`
+  (build/setcap/symlink path references; the *installed* binary/symlink names in `bin/` were
+  deliberately left unchanged, e.g. `bin/panel_pidp1` still points at the relocated
+  `newpanel` binary), `src/blincolnlights/README.md` (also fixed a pre-existing unrelated
+  staleness there: it named the wrong binary, `panel_pidp1` instead of `newpanel`), the root
+  `CLAUDE.md`, and `Claude/CLAUDE.md` plus `pdp1/CLAUDE.md` (path table and prose refs,
+  including a pre-existing wrong path -- `blincolnlights/pinctrl/gpiochip_rp1.c` -- that
+  should already have said `panel_pidp1/Pinctrl/...`).
+- All three relocated build targets (`panel/gpio`, `panel/driver`, `vpanel_pdp1`) were
+  build-verified fresh: clean build succeeds, a no-op rebuild does nothing, touching a
+  shared header forces the right recompiles. `-Wall -Wextra` on `panel/driver` reproduces
+  the same pre-existing warnings already documented in its `CLAUDE.md` from phase 3 --
+  nothing new introduced by the move itself.
+- 17-Jul-2026, follow-up: the `panel-flicker-investigation.md` reference flagged above (both
+  `Claude/CLAUDE.md` and `pdp1/CLAUDE.md` pointed at a file that does not exist in the repo)
+  was removed per the user's direction, rather than left as a dangling pointer. Both docs now
+  point readers at the panel-flicker summary already in `panel/driver/CLAUDE.md`'s own
+  Architecture/RP1 sections instead of a nonexistent standalone file.
+- Deliberately left stale: `Docs/UsingNewpanel.md` mentions the old paths but `Docs/` is
+  off-limits per project rules (primary reference only, not to be modified).
+  `RELEASENOTES.txt`, `Claude/reports/pidp1-analysis-2026-07-02.md`, and the existing
+  `REFACTOR-CHANGES.txt` phase 1-2 entries are historical records and were not rewritten.
+
+**Next task:** none assigned yet. All four proposed phases are now done. Ask the user what's next before starting anything new.
+
+**Known constraints, carry forward:**
+- Deleting or renaming files in this connected folder fails with "Operation not permitted," and `allow_cowork_file_delete` doesn't recognize this mount. `cp` works fine though (no delete needed), which is how phase 4's directory "renames" were actually done: copy to the new location, fix up the copy, build-verify, then queue the old location in `needsdelete.sh` for the user to remove by hand.
+- The Write/Edit tools write directly to this mount and were NOT observed to serve stale reads to a subsequent bash command this session (unlike the historical gotcha recorded in `Claude/CLAUDE.md`). Still worth a quick sanity check after editing a file a build will read, in case this was session-specific rather than fixed.
+- `sandbox-libs/bootstrap.sh` re-copies vendored headers (with a fresh mtime) every time it is sourced, which causes a false-positive rebuild if `make` runs in a separate bash-tool call from the previous build (env vars, and therefore the fresh-header illusion, don't persist across calls). To verify true no-op-rebuild behavior, chain `bootstrap.sh` and all the `make` invocations together in one bash call.
+- `make clean` fails in this mount for the same delete-restriction reason as above; verify by building fresh into whatever `.o`/`.d`/binaries are already present rather than cleaning first.
+- Verifying a build leaves `.o`/`.d`/binary artifacts behind; `.gitignore` covers `*.o`/`*.d` going forward but the already-generated files, plus any relocated-directory leftovers, still need `needsdelete.sh`. Everything from phases 3 and 4 is queued there now, not yet run by the user.
+- `REFACTOR-CHANGES.txt` only gets DELETE/COPY entries for actual file moves/removals, not plain content edits (Makefile tweaks, doc path fixes) -- those go in the relevant nested `CLAUDE.md` instead, or just get made in place if there's no natural nested-doc home for the note.

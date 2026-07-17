@@ -1,8 +1,8 @@
 all: p7sim p7simES
 
-p7sim: main.o glad/glad.o ../blincolnlights/checkConfig.c ../blincolnlights/logger.c
+p7sim: main.o glad/glad.o checkConfig.c ../blincolnlights/logger.c
 	cc -O3 -Wno-unused-result -o $@ $^ -lm -ldl -lpthread `sdl2-config --cflags --libs`
-p7simES: main.o glad/glad.o ../blincolnlights/checkConfig.c ../blincolnlights/logger.c
+p7simES: main.o glad/glad.o checkConfig.c ../blincolnlights/logger.c
 	cc -O3 -Wno-unused-result -o $@ -DGLES $^ -lm -ldl -lpthread `sdl2-config --cflags --libs`
 
 main.o: main.c

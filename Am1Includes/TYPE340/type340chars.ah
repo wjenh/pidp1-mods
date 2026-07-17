@@ -1,0 +1,23 @@
+#ifndef TYPE340CHARS_AH
+#define TYPE340CHARS_AH
+// Useful defines for working with characters.
+// Note that the scale factor is a power of 2, scale 1 is twice as big, 2 four times, etc.
+// Character height is 7 units, width is 5 units, incremental spacing between consecutive characters is 2 units.
+// However, charset 2 allows descenders, superscripts, and subscripts, what a pain.
+// Subscripting drops a character by half of height plus the intercharacter spacing.
+// Superscripting raises a character by half of height plus the intercharacter spacing.
+// Descender characters are dropped down 2 units.
+// If charset 1 vertical drawing is in effect, the x and y coordinate values are swapped.
+
+#define C340_CHAR_HEIGHT(scale) (0d7 * (1 << scale))
+#define C340_CHAR_WIDTH(scale) (0d5 * (1 << scale))
+#define C340_CHAR_INCREMENT(scale) (0d2 * (1 << scale))
+#define C340_CHAR_SPACING(scale) (C340_CHAR_WIDTH(scale) + C340_CHAR_INCREMENT(scale))
+
+// A carriage return returns to x 0, not the original drawing start point, and drops y by 9 steps.
+#define C340_CR_HEIGHT(scale) (0d9 * (1 << scale))
+
+#define C340_SUPERSCRIPT_HEIGHT(scale) ((0d9 * (1 << scale)) / 2)
+#define C340_SUSUBSCRIPT_HEIGHT(scale) ((0d9 * (1 << scale)) / 2)
+
+#endif

@@ -1,0 +1,40 @@
+#ifndef RAND18_AH
+#define RAND18_AH
+
+// Ultimate 18-bit Xorshift PRNG for the DEC PDP-1
+// Call with: jsp rand18
+// Returns: Random number in the AC, IO not preserved
+// This is the classice xor/shift generator specifically tuned for the PDP-1's-1G 18 bit 1's complement math.
+rand18,
+    local retjmp, seed
+    dap retjmp
+        
+    // Step 1: state ^= state << 7
+    lac seed        // Load current seed into AC
+    cli             // we use IO as a shift extension
+    rcl 7s          // Effecively a 7 bit shift that uses the AC sign bit
+    xor seed        // Exclusive-OR shifted result
+    dac seed        // Save intermediate state
+
+    // Step 2: state ^= state >> 9
+    lac seed        // Load intermediate state into IO
+    cli
+    rcr 9s          // Now by 9 bits
+    xor seed        // Exclusive-OR again
+    dac seed        // Save intermediate state
+
+    // Step 3: state ^= state << 3
+    lac seed
+    cli
+    rcl 3s          // And finally 3 bits
+    xor seed        // Final Exclusive-OR 
+
+    // Zero-Protection Safety Check
+    sza i           // Skip the next instruction if AC is NOT 0
+    xor [0x3E917]   // If it hit 0, inject a non-zero pattern to rescue the PRNG
+    dac seed        // Save final state back to memory, AC holds random number
+retjmp, jmp .
+
+seed, 0x321E3      // Seed value
+endloc
+#endif

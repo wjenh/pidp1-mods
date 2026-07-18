@@ -1,0 +1,103 @@
+Demo of the Type 340 display character generator
+// This is cfgast.am1 redone, note how much shorter it is. Faster, too.
+
+#include <TYPE340/type340defs.ah>
+
+#define YORIGIN 0d900
+#define XORIGIN 0
+#define DYORIGIN 0d100
+#define DXORIGIN 0d500
+#define SIZE 2
+#define BRIGHTNESS 5
+
+#define clrnum dzm ones; dzm tens; dzm hundreds; dzm thousands
+
+100/
+strt,
+    clrnum
+loop,
+    lio [prog
+    dla
+    dss
+    jmp .-1
+    jsp updatedigits
+    jsp updnum
+    jmp loop
+
+updnum,             // jsp call
+    local rtn
+    dap rtn
+    cli
+    lac tens
+    add [060
+    rcr 6s
+    lac hundreds
+    add [060
+    rcr 6s
+    lac thousands
+    add [060
+    rcr 6s
+    dio topdigits
+    lac ones
+    add [060
+    ral 9s
+    ral 3s
+    ior [3700
+    dac lastdigit
+rtn, jmp .
+    endloc
+
+updatedigits,        // increment ones, ripple overflow up, jsp call
+    local rtn
+    dap rtn
+
+    idx ones
+    sas [0d10
+    jmp rtn
+
+    dzm ones
+    idx tens
+    sas [0d10
+    jmp rtn
+
+    dzm tens
+    idx hundreds
+    sas [0d10
+    jmp rtn
+
+    dzm hundreds
+    idx thousands
+    sad [0d10
+    dzm thousands
+
+rtn, jmp .
+    endloc
+
+ones, 0
+tens, 0
+hundreds, 0
+thousands, 0
+
+    prog, charsets(2) scale(SIZE) intensity(BRIGHTNESS) next(point)
+    y(YORIGIN) next(point)
+    x(XORIGIN) next(character)
+    type340 " I am the Type 340 Display\n and the Type 342 Symbol Generator\n\n\n"
+    next(character)
+    type340 " ABCDEFGHIJKLMNOPQRSTUVWXYZ\n abcdefghijklmnopqrstuvwxyz\n"
+    next(character)
+    type340 " ?.,@-+*/()[]<>'\"=~_`|#!\\\n "
+    charsets(1) next(character)
+    type340 "vertical also"
+
+    charsets(2) scale(SIZE) next(point)
+    y(DYORIGIN) next(point)
+    x(DXORIGIN) next(character)
+    type340 "Count: "
+    charsets(1) next(character)
+    topdigits, 606060
+    lastdigit, 603700
+    halt
+
+constants
+
+start strt

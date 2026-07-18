@@ -1,3 +1,9 @@
+/*
+ * Telnet emulation used by various components.
+ *
+ * 14-Jul-2026 wje first major cleanup pass, it needed it.
+ *    Still needs more.
+*/
 #include "common.h"
 #include <stdio.h>
 #include <string.h>
@@ -37,13 +43,14 @@ enum {
 #define XXX ((const char*)1)
 #define Lcs ((const char*)2)
 #define Ucs ((const char*)3)
-/* 20-Jun-2026 wje: these used to be aliased to XXX ("shouldn't be sent, so we
- * ignore -- just for documentation"). They ARE sent now -- IOT_3.c (tyo) used to
- * conflate case (Lcs/Ucs) and ribbon color (Blk/Red) by encoding case into a wire
- * bit and never forwarding 034/035 at all. Real Flexowriter hardware has these as
- * two independent shift mechanisms, so IOT_3.c now forwards tb completely raw and
- * this table (already laid out with Blk/Red in the right slots) is what actually
- * implements ribbon-color tracking -- see putfio() below. */
+/* 20-Jun-2026 wje: these used to be aliased to XXX, "shouldn't be sent".
+ * They ARE sent now.
+ * IOT_3.c (tyo) used to conflate case (Lcs/Ucs) and ribbon color (Blk/Red) by encoding case into a wire
+ * bit and never forwarding 034/035 at all.
+ * Real Flexowriter hardware had these as two independent shift mechanisms, so IOT_3.c now forwards
+ * tb completely raw andthis table (which was already laid out with Blk/Red in the right slots) is what actually
+ * implements ribbon-color tracking.
+*/
 #define Red ((const char*)4)
 #define Blk ((const char*)5)
 
@@ -97,30 +104,34 @@ static int color;
 static int ucase;
 
 /* 20-Jun-2026 wje: dropped the `col` parameter and the wire-bit6-driven color
- * switch (col = !!(c&0100); if(color != col) {...}). That encoded IOT_3.c's case
- * state (tbb) into bit 6 of every byte and used it to drive the ANSI escape --
- * conflating case and ribbon color, which are independent on real hardware. Color
- * now changes ONLY on a genuine Blk/Red code from the table, exactly mirroring how
- * ucase already only changes on a genuine Lcs/Ucs code -- the two state machines
- * are now symmetric and independent, as they should be. */
+ * switch.
+ * That encoded IOT_3.c's case state (tbb) into bit 6 of every byte and used it to drive the ANSI escape,
+ * conflating case and ribbon color which are independent on the real flexowriter.
+ * Color now changes only on a Blk/Red code from the table, exactly mirroring how
+ * ucase already only changes on a Lcs/Ucs code.
+ * The two state machines are now symmetric and independent, as they should be.
+ */
 static void
 putfio(int c, int fd)
 {
 	const char *s;
+	ssize_t wr;
 
 	c = ucase*0100 + (c&077);
 	s = fio2uni[c];
 	if(s == Lcs) { ucase = 0; return; }
 	if(s == Ucs) { ucase = 1; return; }
-	if(s == Blk) {
-		if(color) { color = 0; write(fd, "\033[39;49m", 8); }
+	if(s == Blk)
+    {
+		if(color) { color = 0; wr = write(fd, "\033[39;49m", 8); (void)wr; }
 		return;
 	}
-	if(s == Red) {
-		if(!color) { color = 1; write(fd, "\033[31m", 5); }
+	if(s == Red)
+    {
+		if(!color) { color = 1; wr = write(fd, "\033[31m", 5); (void)wr; }
 		return;
 	}
-	if(s != XXX) write(fd, s, strlen(s));
+	if(s != XXX) { wr = write(fd, s, strlen(s)); (void)wr; }
 }
 
 static void
@@ -128,23 +139,34 @@ getfio(int c, int fd, int localfd)
 {
 	char s[2];
 	int n;
+	ssize_t wr;
 
 	n = 0;
-	if(c & 0300){
+	if(c & 0300)
+    {
 		if(c & 0100 && ucase)
+        {
 			s[n++] = 072;
+        }
 		else if(c & 0200 && !ucase)
+        {
 			s[n++] = 074;
+        }
 	}
-	s[n++] = c & 077;
-	write(fd, s, n);
 
-	/* local echo. 20-Jun-2026 wje: was `putfio(color<<6 | s[i], localfd)` -- the
-	 * color<<6 packing was a leftover of the old wire-bit6 color scheme; putfio()
-	 * no longer looks at that bit at all, so it's just s[i] now. */
+	s[n++] = c & 077;
+	wr = write(fd, s, n);
+	(void)wr;	// best-effort; dead peer is caught by the next read()
+
+	/* 20-Jun-2026 wje: was `putfio(color<<6 | s[i], localfd)`.
+     * The color<<6 packing was a leftover of the old wire-bit6 color scheme.
+     * Putfio() no longer looks at that bit at all, so it's just s[i] now.
+     */
 	int i;
 	for(i = 0; i < n; i++)
+    {
 		putfio(s[i], localfd);
+    }
 }
 
 
@@ -153,16 +175,21 @@ getascii(int c, int fd, int localfd)
 {
 	/* simulate common combinations
 	 * didn't actually use to work so well, but maybe fixed now? */
-	if(c == ';') {
+	if(c == ';')
+    {
 		getfio(0140, fd, localfd);
 		getfio(033, fd, localfd);
-	} else if(c == ':') {
+	} else if(c == ':')
+    {
 		getfio(0140, fd, localfd);
 		getfio(073, fd, localfd);
-	} else {
+	} else
+    {
 		c = ascii2fio[c];
 		if(c < 0)
+        {
 			return;
+        }
 
 		getfio(c, fd, localfd);
 	}
@@ -171,23 +198,27 @@ getascii(int c, int fd, int localfd)
 static int
 readiac(int fd)
 {
-	int c;
-	char cc;
-	read(fd, &cc, 1);
+int c;
+char cc;
+ssize_t rd;
+
+	rd = read(fd, &cc, 1);
+	(void)rd;
 	c = cc & 0377;
-	switch(c) {
+	switch(c)
+    {
 	case NOP: break;
 	case WILL:
-		  read(fd, &cc, 1);
+		  rd = read(fd, &cc, 1); (void)rd;
 		  break;
 	case WONT:
-		  read(fd, &cc, 1);
+		  rd = read(fd, &cc, 1); (void)rd;
 		  break;
 	case DO:
-		  read(fd, &cc, 1);
+		  rd = read(fd, &cc, 1); (void)rd;
 		  break;
 	case DONT:
-		  read(fd, &cc, 1);
+		  rd = read(fd, &cc, 1); (void)rd;
 		  break;
 	case IAC:
 		  return c;
@@ -203,12 +234,14 @@ readwrite(int telfd, int typfd)
 	int n;
 	struct pollfd pfd[2];
 	char c;
+	int ci;		/* audit M3a: holds readiac()'s int-typed result, see below */
 
 	pfd[0].fd = typfd;
 	pfd[0].events = POLLIN;
 	pfd[1].fd = telfd;
 	pfd[1].events = POLLIN;
-	while(pfd[0].fd != -1) {
+	while(pfd[0].fd != -1)
+    {
 		n = poll(pfd, 2, -1);
 		if(n < 0){
 			perror("error poll");
@@ -217,21 +250,48 @@ readwrite(int telfd, int typfd)
 		if(n == 0)
 			return;
 		/* take from pdp, send to telnet */
-		if(pfd[0].revents & POLLIN) {
+		if(pfd[0].revents & POLLIN)
+        {
 			if(n = read(typfd, &c, 1), n <= 0)
 				return;
-			else {
+			else
+            {
 				c &= 0177;
 				putfio(c, telfd);
 			}
 		}
 		/* receive over telnet, send to pdp */
-		if(pfd[1].revents & POLLIN) {
+		if(pfd[1].revents & POLLIN)
+        {
 			if(n = read(telfd, &c, 1), n <= 0)
 				return;
-			else {
+			else
+            {
 				if((c&0377) == IAC)
-					c = readiac(telfd);
+                {
+					/* audit M3a: keep readiac()'s result in an int (ci) instead of
+					 * assigning it straight into the plain `char c` above. readiac()
+					 * returns -1 when it fully consumed a telnet command (nothing to
+					 * send), or IAC (255, 0xFF) when the peer sent an escaped IAC --
+					 * two consecutive 0xFF bytes representing one literal 0xFF data
+					 * byte, per telnet's binary-mode escaping rule. Testing `c < 0`
+					 * after assigning 255 into a plain char only behaves correctly if
+					 * char happens to be unsigned on this platform (the default on
+					 * ARM, but NOT on x86_64, where 255 silently becomes -1) -- an
+					 * escaped-IAC data byte would then be indistinguishable from
+					 * "nothing to do here" purely by accident of char's signedness.
+					 */
+					ci = readiac(telfd);
+					if(ci < 0)
+						continue;	/* telnet command fully consumed, nothing to send */
+
+					/* ci == IAC (255) here: explicit decision, not an accident of
+					 * signedness -- a raw 0xFF byte has no representation in the
+					 * 7-bit ASCII/Flexowriter code space this driver forwards
+					 * (everything below is masked with 0177), so there is nothing
+					 * meaningful to send to the typewriter. Drop it. */
+					continue;
+				}
 				if(c < 0)
 					continue;
 				c &= 0177;	/* needed? */
@@ -247,9 +307,14 @@ cmd(int fd, int a, int b)
 	char ca = a;
 	char cb = b;
 	char iac = IAC;
-	write(fd, &iac, 1);
-	write(fd, &ca, 1);
-	if(b >= 0) write(fd, &cb, 1);
+	ssize_t wr;	/* best-effort telnet negotiation write; dead peer caught downstream */
+
+	wr = write(fd, &iac, 1); (void)wr;
+	wr = write(fd, &ca, 1); (void)wr;
+	if(b >= 0)
+    {
+        wr = write(fd, &cb, 1); (void)wr;
+    }
 }
 
 static int typport;
@@ -258,7 +323,11 @@ static int typfd;
 void*
 telthread(void *arg)
 {
-	for(;;) {
+ssize_t wr;
+(void)arg;
+
+	for(;;)
+    {
 		int telfd = serve1(typport);
 		cmd(telfd, WILL, XMITBIN);
 		cmd(telfd, DO, XMITBIN);
@@ -274,9 +343,10 @@ telthread(void *arg)
 		 * changes color on a genuine Blk/Red table entry (060 octal maps to
 		 * XXX/Lcs depending on ucase, never Blk/Red), the reset has to be written
 		 * directly instead of routed through putfio(). */
-		if(color) {
+		if(color)
+        {
 			color = 0;
-			write(telfd, "\033[39;49m", 8);
+			wr = write(telfd, "\033[39;49m", 8); (void)wr;
 		}
 		readwrite(telfd, typfd);
 		close(telfd);

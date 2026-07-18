@@ -19,6 +19,7 @@
  * wje 1-May-26 set radius^2 from config for the Type 340 display
  * wje 16-Jun-26 many changes so the CHM simple test program displays like the real PDP-1
  * wje 3-Jul-26 code cleanup, add a few safety checks, no functional change
+ * wje 14-Jul-2026 wje some more cleanup
 */
 
 #include <fcntl.h>
@@ -34,7 +35,7 @@
 #include "common.h"
 #include "pdp1.h"
 #include "args.h"
-#include "panel_pidp1.h"    // wje - add, only a typedef was here, not the thing being typedefed!
+#include "panel_pidp1.h"    // wje - add, only a typedef was here, not the thing being typedef-ed!
 
 #include "configuration.h"
 #define NOTIOTH
@@ -395,11 +396,17 @@ int n;
         {
             r[n] = '\n';
             r[n + 1] = '\0';
-            write(fd, r, (n + 1));
+            if( write(fd, r, (n + 1)) < 0 )
+            {
+                break;      // peer gone or socket error; stop feeding it more commands
+            }
         }
         else
         {
-            write(fd, r, n);
+            if( write(fd, r, n) < 0 )
+            {
+                break;
+            }
         }
     }
 
@@ -420,6 +427,7 @@ connectdpy(int screenNo, int fd)
 void
 handledpy(int fd, void *arg)
 {
+    (void)arg;      // signature matched to the pollfd accept-callback type; not needed here
     connectdpy(0, fd);
 }
 
@@ -427,6 +435,7 @@ handledpy(int fd, void *arg)
 void
 handledpy2(int fd, void *arg)
 {
+    (void)arg;
     connectdpy(1, fd);
 }
 
@@ -434,6 +443,7 @@ handledpy2(int fd, void *arg)
 void
 handledpy3(int fd, void *arg)
 {
+    (void)arg;
     connectdpy(2, fd);
 }
 
@@ -441,6 +451,7 @@ handledpy3(int fd, void *arg)
 void
 handledpy4(int fd, void *arg)
 {
+    (void)arg;
     connectdpy(3, fd);
 }
 
@@ -613,6 +624,7 @@ exitcleanup(void)
 void
 sighandler(int sig)
 {
+    (void)sig;
     exit(0);
 }
 
@@ -676,9 +688,17 @@ int shmFd;
             logger(LOG_SHM, "shm_open failed, using local memory\n");
             useShm = false;
         }
+        else if( ftruncate(shmFd, sizeof(PDP1)) < 0 )
+        {
+            // Segment couldn't be sized to hold a PDP1; mapping it anyway would risk a
+            // short mapping (SIGBUS on access past the actual segment size), so fall back
+            // to local memory the same way the shm_open failure path above does.
+            logger(LOG_SHM, "ftruncate failed, using local memory\n");
+            close(shmFd);
+            useShm = false;
+        }
         else
         {
-            ftruncate(shmFd, sizeof(PDP1));
             pdp = mmap(NIL, sizeof(PDP1), PROT_READ | PROT_WRITE, MAP_SHARED, shmFd, 0);
             pdp1P = pdp;
             if( pdp == MAP_FAILED )
@@ -737,7 +757,8 @@ static bool
 checkBreakpoints(PDP1 *pdp1P)
 {
 int i;
-int addr;
+uint32_t addr;      // matches BreakpointP's address field (ad1intf.h); addr is always
+                     // non-negative anyway (masked to 17 bits below)
 BreakpointP brkP;
 
     if( !AD1_BREAKPOINTS_ENABLED(pdp1P) )
@@ -882,6 +903,7 @@ ConfigurationSettingP configSettingP;
 void
 sigReconfigure(int sig)
 {
+    (void)sig;
     reconfigRequested = 1;
 }
 

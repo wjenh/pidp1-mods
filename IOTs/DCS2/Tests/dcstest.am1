@@ -221,7 +221,7 @@ halterr,
 //   word 3 = 0x0001 = 1 decimal
 //
 // No option flags are set: no dcfsrv (client, not server), no dcfflex
-// (binary/raw mode), no dcfcrnl, no dcfecho, no interrupt enables.
+// (binary/raw mode), no dcftel, no dcfecho, no interrupt enables.
 // Channel number = 0 in the low 6 bits.
 // ---------------------------------------------------------------------------
 

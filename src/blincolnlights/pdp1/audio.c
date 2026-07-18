@@ -11,6 +11,7 @@
  *    Makefile generates. SDL2's API queues raw samples straight to a device.
  *    SDL3's API instead binds an SDL_AudioStream to a device and pushes samples into the stream.
  *    Under SDL3 tuning can be used; SDL2 does not have the ability and the tuning is ignored.
+ * 14-Jul-2026 wje some cleanup done
 */
 
 #include <stdbool.h>
@@ -216,7 +217,7 @@ startaudio(void)
     {
         initaudio();
     }
-    
+
     continueaudio();
 }
 
@@ -262,7 +263,7 @@ int peak1, peak2;              // the actual peak seen this sample, for overflow
 
 int16_t buf[2];  // our converted result
 
-    if( (dev == AUDIO_HANDLE_INVALID) || (++nexttime < SAMPLE_TIME(sampleRate)) || !isInitialized || isStopped )
+    if( (dev == AUDIO_HANDLE_INVALID) || (++nexttime < (u64)SAMPLE_TIME(sampleRate)) || !isInitialized || isStopped )
     {
         return;
     }

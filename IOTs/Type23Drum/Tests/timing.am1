@@ -1,0 +1,29 @@
+Repeatedly read words from the Type 23 drum
+#include <DRUM/type23drumdefs.ah>
+// This selects the number of words to transfer from the test switches, constrained to a max of 4096.
+// It then loops repeating the transfer.
+// The data comes from drum track 0, goes to memory bank 1.
+
+100/
+    lat
+    and [07777
+    dac count
+
+top, lio [drmrd
+    dia
+    lio count
+    dwc
+    lio [010000
+    dcl         // transfer from track 0, location 0 to bank 1,0
+wait, dra       // show the current drum address
+    lai
+    cks
+    rir 1s
+    spi         // cks bit 17 will be 1 if done, shifted into sign bit
+    jmp top
+    jmp wait
+
+count, 0
+constants   // put them here so the read into buf won't trash them
+
+start 100

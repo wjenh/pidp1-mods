@@ -1,0 +1,153 @@
+Demo of Type 33 symbol generator
+
+#include <SYMGEN/type33iots.ah>
+
+#define YSTART 0d300
+#define YDELTA 0d50
+#define XSTART -0d450
+#define SIZE 2
+#define AUTOSPACE 4
+#define BRIGHTNESS 3
+
+100/
+strt,
+    law SIZE | AUTOSPACE | (BRIGHTNESS << 6)
+    lia
+    glf
+loop,
+    law YSTART
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [lineA
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [linea
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [lineNum
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [lineSym
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [lineMix
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [linemsg
+    jda drawasctext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [lineasc1
+    jda drawasctext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [lineasc2
+    jda drawasctext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [lineasc3
+    jda drawasctext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [lineasc4
+    jda drawasctext
+
+    jmp loop
+
+xoffset, XSTART << 10
+yoffset, 0
+
+lineA,
+    text 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    013
+linea,
+    text 'abcdefghijklmnopqrstuvwxyz'
+    013
+lineNum,
+    text '0123456789'
+    013
+lineSym,
+    text x?.,@-+*/()[]<>'"=~_`|#!\\x
+    013
+lineMix,
+    text 'aAbBcCDdEe'
+    013
+
+linemsg,
+    ascii "And I can do ascii also:"
+lineasc1,
+    ascii "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+lineasc2,
+    ascii "abcdefghijklmnopqrstuvwxyz"
+lineasc3,
+    ascii "0123456789"
+lineasc4,
+    ascii "?.,@-+*/()[]<>'\"=~_`|#!"
+
+#include <SYMGEN/drawtext.ac>
+#include <SYMGEN/drawasctext.ac>
+
+start strt

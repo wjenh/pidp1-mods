@@ -324,6 +324,7 @@ canReduce(PNodeP nodeP)
     switch( nodeP->type )
     {
     case LOCAL:
+    case PRIVATE:
     case ADDLOCAL:
     case ENDLOC:
     case FORCELOC:

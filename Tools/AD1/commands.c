@@ -278,9 +278,10 @@ int flag;
 bool clr;
 BreakpointP brkP;
 
-    if( (brkP = isBreakpoint(addr)) )
+    if( (type != REGISTER) && (brkP = isBreakpoint(addr)) )
     {
         printf("The address cannot be set unless breakpoint %d is deleted first.\n", brkP->number);
+        return;
     }
 
     value &= 0777777;           // only 18 bis
@@ -1144,4 +1145,3 @@ WatchP watchP;
         }
     }
 }
-

@@ -105,6 +105,7 @@
  * 05-Apr-2026 wje - Add symbol import file
  * 06-Apr-2026 wje - Add -n flag to eliminate multiple outputs of an address
  * 09-Apr-2026 wje - Add deduction of more meaningful label names
+ * 14-Jul-2026 wje - Am1 loader was not handling multi-block loads properly
  *
  */
 

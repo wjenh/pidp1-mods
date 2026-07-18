@@ -165,7 +165,6 @@ while true; do
     read -p "Make required PiDP-1 binaries? " yn
     case $yn in
         [Yy]* )
-		make -C $INSTALLDIR/src/blincolnlights/pinctrl 	# pinctrl functions
 		make -C $INSTALLDIR/src/blincolnlights/panel_pidp1 all 	# panel driver
 		make -C $INSTALLDIR/src/blincolnlights/pdp1 	# simulator
 		make -C $INSTALLDIR/src/p7sim			# type 30 displays
@@ -173,8 +172,8 @@ while true; do
 		make -C $INSTALLDIR/src/blincolnlights/tapevis	# visualize a rim tape
 		make -C $INSTALLDIR/src/pidp1_test 		# hardware test program
 		make -C $INSTALLDIR/src/pdp1_periph		# unified peripherals
-		make clean -C $INSTALLDIR/IOTs			# dynamic IOTs, be sure no leftovers
-		make all -C $INSTALLDIR/IOTs			# dynamic IOTs, all of them
+		make -C $INSTALLDIR/IOTs clean			# dynamic IOTs, be sure no leftovers
+		make -C $INSTALLDIR/IOTs all			# dynamic IOTs, all of them
 		
 		# this makes the virtual pdp-1 panel, used if no PiDP-1 hardware is attached:
 		make -C $INSTALLDIR/src/blincolnlights/vpanel_pdp1 	# panel driver

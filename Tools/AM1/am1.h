@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.39 30-Jun-2026"
-#define AM1SHORTVERSION "am1 v1.39"
+#define AM1VERSION "am1 v1.40 13-Jul-2026"
+#define AM1SHORTVERSION "am1 v1.40"
 #define SYMFILEVERSION "V2"             // used for import to check proper version
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -62,6 +62,7 @@
 #define SYMF_EXPORTED 0x20000   // needs to be exported
 #define SYMF_1DOP 0x40000       // is a PDP-1D added instruction
 #define SYMF_LAW 0x100000       // is a law instruction, special case
+#define SYMF_PRIVATE 0x200000   // is a private local
 
 #define CTX_FORCELOCAL 1        // focelocal is active for this context
 

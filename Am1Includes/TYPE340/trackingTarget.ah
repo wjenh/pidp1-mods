@@ -1,0 +1,11 @@
+#ifndef TRACKINGTARGET_AH
+#define TRACKINGTARGET_AH
+// This defines the parameters used by trackingTarget.ah.
+// They are separated out here so programs can get the settings if needed.
+
+#define TARGETSCALE 1
+#define TARGETINTENSITY 6
+#define TARGETARM 0d16
+#define TARGETSPAN (TARGETARM * (2^TARGETSCALE) * 2)
+
+#endif

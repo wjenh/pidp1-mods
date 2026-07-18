@@ -1,0 +1,2304 @@
+Rotating wireframe cube on the Type 340 display
+#include <TYPE340/type340defs.ah>
+
+// Rotating wireframe cube demo.
+//
+// The cube (edge length 2H=120 raster units) tumbles about TWO of its own
+// axes at once -- 3 yaw revolutions (about its vertical/Y axis) for every
+// 2 roll revolutions (about its own depth/Z axis), over a 128-frame cycle.
+// The rates are deliberately decoupled (a 3:2 ratio, not 1:1) so the
+// combined motion reads as a genuine two-axis tumble rather than a single
+// off-kilter wobble -- a 1:1 ratio would look like simple single-axis
+// spin around some other fixed axis. On top of both animated axes there
+// is a third, FIXED 28-degree tilt about X applied last, purely for
+// viewing: without it the top/bottom faces are viewed edge-on and
+// degenerate to straight lines regardless of the animated spin (an
+// earlier version of this program did exactly that). All three rotations
+// are ordinary 3D rotation matrices, so they compose into a single net
+// rotation every frame; this preserves every edge's exact 3D length, and
+// orthographic projection can only shrink a length, never grow it -- so
+// the same "every subcommand is a real cube edge" argument below still
+// guarantees the 127-unit vector limit is never at risk, regardless of
+// how the two animated axes combine.
+//
+// All of the trigonometry (fixed tilt, yaw, and roll) is precomputed
+// off-line in Python -- there is no sin/cos or multiply anywhere in this
+// assembly. The file contains a table of 128 complete frames, each one 17
+// words -- a y(), an x(), and 15 vector subcommands. The 15-word edge
+// sequence was found by exhaustively searching the cube's edge graph for
+// a walk that covers all 12 edges using only real edges (never a face or
+// space diagonal) with exactly 3 necessary retraces (a cube's vertices
+// are all odd-degree, so a single connected walk needs at least 3
+// repeats). There are no invisible pen-lifts; every subcommand is a real
+// edge, so every one is drawn visible (a retrace just draws over an
+// existing line a second time).
+//
+// Each pass through the host loop:
+//   1. computes this frame's base address in frametable (frameidx*17),
+//   2. copies its 17 words on top of the live display list (the same
+//      self-modifying-display-list technique as FunStuff/Demos/newLines.am1,
+//      just generalized from one patched word to seventeen),
+//   3. starts the display with dla and waits for it to reach its own halt,
+//   4. advances frameidx (wrapping 0-127) and loops.
+//
+// Now the amazing part, this was written entirely by Claude/sonnet5, including all the comments above.
+
+#define SCALE 1     // scale factor globally applied
+#define INTENSITY 6 // intensity globally applied
+
+#define COPYWORD(N,DEST) lac curbase; add [N]; dac ptr; lac i ptr; dac DEST
+
+var curbase, ptr, frameidx=0, delaycnt
+
+100/
+top,
+    lac frameidx
+    sal 4s              // AC = frameidx*16
+    add frameidx         // AC = frameidx*16 + frameidx = frameidx*17
+    add [frametable]      // AC = address of this frame's 17-word block
+    dac curbase
+
+    COPYWORD(0d0, progy)
+    COPYWORD(0d1, progx)
+    COPYWORD(0d2, veca)
+    COPYWORD(0d3, vecb)
+    COPYWORD(0d4, vecc)
+    COPYWORD(0d5, vecd)
+    COPYWORD(0d6, vece)
+    COPYWORD(0d7, vecf)
+    COPYWORD(0d8, vecg)
+    COPYWORD(0d9, vech)
+    COPYWORD(0d10, veci)
+    COPYWORD(0d11, vecj)
+    COPYWORD(0d12, veck)
+    COPYWORD(0d13, vecl)
+    COPYWORD(0d14, vecm)
+    COPYWORD(0d15, vecn)
+    COPYWORD(0d16, veco)
+
+    lio [prog
+    dla
+waitstop,
+    dss
+    jmp waitstop
+
+    // tune this constant to taste -- more negative = slower rotation
+    lac [0-0d3000]
+    dac delaycnt
+delayloop,
+    isp delaycnt
+    jmp delayloop
+
+    lac frameidx
+    add [1]
+    and [0177]           // wrap 0-127 (128-frame table)
+    dac frameidx
+    jmp top
+
+variables
+constants
+
+// Begins in parameter mode (scale/intensity, then point, then vector).
+// The placeholder values below are overwritten by the host before the
+// first dla ever runs; they only need to be well-formed.
+prog,
+    scale(SCALE) intensity(INTENSITY) next(point)
+progy, y(0d537) next(point)
+progx, x(0d572) show next(vector)
+veca, right deltax(0d1) deltay(0d0) visible
+vecb, right deltax(0d1) deltay(0d0) visible
+vecc, right deltax(0d1) deltay(0d0) visible
+vecd, right deltax(0d1) deltay(0d0) visible
+vece, right deltax(0d1) deltay(0d0) visible
+vecf, right deltax(0d1) deltay(0d0) visible
+vecg, right deltax(0d1) deltay(0d0) visible
+vech, right deltax(0d1) deltay(0d0) visible
+veci, right deltax(0d1) deltay(0d0) visible
+vecj, right deltax(0d1) deltay(0d0) visible
+veck, right deltax(0d1) deltay(0d0) visible
+vecl, right deltax(0d1) deltay(0d0) visible
+vecm, right deltax(0d1) deltay(0d0) visible
+vecn, right deltax(0d1) deltay(0d0) visible
+veco, right deltax(0d1) deltay(0d0) visible end
+    halt
+    halt
+
+frametable,
+    y(0d537) next(point)                      // frame 0: y (start point, vertex V1)
+    x(0d572) show next(vector)                       // frame 0: x (start point, vertex V1)
+    up deltay(0d56) right deltax(0d0) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d106) right deltax(0d0) visible
+    up deltay(0d0) left deltax(0d120) visible
+    down deltay(0d56) right deltax(0d0) visible
+    up deltay(0d0) right deltax(0d120) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d56) right deltax(0d0) visible
+    up deltay(0d0) left deltax(0d120) visible
+    up deltay(0d106) right deltax(0d0) visible
+    down deltay(0d56) right deltax(0d0) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d0) right deltax(0d120) visible
+    up deltay(0d0) left deltax(0d120) visible
+    up deltay(0d56) right deltax(0d0) visible end
+    y(0d546) next(point)                      // frame 1: y (start point, vertex V1)
+    x(0d574) show next(vector)                       // frame 1: x (start point, vertex V1)
+    up deltay(0d55) left deltax(0d18) visible
+    down deltay(0d104) right deltax(0d12) visible
+    up deltay(0d104) left deltax(0d12) visible
+    down deltay(0d18) left deltax(0d118) visible
+    down deltay(0d56) right deltax(0d18) visible
+    up deltay(0d19) right deltax(0d118) visible
+    down deltay(0d105) right deltax(0d12) visible
+    up deltay(0d56) left deltax(0d18) visible
+    down deltay(0d19) left deltax(0d118) visible
+    up deltay(0d105) left deltax(0d12) visible
+    down deltay(0d56) right deltax(0d18) visible
+    down deltay(0d104) right deltax(0d12) visible
+    up deltay(0d18) right deltax(0d118) visible
+    down deltay(0d18) left deltax(0d118) visible
+    up deltay(0d55) left deltax(0d18) visible end
+    y(0d554) next(point)                      // frame 2: y (start point, vertex V1)
+    x(0d575) show next(vector)                       // frame 2: x (start point, vertex V1)
+    up deltay(0d54) left deltax(0d35) visible
+    down deltay(0d101) right deltax(0d22) visible
+    up deltay(0d101) left deltax(0d22) visible
+    down deltay(0d37) left deltax(0d113) visible
+    down deltay(0d54) right deltax(0d35) visible
+    up deltay(0d37) right deltax(0d113) visible
+    down deltay(0d101) right deltax(0d22) visible
+    up deltay(0d54) left deltax(0d35) visible
+    down deltay(0d37) left deltax(0d113) visible
+    up deltay(0d101) left deltax(0d22) visible
+    down deltay(0d54) right deltax(0d35) visible
+    down deltay(0d101) right deltax(0d22) visible
+    up deltay(0d37) right deltax(0d113) visible
+    down deltay(0d37) left deltax(0d113) visible
+    up deltay(0d54) left deltax(0d35) visible end
+    y(0d561) next(point)                      // frame 3: y (start point, vertex V1)
+    x(0d574) show next(vector)                       // frame 3: x (start point, vertex V1)
+    up deltay(0d51) left deltax(0d51) visible
+    down deltay(0d95) right deltax(0d31) visible
+    up deltay(0d95) left deltax(0d31) visible
+    down deltay(0d54) left deltax(0d104) visible
+    down deltay(0d51) right deltax(0d51) visible
+    up deltay(0d54) right deltax(0d104) visible
+    down deltay(0d95) right deltax(0d31) visible
+    up deltay(0d51) left deltax(0d51) visible
+    down deltay(0d54) left deltax(0d104) visible
+    up deltay(0d95) left deltax(0d31) visible
+    down deltay(0d51) right deltax(0d51) visible
+    down deltay(0d95) right deltax(0d31) visible
+    up deltay(0d54) right deltax(0d104) visible
+    down deltay(0d54) left deltax(0d104) visible
+    up deltay(0d51) left deltax(0d51) visible end
+    y(0d566) next(point)                      // frame 4: y (start point, vertex V1)
+    x(0d572) show next(vector)                       // frame 4: x (start point, vertex V1)
+    up deltay(0d47) left deltax(0d66) visible
+    down deltay(0d86) right deltax(0d38) visible
+    up deltay(0d86) left deltax(0d38) visible
+    down deltay(0d69) left deltax(0d93) visible
+    down deltay(0d47) right deltax(0d67) visible
+    up deltay(0d69) right deltax(0d92) visible
+    down deltay(0d86) right deltax(0d39) visible
+    up deltay(0d47) left deltax(0d67) visible
+    down deltay(0d69) left deltax(0d92) visible
+    up deltay(0d86) left deltax(0d39) visible
+    down deltay(0d47) right deltax(0d67) visible
+    down deltay(0d86) right deltax(0d38) visible
+    up deltay(0d69) right deltax(0d93) visible
+    down deltay(0d69) left deltax(0d93) visible
+    up deltay(0d47) left deltax(0d66) visible end
+    y(0d571) next(point)                      // frame 5: y (start point, vertex V1)
+    x(0d571) show next(vector)                       // frame 5: x (start point, vertex V1)
+    up deltay(0d41) left deltax(0d81) visible
+    down deltay(0d75) right deltax(0d42) visible
+    up deltay(0d75) left deltax(0d42) visible
+    down deltay(0d83) left deltax(0d78) visible
+    down deltay(0d42) right deltax(0d80) visible
+    up deltay(0d84) right deltax(0d79) visible
+    down deltay(0d76) right deltax(0d41) visible
+    up deltay(0d42) left deltax(0d80) visible
+    down deltay(0d84) left deltax(0d79) visible
+    up deltay(0d76) left deltax(0d41) visible
+    down deltay(0d42) right deltax(0d80) visible
+    down deltay(0d75) right deltax(0d42) visible
+    up deltay(0d83) right deltax(0d78) visible
+    down deltay(0d83) left deltax(0d78) visible
+    up deltay(0d41) left deltax(0d81) visible end
+    y(0d574) next(point)                      // frame 6: y (start point, vertex V1)
+    x(0d569) show next(vector)                       // frame 6: x (start point, vertex V1)
+    up deltay(0d35) left deltax(0d93) visible
+    down deltay(0d64) right deltax(0d42) visible
+    up deltay(0d64) left deltax(0d42) visible
+    down deltay(0d95) left deltax(0d63) visible
+    down deltay(0d35) right deltax(0d93) visible
+    up deltay(0d95) right deltax(0d63) visible
+    down deltay(0d64) right deltax(0d42) visible
+    up deltay(0d35) left deltax(0d93) visible
+    down deltay(0d95) left deltax(0d63) visible
+    up deltay(0d64) left deltax(0d42) visible
+    down deltay(0d35) right deltax(0d93) visible
+    down deltay(0d64) right deltax(0d42) visible
+    up deltay(0d95) right deltax(0d63) visible
+    down deltay(0d95) left deltax(0d63) visible
+    up deltay(0d35) left deltax(0d93) visible end
+    y(0d575) next(point)                      // frame 7: y (start point, vertex V1)
+    x(0d568) show next(vector)                       // frame 7: x (start point, vertex V1)
+    up deltay(0d29) left deltax(0d103) visible
+    down deltay(0d51) right deltax(0d39) visible
+    up deltay(0d51) left deltax(0d39) visible
+    down deltay(0d104) left deltax(0d48) visible
+    down deltay(0d29) right deltax(0d103) visible
+    up deltay(0d104) right deltax(0d48) visible
+    down deltay(0d51) right deltax(0d39) visible
+    up deltay(0d29) left deltax(0d103) visible
+    down deltay(0d104) left deltax(0d48) visible
+    up deltay(0d51) left deltax(0d39) visible
+    down deltay(0d29) right deltax(0d103) visible
+    down deltay(0d51) right deltax(0d39) visible
+    up deltay(0d104) right deltax(0d48) visible
+    down deltay(0d104) left deltax(0d48) visible
+    up deltay(0d29) left deltax(0d103) visible end
+    y(0d576) next(point)                      // frame 8: y (start point, vertex V1)
+    x(0d567) show next(vector)                       // frame 8: x (start point, vertex V1)
+    up deltay(0d22) left deltax(0d110) visible
+    down deltay(0d38) right deltax(0d32) visible
+    up deltay(0d38) left deltax(0d32) visible
+    down deltay(0d112) left deltax(0d33) visible
+    down deltay(0d22) right deltax(0d111) visible
+    up deltay(0d112) right deltax(0d32) visible
+    down deltay(0d38) right deltax(0d33) visible
+    up deltay(0d22) left deltax(0d111) visible
+    down deltay(0d112) left deltax(0d32) visible
+    up deltay(0d38) left deltax(0d33) visible
+    down deltay(0d22) right deltax(0d111) visible
+    down deltay(0d38) right deltax(0d32) visible
+    up deltay(0d112) right deltax(0d33) visible
+    down deltay(0d112) left deltax(0d33) visible
+    up deltay(0d22) left deltax(0d110) visible end
+    y(0d576) next(point)                      // frame 9: y (start point, vertex V1)
+    x(0d568) show next(vector)                       // frame 9: x (start point, vertex V1)
+    up deltay(0d14) left deltax(0d116) visible
+    down deltay(0d25) right deltax(0d22) visible
+    up deltay(0d25) left deltax(0d22) visible
+    down deltay(0d117) left deltax(0d19) visible
+    down deltay(0d14) right deltax(0d117) visible
+    up deltay(0d117) right deltax(0d18) visible
+    down deltay(0d25) right deltax(0d23) visible
+    up deltay(0d14) left deltax(0d117) visible
+    down deltay(0d117) left deltax(0d18) visible
+    up deltay(0d25) left deltax(0d23) visible
+    down deltay(0d14) right deltax(0d117) visible
+    down deltay(0d25) right deltax(0d22) visible
+    up deltay(0d117) right deltax(0d19) visible
+    down deltay(0d117) left deltax(0d19) visible
+    up deltay(0d14) left deltax(0d116) visible end
+    y(0d575) next(point)                      // frame 10: y (start point, vertex V1)
+    x(0d570) show next(vector)                       // frame 10: x (start point, vertex V1)
+    up deltay(0d6) left deltax(0d119) visible
+    down deltay(0d13) right deltax(0d9) visible
+    up deltay(0d13) left deltax(0d9) visible
+    down deltay(0d120) left deltax(0d7) visible
+    down deltay(0d5) right deltax(0d120) visible
+    up deltay(0d119) right deltax(0d6) visible
+    down deltay(0d12) right deltax(0d10) visible
+    up deltay(0d5) left deltax(0d120) visible
+    down deltay(0d119) left deltax(0d6) visible
+    up deltay(0d12) left deltax(0d10) visible
+    down deltay(0d5) right deltax(0d120) visible
+    down deltay(0d13) right deltax(0d9) visible
+    up deltay(0d120) right deltax(0d7) visible
+    down deltay(0d120) left deltax(0d7) visible
+    up deltay(0d6) left deltax(0d119) visible end
+    y(0d574) next(point)                      // frame 11: y (start point, vertex V1)
+    x(0d573) show next(vector)                       // frame 11: x (start point, vertex V1)
+    down deltay(0d3) left deltax(0d120) visible
+    down deltay(0d1) left deltax(0d5) visible
+    up deltay(0d1) right deltax(0d5) visible
+    down deltay(0d120) right deltax(0d3) visible
+    up deltay(0d3) right deltax(0d120) visible
+    up deltay(0d120) left deltax(0d3) visible
+    down deltay(0d1) left deltax(0d5) visible
+    down deltay(0d3) left deltax(0d120) visible
+    down deltay(0d120) right deltax(0d3) visible
+    up deltay(0d1) right deltax(0d5) visible
+    up deltay(0d3) right deltax(0d120) visible
+    down deltay(0d1) left deltax(0d5) visible
+    up deltay(0d120) left deltax(0d3) visible
+    down deltay(0d120) right deltax(0d3) visible
+    down deltay(0d3) left deltax(0d120) visible end
+    y(0d572) next(point)                      // frame 12: y (start point, vertex V1)
+    x(0d577) show next(vector)                       // frame 12: x (start point, vertex V1)
+    down deltay(0d11) left deltax(0d118) visible
+    up deltay(0d10) left deltax(0d21) visible
+    down deltay(0d10) right deltax(0d21) visible
+    down deltay(0d119) right deltax(0d9) visible
+    up deltay(0d11) right deltax(0d118) visible
+    up deltay(0d119) left deltax(0d9) visible
+    up deltay(0d10) left deltax(0d21) visible
+    down deltay(0d11) left deltax(0d118) visible
+    down deltay(0d119) right deltax(0d9) visible
+    down deltay(0d10) right deltax(0d21) visible
+    up deltay(0d11) right deltax(0d118) visible
+    up deltay(0d10) left deltax(0d21) visible
+    up deltay(0d119) left deltax(0d9) visible
+    down deltay(0d119) right deltax(0d9) visible
+    down deltay(0d11) left deltax(0d118) visible end
+    y(0d570) next(point)                      // frame 13: y (start point, vertex V1)
+    x(0d582) show next(vector)                       // frame 13: x (start point, vertex V1)
+    down deltay(0d19) left deltax(0d113) visible
+    up deltay(0d20) left deltax(0d39) visible
+    down deltay(0d20) right deltax(0d39) visible
+    down deltay(0d117) right deltax(0d12) visible
+    up deltay(0d19) right deltax(0d113) visible
+    up deltay(0d117) left deltax(0d12) visible
+    up deltay(0d20) left deltax(0d39) visible
+    down deltay(0d19) left deltax(0d113) visible
+    down deltay(0d117) right deltax(0d12) visible
+    down deltay(0d20) right deltax(0d39) visible
+    up deltay(0d19) right deltax(0d113) visible
+    up deltay(0d20) left deltax(0d39) visible
+    up deltay(0d117) left deltax(0d12) visible
+    down deltay(0d117) right deltax(0d12) visible
+    down deltay(0d19) left deltax(0d113) visible end
+    y(0d568) next(point)                      // frame 14: y (start point, vertex V1)
+    x(0d587) show next(vector)                       // frame 14: x (start point, vertex V1)
+    down deltay(0d27) left deltax(0d106) visible
+    up deltay(0d29) left deltax(0d55) visible
+    down deltay(0d29) right deltax(0d55) visible
+    down deltay(0d113) right deltax(0d11) visible
+    up deltay(0d26) right deltax(0d106) visible
+    up deltay(0d114) left deltax(0d11) visible
+    up deltay(0d28) left deltax(0d55) visible
+    down deltay(0d26) left deltax(0d106) visible
+    down deltay(0d114) right deltax(0d11) visible
+    down deltay(0d28) right deltax(0d55) visible
+    up deltay(0d26) right deltax(0d106) visible
+    up deltay(0d29) left deltax(0d55) visible
+    up deltay(0d113) left deltax(0d11) visible
+    down deltay(0d113) right deltax(0d11) visible
+    down deltay(0d27) left deltax(0d106) visible end
+    y(0d566) next(point)                      // frame 15: y (start point, vertex V1)
+    x(0d592) show next(vector)                       // frame 15: x (start point, vertex V1)
+    down deltay(0d33) left deltax(0d96) visible
+    up deltay(0d34) left deltax(0d71) visible
+    down deltay(0d34) right deltax(0d71) visible
+    down deltay(0d110) right deltax(0d7) visible
+    up deltay(0d34) right deltax(0d96) visible
+    up deltay(0d109) left deltax(0d7) visible
+    up deltay(0d35) left deltax(0d71) visible
+    down deltay(0d34) left deltax(0d96) visible
+    down deltay(0d109) right deltax(0d7) visible
+    down deltay(0d35) right deltax(0d71) visible
+    up deltay(0d34) right deltax(0d96) visible
+    up deltay(0d34) left deltax(0d71) visible
+    up deltay(0d110) left deltax(0d7) visible
+    down deltay(0d110) right deltax(0d7) visible
+    down deltay(0d33) left deltax(0d96) visible end
+    y(0d565) next(point)                      // frame 16: y (start point, vertex V1)
+    x(0d597) show next(vector)                       // frame 16: x (start point, vertex V1)
+    down deltay(0d40) left deltax(0d85) visible
+    up deltay(0d40) left deltax(0d85) visible
+    down deltay(0d40) right deltax(0d85) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d40) right deltax(0d85) visible
+    up deltay(0d106) right deltax(0d0) visible
+    up deltay(0d40) left deltax(0d85) visible
+    down deltay(0d40) left deltax(0d85) visible
+    down deltay(0d106) right deltax(0d0) visible
+    down deltay(0d40) right deltax(0d85) visible
+    up deltay(0d40) right deltax(0d85) visible
+    up deltay(0d40) left deltax(0d85) visible
+    up deltay(0d106) right deltax(0d0) visible
+    down deltay(0d106) right deltax(0d0) visible
+    down deltay(0d40) left deltax(0d85) visible end
+    y(0d564) next(point)                      // frame 17: y (start point, vertex V1)
+    x(0d600) show next(vector)                       // frame 17: x (start point, vertex V1)
+    down deltay(0d45) left deltax(0d71) visible
+    up deltay(0d43) left deltax(0d96) visible
+    down deltay(0d43) right deltax(0d96) visible
+    down deltay(0d103) left deltax(0d10) visible
+    up deltay(0d46) right deltax(0d72) visible
+    up deltay(0d102) right deltax(0d9) visible
+    up deltay(0d44) left deltax(0d95) visible
+    down deltay(0d46) left deltax(0d72) visible
+    down deltay(0d102) left deltax(0d9) visible
+    down deltay(0d44) right deltax(0d95) visible
+    up deltay(0d46) right deltax(0d72) visible
+    up deltay(0d43) left deltax(0d96) visible
+    up deltay(0d103) right deltax(0d10) visible
+    down deltay(0d103) left deltax(0d10) visible
+    down deltay(0d45) left deltax(0d71) visible end
+    y(0d563) next(point)                      // frame 18: y (start point, vertex V1)
+    x(0d603) show next(vector)                       // frame 18: x (start point, vertex V1)
+    down deltay(0d50) left deltax(0d57) visible
+    up deltay(0d47) left deltax(0d104) visible
+    down deltay(0d47) right deltax(0d104) visible
+    down deltay(0d99) left deltax(0d21) visible
+    up deltay(0d50) right deltax(0d57) visible
+    up deltay(0d99) right deltax(0d21) visible
+    up deltay(0d47) left deltax(0d104) visible
+    down deltay(0d50) left deltax(0d57) visible
+    down deltay(0d99) left deltax(0d21) visible
+    down deltay(0d47) right deltax(0d104) visible
+    up deltay(0d50) right deltax(0d57) visible
+    up deltay(0d47) left deltax(0d104) visible
+    up deltay(0d99) right deltax(0d21) visible
+    down deltay(0d99) left deltax(0d21) visible
+    down deltay(0d50) left deltax(0d57) visible end
+    y(0d562) next(point)                      // frame 19: y (start point, vertex V1)
+    x(0d603) show next(vector)                       // frame 19: x (start point, vertex V1)
+    down deltay(0d53) left deltax(0d41) visible
+    up deltay(0d49) left deltax(0d108) visible
+    down deltay(0d49) right deltax(0d108) visible
+    down deltay(0d96) left deltax(0d33) visible
+    up deltay(0d53) right deltax(0d41) visible
+    up deltay(0d96) right deltax(0d33) visible
+    up deltay(0d49) left deltax(0d108) visible
+    down deltay(0d53) left deltax(0d41) visible
+    down deltay(0d96) left deltax(0d33) visible
+    down deltay(0d49) right deltax(0d108) visible
+    up deltay(0d53) right deltax(0d41) visible
+    up deltay(0d49) left deltax(0d108) visible
+    up deltay(0d96) right deltax(0d33) visible
+    down deltay(0d96) left deltax(0d33) visible
+    down deltay(0d53) left deltax(0d41) visible end
+    y(0d561) next(point)                      // frame 20: y (start point, vertex V1)
+    x(0d601) show next(vector)                       // frame 20: x (start point, vertex V1)
+    down deltay(0d55) left deltax(0d24) visible
+    up deltay(0d51) left deltax(0d109) visible
+    down deltay(0d51) right deltax(0d109) visible
+    down deltay(0d94) left deltax(0d45) visible
+    up deltay(0d55) right deltax(0d24) visible
+    up deltay(0d94) right deltax(0d45) visible
+    up deltay(0d51) left deltax(0d109) visible
+    down deltay(0d55) left deltax(0d24) visible
+    down deltay(0d94) left deltax(0d45) visible
+    down deltay(0d51) right deltax(0d109) visible
+    up deltay(0d55) right deltax(0d24) visible
+    up deltay(0d51) left deltax(0d109) visible
+    up deltay(0d94) right deltax(0d45) visible
+    down deltay(0d94) left deltax(0d45) visible
+    down deltay(0d55) left deltax(0d24) visible end
+    y(0d560) next(point)                      // frame 21: y (start point, vertex V1)
+    x(0d596) show next(vector)                       // frame 21: x (start point, vertex V1)
+    down deltay(0d56) left deltax(0d6) visible
+    up deltay(0d52) left deltax(0d106) visible
+    down deltay(0d52) right deltax(0d106) visible
+    down deltay(0d92) left deltax(0d56) visible
+    up deltay(0d56) right deltax(0d6) visible
+    up deltay(0d92) right deltax(0d56) visible
+    up deltay(0d52) left deltax(0d106) visible
+    down deltay(0d56) left deltax(0d6) visible
+    down deltay(0d92) left deltax(0d56) visible
+    down deltay(0d52) right deltax(0d106) visible
+    up deltay(0d56) right deltax(0d6) visible
+    up deltay(0d52) left deltax(0d106) visible
+    up deltay(0d92) right deltax(0d56) visible
+    down deltay(0d92) left deltax(0d56) visible
+    down deltay(0d56) left deltax(0d6) visible end
+    y(0d558) next(point)                      // frame 22: y (start point, vertex V1)
+    x(0d589) show next(vector)                       // frame 22: x (start point, vertex V1)
+    down deltay(0d56) right deltax(0d12) visible
+    up deltay(0d55) left deltax(0d100) visible
+    down deltay(0d55) right deltax(0d100) visible
+    down deltay(0d91) left deltax(0d67) visible
+    up deltay(0d56) left deltax(0d11) visible
+    up deltay(0d91) right deltax(0d66) visible
+    up deltay(0d55) left deltax(0d99) visible
+    down deltay(0d56) right deltax(0d11) visible
+    down deltay(0d91) left deltax(0d66) visible
+    down deltay(0d55) right deltax(0d99) visible
+    up deltay(0d56) left deltax(0d11) visible
+    up deltay(0d55) left deltax(0d100) visible
+    up deltay(0d91) right deltax(0d67) visible
+    down deltay(0d91) left deltax(0d67) visible
+    down deltay(0d56) right deltax(0d12) visible end
+    y(0d556) next(point)                      // frame 23: y (start point, vertex V1)
+    x(0d579) show next(vector)                       // frame 23: x (start point, vertex V1)
+    down deltay(0d54) right deltax(0d29) visible
+    up deltay(0d56) left deltax(0d89) visible
+    down deltay(0d56) right deltax(0d89) visible
+    down deltay(0d91) left deltax(0d73) visible
+    up deltay(0d55) left deltax(0d30) visible
+    up deltay(0d90) right deltax(0d74) visible
+    up deltay(0d57) left deltax(0d90) visible
+    down deltay(0d55) right deltax(0d30) visible
+    down deltay(0d90) left deltax(0d74) visible
+    down deltay(0d57) right deltax(0d90) visible
+    up deltay(0d55) left deltax(0d30) visible
+    up deltay(0d56) left deltax(0d89) visible
+    up deltay(0d91) right deltax(0d73) visible
+    down deltay(0d91) left deltax(0d73) visible
+    down deltay(0d54) right deltax(0d29) visible end
+    y(0d553) next(point)                      // frame 24: y (start point, vertex V1)
+    x(0d567) show next(vector)                       // frame 24: x (start point, vertex V1)
+    down deltay(0d52) right deltax(0d46) visible
+    up deltay(0d60) left deltax(0d78) visible
+    down deltay(0d60) right deltax(0d78) visible
+    down deltay(0d90) left deltax(0d78) visible
+    up deltay(0d52) left deltax(0d46) visible
+    up deltay(0d90) right deltax(0d78) visible
+    up deltay(0d60) left deltax(0d78) visible
+    down deltay(0d52) right deltax(0d46) visible
+    down deltay(0d90) left deltax(0d78) visible
+    down deltay(0d60) right deltax(0d78) visible
+    up deltay(0d52) left deltax(0d46) visible
+    up deltay(0d60) left deltax(0d78) visible
+    up deltay(0d90) right deltax(0d78) visible
+    down deltay(0d90) left deltax(0d78) visible
+    down deltay(0d52) right deltax(0d46) visible end
+    y(0d549) next(point)                      // frame 25: y (start point, vertex V1)
+    x(0d554) show next(vector)                       // frame 25: x (start point, vertex V1)
+    down deltay(0d48) right deltax(0d61) visible
+    up deltay(0d63) left deltax(0d65) visible
+    down deltay(0d63) right deltax(0d65) visible
+    down deltay(0d90) left deltax(0d79) visible
+    up deltay(0d49) left deltax(0d62) visible
+    up deltay(0d89) right deltax(0d80) visible
+    up deltay(0d64) left deltax(0d66) visible
+    down deltay(0d49) right deltax(0d62) visible
+    down deltay(0d89) left deltax(0d80) visible
+    down deltay(0d64) right deltax(0d66) visible
+    up deltay(0d49) left deltax(0d62) visible
+    up deltay(0d63) left deltax(0d65) visible
+    up deltay(0d90) right deltax(0d79) visible
+    down deltay(0d90) left deltax(0d79) visible
+    down deltay(0d48) right deltax(0d61) visible end
+    y(0d544) next(point)                      // frame 26: y (start point, vertex V1)
+    x(0d538) show next(vector)                       // frame 26: x (start point, vertex V1)
+    down deltay(0d44) right deltax(0d76) visible
+    up deltay(0d69) left deltax(0d51) visible
+    down deltay(0d69) right deltax(0d51) visible
+    down deltay(0d88) left deltax(0d77) visible
+    up deltay(0d43) left deltax(0d76) visible
+    up deltay(0d89) right deltax(0d77) visible
+    up deltay(0d68) left deltax(0d51) visible
+    down deltay(0d43) right deltax(0d76) visible
+    down deltay(0d89) left deltax(0d77) visible
+    down deltay(0d68) right deltax(0d51) visible
+    up deltay(0d43) left deltax(0d76) visible
+    up deltay(0d69) left deltax(0d51) visible
+    up deltay(0d88) right deltax(0d77) visible
+    down deltay(0d88) left deltax(0d77) visible
+    down deltay(0d44) right deltax(0d76) visible end
+    y(0d537) next(point)                      // frame 27: y (start point, vertex V1)
+    x(0d522) show next(vector)                       // frame 27: x (start point, vertex V1)
+    down deltay(0d37) right deltax(0d89) visible
+    up deltay(0d73) left deltax(0d38) visible
+    down deltay(0d73) right deltax(0d38) visible
+    down deltay(0d87) left deltax(0d71) visible
+    up deltay(0d38) left deltax(0d89) visible
+    up deltay(0d86) right deltax(0d71) visible
+    up deltay(0d74) left deltax(0d38) visible
+    down deltay(0d38) right deltax(0d89) visible
+    down deltay(0d86) left deltax(0d71) visible
+    down deltay(0d74) right deltax(0d38) visible
+    up deltay(0d38) left deltax(0d89) visible
+    up deltay(0d73) left deltax(0d38) visible
+    up deltay(0d87) right deltax(0d71) visible
+    down deltay(0d87) left deltax(0d71) visible
+    down deltay(0d37) right deltax(0d89) visible end
+    y(0d530) next(point)                      // frame 28: y (start point, vertex V1)
+    x(0d506) show next(vector)                       // frame 28: x (start point, vertex V1)
+    down deltay(0d32) right deltax(0d99) visible
+    up deltay(0d80) left deltax(0d25) visible
+    down deltay(0d80) right deltax(0d25) visible
+    down deltay(0d84) left deltax(0d61) visible
+    up deltay(0d32) left deltax(0d100) visible
+    up deltay(0d84) right deltax(0d62) visible
+    up deltay(0d80) left deltax(0d26) visible
+    down deltay(0d32) right deltax(0d100) visible
+    down deltay(0d84) left deltax(0d62) visible
+    down deltay(0d80) right deltax(0d26) visible
+    up deltay(0d32) left deltax(0d100) visible
+    up deltay(0d80) left deltax(0d25) visible
+    up deltay(0d84) right deltax(0d61) visible
+    down deltay(0d84) left deltax(0d61) visible
+    down deltay(0d32) right deltax(0d99) visible end
+    y(0d520) next(point)                      // frame 29: y (start point, vertex V1)
+    x(0d490) show next(vector)                       // frame 29: x (start point, vertex V1)
+    down deltay(0d24) right deltax(0d108) visible
+    up deltay(0d87) left deltax(0d15) visible
+    down deltay(0d87) right deltax(0d15) visible
+    down deltay(0d79) left deltax(0d49) visible
+    up deltay(0d24) left deltax(0d108) visible
+    up deltay(0d79) right deltax(0d49) visible
+    up deltay(0d87) left deltax(0d15) visible
+    down deltay(0d24) right deltax(0d108) visible
+    down deltay(0d79) left deltax(0d49) visible
+    down deltay(0d87) right deltax(0d15) visible
+    up deltay(0d24) left deltax(0d108) visible
+    up deltay(0d87) left deltax(0d15) visible
+    up deltay(0d79) right deltax(0d49) visible
+    down deltay(0d79) left deltax(0d49) visible
+    down deltay(0d24) right deltax(0d108) visible end
+    y(0d510) next(point)                      // frame 30: y (start point, vertex V1)
+    x(0d475) show next(vector)                       // frame 30: x (start point, vertex V1)
+    down deltay(0d16) right deltax(0d115) visible
+    up deltay(0d93) left deltax(0d7) visible
+    down deltay(0d93) right deltax(0d7) visible
+    down deltay(0d74) left deltax(0d34) visible
+    up deltay(0d17) left deltax(0d115) visible
+    up deltay(0d73) right deltax(0d34) visible
+    up deltay(0d94) left deltax(0d7) visible
+    down deltay(0d17) right deltax(0d115) visible
+    down deltay(0d73) left deltax(0d34) visible
+    down deltay(0d94) right deltax(0d7) visible
+    up deltay(0d17) left deltax(0d115) visible
+    up deltay(0d93) left deltax(0d7) visible
+    up deltay(0d74) right deltax(0d34) visible
+    down deltay(0d74) left deltax(0d34) visible
+    down deltay(0d16) right deltax(0d115) visible end
+    y(0d499) next(point)                      // frame 31: y (start point, vertex V1)
+    x(0d462) show next(vector)                       // frame 31: x (start point, vertex V1)
+    down deltay(0d8) right deltax(0d119) visible
+    up deltay(0d100) left deltax(0d2) visible
+    down deltay(0d100) right deltax(0d2) visible
+    down deltay(0d66) left deltax(0d18) visible
+    up deltay(0d8) left deltax(0d118) visible
+    up deltay(0d66) right deltax(0d17) visible
+    up deltay(0d100) left deltax(0d1) visible
+    down deltay(0d8) right deltax(0d118) visible
+    down deltay(0d66) left deltax(0d17) visible
+    down deltay(0d100) right deltax(0d1) visible
+    up deltay(0d8) left deltax(0d118) visible
+    up deltay(0d100) left deltax(0d2) visible
+    up deltay(0d66) right deltax(0d18) visible
+    down deltay(0d66) left deltax(0d18) visible
+    down deltay(0d8) right deltax(0d119) visible end
+    y(0d487) next(point)                      // frame 32: y (start point, vertex V1)
+    x(0d452) show next(vector)                       // frame 32: x (start point, vertex V1)
+    up deltay(0d0) right deltax(0d120) visible
+    up deltay(0d106) right deltax(0d0) visible
+    down deltay(0d106) right deltax(0d0) visible
+    down deltay(0d56) right deltax(0d0) visible
+    up deltay(0d0) left deltax(0d120) visible
+    up deltay(0d56) right deltax(0d0) visible
+    up deltay(0d106) right deltax(0d0) visible
+    up deltay(0d0) right deltax(0d120) visible
+    down deltay(0d56) right deltax(0d0) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d0) left deltax(0d120) visible
+    up deltay(0d106) right deltax(0d0) visible
+    up deltay(0d56) right deltax(0d0) visible
+    down deltay(0d56) right deltax(0d0) visible
+    up deltay(0d0) right deltax(0d120) visible end
+    y(0d475) next(point)                      // frame 33: y (start point, vertex V1)
+    x(0d445) show next(vector)                       // frame 33: x (start point, vertex V1)
+    up deltay(0d8) right deltax(0d118) visible
+    up deltay(0d111) left deltax(0d1) visible
+    down deltay(0d111) right deltax(0d1) visible
+    down deltay(0d45) right deltax(0d18) visible
+    down deltay(0d8) left deltax(0d119) visible
+    up deltay(0d45) left deltax(0d17) visible
+    up deltay(0d111) left deltax(0d2) visible
+    up deltay(0d8) right deltax(0d119) visible
+    down deltay(0d45) right deltax(0d17) visible
+    down deltay(0d111) right deltax(0d2) visible
+    down deltay(0d8) left deltax(0d119) visible
+    up deltay(0d111) left deltax(0d1) visible
+    up deltay(0d45) left deltax(0d18) visible
+    down deltay(0d45) right deltax(0d18) visible
+    up deltay(0d8) right deltax(0d118) visible end
+    y(0d463) next(point)                      // frame 34: y (start point, vertex V1)
+    x(0d441) show next(vector)                       // frame 34: x (start point, vertex V1)
+    up deltay(0d16) right deltax(0d115) visible
+    up deltay(0d114) left deltax(0d7) visible
+    down deltay(0d114) right deltax(0d7) visible
+    down deltay(0d32) right deltax(0d34) visible
+    down deltay(0d16) left deltax(0d115) visible
+    up deltay(0d32) left deltax(0d34) visible
+    up deltay(0d114) left deltax(0d7) visible
+    up deltay(0d16) right deltax(0d115) visible
+    down deltay(0d32) right deltax(0d34) visible
+    down deltay(0d114) right deltax(0d7) visible
+    down deltay(0d16) left deltax(0d115) visible
+    up deltay(0d114) left deltax(0d7) visible
+    up deltay(0d32) left deltax(0d34) visible
+    down deltay(0d32) right deltax(0d34) visible
+    up deltay(0d16) right deltax(0d115) visible end
+    y(0d451) next(point)                      // frame 35: y (start point, vertex V1)
+    x(0d441) show next(vector)                       // frame 35: x (start point, vertex V1)
+    up deltay(0d24) right deltax(0d108) visible
+    up deltay(0d116) left deltax(0d15) visible
+    down deltay(0d116) right deltax(0d15) visible
+    down deltay(0d18) right deltax(0d49) visible
+    down deltay(0d24) left deltax(0d108) visible
+    up deltay(0d18) left deltax(0d49) visible
+    up deltay(0d116) left deltax(0d15) visible
+    up deltay(0d24) right deltax(0d108) visible
+    down deltay(0d18) right deltax(0d49) visible
+    down deltay(0d116) right deltax(0d15) visible
+    down deltay(0d24) left deltax(0d108) visible
+    up deltay(0d116) left deltax(0d15) visible
+    up deltay(0d18) left deltax(0d49) visible
+    down deltay(0d18) right deltax(0d49) visible
+    up deltay(0d24) right deltax(0d108) visible end
+    y(0d440) next(point)                      // frame 36: y (start point, vertex V1)
+    x(0d444) show next(vector)                       // frame 36: x (start point, vertex V1)
+    up deltay(0d31) right deltax(0d100) visible
+    up deltay(0d116) left deltax(0d26) visible
+    down deltay(0d116) right deltax(0d26) visible
+    down deltay(0d3) right deltax(0d61) visible
+    down deltay(0d31) left deltax(0d99) visible
+    up deltay(0d3) left deltax(0d62) visible
+    up deltay(0d116) left deltax(0d25) visible
+    up deltay(0d31) right deltax(0d99) visible
+    down deltay(0d3) right deltax(0d62) visible
+    down deltay(0d116) right deltax(0d25) visible
+    down deltay(0d31) left deltax(0d99) visible
+    up deltay(0d116) left deltax(0d26) visible
+    up deltay(0d3) left deltax(0d61) visible
+    down deltay(0d3) right deltax(0d61) visible
+    up deltay(0d31) right deltax(0d100) visible end
+    y(0d430) next(point)                      // frame 37: y (start point, vertex V1)
+    x(0d451) show next(vector)                       // frame 37: x (start point, vertex V1)
+    up deltay(0d38) right deltax(0d89) visible
+    up deltay(0d113) left deltax(0d38) visible
+    down deltay(0d113) right deltax(0d38) visible
+    up deltay(0d13) right deltax(0d71) visible
+    down deltay(0d38) left deltax(0d89) visible
+    down deltay(0d13) left deltax(0d71) visible
+    up deltay(0d113) left deltax(0d38) visible
+    up deltay(0d38) right deltax(0d89) visible
+    up deltay(0d13) right deltax(0d71) visible
+    down deltay(0d113) right deltax(0d38) visible
+    down deltay(0d38) left deltax(0d89) visible
+    up deltay(0d113) left deltax(0d38) visible
+    down deltay(0d13) left deltax(0d71) visible
+    up deltay(0d13) right deltax(0d71) visible
+    up deltay(0d38) right deltax(0d89) visible end
+    y(0d422) next(point)                      // frame 38: y (start point, vertex V1)
+    x(0d461) show next(vector)                       // frame 38: x (start point, vertex V1)
+    up deltay(0d43) right deltax(0d76) visible
+    up deltay(0d108) left deltax(0d51) visible
+    down deltay(0d108) right deltax(0d51) visible
+    up deltay(0d29) right deltax(0d77) visible
+    down deltay(0d43) left deltax(0d76) visible
+    down deltay(0d29) left deltax(0d77) visible
+    up deltay(0d108) left deltax(0d51) visible
+    up deltay(0d43) right deltax(0d76) visible
+    up deltay(0d29) right deltax(0d77) visible
+    down deltay(0d108) right deltax(0d51) visible
+    down deltay(0d43) left deltax(0d76) visible
+    up deltay(0d108) left deltax(0d51) visible
+    down deltay(0d29) left deltax(0d77) visible
+    up deltay(0d29) right deltax(0d77) visible
+    up deltay(0d43) right deltax(0d76) visible end
+    y(0d415) next(point)                      // frame 39: y (start point, vertex V1)
+    x(0d474) show next(vector)                       // frame 39: x (start point, vertex V1)
+    up deltay(0d49) right deltax(0d62) visible
+    up deltay(0d100) left deltax(0d66) visible
+    down deltay(0d100) right deltax(0d66) visible
+    up deltay(0d44) right deltax(0d79) visible
+    down deltay(0d48) left deltax(0d61) visible
+    down deltay(0d45) left deltax(0d80) visible
+    up deltay(0d101) left deltax(0d65) visible
+    up deltay(0d48) right deltax(0d61) visible
+    up deltay(0d45) right deltax(0d80) visible
+    down deltay(0d101) right deltax(0d65) visible
+    down deltay(0d48) left deltax(0d61) visible
+    up deltay(0d100) left deltax(0d66) visible
+    down deltay(0d44) left deltax(0d79) visible
+    up deltay(0d44) right deltax(0d79) visible
+    up deltay(0d49) right deltax(0d62) visible end
+    y(0d411) next(point)                      // frame 40: y (start point, vertex V1)
+    x(0d489) show next(vector)                       // frame 40: x (start point, vertex V1)
+    up deltay(0d52) right deltax(0d46) visible
+    up deltay(0d90) left deltax(0d78) visible
+    down deltay(0d90) right deltax(0d78) visible
+    up deltay(0d60) right deltax(0d78) visible
+    down deltay(0d52) left deltax(0d46) visible
+    down deltay(0d60) left deltax(0d78) visible
+    up deltay(0d90) left deltax(0d78) visible
+    up deltay(0d52) right deltax(0d46) visible
+    up deltay(0d60) right deltax(0d78) visible
+    down deltay(0d90) right deltax(0d78) visible
+    down deltay(0d52) left deltax(0d46) visible
+    up deltay(0d90) left deltax(0d78) visible
+    down deltay(0d60) left deltax(0d78) visible
+    up deltay(0d60) right deltax(0d78) visible
+    up deltay(0d52) right deltax(0d46) visible end
+    y(0d409) next(point)                      // frame 41: y (start point, vertex V1)
+    x(0d505) show next(vector)                       // frame 41: x (start point, vertex V1)
+    up deltay(0d55) right deltax(0d30) visible
+    up deltay(0d78) left deltax(0d90) visible
+    down deltay(0d78) right deltax(0d90) visible
+    up deltay(0d73) right deltax(0d73) visible
+    down deltay(0d55) left deltax(0d29) visible
+    down deltay(0d73) left deltax(0d74) visible
+    up deltay(0d78) left deltax(0d89) visible
+    up deltay(0d55) right deltax(0d29) visible
+    up deltay(0d73) right deltax(0d74) visible
+    down deltay(0d78) right deltax(0d89) visible
+    down deltay(0d55) left deltax(0d29) visible
+    up deltay(0d78) left deltax(0d90) visible
+    down deltay(0d73) left deltax(0d73) visible
+    up deltay(0d73) right deltax(0d73) visible
+    up deltay(0d55) right deltax(0d30) visible end
+    y(0d410) next(point)                      // frame 42: y (start point, vertex V1)
+    x(0d523) show next(vector)                       // frame 42: x (start point, vertex V1)
+    up deltay(0d56) right deltax(0d11) visible
+    up deltay(0d63) left deltax(0d99) visible
+    down deltay(0d63) right deltax(0d99) visible
+    up deltay(0d85) right deltax(0d67) visible
+    down deltay(0d56) left deltax(0d12) visible
+    down deltay(0d85) left deltax(0d66) visible
+    up deltay(0d63) left deltax(0d100) visible
+    up deltay(0d56) right deltax(0d12) visible
+    up deltay(0d85) right deltax(0d66) visible
+    down deltay(0d63) right deltax(0d100) visible
+    down deltay(0d56) left deltax(0d12) visible
+    up deltay(0d63) left deltax(0d99) visible
+    down deltay(0d85) left deltax(0d67) visible
+    up deltay(0d85) right deltax(0d67) visible
+    up deltay(0d56) right deltax(0d11) visible end
+    y(0d413) next(point)                      // frame 43: y (start point, vertex V1)
+    x(0d540) show next(vector)                       // frame 43: x (start point, vertex V1)
+    up deltay(0d56) left deltax(0d6) visible
+    up deltay(0d48) left deltax(0d106) visible
+    down deltay(0d48) right deltax(0d106) visible
+    up deltay(0d95) right deltax(0d56) visible
+    down deltay(0d57) right deltax(0d6) visible
+    down deltay(0d94) left deltax(0d56) visible
+    up deltay(0d47) left deltax(0d106) visible
+    up deltay(0d57) left deltax(0d6) visible
+    up deltay(0d94) right deltax(0d56) visible
+    down deltay(0d47) right deltax(0d106) visible
+    down deltay(0d57) right deltax(0d6) visible
+    up deltay(0d48) left deltax(0d106) visible
+    down deltay(0d95) left deltax(0d56) visible
+    up deltay(0d95) right deltax(0d56) visible
+    up deltay(0d56) left deltax(0d6) visible end
+    y(0d418) next(point)                      // frame 44: y (start point, vertex V1)
+    x(0d556) show next(vector)                       // frame 44: x (start point, vertex V1)
+    up deltay(0d55) left deltax(0d24) visible
+    up deltay(0d31) left deltax(0d109) visible
+    down deltay(0d31) right deltax(0d109) visible
+    up deltay(0d102) right deltax(0d45) visible
+    down deltay(0d55) right deltax(0d24) visible
+    down deltay(0d102) left deltax(0d45) visible
+    up deltay(0d31) left deltax(0d109) visible
+    up deltay(0d55) left deltax(0d24) visible
+    up deltay(0d102) right deltax(0d45) visible
+    down deltay(0d31) right deltax(0d109) visible
+    down deltay(0d55) right deltax(0d24) visible
+    up deltay(0d31) left deltax(0d109) visible
+    down deltay(0d102) left deltax(0d45) visible
+    up deltay(0d102) right deltax(0d45) visible
+    up deltay(0d55) left deltax(0d24) visible end
+    y(0d426) next(point)                      // frame 45: y (start point, vertex V1)
+    x(0d570) show next(vector)                       // frame 45: x (start point, vertex V1)
+    up deltay(0d53) left deltax(0d41) visible
+    up deltay(0d12) left deltax(0d108) visible
+    down deltay(0d12) right deltax(0d108) visible
+    up deltay(0d107) right deltax(0d33) visible
+    down deltay(0d53) right deltax(0d41) visible
+    down deltay(0d107) left deltax(0d33) visible
+    up deltay(0d12) left deltax(0d108) visible
+    up deltay(0d53) left deltax(0d41) visible
+    up deltay(0d107) right deltax(0d33) visible
+    down deltay(0d12) right deltax(0d108) visible
+    down deltay(0d53) right deltax(0d41) visible
+    up deltay(0d12) left deltax(0d108) visible
+    down deltay(0d107) left deltax(0d33) visible
+    up deltay(0d107) right deltax(0d33) visible
+    up deltay(0d53) left deltax(0d41) visible end
+    y(0d435) next(point)                      // frame 46: y (start point, vertex V1)
+    x(0d582) show next(vector)                       // frame 46: x (start point, vertex V1)
+    up deltay(0d50) left deltax(0d57) visible
+    down deltay(0d5) left deltax(0d104) visible
+    up deltay(0d5) right deltax(0d104) visible
+    up deltay(0d109) right deltax(0d21) visible
+    down deltay(0d50) right deltax(0d57) visible
+    down deltay(0d109) left deltax(0d21) visible
+    down deltay(0d5) left deltax(0d104) visible
+    up deltay(0d50) left deltax(0d57) visible
+    up deltay(0d109) right deltax(0d21) visible
+    up deltay(0d5) right deltax(0d104) visible
+    down deltay(0d50) right deltax(0d57) visible
+    down deltay(0d5) left deltax(0d104) visible
+    down deltay(0d109) left deltax(0d21) visible
+    up deltay(0d109) right deltax(0d21) visible
+    up deltay(0d50) left deltax(0d57) visible end
+    y(0d447) next(point)                      // frame 47: y (start point, vertex V1)
+    x(0d591) show next(vector)                       // frame 47: x (start point, vertex V1)
+    up deltay(0d45) left deltax(0d72) visible
+    down deltay(0d23) left deltax(0d95) visible
+    up deltay(0d23) right deltax(0d95) visible
+    up deltay(0d108) right deltax(0d10) visible
+    down deltay(0d45) right deltax(0d71) visible
+    down deltay(0d108) left deltax(0d9) visible
+    down deltay(0d23) left deltax(0d96) visible
+    up deltay(0d45) left deltax(0d71) visible
+    up deltay(0d108) right deltax(0d9) visible
+    up deltay(0d23) right deltax(0d96) visible
+    down deltay(0d45) right deltax(0d71) visible
+    down deltay(0d23) left deltax(0d95) visible
+    down deltay(0d108) left deltax(0d10) visible
+    up deltay(0d108) right deltax(0d10) visible
+    up deltay(0d45) left deltax(0d72) visible end
+    y(0d459) next(point)                      // frame 48: y (start point, vertex V1)
+    x(0d597) show next(vector)                       // frame 48: x (start point, vertex V1)
+    up deltay(0d40) left deltax(0d85) visible
+    down deltay(0d40) left deltax(0d85) visible
+    up deltay(0d40) right deltax(0d85) visible
+    up deltay(0d106) right deltax(0d0) visible
+    down deltay(0d40) right deltax(0d85) visible
+    down deltay(0d106) right deltax(0d0) visible
+    down deltay(0d40) left deltax(0d85) visible
+    up deltay(0d40) left deltax(0d85) visible
+    up deltay(0d106) right deltax(0d0) visible
+    up deltay(0d40) right deltax(0d85) visible
+    down deltay(0d40) right deltax(0d85) visible
+    down deltay(0d40) left deltax(0d85) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d106) right deltax(0d0) visible
+    up deltay(0d40) left deltax(0d85) visible end
+    y(0d472) next(point)                      // frame 49: y (start point, vertex V1)
+    x(0d599) show next(vector)                       // frame 49: x (start point, vertex V1)
+    up deltay(0d34) left deltax(0d96) visible
+    down deltay(0d55) left deltax(0d71) visible
+    up deltay(0d55) right deltax(0d71) visible
+    up deltay(0d101) left deltax(0d7) visible
+    down deltay(0d34) right deltax(0d96) visible
+    down deltay(0d101) right deltax(0d7) visible
+    down deltay(0d55) left deltax(0d71) visible
+    up deltay(0d34) left deltax(0d96) visible
+    up deltay(0d101) left deltax(0d7) visible
+    up deltay(0d55) right deltax(0d71) visible
+    down deltay(0d34) right deltax(0d96) visible
+    down deltay(0d55) left deltax(0d71) visible
+    down deltay(0d101) right deltax(0d7) visible
+    up deltay(0d101) left deltax(0d7) visible
+    up deltay(0d34) left deltax(0d96) visible end
+    y(0d486) next(point)                      // frame 50: y (start point, vertex V1)
+    x(0d598) show next(vector)                       // frame 50: x (start point, vertex V1)
+    up deltay(0d27) left deltax(0d106) visible
+    down deltay(0d70) left deltax(0d55) visible
+    up deltay(0d70) right deltax(0d55) visible
+    up deltay(0d94) left deltax(0d11) visible
+    down deltay(0d26) right deltax(0d106) visible
+    down deltay(0d95) right deltax(0d11) visible
+    down deltay(0d69) left deltax(0d55) visible
+    up deltay(0d26) left deltax(0d106) visible
+    up deltay(0d95) left deltax(0d11) visible
+    up deltay(0d69) right deltax(0d55) visible
+    down deltay(0d26) right deltax(0d106) visible
+    down deltay(0d70) left deltax(0d55) visible
+    down deltay(0d94) right deltax(0d11) visible
+    up deltay(0d94) left deltax(0d11) visible
+    up deltay(0d27) left deltax(0d106) visible end
+    y(0d500) next(point)                      // frame 51: y (start point, vertex V1)
+    x(0d594) show next(vector)                       // frame 51: x (start point, vertex V1)
+    up deltay(0d19) left deltax(0d113) visible
+    down deltay(0d81) left deltax(0d39) visible
+    up deltay(0d81) right deltax(0d39) visible
+    up deltay(0d86) left deltax(0d12) visible
+    down deltay(0d19) right deltax(0d113) visible
+    down deltay(0d86) right deltax(0d12) visible
+    down deltay(0d81) left deltax(0d39) visible
+    up deltay(0d19) left deltax(0d113) visible
+    up deltay(0d86) left deltax(0d12) visible
+    up deltay(0d81) right deltax(0d39) visible
+    down deltay(0d19) right deltax(0d113) visible
+    down deltay(0d81) left deltax(0d39) visible
+    down deltay(0d86) right deltax(0d12) visible
+    up deltay(0d86) left deltax(0d12) visible
+    up deltay(0d19) left deltax(0d113) visible end
+    y(0d514) next(point)                      // frame 52: y (start point, vertex V1)
+    x(0d586) show next(vector)                       // frame 52: x (start point, vertex V1)
+    up deltay(0d11) left deltax(0d118) visible
+    down deltay(0d92) left deltax(0d21) visible
+    up deltay(0d92) right deltax(0d21) visible
+    up deltay(0d77) left deltax(0d9) visible
+    down deltay(0d11) right deltax(0d118) visible
+    down deltay(0d77) right deltax(0d9) visible
+    down deltay(0d92) left deltax(0d21) visible
+    up deltay(0d11) left deltax(0d118) visible
+    up deltay(0d77) left deltax(0d9) visible
+    up deltay(0d92) right deltax(0d21) visible
+    down deltay(0d11) right deltax(0d118) visible
+    down deltay(0d92) left deltax(0d21) visible
+    down deltay(0d77) right deltax(0d9) visible
+    up deltay(0d77) left deltax(0d9) visible
+    up deltay(0d11) left deltax(0d118) visible end
+    y(0d527) next(point)                      // frame 53: y (start point, vertex V1)
+    x(0d576) show next(vector)                       // frame 53: x (start point, vertex V1)
+    up deltay(0d3) left deltax(0d120) visible
+    down deltay(0d100) left deltax(0d5) visible
+    up deltay(0d100) right deltax(0d5) visible
+    up deltay(0d67) left deltax(0d3) visible
+    down deltay(0d3) right deltax(0d120) visible
+    down deltay(0d67) right deltax(0d3) visible
+    down deltay(0d100) left deltax(0d5) visible
+    up deltay(0d3) left deltax(0d120) visible
+    up deltay(0d67) left deltax(0d3) visible
+    up deltay(0d100) right deltax(0d5) visible
+    down deltay(0d3) right deltax(0d120) visible
+    down deltay(0d100) left deltax(0d5) visible
+    down deltay(0d67) right deltax(0d3) visible
+    up deltay(0d67) left deltax(0d3) visible
+    up deltay(0d3) left deltax(0d120) visible end
+    y(0d539) next(point)                      // frame 54: y (start point, vertex V1)
+    x(0d564) show next(vector)                       // frame 54: x (start point, vertex V1)
+    down deltay(0d5) left deltax(0d120) visible
+    down deltay(0d106) right deltax(0d10) visible
+    up deltay(0d106) left deltax(0d10) visible
+    up deltay(0d56) right deltax(0d7) visible
+    up deltay(0d6) right deltax(0d119) visible
+    down deltay(0d57) left deltax(0d6) visible
+    down deltay(0d105) right deltax(0d9) visible
+    down deltay(0d6) left deltax(0d119) visible
+    up deltay(0d57) right deltax(0d6) visible
+    up deltay(0d105) left deltax(0d9) visible
+    up deltay(0d6) right deltax(0d119) visible
+    down deltay(0d106) right deltax(0d10) visible
+    down deltay(0d56) left deltax(0d7) visible
+    up deltay(0d56) right deltax(0d7) visible
+    down deltay(0d5) left deltax(0d120) visible end
+    y(0d550) next(point)                      // frame 55: y (start point, vertex V1)
+    x(0d550) show next(vector)                       // frame 55: x (start point, vertex V1)
+    down deltay(0d14) left deltax(0d117) visible
+    down deltay(0d109) right deltax(0d23) visible
+    up deltay(0d109) left deltax(0d23) visible
+    up deltay(0d48) right deltax(0d19) visible
+    up deltay(0d13) right deltax(0d116) visible
+    down deltay(0d47) left deltax(0d18) visible
+    down deltay(0d110) right deltax(0d22) visible
+    down deltay(0d13) left deltax(0d116) visible
+    up deltay(0d47) right deltax(0d18) visible
+    up deltay(0d110) left deltax(0d22) visible
+    up deltay(0d13) right deltax(0d116) visible
+    down deltay(0d109) right deltax(0d23) visible
+    down deltay(0d48) left deltax(0d19) visible
+    up deltay(0d48) right deltax(0d19) visible
+    down deltay(0d14) left deltax(0d117) visible end
+    y(0d560) next(point)                      // frame 56: y (start point, vertex V1)
+    x(0d535) show next(vector)                       // frame 56: x (start point, vertex V1)
+    down deltay(0d22) left deltax(0d111) visible
+    down deltay(0d112) right deltax(0d33) visible
+    up deltay(0d112) left deltax(0d33) visible
+    up deltay(0d38) right deltax(0d33) visible
+    up deltay(0d22) right deltax(0d110) visible
+    down deltay(0d38) left deltax(0d32) visible
+    down deltay(0d112) right deltax(0d32) visible
+    down deltay(0d22) left deltax(0d110) visible
+    up deltay(0d38) right deltax(0d32) visible
+    up deltay(0d112) left deltax(0d32) visible
+    up deltay(0d22) right deltax(0d110) visible
+    down deltay(0d112) right deltax(0d33) visible
+    down deltay(0d38) left deltax(0d33) visible
+    up deltay(0d38) right deltax(0d33) visible
+    down deltay(0d22) left deltax(0d111) visible end
+    y(0d568) next(point)                      // frame 57: y (start point, vertex V1)
+    x(0d520) show next(vector)                       // frame 57: x (start point, vertex V1)
+    down deltay(0d29) left deltax(0d103) visible
+    down deltay(0d113) right deltax(0d39) visible
+    up deltay(0d113) left deltax(0d39) visible
+    up deltay(0d30) right deltax(0d48) visible
+    up deltay(0d29) right deltax(0d103) visible
+    down deltay(0d30) left deltax(0d48) visible
+    down deltay(0d113) right deltax(0d39) visible
+    down deltay(0d29) left deltax(0d103) visible
+    up deltay(0d30) right deltax(0d48) visible
+    up deltay(0d113) left deltax(0d39) visible
+    up deltay(0d29) right deltax(0d103) visible
+    down deltay(0d113) right deltax(0d39) visible
+    down deltay(0d30) left deltax(0d48) visible
+    up deltay(0d30) right deltax(0d48) visible
+    down deltay(0d29) left deltax(0d103) visible end
+    y(0d575) next(point)                      // frame 58: y (start point, vertex V1)
+    x(0d506) show next(vector)                       // frame 58: x (start point, vertex V1)
+    down deltay(0d36) left deltax(0d93) visible
+    down deltay(0d112) right deltax(0d42) visible
+    up deltay(0d112) left deltax(0d42) visible
+    up deltay(0d23) right deltax(0d63) visible
+    up deltay(0d35) right deltax(0d93) visible
+    down deltay(0d22) left deltax(0d63) visible
+    down deltay(0d113) right deltax(0d42) visible
+    down deltay(0d35) left deltax(0d93) visible
+    up deltay(0d22) right deltax(0d63) visible
+    up deltay(0d113) left deltax(0d42) visible
+    up deltay(0d35) right deltax(0d93) visible
+    down deltay(0d112) right deltax(0d42) visible
+    down deltay(0d23) left deltax(0d63) visible
+    up deltay(0d23) right deltax(0d63) visible
+    down deltay(0d36) left deltax(0d93) visible end
+    y(0d580) next(point)                      // frame 59: y (start point, vertex V1)
+    x(0d492) show next(vector)                       // frame 59: x (start point, vertex V1)
+    down deltay(0d42) left deltax(0d80) visible
+    down deltay(0d111) right deltax(0d41) visible
+    up deltay(0d111) left deltax(0d41) visible
+    up deltay(0d17) right deltax(0d78) visible
+    up deltay(0d42) right deltax(0d81) visible
+    down deltay(0d17) left deltax(0d79) visible
+    down deltay(0d111) right deltax(0d42) visible
+    down deltay(0d42) left deltax(0d81) visible
+    up deltay(0d17) right deltax(0d79) visible
+    up deltay(0d111) left deltax(0d42) visible
+    up deltay(0d42) right deltax(0d81) visible
+    down deltay(0d111) right deltax(0d41) visible
+    down deltay(0d17) left deltax(0d78) visible
+    up deltay(0d17) right deltax(0d78) visible
+    down deltay(0d42) left deltax(0d80) visible end
+    y(0d585) next(point)                      // frame 60: y (start point, vertex V1)
+    x(0d480) show next(vector)                       // frame 60: x (start point, vertex V1)
+    down deltay(0d47) left deltax(0d67) visible
+    down deltay(0d110) right deltax(0d39) visible
+    up deltay(0d110) left deltax(0d39) visible
+    up deltay(0d11) right deltax(0d93) visible
+    up deltay(0d47) right deltax(0d66) visible
+    down deltay(0d11) left deltax(0d92) visible
+    down deltay(0d110) right deltax(0d38) visible
+    down deltay(0d47) left deltax(0d66) visible
+    up deltay(0d11) right deltax(0d92) visible
+    up deltay(0d110) left deltax(0d38) visible
+    up deltay(0d47) right deltax(0d66) visible
+    down deltay(0d110) right deltax(0d39) visible
+    down deltay(0d11) left deltax(0d93) visible
+    up deltay(0d11) right deltax(0d93) visible
+    down deltay(0d47) left deltax(0d67) visible end
+    y(0d588) next(point)                      // frame 61: y (start point, vertex V1)
+    x(0d470) show next(vector)                       // frame 61: x (start point, vertex V1)
+    down deltay(0d51) left deltax(0d51) visible
+    down deltay(0d109) right deltax(0d31) visible
+    up deltay(0d109) left deltax(0d31) visible
+    up deltay(0d8) right deltax(0d104) visible
+    up deltay(0d51) right deltax(0d51) visible
+    down deltay(0d8) left deltax(0d104) visible
+    down deltay(0d109) right deltax(0d31) visible
+    down deltay(0d51) left deltax(0d51) visible
+    up deltay(0d8) right deltax(0d104) visible
+    up deltay(0d109) left deltax(0d31) visible
+    up deltay(0d51) right deltax(0d51) visible
+    down deltay(0d109) right deltax(0d31) visible
+    down deltay(0d8) left deltax(0d104) visible
+    up deltay(0d8) right deltax(0d104) visible
+    down deltay(0d51) left deltax(0d51) visible end
+    y(0d590) next(point)                      // frame 62: y (start point, vertex V1)
+    x(0d462) show next(vector)                       // frame 62: x (start point, vertex V1)
+    down deltay(0d54) left deltax(0d35) visible
+    down deltay(0d107) right deltax(0d22) visible
+    up deltay(0d107) left deltax(0d22) visible
+    up deltay(0d5) right deltax(0d113) visible
+    up deltay(0d54) right deltax(0d35) visible
+    down deltay(0d5) left deltax(0d113) visible
+    down deltay(0d107) right deltax(0d22) visible
+    down deltay(0d54) left deltax(0d35) visible
+    up deltay(0d5) right deltax(0d113) visible
+    up deltay(0d107) left deltax(0d22) visible
+    up deltay(0d54) right deltax(0d35) visible
+    down deltay(0d107) right deltax(0d22) visible
+    down deltay(0d5) left deltax(0d113) visible
+    up deltay(0d5) right deltax(0d113) visible
+    down deltay(0d54) left deltax(0d35) visible end
+    y(0d592) next(point)                      // frame 63: y (start point, vertex V1)
+    x(0d456) show next(vector)                       // frame 63: x (start point, vertex V1)
+    down deltay(0d56) left deltax(0d18) visible
+    down deltay(0d106) right deltax(0d12) visible
+    up deltay(0d106) left deltax(0d12) visible
+    up deltay(0d2) right deltax(0d118) visible
+    up deltay(0d56) right deltax(0d18) visible
+    down deltay(0d2) left deltax(0d118) visible
+    down deltay(0d106) right deltax(0d12) visible
+    down deltay(0d56) left deltax(0d18) visible
+    up deltay(0d2) right deltax(0d118) visible
+    up deltay(0d106) left deltax(0d12) visible
+    up deltay(0d56) right deltax(0d18) visible
+    down deltay(0d106) right deltax(0d12) visible
+    down deltay(0d2) left deltax(0d118) visible
+    up deltay(0d2) right deltax(0d118) visible
+    down deltay(0d56) left deltax(0d18) visible end
+    y(0d593) next(point)                      // frame 64: y (start point, vertex V1)
+    x(0d452) show next(vector)                       // frame 64: x (start point, vertex V1)
+    down deltay(0d56) right deltax(0d0) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d106) right deltax(0d0) visible
+    up deltay(0d0) right deltax(0d120) visible
+    up deltay(0d56) right deltax(0d0) visible
+    up deltay(0d0) left deltax(0d120) visible
+    down deltay(0d106) right deltax(0d0) visible
+    down deltay(0d56) right deltax(0d0) visible
+    up deltay(0d0) right deltax(0d120) visible
+    up deltay(0d106) right deltax(0d0) visible
+    up deltay(0d56) right deltax(0d0) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d0) left deltax(0d120) visible
+    up deltay(0d0) right deltax(0d120) visible
+    down deltay(0d56) right deltax(0d0) visible end
+    y(0d594) next(point)                      // frame 65: y (start point, vertex V1)
+    x(0d450) show next(vector)                       // frame 65: x (start point, vertex V1)
+    down deltay(0d56) right deltax(0d18) visible
+    down deltay(0d106) left deltax(0d12) visible
+    up deltay(0d106) right deltax(0d12) visible
+    down deltay(0d2) right deltax(0d118) visible
+    up deltay(0d56) left deltax(0d18) visible
+    up deltay(0d2) left deltax(0d118) visible
+    down deltay(0d106) left deltax(0d12) visible
+    down deltay(0d56) right deltax(0d18) visible
+    down deltay(0d2) right deltax(0d118) visible
+    up deltay(0d106) right deltax(0d12) visible
+    up deltay(0d56) left deltax(0d18) visible
+    down deltay(0d106) left deltax(0d12) visible
+    up deltay(0d2) left deltax(0d118) visible
+    down deltay(0d2) right deltax(0d118) visible
+    down deltay(0d56) right deltax(0d18) visible end
+    y(0d595) next(point)                      // frame 66: y (start point, vertex V1)
+    x(0d449) show next(vector)                       // frame 66: x (start point, vertex V1)
+    down deltay(0d54) right deltax(0d35) visible
+    down deltay(0d107) left deltax(0d22) visible
+    up deltay(0d107) right deltax(0d22) visible
+    down deltay(0d5) right deltax(0d113) visible
+    up deltay(0d54) left deltax(0d35) visible
+    up deltay(0d5) left deltax(0d113) visible
+    down deltay(0d107) left deltax(0d22) visible
+    down deltay(0d54) right deltax(0d35) visible
+    down deltay(0d5) right deltax(0d113) visible
+    up deltay(0d107) right deltax(0d22) visible
+    up deltay(0d54) left deltax(0d35) visible
+    down deltay(0d107) left deltax(0d22) visible
+    up deltay(0d5) left deltax(0d113) visible
+    down deltay(0d5) right deltax(0d113) visible
+    down deltay(0d54) right deltax(0d35) visible end
+    y(0d596) next(point)                      // frame 67: y (start point, vertex V1)
+    x(0d450) show next(vector)                       // frame 67: x (start point, vertex V1)
+    down deltay(0d51) right deltax(0d51) visible
+    down deltay(0d109) left deltax(0d31) visible
+    up deltay(0d109) right deltax(0d31) visible
+    down deltay(0d8) right deltax(0d104) visible
+    up deltay(0d51) left deltax(0d51) visible
+    up deltay(0d8) left deltax(0d104) visible
+    down deltay(0d109) left deltax(0d31) visible
+    down deltay(0d51) right deltax(0d51) visible
+    down deltay(0d8) right deltax(0d104) visible
+    up deltay(0d109) right deltax(0d31) visible
+    up deltay(0d51) left deltax(0d51) visible
+    down deltay(0d109) left deltax(0d31) visible
+    up deltay(0d8) left deltax(0d104) visible
+    down deltay(0d8) right deltax(0d104) visible
+    down deltay(0d51) right deltax(0d51) visible end
+    y(0d596) next(point)                      // frame 68: y (start point, vertex V1)
+    x(0d452) show next(vector)                       // frame 68: x (start point, vertex V1)
+    down deltay(0d47) right deltax(0d66) visible
+    down deltay(0d110) left deltax(0d38) visible
+    up deltay(0d110) right deltax(0d38) visible
+    down deltay(0d11) right deltax(0d93) visible
+    up deltay(0d47) left deltax(0d67) visible
+    up deltay(0d11) left deltax(0d92) visible
+    down deltay(0d110) left deltax(0d39) visible
+    down deltay(0d47) right deltax(0d67) visible
+    down deltay(0d11) right deltax(0d92) visible
+    up deltay(0d110) right deltax(0d39) visible
+    up deltay(0d47) left deltax(0d67) visible
+    down deltay(0d110) left deltax(0d38) visible
+    up deltay(0d11) left deltax(0d93) visible
+    down deltay(0d11) right deltax(0d93) visible
+    down deltay(0d47) right deltax(0d66) visible end
+    y(0d597) next(point)                      // frame 69: y (start point, vertex V1)
+    x(0d453) show next(vector)                       // frame 69: x (start point, vertex V1)
+    down deltay(0d42) right deltax(0d81) visible
+    down deltay(0d111) left deltax(0d42) visible
+    up deltay(0d111) right deltax(0d42) visible
+    down deltay(0d17) right deltax(0d78) visible
+    up deltay(0d42) left deltax(0d80) visible
+    up deltay(0d17) left deltax(0d79) visible
+    down deltay(0d111) left deltax(0d41) visible
+    down deltay(0d42) right deltax(0d80) visible
+    down deltay(0d17) right deltax(0d79) visible
+    up deltay(0d111) right deltax(0d41) visible
+    up deltay(0d42) left deltax(0d80) visible
+    down deltay(0d111) left deltax(0d42) visible
+    up deltay(0d17) left deltax(0d78) visible
+    down deltay(0d17) right deltax(0d78) visible
+    down deltay(0d42) right deltax(0d81) visible end
+    y(0d597) next(point)                      // frame 70: y (start point, vertex V1)
+    x(0d455) show next(vector)                       // frame 70: x (start point, vertex V1)
+    down deltay(0d35) right deltax(0d93) visible
+    down deltay(0d113) left deltax(0d42) visible
+    up deltay(0d113) right deltax(0d42) visible
+    down deltay(0d23) right deltax(0d63) visible
+    up deltay(0d36) left deltax(0d93) visible
+    up deltay(0d22) left deltax(0d63) visible
+    down deltay(0d112) left deltax(0d42) visible
+    down deltay(0d36) right deltax(0d93) visible
+    down deltay(0d22) right deltax(0d63) visible
+    up deltay(0d112) right deltax(0d42) visible
+    up deltay(0d36) left deltax(0d93) visible
+    down deltay(0d113) left deltax(0d42) visible
+    up deltay(0d23) left deltax(0d63) visible
+    down deltay(0d23) right deltax(0d63) visible
+    down deltay(0d35) right deltax(0d93) visible end
+    y(0d598) next(point)                      // frame 71: y (start point, vertex V1)
+    x(0d456) show next(vector)                       // frame 71: x (start point, vertex V1)
+    down deltay(0d29) right deltax(0d103) visible
+    down deltay(0d113) left deltax(0d39) visible
+    up deltay(0d113) right deltax(0d39) visible
+    down deltay(0d30) right deltax(0d48) visible
+    up deltay(0d29) left deltax(0d103) visible
+    up deltay(0d30) left deltax(0d48) visible
+    down deltay(0d113) left deltax(0d39) visible
+    down deltay(0d29) right deltax(0d103) visible
+    down deltay(0d30) right deltax(0d48) visible
+    up deltay(0d113) right deltax(0d39) visible
+    up deltay(0d29) left deltax(0d103) visible
+    down deltay(0d113) left deltax(0d39) visible
+    up deltay(0d30) left deltax(0d48) visible
+    down deltay(0d30) right deltax(0d48) visible
+    down deltay(0d29) right deltax(0d103) visible end
+    y(0d598) next(point)                      // frame 72: y (start point, vertex V1)
+    x(0d457) show next(vector)                       // frame 72: x (start point, vertex V1)
+    down deltay(0d22) right deltax(0d110) visible
+    down deltay(0d112) left deltax(0d32) visible
+    up deltay(0d112) right deltax(0d32) visible
+    down deltay(0d38) right deltax(0d33) visible
+    up deltay(0d22) left deltax(0d111) visible
+    up deltay(0d38) left deltax(0d32) visible
+    down deltay(0d112) left deltax(0d33) visible
+    down deltay(0d22) right deltax(0d111) visible
+    down deltay(0d38) right deltax(0d32) visible
+    up deltay(0d112) right deltax(0d33) visible
+    up deltay(0d22) left deltax(0d111) visible
+    down deltay(0d112) left deltax(0d32) visible
+    up deltay(0d38) left deltax(0d33) visible
+    down deltay(0d38) right deltax(0d33) visible
+    down deltay(0d22) right deltax(0d110) visible end
+    y(0d597) next(point)                      // frame 73: y (start point, vertex V1)
+    x(0d456) show next(vector)                       // frame 73: x (start point, vertex V1)
+    down deltay(0d13) right deltax(0d116) visible
+    down deltay(0d110) left deltax(0d22) visible
+    up deltay(0d110) right deltax(0d22) visible
+    down deltay(0d48) right deltax(0d19) visible
+    up deltay(0d14) left deltax(0d117) visible
+    up deltay(0d47) left deltax(0d18) visible
+    down deltay(0d109) left deltax(0d23) visible
+    down deltay(0d14) right deltax(0d117) visible
+    down deltay(0d47) right deltax(0d18) visible
+    up deltay(0d109) right deltax(0d23) visible
+    up deltay(0d14) left deltax(0d117) visible
+    down deltay(0d110) left deltax(0d22) visible
+    up deltay(0d48) left deltax(0d19) visible
+    down deltay(0d48) right deltax(0d19) visible
+    down deltay(0d13) right deltax(0d116) visible end
+    y(0d596) next(point)                      // frame 74: y (start point, vertex V1)
+    x(0d454) show next(vector)                       // frame 74: x (start point, vertex V1)
+    down deltay(0d6) right deltax(0d119) visible
+    down deltay(0d105) left deltax(0d9) visible
+    up deltay(0d105) right deltax(0d9) visible
+    down deltay(0d56) right deltax(0d7) visible
+    up deltay(0d5) left deltax(0d120) visible
+    up deltay(0d57) left deltax(0d6) visible
+    down deltay(0d106) left deltax(0d10) visible
+    down deltay(0d5) right deltax(0d120) visible
+    down deltay(0d57) right deltax(0d6) visible
+    up deltay(0d106) right deltax(0d10) visible
+    up deltay(0d5) left deltax(0d120) visible
+    down deltay(0d105) left deltax(0d9) visible
+    up deltay(0d56) left deltax(0d7) visible
+    down deltay(0d56) right deltax(0d7) visible
+    down deltay(0d6) right deltax(0d119) visible end
+    y(0d594) next(point)                      // frame 75: y (start point, vertex V1)
+    x(0d451) show next(vector)                       // frame 75: x (start point, vertex V1)
+    up deltay(0d3) right deltax(0d120) visible
+    down deltay(0d100) right deltax(0d5) visible
+    up deltay(0d100) left deltax(0d5) visible
+    down deltay(0d67) left deltax(0d3) visible
+    down deltay(0d3) left deltax(0d120) visible
+    up deltay(0d67) right deltax(0d3) visible
+    down deltay(0d100) right deltax(0d5) visible
+    up deltay(0d3) right deltax(0d120) visible
+    down deltay(0d67) left deltax(0d3) visible
+    up deltay(0d100) left deltax(0d5) visible
+    down deltay(0d3) left deltax(0d120) visible
+    down deltay(0d100) right deltax(0d5) visible
+    up deltay(0d67) right deltax(0d3) visible
+    down deltay(0d67) left deltax(0d3) visible
+    up deltay(0d3) right deltax(0d120) visible end
+    y(0d591) next(point)                      // frame 76: y (start point, vertex V1)
+    x(0d447) show next(vector)                       // frame 76: x (start point, vertex V1)
+    up deltay(0d11) right deltax(0d118) visible
+    down deltay(0d92) right deltax(0d21) visible
+    up deltay(0d92) left deltax(0d21) visible
+    down deltay(0d77) left deltax(0d9) visible
+    down deltay(0d11) left deltax(0d118) visible
+    up deltay(0d77) right deltax(0d9) visible
+    down deltay(0d92) right deltax(0d21) visible
+    up deltay(0d11) right deltax(0d118) visible
+    down deltay(0d77) left deltax(0d9) visible
+    up deltay(0d92) left deltax(0d21) visible
+    down deltay(0d11) left deltax(0d118) visible
+    down deltay(0d92) right deltax(0d21) visible
+    up deltay(0d77) right deltax(0d9) visible
+    down deltay(0d77) left deltax(0d9) visible
+    up deltay(0d11) right deltax(0d118) visible end
+    y(0d586) next(point)                      // frame 77: y (start point, vertex V1)
+    x(0d442) show next(vector)                       // frame 77: x (start point, vertex V1)
+    up deltay(0d19) right deltax(0d113) visible
+    down deltay(0d81) right deltax(0d39) visible
+    up deltay(0d81) left deltax(0d39) visible
+    down deltay(0d86) left deltax(0d12) visible
+    down deltay(0d19) left deltax(0d113) visible
+    up deltay(0d86) right deltax(0d12) visible
+    down deltay(0d81) right deltax(0d39) visible
+    up deltay(0d19) right deltax(0d113) visible
+    down deltay(0d86) left deltax(0d12) visible
+    up deltay(0d81) left deltax(0d39) visible
+    down deltay(0d19) left deltax(0d113) visible
+    down deltay(0d81) right deltax(0d39) visible
+    up deltay(0d86) right deltax(0d12) visible
+    down deltay(0d86) left deltax(0d12) visible
+    up deltay(0d19) right deltax(0d113) visible end
+    y(0d581) next(point)                      // frame 78: y (start point, vertex V1)
+    x(0d437) show next(vector)                       // frame 78: x (start point, vertex V1)
+    up deltay(0d26) right deltax(0d106) visible
+    down deltay(0d69) right deltax(0d55) visible
+    up deltay(0d69) left deltax(0d55) visible
+    down deltay(0d94) left deltax(0d11) visible
+    down deltay(0d27) left deltax(0d106) visible
+    up deltay(0d95) right deltax(0d11) visible
+    down deltay(0d70) right deltax(0d55) visible
+    up deltay(0d27) right deltax(0d106) visible
+    down deltay(0d95) left deltax(0d11) visible
+    up deltay(0d70) left deltax(0d55) visible
+    down deltay(0d27) left deltax(0d106) visible
+    down deltay(0d69) right deltax(0d55) visible
+    up deltay(0d94) right deltax(0d11) visible
+    down deltay(0d94) left deltax(0d11) visible
+    up deltay(0d26) right deltax(0d106) visible end
+    y(0d573) next(point)                      // frame 79: y (start point, vertex V1)
+    x(0d432) show next(vector)                       // frame 79: x (start point, vertex V1)
+    up deltay(0d34) right deltax(0d96) visible
+    down deltay(0d55) right deltax(0d71) visible
+    up deltay(0d55) left deltax(0d71) visible
+    down deltay(0d101) left deltax(0d7) visible
+    down deltay(0d34) left deltax(0d96) visible
+    up deltay(0d101) right deltax(0d7) visible
+    down deltay(0d55) right deltax(0d71) visible
+    up deltay(0d34) right deltax(0d96) visible
+    down deltay(0d101) left deltax(0d7) visible
+    up deltay(0d55) left deltax(0d71) visible
+    down deltay(0d34) left deltax(0d96) visible
+    down deltay(0d55) right deltax(0d71) visible
+    up deltay(0d101) right deltax(0d7) visible
+    down deltay(0d101) left deltax(0d7) visible
+    up deltay(0d34) right deltax(0d96) visible end
+    y(0d565) next(point)                      // frame 80: y (start point, vertex V1)
+    x(0d427) show next(vector)                       // frame 80: x (start point, vertex V1)
+    up deltay(0d40) right deltax(0d85) visible
+    down deltay(0d40) right deltax(0d85) visible
+    up deltay(0d40) left deltax(0d85) visible
+    down deltay(0d106) right deltax(0d0) visible
+    down deltay(0d40) left deltax(0d85) visible
+    up deltay(0d106) right deltax(0d0) visible
+    down deltay(0d40) right deltax(0d85) visible
+    up deltay(0d40) right deltax(0d85) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d40) left deltax(0d85) visible
+    down deltay(0d40) left deltax(0d85) visible
+    down deltay(0d40) right deltax(0d85) visible
+    up deltay(0d106) right deltax(0d0) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d40) right deltax(0d85) visible end
+    y(0d555) next(point)                      // frame 81: y (start point, vertex V1)
+    x(0d424) show next(vector)                       // frame 81: x (start point, vertex V1)
+    up deltay(0d45) right deltax(0d71) visible
+    down deltay(0d23) right deltax(0d96) visible
+    up deltay(0d23) left deltax(0d96) visible
+    down deltay(0d108) right deltax(0d10) visible
+    down deltay(0d45) left deltax(0d72) visible
+    up deltay(0d108) left deltax(0d9) visible
+    down deltay(0d23) right deltax(0d95) visible
+    up deltay(0d45) right deltax(0d72) visible
+    down deltay(0d108) right deltax(0d9) visible
+    up deltay(0d23) left deltax(0d95) visible
+    down deltay(0d45) left deltax(0d72) visible
+    down deltay(0d23) right deltax(0d96) visible
+    up deltay(0d108) left deltax(0d10) visible
+    down deltay(0d108) right deltax(0d10) visible
+    up deltay(0d45) right deltax(0d71) visible end
+    y(0d544) next(point)                      // frame 82: y (start point, vertex V1)
+    x(0d421) show next(vector)                       // frame 82: x (start point, vertex V1)
+    up deltay(0d50) right deltax(0d57) visible
+    down deltay(0d5) right deltax(0d104) visible
+    up deltay(0d5) left deltax(0d104) visible
+    down deltay(0d109) right deltax(0d21) visible
+    down deltay(0d50) left deltax(0d57) visible
+    up deltay(0d109) left deltax(0d21) visible
+    down deltay(0d5) right deltax(0d104) visible
+    up deltay(0d50) right deltax(0d57) visible
+    down deltay(0d109) right deltax(0d21) visible
+    up deltay(0d5) left deltax(0d104) visible
+    down deltay(0d50) left deltax(0d57) visible
+    down deltay(0d5) right deltax(0d104) visible
+    up deltay(0d109) left deltax(0d21) visible
+    down deltay(0d109) right deltax(0d21) visible
+    up deltay(0d50) right deltax(0d57) visible end
+    y(0d533) next(point)                      // frame 83: y (start point, vertex V1)
+    x(0d421) show next(vector)                       // frame 83: x (start point, vertex V1)
+    up deltay(0d53) right deltax(0d41) visible
+    up deltay(0d12) right deltax(0d108) visible
+    down deltay(0d12) left deltax(0d108) visible
+    down deltay(0d107) right deltax(0d33) visible
+    down deltay(0d53) left deltax(0d41) visible
+    up deltay(0d107) left deltax(0d33) visible
+    up deltay(0d12) right deltax(0d108) visible
+    up deltay(0d53) right deltax(0d41) visible
+    down deltay(0d107) right deltax(0d33) visible
+    down deltay(0d12) left deltax(0d108) visible
+    down deltay(0d53) left deltax(0d41) visible
+    up deltay(0d12) right deltax(0d108) visible
+    up deltay(0d107) left deltax(0d33) visible
+    down deltay(0d107) right deltax(0d33) visible
+    up deltay(0d53) right deltax(0d41) visible end
+    y(0d520) next(point)                      // frame 84: y (start point, vertex V1)
+    x(0d423) show next(vector)                       // frame 84: x (start point, vertex V1)
+    up deltay(0d55) right deltax(0d24) visible
+    up deltay(0d31) right deltax(0d109) visible
+    down deltay(0d31) left deltax(0d109) visible
+    down deltay(0d102) right deltax(0d45) visible
+    down deltay(0d55) left deltax(0d24) visible
+    up deltay(0d102) left deltax(0d45) visible
+    up deltay(0d31) right deltax(0d109) visible
+    up deltay(0d55) right deltax(0d24) visible
+    down deltay(0d102) right deltax(0d45) visible
+    down deltay(0d31) left deltax(0d109) visible
+    down deltay(0d55) left deltax(0d24) visible
+    up deltay(0d31) right deltax(0d109) visible
+    up deltay(0d102) left deltax(0d45) visible
+    down deltay(0d102) right deltax(0d45) visible
+    up deltay(0d55) right deltax(0d24) visible end
+    y(0d507) next(point)                      // frame 85: y (start point, vertex V1)
+    x(0d428) show next(vector)                       // frame 85: x (start point, vertex V1)
+    up deltay(0d57) right deltax(0d6) visible
+    up deltay(0d47) right deltax(0d106) visible
+    down deltay(0d47) left deltax(0d106) visible
+    down deltay(0d95) right deltax(0d56) visible
+    down deltay(0d56) left deltax(0d6) visible
+    up deltay(0d94) left deltax(0d56) visible
+    up deltay(0d48) right deltax(0d106) visible
+    up deltay(0d56) right deltax(0d6) visible
+    down deltay(0d94) right deltax(0d56) visible
+    down deltay(0d48) left deltax(0d106) visible
+    down deltay(0d56) left deltax(0d6) visible
+    up deltay(0d47) right deltax(0d106) visible
+    up deltay(0d95) left deltax(0d56) visible
+    down deltay(0d95) right deltax(0d56) visible
+    up deltay(0d57) right deltax(0d6) visible end
+    y(0d495) next(point)                      // frame 86: y (start point, vertex V1)
+    x(0d435) show next(vector)                       // frame 86: x (start point, vertex V1)
+    up deltay(0d56) left deltax(0d12) visible
+    up deltay(0d63) right deltax(0d100) visible
+    down deltay(0d63) left deltax(0d100) visible
+    down deltay(0d85) right deltax(0d67) visible
+    down deltay(0d56) right deltax(0d11) visible
+    up deltay(0d85) left deltax(0d66) visible
+    up deltay(0d63) right deltax(0d99) visible
+    up deltay(0d56) left deltax(0d11) visible
+    down deltay(0d85) right deltax(0d66) visible
+    down deltay(0d63) left deltax(0d99) visible
+    down deltay(0d56) right deltax(0d11) visible
+    up deltay(0d63) right deltax(0d100) visible
+    up deltay(0d85) left deltax(0d67) visible
+    down deltay(0d85) right deltax(0d67) visible
+    up deltay(0d56) left deltax(0d12) visible end
+    y(0d482) next(point)                      // frame 87: y (start point, vertex V1)
+    x(0d445) show next(vector)                       // frame 87: x (start point, vertex V1)
+    up deltay(0d55) left deltax(0d29) visible
+    up deltay(0d78) right deltax(0d89) visible
+    down deltay(0d78) left deltax(0d89) visible
+    down deltay(0d73) right deltax(0d73) visible
+    down deltay(0d55) right deltax(0d30) visible
+    up deltay(0d73) left deltax(0d74) visible
+    up deltay(0d78) right deltax(0d90) visible
+    up deltay(0d55) left deltax(0d30) visible
+    down deltay(0d73) right deltax(0d74) visible
+    down deltay(0d78) left deltax(0d90) visible
+    down deltay(0d55) right deltax(0d30) visible
+    up deltay(0d78) right deltax(0d89) visible
+    up deltay(0d73) left deltax(0d73) visible
+    down deltay(0d73) right deltax(0d73) visible
+    up deltay(0d55) left deltax(0d29) visible end
+    y(0d471) next(point)                      // frame 88: y (start point, vertex V1)
+    x(0d457) show next(vector)                       // frame 88: x (start point, vertex V1)
+    up deltay(0d52) left deltax(0d46) visible
+    up deltay(0d90) right deltax(0d78) visible
+    down deltay(0d90) left deltax(0d78) visible
+    down deltay(0d60) right deltax(0d78) visible
+    down deltay(0d52) right deltax(0d46) visible
+    up deltay(0d60) left deltax(0d78) visible
+    up deltay(0d90) right deltax(0d78) visible
+    up deltay(0d52) left deltax(0d46) visible
+    down deltay(0d60) right deltax(0d78) visible
+    down deltay(0d90) left deltax(0d78) visible
+    down deltay(0d52) right deltax(0d46) visible
+    up deltay(0d90) right deltax(0d78) visible
+    up deltay(0d60) left deltax(0d78) visible
+    down deltay(0d60) right deltax(0d78) visible
+    up deltay(0d52) left deltax(0d46) visible end
+    y(0d460) next(point)                      // frame 89: y (start point, vertex V1)
+    x(0d470) show next(vector)                       // frame 89: x (start point, vertex V1)
+    up deltay(0d48) left deltax(0d61) visible
+    up deltay(0d101) right deltax(0d65) visible
+    down deltay(0d101) left deltax(0d65) visible
+    down deltay(0d44) right deltax(0d79) visible
+    down deltay(0d49) right deltax(0d62) visible
+    up deltay(0d45) left deltax(0d80) visible
+    up deltay(0d100) right deltax(0d66) visible
+    up deltay(0d49) left deltax(0d62) visible
+    down deltay(0d45) right deltax(0d80) visible
+    down deltay(0d100) left deltax(0d66) visible
+    down deltay(0d49) right deltax(0d62) visible
+    up deltay(0d101) right deltax(0d65) visible
+    up deltay(0d44) left deltax(0d79) visible
+    down deltay(0d44) right deltax(0d79) visible
+    up deltay(0d48) left deltax(0d61) visible end
+    y(0d451) next(point)                      // frame 90: y (start point, vertex V1)
+    x(0d486) show next(vector)                       // frame 90: x (start point, vertex V1)
+    up deltay(0d43) left deltax(0d76) visible
+    up deltay(0d108) right deltax(0d51) visible
+    down deltay(0d108) left deltax(0d51) visible
+    down deltay(0d29) right deltax(0d77) visible
+    down deltay(0d43) right deltax(0d76) visible
+    up deltay(0d29) left deltax(0d77) visible
+    up deltay(0d108) right deltax(0d51) visible
+    up deltay(0d43) left deltax(0d76) visible
+    down deltay(0d29) right deltax(0d77) visible
+    down deltay(0d108) left deltax(0d51) visible
+    down deltay(0d43) right deltax(0d76) visible
+    up deltay(0d108) right deltax(0d51) visible
+    up deltay(0d29) left deltax(0d77) visible
+    down deltay(0d29) right deltax(0d77) visible
+    up deltay(0d43) left deltax(0d76) visible end
+    y(0d443) next(point)                      // frame 91: y (start point, vertex V1)
+    x(0d502) show next(vector)                       // frame 91: x (start point, vertex V1)
+    up deltay(0d38) left deltax(0d89) visible
+    up deltay(0d113) right deltax(0d38) visible
+    down deltay(0d113) left deltax(0d38) visible
+    down deltay(0d13) right deltax(0d71) visible
+    down deltay(0d38) right deltax(0d89) visible
+    up deltay(0d13) left deltax(0d71) visible
+    up deltay(0d113) right deltax(0d38) visible
+    up deltay(0d38) left deltax(0d89) visible
+    down deltay(0d13) right deltax(0d71) visible
+    down deltay(0d113) left deltax(0d38) visible
+    down deltay(0d38) right deltax(0d89) visible
+    up deltay(0d113) right deltax(0d38) visible
+    up deltay(0d13) left deltax(0d71) visible
+    down deltay(0d13) right deltax(0d71) visible
+    up deltay(0d38) left deltax(0d89) visible end
+    y(0d437) next(point)                      // frame 92: y (start point, vertex V1)
+    x(0d518) show next(vector)                       // frame 92: x (start point, vertex V1)
+    up deltay(0d31) left deltax(0d99) visible
+    up deltay(0d116) right deltax(0d25) visible
+    down deltay(0d116) left deltax(0d25) visible
+    up deltay(0d3) right deltax(0d61) visible
+    down deltay(0d31) right deltax(0d100) visible
+    down deltay(0d3) left deltax(0d62) visible
+    up deltay(0d116) right deltax(0d26) visible
+    up deltay(0d31) left deltax(0d100) visible
+    up deltay(0d3) right deltax(0d62) visible
+    down deltay(0d116) left deltax(0d26) visible
+    down deltay(0d31) right deltax(0d100) visible
+    up deltay(0d116) right deltax(0d25) visible
+    down deltay(0d3) left deltax(0d61) visible
+    up deltay(0d3) right deltax(0d61) visible
+    up deltay(0d31) left deltax(0d99) visible end
+    y(0d433) next(point)                      // frame 93: y (start point, vertex V1)
+    x(0d534) show next(vector)                       // frame 93: x (start point, vertex V1)
+    up deltay(0d24) left deltax(0d108) visible
+    up deltay(0d116) right deltax(0d15) visible
+    down deltay(0d116) left deltax(0d15) visible
+    up deltay(0d18) right deltax(0d49) visible
+    down deltay(0d24) right deltax(0d108) visible
+    down deltay(0d18) left deltax(0d49) visible
+    up deltay(0d116) right deltax(0d15) visible
+    up deltay(0d24) left deltax(0d108) visible
+    up deltay(0d18) right deltax(0d49) visible
+    down deltay(0d116) left deltax(0d15) visible
+    down deltay(0d24) right deltax(0d108) visible
+    up deltay(0d116) right deltax(0d15) visible
+    down deltay(0d18) left deltax(0d49) visible
+    up deltay(0d18) right deltax(0d49) visible
+    up deltay(0d24) left deltax(0d108) visible end
+    y(0d431) next(point)                      // frame 94: y (start point, vertex V1)
+    x(0d549) show next(vector)                       // frame 94: x (start point, vertex V1)
+    up deltay(0d16) left deltax(0d115) visible
+    up deltay(0d114) right deltax(0d7) visible
+    down deltay(0d114) left deltax(0d7) visible
+    up deltay(0d32) right deltax(0d34) visible
+    down deltay(0d16) right deltax(0d115) visible
+    down deltay(0d32) left deltax(0d34) visible
+    up deltay(0d114) right deltax(0d7) visible
+    up deltay(0d16) left deltax(0d115) visible
+    up deltay(0d32) right deltax(0d34) visible
+    down deltay(0d114) left deltax(0d7) visible
+    down deltay(0d16) right deltax(0d115) visible
+    up deltay(0d114) right deltax(0d7) visible
+    down deltay(0d32) left deltax(0d34) visible
+    up deltay(0d32) right deltax(0d34) visible
+    up deltay(0d16) left deltax(0d115) visible end
+    y(0d430) next(point)                      // frame 95: y (start point, vertex V1)
+    x(0d562) show next(vector)                       // frame 95: x (start point, vertex V1)
+    up deltay(0d8) left deltax(0d119) visible
+    up deltay(0d111) right deltax(0d2) visible
+    down deltay(0d111) left deltax(0d2) visible
+    up deltay(0d45) right deltax(0d18) visible
+    down deltay(0d8) right deltax(0d118) visible
+    down deltay(0d45) left deltax(0d17) visible
+    up deltay(0d111) right deltax(0d1) visible
+    up deltay(0d8) left deltax(0d118) visible
+    up deltay(0d45) right deltax(0d17) visible
+    down deltay(0d111) left deltax(0d1) visible
+    down deltay(0d8) right deltax(0d118) visible
+    up deltay(0d111) right deltax(0d2) visible
+    down deltay(0d45) left deltax(0d18) visible
+    up deltay(0d45) right deltax(0d18) visible
+    up deltay(0d8) left deltax(0d119) visible end
+    y(0d431) next(point)                      // frame 96: y (start point, vertex V1)
+    x(0d572) show next(vector)                       // frame 96: x (start point, vertex V1)
+    up deltay(0d0) left deltax(0d120) visible
+    up deltay(0d106) right deltax(0d0) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d56) right deltax(0d0) visible
+    up deltay(0d0) right deltax(0d120) visible
+    down deltay(0d56) right deltax(0d0) visible
+    up deltay(0d106) right deltax(0d0) visible
+    up deltay(0d0) left deltax(0d120) visible
+    up deltay(0d56) right deltax(0d0) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d0) right deltax(0d120) visible
+    up deltay(0d106) right deltax(0d0) visible
+    down deltay(0d56) right deltax(0d0) visible
+    up deltay(0d56) right deltax(0d0) visible
+    up deltay(0d0) left deltax(0d120) visible end
+    y(0d433) next(point)                      // frame 97: y (start point, vertex V1)
+    x(0d579) show next(vector)                       // frame 97: x (start point, vertex V1)
+    down deltay(0d8) left deltax(0d118) visible
+    up deltay(0d100) right deltax(0d1) visible
+    down deltay(0d100) left deltax(0d1) visible
+    up deltay(0d66) left deltax(0d18) visible
+    up deltay(0d8) right deltax(0d119) visible
+    down deltay(0d66) right deltax(0d17) visible
+    up deltay(0d100) right deltax(0d2) visible
+    down deltay(0d8) left deltax(0d119) visible
+    up deltay(0d66) left deltax(0d17) visible
+    down deltay(0d100) left deltax(0d2) visible
+    up deltay(0d8) right deltax(0d119) visible
+    up deltay(0d100) right deltax(0d1) visible
+    down deltay(0d66) right deltax(0d18) visible
+    up deltay(0d66) left deltax(0d18) visible
+    down deltay(0d8) left deltax(0d118) visible end
+    y(0d437) next(point)                      // frame 98: y (start point, vertex V1)
+    x(0d583) show next(vector)                       // frame 98: x (start point, vertex V1)
+    down deltay(0d17) left deltax(0d115) visible
+    up deltay(0d94) right deltax(0d7) visible
+    down deltay(0d94) left deltax(0d7) visible
+    up deltay(0d74) left deltax(0d34) visible
+    up deltay(0d16) right deltax(0d115) visible
+    down deltay(0d73) right deltax(0d34) visible
+    up deltay(0d93) right deltax(0d7) visible
+    down deltay(0d16) left deltax(0d115) visible
+    up deltay(0d73) left deltax(0d34) visible
+    down deltay(0d93) left deltax(0d7) visible
+    up deltay(0d16) right deltax(0d115) visible
+    up deltay(0d94) right deltax(0d7) visible
+    down deltay(0d74) right deltax(0d34) visible
+    up deltay(0d74) left deltax(0d34) visible
+    down deltay(0d17) left deltax(0d115) visible end
+    y(0d441) next(point)                      // frame 99: y (start point, vertex V1)
+    x(0d583) show next(vector)                       // frame 99: x (start point, vertex V1)
+    down deltay(0d24) left deltax(0d108) visible
+    up deltay(0d87) right deltax(0d15) visible
+    down deltay(0d87) left deltax(0d15) visible
+    up deltay(0d79) left deltax(0d49) visible
+    up deltay(0d24) right deltax(0d108) visible
+    down deltay(0d79) right deltax(0d49) visible
+    up deltay(0d87) right deltax(0d15) visible
+    down deltay(0d24) left deltax(0d108) visible
+    up deltay(0d79) left deltax(0d49) visible
+    down deltay(0d87) left deltax(0d15) visible
+    up deltay(0d24) right deltax(0d108) visible
+    up deltay(0d87) right deltax(0d15) visible
+    down deltay(0d79) right deltax(0d49) visible
+    up deltay(0d79) left deltax(0d49) visible
+    down deltay(0d24) left deltax(0d108) visible end
+    y(0d446) next(point)                      // frame 100: y (start point, vertex V1)
+    x(0d580) show next(vector)                       // frame 100: x (start point, vertex V1)
+    down deltay(0d32) left deltax(0d100) visible
+    up deltay(0d80) right deltax(0d26) visible
+    down deltay(0d80) left deltax(0d26) visible
+    up deltay(0d84) left deltax(0d61) visible
+    up deltay(0d32) right deltax(0d99) visible
+    down deltay(0d84) right deltax(0d62) visible
+    up deltay(0d80) right deltax(0d25) visible
+    down deltay(0d32) left deltax(0d99) visible
+    up deltay(0d84) left deltax(0d62) visible
+    down deltay(0d80) left deltax(0d25) visible
+    up deltay(0d32) right deltax(0d99) visible
+    up deltay(0d80) right deltax(0d26) visible
+    down deltay(0d84) right deltax(0d61) visible
+    up deltay(0d84) left deltax(0d61) visible
+    down deltay(0d32) left deltax(0d100) visible end
+    y(0d451) next(point)                      // frame 101: y (start point, vertex V1)
+    x(0d573) show next(vector)                       // frame 101: x (start point, vertex V1)
+    down deltay(0d38) left deltax(0d89) visible
+    up deltay(0d74) right deltax(0d38) visible
+    down deltay(0d74) left deltax(0d38) visible
+    up deltay(0d87) left deltax(0d71) visible
+    up deltay(0d37) right deltax(0d89) visible
+    down deltay(0d86) right deltax(0d71) visible
+    up deltay(0d73) right deltax(0d38) visible
+    down deltay(0d37) left deltax(0d89) visible
+    up deltay(0d86) left deltax(0d71) visible
+    down deltay(0d73) left deltax(0d38) visible
+    up deltay(0d37) right deltax(0d89) visible
+    up deltay(0d74) right deltax(0d38) visible
+    down deltay(0d87) right deltax(0d71) visible
+    up deltay(0d87) left deltax(0d71) visible
+    down deltay(0d38) left deltax(0d89) visible end
+    y(0d455) next(point)                      // frame 102: y (start point, vertex V1)
+    x(0d563) show next(vector)                       // frame 102: x (start point, vertex V1)
+    down deltay(0d43) left deltax(0d76) visible
+    up deltay(0d68) right deltax(0d51) visible
+    down deltay(0d68) left deltax(0d51) visible
+    up deltay(0d88) left deltax(0d77) visible
+    up deltay(0d44) right deltax(0d76) visible
+    down deltay(0d89) right deltax(0d77) visible
+    up deltay(0d69) right deltax(0d51) visible
+    down deltay(0d44) left deltax(0d76) visible
+    up deltay(0d89) left deltax(0d77) visible
+    down deltay(0d69) left deltax(0d51) visible
+    up deltay(0d44) right deltax(0d76) visible
+    up deltay(0d68) right deltax(0d51) visible
+    down deltay(0d88) right deltax(0d77) visible
+    up deltay(0d88) left deltax(0d77) visible
+    down deltay(0d43) left deltax(0d76) visible end
+    y(0d460) next(point)                      // frame 103: y (start point, vertex V1)
+    x(0d550) show next(vector)                       // frame 103: x (start point, vertex V1)
+    down deltay(0d49) left deltax(0d62) visible
+    up deltay(0d64) right deltax(0d66) visible
+    down deltay(0d64) left deltax(0d66) visible
+    up deltay(0d90) left deltax(0d79) visible
+    up deltay(0d48) right deltax(0d61) visible
+    down deltay(0d89) right deltax(0d80) visible
+    up deltay(0d63) right deltax(0d65) visible
+    down deltay(0d48) left deltax(0d61) visible
+    up deltay(0d89) left deltax(0d80) visible
+    down deltay(0d63) left deltax(0d65) visible
+    up deltay(0d48) right deltax(0d61) visible
+    up deltay(0d64) right deltax(0d66) visible
+    down deltay(0d90) right deltax(0d79) visible
+    up deltay(0d90) left deltax(0d79) visible
+    down deltay(0d49) left deltax(0d62) visible end
+    y(0d463) next(point)                      // frame 104: y (start point, vertex V1)
+    x(0d535) show next(vector)                       // frame 104: x (start point, vertex V1)
+    down deltay(0d52) left deltax(0d46) visible
+    up deltay(0d60) right deltax(0d78) visible
+    down deltay(0d60) left deltax(0d78) visible
+    up deltay(0d90) left deltax(0d78) visible
+    up deltay(0d52) right deltax(0d46) visible
+    down deltay(0d90) right deltax(0d78) visible
+    up deltay(0d60) right deltax(0d78) visible
+    down deltay(0d52) left deltax(0d46) visible
+    up deltay(0d90) left deltax(0d78) visible
+    down deltay(0d60) left deltax(0d78) visible
+    up deltay(0d52) right deltax(0d46) visible
+    up deltay(0d60) right deltax(0d78) visible
+    down deltay(0d90) right deltax(0d78) visible
+    up deltay(0d90) left deltax(0d78) visible
+    down deltay(0d52) left deltax(0d46) visible end
+    y(0d466) next(point)                      // frame 105: y (start point, vertex V1)
+    x(0d519) show next(vector)                       // frame 105: x (start point, vertex V1)
+    down deltay(0d55) left deltax(0d30) visible
+    up deltay(0d57) right deltax(0d90) visible
+    down deltay(0d57) left deltax(0d90) visible
+    up deltay(0d91) left deltax(0d73) visible
+    up deltay(0d54) right deltax(0d29) visible
+    down deltay(0d90) right deltax(0d74) visible
+    up deltay(0d56) right deltax(0d89) visible
+    down deltay(0d54) left deltax(0d29) visible
+    up deltay(0d90) left deltax(0d74) visible
+    down deltay(0d56) left deltax(0d89) visible
+    up deltay(0d54) right deltax(0d29) visible
+    up deltay(0d57) right deltax(0d90) visible
+    down deltay(0d91) right deltax(0d73) visible
+    up deltay(0d91) left deltax(0d73) visible
+    down deltay(0d55) left deltax(0d30) visible end
+    y(0d467) next(point)                      // frame 106: y (start point, vertex V1)
+    x(0d501) show next(vector)                       // frame 106: x (start point, vertex V1)
+    down deltay(0d56) left deltax(0d11) visible
+    up deltay(0d55) right deltax(0d99) visible
+    down deltay(0d55) left deltax(0d99) visible
+    up deltay(0d91) left deltax(0d67) visible
+    up deltay(0d56) right deltax(0d12) visible
+    down deltay(0d91) right deltax(0d66) visible
+    up deltay(0d55) right deltax(0d100) visible
+    down deltay(0d56) left deltax(0d12) visible
+    up deltay(0d91) left deltax(0d66) visible
+    down deltay(0d55) left deltax(0d100) visible
+    up deltay(0d56) right deltax(0d12) visible
+    up deltay(0d55) right deltax(0d99) visible
+    down deltay(0d91) right deltax(0d67) visible
+    up deltay(0d91) left deltax(0d67) visible
+    down deltay(0d56) left deltax(0d11) visible end
+    y(0d468) next(point)                      // frame 107: y (start point, vertex V1)
+    x(0d484) show next(vector)                       // frame 107: x (start point, vertex V1)
+    down deltay(0d56) right deltax(0d6) visible
+    up deltay(0d52) right deltax(0d106) visible
+    down deltay(0d52) left deltax(0d106) visible
+    up deltay(0d92) left deltax(0d56) visible
+    up deltay(0d56) left deltax(0d6) visible
+    down deltay(0d92) right deltax(0d56) visible
+    up deltay(0d52) right deltax(0d106) visible
+    down deltay(0d56) right deltax(0d6) visible
+    up deltay(0d92) left deltax(0d56) visible
+    down deltay(0d52) left deltax(0d106) visible
+    up deltay(0d56) left deltax(0d6) visible
+    up deltay(0d52) right deltax(0d106) visible
+    down deltay(0d92) right deltax(0d56) visible
+    up deltay(0d92) left deltax(0d56) visible
+    down deltay(0d56) right deltax(0d6) visible end
+    y(0d467) next(point)                      // frame 108: y (start point, vertex V1)
+    x(0d468) show next(vector)                       // frame 108: x (start point, vertex V1)
+    down deltay(0d55) right deltax(0d24) visible
+    up deltay(0d51) right deltax(0d109) visible
+    down deltay(0d51) left deltax(0d109) visible
+    up deltay(0d94) left deltax(0d45) visible
+    up deltay(0d55) left deltax(0d24) visible
+    down deltay(0d94) right deltax(0d45) visible
+    up deltay(0d51) right deltax(0d109) visible
+    down deltay(0d55) right deltax(0d24) visible
+    up deltay(0d94) left deltax(0d45) visible
+    down deltay(0d51) left deltax(0d109) visible
+    up deltay(0d55) left deltax(0d24) visible
+    up deltay(0d51) right deltax(0d109) visible
+    down deltay(0d94) right deltax(0d45) visible
+    up deltay(0d94) left deltax(0d45) visible
+    down deltay(0d55) right deltax(0d24) visible end
+    y(0d466) next(point)                      // frame 109: y (start point, vertex V1)
+    x(0d454) show next(vector)                       // frame 109: x (start point, vertex V1)
+    down deltay(0d53) right deltax(0d41) visible
+    up deltay(0d49) right deltax(0d108) visible
+    down deltay(0d49) left deltax(0d108) visible
+    up deltay(0d96) left deltax(0d33) visible
+    up deltay(0d53) left deltax(0d41) visible
+    down deltay(0d96) right deltax(0d33) visible
+    up deltay(0d49) right deltax(0d108) visible
+    down deltay(0d53) right deltax(0d41) visible
+    up deltay(0d96) left deltax(0d33) visible
+    down deltay(0d49) left deltax(0d108) visible
+    up deltay(0d53) left deltax(0d41) visible
+    up deltay(0d49) right deltax(0d108) visible
+    down deltay(0d96) right deltax(0d33) visible
+    up deltay(0d96) left deltax(0d33) visible
+    down deltay(0d53) right deltax(0d41) visible end
+    y(0d464) next(point)                      // frame 110: y (start point, vertex V1)
+    x(0d442) show next(vector)                       // frame 110: x (start point, vertex V1)
+    down deltay(0d50) right deltax(0d57) visible
+    up deltay(0d47) right deltax(0d104) visible
+    down deltay(0d47) left deltax(0d104) visible
+    up deltay(0d99) left deltax(0d21) visible
+    up deltay(0d50) left deltax(0d57) visible
+    down deltay(0d99) right deltax(0d21) visible
+    up deltay(0d47) right deltax(0d104) visible
+    down deltay(0d50) right deltax(0d57) visible
+    up deltay(0d99) left deltax(0d21) visible
+    down deltay(0d47) left deltax(0d104) visible
+    up deltay(0d50) left deltax(0d57) visible
+    up deltay(0d47) right deltax(0d104) visible
+    down deltay(0d99) right deltax(0d21) visible
+    up deltay(0d99) left deltax(0d21) visible
+    down deltay(0d50) right deltax(0d57) visible end
+    y(0d462) next(point)                      // frame 111: y (start point, vertex V1)
+    x(0d433) show next(vector)                       // frame 111: x (start point, vertex V1)
+    down deltay(0d46) right deltax(0d72) visible
+    up deltay(0d44) right deltax(0d95) visible
+    down deltay(0d44) left deltax(0d95) visible
+    up deltay(0d103) left deltax(0d10) visible
+    up deltay(0d45) left deltax(0d71) visible
+    down deltay(0d102) right deltax(0d9) visible
+    up deltay(0d43) right deltax(0d96) visible
+    down deltay(0d45) right deltax(0d71) visible
+    up deltay(0d102) left deltax(0d9) visible
+    down deltay(0d43) left deltax(0d96) visible
+    up deltay(0d45) left deltax(0d71) visible
+    up deltay(0d44) right deltax(0d95) visible
+    down deltay(0d103) right deltax(0d10) visible
+    up deltay(0d103) left deltax(0d10) visible
+    down deltay(0d46) right deltax(0d72) visible end
+    y(0d459) next(point)                      // frame 112: y (start point, vertex V1)
+    x(0d427) show next(vector)                       // frame 112: x (start point, vertex V1)
+    down deltay(0d40) right deltax(0d85) visible
+    up deltay(0d40) right deltax(0d85) visible
+    down deltay(0d40) left deltax(0d85) visible
+    up deltay(0d106) right deltax(0d0) visible
+    up deltay(0d40) left deltax(0d85) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d40) right deltax(0d85) visible
+    down deltay(0d40) right deltax(0d85) visible
+    up deltay(0d106) right deltax(0d0) visible
+    down deltay(0d40) left deltax(0d85) visible
+    up deltay(0d40) left deltax(0d85) visible
+    up deltay(0d40) right deltax(0d85) visible
+    down deltay(0d106) right deltax(0d0) visible
+    up deltay(0d106) right deltax(0d0) visible
+    down deltay(0d40) right deltax(0d85) visible end
+    y(0d457) next(point)                      // frame 113: y (start point, vertex V1)
+    x(0d425) show next(vector)                       // frame 113: x (start point, vertex V1)
+    down deltay(0d34) right deltax(0d96) visible
+    up deltay(0d35) right deltax(0d71) visible
+    down deltay(0d35) left deltax(0d71) visible
+    up deltay(0d110) right deltax(0d7) visible
+    up deltay(0d33) left deltax(0d96) visible
+    down deltay(0d109) left deltax(0d7) visible
+    up deltay(0d34) right deltax(0d71) visible
+    down deltay(0d33) right deltax(0d96) visible
+    up deltay(0d109) right deltax(0d7) visible
+    down deltay(0d34) left deltax(0d71) visible
+    up deltay(0d33) left deltax(0d96) visible
+    up deltay(0d35) right deltax(0d71) visible
+    down deltay(0d110) left deltax(0d7) visible
+    up deltay(0d110) right deltax(0d7) visible
+    down deltay(0d34) right deltax(0d96) visible end
+    y(0d454) next(point)                      // frame 114: y (start point, vertex V1)
+    x(0d426) show next(vector)                       // frame 114: x (start point, vertex V1)
+    down deltay(0d26) right deltax(0d106) visible
+    up deltay(0d28) right deltax(0d55) visible
+    down deltay(0d28) left deltax(0d55) visible
+    up deltay(0d113) right deltax(0d11) visible
+    up deltay(0d27) left deltax(0d106) visible
+    down deltay(0d114) left deltax(0d11) visible
+    up deltay(0d29) right deltax(0d55) visible
+    down deltay(0d27) right deltax(0d106) visible
+    up deltay(0d114) right deltax(0d11) visible
+    down deltay(0d29) left deltax(0d55) visible
+    up deltay(0d27) left deltax(0d106) visible
+    up deltay(0d28) right deltax(0d55) visible
+    down deltay(0d113) left deltax(0d11) visible
+    up deltay(0d113) right deltax(0d11) visible
+    down deltay(0d26) right deltax(0d106) visible end
+    y(0d453) next(point)                      // frame 115: y (start point, vertex V1)
+    x(0d430) show next(vector)                       // frame 115: x (start point, vertex V1)
+    down deltay(0d19) right deltax(0d113) visible
+    up deltay(0d20) right deltax(0d39) visible
+    down deltay(0d20) left deltax(0d39) visible
+    up deltay(0d117) right deltax(0d12) visible
+    up deltay(0d19) left deltax(0d113) visible
+    down deltay(0d117) left deltax(0d12) visible
+    up deltay(0d20) right deltax(0d39) visible
+    down deltay(0d19) right deltax(0d113) visible
+    up deltay(0d117) right deltax(0d12) visible
+    down deltay(0d20) left deltax(0d39) visible
+    up deltay(0d19) left deltax(0d113) visible
+    up deltay(0d20) right deltax(0d39) visible
+    down deltay(0d117) left deltax(0d12) visible
+    up deltay(0d117) right deltax(0d12) visible
+    down deltay(0d19) right deltax(0d113) visible end
+    y(0d453) next(point)                      // frame 116: y (start point, vertex V1)
+    x(0d438) show next(vector)                       // frame 116: x (start point, vertex V1)
+    down deltay(0d11) right deltax(0d118) visible
+    up deltay(0d10) right deltax(0d21) visible
+    down deltay(0d10) left deltax(0d21) visible
+    up deltay(0d119) right deltax(0d9) visible
+    up deltay(0d11) left deltax(0d118) visible
+    down deltay(0d119) left deltax(0d9) visible
+    up deltay(0d10) right deltax(0d21) visible
+    down deltay(0d11) right deltax(0d118) visible
+    up deltay(0d119) right deltax(0d9) visible
+    down deltay(0d10) left deltax(0d21) visible
+    up deltay(0d11) left deltax(0d118) visible
+    up deltay(0d10) right deltax(0d21) visible
+    down deltay(0d119) left deltax(0d9) visible
+    up deltay(0d119) right deltax(0d9) visible
+    down deltay(0d11) right deltax(0d118) visible end
+    y(0d454) next(point)                      // frame 117: y (start point, vertex V1)
+    x(0d448) show next(vector)                       // frame 117: x (start point, vertex V1)
+    down deltay(0d3) right deltax(0d120) visible
+    down deltay(0d1) right deltax(0d5) visible
+    up deltay(0d1) left deltax(0d5) visible
+    up deltay(0d120) right deltax(0d3) visible
+    up deltay(0d3) left deltax(0d120) visible
+    down deltay(0d120) left deltax(0d3) visible
+    down deltay(0d1) right deltax(0d5) visible
+    down deltay(0d3) right deltax(0d120) visible
+    up deltay(0d120) right deltax(0d3) visible
+    up deltay(0d1) left deltax(0d5) visible
+    up deltay(0d3) left deltax(0d120) visible
+    down deltay(0d1) right deltax(0d5) visible
+    down deltay(0d120) left deltax(0d3) visible
+    up deltay(0d120) right deltax(0d3) visible
+    down deltay(0d3) right deltax(0d120) visible end
+    y(0d456) next(point)                      // frame 118: y (start point, vertex V1)
+    x(0d460) show next(vector)                       // frame 118: x (start point, vertex V1)
+    up deltay(0d5) right deltax(0d120) visible
+    down deltay(0d12) left deltax(0d10) visible
+    up deltay(0d12) right deltax(0d10) visible
+    up deltay(0d120) left deltax(0d7) visible
+    down deltay(0d6) left deltax(0d119) visible
+    down deltay(0d119) right deltax(0d6) visible
+    down deltay(0d13) left deltax(0d9) visible
+    up deltay(0d6) right deltax(0d119) visible
+    up deltay(0d119) left deltax(0d6) visible
+    up deltay(0d13) right deltax(0d9) visible
+    down deltay(0d6) left deltax(0d119) visible
+    down deltay(0d12) left deltax(0d10) visible
+    down deltay(0d120) right deltax(0d7) visible
+    up deltay(0d120) left deltax(0d7) visible
+    up deltay(0d5) right deltax(0d120) visible end
+    y(0d459) next(point)                      // frame 119: y (start point, vertex V1)
+    x(0d474) show next(vector)                       // frame 119: x (start point, vertex V1)
+    up deltay(0d14) right deltax(0d117) visible
+    down deltay(0d25) left deltax(0d23) visible
+    up deltay(0d25) right deltax(0d23) visible
+    up deltay(0d117) left deltax(0d19) visible
+    down deltay(0d14) left deltax(0d116) visible
+    down deltay(0d117) right deltax(0d18) visible
+    down deltay(0d25) left deltax(0d22) visible
+    up deltay(0d14) right deltax(0d116) visible
+    up deltay(0d117) left deltax(0d18) visible
+    up deltay(0d25) right deltax(0d22) visible
+    down deltay(0d14) left deltax(0d116) visible
+    down deltay(0d25) left deltax(0d23) visible
+    down deltay(0d117) right deltax(0d19) visible
+    up deltay(0d117) left deltax(0d19) visible
+    up deltay(0d14) right deltax(0d117) visible end
+    y(0d464) next(point)                      // frame 120: y (start point, vertex V1)
+    x(0d489) show next(vector)                       // frame 120: x (start point, vertex V1)
+    up deltay(0d22) right deltax(0d111) visible
+    down deltay(0d38) left deltax(0d33) visible
+    up deltay(0d38) right deltax(0d33) visible
+    up deltay(0d112) left deltax(0d33) visible
+    down deltay(0d22) left deltax(0d110) visible
+    down deltay(0d112) right deltax(0d32) visible
+    down deltay(0d38) left deltax(0d32) visible
+    up deltay(0d22) right deltax(0d110) visible
+    up deltay(0d112) left deltax(0d32) visible
+    up deltay(0d38) right deltax(0d32) visible
+    down deltay(0d22) left deltax(0d110) visible
+    down deltay(0d38) left deltax(0d33) visible
+    down deltay(0d112) right deltax(0d33) visible
+    up deltay(0d112) left deltax(0d33) visible
+    up deltay(0d22) right deltax(0d111) visible end
+    y(0d471) next(point)                      // frame 121: y (start point, vertex V1)
+    x(0d504) show next(vector)                       // frame 121: x (start point, vertex V1)
+    up deltay(0d29) right deltax(0d103) visible
+    down deltay(0d51) left deltax(0d39) visible
+    up deltay(0d51) right deltax(0d39) visible
+    up deltay(0d104) left deltax(0d48) visible
+    down deltay(0d29) left deltax(0d103) visible
+    down deltay(0d104) right deltax(0d48) visible
+    down deltay(0d51) left deltax(0d39) visible
+    up deltay(0d29) right deltax(0d103) visible
+    up deltay(0d104) left deltax(0d48) visible
+    up deltay(0d51) right deltax(0d39) visible
+    down deltay(0d29) left deltax(0d103) visible
+    down deltay(0d51) left deltax(0d39) visible
+    down deltay(0d104) right deltax(0d48) visible
+    up deltay(0d104) left deltax(0d48) visible
+    up deltay(0d29) right deltax(0d103) visible end
+    y(0d479) next(point)                      // frame 122: y (start point, vertex V1)
+    x(0d518) show next(vector)                       // frame 122: x (start point, vertex V1)
+    up deltay(0d35) right deltax(0d93) visible
+    down deltay(0d64) left deltax(0d42) visible
+    up deltay(0d64) right deltax(0d42) visible
+    up deltay(0d95) left deltax(0d63) visible
+    down deltay(0d35) left deltax(0d93) visible
+    down deltay(0d95) right deltax(0d63) visible
+    down deltay(0d64) left deltax(0d42) visible
+    up deltay(0d35) right deltax(0d93) visible
+    up deltay(0d95) left deltax(0d63) visible
+    up deltay(0d64) right deltax(0d42) visible
+    down deltay(0d35) left deltax(0d93) visible
+    down deltay(0d64) left deltax(0d42) visible
+    down deltay(0d95) right deltax(0d63) visible
+    up deltay(0d95) left deltax(0d63) visible
+    up deltay(0d35) right deltax(0d93) visible end
+    y(0d487) next(point)                      // frame 123: y (start point, vertex V1)
+    x(0d532) show next(vector)                       // frame 123: x (start point, vertex V1)
+    up deltay(0d42) right deltax(0d80) visible
+    down deltay(0d76) left deltax(0d41) visible
+    up deltay(0d76) right deltax(0d41) visible
+    up deltay(0d83) left deltax(0d78) visible
+    down deltay(0d41) left deltax(0d81) visible
+    down deltay(0d84) right deltax(0d79) visible
+    down deltay(0d75) left deltax(0d42) visible
+    up deltay(0d41) right deltax(0d81) visible
+    up deltay(0d84) left deltax(0d79) visible
+    up deltay(0d75) right deltax(0d42) visible
+    down deltay(0d41) left deltax(0d81) visible
+    down deltay(0d76) left deltax(0d41) visible
+    down deltay(0d83) right deltax(0d78) visible
+    up deltay(0d83) left deltax(0d78) visible
+    up deltay(0d42) right deltax(0d80) visible end
+    y(0d497) next(point)                      // frame 124: y (start point, vertex V1)
+    x(0d544) show next(vector)                       // frame 124: x (start point, vertex V1)
+    up deltay(0d47) right deltax(0d67) visible
+    down deltay(0d86) left deltax(0d39) visible
+    up deltay(0d86) right deltax(0d39) visible
+    up deltay(0d69) left deltax(0d93) visible
+    down deltay(0d47) left deltax(0d66) visible
+    down deltay(0d69) right deltax(0d92) visible
+    down deltay(0d86) left deltax(0d38) visible
+    up deltay(0d47) right deltax(0d66) visible
+    up deltay(0d69) left deltax(0d92) visible
+    up deltay(0d86) right deltax(0d38) visible
+    down deltay(0d47) left deltax(0d66) visible
+    down deltay(0d86) left deltax(0d39) visible
+    down deltay(0d69) right deltax(0d93) visible
+    up deltay(0d69) left deltax(0d93) visible
+    up deltay(0d47) right deltax(0d67) visible end
+    y(0d507) next(point)                      // frame 125: y (start point, vertex V1)
+    x(0d554) show next(vector)                       // frame 125: x (start point, vertex V1)
+    up deltay(0d51) right deltax(0d51) visible
+    down deltay(0d95) left deltax(0d31) visible
+    up deltay(0d95) right deltax(0d31) visible
+    up deltay(0d54) left deltax(0d104) visible
+    down deltay(0d51) left deltax(0d51) visible
+    down deltay(0d54) right deltax(0d104) visible
+    down deltay(0d95) left deltax(0d31) visible
+    up deltay(0d51) right deltax(0d51) visible
+    up deltay(0d54) left deltax(0d104) visible
+    up deltay(0d95) right deltax(0d31) visible
+    down deltay(0d51) left deltax(0d51) visible
+    down deltay(0d95) left deltax(0d31) visible
+    down deltay(0d54) right deltax(0d104) visible
+    up deltay(0d54) left deltax(0d104) visible
+    up deltay(0d51) right deltax(0d51) visible end
+    y(0d517) next(point)                      // frame 126: y (start point, vertex V1)
+    x(0d562) show next(vector)                       // frame 126: x (start point, vertex V1)
+    up deltay(0d54) right deltax(0d35) visible
+    down deltay(0d101) left deltax(0d22) visible
+    up deltay(0d101) right deltax(0d22) visible
+    up deltay(0d37) left deltax(0d113) visible
+    down deltay(0d54) left deltax(0d35) visible
+    down deltay(0d37) right deltax(0d113) visible
+    down deltay(0d101) left deltax(0d22) visible
+    up deltay(0d54) right deltax(0d35) visible
+    up deltay(0d37) left deltax(0d113) visible
+    up deltay(0d101) right deltax(0d22) visible
+    down deltay(0d54) left deltax(0d35) visible
+    down deltay(0d101) left deltax(0d22) visible
+    down deltay(0d37) right deltax(0d113) visible
+    up deltay(0d37) left deltax(0d113) visible
+    up deltay(0d54) right deltax(0d35) visible end
+    y(0d527) next(point)                      // frame 127: y (start point, vertex V1)
+    x(0d568) show next(vector)                       // frame 127: x (start point, vertex V1)
+    up deltay(0d56) right deltax(0d18) visible
+    down deltay(0d105) left deltax(0d12) visible
+    up deltay(0d105) right deltax(0d12) visible
+    up deltay(0d18) left deltax(0d118) visible
+    down deltay(0d55) left deltax(0d18) visible
+    down deltay(0d19) right deltax(0d118) visible
+    down deltay(0d104) left deltax(0d12) visible
+    up deltay(0d55) right deltax(0d18) visible
+    up deltay(0d19) left deltax(0d118) visible
+    up deltay(0d104) right deltax(0d12) visible
+    down deltay(0d55) left deltax(0d18) visible
+    down deltay(0d105) left deltax(0d12) visible
+    down deltay(0d18) right deltax(0d118) visible
+    up deltay(0d18) left deltax(0d118) visible
+    up deltay(0d56) right deltax(0d18) visible end
+
+start top

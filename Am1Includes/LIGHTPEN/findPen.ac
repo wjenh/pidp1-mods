@@ -14,7 +14,7 @@ findPen,
     local loop, rtn
     dap rtn
 
-    law findAperture
+    lac findAperture
     lia
     dpy-i LIGHTPEN
     law TOPY

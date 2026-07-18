@@ -1,5 +1,5 @@
 INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib
-GCC=gcc $(INC)
+GCC=gcc $(INC) -O3
 
 install: iotLogger.o asciitoflex.o flextoascii.o filenames.o display.o
 

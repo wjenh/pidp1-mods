@@ -1,0 +1,49 @@
+Lines version that uses the Type 340 display and vcontinue
+#include <TYPE340/type340defs.ah>
+
+// Start a continued vector with random deltas, restart on the edge violation.
+// It also updates PF 1 and 2 to show which edge caused a violation, and shows the current x, y coords in IO.
+// If PF 1 and 2 are both off, that means the random number generated gave a vector delta of 0 for both x and y.
+// Should be used with the fixed p7simES in the distribution.
+// If you want the full effect, set the scale below to 0. That will draw every pixel along the vector path.
+// THe assembly code can be reduced to its essentials by removing the drc, clf, dsh, dsv, etc. stuff below
+// the dss.
+100/
+top,
+    jsp random
+    dac v1
+    lio [prog
+    dla
+    drc
+    dss
+    jmp .-2
+    clf 7
+    dsv
+    jmp .+2
+    stf 1
+    dsh
+    jmp top
+    stf 2
+    jmp top
+
+// Generate a random number, return it in ac as a visible vector command.
+random,
+    local rtn, ran
+    dap rtn
+    lac ran
+    rar 1s
+    xor [355670
+    add [355670
+    dac ran
+    and [177777
+    ior [200000     // visible delta x, delta y
+rtn, jmp .
+ran,	0
+    endloc
+
+prog, scale(1) intensity(4) next(vcontinue)
+v1, 0
+    halt
+
+constants
+start 100

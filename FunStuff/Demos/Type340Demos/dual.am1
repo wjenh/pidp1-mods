@@ -1,0 +1,105 @@
+Demo of Type 30 and 33 with the Type 340 and 342
+// The difference is impressive.
+// The 33 takes a lot of code, check the drawtext.ah include.
+// The 340/342 takes 2 lines plus its program which is also tiny.
+
+#include <SYMGEN/type33iots.ah>
+#include <TYPE340/type340defs.ah>
+
+#define YSTART 0d300
+#define YDELTA 0d40
+#define XSTART -0d480
+#define SIZE33 2
+#define SIZE340 2
+#define AUTOSPACE 4
+#define BRIGHTNESS33 3
+#define BRIGHTNESS340 7
+#define TXORIGIN 0
+#define TYORIGIN 0d600
+
+100/
+strt,
+    lio [prog       // these 2 lines are all the 340 needs and only once
+    dla
+
+    law SIZE33 AUTOSPACE (BRIGHTNESS33 << 6)
+    lia
+    glf
+loop,
+    law YSTART
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [line1
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [line2
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [line3
+    jda drawtext
+
+    lac yoffset
+    sub [YDELTA
+    dac yoffset
+    sal 8s
+    lia
+    lac xoffset
+    sdb 200
+    lac [line4
+    jda drawtext
+    jmp loop
+
+xoffset, XSTART << 10
+yoffset, 0
+
+line1,
+    text 'Hello,I am the Type 30 display'
+    013
+line2,
+    text 'and the Type 33 symbol generator'
+    013
+line3,
+    text 'drawing characters BUT...'
+    013
+line4,
+    text 'with lots of programming needed.'
+    013
+
+# The entire Type 340 program.
+# Once started, it runs completely independently.
+prog,
+    charsets(2) scale(SIZE340) intensity(BRIGHTNESS340) next(point)
+    y(TYORIGIN) next(point)
+    x(TXORIGIN) next(character)
+
+    type340 " And I'm the Type 340 display\n\
+ and the Type 342 symbol generator\n\
+ also drawing characters but\n\
+ with only 2 lines of assembler and\n\
+ zero interaction with the program.\n\
+ I'm also much faster!."
+    next(subroutine)
+    jump prog next(parameter)
+
+// The Type 33 needs this support code to do text
+#include <SYMGEN/drawtext.ac>
+
+constants
+start strt

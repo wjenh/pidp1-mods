@@ -25,6 +25,9 @@ strt,
     law 7777
     dac lastX
     dac lastY
+    jsp resetFindParameters
+    jsp resetPenParameters
+    jsp resetTrackParameters
     jsp findPen
     jsp getPoints
     jsp displayPoints

@@ -1,0 +1,346 @@
+#ifndef MOTIONFILTER_AC
+#define MOTIONFILTER_AC
+// This implements a motion filter using 2 chained exponential moving average filters.
+// The first is a velocity filter, the second an asymmetric acceleration filter.
+// The acceleration/ filter uses an asymmetric attack/decay alpha rather than one fixed alpha
+// so it can react quickly while the pen is accelerating without overshooting once it decelerates,
+// reverses, or jitters.
+// The output from the chain is used to apply a nonlinear kinematic computation to predict
+// the next location given state history and the current location.
+// All math is done in integer fixed point using only shifts, no hardware multiply or divides.
+// Coordinates are Type 340 style unsigned 10 bit, 0,0 origined, 0..1023.
+// The predicted position is an unbounded extrapolation and can overshoot past either edge
+// of that range, so motionFilterUpdate clamps its result to 0..1023 before returning.
+// After that range clamp, a final position-delta cap also limits how far the returned
+// position can move in a single call relative to the position actually returned last
+// time, freezing at the previous output if exceeded -- see MAX_POSITION_DELTA in
+// motionFilter.ah and the "position delta cap" section of FastPen/CLAUDE.md.
+// The 3 alpha values can be changed on the fly using the alpha setting routines.
+
+#include "motionFilter.ah"
+
+private aalpha, dalpha, valpha, tmp, shiftTable
+
+// These are defined here instead of in the ah file because they are not user configurable.
+#define FILTER_PREV_POSITION 0          // last position offset
+#define FILTER_PREV_VELOCITY 1          // last velocity offset
+#define FILTER_SMOOTHED_VELOCITY 2      // filtered velocity offset
+#define FILTER_SMOOTHED_ACCELERATION 3  // filtered acceleration offset
+#define FILTER_LAST_OUTPUT 4            // last position actually returned, for the delta cap
+
+// Fixed-point scaling configuration, use 6 bits of fractional part,
+// we need 10 integer-part bits plus a sign for the location.
+// Keep the scale constant in sync with the shift constant.
+// We could use cpp token-pasting to construct the shift, but this is simpler.
+// A value of 6 gives a fractional range of 64, plenty for this use.
+#define FILTER_FRAC_BITS 6
+#define FILTER_FIXED_SHIFT  6s
+#define FILTER_FIXED_SCALE  (1 << FILTER_FRAC_BITS)
+#define FILTER_FIXED_ROUND  (1 << (FILTER_FRAC_BITS - 1)) // Used for precise rounding
+
+// Largest magnitude representable in an 18 bit one's complement word (2^17 - 1).
+// Used to saturate the acceleration error below instead of letting it silently wrap.
+#define FILTER_SATLIMIT 0d131071
+
+// Initialize the filter state.
+// Called via jda with the state block address in AC, the initial location in IO.
+// Jda will have put the AC in motionFilterInit, convenient for our pointer use.
+// Does not preserve either.
+motionFilterInit, 0
+    local rtn
+    dap rtn
+
+    dio i motionFilterInit      // set previous position
+    idx motionFilterInit        // velocity and acceleration starts at 0
+    dzm i motionFilterInit
+    idx motionFilterInit
+    dzm i motionFilterInit
+    idx motionFilterInit
+    dzm i motionFilterInit
+    idx motionFilterInit
+    dio i motionFilterInit      // and the last returned position, needs to match the previous position above
+
+    // Reset alphas to the default values.
+    // The constants are full sar xs instuctions.
+    // Classic PDP-1 self-modifying code.
+    lac [VELOCITY_ALPHA_SHIFT
+    dac valpha
+    lac [ACCEL_DECAY_ALPHA_SHIFT
+    dac dalpha
+    lac [ACCEL_ATTACK_ALPHA_SHIFT
+    dac aalpha
+
+rtn, jmp .
+    endloc
+
+// Set the velocity alpha.
+// Alpha is in IO, a value > 6 is silently ignored.
+// Called via jsp, does not preserve AC or IO
+motionFilterValpha,
+    local rtn
+    dap rtn
+    lai
+    sub [7
+    sma
+    jmp rtn             // out of bounds
+    lai
+    add [shiftTable
+    dac tmp
+    lac i tmp
+    dac valpha
+rtn, jmp .
+    endloc
+
+// Set the acceleration alpha.
+// Alpha is in IO, a value > 6 is silently ignored.
+// Called via jsp, does not preserve AC or IO
+motionFilterAalpha,
+    local rtn
+    dap rtn
+    lai
+    sub [7
+    sma
+    jmp rtn             // out of bounds
+    lai
+    add [shiftTable
+    dac tmp
+    lac i tmp
+    dac aalpha
+rtn, jmp .
+    endloc
+
+// Set the deceleration alpha.
+// Alpha is in IO, a value > 6 is silently ignored.
+// Called via jsp, does not preserve AC or IO
+motionFilterDalpha,
+    local rtn
+    dap rtn
+    lai
+    sub [7
+    sma
+    jmp rtn             // out of bounds
+    lai
+    add [shiftTable
+    dac tmp
+    lac i tmp
+    dac dalpha
+rtn, jmp .
+    endloc
+
+// Update and predict the next location.
+// Called via jda with the state block address in AC, the current location in IO.
+// The new value will be returned in AC, clamped to the legal 0..1023 coordinate range.
+// Does not preserve AC or IO.
+motionFilterUpdate, 0
+    local newPos, rawVelocity, rawAcceleration, pointer, rtn
+    addlocal predicted, checkHigh, useOriginal, clampDone
+    addlocal accelError, accelFast, accelDone
+    addlocal accelErrorReady, accelSatPos
+    addlocal clamped, deltaPositive, withinCap, clampDone2
+
+    dap rtn
+    dio newPos                   // we will need this later
+    // First order velocity filter.
+    // Raw velocity = current postion - previous postion
+    lai
+    sub i motionFilterUpdate    // first word in state, the previous x.
+    sal FILTER_FIXED_SHIFT      // normalize to our fixed point representation.
+    dac rawVelocity;
+
+    // Now apply the velocity filtering,
+    // vel_error = rawVelocity - state->smoothed_vx.
+    law FILTER_SMOOTHED_VELOCITY
+    add motionFilterUpdate
+    dac pointer
+    lac rawVelocity
+    sub i pointer
+    // Velocity error now in AC, normalize it, then add the old smoothed_vx back:
+    // new_smoothed_vx = old_smoothed_vx + (error >> shift).
+valpha, sar VELOCITY_ALPHA_SHIFT
+    add i pointer
+    dac i pointer           // update state->smoothed_vx.
+    dac tmp                 // we need smoothed_vx below.
+
+    // Acceleration filtering next.
+    // Raw acceleration = current smoothed velocity - previous velocity.
+    law FILTER_PREV_VELOCITY
+    add motionFilterUpdate
+    dac pointer
+    lac tmp                 // smoothed_vx from above
+    sub i pointer
+    dac rawAcceleration
+
+    // Now filter that raw acceleration but unlike the velocity filter above, use an
+    // asymmetric attack/decay alpha instead of one fixed alpha.
+    // Compare the sign of the new raw acceleration sample against the sign of the
+    // smoothed velocity.
+    // The same sign means the pen is speeding up in the/ direction it's already moving,
+    // so react fast, the ATTACK alpha,  to keep the prediction from falling behind and losing lock.
+    // Opposite signs mean deceleration, reversal, or noise, so react slowly, the DECAY alpha,
+    // so a single such sample/ doesn't overshoot the extrapolated position past where the pen has actually
+    // settled.
+    law FILTER_SMOOTHED_ACCELERATION
+    add motionFilterUpdate
+    dac pointer
+    lac rawAcceleration
+    sub i pointer
+    dac accelError          // provisional result -- may have silently wrapped, checked below
+
+    // accelError = rawAcceleration - smoothed_acceleration can overflow
+    // an 18 bit one's complement word.
+    // rawAcceleration and smoothed_acceleration can each independently reach roughly +-130944,
+    // a full-scale velocity reversal between two samples, so their difference can reach roughly
+    // +-261888, well larger than what we can repersent, whenever the pen
+    // accelerates hard one way then reverses hard the other way from one
+    // sample to the next.
+    // Left unchecked, the subtract above silently wraps to a small or opposite-sign value,
+    // corrupting smoothed_acceleration both for this call and since it is stored back into state below
+    // for every call after it.
+    // This will producing predictions that suddenly jump to the clamp boundary even though the pen is nowhere near it.
+    // Detect the wrap with the rule sign(rawAcceleration) != sign(smoothed_acceleration) AND
+    // sign(accelError) != sign(rawAcceleration) and saturate to +-FILTER_SATLIMIT.
+    lac rawAcceleration
+    xor i pointer            // pointer still addresses smoothed_acceleration
+    sma                      // operand signs differ? (the only case that can overflow)
+    jmp accelErrorReady      // no -- signs agree, the subtraction above is exact
+    lac accelError
+    xor rawAcceleration
+    sma                      // result sign differs from rawAcceleration's -- overflow
+    jmp accelErrorReady      // no -- result sign matches, subtraction was exact
+    lac rawAcceleration
+    sma
+    jmp accelSatPos
+    lac [-FILTER_SATLIMIT]
+    dac accelError
+    jmp accelErrorReady
+accelSatPos,
+    lac [FILTER_SATLIMIT]
+    dac accelError
+
+accelErrorReady,
+    lac rawAcceleration
+    xor tmp                 // Tmp still holds the new smoothed velocity, from above.
+    sma                     // Sign bits differ?
+    jmp accelFast           // No, signs agree, pen is accelerating.
+    lac accelError
+dalpha, sar ACCEL_DECAY_ALPHA_SHIFT
+    jmp accelDone
+
+accelFast,
+    lac accelError
+aalpha, sar ACCEL_ATTACK_ALPHA_SHIFT
+
+accelDone,
+    add i pointer
+    dac i pointer               // update state->smoothed acceleration.
+
+    // Save states for the next time.
+    lac newPos
+    dac i motionFilterUpdate    // state->prevnewPos = current x.
+    law FILTER_PREV_VELOCITY
+    add motionFilterUpdate      // state->prev_vx = state->smoothed_vx
+    dac pointer
+    lac tmp                     // smoothed_vx, computed earlier
+    dac i pointer
+
+    // Now do the nonlinear prediction,
+    // Next postion = current postion + velocity + (0.5 * acceleration)
+    law FILTER_SMOOTHED_ACCELERATION
+    add motionFilterUpdate
+    dac pointer
+    lac i pointer
+    sar 1s                      // the 0.5 part
+    dac tmp
+    law FILTER_PREV_VELOCITY
+    add motionFilterUpdate
+    dac pointer
+    lac i pointer
+    add tmp                     // Now have the next position delta, round and convert back to an integer.
+    add [FILTER_FIXED_ROUND
+    sar FILTER_FIXED_SHIFT
+    add newPos                  // and add to the position
+    dac predicted               // stash the raw (possibly illegal) prediction for clamping
+
+    // Clamp to the legal Type 340 unsigned 10 bit coordinate range, 0..1023.
+    // An out-of-range prediction is always a bad extrapolation, model mismatch or a residual arithmetic corner case,
+    // and the pen's last known-good location is always still on-screen and near where the
+    // pen actually is.
+    // Falling back to it is far less jarring than teleporting the target to a screen edge that may be nowhere
+    // near the/ pen, itself breaking tracking lock.
+    sma                         // predicted negative?
+    jmp checkHigh               // no -- go check the high side
+    lac newPos                  // yes -- out of range low, fall back to last valid location
+    jmp clampDone
+
+checkHigh,
+    lac predicted
+    sub [0d1024]
+    spa                        // Out of rnage?
+    jmp useOriginal            // No, predicted already in range
+    lac newPos                 // Yes, out of range high, fall back to last valid location
+    jmp clampDone
+
+useOriginal,
+    lac predicted
+
+clampDone,
+    // Position-delta cap.
+    // Even after the 0..1023 range clamp above, the extrapolation can still swing a
+    // large, visually jarring distance from the position last actually handed back
+    // to the caller, even when the raw lightpen samples themselves are small.
+    // The smoothed velocity/acceleration state can carry a large residual value for
+    // a few calls after a fast movement even after the pen has settled down.
+    // If the candidate here is farther than MAX_POSITION_DELTA
+    // from the position actually returned last call, freeze it.
+    // Teturn that previous position unchanged instead of the new candidate.
+    // Deliberately does NOT touch prev_position/prev_velocity/smoothed_velocity/
+    // smoothed_acceleration above, those keep updating from the real raw samples
+    // every call regardless of whether this cap fires, so a frozen output should
+    // catch up and unfreeze on its own as the state naturally settles.
+    // Whether the internal state also needs to be adjusted while frozen is an open
+    // question pending empirical testing.
+    dac clamped                    // stash the candidate value from above
+    law FILTER_LAST_OUTPUT
+    add motionFilterUpdate
+    dac pointer
+    lac clamped
+    sub i pointer                  // AC = delta = candidate - last output
+    sma                            // delta negative?
+    jmp deltaPositive              // no -- AC is already the magnitude
+    cma                            // yes -- one's complement negate to get |delta|
+deltaPositive,
+    sub [MAX_POSITION_DELTA]       // AC = |delta| - MAX_POSITION_DELTA
+    spa                            // cap hit (|delta| >= MAX_POSITION_DELTA)?
+    jmp withinCap                  // no -- accept the candidate
+    lac i pointer                  // yes -- freeze: reload the previous output
+    jmp clampDone2
+
+withinCap,
+    lac clamped
+    dac i pointer                  // record the accepted value as the new last output
+
+clampDone2,
+    rtn, jmp .
+
+shiftTable,                     // convert a numeric shift value into the appropriate shift instruction
+    nop
+    sar 1s
+    sar 2s
+    sar 3s
+    sar 4s
+    sar 5s
+    sar 6s
+
+newPos, 0
+rawVelocity, 0
+rawAcceleration, 0
+pointer, 0
+predicted, 0
+accelError, 0
+clamped, 0
+    endloc
+
+// our 'static' vars, in C terms
+tmp, 0
+endloc
+#endif

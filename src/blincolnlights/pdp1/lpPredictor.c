@@ -12,6 +12,10 @@
  * or wrapping.
  *
  * 1-Aug-26 wje initial version
+ * 10-Aug-26 wje (Claude) add reversal detection override.
+ *    The acceleration cascade now forces a fast-snap alpha whenever the instantaneous
+ *    acceleration sign flips against the currently filtered acceleration, instead of
+ *    coasting through a direction change on the slower asymmetric taus.
  *
 */
 
@@ -28,12 +32,11 @@
 #include "logger.h"
 #define LOG_STATS 0
 
-#define DELTA_TIME_CLAMP 0.025      // If a requested prediction time is too far from the last one, clamp tp this.
-#define FINE_MAGNITUDE_LIMIT 50.0   // If a movement is less than this, use a finer scale adjustment.
-
 static double getNow(void);
 static int constrainCoordinate(int);
 
+// Initialize a filter to a known state, should be called before a filter is used
+// and after any untracked lightpen movement, e.g. pen-up movement.
 void
 motionFilterReset(LightpenCoordinateFilterP filterP)
 {
@@ -41,16 +44,20 @@ motionFilterReset(LightpenCoordinateFilterP filterP)
     filterP->tauVelocity = DEFAULT_VELOCITY_TAU;
     filterP->tauAcceleration = DEFAULT_ACCELERATION_TAU;
     filterP->tauDeceleration = DEFAULT_DECELERATION_TAU;
+    filterP->tauReversal = DEFAULT_REVERSAL_TAU;
     filterP->position = 0.0;
     filterP->velocity = 0.0;
     filterP->acceleration = 0.0;
     filterP->lastArrivalTime = 0.0;
+    filterP->lastPredicted = 0;
     filterP->isInitialized = false;
 }
 
-// Call this immediately when the 5ms socket packet drops in
+// Call this when a mosue coordinate update is received from the display.
+// It will update the time-dependent filter alphas appropriately.
+// These will then be used by the prediction algorithm.
 void
-motionFilterAdd(LightpenCoordinateFilter *filterP, int newPos)
+motionFilterAdd(LightpenCoordinateFilterP filterP, int newPos)
 {
 double now;
 double deltaTime;
@@ -60,6 +67,7 @@ double accelerationAlpha;
 double prevPosition;
 double prevVelocity, instantVelocity;
 double instantAcceleration;
+bool isReversal;
 
     newPos = constrainCoordinate(newPos);
     now = getNow();
@@ -67,7 +75,7 @@ double instantAcceleration;
     // First time since a reset.
     if( !filterP->isInitialized )
     {
-        filterP->position = newPos;
+        filterP->lastPredicted = filterP->position = newPos;
         filterP->isInitialized = true;
         filterP->lastArrivalTime = now;
         return;
@@ -92,28 +100,41 @@ double instantAcceleration;
 
     instantVelocity = (filterP->position - prevPosition) / deltaTime;
     prevVelocity = filterP->velocity;
-    filterP->velocity = (velocityAlpha * instantVelocity) + ((1.0f - velocityAlpha) * filterP->velocity);
+    filterP->velocity = (velocityAlpha * instantVelocity) + ((1.0 - velocityAlpha) * filterP->velocity);
 
     instantAcceleration = (filterP->velocity - prevVelocity) / deltaTime;
-    
-    // Your asymmetric sign-based alpha assignment
-    if( instantAcceleration >= 0.0f )
+
+    // If this sample's instantaneous acceleration points the opposite way from what the filter currently
+    // believesand the filtered value is large enough that this isn't just dithering near zero,the pen has
+    // changed direction.
+    // The asymmetric accel/decel taus below are tuned for smooth ramping
+    // and would coast through a real reversal too slowly, so force a much faster,
+    // near-instant alpha to let the acceleration term snap onto the new direction immediately.
+    isReversal = ((instantAcceleration > 0.0) && (filterP->acceleration < -REVERSAL_THRESHOLD)) ||
+        ((instantAcceleration < 0.0) && (filterP->acceleration > REVERSAL_THRESHOLD));
+
+    if( isReversal )
     {
-        accelerationAlpha = 1.0f - exp(-deltaTime / filterP->tauAcceleration);
+        accelerationAlpha = 1.0 - exp(-deltaTime / filterP->tauReversal);
+    }
+    else if( instantAcceleration >= 0.0 )
+    {
+        // Asymmetric sign-based alpha assignment
+        accelerationAlpha = 1.0 - exp(-deltaTime / filterP->tauAcceleration);
     }
     else
     {
-        accelerationAlpha = 1.0f - exp(-deltaTime / filterP->tauDeceleration);
+        accelerationAlpha = 1.0 - exp(-deltaTime / filterP->tauDeceleration);
     }
 
     filterP->acceleration = (accelerationAlpha * instantAcceleration) +
-        ((1.0f - accelerationAlpha) * filterP->acceleration);
+        ((1.0 - accelerationAlpha) * filterP->acceleration);
     filterP->lastArrivalTime = now;
 
     // Log statistics for tuning.
     logger(LOG_STATS, "lpPredictor now %0.6f dt %0.6f coord %d, pos %0.1f, vel %0.1f acc %0.1f error %d\n",
         now, deltaTime, newPos, filterP->position, filterP->velocity, filterP->acceleration,
-        newPos-filterP->lastPredicted);
+        newPos - filterP->lastPredicted);
 }
 
 // Get the predicted coordinate based on the previous history.
@@ -151,7 +172,9 @@ double predictedPos;
     
     if( velocityMagnitude < 8.0 )
     {
-        return( filterP->position );      // Snaps to pixel center when hand stops
+        // Round and constrain the position.
+        filterP->lastPredicted = constrainCoordinate((int)lrint(filterP->position));
+        return( filterP->lastPredicted );   // Snaps to pixel center when hand stops
     }
     else if( velocityMagnitude < FINE_MAGNITUDE_LIMIT )
     {
@@ -178,7 +201,7 @@ struct timespec tm;
 
     clock_gettime( CLOCK_MONOTONIC, &tm );
     usecs = tm.tv_nsec / 1000L;
-    secs = (double)tm.tv_sec + ((double)usecs / 100000.0); 
+    secs = (double)tm.tv_sec + ((double)usecs / 1000000.0); 
     return(secs);
 }
 

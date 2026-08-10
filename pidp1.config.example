@@ -49,6 +49,9 @@ twoscreens=off
 
 # Enable lightpen support in pidp1.
 lightpen=on
+# Enable motion filtering
+motionPrediction=on
+
 # An aperture of 22 corresponds to a physical aperture of 0.200 inches.
 aperture=22
 

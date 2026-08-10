@@ -31,22 +31,25 @@
 #define LOG_START 0
 #define LOG_STOP 0
 #define LOG_DRA 0
+#define LOG_DRP 0
 #define LOG_CONFIG 0
 #define LOG_ERR 0
+#define LOG_UPDATE 0
 
 // Make the actual iot numbers configurable for easy changes.
-#define IOT1 015
-#define IOT2 016
-#define IOT3 017
+#define IOT15 015
+#define IOT16 016
+#define IOT17 017
 
 static void configure(void);
+extern bool predictLightpen(int displayNo, int *xP, int *yP);
 
 int
 iotHandler(PDP1P pdp1P, int dev, int pulse, int completion)
 {
 int cmd;
 int tmp;
-int x, y;
+int x, y, dispNo;
 int flags;
 bool needSkip;
 bool needCompletion = false;    /* must be initialized; completion path only sets it true */
@@ -73,7 +76,7 @@ EmuControlP ctlP;
 
     switch( dev )
     {
-    case IOT1:
+    case IOT15:
         if( cmd & 02 )
         {
             emuClearFlags();
@@ -97,7 +100,7 @@ EmuControlP ctlP;
         emuCommandSet(ctlP);
         break;
 
-    case IOT2:
+    case IOT16:
         switch( cmd )
         {
         case 0:         // dra, display read address counter
@@ -107,8 +110,17 @@ EmuControlP ctlP;
 
         case 1:         // drc, display read coordinates
             // Note that per documentation, the lsb is lost
-            emuGetXY(&x, &y);
+            emuGetXY(&dispNo, &x, &y);
             IO(pdp1P) = ((x & 01776) << 8) | ((y >> 1) & 0777);
+            break;
+
+        case 2:         // drp, display read predicted coordinates, an extension, not original
+            // Note that per documentation, the lsb is lost
+            // We need the display number for this.
+            emuGetXY(&dispNo, &x, &y);
+            predictLightpen(dispNo, &x, &y);        // in the core pdp-1 code
+            IO(pdp1P) = ((x & 01776) << 8) | ((y >> 1) & 0777);
+            iotCondLog(LOG_DRP, "DRP, predicted x %d y %d, IO is %o\n", x, y, IO(pdp1P));
             break;
 
         default:
@@ -117,7 +129,7 @@ EmuControlP ctlP;
         }
         break;
 
-    case IOT3:
+    case IOT17:
         needSkip = false;
         flags = emuGetFlags();
 
@@ -167,7 +179,7 @@ iotStart()
 {
 EmuControlP ctlP;
 
-    iotCondLog(LOG_START, "IOT %o started\n", IOT1);
+    iotCondLog(LOG_START, "IOT %o started\n", IOT15);
     configure();
 }
 
@@ -176,13 +188,13 @@ iotStop()
 {
 EmuControlP ctlP;
 
-    iotCondLog(LOG_STOP, "IOT %o stopped\n", IOT1);
+    iotCondLog(LOG_STOP, "IOT %o stopped\n", IOT15);
     if( emuIsInitialized() )
     {
         ctlP = getEmuControlP();
         ctlP->command = EMU_CMD_STOP;
         emuCommandSet(ctlP);
-        iotCondLog(LOG_STOP, "Issuing stop\n", IOT1);
+        iotCondLog(LOG_STOP, "Issuing stop\n", IOT15);
     }
 
     iotCloseLog();
@@ -195,7 +207,7 @@ iotUpdate()
 {
 EmuControlP ctlP;
 
-    iotCondLog(LOG_UPDATE, "IOT %o updated\n", IOT1);
+    iotCondLog(LOG_UPDATE, "IOT %o updated\n", IOT15);
     configure();
 
     if( emuIsInitialized() )

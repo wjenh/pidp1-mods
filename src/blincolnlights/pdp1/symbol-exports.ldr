@@ -10,6 +10,7 @@
     "checkLightpen";
     "setLightpenRadius2";
     "getLightpenRadius2";
+    "predictLightpen";
     "getDisplayData";
     "setDisplayData";
     "lockDisplayData";

@@ -23,6 +23,7 @@
 //    and addDpyCommand() retries (bounded by DPYFULLRETRIES)
 //    instead of risking a dpyBuf[] overflow if the buffer stays full after a flush.
 // 26-Jun-2026 wje (Claude) deep analysis of possible bottlenecks done, tuning changes made
+// 8-Aug-2026 wje add lightpen exponential moving average prediction logic
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -42,6 +43,7 @@
 
 #include "common.h"
 #include "pdp1.h"
+#include "lpPredictor.h"
 
 // No particular limit, but the type 340 with option 343 monitors can use up to 17, the impl restricts it to 9
 #define MAXDISPLAYS 9
@@ -70,6 +72,8 @@
 #define null 0
 #define isOpen(ctlP) ((ctlP)->fd >= 0)
 
+bool useMotionPrediction = false;  // changed via config file motionPrediction setting
+
 static int curRadius2 = 6*6;       // setLightpenRadius2() will override this
 static bool displayInitialized;
 static sem_t runLock;
@@ -93,6 +97,8 @@ typedef struct {
     uint32_t commandBuf[CMDBUFSIZE];
     int numDpyCommands;
     uint32_t dpyBuf[DPYBUFSIZE];
+    LightpenCoordinateFilter xFilter;     // the two prediction filters
+    LightpenCoordinateFilter yFilter;
 } DisplayControl, *DisplayControlP;
 
 static DisplayControlP displays[MAXDISPLAYS];
@@ -115,6 +121,9 @@ bool display(int screenNo, int x, int y, int intensity);
 // The outside inteface for checking the lightpen.
 // It will return true if there was a lightpen hit at the given coordinates, else false.
 bool checkLightpen(int screenNo,  int x, int y);
+// The outside interface for getting the predicted lightpen coordinates.
+// It will set the coordiates and return true if there is a valid prediction, else false.
+bool predictLightpen(int screenNo,  int *xP, int *yP);
 
 // Internal functions.
 static void initializeDisplaySubsystem(void);
@@ -387,9 +396,17 @@ DisplayControlP ctlP;
             x, ctlP->lpX, y, ctlP->lpY, ctlP->lpRadius2);
 
     gotHit = false;
-    // Use the distance equation for a circle to simulate an actual circular aperture
+    // Use the distance equation for a circle to simulate an actual circular aperture.
+
+    if( useMotionPrediction )
+    {
+        ctlP->lpX = motionFilterPredict(&(ctlP->xFilter));
+        ctlP->lpY = motionFilterPredict(&(ctlP->yFilter));
+    }
+
     delx = ctlP->lpX - x;               // Find squared magnitudes of hit offset
     dely = ctlP->lpY - y;
+
     if( ((delx*delx) + (dely*dely)) < ctlP->lpRadius2 )
     {
         logger(LOG_LP, "LP hit\n");
@@ -399,6 +416,27 @@ DisplayControlP ctlP;
 
     unlockDisplayDataByCtlP(ctlP);
     return(gotHit);
+}
+
+// The outside interface for getting the predicted lightpen coordinates.
+// It will set the coordiates and return true if there is a valid prediction, else false.
+// The predicted location is updated automatically when a lightpen event comes in from the display.
+bool
+predictLightpen(int screenNo,  int *xP, int *yP)
+{
+DisplayControlP ctlP;
+
+    if( !(ctlP = getDisplayControlP(screenNo)) || !isOpen(ctlP) || !ctlP->penDown )
+    {
+        // Return whatever coords we last had, could be invalid.
+        *xP = ctlP->lpX;
+        *yP = ctlP->lpY;
+        return(false);
+    }
+
+    *xP = motionFilterPredict(&(ctlP->xFilter));
+    *yP = motionFilterPredict(&(ctlP->yFilter));
+    return(true);
 }
 
 // End of external functions, these are all internal.
@@ -489,6 +527,8 @@ initializeDisplay(int screenNo)
     {
         displays[screenNo] = calloc(1, sizeof(DisplayControl));
         initializeDisplayControl(displays[screenNo]);
+        motionFilterReset(&(displays[screenNo]->xFilter));
+        motionFilterReset(&(displays[screenNo]->yFilter));
     }
 
     return( displays[screenNo] );
@@ -874,6 +914,8 @@ uint32_t cmd;
                 {
                     penDown = false;
                     gotPosition = false;
+                    motionFilterReset(&(ctlP->xFilter));
+                    motionFilterReset(&(ctlP->yFilter));
                     logger(LOG_LP, "Pen up\n");
                 }
                 else
@@ -897,6 +939,8 @@ uint32_t cmd;
         ctlP->lpX = lastX;
         ctlP-> lpY = lastY;
         ctlP->lpData = true;
+        motionFilterAdd(&(ctlP->xFilter), lastX);
+        motionFilterAdd(&(ctlP->yFilter), lastY);
     }
 
     ctlP->penDown = penDown;

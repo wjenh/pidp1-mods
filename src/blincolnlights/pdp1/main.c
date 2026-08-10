@@ -20,6 +20,7 @@
  * wje 16-Jun-26 many changes so the CHM simple test program displays like the real PDP-1
  * wje 3-Jul-26 code cleanup, add a few safety checks, no functional change
  * wje 14-Jul-2026 wje some more cleanup
+ * wje 8-Aug-2026 wje add motion prediction setting
 */
 
 #include <fcntl.h>
@@ -86,6 +87,7 @@ extern bool audioEnabled;
 extern bool lailiaEnabled;
 extern bool core1DEnabled;
 extern bool all1DEnabled;
+extern bool useMotionPrediction;
 
 static bool timingEnabled;
 static bool useShm;
@@ -501,17 +503,6 @@ netthread(void *arg)
     return( nil );
 }
 
-char *argv0;
-
-// Prints a usage message to stderr and exits the process with status 1. No return value
-// (void) -- exit() means this never actually returns to its caller.
-void
-usage(void)
-{
-    fprintf(stderr, "usage: %s [-h host] [-p port]\n", argv0);
-    exit(1);
-}
-
 // Read a memory file produced by dumpmem() into working memory.
 // Reworked by wje to keep the address and data on one line, much more readable.
 void
@@ -640,28 +631,9 @@ main(int argc, char *argv[])
 PDP1 pdp1;
 PDP1 *pdp = &pdp1;
 pthread_t th;
-const char *host;
 const char *tape = "tapes/dpys5.rim";
-int port;
 int fd[2];
 int shmFd;
-
-    host = "localhost";
-    port = 3400;
-    ARGBEGIN
-    {
-    case 'h':
-        host = EARGF(usage());
-        break;
-
-    case 'p':
-        port = atoi(EARGF(usage()));
-        break;
-
-    default:
-        usage();
-        break;
-    } ARGEND;
 
     pdp1P = pdp;
     panel = getpanel();
@@ -889,6 +861,12 @@ ConfigurationSettingP configSettingP;
     if( (configSettingP = findConfigurationSetting(configurationP, "pidp1timing")) )
     {
         timingEnabled = configSettingP->onOff;
+    }
+
+    // Control of the builtin exponential moving average filters for the lightpen
+    if( (configSettingP = findConfigurationSetting(configurationP, "motionPrediction")) )
+    {
+        useMotionPrediction = configSettingP->onOff;
     }
 
     // Type 340 has its own aperture control

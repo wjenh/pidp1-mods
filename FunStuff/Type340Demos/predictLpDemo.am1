@@ -1,9 +1,8 @@
-Demo of the new fast lightpen predictive tracking library
+Demo of the new fast lightpen builtin predictive tracking supported in the pidp-1 core display logic.
 // This uses the new motion prediction code and an interrupt driven lightpen handler.
 // Compare this to the earlier simplistic tracking!
 #include <TYPE340/type340defs.ah>
 #include <TYPE340/trackingTarget.ah>
-#include <LIGHTPEN/motionFilter.ah>
 
 // Initial target position
 #define TARGETX 0d512
@@ -24,26 +23,6 @@ Demo of the new fast lightpen predictive tracking library
     lsm
     cbs
 
-    // Filters need intializing
-    lio [TARGETX
-    lac [filterX
-    jda motionFilterInit
-    lio [TARGETY
-    lac [filterY
-    jda motionFilterInit
-
-    // And override the alphas.
-    // Law 0 is intentional, makes it easy to change.
-    law 2
-    lia
-    jsp motionFilterValpha
-    law 0
-    lia
-    jsp motionFilterAalpha
-    law 1
-    lia
-    jsp motionFilterDalpha
-
     // And intialize the 340 location
     lac [y(TARGETY) next(point)
     dac tgtY
@@ -59,14 +38,11 @@ Demo of the new fast lightpen predictive tracking library
 top,            // just loop forever, 340 and the interrupt are doing all the work.
     jmp top
 
-// Bring in the filter code.
-#include <LIGHTPEN/motionFilter.ac>
-
 // penISR is entered directly on an interrupt from a lightpen hit
 penISR,
     local curhitX, curhitY
-    // Drc drops the last bit of the coordinates, get back to the full 10 bits
-    drc
+    // Drp, like drc, drops the last bit of the coordinates, get back to the full 10 bits
+    drp
     lai
     and [0777]
     sal 1s
@@ -74,22 +50,14 @@ penISR,
     lai
     sar 8s
     and [01776
-    // Apply the motion filtering, x is in AC.
-    lia
-    lac [filterX
-    jda motionFilterUpdate
     dac curhitX
-    lio curhitY
-    lac [filterY
-    jda motionFilterUpdate
-    dac curhitY
 
-    // Reposition the target and resume the display, now curhitcurhitY is in AC
-    ior [y(0) next(point)]
-    dac tgtY
-    lac curhitX
+    // Reposition the target and resume the display, now curhitX is in AC
     ior [x(0) next(parameter)]
     dac tgtX
+    lac curhitY
+    ior [y(0) next(point)]
+    dac tgtY
 
     // We now do something rather clever, we usurp the 340 program and restart it at
     // the lightpen drawing location.
@@ -104,17 +72,9 @@ curhitX, 0
 curhitY, 0
     endloc
 
-// This brings in the motion prediction filter routines
-#include <LIGHTPEN/motionFilter.ac>
-
-// The filters need a place to save its state
-filterX,
-    table FILTER_STATE_SIZE
-filterY,
-    table FILTER_STATE_SIZE
-
 // The 340 program
 target, lpon scale(1) intensity(6) next(point)
+
 // The origin point, tgtX,tgtY is modified by the pdp-1 code.
 // These are placeholders.
 tgtY, y(TARGETY) next(point)

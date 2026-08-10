@@ -1,0 +1,1372 @@
+Rotate cube that uses interrupts and pdp-1 builtin predictive movement
+// See cube2 for the details of how the cube and its rotation are implemented.
+// This version moves the lightpen hit processing to an SBS interrupt routine that is invoked
+// on a lightpen hit.
+// The predictive movement filters running in the pdp-1 display logic are then applied and the target
+// moved to the new position, also passing the values to the cube rotation logic.
+// The buiiltin filter algorithm used is a exponential moving average filter for velocity, which
+// then chains to a dual slope one for acceleration, one slope for acceleration, one for deceleration.
+// Both use actual time deltas instead of inferring movement speed just from coordinate deltas.
+// Finally, those results are passed to a nonlinear motion predictor to give the predicted location.
+// Two sets are used, one set for each axis.
+// It uses integer fixed point math with only shifts, so it's quite efficient.
+// The chained filters give prediction and fast compensation when the velocity changes.
+//
+// Additionally, since so many rotations now occur in a short time, the fixed-point cube rotation matrix
+// calculations accumulate enough error that the cube distorts and falls apart.
+// Or it did.
+// Now a renormalization correction is periodially applied, Gram-Schmidt orthogonal renormalization.
+//
+// wje 14-Jul-2026 - initial version
+
+#include <TYPE340/type340defs.ah>
+#include <LIGHTPEN/lightpen.ah>
+
+// SCALE sets the size of the cube.
+// Anything hiter than 1 will fail, just not enough room.
+// Better to leave it at 0, rendering and tracking is faster.
+#define SCALE 0
+
+// Protect against invalid SCALE
+#if SCALE > 1
+#undef SCALE
+#define SCALE 1
+#endif
+
+// Cube bounds, computed.
+#define CENTERX (0d150 * (SCALE + 1))
+#define EXTENTX (CENTERX + (0d120 * (SCALE + 1)))       // This provides a margin to avoid target collisions
+#define CENTERY 0d512
+
+#define H 0d60
+#define CUBEINTENSITY 5
+#define MAXSTEP 0d32
+
+// Lightpe aperture to use, too small won't track well.
+#define APERTURE APERTURE250
+
+// We define the target parameters so we can change them.
+// These values work well.
+#define TARGETSCALE 1
+#define TARGETINTENSITY 5
+#define TARGETARM 0d10
+#define TARGETSPAN (TARGETARM * 2^TARGETSCALE * 2)
+
+// Where the drag target is placed, its bounding box size, its scale, and its arm length.
+// The location and bounding box are computed from the location of the cube and the size of the target.
+#define TARGETBOXSIZE (0d1000 - (EXTENTX + 0d20))
+#define TARGETX (EXTENTX + (TARGETBOXSIZE / 2))
+#define TARGETY CENTERY
+
+// Bounds the target can be dragged to, this is set to avoid edge or cube collisions.
+// TARGETXMIN is set well clear of the cube's worst-case possible extent, not just its normal one.
+// This is to account for drift.
+// The absolute pathological bound on any row's projected extent is H*(|a|+|b|+|c|) <= 3*H = 180,
+// i.e. center+180/
+// TARGETXMAX prevents any right-edge collision.
+// The y extents are similarly bounded.
+
+#define TARGETXMIN (TARGETX - (TARGETBOXSIZE/2) + (TARGETSPAN / 2))
+#define TARGETXMAX (TARGETX + (TARGETBOXSIZE/2) - (TARGETSPAN / 2))
+#define TARGETYMIN (TARGETY - (TARGETBOXSIZE/2) + (TARGETSPAN / 2))
+#define TARGETYMAX (TARGETY + (TARGETBOXSIZE/2) - (TARGETSPAN / 2))
+
+// CLAMPTHRESH uses the same Q1.17 fraction convention as the matrix entries, 0200000 = 0.5.
+// Any old matrix entry with |value| below this can cross zero via an ordinary small update.
+// only entries already near the +-1 boundary can wrap, so this is a safe wide-margin)cutoff.
+#define CLAMPTHRESH 0200000
+
+// IDENTITY is the same near-1.0 fixed-point constant used to seed the matrix
+// diagonal at init, reused by renormalize's linear 1/sqrt approximation.
+#define IDENTITY 0377777
+
+// RENORM_INTERVAL throttles how often renormalize actually applies its
+// correction: it runs on every jsp renormalize call (every drag event),
+// but with growth working (see rescale-step header comment) it now really
+// does move m00..m22 on every one of those calls. Applying that,
+// continuously, every frame, even though each individual nudge is small
+// and bounded, made the correction itself the dominant visible motion:
+// the cube visibly changed shape as it was rotated, independent of the
+// actual drag. Skipping RENORM_INTERVAL-1 calls out of every
+// RENORM_INTERVAL leaves m00..m22 completely untouched most of the
+// time, so what's on screen is dominated by updatematrix's own rotation,
+// with drift-control kicking in only periodically. Tune this to taste:
+// lower is more responsive (correction shows up sooner) but more visible;
+// higher is smoother but lets more drift accumulate between corrections.
+#define RENORM_INTERVAL 0d4
+
+// The number of edges and verticies for a cube.
+#define NUMV 0d8
+#define NUME 0d12
+
+// Where the prompt goes.
+#define MSGX 0d100
+#define MSGY 0d100
+
+// state vars
+var havelast
+var prevx, prevy, curhitx, curhity, lpword
+var dx, dy
+
+// Sync between the interrupt routine and the main code, set when the lp coordinates have been updated
+var sawHit
+
+// current orientation matrix (Q1.17 fractions), started ~identity
+var m00, m01, m02, m10, m11, m12, m20, m21, m22
+
+// snapshot of the matrix taken at the start of each update
+var o00, o01, o02, o10, o11, o12, o20, o21, o22
+
+var dyaw, dpit
+var newX, newY
+
+// clampfrac scratch
+var clold
+
+// renormalize scratch: post-updatematrix snapshot (rn..), the
+// orthogonalized/cross-product rows (t..), and working values for the
+// dot-product and rescale steps.
+var rn00, rn01, rn02, rn10, rn11, rn12, rn20, rn21, rn22
+var t00, t01, t02, t10, t11, t12, t20, t21, t22
+var racc, rmag, rcand, rhalf, rrenorm
+
+// free-running call counter used to throttle renormalize to once every
+// RENORM_INTERVAL calls; explicitly zeroed in init, see RENORM_INTERVAL.
+var rncount
+
+// transformverts / dot3 shared scratch
+var vidx, mptr, pvx, pvy, pvz, rowA, rowB, rowC, acc, tmp, sxptr, syptr
+
+// buildedges scratch
+var eidx, eptr, fromv, tov, tptr, fx, fy, tx, ty, ddx, ddy
+var xfield, yfield, vecword, ywordv, xwordv, ebase, wptr
+
+// Set up the interrupt vector
+0/
+    0                   // loc 0 SBS saves the pre-break AC here
+    0                   // loc 1 SBS saves packed(ov1,exd,PC) here; DEBREAK reads it
+    0                   // loc 2 SBS saves the pre-break IO here
+    jmp penISR          // loc 3 isr executes from here
+
+100/
+init,
+    lsm                 // be sure sbs isn't on yet, clear its state to avoid stale interrupts
+    cbs
+
+    // Reset some vars, this isn't C.
+    dzm sawHit
+    dzm havelast
+    dzm m01
+    dzm m02
+    dzm m10
+    dzm m12
+    dzm m20
+    dzm m21
+    dzm rncount
+    lac [0377777    // the identity diagonal value
+    dac m00
+    dac m11
+    dac m22
+    // Initialize the target position.
+    lac [y(TARGETY) next(point)
+    dac tgty
+    lac [x(TARGETX) next(parameter)
+    dac tgtx
+    lio [APERTURE]
+    dpy-i LIGHTPEN
+
+    // Seed a non-degenerate starting orientation by running two synthetic drag
+    // increments through the real update path.
+    law 0d10
+    dac dx
+    law 0d7
+    dac dy
+    jsp updatematrix
+    jsp renormalize
+    law i 0d6   // -0d6
+
+    dac dx
+    law 0d9
+    dac dy
+    jsp updatematrix
+    jsp renormalize
+
+    jsp transformverts
+    jsp buildedges
+
+    // One-time kick-off, prog now runs in its own loop, no more pdp-1 interaction
+    // other than updating the rotation on a lightpen target hit and resuming the 340.
+    // Enable interrupts to handle the lp events.
+    lio [prog]
+    dla
+    esm
+
+    // Just wait for a lightpen hit, then process and repeat.
+poll,
+    lac sawHit
+    sza i
+    jmp poll
+
+    // Snapshot the isr locations so they don't change out from under us
+    lsm
+    dzm sawHit
+    lac curhitx
+    dac newX
+    lac curhity
+    dac newY
+    esm
+
+    lac havelast
+    sza i
+    jmp firsthit
+
+    // We have a previous reference, turn the (clamped) drag delta into a
+    // matrix update, then recompute every screen vertex and edge from it.
+    lac newX
+    sub prevx
+    jda clampstep
+    dac dx
+    lac newY
+    sub prevy
+    jda clampstep
+    dac dy
+    lac newX
+    dac prevx
+    lac newY
+    dac prevy
+
+    jsp updatematrix
+    jsp renormalize
+    jsp transformverts
+    jsp buildedges
+    jmp poll
+
+firsthit,
+    law 1
+    dac havelast
+    lac newX
+    dac prevx
+    lac newY
+    dac prevy
+    jmp poll
+
+// clampstep
+// AC in: raw signed delta.
+// AC out: delta clamped to +-MAXSTEP.
+// Called via jda.
+clampstep, 0        // will have the passed AC value
+    dap csrtn
+    lac clampstep
+    spa
+    jmp csneg
+    lac clampstep
+    sub [MAXSTEP]
+    spa
+    jmp csdone
+    lac [MAXSTEP]
+    jmp csrtn
+csdone,
+    lac clampstep
+    jmp csrtn
+csneg,
+    lac clampstep
+    add [MAXSTEP]
+    sma
+    jmp csdone2
+    lac [0-MAXSTEP]
+    jmp csrtn
+csdone2,
+    lac clampstep
+csrtn, jmp .
+
+// clamptargetx
+// AC in: full-resolution absolute x coordinate.
+// AC out: same, clamped to [TARGETXMIN,TARGETXMAX]
+// Called via jda.
+clamptargetx, 0
+    dap ctxrtn
+    lac clamptargetx
+    sub [TARGETXMAX]
+    spa                 // AC = v-TARGETXMAX; skip (v>=TARGETXMAX) means clamp to max
+    jmp ctxlo
+    lac [TARGETXMAX]
+    jmp ctxrtn
+ctxlo,
+    lac clamptargetx
+    sub [TARGETXMIN]
+    sma                 // AC = v-TARGETXMIN; skip (v<TARGETXMIN) means clamp to min
+    jmp ctxok
+    lac [TARGETXMIN]
+    jmp ctxrtn
+ctxok,
+    lac clamptargetx
+ctxrtn, jmp .
+
+// clamptargety
+// AC in: full-resolution absolute y coordinate.
+// AC out: same, clamped to [TARGETYMIN,TARGETYMAX]
+// Called via jda.
+clamptargety, 0
+    dap ctyrtn
+    lac clamptargety
+    sub [TARGETYMAX]
+    spa                 // AC = v-TARGETYMAX; skip (v>=TARGETYMAX) means clamp to max
+    jmp ctylo
+    lac [TARGETYMAX]
+    jmp ctyrtn
+ctylo,
+    lac clamptargety
+    sub [TARGETYMIN]
+    sma                 // AC = v-TARGETYMIN; skip (v<TARGETYMIN) means clamp to min
+    jmp ctyok
+    lac [TARGETYMIN]
+    jmp ctyrtn
+ctyok,
+    lac clamptargety
+ctyrtn, jmp .
+
+// dot3
+// Computes one output row of matrix*vertex.
+// in: pvx,pvy,pvz, prescaled model coords, and
+//     rowA,rowB,rowC, the 3 matrix entries of the row to use
+// out: AC = descaled dot product.
+// Called via jsp
+dot3,
+    dap d3rtn
+    lac pvx
+    mul rowA
+    dac acc
+    lac pvy
+    mul rowB
+    add acc
+    dac acc
+    lac pvz
+    mul rowC
+    add acc
+    dac acc
+    lac acc
+    sar 5s
+    sar 5s
+    jmp d3rtn
+d3rtn, jmp .
+
+// packdx
+// AC in: signed delta x in raster units.
+// AC out: packed deltax(0-6) field, with 0200 set if delta was negative.
+// Called via jda.
+packdx, 0
+    dap pdxrtn
+    lac packdx
+    spa
+    jmp pdxneg
+    and [0177]
+    jmp pdxrtn
+pdxneg,
+    cma
+    and [0177]
+    ior [0200]
+pdxrtn, jmp .
+
+// packdy
+// AC in: signed delta y in raster units.
+// AC out: packed deltay field shifted into bits 8-14, with 0100000 set if delta was negative.
+// Called via jda.
+packdy, 0
+    dap pdyrtn
+    lac packdy
+    spa
+    jmp pdyneg
+    and [0177]
+    sal 8s
+    jmp pdyrtn
+pdyneg,
+    cma
+    and [0177]
+    sal 8s
+    ior [0100000]
+pdyrtn, jmp .
+
+// clampfrac -- saturating-add guard for one rotation-matrix entry.
+//
+// in: AC = newly computed value, post-add, possibly wrapped.
+// out: AC = the new value unchanged, unless clold's magnitude was >= CLAMPTHRESH and the
+//      sign flipped, in which case AC is saturated to +-0377777 (clold's sign) instead.
+// Called via jda.
+clampfrac, 0
+    dap cfrtn
+    lac clampfrac           // stash the possibly-wrapped new value
+
+    lac clold
+    xor clampfrac
+    and [0400000]
+    sza
+    jmp cfcheck         // sign bits differ -- go check whether this is real overflow
+    lac clampfrac
+    jmp cfrtn           // same sign as before -- definitely not a wrap, pass through
+
+cfcheck,
+    lac clold           // get |clold| into AC
+    spa
+    jmp cfcomp          // clold negative -- complement to get its magnitude
+    jmp cfmag           // clold positive -- AC already holds the magnitude
+cfcomp,
+    cma
+cfmag,
+    sub [CLAMPTHRESH]
+    spa
+    jmp cfok            // |clold| < threshold -- an ordinary zero-crossing, not overflow
+
+    lac clold           // |clold| >= threshold and the sign flipped -- real wraparound;
+    spa                 // saturate to clold's own sign at the max representable magnitude
+    jmp cfclampneg
+    lac [0377777]
+    jmp cfrtn
+cfclampneg,
+    lac [0-0377777]
+    jmp cfrtn
+
+cfok,
+    lac clampfrac
+cfrtn, jmp .
+
+// updatematrix
+// Reads dx,dy which are already clamped raster-pixel deltas, derives
+// small yaw/pitch angles, and applies the first-order skew-rotation update
+// M_new = Delta(dyaw,dpit) * M_old.
+// Each new entry is passed through clampfrac before being stored, so a near-+-1 entry saturates instead of
+// wrapping when a rotation step would otherwise push it past the representable range.
+// Called via jsp.
+updatematrix,
+    dap umrtn
+
+    // The shifts determine the scaling of rotation for lp moves, more shifts, more moves, until it breaks.
+    lac dx
+    sal 9s
+    dac dyaw
+
+    lac dy
+    sal 9s
+    dac dpit
+
+    // snapshot the current matrix
+    lac m00
+    dac o00
+    lac m01
+    dac o01
+    lac m02
+    dac o02
+    lac m10
+    dac o10
+    lac m11
+    dac o11
+    lac m12
+    dac o12
+    lac m20
+    dac o20
+    lac m21
+    dac o21
+    lac m22
+    dac o22
+
+    // row0_new[j] = o0j + dyaw*o2j
+    lac o00
+    dac acc
+    dac clold
+    lac dyaw
+    mul o20
+    add acc
+    jda clampfrac
+    dac m00
+
+    lac o01
+    dac acc
+    dac clold
+    lac dyaw
+    mul o21
+    add acc
+    jda clampfrac
+    dac m01
+
+    lac o02
+    dac acc
+    dac clold
+    lac dyaw
+    mul o22
+    add acc
+    jda clampfrac
+    dac m02
+
+    // row1_new[j] = o1j - dpit*o2j
+    lac dpit
+    cma
+    dac umndpit
+
+    lac o10
+    dac acc
+    dac clold
+    lac umndpit
+    mul o20
+    add acc
+    jda clampfrac
+    dac m10
+
+    lac o11
+    dac acc
+    dac clold
+    lac umndpit
+    mul o21
+    add acc
+    jda clampfrac
+    dac m11
+
+    lac o12
+    dac acc
+    dac clold
+    lac umndpit
+    mul o22
+    add acc
+    jda clampfrac
+    dac m12
+
+    // row2_new[j] = o2j - dyaw*o0j + dpit*o1j
+    lac dyaw
+    cma
+    dac umndyaw
+
+    lac o20
+    dac acc
+    dac clold
+    lac umndyaw
+    mul o00
+    add acc
+    dac acc
+    lac dpit
+    mul o10
+    add acc
+    jda clampfrac
+    dac m20
+
+    lac o21
+    dac acc
+    dac clold
+    lac umndyaw
+    mul o01
+    add acc
+    dac acc
+    lac dpit
+    mul o11
+    add acc
+    jda clampfrac
+    dac m21
+
+    lac o22
+    dac acc
+    dac clold
+    lac umndyaw
+    mul o02
+    add acc
+    dac acc
+    lac dpit
+    mul o12
+    add acc
+    jda clampfrac
+    dac m22
+
+    jmp umrtn
+umrtn, jmp .
+umndpit, 0
+umndyaw, 0
+
+// renormalize
+// First-order Direction-Cosine-Matrix style orthonormalization of the rotation
+// matrix. updatematrix's Delta = I+K incremental-rotation step is only a
+// first-order approximation to a true rotation (K is skew-symmetric, so
+// Delta^T*Delta = I + K^T*K, not I), so every application very slightly
+// stretches and un-squares the matrix's rows. Over many small steps this
+// compounds into visible skew, square faces becoming parallelograms and
+// eventually losing edge connectivity, independent of any fixed-point
+// rounding. This is the standard cheap fix, adapted from the classic AHRS/DCM
+// renormalization algorithm (Premerlani and Bizard): nudge row0 and row1 back
+// toward mutually orthogonal by half their dot product, rebuild row2 as their
+// cross product (exactly orthogonal to both by construction), then rescale
+// all three rows toward unit length using the linear approximation
+// 1/sqrt(x) =~ 0.5*(3-x), valid since x = |row|^2 stays close to 1 as long as
+// this runs every update. No sqrt or divide needed, only mul/add/shift, same
+// as the rest of this file.
+// Each store is guarded by clampfrac exactly like updatematrix: the
+// row-correction and rescale terms are not bounded as tightly as a single
+// small-angle drag step, so the same wraparound risk applies.
+// Called via jsp, immediately after updatematrix and before transformverts,
+// so every drawn frame reflects the corrected matrix.
+// penISR never touches m00..m22 (see file header), so this routine has no
+// interrupt-reentrancy exposure despite running with interrupts enabled.
+renormalize,
+    dap rnrtn
+
+    // Throttle: only run the correction below on every RENORM_INTERVAL-th
+    // call, returning immediately (m00..m22 completely untouched) on the
+    // calls in between. See RENORM_INTERVAL's own comment for why.
+    idx rncount
+    sub [RENORM_INTERVAL]
+    sza
+    jmp rnrtn
+    dzm rncount
+
+    // Snapshot the matrix as updatematrix left it.
+    lac m00
+    dac rn00
+    lac m01
+    dac rn01
+    lac m02
+    dac rn02
+    lac m10
+    dac rn10
+    lac m11
+    dac rn11
+    lac m12
+    dac rn12
+    lac m20
+    dac rn20
+    lac m21
+    dac rn21
+    lac m22
+    dac rn22
+
+    // rhalf = dot(row0,row1) / 2
+    lac rn00
+    mul rn10
+    dac racc
+    lac rn01
+    mul rn11
+    add racc
+    dac racc
+    lac rn02
+    mul rn12
+    add racc
+    dac racc
+    sar 1s
+    dac rhalf
+
+    // t0j = rn0j - rhalf*rn1j  (row0, nudged toward orthogonal to row1)
+    lac rhalf
+    mul rn10
+    dac racc
+    lac rn00
+    dac clold
+    sub racc
+    jda clampfrac
+    dac t00
+
+    lac rhalf
+    mul rn11
+    dac racc
+    lac rn01
+    dac clold
+    sub racc
+    jda clampfrac
+    dac t01
+
+    lac rhalf
+    mul rn12
+    dac racc
+    lac rn02
+    dac clold
+    sub racc
+    jda clampfrac
+    dac t02
+
+    // t1j = rn1j - rhalf*rn0j  (row1, nudged toward orthogonal to row0)
+    lac rhalf
+    mul rn00
+    dac racc
+    lac rn10
+    dac clold
+    sub racc
+    jda clampfrac
+    dac t10
+
+    lac rhalf
+    mul rn01
+    dac racc
+    lac rn11
+    dac clold
+    sub racc
+    jda clampfrac
+    dac t11
+
+    lac rhalf
+    mul rn02
+    dac racc
+    lac rn12
+    dac clold
+    sub racc
+    jda clampfrac
+    dac t12
+
+    // t2 = t0 x t1  (exactly orthogonal to both by construction)
+    lac t01
+    mul t12
+    dac racc
+    lac t02
+    mul t11
+    dac rmag
+    lac racc
+    sub rmag
+    dac rcand
+    lac rn20
+    dac clold
+    lac rcand
+    jda clampfrac
+    dac t20
+
+    lac t02
+    mul t10
+    dac racc
+    lac t00
+    mul t12
+    dac rmag
+    lac racc
+    sub rmag
+    dac rcand
+    lac rn21
+    dac clold
+    lac rcand
+    jda clampfrac
+    dac t21
+
+    lac t00
+    mul t11
+    dac racc
+    lac t01
+    mul t10
+    dac rmag
+    lac racc
+    sub rmag
+    dac rcand
+    lac rn22
+    dac clold
+    lac rcand
+    jda clampfrac
+    dac t22
+
+    // Rescale each row toward unit length via one unified additive
+    // correction: delta = row * 0.5*(IDENTITY - x), where x = |row|^2.
+    //
+    // An earlier version of this step treated x >= ~1 (row confirmed too
+    // long) as a separate case: whenever the plain sum-of-squares below
+    // overflowed Q1.17's ~1.0 ceiling, it hard-multiplied the row by a
+    // fixed shrink factor (RENORM_SHRINK, 0.75) instead of computing a
+    // proportional correction. That overflow was not a rare event:
+    // updatematrix's own first-order rotation step routinely nudges a row
+    // to just over unit length as an ordinary part of correcting it, so
+    // the hard-shrink branch fired on a large fraction of renormalize
+    // calls, each time visibly snapping the whole cube down by 25% in a
+    // single frame before the next few (throttled-out) calls grew it back
+    // toward 1. Confirmed with the diag_vertical.py headless diagnostic
+    // against a slow, steady vertical-only drag: |row|^2 repeatedly
+    // dropped to ~0.5625 (0.75 squared, an exact match for RENORM_SHRINK's
+    // cut) in lockstep with renormalize's RENORM_INTERVAL cadence, then
+    // climbed back toward ~1.0 before the next cut, matching the user's
+    // report of the cube oscillating between two sizes.
+    //
+    // Fix: give the sum-of-squares computation headroom instead of
+    // treating any overflow as "confirmed too long, apply a fixed hard
+    // shrink". Each squared component is halved (sar 1s) before being
+    // added, so racc accumulates x/2 rather than x, which stays
+    // representable for x up to ~2 instead of just ~1. The unified
+    // correction factor rhalf = 0.5*IDENTITY - racc = 0.5*(1-x) is then
+    // always safely in roughly [-0.5, +0.5], whether the row is short
+    // (x<1, rhalf>0, grows) or long (x>1, rhalf<0, shrinks), and scales
+    // smoothly with how far off the row actually is instead of ever
+    // snapping to a fixed cut. Only a genuinely pathological sum (x
+    // approaching 2, essentially impossible from a single updatematrix
+    // step) still needs the fallback guard below, which forces racc to
+    // IDENTITY (a strong "very long" signal) rather than trusting a
+    // wrapped value.
+    //
+    // Row0:
+    lac t00
+    mul t00
+    sar 1s
+    dac racc
+    lac t01
+    mul t01
+    sar 1s
+    dac rmag
+    lac racc
+    add rmag
+    spa
+    jmp rsqbad0a
+    dac racc
+    jmp rsqok0a
+rsqbad0a,
+    lac [IDENTITY]
+    dac racc
+rsqok0a,
+    lac t02
+    mul t02
+    sar 1s
+    dac rmag
+    lac racc
+    add rmag
+    spa
+    jmp rsqbad0b
+    dac racc
+    jmp rsqok0b
+rsqbad0b,
+    lac [IDENTITY]
+    dac racc
+rsqok0b,
+    lac [IDENTITY]
+    sar 1s
+    sub racc
+    dac rhalf
+
+    lac t00
+    mul rhalf
+    dac rcand
+    lac t00
+    dac clold
+    add rcand
+    jda clampfrac
+    dac m00
+
+    lac t01
+    mul rhalf
+    dac rcand
+    lac t01
+    dac clold
+    add rcand
+    jda clampfrac
+    dac m01
+
+    lac t02
+    mul rhalf
+    dac rcand
+    lac t02
+    dac clold
+    add rcand
+    jda clampfrac
+    dac m02
+
+    // Row1:
+    lac t10
+    mul t10
+    sar 1s
+    dac racc
+    lac t11
+    mul t11
+    sar 1s
+    dac rmag
+    lac racc
+    add rmag
+    spa
+    jmp rsqbad1a
+    dac racc
+    jmp rsqok1a
+rsqbad1a,
+    lac [IDENTITY]
+    dac racc
+rsqok1a,
+    lac t12
+    mul t12
+    sar 1s
+    dac rmag
+    lac racc
+    add rmag
+    spa
+    jmp rsqbad1b
+    dac racc
+    jmp rsqok1b
+rsqbad1b,
+    lac [IDENTITY]
+    dac racc
+rsqok1b,
+    lac [IDENTITY]
+    sar 1s
+    sub racc
+    dac rhalf
+
+    lac t10
+    mul rhalf
+    dac rcand
+    lac t10
+    dac clold
+    add rcand
+    jda clampfrac
+    dac m10
+
+    lac t11
+    mul rhalf
+    dac rcand
+    lac t11
+    dac clold
+    add rcand
+    jda clampfrac
+    dac m11
+
+    lac t12
+    mul rhalf
+    dac rcand
+    lac t12
+    dac clold
+    add rcand
+    jda clampfrac
+    dac m12
+
+    // Row2:
+    lac t20
+    mul t20
+    sar 1s
+    dac racc
+    lac t21
+    mul t21
+    sar 1s
+    dac rmag
+    lac racc
+    add rmag
+    spa
+    jmp rsqbad2a
+    dac racc
+    jmp rsqok2a
+rsqbad2a,
+    lac [IDENTITY]
+    dac racc
+rsqok2a,
+    lac t22
+    mul t22
+    sar 1s
+    dac rmag
+    lac racc
+    add rmag
+    spa
+    jmp rsqbad2b
+    dac racc
+    jmp rsqok2b
+rsqbad2b,
+    lac [IDENTITY]
+    dac racc
+rsqok2b,
+    lac [IDENTITY]
+    sar 1s
+    sub racc
+    dac rhalf
+
+    lac t20
+    mul rhalf
+    dac rcand
+    lac t20
+    dac clold
+    add rcand
+    jda clampfrac
+    dac m20
+
+    lac t21
+    mul rhalf
+    dac rcand
+    lac t21
+    dac clold
+    add rcand
+    jda clampfrac
+    dac m21
+
+    lac t22
+    mul rhalf
+    dac rcand
+    lac t22
+    dac clold
+    add rcand
+    jda clampfrac
+    dac m22
+
+    jmp rnrtn
+rnrtn, jmp .
+
+// transformverts
+// Recomputes sxtab[0..7], sytab[0..7], the screen x,y for
+// every cube vertex, from the current matrix.
+// Orthographic projection, z is dropped.
+// Called via jsp.
+transformverts,
+    dap tvrtn
+    dzm vidx
+tvloop,
+    // mptr = model + 3*vidx
+    lac vidx
+    add vidx
+    add vidx
+    add [model]
+    dac mptr
+
+    lac i mptr
+    sal 5s
+    sal 5s
+    dac pvx
+    idx mptr
+    lac i mptr
+    sal 5s
+    sal 5s
+    dac pvy
+    idx mptr
+    lac i mptr
+    sal 5s
+    sal 5s
+    dac pvz
+
+    // screen x = row0 . vertex + CENTERX
+    // dot3's result is the vertex's offset from center in raw (unscaled)
+    // pixel units. This is written out via buildedges as an ABSOLUTE
+    // point-mode move, which the display never multiplies by scale(SCALE)
+    // regardless of what SCALE is set to. This is unlike the vector-mode
+    // edge between two vertices, which the display always does multiply
+    // (see buildedges). So without an explicit multiply here, every vertex lands
+    // at exactly the same screen position no matter what SCALE is, and
+    // raising SCALE only rescales the connecting lines (which buildedges
+    // now compensates for exactly), leaving the cube's actual footprint
+    // unchanged. To make SCALE genuinely resize the cube, pre-multiply the
+    // offset by the same 2^SCALE the display will apply to relative motion,
+    // so the absolute vertex placement grows too. SCALE is a compile-time
+    // constant (0-3), so (as in buildedges) the matching literal shift is
+    // emitted directly.
+    lac m00
+    dac rowA
+    lac m01
+    dac rowB
+    lac m02
+    dac rowC
+    jsp dot3
+#if SCALE == 1
+    sal 1s
+#endif
+    add [CENTERX]
+    dac tmp
+    lac vidx
+    add [sxtab]
+    dac sxptr
+    lac tmp
+    dac i sxptr
+
+    // screen y = row1 . vertex + CENTERY. Same reasoning as screen x above.
+    lac m10
+    dac rowA
+    lac m11
+    dac rowB
+    lac m12
+    dac rowC
+    jsp dot3
+#if SCALE == 1
+    sal 1s
+#endif
+    add [CENTERY]
+    dac tmp
+    lac vidx
+    add [sytab]
+    dac syptr
+    lac tmp
+    dac i syptr
+
+    idx vidx
+    lac vidx
+    sub [NUMV]
+    sza
+    jmp tvloop
+    jmp tvrtn
+tvrtn, jmp .
+
+// buildedges
+// Recomputes and patches the 4-word-per-edge block for all
+// 12 edges in prog, below, from the current sxtab/sytab.
+// Called via jsp.
+buildedges,
+    dap bertn
+    dzm eidx
+beloop,
+    // eptr = edges + 2*eidx ; fromv,tov = edges[2*eidx], edges[2*eidx+1]
+    lac eidx
+    sal 1s
+    add [edges]
+    dac eptr
+    lac i eptr
+    dac fromv
+    idx eptr
+    lac i eptr
+    dac tov
+
+    lac fromv
+    add [sxtab]
+    dac tptr
+    lac i tptr
+    dac fx
+    lac fromv
+    add [sytab]
+    dac tptr
+    lac i tptr
+    dac fy
+
+    lac tov
+    add [sxtab]
+    dac tptr
+    lac i tptr
+    dac tx
+    lac tov
+    add [sytab]
+    dac tptr
+    lac i tptr
+    dac ty
+
+    lac tx
+    sub fx
+    dac ddx
+    lac ty
+    sub fy
+    dac ddy
+
+    // The vector command built below runs under scale(SCALE): relative motion
+    // (this vector) is multiplied by 2^SCALE at draw time, but the point-mode
+    // move to fx,fy just above is an absolute move and is not. ddx/ddy are
+    // already the true final on-screen pixel distance, computed straight from
+    // the absolute matrix-transformed vertex positions, with no scale factor
+    // baked in. So unless pre-shrunk here, the display doubles/quadruples/
+    // octuples the drawn edge length past the correctly-placed second vertex
+    // whenever SCALE is nonzero. Contrast trackingTarget.ac, which does the
+    // mirror-image thing correctly: it leaves its vector deltas as the raw
+    // logical TARGETARM length and instead accounts for the resulting
+    // post-multiply span separately, in TARGETSPAN.
+    // SCALE is a compile-time constant (0-3), so the matching literal shift
+    // is emitted directly rather than attempting a macro-substituted shift
+    // count: sar's "Ns" operands (1s..9s) are each their own reserved token,
+    // not a number-plus-suffix the preprocessor can compose from SCALE.
+#if SCALE == 1
+    lac ddx
+    sar 1s
+    dac ddx
+    lac ddy
+    sar 1s
+    dac ddy
+#endif
+
+    lac ddx
+    jda packdx
+    dac xfield
+    lac ddy
+    jda packdy
+    dac yfield
+
+    lac xfield
+    ior yfield
+    ior [visible end]
+    dac vecword
+
+    lac fy
+    and [01777]
+    ior [y(0) next(point)]
+    dac ywordv
+
+    lac fx
+    and [01777]
+    ior [x(0) next(vector)]
+    dac xwordv
+
+    // ebase = prog + 4*eidx ; write y/x/vector words at ebase+1, +2, +3
+    lac eidx
+    sal 2s
+    add [prog]
+    dac ebase
+
+    idx ebase	// now ebase+1, also in AC
+    dac wptr
+    lac ywordv
+    dac i wptr
+
+    idx ebase	// next word, ebase+2
+    dac wptr
+    lac xwordv
+    dac i wptr
+
+    idx ebase	// next word, ebase+3
+    dac wptr
+    lac vecword
+    dac i wptr
+
+    idx eidx	// increment, will also be in AC
+    sub [NUME]
+    sza
+    jmp beloop
+bertn, jmp .
+
+// penISR is entered directly on an interrupt from a lightpen hit
+penISR,
+    // Drp, like drc,  drops the last bit of the coordinates, get back to the full 10 bits
+    drp
+    lai
+    and [0777]
+    sal 1s
+    dac curhity
+    lai
+    sar 8s
+    and [01776
+    dac curhitx
+
+    // Reposition the target and resume the display, now curhitx is in AC
+    jda clamptargetx
+    ior [x(0) next(parameter)]
+    dac tgtx
+    lac curhity
+    jda clamptargety
+    ior [y(0) next(point)]
+    dac tgty
+    idx sawHit                  // tell main code we have a hit
+
+    // We now do something rather clever, we usurp the 340 program and restart it at
+    // the lightpen drawing location.
+    // That will return to normal processing by itself, but this gets an immediate tracking update.
+    lio [target]
+    dla
+isrDone,
+    lio 2               // restore the pre-break IO
+    lac 0               // restore the pre-break AC -- must be last before DEBREAK
+    jmp i 1             // DEBREAK
+
+// model
+// 8 cube vertices, x,y,z each, +-H per axis.
+// v0..v3 walk the bottom face (z=-H) in cyclic order so each consecutive pair is a
+// real edge: (-H,-H), (H,-H), (H,H), (-H,H).
+// v4..v7 are the same (x,y) cycle directly above at z=+H, so vN+4 sits above vN for the "verticals" edges below.
+// NOTE: this is NOT plain n&1/n&2/n&4 binary bit-labeling -- straight binary
+// counting order would make 1-2 and 5-6 face diagonals rather than edges.
+// This is a Gray-code-style traversal instead.
+model,
+    0-H     // v0 x
+    0-H     // v0 y
+    0-H     // v0 z
+    H       // v1 x
+    0-H     // v1 y
+    0-H     // v1 z
+    H       // v2 x
+    H       // v2 y
+    0-H     // v2 z
+    0-H     // v3 x
+    H       // v3 y
+    0-H     // v3 z
+    0-H     // v4 x
+    0-H     // v4 y
+    H       // v4 z
+    H       // v5 x
+    0-H     // v5 y
+    H       // v5 z
+    H       // v6 x
+    H       // v6 y
+    H       // v6 z
+    0-H     // v7 x
+    H       // v7 y
+    H       // v7 z
+
+// edges, 12 real cube edges, from,to vertex index pairs.
+edges,
+    0d0             // bottom face: 0-1
+    0d1
+    0d1             // 1-2
+    0d2
+    0d2             // 2-3
+    0d3
+    0d3             // 3-0
+    0d0
+    0d4             // top face: 4-5
+    0d5
+    0d5             // 5-6
+    0d6
+    0d6             // 6-7
+    0d7
+    0d7             // 7-4
+    0d4
+    0d0             // verticals: 0-4
+    0d4
+    0d1             // 1-5
+    0d5
+    0d2             // 2-6
+    0d6
+    0d3             // 3-7
+    0d7
+
+// screen-space (x,y) for each of the 8 transformed vertices, filled in every update
+sxtab,
+   table NUMV
+sytab,
+   table NUMV
+
+// The Type 340 display list: 12 edges x 4 words.
+// Word 0 of each edge is the static parameter word.
+// Words/ 1-3 (y, x, vector) are placeholders overwritten by buildedges.
+prog,
+    scale(SCALE) intensity(CUBEINTENSITY) next(point)
+    0
+    0
+    0
+    scale(SCALE) intensity(CUBEINTENSITY) next(point)
+    0
+    0
+    0
+    scale(SCALE) intensity(CUBEINTENSITY) next(point)
+    0
+    0
+    0
+    scale(SCALE) intensity(CUBEINTENSITY) next(point)
+    0
+    0
+    0
+    scale(SCALE) intensity(CUBEINTENSITY) next(point)
+    0
+    0
+    0
+    scale(SCALE) intensity(CUBEINTENSITY) next(point)
+    0
+    0
+    0
+    scale(SCALE) intensity(CUBEINTENSITY) next(point)
+    0
+    0
+    0
+    scale(SCALE) intensity(CUBEINTENSITY) next(point)
+    0
+    0
+    0
+    scale(SCALE) intensity(CUBEINTENSITY) next(point)
+    0
+    0
+    0
+    scale(SCALE) intensity(CUBEINTENSITY) next(point)
+    0
+    0
+    0
+    scale(SCALE) intensity(CUBEINTENSITY) next(point)
+    0
+    0
+    0
+    scale(SCALE) intensity(CUBEINTENSITY) next(point)
+    0
+    0
+    0
+
+// Separate lightpen drag target drawn every pass.
+target,
+   scale(TARGETSCALE) intensity(TARGETINTENSITY) lpon next(point)
+// The origin point, tgtx,tgty is modified by the pdp-1 code.
+// These are placeholders.
+tgty, y(TARGETY) next(point)
+tgtx, x(TARGETX) next(parameter)
+
+#include <TYPE340/trackingTarget.ac>
+
+    next(point) charsets(2) scale(1) intensity(5) lpoff
+    y(MSGY) next(point)
+    x(MSGX) next(character)
+    type340 "Drag the target with the lightpen."
+    next(subroutine)
+    jump prog next(parameter)
+
+    halt   // Just for safety, should never be reached.
+
+variables
+constants
+
+start init

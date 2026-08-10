@@ -1,0 +1,135 @@
+Demo of the new fast lightpen predictive tracking library
+// This uses the new motion prediction code and an interrupt driven lightpen handler.
+// Compare this to the earlier simplistic tracking!
+#include <TYPE340/type340defs.ah>
+#include <TYPE340/trackingTarget.ah>
+#include <LIGHTPEN/motionFilter.ah>
+
+// Initial target position
+#define TARGETX 0d512
+#define TARGETY 0d512
+// Where the prompt goes.
+#define MSGX 0d100
+#define MSGY 0d100
+
+// Set up the interrupt vector
+0/
+    0                   // loc 0 SBS saves the pre-break AC here
+    0                   // loc 1 SBS saves packed(ov1,exd,PC) here; DEBREAK reads it
+    0                   // loc 2 SBS saves the pre-break IO here
+    jmp penISR          // loc 3 isr executes from here
+
+100/
+    // Be sure interrupts are off, flush any pending to avoid spurius lightpen data.
+    lsm
+    cbs
+
+    // Filters need intializing
+    lio [TARGETX
+    lac [filterX
+    jda motionFilterInit
+    lio [TARGETY
+    lac [filterY
+    jda motionFilterInit
+
+    // And override the alphas.
+    // Law 0 is intentional, makes it easy to change.
+    law 2
+    lia
+    jsp motionFilterValpha
+    law 0
+    lia
+    jsp motionFilterAalpha
+    law 1
+    lia
+    jsp motionFilterDalpha
+
+    // And intialize the 340 location
+    lac [y(TARGETY) next(point)
+    dac tgtY
+    lac [x(TARGETX) next(parameter)
+    dac tgtX
+
+    esm         // And now enable interrupts, we're ready.
+
+    // Start the 340, it will run autonomously
+    lio [target
+    dla
+
+top,            // just loop forever, 340 and the interrupt are doing all the work.
+    jmp top
+
+// Bring in the filter code.
+#include <LIGHTPEN/motionFilter.ac>
+
+// penISR is entered directly on an interrupt from a lightpen hit
+penISR,
+    local curhitX, curhitY
+    // Drc drops the last bit of the coordinates, get back to the full 10 bits
+    drc
+    lai
+    and [0777]
+    sal 1s
+    dac curhitY
+    lai
+    sar 8s
+    and [01776
+    // Apply the motion filtering, x is in AC.
+    lia
+    lac [filterX
+    jda motionFilterUpdate
+    dac curhitX
+    lio curhitY
+    lac [filterY
+    jda motionFilterUpdate
+    dac curhitY
+
+    // Reposition the target and resume the display, now curhitY is in AC
+    ior [y(0) next(point)]
+    dac tgtY
+    lac curhitX
+    ior [x(0) next(parameter)]
+    dac tgtX
+
+    // We now do something rather clever, we usurp the 340 program and restart it at
+    // the lightpen drawing location.
+    // That will return to normal processing by itself, but this gets an immediate tracking update.
+    lio [target]
+    dla
+    lio 2               // restore the pre-break IO
+    lac 0               // restore the pre-break AC -- must be last before DEBREAK
+    jmp i 1             // DEBREAK
+
+curhitX, 0
+curhitY, 0
+    endloc
+
+// This brings in the motion prediction filter routines
+#include <LIGHTPEN/motionFilter.ac>
+
+// The filters need a place to save its state
+filterX,
+    table FILTER_STATE_SIZE
+filterY,
+    table FILTER_STATE_SIZE
+
+// The 340 program
+target, lpon scale(1) intensity(6) next(point)
+// The origin point, tgtX,tgtY is modified by the pdp-1 code.
+// These are placeholders.
+tgtY, y(TARGETY) next(point)
+tgtX, x(TARGETX) next(parameter)
+
+#include <TYPE340/trackingTarget.ac>
+
+    next(point) charsets(2) scale(1) intensity(5) lpoff
+    y(MSGY) next(point)
+    x(MSGX) next(character)
+    type340 "Drag the target with the lightpen."
+    next(subroutine)
+    jump target next(parameter)
+    halt   // Just for safety, should never be reached.
+
+variables
+constants
+start 100

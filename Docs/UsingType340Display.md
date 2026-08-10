@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.8
+This is version 1.9
 
-Edit date 11-Jul-2026\
-More explanation of interrupts, lightpen, edge violations
+Edit date 8-Aug-2026\
+Add description of the motion estimator and IOT.
 
 ## What is it?
 
@@ -92,7 +92,7 @@ This can lead to some interesting displays.
 
 ## The IOTs
 
-The display is controlled by 3 IOTs with a total of 8 subinstructions.
+The display is controlled by 3 IOTs with a total of 8 standard subinstructions and 1 non-standard addition.
 Of these, only one is needed to start a display program.
 The rest are for determining the status of the display.
 
@@ -104,6 +104,7 @@ different IOT assignments.
 - dcf - display clear flags, clears the flags following
 - dra - display read address counter, the last address executed
 - drc - display read coordinates, the x and y position of the lightpen hit
+- drp - display read predicted coordinates, the x and y position of where the lightpen currently is
 - dsp - display skip on lightpen flag
 - dss - display skip on stop
 - dsv - display skip on vertical edge violation
@@ -113,7 +114,8 @@ different IOT assignments.
 In more detail:
 
 Only one IOT, dra, takes a value passed in the IO register.\
-Only two IOTs return a value, dra and drc, both in the IO register.
+Only two standard IOTs return a value, dra and drc, both in the IO register.\
+An additional non-standard IOT, drp, also returns a value in the IO register.
 
 | IOT | pdp-1 opcode | input | output | notes |
 |-----|--------------|-------|--------|-------|
@@ -122,7 +124,8 @@ Only two IOTs return a value, dra and drc, both in the IO register.
 | dcf | 720215 | none | none | clears the 340 dkip flags |
 | dra | 720016 | none | IO has current execution address | if the 340 is halted, will be the next location to execute |
 | drc | 720116 | none | IO has the last lightpen hit coordinates | see note 2 |
-| dsp | 720117 | none | none | dsp, dss, dsv, dsh can be combined, see note 3 |
+| drp | 720216 | none | IO has the predicted lightpen position coordinates | see note 3 |
+| dsp | 720117 | none | none | dsp, dss, dsv, dsh can be combined, see note 4 |
 | dss | 720217 | none | none ||
 | dsv | 720417 | none | none ||
 | dsh | 721017 | none | none ||
@@ -136,8 +139,34 @@ are x >> 1 and y >> 1.
 The x coordinate is in IO bits 0-8, the y coordinate in bits 9-17.
 The values are indeterminate if there has not been a lightpen hit.
 
-**Note 3** - All of the skip subcommands can be combined, just as for the normal PDP-1 skip instructions, e.g.\
+**Note 3** - See the section on motion prediction, below.
+The x and y coordinates do not include the least-significant-bit of the screen coordinate, the
+format is the same as Note 2.
+The values are indeterminate if the lightpen is not down.
+
+**Note 4** - All of the skip subcommands can be combined, just as for the normal PDP-1 skip instructions, e.g.\
 dsv dsh dss
+
+## Motion prediction
+
+This is a non-standard addition to help with properly simulating the original lightpen,
+which was an immediate-response coincidence detector of an illuminated dot's coordinates.
+However, with modern raster displays the pseudo-lightpen position derived from mouse coordiates might
+not match the actual mouse position if it is moving quickly.
+
+The motion predictor is a time-based cascaded exponential moving average filter,
+one for velocity and one for acceleration.
+The acceleration filter is dual slope, one alpha value for acceleration and a separate one for deceleration.
+The dual slope allows compensating for overshoot for rapid halts of the mouse movement.
+
+The result of the filters is used to drive a nonlinear motion estimator to give the probable current mouse
+coordinates even if the position doesn't match the reported lightpen hit coordinates.
+
+This can be used to provide very fast target tracking.
+When a tracking target reports a hit, the motion prediction IOT is called to give the coordinates of where the
+mouse actually is.
+The target can then be recentered on these coordinates which ensures tracking isn't lost because of
+the inherent lag in coordinate reporting from the display client.
 
 ## Scale factor
 

@@ -256,7 +256,7 @@ static BRMState brmState;
 static int pendingDelay;
 static volatile int curAddress;      // the address set by the dla command, where we will fetch data from
 static int curX, curY;      // current display coordinates
-static int lpX, lpY;        // last lp hit display coordinates
+static int lpX, lpY, lpDisplay;      // last lp hit display coordinates and display number
 static int curScale;
 static int curIntensity;
 static int shiftState;     // will be 0 for upper shift or 64 for lower shift, first set or second set
@@ -420,20 +420,23 @@ emuOrFlags(int newFlags)
 }
 
 // Return the current x and y coordinates.
-// Note that unless the emulator is stopped or paused,  this is a snapshot.
-// If paused, it was because of a lightpen hit, so return those coords instead of the curren x and y.
+// Note that unless the emulator is stopped or paused, this is a snapshot of the last drawn point.
+// If paused, it was because of a lightpen hit, so return those coords instead of the current x and y.
 void
-emuGetXY(int *xP, int *yP)
+emuGetXY(int *dispP, int *xP, int *yP)
 {
+    // A lightpen hit will pause
     if( isPaused )
     {
         *xP = lpX;
         *yP = lpY;
+        *dispP = lpDisplay;
     }
     else
     {
         *xP = curX;
         *yP = curY;
+        *dispP = 0; // use the primary
     }
 }
 
@@ -1670,6 +1673,7 @@ bool gotLpHit;
                     {
                         lpX = x;
                         lpY = y;
+                        lpDisplay = i;          // which one
                         emuOrFlags(FLAG_LP);
                         iotCondLog(LOG_LP,"lp hit screen %d at x %d y %d\n", i, x, y);
                     }

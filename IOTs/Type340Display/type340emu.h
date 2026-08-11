@@ -68,7 +68,7 @@ void emuWakeup(EmuControlP ctlP);
 int emuGetAddress(void);
 int emuGetFlags(void);
 void emuClearFlags(void);
-void emuGetXY(int *xP, int *yP);
+void emuGetXY(int *dispNoP, int *xP, int *yP);
 
 int get340Command(EmuControlP ctlP);
 int get340Response(EmuControlP ctlP);

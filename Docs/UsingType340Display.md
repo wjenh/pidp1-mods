@@ -5,12 +5,13 @@ This document describes the Type 340 display and how to use it.
 This is version 1.9
 
 Edit date 8-Aug-2026\
-Add description of the motion estimator and IOT.
+Add description of the motion estimator and IOT, minor typo corrections
 
 ## What is it?
 
 The Type 340 display was a successor to the original Type 30 point-plotting display. It was used on just about all
 of DEC's 18-bit computers, definitely PDP1's, 4's, 6's, 7's and 10's.
+It was also used on other computers from other companies.
 
 While it seems to have used the same CRT and deflection circuitry as the Type 30, it added vector drawing, sprites,
 character drawing both vertially and horizontally, as well as point plotting and lightpen support.
@@ -381,11 +382,11 @@ Draws 4 points in a diamond shape and returns to *parameter* mode.
 ## Subroutine
 
 This has 3 subcommand variants.\
-Save, below, use a special register, the *ASR*, address save register.
+Save, below, uses a special register, the *ASR*, address save register.
 All take an address, a 13-bit address(!). This means they can only address bank 0 and bank 1.
 
 - subroutine - the mode name
-- jump - subcommand to jump to a location, like to the *jmp* instruction
+- jump - subcommand to jump to a location, like the PDP-1 *jmp* instruction
 - save - subcommand to jump and save the return address, similar to *jsp*
 - deposit - this one is a bit difficult to understand, but it is used for nested subroutines
 
@@ -400,7 +401,7 @@ Examples:
     parameter mode(subroutine)
     deposit zip mode(vector)
 ```
-For *jump*, control transfers to the commands ar location foo, exactly the same as a normal PDP-1 *jmp*.
+For *jump*, control transfers to the commands at location foo, exactly the same as a normal PDP-1 *jmp*.
 
 The *save* subcommand only works if the final command in the code it calls is a *vector*, *character*, or *increment*
 command that specifies *end*. When this happens, control transfers back to the location one after the original *save*

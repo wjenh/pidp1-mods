@@ -2,17 +2,17 @@
 
 This document describes the lightpen simulation implemented in the emulator.
 
-Updated 17-Mar-2026
+Updated 11-Aug-2026
 
 ## Implementation
 
-Pseudo-lightpen support is implemented in the pidp1 emulator in pdp1.c.
+Pseudo-lightpen support is implemented in the pidp1 emulator in display.c.
 
 While it can't exactly duplicate the function of the original hardware lightpen because there isn't one,
 it can very closely simulate it.
 
-It works by reading commands from the same file descriptor used by the *dpy* instruction to send display commands
-to a display client.
+It works by reading commands from the same file descriptor used by the display instructions
+used to send display commands to a display client.
 
 The reads are non-blocking. Each command is an unsigned 32 bit value, uint32_t, although any 32 bit value
 will work. The command has the format:
@@ -87,13 +87,42 @@ Sets an aperture diameter of 6 pixels.
 
 This command does **not** support completion, don't do a wait!
 
+## Motion prediction
+
+One problem with simulating the orginal lightpen is that it was a *coincidence detector*. It produced an immediate
+signal when it saw a dot displayed on the screen, making it easy to tie the hit to the exact display instruction
+that caused it.
+But, with modern raster displays that are very decoupled in time from the display instruction, the job becomes
+difficult.
+
+A feature implemented in the pidp-1 display logic helps with this, a 2 axis cascaded
+Position-Velocity-Acceleration continuous-time kinematic observer state filter with non-linear
+predictive lead compensation.
+
+Say what?
+
+It's a special mathematical function that uses the history of lightpen position updates over time to be able to
+compute the current location of the 'pen' very accurately, removing much of the time uncertainty.
+This allows the logic that matches the coordinates of a detection with the IOT instruction that caused it to be
+more precise.
+
+In combination with special support in the t30dpy display program, the lightpen responds as fast and as accurately
+as the original real lightpen did.
+
 ## What uses it?
 
-The p7sim Type 30 display emulator and the integrated gui have support for this.\
+On the PDP-1 side, the Type 30 and Type 340 display drivers support the pen as it was handled in the original.
+The replacement for p7sim, t30dpy, fully supports the lightpen with special optimizations that dramatically
+improve tracking over the other displays below.
+
+The p7sim Type 30 display emulator and the integrated gui also have support, but tracking is much slower.
+There is also support in the alternate Type 30 implementation found at https://github.com/Isysxp/PDP1-DPY.git,
+also with the same tracking limitations.
+
+## The mouse-pen
+
 The lightpen is simulated by the mouse.\
 As long as the left buttion is pressed, the lightpen is on the screen and the cursor is the lightpen.
 Any pixel being drawn that is within the aperture around the cursor will be a hit.
 
 When the mouse button is released, the lightpen is off the screen.
-
-There is also support in the alternate Type 30 implementation found at https://github.com/Isysxp/PDP1-DPY.git.

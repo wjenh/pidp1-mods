@@ -1,0 +1,23 @@
+#ifndef TYPE340CHARS_AH
+#define TYPE340CHARS_AH
+// Defines that specify various attributes of characters useful in programs.
+// Characters have the bottom on the drawing coordinate baseline.
+
+// All of the sizes are in pixels for a scale of 0.
+// For higher scales, val << scale gives the proper value.
+#define CHAR_HEIGHT 7
+#define CHAR_WIDTH 5
+
+// Inter-character spacing.
+// The horizontal padding is on the right.
+// The vertical padding is on the top, but only for multiline characters that use newline or carriage return.
+#define CHAR_VPAD 2
+#define CHAR_VSIZE (CHAR_HEIGHT + CHAR_VPAD)
+
+// Note that descenders and super/subscripting extends a character above/below its intrinsic CHAR_HEIGHT size.
+// A descender lowers the baseline by 2, super/subscripts raise/lower by CHAR_VSIZE / 2.
+// A linefeed lowers by one CHAR_HSIZE.
+#define CHAR_HPAD 2
+#define CHAR_HSIZE (CHAR_WIDTH + CHAR_HPAD)
+
+#endif

@@ -1,7 +1,7 @@
 #ifndef TEXTFLEX_AH
 #define TEXTFLEX_AH
 
-/ Write a block of flex text out.
+// Write a block of flex text out.
 // Write out a string produced by text until a word containing
 // only etx, 13, fio-dec stop, is seen, the starting address is in the ac,
 // text <whatever>
@@ -18,15 +18,15 @@
 #include <DCS/dcs2defs.ah>
 
 txtflx,  0
-local
-     dap %txtrtn
-%txttop,  lac i %txtflx
+local rtn, top
+     dap rtn
+top, lac i txtflx
      lia
      and [77
 // check for the end marker
      sub [flxetx
      sza i
-     jmp i %txtrtn
+     jmp rtn
      lai
      ral 6s
      lia
@@ -37,9 +37,9 @@ local
      ral 6s
      lia
      tcb
-     idx %txtflx
-     jmp %txttop
-%txtrtn,  0
+     idx txtflx
+     jmp top
+rtn, jmp .
 endloc
 
 #endif

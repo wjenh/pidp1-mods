@@ -7,27 +7,33 @@
 // The word following the call has the address to begin the setting.
 // This does not use extended addressing, it operates in the current bank.
 memset, 0
-local ptr, count, rtn, loop
-// AC is in memset, return PC in AC
+local ptr, rtn, ctr, loop
+// AC is in memset (the word count, deposited by jda); AC on entry to
+// memset+1 is the return PC, pointing at the target-address data word
+// that immediately follows the jda call in the caller.
     dac rtn
-    lac memset
-    cma
-    dac memset      // so we can use idx
     lac i rtn
     dac ptr
     idx rtn
-    lac memset
-    spa i
-    jmp i rtn       // nothing to do, zero count or bad count
-
-loop, dio i ptr
-    idx ptr
-    idx count
-    spa
+    dzm ctr
+// Count ctr up from 0 to the requested word count (held in memset),
+// testing *before* each write so a count of 0 does nothing -- the
+// idx+sad "count up to a target" idiom, using the runtime value in
+// memset as the target instead of a compile-time [const]. (The previous
+// version negated the count into memset via cma and counted a separate,
+// never-negated 'count' local up from 0 instead, so spa's positive test
+// fired after exactly one iteration regardless of the requested count --
+// only ever the first word got set.)
+loop,
+    lac ctr
+    sad memset      // skip if ctr != count (still work to do)
+    jmp i rtn        // ctr == count (no-skip): done, nothing more to write
+    dio i ptr          // ctr != count (skip case): write the fill value...
+    idx ptr             // ...advance the pointer...
+    idx ctr              // ...and advance the counter
     jmp loop
-    jmp i rtn
 rtn, 0
-count, 0
+ctr, 0
 ptr, 0
 endloc
 

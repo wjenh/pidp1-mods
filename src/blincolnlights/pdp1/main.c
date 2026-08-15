@@ -21,6 +21,7 @@
  * wje 3-Jul-26 code cleanup, add a few safety checks, no functional change
  * wje 14-Jul-2026 wje some more cleanup
  * wje 8-Aug-2026 wje add motion prediction setting
+ * wje 15-Aug-2026 wje if stopped, readin did not do an iot start causing failures
 */
 
 #include <fcntl.h>
@@ -233,9 +234,8 @@ FILE *tmpfP;    // used for timing
 
             if( Edge(readin_sw) )
             {
-                // And the same for readin
-                HSCreset();
-                dynamicIotProcessorStop();
+                HSCreset();         // Stop any transfer, makes no sense to run if reloading memoery
+                dynamicIotProcessorStart(); // might be in stop state, run switch won't be toggled
                 start_readin(pdp);
             }
 

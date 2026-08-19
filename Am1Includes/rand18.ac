@@ -5,36 +5,48 @@
 // Call with: jsp rand18
 // Returns: Random number in the AC, IO not preserved
 // This is the classice xor/shift generator specifically tuned for the PDP-1's-1G 18 bit 1's complement math.
+local r18curSeed
 rand18,
-    local retjmp, seed
+    local retjmp
     dap retjmp
         
     // Step 1: state ^= state << 7
-    lac seed        // Load current seed into AC
+    lac r18curSeed        // Load current seed into AC
     cli             // we use IO as a shift extension
     rcl 7s          // Effecively a 7 bit shift that uses the AC sign bit
-    xor seed        // Exclusive-OR shifted result
-    dac seed        // Save intermediate state
+    xor r18curSeed        // Exclusive-OR shifted result
+    dac r18curSeed        // Save intermediate state
 
     // Step 2: state ^= state >> 9
-    lac seed        // Load intermediate state into IO
+    lac r18curSeed        // Load intermediate state into IO
     cli
     rcr 9s          // Now by 9 bits
-    xor seed        // Exclusive-OR again
-    dac seed        // Save intermediate state
+    xor r18curSeed        // Exclusive-OR again
+    dac r18curSeed        // Save intermediate state
 
     // Step 3: state ^= state << 3
-    lac seed
+    lac r18curSeed
     cli
     rcl 3s          // And finally 3 bits
-    xor seed        // Final Exclusive-OR 
+    xor r18curSeed        // Final Exclusive-OR 
 
     // Zero-Protection Safety Check
     sza i           // Skip the next instruction if AC is NOT 0
     xor [0x3E917]   // If it hit 0, inject a non-zero pattern to rescue the PRNG
-    dac seed        // Save final state back to memory, AC holds random number
+    dac r18curSeed        // Save final state back to memory, AC holds random number
 retjmp, jmp .
+    endloc
 
-seed, 0x321E3      // Seed value
+// Set the seed to the value in the IO register.
+// Call with: jsp rand18seed
+// No return, IO preserved, AC not preserved.
+rand18seed,
+    local retjmp
+    dap retjmp
+    dio r18curSeed
+retjmp, jmp .
+    endloc
+
+r18curSeed, 0x321E3      // Current seed value and its load-time default
 endloc
 #endif

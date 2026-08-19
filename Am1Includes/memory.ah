@@ -1,5 +1,5 @@
 // Useful things for extended memory access
-// eem will be turned off for all but jmp, jsp, jda
+// eem will be turned off for all but farjmp, farjsp, farjda, and farrtn.
 #ifndef MEMORY_AH
 #define MEMORY_AH
 
@@ -11,6 +11,9 @@
 
 #define farjda(a) \
     eem; dac i [a]; jsp i [a+1]
+
+#define farrtn(a) \
+    eem; jmp i a
 
 #define farlac(a) \
     eem; lac i [a]; lem

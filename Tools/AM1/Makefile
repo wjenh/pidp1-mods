@@ -1,12 +1,12 @@
-CC=gcc
-GCCFLAGS= -O3 -s
-#GCCFLAGS= -g -O0
+CC=gcc $(CCFLAGS)
+CCFLAGS= -O3 -s
+#CCFLAGS= -g
 //BISONFLAGS=-Wcounterexamples
 BISONFLAGS=
 
 am1:	am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o permsyms.def.o eval.o \
 	maccodegen.o bincodegen.o listcodegen.o testcodegen.o listSymtab.o
-	gcc $(GCCFLAGS) -o am1 $^
+	$(CC) -o am1 $^
 
 clean:
 	@rm *.o lex.yy.c y.tab.c y.tab.h permsyms.def.c am1 symtabgen cvtxldr xldr.rim xldr.lst 2>/dev/null || true

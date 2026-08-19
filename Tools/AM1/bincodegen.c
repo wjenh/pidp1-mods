@@ -296,18 +296,23 @@ BankContextP bankP;
         {
             // prepare to write one or both
             flushBuffer(outfP, outBufP);
-            cur_bank = bankP->bank;
             initBuffer(outBufP, bankP->cur_pc);
         }
 
         if( bankP->constSymP )
         {
+            cur_bank = bankP->bank;
+            cur_pc = bankP->cur_pc;
             writeConstants(outfP, bankP->constSymP, -1);
+            bankP->cur_pc = cur_pc;
         }
 
         if( bankP->varNodesP )
         {
+            cur_bank = bankP->bank;
+            cur_pc = bankP->cur_pc;
             writeVars(outfP, bankP->varNodesP, -1);
+            bankP->cur_pc = cur_pc;
         }
     }
 }

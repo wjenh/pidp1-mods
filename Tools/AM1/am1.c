@@ -103,6 +103,7 @@
  * 26-Jun-2026 wje - adjust type340 nl to just insert a cr, the t340 emulator changed, it does cr/lf for cr
  * 30-Jun-2026 wje - add thisbank keyword
  * 13-Jul-2026 wje - add private keyword
+ * 19-Aug-2026 wje - fix use of wrong pc when emitting an automatically-emitted constant in multibank use
  *
 */
 #include <unistd.h>

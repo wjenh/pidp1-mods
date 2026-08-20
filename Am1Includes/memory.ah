@@ -12,6 +12,10 @@
 #define farjda(a) \
     eem; dac i [a]; jsp i [a+1]
 
+// This guarantees a proper return setup
+#define farenter(a) \
+    dac a; lem
+
 #define farrtn(a) \
     eem; jmp i a
 

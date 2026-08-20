@@ -27,6 +27,8 @@
  * 23-Jun-26 wje set the current line number to the breakpoint or watch line when it is hit,
  *   load rim from the current file if no file given, try for a rim or a bin.
  *   Rework location printing when a breakpoint or watchpoint is hit.
+ * 20-Aug-26 wje swap the , and : for file and bank separators to be consistent with am1,
+ *   increase max lines per file to 10K for line mapping array.
 */
 #include <stdlib.h>
 #include <stdio.h>

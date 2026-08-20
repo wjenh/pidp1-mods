@@ -90,21 +90,13 @@
  * 20-Jun-2026 wje create the window initially hidden to avoid sdl window initialization jitter
  * 21-Jun-2026 wje when the window is made visible, do a RenderPresent() to get the black background
  * 01-Jul-2026 wje (Claude) fix new points being overwritten by nearby aging points.
- *    DrawPoint() previously did a flat overwrite for every pixel, so whichever
- *    point happened to be walked last in the active list won.
  *    Adjust point pattern vs intensity for more realistic rendering.
  *    Pre-fault brightBuffer[][] so its 256 pages are resident before the first rendered frame runs.
- * 02-Jul-2026 wje (Claude) fix letterbox/pillarbox bars never being cleared when a window is
+ * 02-Jul-2026 wje fix letterbox bars never being cleared when a window is
  *    edge-dragged into a non-square shape without ever going through the F11/F fullscreen toggle.
- * 11-Jul-2026 wje (Claude) SDL_MOUSEMOTION/SDL_MOUSEBUTTONDOWN: read the pen position from the
- *    event's own x/y fields instead of a fresh SDL_GetMouseState() query, ported from t30dpy3.c
- *    (SDL3) after real-world testing showed it measurably improves lightpen tracking during fast
- *    drags. See the comment at the SDL_MOUSEMOTION case for why.
- * 14-Jul-2026 wje (Claude) subframe mouse/event updating: factor the SDL event switch out of
- *    main() into handleEvent(), and slice the frame-wait into EVENTPOLLNS-sized nanosleep()
- *    chunks, draining/handling events after each slice instead of one single nanosleep() for
- *    the whole ~33ms frame. Ported from t30dpy3.c (SDL3); see the comments at EVENTPOLLNS,
- *    EventState, handleEvent(), and the frame-wait loop in main().
+ * 11-Jul-2026 wje (Claude) read the pen position from the
+ *    events x/y fields instead of a fresh SDL_GetMouseState() query, ported from t30dpy3.c.
+ * 14-Jul-2026 - port the fast mouse update logic from t30dpy3, the motion prediction lib needs faster updates.
 */
 
 #include <stdio.h>
@@ -167,9 +159,9 @@
 #define DEFAULTHOST "localhost"
 #define DEFAULTPORT 3400
 // Amount to raise our own nice value (lower our scheduling priority) so that when this
-// client shares a CPU with the PDP-1 emulator (e.g. a headless Pi running both, viewed
-// over VNC), the emulator wins CPU contention and keeps feeding display points instead of
-// stalling. 0 disables. Overridable via the config file ("nice=N").
+// client shares a CPU with the PDP-1 emulator, the emulator wins CPU contention and keeps feeding
+// display points instead of stalling.
+// 0 disables, Overridable via the config file ("nice=N").
 #define DEFAULTNICE 5
 
 // End of config and command line settings
@@ -183,8 +175,6 @@
 
 
 #define FRAMETIME 33333333L      // nanoseconds between frames, this is 30 fps
-#define NSECPERMSEC 1000000
-#define EVENTPOLLNS NSECPERMSEC  // while waiting for the next frame, drain/act on queued SDL events
 
 // Commands sent to emulator.
 #define CMDBITS 0xFF000000
@@ -226,20 +216,17 @@ ActivePoint activePool[MAXACTIVEPOINTS];   // the pool of active-point entries, 
 uint32_t pointIndex[SIZE][SIZE];           // pointIndex[y][x] -> activePool[] index, or NOINDEX
 volatile uint32_t activeListHead;          // head index of the list of points to display in a cycle, or NOINDEX
 volatile uint32_t freeListHead;            // head index of the free pool entries, or NOINDEX
-SDL_mutex *busyLockP;                       // for interlocking with the reader thread
+SDL_mutex *busyLockP;                      // for interlocking with the reader thread
 
 // Th precomputed rgba values for each possibe pdp-1 intensity and internal time step.
 Rgba rgbaValues[8][256];
 
-// Perceptual brightness (the pre-premultiply alpha, i.e. before it is baked into rgbaValues'
-// r/g/b and forced to 255) for each possible intensity and lifetime. This is the score
-// drawPoint() uses to decide whether a point should override a pixel some other point already
-// wrote this frame: see brightBuffer below.
+// Perceptual brightness for each possible intensity and lifetime.
+// This is the value drawPoint() uses to decide whether a point should override a pixel some other point already
+// wrote this frame.
 uint8_t brightValues[8][256];
 
 // Tracks the brightest value written to each screen pixel so far in the current frame.
-// drawPoint() can touch a pixel that some other active point's spread also touches.
-// Without this, whichever point happened to be walked last in the active list wins.
 uint8_t brightBuffer[SIZE][SIZE];
 
 int pdp1FD;
@@ -250,7 +237,7 @@ const char *driverNameP;
 int winSize;
 int lowCutoff = LOWCUTOFF;
 int whiteBias = WHITEBIAS;
-int niceValue = DEFAULTNICE;    // see DEFAULTNICE; 0 disables, config "nice=N" overrides
+int niceValue = DEFAULTNICE;
 uint64_t droppedPoints;         // count of points dropped because activePool[] was exhausted
 
 bool allowLabwcFix = true;
@@ -308,43 +295,22 @@ void reportTiming(void);
 void usage(void);
 FILE *getFile(char *nameP);
 
-// Bundles the small bits of main()'s event-handling state. These used to be plain locals;
-// they're bundled here (still main()-local storage, just passed by address) so handleEvent()
-// can be called both from the once-per-iteration drain and from the short slices of the
-// frame-wait below (see EVENTPOLLNS) without duplicating the whole event switch. Ported from
-// t30dpy3.c's EventState struct, minus its SDL3-only isLetterboxed field (t30dpy.c has no
-// equivalent notion; see flushLetterboxBars() instead), and using int rather than float for
-// the mouse-global scratch fields since SDL2's SDL_GetGlobalMouseState() takes int * here.
-typedef struct EventState {
-    bool fullscreen;
-    bool penDown;
-    int  penx, peny;
-    bool dragging;               // true while the right mouse button is held for a window drag
-    int  dragStartGlobalX;       // screen-absolute cursor x when right button was pressed
-    int  dragStartGlobalY;       // screen-absolute cursor y when right button was pressed
-    int  dragWinOriginX;         // window screen x when right button was pressed
-    int  dragWinOriginY;         // window screen y when right button was pressed
-    int  mouseGlobalX;           // scratch: current screen-absolute cursor x during drag
-    int  mouseGlobalY;           // scratch: current screen-absolute cursor y during drag
-    uint64_t cursorTime;
-} EventState, *EventStateP;
-
-static void handleEvent(SDL_Event *eventP, EventStateP stateP);
-
 int
 main(int argc, char **argv)
 {
+int penx, peny;
 int opt;
 int x, y;
 uint32_t i;
 int pitch;
+bool fullscreen;
+bool penDown;
 uint64_t lastTime;
 uint64_t deltaTime;
+uint64_t cursorTime;
 uint64_t renderStart;       // timing: monotonic ns at the start of a rendered frame
 uint64_t renderDelta;       // timing: duration (ns) of a rendered frame
 uint64_t tAfterBuffer;      // timing: monotonic ns after buffer work, before present
-uint64_t sleepRemaining;    // ns still left to wait before the next frame is due
-uint64_t thisSleep;         // ns to sleep this slice of the wait, see EVENTPOLLNS
 char *cP;
 
 uint32_t pointIdx;
@@ -360,7 +326,13 @@ SDL_Rect bounds;
 SDL_Thread *threadP;
 struct timespec sleepTime;
 
-EventState evState;         // see typedef above main(): bundles the old penDown/dragging/etc locals
+bool dragging;              // true while the right mouse button is held for a window drag
+int dragStartGlobalX;       // screen-absolute cursor x when right button was pressed
+int dragStartGlobalY;       // screen-absolute cursor y when right button was pressed
+int dragWinOriginX;         // window screen x when right button was pressed
+int dragWinOriginY;         // window screen y when right button was pressed
+int mouseGlobalX;           // scratch: current screen-absolute cursor x during drag
+int mouseGlobalY;           // scratch: current screen-absolute cursor y during drag
 
     // On Windows, Winsock must be initialized before any socket call.
     // winSockStartup() is a no-op returning 0 on Linux.
@@ -374,21 +346,21 @@ EventState evState;         // see typedef above main(): bundles the old penDown
     portNum = DEFAULTPORT;        // display 0 on the pidp-1
     winSize = 1024;               // original Type 30 display size
     border = true;
-    evState.fullscreen = false;
-    evState.penDown = false;
+    fullscreen = false;
+    penDown = false;
     doTiming = false;
     totalPoints = 0;
     receivedPoints = 0;
     frameMisses = 0;
     frameDelay = 0;
-    evState.cursorTime = 0;
-    evState.dragging = false;
-    evState.dragStartGlobalX = 0;
-    evState.dragStartGlobalY = 0;
-    evState.dragWinOriginX = 0;
-    evState.dragWinOriginY = 0;
-    evState.mouseGlobalX = 0;
-    evState.mouseGlobalY = 0;
+    cursorTime = 0;
+    dragging = false;
+    dragStartGlobalX = 0;
+    dragStartGlobalY = 0;
+    dragWinOriginX = 0;
+    dragWinOriginY = 0;
+    mouseGlobalX = 0;
+    mouseGlobalY = 0;
 
     loadConfig(true);             // config overrides defines, command line overrides all
 
@@ -515,7 +487,7 @@ EventState evState;         // see typedef above main(): bundles the old penDown
     // Create the renderer, set to black and display.
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | (doVsync)?SDL_RENDERER_PRESENTVSYNC:0 );
 
-    // Record the actual renderer backend (e.g. "opengl", "opengles2", "software") for fps diagnosis.
+    // Record the actual renderer backend for fps diagnosis.
     // SDL2 exposes this via SDL_GetRendererInfo; the name string is owned by SDL and persists.
     {
         SDL_RendererInfo rendererInfo;
@@ -584,38 +556,117 @@ EventState evState;         // see typedef above main(): bundles the old penDown
     {
         while( SDL_PollEvent(&event) )
         {
-            handleEvent(&event, &evState);
+            switch(event.type)
+            {
+            case SDL_QUIT:
+                quit = true;
+                break;
+
+            case SDL_KEYDOWN:
+                switch( event.key.keysym.scancode )
+                {
+                case SDL_SCANCODE_F11:
+                case SDL_SCANCODE_F:
+                    fullscreen = !fullscreen;
+                    SDL_SetWindowFullscreen(window, (fullscreen)?SDL_WINDOW_FULLSCREEN_DESKTOP:0);
+
+                    // Note that under Wayland/labwc, a fullscreen toggle is not synchronous: the actual
+                    // resize/configure event from the compositor lands one or more frames later,
+                    // not immediately on return from SDL_SetWindowFullscreen().
+                    // Did I mention that wayland is obnoxious?
+                    flushLetterboxBars();
+                    break;
+
+                case SDL_SCANCODE_ESCAPE:
+                    quit = true;
+                    break;
+
+                case SDL_SCANCODE_B:
+                    border = !border;
+                    SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
+                    break;
+                }
+                break;
+
+            case SDL_MOUSEMOTION:
+                SDL_ShowCursor(SDL_ENABLE);
+                cursorTime = now();
+                if( penDown )
+                {
+                    // Use the event's own x/y, not a SDL_GetMouseState() query.
+                    penx = event.motion.x;
+                    peny = event.motion.y;
+                    updatePen(pdp1FD, window, true, penx, peny);
+                }
+                if( dragging )
+                {
+                    // Use screen-absolute cursor position so the calculation is
+                    // independent of window position.
+                    SDL_GetGlobalMouseState(&mouseGlobalX, &mouseGlobalY);
+                    SDL_SetWindowPosition(window,
+                        (dragWinOriginX + (mouseGlobalX - dragStartGlobalX)),
+                        (dragWinOriginY + (mouseGlobalY - dragStartGlobalY)));
+                }
+                break;
+
+            case SDL_MOUSEBUTTONDOWN:
+                if( event.button.button == SDL_BUTTON_LEFT )
+                {
+                    penDown = true;
+                    penx = event.button.x;
+                    peny = event.button.y;
+                    updatePen(pdp1FD, window, true, penx, peny);
+                }
+                else if( event.button.button == SDL_BUTTON_RIGHT )
+                {
+                    // Snapshot the screen-absolute cursor position and the window's
+                    // screen origin at the moment the drag begins.
+                    // All subsequent motion uses global coords so window-relative drift can't corrupt
+                    // the delta calculation.
+                    dragging = true;
+                    SDL_GetGlobalMouseState(&dragStartGlobalX, &dragStartGlobalY);
+                    SDL_GetWindowPosition(window, &dragWinOriginX, &dragWinOriginY);
+                }
+                break;
+
+            case SDL_MOUSEBUTTONUP:
+                if( event.button.button == SDL_BUTTON_LEFT )
+                {
+                    penDown = false;
+                    updatePen(pdp1FD, window, false, 0, 0);
+                }
+                else if( event.button.button == SDL_BUTTON_RIGHT )
+                {
+                    dragging = false;
+                }
+                break;
+
+            case SDL_WINDOWEVENT:
+                switch(event.window.event)
+                {
+                case SDL_WINDOWEVENT_CLOSE:
+                    quit = true;
+                    break;
+
+                case SDL_WINDOWEVENT_RESIZED:
+                    // Fires for every resize that actually changes the window's size, whether
+                    // edge-drag or compositor-driven, handles the delayed wayland update.
+                    flushLetterboxBars();
+                    break;
+                }
+            }
         }
 
         // The display update is frame based.
         // If not time for the next frame, sleep until it is.
         // All rgba values are comupted for a frame rate of 30fps.
-        //
-        // The wait is sliced into EVENTPOLLNS-sized chunks, draining/acting on any events
-        // queued during each slice (mouse motion for the lightpen in particular), instead of
-        // one single nanosleep() covering the whole remaining frame time. Previously, a
-        // mouse-motion event queued right after the drain above had to wait for the *next*
-        // full frame (~33ms) before updatePen() ever saw it. Slicing bounds that worst case
-        // to about EVENTPOLLNS. Ported from t30dpy3.c (SDL3), which uses SDL_DelayNS() in
-        // place of the nanosleep() here.
         deltaTime = (now() - lastTime);
 
         if( deltaTime < FRAMETIME )
         {
-            sleepRemaining = FRAMETIME - deltaTime;
-            while( (sleepRemaining > 0) && !quit )
-            {
-                thisSleep = (sleepRemaining < EVENTPOLLNS) ? sleepRemaining : EVENTPOLLNS;
-                sleepTime.tv_sec = 0;
-                sleepTime.tv_nsec = thisSleep;
-                nanosleep(&sleepTime, NULL);
-                sleepRemaining -= thisSleep;
-
-                while( SDL_PollEvent(&event) )
-                {
-                    handleEvent(&event, &evState);
-                }
-            }
+            sleepTime.tv_sec = 0;
+            sleepTime.tv_nsec = FRAMETIME - deltaTime;
+            nanosleep(&sleepTime, NULL);
         }
         else if( deltaTime > FRAMETIME )
         {
@@ -629,10 +680,10 @@ EventState evState;         // see typedef above main(): bundles the old penDown
 
         lastTime = now();
         ++pacedFrames;          // counts every paced loop pass (including idle ones): the true cadence
-        if( evState.cursorTime && (((lastTime - evState.cursorTime) / 1000000) > CURSORTIMEOUT) )
+        if( cursorTime && (((lastTime - cursorTime) / 1000000) > CURSORTIMEOUT) )
         {
             SDL_ShowCursor(SDL_DISABLE);
-            evState.cursorTime = 0;
+            cursorTime = 0;
         }
 
         // With nothing active there is nothing to draw, so the expensive per-point work below
@@ -688,13 +739,10 @@ EventState evState;         // see typedef above main(): bundles the old penDown
             SDL_UnlockMutex(busyLockP);
             SDL_UnlockTexture(textureP);
 
-            // Timing split point, everything above is CPU buffer work (lock + memset + point draw),
-            // everything below is presentation work (blit + Present/VNC).
+            // Timing split point, everything above is CPU buffer work,
+            // everything below is presentation work.
             tAfterBuffer = now();
 
-            // No SDL_RenderClear() here: with SDL_BLENDMODE_NONE and the texture's
-            // pixel buffer fully memset() above, SDL_RenderCopy() fully overwrites
-            // the render target every frame, making a separate clear redundant.
             SDL_RenderCopy(renderer, textureP, NULL, NULL);
             SDL_RenderPresent(renderer);
             ++totalFrames;
@@ -708,7 +756,7 @@ EventState evState;         // see typedef above main(): bundles the old penDown
                 {
                     renderTimeMax = renderDelta;
                 }
-                // Split the frame into buffer work vs present work so we can see which
+                // Split the frame into buffer work vs presentation work so we can see which
                 // dominates on a given backend.
                 phaseBufferTotal += (tAfterBuffer - renderStart);
                 phasePresentTotal += (renderDelta - (tAfterBuffer - renderStart));
@@ -1197,131 +1245,6 @@ int stride;              // pixels per row, derived from pitch (which is in byte
     case 0:
         DRAWIFBRIGHTER(rowP, brightRowP);           // Center core
         break;
-    }
-}
-
-// Handles one SDL event during the main loop. Factored out of main() so it can be called
-// both from the once-per-iteration drain and from the short slices of the frame-wait (see
-// EVENTPOLLNS) without duplicating the whole event switch -- letting mouse motion (and
-// everything else) be acted on as soon as it's queued instead of being held up behind the
-// full ~33ms frame pacing. Ported from t30dpy3.c; the switch body itself is unchanged SDL2
-// code, just moved out of main() with its former locals bundled into stateP (see EventState).
-static void
-handleEvent(SDL_Event *eventP, EventStateP stateP)
-{
-    switch(eventP->type)
-    {
-    case SDL_QUIT:
-        quit = true;
-        break;
-
-    case SDL_KEYDOWN:
-        switch( eventP->key.keysym.scancode )
-        {
-        case SDL_SCANCODE_F11:
-        case SDL_SCANCODE_F:
-            stateP->fullscreen = !stateP->fullscreen;
-            SDL_SetWindowFullscreen(window, (stateP->fullscreen)?SDL_WINDOW_FULLSCREEN_DESKTOP:0);
-
-            // Note that under Wayland/labwc, a fullscreen toggle is not synchronous: the actual
-            // resize/configure event from the compositor lands one or more frames later,
-            // not immediately on return from SDL_SetWindowFullscreen().
-            // Did I mention that wayland is obnoxious?
-            flushLetterboxBars();
-            break;
-
-        case SDL_SCANCODE_ESCAPE:
-            quit = true;
-            break;
-
-        case SDL_SCANCODE_B:
-            border = !border;
-            SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
-            break;
-        }
-        break;
-
-    case SDL_MOUSEMOTION:
-        SDL_ShowCursor(SDL_ENABLE);
-        stateP->cursorTime = now();
-        if( stateP->penDown )
-        {
-            // Use the event's own x/y, not a fresh SDL_GetMouseState() query.
-            // A fast drag can queue several MOUSEMOTION events before this loop
-            // drains them; SDL_GetMouseState() always returns the CURRENT live
-            // position, so every queued event in that burst would report the same
-            // latest position and updatePen() would silently collapse the whole
-            // burst down to one point, dropping the intermediate samples along the
-            // path. The event struct carries the distinct position it was actually
-            // generated at, so reading it directly preserves every sample. Ported
-            // from t30dpy3.c (SDL3), where the same fix uses event.motion.x/y after
-            // SDL_ConvertEventToRenderCoordinates(); no equivalent conversion call
-            // is needed here since this file already does its own window-to-1024
-            // scaling below in updatePen() via offsetX/offsetY/scale.
-            stateP->penx = eventP->motion.x;
-            stateP->peny = eventP->motion.y;
-            updatePen(pdp1FD, window, true, stateP->penx, stateP->peny);
-        }
-        if( stateP->dragging )
-        {
-            // Use screen-absolute cursor position so the calculation is
-            // independent of window position. xrel/yrel are not used because
-            // SDL2 computes them from window-relative coords.
-            SDL_GetGlobalMouseState(&stateP->mouseGlobalX, &stateP->mouseGlobalY);
-            SDL_SetWindowPosition(window,
-                (stateP->dragWinOriginX + (stateP->mouseGlobalX - stateP->dragStartGlobalX)),
-                (stateP->dragWinOriginY + (stateP->mouseGlobalY - stateP->dragStartGlobalY)));
-        }
-        break;
-
-    case SDL_MOUSEBUTTONDOWN:
-        if( eventP->button.button == SDL_BUTTON_LEFT )
-        {
-            stateP->penDown = true;
-            // Same reasoning as the MOUSEMOTION case above: use the event's own
-            // x/y rather than a fresh SDL_GetMouseState() query, matching
-            // t30dpy3.c's use of event.button.x/y.
-            stateP->penx = eventP->button.x;
-            stateP->peny = eventP->button.y;
-            updatePen(pdp1FD, window, true, stateP->penx, stateP->peny);
-        }
-        else if( eventP->button.button == SDL_BUTTON_RIGHT )
-        {
-            // Snapshot the screen-absolute cursor position and the window's
-            // screen origin at the moment the drag begins. All subsequent
-            // motion uses global coords so window-relative drift can't corrupt
-            // the delta calculation.
-            stateP->dragging = true;
-            SDL_GetGlobalMouseState(&stateP->dragStartGlobalX, &stateP->dragStartGlobalY);
-            SDL_GetWindowPosition(window, &stateP->dragWinOriginX, &stateP->dragWinOriginY);
-        }
-        break;
-
-    case SDL_MOUSEBUTTONUP:
-        if( eventP->button.button == SDL_BUTTON_LEFT )
-        {
-            stateP->penDown = false;
-            updatePen(pdp1FD, window, false, 0, 0);
-        }
-        else if( eventP->button.button == SDL_BUTTON_RIGHT )
-        {
-            stateP->dragging = false;
-        }
-        break;
-
-    case SDL_WINDOWEVENT:
-        switch(eventP->window.event)
-        {
-        case SDL_WINDOWEVENT_CLOSE:
-            quit = true;
-            break;
-
-        case SDL_WINDOWEVENT_RESIZED:
-            // Fires for every resize that actually changes the window's size, whether
-            // edge-drag or compositor-driven, handles the delayed wayland update.
-            flushLetterboxBars();
-            break;
-        }
     }
 }
 

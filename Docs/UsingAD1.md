@@ -2,9 +2,9 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.15 and covers up through ad1 version 1.18; it will be updated as needed.\
-Edit date 09-Jul-2026
-Multiple edits to fix typos and add missing window command, add more detail for list, bank, and signal handling
+This is version 1.16 and covers up through ad1 version 1.19; it will be updated as needed.\
+Edit date 20-Aug-2026
+Switch meaning of colon and comma for am1 consistency
 
 ## What is **ad1**?
 
@@ -248,7 +248,7 @@ This is handled in two ways.
 First, a default current bank can be set with the *bank* command. All unqualified symbol lookups will
 then only match symbols in that bank.
 
-Second, a *bank qualifier* can be added to a symbol name, e.g., *loc,1* to explicitly identify the bank.\
+Second, a *bank qualifier* can be added to a symbol name, e.g., *loc:1* to explicitly identify the bank.\
 Note that if multiple files are open, additional behavior applies.
 
 All other uses of an address automatically add the current bank if the address appears to be in bank 0.
@@ -340,8 +340,8 @@ Arguments are in several forms. The names used in the descriptions means:
 - decimal, a decimal-only integer number
 - integer, an integer number in any of the allowed bases
 - value, an integer , or,
-- value, a symbol imported from an **am1** symbol file, with an optional *bank qualifier*, *symbol,banknum*
-- expression, as noted aboe
+- value, a symbol imported from an **am1** symbol file, with an optional *bank qualifier*, *symbol:banknum*
+- expression, as noted above
 - special symbol, as noted in the command description
 - address, a positive value or expression within the memory bounds of the pidp-1, 16 banks of 4096 words.
 
@@ -376,9 +376,7 @@ It also changes the current output format to the new base.
 Sets the default memory bank in use, 0-15 in decimal or the equvalent in other bases.
 
 When set to any value other than zero, all addresses that are < 4096 in decimal are assumed to be in this bank.\
-A base qualifier, *val,basenum*, overrides this setting.
-
-As a special case, *bank pc* sets the default bank to the bank of the current PC.
+A base qualifier, *val:basenum*, overrides this setting.
 
 ## Break address [count]
 
@@ -417,7 +415,7 @@ This command always interprets the number in *base 10*.
 If watch is specified, then this applies to watches instead of breakpoints.
 It can be shortened the same as when used as a command.
 
-## ENable [Watch] [decimal]
+## Enable [Watch] [decimal]
 
 If the decimal is the number of a set breakpoint, enable it if it is enabled.\
 It will again be procoessed if encountered.
@@ -433,7 +431,7 @@ If no argument is given, the current file number is listed along with all the op
 
 If a number is given and it is that of a valid open file, then the current file is switched to that file.
 
-Otherwise it opens a new file for use with **ad1*.
+Otherwise it opens a new file for use with *ad1*.
 
 The name can be the basename of a program file, or have an *.am1*, *.rim*, *.sym*, or *.lst* extension.
 The actual names needed will be derived, name.lst or name.am1, and name.sym.
@@ -470,7 +468,7 @@ This remains the current format until another format command is given.
 
 The format is the same as for the *SHow* command below.
 
-## List [decimal | expression | @expression[,bref][:fileno] | symbol[,bref][:fileno] | .[+-decimal]]
+## List [decimal | expression | @expression[:bref][,fileno] | symbol[:bref][,fileno] | .[+-decimal]]
 
 If a source or listing file is open and is the current file, list lines of text from it.\
 If no argument is given, list from the next line after the last one listed, or if none, the first line.\
@@ -486,16 +484,12 @@ If an expression is preceeded by @, then it is the line that corresponds to that
 Again, if the address corresponds to that in another file, the current file will be made the file the address
 is defined in.
 
-if a . (dot) is given, it means *list from the line corresponding to the last address used*.\
+if a . (period, dot) is given, it means *list from the line corresponding to the last address used*.\
 It can have an optional + or - decimal, which means the last address plus or minus that value,
 e.g. *li .+4*.\
 This also can change the current file.
 
 If an empty line is entered, it is equivalent to entering this command with no arguments.
-
-Each *list* shows a window of lines centered on the target line, not just that single line.\
-The number of lines shown before and after the target is set by the *window* command, which
-defaults to 6, so 13 lines are shown in total, See *window*.
 
 If the file was just a source file, then lines can only be viewed by line number.\
 Otherwise, if the **ad1** .lst file is found, full functionality is available.
@@ -504,7 +498,8 @@ When the file is a listing file, the line numbers in it correspond to the origin
 aren't usually the same as the line in the listing file, they refer to the line in whichever file is being
 listed, so includes and macros can skew it.
 
-The list command displays the line number in the listing or source file itself.
+The list command displays the line number in the listing file itself, the file you're viewing, and the same
+for just a source file.
 
 If the address being shown has been modified by the program, the modified value will not be seen since
 the line is coming from the listing file.
@@ -526,7 +521,7 @@ tape with a *stop* directive, in which case no starting address is set.
 
 It does **not** change the current PC.
 
-## MONitor count filename
+## Monitor count filename
 
 This executes *count* cycles and writes the address and instruction at the pc address
 at the end of each cycle to a file in **pidp-1** new memory file format.\
@@ -566,12 +561,9 @@ Exit **preserves* any breakpoints and watches bud disables them and **ad1** exit
 However, they are preserved only until the pidp-1 is restarted.
 
 Any normal termination other than via exit is equivalent to quit, all watches and breakpoints are deleted.\
-**Ad1** catches *SIGINT* and *SIGTERM* and treats them the same as quit, deleting all breakpoints
-and watches before exiting.\
-A signal that cannot be caught, such as *SIGKILL*, will leave all breakpoints and watches in
-whatever state they are in.
+A kill via a signal will leave all breakpoints and watches in whatever state they are in.
 
-The pidp-1 state is not changed when **ad1** exits either by command or signal.
+The pidp-1 is left in whatever state it is in.
 
 ## SEt address|register value
 
@@ -669,17 +661,6 @@ For each address, if there is an associated symbol, it is shown.
 Otherwise, the address is shown in the current numeric format.
 
 Finally, ask whether or not to make the final address the current address.
-
-## WIndow decimal
-
-Sets the number of lines shown before and after the target line by the *list* command.\
-The *list* command shows a total of twice this value plus one lines, centered on the target line.\
-The default is 6.
-
-This command always interprets the number in *base 10*.
-
-If the window would extend before the first line or after the last line of the file, only the
-valid lines within the file are shown.
 
 ## Watch address [value]
 

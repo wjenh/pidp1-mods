@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <stdbool.h>
 #include <sys/stat.h>
 
@@ -341,12 +342,12 @@ char tmpbuf[1024];
             // Note that the line number is that of the line in the original source,
             // not in the listing file.
             // So, we ignore it and use the current listing file line number.
-            if( (cP = strchr(tmpbuf,':')) )
+            if( (cP = strchr(tmpbuf,':')) && (*(cP + 1) == ' ') && isdigit(*(cP + 2)) )
             {
                 *cP++ = NUL;
 
                 // cP now pointing to the space after the :
-                address = strtol(cP, &cP2, 8);
+                address = strtol(cP + 1, &cP2, 8);
 
                 if( *cP2 != ' ' )
                 {

@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.38 and covers up through am1 version 1.40; it will be updated as needed.\
-Edit date 13-Jul-2026
-Add more detail on locals, add private
+This is version 1.39 and covers up through am1 version 1.40; it will be updated as needed.\
+Edit date 19-Aug-2026
+Update extended memory example code
 
 ## What is **am1**?
 
@@ -1186,6 +1186,7 @@ loop,  lio val; lio val; lio val        // just a delay
        sma
        jmp loop
        farjda(update:*) // a macro in memory.ah
+       lem              // check the macros, some stay in eem state
        jmp loop
 
 val,   1              // initially, we increment
@@ -1193,12 +1194,12 @@ val,   1              // initially, we increment
 bank 1
 100/
 update, 0             // we jump here from bank 0
-       dac rtn
+       farenter(rtn)  // handles proper setup
        lac i [val:0   // change the sign of the operand
        cma
        fardac(val:0)  // another macro
        lac update
-       jmp i rtn
+       farrtn(rtn)    // and back to caller in bank 0
 rtn,   0
 constants
 

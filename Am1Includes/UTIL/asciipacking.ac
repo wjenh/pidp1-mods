@@ -1,0 +1,84 @@
+#ifndef ASCIIPACKING_H
+#define ASCIIPACKING_H
+
+// This contains subroutines to unpack an am1-style ascii packed string into a one-character-per-word buffer
+// and the reverse.
+//
+// The packed strings hold 2 characters per word, one in the high 9 bits, one in the low 9 bits,
+// stored in // high/low order.
+// A byte of 0 terminates the string, similar to C strings.
+// The high 9th bit is unused, but does participate in the termination check.
+//
+// The unpacked strings are teminated by a word of 0.
+//
+// These routines are designed to be extended-memory safe and will work with 16 bit addresses
+// if extended memory is enabled.
+
+// We use nested local scopes so we can share storage.
+local rtn, ptr
+
+// Unpack the string pointed to by AC into the buffer pointed to by IO.
+// The caller must ensure the destination buffer is large enough to hold the unpacked string.
+// Called via jda.
+// Does not preserve AC or IO.
+unpackAscii, 0
+    local loop, done
+    dac rtn
+    dio ptr
+loop,
+    lac i unpackAscii
+    sza i
+    jmp done        // Word is 0, finish up.
+    lia             // save a copy
+    rar 9s          // Nothing fancy, just deal with each byte.
+    and [0377
+    dac i ptr
+    idx ptr
+    lai
+    and [0377
+    dac i ptr
+    idx ptr
+    idx unpackAscii
+    jmp loop
+done,
+    dzm i ptr
+    jmp i rtn
+    endloc
+
+// Pack the string pointed to by AC into the buffer pointed to by IO.
+// The caller must ensure the destination buffer is large enough to hold the packed string.
+// Called via jda.
+// Does not preserve AC or IO.
+packAscii, 0
+    local loop, done
+    dac rtn
+    dio ptr
+loop,
+    cli             // We will build the packed 2 char word here.
+    lac i packAscii // First char.
+    sza i
+    jmp done        // Word is 0, finish up.
+    sal 9s
+    lia             // save it
+    idx packAscii
+    lac i packAscii // Second char.
+    sza i
+    jmp done        // Word is 0, finish up.
+    lai             // Add to the low byte.
+    ior i packAscii
+    dac i ptr
+    idx packAscii
+    idx ptr
+    jmp loop
+
+done,
+    dio i ptr       // The final packed word is in IO, ready to save.
+    jmp i rtn
+    endloc
+
+// Shared storage.
+rtn, 0      // Note we don't use the typical dap/jmp . pattern, we want extended memory to work.
+ptr, 0
+
+endloc
+#endif

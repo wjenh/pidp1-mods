@@ -22,25 +22,26 @@ local rtn, ptr
 // Called via jda.
 // Does not preserve AC or IO.
 unpackAscii, 0
-    local loop, done
+    local loop
     dac rtn
     dio ptr
 loop,
     lac i unpackAscii
-    sza i
-    jmp done        // Word is 0, finish up.
     lia             // save a copy
     rar 9s          // Nothing fancy, just deal with each byte.
     and [0377
     dac i ptr
+    sza i
+    jmp i rtn       // High byte is 0, all done.
     idx ptr
     lai
     and [0377
     dac i ptr
+    sza i
+    jmp i rtn       // Low byte is 0, all done.
     idx ptr
     idx unpackAscii
     jmp loop
-done,
     dzm i ptr
     jmp i rtn
     endloc

@@ -2,51 +2,192 @@
 #define RAND18_AH
 
 // Ultimate 18-bit Xorshift PRNG for the DEC PDP-1
-// Call with: jsp rand18
 // Returns: Random number in the AC, IO not preserved
-// This is the classice xor/shift generator specifically tuned for the PDP-1's-1G 18 bit 1's complement math.
+// This is the classice xor/shift generator specifically tuned
+// for the PDP-1 18 bit ones complement math.
+//
+// Note that a static initializing value is used.
+// Thus, when a program using this is reloaded, the random
+// sequence will repeat exactly as the first load.
+// This can be avoided by dynamically seeding the generator
+// using the rand18seed subroutine below.
+//
+// Call with: jsp rand18
+// Returns number in AC.
+// IO is not preserved.
+
 local r18curSeed
+
 rand18,
-    local retjmp
-    dap retjmp
+    local rtn
+    dap rtn
         
     // Step 1: state ^= state << 7
-    lac r18curSeed        // Load current seed into AC
-    cli             // we use IO as a shift extension
-    rcl 7s          // Effecively a 7 bit shift that uses the AC sign bit
-    xor r18curSeed        // Exclusive-OR shifted result
-    dac r18curSeed        // Save intermediate state
+    lac r18curSeed  // Load current seed into AC.
+    cli             // We use IO as a shift extension.
+    rcl 7s
+    xor r18curSeed  // Exclusive-OR shifted result.
+    dac r18curSeed  // Save intermediate state.
 
     // Step 2: state ^= state >> 9
-    lac r18curSeed        // Load intermediate state into IO
+    lac r18curSeed  // Load intermediate state into IO.
     cli
-    rcr 9s          // Now by 9 bits
-    xor r18curSeed        // Exclusive-OR again
-    dac r18curSeed        // Save intermediate state
+    rcr 9s          // Now by 9 bits.
+    xor r18curSeed  // Exclusive-OR again.
+    dac r18curSeed  // Save intermediate state.
 
     // Step 3: state ^= state << 3
     lac r18curSeed
     cli
-    rcl 3s          // And finally 3 bits
-    xor r18curSeed        // Final Exclusive-OR 
+    rcl 3s          // And finally 3 bits.
+    xor r18curSeed  // Final Exclusive-OR.
 
-    // Zero-Protection Safety Check
-    sza i           // Skip the next instruction if AC is NOT 0
-    xor [0x3E917]   // If it hit 0, inject a non-zero pattern to rescue the PRNG
-    dac r18curSeed        // Save final state back to memory, AC holds random number
-retjmp, jmp .
+    // Zero-Protection Safety Check.
+    sza i           // Skip the next instruction if AC is NOT 0.
+    xor [0x3E917]   // If it hit 0, inject a non-zero pattern to rescue the PRNG.
+    dac r18curSeed  // Save final state back to memory, AC holds random number.
+rtn, jmp .
     endloc
 
 // Set the seed to the value in the IO register.
 // Call with: jsp rand18seed
 // No return, IO preserved, AC not preserved.
 rand18seed,
-    local retjmp
-    dap retjmp
+    local rtn
+    dap rtn
     dio r18curSeed
-retjmp, jmp .
+rtn, jmp .
     endloc
 
-r18curSeed, 0x321E3      // Current seed value and its load-time default
+r18curSeed, 0x321E3 // Current seed value and its load-time default
+
+// Given a list of probabilty percentages and ids,
+// scan the passed list accumulating a running sum of the percentages.
+// The first entry where the running sum is greater than or equal to
+// the generated probability from rand18 is selected.
+//
+// Each list item consists of two fields:
+// High 9 bits, 0-8: an identifier to be returned, 0-511.
+// Low 7 bits, 11-17: the probability 1-100 decimal.
+// A word that is all 0 terminates the list.
+//
+// If there is a match, the identifier is returned.
+// If there is no match, an identifier of -1 is returned.
+//
+// The list should be ordered in increasing probability.
+// This is not mandatory but the results most likely won't
+// be what was intended.
+//
+// Called via jsp with the list address in IO.
+// Returns the matching ID or -1 if there is no match in AC.
+// IO is not presrved.
+probabilitySelector,
+    local rtn,loop, found, fail, weight
+    dap rtn
+    dio ptr
+    jsp rand18
+    // Now divide by 100, we want the remainder.
+    lia
+    cla
+    div [0d100]
+    rcr 1s          // low IO bit isn't used
+    dio rand
+
+    // Go through the list looking for a match.
+    // Each weight is added to the running sum.
+    // When the accumlated weight > random number, match found.
+    dzm weight
+
+loop,
+    lac i ptr
+    sza i           // Done?
+    jmp fail        // Yes, no match found.
+
+    and [0777]      // Extract the weight and update total.
+    add weight
+    dac weight
+    sub rand        // Accumulated weight - rand target.
+    sma             // If accumulated weight >= target, match found.
+    jmp found       // weight - target >= 0
+    idx ptr         // Next item.
+    jmp loop
+
+fail,
+    law i 1         // -1, i is not indirection for this instruction.
+    jmp rtn
+
+found,
+    lac i ptr       // Reload the matched word.
+    sar 9s
+    and [0777       // Mask in case the sign bit propagated.
+rtn, jmp .
+
+weight, 0           // Stores the running cumulative weight.
+    endloc
+
+// Given a list of probabilty percentages and ids, scan the
+// passed list treating each entry as an independent roll.
+//
+// The roll result is normalized to give a value of 0-100.
+// The first entry whose percentage is greater than
+// or equal to the generated probability is selected.
+//
+// Each list item consists of two fields:
+// High 9 bits, 0-8: an identifier to be returned, 0-511.
+// Low 7 bits, 11-17: the probability 1-100 decimal.
+// A word that is all 0 terminates the list.
+//
+// If there is a match, the identifier is returned.
+// If there is no match, an identifier of -1 is returned.
+//
+// The list does not require any specific ordering,
+// it is ordered as the application needs it to be.
+//
+// Called via jsp with the list address in IO.
+// Returns the matching ID or -1 if there is no match in AC.
+// IO is not presrved.
+probabilitySelector2,
+    local rtn, loop, found, fail
+    dap rtn
+    dio ptr
+
+    // Go through the list looking for a match.
+    // The probability is recomputed for each.
+loop,
+    jsp rand18
+    // Now divide by 100, we want the remainder.
+    // We could use some clever shift/subtracts
+    // instead of divide, but they end up taking as long.
+    lia
+    cla
+    div [0d100]
+    rcr 1s          // low IO bit isn't used
+    dio rand
+
+    lac i ptr
+    sza i           // Done?
+    jmp fail        // Yes, no match found.
+    and [0777]      // Extract the percentage.
+    sub rand        // Percentage - rand target.
+    sma             // If >= target, match found.
+    jmp found       // percentage - target >= 0
+    idx ptr         // Next item.
+    jmp loop
+
+fail,
+    law i 1         // -1, i is not indirection for this instruction.
+    jmp rtn
+
+found,
+    lac i ptr       // Reload the matched word.
+    sar 9s          // Extract the id.
+    and [0777       // Mask in case the sign bit propagated.
+rtn, jmp .
+    endloc
+
+// Shared ariables.
+rand,   0           // Stores an 18-bit random number.
+ptr,    0           // Stores a list pointer.
+
 endloc
 #endif

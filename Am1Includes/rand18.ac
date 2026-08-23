@@ -16,7 +16,7 @@
 // Returns number in AC.
 // IO is not preserved.
 
-local r18curSeed
+local r18curSeed, ptr, rand
 
 rand18,
     local rtn
@@ -185,7 +185,7 @@ found,
 rtn, jmp .
     endloc
 
-// Shared ariables.
+// Shared variables, but local to this file.
 rand,   0           // Stores an 18-bit random number.
 ptr,    0           // Stores a list pointer.
 

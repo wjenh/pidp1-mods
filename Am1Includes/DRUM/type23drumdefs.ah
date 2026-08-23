@@ -23,5 +23,10 @@
 
 // The bit set if a cks is done.
 #define cksdrm 1
+#define CKSDRM 1
+
+// A macro to check for ready
+// NOTE this is a multi-instruction macro, DON'T jmp .-x to a location before it!
+#define DRUM_WAIT_READY cks;lai;and [CKSDRM;sza;jmp .-4
 
 #endif

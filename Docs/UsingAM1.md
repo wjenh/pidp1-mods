@@ -3,8 +3,8 @@
 This document describes the **am1** macro assembler and how to use it.
 
 This is version 1.39 and covers up through am1 version 1.40; it will be updated as needed.\
-Edit date 19-Aug-2026
-Update extended memory example code
+Edit date 23-Aug-2026
+Fix example for proper use of the new farenter macro.
 
 ## What is **am1**?
 
@@ -1194,7 +1194,11 @@ val,   1              // initially, we increment
 bank 1
 100/
 update, 0             // we jump here from bank 0
-       farenter(rtn)  // handles proper setup
+       farenter(rtn)  // handles proper setup, NOTE it turns off eem!
+       // So we have to turn it back on again, could have eliminated both,
+       // all it does is 'dac rtn; lem', so since we actually want eem,
+       // a simple 'dac rtn' would be fine.
+       eem
        lac i [val:0   // change the sign of the operand
        cma
        fardac(val:0)  // another macro

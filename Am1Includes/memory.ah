@@ -13,6 +13,7 @@
     eem; dac i [a]; jsp i [a+1]
 
 // This guarantees a proper return setup
+// NOTE that it turns off eem!
 #define farenter(a) \
     dac a; lem
 

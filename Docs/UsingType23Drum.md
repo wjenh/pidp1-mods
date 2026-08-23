@@ -5,9 +5,9 @@ The DEC document *H-23_parallelDrum_jul64.pdf* is a useful companion, although i
 have some significant errors in the IOT section.
 This documentation is correct.
 
-This is version 1.2
-Edit date 5-Jul-2026
-Add more detail on include file
+This is version 1.3
+Edit date 23-Aug-2026
+Add DRUM_WAIT_READY macro description and an example
 
 ## What is the Type 23 Parallel Drum?
 
@@ -91,8 +91,8 @@ This is executed third.
 
 IO register bits
 ```
-bits 2-5, the core memory bank to read from and/or write to, 0-17 octal, 0-15 decimal
-bits 6-17, the address within the core memory back to begin from, 0-7777 octal, 0-4095 decimal
+bits 2-5, the core memory bank to read from and/or write to, 0-17 octal
+bits 6-17, the address within the core memory back to begin from, 0-7777 octal
 ```
 When this is executed the transfer begins asynchronously.
 
@@ -113,7 +113,7 @@ IO register bits *returned*
 bit 0, 1 if an error occurred
 bit 1, 1 for a parity error
 bit 2, 1 for transfer incomplete
-bits 6-17, the current drum address, 0-7777 octal, 0-4095 decimal
+bits 6-17, the current drum address, 0-7777 octal
 ```
 An error should never occur, this is a software drum, not a hardware drum.
 However, if a write to disk fails, bits 0 and 2 will be set to indicate a transfer error.
@@ -141,11 +141,13 @@ The define *drmsch* is 020, bit 13.
 ## How do I know it's done?
 
 If you aren't using the interrupt mode, the only indication is that
-bit 17 will be set if a cks, check status, instruction is executed.
+bit 17 in IO will be set if a cks, check status, instruction is executed.
 
-The define *cksdrm* is 01, bit 17.
+The define *CKSDRM* is 01, bit 17.
 
 Note that this information came directly from the DEC maindec drum verification program.
+
+A convenience macro is provided, DRUM_WAIT_READY, see the example.
 
 ## Interrupts aka Sequence Breaks
 
@@ -153,3 +155,30 @@ Although the drum uses sbs channel 5 or whatever was set by *dss*, it can still 
 In this case, the interrupt will be to the single channel, channel 0.
 
 SBS16 can be enabled either here or via the pidp1.config file.
+
+## An example
+
+This code fragment shows the generic use, a read in this case:
+```
+    lac track            // set the drum track,field, and read mode
+    sal 6s
+    sal 6s
+    ior field           // the drum field, the address in the track 0-4095 decimal
+    ior [drmrd          // read mode
+    lia
+    dia                 // tell the drum the track/offset/mode
+    lio count           // how many words to transfer
+    dwc                 // tell the drum the count
+    lio [buffer         // the buffer to read into
+    dcl                 // do the transfer
+    DRUM_WAIT_READY     // a macro that spins until the drum is ready
+```
+
+Writing is similar, setting the drum track in the dwc instead of the dia.
+Note this uses the same drum offset as dia, it must be set there.
+
+The purpose of this comes from the original use as a paging drum for timesharing.
+Setting both read and write would write the memory to the drum on one track while simultaneously
+reading into memory from the other track.
+
+You can of course do just a read or just a write.

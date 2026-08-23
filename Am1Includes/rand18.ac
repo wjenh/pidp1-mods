@@ -144,6 +144,7 @@ weight, 0           // Stores the running cumulative weight.
 // it is ordered as the application needs it to be.
 //
 // Called via jsp with the list address in IO.
+.
 // Returns the matching ID or -1 if there is no match in AC.
 // IO is not presrved.
 probabilitySelector2,
@@ -182,6 +183,29 @@ found,
     lac i ptr       // Reload the matched word.
     sar 9s          // Extract the id.
     and [0777       // Mask in case the sign bit propagated.
+rtn, jmp .
+    endloc
+
+// Given a list of ids, randomly pick one using a uniform distribution.
+// and eturns the value in the selected entry in the list.
+// Unlike the above selector routines, the full 18 bit value is available.
+// Called via jda with the list address in IO, the number of items in the list in AC.
+// NOTE the different calling method, jda!
+// Neither IO nor AC are preserved, selected value returned in AC.
+selectRandom, 0
+    local rtn
+    dap rtn                 // save the full 16 bit address for multi-bank support
+    dio ptr                 // we will need this later
+    jsp rand18
+    // Now divide by the count, we want the remainder.
+    lia
+    cla
+    div selectRandom        // has count, the AC value from the caller
+    rcr 1s                  // low IO bit isn't used
+    lai                     // IO now has the remainder, 0..count-1 in range
+    add ptr
+    dac ptr
+    lac i ptr               // get the selected entry's value and return it
 rtn, jmp .
     endloc
 

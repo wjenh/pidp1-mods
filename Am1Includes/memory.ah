@@ -1,5 +1,18 @@
 // Useful things for extended memory access
-// eem will be turned off for all but farjmp, farjsp, farjda, and farrtn.
+// eem will be silently managed for the data accessors, farlac, farlio,
+// fardac, fardio transparently, leaving eem off.
+// For farjmp, eem will be left on.
+// For farjsp and farjda, eem will be on when the subroutine is entered.
+// When they return, eem will be turned off.
+//
+// Using farenter will properly set up the subroutine return for cross-bank return and turn off eem.
+// Using farrtn will properly return leaving eem on.
+//
+// DO NOT use skip instructions to skip any of these, e.g:
+//     sza // skip next instruction if AC is 0
+//     jsp foo
+// because these are all multi-instruction macros, the code will fail.
+
 #ifndef MEMORY_AH
 #define MEMORY_AH
 
@@ -7,10 +20,10 @@
     eem; jmp i [a]
 
 #define farjsp(a) \
-    eem; jsp i [a]
+    eem; jsp i [a]; lem
 
 #define farjda(a) \
-    eem; dac i [a]; jsp i [a+1]
+    eem; dac i [a]; jsp i [a+1]; lem
 
 // This guarantees a proper return setup
 // NOTE that it turns off eem!

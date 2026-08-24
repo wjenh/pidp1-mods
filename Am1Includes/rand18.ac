@@ -60,9 +60,10 @@ rtn, 0
 // No return, IO preserved, AC not preserved.
 rand18seed,
     local rtn
-    dap rtn
+    dac rtn
     dio r18curSeed
-rtn, jmp .
+    jmp i rtn
+rtn, 0
     endloc
 
 r18curSeed, 0x321E3 // Current seed value and its load-time default
@@ -88,7 +89,7 @@ r18curSeed, 0x321E3 // Current seed value and its load-time default
 // Returns the matching ID or -1 if there is no match in AC.
 // IO is not presrved.
 probabilitySelector,
-    local rtn,loop, found, fail, weight
+    local rtn, loop, found, fail, weight
     dac rtn         // full 16 bit address
     dio ptr
     jsp rand18
@@ -191,6 +192,7 @@ found,
     sar 9s          // Extract the id.
     and [0777       // Mask in case the sign bit propagated.
     jmp i rtn
+rtn, 0
     endloc
 
 // Given a list of ids, randomly pick one using a uniform distribution.

@@ -1,0 +1,61 @@
+// Utility subroutines for working with the Chrono-Log time-of-day clock.
+// All are 16-bit-address compatible and can be used with extended memory enabled.
+#ifndef TIME_AC
+#define TIME_AC
+
+// Shared locals
+local rtn, tmp
+
+// getTimeHHMMSS gets the current time of day and sets the current hour and minute
+// into AC, hour in the high 9 bits as a binary number 0-23, minute in the low 9 bits
+// as a binary number 0-59.
+// IO will contain the seconds as a binary number 0-59.
+// Called via jsp, extended memory safe.
+getTimeHHMMSS,
+    dac rtn
+    iot 70          // This is the Chrono-Log clock, see its documentation
+    lia             // we only need hhmmss, save it
+    sar 4s          // unpack everything
+    and [0037000    // hour, 5 bits
+    dac tmp
+    lai
+    sar 6s
+    and [077        // minute, 6 bits
+    ior tmp
+    dac tmp         // hour, minute
+    lai
+    and [077
+    lia             // second, 6 bits
+    lac tmp
+    jmp i rtn       // 16 bit address style return
+
+// getTimeMMDDYY gets the current time of day and sets the current month and day
+// into AC, month in the high 9 bits as a binary number 1-11, day in the low 9 bits
+// as a binary number 1-31.
+// IO will contain the year as a binary number 2000-2511.
+// Called via jsp, extended memory safe.
+getTimeMMDDYY,
+    dac rtn
+    iot 70          // This is the Chrono-Log clock, see its documentation
+    lai             // IO has the packed month, day, and year
+    sar 5s          // unpack everything
+    and [0017000    // month, 4 bits
+    dac tmp
+    lai
+    sar 9s
+    and [0000037    // day, 5 bits
+    ior tmp
+    dac tmp
+    lai
+    and [0777       // year, 9 bits
+    add [0d2000     // and convert to full calendar year
+    lia
+    lac tmp
+    jmp i rtn       // 16 bit address style return
+
+// Shared locals
+tmp, 0
+rtn, 0
+endloc
+
+#endif

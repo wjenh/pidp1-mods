@@ -1,0 +1,96 @@
+#ifndef SIXBIT_AC
+#define SIXBIT_AC
+// This is a collection of subroutines to pack and unpack strings to/from DEC SIXBIT.
+// SIXBIT packs 3 limited-range ascii characters into one 18-bit word.
+// It does this by limiting the allowed characters to those between decimal 32 and 95 inclusive.
+// This excludes lower-case characters and the characters back-quoute, ~, {, }, |, and the non-printing del.
+// If these are present in the unpacked ascii as input, they are mapped to the upper-case range
+// by anding with 0x100 before the subtraction.
+
+// Shared locals
+local rtn, count, ptr
+
+// Given a list of SIXBIT packed characters and word count, unpack into am1 directive 'ascii' style
+// 2-characters-per-word form.
+// Note that the input is the word count, not the character count.
+// The destination buffer must be (words/3) * 2 + 1 minimum in length to accomodate
+// the largest possible expansion, a word of 0 will always be added to ensure the
+// am1 string is properly terminated.
+//
+// Called via jda.
+// The word count is in IO.
+// The source address is in AC.
+// The target address follows the jda call:
+// lio count
+// lac [srcaddr
+// jda sixbitToAm1
+// destaddr
+// This is 16-bit-address safe and can be called from any bank
+// as long as extnded memory is enabled.
+//
+sixbitToAm1, 0
+    local loop, partial, next, pending
+    dac rtn         // full 16-bit address preservation
+    lai
+    cma             // -count
+    dac count
+    lac i rtn       // pick up the destination address
+    dac ptr
+    idx rtn
+    // sixbitToAm1 has the source address, ptr the destination, count the word count.
+    dzm pending
+
+loop,
+    lio i sixbitToAm1   // remember that idx modifies the AC!
+    idx sixbitToAm1
+    lac pending         // do we have a partial am1 word?
+    sza
+    jmp partial         // pending is non-0, yes
+    scl 6s              // nothing pending
+    add [0d32
+    sal 3s
+    scl 6s              // first char now in high 9 bits
+    add [0d32           // second char now fully formed
+    dac i ptr
+    idx ptr
+    cla
+    scl 6s              // last char from IO
+    add [0d32
+    dac pending         // save for next char
+    jmp next
+
+partial,                // pending has a character already converted in the low 9 bits and is in AC
+    sal 3s
+    scl 6s
+    add [0d32           // both am1 chars now formed
+    dac i ptr
+    idx ptr
+    cla                 // IO has 2 chars left, a full word
+    scl 6s
+    add [0d32
+    sal 3s
+    scl 6s
+    add [0d32
+    dac i ptr
+    idx ptr
+    dzm pending
+
+next,
+    isp count       // are we done?
+    jmp loop        // no
+    // done, write the pending word then one more word of 0 to be sure the am1 string is terminated.
+    lac pending
+    sal 9s
+    dac i ptr
+    idx ptr
+    dzm i ptr
+    jmp i rtn       // full 16-bit return
+    
+pending, 0          // where we build our am1 character pair
+    endloc
+
+rtn, 0
+ptr, 0
+count, 0
+endlocal
+#endif

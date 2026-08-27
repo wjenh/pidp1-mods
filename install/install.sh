@@ -178,7 +178,7 @@ while true; do
 		# this makes the virtual pdp-1 panel, used if no PiDP-1 hardware is attached:
 		make -C $INSTALLDIR/src/blincolnlights/vpanel_pdp1 	# panel driver
 
-                # The am1 macro assembler
+                # The am1 macro assembler, also installs fastload
 		make -C $INSTALLDIR/Tools/AM1 install
 		make -C $INSTALLDIR/Tools/AM1 clean
                 # The ad1 symbolic debugger
@@ -266,6 +266,7 @@ while true; do
 	    sudo ln -sf $INSTALLDIR/bin/disassemble /usr/local/bin/disassemble
 	    #
 	    sudo ln -sf $INSTALLDIR/bin/am1 /usr/local/bin/am1
+	    sudo ln -sf $INSTALLDIR/bin/fastload /usr/local/bin/fastload
 	    sudo ln -sf $INSTALLDIR/bin/ad1 /usr/local/bin/ad1
 	    sudo ln -sf $INSTALLDIR/bin/drumupdater /usr/local/bin/drumupdater
 	    sudo ln -sf $INSTALLDIR/bin/drumlist /usr/local/bin/drumlist

@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.39 and covers up through am1 version 1.40; it will be updated as needed.\
-Edit date 23-Aug-2026
-Fix example for proper use of the new farenter macro.
+This is version 1.40 and covers up through am1 version 1.40; it will be updated as needed.\
+Edit date 26-Aug-2026
+Add fastload description.
 
 ## What is **am1**?
 
@@ -241,6 +241,18 @@ variable *AM1INCDIR* to the full path to the location.
 The -i flag has priority, followed by the environment variable, followed by the default.
 
 At runtime, /usr/bin/cpp must exist if preprocessing is being done.
+
+## The fastload utility
+
+Also provided is *fastload*, a utility to instantly load a rim tape.
+If you get tired of waiting, this is the answer, especially for very large programs.
+
+It can load traditional macro rim tapes or am1 rim tapes, with extended memory support.\
+The pidp-1 must be running and shared=yes set in the pidp1.config file.
+
+Usage: fastload *rimtapefile*
+
+It will report the starting address and offer to start the program at that address.
 
 ## Test mode
 

@@ -22,14 +22,17 @@ sudo rm -f /usr/local/bin/pdp1control 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/encode_fiodec 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/decode_fiodec 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/tape_visualizer 2>&1 >/dev/null
-sudo rm -f /usr/local/bin/monas 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/macro1_1 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/macro1 2>&1 >/dev/null
-sudo rm -f /usr/local/bin/disassemble_tape 2>&1 >/dev/null
+sudo rm -f /usr/local/bin/disassemble 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/tkaskopenfile 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/tkaskopenfilewrite 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/pdp1audio 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/am1 2>&1 >/dev/null
+sudo rm -f /usr/local/bin/fastload 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/ad1 2>&1 >/dev/null
+sudo rm -f /usr/local/bin/drumupdater 2>&1 >/dev/null
+sudo rm -f /usr/local/bin/drumlist 2>&1 >/dev/null
+sudo rm -f /usr/local/bin/t30dpy 2>&1 >/dev/null
 
 echo Done.

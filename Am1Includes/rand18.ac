@@ -94,7 +94,7 @@ probabilitySelector,
     dio ptr
     jsp rand18
     // Now divide by 100, we want the remainder.
-    lia
+    lia             // div ignores IO bit 17, but not important
     cla
     div [0d100]
     rcr 1s          // low IO bit isn't used

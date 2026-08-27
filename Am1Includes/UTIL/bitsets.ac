@@ -1,0 +1,149 @@
+#ifndef BITSETS_H
+#define BITSETS_H
+// This is a collection of subroutines to manage bit flags in a word or multi-word set of bits, 18 per word.
+// Any number of words, up to memory limits, can be used.
+
+// Shared locals
+local listRtn, wordRtn, ptr, tmp, getMask
+
+// Set the bit in the location whose address is in AC and whose number is in IO.
+// Called via jda.
+// Neither AC nor IO are preserved.
+// This is 16-bit safe and can be called from any bank.
+setBitInWord, 0
+    dac wordRtn
+    jsp getMask
+    ior i setBitInWord
+    dac i setBitInWord
+    jmp i wordRtn
+
+// Clear the bit in the location whose address is in AC and whose number is in IO.
+// Called via jda.
+// Neither AC nor IO are preserved.
+// This is 16-bit safe and can be called from any bank.
+clearBitInWord, 0
+    dac wordRtn
+    jsp getMask
+    cma                 // clear the bit
+    and i setBitInWord
+    dac i setBitInWord
+    jmp i wordRtn
+
+// Test the bit in the location whose address is in AC and whose number is in IO.
+// On return, AC will be nonzero if the bit is set, else 0.
+// Called via jda.
+// Neither AC nor IO are preserved.
+// This is 16-bit safe and can be called from any bank.
+testBitInWord, 0
+    dac wordRtn
+    jsp getMask
+    and i setBitInWord
+    jmp i wordRtn
+
+// Set the bit in the location in the list whose base address is in AC and whose number is in IO.
+// Called via jda.
+// Neither AC nor IO are preserved.
+// This is 16-bit safe and can be called from any bank.
+setBitInList, 0
+    local noOffset
+    dac listRtn
+    sni                 // if the IO is 0, skip the divide
+    jmp noOffset        // 0, no divide needed
+    cla
+    sil 1s              // The divide doesn't use bit 17.
+    div [0d18]          // 18 bits/word.
+    nop                 // This location hit if there was a divide overflow, impossible.
+noOffset,               // IO now contains the offset into the list of the word to use.
+    add setBitInList    // Add our argument, the list base address.
+    jda setBitInWord    // IO has the remainder from the divide, the bit in the word.
+    jmp i listRtn
+    endloc
+
+// Clear the bit in the location in the list whose base address is in AC and whose number is in IO.
+// Called via jda.
+// Neither AC nor IO are preserved.
+// This is 16-bit safe and can be called from any bank.
+clearBitInList, 0
+    local noOffset
+    dac listRtn
+    sni                 // if the IO is 0, skip the divide
+    jmp noOffset        // 0, no divide needed
+    cla
+    sil 1s              // The divide doesn't use bit 17.
+    div [0d18]          // 18 bits/word.
+    nop                 // This location hit if there was a divide overflow, impossible.
+noOffset,               // IO now contains the offset into the list of the word to use.
+    add setBitInList    // Add our argument, the list base address.
+    jda clearBitInWord  // IO has the remainder from the divide, the bit in the word.
+    jmp i listRtn
+    endloc
+
+// Test the bit in the location in the list whose base address is in AC and whose number is in IO.
+// On return, AC will be nonzero if the bit is set, else 0.
+// Called via jda.
+// Neither AC nor IO are preserved.
+// This is 16-bit safe and can be called from any bank.
+testBitInList, 0
+    local noOffset
+    dac listRtn
+    sni                 // if the IO is 0, skip the divide
+    jmp noOffset        // 0, no divide needed
+    cla
+    sil 1s              // The divide doesn't use bit 17.
+    div [0d18]          // 18 bits/word.
+    nop                 // This location hit if there was a divide overflow, impossible.
+noOffset,               // IO now contains the offset into the list of the word to use.
+    add setBitInList    // Add our argument, the list base address.
+    jda testBitInWord   // IO has the remainder from the divide, the bit in the word.
+    jmp i listRtn
+    endloc
+
+// Local routine to convert a bit number 0-17 into a mask with that bit position set to 1.
+// Bits are numbered msb is 17, lsb is 0, NOT the silly DEC 0-17 numbering,
+// but this is transparent to the caller as long as only these routines are used.
+// Example, 1 results in octal 00002.
+// This is a local routine only, it uses 12 bit addressing, but it is bank-safe for any bank.
+// IO contains the number of the bit.
+// On return AC has the bitmask.
+// Called via jsp.
+// Neithe AC nor IO are preserved.
+getMask,
+    local lclrtn, small, addr, shifttab
+    dap lclrtn
+    lai             // if the number is greater than 8, we will shift by n-8.
+    sub [0d9
+    spa             // if the result is >= 0, number is > 8.
+    jmp small
+    add [shifttab
+    dac addr
+    law 1
+    xct i addr      // execute the correct shift
+    ral 9s          // and push it over to where it belongs
+    jmp lclrtn
+
+small, lai
+    add [shifttab   // same as the big case without the extra shift
+    dac addr
+    law 1
+    xct i addr      // execute the correct shift
+lclrtn, jmp .
+addr, 0
+shifttab,           // a list of rar instructons to get the bit into the correct position
+    nop             // lsb needs no shift
+    ral 1s          // bit 1
+    ral 2s
+    ral 3s
+    ral 4s
+    ral 5s
+    ral 6s
+    ral 7s
+    ral 8s          // bit 9 in DEC naming, msb in a half-word
+    endloc
+
+// Shared locals
+listRtn, 0
+wordRtn, 0
+ptr, 0
+tmp, 0
+endloc
+#endif

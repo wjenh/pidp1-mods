@@ -16,6 +16,7 @@ local rtn, count, ptr
 // The destination buffer must be (words/3) * 2 + 1 minimum in length to accomodate
 // the largest possible expansion, a word of 0 will always be added to ensure the
 // am1 string is properly terminated.
+// If the passed count is 0 or negative, a single 0 word will be written to the buffer.
 //
 // Called via jda.
 // The word count is in IO.
@@ -29,14 +30,16 @@ local rtn, count, ptr
 // as long as extnded memory is enabled.
 //
 sixbitToAm1, 0
-    local loop, partial, next, pending
+    local loop, partial, next, none, pending
     dac rtn         // full 16-bit address preservation
-    lai
-    cma             // -count
-    dac count
     lac i rtn       // pick up the destination address
     dac ptr
-    idx rtn
+    idx rtn         // and update the return pointer
+    lai
+    sza sma i       // is the count <= 0?
+    jmp none        // AC <= 0, nothing to do
+    cma             // AC > 0, legitimate, -count for isp later
+    dac count
     // sixbitToAm1 has the source address, ptr the destination, count the word count.
     dzm pending
 
@@ -86,6 +89,10 @@ next,
     dzm i ptr
     jmp i rtn       // full 16-bit return
     
+none,
+    dzm i ptr       // nothing to do, just terminate the buffer
+    jmp i rtn
+
 pending, 0          // where we build our am1 character pair
     endloc
 

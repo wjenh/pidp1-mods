@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.40 and covers up through am1 version 1.40; it will be updated as needed.\
-Edit date 26-Aug-2026
-Add fastload description.
+This is version 1.42 and covers up through am1 version 1.42; it will be updated as needed.\
+Edit date 30-Aug-2026
+Add -S flag
 
 ## What is **am1**?
 
@@ -197,7 +197,7 @@ Just type make.
 
 ## Usage
 
-**am1** [-abdmMlnNsTvz[xykp]] [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
+**am1** [-abdmMlnNsSTvz[xykp]] [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
 
 - a space means add, default is or
 - b generate binary tape image code, the default action
@@ -209,6 +209,7 @@ Just type make.
 - N don't keep any text from an included file in a listing
 - r don't output an initial rim loader
 - s generate a symbol table, automatic if exports are done
+- S print a list of the highest address used in each bank
 - T generate test mode output, see below
 - v print the version number and exit
 - z preserve -0 for math operation results, the default is to convert to 0
@@ -247,10 +248,19 @@ At runtime, /usr/bin/cpp must exist if preprocessing is being done.
 Also provided is *fastload*, a utility to instantly load a rim tape.
 If you get tired of waiting, this is the answer, especially for very large programs.
 
-It can load traditional macro rim tapes or am1 rim tapes, with extended memory support.\
-The pidp-1 must be running and shared=yes set in the pidp1.config file.
+It can load traditional macro rim tapes or am1 rim tapes, with extended memory support.
 
-Usage: fastload *rimtapefile*
+It supports 2 loading options, directly into running memory or into the memory file read when
+the pidp-1 is started.
+
+For direct loading,the pidp-1 must be running and shared=yes set in the pidp1.config file.
+
+For loading into the memory file, the pidp-1 process must not be running.\
+If it is, the memory file will be overwritten.\
+You will be asked to confirm it is not running before loading occurs.\
+Load with -m first, then start the pidp-1.
+
+Usage: fastload [-m] [-f memfilename]  *rimtapefile*
 
 It will report the starting address and offer to start the program at that address.
 

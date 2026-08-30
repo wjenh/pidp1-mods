@@ -14,11 +14,12 @@
  * -N	don't keep any contents from include files in the listing
  * -r	don't write a loader at the beginning of a tape
  * -s	generate a symbol table file
+ * -S	print a summary of per-bank highest address used
  * -T   special mode for testing, output the generated binary as ascii octal numbers
  * -v   print the current version number and exit
  * -z   don't convert 1's complement -0 to +0 in math operations
  *
- * -W	don't print any warnings
+ * -W	print all warnings
  * -W=warning
  *      but do print the given warning, see the documentation
  *      can be repeated as needed
@@ -104,6 +105,8 @@
  * 30-Jun-2026 wje - add thisbank keyword
  * 13-Jul-2026 wje - add private keyword
  * 19-Aug-2026 wje - fix use of wrong pc when emitting an automatically-emitted constant in multibank use
+ * 28-Aug-2026 fab - make output deterministic using a serial number instead of a memory address for hashing
+ * 30-Aug-2026 fab - add -S, memory usage summary
  *
 */
 #include <unistd.h>
@@ -165,6 +168,7 @@ bool sawBank;
 bool noWarn;
 bool noMemFatal;
 bool dropIncludeText;
+bool showMemUsage;
 int lineno;
 
 extern int yydebug;
@@ -216,6 +220,7 @@ SymNodeP symP;
     spaceIsAdd = false;
     noWarn = true;
     dropIncludeText = false;
+    showMemUsage = false;
     testMode = false;
 
     for(i = 1; i < NSIG;)
@@ -300,6 +305,10 @@ SymNodeP symP;
 
             case 's':
                 doSymtab = true;
+                break;
+
+            case 'S':
+                showMemUsage = true;
                 break;
 
             case 'T':
@@ -545,7 +554,20 @@ SymNodeP symP;
         fclose(outfP);
     }
 
-    if(doCpp && !keepCpp)
+    if( showMemUsage )
+    {
+        printf("Highest address used:\n");
+        // Go thru all the used banks, print the high address.
+        while( banksP )
+        {
+            printf("Bank %d, 0%04o (%d decimal)\n",
+                banksP->bank, banksP->cur_pc - 1, banksP->cur_pc - 1);
+            banksP = banksP->nextP;
+        }
+
+    }
+
+    if( doCpp && !keepCpp)
     {
         unlink(pfilename);
     }
@@ -1071,7 +1093,7 @@ leave(int signo)
 int
 usage()
 {
-    fprintf(stderr, "Usage: am1 [-abdmMlnNsvz[xykp]] [-Dsymbol]... [-Ipath]... [-irootpath]\n");
+    fprintf(stderr, "Usage: am1 [-abdmMlnNsSvz[xykp]] [-Dsymbol]... [-Ipath]... [-irootpath]\n");
     fprintf(stderr, "  [-W[=warning]]... sourcefile\n\n");
     fprintf(stderr, "  -a treat space in expressions as add, not or\n");
     fprintf(stderr, "  -b generate binary code\n");
@@ -1083,6 +1105,7 @@ usage()
     fprintf(stderr, "  -N drop any include file text from listing\n");
     fprintf(stderr, "  -r don't write a loader at the beginning of the binary file\n");
     fprintf(stderr, "  -s generate a symbol table file\n");
+    fprintf(stderr, "  -S summarize memory usage per bank\n");
     fprintf(stderr, "  -v print the am1 version number and exit\n");
     fprintf(stderr, "  -z keep 1's complement -0 as the result of a math operation\n");
     fprintf(stderr, "  -D define a symbol to cpp\n");

@@ -11,6 +11,9 @@
 
 #define SYMIFLAG_DELETED    1
 
+// IMPORTANT! symtabgen.c expects these fields to be in the order here.
+// If you add something in the middle, it will break.
+// So, either update it or add to the end.
 typedef struct symnode      // a node in a symbol tree
 {
     struct symnode *leftP;  // the left and right links
@@ -24,6 +27,7 @@ typedef struct symnode      // a node in a symbol tree
     int value2;
     void *ptr;
     struct symnode *symP;
+    int serialNumber;       // creation-order serial number, used for the constant pool hash
 } SymNode, *SymNodeP, **SymNodePP;
 
 void sym_init( SymNodePP );

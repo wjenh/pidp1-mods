@@ -226,12 +226,32 @@ PNodeP node2P;
     }
 }
 
-// This is used for constants to allow us to collapse equivalent expressions.
+// Digest a symbol name into a 64-bit value.
+// Used by hashExpr below for WILDREF (sym:*) references, which are resolved by name.
+// Plain unresolved symbol references use the node's creation-order serial number instead,
+// not this digest.
+static unsigned long
+hashName(const char *nameP)
+{
+unsigned long hashVal;
+
+    hashVal = 0xCBF29CE484222325UL;          // FNV-1a offset basis
+
+    while( *nameP )
+    {
+        hashVal ^= (unsigned long)(unsigned char)*nameP++;
+        hashVal *= 0x100000001B3UL;          // FNV-1a prime
+    }
+
+    return( hashVal );
+}
+
+// This is used for constants to allow us to collapse equivalent expressions into one location.
 // It wouldn't be needed except constants are allowed to reference currently-undefined symbols,
 // which makes resolving expressions that result in the same value painful if the symbol is unresolved.
 // As an expression is evaluated, if the values are known, that's what is used.
-// If a symbol reference is encountered that hasn't been resolved, then the address of the symbol in
-// the symbol table is used to create a hash value, see below.
+// If a symbol reference is encountered that hasn't been resolved, then it's serial number, assigned
+// at symbol table create time is used to create a hash value, see below.
 long int
 hashExpr(PNodeP nodeP)
 {
@@ -374,23 +394,26 @@ SymNodeP symP;
             return( lval );
         }
 
-        // Use the symP as the 'value', modify it if there was an explicit bank ref.
-        // But, since its true value isn't known, we don't want it to be confused with an actual memory address.
-        // All values except this one have resolved to an 18-bit number, which is the final value.
-        // So, scrabmle the symbol table address, take the low 38 bits, shift it up 22 bits.
-        // Why 22?
-        // The address will have been from malloc and will be unique within the lower sizeof(Symbol) bits.
-        // For safety, shift the address up 8 bits after taking the low 36 bits.
-        // If it's a bank ref, it's an explicit reference, add in the bank as the high 4 bits.
-        // This isn't perfect, different unresolved symbols that finally resolve to the same address
-        // won't hash together, but that only means an extra word of memory will be used.
-        hashVal = (unsigned long)symP;
+        // Use the symbol node's creation-order serial number as the 'value', modified if there was an
+        // explicit bank ref.
+        // Since its true value isn't known, we don't want it to be confused
+        // with an actual memory address, all values except this one have resolved to an 18-bit
+        // number, so the serial number is shifted up 22 bits, well clear of that range, and an explicit
+        // bank ref lands in the high 4 bits.
+        //
+        // This isn't perfect: different unresolved symbols that finally resolve to the same
+        // address won't hash together, but that only means an extra word of memory will be used
+        // (same accepted imperfection as before).
+        hashVal = (unsigned long)symP->serialNumber;
         hashVal = ((hashVal & 0xFFFFFFFFF) << 22) | (bank << 60);
         return( (long)hashVal );
 
     case WILDREF:
-        // All we have is the symbolname, use the string address mangled similarly as above.
-        hashVal = (unsigned long)(nodeP->value.strP);
+        // All we have is the symbol NAME -- but for a wildcard ref that's exactly right:
+        // sym:* is resolved BY NAME, so equal names mean the same eventual resolution and
+        // deserve the same fingerprint. Digest the name (deterministic, unlike the string's
+        // malloc address that was used before).
+        hashVal = hashName(nodeP->value.strP);
         hashVal = ((hashVal & 0xFFFFFFFFF) << 22) | (bank << 60);
         return( (long)hashVal );
 

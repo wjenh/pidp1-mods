@@ -1,12 +1,18 @@
 /*
  * Load a binary tape as if it had been done via read-in.
  * A tape in bin or am1 format can be loaded.
- * The emulator must be running and must be in shared memory mode,
- * the data is directly loaded into working memory.
+ * There are two modes.
+ * If the emulator is running and and in shared memory mode,
+ * the tape can be loaded directly into the pdp-1 live memory.
+ * If not, the core-image save vile, coremem, can be overwritten
+ * with the tape so that on the next pdp-1 boot the program will
+ * be memory resident.
+ *
  * If you're tired of waiting for those simulated tape reads,
  * here's your answer.
  *
  * 26-Aug-2026 wje initial version
+ * 28-Aug-2026 wje add load-to-memory-file
 */
 
 #include <unistd.h>
@@ -26,6 +32,8 @@ typedef uint16_t u16;
 // We need this to pick up the definition of the PDP1 data structure.
 #define USEAM1
 #include "/opt/pidp1-mods/src/blincolnlights/pdp1/pdp1.h"
+
+#define DEFAULT_MEMFILE "/opt/pidp1-mods/coremem"
 
 // The kind of tape we are loading
 #define BINTAPE 1
@@ -48,57 +56,134 @@ PDP1P pdp1P;                    // how we get to pdp-1 memory
 
 static int savedWord;
 
-static bool attachMemory(void);
-static int loadTape(char *filenameP);
+static int loadTape(char *filenameP, FILE *memFileFp, bool toFile);
 static int getWord(FILE *fP);
-static void ungetWord(int word);
 static int skipLoader(FILE *fP);
-static int loadAm1(FILE *fP);
+static int loadAm1(FILE *fP, FILE *memFilefP, bool toFile);
 static int loadBin(FILE *fP);
+static bool attachMemory(void);
+static void ungetWord(int word);
+static void usage(void);
 
 int
 main(int argc, char **argv)
 {
 int address;
+bool useMemFile;
 size_t len;
+char *cP;
 char *filenameP;
 char *lineP;
+char *memFileNameP;
+FILE *memFilefP;
 
-    if( argc != 2 )
-    {
-        fprintf(stderr, "Usage: fastload rimfile\n");
-        exit(1);
-    }
+    memFileNameP = DEFAULT_MEMFILE;
+    useMemFile = false;
 
-    filenameP = argv[1];
-    if( !attachMemory() )
-    {
-        fprintf(stderr, "Can't attach to the pdp-1, is it running and is shared=yes in the config file?\n");
-        exit(1);
-    }
+    // do the command line processing
+    ++argv;
+    --argc;
 
-    // Ok, be sure pdp-1 is stopped and load it.
-    AD1_SET_STOP(pdp1P);
-    if( (address = loadTape(filenameP)) == LOADFAILED )
+    while(argc && (**argv == '-'))                        /* look for directives */
     {
-        fprintf(stderr, "Can't load the tape, is it a valid macro or am1 rim tape?\n");
-        exit(1);
-    }
-    else if( address == LOADSTOP )
-    {
-        printf("Tape loaded, an am1 program with a stop directive.\n");
-        exit(0);
-    }
-
-    printf("Tape loaded, start address 0%0o. Start it (y or n/newline)?\n", address);
-    if( (getline(&lineP, &len, stdin)) != -1 )
-    {
-        if( *lineP == 'y' )
+        for(cP = *argv + 1; *cP;)
         {
-            pdp1P->ad1StartAddr = ADDRESSOF(address);
-            pdp1P->ad1ExtendedAddr = address & 0170000;    
-            AD1_CLEAR_SINGLE(pdp1P);    // shouldn't be set, but be sure
-            AD1_SET_START(pdp1P);
+            switch(*cP++)
+            {
+            case 'm':
+                useMemFile = true;
+                break;
+
+            case 'f':               // memfile to use if not the default
+                --argc;
+                ++argv;
+                memFileNameP = *argv;
+                break;
+
+            default:
+                usage();
+                break;
+            }
+        }
+
+        --argc;
+        ++argv;
+    }
+
+    if(argc != 1)
+    {
+        usage();
+    }
+
+    filenameP = *argv;
+
+    if( useMemFile )
+    {
+        printf("Loading into memory file, be sure the pdp-1 isn't running!\n");
+        printf("If it is, this load will be overwritten when it exits.\n");
+        printf("Continue? (y/n) ");
+        if( (getline(&lineP, &len, stdin)) != -1 )
+        {
+            if( *lineP != 'y' )
+            {
+                exit(0);
+            }
+        }
+
+        if( !(memFilefP = fopen(memFileNameP, "w")) )
+        {
+            fprintf(stderr, "Can't open memory file '%s', be sure the directory and file have write permission.\n",
+                memFileNameP);
+            exit(1);
+        }
+
+        if( (address = loadTape(filenameP, memFilefP, true)) == LOADFAILED )
+        {
+            fclose(memFilefP);
+            fprintf(stderr, "Can't load the tape, is it a valid macro or am1 rim tape?\n");
+            exit(1);
+        }
+        else if( address == LOADSTOP )
+        {
+            fclose(memFilefP);
+            printf("Tape loaded, an am1 program with a stop directive.\n");
+            exit(0);
+        }
+
+        printf("Tape loaded, start address 0%0o.\n", address);
+        fclose(memFilefP);
+    }
+    else
+    {
+        if( !attachMemory() )
+        {
+            fprintf(stderr, "Can't attach to the pdp-1, is it running and is shared=yes in the config file?\n");
+            exit(1);
+        }
+
+        // Ok, be sure pdp-1 is stopped and load it.
+        AD1_SET_STOP(pdp1P);
+        if( (address = loadTape(filenameP, 0, false)) == LOADFAILED )
+        {
+            fprintf(stderr, "Can't load the tape, is it a valid macro or am1 rim tape?\n");
+            exit(1);
+        }
+        else if( address == LOADSTOP )
+        {
+            printf("Tape loaded, an am1 program with a stop directive.\n");
+            exit(0);
+        }
+
+        printf("Tape loaded, start address 0%0o. Start it (y or n/newline)?\n", address);
+        if( (getline(&lineP, &len, stdin)) != -1 )
+        {
+            if( *lineP == 'y' )
+            {
+                pdp1P->ad1StartAddr = ADDRESSOF(address);
+                pdp1P->ad1ExtendedAddr = address & 0170000;    
+                AD1_CLEAR_SINGLE(pdp1P);    // shouldn't be set, but be sure
+                AD1_SET_START(pdp1P);
+            }
         }
     }
 
@@ -116,7 +201,7 @@ char *lineP;
 // Do the actual loading.
 // Return the starting address or LOADSTOP on success, else LOADFAILED.
 int
-loadTape(char *filenameP)
+loadTape(char *filenameP, FILE *memFileFp, bool toFile)
 {
 int kind;           // which kind of format we are loading
 int addr;
@@ -150,7 +235,7 @@ FILE *fP;
     // ready to load
     if( kind == AM1TAPE )
     {
-        if( (addr = loadAm1(fP)) == LOADFAILED )
+        if( (addr = loadAm1(fP, memFileFp, toFile)) == LOADFAILED )
         {
             printf("Loading failed, tape is not the correct format.\n");
             return(LOADFAILED);
@@ -267,8 +352,9 @@ int kind;
 
 // Load an am1 binary, return the starting address or LOADSTOP, or LOADFAIL for an error.
 // LOADSTOP is returned if the program ended with a stop direcive.
+// If toFile is true, write to the memory file, else to shared memory.
 int
-loadAm1(FILE *fP)
+loadAm1(FILE *fP, FILE *memFilefP, bool toFile)
 {
 int word;
 int op;
@@ -309,7 +395,15 @@ bool loading;
                 return(LOADFAILED);
             }
 
-            pdp1P->core[curAddr++] = word;      // just put the data into the current addr
+            if( toFile )
+            {
+                fprintf(memFilefP,"%06o: %06o\n", curAddr++, word);
+            }
+            else
+            {
+                pdp1P->core[curAddr++] = word;      // just put the data into the current addr
+            }
+
             if( curAddr == endAddr )
             {
                 loading = false;                // end of a data block
@@ -398,4 +492,12 @@ int shmFd;
     }
 
     return(true);
+}
+
+void
+usage(void)
+{
+    fprintf(stderr, "Usage: fastload [-m] ]-f memfilename] rimfile\n");
+    fprintf(stderr, "    if -f is not used, the default is /opt/pidp1-mods/coremem\n");
+    exit(1);
 }

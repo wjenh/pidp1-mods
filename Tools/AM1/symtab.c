@@ -68,6 +68,10 @@ sym_free( SymNodePP rootPP )           /* User perceived free */
     }
 }
 
+// Creation-order seria numberl for symbol nodes.
+// Parse order is identical from run to run, so this gives every node a unique, deterministic identity.
+static int symSerial;
+
 SymNodeP
 sym_make( char *nameP, int extra ) /* Create a new node */
 {
@@ -84,6 +88,7 @@ sym_make( char *nameP, int extra ) /* Create a new node */
     }
 
     strcpy( symP->name, nameP );
+    symP->serialNumber = ++symSerial;
     return( symP );
 }
 

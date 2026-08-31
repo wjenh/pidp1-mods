@@ -11,8 +11,7 @@ ADVENTURE 1977 WOODS VERSION
 //
 // Before assembling this, its generated include files (message/room
 // tables, object tables, drum layout) must be produced by advdataloader
-// (PendingRework/AdvDataLoader -- the unified generator that replaced
-// the old advtextloader/advroomloader pair, 28-Aug-26), which also
+// (PendingRework/AdvDataLoader -- the unified generator  which also
 // loads the drum with the game data.
 //
 // One save slot is available, also on the drum.
@@ -28,13 +27,9 @@ ADVENTURE 1977 WOODS VERSION
 #include <DCS/dcs2defs.ah>
 #include <DRUM/type23drumdefs.ah>
 #include <memory.ah>
-
-#include "adv_roomtab.ah"
-#include "adv_drumlayout.ah"    // generated drum-layout contract (SAVE/WIZCOM
-                                  // front blocks + text start) -- advdataloader
-                                  // owns these numbers; see the SAVE/WIZCOM
-                                  // sections below
 #include "skipmacros.ah"
+
+#include "Includes/adv_defines.ah"
 
 octal
 
@@ -48,10 +43,6 @@ octal
 #define BS 010
 #define DEL 0177
 
-// Number of entries actually in use in the object table
-#include "adv_objdefs.ah"
-
-// Sentinel objLoc value for objects that don't have a fixed starting room.
 #define AXE_NOWHERE 0d250
 #define SNAKE_GONE 0d250
 #define TROLL_TREASURE_GONE 0d250
@@ -420,7 +411,7 @@ ix, 0
 //   words 3-4:   short-message track/offset and count doublet,
 //                same as the long value if the room def says "SHORT SAME".
 //                ROOMTAB_SHORT_MSG is defined as 3 for the offset to this.
-//   word 5:      a packed per-room flags word (TASK-ROOM-FLAG-WORD, 29-Aug-26):
+//   word 5:      a packed per-room flags word
 //                0 - dark flag, 1 for dark, 0 for not
 //                1 - dwarf flag, 1 for yes, 0 for no
 //                2 - surface flag, 1 if the room is above ground
@@ -635,12 +626,9 @@ cvmIsVase,
 cvmBreak,                            // AC != R_SOFTROOM (skip): anywhere else -- breaks
     lac [msg_VASE_BREAK:1]         // PSPEAK(VASE,PROP+1) -- accidental
     jda pmsg                       //   mishandle's OWN text, distinct from the
-                                    //   explicit BREAK VASE verb's msg 198 (see
-                                    //   vaseBreakMutate's header, TASK-BREAK-
-                                    //   VASE-FIDELITY.md) -- do not merge these
-    eem                             // extend on before the cross-bank-style
-                                    //   call below (TASK-BREAK-VASE-FIDELITY.md;
-                                    //   harmless if already on)
+                                    //   explicit BREAK VASE verb's msg 198.
+                                    //   do not merge these.
+    eem
     jsp i [vaseBreakMutate:0]      // shared state-mutation tail
     jmp cvmRtn
 cvmRtn,
@@ -732,11 +720,6 @@ fhNo,
     jmp i rtn
 rtn, 0
     endloc
-
-// checkBirdCatch / takeBirdCageBundle / dropCageBundle -- S3B
-// bird/snake cluster (24-Aug-26): moved to BANK 1; see the bank-1
-// bird/snake-cluster section near the end of this file. Called from
-// doTake/doDrop/doThrow via the section-13 cross-bank form.
 
 // checkPloverCarry --  Scans objLoc for how
 // many objects are currently carried (objLoc==0, this project's standing
@@ -857,11 +840,9 @@ rtn, 0
     endloc
 
 // Check the PIRATE_FORBID flag for the current cached room -- the source's
-// COND-bit-3 dwarf/pirate exclusion zone (TASK-PIRATE-FORBIDDEN-ZONE.md,
-// OMISSIONS.md #22, adven.f4 lines 638/657/697: 18 rooms -- the Maze-1
-// dead-end subset and the volcano/bear cluster -- where the source's
-// dwarf-stuff block and the pirate's own candidate movement never act
-// while the player is there). Returns AC = 1 if curRoom is one of the 18,
+// COND-bit-3 dwarf/pirate exclusion zone  adven.f4 lines 638/657/697,
+// 18 rooms -- the Maze-1 dead-end subset and the volcano/bear cluster.
+// Returns AC = 1 if curRoom is one of the 18,
 // AC = 0 otherwise. Same section-13 dual-mode shape as checkDwarfRoom
 // immediately above (its own bank-1/bank-3 callers use
 // jsp i [checkPirateForbidRoom:0]; same-bank bank-0 callers use plain jsp
@@ -899,10 +880,6 @@ checkNuggetFound,
     dac nuggetFound
 rtn, jmp 0
     endloc
-
-// printGrateStatus -- S3B grate cluster (24-Aug-26): moved to BANK 1;
-// see the bank-1 grate-cluster section near the end of this file.
-// Called from enterRoom/doLook via the section-13 cross-bank form.
 
 // printChasmTroll -- After a room description prints, if curRoom
 // is either chasm bank (R_CHASM_SW/R_CHASM_NE), print the chasm's own
@@ -989,14 +966,6 @@ psfPrint,
 rtn, jmp 0
     endloc
 
-// printPhonyPlant -- S3B bottle/plant/door cluster (24-Aug-26): moved
-// to BANK 1 -- see the bank-1 section near the end of this file.
-// Called from enterRoom/doLook via the section-13 cross-bank form.
-
-// atGrate -- S3B grate cluster// atGrate -- S3B grate cluster (24-Aug-26): moved to BANK 1 (its only
-// callers, the four grate verbs, all moved with it); see the bank-1
-// grate-cluster section near the end of this file.
-
 // atFissure -- True if curRoom is R_FISSURE_EAST or
 // R_FISSURE_WEST, the two rooms *FISSURE is fixed scenery at (adven.dat
 // section 7, "12 17 27"). Mirrors atGrate above exactly: this project
@@ -1023,9 +992,6 @@ afNo,
     jmp i rtn
 rtn, 0
     endloc
-
-// liquidHere -- S3B bottle/plant/door cluster (24-Aug-26): moved to
-// BANK 1 with its only caller, doFill.
 
 // Generic move processing.
 // Call via jmp, it's not a subroutine and it never returns.
@@ -1097,7 +1063,7 @@ mccNotOver,                    // AC != DIR_OVER (skip): not OVER -- fall throug
     SKIP_NEXT_IF_DIFFERENT [DIR_FORWARD
     jmp dfdCheckRoom          // AC == DIR_FORWARD (no skip): might be the fissure death
     SKIP_NEXT_IF_DIFFERENT [DIR_JUMP
-    jmp dfdCheckRoom          // AC == DIR_JUMP (no skip): might be the fissure death too (F12)
+    jmp dfdCheckRoom          // AC == DIR_JUMP (no skip): might be the fissure death too
     lac curDir
     SKIP_NEXT_IF_DIFFERENT [DIR_CLIMB
     jmp wpcCheckRoom          // AC == DIR_CLIMB (no skip): might be the westpit climb
@@ -1188,9 +1154,8 @@ wpcNotGrown,                     // AC != 4 (skip): not fully grown -- adven.dat
 wpcGrown,
     lac [R_PLANTHOLE
     jmp moveGo
-// mtkSnakeCheck -- MTKING-SW-CASCADE-IMPL-TASK.md (23-Aug-26). Reached
-// only when curRoom == R_MTKING (dispatch chain above). Reproduces
-// adven.dat LOC 19's snake-present travel cascade exactly, under
+// mtkSnakeCheck -- Reached only when curRoom == R_MTKING (dispatch chain above).
+// Reproduces adven.dat LOC 19's snake-present travel cascade exactly, under
 // adven.f4's real cascade rule (statement 12: a failed condition falls
 // to the NEXT row in file order regardless of motion words):
 //   NORTH/SOUTH/WEST (rows 448/449/450 fail while the snake is present)
@@ -1200,14 +1165,13 @@ wpcGrown,
 // LOC 32 is a FORCED location (adven.f4 line 84) the player never
 // occupies: print its text and re-enter LOC 19 -- mtkBounce below gives
 // the exact original transcript (snake line + LOC 19's short text), no
-// player command consumed, no LOC-32 room built (see OMISSIONS.md).
+// player command consumed, no LOC-32 room built.
 // Snake gone: fall straight to the ordinary table rows, which are
 // correct on their own (NORTH unconditional -> R_HOLE; SOUTH/WEST COND
 // rows pass; SW unconditional -> R_MTKING_CANYON_EW, because rows
 // 452->453->454 cascade to LOC 74 regardless of the roll once the snake
 // is gone). FORWARD (row 450's synonym) never reaches here (intercepted
-// by the fissure check above) and remains unwired at R_MTKING -- an
-// existing disclosed synonym omission, see OMISSIONS.md.
+// by the fissure check above) and remains unwired at R_MTKING.
 mtkSnakeCheck,
     lac pastSnake
     SKIP_NEXT_IF_AC_ZERO
@@ -1238,9 +1202,8 @@ mtkBounce,                    // the FORCED LOC-32 bounce: snake text, then re-e
     lac [R_MTKING
     jmp moveGo                // re-enter LOC 19: prints its (short) text, ends the turn
 
-// casSouthCheck -- MTKING-SW-CASCADE-IMPL-TASK.md (23-Aug-26). Reached
-// only when curRoom == R_CANYONABOVE (dispatch chain above). adven.dat
-// LOC 69's SOUTH pair (lines 601-602): dragon dead (PROP(31) != 0) ->
+// casSouthCheck -- Reached only when curRoom == R_CANYONABOVE (dispatch chain above).
+// adven.dat LOC 69's SOUTH pair (lines 601-602): dragon dead (PROP(31) != 0) ->
 // LOC 120 (R_MTKING_CANYON_MID), else the unconditional row -> LOC 119
 // (R_CANYONNE). Two live destinations, so per DECISIONS.md ("Boolean
 // COND/MSG exit rows support exactly one gated destination") the
@@ -1498,27 +1461,6 @@ foobar, 0                 // FEE FIE FOE FOO progress (f4 FOOBAR,
                           // positive fresh, negated by turnLoop's dance,
                           // transient like the rest of this block)
 
-// dtFirstKillOne -- S3B dwarf cluster (24-Aug-26): moved to BANK 1;
-// see the bank-1 dwarf-cluster section near the end of this file.
-
-// dwMoveOne -- S3B dwarf cluster (24-Aug-26): moved to BANK 1 (with
-// its DWARF_ROOM_SCRATCH buffer); see the bank-1 dwarf-cluster
-// section near the end of this file.
-
-// dwarfTurn -- S3B dwarf cluster (24-Aug-26): moved to BANK 1; see
-// the bank-1 dwarf-cluster section near the end of this file. Called
-// from turnLoop via the section-13 form, sharing one eem window with
-// lampTurn. Its state (dwarfStage/dwarvesRemaining/
-// restoredThisSession, the dwarfLoc/dwarfPrevLoc/dwarfBitMask tables,
-// dwarfSeen) stays in bank 0 -- SAVE records, doThrow's combat, and
-// newGame all live there.
-
-// lampTurn -- S3B (24-Aug-26, owner-approved): logic moved to BANK 1;
-// see the bank-1 lamp-cluster section near the end of this file. Called
-// from turnLoop via the section-13 cross-bank form (eem'd jsp i). Its
-// state (lampOn/lampLimit/lampWarned) stays in bank 0's frozen
-
-
 // ptSweep --  Scans every object
 // 0..NOBJS-1 for a qualifying treasure (objTreasure[ix]==1) that the
 // player is carrying (objLoc[ix]==0) or that is lying loose in curRoom
@@ -1615,13 +1557,6 @@ ptZoneCheck,                              // closing == 0 (skipped): falls throu
     lem                   // checkDwarfRoom returns with eem on
     SKIP_NEXT_IF_AC_NOT_ZERO                            // skip when AC != 0 (in dwarf territory)
     jmp rtn                            // AC == 0 (no skip): not in dwarf territory -- nothing to do
-// TASK-PIRATE-FORBIDDEN-ZONE.md: on top of the ordinary dwarf-territory
-// check just above, the source additionally never lets the pirate act
-// while the player stands in one of the 18 COND-bit-3 rooms (adven.f4
-// line 657's blanket "BYPASS DWARF STUFF" gate, applied here to the
-// pirate's own half -- dwarfTurn has the matching gate for the ordinary
-// five). checkPirateForbidRoom reads the same already-resident
-// ROOM_CACHE word checkDwarfRoom just did.
 ptForbidCheck,
     jsp checkPirateForbidRoom
     lem                   // also returns with eem on
@@ -1631,11 +1566,7 @@ ptRoll,                                // AC != 0 (skip): in dwarf territory -- 
 // Stand-in probability, NOT sourced -- same disclosed-approximate status as
 // dwarfTurn's own rolls (PIRATE-LOGIC-PLAN.md section 1). pct=4 realizes a
 // 5/100 rate (probabilitySelector2 matches when pct >= draw, inclusive, so
-// pct=P is a (P+1)/100 rate) -- project-owner-approved checkpoint
-// (PIRATE-LOGIC-TASK.md), matching dtFirstRoll's own rate rather than
-// dtPresenceHit's 12%, since this roll is structurally the same shape as
-// dtFirstRoll: a one-shot, permanent-activation event, not a recurring
-// per-turn presence check.
+// pct=P is a (P+1)/100 rate).
     lio [ptActivateList]
     jsp probabilitySelector2
     SKIP_NEXT_IF_DIFFERENT [-1]
@@ -1886,13 +1817,7 @@ ptr, 0
 
 // =======================================================================
 // vtScan -- scan verbTab for the vocabulary word matching the token
-// whose address is in IO. TASK-PARSER-WORDORDER (28-Aug-26): this was
-// the verb dispatch head's inline loop (playGame); now a section-5 jsp
-// subroutine parameterized on the token (owner decision: parameterize,
-// not a copy-into-verbTok trick, for future rework). Bank-0 callers
-// only: the dispatch head, doGo below, and uvWhatDo's NOUN VERB
-// fallback.
-
+// whose address is in IO.
 // vtPtr, which vtHit consumes) on a match; AC = 0 when the token
 // matches no row (vtPtr is then spent -- do not use it). IO is
 // preserved (strCmpEq preserves it). Returns with eem off.
@@ -1922,25 +1847,11 @@ vtsHit,
 rtn, jmp 0                 // vtsHit falls in (allowed, section 5)
     endloc
 
-// =======================================================================
-// doGo -- TASK-PARSER-WORDORDER (28-Aug-26): the adven.dat 2011 filler
-// verbs WALK/RUN/TRAVEL/GO/PROCEED/EXPLORE/GOTO/FOLLOW/TURN (adven.dat
-// 1086-1095). CONTINUE, also listed under 2011 (line 1091), stays the
+// doGo -- the adven.dat 2011 filler/ verbs
+// WALK/RUN/TRAVEL/GO/PROCEED/EXPLORE/GOTO/FOLLOW/TURN (adven.dat 1086-1095).
+// CONTINUE, also listed under 2011 (line 1091), stays the
 // existing DIR_FORWARD motion row: motion word 7 (adven.dat 873) claims
-// it first in f4 VOCAB's own first-match order.
-// f4 2610/2800's WD1=WD2 reclassify, Option A scope: re-parse the noun
-// as a direction. If nounTok matches a verbTab row whose handler is
-// motion-class -- doMove, or one of the six bespoke handlers that
-// implement source motion-class words (BACK 8, LOOK 57, XYZZY 62,
-// PLUGH 65, CAVE 67, PLOVER 71; owner-approved extension, 28-Aug-26) --
-// dispatch that row through vtHit exactly as if it had been word 1
-// (which also keeps "GO WEST" counting toward the IWEST joke, f4's own
-// second-pass-through-2610 behavior). Anything else -- no second word,
-// an unknown word, an object, a non-motion verb -- prints message 43
-// ("WHERE?"), ACTSPK(11)'s sourced default (adven.dat section 8, pair
-// "11 43" -- located and confirmed 28-Aug-26; NOT invented text).
-// A verb handler (section 5): entered by jmp from vtGo, never returns.
-// =======================================================================
+// it first in f4 VOCAB's own first-match orde, f4 2610/2800's WD1=WD2 reclassify.
 doGo,
     local ptr
     lac nounTok
@@ -2187,7 +2098,7 @@ newGame,
     lac [msg_HERE_BOTTLE_WATER:1]   // reset every game in case a previous game's doFill/doPour
     fardac(FAR_OBJ_HEREMSG(OBJ_BOTTLE))             // patched this at runtime
     dzm bottleProp                 // 0 = full of water, matching the bottle's own starting state
-    // TASK-WATER-OIL-OBJECTS.md: WATER/OIL start "nowhere" -- the bottle
+    // WATER/OIL start "nowhere" -- the bottle
     // isn't carried at cold-load (it's sitting in R_BUILDING, per above),
     // so neither liquid is "carried" either; reset every game rather than
     // relying on the static initializer alone, matching every other
@@ -2253,7 +2164,7 @@ newGame,
     dac grateLocked         // grate starts locked and closed, matching classic Adventure
     dzm grateOpen
     dzm pastSnake
-    dzm birdCaught           // bird/cage correction task -- bird starts wild, uncaught
+    dzm birdCaught
     dzm dwarfStage           // dwarves not yet activated
     dzm nuggetFound           // nugget not yet seen
     dzm everKilledDwarf      // no dwarf killed yet this game
@@ -2559,12 +2470,6 @@ tlNoTransform,
 // jmp idiom every subroutine return already uses. The old goDir stub is
 // gone: movement rows name doMove as their handler directly, and the
 // argument column carries what used to be goDir's AC argument.
-// TASK-PARSER-WORDORDER (28-Aug-26): the scan loop moved out to the
-// vtScan subroutine (after tokenize), parameterized on the token in IO
-// (owner decision: parameterize, not copy-into-verbTok, for future
-// rework) so doGo's direction re-parse and uvWhatDo's NOUN VERB
-// fallback reuse the same lookup. This dispatch head is its primary
-// caller; a hit falls straight into vtHit below.
     lio verbTok           // verb token in IO for vtScan/strCmpEq (S3B) --
                             // loaded once: strCmpEq preserves IO
     jsp vtScan
@@ -2635,7 +2540,7 @@ uvNotObject,
     eem
     jmp i [pUnknownWord:1]
 
-// F4 shared noun-reply stubs (never return; token in IO for the tails):
+// Shared noun-reply stubs (never return; token in IO for the tails:
 unknownNoun,              // the NOUN word isn't in the object table (f4 3000)
     lio nounTok
     lac [voc_knife:2
@@ -2786,7 +2691,7 @@ doScore,
     eem
     jmp i [doScore:3]     // wave 4A: body in bank 3 under the same name
 
-// checkDwarfBlock -- F2 B6 (f4 lines 638-644): if a dwarf that has seen
+// checkDwarfBlock -- f4 lines 638-644: if a dwarf that has seen
 // the player came FROM the room the player is about to enter, the move
 // is cancelled with msg 2. IO = destination on entry.
 // IO is preserved for loadRoom.
@@ -2796,7 +2701,6 @@ checkDwarfBlock,
     local rtn, cdbDest, cdbIx, cdbPtr, cdbMaskPtr
     dap rtn
     dio cdbDest
-// TASK-PIRATE-FORBIDDEN-ZONE.md (adven.f4 line 638's BITSET(LOC,3) clause
     jsp checkPirateForbidRoom
     lem
     SKIP_NEXT_IF_AC_ZERO                     // skip when AC == 0 (not forbidden)
@@ -2996,7 +2900,7 @@ doEat,
 
 // SAY -- Echoes the word (OKAY, "xxx"); the magic
 // words XYZZY/PLUGH/PLOVER are forwarded to their real handlers
-// instead (f4 9035's vocab 62/65/71; 2025 FEE... is F6's). SAY alone
+// instead (f4 9035's vocab 62/65/71; 2025 FEE...). SAY alone
 // echoes "SAY" itself, exactly as f4's WD2=0 fallback does.
 doSay,
     eem
@@ -3019,10 +2923,8 @@ doBrief,
     lac [msg_BRIEF_OK:1]
     jmp pmsgT
 
-// CAVE -- f4 label 40, lines 1139-1141: above ground msg 57,
-// underground msg 58.
-// F4 fidelity (TASK-ROOM-FLAG-WORD, 29-Aug-26): f4's LOC.LT.8 positional
-// predicate reimplemented as the explicit per-room SURFACE flag.
+// CAVE -- f4 label 40, lines 1139-1141: above ground msg 57, underground msg 58.
+// f4's LOC.LT.8 positional predicate reimplemented as the explicit per-room SURFACE flag.
 doCave,
     lac ROOM_CACHE + ROOMTAB_FLAGS
     IS_SURFACE
@@ -3074,7 +2976,7 @@ doRead,
 
 // FIND -- (f4 9190): carried -> msg 24; lying here (or a live dwarf,
 // f4 9192) -> msg 94; anywhere else -> ACTSPK(FIND) = msg 59. The
-// liquid clauses need water/oil object slots (F7). CLOSED is F9.
+// liquid clauses need water/oil object slots. CLOSED is F9.
 doFind,
     eem
     jmp i [doFind:3]      // wave 2: body in bank 3 under the same name
@@ -3120,8 +3022,7 @@ doLampOff,
 //
 // UNLIKE ON/OFF, though, all four require actually being at the grate.
 doUnlock,
-    jsp checkGrateClosing    // F9C: gates the grate-default path while closing;
-                                // never returns if it gates -- see its own header comment
+    jsp checkGrateClosing
     eem
     jmp i [doUnlock:1]
 
@@ -3187,10 +3088,6 @@ doQuit,
     eem
     jmp i [doQuit:3]      // wave 4A: body in bank 3 under the same name
 
-// F9B: tlConnDrop -- the two raw "readCmd reported a connection error"
-// sites (turnLoop, doAttack's confirmation read) jump here instead of
-// straight to pgDone, so connOk is cleared before pgDone's new score-
-// report prologue runs -- no live socket to print a report to.
 tlConnDrop,
     lem
     dzm connOk
@@ -3213,13 +3110,9 @@ pgReport,
     lem
 pgDoneTail,
 rtn, jmp 0
-// (invMsgPtr/invIdx/invAnyCarried and scoreCode moved to BANK 3 with
-// doInventory/doScore, wave 4A 28-Aug-26 -- they were handler-only.)
 vtPtr, 0                     // GLOBAL (TASK-PARSER-WORDORDER) -- shared by
                               // vtScan/vtHit/doGo/uvWhatDo; see vtScan's header
-demoShort, 0                 // F19 -- scratch for the live-fetched wcShort value
-// (dthKillList moved to BANK 3 with doThrow, wave 3 28-Aug-26 -- it was
-// only ever doThrow's own data.)
+demoShort, 0                 // scratch for the live-fetched wcShort value
     endloc
 
 // Includes that are code go here by convention.
@@ -3705,19 +3598,11 @@ rtn, jmp 0
 advctl, dcftel dcfecho dcfsrv
         0d2030
 
-// ---------------------------------------------------------------------
-// Verb table -- R3b moved it to bank 1; S4 relocated it again to BANK 2
-// (see the bank-2 section near the end of this file). vtScan reads it
-
-// ---------------------------------------------------------------------
-
-// ---------------------------------------------------------------------
 // Object table -- parallel arrays, NOBJS entries each (see the #define
 // near the top of this file), walked generically by findObj/doTake/
 // doDrop/doInventory instead of one-off code per object. Index 0 is the
 // keys, index 1 is the lamp; a later stage adding object N+1 just bumps
-// NOBJS and appends one row to each array below. Index 6, the cage, was
-// added by the bird/cage correction task (adven.dat "1004 CAGE").
+// NOBJS and appends one row to each array below.
 //   objNames   -- address of each object's vocabulary word (reuses the
 //                 same voc_* words TAKE/DROP already parse against)
 //   objLoc     -- each object's current room number, or 0 = carried;
@@ -3731,8 +3616,9 @@ advctl, dcftel dcfecho dcfsrv
 //                 when this object is lying in curRoom (objLoc == curRoom)
 //   objTreasure -- 1 if the object counts as a treasure for the troll's
 //                 THROW-any-treasure toll.
-#include "adv_objloc.ac"
-#include "adv_objtake.ac"
+#include "Includes/adv_objloc.ac"
+#include "Includes/adv_objtake.ac"
+
 // Condition table.
 // condFlagAddrs is doMove's small, hand-maintained dispatch table,
 // indexed by the condition ID stored in a ROOM_CACHE exit entry, word +2 of each exit.
@@ -3753,15 +3639,8 @@ condFlagAddrs, 0            // index 0 unused -- condition ID 0 is "unconditiona
                grateOpen     // COND_GRATE_OPEN (0d1)
                pastSnake     // COND_SNAKE (0d2) -- blocked exit: allowed once nonzero.
                OBJ_LOC(OBJ_NUGGET)      // COND_NUGGET_TRAP (0d3) -- the nugget's objLoc entry: 0 if
-                               // carried, else a room number. F13 (26-Aug-26): no longer gates
-                               // any room -- R_NUGGET's exit was the misplaced source of this
-                               // gate (adven.dat line 446 is really unconditional) and is now
-                               // unconditional itself; the real gold-carrying restriction moved
-                               // to bespoke doMove intercepts (ptCheckDir/mhCheckDir) at
-                               // R_PITTOP/R_MISTHALL, which read OBJ_LOC(OBJ_NUGGET) directly
-                               // rather than through this table. Slot kept allocated, not
-                               // renumbered -- would require renumbering every later condition ID.
-               0             // index 4 unused -- COND_RAND (0d4, advroomloader.c's
+                               // carried, else a room number.
+               0               // index 4 unused -- COND_RAND (0d4, advroomloader.c's
                                // COND_RAND_ID) is special-cased in doMove's dmRand branch
                                // before ever reaching this table; this slot only exists to
                                // keep the flat condFlagAddrs+id arithmetic aligned
@@ -3953,18 +3832,6 @@ constants
 // Bank 1 holds overflow code that won't fit in bank 0.
 // Note that there are significant restrictions to what can be here
 // and still be used from bank 0.
-// CLAUDE-NOTE: additions to bank 1 are approved for the S3B
-// cluster-move campaign (owner, 24-Aug-26): feature-cluster CODE moves
-
-// go-ahead, word ledger, and close-out (see FableAnalysis/Refactoring/
-// S3B-LAMP-CLUSTER-RESULTS.md for the model). Anything OUTSIDE that
-// campaign still needs its own explicit approval. SAVE-block state
-// words never move (drum layout is frozen).
-// BANK 2 (owner ruling, 24-Aug-26, bank 1 nearly full): open for the
-// same section-13 patterns, probe-verified live -- see
-// FableAnalysis/Refactoring/BANK2-PROBE-RESULTS.md. A new `bank 2`
-// region MUST end with its own `constants` directive (a pool without
-// one assembles cleanly and silently never loads).
 bank 1
 0/
 
@@ -3981,16 +3848,6 @@ bank 1
 // The invocation from bank 0 will have left extended memory enabled, but
 // reenable for safety.
 //
-// 27-Aug-26 (REORGANIZE-DRUM-RESEARCH.md item 4): the drum now holds
-// sixbit-packed text (3 chars/word, printed via txtsix, below) instead of
-// the old 2-chars/word ascii-directive format txtasc expects, so the
-// stored count word had to grow a second field: sixbit has no
-// self-terminating byte (0 is a real character, space), so the exact
-// character count is needed at print time, not just the word count the
-// DMA transfer itself needs. Both are packed into one word rather than
-// adding a 3rd record word, since advroomloader.c's own long/short
-// message doublets copy this word through verbatim -- keeping the record
-// 2 words means that copy-through code needs no changes at all.
 advPrintMsg, 0
     local rtn, rawCount, msgPad, msgWords, charCnt
     farenter(rtn)
@@ -4247,17 +4104,6 @@ stickCountMsg, ascii " OF THEM GET YOU!\n"
 scoreMsg1, ascii "IF YOU WERE TO QUIT NOW, YOU WOULD SCORE "
 scoreMsg2, ascii " OUT OF A POSSIBLE 350.\n"
 
-// ---------------------------------------------------------------------
-// S3B lamp cluster (24-Aug-26, owner-approved bank-1 logic move) --
-
-// moved: lampOn/lampLimit/lampWarned keep their frozen bank-0
-// SAVE-block slots and objLoc is untouched; all bank-0 state is reached
-
-// everything in this section: eem ON (set by the bank-0 stubs / the
-// eem'd jsp in turnLoop) and kept on throughout -- advPrintMsg's farrtn
-// also returns with eem on.
-// ---------------------------------------------------------------------
-
 // pmsgT1 / pmsgD1 -- bank-1 mirrors of bank 0's pmsgT/pmsgD tails:
 // print via the same-bank advPrintMsg (no farjda composition needed),
 // then leave for the bank-0 continuation. Entered via jmp with AC = the
@@ -4273,7 +4119,7 @@ pmsgD1,
     eem
     jmp i [pgDone:0]
 
-// pmsgDie1 -- F1: bank-1 death tail: print AC's record, then the
+// pmsgDie1 -- bank-1 death tail: print AC's record, then the
 // death/reincarnation flow (playerDied normalizes eem on entry).
 // pdEnter1 is for sites whose text has already printed.
 pmsgDie1,
@@ -4806,7 +4652,7 @@ ulCheckOyster,                       // AC != objLoc+0d26 (skip): not the clam -
     lac i [objLocPtr:0]
     SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_OYSTER)
     jmp ulOyster                   // AC == objLoc+0d27 (no skip): it IS the oyster
-ulCheckDoor,                         // F3 -- the f4 9040 flavor branches, now reachable
+ulCheckDoor,                         // f4 9040 flavor branches, now reachable
     lac i [objLocPtr:0]
     SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_DOOR)
     jmp ulDoor                     // it IS the rusty door
@@ -4940,7 +4786,7 @@ dulNoKey,
     lac [msg_GRATE_NO_KEY:1]
     jmp pmsgT1
 dulNotHere,
-    lio i [nounTok:0]         // F4 (f4 5199): echo the noun
+    lio i [nounTok:0]         // f4 5199: echo the noun
     jmp pSeeNo
 
 // ulChain -- derived directly against adven.f4 lines 1376-1382:
@@ -5204,7 +5050,7 @@ cbsNotHandled,              // AC != objLoc+4 (skip): not the bird -- falls thro
     cla
     jmp i rtn
 cbsIsBird,
-    dzm i [birdCaught:0]   // bird/cage correction task -- any bird drop/throw resets caught
+    dzm i [birdCaught:0]
                               // state unconditionally, whether or not the snake is here
                               // (adven.f4 line 1277)
     lac i [FAR_OBJ_LOC(OBJ_SNAKE)]
@@ -5227,8 +5073,8 @@ rtn, 0
 tptr, 0
     endloc
 
-// checkBirdDragon -- BIRD-DRAGON-ATTACK-TASK.md, adven.f4 lines 1287-1292
-// (label 9025). Fires when the object about to be thrown is the bird,
+// checkBirdDragon -- adven.f4 lines 1287-1292 (label 9025).
+// Fires when the object about to be thrown is the bird,
 // the dragon is in this room, and the dragon is still alive
 // (dragonDead==0). Mirrors checkBirdSnake's own shape and contract
 // exactly: caller must have already confirmed the object is carried and
@@ -5397,25 +5243,11 @@ dcbRtn,
 rtn, 0
     endloc
 
-// ---------------------------------------------------------------------
-// S3B bottle/plant/door cluster (24-Aug-26, owner-approved bank-1
-
-// handlers doFill/doPour use the lamp/grate stub model; printPhonyPlant
-// is a section-13 callee (enterRoom/doLook print chain); liquidHere is
-// bank-1 internal (dap-style, only doFill calls it). strCmpEq became a
-// section-13 dual-mode callee for doPour's three cross-bank compares
-// (farjda composition -- jda itself can never indirect). State stays in
-// bank 0 (bottleProp/plantProp/plantDisplayProp/doorOiled keep their
-// frozen SAVE-block slots; doorOiled's address stays baked into
-// condFlagAddrs). Entry state throughout: eem ON.
-// ---------------------------------------------------------------------
-
-// resyncLiquidObjLoc -- TASK-WATER-OIL-OBJECTS.md (OMISSIONS.md #17).
+// resyncLiquidObjLoc
 // Re-derives objLoc[WATER]/objLoc[OIL] from bottleProp and the bottle's
-// OWN current objLoc value. Unconditional -- callers that don't already
-// know "this is about the bottle" must gate the call themselves (see
-// syncLiquidIfBottle below); doFill/doPour call this directly since they
-// always operate on the bottle already.
+// current objLoc value.
+// Unconditional -- callers that don't already/ know
+// "this is about the bottle" must gate the call themselves.
 //
 // This, plus syncLiquidIfBottle's gate, are the ONLY places WATER/OIL's
 // objLoc is ever written except the static table default and newGame's
@@ -5478,9 +5310,8 @@ rtn, jmp 0
 rlolLoc, 0
     endloc
 
-// syncLiquidIfBottle -- TASK-WATER-OIL-OBJECTS.md (OMISSIONS.md #17).
-// Cross-bank gate for resyncLiquidObjLoc above: fires only when the
-// object whose objLoc slot was just updated (by dtDoTakeGo on a
+// syncLiquidIfBottle --  Cross-bank gate for resyncLiquidObjLoc above.
+// Fires only when the object whose objLoc slot was just updated (by dtDoTakeGo on a
 // successful TAKE, or ddDoDrop on a successful DROP) is the BOTTLE
 // itself -- a no-op for every other object. TAKE/DROP resolve their
 // target via findObj, which can land on any object, so (unlike doFill/
@@ -5633,7 +5464,7 @@ filHaveLiquid,                  // AC != 0 (skip): AC is 1 (water) or 2 (oil)
 filFillOil,                     // AC != 1 (skip): oil
     law 2
     dac i [bottleProp:0]
-    jsp resyncLiquidObjLoc   // TASK-WATER-OIL-OBJECTS.md: re-sync objLoc[WATER]/
+    jsp resyncLiquidObjLoc
                                 // objLoc[OIL] to the new bottleProp
     lac [msg_HERE_BOTTLE_OIL:1]
     dac i [FAR_OBJ_HEREMSG(OBJ_BOTTLE)]
@@ -5641,8 +5472,7 @@ filFillOil,                     // AC != 1 (skip): oil
     jmp pmsgT1
 filFillWater,
     dzm i [bottleProp:0]     // 0 = full of water
-    jsp resyncLiquidObjLoc   // TASK-WATER-OIL-OBJECTS.md: re-sync objLoc[WATER]/
-                                // objLoc[OIL] to the new bottleProp
+    jsp resyncLiquidObjLoc
     lac [msg_HERE_BOTTLE_WATER:1]
     dac i [FAR_OBJ_HEREMSG(OBJ_BOTTLE)]
     lac [msg_FILL_WATER:1]
@@ -5654,7 +5484,7 @@ filNothingHere,
 // unknownVerbT -- bank-1 tail: leave for bank 0's unknownVerb (doFill's
 // unknown-noun path). Entered via jmp with eem on; never returns.
 unknownVerbT,
-    lio i [nounTok:0]     // F4: it's an unknown NOUN here -- echo it, don't
+    lio i [nounTok:0]     // it's an unknown NOUN here -- echo it, don't
     jmp pUnknownWord      // re-run bank 0's bare-object analysis on the verb
 
 // checkWaterOilTake -- derived directly against adven.f4 label 9010,
@@ -5667,8 +5497,7 @@ unknownVerbT,
 // dtWaterOilRejoin), falls into doFill's own fill logic same-bank (case
 // 2, the source's GOTO 9220 cross-verb reuse.
 //
-// The source's four cases (see task doc for the full FORTRAN trace) are
-// straight-line code with an overwriting SPK assignment that collapses,
+// The source's four cases are straight-line code with an overwriting SPK assignment that collapses,
 // for real inputs, to four mutually exclusive branches -- implemented
 // directly as such here rather than replicating the overwrite literally:
 //   1. HERE(BOTTLE) (carried OR in curRoom) AND bottleProp matches the
@@ -5677,9 +5506,7 @@ unknownVerbT,
 //   3. TOTING(BOTTLE) AND bottleProp doesn't match (has the OTHER
 //      liquid) -- msg_BOTTLE_ALREADY_FULL (message 105).
 //   4. Not TOTING(BOTTLE) at all (regardless of location/contents) --
-//      msg_FILL_NOTHING_TO_CARRY (message 104). Both messages reused
-//      verbatim from doFill's own build, per the task doc's own
-//      reuse-before-duplicate instruction.
+//      msg_FILL_NOTHING_TO_CARRY (message 104).
 // No return value; never returns. Called cross-bank via farjmp.
 // =======================================================================
 checkWaterOilTake,
@@ -5830,8 +5657,7 @@ pouNotCarrying,                 // AC != 0 (skip): bottle not carried
 pouEmptyBottle,
     law 1
     dac i [bottleProp:0]      // 1 = empty
-    jsp resyncLiquidObjLoc    // TASK-WATER-OIL-OBJECTS.md: re-sync objLoc[WATER]/
-                                 // objLoc[OIL] -- both go to their _NOWHERE sentinel
+    jsp resyncLiquidObjLoc
     lac [msg_HERE_BOTTLE_EMPTY:1]
     dac i [FAR_OBJ_HEREMSG(OBJ_BOTTLE)]
     lac i [curRoom:0]
@@ -5929,28 +5755,6 @@ pouOilOnDoor,
     lac [msg_DOOR_OIL_SUCCESS:1]
     jmp pmsgT1
 pouWhich, 0
-
-// ---------------------------------------------------------------------
-// S3B dwarf cluster (24-Aug-26, owner-approved bank-1 logic move) --
-
-// section-13 callee (turnLoop, shared eem window with lampTurn);
-// dwMoveOne/dtFirstKillOne are bank-1 internals (dap-style, dwarfTurn
-// only); DWARF_ROOM_SCRATCH moved with dwMoveOne. Everything else
-// stayed in bank 0: dwarfLoc/dwarfPrevLoc (SAVE drum record + doThrow
-// + newGame), dwarfBitMask/dwarfSeen (shared with doThrow),
-// dwarfStage/dwarvesRemaining/restoredThisSession (frozen SAVE-block
-// vars), checkDwarfRoom (section-13 dual-mode -- pirateTurn still
-// calls it same-bank), and the Am1Includes random routines, called
-
-// return addresses and return jmp-i, per rand18.ac's own header; the
-// old rand18X/probSel2X/selRandX trampolines were removed 28-Aug-26,
-// NEXT-STEPS-28AUG.md item 1). Entry state
-// throughout this section: eem ON, kept on (every cross-bank service
-// returns with it on). IMPORTANT idiom note: any address passed OUT of
-// bank 1 (probability lists, loadRoom's buffer parameter) must be the
-
-// in-bank value and would dereference into bank 0 under eem.
-// ---------------------------------------------------------------------
 
 // dtFirstKillOne -- pick one dwarf uniformly (1..5) and kill it with
 // independent 50% odds: adven.f4's "DO 6001 I=1,2" loop body (lines
@@ -6181,10 +5985,9 @@ dwarfTurn,
     local rtn, inZone, dwix, dwptr, dwptr2, dwTotal, dwAttack, dwStick
     dac rtn
 
-// TASK-PIRATE-FORBIDDEN-ZONE.md (adven.f4 line 657's "BYPASS DWARF STUFF"
-// gate, run BEFORE the DFLAG/activation check): while curRoom carries
-// PIRATE_FORBID, skip activation, movement, and the attack tally
-// entirely for this turn -- source's comment is explicit this covers
+// adven.f4 line 657's "BYPASS DWARF STUFF" gate, run BEFORE the DFLAG/activation check):
+// while curRoom carries/ PIRATE_FORBID, skip activation, movement, and the attack tally
+// entirely for this turn, source's comment is explicit this covers
 // ordinary dwarves too ("DWARVES CAN'T MEET THE BEAR... WON'T FOLLOW HIM
 // INTO DEAD END IN MAZE"), not just the pirate (pirateTurn has its own
 // matching gate below). Checked ahead of the ordinary dwarf-territory
@@ -6219,12 +6022,6 @@ dtStage1,                     // equal: dwarfStage == 1
     SKIP_NEXT_IF_AC_NOT_ZERO                // skip when inZone != 0 (in the zone -- roll for it)
     jmp dtDone              // inZone == 0: left the zone -- no roll
 dtFirstRoll,                 // inZone != 0: in the zone -- roll for it
-// RAND-TASK.md/RAND-PLAN.md Tier 1: probabilitySelector2 replaces the old
-// and-[15] approximation (1-in-16, 6.25%) of the sourced 5% (PCT(95) =
-// RAN(100)<95 firing on the OTHER 5%, SOURCE-RESEARCH.md's "Dwarves"
-// section) with the real figure. pct=4 realizes an exact 5/100 hit rate
-// (the subroutine matches when pct >= draw, inclusive, so pct=P is a
-// (P+1)/100 rate) -- a genuine accuracy fix, not just a refactor.
 dtFirstDraw,
     lio [dtFirstList:.]
     jsp i [probabilitySelector2:0]
@@ -6415,17 +6212,6 @@ dtAttackOne,
     jmp dtStickHitSingle
 dtStickMissSingle,
     lac [msg_DWARF_MISS:1]
-// Fable fix (26-Aug-26, FULLSUITE stage8 diagnosis): the non-fatal
-// attack leaves used to jmp pmsgT1, whose tail jumps to turnLoop --
-// but dwarfTurn runs AFTER readCmd in this port's turnLoop (f4 runs
-// dwarf combat before the next read), so that discarded the player's
-// already-read command: ambient knife text printed and the typed
-// command silently vanished, one turn behind. Print-and-RETURN
-// instead (advPrintMsg comes back; dtDone is the section-13 return),
-// letting the pending command dispatch normally after the ambient
-// attack -- the same output order a f4 player sees. The FATAL leaves
-// (pmsgDie1/pdEnter1) keep their jumps: death legitimately ends the
-// turn in f4 too.
     jda advPrintMsg
     jmp dtDone
 dtStickHitSingle,
@@ -6469,15 +6255,6 @@ dtFirstList, 0d4             // probabilitySelector2 list: id unused (single-out
              0                 // list terminator
     endloc
 
-
-// ---------------------------------------------------------------------
-// S3B chasm/troll/bear cluster (24-Aug-26, owner-approved bank-1 logic
-// move) -- sixth and final cluster of the campaign's list. The two
-// mid-flow callees move (bird-cluster model, section-13); doMove's mcc*
-// chasm-crossing sub-region and every state flag (trollGone/
-// trollCrossed/trollBypassed, frozen SAVE-block vars) stay in bank 0.
-// Entry state: eem ON, kept on.
-// ---------------------------------------------------------------------
 
 // checkTrollPayment -- THROW-only (not DROP -- the source's
 // toll mechanic is triggered by throwing an object at the troll, matching
@@ -6628,16 +6405,14 @@ advMsgTmp,
 // ---------------------------------------------------------------------
 // Message table -- generated by Adventure/AdvTextLoader from
 // Adventure/Text/stage1_text.txt; do not hand-edit adv_msgtab.ah itself.
-// Refactoring task R2: lives in BANK 1 (it was bank-0 resident before) --
 
 // a bank-1 record address works exactly like a bank-0 one. Every bank-0
 // reference to a msg_* symbol must use the explicit :1 form: code loads
 
 // objInvMsg/objHereMsg store "msg_X:1". A bare msg_X in bank 0 is an
 // assembly error -- that is the safety net, not an inconvenience.
-// See Refactoring/TASK-R2-MSGTAB-TO-BANK1.md.
 // ---------------------------------------------------------------------
-#include "adv_msgtab.ac"
+#include "Includes/adv_msgtab.ac"
 
 
 // ---------------------------------------------------------------------
@@ -6706,13 +6481,11 @@ bank 2
 // hintCtr/hintedTab are indexed 0-5 for the source's HINT 4-9 (CAVE/
 // BIRD/SNAKE/MAZE/DARK/WITT) -- HINT 1-3 are unused/repurposed
 // bookkeeping in the source (f4's own comment at DATA section 11) this
-// project doesn't carry. hintCtr is transient (matches HINTLC; zeroed
-// by newGame, not in the SAVE block -- an in-progress approach to a
-// hint doesn't survive SUSPEND, same tier as prevRoom/briefFlag's own
-// disclosed F5#3/F4-F5 simplifications). hintedTab IS in the SAVE block
-// (owner direction, 25-Aug-26): a restored game must not re-offer, and
-// re-charge, a hint already paid for.
-// =======================================================================
+// project doesn't carry.
+// hintCtr is transient (matches HINTLC; zeroed/ by newGame, not in the SAVE block,
+// hint doesn't survive SUSPEND, same tier as prevRoom/briefFlag.
+// hintedTab IS in the SAVE block.
+// A restored game must not re-offer, and re-charge, a hint already paid for.
 #define NHINTS      0d6
 #define HINT_CAVE   0
 #define HINT_BIRD   1
@@ -6965,9 +6738,7 @@ htOfferSnake,
 // of the 3 most-recently-occupied rooms -- see roomEmpty below for
 // ATLOC's real meaning, "no object located here", not a room-text
 // flag) AND HOLDNG>1 (carrying more than one item, so dropping a
-// marker costs nothing essential). Built in full per owner direction
-// (25-Aug-26): oldLc2 (turnLoop's move sites), roomEmpty, and
-// hintCarryCount below.
+// marker costs nothing essential).
 htQMaze,
     lac i [curRoom:0]
     swp                              // AC -> IO (roomEmpty's parameter)
@@ -7251,7 +7022,7 @@ tallyVal, 0
 // startClosing) runs UNCONDITIONALLY every turn, regardless of whether
 // this turn's tick actually happened (f4 880-881 -- two separate IF
 // statements, not one conditional chain); likewise CLOCK1<0 -> CLOCK2--
-// -> CLOCK2==0 (-> closedTransport, the F9D repository-transport stub)
+// -> CLOCK2==0 (-> closedTransport)
 // also runs unconditionally once clock1 has gone negative.
 // =======================================================================
 clockTurn,
@@ -7336,7 +7107,7 @@ closedTransport,
     dac i [FAR_OBJ_LOC(OBJ_ROD2)]
     dac i [FAR_OBJ_LOC(OBJ_PILLOW)]
 // MIRROR (adven.f4 "PROP(MIRROR)=PUT(MIRROR,115,0); FIXED(MIRROR)=116"):
-// deliberately NOT relocated. This build's existing OBJ_MIRROR (F7) is
+// deliberately NOT relocated. This build's existing OBJ_MIRROR  is
 // the SAME source object (adven.dat vocab 1023 MIRRO, object 23 -- the
 // giant two-sided mirror spanning Mirror Canyon (room 109) and the
 // repository, confirmed via adven.dat's own room-109 LONG text: "THE
@@ -7348,7 +7119,7 @@ closedTransport,
 // `closed` only, exactly like f4's own "OBJ.NE.MIRROR.OR..NOT.CLOSED" --
 // no location check at all, so it works from either repository room
 // regardless of OBJ_MIRROR's own objLoc value; (b) once closed, every
-// surface-move gate (F9C's moveGo surface trap) already confines the
+// surface-move gate already confines the
 // player to the repository, so R_MIRRORCANYON becomes permanently
 // unreachable and no LOOK there could ever expose the stale placement.
 //
@@ -7525,10 +7296,7 @@ rtn, jmp 0
 // quitting" term, no report printed; caller prints the existing short
 // "IF YOU WERE TO QUIT NOW..." message itself via printScore, bank 1),
 // 1 = normal/exit (full score, "+4" applied unless gaveUp is set, and
-// THIS routine also prints the full exit report -- see sgPrintReport
-// below -- before returning, matching the task's own "normal/exit mode:
-// compute the full score...then print the FULL report" spec). Returns
-// AC = the computed score in both modes.
+// THIS routine also prints the full exit report.
 //
 // MXSCOR is not computed at runtime -- f4's own table sums to a fixed
 // 350, already hardcoded in scoreMsg2's "OUT OF A POSSIBLE 350." text
@@ -7605,9 +7373,9 @@ sgDeepYes,
     add [0d25
     dac score
 
-// ---- survival: (3-numDie)*10 -- MAXDIE is fixed 3 this build (F1's
-// obitTab/reviveTab have exactly 3 entries), so a 4-entry lookup table
-// (numDie 0..3) avoids needing a runtime multiply. -----------------------
+// ---- survival: (3-numDie)*10 -- MAXDIE is fixed 3,
+// obitTab/reviveTab have exactly 3 entries, so a 4-entry lookup table
+// (numDie 0..3) avoids needing a runtime multiply.
 sgSurvival,
     lac i [numDie:0]
     add [sgSurvivalTab:.
@@ -8260,14 +8028,14 @@ voc_turn,      ascii "TURN"
 // the table
 bank 3
 0/
-#include "adv_verbtab.ac"
+#include "Includes/adv_verbtab.ac"
 
 // SURFACE-FLAG CLUSTER
 // isSurfaceRoom answers "is room N SURFACE-flagged?" for a room whose
 // record has NOT been loaded
 // Queries the advdataloader-generated SURFACE_BITMAP one bit per room.
 // =======================================================================
-#include "adv_surfacebitmap.ac"
+#include "Includes/adv_surfacebitmap.ac"
 
 // Answers "is room N (in IO) SURFACE-flagged?" AC = nonzero if so, 0 if
 // trailing parameters -- the room number travels in IO both ways).
@@ -8343,10 +8111,10 @@ drdHere,
     SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_MESSAGE)
     jmp drdMessage
     lac i [objLocPtr:0]
-    SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_MAGAZINE)   // F7
+    SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_MAGAZINE)
     jmp drdMagazine
     lac i [objLocPtr:0]
-    SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_TABLET)     // F7
+    SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_TABLET)
     jmp drdTablet
 drdReadDefault,
     lac [msg_READ_DEFAULT:1]
@@ -8354,10 +8122,10 @@ drdReadDefault,
 drdMessage,
     lac [msg_READ_MESSAGE:1]
     jmp i [pmsgT:0]
-drdMagazine,                  // F7
+drdMagazine,
     lac [msg_READ_MAGAZINE:1]
     jmp i [pmsgT:0]
-drdTablet,                    // F7
+drdTablet,
     lac [msg_READ_TABLET:1]
     jmp i [pmsgT:0]
 drdOysterEntry,
@@ -8407,14 +8175,14 @@ diCheckMessage,
     SKIP_NEXT_IF_SAME i [curRoom:0]  // skip when lying here
     jmp diCheckMagazine
     jmp drdMessage
-diCheckMagazine,               // F7: MESSAGE not present -- try MAGAZINE next
+diCheckMagazine,               // MESSAGE not present -- try MAGAZINE next
     lac i [FAR_OBJ_LOC(OBJ_MAGAZINE)]
     SKIP_NEXT_IF_AC_NOT_ZERO       // skip when != 0 (not carried)
     jmp drdMagazine
     SKIP_NEXT_IF_SAME i [curRoom:0]  // skip when lying here
     jmp diCheckTablet
     jmp drdMagazine
-diCheckTablet,                 // F7: MAGAZINE not present -- try TABLET next
+diCheckTablet,                 // MAGAZINE not present -- try TABLET next
     lac i [FAR_OBJ_LOC(OBJ_TABLET)]
     SKIP_NEXT_IF_AC_NOT_ZERO       // skip when != 0 (not carried)
     jmp drdTablet
@@ -8504,7 +8272,7 @@ deIntransitive,               // f4 8140: food here -> eat it, else "EAT WHAT?"
     jmp deEatFood
 deTmp, 0                      // pointer-indirection temp (rule 4)
 
-// RUB -- F5#6 (f4 9160): LAMP -> msg 75 (ACTSPK(RUB)); any other known
+// RUB -- (f4 9160): LAMP -> msg 75 (ACTSPK(RUB)); any other known
 // object present -> msg 76.
 doRub,
     lac i [nounTok:0]
@@ -8568,8 +8336,8 @@ dfnDwarf,
     jmp dfnHere
 dfnTmp, 0                     // pointer-indirection temp (rule 4)
 
-// WAKE -- F9D (TASK-F9D-REPOSITORY.md, adven.f4 9290/1777-1779). Only
-// use is WAKE DWARF while closed -- msg 199, then msg 136 (the same
+// WAKE -- adven.f4 9290/1777-1779.
+// Only use is WAKE DWARF while closed, msg 199, then msg 136 (the same
 // "dwarves disturbed" scoring exit BREAK MIRROR reaches). DWARF is
 // matched directly by vocabulary word, the same way doFind's dfnDwarf
 // does. Anything else, or DWARF while not closed: ACTSPK(WAKE) =
@@ -8598,9 +8366,9 @@ dwkDefault,
     lac [msg_WAKE_DEFAULT:1]
     jmp i [pmsgT:0]
 
-// SAY -- F5#2 (f4 9030/9035). Echoes the word (OKAY, "xxx"); the magic
+// SAY -- f4 9030/9035. Echoes the word (OKAY, "xxx"); the magic
 // words XYZZY/PLUGH/PLOVER are forwarded to their real handlers
-// instead (f4 9035's vocab 62/65/71; 2025 FEE... is F6's). SAY alone
+// instead (f4 9035's vocab 62/65/71; 2025 FEE...). SAY alone
 // echoes "SAY" itself, exactly as f4's WD2=0 fallback does. The three
 // magic-word handlers live in this bank too, so the forwards stay
 // plain jmp's.
@@ -8644,11 +8412,11 @@ xyFromDebris,
 xyFromBuilding,
     law R_DEBRIS
 xyGo,
-    lia                       // F5#3: park the destination, record prevRoom
+    lia
     lac i [prevRoom:0]
-    dac i [oldLc2:0]          // F8: shift (f4 updates OLDLC2 on teleports too)
+    dac i [oldLc2:0]
     lac i [curRoom:0]
-    dac i [prevRoom:0]        // (f4 updates OLDLOC on teleports too)
+    dac i [prevRoom:0]
     lai
     dac i [curRoom:0]
     lia                       // room in IO for loadRoom
@@ -8658,18 +8426,12 @@ xyGo,
     jsp i [enterRoom:0]       // dual-mode; returns with eem on
     jmp i [turnLoop:0]        // entry lem there closes the window
 xyElsewhere,
-    // F11 (TASK-F11-INVENTED-TEXT.md): was msg_XYZZY_FOOL, an invented
-    // string with no source counterpart. Source (adven.f4 1145-1153,
-    // label 50) prints message 42, "NOTHING HAPPENS." -- reuse the
-    // symbol the SESAME-family words already print it with.
     lac [msg_NOTHING_HAPPENS:1]
     jmp i [pmsgT:0]
 
 // PLUGH -- second magic word, same shape as XYZZY above: from
 // Y2 OR the Nugget Room to the Building; from the Building back to Y2
-// (the canonical anchor). See the pre-move header's full history note
-// (F13 correction) in DECISIONS.md-cited task docs. Falls through to
-// xyElsewhere's put-down everywhere else.
+// (the canonical anchor).
 doPlugh,
     lac i [curRoom:0]
     SKIP_NEXT_IF_DIFFERENT [R_Y2
@@ -8684,17 +8446,8 @@ plFromBuilding,
 plToBuilding,
     law R_BUILDING
 plGo,
-    lia                       // F5#3: park the destination, record prevRoom
+    lia
     lac i [prevRoom:0]
-    dac i [oldLc2:0]          // F8: shift (f4 OLDLC2 on teleports too) --
-                              //   TASK-OPT-P1A fix (29-Aug-26): this shift was
-                              //   missing here alone of the four prevRoom
-                              //   commit sites. adven.f4 label 8 (line 1009)
-                              //   runs OLDLC2=OLDLOC for EVERY motion word
-                              //   except NULL/BACK/LOOK/CAVE, and PLUGH is
-                              //   motion word 65 (adven.dat 957), same class
-                              //   as XYZZY/PLOVER -- so the source shifts on
-                              //   PLUGH exactly as xyGo/plvGo already do here.
     lac i [curRoom:0]
     dac i [prevRoom:0]
     lai
@@ -8736,9 +8489,9 @@ plvFromDarkroom,                 // no emerald check at all -- see the header co
     dac plvDest
 plvGo,
     lac i [prevRoom:0]
-    dac i [oldLc2:0]           // F8: shift (f4 OLDLC2 on teleports too)
+    dac i [oldLc2:0]           // shift (f4 OLDLC2 on teleports too)
     lac i [curRoom:0]
-    dac i [prevRoom:0]        // F5#3 (f4 OLDLOC on teleports too)
+    dac i [prevRoom:0]        // f4 OLDLOC on teleports too
     lac plvDest
     dac i [curRoom:0]
     lia                       // room in IO for loadRoom
@@ -8748,7 +8501,7 @@ plvGo,
     jmp i [turnLoop:0]
 plvDest, 0
 
-// BACK -- F5#3 (f4 label 20): return to prevRoom (f4 OLDLOC). Same room
+// BACK -- f4 label 20: return to prevRoom. Same room
 // (or game start): msg 91. Otherwise the current room's exits are
 // scanned for one leading there, and the move is re-run through the
 // ORDINARY machinery via doMoveFromFar (bank 0 normalizes eem first),
@@ -8798,8 +8551,7 @@ dbIx, 0
 
 // doFoo -- FEE FIE FOE FOO (f4 8250-8252 + the 2608 foobar dance in
 // turnLoop). All five words dispatch here; the verbTab argument column
-// carries each word's k (1..5), parked in curDir by vtHit. See the
-// pre-move header's full citation trail (F6).
+// carries each word's k (1..5), parked in curDir by vtHit.
 doFoo,
     law 1
     sub i [curDir:0]          // AC = 1 - k
@@ -8820,10 +8572,6 @@ dfoFoo,                       // the full incantation!
 dfoCheckTroll,                // not home, not carried -- were they the toll?
     SKIP_NEXT_IF_SAME [TROLL_TREASURE_GONE
     jmp dfoTeleport           // ordinary elsewhere
-// Owner-approved mapping (24-Aug-26, f4 1727-1728 "bring back troll if
-// we steal the eggs back from him before crossing"): re-arm only while
-// the paid crossing is still unused and the bear bypass never
-// happened; a used crossing already belongs to mccReArm's own path.
     lac i [trollGone:0]
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp dfoTeleport           // already back in business
@@ -8876,7 +8624,7 @@ dfoOk,
     lac [msg_OK:1]
     jmp i [pmsgT:0]
 
-// BLAST -- F9D (TASK-F9D-REPOSITORY.md, adven.f4 9230/1692-1697).
+// BLAST -- adven.f4 9230/1692-1697).
 // Outside CLOSED, always ACTSPK(BLAST) = msg 67. While closed, the
 // three-way bonus (133 default / 134 at R_REPOSITORY_NE / 135 if
 // HERE(ROD2), checked LAST so it overrides). Prints msg BONUS, exits to
@@ -8922,13 +8670,11 @@ dblMsgTab, msg_BLAST_SUCCESS:1     // bonus == 133
            msg_BLAST_SPLASHED:1    // bonus == 135
 dblPtr, 0
 
-// BREAK -- F9D (TASK-F9D-REPOSITORY.md, adven.f4 9280/1761-1773).
+// BREAK -- adven.f4 9280/1761-1773.
 // MIRROR (only while closed -- msg 197 then the msg 136 exit WAKE DWARF
 // reaches) and VASE (its own dbrVase body, adven.f4 9282 exactly) are the
 // only two special cases; anything else, or MIRROR while not closed:
-// ACTSPK(BREAK) = msg 146. The two previously-disclosed strict-fidelity
-// deviations (uncarried VASE; R_SOFTROOM) were fixed 29-Aug-26 -- see
-// TASK-BREAK-VASE-FIDELITY.md and dbrVase's own header, below.
+// ACTSPK(BREAK) = msg 146.
 doBreak,
     lac i [nounTok:0]
     SKIP_NEXT_IF_AC_NOT_ZERO
@@ -8948,14 +8694,9 @@ dbrVase,
     lac i [vaseBroken:0]
     SKIP_NEXT_IF_AC_ZERO
     jmp dbrDefault                 // already broken -- generic reply, unchanged
-                                    // -- verified TASK-BREAK-VASE-FIDELITY.md
-    // No carry check, no R_SOFTROOM check below -- adven.f4 9282 (the
-    // explicit BREAK VASE handler) gates ONLY on already-broken; it has
-    // neither exemption. Previously routed through checkVaseMishandle,
-    // which was built for the *accidental* drop/throw path (9027/9028)
-    // and wrongly imported that path's carry requirement and AT(PILLOW)/
-    // R_SOFTROOM exemption onto the explicit verb -- fixed 29-Aug-26,
-    // TASK-BREAK-VASE-FIDELITY.md (was OMISSIONS.md #28 item 3).
+    // No carry check, no R_SOFTROOM check below -- adven.f4 9282
+    // The explicit BREAK VASE handler) gates ONLY on already-broken; it has
+    // neither exemption.
     lac [msg_VASE_HURLED:1]
     dac i [pmsgFar:0]              //   from the accidental path's msg_VASE_BREAK
     jsp i [pmsgFar:0+1]            //   (see vaseBreakMutate's header)
@@ -8978,19 +8719,11 @@ dbrMirrorTooHigh,
 dbrDefault,
     lac [msg_BREAK_DEFAULT:1]
     jmp i [pmsgT:0]
-                                    // dbrTmp (pointer-indirection temp) removed
-                                    // 29-Aug-26 -- its only use (dbrVase's carry
-                                    // check) was deleted, TASK-BREAK-VASE-
-                                    // FIDELITY.md; no other reader.
 
-// TAKE -- moved to BANK 3 (wave 3, 28-Aug-26); citations travel with
-// the code. The bank-1 checkWaterOilTake farjmp's BACK here at
-// dtWaterOilRejoin:3 (case 1) -- the one inbound cross-bank reference
-// into a moved handler so far.
 doTake,
     lac i [nounTok:0]
     SKIP_NEXT_IF_AC_NOT_ZERO                // skip when AC != 0 (a noun was given)
-    jmp dtIntransitive        // AC == 0: bare TAKE (F5#4, f4 8010)
+    jmp dtIntransitive        // AC == 0: bare TAKE (f4 8010)
 dtHaveNoun,                   // AC != 0: a noun was given
     lio i [nounTok:0]         // token in IO for findObj (S3B)
     jsp i [findObj:0]         // returns with eem on -- kept on (bank 3)
@@ -9045,7 +8778,7 @@ dtCheckHere,
     SKIP_NEXT_IF_SAME i [curRoom:0]      // skip when equal (object is in this room)
     jmp dtNotHereMsg           // differs: object is elsewhere
 dtDoTake,                      // equal: object is in this room
-    jsp i [checkCarryLimit:1]   // F2 B1: the 7-object carry cap (f4 9017) --
+    jsp i [checkCarryLimit:1]   // the 7-object carry cap (f4 9017) --
                                    // checked FIRST, before the bird-needs-cage
                                    // special, matching 9017->9016 order; eem is
                                    // already on and every section-13 return keeps it
@@ -9061,11 +8794,9 @@ dtDoTakeGo,                     // AC == 0 (skip): ordinary take proceeds
     dzm i dtTmp
     jsp i [takeBirdCageBundle:1]  // bank 1 -- bring the paired object along if
                                      // bundled (bird/cage task); eem stays on
-    jsp i [syncLiquidIfBottle:1]  // TASK-WATER-OIL-OBJECTS.md: if the object just
-                                     // taken was the bottle, re-sync objLoc[WATER]/
+    jsp i [syncLiquidIfBottle:1]  // if the object just taken was the bottle, re-sync objLoc[WATER]/
                                      // objLoc[OIL] now that it's confirmed carried
-// TASK-PROP-NEGATION-SUPPRESSION.md (29-Aug-26): if the object just
-// taken was one of the ten repository-pile objects, clear its
+// If the object just taken was one of the ten repository-pile objects, clear its
 // repository-hidden flag (bank 0, direct `:0` far write -- eem already
 // on throughout dtDoTakeGo, same convention as every :0/:1 access
 // above and syncLiquidIfBottle's own contract) so it starts printing
@@ -9077,15 +8808,7 @@ dtDoTakeGo,                     // AC == 0 (skip): ordinary take proceeds
 // Each `jmp dtgX` sits immediately after its own compare and is the
 // MATCH handler (fires when the skip does NOT trigger, i.e. AC == that
 // object's address) -- differing falls through to try the next
-// candidate, same idiom as doTake's own dtFound PLANT/WATER/OIL
-// dispatch above. (An earlier draft of this chain had this backwards --
-// jmp-to-the-non-match label right after the compare -- which silently
-// cleared the wrong object's flag on every take; caught live by
-// adventure_prop_negation_test.py's own take/reveal checks, fixed here.)
-// Harmless for every other (non-repository) object: none of the ten
-// compares match, and the chain falls through to dtgRepoDone without
-// touching anything. OYSTER gets one extra step -- see its own branch
-// comment.
+// candidate, same idiom as doTake's own dtFound PLANT/WATER/OIL dispatch above.
     lac dtTmp
     SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_BOTTLE)
     jmp dtgBottle
@@ -9160,10 +8883,10 @@ dtAlready,
     lac [msg_ALREADY_HAVE:1]
     jmp i [pmsgT:0]
 dtNotHereMsg,
-    jmp i [seeNoNoun:0]       // F4 (f4 5199): "I SEE NO xxx HERE."
+    jmp i [seeNoNoun:0]       // f4 5199: "I SEE NO xxx HERE."
 
-// TASK-WATER-OIL-OBJECTS.md (OMISSIONS.md #17): TAKE WATER/OIL entry
-// points, reached from dtFound above. IO carries the requested liquid
+// TAKE WATER/OIL entry points, reached from dtFound above.
+// IO carries the requested liquid
 // code to checkWaterOilTake (bank 1) -- 0 (water) or 2 (oil), matching
 // bottleProp's own encoding. One-way transfer (farjmp): checkWaterOilTake
 // never returns here -- every one of its 4 cases either rejoins the
@@ -9194,7 +8917,7 @@ dtWaterOilRejoin,
                                  // arrives on and STAYS on -- the old lem is
                                  // gone, dtCheckLoc's i-forms need the window
 
-// dtIntransitive -- F5#4 (f4 8010): bare TAKE. If EXACTLY one object
+// dtIntransitive -- f4 8010: bare TAKE. If EXACTLY one object
 // lies in this room (loose or fixed -- f4's ATLOC chain counts both;
 // a fixed one is then refused by the ordinary path, matching f4's
 // 9010 SPK=25) and no live dwarf is about (f4 8012), take it as if it
@@ -9240,12 +8963,10 @@ dtiFound, 0
     endloc
 dtTmp, 0                      // pointer-indirection temp (rule 4)
 
-// DROP -- moved to BANK 3 (wave 3, 28-Aug-26); citations travel with
-// the code.
 doDrop,
     lac i [nounTok:0]
     SKIP_NEXT_IF_AC_NOT_ZERO                // skip when AC != 0 (a noun was given)
-    jmp i [verbWhat:0]        // AC == 0: bare DROP -- "DROP WHAT?" (F4, f4 8000)
+    jmp i [verbWhat:0]        // AC == 0: bare DROP -- "DROP WHAT?" (f4 8000)
 ddHaveNoun,                   // AC != 0: a noun was given
     lio i [nounTok:0]         // token in IO for findObj (S3B)
     jsp i [findObj:0]         // returns with eem on -- kept on (bank 3)
@@ -9258,9 +8979,8 @@ ddFound,                      // AC != 0: a known object
     SKIP_NEXT_IF_AC_ZERO
     jmp ddNotCarrying     // branch 1 (nonzero): objLoc names a room -- not carried
                             // branch 2 (zero): carried -- can drop
-    // TASK-WATER-OIL-OBJECTS.md (OMISSIONS.md #17): DROP WATER/OIL. Unlike
-    // TAKE's 4-way branch, the "not carrying" case above is ALREADY
-    // correct here for free: objLoc[WATER]==0 (the only way this point is
+    //  DROP WATER/OIL. Unlike TAKE's 4-way branch, the "not carrying" case
+    // above is ALREADY correct here for free: objLoc[WATER]==0 (the only way this point is
     // reached for WATER) can only be true when the bottle is BOTH carried
     // AND full of water (syncLiquidIfBottle's own invariant, see its
     // header comment) -- so reaching here at all already proves "carrying
@@ -9296,7 +9016,7 @@ ddCheckVaseMishandle,
     jsp i [checkVaseMishandle:0]   // dual-mode; eem stays on
     SKIP_NEXT_IF_AC_ZERO                   // skip when AC == 0 (not handled) -- falls through to ddCheckVendingCoins
     jmp i [turnLoop:0]        // AC != 0 (no skip): checkVaseMishandle already did everything
-ddCheckVendingCoins,           // F15 -- DROP COINS at the vending machine (adven.f4 9024)
+ddCheckVendingCoins,           // DROP COINS at the vending machine (adven.f4 9024)
     jsp i [checkVendingCoins:0]    // dual-mode (wave 3); eem stays on
     SKIP_NEXT_IF_AC_ZERO                   // skip when AC == 0 (not handled) -- falls through to ddDoDrop
     jmp i [turnLoop:0]        // AC != 0 (no skip): checkVendingCoins already did everything
@@ -9307,9 +9027,7 @@ ddDoDrop,                     // AC == 0: none of the special cases above -- ord
     dac ddTmp
     lac i [curRoom:0]
     dac i ddTmp
-    jsp i [syncLiquidIfBottle:1]  // TASK-WATER-OIL-OBJECTS.md: if the object just
-                                     // dropped was the bottle, re-sync objLoc[WATER]/
-                                     // objLoc[OIL] now that objLoc[BOTTLE] == curRoom
+    jsp i [syncLiquidIfBottle:1]
     lac [msg_DROPPED:1]
     jmp i [pmsgT:0]
 ddNotCarrying,
@@ -9317,13 +9035,10 @@ ddNotCarrying,
     jmp i [pmsgT:0]
 ddTmp, 0                      // pointer-indirection temp (rule 4)
 
-// THROW -- moved to BANK 3 (wave 3, 28-Aug-26); citations and the F18/
-// F9A/Stage-32 combat logic travel with the code. dthKillList and the
-// scan scratch words moved from bank 0 (they were doThrow-only).
 doThrow,
     lac i [nounTok:0]
     SKIP_NEXT_IF_AC_NOT_ZERO                // skip when AC != 0 (a noun was given)
-    jmp i [verbWhat:0]        // AC == 0: bare THROW -- "THROW WHAT?" (F4, f4 8000)
+    jmp i [verbWhat:0]        // AC == 0: bare THROW -- "THROW WHAT?" (f4 8000)
 dthHaveNoun,                  // AC != 0: a noun was given
     lio i [nounTok:0]         // token in IO for findObj (S3B)
     jsp i [findObj:0]         // returns with eem on -- kept on (bank 3)
@@ -9346,13 +9061,13 @@ dthCarried,
                                  // (snake and dragon can't share a room); eem on
     SKIP_NEXT_IF_AC_ZERO                   // skip when AC == 0 (not handled) -- falls through to the troll check
     jmp dthBirdDragonTally2   // AC != 0 (no skip): checkBirdDragon already did everything --
-                                 // F9A's tally2 bookkeeping for this kill lives here (bank 0
-                                 // has headroom; bank 1 does not -- see F9A-RESULTS.md)
+                                 // tally2 bookkeeping for this kill lives here (bank 0
+                                 // has headroom; bank 1 does not.
     jsp i [checkTrollPayment:1]
     SKIP_NEXT_IF_AC_ZERO                   // skip when AC == 0 (not handled)
     jmp i [turnLoop:0]              // AC != 0 (no skip): checkTrollPayment already did everything
-    jmp dthCheckBearDrop      // AC == 0 (skipped-to): bypass the F9A tally2 block
-dthBirdDragonTally2,            // F9A (adven.f4 1291: "IF(PLACE(SNAKE).EQ.PLAC(SNAKE))
+    jmp dthCheckBearDrop      // AC == 0 (skipped-to): bypass the tally2 block
+dthBirdDragonTally2,            // adven.f4 1291: "IF(PLACE(SNAKE).EQ.PLAC(SNAKE))
                                     // TALLY2=TALLY2+1") -- the bird (just killed by
                                     // checkBirdDragon) was the only way to deal with the
                                     // snake; if it's still at its original placement
@@ -9411,8 +9126,8 @@ dthAtDwarf,
     dac dthTmp                     //   miss (source: CALL DROP(AXE,LOC)
     lac i [curRoom:0]              //   unconditionally) -- rule-4 store
     dac i dthTmp
-// F18 (TASK-F18-DWARF-CLOSED-BUGS.md, adven.f4:1566 "IF(RAN(3).EQ.0.OR.
-// SAVED.NE.-1)GOTO9175"): once any RESTORE has happened this connection,
+// adven.f4:1566 "IF(RAN(3).EQ.0.OR. SAVED.NE.-1)GOTO9175"):
+// once any RESTORE has happened this connection,
 // every subsequent axe-throw at a dwarf is a guaranteed miss, regardless
 // of the normal roll -- same restoredThisSession gate/anti-save-scum
 // pattern as dtFirstKillOne's stealth-kill suppression and
@@ -9425,14 +9140,6 @@ dthCheckRestore,
     lac i [restoredThisSession:0]
     SKIP_NEXT_IF_AC_ZERO                     // skip when AC == 0 (no RESTORE yet -- roll normally)
     jmp dthMiss                                 // AC != 0 (no skip): restored -- guaranteed miss, no roll
-// RAND-TASK.md/RAND-PLAN.md Tier 2: probabilitySelector2 replaces the old
-// exact 1-in-3 (RAN(3).EQ.0, SOURCE-RESEARCH.md's "Dwarves" section)
-// reject-sampling roll. pct=32 realizes 33/100 (the subroutine matches
-// when pct >= draw, inclusive, so pct=P is a (P+1)/100 rate) -- the
-// closest integer rate to the true 33.33%, a small, explicitly-accepted
-// precision loss versus the old exact reject-sampling, in exchange for
-// reusing the shared primitive instead of hand-rolled rejection (see
-// RAND-PLAN.md section 5's Tier 2 call on this site).
 dthKillDraw,
     lio [dthKillList:.
                                    //   probabilitySelector2 derefs it under eem
@@ -9476,9 +9183,6 @@ dthMaskPtr, 0
 dthKillList, 0d32             // probabilitySelector2 list: id unused (single-outcome test)
              0                // list terminator
 
-// ATTACK -- moved to BANK 3 (wave 3, 28-Aug-26); the dragon kill's
-// mid-turn confirmation reads its line via readCmdFar (bank 0) and
-// prints via pmsgFar; citations travel with the code.
 doAttack,
     lac i [nounTok:0]
     SKIP_NEXT_IF_AC_NOT_ZERO                       // skip when AC != 0 (a noun was given)
@@ -9506,15 +9210,9 @@ daFound,                          // AC != 0: a known object -- objLocPtr points
     SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_DRAGON)
     jmp daIsDragon                // AC == [objLoc+0d13] (no skip): it IS the dragon
     SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_BIRD)
-    jmp daIsBirdNoun               // AC == [objLoc+0d4] (no skip): it IS the bird (BIRD-DRAGON-ATTACK-TASK.md)
+    jmp daIsBirdNoun               // AC == [objLoc+0d4] (no skip): it IS the bird
     SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_BEAR)              // skip when AC != [objLoc+0d14] -- not the bear
     jmp daIsBear                     // AC == [objLoc+0d14] (no skip): it IS the bear
-// TASK-F23-ATTACK-FLAVOR-TEXT: SNAKE/CLAM/OYSTER extension of this same
-// identify chain (COMPLETION-AUDIT-26AUG.md finding 12, OMISSIONS.md
-// #37). DRAGON/BIRD/BEAR above are unchanged -- only the chain's old
-// terminal test (BEAR, previously SKIP_NEXT_IF_SAME+jmp daNothing) was
-// converted to non-terminal so it could be extended; its own printed
-// behavior is identical either way.
     SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_SNAKE)
     jmp daIsSnakeNoun                // AC == [objLoc+0d5] (no skip): it IS the snake
     SKIP_NEXT_IF_DIFFERENT [FAR_OBJ_LOC(OBJ_CLAM)
@@ -9557,9 +9255,7 @@ daIsTrollNoun,                       // adven.f4 1458: SPK=157. TROLL has no obj
                                         // (see daNotDwarfNoun above), so presence is read the same
                                         // way doFeed's dfCheckTroll/doEat's deTroll already do for
                                         // this exact object: trollGone (still in business?) plus
-                                        // which chasm bank the player is on. Read-only -- no state
-                                        // touched, per this task's own step 3: must not interact
-                                        // with or duplicate the toll/re-arm state machine.
+                                        // which chasm bank the player is on.
     lac i [trollGone:0]
     SKIP_NEXT_IF_AC_ZERO                 // skip when == 0 (troll still in business)
     jmp i [seeNoNoun:0]                 // paid off/bypassed: nobody there to attack
@@ -9594,32 +9290,13 @@ daNothing,                        // AC != [objLoc+0d13], != [objLoc+0d4], and !
                                       // all land here
     lac [msg_ATTACK_NOTHING:1]
     jmp i [pmsgT:0]
-daIsBirdNoun,                     // adven.f4 9124-9125 (BIRD-DRAGON-ATTACK-TASK.md) -- an outright
-                                      // kill, no presence/caught gate (findObj already required HERE),
-                                      // no confirmation prompt (the source has no CALL GETIN on this
-                                      // branch, unlike the dragon's). CLOSED/TALLY2 are out of scope
-                                      // (no endgame state in this project) -- see OMISSIONS.md #7.
+daIsBirdNoun,
     law BIRD_GONE
     dac i [FAR_OBJ_LOC(OBJ_BIRD)]
     dzm i [birdCaught:0]         // tidiness -- nothing will read this for the bird again once gone
     lac [msg_ATTACK_BIRD_KILL:1]
     jmp i [pmsgT:0]
-daIsDwarfNoun,                        // Tier 1 -- flavor-only: no kill branch, no confirmation, no
-                                          // state change, no presence gate (see daHaveNoun's comment
-                                          // above). adven.dat message 49 -- EXCEPT (F18,
-                                          // TASK-F18-DWARF-CLOSED-BUGS.md, adven.f4:1455-1456) once
-                                          // the cave is closed, ATTACK DWARF is a third route to the
-                                          // "disturbed the dwarves" instant game-over, alongside WAKE
-                                          // DWARF (dwkDwarf) and BREAK MIRROR (dbrMirrorBreak) below --
-                                          // same pmsgD ending both already use. THROW at a dwarf is
-                                          // NOT part of this fix: THROW's own dwarf-combat path
-                                          // (dthKillDraw below) never resolves a DWARF-named target at
-                                          // all (dthCheckDwarf scans for room presence, not a noun),
-                                          // matching adven.f4's own control flow -- THROW AXE's kill
-                                          // roll (9172-9176) returns before ever reaching the shared
-                                          // OBJ.EQ.DWARF check at 1456, and no dwarf can be present to
-                                          // throw at once closed anyway (closedTransport clears every
-                                          // dwarfLoc slot).
+daIsDwarfNoun,
     lac i [closed:0]
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp daDwarfDefault
@@ -9645,9 +9322,7 @@ daConfirm,                        // AC == 0: still alive -- ask for confirmatio
     jsp i [pmsgFar:0+1]
     jsp i [readCmdFar:0]           // mid-turn line read via the section-13 wrapper
     SKIP_NEXT_IF_AC_ZERO
-    jmp i [tlConnDrop:0]           // AC != 0: readCmd reported a connection error (F9B:
-                                       // via tlConnDrop -- its entry lem normalizes -- so
-                                       // connOk is cleared before pgDone's report)
+    jmp i [tlConnDrop:0]           // AC != 0: readCmd reported a connection error
 daCheckYes,                       // AC == 0: got a line -- check its first character
     lac i [cmdbuf:0]
     SKIP_NEXT_IF_DIFFERENT ['Y']
@@ -9661,8 +9336,8 @@ daKill,
     law 1
     dac i [dragonDead:0]
     lac [msg_HERE_DRAGON_DEAD:1]
-    dac i [FAR_OBJ_HEREMSG(OBJ_DRAGON)]  // the far-store macros' own eem/lem are
-    lac [msg_HERE_RUG_LOOSE:1]           //   replaced by this body's open window
+    dac i [FAR_OBJ_HEREMSG(OBJ_DRAGON)
+    lac [msg_HERE_RUG_LOOSE:1]
     dac i [FAR_OBJ_HEREMSG(OBJ_RUG)]
     law 1
     dac i [FAR_OBJ_TAKE(OBJ_RUG)]
@@ -9679,8 +9354,6 @@ daAlreadyDead,
     lac [msg_ATTACK_ALREADY_DEAD:1]
     jmp i [pmsgT:0]
 
-// FEED -- moved to BANK 3 (wave 3, 28-Aug-26); citations travel with
-// the code.
 doFeed,
     lac i [nounTok:0]
     SKIP_NEXT_IF_AC_NOT_ZERO                    // skip when AC != 0 (a noun was given)
@@ -9701,7 +9374,7 @@ dfHaveNoun,                       // AC != 0: a noun was given -- nounTok is a r
     SKIP_NEXT_IF_AC_ZERO                          // skip when AC == 0 (not "DWARF")
     jmp dfCheckDwarf                 // AC != 0 (no skip): it's "DWARF"
 dfNotDwarfNoun,                      // AC == 0 (skip): not "DWARF" -- try TROLL next
-// F2 B12 (f4 9212): FEED TROLL. Like DWARF, the troll has no
+// f4 9212: FEED TROLL. Like DWARF, the troll has no
 // object-table slot (state is trollGone), so it's a second direct
 // strCmpEq before findObj. IO still holds the noun token (strCmpEq
 // preserves it).
@@ -9714,7 +9387,7 @@ dfNotTrollNoun,                      // AC == 0 (skip): not "TROLL" -- try the o
     jsp i [findObj:0]         // returns with eem on -- kept on (bank 3)
     SKIP_NEXT_IF_AC_NOT_ZERO                      // skip when AC != 0 (a known object)
     jmp i [unknownNoun:0]          // AC == 0: noun word not in the object table (F4: echoes it)
-// F2 B12 dispatch (f4 9210/9212/9214 order: bird, snake, dragon; the
+// f4 9210/9212/9214 order: bird, snake, dragon; the
 // bear keeps its Stage-24 branch). Presence is checked per branch --
 // the source filters absent objects upstream at 5199 ("I SEE NO XXX
 // HERE.", audit B2); until B2's echoing replies exist, an absent
@@ -9747,7 +9420,7 @@ dfIsSnake,                          // f4 9212: SPK=102; with the bird HERE the
     lac i [FAR_OBJ_LOC(OBJ_SNAKE)]
     SKIP_NEXT_IF_SAME i [curRoom:0]      // skip when snake is in this room
     jmp dfNotHere                 // absent or SNAKE_GONE: no snake here
-dfSnakeHere,                        // (f4's .NOT.CLOSED clause is endgame -- F9)
+dfSnakeHere,                        // (f4's .NOT.CLOSED clause is endgame )
     lac i [FAR_OBJ_LOC(OBJ_BIRD)]
     SKIP_NEXT_IF_AC_NOT_ZERO             // skip when != 0 (bird not carried -- in the room?)
     jmp dfSnakeEatsBird           // 0: bird carried -- HERE, it gets eaten
@@ -9757,7 +9430,7 @@ dfSnakeEatsBird,                    // f4: SPK=101, CALL DSTROY(BIRD), PROP(BIRD
     law BIRD_GONE
     dac i [FAR_OBJ_LOC(OBJ_BIRD)] // gone for good
     dzm i [birdCaught:0]          // matches the bank-1 bird-gone tidiness idiom
-// F9A (adven.f4 1644: "TALLY2=TALLY2+1") -- unconditional here (the
+// adven.f4 1644: "TALLY2=TALLY2+1" -- unconditional here (the
 // SPK=101/DSTROY(BIRD) branch above already gates on snake+bird both
 // present and not closed): the only way to deal with the snake is now
 // gone for good.
@@ -9790,8 +9463,7 @@ dfTrollHere,
     lac [msg_FEED_TROLL:1]
     jmp i [pmsgT:0]               // TROLL'S VICES..."
 dfNotHere,
-    jmp i [seeNoNoun:0]           // F4 (f4 5199): the echoing reply, replacing
-                                  // F2's msg_NOT_HERE stand-in
+    jmp i [seeNoNoun:0]           // f4 5199: the echoing reply
 dfIsBear,
     lac i [bearDead:0]
     SKIP_NEXT_IF_AC_ZERO                       // skip when AC == 0 (not dead)
@@ -9842,23 +9514,20 @@ dfFeedDwarf,                          // AC != 0 (skip): food is here -- feed it
     lac [msg_FEED_DWARF:1]
     jmp i [pmsgT:0]
 
-// SCORE -- moved to BANK 3 (wave 4A, 28-Aug-26); citations travel with
-// the code. scoreCode's storage moved from the playGame block (it was
-// doScore-only).
 doScore,
     lio [0                          // mode 0 = preview -- suppress the "+4" term, no report print
     jsp i [scoreGame:2]
     dac scoreCode
     lia
     jsp i [printScore:1]            // farenter/farrtn callee; returns with eem on
-    lio [msg_SCORE_QUIT:1]         // F1: f4 8241, YES(143,54,54)
+    lio [msg_SCORE_QUIT:1]         // f4 8241, YES(143,54,54)
     jsp i [askYesNo:0]              // dual-mode; returns with eem on
     SKIP_NEXT_IF_AC_ZERO           // skip when NO
     jmp dscQuit
     lac [msg_OK:1]            // NO: "OK", play on
     jmp i [pmsgT:0]
 dscQuit,
-// F9B (adven.f4 8241, GAVEUP=YES(143,54,54) then GOTO 8185 -> falls to
+// adven.f4 8241, GAVEUP=YES(143,54,54 then GOTO 8185 -> falls to
 // 20000): answering yes to SCORE's own quit offer is the SECOND of the
 // three gaveUp sites (see gaveUp's own var comment). The full report
 // (score with the "+4" term now suppressed, class tier, next-rating line)
@@ -9873,19 +9542,17 @@ dscQuit,
     jmp i [pmsgD:0]
 scoreCode, 0
 
-// QUIT -- moved to BANK 3 (wave 4A, 28-Aug-26).
 doQuit,
-    lio [msg_CONFIRM_QUIT:1]       // F1: f4 8180, YES(22,54,54)
+    lio [msg_CONFIRM_QUIT:1]       // f4 8180, YES(22,54,54)
     jsp i [askYesNo:0]             // dual-mode; returns with eem on
     SKIP_NEXT_IF_AC_ZERO           // skip when NO
     jmp dqYes
     lac [msg_OK:1]            // NO: "OK", the turn just ends
     jmp i [pmsgT:0]
 dqYes,
-// F9B (TASK-F9B-SCORING.md, adven.f4 8180-8185): GAVEUP=YES(...) -- QUIT's
-// yes-path is one of exactly three sites that set gaveUp (see its own var
-// comment). Suppresses the scoring "+4 not quitting" term at pgDone's
-// report.
+//  GAVEUP=YES(...) -- QUIT's/ yes-path is one of exactly three sites
+// that set gaveUp.
+// Suppresses the scoring "+4 not quitting" term at pgDone's report.
     law 1
     dac i [gaveUp:0]
     lac [msg_OK:1]
@@ -9894,9 +9561,6 @@ dqYes,
     lac [msg_FAREWELL:1]
     jmp i [pmsgD:0]
 
-// INVENTORY -- moved to BANK 3 (wave 4A, 28-Aug-26). The inv* scratch
-// words moved from the playGame block (they were doInventory-only);
-// per-item printing goes through pmsgFar (print-and-continue).
 doInventory,
     law objLoc:0
     dac invLocPtr
@@ -9948,17 +9612,11 @@ invMsgPtr, 0
 invIdx, 0
 invAnyCarried, 0
 
-// SAVE -- moved to BANK 3 (wave 4A, 28-Aug-26); drum transfers go
-// through drumWriteFar (bank 0); the sv* record tables stayed in bank 0.
 doSave,
-// TASK-F19C-DEMO-BLOCKS-SUSPEND.md (adven.f4 1785-1786, label 8300):
-// "SPK=201; IF(DEMO)GOTO 2011" -- a demo connection's SAVE/SUSPEND/PAUSE
-// (voc_save/voc_suspend/voc_pause all route here) just prints message
-// 201 and ends the turn, matching 2011/2012 exactly (print SPK, back to
-// the command loop, turn still counts) -- no drumWrite, no
-// wzStampSuspend, no wizComSave, no msg_SAVED. Ordinary (demoGame==0)
-// games are unaffected -- this is purely an early-out gate, same idiom
-// as turnLoop's own demoGame check above.
+// adven.f4 1785-1786, label 8300: "SPK=201; IF(DEMO)GOTO 2011"
+// A demo connection's SAVE/SUSPEND/PAUSE just prints message
+// 201 and ends the turn, matching 2011/2012 exactly.
+// Ordinary (demoGame==0) games are unaffected, this is purely an early-out gate.
     lac i [demoGame:0]
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp dsDoSave                // demoGame == 0 (not skipped, false): ordinary game -- do the save
@@ -10020,36 +9678,19 @@ rlHaveSave,
     dac i [drumReadFar:0]
     jsp i [drumReadFar:0+1]
     law rlHintRec:0
-    dac i [drumReadFar:0]                  // F8 -- hintedTab[0..5]
+    dac i [drumReadFar:0] 
     jsp i [drumReadFar:0+1]
     law rlEndgameRec:0
-    dac i [drumReadFar:0]                  // F9A -- seenTab[0..SAVE_ENDGAME_WORDS-1]
+    dac i [drumReadFar:0]
     jsp i [drumReadFar:0+1]
-
-    // F10 Phase D (TASK-F10-WIZARDRY.md, scope item 3: "START gate at
-    // startup AND after RESTORE"): reload WIZCOM first -- another
-    // connection's SAVE may have changed wcSaved/wcSetup since this
-    // connection's own boot-time load -- then re-run the gate, mirroring
-    // the source's own restart path (adven.f4 8305: "YEA=START(0)").
-    // Safe to call wizComLoad here (unlike the boot-time call site):
-    // this connection has already exchanged plenty of DCS2 traffic by
-    // the time a player types RESTORE, well past the hang window Phase
-    // A identified (see wzStart's own header comment and playGame's own
-    // call site for the full investigation).
     jsp i [wizComLoad:0]      // dual-mode; returns with eem on -- kept on
     jsp i [wzStart:2]         // farrtn-style return keeps eem on
     SKIP_NEXT_IF_AC_ZERO
-    jmp rlGateOk                  // AC != 0 (no skip): gate passed (1=normal, 2=demo) -- proceed
-    dzm i [connOk:0]                  // AC == 0 (skipped): hard stop -- end this connection quietly,
-    jmp i [pgDone:0]                    // same treatment as tlConnDrop (no score report, no room
-                                            // shown); pgDone's own entry lem normalizes eem
+    jmp rlGateOk              // AC != 0 (no skip): gate passed (1=normal, 2=demo) -- proceed
+    dzm i [connOk:0]          // AC == 0 (skipped): hard stop -- end this connection quietly,
+    jmp i [pgDone:0]          // same treatment as tlConnDrop (no score report, no room
+                              // shown); pgDone's own entry lem normalizes eem
 rlGateOk,
-
-// F19 (TASK-F19-DEMO-GAMES.md): AC still holds wzStart's raw return value
-// here (1=normal, 2=demo) -- snapshot before the "law 1" just below
-// clobbers it. RESTORE re-runs the whole gate (Phase D's own precedent),
-// so this legitimately overwrites whatever pgGateOk set at connection
-// start.
     sub [1]
     dac i [demoGame:0]
 
@@ -10071,17 +9712,15 @@ rlGateOk,
     jmp i [turnLoop:0]        // show the restored room, same as playGame's own boot sequence
 
 
-// WAVE -- moved to BANK 3 (wave 4A, 28-Aug-26); atFissure went
-// dual-mode-neutral for it; citations travel with the code.
 doWave,
     lac i [nounTok:0]
     SKIP_NEXT_IF_AC_NOT_ZERO                // skip when AC != 0 (a noun was given)
-    jmp i [verbWhat:0]        // AC == 0: bare WAVE -- "WAVE WHAT?" (F4, f4 8000)
+    jmp i [verbWhat:0]        // AC == 0: bare WAVE -- "WAVE WHAT?"
 dwHaveNoun,                   // AC != 0: a noun was given
     lio i [nounTok:0]         // token in IO for findObj (S3B)
     jsp i [findObj:0]         // returns with eem on -- kept on (bank 3)
     SKIP_NEXT_IF_AC_NOT_ZERO                // skip when AC != 0 (a known object)
-    jmp i [unknownNoun:0]     // AC == 0: noun word not in the object table (F4: echoes it)
+    jmp i [unknownNoun:0]     // AC == 0: noun word not in the object table
 dwFound,                      // AC != 0: a known object
     lac i [objLocPtr:0]            // fetch the pointer...
     dac dwvTmp
@@ -10101,9 +9740,6 @@ dwCheckLoc,
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp dwNoEffect            // AC == 0 (no skip): not at the fissure -- no effect
 dwToggle,                     // AC != 0 (skip): at the fissure -- toggle the bridge
-// F9C (TASK-F9C-CLOSING.md, adven.f4 1419): closing suppresses the
-// bridge toggle entirely -- the verb's ordinary default reply prints
-// instead (msg_WAVE_NO_EFFECT), exactly as if nothing happened.
     lac i [closing:0]
     SKIP_NEXT_IF_AC_ZERO          // skip (closing == 0) -- ordinary toggle below
     jmp dwNoEffect                   // closing != 0 (not skipped): suppressed
@@ -10138,7 +9774,7 @@ bank 2
 // placed it in bank 1); rows are voc_x:.
 
 // ---------------------------------------------------------------------
-#include "adv_objnames.ac"
+#include "Includes/adv_objnames.ac"
 
 // The wizardry layer state, prime-time hour masks, holiday window, demo/wizard
 // parameters, suspend timestamps.
@@ -11162,21 +10798,20 @@ acc, 0
 //
 // Reads ONE token via wzGetWord (cross-bank, same as wzWizard's own
 // magic-word/reply reads), then walks it: an optional leading '-',
-// then digits '0'-'9' through to the token's null terminator. Owner
-// directive (25-Aug-26, "implement the same way the original Fortran
-// program operates... true behavior replication"): every CALLER applies
-// the exact same gate the source itself uses right after its own ACCEPT
-// (IF(X.GT.0), IF(FROM.LT.0), etc.) against wzReadIntValue -- this
-// routine does not decide "valid vs not" on the caller's behalf, it
-// only decides what integer (if any) the typed text represents. A
-// blank line, a bare '-' with no digits, or ANY non-digit character
+// then digits '0'-'9' through to the token's null terminator.
+// Every CALLER applies the exact same gate the source itself
+// uses right after its own ACCEPT (IF(X.GT.0), IF(FROM.LT.0), etc.)
+// against wzReadIntValue.
+// This/ routine does not decide "valid vs not" on the caller's behalf, it
+// only decides what integer (if any) the typed text represents.
+// A/ blank line, a bare '-' with no digits, or ANY non-digit character
 // anywhere in the token (including after some valid digits, e.g.
-// "12X") all collapse to wzReadIntValue=0 -- 0 fails every X.GT.0 gate
+// "12X") all collapse to wzReadIntValue=, 0 fails every X.GT.0 gate
 // in the source (matching blank-input behavior exactly) and is never
 // negative (never wrongly triggers a FROM.LT.0 termination on garbage
 // either). This is the most literal mapping achievable without a real
 // PDP-10 FORTRAN runtime to observe FORMAT(G)'s own garbage-input
-// behavior against -- disclosed, not guessed silently.
+// behavior against.
 //
 //   out: wzReadIntValue
 // =======================================================================
@@ -11332,16 +10967,13 @@ wcgMulLoop,
 wcgMulDone,
 
     jsp wzValExtract               // wzValResult = VAL[ix]
-    lac [wzVal:.]                  // F10C fix: pointer must carry bank
-    add ix                          // bits (:.) AND the deref itself must
-    dac valPtr                      // run under eem -- a bare same-bank
-    lac wzValResult                 // pointer + non-eem "dac i" silently
-    eem                              // lands in bank 0 instead of the
-    dac i valPtr                    // current bank once callee/sibling
-    lem                              // jsp calls have disturbed exd/epc
-                                      // (see EXTMEM-PROBE-RESULTS.md;
-                                      // confirmed via _diag_fix2.py).
-
+    lac [wzVal:.]
+    add ix
+    dac valPtr
+    lac wzValResult
+    eem                            // lands in bank 0 instead of the
+    dac i valPtr                   // current bank once callee/sibling
+    lem                            // jsp calls have disturbed exd/epc
     lac ix
     add [1]
     dac ix
@@ -11383,12 +11015,12 @@ wcpLoop,
     SKIP_NEXT_IF_AC_NEGATIVE
     jmp wcpFillDone              // ix >= 5 (no skip): all 5 chars filled
     lac [wzVal:.]                  // ix < 5 (skipped): char for wzVal[ix]
-    add ix                          // F10C fix: tag + eem-wrap the same-
-    dac srcPtr                      // bank indirect deref (see wzChallenge's
-    eem                              // store fix above / EXTMEM-PROBE-
-    lac i srcPtr                    // RESULTS.md) -- a bare pointer +
-    lem                              // non-eem deref silently lands in
-    add [0d64]                       // 'A'+VAL-1 ('A' = 0d65)
+    add ix
+    dac srcPtr
+    eem
+    lac i srcPtr
+    lem
+    add [0d64]
     dac ch
     lac [wzChallengeChars:.]
     add ix
@@ -11500,8 +11132,8 @@ wcrLoop,
     dzm iz                              // (iz-5) >= 0 (skipped): iz was 5 -- wrap to 0
 wcrIzOk,
 
-    lac [wzVal:.]                  // F10C fix: tag + eem-wrap (see
-    add ix                          // wzChallenge's store fix above)
+    lac [wzVal:.]
+    add ix
     dac ptr
     eem
     lac i ptr
@@ -12322,13 +11954,6 @@ scanPtr, 0
 // the source, so wzMaintResult tells bank 0's turnLoop to end the
 // connection the same way doRestore's own hard-stop path does, rather
 // than trying to jump into a bank-0 label directly from bank 2.
-//
-// ABB(1)=0 / BLKLIN have no build counterpart: this port has no room-
-// description abbreviation system at all (OMISSIONS.md #26 lists it
-// among the subsystems never scoped) and no OS-level blank-line-echo
-// flag to toggle (this build's line-oriented DCS I/O has nothing
-// analogous). Both are disclosed no-ops, the same precedent OMISSIONS
-// #27 sets for JUGGLE -- nothing here to act on, not a skipped step.
 //   out: wzMaintResult -- 1 = wizard finished the dialogue and saved,
 //        caller must end the connection; 0 = not a wizard (or declined
 //        somewhere along the way -- source has no such branch, but see
@@ -12543,9 +12168,9 @@ count, 0
 count2, 0
     endloc
     
-#include "adv_objinvmsg.ac"
-#include "adv_objheremsg.ac"
-#include "adv_objtreasure.ac"
+#include "Includes/adv_objinvmsg.ac"
+#include "Includes/adv_objheremsg.ac"
+#include "Includes/adv_objtreasure.ac"
 
 constants
 bank 0

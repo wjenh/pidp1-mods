@@ -8,10 +8,10 @@
  * "messages" is required; every section after it is optional.
  *
  * Usage: advdataloader [-s starttrack] [-c] srcfile
- *
  * 22-Aug-26 wje initial version
  * 28-Aug-26 wje add full generation
  * 29-Aug-26 wje change to emit a track image, don't do a drum update
+ * 31-Aug-26 wje bundle all the separate .ah files into one, silly to separate them
  */
 
 #include <stdio.h>
@@ -30,10 +30,9 @@
 
 // Include files that contain only definitions and do not allocate memory are named .ah,
 // those that allocate memory are named .ac.
+#define DEFINES_OUTFILE "adv_defines.ah"
+
 #define MSGTAB_OUTFILE  "adv_msgtab.ac"
-#define ROOMTAB_OUTFILE "adv_roomtab.ah"
-#define OBJDEFS_OUTFILE "adv_objdefs.ah"
-#define DRUMLAYOUT_OUTFILE "adv_drumlayout.ah"
 #define VERBTAB_OUTFILE "adv_verbtab.ac"
 #define SURFACEBITMAP_OUTFILE "adv_surfacebitmap.ac"
 
@@ -74,8 +73,6 @@ static int numVerbs;
 static int startTrack;
 
 char msgTextBuf[MAX_TEXT];     // accumulates one message's joined raw lines (see joinMsgLine())
-
-char imageName[512];    // path to the drum image
 
 // ---------------------------------------------------------------------
 // Direction/condition tables: hard-coded for phase 1 (SPEC-PHASE1.md
@@ -205,14 +202,14 @@ static int packSixbit(const char *text, Word *outP, int *padCountP);
 static void computeMessagePlacement(int startTrack);
 static void resolveRoomExits(void);
 static void buildRoomRecord(RoomP rP, Word *outWords);
-static void doWrite(const char *path, int roomBaseTrack);
+static void doWrite(int roomBaseTrack);
 static int doCompare(const char *path, int roomBaseTrack);
 static void emitMsgtab(FILE *outP, int startTrack);
 static void emitRoomtab(FILE *outP, int roomBaseTrack, int tracksNeeded, int maxTrack);
 static void emitSurfaceBitmap(FILE *outP);
 static void emitObjDefs(FILE *outP);
-static void emitObjTables(void);
-static void emitVerbTab(void);
+static void emitObjTables(char *dirnameP, FILE *deffP);
+static void emitVerbTab(char *dirnameP);
 static void emitDrumLayout(FILE *outP);
 static void usage(void);
 
@@ -228,11 +225,15 @@ main(int argc, char **argv)
 {
 int opt;
 int i;
-bool compareMode;
 int maxMsgTrack;
 int roomBaseTrack;
 int tracksNeeded;
 int diffs;
+char *dirP;
+bool compareMode;
+FILE *outP;
+FILE *defOutP;
+char outPath[1024];
 
     yy_flex_debug = 0;
     yydebug = 0;
@@ -247,13 +248,17 @@ int diffs;
     symInit(&objSymsP);
 
     startTrack = DEFAULT_START_TRACK;
+    dirP = "";                  // by default, files go in the current dir
 
-    while( (opt = getopt(argc, argv, "s:cyl")) != -1 )
+    while( (opt = getopt(argc, argv, "s:o:cyl")) != -1 )
     {
         switch( opt )
         {
         case 's':
             startTrack = atoi(optarg);
+            break;
+        case 'o':
+            dirP = optarg;
             break;
         case 'c':
             compareMode = true;
@@ -365,102 +370,80 @@ int diffs;
         return( diffs ? 1 : 0 );
     }
 
-    doWrite(imageName, roomBaseTrack);
+    doWrite(roomBaseTrack);
 
+    // All of the defines go into one file
+    sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", DEFINES_OUTFILE);
+
+    if( !(defOutP = fopen(outPath, "w")) )
     {
-    FILE *outP;
+        fprintf(stderr, "Can't create output file '%s'\n", DEFINES_OUTFILE);
+        fail();
+    }
+    emitRoomtab(defOutP, roomBaseTrack, tracksNeeded, maxMsgTrack);
 
-        if( !(outP = fopen(MSGTAB_OUTFILE, "w")) )
-        {
-            fprintf(stderr, "Can't create output file '%s'\n", MSGTAB_OUTFILE);
-            fail();
-        }
-        emitMsgtab(outP, startTrack);
-        fclose(outP);
+    sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", MSGTAB_OUTFILE);
+    if( !(outP = fopen(outPath, "w")) )
+    {
+        fprintf(stderr, "Can't create output file '%s'\n", MSGTAB_OUTFILE);
+        fail();
+    }
+    emitMsgtab(outP, startTrack);
+    fclose(outP);
+    
+    sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", SURFACEBITMAP_OUTFILE);
+    if( !(outP = fopen(outPath, "w")) )
+    {
+        fprintf(stderr, "Can't create output file '%s'\n", SURFACEBITMAP_OUTFILE);
+        fail();
+    }
+    emitSurfaceBitmap(outP);
+    fclose(outP);
 
-        if( !(outP = fopen(ROOMTAB_OUTFILE, "w")) )
-        {
-            fprintf(stderr, "Can't create output file '%s'\n", ROOMTAB_OUTFILE);
-            fail();
-        }
-        emitRoomtab(outP, roomBaseTrack, tracksNeeded, maxMsgTrack);
-        fclose(outP);
-
-        if( !(outP = fopen(SURFACEBITMAP_OUTFILE, "w")) )
-        {
-            fprintf(stderr, "Can't create output file '%s'\n", SURFACEBITMAP_OUTFILE);
-            fail();
-        }
-        emitSurfaceBitmap(outP);
-        fclose(outP);
-
-        // Objects section is optional (SPEC-PHASE1.md); its seven
-        // generated files are only written when it's actually used
-        // (SPEC-PHASE2.md "Emission only when the objects section is
-        // non-empty").
-        if( numObjects > 0 )
-        {
-            emitObjTables();
-        }
-
-        // Verbs section is likewise optional; adv_verbtab.ac is only
-        // written when it's actually used (TASK-VERB-EMISSION.md, same
-        // policy as objects).
-        if( numVerbs > 0 )
-        {
-            emitVerbTab();
-        }
-
-        if( !(outP = fopen(DRUMLAYOUT_OUTFILE, "w")) )
-        {
-            fprintf(stderr, "Can't create output file '%s'\n", DRUMLAYOUT_OUTFILE);
-            fail();
-        }
-        emitDrumLayout(outP);
-        fclose(outP);
+    // Objects section is optional (SPEC-PHASE1.md); its seven
+    // generated files are only written when it's actually used
+    // (SPEC-PHASE2.md "Emission only when the objects section is
+    // non-empty").
+    if( numObjects > 0 )
+    {
+        emitObjTables(dirP, defOutP);
     }
 
-    printf("Wrote %d text blocks to '%s', tracks %d-%d:\n", numMsgs, imageName, startTrack, maxMsgTrack);
-    for( i = 0; i < numMsgs; ++i )
+    // Verbs section is likewise optional; adv_verbtab.ac is only
+    // written when it's actually used (TASK-VERB-EMISSION.md, same
+    // policy as objects).
+    if( numVerbs > 0 )
     {
-        printf("  %-20s track %2d  offset %5d  words %4d\n",
-            msgBlocks[i].symP->nameP, msgBlocks[i].track, msgBlocks[i].offset, msgBlocks[i].nWords);
+        emitVerbTab(dirP);
     }
+
+    emitDrumLayout(defOutP);
+
+    printf("Wrote %d text blocks to tracks %d-%d\n", numMsgs, startTrack, maxMsgTrack);
 
     if( tracksNeeded > 1 )
     {
-        printf("Wrote %d room records (%d words each) to '%s' tracks %d-%d:\n",
-            numRooms, RECORDSIZE, imageName, roomBaseTrack, roomBaseTrack + tracksNeeded - 1);
+        printf("Wrote %d room records (%d words each) to tracks %d-%d\n",
+            numRooms, RECORDSIZE, roomBaseTrack, roomBaseTrack + tracksNeeded - 1);
     }
     else
     {
-        printf("Wrote %d room records (%d words each) to '%s' track %d:\n",
-            numRooms, RECORDSIZE, imageName, roomBaseTrack);
-    }
-    for( i = 0; i < numRooms; ++i )
-    {
-        printf("  %-16s room %2d  %d exits\n", rooms[i].symP->nameP, rooms[i].num, rooms[i].nexits);
+        printf("Wrote %d room records (%d words each) to track %d\n",
+            numRooms, RECORDSIZE, roomBaseTrack);
     }
 
     if( numObjects > 0 )
     {
-        printf("Wrote %d object definitions to '%s' + 6 table files:\n", numObjects, OBJDEFS_OUTFILE);
-        for( i = 0; i < numObjects; ++i )
-        {
-            printf("  %-16s obj %2d\n", objects[i].symP->nameP, objects[i].index);
-        }
+        printf("Wrote %d object definitions to '%s' + 6 table .ac files\n", numObjects, DEFINES_OUTFILE);
     }
 
     if( numVerbs > 0 )
     {
-        printf("Wrote %d verb rows to '%s':\n", numVerbs, VERBTAB_OUTFILE);
-        for( i = 0; i < numVerbs; ++i )
-        {
-            printf("  %-16s %s\n", verbs[i].symP->nameP, verbs[i].handlerTextP);
-        }
+        printf("Wrote %d verb rows to '%s'\n", numVerbs, VERBTAB_OUTFILE);
     }
 
-    return( 0 );
+    fclose(defOutP);
+    return(0);
 }
 
 // ---------------------------------------------------------------------
@@ -1206,7 +1189,7 @@ MessageBlockP blockP;
     }
 
     track = startTrack;
-    offset = (startTrack == SAVE_TRACK) ? DRUM_FRONT_WORDS : 0;
+    offset = (startTrack == SAVE_TRACK) ? DRUM_START_WORDS : 0;
 
     for( i = 0; i < numMsgs; ++i )
     {
@@ -1246,7 +1229,7 @@ MessageBlockP blockP;
 // ---------------------------------------------------------------------
 
 static void
-doWrite(const char *path, int roomBaseTrack)
+doWrite(int roomBaseTrack)
 {
 int i;
 int discardPad;
@@ -1258,7 +1241,7 @@ Word rec[RECORDSIZE];
 
     if( (trackImageFd = open(DEFAULT_TRACK_FILE, O_CREAT | O_WRONLY, 0666)) < 0 )
     {
-        fprintf(stderr, "Can't open drum track image file '%s': ", path);
+        fprintf(stderr, "Can't open drum track image file '%s': ", DEFAULT_TRACK_FILE);
         perror(NULL);
         fail();
     }
@@ -1458,9 +1441,9 @@ MessageBlockP blockP;
     if( startTrack == SAVE_TRACK )
     {
         fprintf(outP, "// Track %d front blocks: words 0-%d SAVE state, words %d-%d WIZCOM\n",
-            startTrack, SAVE_BLOCK_WORDS - 1, WIZCOM_BASE_OFFSET, DRUM_FRONT_WORDS - 1);
+            startTrack, SAVE_BLOCK_WORDS - 1, WIZCOM_BASE_OFFSET, DRUM_START_WORDS - 1);
         fprintf(outP, "// (fixed-size blocks -- see adv_drumlayout.ah, the generated contract).\n");
-        fprintf(outP, "// Text starts at drum word %d.\n\n", DRUM_FRONT_WORDS);
+        fprintf(outP, "// Text starts at drum word %d.\n\n", DRUM_START_WORDS);
     }
     else
     {
@@ -1492,7 +1475,7 @@ int i;
 
     fprintf(outP, "// Auto-generated by advroomloader from Adventure/Rooms/adventureRooms.txt --\n");
     fprintf(outP, "// do not hand-edit. Regenerate with:\n");
-    fprintf(outP, "//   advroomloader -i <drumimage> -o %s -m <msgtabfile> <srcfile>\n", ROOMTAB_OUTFILE);
+    fprintf(outP, "//   advroomloader -i <drumimage> -m <msgtabfile> <srcfile>\n");
 
     if( tracksNeeded > 1 )
     {
@@ -1762,35 +1745,43 @@ int i;
 }
 
 static void
-emitObjTables(void)
+emitObjTables(char *dirP, FILE *deffP)
 {
-FILE *outP;
+char outPath[1024];
 
-    if( !(outP = fopen(OBJDEFS_OUTFILE, "w")) )
-    {
-        fprintf(stderr, "Can't create output file '%s'\n", OBJDEFS_OUTFILE);
-        fail();
-    }
-    emitObjDefs(outP);
-    fclose(outP);
+    // These are defines
+    emitObjDefs(deffP);
 
-    emitObjTableFile("adv_objloc.ac",      "objLoc",      getObjLocField);
-    emitObjTableFile("adv_objtake.ac",     "objTake",     getObjTakeField);
-    emitObjTableFile("adv_objnames.ac",    "objNames",    getObjNamesField);
-    emitObjTableFile("adv_objinvmsg.ac",   "objInvMsg",   getObjInvMsgField);
-    emitObjTableFile("adv_objheremsg.ac",  "objHereMsg",  getObjHereMsgField);
-    emitObjTableFile("adv_objtreasure.ac", "objTreasure", getObjTreasureField);
+    sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", "adv_objloc.ac");
+    emitObjTableFile(outPath, "objLoc", getObjLocField);
+
+    sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", "adv_objtake.ac");
+    emitObjTableFile(outPath, "objTake", getObjTakeField);
+
+    sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", "adv_objnames.ac");
+    emitObjTableFile(outPath, "objNames", getObjNamesField);
+
+    sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", "adv_objinvmsg.ac");
+    emitObjTableFile(outPath,"objInvMsg", getObjInvMsgField);
+
+    sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", "adv_objheremsg.ac");
+    emitObjTableFile(outPath,"objHereMsg", getObjHereMsgField);
+
+    sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", "adv_objtreasure.ac");
+    emitObjTableFile(outPath, "objTreasure", getObjTreasureField);
 }
 
 static void
-emitVerbTab(void)
+emitVerbTab(char *dirP)
 {
-FILE *outP;
 int i;
+FILE *outP;
+char outPath[1024];
 
-    if( !(outP = fopen(VERBTAB_OUTFILE, "w")) )
+    sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", VERBTAB_OUTFILE);
+    if( !(outP = fopen(outPath, "w")) )
     {
-        fprintf(stderr, "Can't create output file '%s'\n", VERBTAB_OUTFILE);
+        fprintf(stderr, "Can't create output file '%s'\n", outPath);
         fail();
     }
 
@@ -1853,7 +1844,7 @@ emitDrumLayout(FILE *outP)
     fprintf(outP, "#define WIZCOM_TRACK           0d%d   // same track -- fixed front blocks\n", SAVE_TRACK);
     fprintf(outP, "#define WIZCOM_BASE_OFFSET     0d%d\n", WIZCOM_BASE_OFFSET);
     fprintf(outP, "#define WIZCOM_BLOCK_WORDS     0d%d\n", WIZCOM_BLOCK_WORDS);
-    fprintf(outP, "#define DRUM_TEXT_START_OFFSET 0d%d\n", DRUM_FRONT_WORDS);
+    fprintf(outP, "#define DRUM_TEXT_START_OFFSET 0d%d\n", DRUM_START_WORDS);
     fprintf(outP, "\n#endif\n");
 }
 
@@ -1861,9 +1852,12 @@ static void
 usage(void)
 {
     fprintf(stderr,
-        "Usage: advdataloader [-s starttrack] [-c] srcfile\n"
-        "  -s starttrack  first drum track to use, 0-%d (default %d)\n"
-        "  -c             compare mode: report differences against imagefile, write nothing\n",
-        NUM_TRACKS - 1, DEFAULT_START_TRACK);
+        "Usage: advdataloader [-s starttrack] [-c] [-o dir] srcfile\n"
+        "  -s starttrack, first drum track to use, 0-%d (default %d)\n"
+        "  -c compare mode, report differences against imagefile, write nothing\n"
+        "  -o outdir, put generated files in this directory, default is current directory\n"
+        "The drum track image file %s always goes in the current directory.\n",
+        NUM_TRACKS - 1, DEFAULT_START_TRACK, DEFAULT_TRACK_FILE);
+
     exit(1);
 }

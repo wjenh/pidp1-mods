@@ -5,13 +5,14 @@ LEX = flex
 BISONFLAGS =
 #CONFLICTS=-Wcounterexamples
 
-all: advdataloader advdrumloader
+all: advdataloader advdrumloader advsave
 
-install: advdataloader advdrumloader
-	cp advdataloader ../advdataloader
+install: advdataloader advdrumloader advsave
+	strip advdataloader
+	strip advdrumloader
+	strip advsave
 	cp advdrumloader ../advdrumloader
-	strip ../advdataloader
-	strip ../advdrumloader
+	cp advsave ../advsave
 
 advdataloader: advdataloader.o symtab.o lex.yy.o y.tab.o
 	$(CC) $(CFLAGS) -o advdataloader advdataloader.o symtab.o lex.yy.o y.tab.o
@@ -19,14 +20,20 @@ advdataloader: advdataloader.o symtab.o lex.yy.o y.tab.o
 advdrumloader: advdrumloader.o
 	$(CC) $(CFLAGS) -o advdrumloader advdrumloader.o
 
+advsave: advsave.o
+	$(CC) $(CFLAGS) -o advsave advsave.o
+
 clean:
-	@rm -f advdataloader advdrumloader *.o y.tab.c y.tab.h lex.yy.c 2>/dev/null || true
+	@rm -f advdataloader advdrumloader advsave *.o y.tab.c y.tab.h lex.yy.c 2>/dev/null || true
 
 advdataloader.o: advdataloader.c advdataloader.h symtab.h y.tab.h
 	$(CC) $(CFLAGS) -c advdataloader.c
 
-advdrumloader.o: advdrumloader.c
+advdrumloader.o: advdrumloader.c advdataloader.h
 	$(CC) $(CFLAGS) -c advdrumloader.c
+
+advsave.o: advsave.c advdataloader.h
+	$(CC) $(CFLAGS) -c advsave.c
 
 symtab.o: symtab.c symtab.h
 	$(CC) $(CFLAGS) -c symtab.c

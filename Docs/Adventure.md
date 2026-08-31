@@ -1,7 +1,7 @@
 # Adventure for the PDP-1!
 
 This is version 1.0\
-24-Aug-2026 Bill Ezell - initial version
+31-Aug-2026 Bill Ezell - add wizard mode and advsave descriptions
 
 Yes, the real deal, a full implementation of the classic Woods 1977 PDP-10 Fortran Adventure 350,\
 including wizard mode, cave closing hours, *everything*.
@@ -70,27 +70,55 @@ keep going.
 If the drum tracks get overwritten, you can reload them without rebuilding everything.
 In the Adventure directory, type 'make drum' and it will copy the data to the drum again.
 
+**WARNING** an install or a reload will wipe any existing adventure save game on the drum.
+If you have one, save it with *advsave*, see below.
+
 Why telnet? Because you'd go insane using the Soroban. Been there, done that. No thanks.\
-And this brings us to DCS. It uses my implementation, DCS2, which while it has all the standard IOTs of the original
+And this brings us to DCS.
+It uses my implementation, DCS2, which while it has all the standard IOTs of the original
 DCS, it adds socket support and telnet emulation.
 That's nonstandard, so you need mine.
 
 ## Wizard access
 
 The original PDP-10 version had a wizard mode to allow setting of what hours the game could be played,
-a holiday schedule, and some other somewhat PDP-10 specific items.
+a holiday schedule, a new magic word, and some other bits.
 It required solving a cryptographic challenge/response to access it using a PDP-10 program named wz.
 
 It's fullly replicated.
 The wz command is run to generate the response to the challenge, just like the original.
 
+The full procedure is:
+- Start a fresh game, it can only be done as the very first thing.
+- At the "Would you like instructions?" prompt, type: NO
+- As your very first command, type: MAGIC MODE
+- At the "Are you a wizard?" prompt, type: YES
+- At the "Password:" prompt, type: DWARF
+- When asked if you know what it was, type: NO
+- Solve the challenge provided by the game using *wz* and type the response.
+
+If the cave is closed, you will be allowed to play.
+Immediately repeat the above if you want to change the hours and such.
+
+If the cave is open, you will enter the configuration setting mode initially.
+
+## Saving a save
+
+The utility program *advsave* can be used to save a copy of your saved game and of the wizcom configuration
+to a file.
+You can then restore it if the drum data is ever overwritten.
+
+This is vaguely similar to saving your core image on the PDP-10.
+
 ## What else is there?
 
 You can set sense switch 6 on to disable the wizard challenge/response.\
-You can set sense swith 5 on to disable closing time, save/restore anti-spoofing, anything related to
-the time.
+This also gets you into the cave even when closed.
 
-In fact, with ss5 on, the Chrono-Log IOT won't be called so you won't need that,
+You can set sense swith 5 on to disable closing time, save/restore anti-spoofing,
+anything related to the time.
+
+In fact, with ss5 and ss6 on, the Chrono-Log IOT won't be called so you won't need that,
 although it is part of the standard pidp1-mods distribution.
 
 Just be sure to turn the switches on before loading.

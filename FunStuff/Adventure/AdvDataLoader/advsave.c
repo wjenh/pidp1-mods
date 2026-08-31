@@ -95,7 +95,7 @@ char *imagenameP;
 
     if( dataFd < 0 )
     {
-        fprintf(stderr,"Can't create save file '%s'.\n", filenameP);
+        fprintf(stderr,"Can't %s save file '%s'.\n", (reload)?"open":"create", filenameP);
         exit(1);
     }
 
@@ -144,16 +144,9 @@ int buffer[DRUM_START_WORDS];
     }
 
     lseek(drumFd, track * WORDS_PER_TRACK * sizeof(int), SEEK_SET);
-    if( read(drumFd, &i, sizeof(int)) != sizeof(int) || (i != DRUM_SAVE_MAGIC) )
-    {
-        fprintf(stderr,"Drum file '%s' does not have valid adveture data loaded.\n", drumFilenameP);
-        return(false);
-    }
-    
-    lseek(drumFd, track * WORDS_PER_TRACK * sizeof(int), SEEK_SET);
     if( write(drumFd, buffer, sizeof(int) * DRUM_START_WORDS) != (sizeof(int) * DRUM_START_WORDS) )
     {
-        fprintf(stderr,"Error wroting drum file '%s'.\n", drumFilenameP);
+        fprintf(stderr,"Error writing drum file '%s'.\n", drumFilenameP);
         return(false);
     }
 

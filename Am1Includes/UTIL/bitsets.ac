@@ -2,32 +2,78 @@
 #define BITSETS_H
 // This is a collection of subroutines to manage bit flags in a word or multi-word set of bits, 18 per word.
 // Any number of words, up to memory limits, can be used.
+// These can be called from any bank, used in any bank.
+// The extened memory state is preserved across calls.
+//
+// All of the subroutines check the 'extended memory on' bit in the return
+// address that is passed, since jda and jsp always pass a full 16-bit address.
+// If in an odd-numbered bank and extended memory is off, a 16-bit jmp i rtn
+// will see the bank number as the chained indirect flag and fail.
+// If eem is off but an odd bank number is in the address, the address is masked to 12 bits.
+// If eem is on, local storage references are 16 bits, if off, 12 bits.
+// The eem state is restored on return.
+
+#define EEM_ON_BIT  0200000     // this bit will be set in the AC after a jsp or jda.
 
 // Shared locals
-local listRtn, wordRtn, ptr, tmp, getMask
+local listRtn, wordRtn, getMask
 
 // Set the bit in the location whose address is in AC and whose number is in IO.
 // Called via jda.
 // Neither AC nor IO are preserved.
 // This is 16-bit safe and can be called from any bank.
 setBitInWord, 0
+    local eemOff, finish
     dac wordRtn
+    and [EEM_ON_BIT
+    sza i       // Not zero?
+    jmp eemOff  // Zero, eem is off
+    jmp finish
+
+eemOff,
+    // If extended memory is off, mask our address to 12 bits
+    lac setBitInWord
+    and [07777
+    dac setBitInWord
+    lac wordRtn
+    and [07777
+    dac wordRtn
+
+finish,
     jsp getMask
     ior i setBitInWord
     dac i setBitInWord
     jmp i wordRtn
+    endloc
 
 // Clear the bit in the location whose address is in AC and whose number is in IO.
 // Called via jda.
 // Neither AC nor IO are preserved.
 // This is 16-bit safe and can be called from any bank.
 clearBitInWord, 0
+    local eemOff, finish
     dac wordRtn
+    and [EEM_ON_BIT
+    sza i       // Not zero?
+    jmp eemOff  // Zero, eem is off
+    jmp finish
+
+eemOff,
+    // If extended memory is off, mask our address to 12 bits
+    lac clearBitInWord
+    and [07777
+    dac clearBitInWord
+    lac wordRtn
+    and [07777
+    dac wordRtn
+
+finish,
     jsp getMask
-    cma                 // clear the bit
-    and i setBitInWord
-    dac i setBitInWord
+    cma
+    and i clearBitInWord
+    dac i clearBitInWord
     jmp i wordRtn
+    endloc
 
 // Test the bit in the location whose address is in AC and whose number is in IO.
 // On return, AC will be nonzero if the bit is set, else 0.
@@ -35,27 +81,51 @@ clearBitInWord, 0
 // Neither AC nor IO are preserved.
 // This is 16-bit safe and can be called from any bank.
 testBitInWord, 0
+    local eemOff, finish
     dac wordRtn
+    and [EEM_ON_BIT
+    sza i       // Not zero?
+    jmp eemOff  // Zero, eem is off
+    jmp finish
+
+eemOff,
+    // If extended memory is off, mask our address to 12 bits
+    lac testBitInWord
+    and [07777
+    dac testBitInWord
+    lac wordRtn
+    and [07777
+    dac wordRtn
+
+finish,
     jsp getMask
-    and i setBitInWord
+    and i testBitInWord
     jmp i wordRtn
+    endloc
 
 // Set the bit in the location in the list whose base address is in AC and whose number is in IO.
 // Called via jda.
 // Neither AC nor IO are preserved.
 // This is 16-bit safe and can be called from any bank.
 setBitInList, 0
-    local noOffset
+    local finish, noOffset
     dac listRtn
-    sni                 // if the IO is 0, skip the divide
-    jmp noOffset        // 0, no divide needed
+    and [EEM_ON_BIT
+    sza                 // Zero?
+    jmp finish          // no, eem is on
+    lac listRtn         // yes, mask out any bank address
+    and [07777
+    dac listRtn
+
+finish,
+    // we always divide, testing for the non-divide case
+    // takes as long as just doing the divide so don't bother
     cla
     sil 1s              // The divide doesn't use bit 17.
     div [0d18]          // 18 bits/word.
     nop                 // This location hit if there was a divide overflow, impossible.
-noOffset,               // IO now contains the offset into the list of the word to use.
     add setBitInList    // Add our argument, the list base address.
-    jda setBitInWord    // IO has the remainder from the divide, the bit in the word.
+    jda setBitInWord    // IO has the bit in the word.
     jmp i listRtn
     endloc
 
@@ -64,17 +134,24 @@ noOffset,               // IO now contains the offset into the list of the word 
 // Neither AC nor IO are preserved.
 // This is 16-bit safe and can be called from any bank.
 clearBitInList, 0
-    local noOffset
+    local finish, noOffset
     dac listRtn
-    sni                 // if the IO is 0, skip the divide
-    jmp noOffset        // 0, no divide needed
+    and [EEM_ON_BIT
+    sza                 // Zero?
+    jmp finish          // no, eem is on
+    lac listRtn         // yes, mask out any bank address
+    and [07777
+    dac listRtn
+
+finish,
+    // we always divide, testing for the non-divide case
+    // takes as long as just doing the divide so don't bother
     cla
     sil 1s              // The divide doesn't use bit 17.
     div [0d18]          // 18 bits/word.
     nop                 // This location hit if there was a divide overflow, impossible.
-noOffset,               // IO now contains the offset into the list of the word to use.
-    add setBitInList    // Add our argument, the list base address.
-    jda clearBitInWord  // IO has the remainder from the divide, the bit in the word.
+    add clearBitInList
+    jda clearBitInWord  // IO has the bit in the word.
     jmp i listRtn
     endloc
 
@@ -83,18 +160,27 @@ noOffset,               // IO now contains the offset into the list of the word 
 // Called via jda.
 // Neither AC nor IO are preserved.
 // This is 16-bit safe and can be called from any bank.
+// HOWEVER, if called from within the bank in which it is located,
+// eem MUST be off!
 testBitInList, 0
-    local noOffset
+    local finish, noOffset
     dac listRtn
-    sni                 // if the IO is 0, skip the divide
-    jmp noOffset        // 0, no divide needed
+    and [EEM_ON_BIT
+    sza                 // Zero?
+    jmp finish          // no, eem is on
+    lac listRtn         // yes, mask out any bank address
+    and [07777
+    dac listRtn
+
+finish,
+    // we always divide, testing for the non-divide case
+    // takes as long as just doing the divide so don't bother
     cla
     sil 1s              // The divide doesn't use bit 17.
     div [0d18]          // 18 bits/word.
     nop                 // This location hit if there was a divide overflow, impossible.
-noOffset,               // IO now contains the offset into the list of the word to use.
-    add setBitInList    // Add our argument, the list base address.
-    jda testBitInWord   // IO has the remainder from the divide, the bit in the word.
+    add testBitInList
+    jda testBitInWord   // IO has the bit in the word.
     jmp i listRtn
     endloc
 
@@ -102,32 +188,34 @@ noOffset,               // IO now contains the offset into the list of the word 
 // Bits are numbered msb is 17, lsb is 0, NOT the silly DEC 0-17 numbering,
 // but this is transparent to the caller as long as only these routines are used.
 // Example, 1 results in octal 00002.
-// This is a local routine only, it uses 12 bit addressing, but it is bank-safe for any bank.
+// This is a local routine only, it uses 12 bit addressing.
 // IO contains the number of the bit.
 // On return AC has the bitmask.
 // Called via jsp.
 // Neithe AC nor IO are preserved.
 getMask,
-    local lclrtn, small, addr, shifttab
-    dap lclrtn
+    local lclrtn, small, instr, shifttab
+    dap lclrtn      // we are local only, eem must be off
     lai             // if the number is greater than 8, we will shift by n-8.
     sub [0d9
     spa             // if the result is >= 0, number is > 8.
     jmp small
-    add [shifttab
-    dac addr
+    add [shifttab   // AC now has the address of the ral to execute
+    ior [xct        // so create an xct instruction to do so
+    dac instr
     law 1
-    xct i addr      // execute the correct shift
+    xct instr       // execute the correct shift
     ral 9s          // and push it over to where it belongs
     jmp lclrtn
 
 small, lai
     add [shifttab   // same as the big case without the extra shift
-    dac addr
+    ior [xct        // and same instruction construction
+    dac instr
     law 1
-    xct i addr      // execute the correct shift
+    xct instr      // execute the correct shift
 lclrtn, jmp .
-addr, 0
+instr, 0
 shifttab,           // a list of rar instructons to get the bit into the correct position
     nop             // lsb needs no shift
     ral 1s          // bit 1
@@ -143,7 +231,6 @@ shifttab,           // a list of rar instructons to get the bit into the correct
 // Shared locals
 listRtn, 0
 wordRtn, 0
-ptr, 0
-tmp, 0
+eemOn, 0
 endloc
 #endif

@@ -106,7 +106,8 @@
  * 13-Jul-2026 wje - add private keyword
  * 19-Aug-2026 wje - fix use of wrong pc when emitting an automatically-emitted constant in multibank use
  * 28-Aug-2026 fab - make output deterministic using a serial number instead of a memory address for hashing
- * 30-Aug-2026 fab - add -S, memory usage summary
+ * 30-Aug-2026 wje - add -S, memory usage summary
+ * 31-Aug-2026 wje - replace accidentially deletec lex pattern for DOTEXT
  *
 */
 #include <unistd.h>

@@ -793,7 +793,7 @@ octal			{ decimalMode = false; }
 			    return(LIBFILE);
 			}
 
-<DOTEXT>xxx		{
+<DOTEXT>.	{
 			int tmpc, rslt;
 			int count;
 			int shift;

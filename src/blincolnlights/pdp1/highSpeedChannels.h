@@ -18,13 +18,15 @@
 #define HSC_MODE_TOMEM         002  // from user space to core memory
 #define HSC_MODE_IMMEDIATE     004  // bypass all the wait states, immediate execution, no reschedule
 #define HSC_MODE_THREADED      010  // immediate execution but check busy and imitate timing
+#define HSC_MODE_TRUESTEAL     040  // true cycle-stealing mode, only for transfers > 5us/word (e.g. the drum)
 #define HSC_MODE_UPDATEPANEL   020  // only for immediate, hsc controls the hsc cycle light
 
 typedef struct {
-    int mode;           // current operation mode, from, to, or both
-    int count;          // number of words to transfer
-    int memBank;        // memory bank to transfer to/from, 0-15 dec
-    int memAddr;        // address offset in memory, offset in bank, 0-4095
+    int mode;               // current operation mode, from, to, or both
+    int count;              // number of words to transfer
+    int memBank;            // memory bank to transfer to/from, 0-15 dec
+    int memAddr;            // address offset in memory, offset in bank, 0-4095
+    int wordTime;           // how fast the device transfers, in tenths of us, only for TRUESTEAL mode
     uint32_t *fromBufferP;  // should be 4k unless you're sure your count won't exceed the size
     uint32_t *toBufferP;    // ditto
     } HSCRequest, *HSCRequestP;

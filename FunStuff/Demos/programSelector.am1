@@ -209,6 +209,7 @@ ld2, lac trk
      dwc
      lio [dirBuf:BNKNO      // into our buffer
      dcl
+     DRUM_WAIT_READY
 
      lac dirBuf + DIRMARKER // 707070 is a marker that the track is initialized
      sas [707070
@@ -264,6 +265,7 @@ loadPgm,
      dwc
      lio destBank
      dcl        // bank x, address 0
+     DRUM_WAIT_READY
 rtn, jmp .
     endloc
 

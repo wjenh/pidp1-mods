@@ -19,6 +19,14 @@
  *    HSCwait() didn't check for done and always slept the full waitDelay regardless, adding a redundant
  *    delay on top of whatever real time had already elapsed.
  *    Now skipped if the channel is already done.
+ * 13-Aug-2026 wje - add HSC_MODE_TRUESTEAL.
+ *    THREADED front-loads all of a transfer's stealticks and only afterward lets the CPU
+ *    run free for the remainder of the device's completion time, which starves the CPU
+ *    for the whole steal block instead of interleaving it the way real HSC hardware did.
+ *    TRUESTEAL spreads the steal ticks evenly across the transfer's actual real-time duration.
+ *    The channel's busy/done timing is accurate on its own and a device no longer needs a
+ *    separate real-clock completion check.
+ *    Note this means a TRUESTEAL channel reports HSC_BUSY for its full durationa.
 */
 
 #include <unistd.h>
@@ -46,10 +54,14 @@ typedef struct {
     bool isAssigned;
     bool isWaiting;
     bool needLightoff;      // HSC_MODE_UPDATE_PANEL was requested
+    bool trueSteal;             // true while a TRUESTEAL transfer is in progress on this channel
     int status;
     int waitDelay;          // if we are in THREADED mode, how long to sleep in HSCwait()
     int brkCount;           // if we are in THREADED mode, simulate break requests, more or less
     int onCount;            // HSC_MODE_UPDATEPANEL was usd, number of cycles to keep hsc cylcle on for
+    int stealsLeft;    // steal-ticks (one per word) still owed
+    int ticksLeft;     // total ticks (steal + free) still owed; the live DDA denominator
+    int stealAcc;           // DDA accumulator
     sem_t accessSemaphore;  // how we synchrnonize modification of the control structure
     sem_t waitSemaphore;    // how we synchrnonize completion
     HSCRequest request;     // pending request if any, copied by execute from user space
@@ -177,6 +189,7 @@ HSCControlP ctlP;
     ctlP->isAssigned = true;
     ctlP->isWaiting = false;
     ctlP->brkCount = 0;
+    ctlP->trueSteal = false;
 
     chanP = (HSCChannelP)malloc(sizeof(HSCChannel));
     chanP->chanNo = chanNo - 1;         // we keep it as an offset in the channel table
@@ -217,6 +230,8 @@ HSCControlP ctlP;
             ctlP->status = HSC_ABORT;
             ctlP->waitDelay = ctlP->brkCount = 0;
             ctlP->isWaiting = false;
+            ctlP->trueSteal = false;
+            ctlP->stealsLeft = ctlP->ticksLeft = ctlP->stealAcc = 0;
         }
     }
 
@@ -228,26 +243,30 @@ HSCControlP ctlP;
 // Returns HSC_ERR for invalid chan, mode, count > 4096, banks out of range of 0-15 dec.
 // Returns HSC_BUSY if a request is still executing.
 // Returns HSC_OK otherwise.
+// Note that TRUESTEAL mode will keep the channel busy until the true transfer time has been reached.
+// Code needs to actually check for request completion!
 int
 HSCexecute(HSCChannelP chanP, HSCRequestP rqstP)
 {
 HSCControlP ctlP;
 
     if( (rqstP->memBank > 15) || (rqstP->memBank < 0) || (rqstP->memAddr > 4095) || (rqstP->memAddr < 0) ||
-        (rqstP->count > 4096) )
+        (rqstP->count > 4096) || (rqstP->count < 0) )
     {
-        logger(LOG_HSC, "request_channel called bad addr or countm bank %d addr %d count %d\n",
+        logger(LOG_HSC, "request_channel called bad addr or count bank %d addr %d count %d\n",
             rqstP->memBank, rqstP->memAddr, rqstP->count);
         return( HSC_ERR );
     }
 
     if( !(ctlP = getControlP(chanP)) || !ctlP->isAssigned )
     {
+        logger(LOG_HSC, "execute called but channel is not assigned\n");
         return( HSC_ERR );
     }
 
     if( ctlP->status == HSC_BUSY )
     {
+        logger(LOG_HSC, "execute called but channel is busy\n");
         return(HSC_BUSY);           // wait your turn
     }
 
@@ -259,20 +278,24 @@ HSCControlP ctlP;
 
     if( (rqstP->mode & HSC_MODE_TOMEM) && (rqstP->toBufferP == 0) )
     {
+        logger(LOG_HSC, "request_channel called bad read address 0\n");
         return( HSC_ERR );      // bad address
     }
 
     if( (rqstP->mode & HSC_MODE_FROMMEM) && (rqstP->fromBufferP == 0) )
     {
+        logger(LOG_HSC, "request_channel called bad write address 0\n");
         return( HSC_ERR );      // bad address
     }
 
-    // Both IMMEDIATE and THREADED handle the tranfer in this call.
-    // The difference is that IMMEDIATE does not check for busy nor does it do any timing emulation.
+    // IMMEDIATE, THREADED, and TRUESTEAL all handle the transfer in this call.
+    // IMMEDIATE does not check for busy nor does it do any timing emulation.
     // THREADED operates as if in normal mode, including a 5usec delay per count, with busy and wait.
-    if( rqstP->mode & (HSC_MODE_IMMEDIATE | HSC_MODE_THREADED) )
+    // TRUESTEAL is like THREADED but for a device slower than memory speed (wordTime > 50),
+    // it spreads its steal ticks evenly across the transfer's actual real-time duration.
+    if( rqstP->mode & (HSC_MODE_IMMEDIATE | HSC_MODE_THREADED | HSC_MODE_TRUESTEAL) )
     {
-        switch( rqstP->mode & (HSC_MODE_IMMEDIATE | HSC_MODE_THREADED) )
+        switch( rqstP->mode & (HSC_MODE_IMMEDIATE | HSC_MODE_THREADED | HSC_MODE_TRUESTEAL) )
         {
         case HSC_MODE_IMMEDIATE:
             logger(LOG_HSC, "request_channel immediate transfer\n");
@@ -302,8 +325,6 @@ HSCControlP ctlP;
             }
 
             // Mark the channel busy so processHSCchannels() will process it.
-            // This is deliberately a BEST-EFFORT steal, not an exact one, the caller typically
-            // manages its apparent delay independently, this only slows the main emulator to match.
             ctlP->status = HSC_BUSY;
 
             ctlP->waitDelay = rqstP->count * 5;       // 5us per word
@@ -315,6 +336,57 @@ HSCControlP ctlP;
                 updatelights(pdp1P, pdp1P->panel);
                 updatelights_pwm(pdp1P->panel, 1);
                 ctlP->onCount = rqstP->count;
+                if( ctlP->onCount < HSC_STRETCH )
+                {
+                    ctlP->onCount = HSC_STRETCH;
+                }
+                ctlP->needLightoff = true;
+            }
+
+            processImmediate(rqstP);
+            return(HSC_BUSY);
+
+        case HSC_MODE_TRUESTEAL:
+            logger(LOG_HSC, "request_channel TRUESTEAL transfer\n");
+            if( ctlP->status == HSC_BUSY )
+            {
+                return( HSC_ERR );      // not now
+            }
+
+            if( rqstP->wordTime < 50 )
+            {
+                // This mode is for devices slower than one memory cycle, 5us, such as the drum.
+                // A device at or faster than memory speed should use THREADED instead.
+                logger(LOG_HSC, "request_channel TRUESTEAL wordTime %d too fast for TRUESTEAL\n",
+                    rqstP->wordTime);
+                return( HSC_ERR );
+            }
+
+            // Mark the channel busy so processHSCchannels() will process it.
+            // Unlike THREADED, this channel stays busy for the transfer's total tick count,
+            // as the original hardware would do.
+            ctlP->status = HSC_BUSY;
+            ctlP->waitDelay = 0;
+            ctlP->brkCount = 0;
+            ctlP->trueSteal = true;
+            ctlP->stealsLeft = rqstP->count;
+            // Round count*word-transfer-time (in us/10) to the nearest whole 5us tick.
+            ctlP->ticksLeft = ((rqstP->count * rqstP->wordTime) + 25) / 50;
+
+            if( ctlP->ticksLeft < ctlP->stealsLeft )
+            {
+                ctlP->ticksLeft = ctlP->stealsLeft;   // never owe fewer ticks than steals
+            }
+            ctlP->stealAcc = 0;
+
+            logger(LOG_HSC, "TRUESTEAL ticks left %d, steals left %d\n", ctlP->ticksLeft, ctlP->stealsLeft);
+
+            if( rqstP->mode & HSC_MODE_UPDATEPANEL )
+            {
+                pdp1P->hsc = 1;
+                updatelights(pdp1P, pdp1P->panel);
+                updatelights_pwm(pdp1P->panel, 1);
+                ctlP->onCount = ctlP->ticksLeft;
                 if( ctlP->onCount < HSC_STRETCH )
                 {
                     ctlP->onCount = HSC_STRETCH;
@@ -507,6 +579,20 @@ uint32_t *memBaseP;
 
     memBaseP = &pdp1P->core[rqstP->memBank * 4096];
 
+#ifdef DOLOGGING
+    if( rqstP->mode & HSC_MODE_FROMMEM )
+    {
+        logger(LOG_DATA,"Transfer %d words from core addr %06o\n",
+            rqstP->count, (rqstP->memBank * 4096) + rqstP->memAddr);
+    }
+
+    if( rqstP->mode & HSC_MODE_TOMEM )
+    {
+        logger(LOG_DATA,"Transfer %d words to core addr %06o\n",
+            rqstP->count, (rqstP->memBank * 4096) + rqstP->memAddr);
+    }
+#endif
+
     while( rqstP->count-- > 0 )
     {
         if( rqstP->memAddr > 4095 )
@@ -530,7 +616,7 @@ uint32_t *memBaseP;
 }
 
 // Process one channel, one word.
-// We do a read before a write if both are enabled.
+// We do a read before a write if both are enabled and we are in normal mode.
 // Returns true if a cycle steal is needed, else false.
 static bool
 processChannel(HSCControlP ctlP)
@@ -549,6 +635,37 @@ HSCRequestP rqstP;
     lockControl(ctlP);
     rqstP = &(ctlP->request);
 
+    // If a TRUESTEAL transfer is in progress, see if we need to steal a cycle.
+    // Spreads stealsLeft steal-ticks evenly across ticksLeft total total ticks.
+    // As a side note, this is a version of the Bresenham algorithm used for drawing smooth lines.
+    // That algorithm ended up being very useful for many things.
+    if( ctlP->trueSteal )
+    {
+        steal = false;
+        ctlP->stealAcc += ctlP->stealsLeft;
+
+        if( ctlP->stealAcc >= ctlP->ticksLeft )
+        {
+            ctlP->stealAcc -= ctlP->ticksLeft;
+            steal = true;
+            ctlP->stealsLeft--;
+        }
+
+        ctlP->ticksLeft--;
+
+        if( ctlP->ticksLeft <= 0 )
+        {
+            logger(LOG_HSC, "processChannel TRUESTEAL marking DONE\n");
+            ctlP->status = HSC_DONE;
+            ctlP->trueSteal = false;
+            ctlP->needLightoff = true;
+            HSCdone(ctlP);
+        }
+
+        unlockControl(ctlP);
+        return(steal);
+    }
+
     // If a THREADED operation was done, fake break cycles.
     if( ctlP->brkCount > 0 )
     {
@@ -559,6 +676,7 @@ HSCRequestP rqstP;
         {
             logger(LOG_HSC, "processChannel threaded marking DONE\n");
             ctlP->status = HSC_DONE;
+            ctlP->needLightoff = true;
             HSCdone(ctlP);
         }
 

@@ -1,4 +1,4 @@
-/*
+/*;
  * This is an implementation of the PDP-1 Type 23 Parallel Drum.
  * The drum data is stored in '/opt/pidp1-mods/pdp23drum' and is a binary image of the drum,
  * stored as 18 bit pdp-1 words per 32 bit image word.
@@ -10,6 +10,7 @@
  *    switch to THREADED mode so real cycle-stealing happens,
  *    change dcl completion timing to account for the cycle-stealing the high speed channel does.
  * wje 14-Jul-2026 - cks drp setting fix, check for HSCexecute() returning busy, fix lost static on transferCount.
+ * wje 2-Sep-2026 - switch to use new paced mode for accurate cycle stealing
  */
 
 #include <unistd.h>
@@ -20,12 +21,12 @@
 #include "highSpeedChannels.h"
 #include "iotHandler.h"
 
-//#define DOLOGGING
+#define DOLOGGING
 #include "iotLogger.h"
 #define LOG_START 0
 #define LOG_IOT 0
 #define LOG_POLL 0
-#define LOG_HSC 0
+#define LOG_HSC 1
 #define LOG_TIME 0
 #define LOG_TOTALTIME 0
 #define LOG_BREAK 0
@@ -50,7 +51,7 @@ static int transferCount;           // set by dwc, consumed by dcl
 static int sbsChan = 5;
 static int draStatusBits = 0;       // use the TE error if a file read or write fails
 static uint64_t drumTime;           // actual running time since drum was started, not simtime
-static uint64_t cmdCompletionTime;  // absolute now()-scale target time for the current dcl to complete
+static uint64_t rotationDelayTime;  // absolute now()-scale target time for the drum to be in position
 
 #ifdef LOG_TOTALTIME                // accumulate timing data
 static uint64_t totalWords;         // cumulative number of words transferred, read and write
@@ -67,9 +68,12 @@ static Word writeBuffer[4096];
 static bool readMode;
 static bool writeMode;
 static bool ioBusy;
+static bool requestPending;
+static bool dbaPending;
 static bool teError;
 
 static HSCChannelP chanP;   // how we get data
+static HSCRequest request;
 
 static void readDrumToBuffer(int, Word *, int, int, int);
 static void writeBufferToDrum(int, Word *, int, int, int);
@@ -82,7 +86,6 @@ iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
 int stat;
 int chanFlags;
 int wordCount;
-HSCRequest request;
 
     if( pulse )
     {
@@ -106,8 +109,8 @@ HSCRequest request;
     switch( dev )
     {
     case 061:            // dia, drum initial address, in the IO register, or dba, drum break address
-        ioBusy = 0;      // just to be sure
-        CKS(pdp1P) &= ~CKS_DRP;        // and not busy
+        dbaPending = requestPending = ioBusy = false;   // just to be sure
+        CKS(pdp1P) &= ~CKS_DRP;       // and not busy
 
         readMode = IO(pdp1P) & 0400000;
         writeMode = 0;
@@ -130,7 +133,15 @@ HSCRequest request;
                 wordCount = drumAddr - drumLoc();
             }
 
-            wordCount = (int)(((float)wordCount * 8500.0) / 5000.0) + 1;    // round up, could end up off by 1, ok
+            requestPending = ioBusy = false;
+            wordCount = (int)(((float)wordCount * 8500.0) / 5000.0) - 1;    // approximate
+            if( wordCount < 1 )
+            {
+                wordCount = 1;
+            }
+
+            rotationDelayTime = now() + ((uint64_t)wordCount * 8500ULL);
+            dbaPending = true;
             enablePolling(wordCount);
         }
 
@@ -168,7 +179,7 @@ HSCRequest request;
         break;
 
     case 063:            // dcl, drum core location
-        // This is nonstandard behavior.
+        // Subcommand 20 is nonstandard behavior.
         // It was added to allow changing the drun's interrupt channel when using sbs16
         // in case it conflicts with other usage.
         // In practice, different PDP-1 installations could have different assignments, hardware configured.
@@ -178,7 +189,6 @@ HSCRequest request;
         {
             // enable/disable sbs16
             pdp1P->sbs16 = IO(pdp1P) & 040;
-
             stat = sbsChan;
 
             // change interrupt channel?
@@ -193,6 +203,7 @@ HSCRequest request;
             break;
         }
 
+        dbaPending = requestPending = ioBusy = false;   // just to be sure
 
         // The manual says mem bank is bits 2, 3, but this isn't correct.
         // The hardware description is.
@@ -202,9 +213,7 @@ HSCRequest request;
 
         iotCondLog(LOG_IOT, "dcl 63 memBank %o memAddr %o\n", memBank, memAddr);
 
-        // And away we go.
-        // For read-write mode, we read data first, then write.
-        // This is the sequence defined in the hardware description.
+        // Set up the request for iotPoll() to submit it when the drum is positioned correctly.
         // Both the drum address and the memory address can wrap around.
         if( !readMode && !writeMode )
         {
@@ -216,13 +225,13 @@ HSCRequest request;
         totalRequests++;
 #endif
         // The transfer happens immediately, but hsc will do the proper cycle-stealing before done
-        chanFlags = HSC_MODE_THREADED | HSC_MODE_UPDATEPANEL;
+        chanFlags = HSC_MODE_PACED | HSC_MODE_UPDATEPANEL;
 
         if( readMode )
         {
             chanFlags |= HSC_MODE_TOMEM;
             readDrumToBuffer(drumFd, readBuffer, drumReadField, drumAddr, transferCount);
-            iotCondLog(LOG_IOT, "dcl 63 read drum to rbuffer\n");
+            iotCondLog(LOG_IOT, "dcl 63 requesting read\n");
         }
 
         if( writeMode )
@@ -231,7 +240,7 @@ HSCRequest request;
             iotCondLog(LOG_IOT, "dcl 63 requesting write\n");
         }
 
-        wordCount = transferCount;             // figure out how many drum word times this will take
+        wordCount = 1;    // figure out how many drum word times for the drum to be in position, we need a least 1
 
         // Transferring a full mem bank is special, it can start anywhere, no rotational delay
         if( transferCount != 4096 )
@@ -255,34 +264,16 @@ HSCRequest request;
         request.memAddr = memAddr;
         request.toBufferP = readBuffer;
         request.fromBufferP = writeBuffer;
-        stat = HSCexecute(chanP, &request);
+        request.wordTime = 85;              // 85 100ns delays, 8.5 usec
+        requestPending = true;
 
-        if( stat == HSC_BUSY )
-        {
-            // The channel is still draining a prior threaded transfer's cycle-stealing
-            // bookkeeping (HSCexecute() does NOT copy any data in this case). The real drum
-            // can't service two overlapping requests either, so wait for the previous one to
-            // genuinely finish, then retry, rather than silently dropping this transfer.
-            iotCondLog(LOG_HSC, "HSCexecute busy, waiting for prior transfer to finish\n");
-            HSCwait(chanP);
-            stat = HSCexecute(chanP, &request);
-        }
-
-        iotCondLog(LOG_HSC, "HSCexecute returned %d\n", stat);
-        // We used threaded, all the data transfer by hsc has completed, no need to wait.
-        if( writeMode )
-        {
-            iotCondLog(LOG_POLL, "iotPoll writing writebuf to drum\n");
-            writeBufferToDrum(drumFd, writeBuffer, drumWriteField, drumAddr, transferCount);
-        }
-
-        ioBusy = 1;
         CKS(pdp1P) |= CKS_DRP;                 // busy until iotPoll signals real completion
-        // Each drum word takes 8.5us; wordCount here is the rotational latency, if any, plus the transfer itself.
+        // Each drum word takes 8.5us; wordCount here is the rotational latency.
         // This uses a real wall-clock completion time rather than a cycle count, gives pefect timing accuracy.
-        cmdCompletionTime = now() + ((uint64_t)wordCount * 8500ULL);
-        iotCondLog(LOG_TIME,"Completion target in %lu nsecs\n", cmdCompletionTime - now());
-        enablePolling(1);
+        rotationDelayTime = now() + ((uint64_t)wordCount * 8500ULL);
+        iotCondLog(LOG_TIME,"Completion target in %lu nsecs\n", rotationDelayTime - now());
+        wordCount = (wordCount * 8500) / 5000;  // get the approximate polling delay
+        enablePolling(wordCount);               // real delay handled in iotPoll()
         break;
 
     default:
@@ -307,6 +298,8 @@ iotStart()
         chanP = HSCallocateChannel(HSC_CHAN);
         iotCondLog(LOG_START, "IOT 61 channel allocation %s\n", (chanP)?"ok":"failed");
     }
+
+    ioBusy = requestPending = dbaPending = 0;
 
     // The drum was a separate physical device that was always spinning while on,
     // independent of the PDP-1.
@@ -352,50 +345,119 @@ iotStop()
     iotCloseLog();
 }
 
-// Used to trigger a break or  determine the end of a transfer
+// Used to trigger a break, submit an hsc request,  or determine the end of a transfer.
+// If a transfer is pending, pendingRequest will be true.
 // If a transfer is in progress, ioBusy will be true.
+// If a dba is being waited for, dbaRequest will be true.
 // If just waiting for a drom location because dba was used, it will be false.
 void
 iotPoll(PDP1 *pdp1P)
 {
-    if( ioBusy )
+int stat;
+
+    if( requestPending )
     {
-        // We will be called when the transfer time is up
-        iotCondLog(LOG_POLL, "iotPoll completing\n");
-
-        if( HSCgetStatus(chanP) == HSC_BUSY )
-        {
-            // can happen if the linux scheduler delays updates, so just keep waiting
-            iotCondLog(LOG_POLL, "iotPoll hsc still busy\n");
-            return;
-        }
-
-        if( now() < cmdCompletionTime )
+        if( now() < rotationDelayTime )
         {
             // The HSC channel data transfer is done, but it uses PDP-1 5usec cycles.
             // The drum's lower 8.5us/word delay hasn't fully elapsed in real time yet.
             // Keep polling until it has.
-            iotCondLog(LOG_POLL, "iotPoll hsc done, still waiting on drum timing\n");
+            enablePolling(1);
+            return;
+        }
+
+        // Drum in position, do the data transfer
+        if( (stat = HSCexecute(chanP, &request)) != HSC_BUSY )
+        {
+            teError = true;
+            requestPending = false;
+            CKS(pdp1P) &= ~CKS_DRP;         // and not busy
+            enablePolling(0);
+            iotCondLog(LOG_HSC, "HSCexcute returned %d, failed.\n", stat);
+            return;
+        }
+
+        iotCondLog(LOG_HSC, "HSCrequest submitted, channel now busy.\n");
+        requestPending = false;
+        ioBusy = true;
+        enablePolling( (request.count * 8500) / 5000 );       // will be too short, but ioBusy will wait
+    }
+    else if( ioBusy )
+    {
+        // We will be called when the estimated transfer time is up.
+        iotCondLog(LOG_POLL, "iotPoll in ioBusy state\n");
+
+        if( HSCgetStatus(chanP) == HSC_BUSY )
+        {
+            // not done yet so just keep waiting
+            iotCondLog(LOG_POLL, "iotPoll hsc still busy\n");
+            enablePolling(1);
             return;
         }
 
         HSCwait(chanP);                     // this will just complete the hsd request, won't wait
+        iotCondLog(LOG_HSC, "HSCwait completed.\n");
         CKS(pdp1P) &= ~CKS_DRP;             // and not busy
-        iotCondLog(LOG_POLL, "IOT 61 completed timeout.\n");
+        ioBusy = false;
+        // If writing, copy the buffer to the drum
+
+        if( request.mode & HSC_MODE_FROMMEM )
+        {
+            iotCondLog(LOG_HSC, "iotPoll writing writebuf to drum\n");
+            writeBufferToDrum(drumFd, writeBuffer, drumWriteField, drumAddr, transferCount);
+        }
+
+        enablePolling(0);
+        iotCondLog(LOG_POLL, "IOT 61 completed transfer.\n");
+
 #ifdef LOG_TOTALTIME
         // update timing stats
         totalTime += now() - rqstStartTime;
 #endif
     }
-    else
+    else if( dbaPending )
     {
         // We got here because of a dba
+        if( now() < rotationDelayTime )
+        {
+            // Not there yet, keep polling until we are.
+            enablePolling(1);
+            return;
+        }
+
+        dbaPending = false;
         initiateBreak(sbsChan);             // the DEC drum diagnostic seems to use channel 5
         iotCondLog(LOG_BREAK, "IOT 61 break initiated at drum count %o.\n", drumLoc());
     }
+    else
+    {
+        iotCondLog(LOG_POLL, "iotPoll() active but no valid state, stopping.\n");
+        enablePolling(0);
+    }
+}
 
-    ioBusy = 0;
-    enablePolling(0);                       // done for now
+// Return the current rotational position of the drum, 0-4095.
+// This is determined from the actual time from drum start and is as accuracte as we can be.
+int
+drumLoc()
+{
+    // The drum has 4096 locations per track and takes 8.5us per location, 4096*8.5 usecs per revolution.
+    // Compute the number of words since start modulo 4096.
+    return( (int)(((now() - drumTime) / 8500L) % 4096) );
+}
+
+// Get the real current time, not simtime.
+// Returns time in nanoseconds.
+uint64_t
+now()
+{
+uint64_t now;
+struct timespec tm;
+
+    clock_gettime( CLOCK_MONOTONIC, &tm );
+    now = tm.tv_nsec;
+    now += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
+    return(now);
 }
 
 // Do a drum read handling drum wraparound
@@ -503,26 +565,3 @@ int writeCount;
     }
 }
 
-// Return the current rotational position of the drum, 0-4095.
-// This is determined from the actual time from drum start and is as accuracte as we can be.
-int
-drumLoc()
-{
-    // The drum has 4096 locations per track and takes 8.5us per location, 4096*8.5 usecs per revolution.
-    // Compute the number of words since start modulo 4096.
-    return( (int)(((now() - drumTime) / 8500L) % 4096) );
-}
-
-// Get the real current time, not simtime.
-// Returns time in nanoseconds.
-uint64_t
-now()
-{
-uint64_t now;
-struct timespec tm;
-
-    clock_gettime( CLOCK_MONOTONIC, &tm );
-    now = tm.tv_nsec;
-    now += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
-    return(now);
-}

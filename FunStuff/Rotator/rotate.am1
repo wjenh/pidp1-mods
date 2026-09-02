@@ -80,6 +80,7 @@ resume,
      cli
      dwc
      dcl
+     DRUM_WAIT_READY
 
 // Yes, that's all it took to read a full memory image and load it into bank 0.
 // Bank 0 now has pgm loaded, update with our glue code.

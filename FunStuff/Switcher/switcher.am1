@@ -127,6 +127,7 @@ lst2, lac trk
      ior [0:BNKNO]  // because law only does 12 bits
      lia
      dcl
+     DRUM_WAIT_READY
      lac linbuf+25  // 707070 is a marker that the track has an image
      sad [707070
      jmp .+2
@@ -153,6 +154,7 @@ doload,
      cli            // a word count of 0 means 4096 words
      dwc
      dcl        // bank 0, address 0
+     DRUM_WAIT_READY
 
 // Bank 0 now has pgm loaded, check for valid load entry.
 // We need eem briefly to access location 7777 in bank 0 just to verify it.

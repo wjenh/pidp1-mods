@@ -11,7 +11,8 @@
  * If the last is not a full track, a full track of data is still written.
  *
  * 29-Aug-2026 wje initial version
- * 30-Aug-2026 wje every run now also explicitlyreinitializes the SAVE/WIZCOM reserved blocks
+ * 30-Aug-2026 wje every run now also explicitly reinitializes the SAVE/WIZCOM reserved blocks
+ * 2-Sep-2026 wje but don't reinitialize if the correct magic number is there
  *
 */
 
@@ -24,10 +25,11 @@
 #define ADV_DEFINES_ONLY
 #include "advdataloader.h"
 
-#define MAX_TRACK  (NUM_TRACKS -1)       // highest valid track number
+// This must stay in sync with the value in adventure.am1!
+#define SAVE_MAGIC 31344
+#define MAX_TRACK (NUM_TRACKS -1)       // highest valid track number
 
 void usage(void);
-void resetSaveWizBlock(int outFd);
 
 int
 main(int argc, char **argv)
@@ -39,7 +41,7 @@ char *filenameP;
 char *imageNameP;
 
 int buffer[WORDS_PER_TRACK];     // one full drum track
-char imageName[1024];
+int saveArea[DRUM_START_WORDS];
 
     imageNameP = DEFAULT_DRUM;
 
@@ -48,8 +50,7 @@ char imageName[1024];
         switch( opt )
         {
         case 'i':
-            strcpy(imageName, optarg);
-            imageNameP = imageName;
+            imageNameP = optarg;
             break;
 
         default:
@@ -71,11 +72,36 @@ char imageName[1024];
         exit(1);
     }
 
-    if( (outFd = open(imageNameP, O_WRONLY|O_CREAT, 0666)) < 0 )
+    if( (outFd = open(imageNameP, O_RDWR|O_CREAT, 0666)) < 0 )
     {
         fprintf(stderr,"Can't open drum file '%s'.\n", imageNameP);
         close(inFd);
         exit(1);
+    }
+
+    if( lseek(outFd, SAVE_TRACK * WORDS_PER_TRACK * sizeof(int), SEEK_SET) < 0 )
+    {
+        fprintf(stderr, "Can't seek to SAVE/WIZCOM block (track %d) in drum file %s: ", SAVE_TRACK, imageNameP);
+        perror(NULL);
+        exit(1);
+    }
+
+    // If we get 0 bytes back, the drum file was never initialzed, not an error, just clear the save area.
+    if( ((count = read(outFd, saveArea, sizeof(saveArea))) != sizeof(saveArea)) || (saveArea[0] != SAVE_MAGIC) )
+    {
+        if( count < 0 )
+        {
+            fprintf(stderr, "Can't read drum file '%s'\n", imageNameP);
+            perror(NULL);
+            exit(1);
+        }
+
+        memset(saveArea, 0, sizeof(saveArea));       // nothing there, clear the save area
+        printf("No valid save was found, initializing the save and wizcom area.\n");
+    }
+    else
+    {
+        printf("A valid save was found, preserving it.\n");
     }
 
     if( (read(inFd, &track, sizeof(int)) != sizeof(int)) || (track < 0) || (track > MAX_TRACK) )
@@ -90,45 +116,26 @@ char imageName[1024];
         write(outFd, buffer, count);
     }
 
-    // Always reinitialize the SAVE/WIZCOM reserved block, regardless of
-    // which track(s) the datafile itself targeted -- see this file's own
-    // header comment ("30-Aug-2026 wje owner-directed fix") for why this
-    // must not depend on whatever the datafile happened to contain there.
-    resetSaveWizBlock(outFd);
-
-    close(inFd);
-    close(outFd);
-
-    printf("Adventure data has been loaded to the drum.\n");
-    exit(0);
-}
-
-// Unconditionally overwrites the SAVE_TRACK save and wizcom blocks.
-//
-// No return value.
-// Aborts the whole program on failure,  a half-initialized reserved block is worse
-// than not deploying at all, since it would look valid enough to read
-// but not actually be internally consistent.
-void
-resetSaveWizBlock(int outFd)
-{
-int zero[DRUM_START_WORDS];
-
-    memset(zero, 0, sizeof(zero));
-
-    if( lseek(outFd, (off_t)SAVE_TRACK * WORDS_PER_TRACK * sizeof(int), SEEK_SET) < 0 )
+    // Now rewrite the save area
+    if( lseek(outFd, SAVE_TRACK * WORDS_PER_TRACK * sizeof(int), SEEK_SET) < 0 )
     {
         fprintf(stderr, "Can't seek to SAVE/WIZCOM block (track %d): ", SAVE_TRACK);
         perror(NULL);
         exit(1);
     }
 
-    if( write(outFd, zero, sizeof(zero)) != (ssize_t)sizeof(zero) )
+    if( write(outFd, saveArea, sizeof(saveArea)) != sizeof(saveArea) )
     {
         fprintf(stderr, "Can't initialize SAVE/WIZCOM block (track %d): ", SAVE_TRACK);
         perror(NULL);
         exit(1);
     }
+
+    close(inFd);
+    close(outFd);
+
+    printf("Adventure data has been loaded to the drum.\n");
+    exit(0);
 }
 
 void

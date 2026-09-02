@@ -1,4 +1,4 @@
-/*;
+/*
  * This is an implementation of the PDP-1 Type 23 Parallel Drum.
  * The drum data is stored in '/opt/pidp1-mods/pdp23drum' and is a binary image of the drum,
  * stored as 18 bit pdp-1 words per 32 bit image word.
@@ -10,7 +10,7 @@
  *    switch to THREADED mode so real cycle-stealing happens,
  *    change dcl completion timing to account for the cycle-stealing the high speed channel does.
  * wje 14-Jul-2026 - cks drp setting fix, check for HSCexecute() returning busy, fix lost static on transferCount.
- * wje 2-Sep-2026 - switch to use new paced mode for accurate cycle stealing
+ * wje 2-Sep-2026 - switch to use new TRUESTEAL mode for accurate cycle stealing
  */
 
 #include <unistd.h>
@@ -225,7 +225,7 @@ int wordCount;
         totalRequests++;
 #endif
         // The transfer happens immediately, but hsc will do the proper cycle-stealing before done
-        chanFlags = HSC_MODE_PACED | HSC_MODE_UPDATEPANEL;
+        chanFlags = HSC_MODE_TRUESTEAL | HSC_MODE_UPDATEPANEL;
 
         if( readMode )
         {

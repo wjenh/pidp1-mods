@@ -19,7 +19,7 @@
  *    HSCwait() didn't check for done and always slept the full waitDelay regardless, adding a redundant
  *    delay on top of whatever real time had already elapsed.
  *    Now skipped if the channel is already done.
- * 13-Aug-2026 wje - add HSC_MODE_TRUESTEAL.
+ * 2-Sep-2026 wje - add HSC_MODE_TRUESTEAL and some safety data masking.
  *    THREADED front-loads all of a transfer's stealticks and only afterward lets the CPU
  *    run free for the remainder of the device's completion time, which starves the CPU
  *    for the whole steal block instead of interleaving it the way real HSC hardware did.
@@ -603,12 +603,12 @@ uint32_t *memBaseP;
         // Always get from mem first
         if( rqstP->mode & HSC_MODE_FROMMEM )
         {
-            *(rqstP->fromBufferP++) = *(memBaseP + rqstP->memAddr);
+            *(rqstP->fromBufferP++) = *(memBaseP + rqstP->memAddr) & 0777777;   // just for cleanliness
         }
 
         if( rqstP->mode & HSC_MODE_TOMEM )
         {
-            *(memBaseP + rqstP->memAddr) = *(rqstP->toBufferP++);
+            *(memBaseP + rqstP->memAddr) = *(rqstP->toBufferP++) & 0777777;
         }
 
         ++(rqstP->memAddr);
@@ -698,13 +698,13 @@ HSCRequestP rqstP;
         if( rqstP->mode & HSC_MODE_FROMMEM )
         {
             data = pdp1P->core[fullAddr];
-            *(rqstP->fromBufferP++) = data;
+            *(rqstP->fromBufferP++) = data & 0777777;
             logger(LOG_DATA,"%06o from core %o\n", data, fullAddr);
         }
 
         if( rqstP->mode & HSC_MODE_TOMEM )
         {
-            data = *(rqstP->toBufferP++) & 0777777;
+            data = *(rqstP->toBufferP++) & 0777777;   // just for cleanliness
             logger(LOG_DATA,"%06o to core %o\n", data, fullAddr);
             pdp1P->core[fullAddr] = data;
         }

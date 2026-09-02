@@ -7,13 +7,15 @@
  * Each subsequent line is one symbol in the form:
  * aaaaaa t symbol-name nnnn
  * where aaaaaa is the 16-bit address of the symbol's location in memory.
- * t is one of G, X, I for global, exported, or imported.
+ * t is one of G, L, X, I for global, local, exported, or imported.
  * and nnnn is the line number in the source file where the symbol was resolved.
  *
- * Note that the same symbol name can occur in different banks.
+ * Note that the same symbol name can occur in different banks and for locals
+ * multiple instances can also be in the same bank.
  * The full address is used to resolve which symbol is where.
  *
  * wje 24-Feb-26 Add line number and versioning to symbol file, used by ad1.
+ * wje 2-Sep-26 Add local symbols, now version V3.
  *
 */
 
@@ -26,7 +28,7 @@
 #include "symtab.h"
 
 #define SYMTAB_LABEL  "%%am1 symtab file%%"
-#define SYMTAB_VERSION  "V2"
+#define SYMTAB_VERSION  "V3"
 
 void printSymbol(FILE *outfP, SymNodeP symP);
 

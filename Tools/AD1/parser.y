@@ -141,6 +141,7 @@ typedef struct argitem_t {
 %token LPAREN
 %token RPAREN
 %token LINEAT
+%token LOCAL
 %token SEPARATOR
 
 /* non-terminals */

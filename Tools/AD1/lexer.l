@@ -72,6 +72,7 @@ extern void freeMem(void);
                 }
             }
 
+local       { return(LOCAL); }
 \&          { return(AND); }
 \|          { return(OR); }
 \^          { return(XOR); }

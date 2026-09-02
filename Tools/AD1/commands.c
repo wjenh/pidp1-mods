@@ -200,7 +200,7 @@ int val;
     else
     {
         val = (int)pdp1P->core[addr];
-        formatAndPrintTwo(ADDRESS, lastAddr, base, val);
+        formatAndPrintTwo(ADDRESS, addr, base, val);
         NEWLINE;
     }
 }

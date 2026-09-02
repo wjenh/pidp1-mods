@@ -29,6 +29,7 @@
  *   Rework location printing when a breakpoint or watchpoint is hit.
  * 20-Aug-26 wje swap the , and : for file and bank separators to be consistent with am1,
  *   increase max lines per file to 10K for line mapping array.
+ * 2-Sep-26 wje clean up some of the exit handlers
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -51,6 +52,9 @@
 #define SHM_NAME "/pidp1"
 
 PDP1P pdp1P;            // the emulator state in shared memory
+
+int exitReason;         // EXIT or QUIT, tells leave() how to treat breakpoints, 0 means an abnormal exit.
+
 char *am1NameP;
 char *lstNameP;
 char *symNameP;
@@ -265,7 +269,7 @@ char line[256];
     if( testMode )
     {
         // Just a local copy for standalone testing.
-        PDP1 fakePDP1;
+        static PDP1 fakePDP1;
         pdp1P = &fakePDP1;
         memset(pdp1P, 0, sizeof(PDP1));
         if( !loadMemoryFromFile(MEMFILE, pdp1P->core, MAXMEM) )
@@ -409,7 +413,8 @@ char line[256];
         }
     }
 
-    exit(exitStatus);
+    exitReason = exitStatus;
+    exit(0);
 }
 
 // Given a numeric format as for strtol(), return a format string for printf().
@@ -1118,13 +1123,14 @@ FileInfoP infoP;
     return(false);
 }
 
+// The exit status is not the reason we are leaving, main does exit(0), so use exitReason.
 void
 leave(int status, void *ignore)
 {
     AD1_CLEAR_SINGLE(pdp1P);        // be sure we turn off single step, might have been on
 
-    // Exit will preserve all the breakpoints, but disable them
-    if( status == EXIT )
+    // Exit will preserve all the breakpoints, but disable them.
+    if( exitReason == EXIT )
     {
         disableAllWatchesAndBreakpoints();
     }

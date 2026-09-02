@@ -11,7 +11,7 @@
 #include "ad1.h"
 #include "y.tab.h"
 
-#define NUMSYMBOLS 1024
+#define NUMSYMBOLS 4096
 #define SYMHEADER "%%am1 symtab file%%"
 
 static Symbol symbols[NUMSYMBOLS];

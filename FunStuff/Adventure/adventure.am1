@@ -2270,11 +2270,48 @@ pgGateOk,
     dac instrHinted        //   scoreGame deducts 5 for taking instructions
 pgNoInstr,
     jsp enterRoom
+// CLAUDE 01-Sep-26: enter the loop at tlPrompt, below the hook block, so the
+// very first command is read with no hooks ahead of it -- exactly as before
+// this reordering. adven.f4 does run its dwarf block once before the first
+// room description, but the first room is LOC=1 (outside, DFLAG=0) where that
+// block is a no-op, so skipping it costs nothing and keeps turn 0 unchanged
+// (notably the turns==0 MAGIC MODE gate below).
+    jmp tlPrompt
 
+// CLAUDE 01-Sep-26: the dwarf block runs HERE, at the top of the loop --
+// i.e. AFTER the previous command has been fully dispatched, which is where
+// adven.f4 runs it: the whole dwarf block sits after "74 LOC=NEWLOC" and
+// before the room description, so the dwarves act in the room the player has
+// just arrived in. It used to run between readCmd and the verb dispatch,
+// one command too early, with two visible consequences:
+//   - the first dwarf's "CALL DROP(AXE,LOC)" left the axe in the room the
+//     player was about to walk out of, so the following TAKE AXE answered
+//     "I SEE NO AXE HERE." (the printed transcript looked identical either
+//     way, which is why it went unnoticed for so long);
+//   - checkDwarfBlock (moveGo) was off by the same turn -- it tested
+//     dwarfPrevLoc/dwarfSeen words that dwarfTurn had just overwritten during
+//     THIS command, where f4's own DO-74 block tests the PREVIOUS turn's
+//     ODLOC/DSEEN.
+// It still fires exactly once per accepted command; only its position within
+// the turn moved. clockTurn/lampTurn deliberately stayed where they were --
+// they are the source's separate label-2600 block, not part of this one.
+// Blank lines re-enter at tlPrompt below (they must not buy a free dwarf
+// turn), and so does playGame's first turn.
 turnLoop,
     lem                  // S3B: bank-1 verb handlers/hooks arrive here via an
                            // eem'd indirect jump -- normalize to eem off so
                            // every turn starts in the same extend state
+    eem                   // S3B: dwarfTurn lives in bank 1 -- section-13
+    jsp i [dwarfTurn:1]   //   callee, returns with eem on
+    lem
+    jsp pirateTurn        // per-turn pirate activation/theft hook -- see pirateTurn
+                           //   above. Part of the same source block: the pirate is
+                           //   DLOC(6) in adven.f4, moved and tested alongside the
+                           //   five dwarves, so it belongs on this side of the turn
+
+tlPrompt,                // CLAUDE 01-Sep-26: post-hook re-entry point
+    lem                  //   the blank-line path below skips turnLoop's own
+                           //   lem, so normalize the extend state here too
     jsp checkDark
     dac wzdark
     lac knfloc
@@ -2304,7 +2341,9 @@ pgOk,
 
     lac verbTok
     SKIP_NEXT_IF_AC_NOT_ZERO                // skip when AC != 0 (have a verb)
-    jmp turnLoop             // AC == 0: blank line, just prompt again
+    jmp tlPrompt             // AC == 0: blank line, just prompt again
+                             //   (CLAUDE 01-Sep-26: tlPrompt, not turnLoop --
+                             //   a blank line must not run another dwarf turn)
 havVerb,                     // AC != 0: have a verb
 
     lac turns
@@ -2342,6 +2381,17 @@ tlMagicEndConnection,
     dzm connOk
     jmp pgDone
 tlSkipMagicCheck,
+// CLAUDE 01-Sep-26: adven.f4:2608's "TURNS=TURNS+1", which had no counterpart
+// here at all -- nothing but newGame's "dzm turns" ever wrote the variable, so
+// it sat at 0 for a whole session. Three things were broken by that: the score
+// report's turn count always printed 0, the demo timeout below (turns >=
+// wcShort) could never fire, and the "turns == 0" gate on MAGIC MODE above was
+// open on EVERY command instead of only the first. Placed exactly where the
+// source puts it: after the MAGIC MODE test (which needs the pre-increment
+// value, i.e. 0 on the first command) and before the demo-timeout test (which
+// needs the post-increment value). idx clobbers AC, which is dead here -- the
+// lac below is the next read.
+    idx turns
     lac demoGame
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp tlDemoCheckDone        // demoGame == 0 (not skipped, false): not a demo connection -- skip
@@ -2381,13 +2431,15 @@ tlFoobarArm,
     dac foobar
 tlFoobarDone,
 
-    eem                   // S3B: dwarfTurn AND lampTurn live in bank 1 --
-    jsp i [dwarfTurn:1]   //   one shared window: both are section-13
-                           //   callees returning with eem on
-    jsp i [clockTurn:2]
-    jsp i [lampTurn:1]    //   callees returning with eem on
+// CLAUDE 01-Sep-26: only clockTurn/lampTurn are left here. dwarfTurn and
+// pirateTurn moved to the top of turnLoop -- see the comment there. The clock
+// and the lamp countdown are adven.f4's label-2600 block, which runs between
+// the room description and the command read, so this slot is already the
+// right one for them and their per-turn accounting is unchanged.
+    eem                   // S3B: lampTurn lives in bank 1, clockTurn in bank 2 --
+    jsp i [clockTurn:2]   //   one shared window; both are section-13 callees
+    jsp i [lampTurn:1]    //   returning with eem on
     lem
-    jsp pirateTurn        // per-turn pirate activation/theft hook -- see pirateTurn above
 
     lac nounTok
     SKIP_NEXT_IF_AC_NOT_ZERO       // skip when a second word exists
@@ -5970,10 +6022,17 @@ destVal, 0
 DWARF_ROOM_SCRATCH,
     table ROOMTAB_RECORDSIZE
 
-// dwarfTurn -- Runs once per player command, BEFORE the command
-// is dispatched to the verb dispatch, matching the orginal game's flow.
-// The dwarf-processing block runs unconditionally every turn,
-// regardless of the typed verb, and only then is the player's command itself acted on.
+// dwarfTurn -- Runs once per player command, at the top of turnLoop, i.e.
+// AFTER that command has been fully dispatched (CLAUDE 01-Sep-26: it used to
+// run before the dispatch, which put the dwarves one command ahead of the
+// player -- see turnLoop's own note). The original runs its dwarf block at
+// label 74, right after LOC=NEWLOC, so the dwarves always act in the room the
+// player has just arrived in; this placement is the equivalent.
+// The dwarf-processing block runs unconditionally every turn, regardless of
+// the typed verb. (The source is narrower -- only verbs that GOTO 2, chiefly
+// movement, re-enter the dwarf block at all; verbs ending at 2011/2012/2600
+// skip it. This port's every-turn model is a deliberate, long-standing
+// deviation, unchanged here.)
 //
 // State machine (dwarfStage, a direct analog of the source's DFLAG):
 //   0 = no dwarf activity yet (waiting to reach dwarf territory)
@@ -6145,7 +6204,11 @@ dtTallyStickRoll,                                   // == 0 (skip): no RESTORE y
 // Same 3-in-32 (9.375%) approximation as the original dtKnifeDraw, now
 // rolled once per attacking dwarf in this loop instead of once per turn.
     jsp i [rand18:0]
-    and [31
+// CLAUDE 01-Sep-26: the 0d prefix is required. This file assembles in
+// octal, so a bare [31 is 0d25 -- bits {0,3,4} -- which makes the draw
+// land in {0,1,8,9,16,17,24,25} and the {0,1,2} chain below hit 2-in-8
+// = 25%, not the intended 3-in-32 = 9.375% (adven.f4's figure is 9.5%).
+    and [0d31
     SKIP_NEXT_IF_DIFFERENT [0
     jmp dtTallyStickHit          // branch 1 (equal to 0): a hit
     SKIP_NEXT_IF_DIFFERENT [1
@@ -6220,7 +6283,12 @@ dtStickHitSingle,
 dtAttackPlural,
     lio dwAttack
     law attackCountMsg
-    jsp printCountMsg     // same-bank now
+// CLAUDE 01-Sep-26: jda, not jsp. printCountMsg is a jda-entry routine --
+// the caller's AC (the message address) is deposited into its leading
+// word and read back by its own lac printCountMsg. A jsp lands on that
+// data word instead and never passes the argument, so every multi-dwarf
+// ATTACK/STICK line printed the wrong text or none.
+    jda printCountMsg     // same-bank now
     lac dwStick
     SKIP_NEXT_IF_AC_ZERO
     jmp dtStickCheckMulti
@@ -6238,7 +6306,8 @@ dtStickOneHit,
 dtStickPlural,
     lio dwStick                 // count of dwarves that stuck you
     law stickCountMsg
-    jsp printCountMsg
+// CLAUDE 01-Sep-26: jda, not jsp -- see dtAttackPlural above.
+    jda printCountMsg
     jmp pdEnter1                // go straight to the death flow
 
 dtDone,
@@ -7582,7 +7651,13 @@ sgPrintReport,
     dio scoreVal
 
     lac i [turns:0]           // eem ON (inherited from scoreGame) -- bank-0 far fetch
-    dio turnsVal
+// CLAUDE 01-Sep-26: dac, not dio. lac leaves the fetched value in AC and does
+// not touch IO, and IO still holds the score deposited by the dio scoreVal
+// above -- so "USING t TURNS." printed the SCORE again, not the turn count.
+// Invisible until now for a second reason: nothing incremented turns at all
+// (see turnLoop's tlSkipMagicCheck), so this line had no correct value to
+// print either way.
+    dac turnsVal
     lem                        // OFF from here through the "...USING t TURNS." line --
                                   // txtascB2/sgPrint3Digit/sgPrint4Digit all need eem off
     law sgMsgScored
@@ -8448,6 +8523,12 @@ plToBuilding,
 plGo,
     lia
     lac i [prevRoom:0]
+// CLAUDE 01-Sep-26: restored -- this store was lost in the production
+// comment strip, which left the lac above dead. adven.f4 label 8 runs
+// OLDLC2=OLDLOC for every motion word except NULL/BACK/LOOK/CAVE, and
+// PLUGH is motion word 65, same class as XYZZY/PLOVER -- so the source
+// shifts on PLUGH exactly as xyGo/plvGo already do here.
+    dac i [oldLc2:0]
     lac i [curRoom:0]
     dac i [prevRoom:0]
     lai
@@ -9091,6 +9172,20 @@ dthCheckVaseMishandle,          // VASE mishandle, THROW VASE too
     SKIP_NEXT_IF_AC_ZERO                   // skip when AC == 0 (not handled) -- falls through to dthCheckDwarf
     jmp i [turnLoop:0]              // AC != 0 (no skip): checkVaseMishandle already did everything
 dthCheckDwarf,                 // AC == 0: none of the special cases above applied
+// CLAUDE 01-Sep-26: adven.f4:1551's "IF(OBJ.NE.AXE)GOTO 9020" -- throwing
+// anything but the axe is a plain DROP, and the source makes that test BEFORE
+// the dwarf scan. Without it every object that survived the special cases
+// above ran the full dwarf-combat path, so THROW LAMP could kill a dwarf.
+// f4's 9020 is the shared drop tail; doThrow has already run the bird/snake,
+// bear and vase checks that precede it, so the equivalent re-entry here is
+// ddCheckVendingCoins -- f4 9024's vending-machine case, which a non-axe
+// THROW reaches through 9020 and which doThrow otherwise never checks.
+// objLocPtr holds the ADDRESS of this object's loc cell, so comparing it
+// against the axe's cell is the object-identity test (same idiom as
+// doAttack's daFound dragon check).
+    lac i [objLocPtr:0]
+    SKIP_NEXT_IF_SAME [FAR_OBJ_LOC(OBJ_AXE)   // skip when it IS the axe -- fall into the scan
+    jmp ddCheckVendingCoins                    // not the axe (no skip): plain DROP (f4 9020)
 // adven.f4 lines 1551-1555.
 // "DO 9171 I=1,5 / IF(DLOC(I).EQ.LOC)GOTO9172" is a plain first-match scan
 // over I=1..5 in fixed array order. Mirrored exactly here: scan
@@ -9180,7 +9275,11 @@ dthTmp, 0                     // pointer-indirection temp (rule 4)
 dthDwarfPtr, 0                // scan scratch (moved from bank 0 with the body)
 dthScanIx, 0
 dthMaskPtr, 0
-dthKillList, 0d32             // probabilitySelector2 list: id unused (single-outcome test)
+// CLAUDE 01-Sep-26: 0d66 (67%), not 0d32 (33%) -- the polarity was
+// inverted. adven.f4:1566's IF(RAN(3).EQ.0...)GOTO 9175 branches to the
+// print-SPK tail with SPK still 48 (dodge), so RAN(3).EQ.0 is the 1-in-3
+// MISS and the fall-through is the 2-in-3 KILL.
+dthKillList, 0d66             // probabilitySelector2 list: id unused (single-outcome test)
              0                // list terminator
 
 doAttack,

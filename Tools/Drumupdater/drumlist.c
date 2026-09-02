@@ -21,6 +21,10 @@
 #include <string.h>
 
 #define DEFAULT_IMAGE "/opt/pidp1-mods/pdp23drum"
+#define WORDS_PER_TRACK 4096
+#define ADVENTURE_SAVE_TRACK 16
+#define ADVENTURE_LAST_TRACK 22
+#define ADVENTURE_SAVE_MAGIC 31344
 
 typedef int Word;        // we put the 18 bit PDP-1 words into a 32 bit integer
 Word buffer[128]; 
@@ -33,6 +37,8 @@ main(int argc, char **argv)
 {
 int opt;
 int fd;
+bool adventurePresent = false;
+Word adventureMagic;
 int trackNo = 0;
 char *cP, *cP2;
 char imageName[512];
@@ -55,6 +61,16 @@ char imageName[512];
         fprintf(stderr,"Can't open drum image file '%s'\n", imageName);
         exit(1);
     }
+    // Adventure's SAVE block begins at word 0 of track 16.  Use the
+    // same validity magic as AdvDataLoader/advdrumloader.c.
+    if( lseek(fd, ADVENTURE_SAVE_TRACK * WORDS_PER_TRACK * sizeof(Word), SEEK_SET) >= 0 )
+    {
+        if( (read(fd, &adventureMagic, sizeof(Word)) == sizeof(Word)) &&
+            (adventureMagic == ADVENTURE_SAVE_MAGIC) )
+        {
+            adventurePresent = true;
+        }
+    }
 
     // The start address is in location 07773.
     // Location 07774 will be 1 to indicate the presence of a label.
@@ -71,6 +87,22 @@ char imageName[512];
 
     for( trackNo = 0; trackNo < 32; ++trackNo )
     {
+        // Check Adventure before seeking to 07751.  Its final room-data
+        // track may be partial and need not contain that far-offset word.
+        if( adventurePresent &&
+            (trackNo >= ADVENTURE_SAVE_TRACK) &&
+            (trackNo <= ADVENTURE_LAST_TRACK) )
+        {
+            if( trackNo == ADVENTURE_SAVE_TRACK )
+                printf("Track %d: Adventure text/data (SAVE/WIZCOM)\n", trackNo);
+            else if( trackNo <= 19 )
+                printf("Track %d: Adventure text/data\n", trackNo);
+            else
+                printf("Track %d: Adventure room data\n", trackNo);
+
+            continue;
+        }
+
         lseek(fd, (07751 + (trackNo * 4096)) * sizeof(Word), SEEK_SET);
         if( !read(fd, buffer, 027 * sizeof(Word)) )   // read 7751-7777
         {

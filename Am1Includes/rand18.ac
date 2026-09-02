@@ -97,7 +97,7 @@ probabilitySelector,
     lia             // div ignores IO bit 17, but not important
     cla
     div [0d100]
-    rcr 1s          // low IO bit isn't used
+    nop             // div executes here on overflow, won't happen
     dio rand
 
     // Go through the list looking for a match.
@@ -170,7 +170,7 @@ loop,
     lia
     cla
     div [0d100]
-    rcr 1s          // low IO bit isn't used
+    nop             // div executes here on overflow, won't happen
     dio rand
 
     lac i ptr
@@ -204,17 +204,17 @@ rtn, 0
 selectRandom, 0
     local rtn
     dac rtn         // full 16 bit address
-    dio ptr                 // we will need this later
+    dio ptr         // we will need this later
     jsp rand18
     // Now divide by the count, we want the remainder.
     lia
     cla
-    div selectRandom        // has count, the AC value from the caller
-    rcr 1s                  // low IO bit isn't used
-    lai                     // IO now has the remainder, 0..count-1 in range
+    div selectRandom // has count, the AC value from the caller
+    nop             // div executes here on overflow, won't happen
+    lai             // IO now has the remainder, 0..count-1 in range
     add ptr
     dac ptr
-    lac i ptr               // get the selected entry's value and return it
+    lac i ptr      // get the selected entry's value and return it
     jmp i rtn
 rtn, 0
     endloc

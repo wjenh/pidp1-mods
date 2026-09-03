@@ -107,7 +107,8 @@
  * 19-Aug-2026 wje - fix use of wrong pc when emitting an automatically-emitted constant in multibank use
  * 28-Aug-2026 fab - make output deterministic using a serial number instead of a memory address for hashing
  * 30-Aug-2026 wje - add -S, memory usage summary
- * 31-Aug-2026 wje - replace accidentially deletec lex pattern for DOTEXT
+ * 31-Aug-2026 wje - replace accidentially deleted lex pattern for DOTEXT
+ * 3-Sep-2026 wje - just some formatting cleanup, no code change, no version change
  *
 */
 #include <unistd.h>
@@ -724,12 +725,6 @@ typeToName(int type)
     case CONSTANTS:
         return("constants");
         break;
-    case RELOC:
-        return("reloc");
-        break;
-    case ENDRELOC:
-        return("endreloc");
-        break;
     case SEPARATOR:
         return("<separator>");
         break;
@@ -755,8 +750,6 @@ SymNodeP symP;
     case ADDLOCAL:
     case ENDLOC:
     case CONSTANTS:
-    case RELOC:
-    case ENDRELOC:
     case STOP:
         return(nameP);
 

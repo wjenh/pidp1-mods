@@ -25,24 +25,6 @@ bool atSol = true;                      // initially true
 int curBank;
 BankContextP banksP;
 BankContextP curBankP;
-
-// Used by the label rules below to carry the label's own symbol and the PC
-// at the label's location across mid-rule actions.
-//
-// pendingLabelSymP / pendingLabelLocType: carry the symbol and location type
-// so the label is registered in the symbol table *before* labelTrailer is
-// parsed.  This fixes a real use-after-free in the "NAME LOCATION" case: see
-// Claude/skill-updates/syntax-additions.md, am1 bug 1, for the full root-cause
-// writeup (same-line self-reference, e.g. "foo, jmp foo", confirmed via
-// AddressSanitizer).
-//
-// pendingLabelPC: the value of curBankP->cur_pc at the moment the label is defined.
-// It is captured in each label rule's mid-rule action, *before* labelTrailer
-// is parsed.  This is necessary because labelTrailer's TEXT/ASCII/TYPE340
-// alternatives advance curBankP->cur_pc themselves (for the multi-word string), so by
-// the time the final rule action fires curBankP->cur_pc has already moved.  Using
-// pendingLabelPC ensures the LOCATION node always gets the label's starting
-// address, not the post-string address.
 static SymNodeP pendingLabelSymP;
 static int pendingLabelLocType;
 static int pendingLabelPC;
@@ -94,7 +76,6 @@ extern bool fileIsMain(char *nameP);
 extern void checkPCBound(char *msgP, int pc, int lineNo);
 extern void leave(int);
 extern LocalContextP newLocalContext(void);
-extern SymNodeP resolveLocalSymbol(char *);
 extern PNodeP binop(int lineNo, int pc, int value, PNodeP leftP, PNodeP rightP);
 extern PNodeP unop(int lineNo, int pc, int value, PNodeP expP);
 extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
@@ -178,7 +159,6 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %token SEPARATOR TERMINATOR SEMI EMPTYLINE
 
 %token CONSTANTS
-%token RELOC ENDRELOC
 
 /* union declarations for non-terminals */
 
@@ -346,10 +326,12 @@ stmt_list       : stmt terminator
                 }
                 ;
 
-// Many rules have to look ahead a token, and if that's a terminator, the line number will have been incremented.
-// So, newnode() automatically decrements it.
-// But, for some other statements, they don't look ahead, so the line number won't have been incremented yet.
-// Adjust it for those.
+                // Many rules have to look ahead a token, and if that's a terminator,
+                // the line number will have been incremented.
+                // So, newnode() automatically decrements it.
+                // But, for some other statements, they don't look ahead, so the line number won't
+                // have been incremented yet.
+                // Adjust it for those.
 stmt            : one_stmt
                 {
                     $$ = $1;
@@ -409,18 +391,10 @@ one_stmt        : expr
                 }
                 | NAME LOCATION
                 {
-                    // Register the label's own symbol HERE, before labelTrailer
-                    // (below) is parsed. This matters for a same-line
-                    // self-reference like "foo, jmp foo": if registration
-                    // were deferred until after labelTrailer, the lexer would
-                    // not yet know "foo" when it scans the second occurrence
-                    // inside labelTrailer, so the bare-NAME expression rule
-                    // would create its own forward-reference SymNode for "foo"
-                    // and a parse tree node would cache a raw pointer to it.
-                    // Registering the label first means that second occurrence
-                    // resolves as an ADDR to this same symbol instead, so no
-                    // duplicate node is ever created (and none is later freed
-                    // out from under a live pointer).
+                    // Register the label's symbol here, before labelTrailer is parsed.
+                    // This matters for a same-line self-reference like "foo, jmp foo".
+                    // If registration were deferred until after labelTrailer,
+                    // the lexer would not yet know "foo" when it scans the second occurrence.
                     //
                     // pendingLabelPC is saved here so the final action can
                     // use the label's starting address even if labelTrailer's
@@ -451,14 +425,9 @@ one_stmt        : expr
                 }
                 labelTrailer
                 {
-                    // Use pendingLabelPC (captured in the mid-rule action above)
-                    // rather than curBankP->cur_pc here.  If labelTrailer matched a
-                    // TEXT/ASCII/TYPE340 alternative it already advanced curBankP->cur_pc
-                    // and also set PN_NOINC on the node, so this action must
-                    // not increment again.  For a normal expression labelTrailer
-                    // returns a non-PN_NOINC node and curBankP->cur_pc == pendingLabelPC
-                    // (unchanged by a simple expression), so incrementing here
-                    // is correct for that case too.
+                    // Use pendingLabelPC rather than curBankP->cur_pc here.
+                    // If labelTrailer matched a TEXT/ASCII/TYPE340 alternative it already
+                    // advanced curBankP->cur_pc and also set PN_NOINC on the node.
                     if( $4 && !($4->flags & PN_NOINC) )
                     {
                         ++curBankP->cur_pc;
@@ -469,7 +438,7 @@ one_stmt        : expr
                 | ADDR LOCATION
                 {
                     // Capture curBankP->cur_pc before labelTrailer is parsed; a
-                    // TEXT/ASCII/TYPE340 alternative in labelTrailer will
+                    // TEXT/ASCII/TYPE340 in labelTrailer will
                     // advance curBankP->cur_pc, and we need the label's starting
                     // address for both the symbol value and the node pc.
                     pendingLabelPC = curBankP->cur_pc;
@@ -704,22 +673,6 @@ optExpr         : expr
                 }
                 ;
 
-// labelTrailer is used in place of optExpr in the four label rules
-// (NAME LOCATION, ADDR LOCATION, LCLNAME LOCATION, LCLADDR LOCATION).
-// It extends optExpr with TEXT, ASCII STRING, and TYPE340 T340STRING
-// alternatives, allowing constructs like:
-//
-//     msg,  text "hello\n"
-//     data, ascii "abc"
-//     gfx,  type340 "XYZ"
-//
-// on a single line.  The TEXT/ASCII/TYPE340 alternatives:
-//   - create their node with pc = pendingLabelPC (the label's address,
-//     saved by the enclosing label rule's mid-rule action before this
-//     non-terminal is parsed)
-//   - advance curBankP->cur_pc by the string's word count themselves
-//   - set PN_NOINC on the returned node so the enclosing label rule's
-//     final action does not attempt a second curBankP->cur_pc increment
 labelTrailer    : optExpr
                 {
                     $$ = $1;
@@ -1457,7 +1410,10 @@ char symbol[256];
         verror("file '%s' is not a version %s symbol file", filenameP, SYMFILEVERSION);
     }
 
-    fgets(str, sizeof(str), infP);              // third line, file name, just skip it
+    if( !fgets(str, sizeof(str), infP) )              // third line, file name, just skip it
+    {
+        verror("error reading file '%s'", filenameP, SYMFILEVERSION);
+    }
 
     // Ok, now the symbols
     while( fgets(str, sizeof(str), infP) )

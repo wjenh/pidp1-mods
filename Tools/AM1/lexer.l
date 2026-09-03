@@ -50,99 +50,99 @@ extern void vwarn(int errtype, char *msgP, ...);
 %%
 
 <FIRST>^[^#].*$		{
-			    BEGIN BODY;
-			    lineno = 1;    // always our first line
-			    yylval.strP = malloc(strlen(yytext) + 1);
-			    strcpy(yylval.strP, yytext);
-			    return(HEADER);
-			}
+                        BEGIN BODY;
+                        lineno = 1;    // always our first line
+                        yylval.strP = malloc(strlen(yytext) + 1);
+                        strcpy(yylval.strP, yytext);
+                        return(HEADER);
+                    }
 
-^[ \t]*"/*"		{
-			    BEGIN(CCOMMENT);
-			    strcpy(commentBuf, yytext);
-			    commentP = commentBuf + strlen(commentBuf);
-			    *commentP = '\0';
-			    yylval.ival = lineno;
-			    return(CSSTART);
-			}
+^[ \t]*"/*"		    {
+                        BEGIN(CCOMMENT);
+                        strcpy(commentBuf, yytext);
+                        commentP = commentBuf + strlen(commentBuf);
+                        *commentP = '\0';
+                        yylval.ival = lineno;
+                        return(CSSTART);
+                    }
 
 <CCOMMENT>"*/"		{
-			    BEGIN BODY;
-			    *commentP = '\0';
-			    yylval.strP = malloc(commentP - commentBuf + 1);
-			    strcpy(yylval.strP, commentBuf);
-			    unput('\n');    // sometimes lookahead screws up start-of-line
-			    return(CSCOMMENT);
-			}
+                        BEGIN BODY;
+                        *commentP = '\0';
+                        yylval.strP = malloc(commentP - commentBuf + 1);
+                        strcpy(yylval.strP, commentBuf);
+                        unput('\n');    // sometimes lookahead screws up start-of-line
+                        return(CSCOMMENT);
+                    }
 
-<CCOMMENT>\n	{
-			    ++lineno;
+<CCOMMENT>\n	    {
+                        ++lineno;
 
-			    if( commentP >= &commentBuf[MAXCCOMMENT] )
-			    {
-			    	verror("C-style comment exceeds %d characters", MAXCCOMMENT - 1);
-			    }
+                        if( commentP >= &commentBuf[MAXCCOMMENT] )
+                        {
+                            verror("C-style comment exceeds %d characters", MAXCCOMMENT - 1);
+                        }
 
-			    *commentP++ = yytext[0];
-			}
+                        *commentP++ = yytext[0];
+                    }
 
 <CCOMMENT>[^*\n]*	{
-			int len;
+                    int len;
 
-			    len = strlen(yytext);
-			    if( (commentP + len) >= &commentBuf[MAXCCOMMENT] )
-			    {
-			    	verror("C-style comment exceeds %d characters", MAXCCOMMENT - 1);
-			    }
+                        len = strlen(yytext);
+                        if( (commentP + len) >= &commentBuf[MAXCCOMMENT] )
+                        {
+                            verror("C-style comment exceeds %d characters", MAXCCOMMENT - 1);
+                        }
 
-			    strcpy(commentP, yytext);
-			    commentP += len;
-			}
+                        strcpy(commentP, yytext);
+                        commentP += len;
+                    }
 
 <CCOMMENT>"*"+[^*/\n]*	{
-			int len;
+                    int len;
 
-			    len = strlen(yytext);
-			    if( (commentP + len) >= &commentBuf[MAXCCOMMENT] )
-			    {
-			    	verror("C-style comment exceeds %d characters", MAXCCOMMENT - 1);
-			    }
+                        len = strlen(yytext);
+                        if( (commentP + len) >= &commentBuf[MAXCCOMMENT] )
+                        {
+                            verror("C-style comment exceeds %d characters", MAXCCOMMENT - 1);
+                        }
 
-			    strcpy(commentP, yytext);
-			    commentP += len;
-			}
+                        strcpy(commentP, yytext);
+                        commentP += len;
+                    }
 
 <CCOMMENT><<EOF>>	{
-			    verror("unterminated C-style comment, missing */", yytext);
-			}
+                        verror("unterminated C-style comment, missing */", yytext);
+                    }
 
-[ \t]*"//".*\n	{
-			char *cP;
+[ \t]*"//".*\n	    {
+                    char *cP;
 
-			    cP = strchr(yytext, '/') + 2;
-			    yylval.strP = malloc(strlen(cP) + 1);
-			    strcpy(yylval.strP, cP);
-			    *strchr(yylval.strP, '\n') = 0;
+                        cP = strchr(yytext, '/') + 2;
+                        yylval.strP = malloc(strlen(cP) + 1);
+                        strcpy(yylval.strP, cP);
+                        *strchr(yylval.strP, '\n') = 0;
 
-			    if( inConstant )
-			    {
-			    	noIncrement = true;    // because we're going to push back a newline
-			    }
+                        if( inConstant )
+                        {
+                            noIncrement = true;    // because we're going to push back a newline
+                        }
 
-			    if( !noIncrement && !sawSemi )
-			    {
-			        ++lineno;
-			    }
-			    noIncrement = sawSemi = false;
+                        if( !noIncrement && !sawSemi )
+                        {
+                            ++lineno;
+                        }
+                        noIncrement = sawSemi = false;
 
-			    if( inConstant )
-			    {
-			    	unput('\n');
-			    }
-			    inConstant = false;
+                        if( inConstant )
+                        {
+                            unput('\n');
+                        }
+                        inConstant = false;
 
-			    return(COMMENT);
-			}
+                        return(COMMENT);
+                    }
 
 \%forcelocal		{ return(FORCELOC); }
 
@@ -151,12 +151,12 @@ addloc(al)?[ \t]*	{ return(ADDLOCAL); }
 priv(ate)?[ \t]*	{ return(PRIVATE); }
 endloc(al)?[ \t]*	{ return(ENDLOC); }
 
-var[ \t]*		{ return(VAR); }
-table[ \t]*		{ return(TABLE); }
-bank[ \t]*		{ return(BANK); }
-thisbank[ \t]*	{ return(THISBANK); }
+var[ \t]*	    	{ return(VAR); }
+table[ \t]*	    	{ return(TABLE); }
+bank[ \t]*	    	{ return(BANK); }
+thisbank[ \t]*  	{ return(THISBANK); }
 
-\:			{ return(BREF); }
+\:		        	{ return(BREF); }
 ^[ \t]*start[ \t]*	{ return(START); }
 ^[ \t]*stop[ \t]*	{ return(STOP); }
 ^[ \t]*constants[ \t]*	{ return(CONSTANTS); }
@@ -164,724 +164,725 @@ thisbank[ \t]*	{ return(THISBANK); }
 ^[ \t]*import[ \t]*	{ return(IMPORT); }
 ^[ \t]*export[ \t]*	{ return(EXPORT); }
 
-ascii[ \t]+		{ return(ASCII); }
-text[ \t]+		{ BEGIN DOTEXT; }
+ascii[ \t]+ 		{ return(ASCII); }
+text[ \t]+  		{ BEGIN DOTEXT; }
 
 type340[ \t]+		{
-			    BEGIN T340STR;
-			    return(TYPE340);
-			}
+                        BEGIN T340STR;
+                        return(TYPE340);
+                    }
 
 flexo[ \t][^\n;]{1,3}	{
-			int i, ch, shift, nshifts, nchars;
-			char *cP;
-			int rslt;
+                    int i, ch, shift, nshifts, nchars;
+                    char *cP;
+                    int rslt;
 
-			    cP = yytext;
-			    // skip to the argument
-			    while( *cP && !isspace(*cP) )
-			    {
-			        ++cP;
-			    }
+                        cP = yytext;
+                        // skip to the argument
+                        while( *cP && !isspace(*cP) )
+                        {
+                            ++cP;
+                        }
 
-			    while( isspace(*cP) )
-			    {
-			    	++cP;
-			    }
+                        while( isspace(*cP) )
+                        {
+                            ++cP;
+                        }
 
-			    nchars = strlen(cP);
-			    for( nshifts = shift = i = rslt = 0; i < nchars; ++i )
-			    {
+                        nchars = strlen(cP);
+                        for( nshifts = shift = i = rslt = 0; i < nchars; ++i )
+                        {
+                            if( *cP == '\\' )		// special directive, red, black, newline
+                            {
+                                ++cP;
+                                ++i;
 
-				if( *cP == '\\' )		// special directive, red, black, newline
-				{
-				    ++cP;
-				    ++i;
+                                if( nchars <= 0 )
+                                {
+                                    verror("invalid \\ in flexo, no directive character");
+                                }
 
-				    if( nchars <= 0 )
-				    {
-				        verror("invalid \\ in flexo, no directive character");
-				    }
+                                switch( *cP )
+                                {
+                                case 'B':
+                                    ch = BLACK;
+                                    break;
 
-				    switch( *cP )
-				    {
-				    case 'B':
-				    	ch = BLACK;
-					break;
+                                case 'R':
+                                    ch = RED;
+                                    break;
 
-				    case 'R':
-				    	ch = RED;
-					break;
+                                case 'n':
+                                    ch = FLEX_CR;
+                                    break;
 
-				    case 'n':
-				    	ch = FLEX_CR;
-					break;
+                                case '\\':
+                                    ch = '\\';
+                                    break;
 
-				    case '\\':
-				    	ch = '\\';
-					break;
+                                default:
+                                    verror("\\%c in text is not valid", *cP);
+                                }
+                            }
+                            else
+                            {
+                                ch = asciiToFlexo(*cP, &shift);
+                            }
 
-				    default:
-				        verror("\\%c in text is not valid", *cP);
-				    }
-				}
-				else
-				{
-				    ch = asciiToFlexo(*cP, &shift);
-				}
+                            if( ch == NONE )
+                            {
+                                vwarn(WARN_FLEX,
+                                    "The character '%c' is not a Flexo character, replaced with space", *cP);
+                                ch = FLEX_SPACE;
+                            }
 
-				if( ch == NONE )
-				{
-				    vwarn(WARN_FLEX,
-				        "The character '%c' is not a Flexo character, replaced with space", *cP);
-				    ch = FLEX_SPACE;
-				}
+                            rslt <<= 6;
+                            rslt |= ch;
 
-			    	rslt <<= 6;
-				rslt |= ch;
+                            if( (ch != CSHIFT) && (ch != CUNSHIFT) )
+                            {
+                                ++cP;
+                            }
+                            else
+                            {
+                                ++nshifts;
+                            }
+                        }
 
-				if( (ch != CSHIFT) && (ch != CUNSHIFT) )
-				{
-				    ++cP;
-				}
-				else
-				{
-				    ++nshifts;
-				}
-			    }
+                        if( (nchars + nshifts) > 3 )
+                        {
+                            vwarn(WARN_FLEX,
+                            "only the first %d characters used because shift/unshift codes needed",
+                            nchars - nshifts);
+                        }
 
-			    if( (nchars + nshifts) > 3 )
-			    {
-			    	vwarn(WARN_FLEX,
-				    "only the first %d characters used because shift/unshift codes needed",
-				    nchars - nshifts);
-			    }
+                        while( nchars++ < 3 )
+                        {
+                            rslt <<= 6;
+                        }
 
-			    while( nchars++ < 3 )
-			    {
-			    	rslt <<= 6;
-			    }
-
-			    yylval.ival = rslt;
-			    return(FLEXO);
-		        }
+                        yylval.ival = rslt;
+                        return(FLEXO);
+                    }
 
 char[ \t]+.[lmr]	{
-			int rslt;
-			int shift;
-			char *cP;
+                    int rslt;
+                    int shift;
+                    char *cP;
 
-			    cP = yytext;
-			    // skip to the argument
-			    while( *cP && !isspace(*cP) )
-			    {
-			        ++cP;
-			    }
+                        cP = yytext;
+                        // skip to the argument
+                        while( *cP && !isspace(*cP) )
+                        {
+                            ++cP;
+                        }
 
-			    while( isspace(*cP) )
-			    {
-			    	++cP;
-			    }
+                        while( isspace(*cP) )
+                        {
+                            ++cP;
+                        }
 
-			    rslt = *cP++ ;
-			    shift = 0;
-			    rslt = asciiToFlexo(rslt, &shift);
-			    if( rslt == CSHIFT )
-			    {
-			    	verror("The character '%c' is a shifted Flexo character, not allowed",
-				    *(cP - 1));
-			    }
-			    else if( rslt == NONE )
-			    {
-			    	vwarn(WARN_FLEX, "The character '%c' is not a Flexo character, replaced with space",
-				    *(cP - 1));
-				rslt = FLEX_SPACE;
-			    }
+                        rslt = *cP++ ;
+                        shift = 0;
+                        rslt = asciiToFlexo(rslt, &shift);
+                        if( rslt == CSHIFT )
+                        {
+                            verror("The character '%c' is a shifted Flexo character, not allowed",
+                            *(cP - 1));
+                        }
+                        else if( rslt == NONE )
+                        {
+                            vwarn(WARN_FLEX, "The character '%c' is not a Flexo character, replaced with space",
+                            *(cP - 1));
+                            rslt = FLEX_SPACE;
+                        }
 
-			    switch( *cP )
-			    {
-			    case 'l':
-				rslt <<= 12;
-			    	break;
-			    case 'm':
-				rslt <<= 6;
-			    	break;
-			    case 'r':
-			    	break;
-			    }
+                        switch( *cP )
+                        {
+                        case 'l':
+                        rslt <<= 12;
+                            break;
+                        case 'm':
+                        rslt <<= 6;
+                            break;
+                        case 'r':
+                            break;
+                        }
 
-			    yylval.ival = rslt;
-			    return(CHAR);
-			}
+                        yylval.ival = rslt;
+                        return(CHAR);
+                    }
 
-decimal			{ decimalMode = true; }
-octal			{ decimalMode = false; }
+decimal		    	{ decimalMode = true; }
+octal		    	{ decimalMode = false; }
 
-[ ]*\&[ ]*		{ return(AND); }
-[ ]*\|[ ]*		{ return(OR); }
-[ ]*\^[ ]*		{ return(XOR); }
-[ ]*\~[ ]*		{ return(CMPL); }
-[ ]*\+[ ]*		{ return(PLUS); }
-[ ]*\-[ ]*		{ return(MINUS); }
-[ ]*\/[ ]*		{ return(DIV); }
-[ ]*\*[ ]*		{ return(MUL); }
-[ ]*%%[ ]*		{ return(MOD); }
-[ ]*<<[ ]*		{ return(LSHIFT); }
-[ ]*>>[ ]*		{ return(RSHIFT); }
-\.			{ return(DOT); }
-\,[ \t]*		{ return(LOCATION); }
+[ ]*\&[ ]*	    	{ return(AND); }
+[ ]*\|[ ]*	    	{ return(OR); }
+[ ]*\^[ ]*	    	{ return(XOR); }
+[ ]*\~[ ]*	    	{ return(CMPL); }
+[ ]*\+[ ]*	    	{ return(PLUS); }
+[ ]*\-[ ]*	    	{ return(MINUS); }
+[ ]*\/[ ]*	    	{ return(DIV); }
+[ ]*\*[ ]*	    	{ return(MUL); }
+[ ]*%%[ ]*	    	{ return(MOD); }
+[ ]*<<[ ]*	    	{ return(LSHIFT); }
+[ ]*>>[ ]*	    	{ return(RSHIFT); }
+\.		       	    { return(DOT); }
+\,[ \t]*	    	{ return(LOCATION); }
 
-\[			{
-			    inConstant = true;
-			    return(CONSTANT);
-			}
+\[                  {
+                        inConstant = true;
+                        return(CONSTANT);
+                    }
 
-\]			{
-			    inConstant = false;
-			    return(ENDCONST);
-			}
+\]		    	    {
+                        inConstant = false;
+                        return(ENDCONST);
+                    }
 
 0x[0-9A-Fa-f]+		{
-			    yylval.ival = (int)strtol(yytext,0,16);
-			    if( yylval.ival > WRDMASK )
-			    {
-				verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
-				return(BAD);
-			    }
-			    return(INTEGER);
-			}
+                        yylval.ival = (int)strtol(yytext,0,16);
+                        if( yylval.ival > WRDMASK )
+                        {
+                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+                            return(BAD);
+                        }
+                        return(INTEGER);
+                    }
 
-0d[0-9]+		{
-			    yylval.ival = (int)strtol(yytext+2,0,10);
-			    if( yylval.ival > WRDMASK )
-			    {
-				verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
-				return(BAD);
-			    }
-			    return(INTEGER);
-			}
+0d[0-9]+	    	{
+                        yylval.ival = (int)strtol(yytext+2,0,10);
+                        if( yylval.ival > WRDMASK )
+                        {
+                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+                            return(BAD);
+                            }
+                        return(INTEGER);
+                    }
 
-0o[0-7]+		{
-			    yylval.ival = (int)strtol(yytext+2,0,8);
-			    if( yylval.ival > WRDMASK )
-			    {
-				verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
-				return(BAD);
-			    }
-			    return(INTEGER);
-			}
+0o[0-7]+	    	{
+                        yylval.ival = (int)strtol(yytext+2,0,8);
+                        if( yylval.ival > WRDMASK )
+                        {
+                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+                            return(BAD);
+                        }
+                        return(INTEGER);
+                    }
 
-0b[0-1]+		{
-			    yylval.ival = (int)strtol(yytext+2,0,2);
-			    if( yylval.ival > WRDMASK )
-			    {
-				verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
-				return(BAD);
-			    }
-			    return(INTEGER);
-			}
+0b[0-1]+		    {
+                        yylval.ival = (int)strtol(yytext+2,0,2);
+                        if( yylval.ival > WRDMASK )
+                        {
+                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+                            return(BAD);
+                        }
+                        return(INTEGER);
+                    }
 
-[0-9]+			{
-			    if( !decimalMode && (strchr(yytext, '8') || strchr(yytext, '9')) )
-			    {
-				verror("decimal number %s, but in octal mode", yytext);
-				return(BAD);
-			    }
+[0-9]+			    {
+                        if( !decimalMode && (strchr(yytext, '8') || strchr(yytext, '9')) )
+                        {
+                            verror("decimal number %s, but in octal mode", yytext);
+                            return(BAD);
+                        }
 
-			    yylval.ival = (int)strtol(yytext,0,(decimalMode)?10:8);
-			    if( yylval.ival > WRDMASK )
-			    {
-				verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
-				return(BAD);
-			    }
-			    return(INTEGER);
-			}
+                        yylval.ival = (int)strtol(yytext,0,(decimalMode)?10:8);
+                        if( yylval.ival > WRDMASK )
+                        {
+                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+                            return(BAD);
+                        }
+                        return(INTEGER);
+                    }
 
-[1-9]s			{
-			SymNodeP symP;
+[1-9]s			    {
+                    SymNodeP symP;
 
-			    if( (symP = sym_find((SymNodeP *)&permSymP,yytext)) )
-			    {
-			        yylval.symP = symP;
-			        return(VALUESPEC);
-			    }
-			    else
-			    {
-				verror("can't find %s in permanent symbols", yytext);
-			    }
-			}
+                        if( (symP = sym_find((SymNodeP *)&permSymP,yytext)) )
+                        {
+                            yylval.symP = symP;
+                            return(VALUESPEC);
+                        }
+                        else
+                        {
+                            verror("can't find %s in permanent symbols", yytext);
+                        }
+                    }
 
 [a-zA-Z_][a-zA-Z0-9_]*	{
-			SymNodeP symP;
+                        SymNodeP symP;
 
-			    if( (symP = sym_find((SymNodeP *)&permSymP,yytext)) )
-			    {
-				switch( symP->flags & SYM_MASK )
-				{
-				case SYM_VALUE:
-				    yylval.symP = symP;
-				    return(VALUESPEC);
+                            if( (symP = sym_find((SymNodeP *)&permSymP,yytext)) )
+                            {
+                                switch( symP->flags & SYM_MASK )
+                                {
+                                case SYM_VALUE:
+                                    yylval.symP = symP;
+                                    return(VALUESPEC);
 
-				case SYM_OPCODE:
-				    yylval.symP = symP;
-				    return(OPCODE);
+                                case SYM_OPCODE:
+                                    yylval.symP = symP;
+                                    return(OPCODE);
 
-				case SYM_OPADDR:
-				    yylval.symP = symP;
-				    return(OPADDR);
+                                case SYM_OPADDR:
+                                    yylval.symP = symP;
+                                    return(OPADDR);
 
-				case SYM_OPORABLE:
-				    yylval.symP = symP;
-				    return(OPORABLE);
-				}
+                                case SYM_OPORABLE:
+                                    yylval.symP = symP;
+                                    return(OPORABLE);
 
-				verror("inernal error in perm sym lookup");
-			    }
-			    else if( (symP = resolveLocalSymbol(yytext)) )
-			    {
-				yylval.symP = symP;
-				return(LCLADDR);
-			    }
-			    else if( (symP = sym_find(&(curBankP->globalSymP),yytext)) )
-			    {
-				yylval.symP = symP;
-				return(ADDR);
-			    }
-			    else
-			    {
-				yylval.strP = malloc(yyleng+1);
-				strcpy(yylval.strP,yytext);
-				return(NAME);
-			    }
-			}
+                                default:
+                                    verror("inernal error in perm sym lookup");
+                                }
+                            }
+                            else if( (symP = resolveLocalSymbol(yytext)) )
+                            {
+                                yylval.symP = symP;
+                                return(LCLADDR);
+                            }
+                            else if( (symP = sym_find(&(curBankP->globalSymP),yytext)) )
+                            {
+                                yylval.symP = symP;
+                                return(ADDR);
+                            }
+                            else
+                            {
+                                yylval.strP = malloc(yyleng+1);
+                                strcpy(yylval.strP,yytext);
+                                return(NAME);
+                            }
+                        }
 
 %[a-zA-Z_][a-zA-Z0-9_]*	{
-			SymNodeP nodeP;
+                    SymNodeP nodeP;
 
-			    if( (nodeP = resolveLocalSymbol(yytext)) )
-			    {
-				yylval.symP = nodeP;
-				return(LCLADDR);
-			    }
-			    else
-			    {
-				yylval.strP = malloc(yyleng+1);
-				strcpy(yylval.strP,yytext);
-				return(LCLNAME);
-			    }
-			}
+                        if( (nodeP = resolveLocalSymbol(yytext)) )
+                        {
+                            yylval.symP = nodeP;
+                            return(LCLADDR);
+                        }
+                        else
+                        {
+                            yylval.strP = malloc(yyleng+1);
+                            strcpy(yylval.strP,yytext);
+                            return(LCLNAME);
+                        }
+                    }
 
-^[\t ]+			{ }
+^[\t ]+	            { }
 
-[\t ]+			{
-			    return(SEPARATOR);
-			}
+[\t ]+	            {
+                        return(SEPARATOR);
+                    }
 
 \/[ \t]*[^a-zA-Z0-9\~\%\[\/] {
-			    int ch;
+                    int ch;
 
-			    ch = yytext[yyleng-1];
-			    if( ch == '\n' )
-			    {
-			    	++lineno;
-				noIncrement = true;    // we don't want terminator to inc again
-			    }
+                        ch = yytext[yyleng-1];
+                        if( ch == '\n' )
+                        {
+                            ++lineno;
+                            noIncrement = true;    // we don't want terminator to inc again
+                        }
 
-			    unput( ch );
+                        unput( ch );
 
-			    if( ch == '/' )
-			    {
-			    	unput(' ');    // preserve a space between origin and comment
-			    }
-			    return(ORIGIN);
-			}
+                        if( ch == '/' )
+                        {
+                            unput(' ');    // preserve a space between origin and comment
+                        }
+                        return(ORIGIN);
+                    }
 
-^\n			{
-			    if( !noIncrement )
-			    {
-			        ++lineno;
-			    }
-			    noIncrement = sawSemi = false;
-			    return( EMPTYLINE );
-			}
+^\n         		{
+                        if( !noIncrement )
+                        {
+                            ++lineno;
+                        }
+                        noIncrement = sawSemi = false;
+                        return( EMPTYLINE );
+                    }
 
 [ \t]*(\n|\;[ \t]*)	{
-			    if( inConstant )
-			    {
-				inConstant = false;
-				if( strchr(yytext,';') )
-				{
-				    unput(';');
-				}
-				else
-				{
-				    unput('\n');
-				}
+                        if( inConstant )
+                        {
+                            inConstant = false;
+                            if( strchr(yytext,';') )
+                            {
+                                unput(';');
+                            }
+                            else
+                            {
+                                unput('\n');
+                            }
 
-				yylval.strP = 0;
-			        return(ENDCONST);
-			    }
-			    else
-			    {
-				if( strchr(yytext,';') )
-				{
-				    if( !sawSemi )
-				    {
-				        ++lineno;    // only once until real terminator
-				    }
+                            yylval.strP = 0;
+                            return(ENDCONST);
+                        }
+                        else
+                        {
+                            if( strchr(yytext,';') )
+                            {
+                                if( !sawSemi )
+                                {
+                                    ++lineno;    // only once until real terminator
+                                }
 
-				    sawSemi = true;
-				    return(SEMI);
-				}
-				else
-				{
-				    // not semi terminated
-				    if( sawSemi )
-				    {
-				        sawSemi = false;    // we don't incr here, all one line
-				    }
-				    else if( !noIncrement )
-				    {
-					++lineno;
-				    }
+                                sawSemi = true;
+                                return(SEMI);
+                            }
+                            else
+                            {
+                                // not semi terminated
+                                if( sawSemi )
+                                {
+                                    sawSemi = false;    // we don't incr here, all one line
+                                }
+                                else if( !noIncrement )
+                                {
+                                    ++lineno;
+                                }
 
-				    noIncrement = false;
-				    return(TERMINATOR);
-				}
-			    }
-			}
+                                noIncrement = false;
+                                return(TERMINATOR);
+                            }
+                        }
+                    }
 
-<FIRST,BODY>^\#		{
-			    // Handle cpp line number resets
-			    reset_line();
-			    yylval.strP = malloc(strlen(filenameP) + 1);
-			    strcpy(yylval.strP, filenameP);
-			    return( FILENAME );
-			}
+<FIRST,BODY>^\#     {
+                        // Handle cpp line number resets
+                        reset_line();
+                        yylval.strP = malloc(strlen(filenameP) + 1);
+                        strcpy(yylval.strP, filenameP);
+                        return( FILENAME );
+                    }
 
-\'			{
-			int tmpc;
-			int number;
-			int ctr;
+\'			        {
+                    int tmpc;
+                    int number;
+                    int ctr;
 
-			    tmpc = input();
+                        tmpc = input();
 
-			    if( tmpc == '\\' )
-			    {
-				switch( (tmpc = input()) ) /* process \ */
-				{
-				case '\n':	/* \<newline> not allowed */
-				    return(BAD);
-				    break;
+                        if( tmpc == '\\' )
+                        {
+                            switch( (tmpc = input()) ) /* process \ */
+                            {
+                            case '\n':	/* \<newline> not allowed */
+                                return(BAD);
+                                break;
 
-				case 'e':
-				    tmpc = '\033';    /* an escape */
-				    break;
+                            case 'e':
+                                tmpc = '\033';    /* an escape */
+                                break;
 
-				case 'b':
-				    tmpc = '\b';    /* a backspace */
-				    break;
+                            case 'b':
+                                tmpc = '\b';    /* a backspace */
+                                break;
 
-				case '^':		/* ^char */
-				    tmpc = input() & 037;
-				    break;
+                            case '^':		/* ^char */
+                                tmpc = input() & 037;
+                                break;
 
-				case 'f':
-				    tmpc= '\f';    /* formfeed */
-				    break;
+                            case 'f':
+                                tmpc= '\f';    /* formfeed */
+                                break;
 
-				case 'n':		/* a newline */
-				    tmpc= '\n';
-				    break;
+                            case 'n':		/* a newline */
+                                tmpc= '\n';
+                                break;
 
-				case 'r':
-				    tmpc = '\r';    /* return */
-				    break;
+                            case 'r':
+                                tmpc = '\r';    /* return */
+                                break;
 
-				case 't':		/* a tab */
-				    tmpc = '\t';
-				    break;
+                            case 't':		/* a tab */
+                                tmpc = '\t';
+                                break;
 
-				case '\\':		/* an esc'd \ */
-				    break;
+                            case '\\':		/* an esc'd \ */
+                                break;
 
-				case '0':		/* numeric escape */
-				case '1':
-				case '2':
-				case '3':
-				case '4':
-				case '5':
-				case '6':
-				case '7':
-				    number = tmpc - '0';
-				    ctr = 1;
+                            case '0':		/* numeric escape */
+                            case '1':
+                            case '2':
+                            case '3':
+                            case '4':
+                            case '5':
+                            case '6':
+                            case '7':
+                                number = tmpc - '0';
+                                ctr = 1;
 
-				    tmpc = input();
+                                tmpc = input();
 
-				    while( isdigit(tmpc) && (ctr < 3) )
-				    {
-					number = number*8 + (tmpc - '0');
-					++ctr;
-					tmpc = input();
-				    }
+                                while( isdigit(tmpc) && (ctr < 3) )
+                                {
+                                    number = number*8 + (tmpc - '0');
+                                    ++ctr;
+                                    tmpc = input();
+                                }
 
-				    unput(tmpc);
-				    tmpc = number;
-				    break;
+                                unput(tmpc);
+                                tmpc = number;
+                                break;
 
-				default:		/* just char as is */
-				    break;
-				}
-			    }
+                            default:		/* just char as is */
+                                break;
+                            }
+                        }
 
-			    yylval.ival = tmpc;    /* in case is a lit */
+                        yylval.ival = tmpc;    /* in case is a lit */
 
-			    if( (tmpc = input()) == '\'' )
-			    {
-				return(LITCHAR);
-			    }
-			    else
-			    {
-				return(BAD);
-			    }
-			}
+                        if( (tmpc = input()) == '\'' )
+                        {
+                            return(LITCHAR);
+                        }
+                        else
+                        {
+                            return(BAD);
+                        }
+                    }
 
-\"			{
-			int tmpc;
-			char *cP;
-			char string[STRBUF];
+\"			        {
+                    int tmpc;
+                    char *cP;
+                    char string[STRBUF];
 
-			    cP = string;
+                        cP = string;
 
-			    while( (tmpc = input()) != '"' )
-			    {
-				if( cP >= (string+STRBUF) )
-				{
-				    verror("string too long", 0);
-				}
+                        while( (tmpc = input()) != '"' )
+                        {
+                            if( cP >= (string+STRBUF) )
+                            {
+                                verror("string too long", 0);
+                            }
 
-				if( (tmpc == EOF) || (tmpc == '\n') )
-				{
-				    verror("unterminated quote in ascii string");
-				}
+                            if( (tmpc == EOF) || (tmpc == '\n') )
+                            {
+                                verror("unterminated quote in ascii string");
+                            }
 
-				if( tmpc == '\\' )
-				{
-				    tmpc = processEscape(input());
-				    if( !tmpc )
-				    {
-				        continue;    // meant a line continuation
-				    }
-				}
+                            if( tmpc == '\\' )
+                            {
+                                tmpc = processEscape(input());
+                                if( !tmpc )
+                                {
+                                    continue;    // meant a line continuation
+                                }
+                            }
 
-			        *cP++ = (char)tmpc;
-			    }
+                            *cP++ = (char)tmpc;
+                        }
 
-			    *cP = '\0';
+                        *cP = '\0';
 
-			    yylval.strP = (char *)malloc(strlen(string) + 1);
-			    strcpy(yylval.strP, string);
-			    return( STRING );
-			}
+                        yylval.strP = (char *)malloc(strlen(string) + 1);
+                        strcpy(yylval.strP, string);
+                        return( STRING );
+                    }
 
-<T340STR>\"		{
-			int i;
-			int tmpc;
-			int charCount;
-			bool sawEnd;
-			bool sawForcedShift;
-			char *cP;
-			bool inUpper;    // current shift state, false if lower
-			char string[STRBUF];
 
-			    cP = string;
-			    charCount = 0;
-			    sawEnd = false;
-			    sawForcedShift = false;
-			    inUpper = true;    // we always start in upper for the type 340
+<T340STR>\"		    {
+                    int i;
+                    int tmpc;
+                    int charCount;
+                    bool sawEnd;
+                    bool sawForcedShift;
+                    char *cP;
+                    bool inUpper;    // current shift state, false if lower
+                    char string[STRBUF];
 
-			    while( (tmpc = input()) != '"' )
-			    {
-					if( cP >= (string+STRBUF) )
-					{
-						verror("string too long", 0);
-					}
+                        cP = string;
+                        charCount = 0;
+                        sawEnd = false;
+                        sawForcedShift = false;
+                        inUpper = true;    // we always start in upper for the type 340
 
-					if( (tmpc == EOF) || (tmpc == '\n') )
-					{
-						verror("unterminated quote in type340 string");
-					}
+                        while( (tmpc = input()) != '"' )
+                        {
+                            if( cP >= (string+STRBUF) )
+                            {
+                                verror("string too long", 0);
+                            }
 
-					if( tmpc == '\\' )
-					{
-						tmpc = processType340Escape(input());
-						if( !tmpc )
-						{
-							continue;    // meant a line continuation
-						}
+                            if( (tmpc == EOF) || (tmpc == '\n') )
+                            {
+                                verror("unterminated quote in type340 string");
+                            }
 
-						if( tmpc == TYPE340UPPER )
-						{
-							inUpper = true;
-							sawForcedShift = true;
-						}
-						else if( tmpc == TYPE340LOWER )
-						{
-							inUpper = false;
-							sawForcedShift = true;
-						}
-						else if( tmpc == TYPE340AUTO )
-						{
-							sawForcedShift = false;
-							continue;
-						}
-						else if( tmpc == TYPE340NOEND )
-						{
-							sawEnd = true;    // fake that we had one
-							continue;
-						}
-						else if( tmpc == TYPE340NL )	// convert to a cr, the type340 does a cr/lf for cr
-						{
-							tmpc = TYPE340CR;
-						}
-						else if( tmpc == TYPE340END )
-						{
-							sawEnd = true;
-						}
-					}
-					else
-					{
-						i = type340Shift(tmpc);
-						if( !sawForcedShift && (i > 0) && !inUpper )
-						{
-						inUpper = true;
-						*cP++ = TYPE340UPPER;
-						++charCount;
-						}
-						else if( !sawForcedShift && (i < 0) && inUpper )
-						{
-							inUpper = false;
-							*cP++ = TYPE340LOWER;
-							++charCount;
-						}
+                            if( tmpc == '\\' )
+                            {
+                                tmpc = processType340Escape(input());
+                                if( !tmpc )
+                                {
+                                    continue;    // meant a line continuation
+                                }
 
-						tmpc = asciiToType340(tmpc);
-					}
+                                if( tmpc == TYPE340UPPER )
+                                {
+                                    inUpper = true;
+                                    sawForcedShift = true;
+                                }
+                                else if( tmpc == TYPE340LOWER )
+                                {
+                                    inUpper = false;
+                                    sawForcedShift = true;
+                                }
+                                else if( tmpc == TYPE340AUTO )
+                                {
+                                    sawForcedShift = false;
+                                    continue;
+                                }
+                                else if( tmpc == TYPE340NOEND )
+                                {
+                                    sawEnd = true;    // fake that we had one
+                                    continue;
+                                }
+                                else if( tmpc == TYPE340NL )	// convert to a cr, the type340 does a cr/lf for cr
+                                {
+                                    tmpc = TYPE340CR;
+                                }
+                                else if( tmpc == TYPE340END )
+                                {
+                                    sawEnd = true;
+                                }
+                            }
+                            else
+                            {
+                                i = type340Shift(tmpc);
+                                if( !sawForcedShift && (i > 0) && !inUpper )
+                                {
+                                    inUpper = true;
+                                    *cP++ = TYPE340UPPER;
+                                    ++charCount;
+                                }
+                                else if( !sawForcedShift && (i < 0) && inUpper )
+                                {
+                                    inUpper = false;
+                                    *cP++ = TYPE340LOWER;
+                                    ++charCount;
+                                }
 
-			        ++charCount;
-			        *cP++ = (char)tmpc;
-			    }
+                                tmpc = asciiToType340(tmpc);
+                            }
 
-			    if( !sawEnd )
-			    {
-			        *cP++ = TYPE340END;
-			        ++charCount;
-			    }
+                            ++charCount;
+                            *cP++ = (char)tmpc;
+                        }
 
-			    // We reuse the Flex struct, this is also a counted string
-			    BEGIN BODY;
-			    yylval.flexText.nchars = charCount;
-			    yylval.flexText.bufP  = (char *)malloc(charCount);
-			    memcpy(yylval.flexText.bufP, string, charCount);
+                        if( !sawEnd )
+                        {
+                            *cP++ = TYPE340END;
+                            ++charCount;
+                        }
 
-			    return( T340STRING );
-			}
+                        // We reuse the Flex struct, this is also a counted string
+                        BEGIN BODY;
+                        yylval.flexText.nchars = charCount;
+                        yylval.flexText.bufP  = (char *)malloc(charCount);
+                        memcpy(yylval.flexText.bufP, string, charCount);
 
-\<[a-zA-Z\./_0-9]+\>	{
-			    yylval.strP = malloc(strlen(yytext) + 1);
-			    strcpy(yylval.strP, yytext);
-			    return(LIBFILE);
-			}
+                        return( T340STRING );
+                    }
 
-<DOTEXT>.	{
-			int tmpc, rslt;
-			int count;
-			int shift;
-			char marker;
-			char *cP;
-			char string[STRBUF];
+\<[a-zA-Z\./_0-9]+\>    {
+                        yylval.strP = malloc(strlen(yytext) + 1);
+                        strcpy(yylval.strP, yytext);
+                        return(LIBFILE);
+                    }
 
-			    marker = yytext[0];
+<DOTEXT>.	        {
+                    int tmpc, rslt;
+                    int count;
+                    int shift;
+                    char marker;
+                    char *cP;
+                    char string[STRBUF];
 
-			    cP = string;
-			    count = shift = 0;
+                        marker = yytext[0];
 
-			    while( (tmpc = input()) != marker )
-			    {
-					if( cP >= (string+STRBUF) )
-					{
-						verror("string too long", 0);
-					}
+                        cP = string;
+                        count = shift = 0;
 
-					if( (tmpc == EOF) || (tmpc == '\n') )
-					{
-						verror("unterminated %c in text", marker);
-					}
+                        while( (tmpc = input()) != marker )
+                        {
+                            if( cP >= (string+STRBUF) )
+                            {
+                                verror("string too long", 0);
+                            }
 
-					if( tmpc == '\\' )		// special directive, red or black
-					{
-						if( (tmpc = input()) == marker )
-						{
-							verror("invalid \\ in text, no directive character");
-						}
-						switch(tmpc)
-						{
-						case 'B':
-							rslt = BLACK;
-						break;
+                            if( (tmpc == EOF) || (tmpc == '\n') )
+                            {
+                                verror("unterminated %c in text", marker);
+                            }
 
-						case 'R':
-							rslt = RED;
-						break;
+                            if( tmpc == '\\' )		// special directive, red or black
+                            {
+                                if( (tmpc = input()) == marker )
+                                {
+                                    verror("invalid \\ in text, no directive character");
+                                }
+                                switch(tmpc)
+                                {
+                                case 'B':
+                                    rslt = BLACK;
+                                    break;
 
-						case 'n':
-							rslt = FLEX_CR;
-						break;
+                                case 'R':
+                                    rslt = RED;
+                                    break;
 
-						case '\\':
-							rslt = tmpc;
-						break;
+                                case 'n':
+                                    rslt = FLEX_CR;
+                                    break;
 
-						default:
-							verror("\\%c in text is not valid", tmpc);
-						}
-					}
-					else
-					{
-						rslt = asciiToFlexo(tmpc, &shift);
-					}
+                                case '\\':
+                                    rslt = tmpc;
+                                    break;
 
-					if( rslt == NONE )
-					{
-						vwarn(WARN_FLEX,
-							"The character '%c' is not a Flexo character, replaced with space", tmpc);
-						rslt = FLEX_SPACE;
-					}
+                                default:
+                                    verror("\\%c in text is not valid", tmpc);
+                                }
+                            }
+                            else
+                            {
+                                rslt = asciiToFlexo(tmpc, &shift);
+                            }
 
-					if( (rslt == CSHIFT) || (rslt == CUNSHIFT) )
-					{
-						*cP++ = rslt;
-						++count;
-						rslt = asciiToFlexo(tmpc, &shift);    // get the real char
-					}
+                            if( rslt == NONE )
+                            {
+                                vwarn(WARN_FLEX,
+                                    "The character '%c' is not a Flexo character, replaced with space", tmpc);
+                                rslt = FLEX_SPACE;
+                            }
 
-			        *cP++ = (char)rslt;
-				    ++count;
-			    }
+                            if( (rslt == CSHIFT) || (rslt == CUNSHIFT) )
+                            {
+                                *cP++ = rslt;
+                                ++count;
+                                rslt = asciiToFlexo(tmpc, &shift);    // get the real char
+                            }
 
-			    BEGIN BODY;
-			    yylval.flexText.nchars = count;
-			    yylval.flexText.bufP  = (char *)malloc(count);
-			    memcpy(yylval.flexText.bufP, string, count);
-			    return( TEXT );
-			}
+                            *cP++ = (char)rslt;
+                            ++count;
+                        }
 
-.			{
-			    if( yytext[0] != '\r')	// in case we get cr-nl or nl-cr, drop the cr
-			    {
-			        return(yytext[0]);
-			    }
-			}
+                        BEGIN BODY;
+                        yylval.flexText.nchars = count;
+                        yylval.flexText.bufP  = (char *)malloc(count);
+                        memcpy(yylval.flexText.bufP, string, count);
+                        return( TEXT );
+                    }
+
+.			        {
+                        if( yytext[0] != '\r')	// in case we get cr-nl or nl-cr, drop the cr
+                        {
+                            return(yytext[0]);
+                        }
+                    }
 %%
 void
 gdbtarget()

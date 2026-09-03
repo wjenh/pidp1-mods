@@ -22,9 +22,11 @@ clean:
 	@rm -f *.o lex.yy.c y.tab.c y.tab.h permsyms.def.c am1 fastload symtabgen cvtxldr \
 	xldr.rim xldr.lst parser.output .y.tab.c.old .y.tab.h.old .lex.yy.c.old .permsyms.def.c.old
 
-install: am1
+install: am1 fastload
 	cp am1 ../../bin
+	cp fastload ../../bin
 	strip ../../bin/am1
+	strip ../../fastload/am1
 
 permsyms.def.o: permsyms.def.c
 	$(CC) -c permsyms.def.c

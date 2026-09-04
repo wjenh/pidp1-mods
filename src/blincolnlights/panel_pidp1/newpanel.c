@@ -692,6 +692,24 @@ struct sched_param sp;
         currentCycleCount = panelP->cyclecount;
         expectedCycles = currentCycleCount - lastCycleCount;
 
+        // The emulator stops advancing cyclecount when the physical POWER switch is off.
+        // Do not leave the last computed PWM image displayed in that state: clear the
+        // filter, the inactive display buffer, and any counts accumulated before the
+        // emulator observed the switch transition. Publishing the cleared buffer keeps
+        // the panel thread's double-buffer handoff intact.
+        if( !(panelP->sw0 & SW_POWER) )
+        {
+            memset(panelP->pwmcount, 0, sizeof(panelP->pwmcount));
+            memset(lightsP->lightsF, 0, sizeof(lightsP->lightsF));
+
+            writeIdx = 1 - atomic_load_explicit(&lightsP->lightsReadyIdx, memory_order_relaxed);
+            memset(lightsP->lights[writeIdx], 0, sizeof(lightsP->lights[writeIdx]));
+            atomic_store_explicit(&lightsP->lightsReadyIdx, writeIdx, memory_order_release);
+
+            lastCycleCount = currentCycleCount;
+            continue;
+        }
+
         // pdp1's main loop runs in bursts, pacing itself to 5us/cycle
         // using usleep(1000), so cyclecount advances in chunks of ~200 every ~1ms rather than smoothly.
         // If we proceeded with expectedCycles==0 clamped to 1 and count==0, every light would

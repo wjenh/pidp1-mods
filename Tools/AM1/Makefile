@@ -26,7 +26,7 @@ install: am1 fastload
 	cp am1 ../../bin
 	cp fastload ../../bin
 	strip ../../bin/am1
-	strip ../../fastload
+	strip ../../bin/fastload
 
 permsyms.def.o: permsyms.def.c
 	$(CC) -c permsyms.def.c

@@ -25,6 +25,8 @@ char asciiToType340(char ch);
 extern bool keepMinusZero;
 extern bool spaceIsAdd;
 extern char processType340Escape(char ch);
+extern void vwarn(int errtype, const char *msgP, ...);
+extern void vwarnl(int errType, int lineno, const char *msgP, ...);
 
 static int _evalExpr(PNodeP);
 
@@ -62,6 +64,22 @@ PNodeP node2P;
         // The returned values will be in 1's cmpl
         lval = _evalExpr(nodeP->leftP);
         rval = _evalExpr(nodeP->rightP);
+
+        if( (nodeP->leftP->type == OPORABLE) && (nodeP->leftP->value.symP->flags & SYMF_LAW) )
+        {
+            // See if someone did something silly like law -1
+            // We can conveniently see if a minus was used, because this node will be a MINUS op.
+            if( nodeP->value.ival == MINUS )
+            {
+                vwarnl(WARN_LAW, nodeP->lineNo, "law used with a negative number. This is almost certainly wrong!");
+            }
+            else if( rval & 0760000 )
+            {
+                // This is tricy, because 4096 is law i 0, so any value in 017777 is technically valid.
+                vwarnl(WARN_LAW, nodeP->lineNo,
+                    "law used with a value not in the range i 7777 to 7777. This is almost certainly wrong!");
+            }
+        }
 
         op = nodeP->value.ival;
 

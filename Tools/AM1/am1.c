@@ -109,6 +109,7 @@
  * 30-Aug-2026 wje - add -S, memory usage summary
  * 31-Aug-2026 wje - replace accidentially deleted lex pattern for DOTEXT
  * 3-Sep-2026 wje - just some formatting cleanup, no code change, no version change
+ * 3-Sep-2026 wje - add out-of-bounds warning for law -n or law (i) > 07777
  *
 */
 #include <unistd.h>
@@ -141,6 +142,7 @@ Warning warnings[] = {
     {"bank", WARN_BANK, false, false, false},
     {"bref", WARN_BREF, false, false, false},
     {"memory", WARN_MEMORY, false, true, false},
+    {"law", WARN_LAW, true, true, false},
     {0, 0, false}  // end marker
 };
 
@@ -1106,7 +1108,7 @@ usage()
     fprintf(stderr, "  -I add an include path to cpp\n");
     fprintf(stderr, "  -i define the include root directory\n");
     fprintf(stderr, "  -W print all warnings\n");
-    fprintf(stderr, "  -W=warning print this warnng\n");
+    fprintf(stderr, "  -W=[-]warning (- don't) print this warnng\n");
     fprintf(stderr, "  -x enable flex debug output on stderr\n");
     fprintf(stderr, "  -y enable yacc debug output on stderr\n");
     fprintf(stderr, "  -k don't delete cpp tmp file\n");
@@ -1194,12 +1196,29 @@ void
 enableWarning(char *nameP)
 {
 int i;
+bool negate;
+
+    negate = (*nameP == '-');
+    if( negate )
+    {
+        ++nameP;
+    }
 
     for( i = 0; warnings[i].id; ++i )
     {
         if( !strcmp(nameP, warnings[i].name) )
         {
-            warnings[i].enabled = true;
+            if( negate )
+            {
+                // They never want to see it 
+                warnings[i].enabled = false;
+                warnings[i].repeats = false;
+                warnings[i].issued = true;
+            }
+            else
+            {
+                warnings[i].enabled = true;
+            }
             return;
         }
     }
@@ -1219,6 +1238,7 @@ int i;
 }
 
 // See if a particular warning should be issued.
+// If noWarn is false, a warning will always be issued subject to repears and issued.
 // If so, return true, else false.
 bool
 doWarn(int id)

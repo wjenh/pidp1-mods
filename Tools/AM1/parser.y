@@ -63,6 +63,7 @@ SymNodeP findSymbolInBank(int bank, char *nameP);
 int yyerror(const char *errstr);
 void verror(const char *msgP, ...);
 void vwarn(int errtype, const char *msgP, ...);
+void vwarnl(int errType, int lineno, const char *msgP, ...);
 
 int yylex(void);
 
@@ -1627,6 +1628,25 @@ yywrap()                /* tell lex to clean up */
 
 void
 vwarn(int errType, const char *msgP, ...)
+{
+va_list argP;
+char format[1024];
+
+    if( !doWarn(errType) )
+    {
+        return;
+    }
+
+    va_start(argP, msgP);
+    sprintf(format,"am1: WARNING: %s\nat line %d, file %s\n",
+        msgP,lineno,filenameP);
+    vfprintf(stderr,format,argP);
+    va_end(argP);
+}
+
+// Same as above except the line number is passed explicitly
+void
+vwarnl(int errType, int lineno, const char *msgP, ...)
 {
 va_list argP;
 char format[1024];

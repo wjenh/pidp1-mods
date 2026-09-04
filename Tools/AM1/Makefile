@@ -1,6 +1,6 @@
 CC=gcc $(CCFLAGS)
-CCFLAGS= -O3 -s
-#CCFLAGS= -g
+#CCFLAGS= -O3 -s
+CCFLAGS= -g
 #BISONFLAGS=-Wcounterexamples
 BISONFLAGS=
 

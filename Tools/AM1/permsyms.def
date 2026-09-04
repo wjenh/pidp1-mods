@@ -51,7 +51,7 @@ mul opaddr 0540000
 div opaddr 0560000
 jmp opaddr 0600000
 jsp opaddr 0620000
-law opcode 0700000
+law lawop 0700000
 
 skp oporable 0640000
 spi oporable 0642000

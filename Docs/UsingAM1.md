@@ -3,8 +3,8 @@
 This document describes the **am1** macro assembler and how to use it.
 
 This is version 1.42 and covers up through am1 version 1.42; it will be updated as needed.\
-Edit date 30-Aug-2026
-Add -S flag
+Edit date 3-Sep-2026
+Add warning for law misuse, allow -W=-warning to turn off a specific warning
 
 ## What is **am1**?
 
@@ -215,7 +215,7 @@ Just type make.
 - z preserve -0 for math operation results, the default is to convert to 0
 - Dsymbol define a symbol for **cpp**, -Dsym or -D sym are both accepted
 - W print all warnings
-- W=name print just this warning, can be repeated for more warnings
+- W=[-]name enable or -disable just this warning, can be repeated for more warnings
 - Ipath add a search path to **cpp** for "files", -Ipath or -I path are both accepted
 - ipath set the root directory for <file> searches, -ipath or -i path are both accepted
 
@@ -290,21 +290,25 @@ If not stated, the warning is only issued once.
 The warnings are:
 - 1Dop, a PDP-1D instruction, lia, lai, lsw, swp, sni, szi, or cmi was used, repeats
 - bank, a bank statement is used but generating macro code (once per bank directive)
-- banks, bank usage detected at end of assembly while generating macro code, or a cross-bank forward
-reference was created
+- banks, bank usage detected generating macro code, or a cross-bank forward reference was created
 - bref, a symbol with a bank reference is used but generating macro code
 - stop, a stop statement is used but generating macro code
 - locals, a local symbol hides a global symbol or an endlocal does not match the scoping depth, repeats
 - flex, a flexo op is used but shift codes make it exceed 3 characters, repeats
 - vars, a variables statement was used but there are no variables to emit, repeats
 - memory, an expression's address is the same as one that already has had code written to it, but see below
+- law, an law -n or law out of the range law i 07777 to law 07777 was used, repeats and enabled by default
 
 Examples:
 ```
--W
 -W=1Dop
 -W=bank -W=locals
+-W
+-W=-flex
 ```
+
+The first form enables all warnings, but individual ones can be then diabled.\
+Prefacing the warning name with a minus turns off the warning, useful with -W.
 
 Errors are always printed and cause assembly to stop.
 There are 4 kinds of errors:

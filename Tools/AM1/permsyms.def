@@ -22,7 +22,7 @@
 9s  value 0777
 
 # The IOT wait-for-completion, need-completion flags
-i   value 010000
+i   imod 010000
 C   value 004000
 
 and opaddr 0020000

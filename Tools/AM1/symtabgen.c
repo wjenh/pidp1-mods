@@ -8,7 +8,7 @@
  * # a comment, ignored, as are blank lines.
  * name type value trailing-chars-ignored.
  * where name is the symbol name,
- * type is one of 'value', 'opcode', 'opaddr', 'oporable', 1Dop, 'law', or 'value'
+ * type is one of 'value', 'opcode', 'opaddr', 'oporable', 1Dop, 'law', 'imod', or 'value'
  * and value is the integer value.
 */
 #include <stdlib.h>
@@ -123,6 +123,10 @@ char line[1024];                                // and a line buffer
         else if( !strcmp(typeP, "lawop") )
         {
             i = SYMF_PERM | SYM_OPORABLE | SYMF_LAW;
+        }
+        else if( !strcmp(typeP, "imod") )
+        {
+            i = SYMF_PERM | SYM_VALUE | SYMF_INDIRECT;       // used to identify op i
         }
         else if( !strcmp(typeP, "value") )
         {

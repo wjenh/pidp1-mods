@@ -415,22 +415,25 @@ octal		    	{ decimalMode = false; }
 
                             if( (symP = sym_find((SymNodeP *)&permSymP,yytext)) )
                             {
+                                yylval.symP = symP;
+
+                                if( symP->flags & SYMF_LAW )
+                                {
+                                    return( LAW );
+                                }
+
                                 switch( symP->flags & SYM_MASK )
                                 {
                                 case SYM_VALUE:
-                                    yylval.symP = symP;
                                     return(VALUESPEC);
 
                                 case SYM_OPCODE:
-                                    yylval.symP = symP;
                                     return(OPCODE);
 
                                 case SYM_OPADDR:
-                                    yylval.symP = symP;
-                                    return(OPADDR);
+                                    return( OPADDR );
 
                                 case SYM_OPORABLE:
-                                    yylval.symP = symP;
                                     return(OPORABLE);
 
                                 default:

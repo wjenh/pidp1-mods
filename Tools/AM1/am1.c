@@ -110,6 +110,7 @@
  * 31-Aug-2026 wje - replace accidentially deleted lex pattern for DOTEXT
  * 3-Sep-2026 wje - just some formatting cleanup, no code change, no version change
  * 3-Sep-2026 wje - add out-of-bounds warning for law -n or law (i) > 07777
+ * 5-Sep-2026 wje - more law cases handled, all should be covered now
  *
 */
 #include <unistd.h>
@@ -730,6 +731,9 @@ typeToName(int type)
     case SEPARATOR:
         return("<separator>");
         break;
+    case IMOD:
+        return("i");
+        break;
     default:
         return(0);
         break;
@@ -802,6 +806,7 @@ SymNodeP symP;
         break;
 
     case CONSTANT:
+    case IMOD:
         sprintf(rsltP, "%s", nameP);
         break;
 

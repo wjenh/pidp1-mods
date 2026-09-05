@@ -371,6 +371,11 @@ PNodeP node2P;
         output(outfP, doOutput,".");
         break;
 
+    case LAW:
+        output(outfP, doOutput,"law");
+        listOperand(outfP, nodeP->rightP);
+        break;
+
     case OPORABLE:
     case OPCODE:
     case OPADDR:
@@ -405,6 +410,10 @@ PNodeP node2P;
 
     case INTEGER:
         output(outfP, doOutput, "%o", nodeP->value.ival & WRDMASK);
+        break;
+
+    case IMOD:
+        output(outfP, doOutput, "i");
         break;
 
     case VALUESPEC:

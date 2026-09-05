@@ -110,8 +110,10 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %token <symP> OPADDR
 %token <symP> OPORABLE
 %token <symP> VALUESPEC
+%token <symP> IMOD
 %token <symP> ADDR
 %token <symP> LCLADDR
+%token <symP> LAW 
 %token <strP> NAME
 %token <strP> LCLNAME
 %token <strP> COMMENT
@@ -200,7 +202,7 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %left PLUS MINUS
 %left MUL DIV MOD
 %left CMPL
-%left UMINUS
+%right UMINUS
 %right '='
 %left ENDCONST
 
@@ -717,9 +719,24 @@ optINTEGER      : INTEGER
 
 expr            : simple_expr               { $$ = $1; }
                 | directive_expr            { $$ = $1; }
+                | LAW
+                {
+                    $$ = newnode(lineno, curBankP->cur_pc, LAW, NILP, NILP);
+                    $$->value.symP = $1;
+                }
+                | LAW optSEPARATOR simple_expr
+                {
+                    $$ = newnode(lineno, curBankP->cur_pc, LAW, NILP, NILP);
+                    $$->value.symP = $1;
+                    $$ = binop(lineno, curBankP->cur_pc, SEPARATOR, $$, $3);
+                }
                 ;
 
-simple_expr    : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBankP->cur_pc, SEPARATOR, $1, $3); }
+optSEPARATOR    : SEPARATOR
+                |
+                ;
+
+simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBankP->cur_pc, SEPARATOR, $1, $3); }
                 | MINUS simple_expr %prec UMINUS   { $$ = unop(lineno, curBankP->cur_pc, UMINUS, $2); }
                 | simple_expr PLUS simple_expr     { $$ = binop(lineno, curBankP->cur_pc, PLUS, $1, $3); }
                 | simple_expr MINUS simple_expr    { $$ = binop(lineno, curBankP->cur_pc, MINUS, $1, $3); }
@@ -764,7 +781,15 @@ simple_expr    : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBankP
                 }
                 | VALUESPEC
                 {
-                    $$ = newnode(lineno, curBankP->cur_pc, VALUESPEC, NILP, NILP);
+                    if( $1->flags & SYMF_INDIRECT )
+                    {
+                        $$ = newnode(lineno, curBankP->cur_pc, IMOD, NILP, NILP);
+                    }
+                    else
+                    {
+                        $$ = newnode(lineno, curBankP->cur_pc, VALUESPEC, NILP, NILP);
+                    }
+
                     $$->value.symP = $1;
                 }
                 | CONSTANT simple_expr endConst

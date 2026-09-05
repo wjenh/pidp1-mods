@@ -29,6 +29,7 @@ extern void vwarn(int errtype, const char *msgP, ...);
 extern void vwarnl(int errType, int lineno, const char *msgP, ...);
 
 static int _evalExpr(PNodeP);
+static bool hasIndirect(PNodeP nodeP);
 
 void verror(char *msgP, ...);
 
@@ -64,33 +65,48 @@ PNodeP node2P;
         // The returned values will be in 1's cmpl
         lval = _evalExpr(nodeP->leftP);
         rval = _evalExpr(nodeP->rightP);
-
-        if( (nodeP->leftP->type == OPORABLE) && (nodeP->leftP->value.symP->flags & SYMF_LAW) )
-        {
-            // See if someone did something silly like law -1
-            // We can conveniently see if a minus was used, because this node will be a MINUS op.
-            if( nodeP->value.ival == MINUS )
-            {
-                vwarnl(WARN_LAW, nodeP->lineNo, "law used with a negative number. This is almost certainly wrong!");
-            }
-            else if( rval & 0760000 )
-            {
-                // This is tricy, because 4096 is law i 0, so any value in 017777 is technically valid.
-                vwarnl(WARN_LAW, nodeP->lineNo,
-                    "law used with a value not in the range i 7777 to 7777. This is almost certainly wrong!");
-            }
-        }
-
         op = nodeP->value.ival;
 
-        // bitwise operators, no -0 adjustment
+        // bitwise operators, no -0 adjustment, and LAW special case
         switch( op )
         {
-        case XOR:
+        case XOR:                   // MUST COME FIRST!
             lval = lval ^ rval;
             return( lval );
 
         case SEPARATOR:
+            // See if someone did something silly like law -1
+            // This is tricy, because 4096 is law i 0, so any value in 017777 is technically valid.
+            // However, it would be very poor coding, reject it.
+            // We have to explicitly check for an 'i' first.
+            if( nodeP->leftP->type == LAW )
+            {
+                if( (unsigned)rval > 07777 )
+                {
+                    if(  hasIndirect(nodeP->rightP) )
+                    {
+                        if( (unsigned)(rval & ~010000) > 07777 )
+                        {
+                            vwarnl(WARN_LAW, nodeP->lineNo,
+                                "law i used with a value not in the range 0 to 7777. This is almost certainly wrong!");
+                        }
+                    }
+                    else
+                    {
+                        if( rval < 0 )
+                        {
+                            vwarnl(WARN_LAW, nodeP->lineNo,
+                                "law used with a negative number. This is wrong, use 'law i nn'.");
+                        }
+                        else
+                        {
+                            vwarnl(WARN_LAW, nodeP->lineNo,
+                                "law used with a value not in the range 0 to 7777. This is almost certainly wrong!");
+                        }
+                    }
+                }
+            }
+
             if( spaceIsAdd )
             {
                 op = PLUS;      // fall thru to math code
@@ -169,11 +185,9 @@ PNodeP node2P;
                 }
 
                 return(lval);
-                break;
 
             case CMPL:
                 return( ~_evalExpr(nodeP->rightP) );
-                break;
 
         default:
             verror("unknown unary op %d in _evalExpr", nodeP->value.ival);
@@ -184,6 +198,7 @@ PNodeP node2P;
     case OPORABLE:
     case OPCODE:
     case OPADDR:
+    case LAW:
         return( nodeP->value.symP->value );
         break;
 
@@ -236,11 +251,36 @@ PNodeP node2P;
         break;
 
     case VALUESPEC:
+    case IMOD:
         return( nodeP->value.symP->value );
         break;
 
     default:
         verror("unknown op %d, pc 0%04o in _evalExpr", nodeP->type, nodeP->pc);
+    }
+}
+
+// Check to see if an i modifier occurs in the tree.
+// Return true if so, else false
+static bool
+hasIndirect(PNodeP nodeP)
+{
+    if( !nodeP )
+    {
+        return(false);
+    }
+
+    if( nodeP->type == IMOD )
+    {
+        return(true);
+    }
+    else if( hasIndirect(nodeP->leftP) )
+    {
+        return(true);
+    }
+    else
+    {
+        return( hasIndirect(nodeP->rightP) );
     }
 }
 
@@ -372,6 +412,8 @@ SymNodeP symP;
         case CMPL:
             lval = (~rval) & 0777777;
             return( (rval & ~0777777) | lval );
+        case LAW:
+            return( nodeP->value.symP->value );
         default:
             verror("unknown unary op %d in hashExpr", nodeP->value.ival);
             // never returns, just to shut up overly-picky c compilers
@@ -388,6 +430,7 @@ SymNodeP symP;
     case OPCODE:
     case OPADDR:
     case VALUESPEC:
+    case IMOD:
         return( nodeP->value.symP->value );
 
     case ADDR:

@@ -27,7 +27,7 @@ static void emitText(FILE *outfP, FlexText flexText);
 static void emitVars(FILE *outfP, PNodeListP listP);
 static int emitConstants(FILE *outfP, SymNodeP nodeP);
 
-void verror(char *msgP, ...);
+extern void verror(char *msgP, ...);
 
 // Walk a tree and emit equivalent macro1 code.
 void
@@ -314,7 +314,20 @@ PNodeP node2P;
     switch( nodeP->type )
     {
     case BINOP:
-        if( nodeP->value.ival == XOR )
+        // We don't do the illegal law checks, macro didn't.
+        if( nodeP->leftP->type == LAW )
+        {
+            rval = onesComplAdj(evalExpr(nodeP->rightP));
+            if( rval & 010000 )
+            {
+                fprintf(outfP,"law i %o", rval & ~010000);
+            }
+            else
+            {
+                fprintf(outfP,"law %o", rval);
+            }
+        }
+        else if( nodeP->value.ival == XOR )
         {
             // there is no xor in macro1, have to reduce everything
             lval = onesComplAdj(evalExpr(nodeP->leftP));
@@ -482,6 +495,7 @@ PNodeP node2P;
         break;
 
     case VALUESPEC:
+    case IMOD:
         fprintf(outfP, "%s", nodeP->value.symP->name);
         break;
 

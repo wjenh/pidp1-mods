@@ -13,27 +13,42 @@
 // On call, AC contains the address of the text block.
 // Insert this at the desired point in code.
 // Call via jda txtasc.
+// This is cross-bank safe.
 
 #include <DCS/dcs2defs.ah>
 
 txtasc,  0
-     dap txartn
-txatop,  lac i txtasc
+     local rtn, top
+     dac rtn
+     // We need to check for eem on.
+     // If not, addresses must be masked to 12 bits.
+     and [0200000
+     sza
+     jmp top      // on, ok to proceed
+     law 07777
+     and rtn
+     dac rtn
+     law 07777
+     and txtasc
+     dac txtasc
+
+top,  lac i txtasc
 // a word has xaaaaaaaaxbbbbbbbb
      sar 4s
      sar 5s
      sza i
-     jmp i txartn
+     jmp i rtn
      lia
      tcb
      law 377
      and i txtasc
      sza i
-     jmp i txartn
+     jmp i rtn
      lia
      tcb
      idx txtasc
-     jmp txatop
-txartn,  0
+     jmp top
+rtn,  0
+    endloc
 
 #endif

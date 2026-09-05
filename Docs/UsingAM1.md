@@ -3,8 +3,8 @@
 This document describes the **am1** macro assembler and how to use it.
 
 This is version 1.42 and covers up through am1 version 1.42; it will be updated as needed.\
-Edit date 3-Sep-2026
-Add warning for law misuse, allow -W=-warning to turn off a specific warning
+Edit date 5-Sep-2026
+Add warning for the behavior of addesses when cross bank calls are made.
 
 ## What is **am1**?
 
@@ -1090,6 +1090,22 @@ As an example, the *jda* instruction does not work with extended memory. It uses
 the opcode and will not actually indirect.
 A macro that implements a working jda for extended memory, *farjda()* is provided in the <memory.ah>
 include file along with other macros useful for cross-bank referencing.
+
+**VERY IMPORTANT!**
+
+When a cross-bank call is made (jsp), the address that the target gets is a full 16 bit address.
+That means the calling bank number is included.
+
+If you call from an odd-numbered bank and then the routine turns off extended memory, that odd bank will
+be set in the low bit of the bank number field.
+That happens to be the *indirect bit* when extended memory is off, and your code will not do anything like
+you expected.
+
+If you have a routine that is called cross-bank and it turns off eem, then does any indirect references through
+any data passed, including the return address, that can have bank bits on, you have to mask them off!
+
+How do you know if eem is on or off?\
+Bit 1 (in DEC numbering), next-to-msb, will be 1 if eem is on, else 0.
 
 The **macro** and **macro1** compilers do not support extended memory,
 so code using banks will generate code that isn't actually usable, but it will be annotated

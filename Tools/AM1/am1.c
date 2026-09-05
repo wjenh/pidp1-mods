@@ -111,6 +111,7 @@
  * 3-Sep-2026 wje - just some formatting cleanup, no code change, no version change
  * 3-Sep-2026 wje - add out-of-bounds warning for law -n or law (i) > 07777
  * 5-Sep-2026 wje - more law cases handled, all should be covered now
+ * 5-Sep-2026 wje -  Various fixes for dangling constants and vars not being emitted correctly.
  *
 */
 #include <unistd.h>

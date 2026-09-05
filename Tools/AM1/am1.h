@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v1.45 5-Sep-2026"
-#define AM1SHORTVERSION "am1 v1.45"
+#define AM1VERSION "am1 v1.46 5-Sep-2026"
+#define AM1SHORTVERSION "am1 v1.46"
 #define SYMFILEVERSION "V2"             // used for import to check proper version
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -132,6 +132,8 @@ typedef struct bankcontext
     struct bankcontext *nextP;
     int bank;               // the bank number
     int cur_pc;             // pc at the time of the switch from this bank
+    int constPC;            // start of the automatically emitted constants block, -1 if none
+    int varPC;              // start of the automatically emitted variables block, -1 if none
     SymNodeP globalSymP;    // we preserve the globals,consts, and vars, no need for locals
     SymNodeP constSymP;
     PNodeListP varNodesP;

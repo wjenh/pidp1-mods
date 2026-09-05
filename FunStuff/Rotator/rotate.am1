@@ -30,7 +30,7 @@ bank bnkno
 
 // Put included code here
 1000/
-#include <farmemcpy.ac>
+#include <memcpy.ac>
 
 // The channel 0 interrupt setup.
 // We execute a bit of code that will get
@@ -85,12 +85,14 @@ resume,
 // Yes, that's all it took to read a full memory image and load it into bank 0.
 // Bank 0 now has pgm loaded, update with our glue code.
      law 4
-     jda farmemcpy
+     eem
+     jda memcpy
      0:bnkno
      0
      law lastloc - isr
-     jda farmemcpy
+     jda rmemcpy
      isr:bnkno
+     lem
      isr
 
 // turn on ints, extended mem, and transfer back to bank 0, adr 0
@@ -98,7 +100,6 @@ resume,
 // enable the clock
      law clsena clsimn   // 1 min interrupt enabled, clock enabled
      cls
-     eem
      farjmp(0)
 
 #include <TYPE340/type340halt.ac>
@@ -122,8 +123,7 @@ isr, law rti
      jmp i 1
 
 // the interrupt return jumps here, jump back to the control code
-rti, eem
-     farjmp(resume:bnkno)
+rti, farjmp(resume:bnkno)
 
 // We jump here when control is transferred from bank 1,
 // if no start addr, go on to next pgm.

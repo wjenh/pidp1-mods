@@ -154,14 +154,14 @@ BankContextP bankP;
 
         if( bankP->constSymP )
         {
-            node.pc = bankP->cur_pc;
+            node.pc = bankP->constPC;
             node.bank = bankP->bank;
             dumpConstants(outfP, &node, bankP->constSymP);
         }
 
         if( bankP->varNodesP )
         {
-            node.pc = bankP->cur_pc;
+            node.pc = bankP->varPC;
             node.bank = bankP->bank;
             node.value.ptr = bankP->varNodesP;
             dumpVars(outfP, &node);

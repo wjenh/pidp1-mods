@@ -7,9 +7,6 @@ BISONFLAGS=
 OBJS=am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o eval.o \
 	maccodegen.o bincodegen.o listcodegen.o testcodegen.o listSymtab.o
 
-.PHONY: all clean install
-.DELETE_ON_ERROR:
-
 all: am1 fastload
 
 am1:	$(OBJS)
@@ -31,9 +28,6 @@ install: am1 fastload
 permsyms.def.o: permsyms.def.c
 	$(CC) -c permsyms.def.c
 
-# lexfuncs.c is #included by lexer.l into the third section of the scanner,
-# so it is compiled as part of lex.yy.c rather than appearing in it. It has to
-# be a dependency of the object, not just of the generated source.
 lex.yy.o: lex.yy.c y.tab.h lexfuncs.c
 	$(CC) -c lex.yy.c
 
@@ -41,15 +35,12 @@ y.tab.o: y.tab.c
 	$(CC) -DYYDEBUG=1 -c y.tab.c
 
 permsyms.def.c: symtabgen permsyms.def
-	@cp -p permsyms.def.c .permsyms.def.c.old 2>/dev/null || true
 	./symtabgen permsyms.def
-	@cmp -s permsyms.def.c .permsyms.def.c.old && mv -f .permsyms.def.c.old permsyms.def.c \
-	|| rm -f .permsyms.def.c.old
 
-lex.yy.c: lexer.l y.tab.h FORCE
+lex.yy.c: lexer.l y.tab.h
 	flex -d lexer.l
 
-%.tab.c %.tab.h: parser.y am1.h symtab.h FORCE
+y.tab.%: parser.y am1.h symtab.h
 	bison $(BISONFLAGS) -o y.tab.c -d parser.y
 
 am1.o: am1.c am1.h symtab.h y.tab.h
@@ -73,7 +64,7 @@ listcodegen.o: listcodegen.c am1.h y.tab.h
 testcodegen.o: testcodegen.c am1.h y.tab.h
 	$(CC) -c testcodegen.c
 
-listSymtab.o: listSymtab.c am1.h symtab.h
+listSymtab.o: listSymtab.c am1.h symtab.h y.tab.h
 	$(CC) -c listSymtab.c
 
 symtabgen: symtabgen.c am1.h symtab.o
@@ -88,5 +79,3 @@ cvtxldr: cvtxldr.c
 xldr: cvtxldr
 	$(MACRO) xldr.src
 	cvtxldr xldr.lst >xldr.h
-
-FORCE:

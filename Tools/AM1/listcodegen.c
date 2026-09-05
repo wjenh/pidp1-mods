@@ -53,7 +53,7 @@ listCodegen(FILE *outfP, PNodeP rootP)
 
         if( bankP->constSymP )
         {
-            node.pc = bankP->cur_pc;    // need a node for the pc
+            node.pc = bankP->constPC;   // need a node for the pc
             node.bank = bankP->bank;
             node.lineNo = lineno;
             output(outfP, doOutput, "// Constants for bank %d\n", bankP->bank);
@@ -62,7 +62,7 @@ listCodegen(FILE *outfP, PNodeP rootP)
 
         if( bankP->varNodesP )
         {
-            node.pc = bankP->cur_pc;    // need a node for the pc
+            node.pc = bankP->varPC;     // need a node for the pc
             node.bank = bankP->bank;
             node.lineNo = lineno;
             node.value.ptr = bankP->varNodesP;

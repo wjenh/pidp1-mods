@@ -14,19 +14,32 @@
 // On call, AC contains the address of the text block.
 // Insert this at the desired point in code.
 // Call via jda txtflx.
+// This is cross-bank safe.
 
 #include <DCS/dcs2defs.ah>
 
 txtflx,  0
 local rtn, top
-     dap rtn
+     dac rtn
+     // We need to check for eem on.
+     // If not, addresses must be masked to 12 bits.
+     and [0200000
+     sza      // on, ok to proceed
+     jmp top
+     law 07777
+     and rtn
+     dac rtn
+     law 07777
+     and txtflx
+     dac txtflx
+
 top, lac i txtflx
      lia
      and [77
 // check for the end marker
      sub [flxetx
      sza i
-     jmp rtn
+     jmp i rtn
      lai
      ral 6s
      lia
@@ -39,7 +52,7 @@ top, lac i txtflx
      tcb
      idx txtflx
      jmp top
-rtn, jmp .
-endloc
+rtn, 0
+    endloc
 
 #endif

@@ -14,28 +14,41 @@
 #include <DCS/getch.ac>
 
 getlin,  0
-local
-        dap %glnrtn
-        dio %glnmem
-%glnlp,   jda getch
-        lai
-        sad [flxerr
-        jmp %glnbad
-        dio i %glnmem
-        law flxnl
-        sad i %glnmem
-        jmp %glndon
-        idx %glnmem
-        jmp %glnlp
-%glndon,  lac getlin
-        cli
-        jmp i %glnrtn
-%glnbad,  rle
-        lac getlin
-        jmp i %glnrtn
-%glnrtn,  0
-%glnmem,  0
-endloc
+    local rtn, mem, loop, done, bad
+    dac rtn
+    // We need to check for eem on.
+    // If not, addresses must be masked to 12 bits.
+    and [0200000
+    sza      // on, ok to proceed
+    jmp loop
+    lac rtn
+    and [07777
+    dac rtn
+    lai
+    and [07777
+    dac mem
+loop,
+    jda getch
+    lai
+    sad [flxerr
+    jmp bad
+    dio i mem
+    law flxnl
+    sad i mem
+    jmp done
+    idx mem
+    jmp loop
+done,
+    lac getlin
+    cli
+    jmp i rtn
+bad,
+    rle
+    lac getlin
+    jmp i rtn
+rtn,  0
+mem,  0
+    endloc
 
 #endif
 

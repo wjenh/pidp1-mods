@@ -3,7 +3,7 @@
 // fardac, fardio transparently, leaving eem off.
 // For farjmp, eem will be left on.
 // For farjsp and farjda, eem will be on when the subroutine is entered.
-// When they return, eem will be turned off.
+// When they return, eem will remain on.
 //
 // Using farenter will properly set up the subroutine return for cross-bank return and turn off eem.
 // Using farrtn will properly return leaving eem on.
@@ -20,10 +20,10 @@
     eem; jmp i [a]
 
 #define farjsp(a) \
-    eem; jsp i [a]; lem
+    eem; jsp i [a]
 
 #define farjda(a) \
-    eem; dac i [a]; jsp i [a+1]; lem
+    eem; dac i [a]; jsp i [a+1]
 
 // This guarantees a proper return setup
 // NOTE that it turns off eem!

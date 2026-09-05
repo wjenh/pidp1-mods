@@ -54,28 +54,10 @@ lex.yy.o: lex.yy.c y.tab.h
 y.tab.o: y.tab.c
 	$(CC) -DYYDEBUG=1 -c y.tab.c
 
-# lex.yy.c, y.tab.c and y.tab.h are build artifacts, not checked in.
-# They are regenerated on every build rather than only when the source is
-# newer, because a git pull over an already-built tree can leave a generated
-# file with a newer timestamp than the source it no longer matches, and make
-# would then happily keep using it. That produced a scanner whose ':' and ','
-# rules were the wrong way round long after lexer.l had been fixed.
-# The new output only replaces the old file when the content actually changed,
-# so an unchanged generated file keeps its timestamp and nothing recompiles.
-
 lex.yy.c: lexer.l y.tab.h FORCE
-	@cp -p lex.yy.c .lex.yy.c.old 2>/dev/null || true
 	flex -d lexer.l
-	@cmp -s lex.yy.c .lex.yy.c.old && mv -f .lex.yy.c.old lex.yy.c || rm -f .lex.yy.c.old
 
-y.tab.c: parser.y ad1.h pdp1inc.h FORCE
-	@cp -p y.tab.c .y.tab.c.old 2>/dev/null || true
-	@cp -p y.tab.h .y.tab.h.old 2>/dev/null || true
-	bison $(BISONFLAGS) $(CONFLICTS) -o y.tab.c -d parser.y
-	@cmp -s y.tab.c .y.tab.c.old && mv -f .y.tab.c.old y.tab.c || rm -f .y.tab.c.old
-	@cmp -s y.tab.h .y.tab.h.old && mv -f .y.tab.h.old y.tab.h || rm -f .y.tab.h.old
-
-# bison writes y.tab.h as a side effect of the rule above.
-y.tab.h: y.tab.c ;
+%.tab.c %.tab.h: parser.y ad1.h FORCE
+	bison $(BISONFLAGS) -o y.tab.c -d parser.y
 
 FORCE:

@@ -292,27 +292,28 @@ BankContextP bankP;
     // We now have to emit any constants and vars that didn't have an ending constants statement
     for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
     {
-        if( bankP->constSymP || bankP->varNodesP )
+        if( !bankP->constSymP && !bankP->varNodesP )
         {
-            // prepare to write one or both
-            flushBuffer(outfP, outBufP);
-            initBuffer(outBufP, bankP->cur_pc);
+            continue;
         }
+
+        // Prepare to write one or both.
+        // cur_bank has to be set before initBuffer, it stamps the bank into the block
+        // start address. The parser recorded where each block starts, don't use cur_pc,
+        // it has already been moved past the variables.
+        flushBuffer(outfP, outBufP);
+        cur_bank = bankP->bank;
+        cur_pc = (bankP->constSymP)?bankP->constPC:bankP->varPC;
+        initBuffer(outBufP, cur_pc);
 
         if( bankP->constSymP )
         {
-            cur_bank = bankP->bank;
-            cur_pc = bankP->cur_pc;
             writeConstants(outfP, bankP->constSymP, -1);
-            bankP->cur_pc = cur_pc;
         }
 
         if( bankP->varNodesP )
         {
-            cur_bank = bankP->bank;
-            cur_pc = bankP->cur_pc;
             writeVars(outfP, bankP->varNodesP, -1);
-            bankP->cur_pc = cur_pc;
         }
     }
 }

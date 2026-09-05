@@ -1,35 +1,45 @@
 #ifndef MEMCPY_AH
 #define MEMCPY_AH
-// Copy from one location to another in the same bank.
-// Call using jda.
+// Copy from one location to another.
 // AC has the count of words to copy.
 // The word following the call has the address to copy from.
 // The next word has the address to copy to.
+// Call using jda.
+// This is cross-bank safe.
 memcpy, 0
-local
+local rtn, ok, loop, src, dest
 // AC is in memcpy, return PC in AC
-    dac %cpydn
-    lio i %cpydn
-    dio %ads
-    idx %cpydn
-    lio i %cpydn
-    dio %adt
-    idx %cpydn
+    dac rtn
+    // See if eem is on.
+    // If not, mask the arg/return addr to 12 bits.
+    and [0200000]
+    sza
+    jmp ok      // it's on, ok to proceed
+    lac rtn     // off, mask the addresses
+    and [07777
+    dac rtn
+ok,
+    lio i rtn
+    dio src
+    idx rtn
+    lio i rtn
+    dio dest
+    idx rtn
     lac memcpy
     cma
-%cl, add [1
+loop, add [1
     lsw
-    lac i %ads
-    dac i %adt
-    idx %ads
-    idx %adt
+    lac i src
+    dac i dest
+    idx src
+    idx dest
     lsw
     sza
-    jmp %cl
-    jmp i %cpydn
-%cpydn, 0
-%ads, 0
-%adt, 0
+    jmp loop
+    jmp i rtn
+rtn, 0
+src, 0
+dest, 0
 endloc
 
 #endif

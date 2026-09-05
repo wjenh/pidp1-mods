@@ -5,32 +5,34 @@
 // AC has the count of words to set.
 // IO has the value to set.
 // The word following the call has the address to begin the setting.
-// This does not use extended addressing, it operates in the current bank.
+// This is cross-bank safe.
 memset, 0
-local ptr, rtn, ctr, loop
-// AC is in memset (the word count, deposited by jda); AC on entry to
-// memset+1 is the return PC, pointing at the target-address data word
-// that immediately follows the jda call in the caller.
+local ptr, ok, rtn, ctr, loop
+// Original AC is in memset, rtn addr in AC.
     dac rtn
+    // Check bit 1 to see if eem is on.
+    // If not, all addresses used have to be masked to 12 bits
+    // to avoid collison between the bank number and the i bit
+    // if called in an odd-numbered bank.
+    and [0200000]
+    sza
+    jmp ok        // eem is on, nothing to worry about
+    lac rtn
+    and [07777]
+    dac rtn       // addr is now safe
+ok,
     lac i rtn
     dac ptr
     idx rtn
     dzm ctr
-// Count ctr up from 0 to the requested word count (held in memset),
-// testing *before* each write so a count of 0 does nothing -- the
-// idx+sad "count up to a target" idiom, using the runtime value in
-// memset as the target instead of a compile-time [const]. (The previous
-// version negated the count into memset via cma and counted a separate,
-// never-negated 'count' local up from 0 instead, so spa's positive test
-// fired after exactly one iteration regardless of the requested count --
-// only ever the first word got set.)
+    // Loop for as many words as we have to set.
 loop,
     lac ctr
-    sad memset      // skip if ctr != count (still work to do)
-    jmp i rtn        // ctr == count (no-skip): done, nothing more to write
-    dio i ptr          // ctr != count (skip case): write the fill value...
-    idx ptr             // ...advance the pointer...
-    idx ctr              // ...and advance the counter
+    sad memset  // skip if ctr != count (still work to do)
+    jmp i rtn   // ctr == count (no-skip): done, nothing more to write
+    dio i ptr   // ctr != count (skip case): write the fill value,
+    idx ptr     // advance the pointer,
+    idx ctr     // and advance the counter.
     jmp loop
 rtn, 0
 ctr, 0

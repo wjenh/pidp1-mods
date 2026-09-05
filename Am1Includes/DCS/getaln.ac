@@ -9,32 +9,48 @@
 // If an error occurs, the IO register will have the DCS2 rcs error code, else 0.
 // The AC register is preserved.
 // Call via jda getaln.
+// Can be called cross-bank.
+// If so, IO must contain the full 16 bit address to use.
 
 #include <DCS/dcs2defs.ah>
 #include <DCS/getach.ac>
 
 getaln,  0
-local
-        dap %glartn
-        dio %glamem
-%glalp, jda getach
+local rtn, next, loop, done, bad, mem
+        dac rtn
+        // We need to determine if eem is on.
+        // If not, both the return address and the buffer address
+        // need to be masked to 12 bits to avoid colliding with the
+        // indirect bit which will also be set if the current bank is an odd number.
+        and [0200000
+        sza
+        jmp next        // eem is on, ok to continue
+        lai             // off, mask the addresses
+        and [07777]
+        lac rtn
+        and [07777]
+        dac rtn
+next,   dio mem
+loop,   jda getach
         lai
         sza i
-        jmp %glalp
+        jmp loop
         spa
-        jmp %glabad
-        dio i %glamem
+        jmp bad
+        dio i mem
         sad ['\r'
-        jmp %gladon
+        jmp done
         sad ['\n'
-        jmp %gladon
-        idx %glamem
-        jmp %glalp
-%gladon,  cli
+        jmp done
+        idx mem
+        jmp loop
+done,   cli
 // overwrite the cr or lf with 0
-        dzm i %glamem
-%glabad,  lac getaln
-%glartn,  jmp .
-%glamem,  0
+        dzm i mem
+bad,    lac getaln
+        jmp i rtn
+rtn, 0
+mem, 0
+    endloc
 
 #endif

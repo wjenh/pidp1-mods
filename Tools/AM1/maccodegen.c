@@ -44,14 +44,14 @@ macCodegen(FILE *outfP, PNodeP rootP)
         if( bankP->constSymP )
         {
             fprintf(outfP, "/ Constants for bank %d\n", bankP->bank);
-            fprintf(outfP, "%o/\n", bankP->cur_pc);
-            bankP->cur_pc += emitConstants(outfP, bankP->constSymP);
+            fprintf(outfP, "%o/\n", bankP->constPC);
+            emitConstants(outfP, bankP->constSymP);
         }
 
         if( bankP->varNodesP )
         {
             fprintf(outfP, "/ Vars for bank %d\n", bankP->bank);
-            fprintf(outfP, "%o/\n", bankP->cur_pc);
+            fprintf(outfP, "%o/\n", bankP->varPC);
             emitVars(outfP, bankP->varNodesP);
         }
     }

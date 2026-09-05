@@ -1,41 +1,50 @@
 #ifndef GETCH_AC
 #define GETCH_AC
-// Wait for a character on the current DCS channel.
+// Wait for a flex character on the current DCS channel.
 // The IO register is cleared and the character is 
 // returned in the IO register.
 // If an error occurs, the IO register will be the character flxerr.
 // The AC register is preserved.
 // Call via jda getch.
+// This is cross-bank safe.
 
 #include <DCS/dcs2defs.ah>
 
 getch, 0
-     local gchlp, gcherr, gchrtn
-     dac gchrtn
+     local loop, err, rtn
+     dac rtn
+     // We need to check for eem on.
+     // If not, addresses must be masked to 12 bits.
+     and [0200000
+     sza      // on, ok to proceed
+     jmp loop
+     lac rtn
+     and [07777
+     dac rtn
 // loop waiting for a character
-gchlp,
+loop,
      cli
      iot rcs
      lai
      and [dsfful dsfser dsfcls
      sza
-     jmp gcherr
+     jmp err
      lai
      and [dsfrdy
      sza i
-     jmp gchlp
+     jmp loop
      iot rch rchclr
      lai
      sad [flxnch
 // really shouldn't happen
-     jmp gchlp
+     jmp loop
 // the character in IO is either valid or flxerr
      jmp .+3
-gcherr,
+err,
      law flxerr
      lia
      lac getch
-     jmp i gchrtn
-gchrtn, 0
+     jmp i rtn
+rtn, 0
     endloc
 #endif

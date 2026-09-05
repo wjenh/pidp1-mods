@@ -2,40 +2,49 @@
 #define GETACH_AH
 
 // Wait for an ascii character on the current DCS channel.
-// The IO register is cleared and the character is 
-// returned in the IO register.
+// The IO register is cleared and the character is returned in the IO register.
 // If an error occurs, the IO register will be the rcs status with bit 0 set to 1.
 // The AC register is preserved.
 // Call via jda getach.
+// Can be called safely cross-bank.
 
 #include <DCS/dcs2defs.ah>
 
 getach,  0
-local
-     dap %gachrt
+local rtn, loop, done, err
+     dac rtn
+     // Check to see if eem is on.
+     // If not, the return address needs to be masked to 12 bits.
+     and [0200000
+     sza
+     jmp loop       // it's on, ok to proceed
+     lac rtn
+     and [07777
+     dac rtn
 // loop waiting for a character
-%gachlp, 
+loop,
      cli
      rcs
      lai
      and [dsfser dsfcls
      sza
-     jmp %gacher
+     jmp err
      lai
      and [dsfrdy
      sza i
-     jmp %gachlp
+     jmp loop
      rch rchclr
      spi
-     jmp %gacher
-     jmp %gacdn
-%gacher, 
+     jmp err
+     jmp done
+err, 
      lai
      ior [400000
      lia
-%gacdn, 
+done, 
      lac getach
-%gachrt,  jmp .
+     jmp i rtn
+rtn, 0
 endloc
 
 #endif

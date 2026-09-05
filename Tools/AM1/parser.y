@@ -240,19 +240,28 @@ body   : stmt_list
 
                     if( $1 )
                     {
+                        // Place any constants and variables that were never emitted by an
+                        // explicit directive.
+                        // They go at the end of their own bank, constants first, then variables.
+                        // That is the order every code generator emits
+                        // them in, and the start of each block is recorded in the bank context
+                        // so no generator has to infer it from cur_pc.
                         for(BankContextP bp = banksP; bp; bp = bp->nextP)
                         {
-                            if( bp->varNodesP )
-                            {
-                                curBankP = bp;
-                                setVarsPC(bp->bank, bp->varNodesP);
-                            }
+                            curBankP = bp;
 
                             if( bp->constSymP )
                             {
-                                setConstPC(bp->cur_pc, bp->constSymP);
+                                bp->constPC = bp->cur_pc;
+                                bp->cur_pc = setConstPC(bp->cur_pc, bp->constSymP);
                                 constsListP = addToSymlist(constsListP, bp->constSymP,
-                                    bp->bank, bp->cur_pc);
+                                    bp->bank, bp->constPC);
+                            }
+
+                            if( bp->varNodesP )
+                            {
+                                bp->varPC = bp->cur_pc;
+                                setVarsPC(bp->bank, bp->varNodesP);
                             }
                         }
                         curBankP = findBank(curBank);
@@ -1593,6 +1602,8 @@ BankContextP newP;
     newP = (BankContextP)calloc(1, sizeof(BankContext));
     newP->bank = bank;
     newP->cur_pc = 0;       // new banks start at 0
+    newP->constPC = -1;     // nothing placed automatically yet
+    newP->varPC = -1;
     newP->nextP = banksP;
     banksP = newP;
     return( newP );

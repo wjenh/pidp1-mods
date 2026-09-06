@@ -92,23 +92,6 @@ gravdone,
 
     // advance the fixed-seed xorshift-style generator by one mix step (shift, xor, x3)
     jsp rand18
-    /*
-    lac rndval
-    dac tmpval
-    sal 5s
-    xor tmpval
-    dac rndval
-    lac rndval
-    dac tmpval
-    sar 7s
-    xor tmpval
-    dac rndval
-    lac rndval
-    dac tmpval
-    sal 3s
-    xor tmpval
-    */
-
     dac rndval
     and [1]                 // bit 0 chooses the starting edge
     sza
@@ -210,7 +193,7 @@ delayloop,
 
     jmp frame
 
-#include <rand18.ac>
+#include <RANDOM/rand18.ac>
 
 variables
 constants

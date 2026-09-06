@@ -1,0 +1,75 @@
+#ifndef PROBABILITYSELECTOR_AC
+#define PROBABILITYSELECTOR_AC
+// Given a list of probabilty percentages and ids,
+// scan the passed list accumulating a running sum of the percentages.
+// The first entry where the running sum is greater than or equal to
+// the generated probability from rand18 is selected.
+//
+// Each list item consists of two fields:
+// High 9 bits, 0-8: an identifier to be returned, 0-511.
+// Low 7 bits, 11-17: the probability 1-100 decimal.
+// A word that is all 0 terminates the list.
+//
+// If there is a match, the identifier is returned.
+// If there is no match, an identifier of -1 is returned.
+//
+// The list should be ordered in increasing probability.
+// This is not mandatory but the results most likely won't
+// be what was intended.
+//
+// Called via jsp with the list address in IO.
+// Returns the matching ID or -1 if there is no match in AC.
+// IO is not presrved.
+//
+// Rand18 is included automatically.
+// If it has already been included, it MUST be in the bank including this!
+
+#include <RANDOM/rand18.ac>
+
+probabilitySelector,
+    local rtn, loop, found, fail, weight, ptr, rand
+    dac rtn         // full 16 bit address
+    dio ptr
+    jsp rand18
+    // Now divide by 100, we want the remainder.
+    lia             // div ignores IO bit 17, but not important
+    cla
+    div [0d100]
+    nop             // div executes here on overflow, won't happen
+    dio rand
+
+    // Go through the list looking for a match.
+    // Each weight is added to the running sum.
+    // When the accumlated weight > random number, match found.
+    dzm weight
+
+loop,
+    lac i ptr
+    sza i           // Done?
+    jmp fail        // Yes, no match found.
+
+    and [0777]      // Extract the weight and update total.
+    add weight
+    dac weight
+    sub rand        // Accumulated weight - rand target.
+    sma             // If accumulated weight >= target, match found.
+    jmp found       // weight - target >= 0
+    idx ptr         // Next item.
+    jmp loop
+
+fail,
+    law i 1         // -1, i is not indirection for this instruction.
+    jmp i rtn
+
+found,
+    lac i ptr       // Reload the matched word.
+    sar 9s
+    and [0777       // Mask in case the sign bit propagated.
+    jmp i rtn
+
+rtn, 0
+ptr, 0
+weight, 0           // Stores the running cumulative weight.
+rand, 0
+    endloc
+#endif

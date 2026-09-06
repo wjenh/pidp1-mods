@@ -1,0 +1,29 @@
+#ifndef SELECTRANDOM_AC
+#define SELECTRANDOM_AC
+#include <RANDOM/rand18.ac>
+
+// Given a list of ids, randomly pick one using a uniform distribution.
+// and eturns the value in the selected entry in the list.
+// Unlike the above selector routines, the full 18 bit value is available.
+// Called via jda with the list address in IO, the number of items in the list in AC.
+// NOTE the different calling method, jda!
+// Neither IO nor AC are preserved, selected value returned in AC.
+selectRandom, 0
+    local rtn, ptr
+    dac rtn         // full 16 bit address
+    dio ptr         // we will need this later
+    jsp rand18
+    // Now divide by the count, we want the remainder.
+    lia
+    cla
+    div selectRandom // has count, the AC value from the caller
+    nop             // div executes here on overflow, won't happen
+    lai             // IO now has the remainder, 0..count-1 in range
+    add ptr
+    dac ptr
+    lac i ptr      // get the selected entry's value and return it
+    jmp i rtn
+rtn, 0
+ptr, 0
+    endloc
+#endif

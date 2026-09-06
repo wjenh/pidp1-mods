@@ -12,18 +12,39 @@
 //     sza // skip next instruction if AC is 0
 //     jsp foo
 // because these are all multi-instruction macros, the code will fail.
+//
+// For more fine-grained control, the crossBankjmp, crossBankjda, crossBankjsp versions can be used.
+// These allow control of whether an initial eem is done or not:
+// crossBankjmp(xx:*, TRUE), crossBankjmp(xx:*, FALSE);
+// This allows eliminating a superflous eem if it is already on.
 
 #ifndef MEMORY_AH
 #define MEMORY_AH
+#include <stddefs.ah>
+
+#define MEM_CONCAT_HIDDEN(prefix, cond) prefix ## cond
+#define MEM_CONCAT(prefix, cond) MEM_CONCAT_HIDDEN(prefix, cond)
 
 #define farjmp(a) \
     eem; jmp i [a]
 
+#define CROSS_BANK_JMP1(a) eem; jmp i [a]
+#define CROSS_BANK_JMP0(a) jmp i [a]
+#define crossBankjmp(a, cond) MEM_CONCAT(CROSS_BANK_JMP, cond)(a)
+
 #define farjsp(a) \
     eem; jsp i [a]
 
+#define CROSS_BANK_JSP1(a) eem; jsp i [a]
+#define CROSS_BANK_JSP0(a) jsp i [a]
+#define crossBankjsp(a, cond) MEM_CONCAT(CROSS_BANK_JSP, cond)(a)
+
 #define farjda(a) \
     eem; dac i [a]; jsp i [a+1]
+
+#define CROSS_BANK_JDA1(a) eem; dac i [a]; jsp i [a+1]
+#define CROSS_BANK_JDA0(a) dac i [a]; jsp i [a+1]
+#define crossBankjda(a, cond) MEM_CONCAT(CROSS_BANK_JDA, cond)(a)
 
 // This guarantees a proper return setup
 // NOTE that it turns off eem!

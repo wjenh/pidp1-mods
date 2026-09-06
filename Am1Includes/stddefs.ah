@@ -1,0 +1,22 @@
+// Some defines for useful things used elsewhere.
+
+#ifndef STDDEFS_AH
+#define STDDEFS_AH
+
+#ifndef TRUE
+#define TRUE 1
+#endif
+
+#ifndef FALSE
+#define FALSE 0
+#endif
+
+#ifndef EEM_ON_MASK
+#define EEM_ON_MASK 0200000
+#endif
+
+#ifndef INDIRECT_ON_MASK
+#define INDIRECT_ON_MASK 010000
+#endif
+
+#endif

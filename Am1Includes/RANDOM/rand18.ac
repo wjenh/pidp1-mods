@@ -1,0 +1,69 @@
+#ifndef RAND18_AC
+#define RAND18_AC
+// A collection of random number utilities.
+// All are 16-bit address safe and will work across banks
+// if eem is on.
+// If you are using extended memory, remember that passed pointers
+// will be used as absolute 16 bit addresses!
+
+// Ultimate 18-bit Xorshift PRNG for the DEC PDP-1
+// Returns: Random number in the AC, IO not preserved
+// This is the classice xor/shift generator specifically tuned
+// for the PDP-1 18 bit ones complement math.
+//
+// Note that a static initializing value is used.
+// Thus, when a program using this is reloaded, the random
+// sequence will repeat exactly as the first load.
+// This can be avoided by dynamically seeding the generator
+// using the rand18seed subroutine below.
+//
+// Call with: jsp rand18
+// Returns number in AC.
+// IO is not preserved.
+
+// Shared locals
+local r18curSeed, rand, rtn
+
+rand18,
+    dac rtn         // full 16 bit address
+        
+    // Step 1: state ^= state << 7
+    lac r18curSeed  // Load current seed into AC.
+    cli             // We use IO as a shift extension.
+    rcl 7s
+    xor r18curSeed  // Exclusive-OR shifted result.
+    dac r18curSeed  // Save intermediate state.
+
+    // Step 2: state ^= state >> 9
+    lac r18curSeed  // Load intermediate state into IO.
+    cli
+    rcr 9s          // Now by 9 bits.
+    xor r18curSeed  // Exclusive-OR again.
+    dac r18curSeed  // Save intermediate state.
+
+    // Step 3: state ^= state << 3
+    lac r18curSeed
+    cli
+    rcl 3s          // And finally 3 bits.
+    xor r18curSeed  // Final Exclusive-OR.
+
+    // Zero-Protection Safety Check.
+    sza i           // Skip the next instruction if AC is NOT 0.
+    xor [0x3E917]   // If it hit 0, inject a non-zero pattern to rescue the PRNG.
+    dac r18curSeed  // Save final state back to memory, AC holds random number.
+    jmp i rtn
+
+// Set the seed to the value in the IO register.
+// Call with: jsp rand18seed
+// No return, IO preserved, AC not preserved.
+rand18seed,
+    dac rtn
+    dio r18curSeed
+    jmp i rtn
+
+// Shared locals
+r18curSeed, 0x321E3 // Current seed value and its load-time default
+rand,   0           // Stores an 18-bit random number.
+rtn,    0
+endloc
+#endif

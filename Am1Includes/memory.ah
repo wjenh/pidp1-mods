@@ -13,14 +13,25 @@
 //     jsp foo
 // because these are all multi-instruction macros, the code will fail.
 //
-// For more fine-grained control, the crossBankjmp, crossBankjda, crossBankjsp versions can be used.
+// For more fine-grained control, the crossBankjmp, crossBankjda, crossBankjsp,
+// crossBankrtn, and similar for the lac/dac/lio/dio versions can be used.
+//
 // These allow control of whether an initial eem is done or not:
 // crossBankjmp(xx:*, TRUE), crossBankjmp(xx:*, FALSE);
+//
 // This allows eliminating a superflous eem if it is already on.
+// THESE ARE COMPILE TIME expansions, the assembler can't know what the eem state is.
+// If used incorrectly, the indirect resolves in the wrong bank and the code will fail .
+// Use these where the eem-on state is obvious.
+//
+// EEM and NOEEM can also be used for more clarity.
 
 #ifndef MEMORY_AH
 #define MEMORY_AH
 #include <stddefs.ah>
+
+#define EEM 1
+#define NOEEM 0
 
 #define MEM_CONCAT_HIDDEN(prefix, cond) prefix ## cond
 #define MEM_CONCAT(prefix, cond) MEM_CONCAT_HIDDEN(prefix, cond)
@@ -54,16 +65,36 @@
 #define farrtn(a) \
     eem; jmp i a
 
+#define CROSS_BANK_RTN1(a) eem; jmp i a
+#define CROSS_BANK_RTN0(a) jmp i a
+#define crossBankrtn(a, cond) MEM_CONCAT(CROSS_BANK_RTN, cond)(a)
+
 #define farlac(a) \
     eem; lac i [a]; lem
+
+#define CROSS_BANK_LAC1(a) eem; lac i [a]; lem
+#define CROSS_BANK_LAC0(a) lac i [a]
+#define crossBanklac(a, cond) MEM_CONCAT(CROSS_BANK_LAC, cond)(a)
 
 #define farlio(a) \
     eem; lio i [a]; lem
 
+#define CROSS_BANK_LIO1(a) eem; lio i [a]; lem
+#define CROSS_BANK_LIO0(a) lio i [a]
+#define crossBanklio(a, cond) MEM_CONCAT(CROSS_BANK_LIO, cond)(a)
+
 #define fardac(a) \
     eem; dac i [a]; lem
 
+#define CROSS_BANK_DAC1(a) eem; dac i [a]; lem
+#define CROSS_BANK_DAC0(a) dac i [a]
+#define crossBankdac(a, cond) MEM_CONCAT(CROSS_BANK_DAC, cond)(a)
+
 #define fardio(a) \
     eem; dio i [a]; lem
+
+#define CROSS_BANK_DIO1(a) eem; dio i [a]; lem
+#define CROSS_BANK_DIO0(a) dio i [a]
+#define crossBankdio(a, cond) MEM_CONCAT(CROSS_BANK_DIO, cond)(a)
 
 #endif

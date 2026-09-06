@@ -90,7 +90,7 @@ resume,
      0:bnkno
      0
      law lastloc - isr
-     jda rmemcpy
+     jda memcpy
      isr:bnkno
      lem
      isr

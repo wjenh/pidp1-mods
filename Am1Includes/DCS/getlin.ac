@@ -1,7 +1,7 @@
 #ifndef GETLIN_AH
 #define GETLIN_AH
 
-/ Read a line of characters into the memory address passed in the IO register.
+// Read a line of characters into the memory address passed in the IO register.
 // One character is placed in each word.
 // The line is terminated by the nl character, flxnl, 077.
 // The memory area is not bounds checked!
@@ -16,6 +16,7 @@
 getlin,  0
     local rtn, mem, loop, done, bad
     dac rtn
+    dio mem
     // We need to check for eem on.
     // If not, addresses must be masked to 12 bits.
     and [0200000
@@ -24,7 +25,7 @@ getlin,  0
     lac rtn
     and [07777
     dac rtn
-    lai
+    lai             // the buffer address is still in IO
     and [07777
     dac mem
 loop,
@@ -49,7 +50,5 @@ bad,
 rtn,  0
 mem,  0
     endloc
-
-#endif
 
 #endif

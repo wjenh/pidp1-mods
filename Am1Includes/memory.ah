@@ -25,6 +25,34 @@
 // Use these where the eem-on state is obvious.
 //
 // EEM and NOEEM can also be used for more clarity.
+//
+// The flag does NOT mean the same thing in both families.
+//
+// For crossBankjmp, crossBankjsp, crossBankjda and crossBankrtn it controls
+// the leading eem only -- there is nothing to do afterwards, control has left.
+//
+// For the lac/lio/dac/dio accessors it controls the eem AND the lem, so the
+// state on the way OUT differs and there are four dispositions, named for
+// what happens to the extend-mode window:
+//
+//   EEM       eem before, lem after  -- opens the window and closes it (= far*)
+//   NOEEM     neither                -- runs inside a window, LEAVES IT OPEN
+//   EEMOPEN   eem before, no lem     -- opens the window and leaves it open
+//   EEMCLOSE  no eem, lem after      -- runs inside a window and closes it
+//
+// So swapping fardac(x) for crossBankdac(x, NOEEM) does TWO things, not one:
+// it also drops the lem that any following indirect in-bank reference relies on.
+// When eem is already on and the code after still wants it off, EEMCLOSE
+// is the one that keeps the old exit state.
+//
+// EEMOPEN and EEMCLOSE are accessors only, used with crossBanklac, dac, lio, dio.
+// Passing either to a transfer macro is illegal and will give a syntax error.
+//
+// The skip warning above is conservative rather than exact: the single-word
+// forms, NOEEM on any accessor, and NOEEM on crossBankjmp/jsp/rtn, are one
+// instruction and CAN be skipped over safely.
+// Everything else, including crossBankjda(x, NOEEM), is still multi-word.
+// However, assuming all are multiword is safe and less confusing.
 
 #ifndef MEMORY_AH
 #define MEMORY_AH
@@ -32,6 +60,8 @@
 
 #define EEM 1
 #define NOEEM 0
+#define EEMOPEN 2
+#define EEMCLOSE 3
 
 #define MEM_CONCAT_HIDDEN(prefix, cond) prefix ## cond
 #define MEM_CONCAT(prefix, cond) MEM_CONCAT_HIDDEN(prefix, cond)
@@ -74,6 +104,8 @@
 
 #define CROSS_BANK_LAC1(a) eem; lac i [a]; lem
 #define CROSS_BANK_LAC0(a) lac i [a]
+#define CROSS_BANK_LAC2(a) eem; lac i [a]
+#define CROSS_BANK_LAC3(a) lac i [a]; lem
 #define crossBanklac(a, cond) MEM_CONCAT(CROSS_BANK_LAC, cond)(a)
 
 #define farlio(a) \
@@ -81,6 +113,8 @@
 
 #define CROSS_BANK_LIO1(a) eem; lio i [a]; lem
 #define CROSS_BANK_LIO0(a) lio i [a]
+#define CROSS_BANK_LIO2(a) eem; lio i [a]
+#define CROSS_BANK_LIO3(a) lio i [a]; lem
 #define crossBanklio(a, cond) MEM_CONCAT(CROSS_BANK_LIO, cond)(a)
 
 #define fardac(a) \
@@ -88,6 +122,8 @@
 
 #define CROSS_BANK_DAC1(a) eem; dac i [a]; lem
 #define CROSS_BANK_DAC0(a) dac i [a]
+#define CROSS_BANK_DAC2(a) eem; dac i [a]
+#define CROSS_BANK_DAC3(a) dac i [a]; lem
 #define crossBankdac(a, cond) MEM_CONCAT(CROSS_BANK_DAC, cond)(a)
 
 #define fardio(a) \
@@ -95,6 +131,8 @@
 
 #define CROSS_BANK_DIO1(a) eem; dio i [a]; lem
 #define CROSS_BANK_DIO0(a) dio i [a]
+#define CROSS_BANK_DIO2(a) eem; dio i [a]
+#define CROSS_BANK_DIO3(a) dio i [a]; lem
 #define crossBankdio(a, cond) MEM_CONCAT(CROSS_BANK_DIO, cond)(a)
 
 #endif

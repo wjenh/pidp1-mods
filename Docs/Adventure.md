@@ -1,7 +1,7 @@
 # Adventure for the PDP-1!
 
-This is version 1.0\
-31-Aug-2026 Bill Ezell - add wizard mode and advsave descriptions
+This is version 1.1\
+6-Sep-2026 Bill Ezell - updates for more detail on fastloading, game saves
 
 Yes, the real deal, a full implementation of the classic Woods 1977 PDP-10 Fortran Adventure 350,\
 including wizard mode, cave closing hours, *everything*.
@@ -60,7 +60,18 @@ However, the code it generates will load and run on any -1 that has the proper '
 
 Easy. Type 'make' in its directory. That will build the program and load the drum with the necessary data.\
 Load the tape. Be patient, it's big, remember?\
-If you get tired of waiting, you can use the *fastload* utility, see *UsingAM1.md*.\
+If you get tired of waiting, you can use the *fastload* utility:
+```
+fastload adventure.rim
+```
+but be aware that either the pidp-1 needs to be running in shared memory mode, set in the *pidp1.config* file,
+or with pidp-1 shut down,  use the 'write to the memory file' version:
+```
+fastload -m adventure.rim
+```
+then start the emulator and manually start the program at address 4.
+
+This is highly recommended, the program is huge and will take close to forever to load via the tape reader.\
 When it's loaded, telnet to port 2030 and relive history.
 
 If you quit and leave it running, you can telnet back in, restore your game or start a new one.
@@ -70,8 +81,9 @@ keep going.
 If the drum tracks get overwritten, you can reload them without rebuilding everything.
 In the Adventure directory, type 'make drum' and it will copy the data to the drum again.
 
-**WARNING** an install or a reload will wipe any existing adventure save game on the drum.
-If you have one, save it with *advsave*, see below.
+An install or a reload will preserve any existing save game and WIZCOM data on the drum.
+However, another program that uses the drum can overwrite it.
+If you want to be able to restore after that happens, save it with *advsave*, see below.
 
 Why telnet? Because you'd go insane using the Soroban. Been there, done that. No thanks.\
 And this brings us to DCS.
@@ -171,8 +183,13 @@ When you play, tip your hat to Crowther and Woods.
 All I ask is that you credit me and keep my comments in the code.
 This turned into a huge obsession and consumed many hours of my time and many baby seals powering Claude.
 
-By the way, love it or hate it, this would not have happend without Claude to deal with all the research, validation,
-etc.
+Finall, love it or hate it, this would not have happend without Claude Sonnet, Opus, and Fable
+to deal with all the research, validation, and major portions of the code generation.
+It created its own test harness for running the pidp-1 emulator, loading the rim, connecting to the game
+and playing it just as a human would, and used the ad1 debugger to track down problems, quite amazing.
+
+The sheer volume of work and its complexity would have made it totally impractical for me to do it alone.
+
 Credit where credit is due.
 
 Bill Ezell, wje\

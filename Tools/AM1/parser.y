@@ -243,8 +243,8 @@ body   : stmt_list
                         // Place any constants and variables that were never emitted by an
                         // explicit directive.
                         // They go at the end of their own bank, constants first, then variables.
-                        // That is the order every code generator emits
-                        // them in, and the start of each block is recorded in the bank context
+                        // That is the order every code generator emits them in,
+                        // and the start of each block is recorded in the bank context
                         // so no generator has to infer it from cur_pc.
                         for(BankContextP bp = banksP; bp; bp = bp->nextP)
                         {
@@ -819,6 +819,15 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                     }
                     $$ = newnode(lineno, curBankP->cur_pc, CONSTANT, NILP, $3);
                     $$->value.symP = symP;
+
+                    // Keep this reference's expression tree on the node.
+                    // The pooled symbol's ->ptr holds only the expression that
+                    // was placed into the slot first, and literals are pooled
+                    // by value, so every later reference whose value coincides
+                    // shares the same slot and would otherwise be listed
+                    // under an unrelated symbol, complete with the wrong bank
+                    // qualifier.
+                    $$->value2.ptr = $2;
                 }
                 | DOT
                 {

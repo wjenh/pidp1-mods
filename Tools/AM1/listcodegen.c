@@ -353,8 +353,10 @@ PNodeP node2P;
         break;
 
     case CONSTANT:
+        // Print the expression this reference has in value2.ptr.
         output(outfP, doOutput,"[");
-        listOperand(outfP, nodeP->value.symP->ptr);
+        listOperand(outfP, (nodeP->value2.ptr)?(PNodeP)(nodeP->value2.ptr)
+                                              :(PNodeP)(nodeP->value.symP->ptr));
         output(outfP, doOutput,"]");
         if( nodeP->rightP )
         {

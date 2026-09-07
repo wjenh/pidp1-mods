@@ -81,6 +81,7 @@ object      { return(OBJECT); }
 direction   { return(DIRECTION); }
 room        { return(ROOM); }
 verb        { return(VERB); }
+alias       { return(ALIAS); }
 
 longmsg     { return(LONGMSG); }
 shortmsg    { return(SHORTMSG); }
@@ -107,6 +108,13 @@ attributes  { return(ATTRIBUTES); }
      * INMESSAGE/DOTEXT already uses to keep message body text from being
      * tokenized against the keyword table. */
 voc         { BEGIN RAWWORD; return(VOC); }
+    /* TASK-FR2 step 1 (04-Sep-26): an optional "bank <n>" between a verb
+     * row's voc word and its argument, naming the memory bank the voc_*
+     * string is defined in. Absent means bank 2, where every vocabulary
+     * word lived until bank 2 filled up -- see addVerbDef(). Lowercase
+     * only, like every other keyword here, so an uppercase corpus name
+     * BANK would still lex as a plain STRING. */
+bank        { return(BANKKW); }
 move        { return(MOVEKW); }
 msgref      { return(MSGREF); }
 karg        { return(KARG); }

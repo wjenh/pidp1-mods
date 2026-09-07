@@ -25,8 +25,10 @@
 #define ADV_DEFINES_ONLY
 #include "advdataloader.h"
 
-// This must stay in sync with the value in adventure.am1!
-#define SAVE_MAGIC 31344
+// SAVE_MAGIC (word 0 of the reserved block) and WIZCOM_MAGIC (word
+// WIZCOM_BASE_OFFSET) come from the file adventure.am1 includes too, so the
+// assembler and this tool cannot drift apart.
+#include "advmagic.h"
 #define MAX_TRACK (NUM_TRACKS -1)       // highest valid track number
 
 void usage(void);
@@ -86,22 +88,51 @@ int saveArea[DRUM_START_WORDS];
         exit(1);
     }
 
-    // If we get 0 bytes back, the drum file was never initialzed, not an error, just clear the save area.
-    if( ((count = read(outFd, saveArea, sizeof(saveArea))) != sizeof(saveArea)) || (saveArea[0] != SAVE_MAGIC) )
+    // The reserved block holds TWO independent records back to back -- the SAVE block at word 0
+    // and the WIZCOM block at word WIZCOM_BASE_OFFSET -- and each carries its own magic number.
+    // They are written by different game actions (SAVE vs. the wizard's MOTD editor), so either
+    // one can be valid while the other is not. Judge and clear them SEPARATELY: gating both on
+    // the SAVE magic alone would zero a perfectly good WIZCOM/MOTD record just because the
+    // player happened to have no saved game, and would equally carry a stale WIZCOM record
+    // forward on the strength of an unrelated save.
+    //
+    // If we get 0 bytes back, the drum file was never initialized -- not an error, both records
+    // simply do not exist yet.
+    if( (count = read(outFd, saveArea, sizeof(saveArea))) < 0 )
     {
-        if( count < 0 )
-        {
-            fprintf(stderr, "Can't read drum file '%s'\n", imageNameP);
-            perror(NULL);
-            exit(1);
-        }
+        fprintf(stderr, "Can't read drum file '%s'\n", imageNameP);
+        perror(NULL);
+        exit(1);
+    }
 
-        memset(saveArea, 0, sizeof(saveArea));       // nothing there, clear the save area
-        printf("No valid save was found, initializing the save and wizcom area.\n");
+    if( count != sizeof(saveArea) )
+    {
+        // A short read means the block was never written, or was truncated. Nothing in it can be
+        // trusted, so neither record survives.
+        memset(saveArea, 0, sizeof(saveArea));
+        printf("No existing SAVE/WIZCOM block, initializing both areas.\n");
     }
     else
     {
-        printf("A valid save was found, preserving it.\n");
+        if( saveArea[0] != SAVE_MAGIC )
+        {
+            memset(saveArea, 0, SAVE_BLOCK_WORDS * sizeof(int));
+            printf("No valid save was found, initializing the save area.\n");
+        }
+        else
+        {
+            printf("A valid save was found, preserving it.\n");
+        }
+
+        if( saveArea[WIZCOM_BASE_OFFSET] != WIZCOM_MAGIC )
+        {
+            memset(&saveArea[WIZCOM_BASE_OFFSET], 0, WIZCOM_BLOCK_WORDS * sizeof(int));
+            printf("No valid wizcom record was found, initializing the wizcom area.\n");
+        }
+        else
+        {
+            printf("A valid wizcom record was found, preserving it.\n");
+        }
     }
 
     if( (read(inFd, &track, sizeof(int)) != sizeof(int)) || (track < 0) || (track > MAX_TRACK) )

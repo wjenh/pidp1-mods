@@ -20,6 +20,5 @@ Example:
     $ wz abcde
     BBBBE
 
-See the header comment in wz.c for the arithmetic and its sources
-(advn2.f4 491-548, adventure.am1's wzChallenge/wzCheckReply,
-Claude/SupportCode/testing/adventure_f10c_test.py).
+See the header comment in wz.c for the arithmetic and its sources,
+advn2.f4 491-548, adventure.am1's wzChallenge/wzCheckReply,

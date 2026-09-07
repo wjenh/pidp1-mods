@@ -8,6 +8,11 @@
  * "messages" is required; every section after it is optional.
  *
  * Usage: advdataloader [-s starttrack] [-c] srcfile
+ *
+ * The SPEC-PHASE1.md / SPEC-PHASE2.md cited in comments below moved to
+ * ../CompletedTasks/AdvDataLoader-Phase2/ on 04-Sep-26. They are a record
+ * of how this was built, not a description of what it does now; README.md
+ * in this directory is the current reference.
  * 22-Aug-26 wje initial version
  * 28-Aug-26 wje add full generation
  * 29-Aug-26 wje change to emit a track image, don't do a drum update
@@ -34,10 +39,21 @@
 
 #define MSGTAB_OUTFILE  "adv_msgtab.ac"
 #define VERBTAB_OUTFILE "adv_verbtab.ac"
+#define OBJALIAS_OUTFILE "adv_objalias.ac"
 #define SURFACEBITMAP_OUTFILE "adv_surfacebitmap.ac"
+#define DWARFBITMAP_OUTFILE "adv_dwarfbitmap.ac"
 
 #define MAX_OBJECTS 512     // number of objects we can store
 #define MAX_VERBS   512     // number of verb rows we can store (~178 today)
+
+// Largest direction code an EXIT row can carry -- buildRoomRecord() packs
+// it into the exit word's direction field, so this IS that field's mask.
+// Directions themselves are not capped by it (curDir is a whole word),
+// only their use in a room's exit list; newRoomExit() enforces it.
+// 127 covers adven.dat's motion numbering (75 distinct codes, highest 77)
+// with room to spare.
+#define MAX_EXIT_DIRCODE EXIT_DIR_MASK
+#define MAX_ALIASES 256     // number of object-alias rows (~26 today)
 
 #ifndef NULL
 #define NULL (void *)0
@@ -70,6 +86,9 @@ static int numObjects;
 
 static Verb verbs[MAX_VERBS];
 static int numVerbs;
+
+static Alias aliases[MAX_ALIASES];
+static int numAliases;
 static int startTrack;
 
 char msgTextBuf[MAX_TEXT];     // accumulates one message's joined raw lines (see joinMsgLine())
@@ -95,59 +114,77 @@ typedef struct {
 // Direction word, matched adventure.am1's DIR_* numeric code.
 // Must stay in sync with adventure.am1's #define DIR_NORTH etc.
 static const DirEnt dirTable[] = {
-    { "NORTH", 1 },
-    { "SOUTH", 2 },
-    { "EAST", 3 },
-    { "WEST", 4 },
-    { "IN", 5 },
-    { "OUT", 6 },
-    { "UP", 7 },
-    { "DOWN", 8 },
-    { "NE", 9 },
-    { "SE", 10 },
-    { "SW", 11 },
-    { "NW", 12 },
-    /* Stage 21: fissure/rod cluster motion words. Must stay in sync with
-     * adventure.am1's DIR_* #defines. */
-    { "FORWARD", 13 },
-    { "JUMP", 14 },
-    { "OVER", 15 },
-    { "ACROSS", 16 },
-    { "CROSS", 17 },
-    { "HALL", 18 },
-    { "PASSAGE", 19 },
-    { "TUNNEL", 19 },  /* true source synonym, shares DIR_PASSAGE (19) */
-    { "CLIMB", 20 },
-    { "CRAWL", 21 },
-    /* Stage 22 (STAGE22-TASK.md): SECRE, adven.dat motion word 66,
-     * R_MTKING's exit into the dragon/RUG cluster. Must stay in sync
-     * with adventure.am1's DIR_SECRE #define. */
-    { "SECRE", 22 },
-    /* Stage 23 (STAGE23-TASK.md Parts A/B/C): the troll-bridge/volcano
-     * cluster's new motion words. UPWAR/LEFT/RIGHT are true synonyms of
-     * already-existing UP/NE/SE and reuse those codes directly (see
-     * adventure.am1's voc_upwar/voc_left/voc_right) rather than needing
-     * entries here. Must stay in sync with adventure.am1's DIR_BEDQU/
-     * DIR_FORK/DIR_VIEW/DIR_BARRE #defines. */
-    { "BEDQU", 23 },
-    { "FORK", 24 },
-    { "VIEW", 25 },
-    { "BARRE", 26 },
-    /* Stage 25 (STAGE25-TASK.md): ORIEN, adven.dat motion word 72,
-     * R_SWISSCHEESE's real entrance into the Oriental Room/VASE puzzle.
-     * Must stay in sync with adventure.am1's DIR_ORIEN #define. */
-    { "ORIEN", 27 },
-    /* Stage 26 (STAGE26-TASK.md): CAVER and DARK, adven.dat motion words
-     * 73 and 22 -- the Oriental Room/Misty Cavern/Alcove cluster's real
-     * entrance and the Plover Room's real Dark-Room entrance. Must stay
-     * in sync with adventure.am1's DIR_CAVER/DIR_DARK #defines. */
-    { "CAVER", 28 },
-    { "DARK", 29 },
-    /* Stage 29 (STAGE29-TASK.md): GIANT, adven.dat motion word 27 --
-     * the Giant Room cluster's own "return to the Giant Room" synonym
-     * word, used at LOC 88/93/95. Must stay in sync with
-     * adventure.am1's DIR_GIANT #define. */
-    { "GIANT", 30 },
+    { "ROAD",      2 },  /* HILL/ROAD */
+    { "ENTER",     3 },  /* ENTER -- TASK-FR2 step 4: motion 3's only word, de-aliased from IN */
+    { "UPSTR",     4 },  /* UPSTR */
+    { "DOWNS",     5 },  /* DOWNS */
+    { "FORES",     6 },  /* FORES */
+    { "FORWARD",   7 },  /* CONTI/FORWA/ONWAR */
+    { "VALLE",     9 },  /* VALLE */
+    { "STAIR",     10 },  /* STAIR */
+    { "OUT",       11 },  /* EXIT/LEAVE/OUT/OUTSI */
+    { "BUILD",     12 },  /* BUILD/HOUSE */
+    { "GULLY",     13 },  /* GULLY */
+    { "STREA",     14 },  /* STREA -- voc_stream already exists (adven.f4 892's ENTER STREAM) */
+    { "ROCK",      15 },  /* ROCK */
+    { "BED",       16 },  /* BED */
+    { "CRAWL",     17 },  /* CRAWL */
+    { "COBBL",     18 },  /* COBBL */
+    { "IN",        19 },  /* IN/INSID/INWAR */
+    { "SURFA",     20 },  /* SURFA */
+    { "NULL",      21 },  /* NOWHE/NULL -- RESERVED -- adven.f4 1005 makes NULL/NOWHE a label-8 special */
+    { "DARK",      22 },  /* DARK */
+    { "PASSAGE",   23 },  /* PASSA/TUNNE -- TUNNEL shares this code -- one adven.dat word, two spellings */
+    { "TUNNEL",    23 },  /* PASSA/TUNNE -- shares DIR_PASSAGE, adven.dat's own PASSA/TUNNE pair */
+    { "LOW",       24 },  /* LOW */
+    { "CANYO",     25 },  /* CANYO */
+    { "GIANT",     27 },  /* GIANT */
+    { "VIEW",      28 },  /* VIEW */
+    { "UP",        29 },  /* ABOVE/ASCEN/U/UP/UPWAR */
+    { "DOWN",      30 },  /* D/DESCE/DOWN/DOWNW */
+    { "PIT",       31 },  /* PIT */
+    { "OUTDO",     32 },  /* OUTDO */
+    { "CRACK",     33 },  /* CRACK */
+    { "STEPS",     34 },  /* STEPS -- voc_steps already exists (object 1007, same word) */
+    { "DOME",      35 },  /* DOME */
+    { "LEFT",      36 },  /* LEFT -- TASK-FR2 step 4: de-aliased from NE */
+    { "RIGHT",     37 },  /* RIGHT -- TASK-FR2 step 4: de-aliased from SE */
+    { "HALL",      38 },  /* HALL */
+    { "JUMP",      39 },  /* JUMP */
+    { "BARRE",     40 },  /* BARRE */
+    { "OVER",      41 },  /* OVER */
+    { "ACROSS",    42 },  /* ACROS */
+    { "EAST",      43 },  /* E/EAST */
+    { "WEST",      44 },  /* W/WEST */
+    { "NORTH",     45 },  /* N/NORTH */
+    { "SOUTH",     46 },  /* S/SOUTH */
+    { "NE",        47 },  /* NE */
+    { "SE",        48 },  /* SE */
+    { "SW",        49 },  /* SW */
+    { "NW",        50 },  /* NW */
+    { "DEBRI",     51 },  /* DEBRI */
+    { "HOLE",      52 },  /* HOLE */
+    { "WALL",      53 },  /* WALL */
+    { "BROKE",     54 },  /* BROKE */
+    { "Y2",        55 },  /* Y2 */
+    { "CLIMB",     56 },  /* CLIMB */
+    { "FLOOR",     58 },  /* FLOOR */
+    { "ROOM",      59 },  /* ROOM */
+    { "SLIT",      60 },  /* SLIT */
+    { "SLAB",      61 },  /* SLAB/SLABR */
+    { "XYZZY",     62 },  /* XYZZY -- RESERVED -- doXyzzy owns the word */
+    { "DEPRE",     63 },  /* DEPRE */
+    { "ENTRA",     64 },  /* ENTRA */
+    { "PLUGH",     65 },  /* PLUGH -- RESERVED -- doPlugh owns the word */
+    { "SECRE",     66 },  /* SECRE */
+    { "CROSS",     69 },  /* CROSS */
+    { "BEDQU",     70 },  /* BEDQU */
+    { "PLOVE",     71 },  /* PLOVE -- RESERVED -- doPlove owns the word */
+    { "ORIEN",     72 },  /* ORIEN */
+    { "CAVER",     73 },  /* CAVER */
+    { "SHELL",     74 },  /* SHELL */
+    { "RESER",     75 },  /* RESER */
+    { "FORK",      77 },  /* FORK */
     { NULL, 0 }
 };
 
@@ -177,6 +214,8 @@ static const CondEnt condTable[] = {
 
 static int dirCodeForName(const char *nameP);
 static int condIdForName(const char *nameP);
+static int exitCondId(const char *dirNameP, char *condNameP);
+static MessageBlockP exitMsgBlock(const char *dirNameP, char *msgNameP);
 
 void addMessage(char *labelP, char *textP);
 void beginMessage(void);
@@ -191,6 +230,8 @@ void setRoomShortMsg(char *nameP);
 void addRoomFlagAttr(char *flagNameP, bool value);
 void addRoomExit(char *dirNameP, char *destNameP);
 void addRoomExitCond(char *dirNameP, char *destNameP, char *condNameP, char *msgNameP);
+void addRoomExitCondSilent(char *dirNameP, char *destNameP, char *condNameP);
+void addRoomExitCondMsg(char *dirNameP, char *condNameP, char *msgNameP);
 void addRoomExitRand(char *dirNameP, char *destNameP, int percent);
 void addObjectDef(char *nameP, char *vocSymP, char *locTextP, bool take,
     char *invMsgNameP, char *hereMsgNameP, char *treasureTextP);
@@ -206,10 +247,14 @@ static void doWrite(int roomBaseTrack);
 static int doCompare(const char *path, int roomBaseTrack);
 static void emitMsgtab(FILE *outP, int startTrack);
 static void emitRoomtab(FILE *outP, int roomBaseTrack, int tracksNeeded, int maxTrack);
+static void emitRoomFlagBitmap(FILE *outP, Word flagMask, const char *guardP,
+                               const char *symbolP, const char *purposeP);
 static void emitSurfaceBitmap(FILE *outP);
+static void emitDwarfBitmap(FILE *outP);
 static void emitObjDefs(FILE *outP);
 static void emitObjTables(char *dirnameP, FILE *deffP);
 static void emitVerbTab(char *dirnameP);
+static void emitObjAlias(char *dirnameP, FILE *deffP);
 static void emitDrumLayout(FILE *outP);
 static void usage(void);
 
@@ -400,6 +445,15 @@ char outPath[1024];
     emitSurfaceBitmap(outP);
     fclose(outP);
 
+    sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", DWARFBITMAP_OUTFILE);
+    if( !(outP = fopen(outPath, "w")) )
+    {
+        fprintf(stderr, "Can't create output file '%s'\n", DWARFBITMAP_OUTFILE);
+        fail();
+    }
+    emitDwarfBitmap(outP);
+    fclose(outP);
+
     // Objects section is optional (SPEC-PHASE1.md); its seven
     // generated files are only written when it's actually used
     // (SPEC-PHASE2.md "Emission only when the objects section is
@@ -415,6 +469,14 @@ char outPath[1024];
     if( numVerbs > 0 )
     {
         emitVerbTab(dirP);
+    }
+
+    // Object aliases (TASK-FR7 7b group 1) -- same optional-section
+    // policy as objects and verbs. NOBJALIAS is emitted alongside so
+    // findObj's scan has a bound even when the table is empty.
+    if( numObjects > 0 )
+    {
+        emitObjAlias(dirP, defOutP);
     }
 
     emitDrumLayout(defOutP);
@@ -440,6 +502,11 @@ char outPath[1024];
     if( numVerbs > 0 )
     {
         printf("Wrote %d verb rows to '%s'\n", numVerbs, VERBTAB_OUTFILE);
+    }
+
+    if( numObjects > 0 )
+    {
+        printf("Wrote %d object aliases to '%s'\n", numAliases, OBJALIAS_OUTFILE);
     }
 
     fclose(defOutP);
@@ -748,6 +815,19 @@ int code;
         verror("Room '%s': EXIT direction '%s' is not recognized\n", currentRoomP->symP->nameP, dirNameP);
     }
 
+    // buildRoomRecord() packs this code into bits 0:6 of the exit word
+    // (dirCode << EXIT_DIR_SHIFT, read back by adventure.am1's
+    // GET_DIRECTION_CODE "sar 9s; sar 2s; and [0x7F]"). Refused rather
+    // than truncated silently: a truncated code is a plausible-looking
+    // exit in the wrong direction, which is exactly the kind of defect
+    // the room table cannot show.
+    if( code > MAX_EXIT_DIRCODE )
+    {
+        verror("Room '%s': EXIT direction '%s' has code %d, above the %d the exit "
+               "word's 7-bit direction field can hold\n",
+            currentRoomP->symP->nameP, dirNameP, code, MAX_EXIT_DIRCODE);
+    }
+
     eP = &currentRoomP->exits[currentRoomP->nexits++];
     eP->destNameP = destNameP;
     eP->destLine = yylineno;
@@ -766,14 +846,16 @@ addRoomExit(char *dirNameP, char *destNameP)
     newRoomExit(dirNameP, destNameP);
 }
 
-void
-addRoomExitCond(char *dirNameP, char *destNameP, char *condNameP, char *msgNameP)
+// Resolve a condition name to its condTable ID, or die. Shared by all
+// three `cond` exit forms. The range check is not paranoia: doMove tells
+// a boolean gate from the three internal IDs (COND_RAND, COND_MSG,
+// COND_RANDMSG) by value alone, so a condTable entry that ever collided
+// with one of them would be silently mis-dispatched at run time rather
+// than rejected here.
+static int
+exitCondId(const char *dirNameP, char *condNameP)
 {
-ExitP eP;
 int condId;
-SymNodeP symP;
-
-    eP = newRoomExit(dirNameP, destNameP);
 
     if( (condId = condIdForName(condNameP)) < 0 )
     {
@@ -783,6 +865,36 @@ SymNodeP symP;
             currentRoomP->symP->nameP, dirNameP, condNameP);
     }
 
+    if( (condId == COND_RAND_ID) || (condId == COND_MSG_ID) || (condId == COND_RANDMSG_ID) )
+    {
+        verror("Room '%s': EXIT %s condition '%s' has ID %d, which is one of doMove's "
+               "internal IDs (COND_RAND %d, COND_MSG %d, COND_RANDMSG %d) -- "
+               "renumber it in condTable[] and in condFlagAddrs together\n",
+            currentRoomP->symP->nameP, dirNameP, condNameP, condId,
+            COND_RAND_ID, COND_MSG_ID, COND_RANDMSG_ID);
+    }
+
+    if( condId > EXIT_COND_MASK )
+    {
+        verror("Room '%s': EXIT %s condition '%s' has ID %d, above the %d the exit "
+               "word's 5-bit condition field can hold\n",
+            currentRoomP->symP->nameP, dirNameP, condNameP, condId, EXIT_COND_MASK);
+    }
+
+    return( condId );
+}
+
+void
+addRoomExitCond(char *dirNameP, char *destNameP, char *condNameP, char *msgNameP)
+{
+ExitP eP;
+int condId;
+SymNodeP symP;
+
+    eP = newRoomExit(dirNameP, destNameP);
+
+    condId = exitCondId(dirNameP, condNameP);
+
     if( !(symP = symFind(&msgSymsP, msgNameP)) )
     {
         verror("Room '%s': EXIT %s block message '%s' not found\n",
@@ -791,6 +903,103 @@ SymNodeP symP;
 
     eP->condId = condId;
     eP->condMsgP = (MessageBlockP)symP->ptr;
+}
+
+// TASK-FR2 step 3 / TASK-FR19 C12: 'EXIT <dir> <dest> COND <cond>' --
+// the gate with no refusal message. The condition holds, the player
+// moves; it fails, and doMove's dmGateFail walks on to the next entry
+// for this direction without printing anything, which is adven.f4 label
+// 12's own behaviour. adven.dat's conditional rows (M >= 100) whose
+// cascade continues on a further row rather than on a message.
+//
+// The row is marked ONLY by having no message: condId stays an ordinary
+// condTable ID, so nothing about the entry's format changes.
+// advdataloader.h has the four-shape table.
+void
+addRoomExitCondSilent(char *dirNameP, char *destNameP, char *condNameP)
+{
+ExitP eP;
+
+    eP = newRoomExit(dirNameP, destNameP);
+
+    eP->condId = exitCondId(dirNameP, condNameP);
+    eP->condMsgP = NULL;         // no message => silent fall-through on failure
+}
+
+// TASK-FR2 step 3: 'EXIT <dir> NONE COND <cond> MSG <msg>' -- the gated
+// message-only row. The condition holds, so the row's own action runs
+// (print <msg>, stay put); it fails, so the scan moves on silently. The
+// sense of `msg` is the one the unconditional NONE rows already set: on
+// a row that names no destination the message IS the action, not a
+// refusal.
+//
+// adven.dat's conditional N>500 rows -- LOC 103's clam/oyster refusals,
+// LOC 117/122's troll-and-chasm pair, the fissure's msg 97.
+void
+addRoomExitCondMsg(char *dirNameP, char *condNameP, char *msgNameP)
+{
+ExitP eP;
+
+    eP = newRoomExit(dirNameP, NULL);
+
+    eP->condId = exitCondId(dirNameP, condNameP);
+    eP->condMsgP = exitMsgBlock(dirNameP, msgNameP);
+}
+
+// Resolve a message name to its block, or die. Shared by every exit form
+// that carries a message: the two COND forms and the two message-only
+// ones.
+static MessageBlockP
+exitMsgBlock(const char *dirNameP, char *msgNameP)
+{
+SymNodeP symP;
+
+    if( !(symP = symFind(&msgSymsP, msgNameP)) )
+    {
+        verror("Room '%s': EXIT %s block message '%s' not found\n",
+            currentRoomP->symP->nameP, dirNameP, msgNameP);
+    }
+
+    return( (MessageBlockP)symP->ptr );
+}
+
+// TASK-FR3/FR4: 'EXIT <dir> NONE MSG <msg>' -- print <msg> and stay put,
+// unconditionally. adven.dat's N>500 travel rows. destNameP is NULL, so
+// resolveRoomExits() leaves destNum at 0, which is what doMove reads as
+// "no destination".
+void
+addRoomExitMsg(char *dirNameP, char *msgNameP)
+{
+ExitP eP;
+
+    eP = newRoomExit(dirNameP, NULL);
+    eP->condId = COND_MSG_ID;
+    eP->condMsgP = exitMsgBlock(dirNameP, msgNameP);
+}
+
+// TASK-FR4: 'EXIT <dir> NONE RAND <pct> MSG <msg>' -- on a hit, print
+// <msg> and stay put; on a miss, fall through to the next row for this
+// direction. adven.dat's M<100 N>500 rows (the msg-56/126 bounces).
+//
+// The threshold rides in the exit word's own threshold field, the same
+// one a plain RAND row uses. It no longer has to squat in destNum: the
+// message is a 10-bit index into msgtab, not an inline doublet, so the
+// two stopped competing for space (advdataloader.h has the layout).
+void
+addRoomExitRandMsg(char *dirNameP, int percent, char *msgNameP)
+{
+ExitP eP;
+
+    if( (percent < 0) || (percent > 100) )
+    {
+        verror("Room '%s': EXIT %s RAND percent %d is not 0-100\n",
+            currentRoomP->symP->nameP, dirNameP, percent);
+    }
+
+    eP = newRoomExit(dirNameP, NULL);
+    eP->condId = COND_RANDMSG_ID;
+    eP->condMsgP = exitMsgBlock(dirNameP, msgNameP);
+    eP->randThreshold = (percent * RAND_DOMAIN + 50) / 100;    // rounded, as addRoomExitRand
 }
 
 void
@@ -829,6 +1038,15 @@ SymNodeP symP;
         {
             eP = &rP->exits[j];
 
+            // A row that names no destination at all -- the two
+            // message-only types (COND_MSG_ID, COND_RANDMSG_ID) and the
+            // gated message row addRoomExitCondMsg() builds; leave
+            // destNum 0.
+            if( !eP->destNameP )
+            {
+                continue;
+            }
+
             if( !(symP = symFind(&roomSymsP, eP->destNameP)) )
             {
                 verrorAt(eP->destLine, "Room '%s': EXIT destination '%s' is not a defined room\n",
@@ -840,13 +1058,39 @@ SymNodeP symP;
     }
 }
 
+// The 1-based index of a message block in the emitted msgtab, or 0 for
+// "no message". emitMsgtab() walks msgBlocks[] in this order and emits
+// two words per block behind the label msgTab, so a message's run-time
+// address is msgTab + MSGTAB_RECORDSIZE * (index - 1). The index is
+// 1-based precisely so that 0 can mean "this row prints nothing" --
+// msgBlocks[0] is a real message.
+static int
+msgIndexOf(MessageBlockP blockP)
+{
+int idx;
+
+    if( !blockP )
+    {
+        return( 0 );
+    }
+
+    idx = (int)(blockP - msgBlocks) + 1;
+
+    if( idx > EXIT_MSGIDX_MASK )
+    {
+        verror("message '%s' is number %d, past the %d the exit entry's message "
+               "index field can hold\n", blockP->symP->nameP, idx, EXIT_MSGIDX_MASK);
+    }
+
+    return( idx );
+}
+
 // Build one room's 64-word drum record, exactly matching
 // advroomloader.c's buildRecord().
 static void
 buildRoomRecord(RoomP rP, Word *outWords)
 {
 int i, base;
-Word word;
 AttributeP aP;
 ExitP eP;
 
@@ -867,30 +1111,24 @@ ExitP eP;
     outWords[3] = (rP->shortMsgP->track << 12) + rP->shortMsgP->offset;
     outWords[4] = (rP->shortMsgP->padCount << 12) | rP->shortMsgP->nWords;
 
+    // Two words, one shape for every row type -- advdataloader.h has the
+    // field layout. A field a given row does not use is simply 0: destNum
+    // for the two message-only types, randThreshold for all but the two
+    // weighted ones, the message index for a row that prints nothing.
+    // That is why no per-condition branching survives here: while the
+    // message was an inline doublet it needed both of the entry's other
+    // words, and the row types had to fight over them.
     for( i = 0; i < rP->nexits; ++i )
     {
         eP = &rP->exits[i];
         base = HEADERWORDS + (i * EXITWORDS);
 
-        word = eP->destNum;
-        word |= eP->condId << 8;
-        word |= eP->dirCode << 13;
-        outWords[base] = word;
+        outWords[base] = (eP->dirCode << EXIT_DIR_SHIFT)
+                       | (eP->condId << EXIT_COND_SHIFT)
+                       | (eP->randThreshold & EXIT_THRESH_MASK);
 
-        if( eP->condId == COND_RAND_ID )
-        {
-            // Reuse the block-message doublet's first word for the roll
-            // threshold -- a RAND row never prints a block message on a
-            // miss, it silently falls through, so that slot is otherwise
-            // unused for this condition.
-            outWords[base + 1] = eP->randThreshold;
-        }
-        else if( eP->condId != 0 )
-        {
-            outWords[base + 1] = (eP->condMsgP->track << 12) + eP->condMsgP->offset;
-            outWords[base + 2] = (eP->condMsgP->padCount << 12) | eP->condMsgP->nWords;
-        }
-        // else: already zeroed by the memset above
+        outWords[base + 1] = (msgIndexOf(eP->condMsgP) << EXIT_MSGIDX_SHIFT)
+                           | (eP->destNum & EXIT_DEST_MASK);
     }
 }
 
@@ -968,6 +1206,51 @@ SymNodeP symP;
 }
 
 // ---------------------------------------------------------------------
+// Object aliases (TASK-FR7 7b group 1, S14) -- one flat 'alias'
+// statement per row of the two-column objAlias table. adven.dat section
+// 4 gives many objects more than one vocabulary word (LAMP is also
+// HEADL and LANTE; CHEST is also BOX and TREAS); the port's objNames
+// table cannot hold them, because findObj advances objNames, objLoc and
+// objTake together on a single index and a second name row would slide
+// the other two out of correspondence. The alias table is scanned only
+// after that walk has missed, so the common path is unchanged.
+//
+// The target object must already have been defined -- 'aliases' follows
+// 'objects' in the 'definitions' rule -- which is what lets the index be
+// resolved here, at parse time, rather than needing a second pass.
+// ---------------------------------------------------------------------
+
+void
+addAliasDef(char *vocWordP, char *objNameP)
+{
+AliasP aliasP;
+SymNodeP symP;
+ObjectP objP;
+char buf[MAX_NAME + 8];
+
+    if( numAliases >= MAX_ALIASES )
+    {
+        verror("Too many object aliases, the limit is %d.\n", MAX_ALIASES);
+    }
+
+    if( !(symP = symFind(&objSymsP, objNameP)) )
+    {
+        verror("Alias target object '%s' is not defined.\n", objNameP);
+    }
+
+    objP = (ObjectP)symP->ptr;
+
+    aliasP = &aliases[numAliases];
+    sprintf(buf, "voc_%s", vocWordP);
+    aliasP->vocSymP = (char *)malloc(strlen(buf) + 1);
+    strcpy(aliasP->vocSymP, buf);
+    aliasP->objIndex = objP->index;
+    aliasP->objNameP = objNameP;
+
+    ++numAliases;
+}
+
+// ---------------------------------------------------------------------
 // Verbs (TASK-VERB-EMISSION.md) -- one flat 'verb' statement per row of
 // the single verbTab table (3 words/row: voc_*:2, argument, handler:0).
 // Same no-forward-references situation as objects, so everything is
@@ -977,7 +1260,7 @@ SymNodeP symP;
 // ---------------------------------------------------------------------
 
 void
-addVerbDef(char *nameP, char *vocWordP, VerbArgP argP, char *handlerP)
+addVerbDef(char *nameP, char *vocWordP, int vocBank, VerbArgP argP, char *handlerP)
 {
 VerbP verbP;
 SymNodeP symP;
@@ -997,7 +1280,18 @@ char buf[MAX_NAME + 8];
     verbP = &verbs[numVerbs];
     verbP->symP = symP;
 
-    sprintf(buf, "voc_%s:2", vocWordP);
+    // The bank tag comes from the corpus's optional "bank <n>" clause;
+    // parser.y passes a literal 2 for a row that omits it. It is not
+    // cosmetic -- am1 resolves voc_<word>:<n> against bank n, so a
+    // string that has moved needs its tag moved with it. TASK-FR2 step
+    // 1's motion words live in bank 3 because bank 2 is full, the same
+    // reason TASK-FR7 7b's object synonyms went there (which is why
+    // emitObjAlias has a hardcoded ":3").
+    if( (vocBank < 0) || (vocBank > 3) )
+    {
+        verror("Verb '%s': bank %d is not a memory bank (0-3).\n", nameP, vocBank);
+    }
+    sprintf(buf, "voc_%s:%d", vocWordP, vocBank);
     verbP->vocTextP = (char *)malloc(strlen(buf) + 1);
     strcpy(verbP->vocTextP, buf);
 
@@ -1453,6 +1747,14 @@ MessageBlockP blockP;
     }
     fprintf(outP, "#ifndef ADV_MSGTAB_AH\n#define ADV_MSGTAB_AH\n\n");
 
+    // The table's base. A room's exit entry names its message by a
+    // 1-based index into this table rather than carrying an inline
+    // doublet. The records below are contiguous and in this order;
+    // nothing may be inserted between msgTab and the first of them.
+    fprintf(outP, "// msgTab -- the table's base. A room exit entry names a message\n");
+    fprintf(outP, "// by its 1-based index here: address = msgTab + 2 * (index - 1).\n");
+    fprintf(outP, "msgTab,\n");
+
     for( i = 0; i < numMsgs; ++i )
     {
         blockP = &msgBlocks[i];
@@ -1525,6 +1827,15 @@ int i;
 
     // So the adventure program stays in sync with this.
     fprintf(outP, "#define COND_RAND 0d%d\n", COND_RAND_ID);
+    // TASK-FR3/FR4 message-only rows. Both are special-cased in doMove
+    // and SKIPPED by dwMoveOne and doBack -- neither names a room, so the
+    // destination field of both reads 0. Any new exit-table walker must
+    // skip every row whose DESTINATION FIELD is 0, which is the test the
+    // two scanners use: since TASK-FR2 step 3 a gated message row carries
+    // an ordinary condTable ID, so "condId >= COND_MSG" no longer finds
+    // every roomless row.
+    fprintf(outP, "#define COND_MSG 0d%d\n", COND_MSG_ID);
+    fprintf(outP, "#define COND_RANDMSG 0d%d\n", COND_RANDMSG_ID);
     fprintf(outP, "#define RAND_DOMAIN_MASK 0d%d\n", RAND_DOMAIN - 1);
     fprintf(outP, "#define DARK_FLAG_MASK 0%o\n", DARK_FLAG);
     fprintf(outP, "#define DWARF_FLAG_MASK 0%o\n", DWARF_FLAG);
@@ -1535,7 +1846,8 @@ int i;
     fprintf(outP, "#define ROOMTAB_SHORT_MSG 3\n");
     fprintf(outP, "#define ROOMTAB_EXITS 0d%d\n", HEADERWORDS);
     fprintf(outP, "#define EXIT_FLAGS 0\n");
-    fprintf(outP, "#define EXIT_MSG 1\n");
+    fprintf(outP, "#define EXIT_DEST 1\n");
+    fprintf(outP, "#define MSGTAB_RECORDSIZE 0d2\n");
 
     // These expect the value to be in the AC
     fprintf(outP, "// Value in AC for these.\n");
@@ -1546,28 +1858,42 @@ int i;
     fprintf(outP, "#define IS_PIRATE_FORBID and [PIRATE_FORBID_MASK]\n\n");
 
     fprintf(outP, "// Value in AC for these, result in AC.\n");
+    // Exit-entry unpacking. These mirror buildRoomRecord()'s shifts (the
+    // field layout is in advdataloader.h) and must change with them.
+    // GET_EXIT_COUNT reads the room header's word 0; GET_DIRECTION_CODE,
+    // GET_CONDITION_ID and GET_RAND_THRESHOLD read exit word 0;
+    // GET_ROOM_NUMBER and GET_MSG_INDEX read exit word 1 (EXIT_DEST).
+    // A shift of more than nine places needs two sar's.
     fprintf(outP, "#define GET_ROOM_NUMBER and [0xFF]\n");
     fprintf(outP, "#define GET_EXIT_COUNT sar 8s; and [0xFF]\n");
-    fprintf(outP, "#define GET_DIRECTION_CODE sar 9s; sar 4s; and [0x1F]\n");
-    fprintf(outP, "#define GET_CONDITION_ID sar 8s; and [0x1F]\n\n");
+    fprintf(outP, "#define GET_DIRECTION_CODE sar 9s; sar 2s; and [0x7F]\n");
+    fprintf(outP, "#define GET_CONDITION_ID sar 6s; and [0x1F]\n");
+    fprintf(outP, "#define GET_RAND_THRESHOLD and [0x3F]\n");
+    fprintf(outP, "#define GET_MSG_INDEX sar 8s; and [0x3FF]\n\n");
 
     fprintf(outP, "\n#endif\n");
 }
 
-// Emit adv_surfacebitmap.ah -- one bit per room (bit (room-1), 1-based
-// room numbers), set if that room is SURFACE-flagged. Consumed by
-// mgDestCheck (adventure.am1, bank 3's isSurfaceRoom wrapper) via
-// UTIL/bitsets.ac's testBitInList, for the one place a room's own
-// SURFACE flag is needed before its record has been loaded (a move
-// destination during closing). See PendingRework/TASK-ROOM-FLAG-WORD.md.
+// Emit one room-flag bitmap include -- one bit per room (bit (room-1),
+// 1-based room numbers), set if that room carries flagMask in its record
+// word 5. Two callers today: emitSurfaceBitmap() (SURFACE, consumed by
+// mgDestCheck's isSurfaceRoom) and emitDwarfBitmap() (DWARF, consumed by
+// dwMoveOne's confinement filter, TASK-FR13). Both answer the same
+// question -- "does room N carry this flag?" for a room whose 64-word
+// drum record has NOT been loaded -- so they share one emitter rather
+// than keeping two copies that can drift apart.
 // buildRoomRecord() is reused as-is (already correctly computes word 5)
-// rather than re-deriving SURFACE membership from attributesP by name --
+// rather than re-deriving flag membership from attributesP by name --
 // avoids duplicating flag-lookup logic, and guarantees the bitmap can
 // never disagree with the drum record it's describing. nWords is
 // computed from the live numRooms, not a hardcoded constant, so the
 // bitmap stays renumber/insertion-safe.
+// guardP is the include guard AND the "<guard>_WORDS" define stem;
+// symbolP is the am1 label the table is emitted under; purposeP is the
+// one-sentence "consumed by" note for the generated file's header.
 static void
-emitSurfaceBitmap(FILE *outP)
+emitRoomFlagBitmap(FILE *outP, Word flagMask, const char *guardP,
+                   const char *symbolP, const char *purposeP)
 {
 Word rec[RECORDSIZE];
 int  *bitmap;
@@ -1579,7 +1905,7 @@ int  i, w, bitIx;
     for( i = 0; i < numRooms; ++i )
     {
         buildRoomRecord(&rooms[i], rec);
-        if( rec[5] & SURFACE_FLAG )        // rec[ROOMTAB_FLAGS], word index 5
+        if( rec[5] & flagMask )            // rec[ROOMTAB_FLAGS], word index 5
         {
             bitIx = rooms[i].num - 1;       // 0-based, matches loadRoom's own
                                              // (curRoom-1) convention and
@@ -1592,19 +1918,47 @@ int  i, w, bitIx;
     fprintf(outP, "// Auto-generated by advdataloader from AdvDataLoader/adventure.adv --\n");
     fprintf(outP, "// do not hand-edit. Regenerate via `make` in Adventure/.\n");
     fprintf(outP, "// One bit per room (bit (room-1), room numbers 1-based), set if that\n");
-    fprintf(outP, "// room is SURFACE-flagged -- consumed by mgDestCheck (adventure.am1)\n");
-    fprintf(outP, "// via UTIL/bitsets.ac's testBitInList, for the one place a room's own\n");
-    fprintf(outP, "// SURFACE flag is needed before its record has been loaded (a move\n");
-    fprintf(outP, "// destination during closing). See PendingRework/TASK-ROOM-FLAG-WORD.md.\n\n");
-    fprintf(outP, "#ifndef ADV_SURFACEBITMAP_AH\n#define ADV_SURFACEBITMAP_AH\n\n");
-    fprintf(outP, "#define SURFACE_BITMAP_WORDS 0d%d\n\n", nWords);
-    fprintf(outP, "SURFACE_BITMAP,\n");
+    fprintf(outP, "// room carries the flag named below.\n");
+    fprintf(outP, "// %s\n\n", purposeP);
+    fprintf(outP, "#ifndef %s\n#define %s\n\n", guardP, guardP);
+    fprintf(outP, "#define %s_WORDS 0d%d\n\n", symbolP, nWords);
+    fprintf(outP, "%s,\n", symbolP);
     for( w = 0; w < nWords; ++w )
     {
         fprintf(outP, "\t0%o\n", bitmap[w]);
     }
     fprintf(outP, "\n#endif\n");
     free(bitmap);
+}
+
+// Emit adv_surfacebitmap.ac -- the SURFACE flag, consumed by mgDestCheck
+// (adventure.am1, bank 3's isSurfaceRoom wrapper) via UTIL/bitsets.ac's
+// testBitInList, for the one place a room's own SURFACE flag is needed
+// before its record has been loaded (a move destination during closing).
+// See PendingRework/TASK-ROOM-FLAG-WORD.md.
+static void
+emitSurfaceBitmap(FILE *outP)
+{
+    emitRoomFlagBitmap(outP, SURFACE_FLAG, "ADV_SURFACEBITMAP_AH",
+                       "SURFACE_BITMAP",
+                       "SURFACE: consumed by mgDestCheck via bank 3's isSurfaceRoom.");
+}
+
+// Emit adv_dwarfbitmap.ac -- the DWARF flag, consumed by dwMoveOne's
+// candidate filter (adventure.am1, bank 3's isDwarfRoom wrapper). This is
+// adven.f4 line 696's NEWLOC.LT.15 clause: a dwarf never walks out of the
+// cave. The port cannot use the source's room-NUMBER compare because the
+// port's room numbering is not monotonic with adven.dat's LOC numbering
+// (R_Y2 is port room 15 but LOC 33), so the flag itself is the test, and
+// it has to be answerable for a candidate room whose record is not
+// loaded -- exactly what SURFACE_BITMAP does for move destinations.
+// See CompletedTasks/TASK-FR13-DWARF-CONFINEMENT.md.
+static void
+emitDwarfBitmap(FILE *outP)
+{
+    emitRoomFlagBitmap(outP, DWARF_FLAG, "ADV_DWARFBITMAP_AH",
+                       "DWARF_BITMAP",
+                       "DWARF: consumed by dwMoveOne via bank 3's isDwarfRoom (TASK-FR13).");
 }
 
 // ---------------------------------------------------------------------
@@ -1797,7 +2151,54 @@ char outPath[1024];
 
     fclose(outP);
 }
+// ---------------------------------------------------------------------
+// Object alias table (TASK-FR7 7b group 1, S14) -- two words per row,
+// {vocabulary-word address, OBJ_* index}, scanned by findObj only after
+// its walk over objNames has missed. Rows are emitted in corpus order;
+// order is match precedence, and no word appears twice, so the order is
+// not load-bearing beyond that. NOBJALIAS goes into the defines file so
+// the scan is bounded by a count rather than by a sentinel -- the same
+// shape as NOBJS, and one word cheaper per row than a terminator.
+// ---------------------------------------------------------------------
+static void
+emitObjAlias(char *dirP, FILE *deffP)
+{
+int i;
+FILE *outP;
+char outPath[1024];
 
+    fprintf(deffP, "#define NOBJALIAS 0d%d\n\n", numAliases);
+
+    sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", OBJALIAS_OUTFILE);
+    if( !(outP = fopen(outPath, "w")) )
+    {
+        fprintf(stderr, "Can't create output file '%s'\n", outPath);
+        fail();
+    }
+
+    fprintf(outP, "// Auto-generated by advdataloader from '%s', do not hand-edit.\n", baseNameP);
+    fprintf(outP, "// Regenerate with: advdataloader <srcfile>\n");
+    fprintf(outP, "// objAlias table body -- two words per row, {word address, OBJ_* index},\n");
+    fprintf(outP, "// %d rows (NOBJALIAS in adv_defines.ah). See findObj's foAliasScan.\n\n", numAliases);
+
+    fprintf(outP, "objAlias,\n");
+    for( i = 0; i < numAliases; ++i )
+    {
+        // ":3", not objNames' ":.". Bank 2 -- which holds every other
+        // voc_* string, objNames and three more object tables -- has no
+        // room for these 26 rows or for the words they name, so the alias
+        // vocabulary and this table both live in bank 3, and the tag is
+        // explicit rather than "whatever bank included me".
+        fprintf(outP, "    %s:3;\t0d%d\t// %s -> %s\n",
+            aliases[i].vocSymP, aliases[i].objIndex, aliases[i].vocSymP, aliases[i].objNameP);
+    }
+    if( numAliases == 0 )
+    {
+        fprintf(outP, "    0                          // empty table\n");
+    }
+
+    fclose(outP);
+}
 // ---------------------------------------------------------------------
 // Error handling
 // ---------------------------------------------------------------------

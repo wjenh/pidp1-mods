@@ -3,36 +3,24 @@
 This is a data-driven generator that both creates definition include files for the adventure.am1 game
 and loads the Type 23 drum with data such as the text of messages and room desciptions.
 
-**Status (01-Sep-26): complete and live -- this is THE loader.**
-`adventure.adv` in this directory is now THE single hand-edited corpus
-(the old three-source set plus `convert_legacy.py` are retired), and
-verb/action emission is live, not future work.
+**Complete and live -- this is THE loader**, and `adventure.adv` in this
+directory is THE single hand-edited corpus. One run of
+`advdataloader -o <dir> adventure.adv` emits the whole generated include
+set and writes the intermediate track image `advtracks.drm`;
+`advdrumloader` then loads that onto the drum. The project `Makefile`
+runs both, with `-o Includes`.
 
-One run of `advdataloader -o <dir> adventure.adv` emits the whole
-generated include set and writes the intermediate track image
-`advtracks.drm`; `advdrumloader` then loads that onto the drum. The
-project `Makefile` runs both, with `-o Includes`.
-
-**Output shape changed:** the `#define`s that Phase 1/2 emitted as four
-separate headers (`adv_msgtab.ah`, `adv_roomtab.ah`, `adv_objdefs.ah`,
-`adv_drumlayout.ah`) are now collapsed into ONE file,
-`adv_defines.ah`. The table *bodies* stay separate: `adv_msgtab.ac`,
-`adv_verbtab.ac`, `adv_surfacebitmap.ac`, and the six `adv_obj*.ac`
-object tables. The "Artifacts" section and the per-section examples
-below still describe the older split -- read them for the record
-formats, not for the file names.
-
-Phase history, for reference: Phase 1 (SPEC-PHASE1.md +
-GOLDEN-MASTER-RESULTS.md) reproduced the legacy AdvTextLoader/
-AdvRoomLoader pair byte-identically; Phase 2 (SPEC-PHASE2.md +
-PHASE2-RESULTS.md) added object tables and constants on a
-binary-identical rail. Both phase docs predate the collapse above.
-Where this README's original design text disagrees with the specs, the
-specs win -- except on output file names, where this note wins.
+The build records for the two phases that got it here were moved to
+`../CompletedTasks/AdvDataLoader-Phase2/` on 04-Sep-26. They describe a
+retired world (legacy loader pair, `convert_legacy.py`, four separate
+`#define` headers) -- read them for the record only, never as a
+procedure. A few per-section examples below still name the old
+`adv_*.ah` split; read those for the record *formats*, not for the file
+names, and see "Artifacts" for what is actually emitted.
 
 ## The grammar
 
-An input file consists of seven sections, in order (every section after
+An input file consists of eight sections, in order (every section after
 messages may be empty/omitted):
 - messages, defines the text for the in-game messages shown the user
 - movement, defines the words that perform movement, e.g. NORTH
@@ -40,33 +28,51 @@ messages may be empty/omitted):
 - actions, defines the actions associated with verbs used in the game
 - rooms, defines rooms, their names, attributes, and exit points.
 - objects, defines the objects used in the game, e.g., the lamp
+- aliases, gives an object a second (third, fourth) name, e.g. LANTERN
 - verbs, defines the action words used in the game and their actions, e.g. TAKE
 
 Numbers use am1 conventions: bare integers are OCTAL, 0d is decimal, 0x is hex.
 
 ## Artifacts
 
-Phase 1 emits the two legacy include files byte-identically to the old
-AdvTextLoader/AdvRoomLoader pair (that is the golden-master rail):
-- adv_msgtab.ah, message drum-location doublets
-- adv_roomtab.ah, room #defines plus the ROOMTAB_*/COND_*/mask constants
+`adventure.adv` is THE corpus and is hand-edited. Nothing generates it:
+the legacy `Text/adventureText.txt` + `Rooms/adventureRooms.txt` pair and
+the `convert_legacy.py` that once produced it from them were retired
+01-Sep-26.
 
-The unified adv_data.ah (#defines, no code) / adv_data.ac (memory-using
-data) split is the phase-2 output, not yet emitted.
+advdataloader emits one #define header plus eleven table bodies, all into
+the directory named by `-o` (this tree uses `-o Includes`):
 
-The drum image (default ./pdp23drum for now; the deployed
-/opt/pidp1-mods/pdp23drum path is an owner decision at retire time) is
-updated in place. Text packing starts at track 18 (SAVE_TRACK 16 and
-WIZCOM_TRACK 17 precede it) and expands as needed; room records follow
-one track past the last text track. The -c flag compares instead of
-writing: it validates everything, reads the image, and reports any
-region that differs from what it would have written (the standing
-golden-master check).
+- `adv_defines.ah` -- every #define: message, room, object and
+  drum-layout constants, NROOMS, ROOMTAB_*, MAXEXITS, COND_*,
+  OBJ_*/NOBJS. This one file replaced the old four-header set
+  (adv_msgtab.ah, adv_roomtab.ah, adv_objdefs.ah, adv_drumlayout.ah).
+- `adv_msgtab.ac`, `adv_verbtab.ac`, `adv_surfacebitmap.ac`,
+  `adv_dwarfbitmap.ac`, and the seven `adv_obj*.ac` object tables
+  (`objalias`, `objheremsg`, `objinvmsg`, `objloc`, `objnames`,
+  `objtake`, `objtreasure`).
 
-The input corpus, adventure.adv, is generated from the legacy sources
-(Text/adventureText.txt + Rooms/adventureRooms.txt) by
-convert_legacy.py; data.adv is a small smoke-test sample of the
-grammar.
+Never hand-edit a generated file.
+
+It also writes the intermediate track image `advtracks.drm` (relative to
+cwd). That image is not the drum: `advdrumloader` blits it onto the live
+drum image in a second step, and restamps the SAVE/WIZCOM reserved block.
+`advdrumloader -i <path>` selects the image; with no `-i` it defaults to
+/opt/pidp1-mods/pdp23drum.
+
+Drum layout: SAVE and WIZCOM share **track 16** in fixed 512-word blocks
+-- SAVE at word 0, WIZCOM at word 512 (`WIZCOM_BASE_OFFSET`). Message
+text starts right after them at word 1024 of that same track and flows
+onto later tracks; room records follow one track past the last text
+track. There is no separate WIZCOM track, and a test or tool that
+invents one silently writes where the game never reads -- see
+`Adventure/TESTING.md`, "Test-side addressing of that record", where that
+constant drifted twice. Derive the address as SAVE_TRACK +
+WIZCOM_BASE_OFFSET.
+
+The `-c` flag compares instead of writing: it validates everything, reads
+the image, and reports any region that differs from what it would have
+written.
 
 **IMPORTANT** - this data is read-only as far as the game program is concerned, it cannot
 be modified by in-game actions.
@@ -119,10 +125,31 @@ where:
 - name is the direction's name as will be recogized when the user types it
 - value is an arbitrary integer for use in the program
 
-Each direction will generate a definition in the .ah include file:
+It does NOT generate anything. The direction list is validated against
+`advdataloader.c`'s hard-coded `dirTable`, and the `#define DIR_name` it
+looks as though it would emit is hand-written in `adventure.am1`
+instead:
 ```
 #define DIR_name value
 ```
+So a direction lives in three files and all three must agree.
+`addDirection()` compares the first two; nothing in the build reads the
+third, and `adventure_fr2_motion_vocabulary_test.py` compares all three.
+
+**A direction's value must fit `MAX_EXIT_DIRCODE` to be usable in a
+room's `exit` row.** `buildRoomRecord()` packs the code into the exit
+entry's seven-bit direction field (`dirCode << EXIT_DIR_SHIFT`, read back
+by `adventure.am1`'s `GET_DIRECTION_CODE`), and `MAX_EXIT_DIRCODE` *is*
+that field's mask, 127. `newRoomExit()` rejects a larger code rather than
+truncating it -- a truncated code is a valid-looking exit in the wrong
+direction, which the room table cannot show.
+
+127 covers `adven.dat`'s own motion numbering (75 distinct codes, highest
+77) with room to spare, so nothing in the corpus is out of reach. It was
+31 between the 04-Sep-26 and 05-Sep-26 cuts, when the entry was three
+words with a five-bit field; see
+`CompletedTasks/TASK-FR2-MOTION-WORDS-AND-EXITS.md`'s 05-Sep-26 addendum
+for the two-word entry and why the record stayed 64 words.
 
 ## Flags
 
@@ -191,6 +218,45 @@ Each obj will generate a definition in the .ah include file:
 #define OBJ_name generated-numeric-id
 ```
 
+## Object aliases (added 03-Sep-26)
+
+`adven.dat` gives most objects more than one word -- the lamp is LAMP,
+LANTE and HEADL. An `object` row carries exactly one `name voc_*`, and
+`findObj` walks `objNames`, `objLoc` and `objTake` in lockstep on a
+single index, so a second name cannot be added to `objNames` without
+breaking that correspondence. The aliases section is the second table
+that solves it.
+
+The syntax is:
+```
+alias voc *word* object *OBJNAME*
+```
+where:
+- word is the vocabulary word, written the way a `voc_*` symbol is (the
+  `voc` keyword is what puts the lexer in raw-word mode, which is
+  required: several alias words -- `box`, `key`, `nest` -- collide with
+  loader keywords and would otherwise tokenize as grammar).
+- OBJNAME is an object defined in the objects section above. It must
+  already be defined; a forward reference is an error.
+
+Example:
+```
+alias voc lante object LAMP
+alias voc headl object LAMP
+```
+
+Emits `Includes/adv_objalias.ac`, two words per row (the `voc_*` string
+pointer and the `OBJ_*` index), plus `#define NOBJALIAS <count>` in the
+.ah include file. The rows are tagged for **bank 3**, which is where
+`adventure.am1` includes them and where their `voc_*` strings live --
+bank 2 is full. Changing that means changing the tag in
+`emitObjAlias()`, not just the `#include`.
+
+`findObj` consults the table only after `objNames` misses
+(`foAliasScan`), and on a hit re-derives `objLoc`/`objTake` from their
+bases, so an aliased word behaves identically to the object's own name
+from that point on.
+
 ## Verbs
 
 This defines the verbs in the game that can used, such as TAKE.
@@ -208,6 +274,27 @@ Example:
 ```
 verb up direction up 
 ```
+
+**The live syntax is the one the corpus uses**, not the sketch above --
+`verb NAME voc WORD [bank N] <argspec> handler HANDLER`, documented in
+`adventure.adv`'s own verbs-section header comment.
+
+### The optional `bank N` clause (added 04-Sep-26, TASK-FR2 step 1)
+
+```
+verb ROAD voc road bank 3 move ROAD handler doMove
+```
+
+`N` is the memory bank the row's `voc_*` string is defined in, and it
+becomes the emitted reference's tag (`voc_road:3`). **Omitted, it means
+bank 2**, which is where every vocabulary word lived until bank 2 filled
+up, so no row that predates the clause changed.
+
+It is not cosmetic. am1 resolves `voc_<word>:<n>` against bank `n`
+whatever bank the label is really in, so a mis-tagged row assembles
+cleanly and then never matches. If a `voc_*` string moves banks, its verb
+row's clause moves with it. The object-alias table has the same problem
+and still solves it the older way -- `emitObjAlias()` hardcodes `:3`.
 *what gets emitted is not yet defined*
 
 Each verb will generate a definition in the .ah include file:

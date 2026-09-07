@@ -28,8 +28,14 @@
 
 #define ADV_DEFINES_ONLY
 #include "advdataloader.h"
-#define SAVE_MAGIC ((int)(('X' << 24) | ('Y' << 16) | ('Z' << 8) | 'Z'))
-#define DRUM_SAVE_MAGIC 31344   // must match adventure.am1's value
+// The DRUM's save marker comes from the file adventure.am1 includes too
+// (as SAVE_MAGIC), so this tool cannot drift from the assembler.
+#include "advmagic.h"
+// ADVSAVE_FILE_MAGIC is this tool's OWN marker for its .sav container file,
+// unrelated to the drum's -- it was called SAVE_MAGIC until the drum value
+// was single-sourced under that name.
+#define ADVSAVE_FILE_MAGIC ((int)(('X' << 24) | ('Y' << 16) | ('Z' << 8) | 'Z'))
+#define DRUM_SAVE_MAGIC SAVE_MAGIC
 
 bool loadDrum(int dataFd, int drumFd, int track, char *filenameP, char *drumFilenameP);
 bool saveDrum(int dataFd, int drumFd, int track, char *filenameP, char *drumFilenameP);
@@ -131,7 +137,7 @@ loadDrum(int dataFd, int drumFd,int track, char *filenameP, char *drumFilenameP)
 int i;
 int buffer[DRUM_START_WORDS];
 
-    if( (read(dataFd, &i, sizeof(int)) != sizeof(int)) || (i != SAVE_MAGIC) )
+    if( (read(dataFd, &i, sizeof(int)) != sizeof(int)) || (i != ADVSAVE_FILE_MAGIC) )
     {
         fprintf(stderr,"Data file '%s' is not an adventure save file.\n", filenameP);
         return(false);
@@ -172,7 +178,7 @@ int buffer[DRUM_START_WORDS];
         return(false);
     }
 
-    i = SAVE_MAGIC;
+    i = ADVSAVE_FILE_MAGIC;
     if( write(dataFd, &i, sizeof(int)) != sizeof(int) )
     {
         fprintf(stderr,"Error writing data  file '%s'.\n", filenameP);

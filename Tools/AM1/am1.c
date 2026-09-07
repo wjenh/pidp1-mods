@@ -113,6 +113,7 @@
  * 5-Sep-2026 wje - more law cases handled, all should be covered now
  * 5-Sep-2026 wje - various fixes for dangling constants and vars not being emitted correctly
  * 6-Sep-2026 wje - minor fix in listcodegen to fix some costants being listed incorrectly
+ * 6-Sep-2026 wje - trivial change, show mem usage in sorted low bank to high bank order
  *
 */
 #include <unistd.h>
@@ -220,6 +221,7 @@ int i;
 bool testMode;
 char *cP, *cP2;
 SymNodeP symP;
+BankContextP bankP, lastBankP;
 
     yydebug = 0;
     yy_flex_debug = 0;
@@ -564,14 +566,33 @@ SymNodeP symP;
     if( showMemUsage )
     {
         printf("Highest address used:\n");
-        // Go thru all the used banks, print the high address.
-        while( banksP )
-        {
-            printf("Bank %d, 0%04o (%d decimal)\n",
-                banksP->bank, banksP->cur_pc - 1, banksP->cur_pc - 1);
-            banksP = banksP->nextP;
-        }
 
+        // Go thru all the used banks, print the high address.
+        // We iterate to do it in the correct order, too small a list to sort.
+        for( i = 0, lastBankP = 0; banksP; ++i )
+        {
+            for( bankP = banksP, lastBankP = 0; bankP; bankP = bankP->nextP )
+            {
+                if( bankP->bank == i )
+                {
+                    printf("Bank %d, 0%04o (%d decimal)\n",
+                        bankP->bank, bankP->cur_pc - 1, bankP->cur_pc - 1);
+                    // Unlink this one
+                    if( lastBankP )
+                    {
+                        lastBankP->nextP = bankP->nextP;
+                    }
+                    else
+                    {
+                        banksP = bankP->nextP;
+                    }
+                }
+                else
+                {
+                    lastBankP = bankP;
+                }
+            }
+        }
     }
 
     if( doCpp && !keepCpp)

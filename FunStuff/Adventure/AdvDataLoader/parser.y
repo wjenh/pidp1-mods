@@ -40,10 +40,15 @@ extern void setRoomShortMsg(char *nameP);
 extern void addRoomFlagAttr(char *flagNameP, bool value);
 extern void addRoomExit(char *dirNameP, char *destNameP);
 extern void addRoomExitCond(char *dirNameP, char *destNameP, char *condNameP, char *msgNameP);
+extern void addRoomExitCondSilent(char *dirNameP, char *destNameP, char *condNameP);
+extern void addRoomExitCondMsg(char *dirNameP, char *condNameP, char *msgNameP);
 extern void addRoomExitRand(char *dirNameP, char *destNameP, int percent);
+extern void addRoomExitMsg(char *dirNameP, char *msgNameP);
+extern void addRoomExitRandMsg(char *dirNameP, int percent, char *msgNameP);
 extern void addObjectDef(char *nameP, char *vocSymP, char *locTextP, bool take,
     char *invMsgNameP, char *hereMsgNameP, char *treasureTextP);
-extern void addVerbDef(char *nameP, char *vocWordP, VerbArgP argP, char *handlerP);
+extern void addVerbDef(char *nameP, char *vocWordP, int vocBank, VerbArgP argP, char *handlerP);
+extern void addAliasDef(char *vocWordP, char *objNameP);
 extern void fail(void);
 
 %}
@@ -65,6 +70,7 @@ extern void fail(void);
 %token FLAG
 %token DIRECTION
 %token VERB
+%token ALIAS
 
 %token ENDMSG
 %token BIT
@@ -91,6 +97,7 @@ extern void fail(void);
 
 /* Verbs section keywords */
 %token VOC
+%token BANKKW
 %token MOVEKW
 %token MSGREF
 %token KARG
@@ -115,7 +122,7 @@ extern void fail(void);
 
 %%
 
-definitions : messages movement flags actions rooms objects verbs
+definitions : messages movement flags actions rooms objects aliases verbs
             ;
 
 messages    : message
@@ -217,9 +224,40 @@ roomspec    : FLAG STRING YESNO
             {
                 addRoomExitCond($2, $3, $5, $7);
             }
+            /* TASK-FR2 step 3 / TASK-FR19 C12: the same gate with no
+             * message -- a failed condition falls through to the next
+             * entry for this direction without printing, which is what
+             * adven.f4 label 12 does. LALR(1)-clean: after the condition
+             * name the parser shifts on MSG and reduces on anything
+             * else, and MSG starts no other roomspec. */
+            | EXIT STRING STRING COND STRING
+            {
+                addRoomExitCondSilent($2, $3, $5);
+            }
             | EXIT STRING STRING RAND INTEGER
             {
                 addRoomExitRand($2, $3, $5);
+            }
+            /* Message-only rows (TASK-FR3/FR4): NONE in the destination
+             * slot means "print and stay put". Distinguished from the
+             * three forms above at token 3, so still LALR(1)-clean. */
+            | EXIT STRING NONE MSG STRING
+            {
+                addRoomExitMsg($2, $5);
+            }
+            | EXIT STRING NONE RAND INTEGER MSG STRING
+            {
+                addRoomExitRandMsg($2, $5, $7);
+            }
+            /* TASK-FR2 step 3: the gated message-only row -- the
+             * condition holds, so the row's own action runs (print and
+             * stay); it fails, so the scan silently tries the next
+             * entry. adven.dat's conditional N>500 rows. Note the sense:
+             * on a NONE row `msg` is the ACTION, not a refusal, exactly
+             * as it is on the two unconditional NONE forms above. */
+            | EXIT STRING NONE COND STRING MSG STRING
+            {
+                addRoomExitCondMsg($2, $5, $7);
             }
             ;
 
@@ -274,13 +312,44 @@ treasureVal : YESNO
             }
             ;
 
+aliases     : /* empty */
+            | aliases alias
+            ;
+
+/* TASK-FR7 7b group 1 (S14): a second vocabulary word for an object that
+ * already has an 'object' row. findObj walks objNames/objLoc/objTake in
+ * lockstep on one index, so a synonym cannot be a second objNames entry
+ * without breaking that correspondence -- it becomes a row in the
+ * separate two-column objAlias table instead, which findObj scans only
+ * after its own walk has missed. 'voc' is reused here for the same
+ * reason the verbs section uses it: it switches the lexer into RAWWORD,
+ * so alias words that collide with keywords (box, key, name, ...) still
+ * lex as plain identifiers. The object must already be defined -- the
+ * aliases section sits after 'objects' in 'definitions' so there are no
+ * forward references, exactly as objects and verbs are placed. */
+alias       : ALIAS VOC STRING OBJECT STRING
+            {
+                addAliasDef($3, $5);
+            }
+            ;
+
 verbs       : /* empty */
             | verbs verb
             ;
 
+/* Two forms, differing only in the optional "bank <n>" that names the
+ * memory bank holding this row's voc_* string. Without it the string is
+ * assumed to be in bank 2, which is where all 220-odd of them were until
+ * bank 2 filled up; TASK-FR2 step 1's motion words are in bank 3 and say
+ * so. LALR-safe: after VOC STRING the lookahead is either BANKKW or one
+ * of argSpec's four distinct leading tokens. */
 verb        : VERB STRING VOC STRING argSpec HANDLERKW STRING
             {
-                addVerbDef($2, $4, $5, $7);
+                addVerbDef($2, $4, 2, $5, $7);
+            }
+            | VERB STRING VOC STRING BANKKW INTEGER argSpec HANDLERKW STRING
+            {
+                addVerbDef($2, $4, $6, $7, $9);
             }
             ;
 

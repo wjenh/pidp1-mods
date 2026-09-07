@@ -58,7 +58,7 @@ message BUILDING_LONG
 YOU ARE INSIDE A BUILDING, A WELL HOUSE FOR A LARGE SPRING.
 @
 message BUILDING_SHORT
-YOU ARE INSIDE THE BUILDING.
+YOU'RE INSIDE BUILDING.
 @
 message HILL_LONG
 YOU HAVE WALKED UP A HILL, STILL IN THE FOREST.\n
@@ -66,79 +66,79 @@ THE ROAD SLOPES BACK DOWN THE OTHER SIDE OF THE HILL.\n
 THERE IS A BUILDING IN THE DISTANCE.
 @
 message HILL_SHORT
-YOU ARE ON THE HILL.
+YOU'RE AT HILL IN ROAD.
 @
 message VALLEY_LONG
 YOU ARE IN A VALLEY IN THE FOREST BESIDE A STREAM TUMBLING ALONG A
 ROCKY BED.
 @
 message VALLEY_SHORT
-YOU ARE IN THE VALLEY.
+YOU'RE IN VALLEY.
 @
 message FOREST_LONG
-YOU ARE WANDERING AIMLESSLY THROUGH THE FOREST.\n
-THE ROAD IS BACK TO THE SOUTH.
+YOU ARE IN OPEN FOREST, WITH A DEEP VALLEY TO ONE SIDE.
 @
 message FOREST_SHORT
-YOU ARE IN THE FOREST.
+YOU'RE IN FOREST.
+@
+# adven.dat LOC 6, the second open-forest room (TASK-FR2 step 2).  Its
+# SHORT text is byte-identical to LOC 5's -- that is the source's own
+# doing, not a copy/paste here: sections 1 and 2 give LOC 5 and LOC 6
+# different long texts and the same "YOU'RE IN FOREST." short one.
+message FOREST2_LONG
+YOU ARE IN OPEN FOREST NEAR BOTH A VALLEY AND A ROAD.
+@
+message FOREST2_SHORT
+YOU'RE IN FOREST.
 @
 message SLIT_LONG
-AT YOUR FEET ALL THE WATER OF A SMALL STREAM SPLASHES INTO A\n
-TWO-INCH SLIT IN THE ROCK.\n
-DOWNSTREAM THE STREAMBED IS BARE ROCK.
+AT YOUR FEET ALL THE WATER OF THE STREAM SPLASHES INTO A 2-INCH SLIT\n
+IN THE ROCK.  DOWNSTREAM THE STREAMBED IS BARE ROCK.
 @
 message SLIT_SHORT
-YOU ARE AT THE SLIT IN THE STREAMBED.
+YOU'RE AT SLIT IN STREAMBED.
 @
 message GRATE_LONG
-YOU ARE IN A TWENTY-FOOT DEPRESSION FLOORED WITH BARE DIRT.\n
-SET INTO THE DIRT IS A STRONG STEEL GRATE MOUNTED IN CONCRETE.\n
-A DRY STREAMBED LEADS INTO THE DEPRESSION.
+YOU ARE IN A 20-FOOT DEPRESSION FLOORED WITH BARE DIRT.  SET INTO THE\n
+DIRT IS A STRONG STEEL GRATE MOUNTED IN CONCRETE.  A DRY STREAMBED\n
+LEADS INTO THE DEPRESSION.
 @
 message GRATE_SHORT
-YOU ARE OUTSIDE THE GRATE.
+YOU'RE OUTSIDE GRATE.
 @
 message BELOW_GRATE_LONG
-YOU ARE IN A SMALL CHAMBER BENEATH THE GRATE.\n
-DEBRIS AND LOOSE STONES COVER THE FLOOR, AND A CRAMPED PASSAGE AHEAD\n
-IS CHOKED WITH RUBBLE.\n
-THE ONLY WAY OUT IS UP THROUGH THE GRATE.
+YOU ARE IN A SMALL CHAMBER BENEATH A 3X3 STEEL GRATE TO THE SURFACE.\n
+A LOW CRAWL OVER COBBLES LEADS INWARD TO THE WEST.
 @
 message BELOW_GRATE_SHORT
-YOU ARE IN THE CHAMBER BELOW THE GRATE.
+YOU'RE BELOW THE GRATE.
 @
 message COBBLE_LONG
 YOU ARE CRAWLING OVER COBBLES IN A LOW PASSAGE.\n
 THERE IS A DIM LIGHT AT THE EAST END OF THE PASSAGE.
 @
 message COBBLE_SHORT
-YOU ARE IN THE COBBLE CRAWL.
+YOU'RE IN COBBLE CRAWL.
 @
 message DEBRIS_LONG
 YOU ARE IN A DEBRIS ROOM FILLED WITH STUFF WASHED IN FROM THE SURFACE.\n
-A
-LOW PASSAGE TO THE WEST BENDS OUT OF SIGHT.\n
-SCRAWLED ON THE WALL WITH A
-BURNT STICK IS THE INSCRIPTION, "MAGIC WORD XYZZY."
+A LOW WIDE PASSAGE WITH COBBLES BECOMES PLUGGED WITH MUD AND DEBRIS\n
+HERE, BUT AN AWKWARD CANYON LEADS UPWARD AND WEST.  A NOTE ON THE WALL\n
+SAYS "MAGIC WORD XYZZY".
 @
 message DEBRIS_SHORT
-YOU ARE IN THE DEBRIS ROOM.
+YOU'RE IN DEBRIS ROOM.
 @
 message AWKWARD_LONG
 YOU ARE IN AN AWKWARD SLOPING EAST/WEST CANYON.
 @
-message AWKWARD_SHORT
-YOU ARE IN THE AWKWARD CANYON.
-@
 message BIRD_LONG
-YOU ARE IN A SPLENDID CHAMBER THIRTY FEET HIGH.\n
-THE WALLS ARE FROZEN
-RIVERS OF ORANGE STONE.\n
-AN AWKWARD CANYON ENTERS FROM THE EAST, AND THE
-CHAMBER CONTINUES WEST.
+YOU ARE IN A SPLENDID CHAMBER THIRTY FEET HIGH.  THE WALLS ARE FROZEN\n
+RIVERS OF ORANGE STONE.  AN AWKWARD CANYON AND A GOOD PASSAGE EXIT\n
+FROM EAST AND WEST SIDES OF THE CHAMBER.
 @
 message BIRD_SHORT
-YOU ARE IN THE ORANGE-STONE CHAMBER.
+YOU'RE IN BIRD CHAMBER.
 @
 message PITTOP_LONG
 AT YOUR FEET IS A SMALL PIT BREATHING TRACES OF WHITE MIST.\n
@@ -154,11 +154,12 @@ THERE ARE OPENINGS TO EITHER SIDE.\n
 NEARBY, A WIDE STONE STAIRCASE
 LEADS DOWNWARD.\n
 THE HALL IS FILLED WITH WISPS OF WHITE MIST SWAYING
-GENTLY.\n
-THE GROUND SLOPES UP TO THE WEST.
+TO AND FRO ALMOST AS IF ALIVE.\n
+A COLD WIND BLOWS UP THE STAIRCASE.\n
+THERE IS A PASSAGE AT THE TOP OF A DOME BEHIND YOU.
 @
 message MISTHALL_SHORT
-YOU ARE IN THE HALL OF MISTS.
+YOU'RE IN HALL OF MISTS.
 @
 message GRATE_NO_KEY
 YOU HAVE NO KEYS!
@@ -177,9 +178,6 @@ IT WAS ALREADY LOCKED.
 @
 message GRATE_LOCK_CANT
 YOU CAN'T LOCK AN OPEN GRATE.
-@
-message GRATE_SHUT
-THE GRATE IS SHUT.
 @
 message GRATE_STAT_LOCKED
 THE GRATE IS LOCKED.
@@ -203,10 +201,10 @@ SOME OBJECTS ALSO IMPLY VERBS;\n
 IN PARTICULAR, "INVENTORY" IMPLIES "TAKE INVENTORY", WHICH CAUSES ME TO\n
 GIVE YOU A LIST OF WHAT YOU'RE CARRYING.\n
 THE OBJECTS HAVE SIDE EFFECTS; FOR INSTANCE, THE ROD SCARES THE BIRD.\n
-USUALLY PEOPLE HAVING TROUBLE MOVING JUST NEED TO TRY A FEW MORE WORDS.\
+USUALLY PEOPLE HAVING TROUBLE MOVING JUST NEED TO TRY A FEW MORE WORDS.\n
 USUALLY PEOPLE TRYING UNSUCCESSFULLY TO MANIPULATE AN OBJECT ARE ATTEMPTING SOMETHING\n
 BEYOND THEIR (OR MY!) CAPABILITIES AND SHOULD TRY A COMPLETELY DIFFERENT TACK.\n
-TO SPEED THE GAME YOU CAN SOMETIMES MOVE LONG\DISTANCES WITH A SINGLE WORD.\n
+TO SPEED THE GAME YOU CAN SOMETIMES MOVE LONG\nDISTANCES WITH A SINGLE WORD.\n
 FOR EXAMPLE, "BUILDING" USUALLY GETS YOU TO THE BUILDING FROM ANYWHERE ABOVE GROUND\n
 EXCEPT WHEN LOST IN THE FOREST.\n
 ALSO, NOTE THAT CAVE PASSAGES TURN A LOT, AND THAT LEAVING A\n
@@ -219,47 +217,53 @@ YOU CAN'T GO THAT WAY.
 message DONT_UNDERSTAND
 I DON'T UNDERSTAND THAT.
 @
-message TAKEN
-TAKEN.
-@
-message DROPPED
-DROPPED.
-@
-message CANT_TAKE
-YOU CAN'T TAKE THAT.
-@
+# msgs TAKEN ("TAKEN.") and DROPPED ("DROPPED.") were removed here in
+# TASK-FR28 N23, 05-Sep-26, for the same reason CANT_TAKE went in S16:
+# they are strings adven.dat does not contain.  adven.f4 9014 ends a
+# successful TAKE with "GOTO 2009", and 2009 is "K=54" -> 2010 "SPK=K"
+# -> 2011 "CALL RSPEAK(SPK)"; a successful DROP falls through the four
+# special legs to 9027, the ORDINARY path, which is "CALL RSPEAK(54)"
+# before 9021's mechanics.  Message 54 is "OK".  (9021, which the FR28
+# row cited, is the mechanics tail, and it is silent only because the
+# legs that jump into it -- 9020's msg 30 and 9026's msg 163 -- have
+# already spoken.)  dtgRepoDone and ddDoDrop now both print msg_OK, the
+# record this file already carries and ulDoor's oiled leg already uses.
+# Owner's ruling 04-Sep-26, recorded in FUNCTIONALITY.md's "Considered
+# and NOT added" list: the Fortran is the final arbiter.  Do not re-add
+# either record.
+# msg CANT_TAKE ("YOU CAN'T TAKE THAT.") was removed here in S16,
+# 04-Sep-26. It is a string adven.dat does not contain; adven.f4 9010
+# refuses a TAKE with msg 25 / 115 / 169 / 170 and never with an
+# invented one. S15's L10 fix rewired the last caller (dtCantTake ->
+# msg_CANT_BE_SERIOUS / BEAR_CHAINED / CHAIN_LOCKED), leaving this
+# record referenced by nothing. Owner's ruling 04-Sep-26: the Fortran
+# is the arbiter, so it goes. Do not re-add it.
 message NOT_HERE
 YOU DON'T SEE THAT HERE.
 @
 message NOT_CARRYING
-YOU AREN'T CARRYING THAT.
+YOU AREN'T CARRYING IT!
 @
 message ALREADY_HAVE
 YOU ARE ALREADY CARRYING IT!
 @
 message INV_EMPTY
-YOU ARE EMPTY-HANDED.
+YOU'RE NOT CARRYING ANYTHING.
 @
 message INV_HEADER
-YOU ARE CARRYING:
+YOU ARE CURRENTLY HOLDING THE FOLLOWING:
 @
 message INV_KEYS
-A SET OF KEYS.
+SET OF KEYS
 @
 message INV_LAMP
-A BRASS LAMP.
+BRASS LANTERN
 @
 message LAMP_ON
 YOUR LAMP IS NOW ON.
 @
-message LAMP_ALREADY_ON
-THE LAMP IS ALREADY ON.
-@
 message LAMP_OFF
 YOUR LAMP IS NOW OFF.
-@
-message LAMP_ALREADY_OFF
-THE LAMP IS ALREADY OFF.
 @
 message LAMP_NONE
 YOU HAVE NO LAMP.
@@ -272,37 +276,34 @@ message HERE_KEYS
 THERE ARE SOME KEYS ON THE GROUND HERE.
 @
 message HERE_LAMP
-THERE IS A SHINY BRASS LAMP HERE.
+THERE IS A SHINY BRASS LAMP NEARBY.
 @
 message PIT_DEATH
 YOU FELL INTO A PIT AND BROKE EVERY BONE IN YOUR BODY!
 @
 message Y2_LONG
-YOU ARE IN A LARGE ROOM.\n
-A PASSAGE LEADS SOUTH, ANOTHER LEADS WEST, AND A
-WALL OF BROKEN ROCK BLOCKS THE WAY EAST.\n
-A LARGE "Y2" IS PAINTED ON A ROCK
-IN THE ROOM'S CENTER.
+YOU ARE IN A LARGE ROOM, WITH A PASSAGE TO THE SOUTH, A PASSAGE TO THE\n
+WEST, AND A WALL OF BROKEN ROCK TO THE EAST.  THERE IS A LARGE "Y2" ON\n
+A ROCK IN THE ROOM'S CENTER.
 @
 message Y2_SHORT
-YOU ARE IN THE Y2 ROOM.
+YOU'RE AT "Y2".
 @
 message JUMBLE_LONG
 YOU ARE IN A JUMBLE OF ROCK, WITH CRACKS EVERYWHERE.
 @
 message NUGGET_LONG
-THIS IS A LOW ROOM WITH A CRUDE NOTE ON THE WALL.\n
-THE NOTE SAYS, "YOU
-WON'T GET IT UP THE STEPS."
+THIS IS A LOW ROOM WITH A CRUDE NOTE ON THE WALL.  THE NOTE SAYS,\n
+"YOU WON'T GET IT UP THE STEPS".
 @
 message NUGGET_SHORT
-YOU ARE IN THE NUGGET OF GOLD ROOM.
+YOU'RE IN NUGGET OF GOLD ROOM.
 @
 message INV_NUGGET
-A LARGE GOLD NUGGET.
+LARGE GOLD NUGGET
 @
 message HERE_NUGGET
-THERE IS A LARGE SPARKLING GOLD NUGGET HERE!
+THERE IS A LARGE SPARKLING NUGGET OF GOLD HERE!
 @
 message DWARF_FIRST
 A LITTLE DWARF JUST WALKED AROUND A CORNER, SAW YOU, THREW A LITTLE AXE
@@ -337,7 +338,7 @@ message AXE_MISS
 YOU ATTACK A LITTLE DWARF, BUT HE DODGES OUT OF THE WAY.
 @
 message INV_AXE
-A LITTLE AXE.
+DWARF'S AXE
 @
 message HERE_AXE
 THERE IS A LITTLE AXE HERE.
@@ -370,7 +371,7 @@ YOU ARE IN THE HALL OF THE MOUNTAIN KING, WITH PASSAGES OFF IN ALL
 DIRECTIONS.
 @
 message MTKING_SHORT
-YOU ARE IN THE HALL OF THE MOUNTAIN KING.
+YOU'RE IN HALL OF MT KING.
 @
 message HOLE_LONG
 YOU ARE IN A LOW N/S PASSAGE AT A HOLE IN THE FLOOR.\n
@@ -385,7 +386,7 @@ IS A LARGE PASSAGE.\n
 ABOVE YOU IS A HOLE TO ANOTHER PASSAGE.
 @
 message DIRTYPASS_SHORT
-YOU ARE IN THE DIRTY PASSAGE.
+YOU'RE IN DIRTY PASSAGE.
 @
 message SMALLPIT_LONG
 YOU ARE ON THE BRINK OF A SMALL CLEAN CLIMBABLE PIT.\n
@@ -402,7 +403,7 @@ FLOOR.\n
 THERE ARE CRACKS EVERYWHERE, AND A PASSAGE LEADING EAST.
 @
 message DUSTYROCKS_SHORT
-YOU ARE IN THE DUSTY ROCK ROOM.
+YOU'RE IN DUSTY ROCK ROOM.
 @
 message JUNCTION_LONG
 YOU ARE AT A COMPLEX JUNCTION.\n
@@ -426,6 +427,16 @@ YOU ARE AT THE BOTTOM OF THE PIT WITH A BROKEN NECK.
 @
 message SNAKE_BLOCKED
 YOU CAN'T GET BY THE SNAKE.
+@
+# adven.dat LOC 79's own room text.  LOC 79 is a forced-motion location
+# ("79 3 1" -- motion word 1, straight back to the well house) with no
+# other travel row at all, so unlike LOC 16/21/26/40/59 it cannot be
+# modelled as a room the player stands in: there would be no word to
+# type to leave it.  It is a bounce instead, like LOC 22 and LOC 32 --
+# adventure.am1's bldSewerBounce prints this and re-enters LOC 3.
+message SEWER_LONG
+THE STREAM FLOWS OUT THROUGH A PAIR OF 1 FOOT DIAMETER SEWER PIPES.\n
+IT WOULD BE ADVISABLE TO USE THE EXIT.
 @
 message BEDQUILT_LONG
 YOU ARE IN BEDQUILT, A LONG EAST/WEST PASSAGE WITH HOLES EVERYWHERE.\n
@@ -524,7 +535,7 @@ A GENTLY SLOPING PASSAGE LEADS UPWARD TO THE NORTH, ANOTHER PASSAGE LEADS
 SE, AND A HANDS AND KNEES CRAWL LEADS WEST.
 @
 message ORIENTAL_SHORT
-YOU'RE IN THE ORIENTAL ROOM.
+YOU'RE IN ORIENTAL ROOM.
 @
 message MISTY_CAVERN_LONG
 YOU ARE FOLLOWING A WIDE PATH AROUND THE OUTER EDGE OF A LARGE CAVERN.\n
@@ -695,6 +706,14 @@ YOU ARE IN A MAZE OF TWISTY LITTLE PASSAGES, ALL ALIKE.
 message MAZE_DEADEND_LONG
 DEAD END
 @
+# TASK-FR4 (06-Sep-26, S46).  adven.dat LOC 73's own long text.  It is a
+# different string from MAZE_DEADEND_LONG above -- "DEAD END CRAWL."
+# against "DEAD END" -- and the difference is on the screen, so it does
+# not share it.  LOC 73 has no section-2 short text, so the room uses this
+# for both, the way LOC 72 next door uses LOWROOM_LONG for both.
+message DEADENDCRAWL_LONG
+DEAD END CRAWL.
+@
 message MAZE_BRINKPIT_LONG
 YOU ARE ON THE BRINK OF A THIRTY FOOT PIT WITH A MASSIVE ORANGE COLUMN DOWN
 ONE WALL.\n
@@ -706,7 +725,7 @@ message MAZE_BRINKPIT_SHORT
 YOU'RE AT BRINK OF PIT.
 @
 message INV_BIRD
-A LITTLE BIRD.
+LITTLE BIRD IN CAGE
 @
 message HERE_BIRD
 A CHEERFUL LITTLE BIRD IS SITTING HERE SINGING.
@@ -715,7 +734,7 @@ message HERE_SNAKE
 A HUGE GREEN FIERCE SNAKE BARS THE WAY!
 @
 message INV_CAGE
-A WICKER CAGE.
+WICKER CAGE
 @
 message HERE_CAGE
 THERE IS A SMALL WICKER CAGE DISCARDED NEARBY.
@@ -750,7 +769,7 @@ TO THE NORTH A ROUND TWO
 FOOT HOLE SLANTS DOWN.
 @
 message LONGHALL_EAST_SHORT
-YOU ARE AT THE EAST END OF LONG HALL.
+YOU'RE AT EAST END OF LONG HALL.
 @
 message LONGHALL_WEST_LONG
 YOU ARE AT THE WEST END OF A VERY LONG FEATURELESS HALL.\n
@@ -758,7 +777,7 @@ THE HALL JOINS UP
 WITH A NARROW NORTH/SOUTH PASSAGE.
 @
 message LONGHALL_WEST_SHORT
-YOU ARE AT THE WEST END OF LONG HALL.
+YOU'RE AT WEST END OF LONG HALL.
 @
 message CROSSOVER_LONG
 YOU ARE AT A CROSSOVER OF A HIGH N/S PASSAGE AND A LOW E/W ONE.
@@ -840,7 +859,7 @@ message FISSURE_BRIDGE_GONE
 THE CRYSTAL BRIDGE HAS VANISHED!
 @
 message INV_ROD
-A BLACK ROD.
+BLACK ROD
 @
 message HERE_ROD
 A THREE FOOT BLACK ROD WITH A RUSTY STAR ON AN END LIES NEARBY.
@@ -849,9 +868,9 @@ message MTKING_SOUTH_LONG
 YOU ARE IN THE SOUTH SIDE CHAMBER.
 @
 message CANYON_EW_LONG
-YOU ARE IN A SECRET CANYON WHICH HERE RUNS E/W.\n
-IT CROSSES OVER A VERY TIGHT CANYON 15 FEET BELOW\
-IF YOU GO DOWN YOU MAY NOT BE ABLE TO GET BACK UP.
+YOU ARE IN A SECRET CANYON WHICH HERE RUNS E/W.  IT CROSSES OVER A\n
+VERY TIGHT CANYON 15 FEET BELOW.  IF YOU GO DOWN YOU MAY NOT BE ABLE\n
+TO GET BACK UP.
 @
 message CANYON_EW_SHORT
 YOU'RE IN SECRET E/W CANYON ABOVE TIGHT CANYON.
@@ -876,31 +895,31 @@ message CANYON_BOULDERS_LONG
 THE CANYON RUNS INTO A MASS OF BOULDERS -- DEAD END.
 @
 message INV_DIAMOND
-SEVERAL DIAMONDS.
+SEVERAL DIAMONDS
 @
 message HERE_DIAMOND
 THERE ARE DIAMONDS HERE!
 @
 message INV_SILVER
-BARS OF SILVER.
+BARS OF SILVER
 @
 message HERE_SILVER
 THERE ARE BARS OF SILVER HERE!
 @
 message INV_JEWELRY
-PRECIOUS JEWELRY.
+PRECIOUS JEWELRY
 @
 message HERE_JEWELRY
 THERE IS PRECIOUS JEWELRY HERE!
 @
 message INV_COINS
-RARE COINS.
+RARE COINS
 @
 message HERE_COINS
 THERE ARE MANY COINS HERE!
 @
 message INV_RUG
-A PERSIAN RUG.
+PERSIAN RUG
 @
 message HERE_RUG_UNDER
 THE DRAGON IS SPRAWLED OUT ON A PERSIAN RUG!!
@@ -982,34 +1001,32 @@ message VOLCANO_JUNCTION_SHORT
 YOU'RE AT JUNCTION WITH WARM WALLS.
 @
 message VOLCANO_VIEW_LONG
-YOU ARE ON THE EDGE OF A BREATH-TAKING VIEW.\n
-FAR BELOW YOU IS AN ACTIVE VOLCANO, FROM WHICH GREAT GOUTS OF MOLTEN LAVA\n
-COME SURGING OUT, CASCADING BACK DOWN INTO THE DEPTHS.\n
-THE GLOWING ROCK FILLS THE FARTHEST REACHES OF THE CAVERN WITH A\n
-BLOOD-RED GLARE, GIVING EVERYTHING AN EERIE, MACABRE APPEARANCE.\n
-THE AIR IS FILLED WITH FLICKERING SPARKS OF ASH AND A HEAVY SMELL OF BRIMSTONE.\n
-THE WALLS ARE HOT TO THE TOUCH, AND THE THUNDERING OF THE VOLCANO DROWNS\n
-OUT ALL OTHER SOUNDS.\n
-EMBEDDED IN THE JAGGED ROOF FAR OVERHEAD ARE MYRIAD TWISTED FORMATIONS\n
-COMPOSED OF PURE WHITE ALABASTER, WHICH SCATTER THE MURKY LIGHT INTO SINISTER\n
-APPARITIONS UPON THE WALLS.\n
-TO ONE SIDE IS A DEEP GORGE, FILLED WITH A BIZARRE CHAOS OF TORTURED ROCK\n
-WHICH SEEMS TO HAVE BEEN CRAFTED BY THE DEVIL HIMSELF.\n
-AN IMMENSE RIVER OF FIRE CRASHES OUT FROM THE DEPTHS OF THE VOLCANO,\n
-BURNS ITS WAY THROUGH THE GORGE, AND PLUMMETS INTO A BOTTOMLESS PIT FAR OFF\n
-TO YOUR LEFT.\n
-TO THE RIGHT, AN IMMENSE GEYSER OF BLISTERING STEAM ERUPTS CONTINUOUSLY FROM\n
-A BARREN ISLAND IN THE CENTER OF A SULFUROUS LAKE, WHICH BUBBLES OMINOUSLY.\n
-THE FAR RIGHT WALL IS AFLAME WITH AN INCANDESCENCE OF ITS OWN,\n
-WHICH LENDS AN ADDITIONAL INFERNAL SPLENDOR TO THE ALREADY HELLISH SCENE.\n
-A DARK, FOREBODING PASSAGE EXITS TO THE SOUTH.
+YOU ARE ON THE EDGE OF A BREATH-TAKING VIEW.  FAR BELOW YOU IS AN\n
+ACTIVE VOLCANO, FROM WHICH GREAT GOUTS OF MOLTEN LAVA COME SURGING\n
+OUT, CASCADING BACK DOWN INTO THE DEPTHS.  THE GLOWING ROCK FILLS THE\n
+FARTHEST REACHES OF THE CAVERN WITH A BLOOD-RED GLARE, GIVING EVERY-\n
+THING AN EERIE, MACABRE APPEARANCE.  THE AIR IS FILLED WITH FLICKERING\n
+SPARKS OF ASH AND A HEAVY SMELL OF BRIMSTONE.  THE WALLS ARE HOT TO\n
+THE TOUCH, AND THE THUNDERING OF THE VOLCANO DROWNS OUT ALL OTHER\n
+SOUNDS.  EMBEDDED IN THE JAGGED ROOF FAR OVERHEAD ARE MYRIAD TWISTED\n
+FORMATIONS COMPOSED OF PURE WHITE ALABASTER, WHICH SCATTER THE MURKY\n
+LIGHT INTO SINISTER APPARITIONS UPON THE WALLS.  TO ONE SIDE IS A DEEP\n
+GORGE, FILLED WITH A BIZARRE CHAOS OF TORTURED ROCK WHICH SEEMS TO\n
+HAVE BEEN CRAFTED BY THE DEVIL HIMSELF.  AN IMMENSE RIVER OF FIRE\n
+CRASHES OUT FROM THE DEPTHS OF THE VOLCANO, BURNS ITS WAY THROUGH THE\n
+GORGE, AND PLUMMETS INTO A BOTTOMLESS PIT FAR OFF TO YOUR LEFT.  TO\n
+THE RIGHT, AN IMMENSE GEYSER OF BLISTERING STEAM ERUPTS CONTINUOUSLY\n
+FROM A BARREN ISLAND IN THE CENTER OF A SULFUROUS LAKE, WHICH BUBBLES\n
+OMINOUSLY.  THE FAR RIGHT WALL IS AFLAME WITH AN INCANDESCENCE OF ITS\n
+OWN, WHICH LENDS AN ADDITIONAL INFERNAL SPLENDOR TO THE ALREADY\n
+HELLISH SCENE.  A DARK, FOREBODING PASSAGE EXITS TO THE SOUTH.
 @
 message VOLCANO_VIEW_SHORT
 YOU'RE AT BREATH-TAKING VIEW.
 @
 message BOULDER_CHAMBER_LONG
 YOU ARE IN A SMALL CHAMBER FILLED WITH LARGE BOULDERS.\n
-THE WALLS ARE VERY WARM, CAUSING THE AIR IN THE ROOM TO BE ALMOST STIFLING\b
+THE WALLS ARE VERY WARM, CAUSING THE AIR IN THE ROOM TO BE ALMOST STIFLING\n
 FROM THE HEAT.\n
 THE ONLY EXIT IS A CRAWL HEADING WEST,\n
 THROUGH WHICH IS COMING A LOW RUMBLING.
@@ -1078,7 +1095,7 @@ message HERE_SPICES
 THERE ARE RARE SPICES HERE!
 @
 message INV_SPICES
-RARE SPICES.
+RARE SPICES
 @
 message INV_BEAR
 YOU ARE BEING FOLLOWED BY A VERY LARGE, TAME BEAR.
@@ -1087,7 +1104,7 @@ message HERE_FOOD
 THERE IS FOOD HERE.
 @
 message INV_FOOD
-TASTY FOOD.
+TASTY FOOD
 @
 message EA1_SMALL_LONG
 YOU HAVE ENTERED A SMALL ROOM YOU DIDN'T SEE BEFORE.\n
@@ -1125,7 +1142,7 @@ message HERE_CHAIN_LOCKED_ALONE
 THERE IS A GOLDEN CHAIN LOCKED TO THE WALL!
 @
 message INV_CHAIN
-GOLDEN CHAIN.
+GOLDEN CHAIN
 @
 message FEED_BEAR_OK
 THE BEAR EAGERLY WOLFS DOWN YOUR FOOD, AFTER WHICH HE SEEMS TO CALM DOWN\n
@@ -1224,11 +1241,10 @@ message NOTHING_HAPPENS
 NOTHING HAPPENS.
 @
 message TREES_MSG
-THE TREES OF THE FOREST ARE LARGE HARDWOOD OAK AND MAPLE,\n
-WITH AN OCCASIONAL GROVE OF PINE OR SPRUCE.\n
-THERE IS QUITE A BIT OF UNDER-GROWTH, LARGELY BIRCH AND\n
-ASH SAPLINGS PLUS NONDESCRIPT BUSHES OF VARIOUS SORTS.\n
-THIS TIME OF YEAR VISIBILITY IS QUITE RESTRICTED BY\n
+THE TREES OF THE FOREST ARE LARGE HARDWOOD OAK AND MAPLE, WITH AN\n
+OCCASIONAL GROVE OF PINE OR SPRUCE.  THERE IS QUITE A BIT OF UNDER-\n
+GROWTH, LARGELY BIRCH AND ASH SAPLINGS PLUS NONDESCRIPT BUSHES OF\n
+VARIOUS SORTS.  THIS TIME OF YEAR VISIBILITY IS QUITE RESTRICTED BY\n
 ALL THE LEAVES, BUT TRAVEL IS QUITE EASY IF YOU DETOUR AROUND THE\n
 SPRUCE AND BERRY BUSHES.
 @
@@ -1274,6 +1290,9 @@ message READ_MESSAGE
 message READ_DEFAULT
 I'M AFRAID I DON'T UNDERSTAND.
 @
+message INV_MAGAZINE
+"SPELUNKER TODAY"
+@
 message HERE_MAGAZINE
 THERE ARE A FEW RECENT ISSUES OF "SPELUNKER TODAY" MAGAZINE HERE.
 @
@@ -1313,6 +1332,7 @@ message INFO_1
 IF YOU WANT TO END YOUR ADVENTURE EARLY, SAY "QUIT".\n
 TO SUSPEND YOUR ADVENTURE SUCH THAT YOU CAN CONTINUE LATER,\n
 SAY "SUSPEND" (OR "PAUSE" OR "SAVE").\n
+TO SEE WHAT HOURS THE CAVE IS NORMALLY OPEN, SAY "HOURS".\n
 TO SEE HOW WELL YOU'RE DOING, SAY "SCORE".\n
 TO GET FULL CREDIT FOR A TREASURE, YOU MUST HAVE LEFT IT SAFELY\n
 IN THE BUILDING, THOUGH YOU GET PARTIAL CREDIT JUST FOR LOCATING IT.\n
@@ -1377,7 +1397,8 @@ THE SHELL IS VERY STRONG AND IS IMPERVIOUS TO ATTACK.
 @
 message BEAR_TROLL_BYPASS
 THE BEAR LUMBERS TOWARD THE TROLL, WHO LETS OUT A STARTLED SHRIEK AND\n
-SCURRIES AWAY.nTHE BEAR SOON GIVES UP THE PURSUIT AND WANDERS BACK.
+SCURRIES AWAY.\n
+THE BEAR SOON GIVES UP THE PURSUIT AND WANDERS BACK.
 @
 message CHASM_NO_LONGER
 THERE IS NO LONGER ANY WAY ACROSS THE CHASM.
@@ -1395,7 +1416,7 @@ message HERE_VASE_BROKEN
 THE FLOOR IS LITTERED WITH WORTHLESS SHARDS OF POTTERY.
 @
 message INV_VASE
-A MING VASE.
+MING VASE
 @
 message VASE_BREAK
 THE MING VASE DROPS WITH A DELICATE CRASH.
@@ -1407,26 +1428,26 @@ message HERE_EMERALD
 THERE IS AN EMERALD HERE THE SIZE OF A PLOVER'S EGG!
 @
 message INV_EMERALD
-EGG-SIZED EMERALD.
+EGG-SIZED EMERALD
 @
 message HERE_PLATINUM
 THERE IS A PLATINUM PYRAMID HERE, 8 INCHES ON A SIDE!
 @
 message INV_PLATINUM
-PLATINUM PYRAMID.
+PLATINUM PYRAMID
 @
 message TUNNEL_TOO_FULL
 SOMETHING YOU'RE CARRYING WON'T FIT THROUGH THE TUNNEL WITH YOU.\n
 YOU'D BEST TAKE INVENTORY AND DROP SOMETHING.
 @
 message INV_BOTTLE
-A SMALL BOTTLE.
+SMALL BOTTLE
 @
 message INV_WATER
-WATER IN THE BOTTLE.
+WATER IN THE BOTTLE
 @
 message INV_OIL
-OIL IN THE BOTTLE.
+OIL IN THE BOTTLE
 @
 message HERE_BOTTLE_WATER
 THERE IS A BOTTLE OF WATER HERE.
@@ -1558,13 +1579,13 @@ message HERE_EGGS
 THERE IS A LARGE NEST HERE, FULL OF GOLDEN EGGS!
 @
 message INV_EGGS
-GOLDEN EGGS.
+GOLDEN EGGS
 @
 message HERE_TRIDENT
 THERE IS A JEWEL-ENCRUSTED TRIDENT HERE!
 @
 message INV_TRIDENT
-JEWELED TRIDENT.
+JEWELED TRIDENT
 @
 message WHAT
 WHAT?
@@ -1585,7 +1606,7 @@ message HERE_PEARL
 OFF TO ONE SIDE LIES A GLISTENING PEARL!
 @
 message INV_PEARL
-GLISTENING PEARL.
+GLISTENING PEARL
 @
 message CLAM_PUT_DOWN
 I ADVISE YOU TO PUT DOWN THE CLAM BEFORE OPENING IT.  >STRAIN!<
@@ -1640,7 +1661,7 @@ message HERE_CHEST
 THE PIRATE'S TREASURE CHEST IS HERE!
 @
 message INV_CHEST
-TREASURE CHEST.
+TREASURE CHEST
 @
 message HERE_MESSAG
 THERE IS A MESSAGE SCRAWLED IN THE DUST IN A FLOWERY SCRIPT, READING:\n
@@ -1830,20 +1851,17 @@ TO ACHIEVE THE NEXT HIGHER RATING WOULD BE A NEAT TRICK!\n
 CONGRATULATIONS!!
 @
 message REPOSITORY_NE_LONG
-YOU ARE AT THE NORTHEAST END OF AN IMMENSE ROOM, EVEN LARGER THAN\n
-THE GIANT ROOM.\n
-IT APPEARS TO BE A REPOSITORY FOR THE "ADVENTURE" PROGRAM.\n
-MASSIVE TORCHES FAR OVERHEAD BATHE THE ROOM WITH SMOKY YELLOW LIGHT.\n
-SCATTERED ABOUT YOU CAN BE SEEN A PILE OF BOTTLES (ALL OF THEM EMPTY)\n
-A NURSERY OF YOUNG BEANSTALKS MURMURING QUIETLY, A BED OF OYSTERS, A BUNDLE\n
-OF BLACK RODS WITH RUSTY STARS ON THEIR ENDS, AND A COLLECTION OF BRASS\n
-LANTERNS.\n
-OFF TO ONE SIDE A GREAT MANY DWARVES ARE SLEEPING ON THE FLOOR,\n
-SNORING LOUDLY.\n
-A SIGN NEARBY READS: "DO NOT DISTURB THE DWARVES!"\n
-AN IMMENSE MIRROR IS HANGING AGAINST ONE WALL, AND STRETCHES TO THE OTHER\n
-END OF THE ROOM, WHERE VARIOUS OTHER SUNDRY OBJECTS CAN BE GLIMPSED DIMLY\n
-IN THE DISTANCE.
+YOU ARE AT THE NORTHEAST END OF AN IMMENSE ROOM, EVEN LARGER THAN THE\n
+GIANT ROOM.  IT APPEARS TO BE A REPOSITORY FOR THE "ADVENTURE"\n
+PROGRAM.  MASSIVE TORCHES FAR OVERHEAD BATHE THE ROOM WITH SMOKY\n
+YELLOW LIGHT.  SCATTERED ABOUT YOU CAN BE SEEN A PILE OF BOTTLES (ALL\n
+OF THEM EMPTY), A NURSERY OF YOUNG BEANSTALKS MURMURING QUIETLY, A BED\n
+OF OYSTERS, A BUNDLE OF BLACK RODS WITH RUSTY STARS ON THEIR ENDS, AND\n
+A COLLECTION OF BRASS LANTERNS.  OFF TO ONE SIDE A GREAT MANY DWARVES\n
+ARE SLEEPING ON THE FLOOR, SNORING LOUDLY.  A SIGN NEARBY READS: "DO\n
+NOT DISTURB THE DWARVES!"  AN IMMENSE MIRROR IS HANGING AGAINST ONE\n
+WALL, AND STRETCHES TO THE OTHER END OF THE ROOM, WHERE VARIOUS OTHER\n
+SUNDRY OBJECTS CAN BE GLIMPSED DIMLY IN THE DISTANCE.
 @
 message REPOSITORY_NE_SHORT
 YOU'RE AT NE END.
@@ -1895,6 +1913,12 @@ message MIRROR_SHATTER
 YOU STRIKE THE MIRROR A RESOUNDING BLOW,\n
 WHEREUPON IT SHATTERS INTO A MYRIAD TINY FRAGMENTS.
 @
+# msg 148 -- TWO USES, and adven.f4 sets SPK=148 at both: BREAK MIRROR
+# out of reach, and HOLE at the West Pit of the Twopit Room (LOC 23,
+# .dat row `23 648 52`), where the hole is up in the wall. The name is
+# the first use; TASK-FR2 step 3 added the travel row against it rather
+# than duplicating the text, because a message costs two words of
+# bank 1 in the msg_* table.
 message MIRROR_TOO_HIGH
 IT IS TOO FAR UP FOR YOU TO REACH.
 @
@@ -1920,13 +1944,13 @@ message OYSTER_HINT_REPEAT
 IT SAYS THE SAME THING IT DID BEFORE.
 @
 message INV_ROD2
-A BLACK ROD.
+BLACK ROD
 @
 message HERE_ROD2
 A THREE FOOT BLACK ROD WITH A RUSTY MARK ON AN END LIES NEARBY.
 @
 message INV_PILLOW
-A VELVET PILLOW.
+VELVET PILLOW
 @
 message HERE_PILLOW
 A SMALL VELVET PILLOW LIES ON THE FLOOR.
@@ -2001,7 +2025,7 @@ message MAINT_OKAY_SAVE
 OKAY.  YOU CAN SAVE THIS VERSION NOW.
 @
 message MAINT_NEWHRS_INTRO
-NEW HOURS SPECIFIED BY DEFINING "PRIME TIME".s\n
+NEW HOURS SPECIFIED BY DEFINING "PRIME TIME".\n
 GIVE ONLY THE HOUR (E.G. 14, NOT 14:00 OR 2PM).\n
 ENTER A NEGATIVE NUMBER AFTER LAST PAIR.
 @
@@ -2035,8 +2059,7 @@ TOO SMALL!  ASSUMING MINIMUM VALUE (45 MINUTES).
 message VENDING_HERE
 THERE IS A MASSIVE VENDING MACHINE HERE.\n
 THE INSTRUCTIONS ON IT READ:\n
-"DROP COINS HERE TO RECEIVE FRESH BATTERIES."\n
-THERE IS A PASSAGE TO THE WEST.
+"DROP COINS HERE TO RECEIVE FRESH BATTERIES."
 @
 message BATTERIES_HERE
 THERE ARE FRESH BATTERIES HERE.
@@ -2045,7 +2068,7 @@ message BATTERIES_DISCARDED
 SOME WORN-OUT BATTERIES HAVE BEEN DISCARDED NEARBY.
 @
 message INV_BATTERIES
-A SET OF BATTERIES.
+BATTERIES
 @
 message LAMP_HINT_VENDING
 YOUR LAMP IS GETTING DIM.\n
@@ -2063,43 +2086,359 @@ YOUR LAMP IS GETTING DIM.\n
 I'M TAKING THE LIBERTY OF REPLACING THE BATTERIES.
 @
 
-direction NORTH 0d1
-direction SOUTH 0d2
-direction EAST 0d3
-direction WEST 0d4
-direction IN 0d5
-direction OUT 0d6
-direction UP 0d7
-direction DOWN 0d8
-direction NE 0d9
-direction SE 0d10
-direction SW 0d11
-direction NW 0d12
-direction FORWARD 0d13
-direction JUMP 0d14
-direction OVER 0d15
-direction ACROSS 0d16
-direction CROSS 0d17
-direction HALL 0d18
-direction PASSAGE 0d19
-direction TUNNEL 0d19
-direction CLIMB 0d20
-direction CRAWL 0d21
-direction SECRE 0d22
-direction BEDQU 0d23
-direction FORK 0d24
-direction VIEW 0d25
-direction BARRE 0d26
-direction ORIEN 0d27
-direction CAVER 0d28
-direction DARK 0d29
-direction GIANT 0d30
+# ---------------------------------------------------------------------
+# TASK-FR8 additions (S1, 02-Sep-26). Text restored from adven.dat for
+# messages that were absent from this corpus. Blocks below are NOT YET
+# REFERENCED by adventure.am1 unless noted -- the wiring belongs to the
+# task that needs each one (see PendingTasks/SESSION-GROUPS.md):
+#   S3 wants FR8_NO_PASS_GRATE, FR8_SLIT_TOO_NARROW,
+#            FR8_HOLES_MAIN_PASSAGE, FR8_HOLES_CAVE_IN
+#   S4 wants FR8_AXE_BOUNCES_DRAGON, FR8_DRAGON_LOOKS_NASTY,
+#            FR8_AXE_MISSES_BEAR, HERE_AXE_BY_BEAR
+#   S5 wants HERE_VASE_ON_PILLOW
+#   S6 wants FR8_DRINK_STREAM, FR8_BOTTLE_NOW_EMPTY
+# Names carry an FR8_ prefix only where an unprefixed name would read as
+# already-wired game text; the five HERE_* prop texts follow the existing
+# object-text naming instead, since that is what they are.
+# ---------------------------------------------------------------------
+
+# adven.dat section 6, msg 38 -- section-8 default for LIGHT/ON, EXTINGUISH/OFF
+message FR8_NO_LIGHT_SOURCE
+YOU HAVE NO SOURCE OF LIGHT.
+@
+
+# msg 50 -- the SESAME/ABRA/SHAZAM/HOCUS family (special 3050)
+message FR8_MAGIC_WORD_WORN_OUT
+GOOD TRY, BUT THAT IS AN OLD WORN-OUT MAGIC WORD.
+@
+
+# msg 56 -- the Bedquilt/Swiss Cheese random bounce
+message FR8_HOLES_MAIN_PASSAGE
+YOU HAVE CRAWLED AROUND IN SOME LITTLE HOLES AND WOUND UP BACK IN THE\n
+MAIN PASSAGE.
+@
+
+# msg 73 -- DRINK from a stream
+message FR8_DRINK_STREAM
+YOU HAVE TAKEN A DRINK FROM THE STREAM.  THE WATER TASTES STRONGLY OF\n
+MINERALS, BUT IS NOT UNPLEASANT.  IT IS EXTREMELY COLD.
+@
+
+# msg 74 -- DRINK from the bottle
+message FR8_BOTTLE_NOW_EMPTY
+THE BOTTLE OF WATER IS NOW EMPTY.
+@
+
+# msg 93 -- DOWN at the grate (LOC 8) / UP below it (LOC 9), while locked
+message FR8_NO_PASS_GRATE
+YOU CAN'T GO THROUGH A LOCKED STEEL GRATE!
+@
+
+# msg 95 -- DOWN at the slit (LOC 7) and at the bottom of the pit (LOC 38)
+message FR8_SLIT_TOO_NARROW
+YOU DON'T FIT THROUGH A TWO-INCH SLIT!
+@
+
+# msg 126 -- Witt's End, WEST
+message FR8_HOLES_CAVE_IN
+YOU HAVE CRAWLED AROUND IN SOME LITTLE HOLES AND FOUND YOUR WAY\n
+BLOCKED BY A RECENT CAVE-IN.  YOU ARE NOW BACK IN THE MAIN PASSAGE.
+@
+
+# msg 137
+message FR8_LEAVE_BIRD_ALONE
+OH, LEAVE THE POOR UNHAPPY BIRD ALONE.
+@
+
+# msg 138
+message FR8_WANT_IS_AROUND_HERE
+I DARESAY WHATEVER YOU WANT IS AROUND HERE SOMEWHERE.
+@
+
+# msg 144 -- FILL VASE. The bottle variant is msg 106, already present
+# and correctly used as FILL_NOTHING_HERE.
+message FR8_FILL_VASE_NOTHING
+THERE IS NOTHING HERE WITH WHICH TO FILL THE VASE.
+@
+
+# msg 145
+message FR8_VASE_SHATTERED
+THE SUDDEN CHANGE IN TEMPERATURE HAS DELICATELY SHATTERED THE VASE.
+@
+
+# msg 152 -- THROW AXE at a live dragon
+message FR8_AXE_BOUNCES_DRAGON
+THE AXE BOUNCES HARMLESSLY OFF THE DRAGON'S THICK SCALES.
+@
+
+# msg 153 -- travel past a live dragon (LOC 119 and LOC 121; LOC 120
+# is the dragon-DEAD canyon and has no msg-153 row)
+message FR8_DRAGON_LOOKS_NASTY
+THE DRAGON LOOKS RATHER NASTY.  YOU'D BEST NOT TRY TO GET BY.
+@
+
+# msg 155 -- section-8 default for BRIEF. The port's WHAT is msg 61,
+# a different message, correctly present.
+message FR8_ON_WHAT
+ON WHAT?
+@
+
+# msg 164 -- THROW AXE at a live bear
+message FR8_AXE_MISSES_BEAR
+THE AXE MISSES AND LANDS NEAR THE BEAR WHERE YOU CAN'T GET AT IT.
+@
+
+# msg 169
+message FR8_BEAR_STILL_CHAINED
+THE BEAR IS STILL CHAINED TO THE WALL.
+@
+
+# msg 170 -- TAKE CHAIN while the bear is still there. The port's
+# CHAIN_LOCK_OK is msg 172, a different message, correctly present.
+message FR8_CHAIN_STILL_LOCKED
+THE CHAIN IS STILL LOCKED.
+@
+
+# msg 200 -- maintenance mode
+message FR8_IS_THIS_ACCEPTABLE
+IS THIS ACCEPTABLE?
+@
+
+# adven.dat section 12, msg 31 -- maintenance mode. Its companion msg 32
+# is already present as CORE_IMAGE_REMINDER.
+message FR8_BREAK_AND_SAVE_CORE
+BREAK OUT OF THIS AND SAVE YOUR CORE-IMAGE.
+@
+
+# adven.dat section 5 prop texts. The object grammar carries one heremsg
+# per object, so these prop-1 variants are reached by poking objHereMsg
+# at runtime -- the poke belongs to the task that owns each mechanic.
+
+# object 2 prop 1 -- a lit lamp on the floor
+message HERE_LAMP_LIT
+THERE IS A LAMP SHINING NEARBY.
+@
+
+# object 8 prop 1 -- the caged bird on the floor
+message HERE_BIRD_IN_CAGE
+THERE IS A LITTLE BIRD IN THE CAGE.
+@
+
+# object 28 prop 1 -- after THROW AXE at the bear (S4)
+message HERE_AXE_BY_BEAR
+THERE IS A LITTLE AXE LYING BESIDE THE BEAR.
+@
+
+# object 32 prop 1 -- after the troll bridge collapses
+message HERE_CHASM_WRECKAGE
+THE WRECKAGE OF A BRIDGE (AND A DEAD BEAR) CAN BE SEEN AT THE BOTTOM\n
+OF THE CHASM.
+@
+
+# object 58 prop 1 -- the Ming vase set down on the velvet pillow (S5)
+message HERE_VASE_ON_PILLOW
+THE VASE IS NOW RESTING, DELICATELY, ON A VELVET PILLOW.
+@
+
+# ---------------------------------------------------------------------
+# TASK-FR7 7a additions (S12, 03-Sep-26). Two adven.dat section-8
+# defaults for the three action verbs the port was missing. Both texts
+# already exist in this corpus under another message's name -- msg 110 is
+# WAKE_DEFAULT (ACTSPK(WAKE) is also 110) and msg 14 is FEED_NOT_BEAR --
+# and both are named again here rather than shared, which is what this
+# corpus already does for msg 110's two roles (WAKE_DEFAULT and
+# FEED_BEAR_DEAD). One record per role keeps a later edit to one verb's
+# text from silently changing another's.
+# ---------------------------------------------------------------------
+
+# msg 110 -- TWO USES. adven.f4 9150's
+# "IF(OBJ.NE.0.AND.OBJ.NE.WATER)SPK=110", and DOWN/JUMP at the volcano
+# view (LOC 126, .dat row `126 610 30 39`). The name is the first use;
+# TASK-FR2 step 3 added the travel rows against it rather than
+# duplicating the text, because a message costs two words of bank 1 in
+# the msg_* table.
+message DRINK_NOT_WATER
+DON'T BE RIDICULOUS!
+@
+
+# msg 14 -- ACTSPK(CALM), adven.dat section 8 row "10 14". CALM has no
+# behaviour in the source at all: 4090 index 10 goes straight to 2011.
+message CALM_DEFAULT
+I'M GAME.\n
+WOULD YOU CARE TO EXPLAIN HOW?
+@
+
+# msg 147 -- ACTSPK(FOO), adven.dat section 8 row "25 147". FEE/FIE/FOE/
+# FOO/FUM with a noun is 4090 index 25, which is 2011 and nothing else,
+# so the incantation does not advance (TASK-FR27 N13). Same text as
+# SWIM_MSG and named separately for the same reason msg 110 carries
+# three names in this file: one record per role.
+message FOO_DEFAULT
+I DON'T KNOW HOW.
+@
+
+# advn2.f4 133-135 (GETIN's FORMAT 21), not a section-6 message -- the
+# tokenizer's own refusal of a third word, printed and then the line is
+# read again with no turn taken (TASK-FR27 N10).
+message STICK_TO_TWO_WORDS
+PLEASE STICK TO 1- AND 2-WORD COMMANDS.
+@
+
+# ---------------------------------------------------------------------
+# Movement -- the direction names, numbered with adven.dat's OWN
+# section-4 motion numbers (TASK-FR2, 06-Sep-26).
+#
+# They used to be the port's own 1..30 with TASK-FR2 step 1's 31..67
+# appended, which meant every section-3 travel row had to be translated
+# on the way in. The exit entry's direction field is seven bits now
+# (TASK-FR2's 05-Sep-26 addendum), so the source's numbering fits and the
+# rows transcribe instead: `1 2 2 44 29` names motions 2, 44 and 29, and
+# those are ROAD, WEST and UP right here.
+#
+# The list is in adven.dat's numeric order. Gaps are real -- the numbers
+# below that no direction claims are words the port handles elsewhere:
+#     3  ENTER                   the ENTER WATER/STREAM transform
+#     8  BACK/RETRE/RETUR        doBack
+#    26  AWKWA                   no travel row ported yet (FR2 step 3)
+#    36  LEFT                    still aliased to NE (FR2 step 4)
+#    37  RIGHT                   still aliased to SE (FR2 step 4)
+#    57  DESCR/EXAMI/LOOK/TOUCH  doLook
+#    67  CAVE                    doCave
+#    76  MAIN/OFFIC              no travel row ported yet (FR2 step 3)
+#
+# PASSAGE and TUNNEL are one adven.dat word (23, PASSA/TUNNE) under two
+# spellings and deliberately share a code; nothing else may.
+#
+# XYZZY, PLUGH and PLOVE are numbered but have NO doMove verb row below,
+# so those three words answer exactly as they did before FR2 step 1:
+#   XYZZY/PLUGH/PLOVE -- doXyzzy/doPlugh/doPlove own these words and do
+#     the teleport themselves. Their travel-row form is FR2's step 2/3
+#     work, and moving them onto doMove before the rows exist would just
+#     break three working magic words.
+#
+# A direction lives in three files -- here, advdataloader.c's dirTable,
+# and adventure.am1's #define DIR_* block -- and the loader compares only
+# the first two. adventure_fr2_motion_vocabulary_test.py compares all
+# three. Trailing comments are NOT allowed on these rows: the lexer only
+# honors a '#' in column 1.
+# ---------------------------------------------------------------------
+direction ROAD    0d2
+# TASK-FR2 step 4 (06-Sep-26): the three de-aliased words.  ENTER is
+# adven.dat motion 3 and its ONLY word (section 4 line "3 ENTER"); it
+# was aliased onto DIR_IN, whose own word list is IN/INSID/INWAR
+# (motion 19).  LEFT (36) and RIGHT (37) are likewise one word each and
+# were aliased onto NE/SE.
+direction ENTER   0d3
+direction UPSTR   0d4
+direction DOWNS   0d5
+direction FORES   0d6
+direction FORWARD 0d7
+direction VALLE   0d9
+direction STAIR   0d10
+direction OUT     0d11
+direction BUILD   0d12
+direction GULLY   0d13
+direction STREA   0d14
+direction ROCK    0d15
+direction BED     0d16
+direction CRAWL   0d17
+direction COBBL   0d18
+direction IN      0d19
+direction SURFA   0d20
+direction NULL    0d21
+direction DARK    0d22
+direction PASSAGE 0d23
+direction TUNNEL  0d23
+direction LOW     0d24
+direction CANYO   0d25
+direction GIANT   0d27
+direction VIEW    0d28
+direction UP      0d29
+direction DOWN    0d30
+direction PIT     0d31
+direction OUTDO   0d32
+direction CRACK   0d33
+direction STEPS   0d34
+direction DOME    0d35
+direction LEFT    0d36
+direction RIGHT   0d37
+direction HALL    0d38
+direction JUMP    0d39
+direction BARRE   0d40
+direction OVER    0d41
+direction ACROSS  0d42
+direction EAST    0d43
+direction WEST    0d44
+direction NORTH   0d45
+direction SOUTH   0d46
+direction NE      0d47
+direction SE      0d48
+direction SW      0d49
+direction NW      0d50
+direction DEBRI   0d51
+direction HOLE    0d52
+direction WALL    0d53
+direction BROKE   0d54
+direction Y2      0d55
+direction CLIMB   0d56
+direction FLOOR   0d58
+direction ROOM    0d59
+direction SLIT    0d60
+direction SLAB    0d61
+direction XYZZY   0d62
+direction DEPRE   0d63
+direction ENTRA   0d64
+direction PLUGH   0d65
+direction SECRE   0d66
+direction CROSS   0d69
+direction BEDQU   0d70
+direction PLOVE   0d71
+direction ORIEN   0d72
+direction CAVER   0d73
+direction SHELL   0d74
+direction RESER   0d75
+direction FORK    0d77
 
 flag DARK 0d131072
 flag DWARF 0d65536
 flag SURFACE 0d32768
 flag PIRATE_FORBID 0d16384
 
+# ---------------------------------------------------------------------
+# The surface, LOC 1-10 (TASK-FR2 step 2, 04-Sep-26).  Every exit below
+# is a transcription of an adven.dat section-3 row, not a translation:
+# since the renumber a direction's DIR_* code IS its section-4
+# motion number, so `1 2 2 44 29` reads off as ROAD/WEST/UP -> LOC 2.
+# The rows are listed in the source's own order, grouped by the row they
+# come from, with that row quoted beside the first exit of the group.
+#
+# Two adven.dat rows in this range are deliberately NOT table rows:
+#   LOC 3's `3 11 62` (XYZZY) and `3 33 65` (PLUGH) -- doXyzzy/doPlugh
+#     own those words and never fall through to the travel scan, so a
+#     table row for them would be unreachable data.
+#   LOC 10's NULL (21) in `10 9 11 20 21 43` -- adven.f4 1005 answers
+#     NULL at label 8, ahead of the travel scan, by staying put, so the
+#     player can never reach this row. FR27 N13 (05-Sep-26) gave NULL and
+#     NOWHE vocabulary rows, but they name doNull, not doMove, so the row
+#     is still unreachable -- deliberately, and for the source's reason.
+# LOC 3's `3 79 5 14` is not a table row either: LOC 79 is forced motion
+# with no way out but the force, so it is a bounce in adventure.am1
+# (bldSewerBounce), the same shape as LOC 22 and LOC 32.
+# TASK-FR26 N6 (05-Sep-26) made that the rule for every forced LOC: 16, 26,
+# 40 and 59 used to be built as standing rooms and are now bounces too, so
+# no forced LOC is a room in this corpus except LOC 21 (R_FISSURE_DEATH),
+# which the player never reaches either -- dfdCheckRoom kills ahead of the
+# scan, and the room survives only for dwMoveOne's FORCED exclusion.
+#
+# ENTER (motion 3) appears in LOC 1's, LOC 3's and LOC 8's rows and has
+# no direction of its own -- this port aliases the word onto DIR_IN.
+# That is right at LOC 1 and LOC 8, where ENTER and IN share a row, and
+# wrong at LOC 3, where the source's ENTER goes outside and IN has no
+# row at all.  Left alone here: giving ENTER its own code is vocabulary
+# work of the same kind as FR2 step 4's LEFT/RIGHT, not step 2's.
+# FR27 N7 landed 05-Sep-26 and narrowed what the alias still covers:
+# tlEnterVerb now does adven.f4 19999's "ENTER <word> -> 2800", so only
+# BARE ENTER reaches this row, and that is the case FR2 step 4 owns.
 room R_ROAD
 longmsg ROAD_LONG
 shortmsg ROAD_SHORT
@@ -2107,10 +2446,29 @@ flag DARK no
 flag DWARF no
 flag SURFACE yes
 flag PIRATE_FORBID no
-exit NORTH R_FOREST
+# 1 2 2 44 29
+exit ROAD  R_HILL
+exit WEST  R_HILL
+exit UP    R_HILL
+# 1 3 3 12 19 43
+# FR2 step 4 (06-Sep-26): ENTER is its own word now, so it needs its own
+# entry here.  It worked before only because IN shares this row; that is
+# what made the alias look right at this LOC.
+exit BUILD R_BUILDING
+exit ENTER R_BUILDING
+exit IN    R_BUILDING
+exit EAST  R_BUILDING
+# 1 4 5 13 14 46 30
+exit DOWNS R_VALLEY
+exit GULLY R_VALLEY
+exit STREA R_VALLEY
 exit SOUTH R_VALLEY
-exit WEST R_HILL
-exit IN R_BUILDING
+exit DOWN  R_VALLEY
+# 1 5 6 45 43      (43/EAST already matched the R_BUILDING row above)
+exit FORES R_FOREST
+exit NORTH R_FOREST
+# 1 8 63
+exit DEPRE R_GRATE
 end
 room R_BUILDING
 longmsg BUILDING_LONG
@@ -2119,7 +2477,16 @@ flag DARK no
 flag DWARF no
 flag SURFACE yes
 flag PIRATE_FORBID no
-exit OUT R_ROAD
+# 3 1 3 11 32 44
+# FR2 step 4 (06-Sep-26): ENTER now wired.  This LOC is why the alias was
+# a defect and not just an approximation -- the source sends ENTER OUTSIDE
+# from in here, and this LOC has no IN row at all, so aliased ENTER found
+# no exit and answered moveBlocked's IN/OUT class ("I DON'T KNOW IN FROM
+# OUT HERE.").
+exit OUT   R_ROAD
+exit ENTER R_ROAD
+exit OUTDO R_ROAD
+exit WEST  R_ROAD
 end
 room R_HILL
 longmsg HILL_LONG
@@ -2128,7 +2495,16 @@ flag DARK no
 flag DWARF no
 flag SURFACE yes
 flag PIRATE_FORBID no
-exit EAST R_ROAD
+# 2 1 2 12 7 43 30
+exit ROAD    R_ROAD
+exit BUILD   R_ROAD
+exit FORWARD R_ROAD
+exit EAST    R_ROAD
+exit DOWN    R_ROAD
+# 2 5 6 45 46
+exit FORES   R_FOREST
+exit NORTH   R_FOREST
+exit SOUTH   R_FOREST
 end
 room R_VALLEY
 longmsg VALLEY_LONG
@@ -2137,9 +2513,35 @@ flag DARK no
 flag DWARF no
 flag SURFACE yes
 flag PIRATE_FORBID no
+# 4 1 4 12 45
+exit UPSTR R_ROAD
+exit BUILD R_ROAD
 exit NORTH R_ROAD
+# 4 5 6 43 44 29
+exit FORES R_FOREST
+exit EAST  R_FOREST
+exit WEST  R_FOREST
+exit UP    R_FOREST
+# 4 7 5 46 30
+exit DOWNS R_SLIT
 exit SOUTH R_SLIT
+exit DOWN  R_SLIT
+# 4 8 63
+exit DEPRE R_GRATE
 end
+# LOC 5.  The three-word 50% row and the LOC-6 row after it are one
+# cascade, not two independent exits: adven.f4's label 12 falls a failed
+# row through to the NEXT row with a different N field REGARDLESS of that
+# row's own motion words, so FORWARD and NORTH reach LOC 6 as well even
+# though `5 6 6` names only FORES.  The port's RAND row does the same
+# thing by construction -- dmRand's miss goes to dmAdvance, which scans
+# on for the next entry with this direction -- so each of the three words
+# needs both halves written out.
+#
+# WEST and SOUTH are genuine self-loops (`5 5 44 46`); the audit's
+# self-loop check compares against the original and passes them.  The
+# port used to send SOUTH to the End of Road, which was an invented
+# shortcut with no row behind it and is now gone.
 room R_FOREST
 longmsg FOREST_LONG
 shortmsg FOREST_SHORT
@@ -2147,7 +2549,40 @@ flag DARK no
 flag DWARF no
 flag SURFACE yes
 flag PIRATE_FORBID no
-exit SOUTH R_ROAD
+# 5 4 9 43 30
+exit VALLE   R_VALLEY
+exit EAST    R_VALLEY
+exit DOWN    R_VALLEY
+# 5 50005 6 7 45  -- 50% stay in the forest
+# 5 6 6           -- and on a miss, the cascade lands at LOC 6
+exit FORES   R_FOREST rand 0d50
+exit FORES   R_FOREST2
+exit FORWARD R_FOREST rand 0d50
+exit FORWARD R_FOREST2
+exit NORTH   R_FOREST rand 0d50
+exit NORTH   R_FOREST2
+# 5 5 44 46
+exit WEST    R_FOREST
+exit SOUTH   R_FOREST
+end
+room R_FOREST2
+longmsg FOREST2_LONG
+shortmsg FOREST2_SHORT
+flag DARK no
+flag DWARF no
+flag SURFACE yes
+flag PIRATE_FORBID no
+# 6 1 2 45
+exit ROAD  R_ROAD
+exit NORTH R_ROAD
+# 6 4 9 43 44 30
+exit VALLE R_VALLEY
+exit EAST  R_VALLEY
+exit WEST  R_VALLEY
+exit DOWN  R_VALLEY
+# 6 5 6 46
+exit FORES R_FOREST
+exit SOUTH R_FOREST
 end
 room R_SLIT
 longmsg SLIT_LONG
@@ -2156,8 +2591,26 @@ flag DARK no
 flag DWARF no
 flag SURFACE yes
 flag PIRATE_FORBID no
+# 7 1 12
+exit BUILD R_ROAD
+# 7 4 4 45
+exit UPSTR R_VALLEY
 exit NORTH R_VALLEY
+# 7 5 6 43 44
+exit FORES R_FOREST
+exit EAST  R_FOREST
+exit WEST  R_FOREST
+# 7 8 5 15 16 46
+exit DOWNS R_GRATE
+exit ROCK  R_GRATE
+exit BED   R_GRATE
 exit SOUTH R_GRATE
+# 7 595 60 14 30   (595 -> message 95, print and stay)
+# A message-only row prints and ends the turn here, as every other one in
+# the port does; FR26 N3 has the source re-describing the room afterwards.
+exit SLIT  none msg FR8_SLIT_TOO_NARROW
+exit STREA none msg FR8_SLIT_TOO_NARROW
+exit DOWN  none msg FR8_SLIT_TOO_NARROW
 end
 room R_GRATE
 longmsg GRATE_LONG
@@ -2166,29 +2619,67 @@ flag DARK no
 flag DWARF no
 flag SURFACE yes
 flag PIRATE_FORBID no
+# 8 5 6 43 44 46
+exit FORES R_FOREST
+exit EAST  R_FOREST
+exit WEST  R_FOREST
+exit SOUTH R_FOREST
+# 8 1 12
+exit BUILD R_ROAD
+# 8 7 4 13 45
+exit UPSTR R_SLIT
+exit GULLY R_SLIT
 exit NORTH R_SLIT
-exit DOWN R_BELOW_GRATE cond GRATE_OPEN msg GRATE_SHUT
+# 8 303009 3 19 30 / 8 593 3   (grate open -> LOC 9, else message 93)
+# FR2 step 4 (06-Sep-26): ENTER gets its own entry -- it worked here only
+# by sharing IN's row.  ENTER is on the message row `8 593 3` too, and
+# adven.f4 label 12 falls to the next destination group WITHOUT re-testing
+# the word, so all three words reach message 93 on a shut grate; the fused
+# `msg` clause already expresses that for DOWN and IN.
+exit DOWN R_BELOW_GRATE cond GRATE_OPEN msg FR8_NO_PASS_GRATE
+exit ENTER R_BELOW_GRATE cond GRATE_OPEN msg FR8_NO_PASS_GRATE
+exit IN R_BELOW_GRATE cond GRATE_OPEN msg FR8_NO_PASS_GRATE
 end
 room R_BELOW_GRATE
 longmsg BELOW_GRATE_LONG
 shortmsg BELOW_GRATE_SHORT
-flag DARK yes
+flag DARK no
 flag DWARF no
 flag SURFACE no
 flag PIRATE_FORBID no
-exit UP R_GRATE cond GRATE_OPEN msg GRATE_SHUT
-exit WEST R_COBBLE
+# 9 303008 11 29 / 9 593 11
+exit UP R_GRATE cond GRATE_OPEN msg FR8_NO_PASS_GRATE
+exit OUT R_GRATE cond GRATE_OPEN msg FR8_NO_PASS_GRATE
+# 9 10 17 18 19 44
+exit CRAWL R_COBBLE
+exit COBBL R_COBBLE
+exit IN    R_COBBLE
+exit WEST  R_COBBLE
+# 9 14 31
+exit PIT   R_PITTOP
+# 9 11 51
+exit DEBRI R_DEBRIS
+# No original row: the owner-authored easter egg (TASK-EASTER-EGG).
 exit NORTH R_EA1_SMALL
 end
 room R_COBBLE
 longmsg COBBLE_LONG
 shortmsg COBBLE_SHORT
-flag DARK yes
+flag DARK no
 flag DWARF no
 flag SURFACE no
 flag PIRATE_FORBID no
-exit WEST R_DEBRIS
-exit EAST R_BELOW_GRATE
+# 10 9 11 20 21 43   (21 = NULL, which has no verb row -- see the block header)
+exit OUT   R_BELOW_GRATE
+exit SURFA R_BELOW_GRATE
+exit EAST  R_BELOW_GRATE
+# 10 11 19 22 44 51
+exit IN    R_DEBRIS
+exit DARK  R_DEBRIS
+exit WEST  R_DEBRIS
+exit DEBRI R_DEBRIS
+# 10 14 31
+exit PIT   R_PITTOP
 end
 room R_DEBRIS
 longmsg DEBRIS_LONG
@@ -2197,18 +2688,54 @@ flag DARK yes
 flag DWARF no
 flag SURFACE no
 flag PIRATE_FORBID no
+# 11 303008 63   grate open: out through the depression. Shut: this row is
+# 11 9 64        skipped in silence and DEPRE takes the ENTRA row below,
+#                which is adven.f4 label 12. The two must stay in this order.
+exit DEPRE R_GRATE cond GRATE_OPEN
+exit DEPRE R_BELOW_GRATE
+exit ENTRA R_BELOW_GRATE
 exit WEST R_AWKWARD
 exit EAST R_COBBLE
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 11 10 17 18 23 24 43
+exit CRAWL    R_COBBLE
+exit COBBL    R_COBBLE
+exit PASSAGE  R_COBBLE
+exit LOW      R_COBBLE
+# 11 12 25 19 29 44
+exit CANYO    R_AWKWARD
+exit IN       R_AWKWARD
+exit UP       R_AWKWARD
+# 11 14 31
+exit PIT      R_PITTOP
 end
 room R_AWKWARD
 longmsg AWKWARD_LONG
-shortmsg AWKWARD_SHORT
+shortmsg AWKWARD_LONG
 flag DARK yes
 flag DWARF no
 flag SURFACE no
 flag PIRATE_FORBID no
+# 12 303008 63   see R_DEBRIS: the same two-row grate cascade, and the
+# 12 9 64        same required order.
+exit DEPRE R_GRATE cond GRATE_OPEN
+exit DEPRE R_BELOW_GRATE
+exit ENTRA R_BELOW_GRATE
 exit WEST R_BIRD
 exit EAST R_DEBRIS
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 12 11 30 43 51
+exit DOWN     R_DEBRIS
+exit DEBRI    R_DEBRIS
+# 12 13 19 29 44
+exit IN       R_BIRD
+exit UP       R_BIRD
+# 12 14 31
+exit PIT      R_PITTOP
 end
 room R_BIRD
 longmsg BIRD_LONG
@@ -2217,8 +2744,23 @@ flag DARK yes
 flag DWARF no
 flag SURFACE no
 flag PIRATE_FORBID no
+# 13 303008 63   see R_DEBRIS: the same two-row grate cascade, and the
+# 13 9 64        same required order.
+exit DEPRE R_GRATE cond GRATE_OPEN
+exit DEPRE R_BELOW_GRATE
+exit ENTRA R_BELOW_GRATE
 exit WEST R_PITTOP
 exit EAST R_AWKWARD
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 13 11 51
+exit DEBRI    R_DEBRIS
+# 13 12 25 43
+exit CANYO    R_AWKWARD
+# 13 14 23 31 44
+exit PASSAGE  R_PITTOP
+exit PIT      R_PITTOP
 end
 room R_PITTOP
 longmsg PITTOP_LONG
@@ -2227,10 +2769,37 @@ flag DARK yes
 flag DWARF no
 flag SURFACE no
 flag PIRATE_FORBID no
+# 14 303008 63   see R_DEBRIS: the same two-row grate cascade, and the
+# 14 9 64        same required order.
+exit DEPRE R_GRATE cond GRATE_OPEN
+exit DEPRE R_BELOW_GRATE
+exit ENTRA R_BELOW_GRATE
+# 14 150020 30 31 34 / 14 15 30 -- the nugget pit death is NOT here: it
+# needs LOC 20 (TASK-FR3's JUMP deaths) and a carrying-the-nugget
+# condition, both step 3 work. DOWN therefore still goes straight to the
+# Hall of Mists, as it did before this row group was added.
+#
+# S45 (06-Sep-26): the death half of `14 150020 30 31 34` has been
+# adventure.am1's ptCheckDir/ptDown/ptDeath since TASK-F13, and PIT and
+# STEPS join DOWN on that arm now. These two rows are the OTHER half --
+# line 432's `14 15 30` fallback, which the original reaches for all three
+# words through adven.f4 label 12's word-agnostic fall-through and this
+# port has to spell out one word at a time (S44).
 exit DOWN R_MISTHALL
+exit PIT R_MISTHALL
+exit STEPS R_MISTHALL
 exit EAST R_BIRD
-exit WEST R_CRACK
+# 14 16 33 44 -- CRACK and WEST both reach LOC 16, a FORCED location
+# whose only row is `16 14 1`.  TASK-FR26 N6: answered by adventure.am1's
+# ptCheckDir/ptCrackBounce, which prints LOC 16's own text and re-enters
+# this room in the same turn.  CRACK had no exit here at all before that
+# (one of TASK-FR2's missing-row list); the code arm answers both words.
 exit PASSAGE R_BIRD
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 14 11 51
+exit DEBRI    R_DEBRIS
 end
 room R_MISTHALL
 longmsg MISTHALL_LONG
@@ -2240,14 +2809,34 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit UP R_PITTOP
+# 15 18 36 46
+# FR2 step 4 (06-Sep-26): LEFT shares SOUTH's row here.  It was never
+# reachable before -- LEFT meant NE, and this LOC has no NE row.
 exit SOUTH R_NUGGET
+exit LEFT R_NUGGET
 exit NORTH R_MTKING
 exit EAST R_PITTOP
 exit PASSAGE R_PITTOP
+# 15 150022 29 31 34 35 23 43 / 15 14 ... -- PIT, STEPS and DOME are the
+# three words of that row the port could not say at all before S45
+# (06-Sep-26). The gold half is adventure.am1's mhCheckDir/mhBounce, which
+# prints LOC 22's "THE DOME IS UNCLIMBABLE."; these rows are the
+# not-carrying fallback to the Pit Top, one per word because the port has
+# no word-agnostic cascade fall-through (S44).
+exit PIT R_PITTOP
+exit STEPS R_PITTOP
+exit DOME R_PITTOP
 exit WEST R_FISSURE_EAST
 exit FORWARD R_FISSURE_EAST
 exit HALL R_FISSURE_EAST
 exit DOWN R_MTKING
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 15 19 10 30 45
+exit STAIR    R_MTKING
+# 15 34 55
+exit Y2       R_JUMBLE
 end
 room R_Y2
 longmsg Y2_LONG
@@ -2259,6 +2848,12 @@ flag PIRATE_FORBID no
 exit EAST R_JUMBLE
 exit WEST R_Y2WINDOW
 exit SOUTH R_HOLE
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 33 34 43 53 54
+exit WALL     R_JUMBLE
+exit BROKE    R_JUMBLE
 end
 room R_JUMBLE
 longmsg JUMBLE_LONG
@@ -2269,6 +2864,11 @@ flag SURFACE no
 flag PIRATE_FORBID no
 exit DOWN R_Y2
 exit UP R_MISTHALL
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 34 33 30 55
+exit Y2       R_Y2
 end
 room R_Y2WINDOW
 longmsg Y2WINDOW_LONG
@@ -2278,6 +2878,11 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit EAST R_Y2
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 35 33 43 55
+exit Y2       R_Y2
 end
 room R_NUGGET
 longmsg NUGGET_LONG
@@ -2298,12 +2903,40 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit EAST R_MISTHALL
+# 19 311028 45 36 / 19 311029 46 37 / 19 311030 44 7
+# TASK-FR4 LOC 19, S44 (06-Sep-26).  All six snake-gated words are here
+# now.  NORTH's gate is NOT missing and never was: doMove's mtkSnakeCheck
+# owns NORTH/SOUTH/WEST/SW while the snake is present and bounces them off
+# FORCED LOC 32 (adventure.am1's mtkBounce), so those three never reach
+# this table in that state.  FR2 step 4's note above this block said the
+# opposite and mirrored LEFT on it -- an UNGATED row -- which let LEFT walk
+# the player past the snake to LOC 28 and its silver bars.  Probed live
+# 06-Sep-26: LEFT reached "YOU ARE IN A LOW N/S PASSAGE AT A HOLE IN THE
+# FLOOR ... THERE ARE BARS OF SILVER HERE!" with the snake still alive.
+#
+# The gate is spelled in the TABLE and not in mtkSnakeCheck for LEFT and
+# FORWARD because the two shapes are player-visible-identical, and that is
+# measured, not assumed: the same probe typed RIGHT (a table `cond SNAKE`
+# row) and NORTH (the code bounce) at the same snake and got byte-identical
+# replies -- "YOU CAN'T GET BY THE SNAKE." then "YOU'RE IN HALL OF MT
+# KING." then the snake's here-text.  A table row costs nothing; a code arm
+# costs bank 0 and, for FORWARD, would also need dfdCheckRoom's "not at a
+# fissure bank" path to reach the room dispatch, since doMove dispatches
+# DIR_FORWARD by direction well before curRoom is tested.
 exit NORTH R_HOLE
+exit LEFT R_HOLE cond SNAKE msg SNAKE_BLOCKED
 exit WEST R_MTKING_WEST cond SNAKE msg SNAKE_BLOCKED
+exit FORWARD R_MTKING_WEST cond SNAKE msg SNAKE_BLOCKED
 exit SOUTH R_MTKING_SOUTH cond SNAKE msg SNAKE_BLOCKED
+exit RIGHT R_MTKING_SOUTH cond SNAKE msg SNAKE_BLOCKED
 exit SECRE R_MTKING_CANYON_EW
 exit SW R_MTKING_CANYON_EW
 exit UP R_MISTHALL
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 19 15 10 29 43
+exit STAIR    R_MISTHALL
 end
 room R_HOLE
 longmsg HOLE_LONG
@@ -2315,6 +2948,16 @@ flag PIRATE_FORBID no
 exit NORTH R_Y2
 exit DOWN R_DIRTYPASS
 exit SOUTH R_MTKING
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 28 19 38 11 46
+exit HALL     R_MTKING
+exit OUT      R_MTKING
+# 28 33 45 55
+exit Y2       R_Y2
+# 28 36 30 52
+exit HOLE     R_DIRTYPASS
 end
 room R_DIRTYPASS
 longmsg DIRTYPASS_LONG
@@ -2326,6 +2969,15 @@ flag PIRATE_FORBID no
 exit UP R_HOLE
 exit EAST R_SMALLPIT
 exit WEST R_DUSTYROCKS
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 36 37 43 17
+exit CRAWL    R_SMALLPIT
+# 36 28 29 52
+exit HOLE     R_HOLE
+# 36 65 70
+exit BEDQU    R_BEDQUILT
 end
 room R_SMALLPIT
 longmsg SMALLPIT_LONG
@@ -2336,6 +2988,14 @@ flag SURFACE no
 flag PIRATE_FORBID no
 exit WEST R_DIRTYPASS
 exit DOWN R_STREAMPIT
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 37 36 44 17
+exit CRAWL    R_DIRTYPASS
+# 37 38 30 31 56
+exit PIT      R_STREAMPIT
+exit CLIMB    R_STREAMPIT
 end
 room R_STREAMPIT
 longmsg STREAMPIT_LONG
@@ -2345,6 +3005,18 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit UP R_SMALLPIT
+exit DOWN none msg FR8_SLIT_TOO_NARROW
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 38 37 56 29 11
+exit CLIMB    R_SMALLPIT
+exit OUT      R_SMALLPIT
+# 38 595 60 14 30 4 5
+exit SLIT     none msg FR8_SLIT_TOO_NARROW
+exit STREA    none msg FR8_SLIT_TOO_NARROW
+exit UPSTR    none msg FR8_SLIT_TOO_NARROW
+exit DOWNS    none msg FR8_SLIT_TOO_NARROW
 end
 room R_DUSTYROCKS
 longmsg DUSTYROCKS_LONG
@@ -2355,16 +3027,21 @@ flag SURFACE no
 flag PIRATE_FORBID no
 exit EAST R_DIRTYPASS
 exit DOWN R_JUNCTION
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 39 36 43 23
+exit PASSAGE  R_DIRTYPASS
+# 39 64 30 52 58
+exit HOLE     R_JUNCTION
+exit FLOOR    R_JUNCTION
+# 39 65 70
+exit BEDQU    R_BEDQUILT
 end
-room R_CRACK
-longmsg CRACK_LONG
-shortmsg CRACK_LONG
-flag DARK yes
-flag DWARF yes
-flag SURFACE no
-flag PIRATE_FORBID no
-exit EAST R_PITTOP
-end
+# LOC 16 was a room here (R_CRACK) until TASK-FR26 N6, 05-Sep-26.  It is
+# a FORCED location -- adven.f4 2000-2001 prints its text and travels on
+# in the same turn, so the player never stands in it.  CRACK_LONG stays
+# as a message; the bounce is adventure.am1's ptCrackBounce.
 room R_JUNCTION
 longmsg JUNCTION_LONG
 shortmsg JUNCTION_SHORT
@@ -2376,6 +3053,16 @@ exit UP R_DUSTYROCKS
 exit WEST R_BEDQUILT
 exit NORTH R_SHELLROOM
 exit EAST R_ANTEROOM
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 64 39 29 56 59
+exit CLIMB    R_DUSTYROCKS
+exit ROOM     R_DUSTYROCKS
+# 64 65 44 70
+exit BEDQU    R_BEDQUILT
+# 64 103 45 74
+exit SHELL    R_SHELLROOM
 end
 room R_BEDQUILT
 longmsg BEDQUILT_LONG
@@ -2386,10 +3073,24 @@ flag SURFACE no
 flag PIRATE_FORBID no
 exit EAST R_JUNCTION
 exit WEST R_SWISSCHEESE
-exit NORTH R_BEDQUILT rand 0d60
+exit NORTH none rand 0d60 msg FR8_HOLES_MAIN_PASSAGE
 exit NORTH R_LOWROOM rand 0d75
 exit NORTH R_THREECANYONS
+exit SOUTH none rand 0d80 msg FR8_HOLES_MAIN_PASSAGE
+exit UP none rand 0d80 msg FR8_HOLES_MAIN_PASSAGE
+exit UP R_CANYONABOVE2 rand 0d50
+exit UP R_DUSTYROCKS
+exit DOWN none rand 0d80 msg FR8_HOLES_MAIN_PASSAGE
 exit DOWN R_ANTEROOM
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 65 68 61
+exit SLAB     R_SLAB
+# TASK-FR4 item 4f (06-Sep-26, S46).  SOUTH's 20% fall-through: `65 80556
+# 46` fails its roll and label 12 walks on to `65 68 61`, the Slab Room.
+# Bedquilt's other three words already carry their full cascades above.
+exit SOUTH    R_SLAB
 end
 room R_SWISSCHEESE
 longmsg SWISSCHEESE_LONG
@@ -2402,6 +3103,20 @@ exit WEST R_TWOPITEAST
 exit EAST R_SOFTROOM
 exit NE R_BEDQUILT
 exit ORIEN R_ORIENTAL
+exit SOUTH none rand 0d80 msg FR8_HOLES_MAIN_PASSAGE
+exit NW none rand 0d50 msg FR8_HOLES_MAIN_PASSAGE
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 66 77 25
+exit CANYO    R_TALLCANYON
+# TASK-FR4 item 4f (06-Sep-26, S46).  The 20% and 50% fall-through legs of
+# the two rows above.  adven.f4 label 12 advances to the next travel entry
+# regardless of the word, so SOUTH's failed 80% roll lands on `66 77 25`
+# (LOC 77) and NW's failed 50% roll on `66 97 72` (LOC 97).  Ordered AFTER
+# their own probability rows, which is what makes them fall-throughs.
+exit SOUTH    R_TALLCANYON
+exit NW       R_ORIENTAL
 end
 room R_TWOPITEAST
 longmsg TWOPITEAST_LONG
@@ -2413,6 +3128,13 @@ flag PIRATE_FORBID no
 exit EAST R_SWISSCHEESE
 exit WEST R_TWOPITWEST
 exit DOWN R_EASTPIT
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 67 23 44 42
+exit ACROSS   R_TWOPITWEST
+# 67 24 30 31
+exit PIT      R_EASTPIT
 end
 room R_SLAB
 longmsg SLAB_LONG
@@ -2424,6 +3146,11 @@ flag PIRATE_FORBID no
 exit SOUTH R_TWOPITWEST
 exit UP R_CANYONABOVE
 exit NORTH R_BEDQUILT
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 68 69 29 56
+exit CLIMB    R_CANYONABOVE
 end
 room R_CANYONABOVE
 longmsg CANYONABOVE_LONG
@@ -2435,6 +3162,13 @@ flag PIRATE_FORBID no
 exit DOWN R_SLAB
 exit SOUTH R_CANYONNE
 exit NORTH R_MIRRORCANYON
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 69 68 30 61
+exit SLAB     R_SLAB
+# 69 113 75
+exit RESER    R_RESERVOIR
 end
 room R_CANYONABOVE2
 longmsg CANYONABOVE2_LONG
@@ -2446,6 +3180,11 @@ flag PIRATE_FORBID no
 exit NORTH R_THREECANYONS
 exit DOWN R_BEDQUILT
 exit SOUTH R_STALACTITE
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 70 65 30 23
+exit PASSAGE  R_BEDQUILT
 end
 room R_THREECANYONS
 longmsg THREECANYONS_LONG
@@ -2468,6 +3207,17 @@ flag PIRATE_FORBID no
 exit EAST R_TWOPITEAST
 exit WEST R_SLAB
 exit DOWN R_WESTPIT
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 23 67 43 42
+exit ACROSS   R_TWOPITEAST
+# 23 68 44 61
+exit SLAB     R_SLAB
+# 23 25 30 31
+exit PIT      R_WESTPIT
+# 23 648 52
+exit HOLE     none msg MIRROR_TOO_HIGH
 end
 room R_EASTPIT
 longmsg EASTPIT_LONG
@@ -2477,6 +3227,11 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit UP R_TWOPITEAST
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 24 67 29 11
+exit OUT      R_TWOPITEAST
 end
 room R_WESTPIT
 longmsg WESTPIT_LONG
@@ -2486,6 +3241,11 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit UP R_TWOPITWEST
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 25 23 29 11
+exit OUT      R_TWOPITWEST
 end
 room R_SOFTROOM
 longmsg SOFTROOM_LONG
@@ -2495,6 +3255,11 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit WEST R_SWISSCHEESE
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 96 66 44 11
+exit OUT      R_SWISSCHEESE
 end
 room R_ORIENTAL
 longmsg ORIENTAL_LONG
@@ -2507,6 +3272,12 @@ exit SE R_SWISSCHEESE
 exit NORTH R_MISTY_CAVERN
 exit UP R_MISTY_CAVERN
 exit CAVER R_MISTY_CAVERN
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 97 72 44 17
+exit WEST     R_LOWROOM
+exit CRAWL    R_LOWROOM
 end
 room R_MISTY_CAVERN
 longmsg MISTY_CAVERN_LONG
@@ -2534,7 +3305,7 @@ end
 room R_PLOVER
 longmsg PLOVER_LONG
 shortmsg PLOVER_SHORT
-flag DARK yes
+flag DARK no
 flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
@@ -2553,6 +3324,11 @@ flag SURFACE no
 flag PIRATE_FORBID no
 exit SOUTH R_PLOVER
 exit OUT R_PLOVER
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 101 100 46 71 11
+exit PLOVE    R_PLOVER
 end
 room R_ARCHEDHALL
 longmsg ARCHEDHALL_LONG
@@ -2562,6 +3338,12 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit DOWN R_SHELLROOM
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 102 103 30 74 11
+exit SHELL    R_SHELLROOM
+exit OUT      R_SHELLROOM
 end
 room R_SHELLROOM
 longmsg SHELLROOM_LONG
@@ -2573,6 +3355,11 @@ flag PIRATE_FORBID no
 exit UP R_ARCHEDHALL
 exit DOWN R_SLOPINGCORRIDOR
 exit SOUTH R_JUNCTION
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 103 102 29 38
+exit HALL     R_ARCHEDHALL
 end
 room R_SLOPINGCORRIDOR
 longmsg SLOPINGCORRIDOR_LONG
@@ -2583,6 +3370,11 @@ flag SURFACE no
 flag PIRATE_FORBID no
 exit UP R_SHELLROOM
 exit DOWN R_CULDESAC
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 104 103 29 74
+exit SHELL    R_SHELLROOM
 end
 room R_CULDESAC
 longmsg CULDESAC_LONG
@@ -2592,6 +3384,13 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit UP R_SLOPINGCORRIDOR
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 105 104 29 11
+exit OUT      R_SLOPINGCORRIDOR
+# 105 103 74
+exit SHELL    R_SHELLROOM
 end
 room R_ANTEROOM
 longmsg ANTEROOM_LONG
@@ -2611,7 +3410,31 @@ flag DARK yes
 flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
+exit EAST none rand 0d95 msg FR8_HOLES_MAIN_PASSAGE
 exit EAST R_ANTEROOM
+exit WEST none msg FR8_HOLES_CAVE_IN
+# TASK-FR4 item 4f (06-Sep-26, S46).  `108 95556 43 45 46 47 48 49 50 29
+# 30` gives NINE words the same 95% "you wound up back in the main
+# passage" roll, and `108 106 43` is the 5% fall-through for every one of
+# them in adven.f4 -- label 12 advances by ENTRY, not by word.  Only EAST
+# had that leg here.  Eight added below, each immediately after its own
+# 95% row so the roll is tried first and the Anteroom is the remainder.
+exit NORTH none rand 0d95 msg FR8_HOLES_MAIN_PASSAGE
+exit NORTH R_ANTEROOM
+exit SOUTH none rand 0d95 msg FR8_HOLES_MAIN_PASSAGE
+exit SOUTH R_ANTEROOM
+exit NE none rand 0d95 msg FR8_HOLES_MAIN_PASSAGE
+exit NE R_ANTEROOM
+exit SE none rand 0d95 msg FR8_HOLES_MAIN_PASSAGE
+exit SE R_ANTEROOM
+exit SW none rand 0d95 msg FR8_HOLES_MAIN_PASSAGE
+exit SW R_ANTEROOM
+exit NW none rand 0d95 msg FR8_HOLES_MAIN_PASSAGE
+exit NW R_ANTEROOM
+exit UP none rand 0d95 msg FR8_HOLES_MAIN_PASSAGE
+exit UP R_ANTEROOM
+exit DOWN none rand 0d95 msg FR8_HOLES_MAIN_PASSAGE
+exit DOWN R_ANTEROOM
 end
 room R_MIRRORCANYON
 longmsg MIRRORCANYON_LONG
@@ -2622,6 +3445,11 @@ flag SURFACE no
 flag PIRATE_FORBID no
 exit SOUTH R_CANYONABOVE
 exit NORTH R_RESERVOIR
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 109 113 45 75
+exit RESER    R_RESERVOIR
 end
 room R_WINDOWONPIT
 longmsg WINDOWONPIT_LONG
@@ -2641,8 +3469,20 @@ flag SURFACE no
 flag PIRATE_FORBID no
 exit NORTH R_CANYONABOVE2
 exit DOWN R_MAZE_A50 rand 0d40
-exit DOWN R_MAZE_A53 rand 0d30
+exit DOWN R_MAZE_A53 rand 0d50
 exit DOWN R_MAZE_A45
+# TASK-FR4 (06-Sep-26, S46): JUMP and CLIMB share the 40% row
+# `111 40050 30 39 56` with DOWN and then fall, word-agnostically in
+# adven.f4, into DOWN's own `111 50053 30` and `111 45 30`.  The port's
+# scan re-matches the word at every row, so each word carries its own
+# copy of the three-row cascade.  Same destinations, same probabilities,
+# same order as DOWN's above.
+exit JUMP R_MAZE_A50 rand 0d40
+exit JUMP R_MAZE_A53 rand 0d50
+exit JUMP R_MAZE_A45
+exit CLIMB R_MAZE_A50 rand 0d40
+exit CLIMB R_MAZE_A53 rand 0d50
+exit CLIMB R_MAZE_A45
 end
 room R_RESERVOIR
 longmsg RESERVOIR_LONG
@@ -2652,6 +3492,11 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit SOUTH R_MIRRORCANYON
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 113 109 46 11 109
+exit OUT      R_MIRRORCANYON
 end
 room R_CANYONNE
 longmsg CANYONNE_LONG
@@ -2661,6 +3506,9 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit NORTH R_CANYONABOVE
+exit OUT R_CANYONABOVE
+exit EAST none msg FR8_DRAGON_LOOKS_NASTY
+exit FORWARD none msg FR8_DRAGON_LOOKS_NASTY
 end
 room R_MAZE_A42
 longmsg MAZE_ALIKE_LONG
@@ -2845,6 +3693,11 @@ exit WEST R_MAZE_A55
 exit SOUTH R_MAZE_A58
 exit NORTH R_MAZE_A83
 exit EAST R_MAZE_A84
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 57 13 30 56
+exit CLIMB    R_BIRD
 end
 room R_MAZE_A58
 longmsg MAZE_DEADEND_LONG
@@ -2958,6 +3811,14 @@ flag SURFACE no
 flag PIRATE_FORBID no
 exit EAST R_MTKING
 exit WEST R_CROSSOVER
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 30 19 38 11 43
+exit HALL     R_MTKING
+exit OUT      R_MTKING
+# 30 62 44 29
+exit UP       R_CROSSOVER
 end
 room R_LONGHALL_EAST
 longmsg LONGHALL_EAST_LONG
@@ -2971,6 +3832,12 @@ exit NORTH R_CROSSOVER
 exit EAST R_MISTHALL_WEST
 exit UP R_MISTHALL_WEST
 exit CRAWL R_MISTHALL_WEST
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 60 62 45 30 52
+exit DOWN     R_CROSSOVER
+exit HOLE     R_CROSSOVER
 end
 room R_LONGHALL_WEST
 longmsg LONGHALL_WEST_LONG
@@ -3223,11 +4090,11 @@ flag PIRATE_FORBID no
 exit HALL R_MISTHALL
 exit EAST R_MISTHALL
 exit JUMP R_FISSURE_DEATH cond FISSURE_NO_BRIDGE msg FISSURE_JUMP
-exit FORWARD R_FISSURE_DEATH cond FISSURE_NO_BRIDGE msg CANT_GO
+exit FORWARD R_FISSURE_WEST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
 exit OVER R_FISSURE_WEST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
-exit ACROSS R_FISSURE_EAST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
-exit WEST R_FISSURE_EAST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
-exit CROSS R_FISSURE_EAST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
+exit ACROSS R_FISSURE_WEST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
+exit WEST R_FISSURE_WEST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
+exit CROSS R_FISSURE_WEST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
 end
 room R_FISSURE_DEATH
 longmsg FISSURE_DEATH_LONG
@@ -3244,33 +4111,23 @@ flag DARK yes
 flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
-exit NORTH R_LOWCRAWL_A
+# 27 40 45 -- NORTH reaches LOC 40, a FORCED location whose only row is
+# `40 41 1`.  TASK-FR26 N6: answered by adventure.am1's fwNorthCheck,
+# which prints LOC 40's own text and travels on to R_MISTHALL_WEST in
+# the same turn, rather than by a room the player stands in.
 exit WEST R_MISTHALL_WEST
 exit JUMP R_FISSURE_DEATH cond FISSURE_NO_BRIDGE msg FISSURE_JUMP
-exit FORWARD R_FISSURE_DEATH cond FISSURE_NO_BRIDGE msg CANT_GO
+exit FORWARD R_FISSURE_EAST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
 exit OVER R_FISSURE_EAST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
-exit ACROSS R_FISSURE_WEST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
-exit EAST R_FISSURE_WEST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
-exit CROSS R_FISSURE_WEST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
+exit ACROSS R_FISSURE_EAST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
+exit EAST R_FISSURE_EAST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
+exit CROSS R_FISSURE_EAST cond FISSURE_BRIDGE msg FISSURE_NO_CROSS
 end
-room R_LOWCRAWL_A
-longmsg LOWCRAWL_LONG
-shortmsg LOWCRAWL_LONG
-flag DARK yes
-flag DWARF yes
-flag SURFACE no
-flag PIRATE_FORBID no
-exit CRAWL R_MISTHALL_WEST
-end
-room R_LOWCRAWL_B
-longmsg LOWCRAWL_LONG
-shortmsg LOWCRAWL_LONG
-flag DARK yes
-flag DWARF yes
-flag SURFACE no
-flag PIRATE_FORBID no
-exit CRAWL R_FISSURE_WEST
-end
+# LOC 40 and LOC 59 were rooms here (R_LOWCRAWL_A/B) until TASK-FR26 N6,
+# 05-Sep-26.  Both are FORCED locations sharing one text -- adven.f4
+# 2000-2001 prints it and travels on in the same turn (`40 41 1`,
+# `59 27 1`), so the player never stands in either.  LOWCRAWL_LONG stays
+# as a message; the bounces are adventure.am1's fwNorthCheck/mwNorthCheck.
 room R_MISTHALL_WEST
 longmsg MISTHALL_WEST_LONG
 shortmsg MISTHALL_WEST_SHORT
@@ -3283,7 +4140,10 @@ exit UP R_MAZE_A42
 exit PASSAGE R_MAZE_A42
 exit CLIMB R_MAZE_A42
 exit EAST R_FISSURE_WEST
-exit NORTH R_LOWCRAWL_B
+# 41 59 45 -- NORTH reaches LOC 59, a FORCED location whose only row is
+# `59 27 1`.  TASK-FR26 N6: answered by adventure.am1's mwNorthCheck,
+# which prints LOC 59's own text and travels on to R_FISSURE_WEST in the
+# same turn, rather than by a room the player stands in.
 exit WEST R_LONGHALL_EAST
 exit CRAWL R_LONGHALL_EAST
 end
@@ -3328,6 +4188,8 @@ flag SURFACE no
 flag PIRATE_FORBID no
 exit EAST R_MTKING_CANYON_EW
 exit OUT R_MTKING_CANYON_EW
+exit NORTH none msg FR8_DRAGON_LOOKS_NASTY
+exit FORWARD none msg FR8_DRAGON_LOOKS_NASTY
 end
 room R_LOWROOM
 longmsg LOWROOM_LONG
@@ -3338,6 +4200,31 @@ flag SURFACE no
 flag PIRATE_FORBID no
 exit BEDQU R_BEDQUILT
 exit SW R_CHASM_CORRIDOR
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 72 97 48 72
+exit SE       R_ORIENTAL
+exit ORIEN    R_ORIENTAL
+# TASK-FR4 (06-Sep-26, S46).  adven.dat `72 73 45` -- the last row in the
+# corpus audit's (b) list.  LOC 73 had no port room at all until now.
+exit NORTH    R_DEADENDCRAWL
+end
+# TASK-FR4 (06-Sep-26, S46).  adven.dat LOC 73, reached only from LOC 72.
+# One travel row, `73 72 46 17 11`: SOUTH, CRAWL and OUT all go back.
+# Flags follow adven.dat section 9 -- DARK (only LOCs 0-10 carry the
+# lighted bit), DWARF yes (>= 15, not forced), PIRATE_FORBID no (73 is
+# not in bit 3's eighteen-room exclusion zone).
+room R_DEADENDCRAWL
+longmsg DEADENDCRAWL_LONG
+shortmsg DEADENDCRAWL_LONG
+flag DARK yes
+flag DWARF yes
+flag SURFACE no
+flag PIRATE_FORBID no
+exit SOUTH R_LOWROOM
+exit CRAWL R_LOWROOM
+exit OUT R_LOWROOM
 end
 room R_CHASM_CORRIDOR
 longmsg CHASM_CORRIDOR_LONG
@@ -3357,9 +4244,17 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit SW R_CHASM_CORRIDOR
-exit ACROSS R_CHASM_SW cond TROLL_GONE msg TROLL_REFUSES
-exit CROSS R_CHASM_SW cond TROLL_GONE msg TROLL_REFUSES
-exit NE R_CHASM_SW cond TROLL_GONE msg TROLL_REFUSES
+# TASK-FR4 item 4g, S44 (06-Sep-26).  adven.dat row 729, the second half of
+# LOC 117's JUMP cascade:
+#   117 332021 39   -> LOC 21, the death, when PROP(32 *CHASM) is not 0
+#   117 596     39  then, unconditionally, -> stay, msg 96
+# Only row 729 is here.  Row 728's death is doMove's pjChasmJump, because
+# R_FISSURE_DEATH has no exits and nothing in the port kills on entering it
+# -- a corpus row to LOC 21 would strand the player, not kill them.  This
+# row is what pjChasmJump falls through to while the bridge still stands,
+# and it is LOC 122's row 744 exactly (`exit JUMP none msg FISSURE_JUMP`).
+# 117 596 39
+exit JUMP     none msg FISSURE_JUMP
 end
 room R_CHASM_NE
 longmsg CHASM_NE_LONG
@@ -3369,12 +4264,14 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID yes
 exit NE R_VOLCANO_CORRIDOR
-exit ACROSS R_CHASM_NE cond TROLL_GONE msg TROLL_REFUSES
-exit CROSS R_CHASM_NE cond TROLL_GONE msg TROLL_REFUSES
-exit SW R_CHASM_NE cond TROLL_GONE msg TROLL_REFUSES
 exit FORK R_VOLCANO_FORK
 exit VIEW R_VOLCANO_VIEW
 exit BARRE R_BEAR_ENTRANCE
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 122 596 39
+exit JUMP     none msg FISSURE_JUMP
 end
 room R_VOLCANO_CORRIDOR
 longmsg VOLCANO_CORRIDOR_LONG
@@ -3397,8 +4294,14 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID yes
 exit WEST R_VOLCANO_CORRIDOR
+# 124 125 47 36 / 124 128 48 37 30
+# FR2 step 4 (06-Sep-26): this is the room the old NE/SE alias was read
+# off, and the only one where it gave the right destination.  Both words
+# now need their own entries to keep working here.
 exit NE R_VOLCANO_JUNCTION
+exit LEFT R_VOLCANO_JUNCTION
 exit SE R_LIMESTONE_PASSAGE
+exit RIGHT R_LIMESTONE_PASSAGE
 exit DOWN R_LIMESTONE_PASSAGE
 exit VIEW R_VOLCANO_VIEW
 exit BARRE R_BEAR_ENTRANCE
@@ -3420,7 +4323,7 @@ end
 room R_VOLCANO_VIEW
 longmsg VOLCANO_VIEW_LONG
 shortmsg VOLCANO_VIEW_SHORT
-flag DARK yes
+flag DARK no
 flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID yes
@@ -3428,6 +4331,12 @@ exit SOUTH R_VOLCANO_JUNCTION
 exit PASSAGE R_VOLCANO_JUNCTION
 exit OUT R_VOLCANO_JUNCTION
 exit FORK R_VOLCANO_FORK
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 126 610 30 39
+exit DOWN     none msg DRINK_NOT_WATER
+exit JUMP     none msg DRINK_NOT_WATER
 end
 room R_BOULDER_CHAMBER
 longmsg BOULDER_CHAMBER_LONG
@@ -3469,7 +4378,17 @@ exit UP R_LIMESTONE_PASSAGE
 exit FORK R_VOLCANO_FORK
 exit EAST R_BEARROOM
 exit BARRE R_BEARROOM
+# FR2 step 4 (06-Sep-26): ENTER, the fourth word of `129 130 43 19 40 3`.
+# It shared IN's row here, so this entry is preservation, not a new exit.
+# Deliberately ABOVE step 3's block below: step3_static_checks() counts
+# every exit line after that marker as step 3's, and this one is step 4's.
+exit ENTER R_BEARROOM
 exit VIEW R_VOLCANO_VIEW
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 129 130 43 19 40 3
+exit IN       R_BEARROOM
 end
 room R_BEARROOM
 longmsg BEARROOM_LONG
@@ -3483,15 +4402,11 @@ exit OUT R_BEAR_ENTRANCE
 exit FORK R_VOLCANO_FORK
 exit VIEW R_VOLCANO_VIEW
 end
-room R_PLANTHOLE
-longmsg PLANTHOLE_LONG
-shortmsg PLANTHOLE_LONG
-flag DARK yes
-flag DWARF yes
-flag SURFACE no
-flag PIRATE_FORBID no
-exit CLIMB R_NARROWCORRIDOR
-end
+# LOC 26 was a room here (R_PLANTHOLE) until TASK-FR26 N6, 05-Sep-26.  It
+# is a FORCED location (`26 88 1`) -- adven.f4 2000-2001 prints its text
+# and travels on to LOC 88 in the same turn, so the player never stands
+# in it.  PLANTHOLE_LONG stays as a message; the bounce is
+# adventure.am1's wpcGrown, which already owned the CLIMB that gets here.
 room R_NARROWCORRIDOR
 longmsg NARROWCORRIDOR_LONG
 shortmsg NARROWCORRIDOR_SHORT
@@ -3548,8 +4463,22 @@ flag DWARF yes
 flag SURFACE no
 flag PIRATE_FORBID no
 exit SOUTH R_GIANT
+# 94 309095 45 3 73 / 94 611 45
+# FR2 step 4 (06-Sep-26): ENTER is the third word on the door row and was
+# unreachable while it meant IN, which this LOC has no row for.  The msg
+# clause is right for all three words: `94 611 45` names only NORTH, but
+# adven.f4 label 12 advances to the next destination group without
+# re-testing the word, so a failed door condition reaches 611 whichever
+# of the three was typed.
 exit NORTH R_WATERFALL cond DOOR_OILED msg DOOR_RUSTY
+exit ENTER R_WATERFALL cond DOOR_OILED msg DOOR_RUSTY
 exit CAVER R_WATERFALL cond DOOR_OILED msg DOOR_RUSTY
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 94 92 46 27 23
+exit GIANT    R_GIANT
+exit PASSAGE  R_GIANT
 end
 room R_WATERFALL
 longmsg WATERFALL_LONG
@@ -3580,6 +4509,11 @@ flag DWARF no
 flag SURFACE no
 flag PIRATE_FORBID no
 exit NE R_REPOSITORY_NE
+# TASK-FR2 step 3 (06-Sep-26): the words these adven.dat rows name
+# that the port had no exit for.  Every one is a single unconditional
+# row, so order against the rows above does not matter.
+# 116 593 30
+exit DOWN     none msg FR8_NO_PASS_GRATE
 end
 room R_TIGHTCANYON
 longmsg TIGHTCANYON_LONG
@@ -3636,7 +4570,7 @@ flag DARK no
 flag DWARF no
 flag SURFACE no
 flag PIRATE_FORBID no
-exit SOUTH R_MAZE_D140_VEND
+exit SOUTH R_BELOW_GRATE
 exit NORTH R_EA1_CABINET
 end
 room R_EA1_CABINET
@@ -3801,7 +4735,7 @@ object PLANT name voc_plant loc R_WESTPIT take no invmsg none heremsg HERE_PLANT
 # objTreasure: rusty door -- an obstacle, not a treasure (Stage 29)
 object DOOR name voc_door loc R_DOORPASSAGE take no invmsg none heremsg HERE_DOOR_RUSTY treasure 0
 
-# objTake (between rows 23,24): scenery-rejection path (msg_CANT_TAKE) handles it, no bespoke
+# objTake (between rows 23,24): scenery-rejection path (dtCantTake, f4 9010 msg 25) handles it, no bespoke
 # objTake (between rows 23,24): intercept needed (unlike PLANT, no special TAKE text is sourced)
 # objHereMsg (between rows 23,24): msg_HERE_DOOR_OILED by doPour's DOOR branch, same
 # objHereMsg (between rows 23,24): objHereMsg-patch mechanism as BOTTLE/PLANT above
@@ -3913,7 +4847,7 @@ object TABLET name voc_tablet loc R_DARKROOM take no invmsg none heremsg HERE_TA
 # objInvMsg: magazine
 # objHereMsg: "THERE ARE A FEW RECENT ISSUES OF ... MAGAZINE HERE."
 # objTreasure: magazine
-object MAGAZINE name voc_magaz loc R_ANTEROOM take no invmsg none heremsg HERE_MAGAZINE treasure 0
+object MAGAZINE name voc_magaz loc R_ANTEROOM take yes invmsg INV_MAGAZINE heremsg HERE_MAGAZINE treasure 0
 
 # objLoc (between rows 33,34): owner-confirmed 24-Aug-26 against the source table --
 # objLoc (between rows 33,34): the task doc's own "Witt's End" was an imprecise paraphrase)
@@ -3960,8 +4894,10 @@ object MIRROR name voc_mirro loc R_MIRRORCANYON take no invmsg none heremsg none
 # objTreasure: volcano/geyser
 object VOLCANO name voc_volca loc R_VOLCANO_VIEW take no invmsg none heremsg none treasure 0
 
-# objLoc (between rows 39,40): F9D (TASK-F9D-REPOSITORY.md): ROD2/PILLOW don't exist anywhere until
-# objLoc (between rows 39,40): closedTransport's PUT-list places them (adven.f4 1927-1928).
+# objLoc (between rows 39,40): F9D (TASK-F9D-REPOSITORY.md): ROD2 doesn't exist anywhere until
+# objLoc (between rows 39,40): closedTransport's PUT-list places it (adven.f4 1927-1928). PILLOW is
+# objLoc (between rows 39,40): on the same PUT-list but, unlike ROD2, it ALSO has an ordinary
+# objLoc (between rows 39,40): start-of-game placement (adven.dat "10 96") -- see its own row below.
 # objTake (between rows 39,40): F9D: both takeable, ordinary movable objects once placed.
 # objNames (between rows 39,40): F9D (TASK-F9D-REPOSITORY.md): indices 40-41.
 # objInvMsg (between rows 39,40): F9D: ordinary static inventory lines.
@@ -3974,12 +4910,15 @@ object VOLCANO name voc_volca loc R_VOLCANO_VIEW take no invmsg none heremsg non
 # objTreasure: rod2
 object ROD2 name voc_rod2 loc ROD2_NOWHERE take yes invmsg INV_ROD2 heremsg HERE_ROD2 treasure 0
 
-# objLoc: pillow: adven.dat object 10
+# objLoc: pillow: adven.dat object 10 -- section 7's "10 96", the Soft Room. TASK-FR6 6a (S5): this
+# objLoc: pillow: was PILLOW_NOWHERE, so the pillow could not be obtained in normal play and the
+# objLoc: pillow: vase-on-pillow mechanic (checkVaseMishandle's AT(PILLOW) branch) was dead. newGame
+# objLoc: pillow: resets it here too, because closedTransport moves it to the repository.
 # objTake: pillow
 # objInvMsg: pillow
 # objHereMsg: pillow
 # objTreasure: pillow
-object PILLOW name voc_pillo loc PILLOW_NOWHERE take yes invmsg INV_PILLOW heremsg HERE_PILLOW treasure 0
+object PILLOW name voc_pillo loc R_SOFTROOM take yes invmsg INV_PILLOW heremsg HERE_PILLOW treasure 0
 
 # objLoc (between rows 41,42): F15 (TASK-F15-VENDING-MACHINE.md): VENDING is fixed scenery at LOC 140
 # objLoc (between rows 41,42): (adven.dat "38 140 -1"); BATTERIES doesn't exist until DROP COINS
@@ -4064,6 +5003,101 @@ object OIL name voc_oil loc OIL_NOWHERE take no invmsg INV_OIL heremsg none trea
 # checks nounTok against this object's FAR_OBJ_LOC to route ON/OFF here
 # instead of the lamp; see DECISIONS.md for the word-order design note.
 object EA1PANEL name voc_switc loc R_EA1_CABINET take no invmsg none heremsg none treasure 0
+
+# ---------------------------------------------------------------------
+# TASK-SCENERY-NOUNS (S15, 03-Sep-26). The five adven.dat section-7
+# objects this port modelled as room state instead of as object rows, so
+# four of their nouns did not parse at all and TROLL parsed only for the
+# three verbs carrying a bespoke strCmpEq hook. They are ordinary rows
+# now, in the same shape the port already uses for every other piece of
+# named-but-inert scenery (STEPS, DRAWINGS, STALACTITE, CARPETMOSS,
+# MIRROR, VOLCANO, EA1PANEL): take no, invmsg none, heremsg none -- so
+# nothing describes them, nothing lists them and nothing can carry them.
+# The state each one stands for is untouched; only the noun is new.
+#
+# Each is a PLAC/FIXD pair in section 7, which makes AT() true in TWO
+# rooms. objLoc holds the PLAC room and objPresenceGate's pgSecondLoc
+# answers the FIXD one -- the machinery that was already there for
+# DRAGON, RUG, STEPS and SHADOWFIG.
+#
+# objLoc: grate: adven.dat "3 8 9" (PLAC=8 outside the grate,
+# objLoc: grate: FIXD=9 below it) -- the second room is in pgSecondLoc.
+# objTake: grate -- FIXED(GRATE) is 9, so f4 9010's SPK=25 answers TAKE.
+# objInvMsg/objHereMsg: grate -- adven.dat has no section-5 text for it;
+# objHereMsg: grate -- the two rooms' own descriptions carry the grate,
+# objHereMsg: grate -- and printGrateStatus prints its lock/open state.
+object GRATE name voc_grate loc R_GRATE take no invmsg none heremsg none treasure 0
+
+# objLoc: fissure: adven.dat "12 17 27" (the two fissure banks; the
+# objLoc: fissure: crystal bridge itself stays flagged state, this row is
+# objLoc: fissure: only the noun). FIXD=27 is in pgSecondLoc.
+object FISSURE name voc_fissu loc R_FISSURE_EAST take no invmsg none heremsg none treasure 0
+
+# objLoc: pirate: adven.dat "30 0 -1" -- PLACE 0, FIXED -1, so the pirate
+# objLoc: pirate: object is never AT() anywhere. That is deliberate in the
+# objLoc: pirate: source: the walking pirate is DFLAG state, and the noun
+# objLoc: pirate: exists only so f4 5190 can answer "I SEE NO PIRATE
+# objLoc: pirate: HERE." The port answered doAttack's intransitive
+# objLoc: pirate: "THERE IS NOTHING HERE TO ATTACK." instead -- right
+# objLoc: pirate: shape, wrong text. See PIRAT_NOWHERE in adventure.am1.
+object PIRATE name voc_pirat loc PIRAT_NOWHERE take no invmsg none heremsg none treasure 0
+
+# objLoc: chasm: adven.dat "32 117 122" (the two chasm banks). NOTE the
+# objLoc: chasm: chasm has no crossing rows in this corpus at all -- S10
+# objLoc: chasm: deleted them because movChasmCrossing owns the crossing.
+# objLoc: chasm: This row is the NOUN only and adds no exit.
+object CHASM name voc_chasm loc R_CHASM_SW take no invmsg none heremsg none treasure 0
+
+# objLoc: troll: adven.dat "33 117 122", but unlike the four above the
+# objLoc: troll: placement is runtime state (f4 MOVE(TROLL,0) when paid or
+# objLoc: troll: scared off, MOVE(TROLL,PLAC(TROLL)) when brought back).
+# objLoc: troll: The port carries that in trollGone, so this row parks the
+# objLoc: troll: object nowhere and pgTroll owns BOTH rooms off the flag --
+# objLoc: troll: the shape pgMirror already uses. Writing objLoc at each
+# objLoc: troll: MOVE site instead would have needed a newGame reset too.
+object TROLL name voc_troll loc TROLL_NOWHERE take no invmsg none heremsg none treasure 0
+
+# ---------------------------------------------------------------------
+# Object aliases (TASK-FR7 7b group 1, S14, 03-Sep-26). adven.dat section
+# 4 gives many objects more than one vocabulary word; objNames can hold
+# only one per object, because findObj advances objNames, objLoc and
+# objTake together on a single index. Each row here is {word, object},
+# scanned by findObj only after that walk has missed, so the common path
+# is unchanged and an alias resolves to exactly the same pointers its
+# primary name would.
+#
+# The list is the mechanical difference between adven.dat section 4's
+# 1xxx codes and this corpus's object rows -- nothing is invented and
+# nothing is left out. DWARF/DWARV and KNIFE/KNIVE are section-4 object
+# words too but are NOT aliases: neither has an object row, and both are
+# answered inside objPresenceGate (f4 5110 and 5130).
+# ---------------------------------------------------------------------
+alias voc key object KEYS
+alias voc headl object LAMP
+alias voc lante object LAMP
+alias voc velve object PILLOW
+alias voc issue object MAGAZINE
+alias voc spelu object MAGAZINE
+alias voc qspel object MAGAZINE
+alias voc ratio object FOOD
+alias voc jar object BOTTLE
+alias voc h2o object WATER
+alias voc beans object PLANT
+alias voc figur object SHADOWFIG
+alias voc geyse object VOLCANO
+alias voc machi object VENDING
+alias voc moss object CARPETMOSS
+alias voc gold object NUGGET
+alias voc bars object SILVER
+alias voc box object CHEST
+alias voc treas object CHEST
+alias voc egg object EGGS
+alias voc nest object EGGS
+alias voc ming object VASE
+alias voc shard object VASE
+alias voc potte object VASE
+alias voc pyram object PLATINUM
+alias voc persi object RUG
 
 # ---------------------------------------------------------------------
 # Verbs (TASK-VERB-EMISSION.md). One statement per verbTab row:
@@ -4161,16 +5195,27 @@ verb VIEW voc view move VIEW handler doMove
 verb BARRIER voc barrier move BARRE handler doMove
 # true synonym of UP/U
 verb UPWARD voc upward move UP handler doMove
-# true synonym of NE, R_VOLCANO_FORK only
-verb LEFT voc left move NE handler doMove
-# true synonym of SE, R_VOLCANO_FORK only
-verb RIGHT voc right move SE handler doMove
-# F17: true synonym of IN, R_ROAD's Building-entry
-# row (adven.dat 372) -- NOT DIR_BARRE (Stage 23's
-# binding was never a sourced synonym; adven.dat's
-# BARRE is vocab word 40, a distinct word from
-# ENTER/word 3 -- see TASK-F17-ENTER-INWARD-COLLISION.md)
-verb ENTER voc enter move IN handler doMove
+# TASK-FR2 step 4 (06-Sep-26): de-aliased.  LEFT and RIGHT are adven.dat
+# motions 36 and 37, not synonyms of NE (47) and SE (48) -- the earlier
+# binding was read off R_VOLCANO_FORK, where LEFT happens to share a row
+# with NE and RIGHT with SE, and it was wrong everywhere else.  It also
+# gave the wrong refusal: adven.f4 50's "IF(K.EQ.7.OR.K.EQ.36.OR.K.EQ.37)
+# SPK=10" puts LEFT/RIGHT in FORWARD's class (msg 10), not the compass
+# class (msg 9) that 43..50 gets.
+verb LEFT voc left move LEFT handler doMove
+verb RIGHT voc right move RIGHT handler doMove
+# TASK-FR2 step 4 (06-Sep-26): de-aliased off DIR_IN.  F17 was right that
+# ENTER is not DIR_BARRE (adven.dat's BARRE is word 40); it settled on IN
+# because R_ROAD's Building-entry row carries both words.  But motion 3's
+# word list is ENTER and nothing else, and motion 19's is IN/INSID/INWAR,
+# so the two are distinct words that merely share some rows.  Where they
+# do NOT share one -- adven.dat's `3 1 3 11 32 44` -- the alias sent the
+# player nowhere, because that LOC has no IN row at all.
+# See TASK-F17-ENTER-INWARD-COLLISION.md; INWARD below stays on IN, which
+# IS one of motion 19's three words.
+# FR27 N7 (05-Sep-26) already narrowed what reaches here: tlEnterVerb does
+# adven.f4 19999's "ENTER <word> -> 2800", so only BARE ENTER travels.
+verb ENTER voc enter move ENTER handler doMove
 # F17: universal synonym of IN (adven.dat 19), same
 # DIR_BARRE correction as voc_enter above
 verb INWARD voc inward move IN handler doMove
@@ -4182,6 +5227,79 @@ verb CAVER voc caver move CAVER handler doMove
 verb DARK voc dark move DARK handler doMove
 # Stage 29
 verb GIANT voc giant move GIANT handler doMove
+
+# ---------------------------------------------------------------------
+# TASK-FR2 step 1 (04-Sep-26): the motion words above, as verb rows.
+# Each one sets curDir and falls into doMove, which finds no matching
+# exit yet and answers moveBlocked's msg 12, "I DON'T KNOW HOW TO APPLY
+# THAT WORD HERE." That is what adven.f4's label 50 prints for a motion
+# word with no travel row (SPK=12, the default there), so the words are
+# right even before their rows exist.
+#
+# 'bank 3' names the memory bank the voc_* string is in. Bank 2, which
+# holds every other vocabulary word, had 102 words free and these need
+# more, so the strings went to bank 3 beside TASK-FR7 7b's object
+# synonyms -- same reason, same place. STREA and STEPS carry no bank
+# clause because their strings already exist in bank 2 (voc_stream, used
+# by adven.f4 892's ENTER STREAM special, and voc_steps, object 1007).
+#
+# STEPS changes an existing answer, and deliberately. adven.dat has the
+# word twice -- motion 34 at section-4 line 918 and object 1007 at line
+# 979 -- and adven.f4's VOCAB scan (line 236, called at 901 with INIT=-1)
+# returns the FIRST table entry, so the player's STEPS is the motion
+# word and the object is reachable only from inside the program. That
+# function's own header comment says so in as many words. Before this
+# row, the port answered STEPS as a noun; it now answers it as a motion
+# word, matching the source. The object row stays -- printStepsHere and
+# objLoc still need it.
+# ---------------------------------------------------------------------
+verb ROAD   voc road    bank 3 move ROAD   handler doMove
+verb HILL   voc hill    bank 3 move ROAD   handler doMove
+verb UPSTR  voc upstr   bank 3 move UPSTR  handler doMove
+verb DOWNS  voc downs   bank 3 move DOWNS  handler doMove
+verb FORES  voc fores   bank 3 move FORES  handler doMove
+verb VALLE  voc valle   bank 3 move VALLE  handler doMove
+verb STAIR  voc stair   bank 3 move STAIR  handler doMove
+verb BUILD  voc build   bank 3 move BUILD  handler doMove
+verb HOUSE  voc house   bank 3 move BUILD  handler doMove
+verb GULLY  voc gully   bank 3 move GULLY  handler doMove
+verb STREA  voc stream  move STREA  handler doMove
+verb ROCK   voc rock    bank 3 move ROCK   handler doMove
+verb BED    voc bed     bank 3 move BED    handler doMove
+verb COBBL  voc cobbl   bank 3 move COBBL  handler doMove
+verb SURFA  voc surfa   bank 3 move SURFA  handler doMove
+verb LOW    voc low     bank 3 move LOW    handler doMove
+verb CANYO  voc canyo   bank 3 move CANYO  handler doMove
+verb PIT    voc pit     bank 3 move PIT    handler doMove
+verb OUTDO  voc outdo   bank 3 move OUTDO  handler doMove
+verb CRACK  voc crack   bank 3 move CRACK  handler doMove
+verb STEPS  voc steps   move STEPS  handler doMove
+verb DOME   voc dome    bank 3 move DOME   handler doMove
+verb DEBRI  voc debri   bank 3 move DEBRI  handler doMove
+verb HOLE   voc hole    bank 3 move HOLE   handler doMove
+verb WALL   voc wall    bank 3 move WALL   handler doMove
+verb BROKE  voc broke   bank 3 move BROKE  handler doMove
+verb Y2     voc y2      bank 3 move Y2     handler doMove
+verb FLOOR  voc floor   bank 3 move FLOOR  handler doMove
+verb ROOM   voc room    bank 3 move ROOM   handler doMove
+verb SLIT   voc slit    bank 3 move SLIT   handler doMove
+verb SLAB   voc slab    bank 3 move SLAB   handler doMove
+verb SLABR  voc slabr   bank 3 move SLAB   handler doMove
+verb DEPRE  voc depre   bank 3 move DEPRE  handler doMove
+verb ENTRA  voc entra   bank 3 move ENTRA  handler doMove
+verb SHELL  voc shell   bank 3 move SHELL  handler doMove
+verb RESER  voc reser   bank 3 move RESER  handler doMove
+
+# TASK-FR27 N13 (05-Sep-26).  adven.dat gives motion 21 two words, NULL
+# and NOWHE; without a row here they were not vocabulary at all and the
+# game answered SORRY, I DON'T KNOW THE WORD "NULL".  They are NOT
+# doMove rows: adven.f4 1005 tests "IF(K.EQ.NULL)GOTO 2" at label 8,
+# ahead of the travel scan, so the word never meets a travel row (LOC
+# 10's `10 9 11 20 21 43` carries a 21 that the source can never reach)
+# and label 50's msg 12 is wrong for it.  doNull is label 8's own
+# exception: stay, run the dwarves, describe the room.
+verb NULL   voc null    bank 3 move NULL   handler doNull
+verb NOWHE  voc nowhe   bank 3 move NULL   handler doNull
 verb LOOK voc look none handler doLookCmd
 # F16: EXAMINE, adven.f4 index 57
 verb EXAMI voc exami none handler doLookCmd
@@ -4267,6 +5385,17 @@ verb RESTORE voc restore none handler doRestore
 verb EAT voc eat none handler doEat
 # F16: DEVOUR, adven.dat 2014
 verb DEVOU voc devou none handler doEat
+# FR7 7a (S12, 03-Sep-26): adven.dat 2015, verb 15. Real behaviour --
+# adven.f4 9150, drink from the room's stream or empty a carried bottle.
+verb DRINK voc drink none handler doDrink
+# FR7 7a: adven.dat 2010, verb 10, three words. Quip only -- 4090 index
+# 10 is 2011, so the whole verb is its section-8 default, msg 14.
+verb CALM voc calm none handler doCalm
+verb PLACA voc placa none handler doCalm
+verb TAME voc tame none handler doCalm
+# FR7 7a: adven.dat 2005, verb 5. Both 4080 and 4090 index 5 go to 2009,
+# which is "K=54" -- the word is a no-op that answers OK.
+verb NOTHI voc nothi none handler doNothing
 verb SAY voc say none handler doSay
 # F16: adven.dat 2003
 verb CHANT voc chant none handler doSay
@@ -4289,14 +5418,21 @@ verb SUSPEND voc suspend none handler doSave
 verb PAUSE voc pause none handler doSave
 verb INFO voc info none handler doInfo
 verb INFOR voc infor none handler doInfo
-# msg 42
-verb SESAM voc sesam msgref NOTHING_HAPPENS handler doSpeak
-verb OPENS voc opens msgref NOTHING_HAPPENS handler doSpeak
-verb ABRA voc abra msgref NOTHING_HAPPENS handler doSpeak
-verb ABRAC voc abrac msgref NOTHING_HAPPENS handler doSpeak
-verb SHAZA voc shaza msgref NOTHING_HAPPENS handler doSpeak
-verb HOCUS voc hocus msgref NOTHING_HAPPENS handler doSpeak
-verb POCUS voc pocus msgref NOTHING_HAPPENS handler doSpeak
+# msg 50 (TASK-FR27 N11, 05-Sep-26).  adven.dat section 4 gives SESAM,
+# OPENS, ABRA, ABRAC, SHAZA and HOCUS the special code 3050, and 2630
+# sends a class-4 word to 2010, which speaks MOD(3050,1000) -- msg 50,
+# not msg 42.  The header said "msg 42" and every row named
+# NOTHING_HAPPENS, which is msg 42's text and belongs to XYZZY/PLUGH
+# elsewhere (adven.f4 label 50's "IF(K.EQ.62.OR.K.EQ.65)SPK=42").
+# POCUS is not in adven.dat at all -- it is this port's own extra
+# spelling of HOCUS POCUS -- and is kept, answering with the family.
+verb SESAM voc sesam msgref FR8_MAGIC_WORD_WORN_OUT handler doSpeak
+verb OPENS voc opens msgref FR8_MAGIC_WORD_WORN_OUT handler doSpeak
+verb ABRA voc abra msgref FR8_MAGIC_WORD_WORN_OUT handler doSpeak
+verb ABRAC voc abrac msgref FR8_MAGIC_WORD_WORN_OUT handler doSpeak
+verb SHAZA voc shaza msgref FR8_MAGIC_WORD_WORN_OUT handler doSpeak
+verb HOCUS voc hocus msgref FR8_MAGIC_WORD_WORN_OUT handler doSpeak
+verb POCUS voc pocus msgref FR8_MAGIC_WORD_WORN_OUT handler doSpeak
 # msg 64
 verb TREE voc tree msgref TREES_MSG handler doSpeak
 verb TREES voc trees msgref TREES_MSG handler doSpeak

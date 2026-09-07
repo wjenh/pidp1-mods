@@ -1,10 +1,11 @@
-CC=gcc -O0 -g -Wall
+#CC=gcc -O0 -g -Wall
+CC=gcc -O3 -Wall
 
 all: wz
 
 install: wz
-	strip wz
 	cp wz ..
+	strip ../wz
 
 wz: wz.c
 	$(CC) wz.c -o wz

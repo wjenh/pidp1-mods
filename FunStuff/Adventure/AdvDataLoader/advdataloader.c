@@ -9,10 +9,9 @@
  *
  * Usage: advdataloader [-s starttrack] [-c] srcfile
  *
- * The SPEC-PHASE1.md / SPEC-PHASE2.md cited in comments below moved to
- * ../CompletedTasks/AdvDataLoader-Phase2/ on 04-Sep-26. They are a record
- * of how this was built, not a description of what it does now; README.md
- * in this directory is the current reference.
+ * README.md in this directory is the current reference for the
+ * definition-file syntax.
+ *
  * 22-Aug-26 wje initial version
  * 28-Aug-26 wje add full generation
  * 29-Aug-26 wje change to emit a track image, don't do a drum update
@@ -33,8 +32,8 @@
 
 #define DEFAULT_TRACK_FILE   "advtracks.drm"
 
-// Include files that contain only definitions and do not allocate memory are named .ah,
-// those that allocate memory are named .ac.
+// Include files that contain only definitions and do not allocate memory
+// are named .ah, those that allocate memory are named .ac.
 #define DEFINES_OUTFILE "adv_defines.ah"
 
 #define MSGTAB_OUTFILE  "adv_msgtab.ac"
@@ -94,12 +93,10 @@ static int startTrack;
 char msgTextBuf[MAX_TEXT];     // accumulates one message's joined raw lines (see joinMsgLine())
 
 // ---------------------------------------------------------------------
-// Direction/condition tables: hard-coded for phase 1 (SPEC-PHASE1.md
-// "Room records" -- moving either into the definition file is a
-// phase-2+ owner decision). Copied verbatim, including comments, from
-// AdvRoomLoader/advroomloader.c -- these two tables MUST stay in sync
-// with that file (until/unless a later phase makes one of them the
-// single source of truth).
+// Direction and condition tables. Both are hard-coded here rather than
+// written in the definition file, and both must stay in step with
+// adventure.am1: dirTable with its DIR_* defines, condTable with its
+// condFlagAddrs table.
 // ---------------------------------------------------------------------
 typedef struct {
     const char *nameP;
@@ -115,7 +112,7 @@ typedef struct {
 // Must stay in sync with adventure.am1's #define DIR_NORTH etc.
 static const DirEnt dirTable[] = {
     { "ROAD",      2 },  /* HILL/ROAD */
-    { "ENTER",     3 },  /* ENTER -- TASK-FR2 step 4: motion 3's only word, de-aliased from IN */
+    { "ENTER",     3 },  /* ENTER -- motion 3's only word, distinct from IN */
     { "UPSTR",     4 },  /* UPSTR */
     { "DOWNS",     5 },  /* DOWNS */
     { "FORES",     6 },  /* FORES */
@@ -147,8 +144,8 @@ static const DirEnt dirTable[] = {
     { "CRACK",     33 },  /* CRACK */
     { "STEPS",     34 },  /* STEPS -- voc_steps already exists (object 1007, same word) */
     { "DOME",      35 },  /* DOME */
-    { "LEFT",      36 },  /* LEFT -- TASK-FR2 step 4: de-aliased from NE */
-    { "RIGHT",     37 },  /* RIGHT -- TASK-FR2 step 4: de-aliased from SE */
+    { "LEFT",      36 },  /* LEFT -- a motion of its own, not an alias for NE */
+    { "RIGHT",     37 },  /* RIGHT -- a motion of its own, not an alias for SE */
     { "HALL",      38 },  /* HALL */
     { "JUMP",      39 },  /* JUMP */
     { "BARRE",     40 },  /* BARRE */
@@ -192,19 +189,19 @@ static const DirEnt dirTable[] = {
 // Must stay in the same order as adventure.am1's condFlagAddrs table.
 // 0 is reserved for "unconditional" and never appears here.
 // 4 (COND_RAND_ID) is reserved for the RAND special case and never
-// appears here either -- Stage 21's new conditions start at 5.
+// appears here either, so the ids jump from 3 to 5.
 static const CondEnt condTable[] = {
     { "GRATE_OPEN", 1 },
     { "SNAKE", 2 },
     { "NUGGET_TRAP", 3 },
     { "FISSURE_BRIDGE", 5 },
     { "FISSURE_NO_BRIDGE", 6 },
-    /* Stage 23: gates R_CHASM_SW/R_CHASM_NE's ACROSS/CROSS/NE-or-SW rows
+    /* Gates R_CHASM_SW/R_CHASM_NE's ACROSS/CROSS/NE-or-SW rows
      * (troll gone -> allowed silent no-op, troll present -> blocked with
      * msg_TROLL_REFUSES). Must stay in sync with adventure.am1's
      * condFlagAddrs table and its trollGone var. */
     { "TROLL_GONE", 7 },
-    /* Stage 29: gates R_DOORPASSAGE's NORTH/CAVER rows to R_WATERFALL
+    /* Gates R_DOORPASSAGE's NORTH/CAVER rows to R_WATERFALL
      * (RUSTY DOOR oiled -> allowed, not oiled -> blocked with
      * msg_DOOR_RUSTY). Must stay in sync with adventure.am1's
      * condFlagAddrs table and its doorOiled var. */
@@ -244,7 +241,7 @@ static void computeMessagePlacement(int startTrack);
 static void resolveRoomExits(void);
 static void buildRoomRecord(RoomP rP, Word *outWords);
 static void doWrite(int roomBaseTrack);
-static int doCompare(const char *path, int roomBaseTrack);
+static int doCompare(const char *pathP, int roomBaseTrack);
 static void emitMsgtab(FILE *outP, int startTrack);
 static void emitRoomtab(FILE *outP, int roomBaseTrack, int tracksNeeded, int maxTrack);
 static void emitRoomFlagBitmap(FILE *outP, Word flagMask, const char *guardP,
@@ -265,6 +262,13 @@ extern FILE *yyin;     // lex input file fP
 
 extern int yyparse();
 
+// Parses the definition file named on the command line, resolves the
+// room/object/verb tables it builds, then either writes the drum track
+// image and the generated include files, or (with -c) compares an
+// existing track image against what this run would have written.
+// Returns 0 on success. With -c it returns 1 when the existing image
+// differs from what this run would have written; any other error path
+// goes through fail(), which exits 1.
 int
 main(int argc, char **argv)
 {
@@ -368,13 +372,12 @@ char outPath[1024];
     }
 
     // Everything from here down completes and validates entirely in
-    // memory before the drum image is touched (SKELETON-EVAL 2.3).
+    // memory before the drum image is touched.
     computeMessagePlacement(startTrack);
     resolveRoomExits();
 
     // Room base track = one past the highest track any message uses,
-    // matching advroomloader.c's maxMsgTrack()+1 -- computed here from
-    // our own in-memory placement instead of re-parsing a .ah file.
+    // computed from our own in-memory placement.
     maxMsgTrack = msgBlocks[0].track;
     for( i = 1; i < numMsgs; ++i )
     {
@@ -435,7 +438,7 @@ char outPath[1024];
     }
     emitMsgtab(outP, startTrack);
     fclose(outP);
-    
+
     sprintf(outPath,"%s%s%s", dirP, (*dirP)?"/":"", SURFACEBITMAP_OUTFILE);
     if( !(outP = fopen(outPath, "w")) )
     {
@@ -454,26 +457,23 @@ char outPath[1024];
     emitDwarfBitmap(outP);
     fclose(outP);
 
-    // Objects section is optional (SPEC-PHASE1.md); its seven
-    // generated files are only written when it's actually used
-    // (SPEC-PHASE2.md "Emission only when the objects section is
-    // non-empty").
+    // The objects section is optional; its generated files are only
+    // written when it is actually used.
     if( numObjects > 0 )
     {
         emitObjTables(dirP, defOutP);
     }
 
-    // Verbs section is likewise optional; adv_verbtab.ac is only
-    // written when it's actually used (TASK-VERB-EMISSION.md, same
-    // policy as objects).
+    // The verbs section is likewise optional; adv_verbtab.ac is only
+    // written when it is actually used.
     if( numVerbs > 0 )
     {
         emitVerbTab(dirP);
     }
 
-    // Object aliases (TASK-FR7 7b group 1) -- same optional-section
-    // policy as objects and verbs. NOBJALIAS is emitted alongside so
-    // findObj's scan has a bound even when the table is empty.
+    // Object aliases -- same optional-section policy as objects and
+    // verbs. NOBJALIAS is emitted alongside so findObj's scan has a
+    // bound even when the table is empty.
     if( numObjects > 0 )
     {
         emitObjAlias(dirP, defOutP);
@@ -527,19 +527,10 @@ beginMessage(void)
 // Join one more raw source line into the message currently being
 // accumulated. Lines are joined with a single space, unconditionally,
 // between non-empty lines -- the join space after a line ending in a
-// '\n' escape is swallowed later by translateEscapes(), exactly as the
-// retired advtextloader's pipeline did. A genuinely blank raw line
-// (shouldn't reach here -- the lexer already skips those) contributes
-// nothing.
-//
-// History (28-Aug-26, after the legacy loaders' retirement): this used
-// to also emulate advtextloader.c's 1024-byte fgets buffer, which
-// silently split any >1023-byte physical line and re-joined the pieces
-// with a phantom space -- an accidental artifact the phase-1
-// byte-identity rail required reproducing (the corpus's HELP message
-// tripped it, printing one mid-word space). With byte-identity to the
-// retired tools no longer a requirement, the emulation is gone: long
-// lines join naturally, and HELP prints without the phantom space.
+// '\n' escape is swallowed later by translateEscapes(). A genuinely
+// blank raw line (shouldn't reach here -- the lexer already skips those)
+// contributes nothing. Physical line length is not capped, so a long
+// line joins naturally with no phantom space in the middle of it.
 void
 joinMsgLine(char *lineP)
 {
@@ -557,9 +548,9 @@ joinMsgLine(char *lineP)
 }
 
 // Register the message just closed (block close = ENDMSG). textP is
-// the fully joined raw text (still containing literal "\n" two-char
-// escapes, untouched) -- translateEscapes()/normalizeText()/packSixbit()
-// run later, during placement, exactly matching advtextloader.c's order.
+// the fully joined raw text, still containing literal "\n" two-char
+// escapes; translateEscapes(), normalizeText() and packSixbit() run
+// later, during placement, in that order.
 void
 addMessage(char *labelP, char *textP)
 {
@@ -586,8 +577,8 @@ SymNodeP symP;
 
     strncpy(blockP->text, textP, MAX_TEXT - 1);
     blockP->text[MAX_TEXT - 1] = 0;
-    // Every printed message ends on its own line: bake the newline
-    // into the text itself at block close (advtextloader.c).
+    // Every printed message ends on its own line: the newline is baked
+    // into the text itself at block close.
     strncat(blockP->text, "\n", MAX_TEXT - strlen(blockP->text) - 1);
 
     symP->ptr = blockP;    // so a later lookup-by-name gets the block directly
@@ -597,6 +588,8 @@ SymNodeP symP;
 // Movement / flags / actions -- simple named-value symbol tables.
 // ---------------------------------------------------------------------
 
+// Defines a named flag with its bit value, usually a room-attribute
+// bitmask. A duplicate name is a fatal error via verror().
 void
 addFlag(char *nameP, int value)
 {
@@ -610,11 +603,11 @@ SymNodeP symP;
     }
 }
 
-// The movement section is parsed and validated against the hard-coded
-// dirTable[] above (names/values must match exactly, SPEC-PHASE1.md),
-// but dirTable[] -- not this symbol table -- is what actually gets used
-// to pack exits, so a mismatch here is caught immediately rather than
-// silently diverging from what the packed data will say.
+// Defines one movement word and validates it against the hard-coded
+// dirTable[] above: the name must be present there and the value must
+// match exactly. dirTable[], not this symbol table, is what actually
+// packs exits, so a mismatch is a fatal error here rather than a silent
+// divergence from what the packed data will say.
 void
 addDirection(char *nameP, int value)
 {
@@ -650,6 +643,8 @@ bool found;
     }
 }
 
+// Defines a named action with its value. A duplicate name is a fatal
+// error via verror().
 void
 addAction(char *nameP, int value)
 {
@@ -667,6 +662,9 @@ SymNodeP symP;
 // Rooms
 // ---------------------------------------------------------------------
 
+// Looks a movement word up in the hard-coded dirTable[].
+// Returns its direction code, or 0 if the name is not there -- 0 is
+// never a legal direction code.
 static int
 dirCodeForName(const char *nameP)
 {
@@ -683,6 +681,9 @@ int i;
     return( 0 );    // 0 = not found, never a legal direction code
 }
 
+// Looks a condition name up in the hard-coded condTable[].
+// Returns its condition ID, or -1 if the name is not there -- no real ID
+// has that value.
 static int
 condIdForName(const char *nameP)
 {
@@ -728,9 +729,9 @@ RoomP roomP;
     currentRoomP = roomP;
 }
 
-// Finish the room just closed (END reduction): validate the required
-// LONG message was given, and default SHORT to LONG if omitted
-// (legacy "SHORT SAME" behavior).
+// Finish the room just closed (END reduction): validate that the
+// required LONG message was given, and default SHORT to LONG when it was
+// omitted.
 void
 finishRoom(void)
 {
@@ -747,6 +748,8 @@ finishRoom(void)
     currentRoomP = NULL;
 }
 
+// Attaches the named message block to the current room as its LONG
+// description. An unknown name is a fatal error via verror().
 void
 setRoomLongMsg(char *nameP)
 {
@@ -760,6 +763,8 @@ SymNodeP symP;
     currentRoomP->longMsgP = (MessageBlockP)symP->ptr;
 }
 
+// Attaches the named message block to the current room as its SHORT
+// description. An unknown name is a fatal error via verror().
 void
 setRoomShortMsg(char *nameP)
 {
@@ -774,8 +779,8 @@ SymNodeP symP;
 }
 
 // "flag NAME yes|no" -- NAME must be a defined flag; on yes, its value
-// (mask) gets OR'd into word0 at record-build time. That's the whole
-// of room-flag semantics (SPEC-PHASE1.md).
+// (mask) gets OR'd into word0 at record-build time. That is the whole of
+// room-flag semantics.
 void
 addRoomFlagAttr(char *flagNameP, bool value)
 {
@@ -796,9 +801,13 @@ SymNodeP symP;
 
 // Common setup for a new exit row: bounds-check, resolve the direction
 // code immediately (the hard-coded dirTable is always fully known), and
-// stash the destination room's name + source line -- the only thing an
-// exit needs resolved AFTER the whole parse, since forward references
-// to rooms defined later in the file are normal.
+// stash the destination room's name and source line -- the only thing an
+// exit needs resolved AFTER the whole parse, since forward references to
+// rooms defined later in the file are normal.
+// Returns the new exit slot, already linked into the current room, for
+// the caller to fill in its condition/message fields. Never returns on
+// error: an over-full room or an unrecognized direction goes through
+// verror().
 static ExitP
 newRoomExit(char *dirNameP, char *destNameP)
 {
@@ -840,18 +849,23 @@ int code;
     return( eP );
 }
 
+// Adds a plain unconditional exit: direction DIRNAME leads to room
+// DESTNAME, always.
 void
 addRoomExit(char *dirNameP, char *destNameP)
 {
     newRoomExit(dirNameP, destNameP);
 }
 
-// Resolve a condition name to its condTable ID, or die. Shared by all
-// three `cond` exit forms. The range check is not paranoia: doMove tells
-// a boolean gate from the three internal IDs (COND_RAND, COND_MSG,
-// COND_RANDMSG) by value alone, so a condTable entry that ever collided
-// with one of them would be silently mis-dispatched at run time rather
-// than rejected here.
+// Resolves a condition name to its condTable ID. Shared by all three
+// `cond` exit forms. The range checks are not paranoia: doMove tells a
+// boolean gate from the three internal IDs (COND_RAND, COND_MSG,
+// COND_RANDMSG) by value alone, so a condTable entry colliding with one
+// of them would be silently mis-dispatched at run time rather than
+// rejected here.
+// Returns the condition ID, always 1..EXIT_COND_MASK and never one of
+// the internal IDs. Never returns on error -- an unknown name, a
+// colliding ID or an out-of-range ID all go through verror().
 static int
 exitCondId(const char *dirNameP, char *condNameP)
 {
@@ -884,6 +898,9 @@ int condId;
     return( condId );
 }
 
+// Adds a gated exit with a refusal message: if the condition holds the
+// player moves to DESTNAME, otherwise MSGNAME is printed and the row
+// ends the cascade.
 void
 addRoomExitCond(char *dirNameP, char *destNameP, char *condNameP, char *msgNameP)
 {
@@ -905,12 +922,12 @@ SymNodeP symP;
     eP->condMsgP = (MessageBlockP)symP->ptr;
 }
 
-// TASK-FR2 step 3 / TASK-FR19 C12: 'EXIT <dir> <dest> COND <cond>' --
-// the gate with no refusal message. The condition holds, the player
-// moves; it fails, and doMove's dmGateFail walks on to the next entry
-// for this direction without printing anything, which is adven.f4 label
-// 12's own behaviour. adven.dat's conditional rows (M >= 100) whose
-// cascade continues on a further row rather than on a message.
+// 'EXIT <dir> <dest> COND <cond>' -- the gate with no refusal message.
+// If the condition holds the player moves; if it fails, doMove's
+// dmGateFail walks on to the next entry for this direction without
+// printing anything, which is adven.f4 label 12's own behavior.
+// adven.dat's conditional rows (M >= 100) whose cascade continues on a
+// further row rather than on a message.
 //
 // The row is marked ONLY by having no message: condId stays an ordinary
 // condTable ID, so nothing about the entry's format changes.
@@ -926,12 +943,11 @@ ExitP eP;
     eP->condMsgP = NULL;         // no message => silent fall-through on failure
 }
 
-// TASK-FR2 step 3: 'EXIT <dir> NONE COND <cond> MSG <msg>' -- the gated
-// message-only row. The condition holds, so the row's own action runs
-// (print <msg>, stay put); it fails, so the scan moves on silently. The
-// sense of `msg` is the one the unconditional NONE rows already set: on
-// a row that names no destination the message IS the action, not a
-// refusal.
+// 'EXIT <dir> NONE COND <cond> MSG <msg>' -- the gated message-only row.
+// If the condition holds the row's own action runs (print <msg>, stay
+// put); if it fails the scan moves on silently. The sense of `msg` is the
+// one the unconditional NONE rows set: on a row that names no destination
+// the message IS the action, not a refusal.
 //
 // adven.dat's conditional N>500 rows -- LOC 103's clam/oyster refusals,
 // LOC 117/122's troll-and-chasm pair, the fissure's msg 97.
@@ -946,9 +962,10 @@ ExitP eP;
     eP->condMsgP = exitMsgBlock(dirNameP, msgNameP);
 }
 
-// Resolve a message name to its block, or die. Shared by every exit form
-// that carries a message: the two COND forms and the two message-only
-// ones.
+// Resolves a message name to its block. Shared by every exit form that
+// carries a message: the two COND forms and the two message-only ones.
+// Returns the message block, never NULL -- an unknown name goes through
+// verror() and does not return.
 static MessageBlockP
 exitMsgBlock(const char *dirNameP, char *msgNameP)
 {
@@ -963,7 +980,7 @@ SymNodeP symP;
     return( (MessageBlockP)symP->ptr );
 }
 
-// TASK-FR3/FR4: 'EXIT <dir> NONE MSG <msg>' -- print <msg> and stay put,
+// 'EXIT <dir> NONE MSG <msg>' -- print <msg> and stay put,
 // unconditionally. adven.dat's N>500 travel rows. destNameP is NULL, so
 // resolveRoomExits() leaves destNum at 0, which is what doMove reads as
 // "no destination".
@@ -977,14 +994,13 @@ ExitP eP;
     eP->condMsgP = exitMsgBlock(dirNameP, msgNameP);
 }
 
-// TASK-FR4: 'EXIT <dir> NONE RAND <pct> MSG <msg>' -- on a hit, print
-// <msg> and stay put; on a miss, fall through to the next row for this
-// direction. adven.dat's M<100 N>500 rows (the msg-56/126 bounces).
+// 'EXIT <dir> NONE RAND <pct> MSG <msg>' -- on a hit, print <msg> and
+// stay put; on a miss, fall through to the next row for this direction.
+// adven.dat's M<100 N>500 rows (the msg-56/126 bounces).
 //
 // The threshold rides in the exit word's own threshold field, the same
-// one a plain RAND row uses. It no longer has to squat in destNum: the
-// message is a 10-bit index into msgtab, not an inline doublet, so the
-// two stopped competing for space (advdataloader.h has the layout).
+// one a plain RAND row uses; the message is a 10-bit index into msgtab,
+// so the two do not compete for space (advdataloader.h has the layout).
 void
 addRoomExitRandMsg(char *dirNameP, int percent, char *msgNameP)
 {
@@ -1002,6 +1018,9 @@ ExitP eP;
     eP->randThreshold = (percent * RAND_DOMAIN + 50) / 100;    // rounded, as addRoomExitRand
 }
 
+// 'EXIT <dir> <dest> RAND <pct>' -- on a hit the player moves to
+// DESTNAME; on a miss the scan falls through to the next row for this
+// direction. A percent outside 0-100 is a fatal error via verror().
 void
 addRoomExitRand(char *dirNameP, char *destNameP, int percent)
 {
@@ -1058,12 +1077,14 @@ SymNodeP symP;
     }
 }
 
-// The 1-based index of a message block in the emitted msgtab, or 0 for
-// "no message". emitMsgtab() walks msgBlocks[] in this order and emits
-// two words per block behind the label msgTab, so a message's run-time
-// address is msgTab + MSGTAB_RECORDSIZE * (index - 1). The index is
-// 1-based precisely so that 0 can mean "this row prints nothing" --
-// msgBlocks[0] is a real message.
+// Finds a message block's position in the emitted msgtab.
+// Returns its 1-based index, or 0 when blockP is NULL, meaning "no
+// message". The index is 1-based precisely so 0 can mean "this row prints
+// nothing" -- msgBlocks[0] is a real message. emitMsgtab() walks
+// msgBlocks[] in this order and emits two words per block behind the
+// label msgTab, so a message's run-time address is
+// msgTab + MSGTAB_RECORDSIZE * (index - 1). An index too large for the
+// exit entry's message field goes through verror() and does not return.
 static int
 msgIndexOf(MessageBlockP blockP)
 {
@@ -1085,8 +1106,7 @@ int idx;
     return( idx );
 }
 
-// Build one room's 64-word drum record, exactly matching
-// advroomloader.c's buildRecord().
+// Builds one room's 64-word drum record into outWords.
 static void
 buildRoomRecord(RoomP rP, Word *outWords)
 {
@@ -1115,9 +1135,7 @@ ExitP eP;
     // field layout. A field a given row does not use is simply 0: destNum
     // for the two message-only types, randThreshold for all but the two
     // weighted ones, the message index for a row that prints nothing.
-    // That is why no per-condition branching survives here: while the
-    // message was an inline doublet it needed both of the entry's other
-    // words, and the row types had to fight over them.
+    // That is why there is no per-condition branching here.
     for( i = 0; i < rP->nexits; ++i )
     {
         eP = &rP->exits[i];
@@ -1133,7 +1151,7 @@ ExitP eP;
 }
 
 // ---------------------------------------------------------------------
-// Objects (SPEC-PHASE2.md) -- one flat 'object' statement per row of the
+// Objects -- one flat 'object' statement per row of the
 // six parallel object tables (objLoc/objTake/objNames/objInvMsg/
 // objHereMsg/objTreasure), file order = OBJ_* index order. Unlike rooms,
 // nothing here is a forward reference: the whole messages section is
@@ -1142,12 +1160,12 @@ ExitP eP;
 // rather than needing a second resolution pass.
 // ---------------------------------------------------------------------
 
-// Format one invmsg/heremsg field: NULL (the grammar's %none/NONE case)
-// becomes the literal row text "0"; otherwise the row is "msg_<name>:1",
-// same shape as the hand table's rows. The message name is NOT required
-// to exist (SPEC-PHASE2.md) -- warn only, since the emission is symbolic
-// text and the assembler is the final arbiter of whether msg_<name>
-// actually resolves.
+// Formats one invmsg/heremsg field for emission.
+// Returns a freshly malloc'd row text, never NULL: the literal "0" when
+// msgNameP is NULL (the grammar's %none/NONE case), otherwise
+// "msg_<name>:1". The message name is NOT required to exist -- an unknown
+// one only warns, since the emission is symbolic text and the assembler
+// is the final arbiter of whether msg_<name> actually resolves.
 static char *
 formatMsgField(const char *objNameP, const char *fieldNameP, char *msgNameP)
 {
@@ -1173,6 +1191,9 @@ char *textP;
     return( textP );
 }
 
+// Registers one object, assigning it the next OBJ_* index in file order
+// and formatting every field to its final table-row text. A duplicate
+// name, or more than MAX_OBJECTS objects, is a fatal error via verror().
 void
 addObjectDef(char *nameP, char *vocSymP, char *locTextP, bool take,
     char *invMsgNameP, char *hereMsgNameP, char *treasureTextP)
@@ -1206,8 +1227,8 @@ SymNodeP symP;
 }
 
 // ---------------------------------------------------------------------
-// Object aliases (TASK-FR7 7b group 1, S14) -- one flat 'alias'
-// statement per row of the two-column objAlias table. adven.dat section
+// Object aliases -- one flat 'alias' statement per row of the
+// two-column objAlias table. adven.dat section
 // 4 gives many objects more than one vocabulary word (LAMP is also
 // HEADL and LANTE; CHEST is also BOX and TREAS); the port's objNames
 // table cannot hold them, because findObj advances objNames, objLoc and
@@ -1220,6 +1241,9 @@ SymNodeP symP;
 // resolved here, at parse time, rather than needing a second pass.
 // ---------------------------------------------------------------------
 
+// Registers one alias row: a second vocabulary word for an object that
+// already has an 'object' row. An unknown target object, or more than
+// MAX_ALIASES rows, is a fatal error via verror().
 void
 addAliasDef(char *vocWordP, char *objNameP)
 {
@@ -1251,14 +1275,18 @@ char buf[MAX_NAME + 8];
 }
 
 // ---------------------------------------------------------------------
-// Verbs (TASK-VERB-EMISSION.md) -- one flat 'verb' statement per row of
-// the single verbTab table (3 words/row: voc_*:2, argument, handler:0).
+// Verbs -- one flat 'verb' statement per row of the single verbTab table
+// (3 words/row: voc_*:2, argument, handler:0).
 // Same no-forward-references situation as objects, so everything is
 // resolved/formatted to its final row text right here. The handler field
 // is stored verbatim, deliberately unvalidated -- see the Verb struct's
 // comment in advdataloader.h for why.
 // ---------------------------------------------------------------------
 
+// Registers one verb row, formatting its three emitted words from the
+// vocabulary word, its bank, the argument spec and the handler name. A
+// duplicate key name, or more than MAX_VERBS rows, is a fatal error via
+// verror().
 void
 addVerbDef(char *nameP, char *vocWordP, int vocBank, VerbArgP argP, char *handlerP)
 {
@@ -1282,11 +1310,10 @@ char buf[MAX_NAME + 8];
 
     // The bank tag comes from the corpus's optional "bank <n>" clause;
     // parser.y passes a literal 2 for a row that omits it. It is not
-    // cosmetic -- am1 resolves voc_<word>:<n> against bank n, so a
-    // string that has moved needs its tag moved with it. TASK-FR2 step
-    // 1's motion words live in bank 3 because bank 2 is full, the same
-    // reason TASK-FR7 7b's object synonyms went there (which is why
-    // emitObjAlias has a hardcoded ":3").
+    // cosmetic -- am1 resolves voc_<word>:<n> against bank n, so a string
+    // that has moved needs its tag moved with it. The motion words live
+    // in bank 3 because bank 2 is full, the same reason the object
+    // synonyms are there (which is why emitObjAlias hardcodes ":3").
     if( (vocBank < 0) || (vocBank > 3) )
     {
         verror("Verb '%s': bank %d is not a memory bank (0-3).\n", nameP, vocBank);
@@ -1309,11 +1336,11 @@ char buf[MAX_NAME + 8];
         break;
 
     case VERBARG_MSGREF:
-        // Reuses the exact same formatting/warning logic objects' invmsg/
-        // heremsg fields use, so a verb's message reference round-trips
-        // identically to an object's (same "msg_<name>:1" shape, same
-        // warn-but-don't-fail policy since this is symbolic text and the
-        // assembler is the final arbiter).
+        // Reuses the same formatting and warning logic objects' invmsg
+        // and heremsg fields use, so a verb's message reference
+        // round-trips identically to an object's: same "msg_<name>:1"
+        // shape, same warn-but-don't-fail policy, since this is symbolic
+        // text and the assembler is the final arbiter.
         verbP->argTextP = formatMsgField(nameP, "msgref", argP->strVal);
         break;
 
@@ -1333,8 +1360,8 @@ char buf[MAX_NAME + 8];
 }
 
 // ---------------------------------------------------------------------
-// Text pipeline -- lifted UNCHANGED in behavior from
-// AdvTextLoader/advtextloader.c (SPEC-PHASE1.md "Text pipeline").
+// Text pipeline: escape translation, case normalization, then packing to
+// three sixbit characters per pdp-1 word.
 // ---------------------------------------------------------------------
 
 // Translate the standard '\n' escape convention, replacing each
@@ -1346,28 +1373,28 @@ static void
 translateEscapes(MessageBlockP blockP)
 {
 char buf[MAX_TEXT];
-const char *src = blockP->text;
-char *dst = buf;
+const char *srcP = blockP->text;
+char *dstP = buf;
 
-    while( *src )
+    while( *srcP )
     {
-        if( (src[0] == '\\') && (src[1] == 'n') )
+        if( (srcP[0] == '\\') && (srcP[1] == 'n') )
         {
-            *dst++ = '\n';
-            src += 2;
+            *dstP++ = '\n';
+            srcP += 2;
 
-            while( *src == ' ' )
+            while( *srcP == ' ' )
             {
-                ++src;      // swallow the word-wrap join space, if any
+                ++srcP;      // swallow the word-wrap join space, if any
             }
         }
         else
         {
-            *dst++ = *src++;
+            *dstP++ = *srcP++;
         }
     }
 
-    *dst = 0;
+    *dstP = 0;
     strncpy(blockP->text, buf, MAX_TEXT - 1);
     blockP->text[MAX_TEXT - 1] = 0;
 }
@@ -1394,19 +1421,19 @@ char *cP;
     }
 }
 
-// Pack text into Word[] using DEC-SIXBIT-style packing: 3 characters
-// per 18-bit word, (ascii-32)&077 per character, high to low. Every
-// byte must already be normalized (uppercase, or '\n') by the time this
-// runs -- normalizeText() guarantees that. '_' is reserved as the
-// embedded-newline sentinel and is an ERROR if it appears literally
-// (see AdvTextLoader/advtextloader.c's packSixbit() header comment for
-// the full rationale).
+// Packs textP into Word[] using DEC-SIXBIT-style packing: 3 characters
+// per 18-bit word, (ascii-32)&077 per character, high to low. Every byte
+// must already be normalized (uppercase, or '\n') by the time this runs
+// -- normalizeText() guarantees that. Sixbit 077 is the embedded-newline
+// sentinel, so a literal '_' (which would pack to the same code) is an
+// error rather than a character.
 //
-// Returns the number of words written into outP (caller must ensure
-// room for at least (nchars/3)+1 words) and, via *padCountP, how many
-// of the LAST word's 3 character slots are unused padding (0, 1, or 2).
+// Returns the number of words written into outP; the caller must ensure
+// room for at least (nchars/3)+1 words. *padCountP is set to how many of
+// the LAST word's 3 character slots are unused padding, 0, 1 or 2. A
+// literal '_' or an out-of-range byte exits 1 rather than returning.
 static int
-packSixbit(const char *text, Word *outP, int *padCountP)
+packSixbit(const char *textP, Word *outP, int *padCountP)
 {
 int nchars;
 int i, w;
@@ -1414,7 +1441,7 @@ int slot;
 Word vals[3];
 unsigned char c;
 
-    nchars = (int)strlen(text);
+    nchars = (int)strlen(textP);
 
     for( w = i = 0; i < nchars; )
     {
@@ -1422,7 +1449,7 @@ unsigned char c;
         {
             if( i < nchars )
             {
-                c = (unsigned char)text[i++];
+                c = (unsigned char)textP[i++];
 
                 if( c == '\n' )
                 {
@@ -1433,7 +1460,7 @@ unsigned char c;
                     fprintf(stderr,
                         "Error: literal '_' found in packed text -- '_' is reserved "
                         "as the embedded-newline sentinel and cannot appear as a "
-                        "real character (see packSixbit's header comment)\n");
+                        "real character\n");
                     exit(1);
                 }
                 else if( (c < 32) || (c > 95) )
@@ -1462,9 +1489,9 @@ unsigned char c;
 }
 
 // ---------------------------------------------------------------------
-// Message placement -- pack FIRST, then track-fit check/bump, then
-// record track/offset, then account (SKELETON-EVAL 2.2's fix), matching
-// advtextloader.c's loop order and its never-span-a-track rule exactly.
+// Message placement. The order within the loop matters: pack FIRST, then
+// the track-fit check and possible bump, then record track/offset, then
+// account for the words used. A block never spans a track.
 // ---------------------------------------------------------------------
 static void
 computeMessagePlacement(int startTrack)
@@ -1476,7 +1503,7 @@ Word packed[(MAX_TEXT / 3) + 2];
 MessageBlockP blockP;
 
     // Translate '\n' escapes before any other processing, for every
-    // block -- same order as advtextloader.c's main().
+    // block.
     for( i = 0; i < numMsgs; ++i )
     {
         translateEscapes(&msgBlocks[i]);
@@ -1522,6 +1549,10 @@ MessageBlockP blockP;
 // Drum image I/O
 // ---------------------------------------------------------------------
 
+// Writes the drum track image file: the starting track number, then
+// every message block's packed text and every room's 64-word record, each
+// at its own offset relative to that starting track.
+// Any open/seek/write failure goes through fail() and does not return.
 static void
 doWrite(int roomBaseTrack)
 {
@@ -1540,9 +1571,10 @@ Word rec[RECORDSIZE];
         fail();
     }
 
-    // The track image file consists of an initial integer containing the starting track number,
-    // followed by the data as it would be written to the drum.
-    // advdrumloader then copies this data to the approprate track base on the drum.
+    // The track image file consists of an initial integer holding the
+    // starting track number, followed by the data as it would be written
+    // to the drum. advdrumloader then copies that data to the appropriate
+    // track base on the drum.
     if( write(trackImageFd, &startTrack, sizeof(int)) != (ssize_t)(sizeof(int)) )
     {
         fprintf(stderr, "write failed for starting track number");
@@ -1599,10 +1631,13 @@ Word rec[RECORDSIZE];
     trackImageFd = -1;
 }
 
-// -c: read-only compare against what would have been written.
-// Reports every differing region and writes nothing.
+// -c: read-only compare of an existing track image against what this run
+// would have written. Reports every differing region on stderr and
+// writes nothing.
+// Returns the number of differing regions, 0 meaning the image matches.
+// A failure to open or seek the image goes through fail() instead.
 static int
-doCompare(const char *path, int roomBaseTrack)
+doCompare(const char *pathP, int roomBaseTrack)
 {
 int i;
 int diffs;
@@ -1614,9 +1649,9 @@ int discardPad;
 int nwords;
 ssize_t n;
 
-    if( (trackImageFd = open(path, O_RDONLY)) < 0 )
+    if( (trackImageFd = open(pathP, O_RDONLY)) < 0 )
     {
-        fprintf(stderr, "Can't open drum image file '%s': ", path);
+        fprintf(stderr, "Can't open drum image file '%s': ", pathP);
         perror(NULL);
         fail();
     }
@@ -1698,45 +1733,39 @@ ssize_t n;
 
     if( diffs == 0 )
     {
-        printf("advdataloader -c: clean, %d messages + %d rooms match '%s'.\n", numMsgs, numRooms, path);
+        printf("advdataloader -c: clean, %d messages + %d rooms match '%s'.\n", numMsgs, numRooms, pathP);
     }
     else
     {
-        printf("advdataloader -c: %d differing region(s) found in '%s'.\n", diffs, path);
+        printf("advdataloader -c: %d differing region(s) found in '%s'.\n", diffs, pathP);
     }
 
     return( diffs );
 }
 
 // ---------------------------------------------------------------------
-// .ah emission -- fprintf blocks copied verbatim from
-// AdvTextLoader/advtextloader.c and AdvRoomLoader/advroomloader.c
-// (SPEC-PHASE1.md items 1-2), including header comments that literally
-// name those tools -- that's intentional, it's what makes the output
-// byte-identical to what they'd produce.
+// Include-file emission. Each emit* routine writes one generated file;
+// the text of the headers they print is the generated files' own
+// commentary, not this file's.
 // ---------------------------------------------------------------------
 
+// Writes adv_msgtab.ac: the msgTab base label followed by one two-word
+// record per message block, in msgBlocks[] order.
 static void
 emitMsgtab(FILE *outP, int startTrack)
 {
 int i;
 MessageBlockP blockP;
 
-    fprintf(outP, "// Auto-generated by advtextloader, do not hand-edit.\n");
-    fprintf(outP, "// Regenerate with: advtextloader -i <drumimage> -o %s <srcfile>\n", MSGTAB_OUTFILE);
+    fprintf(outP, "// Auto-generated by advdataloader, do not hand-edit.\n");
     fprintf(outP, "// Each label is a 2-word record: track/word-offset, then a packed\n");
     fprintf(outP, "// (padCount<<12)|wordCount value -- padCount (0-2) is how many of the\n");
     fprintf(outP, "// last packed word's 3 character slots are unused padding, needed\n");
-    fprintf(outP, "// because sixbit packing has no self-terminating byte (see\n");
-    fprintf(outP, "// packSixbit's header comment in advtextloader.c). advPrintMsg in\n");
-    fprintf(outP, "// adventure.am1 decodes both fields; advroomloader.c only ever\n");
-    fprintf(outP, "// copies this word through verbatim and does not need to know its\n");
-    fprintf(outP, "// internal shape. Pass the record's address to advPrintMsg to print it.\n");
+    fprintf(outP, "// because sixbit packing has no self-terminating byte.\n");
     if( startTrack == SAVE_TRACK )
     {
         fprintf(outP, "// Track %d front blocks: words 0-%d SAVE state, words %d-%d WIZCOM\n",
             startTrack, SAVE_BLOCK_WORDS - 1, WIZCOM_BASE_OFFSET, DRUM_START_WORDS - 1);
-        fprintf(outP, "// (fixed-size blocks -- see adv_drumlayout.ah, the generated contract).\n");
         fprintf(outP, "// Text starts at drum word %d.\n\n", DRUM_START_WORDS);
     }
     else
@@ -1770,38 +1799,31 @@ MessageBlockP blockP;
     fprintf(outP, "\n#endif\n");
 }
 
+// Writes the room-table section of adv_defines.ah: the drum geometry
+// defines for the room records, and one R_<name> define per room.
 static void
 emitRoomtab(FILE *outP, int roomBaseTrack, int tracksNeeded, int maxTrack)
 {
 int i;
 
-    fprintf(outP, "// Auto-generated by advroomloader from Adventure/Rooms/adventureRooms.txt --\n");
-    fprintf(outP, "// do not hand-edit. Regenerate with:\n");
-    fprintf(outP, "//   advroomloader -i <drumimage> -m <msgtabfile> <srcfile>\n");
+    fprintf(outP, "// Auto-generated by dataloader.\n");
+    fprintf(outP, "// Do not hand-edit.\n");
 
     if( tracksNeeded > 1 )
     {
         fprintf(outP, "// Room records live on drum tracks %d-%d (%d tracks), %d words each,\n",
             roomBaseTrack, roomBaseTrack + tracksNeeded - 1, tracksNeeded, RECORDSIZE);
         fprintf(outP, "// one per room number (room N's record is at flat word offset\n");
-        fprintf(outP, "// (N-1)*%d from the start of track %d -- see adventure.am1's loadRoom,\n",
+        fprintf(outP, "// (N-1)*%d from the start of track %d.\n",
             RECORDSIZE, roomBaseTrack);
-        fprintf(outP, "// which derives the same track/offset split at runtime via shift+mask,\n");
-        fprintf(outP, "// Stage 16's own STAGE16-PLAN.md section 1, and STAGE11-PLAN.md section 3\n");
-        fprintf(outP, "// for the original single-track design this generalizes). Track %d was\n",
-            roomBaseTrack);
     }
     else
     {
         fprintf(outP, "// Room records live on drum track %d, %d words each, one per room number\n",
             roomBaseTrack, RECORDSIZE);
-        fprintf(outP, "// (room N's record is at word offset (N-1)*%d). See adventure.am1's\n", RECORDSIZE);
-        fprintf(outP, "// loadRoom/ROOM_CACHE and STAGE11-PLAN.md section 3. Track %d was\n",
-            roomBaseTrack);
+        fprintf(outP, "// Room N's record is at word offset (N-1)*%d.\n", RECORDSIZE);
     }
 
-    fprintf(outP, "// computed, not passed in -- one past msgtab's own highest track (%d); see\n", maxTrack);
-    fprintf(outP, "// Adventure/DRUMOVERWRITE-TASK.md.\n\n");
     fprintf(outP, "#ifndef ADV_ROOMTAB_AH\n#define ADV_ROOMTAB_AH\n\n");
 
     for( i = 0; i < numRooms; ++i )
@@ -1827,13 +1849,12 @@ int i;
 
     // So the adventure program stays in sync with this.
     fprintf(outP, "#define COND_RAND 0d%d\n", COND_RAND_ID);
-    // TASK-FR3/FR4 message-only rows. Both are special-cased in doMove
-    // and SKIPPED by dwMoveOne and doBack -- neither names a room, so the
+    // The message-only rows. Both are special-cased in doMove and
+    // SKIPPED by dwMoveOne and doBack -- neither names a room, so the
     // destination field of both reads 0. Any new exit-table walker must
     // skip every row whose DESTINATION FIELD is 0, which is the test the
-    // two scanners use: since TASK-FR2 step 3 a gated message row carries
-    // an ordinary condTable ID, so "condId >= COND_MSG" no longer finds
-    // every roomless row.
+    // two scanners use: a gated message row carries an ordinary condTable
+    // ID, so "condId >= COND_MSG" does not find every roomless row.
     fprintf(outP, "#define COND_MSG 0d%d\n", COND_MSG_ID);
     fprintf(outP, "#define COND_RANDMSG 0d%d\n", COND_RANDMSG_ID);
     fprintf(outP, "#define RAND_DOMAIN_MASK 0d%d\n", RAND_DOMAIN - 1);
@@ -1874,20 +1895,22 @@ int i;
     fprintf(outP, "\n#endif\n");
 }
 
-// Emit one room-flag bitmap include -- one bit per room (bit (room-1),
+// Emits one room-flag bitmap include -- one bit per room (bit (room-1),
 // 1-based room numbers), set if that room carries flagMask in its record
-// word 5. Two callers today: emitSurfaceBitmap() (SURFACE, consumed by
+// word 5. Two callers: emitSurfaceBitmap() (SURFACE, consumed by
 // mgDestCheck's isSurfaceRoom) and emitDwarfBitmap() (DWARF, consumed by
-// dwMoveOne's confinement filter, TASK-FR13). Both answer the same
-// question -- "does room N carry this flag?" for a room whose 64-word
-// drum record has NOT been loaded -- so they share one emitter rather
-// than keeping two copies that can drift apart.
-// buildRoomRecord() is reused as-is (already correctly computes word 5)
-// rather than re-deriving flag membership from attributesP by name --
-// avoids duplicating flag-lookup logic, and guarantees the bitmap can
-// never disagree with the drum record it's describing. nWords is
-// computed from the live numRooms, not a hardcoded constant, so the
-// bitmap stays renumber/insertion-safe.
+// dwMoveOne's confinement filter). Both answer the same question --
+// "does room N carry this flag?" for a room whose 64-word drum record has
+// NOT been loaded -- so they share one emitter rather than two copies
+// that can drift apart.
+//
+// buildRoomRecord() is reused as-is, since it already computes word 5,
+// rather than re-deriving flag membership from attributesP by name: that
+// avoids duplicating the flag-lookup logic and guarantees the bitmap can
+// never disagree with the drum record it describes. nWords is computed
+// from the live numRooms, not a hardcoded constant, so the bitmap stays
+// renumber- and insertion-safe.
+//
 // guardP is the include guard AND the "<guard>_WORDS" define stem;
 // symbolP is the am1 label the table is emitted under; purposeP is the
 // one-sentence "consumed by" note for the generated file's header.
@@ -1916,7 +1939,7 @@ int  i, w, bitIx;
     }
 
     fprintf(outP, "// Auto-generated by advdataloader from AdvDataLoader/adventure.adv --\n");
-    fprintf(outP, "// do not hand-edit. Regenerate via `make` in Adventure/.\n");
+    fprintf(outP, "// Do not hand-edit. Regenerate via `make` in Adventure/.\n");
     fprintf(outP, "// One bit per room (bit (room-1), room numbers 1-based), set if that\n");
     fprintf(outP, "// room carries the flag named below.\n");
     fprintf(outP, "// %s\n\n", purposeP);
@@ -1931,11 +1954,11 @@ int  i, w, bitIx;
     free(bitmap);
 }
 
-// Emit adv_surfacebitmap.ac -- the SURFACE flag, consumed by mgDestCheck
-// (adventure.am1, bank 3's isSurfaceRoom wrapper) via UTIL/bitsets.ac's
-// testBitInList, for the one place a room's own SURFACE flag is needed
-// before its record has been loaded (a move destination during closing).
-// See PendingRework/TASK-ROOM-FLAG-WORD.md.
+// Emits adv_surfacebitmap.ac -- the SURFACE flag, consumed by
+// mgDestCheck (adventure.am1, bank 3's isSurfaceRoom wrapper) via
+// UTIL/bitsets.ac's testBitInList, for the one place a room's own SURFACE
+// flag is needed before its record has been loaded: a move destination
+// during closing.
 static void
 emitSurfaceBitmap(FILE *outP)
 {
@@ -1944,15 +1967,14 @@ emitSurfaceBitmap(FILE *outP)
                        "SURFACE: consumed by mgDestCheck via bank 3's isSurfaceRoom.");
 }
 
-// Emit adv_dwarfbitmap.ac -- the DWARF flag, consumed by dwMoveOne's
+// Emits adv_dwarfbitmap.ac -- the DWARF flag, consumed by dwMoveOne's
 // candidate filter (adventure.am1, bank 3's isDwarfRoom wrapper). This is
 // adven.f4 line 696's NEWLOC.LT.15 clause: a dwarf never walks out of the
 // cave. The port cannot use the source's room-NUMBER compare because the
-// port's room numbering is not monotonic with adven.dat's LOC numbering
-// (R_Y2 is port room 15 but LOC 33), so the flag itself is the test, and
-// it has to be answerable for a candidate room whose record is not
-// loaded -- exactly what SURFACE_BITMAP does for move destinations.
-// See CompletedTasks/TASK-FR13-DWARF-CONFINEMENT.md.
+// port's room numbering is not monotonic with adven.dat's LOC numbering,
+// so the flag itself is the test, and it has to be answerable for a
+// candidate room whose record is not loaded -- exactly what
+// SURFACE_BITMAP does for move destinations.
 static void
 emitDwarfBitmap(FILE *outP)
 {
@@ -1962,27 +1984,21 @@ emitDwarfBitmap(FILE *outP)
 }
 
 // ---------------------------------------------------------------------
-// Object table emission (SPEC-PHASE2.md) -- adv_objdefs.ah (cpp-only:
-// OBJ_* index defines, NOBJS, and the accessor macros) plus six
-// one-line-per-object table-body files, one per parallel array. Called
-// from main() only when the objects section is non-empty. Values are
-// printed exactly as addObjectDef()/the locVal/treasureVal grammar
-// actions already resolved and formatted them -- symbolic text passed
-// through verbatim, the assembler is the final arbiter, same as the
-// hand tables this replaces. Whitespace/comment style is free-form
-// (binary identity is judged at the assembled level); only the
-// accessor-macro BODIES need to be byte-for-byte identical to the hand
-// macros (SPEC-PHASE2.md acceptance item 4) -- kept exact by using a
-// single space between the macro head and its body below, so the body
-// text itself (e.g. "objLoc+o") is trivially diffable.
+// Object table emission -- the OBJ_* index defines, NOBJS and the
+// accessor macros into adv_defines.ah, plus six one-line-per-object
+// table-body files, one per parallel array. Called from main() only when
+// the objects section is non-empty. Values are printed exactly as
+// addObjectDef() and the locVal/treasureVal grammar actions resolved and
+// formatted them: symbolic text passed through verbatim, with the
+// assembler as the final arbiter. There is a single space between each
+// macro head and its body so the body text (e.g. "objLoc+o") stays
+// trivially diffable.
 // ---------------------------------------------------------------------
 
 // {macro suffix, table array name, far-tag} for the five accessor-macro
-// pairs (OBJ_<suffix>(o) / FAR_OBJ_<suffix>(o)) -- byte-for-byte the
-// same macro BODIES as today's hand macros (adventure.am1's "Object
-// indices and accessor macros" block). objNames is deliberately absent:
-// the hand file never had an OBJ_NAMES/FAR_OBJ_NAMES pair either --
-// findObj addresses it directly under eem, not through a +o accessor.
+// pairs, OBJ_<suffix>(o) and FAR_OBJ_<suffix>(o). objNames is
+// deliberately absent: findObj addresses it directly under eem, not
+// through a +o accessor.
 static const struct {
     const char *suffixP;
     const char *arrayNameP;
@@ -1996,6 +2012,8 @@ static const struct {
 };
 #define NUM_OBJ_ACCESSORS (int)(sizeof(objAccessors) / sizeof(objAccessors[0]))
 
+// Writes the object-index section of adv_defines.ah: one OBJ_<name>
+// define per object, NOBJS, and the two accessor-macro families.
 static void
 emitObjDefs(FILE *outP)
 {
@@ -2004,7 +2022,7 @@ int i;
     fprintf(outP, "// Auto-generated by advdataloader from '%s', do not hand-edit.\n", baseNameP);
     fprintf(outP, "// Regenerate with: advdataloader <srcfile>\n");
     fprintf(outP, "// Object indices and accessor macros -- see adventure.am1's \"Object table\"\n");
-    fprintf(outP, "// section for the six parallel arrays these index into (SPEC-PHASE2.md).\n\n");
+    fprintf(outP, "// section for the six parallel arrays these index into).\n\n");
     fprintf(outP, "#ifndef ADV_OBJDEFS_AH\n#define ADV_OBJDEFS_AH\n\n");
 
     for( i = 0; i < numObjects; ++i )
@@ -2028,14 +2046,22 @@ int i;
     fprintf(outP, "\n#endif\n");
 }
 
+// One accessor per parallel object table, all with this signature so
+// emitObjTableFile() can be handed whichever column it is writing.
+// Each returns the row text for one object; the two that format into a
+// static buffer are valid only until the next call on the same getter,
+// which is all emitObjTableFile's one-row-at-a-time loop needs.
 typedef char *(*ObjFieldGetter)(ObjectP objP);
 
+// Returns the object's objLoc row text, owned by the Object record.
 static char *
 getObjLocField(ObjectP objP)
 {
     return( objP->locTextP );
 }
 
+// Returns the object's objTake row text, "0" or "1", formatted into a
+// static buffer that the next call overwrites.
 static char *
 getObjTakeField(ObjectP objP)
 {
@@ -2045,6 +2071,8 @@ static char buf[8];
     return( buf );
 }
 
+// Returns the object's objNames row text, "voc_<word>:.", formatted into
+// a static buffer that the next call overwrites.
 static char *
 getObjNamesField(ObjectP objP)
 {
@@ -2054,33 +2082,39 @@ static char buf[MAX_NAME + 4];
     return( buf );
 }
 
+// Returns the object's objInvMsg row text, owned by the Object record.
 static char *
 getObjInvMsgField(ObjectP objP)
 {
     return( objP->invMsgTextP );
 }
 
+// Returns the object's objHereMsg row text, owned by the Object record.
 static char *
 getObjHereMsgField(ObjectP objP)
 {
     return( objP->hereMsgTextP );
 }
 
+// Returns the object's objTreasure row text, owned by the Object record.
 static char *
 getObjTreasureField(ObjectP objP)
 {
     return( objP->treasureTextP );
 }
 
+// Writes one parallel object table's .ac file: the label, then one row
+// per object in OBJ_* index order, each row's text supplied by getterP.
+// A file that cannot be created goes through fail() and does not return.
 static void
-emitObjTableFile(const char *path, const char *labelP, ObjFieldGetter getterP)
+emitObjTableFile(const char *pathP, const char *labelP, ObjFieldGetter getterP)
 {
 FILE *outP;
 int i;
 
-    if( !(outP = fopen(path, "w")) )
+    if( !(outP = fopen(pathP, "w")) )
     {
-        fprintf(stderr, "Can't create output file '%s'\n", path);
+        fprintf(stderr, "Can't create output file '%s'\n", pathP);
         fail();
     }
 
@@ -2098,6 +2132,8 @@ int i;
     fclose(outP);
 }
 
+// Writes the object-index defines into the already-open defines file,
+// then the six parallel table .ac files into dirP.
 static void
 emitObjTables(char *dirP, FILE *deffP)
 {
@@ -2125,6 +2161,9 @@ char outPath[1024];
     emitObjTableFile(outPath, "objTreasure", getObjTreasureField);
 }
 
+// Writes adv_verbtab.ac: the verbTab label, one three-word row per verb
+// in corpus order, then a 0 word ending the table.
+// A file that cannot be created goes through fail() and does not return.
 static void
 emitVerbTab(char *dirP)
 {
@@ -2152,7 +2191,7 @@ char outPath[1024];
     fclose(outP);
 }
 // ---------------------------------------------------------------------
-// Object alias table (TASK-FR7 7b group 1, S14) -- two words per row,
+// Object alias table -- two words per row,
 // {vocabulary-word address, OBJ_* index}, scanned by findObj only after
 // its walk over objNames has missed. Rows are emitted in corpus order;
 // order is match precedence, and no word appears twice, so the order is
@@ -2160,6 +2199,9 @@ char outPath[1024];
 // the scan is bounded by a count rather than by a sentinel -- the same
 // shape as NOBJS, and one word cheaper per row than a terminator.
 // ---------------------------------------------------------------------
+// Writes adv_objalias.ac and the NOBJALIAS define: one two-word row per
+// alias in corpus order, or a single 0 word when there are none.
+// A file that cannot be created goes through fail() and does not return.
 static void
 emitObjAlias(char *dirP, FILE *deffP)
 {
@@ -2186,7 +2228,7 @@ char outPath[1024];
     {
         // ":3", not objNames' ":.". Bank 2 -- which holds every other
         // voc_* string, objNames and three more object tables -- has no
-        // room for these 26 rows or for the words they name, so the alias
+        // room for these rows or for the words they name, so the alias
         // vocabulary and this table both live in bank 3, and the tag is
         // explicit rather than "whatever bank included me".
         fprintf(outP, "    %s:3;\t0d%d\t// %s -> %s\n",
@@ -2203,11 +2245,11 @@ char outPath[1024];
 // Error handling
 // ---------------------------------------------------------------------
 
-// Error of some kind, clean up and leave. Since all placement/record
-// building is validated in memory before the drum image is opened, the
-// only thing there is to clean up mid-parse is the input file; trackImageFd
-// is only ever open during doWrite()/doCompare(), both of which are
-// past all validation by the time they run.
+// Error of some kind: close whatever is open and exit 1. Does not
+// return. Since all placement and record building is validated in memory
+// before the drum image is opened, the only thing to clean up mid-parse
+// is the input file; trackImageFd is only ever open during doWrite() or
+// doCompare(), both of which run past all validation.
 void
 fail(void)
 {
@@ -2224,11 +2266,11 @@ fail(void)
     exit(1);
 }
 
-// Emit adv_drumlayout.ah -- the drum layout contract between this tool
-// (which places the SAVE/WIZCOM front blocks' reservation, the message
-// text, and the room records) and adventure.am1, whose drum-transfer
-// records must agree. Emitted from the same #defines the placement code
-// uses, so the two sides cannot drift.
+// Writes the drum-layout section of adv_defines.ah -- the layout
+// contract between this tool (which places the SAVE/WIZCOM front blocks'
+// reservation, the message text and the room records) and adventure.am1,
+// whose drum-transfer records must agree. Emitted from the same #defines
+// the placement code uses, so the two sides cannot drift.
 static void
 emitDrumLayout(FILE *outP)
 {
@@ -2249,6 +2291,7 @@ emitDrumLayout(FILE *outP)
     fprintf(outP, "\n#endif\n");
 }
 
+// Prints the usage summary to stderr and exits 1. Does not return.
 static void
 usage(void)
 {

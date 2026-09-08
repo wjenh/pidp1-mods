@@ -1,25 +1,12 @@
 /* symtab.c - symbol table manipulation routines
  *
- * The symbol table routines use binary trees, see symtab.h for
- * more information. Every symbol node has a long int reserved for
- * use by the caller, symNodeP->ival, and a (void *)pointer, symNodeP->ptr.
+ * The symbol table is a simple unbalanced binary tree keyed on the
+ * symbol name, see symtab.h for the node layout. Every node carries two
+ * fields reserved for the caller: an int, symNodeP->ival, and a
+ * (void *) pointer, symNodeP->ptr.
  *
- * The following routines are available:
- *
- * void symInit(SymNodePP rootPP)
- *	Initializes a new symbol table.
- * void symFree(SymNodePP rootPP)
- *	Frees up all allocated storage for a tree.
- * SymNodeP symMake(char *nameP)
- *	Allocates and initializes a new SymNode.
- *  The passed nameP is kept as the name, be sure it's
- *  an allocated string, and not freed later.
- * SymNodeP symFind(SymNodePP rootPP, char *nameP)
- *	Searches for a given name in the table. If found, a pointer to
- *	the SymNode is returned, else 0.
- * void symAdd(SymNodePP rootPP, SymNodeP newP)
- *	Adds the new data to the table.
- *	NewP is returned, if a node already exists, null is returned.
+ * A node's name string is owned by the tree once the node is added:
+ * symMake keeps the pointer it is handed, and symFree releases it.
  *
 */
 #include <stdlib.h>
@@ -27,55 +14,66 @@
 #include <string.h>
 #include "symtab.h"
 
+// Initializes a new, empty symbol table rooted at *rootPP.
 void
-symInit( SymNodePP rootPP )   /* Initialize a root node */
+symInit(SymNodePP rootPP)
 {
-    *rootPP = ( SymNodeP ) 0;   /* real tough */
+    *rootPP = (SymNodeP)0;
 }
 
+// Recursively frees a subtree, both the nodes and their name strings.
+// Internal to this file; callers use symFree.
 static void
-real_free( SymNodeP rootP )     /* Free up a table */
+realFree(SymNodeP rootP)
 {
     if( rootP->rightP )
     {
-        real_free( rootP->rightP );
+        realFree(rootP->rightP);
     }
 
     if( rootP->leftP )
     {
-        real_free( rootP->leftP );
+        realFree(rootP->leftP);
     }
 
-    free( rootP->nameP );
-    free( rootP );
+    free(rootP->nameP);
+    free(rootP);
 }
 
+// Frees every node in the table and resets the root to empty.
+// Safe to call on an already-empty table.
 void
-symFree( SymNodePP rootPP )           /* User perceived free */
+symFree(SymNodePP rootPP)
 {
     if( *rootPP )
     {
-        real_free( *rootPP );
-        *rootPP = ( SymNodeP ) 0;
+        realFree(*rootPP);
+        *rootPP = (SymNodeP)0;
     }
 }
 
+// Allocates and zeroes a new node, keeping nameP as its name.
+// The string must be allocated and must not be freed by the caller;
+// symFree releases it with the node.
+// Returns the new node, or 0 if there was no memory.
 SymNodeP
-symMake(char *nameP)           /* Create a new node */
+symMake(char *nameP)
 {
 SymNodeP symP;
 
-    if( !(symP = (SymNodeP) calloc(sizeof(SymNode), sizeof(char))) )
+    if( !(symP = (SymNodeP)calloc(sizeof(SymNode), sizeof(char))) )
     {
-        return( (SymNodeP)0 ); /* sorry, no memory */
+        return((SymNodeP)0);
     }
 
-     symP->nameP = nameP;
-    return( symP );
+    symP->nameP = nameP;
+    return(symP);
 }
 
+// Looks up a name in the table.
+// Returns the matching node, or 0 if the name is not present.
 SymNodeP
-symFind(SymNodePP rootPP, char *nameP)  /* Look up a name in the table */
+symFind(SymNodePP rootPP, char *nameP)
 {
 int cmp;                /* result of comparison */
 SymNodeP curP;          /* current node we have */
@@ -86,7 +84,7 @@ SymNodeP curP;          /* current node we have */
     {
         if( (cmp = strcmp(nameP, curP->nameP)) == 0 )
         {
-            return( curP ); /* found it */
+            return(curP);
         }
         else if( cmp < 0 )
         {
@@ -98,11 +96,15 @@ SymNodeP curP;          /* current node we have */
         }
     }
 
-    return(0); /* not found */
+    return((SymNodeP)0);
 }
 
+// Adds a node to the table, keyed on newP->nameP.
+// Returns newP on success, or 0 if a node with that name already
+// exists, in which case the table is left unchanged and newP is not
+// linked in (the caller still owns it).
 SymNodeP
-symAdd(SymNodePP rootPP, SymNodeP newP) /* Add a node to a table */
+symAdd(SymNodePP rootPP, SymNodeP newP)
 {
 int cmp;            /* result of comparison */
 SymNodeP curP;      /* current node we have */
@@ -110,7 +112,7 @@ SymNodeP curP;      /* current node we have */
     if( !(curP = *rootPP) )
     {
         *rootPP = newP;
-        return( newP ); /* first one today */
+        return(newP); /* first one today */
     }
 
     for( ;; )
@@ -145,5 +147,5 @@ SymNodeP curP;      /* current node we have */
         }
     }
 
-    return( newP );
+    return(newP);
 }

@@ -19,7 +19,7 @@ typedef struct symnode      // a node in a symbol tree
 
 void symInit(SymNodePP rootPP);
 SymNodeP symAdd(SymNodePP rootPP, SymNodeP symP);
-SymNodeP symFind(SymNodePP, char *nameP);
+SymNodeP symFind(SymNodePP rootPP, char *nameP);
 SymNodeP symMake(char *nameP);
 void symFree(SymNodePP rootPP);
 #endif

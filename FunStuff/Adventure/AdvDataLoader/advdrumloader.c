@@ -1,14 +1,15 @@
 /*
- * This is a simple program that loads the drum-image data produced by advdataloader into the drum
- * It uses the initial track information from that data, then writes full 4K tracks for as many
- * as are needed.
+ * This is a simple program that loads the drum-image data produced by
+ * advdataloader into the drum. It uses the initial track information from
+ * that data, then writes full 4K tracks for as many as are needed.
  *
- * Usage advdataloader [-i path-to-live-drum-image] datafile
+ * Usage advdrumloader [-i path-to-live-drum-image] datafile
  *
- * IF no -i path is given, the default is '/opt/pidp1-mods/pdp23drum'.
+ * If no -i path is given, the default is '/opt/pidp1-mods/pdp23drum'.
  *
- * The first (int size) word in the datafile is the initial track, the rest is track images.
- * If the last is not a full track, a full track of data is still written.
+ * The first (int size) word in the datafile is the initial track, the rest
+ * is track images. If the last is not a full track, a full track of data
+ * is still written.
  *
  * 29-Aug-2026 wje initial version
  * 30-Aug-2026 wje every run now also explicitly reinitializes the SAVE/WIZCOM reserved blocks
@@ -33,6 +34,10 @@
 
 void usage(void);
 
+// Loads a datafile produced by advdataloader into the drum image,
+// preserving whichever of the reserved SAVE and WIZCOM records is still
+// valid and clearing the other.
+// Exits 0 once the data is loaded, 1 on any error.
 int
 main(int argc, char **argv)
 {
@@ -57,6 +62,7 @@ int saveArea[DRUM_START_WORDS];
 
         default:
             usage();
+            exit(0);
         }
     }
 
@@ -88,16 +94,18 @@ int saveArea[DRUM_START_WORDS];
         exit(1);
     }
 
-    // The reserved block holds TWO independent records back to back -- the SAVE block at word 0
-    // and the WIZCOM block at word WIZCOM_BASE_OFFSET -- and each carries its own magic number.
-    // They are written by different game actions (SAVE vs. the wizard's MOTD editor), so either
-    // one can be valid while the other is not. Judge and clear them SEPARATELY: gating both on
-    // the SAVE magic alone would zero a perfectly good WIZCOM/MOTD record just because the
-    // player happened to have no saved game, and would equally carry a stale WIZCOM record
+    // The reserved block holds TWO independent records back to back -- the
+    // SAVE block at word 0 and the WIZCOM block at word
+    // WIZCOM_BASE_OFFSET -- and each carries its own magic number. They are
+    // written by different game actions (SAVE vs. the wizard's MOTD
+    // editor), so either one can be valid while the other is not. Judge and
+    // clear them SEPARATELY: gating both on the SAVE magic alone would zero
+    // a perfectly good WIZCOM/MOTD record just because the player happened
+    // to have no saved game, and would equally carry a stale WIZCOM record
     // forward on the strength of an unrelated save.
     //
-    // If we get 0 bytes back, the drum file was never initialized -- not an error, both records
-    // simply do not exist yet.
+    // If we get 0 bytes back, the drum file was never initialized -- not an
+    // error, both records simply do not exist yet.
     if( (count = read(outFd, saveArea, sizeof(saveArea))) < 0 )
     {
         fprintf(stderr, "Can't read drum file '%s'\n", imageNameP);
@@ -107,8 +115,9 @@ int saveArea[DRUM_START_WORDS];
 
     if( count != sizeof(saveArea) )
     {
-        // A short read means the block was never written, or was truncated. Nothing in it can be
-        // trusted, so neither record survives.
+        // A short read means the block was never written, or was
+        // truncated. Nothing in it can be trusted, so neither record
+        // survives.
         memset(saveArea, 0, sizeof(saveArea));
         printf("No existing SAVE/WIZCOM block, initializing both areas.\n");
     }
@@ -169,6 +178,7 @@ int saveArea[DRUM_START_WORDS];
     exit(0);
 }
 
+// Prints the usage summary to stderr.
 void
 usage(void)
 {

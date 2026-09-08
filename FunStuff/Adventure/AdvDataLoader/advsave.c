@@ -1,19 +1,18 @@
 /*
- * This is a simple program that copies the adventure save slot and wizcom configuration block
- * to a file so if the drum track is overwritten, your game setup won't be lost.
- * It can then be rewritten to the drum after reloading adventure.
+ * This is a simple program that copies the adventure save slot and wizcom
+ * configuration block to a file so if the drum track is overwritten, your
+ * game setup won't be lost. It can then be rewritten to the drum after
+ * reloading adventure.
  *
  * Usage advsave [-i path-to-live-drum-image] [-r] savefile
  *
- * IF no -i path is given, the default is '/opt/pidp1-mods/pdp23drum'.
+ * If no -i path is given, the default is '/opt/pidp1-mods/pdp23drum'.
  *
- * The first (int size) word in the datafile is the initial track,
- * the rest is just a 1024 word snapshot of the beginning of that track.
- * Both the save slot and the configuration data are there.
+ * The first (int size) word in the save file is a magic number for
+ * validation, the rest is a 1024 word snapshot of the beginning of the
+ * selected track. Both the save slot and the configuration data are there.
  *
  * Using -r restores from a saved copy.
- *
- * The save file iw written with a one int word magic number for validation.
  *
  * 31-Aug-2026 wje initial version
  *
@@ -31,9 +30,8 @@
 // The DRUM's save marker comes from the file adventure.am1 includes too
 // (as SAVE_MAGIC), so this tool cannot drift from the assembler.
 #include "advmagic.h"
-// ADVSAVE_FILE_MAGIC is this tool's OWN marker for its .sav container file,
-// unrelated to the drum's -- it was called SAVE_MAGIC until the drum value
-// was single-sourced under that name.
+// ADVSAVE_FILE_MAGIC is this tool's OWN marker for its .sav container
+// file, unrelated to the drum's.
 #define ADVSAVE_FILE_MAGIC ((int)(('X' << 24) | ('Y' << 16) | ('Z' << 8) | 'Z'))
 #define DRUM_SAVE_MAGIC SAVE_MAGIC
 
@@ -41,6 +39,9 @@ bool loadDrum(int dataFd, int drumFd, int track, char *filenameP, char *drumFile
 bool saveDrum(int dataFd, int drumFd, int track, char *filenameP, char *drumFilenameP);
 void usage(void);
 
+// Parses the options, opens the save file and the drum image, and runs
+// either saveDrum or loadDrum.
+// Exits 0 if the transfer succeeded, 1 on any error.
 int
 main(int argc, char **argv)
 {
@@ -66,7 +67,7 @@ char *imagenameP;
 
         case 't':
             track = atoi(optarg);
-            ;
+            break;
 
         case 'i':
             imagenameP = optarg;
@@ -87,7 +88,7 @@ char *imagenameP;
     if( (track >= NUM_TRACKS) || (track < 0) )
     {
         fprintf(stderr, "The track number must be 0-31.\n");
-        return(false);
+        exit(1);
     }
 
     if( reload )
@@ -131,6 +132,11 @@ char *imagenameP;
     exit(stat?0:1);
 }
 
+// Restores a previously saved snapshot: validates the save file's own
+// magic word, reads DRUM_START_WORDS from it, and writes them over the
+// start of the given drum track.
+// Returns true on success, false if the file is not an advsave file, is
+// short, or the drum write failed. Diagnostics go to stderr.
 bool
 loadDrum(int dataFd, int drumFd,int track, char *filenameP, char *drumFilenameP)
 {
@@ -159,6 +165,12 @@ int buffer[DRUM_START_WORDS];
     return(true);
 }
 
+// Captures a snapshot: reads DRUM_START_WORDS from the start of the given
+// drum track, checks word 0 against the drum's SAVE_MAGIC so an
+// uninitialised image is not saved, then writes this tool's own magic word
+// followed by the snapshot to the save file.
+// Returns true on success, false if the drum read failed, the track holds
+// no loaded game, or a write failed. Diagnostics go to stderr.
 bool
 saveDrum(int dataFd, int drumFd, int track, char *filenameP, char *drumFilenameP)
 {
@@ -190,10 +202,11 @@ int buffer[DRUM_START_WORDS];
         fprintf(stderr,"Error writing data  file '%s'.\n", filenameP);
         return(false);
     }
-    
+
     return(true);
 }
 
+// Prints the usage summary to stderr and exits 1. Does not return.
 void
 usage(void)
 {

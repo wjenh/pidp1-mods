@@ -29,13 +29,7 @@ clean:
 advdataloader.o: advdataloader.c advdataloader.h symtab.h y.tab.h
 	$(CC) $(CFLAGS) -c advdataloader.c
 
-# advmagic.h holds SAVE_MAGIC and WIZCOM_MAGIC and is listed here on
-# purpose: it was missing until 05-Sep-26, so bumping SAVE_MAGIC left
-# these two objects stale and `make` said "Nothing to be done". A stale
-# advdrumloader stops recognising the SAVE block it is meant to preserve
-# and zeroes every save -- exactly the failure advmagic.h's own header
-# comment describes, and exactly what happened again when TASK-FR31 N41
-# bumped the value to 0x7A72.
+# advmagic.h holds SAVE_MAGIC and WIZCOM_MAGIC.
 advdrumloader.o: advdrumloader.c advdataloader.h advmagic.h
 	$(CC) $(CFLAGS) -c advdrumloader.c
 

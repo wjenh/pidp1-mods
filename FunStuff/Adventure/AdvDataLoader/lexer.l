@@ -36,8 +36,7 @@ message     {
 <DOTEXT>^.*\n   {
                 // A message body line, returned RAW: physical newline
                 // stripped, no escape processing, no space insertion --
-                // all of that is done in C (advdataloader.c), not here
-                // (see SPEC-PHASE1.md "Text pipeline").
+                // all of that is done in C (advdataloader.c), not here.
                 yytext[yyleng - 1] = 0;      // strip the trailing \n
 
                 if( !strcmp(yytext, "@") )
@@ -89,41 +88,36 @@ none        { return(NONE); }
 action      { return(ACTION); }
 attributes  { return(ATTRIBUTES); }
 
-    /* Verbs section keywords (TASK-VERB-EMISSION.md). 'msgref' (not the
-     * already-taken 'msg', used by room exits' COND ... MSG clause) names
-     * a doSpeak row's message argument; 'karg' names a doFoo row's small
-     * integer k-value; 'voc' labels the vocabulary-word field, 'handler'
-     * the dispatch-target field -- same fixed-field-order, keyword-
-     * labeled style as the 'object' statement.
+    /* Verbs section keywords. 'msgref' (not the already-taken 'msg',
+     * used by room exits' COND ... MSG clause) names a doSpeak row's
+     * message argument; 'karg' names a doFoo row's small integer k-value;
+     * 'voc' labels the vocabulary-word field, 'handler' the
+     * dispatch-target field -- same fixed-field-order, keyword-labeled
+     * style as the 'object' statement.
      *
      * 'voc'/'handler' switch into the RAWWORD state (see below) for
      * exactly their following field: verbTab's real vocabulary words
-     * include plain English verbs that collide with other section's
-     * keywords (e.g. voc_exit, the OUT-direction synonym, collides with
-     * EXIT -- ROOM's exit-row keyword) -- discovered when 'verb EXIT voc
-     * exit move OUT handler doMove' failed to parse, the corpus word
-     * 'exit' lexing as EXIT instead of STRING. RAWWORD forces the single
-     * word right after 'voc'/'handler' to lex as a plain identifier
-     * regardless of any keyword table entry, the same idea as
-     * INMESSAGE/DOTEXT already uses to keep message body text from being
-     * tokenized against the keyword table. */
+     * include plain English verbs that collide with other sections'
+     * keywords -- voc_exit, the OUT-direction synonym, collides with
+     * EXIT, ROOM's exit-row keyword, so 'verb EXIT voc exit move OUT
+     * handler doMove' would lex the corpus word 'exit' as EXIT instead of
+     * STRING. RAWWORD forces the single word right after 'voc'/'handler'
+     * to lex as a plain identifier regardless of any keyword table entry,
+     * the same idea INMESSAGE/DOTEXT uses to keep message body text from
+     * being tokenized against the keyword table. */
 voc         { BEGIN RAWWORD; return(VOC); }
-    /* TASK-FR2 step 1 (04-Sep-26): an optional "bank <n>" between a verb
-     * row's voc word and its argument, naming the memory bank the voc_*
-     * string is defined in. Absent means bank 2, where every vocabulary
-     * word lived until bank 2 filled up -- see addVerbDef(). Lowercase
-     * only, like every other keyword here, so an uppercase corpus name
-     * BANK would still lex as a plain STRING. */
+    /* An optional "bank <n>" between a verb row's voc word and its
+     * argument, naming the memory bank the voc_* string is defined in.
+     * Absent means bank 2 -- see addVerbDef(). Lowercase only, like every
+     * other keyword here, so an uppercase corpus name BANK would still
+     * lex as a plain STRING. */
 bank        { return(BANKKW); }
 move        { return(MOVEKW); }
 msgref      { return(MSGREF); }
 karg        { return(KARG); }
 handler     { BEGIN RAWWORD; return(HANDLERKW); }
 
-    /* Objects section keywords (SPEC-PHASE2.md). treasure was already
-     * declared as a %token but, pre-phase-2, never actually returned by
-     * the lexer -- "treasure" used to lex as a plain STRING attribute
-     * name in the old skeleton object grammar. It's a real keyword now. */
+    /* Objects section keywords. */
 name        { return(NAME); }
 loc         { return(LOC); }
 take        { return(TAKE); }
@@ -134,8 +128,9 @@ treasure    { return(TREASURE); }
 end         { return(END); }
 
 0d[0-9]+    {
-                // Fixed: was strtol(yytext, NULL, 16), which parsed "0d123"
-                // as hex 0xd123 ('d' is a hex digit). Decimal, skip "0d".
+                // Decimal, skipping the "0d" prefix. NOT base 16: 'd'
+                // is a hex digit, so strtol(yytext, NULL, 16) would read
+                // "0d123" as 0xd123.
                 yylval.ival = strtol(yytext + 2, NULL, 10);
                 return(INTEGER);
             }

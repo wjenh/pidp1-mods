@@ -18,7 +18,7 @@
 #define WORDS_PER_TRACK       4096
 #define NUM_TRACKS              32
 
-#define MAX_MSGS       768     // number of text blocks we can build (see advtextloader.c MAX_BLOCKS)
+#define MAX_MSGS       768     // number of text blocks we can build
 #define MAX_TEXT       2048    // maximum characters allowed in one message block
 #define MAX_NAME        128    // maximum name length for names we still copy into fixed buffers
 
@@ -28,24 +28,18 @@
 #define HEADERWORDS       6
 #define RECORDSIZE       64
 
-// Exit entries are two words (TASK-FR2, 05-Sep-26); 6 + 2*29 = 64, so
-// MAXEXITS now fills the record exactly and cannot be raised again
-// without changing RECORDSIZE.
-//
-// 29 is the owner's decision of 06-Sep-26, taken for TASK-FR2 step 3.
-// The drum side is free -- the 64-word record already reserved through
-// 29 -- and the only cost is adventure.am1's dmoCand candidate buffer,
-// one bank-1 word per exit: 11 words out of the 53 bank 1 had.
+// Exit entries are two words: 6 + 2*29 = 64, so MAXEXITS fills the
+// record exactly and cannot be raised without changing RECORDSIZE.
 //
 // Do NOT re-derive the sizing from adven.dat's ROW counts. The port
 // stores one entry per (motion word, cascade row), so a conditional row
 // costs an entry for every word whose cascade reaches it, and a LOC's
 // entry count can be far above its row count. Measured with
-// Claude/SupportCode/adv_exit_budget.py on 06-Sep-26: LOC 19 needs 25
-// entries from 8 rows, LOC 15 needs 21 from 6, LOC 108 needs 19 from 3.
-// 25 is the highest requirement in the game; 29 leaves four over it.
-// The earlier "worst LOCs need 16, nothing above 13" note in this
-// comment was a row count and was wrong.
+// Claude/SupportCode/adv_exit_budget.py: LOC 19 needs 25 entries from 8
+// rows, LOC 15 needs 21 from 6, LOC 108 needs 19 from 3. 25 is the
+// highest requirement in the game; 29 leaves four over it. The cost of
+// each extra exit is one bank-1 word in adventure.am1's dmoCand
+// candidate buffer.
 //
 // Exit-entry packing, DEC bit numbering (bit 0 is the word's MSB). The
 // GET_* macros emitDrumLayout() writes into the generated defines file
@@ -71,11 +65,11 @@
 #define COND_RAND_ID      4
 #define RAND_DOMAIN      32
 
-// TASK-FR3/FR4 (S3): message-only exit rows -- a motion that prints a
-// message and leaves the player where they are, with no destination.
-// adven.dat spells these N>500 (the destination IS a message number);
-// the port needs them for the refusals FR3 lists and for the msg-56/126
-// random bounces at Witt's End, Bedquilt and Swiss Cheese.
+// Message-only exit rows -- a motion that prints a message and leaves
+// the player where they are, with no destination. adven.dat spells these
+// N>500 (the destination IS a message number); the port needs them for
+// the plain refusals and for the msg-56/126 random bounces at Witt's End,
+// Bedquilt and Swiss Cheese.
 //
 // Like COND_RAND_ID these are internal condition IDs, never written as a
 // `cond` name in the corpus and never present in condTable[], so they
@@ -85,10 +79,8 @@
 // COND_MSG_ID:     unconditional. destNum is 0; the message-index field
 //                  names what to print.
 // COND_RANDMSG_ID: weighted. destNum is 0, and the roll threshold sits
-//                  in the same field a plain RAND row uses. Before the
-//                  05-Sep-26 two-word entry the threshold had to squat
-//                  in destNum, because the message needed both of the
-//                  entry's other words; a 10-bit message index freed it.
+//                  in the same field a plain RAND row uses; the 10-bit
+//                  message index leaves that field free.
 //
 // Neither row names a room, so every exit-table walker that reads a
 // destination must skip both IDs -- their destination field reads 0.
@@ -97,11 +89,10 @@
 #define COND_MSG_ID       9
 #define COND_RANDMSG_ID  10
 
-// TASK-FR2 step 3 / TASK-FR19 C12 (04-Sep-26): the four shapes a boolean
-// condTable row can take, and how doMove tells them apart. There is NO
-// new condition ID and no format change -- the destination and message
-// fields of word 1 already carry everything needed, so the same
-// condId 1..8 covers all four:
+// The four shapes a boolean condTable row can take, and how doMove tells
+// them apart. No extra condition ID is needed: the destination and
+// message fields of word 1 carry everything, so the same condId 1..8
+// covers all four:
 //
 //   dest != 0, msg != 0   `exit D DEST cond C msg M`
 //                         pass -> move to DEST; fail -> print M, stay.
@@ -110,8 +101,7 @@
 //   dest != 0, msg == 0   `exit D DEST cond C`
 //                         pass -> move to DEST; fail -> SILENTLY fall
 //                         through to the next entry for this direction.
-//                         adven.f4 label 12's own behaviour, and the one
-//                         shape the grammar had no way to express.
+//                         adven.f4 label 12's own behavior.
 //
 //   dest == 0, msg != 0   `exit D none cond C msg M`
 //                         pass -> print M and stay; fail -> fall through
@@ -130,8 +120,8 @@
 // `none` row, `msg` IS the row's action. `cond` gates the row's own
 // action in every case, exactly as adven.f4 label 11 does.
 //
-// Consequence for exit-table walkers: "names no room" is now `dest == 0`
-// and NOT `condId >= COND_MSG` -- a `dest == 0, msg != 0` row carries an
+// Consequence for exit-table walkers: "names no room" is `dest == 0`,
+// NOT `condId >= COND_MSG` -- a `dest == 0, msg != 0` row carries an
 // ordinary boolean condition ID. dwMoveOne's dmoScanCheck and doBack's
 // dbScan test the destination field itself for that reason.
 
@@ -195,9 +185,9 @@ typedef struct {
     char *treasureTextP;// objTreasure row value: "1"/"0" for yes/no, or "0d<K>"/"0"
 } Object, *ObjectP;
 
-// TASK-FR7 7b group 1 (S14). One row of the two-column objAlias table:
-// a second vocabulary word for an object that already owns an objNames
-// row. Only the object's INDEX is kept -- findObj re-derives objLoc and
+// One row of the two-column objAlias table: a second vocabulary word for
+// an object that already owns an objNames row. Only the object's INDEX
+// is kept -- findObj re-derives objLoc and
 // objTake from their table bases once it has the index, exactly as its
 // own in-order walk does, so an alias hit and a name hit leave the
 // caller's pointers in identical shape.

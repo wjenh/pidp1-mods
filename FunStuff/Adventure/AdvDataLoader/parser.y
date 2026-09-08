@@ -23,7 +23,7 @@ extern SymNodeP verbSymsP;
 
 extern char msgTextBuf[MAX_TEXT];
 
-int yyerror(const char *errstr);
+int yyerror(const char *errstrP);
 
 extern int yylex(void);
 
@@ -224,8 +224,8 @@ roomspec    : FLAG STRING YESNO
             {
                 addRoomExitCond($2, $3, $5, $7);
             }
-            /* TASK-FR2 step 3 / TASK-FR19 C12: the same gate with no
-             * message -- a failed condition falls through to the next
+            /* The same gate with no message -- a failed condition falls
+             * through to the next
              * entry for this direction without printing, which is what
              * adven.f4 label 12 does. LALR(1)-clean: after the condition
              * name the parser shifts on MSG and reduces on anything
@@ -238,7 +238,7 @@ roomspec    : FLAG STRING YESNO
             {
                 addRoomExitRand($2, $3, $5);
             }
-            /* Message-only rows (TASK-FR3/FR4): NONE in the destination
+            /* Message-only rows: NONE in the destination
              * slot means "print and stay put". Distinguished from the
              * three forms above at token 3, so still LALR(1)-clean. */
             | EXIT STRING NONE MSG STRING
@@ -249,10 +249,10 @@ roomspec    : FLAG STRING YESNO
             {
                 addRoomExitRandMsg($2, $5, $7);
             }
-            /* TASK-FR2 step 3: the gated message-only row -- the
-             * condition holds, so the row's own action runs (print and
-             * stay); it fails, so the scan silently tries the next
-             * entry. adven.dat's conditional N>500 rows. Note the sense:
+            /* The gated message-only row -- if the condition holds the
+             * row's own action runs (print and stay); if it fails the
+             * scan silently tries the next entry. adven.dat's conditional
+             * N>500 rows. Note the sense:
              * on a NONE row `msg` is the ACTION, not a refusal, exactly
              * as it is on the two unconditional NONE forms above. */
             | EXIT STRING NONE COND STRING MSG STRING
@@ -316,7 +316,7 @@ aliases     : /* empty */
             | aliases alias
             ;
 
-/* TASK-FR7 7b group 1 (S14): a second vocabulary word for an object that
+/* A second vocabulary word for an object that
  * already has an 'object' row. findObj walks objNames/objLoc/objTake in
  * lockstep on one index, so a synonym cannot be a second objNames entry
  * without breaking that correspondence -- it becomes a row in the
@@ -339,10 +339,9 @@ verbs       : /* empty */
 
 /* Two forms, differing only in the optional "bank <n>" that names the
  * memory bank holding this row's voc_* string. Without it the string is
- * assumed to be in bank 2, which is where all 220-odd of them were until
- * bank 2 filled up; TASK-FR2 step 1's motion words are in bank 3 and say
- * so. LALR-safe: after VOC STRING the lookahead is either BANKKW or one
- * of argSpec's four distinct leading tokens. */
+ * assumed to be in bank 2, where most of them live; the motion words are
+ * in bank 3 and say so. LALR-safe: after VOC STRING the lookahead is
+ * either BANKKW or one of argSpec's four distinct leading tokens. */
 verb        : VERB STRING VOC STRING argSpec HANDLERKW STRING
             {
                 addVerbDef($2, $4, 2, $5, $7);
@@ -394,6 +393,8 @@ stringOrNone: STRING
             ;
 
 %%
+// Reports a printf-style error against the line the lexer is currently
+// on, then calls fail(). Does not return.
 void
 verror(const char *msgP, ...)
 {
@@ -422,11 +423,13 @@ char format[1024];
     fail();
 }
 
+// bison's own error entry point: reports the parser's message against
+// the current line, then calls fail(). Does not return; the return(0)
+// only satisfies the declared int result.
 int
-yyerror(const char *errstr)
+yyerror(const char *errstrP)
 {
-    fprintf(stderr,"advdataloader: %s at line %d\n", errstr, yylineno);
+    fprintf(stderr,"advdataloader: %s at line %d\n", errstrP, yylineno);
     fail();
-    // never returns, just to shut up overly-picky c compilers
     return(0);
 }

@@ -42,8 +42,6 @@ loop,
     idx ptr
     idx unpackAscii
     jmp loop
-    dzm i ptr
-    jmp i rtn
     endloc
 
 // Pack the string pointed to by AC into the buffer pointed to by IO.

@@ -1309,7 +1309,6 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 |ior | 0040000|
 |xor | 0060000|
 |xct | 0100000|
-|jfd | 0120000|
 |cal | 0160000|
 |jda | 0170000|
 |lac | 0200000|
@@ -1371,7 +1370,7 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 |swp             | 0760060|
 |cmi             | 0770000|
 |sni             | 0644000|
-|szi             | 0654060|
+|szi             | 0654000|
 |scf             | 0740040|
 |sci             | 0740100|
 |ifi             | 0742000|

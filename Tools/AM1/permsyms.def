@@ -29,7 +29,6 @@ and opaddr 0020000
 ior opaddr 0040000
 xor opaddr 0060000
 xct opaddr 0100000
-jfd opaddr 0120000
 cal opaddr 0160000
 jda opaddr 0170000
 lac opaddr 0200000
@@ -95,7 +94,7 @@ lsw 1Dop 0760060
 swp 1Dop 0760060
 cmi 1Dop 0770000
 sni 1Dop 0644000
-szi 1Dop 0654060
+szi 1Dop 0654000
 
 iif 1Dop 0744000
 ifi 1Dop 0742000

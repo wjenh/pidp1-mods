@@ -1,6 +1,6 @@
-This contains a Claude AI skill that you can include in a Claude project if you want to write am1 assembler.
-I have set up a Claude project that I trained on the PDP-1, am1 usage, and the am1 include files that are relevant.
-This is the result. It is updated when Claude improves its understanding.
+This contains two Claude AI skills that you can include in a Claude project if you want to write am1 assembler.
+The skills here are sufficient to turn Claude into a quite competent coder, and are the same it used to create
+the adventure game.
 
-There is also a CLAUDE.md file which you can instruct Claude to read that will educate it about the structure
-of the emulator and the peripherals as well as establish the coding standards.
+They should be used such that Claude has access to /opt/pidp1-mods/Am1Includes and /Docs or a copy thereof.
+These are the skill sets that were used to create the adventure game.

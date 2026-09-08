@@ -3,8 +3,8 @@
 This document describes the **am1** macro assembler and how to use it.
 
 This is version 1.42 and covers up through am1 version 1.42; it will be updated as needed.\
-Edit date 5-Sep-2026
-Add warning for the behavior of addesses when cross bank calls are made.
+Edit date 8-Sep-2026
+Minor correction for cmi and dpy values, explain start behavior when in a bank, add 1D instruction explanations.
 
 ## What is **am1**?
 
@@ -64,7 +64,7 @@ use of characters in **macro1** that were poorly handled.
 - Tabs are not statement delimiters and are treated as a space
 - Cpp directives of the form *#xxx* are supported
 - The operators *& | ~ ^ \* \/*, %% (mod), as well as *(expr)* are added
-- *C* is defined as 040000 for use with IOTS
+- *C* is defined as 04000 for use with IOTS
 - *dpyc* is defined as 724007 for convenience
 - *sdb* is defined as 722007 for Type 33 support, equivalent to dpy-i if Type 33 not configured
 - *%* is added to indicate a local variable, *%xxx*
@@ -447,6 +447,27 @@ So, put your comments before the continuation:
 ```
 
 Finally, note that the **cpp** preprocessor removes comments from #defines when they are expanded in code.
+
+## PDP-1D instructions
+
+A number of the PDP-1D extended instructions are supported.
+However, the target PDP-1 must support any that are used.\
+All are supported by the pidp1-mods PDP-1.
+
+| mnemonic | operation |
+|----------|-----------|
+|lia | Load IO from AC |
+|lai | Load AC from IO |
+|lsw | lia lai, swap AC and IO|
+|swp | same as lsw |
+|cmi | 1's complement IO |
+|sni | skip on nonzero IO |
+|szi | skip on zero IO |
+|scf | clear program flags |
+|sci | clear IO |
+|ifi | program flags = pf bitwise-or with IO |
+|iif | IO = IO bitwise-or with pf |
+|ida | index AC, AC = AC + 1 |
 
 ## General program structure and comments
 
@@ -1133,6 +1154,16 @@ The start address can also be in any bank and can be a shared location symbol.
 
 The *stop* directive tells the loader to halt instead of starting the program.
 Additional tapes can the be loaded via read-in.
+
+**IMPORTANT** - an unqualified start means *in the current bank*:
+```
+bank 2
+start foo
+```
+will look for *foo* in bank 2 and tell the loader to start there.
+
+If you want to start in another bank, typically bank 0, either qualify the location with a bank or
+switch to the desired bank before using the directive.
 
 Examples are:
 ```

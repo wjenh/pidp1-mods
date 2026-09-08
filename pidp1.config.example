@@ -89,7 +89,7 @@ alpha=0.20
 # Each channel's alpha can also be set separately.
 # The alphas below are directly derived from the actual component values the
 # rc filters PDP-1 at the Computer History Museum have, per notes provided by them.
-# They correspond to cutoff frequences of 816, 740, 339, and 176 Hz.
+# They correspond to cutoff frequencies of 816, 740, 339, and 176 Hz.
 # These should be the authentic experience.
 #alpha1=0.2070
 #alpha2=0.1904

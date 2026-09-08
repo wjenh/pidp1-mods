@@ -1,8 +1,8 @@
 # Using the DCS Communication System
 
 This document describes how to use the enhanced multi-channel Type 630 Data Communication System replacement.
-Updated 15-Jul-2026\
-telent handling description added
+Updated 9-Sep-2026\
+corrected stale include file description
 
 ## What is DCS2?
 
@@ -432,7 +432,7 @@ If there is no channel available to accept a connection request, the request wil
 becomes available for the associated port.
 Note that the client might abandon the request after some time limit.
 
-## Telnet  mode rules
+## Telnet mode rules
 
 Enabling telnet is transparent to the pdp-1 program side.
 It handles protocl negotiation in both active and passive modes and transforms
@@ -446,7 +446,7 @@ A linefeed with no carriage return is also converted to Flexo carriage return, n
 In ascii mode cr/lf is converted to lf, a newline.\
 A bare lf is left unchanged.
 
-This is close to the telnet standard, but sightly relaxed
+This is close to the telnet standard, but sightly relaxed.
 
 ## Channel status bits
 
@@ -555,7 +555,6 @@ These are included:
 #define rchclr 002000
 
 // Extended commands.
-#define rwe iot 0222
 #define scb iot 4222
 #define rle iot 4322
 #define rpc iot 4422
@@ -570,7 +569,8 @@ These are included:
 // dcfxxx are single bit flags
 // dcmxxx are multibit masks
 // Channel Request Block first word
-// dcftel - telnet mode
+// dcftel - enable telnet mode: symmetric cr/lf framing on send and receive plus
+//          limited IAC handling (option negotiation refused, IAC escaping honored).
 // dcfflex - flexo mode, do automatic conversion
 // dcfecho - echo received characters
 // dcfioc - interrupt on connection open or close
@@ -584,7 +584,7 @@ These are included:
 // dcmsbs - bitmask, sbs channel to use
 // dcmcha - bitmask, channel number for this channel
 
-#define dcfcrnl 400000
+#define dcftel 400000
 #define dcfflex 200000
 #define dcfecho 100000
 #define dcfioc 040000

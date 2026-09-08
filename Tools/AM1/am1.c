@@ -114,6 +114,7 @@
  * 5-Sep-2026 wje - various fixes for dangling constants and vars not being emitted correctly
  * 6-Sep-2026 wje - minor fix in listcodegen to fix some costants being listed incorrectly
  * 6-Sep-2026 wje - trivial change, show mem usage in sorted low bank to high bank order
+ * 8-Sep-2026 wje - change symtab version number, fix testcodegen to handle text, ascii, type340
  *
 */
 #include <unistd.h>

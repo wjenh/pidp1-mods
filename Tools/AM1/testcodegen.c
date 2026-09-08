@@ -2,6 +2,7 @@
  * Process a parse tree to generate a test dump file.
  * The output is each memory location and value that was generated printed as two space-separated
  * 6 digit octal numbers.
+ *
 */
 #include <stdio.h>
 #include <string.h>
@@ -26,8 +27,8 @@ static int reduceOperand(PNodeP);
 static void dumpStatements(FILE *, PNodeP);
 static void dumpVars(FILE *outfP, PNodeP);
 static void dumpConstants(FILE *fP, PNodeP nodeP, SymNodeP symP);
-static bool dumpText(FILE *outfP, FlexText flexText);
-static bool dumpAscii(FILE *outfP, char *strP);
+static void dumpText(FILE *outfP, PNodeP nodeP);
+static void dumpAscii(FILE *outfP, PNodeP nodeP);
 static void printOne(FILE *fP, PNodeP nodeP, int value);
 
 // Walk a tree and emit the words.
@@ -49,7 +50,6 @@ static void
 dumpStatements(FILE *outfP, PNodeP nodeP)
 {
 int i, j;
-PNodeP node2P;
 BankContextP bankP;
 
     while( nodeP )
@@ -89,11 +89,11 @@ BankContextP bankP;
                 {
                 case TEXT:
                 case TYPE340:
-                    dumpText(outfP, nodeP->rightP->value.flexText);
+                    dumpText(outfP, nodeP->rightP);
                     break;
 
                 case ASCII:
-                    dumpAscii(outfP, nodeP->rightP->value.strP);
+                    dumpAscii(outfP, nodeP->rightP);
                     break;
 
                 default:
@@ -115,12 +115,11 @@ BankContextP bankP;
 
         case TEXT:
         case TYPE340:
-            dumpText(outfP, nodeP->value.flexText);
-            break;
+            dumpText(outfP, nodeP);
             break;
 
         case ASCII:
-            dumpAscii(outfP, nodeP->value.strP);
+            dumpAscii(outfP, nodeP);
             break;
 
         case BANK:
@@ -130,11 +129,12 @@ BankContextP bankP;
         case TABLE:
             if( nodeP->rightP )     // has initializer
             {
+                // Every word of the table gets the initializer's value, evaluated once.
                 j = evalExpr(nodeP->rightP);
 
                 for( i = 0; i < nodeP->value.ival; ++i )
                 {
-                    fprintf(outfP, "%06o\n", i);
+                    fprintf(outfP, "%02o%04o %06o\n", nodeP->bank, (nodeP->pc + i), j);
                 }
             }
             break;
@@ -213,12 +213,6 @@ canReduce(PNodeP nodeP)
 static int
 reduceOperand(PNodeP nodeP)
 {
-int lval;
-int rval;
-char ch;
-SymNodeP symP;
-PNodeP node2P;
-
     if( !nodeP )
     {
         return(0);
@@ -226,19 +220,30 @@ PNodeP node2P;
 
     if( nodeP->type == DOT )
     {
-        return( 0 );
+        // A bare '.' is the address of the word itself, which the parser
+        // snapshotted into the node when it built it; bincodegen.c uses its
+        // running pc here and the two are the same address.
+        return( nodeP->value.ival );
     }
 
     return( evalExpr(nodeP) );
 }
 
-// Emit packed ascii, return false if memory overwritten, else true.
-static bool
-dumpAscii(FILE *outfP, char *strP)
+// Emit packed ascii, two 9-bit characters per word, high character first, the
+// terminating NUL included, a lone final character padded with a zero low byte.
+// This is writeAscii() in bincodegen.c with the output replaced by printing.
+// The node is the ASCII node: its pc is the first word's address.
+static void
+dumpAscii(FILE *outfP, PNodeP nodeP)
 {
 int i;
 int word;
+int addr;
+char *strP;
 
+    strP = nodeP->value.strP;
+    addr = nodeP->pc;
+    word = 0;
     i = 0;      // 0 is doing high byte, 1 doing low byte
 
     do
@@ -250,7 +255,7 @@ int word;
         else
         {
             word = (word << 9) | *strP;
-            fprintf(outfP, "%06o\n", i);
+            fprintf(outfP, "%02o%04o %06o\n", nodeP->bank, addr++, (word & WRDMASK));
         }
 
         i ^= 1;
@@ -259,27 +264,35 @@ int word;
 
     if( i )         // if not zero, we didn't finish writing a full word, do so with low byte 0
     {
-        fprintf(outfP, "%06o\n", i);
+        fprintf(outfP, "%02o%04o %06o\n", nodeP->bank, addr++, ((word << 9) & WRDMASK));
     }
-
-    return(true);
 }
 
-// Emit packed flexo code
-static bool
-dumpText(FILE *outfP, FlexText flexText)
+// Emit packed flexo code, three 6-bit characters per word, high character first,
+// a short final word padded on the right, an empty string still one zero word.
+// This is writeText() in bincodegen.c with the output replaced by printing.
+// writeText() never clears its accumulator between words, so every word after
+// the first carries earlier characters above bit 17; the tape writer drops them
+// and this masks them the same way.
+// The node is the TEXT or TYPE340 node: its pc is the first word's address.
+static void
+dumpText(FILE *outfP, PNodeP nodeP)
 {
 int i;
 int val;
+int addr;
 char *bufP;
+FlexText flexText;
 
+    flexText = nodeP->value.flexText;
     bufP = flexText.bufP;
+    addr = nodeP->pc;
 
     for( val = i = 0; i < flexText.nchars; i++ )
     {
         if( i && !(i % 3) )
         {
-            fprintf(outfP, "%06o\n", val);
+            fprintf(outfP, "%02o%04o %06o\n", nodeP->bank, addr++, (val & WRDMASK));
         }
 
         val <<= 6;
@@ -293,14 +306,12 @@ char *bufP;
             val <<= 6;
         }
 
-        fprintf(outfP, "%06o\n", val);
+        fprintf(outfP, "%02o%04o %06o\n", nodeP->bank, addr++, (val & WRDMASK));
     }
     else if( (i >= flexText.nchars) && !( i % 3) )
     {
-        fprintf(outfP, "%06o\n", val);
+        fprintf(outfP, "%02o%04o %06o\n", nodeP->bank, addr++, (val & WRDMASK));
     }
-
-    return(true);
 }
 
 // Walk a list of variables, emit the storage.

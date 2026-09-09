@@ -11,6 +11,7 @@ void checkPCBound(char *mstP, int pc, int lineNo);
 
 extern void yyerror(char *);
 extern void verror(const char *msgP, ...);
+extern void verrorl(int lineNo, const char *msgP, ...);
 
 extern int curBank;
 
@@ -19,8 +20,10 @@ checkPCBound(char *msgP, int addr, int lineNo)
 {
     if( addr >= BANKSIZE )                 // ran over the end of the memory
     {
-        // lineNo is not incremented yet, no need to back it up.
-        verror("%s would go past the memory bank size of 4096 words", msgP, lineNo);
+        // Report against the line the caller recorded, not the global lineno:
+        // if bison read the terminator as lookahead before the rule reduced,
+        // the global has already moved on to the next line.
+        verrorl(lineNo, "%s would go past the memory bank size of 4096 words", msgP);
     }
 }
 

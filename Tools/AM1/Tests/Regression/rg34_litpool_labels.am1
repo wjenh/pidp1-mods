@@ -1,0 +1,44 @@
+Pooled literal labels in the listing
+// am1 pools a bank's literals BY VALUE, so two references whose values
+// coincide share ONE pool word. That is correct and deliberate: the word is
+// the same 18 bits either way, and which bank an indirect through it reaches
+// is decided by the extend-mode state at execution, not by the pool.
+//
+// Until 06-Sep-26 the listing rendered every reference sharing a slot from the
+// pooled symbol's own expression tree -- whichever reference interned the slot
+// first -- so the second reference here was annotated with the first one's
+// symbol, bank qualifier included. In Adventure that printed a bank-0
+// subroutine call under an unrelated bank-2 string label.
+//
+// The two references below are written differently but resolve to the same
+// 12-bit value, so they must share one pool word AND still be labelled with
+// what the source wrote. run_regression.sh checks both halves; a run where
+// they stopped sharing the word would make the label check vacuous.
+//
+// Tools/AM1/Tests/litpool_bankcollide.am1 is the same case with the collision
+// under a -D switch, for looking at by hand.
+
+100/
+    hlt
+
+// alpha is a bank-0 address; beta is a bank-1 offset. Both are DEFINED before
+// they are referenced, so both values are known when the pool slot is chosen
+// (a forward reference gets its own slot and no sharing happens at all).
+bank 0
+2000/
+alpha, 0
+
+bank 1
+2000/
+beta, 0
+
+3000/
+    lac [alpha:0        // FAR reference  -- bank 0's 12-bit address
+    lac [beta           // NEAR reference -- bank 1's own 12-bit offset
+    hlt
+
+constants
+
+bank 0
+constants
+start 100

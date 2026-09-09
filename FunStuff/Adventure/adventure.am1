@@ -6500,13 +6500,7 @@ apmNoBlank,
     dcl                 // issue bank 1, into advMsgTmp -- starts the transfer
     DRUM_WAIT_READY         // wait for the transfer to complete
     lem
-    // Derive the exact character count txtsix needs: charCount =
-    // 3*nwords - padCount. Plain shift/mask/add/sub throughout, not
-    // `mul`/`div` -- this codebase deliberately avoids `mul` elsewhere
-    // (see the WHY-NO-MUL notes later in this file: it's a Q1.17
-    // fixed-point product, not a plain integer one), and `div`'s exact
-    // register/pre-shift convention is easy to get wrong, so this sticks
-    // to primitives already proven correct.
+    // Derive the exact character count txtsix needs: charCount = 3*nwords - padCount.
     lac rawCount
     and [07777]         // AC = nwords (recomputed; IO was overwritten by
     dac msgWords        // the dcl transfer-address load above)
@@ -11428,10 +11422,8 @@ rbtCore,                     // AC = the chosen bitmap's base address,
     lia                      // IO = bit index (lia writes AC into IO)
     cla
     sil 1s                   // pre-shift: div's dividend ignores IO bit 17
-                              // (the same idiom as UTIL/bitsets.ac)
     div [0d18]               // AC = word offset (bitIx/18), IO = bit-in-word
-    nop                      // div SKIPS this on success; overflow is
-                              // impossible (bitIx < 256, divisor 18)
+    nop                      // div SKIPS this on success; overflow is impossible
     add base                 // AC = 12-bit in-bank address of the word
     dac ptr
     lai                      // AC = bit-in-word (0..17, from IO)
@@ -12614,10 +12606,9 @@ dtDoTakeGo,                     // AC == 0 (skip): ordinary take proceeds
     lac i [objLocPtr:0]            // zero the cell objLocPtr points at
     dac dtTmp
     dzm i dtTmp
-    jsp i [takeBirdCageBundle:1]  // bank 1 -- bring the paired object along if
-                                     // bundled (bird/cage task); eem stays on
+    jsp i [takeBirdCageBundle:1]  // bank 1 -- bring the paired object along if bundled, eem stays on
     jsp i [syncLiquidIfBottle:1]  // if the object just taken was the bottle, re-sync objLoc[WATER]/
-                                     // objLoc[OIL] now that it's confirmed carried
+                                  // objLoc[OIL] now that it's confirmed carried
 // There are no per-site repository-flag clears here: adven.f4 does not
 // clear those flags at the TAKE site at all. 860 sweeps everything
 // carried, once a turn, and that sweep lives in turnLoop where the source
@@ -12786,17 +12777,16 @@ ddCheckVendingCoins,           // DROP COINS at the vending machine (adven.f4 90
     SKIP_NEXT_IF_AC_ZERO                   // skip when AC == 0 (not handled) -- falls through to ddDoDrop
     jmp i [turnLoop:0]        // AC != 0 (no skip): checkVendingCoins already did everything
 ddDoDrop,                     // AC == 0: none of the special cases above -- ordinary drop
-    jsp i [dropCageBundle:1]  // bank 1 -- dropping the cage drops the bird
-                                 //   too (bird/cage task); eem stays on
-    lac i [objLocPtr:0]            // store curRoom into the cell
+    jsp i [dropCageBundle:1]  // bank 1 -- dropping the cage drops the bird too, eem stays on
+    lac i [objLocPtr:0]       // store curRoom into the cell
     dac ddTmp
     lac i [curRoom:0]
     dac i ddTmp
     lio i [objLocPtr:0]            // f4 1278's CALL DROP(OBJ,LOC) prefixes the room's
     jsp i [bumpDropSeq:0]            // list, so this object is described first from now on
     jsp i [syncLiquidIfBottle:1]
-// This is adven.f4 9027, not 9021.  9027 is the ORDINARY
-// drop -- everything that is not one of the four special legs falls
+// This is adven.f4 9027.
+// Everything that is not one of the four special legs falls
 // through to it and speaks RSPEAK(54), message 54 being "OK".  9021 is
 // the shared MECHANICS tail (liquid substitution, the cage/bird bundle,
 // CALL DROP) and is silent only because the legs that jump into it have
@@ -15727,8 +15717,8 @@ wsdLoop,
     lac v
     sub wzSmDivisor
     SKIP_NEXT_IF_AC_NOT_NEGATIVE   // (v-divisor) >= 0: skip past done -- more to subtract
-    jmp wsdDone                        // (v-divisor) < 0 (no skip): v < divisor, done
-    dac v                                 // (v-divisor) >= 0 (skipped): v -= divisor
+    jmp wsdDone                    // (v-divisor) < 0 (no skip): v < divisor, done
+    dac v                          // (v-divisor) >= 0 (skipped): v -= divisor
     lac q
     add [1]
     dac q

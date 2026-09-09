@@ -1,0 +1,59 @@
+Literal pool value-dedup across banks
+// am1 pools a bank's literals BY VALUE. Two literals whose 12-bit values
+// coincide therefore share ONE pool word, even when they mean addresses in
+// different banks -- which is correct: the word is the same 18 bits either
+// way, and which bank an indirect through it resolves to is decided by the
+// extend-mode state at execution, not by the pool.
+//
+// The consequence is that a bank's pool can grow or shrink by a word when
+// some OTHER bank's addresses move and a coincidence is made or broken.
+// Adventure hit this on 06-Sep-26: bank 2's pool went 234 -> 235 words for a
+// change that was entirely bank-0-local, because wizComSave moved from
+// 006230 to 006277 and stopped colliding with wnhLblHolidays's bank-2
+// offset 6230.
+//
+//   am1 -l -DALPHAORG=2000 litpool_bankcollide.am1   -> ONE pool word
+//   am1 -l -DALPHAORG=2001 litpool_bankcollide.am1   -> TWO pool words
+//
+// LISTING DEFECT, FIXED 06-Sep-26, and still checked by the same two runs:
+// the listing used to label a pooled literal with the expression that was
+// interned into the slot FIRST, ignoring both the bank qualifier and what the
+// source actually wrote, so in the ALPHAORG=2000 run `lac [beta` printed as
+// `lac [alpha:0]`. The generated code was right; only the annotation lied. In
+// Adventure the same defect printed `jsp i [wizComSave:0]` as
+// `jsp i [wnhLblHolidays]`, which is exactly the kind of thing that sends
+// someone chasing a phantom through a listing. The parser now keeps each
+// reference's own expression tree on the CONSTANT node (value2.ptr) and the
+// listing prints from there.
+//
+// The check: in BOTH runs line 43 must print `lac [alpha:0]` and line 44 must
+// print `lac [beta]`. The ALPHAORG=2000 run must still show them sharing one
+// pool word -- identical object words, different labels. Regression test
+// rg34_litpool_labels in Tests/Regression pins exactly that.
+100/
+    hlt
+
+// Bank 0's alpha is placed by -DALPHAORG. Bank 1's beta is fixed at 2000.
+// Both symbols are DEFINED before the two literals below reference them,
+// so both values are known when the pool slot is chosen. (With forward
+// references am1 allocates separate slots and no dedup happens -- that is
+// worth knowing too, and it is why the first draft of this test showed
+// nothing.)
+bank 0
+ALPHAORG/
+alpha, 0
+
+bank 1
+2000/
+beta, 0
+
+3000/
+    lac [alpha:0        // FAR literal  -- bank 0's 12-bit address
+    lac [beta           // NEAR literal -- bank 1's own 12-bit offset
+    hlt
+
+constants
+
+bank 0
+constants
+start 100

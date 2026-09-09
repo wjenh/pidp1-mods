@@ -1,0 +1,11 @@
+Test rg35 (XFAIL): a variables block that runs past the bank must still fail
+// setVarsPC places the implicit block, and it bound-checks separately from
+// the directive rules, so it needs its own negative case. Two variables
+// starting at 07777 put the second at 010000.
+        var topvar, overvar
+100/
+beg,    dio topvar
+        dio overvar
+07777/
+        variables
+stop

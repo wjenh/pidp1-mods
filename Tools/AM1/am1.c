@@ -1,6 +1,6 @@
 /* am1.c - another macro1 assembler
  *
- * Usage: am1 [-abdlmMnrsvz[ykp]] [-i path] [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
+ * Usage: am1 [-abdlmMnrsvz[ykp]] [-O[=modifier]] [-i path] [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
  *
  * Valid switches are:
  *
@@ -12,6 +12,19 @@
  * -M	memory overwrite by code is a warning, not a fatal error
  * -n	don't run cpp on input source
  * -N	don't keep any contents from include files in the listing
+ * -O   run the optimizer advisor, write its report to sourcefile.opt
+ * -O=dump
+ *      as -O, and also print the optimizer's word table on stdout in -T format
+ * -O=decode
+ *      as -O, and also print the optimizer's decoded word table on stdout
+ * -O=refs
+ *      as -O, and also print the optimizer's reference edges and word flags on stdout
+ * -O=flow
+ *      as -O, and also print the optimizer's basic blocks and reachability on stdout
+ * -O=rules
+ *      as -O, and also print the optimizer's findings on stdout, one per line
+ * -O=check
+ *      as -O, and run the optimizer's decoder self-check first, on stdout
  * -r	don't write a loader at the beginning of a tape
  * -s	generate a symbol table file
  * -S	print a summary of per-bank highest address used
@@ -115,6 +128,9 @@
  * 6-Sep-2026 wje - minor fix in listcodegen to fix some costants being listed incorrectly
  * 6-Sep-2026 wje - trivial change, show mem usage in sorted low bank to high bank order
  * 8-Sep-2026 wje - change symtab version number, fix testcodegen to handle text, ascii, type340
+ * 8-Sep-2026 claude - add -O, the optimizer advisor, see Docs-OPTIMIZER.md.
+ * 9-Sep-2026 wje - fixes (finally) for line numbers sometimes being off by one in error messages, fix some of the
+ *    directives, e.g. table, not allowing use of location 07777
  *
 */
 #include <unistd.h>
@@ -127,6 +143,7 @@
 
 #include "am1.h"
 #include "symtab.h"
+#include "optimizer.h"
 
 typedef struct inc_item
 {
@@ -178,6 +195,7 @@ bool noWarn;
 bool noMemFatal;
 bool dropIncludeText;
 bool showMemUsage;
+bool doOptimize;                // -O, run the optimizer advisor
 int lineno;
 
 extern int yydebug;
@@ -303,6 +321,19 @@ BankContextP bankP, lastBankP;
 
             case 'N':
                 dropIncludeText = true;
+                break;
+
+            case 'O':                                       /* -O or -O=modifier */
+                doOptimize = true;
+                if( *cP == '=' )
+                {
+                    if( !optimizeSetOption(++cP) )
+                    {
+                        usage();
+                    }
+
+                    cP = "";
+                }
                 break;
 
             case 'p':
@@ -469,6 +500,29 @@ BankContextP bankP, lastBankP;
     if( doMacro && sawBank  )
     {
         vwarn(WARN_BANKS, "'bank' was used, macro1 does not support it.\n");
+    }
+
+    // The optimizer runs on the finished tree before any back end and
+    // changes nothing; its report is the only output it produces.
+    if( doOptimize )
+    {
+        strcpy(ofilename, basename);                         /* output file */
+        strcat(ofilename, ".opt");
+
+        if(!(outfP = fopen(ofilename, "w")))
+        {
+            fprintf(stderr, "am1: can't open output file '%s'\n", ofilename);
+            leave(0);
+        }
+
+        i = optimize(rootP, basename);
+
+        fclose(outfP);
+
+        if(!i)                    // optimizer failed
+        {
+            unlink(ofilename);      // get rid of output
+        }
     }
 
     if( doMacro )
@@ -1118,7 +1172,7 @@ leave(int signo)
 int
 usage()
 {
-    fprintf(stderr, "Usage: am1 [-abdmMlnNsSvz[xykp]] [-Dsymbol]... [-Ipath]... [-irootpath]\n");
+    fprintf(stderr, "Usage: am1 [-abdmMlnNsSvz[xykp]] [-O[=dump|decode|refs|flow|rules|check]] [-Dsymbol]... [-Ipath]... [-irootpath]\n");
     fprintf(stderr, "  [-W[=warning]]... sourcefile\n\n");
     fprintf(stderr, "  -a treat space in expressions as add, not or\n");
     fprintf(stderr, "  -b generate binary code\n");
@@ -1128,6 +1182,13 @@ usage()
     fprintf(stderr, "  -M memory overwrite is a warning, not a fatal error\n");
     fprintf(stderr, "  -n don't run cpp\n");
     fprintf(stderr, "  -N drop any include file text from listing\n");
+    fprintf(stderr, "  -O run the optimizer advisor, report goes to sourcefile.opt\n");
+    fprintf(stderr, "  -O=dump as -O, and print the optimizer's word table on stdout in -T format\n");
+    fprintf(stderr, "  -O=decode as -O, and print the optimizer's decoded word table on stdout\n");
+    fprintf(stderr, "  -O=refs as -O, and print the optimizer's reference edges and word flags on stdout\n");
+    fprintf(stderr, "  -O=flow as -O, and print the optimizer's basic blocks and reachability on stdout\n");
+    fprintf(stderr, "  -O=rules as -O, and print the optimizer's findings on stdout\n");
+    fprintf(stderr, "  -O=check as -O, and run the optimizer's decoder self-check first\n");
     fprintf(stderr, "  -r don't write a loader at the beginning of the binary file\n");
     fprintf(stderr, "  -s generate a symbol table file\n");
     fprintf(stderr, "  -S summarize memory usage per bank\n");

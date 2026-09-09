@@ -1,0 +1,36 @@
+Test rg32: constants-pool determinism (no ASLR sensitivity)
+// Two plain runs of this file (NO setarch -R) must produce byte-identical
+// output -- run_regression.sh's rg32 block assembles it twice and compares.
+// Before 28-Aug-26, constant fingerprints for unresolved symbols came from
+// the symbol node's malloc ADDRESS, so the constants-pool layout followed
+// the allocator under ASLR and every run gave a different binary. Now:
+// unresolved symbol refs use a creation-order serial (sym_make), and
+// wildcard refs digest the NAME (FNV-1a) -- both identical run to run.
+// The stored .ref additionally pins the exact layout, including:
+//   - an unresolved-at-use forward ref deduping to one slot ([fwd] twice)
+//   - a distinct expression on the same symbol getting its own slot
+//   - wildcard refs deduping BY NAME ([wsym:*] twice -> one slot; the old
+//     string-pointer hashing never deduped these at all)
+// If the fingerprint scheme is ever deliberately changed, regenerate the
+// .ref (am1 -T, copy the .dmp) -- layout pinning is the point, not a law.
+100/
+    lac [fwd            // forward ref, unresolved when this constant is hashed
+    lio [fwd            // same symbol -- must share one pool slot
+    lac [fwd+1          // distinct expression on the same symbol -- own slot
+    lio [wsym:*         // wildcard by name, unresolved
+    lac [wsym:*         // same name -- must share one pool slot
+    lac [17
+    lio [17             // plain value dedup, sanity
+    hlt
+fwd, 0
+    constants
+
+bank 1
+200/
+wsym, 0
+b1fwd, 0
+    lac [b1fwd          // per-bank pool, its own forward-ref slot
+    hlt
+    constants
+
+start 100

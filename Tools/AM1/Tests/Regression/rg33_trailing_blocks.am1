@@ -1,0 +1,39 @@
+rg33 automatic placement of trailing constants and variables
+
+// Regression for the automatically emitted constants and variables blocks
+// (05-Sep-26). Three defects, all silent:
+//   - the block was stamped with whatever bank happened to be current when the
+//     program ended, not the bank it belongs to, so it could land in, and
+//     overwrite, another bank
+//   - the parser allocated variables before constants but every code generator
+//     emitted constants before variables, so the variables were written past
+//     the constants instead of where their symbols point
+//   - the code generators advanced the bank's cur_pc, so whichever one ran
+//     second reported or emitted the block at the wrong address
+//
+// Both banks leave constants and variables dangling, and the program ends in
+// bank 0, so bank 1's trailing block is the one most likely to be misplaced.
+// Compared against the stored .ref, which pins bank and address for every word.
+
+100/
+       lac [foo:1             // a bank 0 constant holding a bank 1 address
+       dac v1
+       lac [0d1234
+       dac v2
+       hlt
+bar,   0                      // referenced from bank 1
+
+var v1
+var v2
+
+bank 1
+200/
+foo,   0                      // referenced from bank 0
+       lac [bar:0             // a bank 1 constant holding a bank 0 address
+       dac w1
+       hlt
+
+var w1
+
+bank 0
+start 100

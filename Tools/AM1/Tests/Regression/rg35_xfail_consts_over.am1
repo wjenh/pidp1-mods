@@ -1,0 +1,10 @@
+Test rg35 (XFAIL): a constants block that runs past the bank must still fail
+// setConstPC places the implicit block and bound-checks separately from the
+// directive rules and from setVarsPC, so it needs its own negative case.
+// Two pooled constants starting at 07777 put the second at 010000.
+100/
+beg,    lac [0123]
+        lac [0456]
+07777/
+        constants
+stop

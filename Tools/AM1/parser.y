@@ -64,6 +64,7 @@ int yyerror(const char *errstr);
 void verror(const char *msgP, ...);
 void vwarn(int errtype, const char *msgP, ...);
 void vwarnl(int errType, int lineno, const char *msgP, ...);
+void verrorl(int lineno, const char *msgP, ...);
 
 int yylex(void);
 
@@ -352,8 +353,8 @@ stmt            : one_stmt
 
 one_stmt        : expr
                 {
-                    checkPCBound("Code", curBankP->cur_pc, lineno);
                     $$ = newnode(lineno, curBankP->cur_pc, EXPR, NILP, $1);
+                    checkPCBound("Code", curBankP->cur_pc, $$->lineNo);
                     if( $1 && !($1->flags & PN_NOINC) )
                     {
                         ++curBankP->cur_pc;
@@ -392,7 +393,7 @@ one_stmt        : expr
                     else
                     {
                         setVarsPC(curBank, curBankP->varNodesP);
-                        checkPCBound("Variables", curBankP->cur_pc, lineno);
+                        checkPCBound("Variables", curBankP->cur_pc - 1, $$->lineNo);
                         curBankP->varNodesP = 0;
                     }
                 }
@@ -561,7 +562,7 @@ one_stmt        : expr
                     $$ = newnode(lineno+1, curBankP->cur_pc, ASCII, NILP, NILP);
                     $$->value.strP = $2;
                     curBankP->cur_pc += countAscii($2);
-                    checkPCBound("Ascii", curBankP->cur_pc, lineno);
+                    checkPCBound("Ascii", curBankP->cur_pc - 1, $$->lineNo);
                 }
                 | TYPE340 T340STRING
                 {
@@ -570,28 +571,28 @@ one_stmt        : expr
                     $$ = newnode(lineno+1, curBankP->cur_pc, TYPE340, NILP, NILP);
                     $$->value.flexText = $2;
                     curBankP->cur_pc += countText($2);
-                    checkPCBound("Type340", curBankP->cur_pc, lineno);
+                    checkPCBound("Type340", curBankP->cur_pc - 1, $$->lineNo);
                 }
                 | TEXT
                 {
                     $$ = newnode(lineno+1, curBankP->cur_pc, TEXT, NILP, NILP);
                     $$->value.flexText = $1;
                     curBankP->cur_pc += countText($1);
-                    checkPCBound("Text", curBankP->cur_pc, lineno);
+                    checkPCBound("Text", curBankP->cur_pc - 1, $$->lineNo);
                 }
                 | TABLE simple_expr
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, TABLE, NILP, NILP);
                     $$->value.ival = evalExpr($2);
                     curBankP->cur_pc += $$->value.ival;
-                    checkPCBound("Table", curBankP->cur_pc, lineno);
+                    checkPCBound("Table", curBankP->cur_pc - 1, $$->lineNo);
                 }
                 | TABLE simple_expr LOCATION simple_expr
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, TABLE, NILP, $4);
                     $$->value.ival = evalExpr($2);
                     curBankP->cur_pc += $$->value.ival;
-                    checkPCBound("Table", curBankP->cur_pc, lineno);
+                    checkPCBound("Table", curBankP->cur_pc - 1, $$->lineNo);
                 }
                 | EXPORT symList
                 {
@@ -694,7 +695,7 @@ labelTrailer    : optExpr
                     $$ = newnode(lineno+1, pendingLabelPC, ASCII, NILP, NILP);
                     $$->value.strP = $2;
                     curBankP->cur_pc += countAscii($2);
-                    checkPCBound("Ascii", curBankP->cur_pc, lineno);
+                    checkPCBound("Ascii", curBankP->cur_pc - 1, $$->lineNo);
                     $$->flags |= PN_NOINC;
                 }
                 | TYPE340 T340STRING
@@ -703,7 +704,7 @@ labelTrailer    : optExpr
                     $$ = newnode(lineno+1, pendingLabelPC, TYPE340, NILP, NILP);
                     $$->value.flexText = $2;
                     curBankP->cur_pc += countText($2);
-                    checkPCBound("Type340", curBankP->cur_pc, lineno);
+                    checkPCBound("Type340", curBankP->cur_pc - 1, $$->lineNo);
                     $$->flags |= PN_NOINC;
                 }
                 | TEXT
@@ -711,7 +712,7 @@ labelTrailer    : optExpr
                     $$ = newnode(lineno+1, pendingLabelPC, TEXT, NILP, NILP);
                     $$->value.flexText = $1;
                     curBankP->cur_pc += countText($1);
-                    checkPCBound("Text", curBankP->cur_pc, lineno);
+                    checkPCBound("Text", curBankP->cur_pc - 1, $$->lineNo);
                     $$->flags |= PN_NOINC;
                 }
                 ;
@@ -1329,7 +1330,7 @@ setConstPC(int pc, SymNodeP symP)
     pc = setConstPC(pc, symP->leftP);
     pc = setConstPC(pc, symP->rightP);
 
-    checkPCBound("Constants", pc, lineno);
+    checkPCBound("Constants", pc - 1, lineno);
     return( pc );
 }
 
@@ -1391,7 +1392,7 @@ SymNodeP symP;
         listP = listP->nextP;
     }
 
-    checkPCBound("Variables", curBankP->cur_pc, lineno);
+    checkPCBound("Variables", curBankP->cur_pc - 1, lineno);
 }
 
 // Process a symbol file, bring in all exported ones.
@@ -1706,6 +1707,25 @@ char format[1024];
         msgP,lineno,filenameP);
     vfprintf(stderr,format,argP);
     va_end(argP);
+}
+
+// Same as verror except the line number is passed explicitly.
+// A diagnostic raised from a parser action cannot rely on the global
+// lineno: if bison read the statement terminator as lookahead before the
+// rule reduced, the lexer has already advanced it to the next line.
+// The node's own lineNo, set by newnode(), is the line the user wrote.
+void
+verrorl(int lineno, const char *msgP, ...)
+{
+va_list argP;
+char format[1024];
+
+    va_start(argP, msgP);
+    sprintf(format,"am1: %s\nat line %d, file %s\n",
+        msgP,lineno,filenameP);
+    vfprintf(stderr,format,argP);
+    va_end(argP);
+    leave(0);
 }
 
 void

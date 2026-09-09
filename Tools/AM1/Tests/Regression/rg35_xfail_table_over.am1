@@ -1,0 +1,9 @@
+Test rg35 (XFAIL): a table that runs one word past the bank must still fail
+// The companion to rg35_bank_ceiling. That test proves a block may END on
+// 07777; this one proves the check was not simply removed. The table starts
+// at 07770 and asks for 011 words, so its last word would be 010000.
+100/
+beg,    hlt
+07770/
+        table 011, 0123
+stop

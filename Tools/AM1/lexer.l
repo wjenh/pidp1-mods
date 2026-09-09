@@ -71,6 +71,7 @@ extern void vwarn(int errtype, char *msgP, ...);
                         *commentP = '\0';
                         yylval.strP = malloc(commentP - commentBuf + 1);
                         strcpy(yylval.strP, commentBuf);
+                        noIncrement = true;    // because we are going to push back a newline
                         unput('\n');    // sometimes lookahead screws up start-of-line
                         return(CSCOMMENT);
                     }

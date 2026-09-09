@@ -6,9 +6,6 @@
 # Each test is two checks, not one:
 #   1. am1 exits successfully (or, for an --xfail test, does not)
 #   2. the words it generated match the stored <name>.ref
-# The second check was missing until 08-Sep-2026, so for a while the suite was
-# only asking whether am1 ran, not whether it assembled the right thing. It
-# stayed green through a source change that added two words to rg10_locals.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AM1="${1:-"$SCRIPT_DIR/../../am1"}"
@@ -251,6 +248,25 @@ else
     FAILURES+=("rg34_litpool_still_shared")
 fi
 
+
+# rg35 -- the last word of a bank (09-Sep-26). Every directive that reserves a
+# BLOCK advanced cur_pc and then bound-checked the result, which is one PAST
+# the last word the block used. A block ending exactly on 07777 left cur_pc at
+# 010000 and was rejected, so table, text, ascii, type340, variables and
+# constants could not reach the top word of any bank -- although a plain
+# instruction could, which is the control leg rg35_bank_ceiling carries in
+# bank 0. Four checks, because relaxing a bound is only half a fix:
+#   1. rg35_bank_ceiling assembles, and its .ref pins the words so a "fix"
+#      that let the block through by dropping its last word still fails
+#   2-4. the three xfail sources overrun by exactly one word and must still be
+#      rejected. They are separate sources because the check lives in three
+#      places -- the directive rules, setVarsPC and setConstPC -- and am1
+#      stops at the first error, so one source could only ever test one.
+run_test rg35_bank_ceiling         "$SCRIPT_DIR/rg35_bank_ceiling.am1"
+
+run_test rg35_xfail_table_over     "$SCRIPT_DIR/rg35_xfail_table_over.am1"     --xfail
+run_test rg35_xfail_vars_over      "$SCRIPT_DIR/rg35_xfail_vars_over.am1"      --xfail
+run_test rg35_xfail_consts_over    "$SCRIPT_DIR/rg35_xfail_consts_over.am1"    --xfail
 echo ""
 
 # Not a failure: an --xfail test never gets far enough to have words to

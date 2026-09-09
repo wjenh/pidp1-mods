@@ -1,0 +1,55 @@
+Test rg35: a block directive may end on the last word of a bank
+// 07777 is a usable address -- an ordinary instruction assembles there, and
+// bank 0 below puts one at 07777 to prove it. But every directive that
+// reserves a BLOCK of words advances cur_pc first and bound-checked the
+// result, which is one PAST the last word it used. A block ending exactly at
+// 07777 left cur_pc at 010000 and was rejected, so the top word of every bank
+// was unreachable to table, text, ascii, type340, variables and constants.
+//
+// Each bank below ends its block exactly on 07777. Every one of these was
+// rejected before 09-Sep-2026; if the check ever goes back to testing the pc
+// after the block instead of the last address in it, they fail again.
+//
+// The .ref pins the words, so it also catches a "fix" that let the block
+// through by silently dropping its last word.
+
+bank 0
+100/
+beg,    hlt
+07777/
+        lac beg         // an ordinary instruction reaches the ceiling
+
+bank 1
+07770/
+        table 010, 0123 // 8 words, 07770 through 07777
+
+bank 2
+07777/
+        text "a"
+
+bank 3
+07777/
+        ascii "a"
+
+bank 4
+07777/
+        type340 "a"
+
+bank 5
+07777/
+lbl,    text "b"        // the labelTrailer form takes a different rule
+
+bank 6
+        var topvar
+100/
+        dio topvar
+07777/
+        variables       // the implicit block, placed by setVarsPC
+
+bank 7
+100/
+        lac [0123]
+07777/
+        constants       // the implicit block, placed by setConstPC
+
+start beg:0

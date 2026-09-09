@@ -5,7 +5,7 @@ CCFLAGS= -g
 BISONFLAGS=
 
 OBJS=am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o eval.o \
-	maccodegen.o bincodegen.o listcodegen.o testcodegen.o listSymtab.o
+	maccodegen.o bincodegen.o listcodegen.o testcodegen.o listSymtab.o optimizer.o
 
 all: am1 fastload
 
@@ -43,8 +43,11 @@ lex.yy.c: lexer.l y.tab.h
 y.tab.%: parser.y am1.h symtab.h
 	bison $(BISONFLAGS) -o y.tab.c -d parser.y
 
-am1.o: am1.c am1.h symtab.h y.tab.h
+am1.o: am1.c am1.h symtab.h y.tab.h optimizer.h
 	$(CC) -c am1.c
+
+optimizer.o: optimizer.c optimizer.h am1.h y.tab.h
+	$(CC) -c optimizer.c
 
 parsefns.o: parsefns.c am1.h y.tab.h
 	$(CC) -c parsefns.c

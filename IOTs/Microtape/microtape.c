@@ -234,10 +234,6 @@ int unit;
         {
             sbsChan = settingP->ivalue;
         }
-        else
-        {
-            fprintf(stderr, "microtapesbs must be a channel number 0-15; using %d\n", MT_DEFAULT_SBS);
-        }
     }
 
     readList(specs);
@@ -287,11 +283,6 @@ int ch;
 
     if( !(fP = fopen(MT_LIST_FILE, "r")) )
     {
-        if( errno != ENOENT )
-        {
-            fprintf(stderr, "%s: %s\n", MT_LIST_FILE, strerror(errno));
-        }
-
         return;
     }
 
@@ -300,7 +291,6 @@ int ch;
         len = strlen(line);
         if( (len > 0) && (line[len - 1] != '\n') && !feof(fP) )
         {
-            fprintf(stderr, "%s line %d: too long, skipped\n", MT_LIST_FILE, lineNo);
             while( ((ch = fgetc(fP)) != EOF) && (ch != '\n') )
             {
                 // discard the rest of the line
@@ -328,13 +318,11 @@ int ch;
         unit = strtol(cP, &endP, 10);
         if( (endP == cP) || ((*endP != ' ') && (*endP != '\t')) )
         {
-            fprintf(stderr, "%s line %d: want \"<drive 1-8> <path>[,locked]\"\n", MT_LIST_FILE, lineNo);
             continue;
         }
 
         if( (unit < 1) || (unit > MT_UNITS) || (errno != 0) )
         {
-            fprintf(stderr, "%s line %d: drive %ld; the drives are 1-8\n", MT_LIST_FILE, lineNo, unit);
             continue;
         }
 
@@ -345,13 +333,7 @@ int ch;
 
         if( strlen(cP) >= SPEC_MAX )
         {
-            fprintf(stderr, "%s line %d: path too long\n", MT_LIST_FILE, lineNo);
             continue;
-        }
-
-        if( specs[unit][0] )
-        {
-            fprintf(stderr, "%s line %d: drive %ld is listed again; this line wins\n", MT_LIST_FILE, lineNo, unit);
         }
 
         strcpy(specs[unit], cP);
@@ -380,7 +362,6 @@ bool locked;
 
     if( !parseSpec(listSpec[unit], path, &locked) )
     {
-        fprintf(stderr, "%s: bad entry \"%s\" in %s (want path[,locked])\n", who, listSpec[unit], MT_LIST_FILE);
         unmountDrive(unit, now);
         listFailed[unit] = true;
         return;
@@ -437,7 +418,6 @@ int len;
 
     if( (len < 0) || (len >= (int)sizeof(full)) )
     {
-        fprintf(stderr, "%s: image path too long: %s\n", whoP, pathP);
         unmountDrive(unit, now);
         return(MT_MOUNT_FAILED);
     }
@@ -473,21 +453,8 @@ int result;
         }
     }
 
-    if( other <= MT_UNITS )
+    if( (other > MT_UNITS) && mt555MountFile(uP, fullP, locked, true, err, (int)sizeof(err)) )
     {
-        fprintf(stderr, "%s: %s is already mounted on drive %d\n", whoP, fullP, other);
-    }
-    else if( !mt555MountFile(uP, fullP, locked, true, err, (int)sizeof(err)) )
-    {
-        fprintf(stderr, "%s: %s\n", whoP, err);
-    }
-    else
-    {
-        if( uP->created )
-        {
-            fprintf(stderr, "%s: %s did not exist; created it as a blank tape\n", whoP, fullP);
-        }
-
         iotCondLog(LOG_MT_CONFIG, "%s: mounted %s%s\n", whoP, fullP, (uP->locked ? " (locked)" : ""));
         result = (uP->locked ? MT_MOUNT_LOCKED : MT_MOUNT_OK);
     }
@@ -540,7 +507,6 @@ int unit;
 
     if( !unpackName(pdp1P, addr, name, sizeof(name)) )
     {
-        fprintf(stderr, "%s: no valid image name at %06o (packed ascii, ending in its own bank)\n", who, addr);
         unmountDrive(unit, now);
         return(MT_MOUNT_FAILED);
     }
@@ -604,7 +570,6 @@ int unit;
         uP = mt550Unit(&ctl, unit);
         if( uP->ioError && !ioErrorReported[unit] )
         {
-            fprintf(stderr, "microtape%d: writing %s failed; the image on disk is out of date\n", unit, uP->path);
             ioErrorReported[unit] = true;
         }
     }

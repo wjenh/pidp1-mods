@@ -75,7 +75,7 @@ Timing begins on the next instruction cycle after the IOT returns.
 If the countdouwn period is 0, then the timer is stopped if a countdown is in progress and the cks status bit
 is cleared.
 
-When the count reaches 0, bit 3 in the cks check status instruction return value will be a 1.
+When the count reaches 0, bit 13, 0000020, in the cks check status instruction return value will be a 1.
 The flag will be reset when the counter is started again or if a reset, via setting a count of 0, is done.
 
 This honors the i, wait for completion and c, issue a completion pulse flags in the IOT call,

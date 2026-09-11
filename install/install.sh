@@ -276,6 +276,7 @@ while true; do
 	    sudo ln -sf $INSTALLDIR/bin/tkaskopenfilewrite /usr/local/bin/tkaskopenfilewrite
         #
 	    sudo ln -sf $INSTALLDIR/bin/pdp1audio /usr/local/bin/pdp1audio
+	    sudo ln -sf $INSTALLDIR/bin/mkmicrotape /usr/local/bin/mkmicrotape
 
 	    break
 	    ;;

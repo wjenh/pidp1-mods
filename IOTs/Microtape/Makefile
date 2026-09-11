@@ -6,6 +6,8 @@
 # image tool mkmicrotape here, it installs nothing into the IOTs directory.
 #
 install: mkmicrotape
+	strip mkmicrotape
+	cp mkmicrotape ../../bin
 
 mkmicrotape: mkmicrotape.c transport555.c transport555.h
 	gcc -O2 -Wall -o $@ mkmicrotape.c transport555.c

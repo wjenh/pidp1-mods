@@ -1,0 +1,77 @@
+#ifndef TYPE550DEFS_AH
+#define TYPE550DEFS_AH
+
+// Defines for the Type 550 Microtape Control.
+// It shares device 01 with the paper tape reader, rather unusual, but that's what the original did.
+// See Docs/UsingType550Microtape.md.
+// Use as mse, mlc, and so on; iot is already included.
+// All six take effect immediately.
+// / none need or honor the i or C bit.
+//   mse - select the unit in IO bits 2-5 (use mtu1-mtu8); clears the flags and errors
+//   mlc - load control from IO bits 12-17: mtgo, mtrev and one mode; clears the flags and errors
+//   mrd - IO <- the buffer; clears the data and block end flags
+//   mwr - the buffer <- IO; clears the data and block end flags
+//   mrs - IO <- status, bits 0-8 (mtdf ... mtunab below), bits 9-17 zero
+//   mmt - mount a tape image. IO bits 2-5 speify the drive (mtu1-mtu8),
+//         AC = the address of its file name, an ascii string in the same bank
+//         AC = 0 unmounts the drive
+//         IO <- mtmok, mtmlck - mounted write-locked, the file is read-only, or mtmerr.
+//
+#define mmt iot 201
+#define mse iot 301
+#define mlc iot 401
+#define mrd iot 501
+#define mwr iot 601
+#define mrs iot 701
+
+// Unit numbers for mse and mmt, in IO bits 2-5 (unit 8 is 10 in the field).
+#define mtu1 010000
+#define mtu2 020000
+#define mtu3 030000
+#define mtu4 040000
+#define mtu5 050000
+#define mtu6 060000
+#define mtu7 070000
+#define mtu8 100000
+
+// The mlc word.
+// Contains go, reverse, plus the mark track write equivalend.
+// Modes 4-6 act as move.
+// Mode 7, the write mark track operation, erases the whole reel to a blank tape then acts as move.
+// It is refused on a write-locked drive.
+#define mtgo 40
+#define mtrev 20
+#define mtmove 0
+#define mtsrch 1
+#define mtread 2
+#define mtwrit 3
+#define mtfmt 7
+
+// Status bits from mrs.
+#define mtdf 400000
+#define mtbef 200000
+#define mterf 100000
+#define mtend 040000
+#define mtmiss 020000
+#define mtrevs 010000
+#define mtgos 004000
+#define mtmte 002000
+#define mtunab 001000
+
+// Results of mmt, in IO.
+#define mtmok 0
+#define mtmlck 1
+#define mtmerr 777776
+
+// A search flag's word.
+// The mark code in bits 0-5, the block number in bits 6-17.
+// Forward, the code is 26, in reverse its complement obverse, 45.
+#define mtbmf 260000
+#define mtbmr 450000
+#define mtblk 007777
+
+// Blocks per tape, 0-1077 octal, and data words per block.
+#define MTBLKS 1100
+#define MTWDS 400
+
+#endif

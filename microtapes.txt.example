@@ -1,0 +1,23 @@
+# microtapes.txt -- the tapes on the Type 550 Microtape drives. Copy this file to
+# /opt/pidp1-mods/microtapes.txt and edit it. See Docs/UsingType550Microtape.md.
+#
+# One line per drive:  <drive> <image>[,locked]
+#   drive    1-8, in decimal (drive 8 is 10 in the mse unit field)
+#   image    the tape image file. A path that does not start with / is relative to
+#            /opt/pidp1-mods. It runs to the end of the line and may contain spaces.
+#   ,locked  the WRITE LOCK switch: the drive can be read but not written or erased.
+#            A read-only image file is mounted locked anyway.
+# A missing image is created as a blank tape, unless the line is locked; its directory must
+# already exist (mkdir /opt/pidp1-mods/microtapes for the lines below). A drive with no
+# line has no tape; mlc on it gives tape unable. Blank lines and lines starting with # are
+# ignored.
+#
+# After editing, a SIGHUP to pidp1 (bin/pdp1control.sh reload) remounts the drives whose lines
+# changed, any drive whose tape ran off its reel, and any drive whose line failed to mount last
+# time; the others keep their tapes where they are, including tapes a program mounted with
+# the mount IOT (mmt, 720201).
+#
+# The sequence break channel is microtapesbs in pidp1.config.
+
+#1 microtapes/tape1.img
+#2 microtapes/system.img,locked

@@ -1,0 +1,205 @@
+Type 550 microtape sample -- write a block, read it back in reverse
+
+#include <MICROTAPE/type550defs.ah>
+
+// Writes block BLK of unit 1 with the words 1, 2, ... 400, searches back to it in
+// reverse, reads it backward into rbuf and checks that the block totals zero.
+// Halts at good with AC = 0, or at bad with AC = the status word or the total.
+
+#define BLK 12
+
+100/
+begin,
+    lio [mtu1]
+    mse                     // select unit 1; the 34 ms selection delay starts
+    jsp fill                // buf = 1, 2, ... 400, cksum = its checksum
+    lio [mtgo mtsrch]
+    mlc                     // search forward: 200 ms to speed, then a flag per block
+    lac [BLK]
+    dac want
+    jsp find                // take search flags up to block BLK's
+    jsp write               // write it, then search forward again
+    lac [BLK+1]
+    dac want
+    jsp find                // the next block's mark: the tape is past block BLK
+    lio [mtgo mtrev mtsrch]
+    mlc                     // search in reverse (300 ms to turn around)
+    lac [BLK]
+    dac want
+    jsp find                // block BLK again, now from its far end
+    jsp readrv              // read it backward into rbuf
+    cli
+    mlc                     // go = 0: stop the tape
+
+    law rbuf                // add up the MTWDS+2 words of rbuf
+    dap tot1
+    law i MTWDS+2
+    dac n
+    dzm sum
+tot1,
+    lac .
+    add sum
+    dac sum
+    idx tot1
+    isp n
+    jmp tot1
+    lac sum
+    sza                     // skip if the block totals zero
+    jmp bad                 // AC = the total
+good,
+    hlt                     // AC = 0: rbuf holds the block as it was written
+    jmp begin
+
+fail,
+    mrs                     // an error: AC = the status word
+    dio stat
+    lac stat
+bad,
+    hlt                     // AC = the status word, or the block total
+    jmp begin
+
+// Takes search flags until the one for block want, and returns at once:
+// the read or write deadline is counted from that flag.
+find,
+    dap findx
+find1,
+    mrs                     // IO = status
+    spi i                   // skip if the data flag is up
+    jmp find2
+    mrd                     // IO = mark code | block number
+    dio word
+    lac word
+    and [mtblk]
+    sad want                // skip if it is not block want
+findx,
+    jmp .                   // it is: return
+    jmp find1
+find2,
+    ril 2s                  // the error flag to IO bit 0
+    spi i                   // skip if the error flag is up
+    jmp find1               // nothing yet
+    jmp fail
+
+// Fills buf with 1, 2, ... MTWDS, and sets cksum to their checksum.
+fill,
+    dap fillx
+    law buf
+    dap fillp
+    dzm n
+    dzm sum
+fill1,
+    idx n                   // AC = n = 1, 2, ...
+fillp,
+    dac .
+    add sum
+    dac sum
+    idx fillp               // the next word of buf
+    lac n
+    sad [MTWDS]             // skip while n is short of MTWDS
+    jmp fill2
+    jmp fill1
+fill2,
+    lac sum
+    cma                     // the checksum is the complement of the sum
+    dac cksum
+fillx,
+    jmp .
+
+// Writes buf and cksum into the block whose search flag was just taken (mlc and
+// the first mwr within 400 us of that flag), then sets the tape searching forward
+// again. Every flag must be answered within 200 us, so the loop only looks at
+// the data flag; a MISS leaves the error flag up, checked once at the end.
+write,
+    dap writex
+    law buf
+    dap wrp
+    lio [mtgo mtwrit]
+    mlc                     // write: the control asks for the first word at once
+wr1,
+    mrs                     // IO = status
+    spi i                   // skip if the data flag is up
+    jmp wr2
+wrp,
+    lio .                   // the next data word
+    mwr
+    idx wrp
+    jmp wr1
+wr2,
+    ril 1s                  // the block end flag to IO bit 0
+    spi                     // skip unless it is up
+    jmp wr3                 // BEF: send the checksum
+    ril 1s                  // the error flag to IO bit 0
+    spi i                   // skip if it is up
+    jmp wr1                 // nothing yet
+    jmp fail
+wr3,
+    lio cksum
+    mwr
+    law i 24                // about 300 us: the checksum reaches the tape
+    dac n                   // 200 us after the block end flag
+wr4,
+    isp n
+    jmp wr4
+    mrs
+    ril 2s                  // the error flag to IO bit 0
+    spi                     // skip unless it is up: nothing was missed
+    jmp fail
+    lio [mtgo mtsrch]
+    mlc                     // back to searching forward
+writex,
+    jmp .
+
+// Reads the block whose reverse search flag was just taken (mlc within 400 us
+// of that flag), backward. The words come last first, so they are stored from
+// the end of rbuf down, and rbuf ends up holding the block as written: the
+// leading checksum, the MTWDS data words, the trailing checksum.
+readrv,
+    dap readx
+    law rbuf+MTWDS+1        // the last of the MTWDS+2 words
+    dap rdp
+    lio [mtgo mtrev mtread]
+    mlc                     // read in reverse: a flag with each word
+rd1,
+    mrs                     // IO = status
+    spi i                   // skip if the data flag is up
+    jmp rd2
+    mrd                     // IO = the word
+rdp,
+    dio .
+    lac rdp
+    sub [1]
+    dap rdp
+    jmp rd1
+rd2,
+    ril 1s                  // the block end flag to IO bit 0
+    spi                     // skip unless it is up
+    jmp rd3                 // BEF: the last word
+    ril 1s                  // the error flag to IO bit 0
+    spi i                   // skip if it is up
+    jmp rd1                 // nothing yet
+    jmp fail
+rd3,
+    mrd                     // the leading checksum, which comes last in reverse
+    dio rbuf
+    mrs
+    ril 2s                  // the error flag to IO bit 0
+    spi                     // skip unless it is up: nothing was missed
+    jmp fail
+readx,
+    jmp .
+
+want,   0
+cksum,  0
+stat,   0
+word,   0
+sum,    0
+n,      0
+
+constants
+
+buf,
+    table MTWDS
+rbuf,
+    table MTWDS+2
+
+start begin

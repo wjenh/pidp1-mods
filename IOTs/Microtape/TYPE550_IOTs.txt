@@ -1,0 +1,72 @@
+The Type 550 Microtape uses five IOTs on device 01.
+Every one completes immediately; none need or support the i or C bit.
+If given, completion is immediately issued.
+
+IOT 201, 720201, mmt   MOUNT (not a 1963 IOT)
+   IO --uuuu------------
+      uuuu          unit 1-7, 10 = unit 8
+   AC bits 2-17     address of the image's name, packed ascii (am1's ascii directive), ending
+                    with a zero character in the same bank; 0 = unmount the unit
+   The tape replaces whatever the unit held, unlocked, at the load point; a missing image is
+   created as a blank tape; a relative name is relative to /opt/pidp1-mods.
+   IO <- 0 mounted (or unmounted), 1 mounted write-locked (read-only file), 777776 failed.
+   A bad unit number changes nothing; any other failure leaves the unit with no tape.
+
+IOT 301, 720301, mse   SELECT
+   IO --uuuu------------
+      uuuu          unit 1-7, 10 = unit 8; 0 or 11-17 select no unit
+   Clears DF, BEF, ERF, END, MISS, MTE and UNABLE.
+   A different unit starts the 34 ms selection delay, no flags until it ends.
+   The unit that was selected keeps moving as it was told, unwatched. It can run off its reel.
+
+IOT 401, 720401, mlc   LOAD CONTROL
+   IO ------------gr-mmm
+      g             go: 1 = move, 0 = stop (150 ms)
+      r             reverse
+      mmm           mode: 0 move, 1 search, 2 read, 3 write, 7 erase; 4-6 act as move
+   Clears the same flags as mse.
+   Refused (UNABLE and ERF set, nothing changed) if no unit is selected, the unit has no tape,
+   its tape ran off the reel, or the mode is write or erase and the unit is write locked.
+   Erase, mode 7, truncates the whole reel at once, then acts as move.
+   Starting takes 200 ms and reversing 300 ms; no flags until the tape is at speed.
+   Entering write mode raises DF at once (at speed) to ask for the first word.
+
+IOT 501, 720501, mrd   READ
+   the buffer -> IO (IO is replaced).  Clears DF and BEF.
+
+IOT 601, 720601, mwr   WRITE
+   IO -> the buffer.  Clears DF and BEF.
+
+IOT 701, 720701, mrs   READ STATUS
+   status -> IO
+      400000  DF      data flag
+      200000  BEF     block end flag
+      100000  ERF     error flag (END, MISS or UNABLE)
+      040000  END     the tape ran into the end zone ahead and was stopped
+      020000  MISS    a flag came due while DF or BEF was still set
+      010000  REV     reverse commanded
+      004000  GO      go commanded (cleared by END)
+      002000  MTE     mark track error, never set (the emulated mark track is perfect)
+      001000  UNABLE  the last mlc was refused
+   bits 9-17 are 0.  Clears nothing.
+
+Every raise of DF, BEF or ERF requests a sequence break, on channel 2 unless microtapesbs in
+pidp1.config says otherwise. The drives' tapes are listed in /opt/pidp1-mods/microtapes.txt.
+
+Per block, at speed (200 us per word), forward; reverse is the mirror image.
+   search   DF at the block mark, buffer = 260000 + block (reverse: 450000 + block)
+   read     DF 400 us after the mark with the leading checksum, 256 DFs with the data every
+            200 us, then BEF with the trailing checksum.  Read in reverse, a block gives the
+            same words, last first.
+   write    DF asks for each word two word-times before it is written; BEF asks for the
+            trailing checksum.  The control writes the leading checksum (-0) itself.
+            Checksum is the complement of the ones'-complement sum of -0 and the 256 data words,
+            so the whole block totals -0.
+
+Deadlines, see Docs/UsingType550Microtape.md:
+   every data flag             mrd or mwr within 200 us
+   search flag -> write        mlc and the first mwr within 400 us
+   search flag -> read         mlc within 400 us to get the leading checksum, 600 us for word 1
+   read BEF -> next block      its first DF comes 1.4 ms later; search within 1.0 ms (manual: 800 us),
+                               write within 1.2 ms
+   write BEF -> next block     its first DF comes 1.6 ms later; search within 1.4 ms (manual: 1.2 ms)

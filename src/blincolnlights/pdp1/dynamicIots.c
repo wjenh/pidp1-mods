@@ -30,7 +30,7 @@
  * because real tape/typewriter timing doesn't stop just because the CPU is halted.
  * Also added dynamicIotOwnsDevice(int dev), so core code can tell whether a given device number is now
  * owned by a loaded dynamic IOT and skip its own builtin servicing of that device accordingly.
- * 
+ * 11-Sep-2026 wje a failed alias now closes its .so and marks its entry invalid.
  */
 
 #include <unistd.h>
@@ -53,10 +53,9 @@ void dynamicIotProcessBreak(int chan);
 static IotEntryP initializeEntry(int dev);
 
 // Common lookup/lazy-load logic shared by dynamicIotProcessor() and dynamicIotOwnsDevice().
-// Resolves dev to its real IotEntry (following aliases), lazily dlopen()ing IOT_<dev>.so via
-// initializeEntry() if this is the first time dev has been touched.
-// Returns a pointer to the resolved IotEntry if dev has a loaded or
-// loadable handler; returns 0 if dev is out of range or no handler could be loaded for it.
+// Resolves dev to its real IotEntry following aliases.
+// Returns a pointer to the resolved IotEntry if dev has a handler,
+// returns 0 if dev is out of range or no handler could be loaded for it.
 static IotEntryP
 resolveEntry(int dev)
 {
@@ -232,7 +231,7 @@ IoPollEntryP itemP;
 // Try to resolve a dynamic IOT's .so, if successful, initialize it.
 // Returns a pointer to the rIotEntry/ on success; returns 0 if the .so can't be opened, or if it
 // exports neither iotHandler nor a usable iotAlias, or if an iotAlias target is out of range or
-// itself fails to resolve.
+// itself fails to resolve. Every failure marks dev's entry invalid, so it is not tried again.
 static IotEntryP
 initializeEntry(int dev)
 {
@@ -262,19 +261,22 @@ char fname[256];
         {
             // we need to have this alias point to the real one
             i = aliasP();
-            if( (i < 1) || (i > 63) )          // audit M9: was "&&", could never be true -- no range check at all
+            if( (i < 1) || (i > 63) || (i == dev) )    // audit M9: was "&&", could never be true -- no range check at all
             {
+                dlclose(entryP->dlHandleP);
+                entryP->dlHandleP = 0;
+                entryP->invalid = 1;
                 return(0);      // out of range
             }
 
-            tmpEntryP = &handles[i];    // our real entry
-            if( !tmpEntryP->handlerP )
+            // Our real entry, loaded if need be. It must be a handler: a target that is missing,
+            // or is itself still being set up (an alias loop), fails the alias.
+            tmpEntryP = resolveEntry(i);
+            if( !tmpEntryP || !tmpEntryP->handlerP )
             {
-                tmpEntryP = initializeEntry(i);
-            }
-
-            if( !tmpEntryP )
-            {
+                dlclose(entryP->dlHandleP);
+                entryP->dlHandleP = 0;
+                entryP->invalid = 1;
                 return(0);              // target doesn't exist
             }
 

@@ -190,4 +190,9 @@ fasttyo=false
 # The overall timing is maintained in terms of displayed points per second, but the high speed channel
 # Finally, one could argue that a cache could have been added to the original hardware, like many
 # other PDP-1 hacks, so you can pretend this is semi-legitimate.
-t340cachesize=0 
+t340cachesize=0
+
+# Type 550 Microtape break channel.
+# Set the equence break channel for the data, block end and error flags.
+# The default is 2.
+#microtapesbs=2

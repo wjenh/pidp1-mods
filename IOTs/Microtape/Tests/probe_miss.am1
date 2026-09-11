@@ -1,0 +1,118 @@
+Microtape probe -- MISS from a slow service loop, with a fast control leg
+
+#include <MICROTAPE/type550defs.ah>
+
+// Phase 5 of Magtape/TASK-TYPE550.md. Needs drive 1 mounted.
+// Reads block 5 of drive 1 answering every data flag at once (the control leg: no MISS),
+// then block 7 waiting about 300 us before each mrd (more than the 200 us allowed: MISS).
+// Halts at done with AC = the error bits (ERF, MISS) after the fast block, expected 0,
+// and IO = the error bits after the slow block, expected 120000; or at fail with
+// AC = the status word if the tape stopped or no flag came.
+
+100/
+begin,
+    lio [mtu1]
+    mse
+    lio [mtgo mtsrch]
+    mlc                     // search forward
+    lac [5]
+    dac want
+    jsp find
+    dzm delay               // fast: one pass of the delay loop, 10 us
+    jsp read
+    dac fast
+    lio [mtgo mtsrch]
+    mlc                     // back to search (within 1 ms of the block end flag)
+    lac [7]
+    dac want
+    jsp find
+    law i 24
+    dac delay               // slow: 20 passes, 300 us
+    jsp read
+    dac slow
+    cli
+    mlc                     // stop the tape
+    lac fast
+    lio slow
+done,
+    hlt                     // AC = fast error bits (0), IO = slow error bits (120000)
+    jmp begin
+
+fail,
+    mrs
+    dio stat
+    lac stat
+    hlt                     // AC = the status word
+    jmp begin
+
+// Takes search flags until the one for block want, and returns at once.
+find,
+    dap findx
+find1,
+    mrs                     // IO = status
+    spi i                   // skip if the data flag is up
+    jmp find2
+    mrd                     // IO = mark code | block number
+    dio word
+    lac word
+    and [mtblk]
+    sad want                // skip if it is not block want
+findx,
+    jmp .                   // it is: return
+    jmp find1
+find2,
+    ril 2s                  // the error flag to IO bit 0
+    spi i                   // skip if it is up
+    jmp find1               // nothing yet
+    jmp fail
+
+// Reads the block whose search flag was just taken, waiting delay (negative, or 0) passes
+// of a 15 us loop before each mrd. The block end flag is tested first, so a slow loop that
+// finds both flags up still stops at the end of the block.
+// Returns AC = the ERF and MISS bits of the status after the block.
+read,
+    dap readx
+    lio [mtgo mtread]
+    mlc                     // read: a flag with each word
+rd1,
+    mrs                     // IO = status
+    dio stat
+    ril 1s                  // the block end flag to IO bit 0
+    spi                     // skip unless it is up
+    jmp rd3
+    lio stat
+    spi i                   // skip if the data flag is up
+    jmp rd2
+    lac delay
+    dac n
+rd4,
+    isp n
+    jmp rd4
+    mrd
+    jmp rd1
+rd2,
+    lac stat                // no flag up: the error flag alone is a MISS still showing,
+    and [mtend mtunab]      // unless the tape stopped (END) or was refused (UNABLE)
+    sza                     // skip if neither
+    jmp fail
+    jmp rd1
+rd3,
+    mrd                     // the trailing checksum
+    mrs
+    dio stat
+    lac stat
+    and [mterf mtmiss]
+readx,
+    jmp .
+
+want,   0
+word,   0
+stat,   0
+delay,  0
+n,      0
+fast,   0
+slow,   0
+
+constants
+
+start begin

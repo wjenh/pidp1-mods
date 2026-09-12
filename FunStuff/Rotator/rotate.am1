@@ -92,9 +92,7 @@ resume,
      law lastloc - isr
      jda memcpy
      isr:bnkno
-     lem
-     isr
-
+     isr            // will be in bank 0
 // turn on ints, extended mem, and transfer back to bank 0, adr 0
      esm
 // enable the clock
@@ -130,6 +128,7 @@ rti, farjmp(resume:bnkno)
 go,  lac startaddr
      sza
      jmp i startaddr    // transfer to the loaded program
+     farjmp(resume:bnkno)
 
 constants
 lastloc,

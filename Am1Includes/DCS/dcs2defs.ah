@@ -68,7 +68,17 @@
 #define scbset 010000
 #define scbbnd 020000
 #define scbrst 040000
+#define scbmod 100000     // TENTATIVE name, 13-Sep-2026
 #define scbclr 000000
+
+// Modification Request Block first word
+// dcmmty - bitmask, the modification type
+// dcmgen - modification type 0, general
+// dcmtel - modification type 1, telnet
+// Type 0 uses dcfecho, dcfioc, dcfioe, dcfior, dcfie, dcmsbs, and dcmcha from above.
+#define dcmmty 600000
+#define dcmgen 000000
+#define dcmtel 200000
 
 // Channel status flags
 // dsfopn - channel has been opened by scb
@@ -93,8 +103,8 @@
 #define dsfcls 000100
 #define dsfien 000200
 #define dsfior 000400
-#define dsfioc 001000
-#define dsfioe 002000
+#define dsfioc 002000
+#define dsfioe 001000
 #define dsfcur 004000
 
 // and some combined ones
@@ -114,6 +124,18 @@
 // dseep - internal error in epoll
 // dsenc - no client connected but operation attempted
 #define dserr 400000
+
+// dseflc - flag, no character was ready (rch, rcr, 8-bit mode)
+// dseflf - flag, the transmit buffer is full (tcb, tcc)
+// dsefle - flag, a Linux errno is in dsemen
+// dsemen - bitmask, the low 8 bits of the Linux errno
+// dsemco - bitmask, the DCS2 error code, one of the dsexx values below
+#define dseflc 200000
+#define dseflf 100000
+#define dsefle 040000
+#define dsemen 007760
+#define dsemco 000017
+
 #define dseno 1
 #define dseoe 2
 #define dseic 3

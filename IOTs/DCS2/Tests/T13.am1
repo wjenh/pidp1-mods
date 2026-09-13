@@ -1,0 +1,697 @@
+T13: DCS2 SCB MODIFY TEST
+/*
+ * T13.am1 -- The scb modify request (scbmod), and the fixes made with it:
+ *            clear/set decode (F1), the error word (F2), echo when the
+ *            program reads the character (F3), held interrupts delivered
+ *            after rci (F4), and rch building a word (F6).
+ *
+ * Harness required:
+ *   ./dcstestharness echo-toggle-client 127.0.0.1 2113
+ *   Start AFTER the program prints "T13 listening on 2113".
+ *   The peer waits for each marker byte T13 sends and replies with the
+ *   next letter.  When the bytes before a marker are not exactly what it
+ *   expects (an echo missing, or one that should not be there) it replies
+ *   in lowercase, so T13 sees the failure as a wrong letter.  The peer
+ *   exits 0 only if every step matched.
+ *
+ *   T13 sends  peer must see first     peer replies
+ *   '0'        '0'                     "HI"
+ *   '1'        '1'                     'A'
+ *   '2'        '2' (A not echoed)      'B'
+ *   '3'        'B' '3' (B echoed)      'C'
+ *   '4'        '4' (C not echoed)      'D'
+ *   (none)     'D' (D echoed)          'E'
+ *   '5'        '5'                     'F'
+ *   '6'        '6'                     'G'
+ *   '7'        '7'                     closes the connection
+ *
+ * Channel 5 is a server on port 2113, ASCII, not telnet, opened with echo
+ * and interrupts off.  Channel 5 rather than 0 so a request that took its
+ * channel from the wrong place is not saved by the zero.
+ *
+ * Tests, in the order they are printed:
+ *   T13-1   modify on a closed channel (1) -> exactly dserr dseno
+ *   T13-2   modify naming channel 077 -> exactly dserr dseic
+ *   T13-11  ssb with channel 010 -> exactly dserr dseic (was dserr 013)
+ *   T13-12  roc 5, rrc returns 5, then rle returns 0 (rrc used to leave
+ *           the channel number in last_error)
+ *   T13-13  rch rchclr, ril 6s, rch: the second rch keeps the upper bits,
+ *           "HI" builds 011111 (rch without rchclr used to clear them)
+ *   T13-3   modify types 1, 2 and 3 -> dserr dseil each
+ *   T13-4   scbmod together with scbset -> dserr dseil
+ *   T13-5   echo off as opened: A is not echoed
+ *   T13-6   modify echo on: B is echoed (the control leg for 5 and 7)
+ *   T13-7   modify echo off: C is not echoed
+ *   T13-7b  D arrives with echo off, dsfrdy is seen, then a modify turns
+ *           echo on, then rch: D is echoed, echo is decided at read time
+ *   T13-8   E arrives with interrupts off, dsfrdy is seen and no interrupt
+ *           has come; a modify with dcfie dcfior must interrupt with no
+ *           further byte
+ *   T13-9   the T13-8 routine turns interrupts off with a modify, then
+ *           rci; after a modify turns them on again, F must interrupt
+ *   T13-10  with dcfioc too, G interrupts; that routine sends '7', waits
+ *           for dsfcls, then rci; the close held meanwhile must interrupt
+ *           next, with dsfioc in rcs and ric 5
+ *
+ * Interrupts: the T11 pattern, "jmp irq" at location 3, one sequence
+ * break channel.  The routine saves nothing itself; every way out
+ * restores IO and AC from locations 2 and 0 and returns with "jmp i 1".
+ * A break with no DCS2 channel behind it (ric 0100) is ignored, the
+ * typewriter's completion can cause one.  Nothing is typed while the
+ * sequence break system is on.  Each wait has a timeout, so a missing
+ * interrupt or reply is a FAIL, not a hang.
+ *
+ * Assembler: am1 v1.50
+ * Assemble:  am1 -b T13.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define CHAN    5
+
+// ASCII codes: the markers T13 sends and the letters the peer replies with.
+#define ch_0    060
+#define ch_1    061
+#define ch_2    062
+#define ch_3    063
+#define ch_4    064
+#define ch_5    065
+#define ch_6    066
+#define ch_7    067
+#define ch_A    0101
+#define ch_B    0102
+#define ch_C    0103
+#define ch_D    0104
+#define ch_E    0105
+#define ch_F    0106
+#define ch_G    0107
+
+// "HI" built into one word: 'H' 0110 shifted up 6, then 'I' 0111 below it.
+#define word_HI 011111
+
+// What the interrupt routine does next.
+#define PH8     1
+#define PH9     2
+#define PH10    3
+#define PH10B   4
+#define PHDONE  5
+
+// Each check leaves tbad nonzero if it fails, JUDGE reports and clears it.
+// (Not "bad", numbertofio.ac has that label.)
+#define CHKEQ(v, e) \
+    lac v; \
+    xor [e]; \
+    ior tbad; \
+    dac tbad
+
+#define CHKSET(v, m) \
+    lac v; \
+    and [m]; \
+    xor [m]; \
+    ior tbad; \
+    dac tbad
+
+#define CHKNZ(v) \
+    lac v; \
+    sza i; \
+    idx tbad
+
+#define JUDGE(lbl) \
+    lio tbad; \
+    dzm tbad; \
+    lac [lbl]; \
+    jda judge
+
+#define WAITRDY() \
+    lac [dsfrdy]; \
+    jda waitst
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb
+
+    lac [jmp irq]           // the sequence break routine
+    dac 3
+
+    dzm tbad
+    dzm intCount
+    dzm spurCount
+    dzm strayCount
+    dzm phase
+
+// ---- open server channel 5, echo and interrupts off -------------------------
+
+    lio [scbset ctl13]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr             // server open failed (port in use?)
+
+    lac [rdymsg]
+    jda typetext
+
+// ---- T13-1: modify on a channel that is not open ----------------------------
+
+    lio [scbmod mclosed]
+    scb
+    dio got
+    CHKEQ(got, dserr dseno)
+    JUDGE(lbl1)
+
+// ---- T13-2: modify naming a channel out of range ----------------------------
+
+    lio [scbmod mbadch]
+    scb
+    dio got
+    CHKEQ(got, dserr dseic)
+    JUDGE(lbl2)
+
+// ---- T13-11: ssb with a bad channel, the code is not or'ed into it ----------
+
+    lio [010]
+    ssb
+    dio got
+    CHKEQ(got, dserr dseic)
+    JUDGE(lbl11)
+
+// ---- T13-12: rrc does not leave the channel number for rle ------------------
+
+    rle                     // clear the error T13-11 left
+    lio [CHAN]
+    roc                     // channel 5 is open, so it can be current
+    dio got
+    CHKEQ(got, 0)
+    rrc
+    dio got
+    CHKEQ(got, CHAN)
+    rle
+    dio got
+    CHKEQ(got, 0)
+    JUDGE(lbl12)
+
+// ---- wait for the peer ------------------------------------------------------
+
+    lac [dsfcon]
+    jda waitst
+    sza
+    jmp havecon
+    lio [REPORT_FAIL]
+    lac [lblnc]
+    jda reportResult
+    jmp finish
+havecon,
+    lio [CHAN]
+    ssb                     // tcb sends on channel 5
+
+// ---- T13-13: rch without rchclr keeps the bits above the character ----------
+
+    lio [ch_0]
+    tcb                     // the peer replies "HI"
+    WAITRDY()
+    rch rchclr              // IO = 'H'
+    ril 6s                  // 'H' moved up out of the character's bits
+    dio word13
+    WAITRDY()
+    lio word13
+    rch                     // 'I' into the low 8 bits, the rest kept
+    dio got
+    CHKEQ(got, word_HI)
+    JUDGE(lbl13)
+
+// ---- T13-3: modification types 1, 2 and 3 are invalid -----------------------
+
+    lio [scbmod mtel]
+    scb
+    dio got
+    CHKEQ(got, dserr dseil)
+    lio [scbmod mty2]
+    scb
+    dio got
+    CHKEQ(got, dserr dseil)
+    lio [scbmod mty3]
+    scb
+    dio got
+    CHKEQ(got, dserr dseil)
+    JUDGE(lbl3)
+
+// ---- T13-4: modify with another request bit is invalid ----------------------
+
+    lio [scbmod scbset mplain]
+    scb
+    dio got
+    CHKEQ(got, dserr dseil)
+    JUDGE(lbl4)
+
+// ---- T13-5, 6, 7, 7b: echo phases -------------------------------------------
+//
+// Each reply is read before the next marker is sent, so the peer knows where
+// an echo, if any, belongs.  The verdicts are the peer's: it replies in
+// lowercase when what it saw before a marker was wrong.
+
+    lio [ch_1]
+    tcb
+    WAITRDY()
+    rch rchclr              // A, echo off as opened
+    dio gotA
+
+    lio [scbmod mecho]      // echo on
+    scb
+    dio modOn2
+    lio [ch_2]
+    tcb
+    WAITRDY()
+    rch rchclr              // B, echoed now; B also says the peer saw no A echo
+    dio gotB
+
+    lio [scbmod mplain]     // echo off
+    scb
+    dio modOff3
+    lio [ch_3]
+    tcb
+    WAITRDY()
+    rch rchclr              // C, not echoed; C also says the peer saw the B echo
+    dio gotC
+
+    lio [ch_4]
+    tcb
+    WAITRDY()               // D is waiting, it arrived with echo off
+    lio [scbmod mecho]      // echo on, after D arrived and before it is read
+    scb
+    dio modOn4
+    rch rchclr              // D, echoed now; D also says the peer saw no C echo
+    dio gotD
+    lio [scbmod mplain]     // echo off again, the peer now sends E
+    scb
+    dio modOff4
+
+    CHKEQ(gotA, ch_A)
+    CHKEQ(gotB, ch_B)
+    JUDGE(lbl5)
+
+    CHKEQ(modOn2, 0)
+    CHKEQ(modOff3, 0)
+    CHKEQ(gotC, ch_C)
+    JUDGE(lbl6)
+
+    CHKEQ(gotD, ch_D)
+    JUDGE(lbl7)
+
+// ---- interrupts on: nothing is typed until they are off again ---------------
+//
+// A tyo completion requests a break even while SBS is off, so the break state
+// is cleared after the last output, not before it.
+
+    lsm
+    cbs
+    esm
+
+// ---- T13-8: a character waiting when interrupts are enabled -----------------
+
+    law PH8
+    dac phase
+    WAITRDY()               // E, sent by the peer once it saw the D echo
+    dac rdy8
+    lac intCount
+    dac pre8                // the control: no interrupt while they were off
+    lio [scbmod mint]       // interrupts on, received-character interrupt
+    scb
+    dio mod8
+    law 1
+    jda waitint             // the routine at h8 reads E
+    dac wait8
+
+// ---- T13-9: interrupts again after the routine turned them off --------------
+
+    law PH9
+    dac phase
+    lio [scbmod mint]
+    scb
+    dio mod9
+    lio [ch_5]
+    tcb                     // the peer sends F
+    law 2
+    jda waitint
+    dac wait9
+
+// ---- T13-10: a close held while the interrupt is in progress ----------------
+
+    law PH10
+    dac phase
+    lio [scbmod mintc]      // connect/close interrupts too
+    scb
+    dio mod10
+    lio [ch_6]
+    tcb                     // the peer sends G
+    law 4
+    jda waitint             // h10 for G, then h10b for the close
+    dac wait10
+
+    lsm
+    cbs
+
+// ---- report the interrupt phases --------------------------------------------
+
+    CHKEQ(modOn4, 0)
+    CHKEQ(modOff4, 0)
+    CHKEQ(ch8, ch_E)        // E says the peer saw the D echo
+    JUDGE(lbl7b)
+
+    CHKNZ(rdy8)
+    CHKEQ(pre8, 0)
+    CHKEQ(mod8, 0)
+    CHKEQ(wait8, 0)
+    CHKEQ(ric8, CHAN)
+    CHKSET(rcs8, dsfior)
+    JUDGE(lbl8)
+
+    CHKEQ(hmod8, 0)         // the modify inside the T13-8 routine
+    CHKEQ(mod9, 0)
+    CHKEQ(wait9, 0)
+    CHKEQ(ric9, CHAN)
+    CHKEQ(ch9, ch_F)
+    JUDGE(lbl9)
+
+    CHKEQ(mod10, 0)
+    CHKEQ(wait10, 0)
+    CHKEQ(ch10, ch_G)
+    CHKEQ(tcb10, 0)
+    CHKNZ(cls10)
+    CHKEQ(ric10b, CHAN)
+    CHKSET(rcs10b, dsfioc)
+    CHKEQ(strayCount, 0)
+    JUDGE(lbl10)
+
+// ---- close channel and clean up ---------------------------------------------
+
+finish,
+    lsm
+    cbs
+    lio [CHAN]              // SCBCLEAR takes the channel from IO
+    scb
+
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- sequence break routine -------------------------------------------------
+//
+// Reached through the "jmp irq" at location 3.  The break saved AC in 0, the
+// return in 1 and IO in 2.  phase says which test the interrupt belongs to.
+
+irq,
+    ric
+    dio hric
+    lac hric
+    sad [0100]
+    jmp hspur               // no DCS2 channel interrupted
+    lac phase
+    sad [PH8]
+    jmp h8
+    sad [PH9]
+    jmp h9
+    sad [PH10]
+    jmp h10
+    sad [PH10B]
+    jmp h10b
+    idx strayCount          // an interrupt no phase expects
+    lio [CHAN]
+    rci
+    jmp hexit
+
+hspur,
+    idx spurCount
+    jmp hexit
+
+// T13-8: read E, then turn interrupts off before rci (T13-9's setup).
+h8,
+    lac hric
+    dac ric8
+    lio [CHAN]
+    rcs
+    dio rcs8
+    rch rchclr
+    dio ch8
+    lio [scbmod mplain]     // interrupts off inside the interrupt routine
+    scb
+    dio hmod8
+    lio [CHAN]
+    rci
+    idx intCount
+    jmp hexit
+
+// T13-9: read F.
+h9,
+    lac hric
+    dac ric9
+    rch rchclr
+    dio ch9
+    lio [CHAN]
+    rci
+    idx intCount
+    jmp hexit
+
+// T13-10: read G, have the peer close, and wait for the close before rci.
+h10,
+    rch rchclr
+    dio ch10
+    lio [ch_7]
+    tcb                     // the peer closes when it sees this
+    dio tcb10
+    lac [-0377777]
+    dac hcnt
+h10w,
+    lio [CHAN]
+    rcs
+    lai
+    and [dsfcls]
+    sza
+    jmp h10c
+    isp hcnt
+    jmp h10w
+    cla                     // timed out
+h10c,
+    dac cls10               // dsfcls, 0 on a timeout
+    law PH10B
+    dac phase
+    lio [CHAN]
+    rci                     // the close was held meanwhile, it interrupts next
+    idx intCount
+    jmp hexit
+
+// T13-10: the held close.
+h10b,
+    lac hric
+    dac ric10b
+    lio [CHAN]
+    rcs
+    dio rcs10b
+    lio [CHAN]
+    rci
+    law PHDONE
+    dac phase
+    idx intCount
+    jmp hexit
+
+hexit,
+    lio 2
+    lac 0
+    jmp i 1                 // debreak
+
+// ---- subroutines ------------------------------------------------------------
+
+// Wait until channel 5's status has one of the given bits, or time out.
+// Called via jda, AC = the status bits.
+// Returns AC = the status and'ed with the bits, 0 on a timeout.
+// IO is not preserved.
+waitst, 0
+    local rtn, cnt, loop
+    dap rtn
+    lac [-0377777]
+    dac cnt
+loop,
+    lio [CHAN]
+    rcs
+    lai
+    and waitst
+    sza
+    jmp rtn
+    isp cnt
+    jmp loop
+    cla                     // timed out
+rtn, jmp .
+cnt, 0
+    endloc
+
+// Wait until intCount reaches the given count, or time out.
+// Called via jda, AC = the count.
+// Returns AC = 0 when it was reached, 1 on a timeout.
+waitint, 0
+    local rtn, cnt, loop, done
+    dap rtn
+    lac [-0377777]
+    dac cnt
+loop,
+    lac intCount
+    sad waitint             // skip while it differs
+    jmp done
+    isp cnt
+    jmp loop
+    law 1                   // timed out
+    jmp rtn
+done,
+    cla
+rtn, jmp .
+cnt, 0
+    endloc
+
+// Report a test: AC = the label's address, IO = 0 for PASS, anything else FAIL.
+// reportResult itself would take IO 2 as SKIP.
+// Called via jda. Neither AC nor IO is preserved.
+judge, 0
+    local rtn
+    dap rtn
+    lai
+    sza                     // skip if 0, a PASS
+    law REPORT_FAIL
+    lia
+    lac judge
+    jda reportResult
+rtn, jmp .
+    endloc
+
+// ---- storage ----------------------------------------------------------------
+
+tbad,       0
+got,        0
+word13,     0
+phase,      0
+intCount,   0
+spurCount,  0
+strayCount, 0
+hric,       0
+hcnt,       0
+
+gotA,       0
+gotB,       0
+gotC,       0
+gotD,       0
+modOn2,     0
+modOff3,    0
+modOn4,     0
+modOff4,    0
+
+rdy8,       0
+pre8,       0
+mod8,       0
+wait8,      0
+ric8,       0
+rcs8,       0
+ch8,        0
+hmod8,      0
+
+mod9,       0
+wait9,      0
+ric9,       0
+ch9,        0
+
+mod10,      0
+wait10,     0
+ch10,       0
+tcb10,      0
+cls10,      0
+ric10b,     0
+rcs10b,     0
+
+// ---- modification request blocks, word 0 only -------------------------------
+
+mclosed,    1                       // type 0, channel 1, which is not open
+mbadch,     077                     // channel 077, there are 8
+mtel,       dcmtel CHAN             // type 1
+mty2,       400000 CHAN             // type 2
+mty3,       dcmmty CHAN             // type 3
+mplain,     CHAN                    // type 0: echo and interrupts off
+mecho,      dcfecho CHAN            // echo on
+mint,       dcfie dcfior 0200 CHAN  // interrupts on, received character, SBS channel 1
+mintc,      dcfie dcfior dcfioc 0200 CHAN   // and connect/close
+
+// ---- labels -----------------------------------------------------------------
+
+rdymsg,
+    text "T13 listening on 2113\n"
+    013
+lblnc,
+    text "T13 peer never connected"
+    013
+lbl1,
+    text "T13-1 modify, channel not open"
+    013
+lbl2,
+    text "T13-2 modify, channel 077"
+    013
+lbl11,
+    text "T13-11 ssb channel 010"
+    013
+lbl12,
+    text "T13-12 rrc leaves rle 0"
+    013
+lbl13,
+    text "T13-13 rch builds a word"
+    013
+lbl3,
+    text "T13-3 modify types 1-3"
+    013
+lbl4,
+    text "T13-4 modify with set"
+    013
+lbl5,
+    text "T13-5 echo off, no echo"
+    013
+lbl6,
+    text "T13-6 echo on, echoed"
+    013
+lbl7,
+    text "T13-7 echo off again"
+    013
+lbl7b,
+    text "T13-7b echo at read time"
+    013
+lbl8,
+    text "T13-8 waiting char on enable"
+    013
+lbl9,
+    text "T13-9 interrupts after disable"
+    013
+lbl10,
+    text "T13-10 held close delivered"
+    013
+
+// ---- channel control block (server, channel 5, port 2113) -------------------
+//
+// word 0: dcfsrv, channel 5, echo and interrupts off
+// word 1: port 2113 (decimal)
+
+ctl13,
+    dcfsrv CHAN
+decimal
+    2113
+octal
+
+#include <TYO/typetext.ac>
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

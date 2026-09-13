@@ -113,16 +113,21 @@ begin,
 // b3 |= b2 every cycle, so a random b2=1 repopulates b3 immediately after
 // CBS if b2 is not also cleared.
 //
-// lsm; cbs here ensures all break state is zeroed before esm enables SBS,
+// lsm; cbs ensures all break state is zeroed before esm enables SBS,
 // preventing a spurious break from firing on the first ESM cycle.
-
-    lsm                         // ensure SBS disabled (safety; scbrst doesn't touch CPU SBS)
-    cbs                         // clear b2, b3, b4 (CBS clears all break state)
+// They must come AFTER the ready message: a tyo completion requests a break
+// even while SBS is off, and esm would then take it before the DCS2 one
+// (probed 13-Sep-2026, Claude/skill-updates/dcs2-typewriter-break-2026-09-13.md).
+// The peer is not started until the message is seen, so nothing it sends
+// can be cleared by this cbs.
 
 // ---- signal readiness -------------------------------------------------------
 
     lac [rdymsg]
     jda typetext
+
+    lsm                         // ensure SBS disabled (safety; scbrst doesn't touch CPU SBS)
+    cbs                         // clear b2, b3, b4 and the typewriter's break request
 
 // ---- enable SBS and spin until handler fires --------------------------------
 //
@@ -196,7 +201,7 @@ t3_done,
 
 // ---- close channel and clean up -------------------------------------------
 
-    lio [ctl11]
+    lio [0]                     // SCBCLEAR takes the channel from IO
     scb                         // SCBCLEAR channel 0
 
     lio [scbrst]

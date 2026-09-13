@@ -17,6 +17,18 @@
  *    Flex or ASCII data characters.
  *    Renamed CNTL_CRLF/RQST_CRLF to CNTL_TELNET/RQST_TELNET to reflect the wider scope.
  *    The dcs2defs.ah file was updated with the new mnemonic dcftel.
+ * 13-Sep-2026 wje (Claude) - add modify-channel support, varius bug fixed.
+ *    Add scb modify request, type 0, general, echo and the interrupt settings.
+ *    scb clear and rebind take their channel from IO bits 12-17, as documented.
+ *    Every error site builds the documented error word and records it for rle.
+ *    Echo happens when the program reads a character, never on arrival, and a
+ *    received 0377 is echoed as IAC IAC in telnet mode.
+ *    Interrupts held while an earlier one was in progress are requested after rci,
+ *    and rci always clears the channel's interrupt state.
+ *    rch/rcr without rchclr keep the IO bits above the character.
+ *    An epoll_wait() error no longer walks the event table, and every event
+ *    epoll_wait() returns is handled.
+ *    Bytes 0200-0377 are read correctly where char is signed (x86).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -82,10 +94,13 @@
 #define RES     053
 #define RXL     054
 
+// scb requests, IO bits 2-5 shifted down by 12.
+// More than one bit set is an invalid command.
 #define SCBCLEAR    0
 #define SCBOPEN     1
 #define SCBREBIND   2
 #define SCBRESET    4
+#define SCBMODIFY   010
 
 // Control flags in the Channel structure.
 // The 6 lowest also match the channel status bits.
@@ -114,6 +129,10 @@
 #define CNTL_RESET_MASK     (CNTL_LOST | CNTL_CONNERR | CNTL_TFULL | CNTL_RREADY)
 #define CNTL_COMMON_MASK    0374000 // mask for the common bits with rcs
 
+// The control flags a type 0 modify request replaces, see modifyChannel().
+// Telnet, Flexo, server/client and the state bits cannot be modified.
+#define CNTL_MODIFY_MASK    (CNTL_ECHO | CNTL_IOC | CNTL_IOE | CNTL_IOR | CNTL_IE)
+
 #define RQST_TELNET         0400000 // telnet mode bit in the scb control word
 #define RQST_FLEX           0200000 // etc
 #define RQST_ECHO           0100000
@@ -127,6 +146,11 @@
 #define REQ_CHAN_MSK    0000077
 #define REQ_SBS_MSK     0003600
 #define REQ_SBS_SHIFT   7
+
+// Word 0 of a modification request block: bits 0-1 are the modification type.
+// The flag and channel bits of type 0 are in the same places as in a channel request.
+#define MOD_TYPE_MSK        0600000
+#define MOD_TYPE_GENERAL    0000000 // type 0, echo and the interrupt settings
 
 // Statis bits we return in the IO register
 #define STATUS_OPEN         0000001     // keep the first 6 aligned with the first 6 CNTL flags
@@ -144,7 +168,10 @@
 #define STATUS_CHAN         0004000     // is current channel
 
 // Error codes we return in the IO register
-#define IO_ERR_FLAG         0400000 // bit 0, general error flag, no other bits set mean read returned 0 chars
+// The error word: bit 0 error, bit 1 no character, bit 2 transmit buffer full,
+// bit 3 errno present, bits 6-13 the low 8 bits of errno, bits 14-17 the DCS2 code.
+// Build an errno word as IO_ERR_FLAG | IO_ERR_ERRNO | code | ((errno & 0377) << 4).
+#define IO_ERR_FLAG         0400000 // bit 0, set for every error, and with bit 1 or bit 2 for those two conditions
 #define IO_ERR_NOCHAR       0200000 // bit 1, if set a read returned no characters
 #define IO_ERR_FULL         0100000 // bit 2, if set a send could not send all characters
 #define IO_ERR_ERRNO        0040000 // bit 3, if set bits 6-13 contain a Linux errno
@@ -227,7 +254,7 @@ char pendingBuf[2];         // un-sent tail byte(s) from a short send(), e.g. a 
 int pendingLen;             // valid byte count in pendingBuf, 0 if nothing is queued
 int telnet_rstate;          // TNS_x, incoming telnet IAC parser state
 int telnet_reply_cmd;       // TN_WONT or TN_DONT pending once a WILL/DO's option byte arrives, 0 if none
-bool crlf_stash_valid;      // true if crlf_stash holds an already-fetched, already-echoed data byte
+bool crlf_stash_valid;      // true if crlf_stash holds a data byte taken off the wire but not yet delivered, so not yet echoed
 int crlf_stash;             // stashed data-plane byte bumped by a cr/lf lookahead, see getCollapsedByte()
 } Channel, *ChannelP;
 
@@ -256,18 +283,21 @@ void closeRemoteSocket(ChannelP, int);
 void releaseChannel(PDP1P );
 bool canPost(PDP1P , ChannelP, int);
 void postInterrupt(ChannelP, int);
+void postHeldInterrupts(PDP1P);
+void modifyChannel(ChannelP, int);
 int getChar(ChannelP);
 int telnetFilter(ChannelP, unsigned char);
-int getDataByte(ChannelP);
+int getDataByte(ChannelP, bool);
 int getCollapsedByte(ChannelP);
+void echoByte(ChannelP, int);
 void sendTelnetGreeting(ChannelP);
 
 extern int flexToAscii(char, int *);
 extern char asciiToFlex(char, int *);
 
-// Called when the emulator transitions to run state (START pressed or program loaded).
+// Called when the emulator transitions to run state.
 // Performs a full IOT state reset so that each new program run begins with a clean slate,
-// regardless of how the previous run ended (normal HLT, console Stop, crash, etc.).
+// regardless of how the previous run ended.
 // Without this, stale state such as need_general_completion, open channel fds, or a
 // pending SBS break from a previous run can corrupt the next program's execution.
 void
@@ -330,6 +360,7 @@ iotHandler(PDP1P pdp1P, int dev, int pulse, int completion)
 int i, j;
 int cmd;
 int ich;
+int err;                                // errno saved before anything else can change it
 bool clear_io;                          // bit 02000 was set, used by rcr and rch
 ChannelP chanP;
 struct epoll_event event;
@@ -378,15 +409,22 @@ char wbuf[8];
         {
             chanP = &channels[cur_chan];
 
-            // Clear the bits that will receive the character
+            // Clear the bits that will receive the character, the low 6 bits in Flexo
+            // mode, else the low 8, and keep the rest so a program can build a word up
+            // a character at a time.
             if( clear_io )
             {
                 IO(pdp1P) = 0;
             }
             else
             {
-                IO(pdp1P) &= (chanP->control_flags & CNTL_FLEX)?077:0xFF;
+                IO(pdp1P) &= ~((chanP->control_flags & CNTL_FLEX)?077:0377);
             }
+
+            // NONE unless getChar() says otherwise.
+            // When hasChar() is false getChar() is never called, so without this the
+            // test for FAIL below would read an uninitialized ich.
+            ich = NONE;
 
             if( hasRcvPushback(chanP) )
             {
@@ -400,17 +438,23 @@ char wbuf[8];
                 {
                     ich = (ich == FAIL)?FLEX_ERR:FLEX_NCHAR;
                 }
+                else if( ich == FAIL )
+                {
+                    // Connection lost: bit 0 and the error code, and bit 1 cleared since
+                    // this is an error, not the no-character condition.
+                    IO(pdp1P) &= ~IO_ERR_NOCHAR;
+                    ich = IO_ERR_FLAG | IO_ERR_LOST;
+                }
                 else
                 {
-                    ich = IO_ERR_FLAG | ((ich == FAIL)?IO_ERR_LOST:IO_ERR_NOCHAR);
+                    ich = IO_ERR_FLAG | IO_ERR_NOCHAR;
                 }
             }
 
             // getChar() might have added pushback, or getCollapsedByte()'s
             // cr/lf lookahead might have already pulled the next real byte off the wire
-            // and stashed it in crlf_stash because it turned out not to be part of this
-            // line ending.
-            //  Either way there is a character ready now with no
+            // and stashed it in crlf_stash because it turned out not to be part of this line ending.
+            // Either way there is a character ready now with no
             // further socket event ever going to arrive for it, so RREADY must stay set.
             if( !hasRcvPushback(chanP) && !chanP->crlf_stash_valid )
             {
@@ -433,7 +477,15 @@ char wbuf[8];
         break;
 
     case RRC:                                   // get current channel number, if any
-        last_error = IO(pdp1P) = (cur_chan == -1)?IO_ERR_FLAG | IO_ERR_NOCURRENT:cur_chan;
+        // Only the error is recorded for rle, a channel number is not an error.
+        if( cur_chan == -1 )
+        {
+            last_error = IO(pdp1P) = (IO_ERR_FLAG | IO_ERR_NOCURRENT);
+        }
+        else
+        {
+            IO(pdp1P) = cur_chan;
+        }
         break;
 
     case RSC:                                   // release current channel, if any
@@ -481,10 +533,14 @@ char wbuf[8];
             break;
         }
 
+
         if( chanP->control_flags & CNTL_TFULL )
         {
+            // The buffer-full condition leaves the other IO bits, the character, alone,
+            // and rle gets the condition with bits 3-17 0, as at the two sites below.
             iotLog("TCC/TCB has FULL on %d\n", cur_chan);
-            last_error = IO(pdp1P) = IO_ERR_FLAG | IO_ERR_FULL;
+            IO(pdp1P) |= (IO_ERR_FLAG | IO_ERR_FULL);
+            last_error = (IO_ERR_FLAG | IO_ERR_FULL);
         }
         else
         {
@@ -523,14 +579,18 @@ char wbuf[8];
             }
 
             j = send(chanP->chan_fd, wbuf, i, MSG_NOSIGNAL);
+            err = errno;
 
             if( j < 0 )
             {
-                if( errno == EAGAIN )
+                if( err == EAGAIN )
                 {
+                    // Buffer full: IO keeps the character with bits 0 and 2 added,
+                    // rle gets the condition alone, without the character.
                     iotLog("TCC/TCB got EAGAIN on %d\n", cur_chan);
                     chanP->control_flags |= CNTL_TFULL;
-                    last_error = IO(pdp1P) |= IO_ERR_FLAG | IO_ERR_FULL;
+                    IO(pdp1P) |= (IO_ERR_FLAG | IO_ERR_FULL);
+                    last_error = (IO_ERR_FLAG | IO_ERR_FULL);
 
                     if( canPost(pdp1P, chanP, CNTL_IOE) )
                     {
@@ -544,25 +604,28 @@ char wbuf[8];
                 }
                 else                    // an error, probably no remote anymore
                 {
-                    iotLog("TCC/TCB errno %d on %d\n", errno, cur_chan);
-                    last_error = chanP->last_err = IO_ERR_FLAG | IO_ERR_ERRNO | errno;
+                    // The full error word, returned in IO as well, so the program
+                    // does not get its own character back and take it for success.
+                    iotLog("TCC/TCB errno %d on %d\n", err, cur_chan);
+                    last_error = chanP->last_err = IO(pdp1P) =
+                        (IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_SOCKET | ((err & 0377) << 4));
                     break;
                 }
             }
             else if( j < i )
             {
-                // Short send -- e.g. the CR/LF pair from a CNTL_TELNET
-                // only got its '\r' onto the wire.
+                // Short send, e.g. the CR/LF pair from a CNTL_TELNET only got its '\r' onto the wire.
                 // Report FULL exactly as the EAGAIN case above does, but also queue the un-sent tail so
                 // iotPoll() can flush it the next time EPOLLOUT fires.
-                // Without // this the tail byte would simply be lost.
+                // Without this the tail byte would simply be lost.
                 iotLog("TCC/TCB short send on %d, %d of %d bytes\n", cur_chan, j, i);
 
                 memcpy(chanP->pendingBuf, wbuf + j, i - j);
                 chanP->pendingLen = i - j;
 
                 chanP->control_flags |= CNTL_TFULL;
-                last_error = IO(pdp1P) |= IO_ERR_FLAG | IO_ERR_FULL;
+                IO(pdp1P) |= (IO_ERR_FLAG | IO_ERR_FULL);
+                last_error = (IO_ERR_FLAG | IO_ERR_FULL);
 
                 if( canPost(pdp1P, chanP, CNTL_IOE) )
                 {
@@ -585,7 +648,8 @@ char wbuf[8];
         i = IO(pdp1P) & 077;
         if( i >= NUM_CHANS )
         {
-            last_error = IO(pdp1P) |= IO_ERR_FLAG | IO_ERR_CHAN;
+            // Replace IO, or'ing the code into the channel number garbles it.
+            last_error = IO(pdp1P) = (IO_ERR_FLAG | IO_ERR_CHAN);
         }
         else
         {
@@ -629,19 +693,21 @@ char wbuf[8];
         i = IO(pdp1P) & 077;
         if( i >= NUM_CHANS )
         {
-            last_error = IO(pdp1P) |= IO_ERR_FLAG | IO_ERR_CHAN;
+            // Replace IO, or'ing the code into the channel number garbles it.
+            last_error = IO(pdp1P) = (IO_ERR_FLAG | IO_ERR_CHAN);
         }
         else
         {
             chanP = &channels[i];
-            if( chanP->control_flags & CNTL_IE )
-            {
-                iotLog("RCI resetting interrupts for channel %d\n", i);
 
-                chanP->interrupt_issued = false;
-                chanP->interrupts_in_process = 0;
-                chanP->interrupts_queued = 0;
-            }
+            // The in-progress state is cleared whether or not interrupts are enabled now,
+            // a modify might have disabled them inside the interrupt routine.
+            // Events held while the interrupt was in progress stay in interrupts_queued,
+            // postHeldInterrupts() requests them as a new interrupt on the next poll.
+            iotLog("RCI resetting interrupts for channel %d\n", i);
+
+            chanP->interrupt_issued = false;
+            chanP->interrupts_in_process = 0;
 
             if( last_intr_chan == i)
             {
@@ -666,7 +732,7 @@ char wbuf[8];
 
         if( i >= NUM_CHANS )
         {
-            IO(pdp1P) = IO_ERR_FLAG | IO_ERR_CHAN;    // bad channel
+            last_error = IO(pdp1P) = (IO_ERR_FLAG | IO_ERR_CHAN);    // bad channel
         }
         else
         {
@@ -722,14 +788,14 @@ char wbuf[8];
 
         if( i >= NUM_CHANS )
         {
-            IO(pdp1P) = IO_ERR_FLAG | IO_ERR_CHAN;    // bad channel
+            last_error = IO(pdp1P) = (IO_ERR_FLAG | IO_ERR_CHAN);    // bad channel
         }
         else
         {
             chanP = &channels[i];
             if( !(chanP->control_flags & CNTL_OPEN) )
             {
-                IO(pdp1P) = IO_ERR_FLAG | IO_ERR_NOTOPEN;
+                last_error = IO(pdp1P) = (IO_ERR_FLAG | IO_ERR_NOTOPEN);
             }
             else
             {
@@ -809,12 +875,29 @@ PortMapP mapP;
 struct epoll_event *eventP;
 struct epoll_event event;
 
-    if( (i = epoll_wait(epoll_fd, events, NUM_CHANS * 2, 0)) )
+    if( epoll_fd < 0 )
+    {
+        return;                 // not initialized, or reset, there is nothing to poll
+    }
+
+    i = epoll_wait(epoll_fd, events, NUM_CHANS * 2, 0);
+
+    if( i < 0 )
+    {
+        // -1 is an error, not a count.
+        // EINTR is only a signal arriving, the next poll tries again.
+        if( errno != EINTR )
+        {
+            last_error = (IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_EPOLL | ((errno & 0377) << 4));
+        }
+    }
+    else if( i > 0 )
     {
         // We can have a connection request on server chans or data ready on client chans
         eventP = events;
         did_our_event = false;
 
+        // One pass per event, eventP steps through the i events epoll_wait() returned.
         while( i-- )
         {
             data = eventP->data.u32;
@@ -890,7 +973,7 @@ struct epoll_event event;
                     {
                         if( eventP->events & EPOLLRDHUP )
                         {
-                            // Orderly remote shutdown (FIN received): treat as connection close.
+                            // Orderly remote shutdown, FIN received, treat as connection close.
                             // On Linux, EPOLLIN | EPOLLRDHUP fires together when the peer calls close().
                             epoll_ctl(epoll_fd, EPOLL_CTL_DEL, chanP->chan_fd, 0);
                             close(chanP->chan_fd);
@@ -918,9 +1001,11 @@ struct epoll_event event;
                                 // negotiation or other IAC framing arrived.
                                 // getDataByte() strips that and sends any negotiation replies internally
                                 // and may find no real character behind it yet.
-                                // Peek now so CNTL_RREADY keeps its contract of "a real character
-                                // is actually available".
-                                peeked = getDataByte(chanP);
+                                // Peek now so CNTL_RREADY still only reports a real character
+                                // is actually available.
+                                // The peek does not deliver the byte, so it is not echoed here,
+                                // it is echoed when the program reads it.
+                                peeked = getDataByte(chanP, false);
 
                                 if( peeked == FAIL )
                                 {
@@ -943,9 +1028,9 @@ struct epoll_event event;
                                 }
                                 else
                                 {
-                                    // A real byte is waiting -- stash it so getChar() returns
-                                    // exactly this byte next time instead of re-reading the
-                                    // socket (same stash getCollapsedByte() itself uses).
+                                    // A real byte is waiting, stash it so getChar() returns
+                                    // this byte next time instead of re-reading the socket.
+                                    // It has not been echoed, getDataByte() echoes it on delivery.
                                     chanP->crlf_stash = peeked;
                                     chanP->crlf_stash_valid = true;
                                 }
@@ -1041,14 +1126,16 @@ struct epoll_event event;
                         if( chanP->pendingLen > 0 )
                         {
                             j = send(chanP->chan_fd, chanP->pendingBuf, chanP->pendingLen, MSG_NOSIGNAL);
+                            soErr = errno;
 
                             if( j < 0 )
                             {
-                                if( errno != EAGAIN )
+                                if( soErr != EAGAIN )
                                 {
                                     iotLog("iotPoll pending-tail send errno %d on chan %d\n",
-                                        errno, chanP->chan_no);
-                                    last_error = chanP->last_err = IO_ERR_FLAG | IO_ERR_ERRNO | errno;
+                                        soErr, chanP->chan_no);
+                                    last_error = chanP->last_err =
+                                        (IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_SOCKET | ((soErr & 0377) << 4));
                                     chanP->pendingLen = 0;    // give up on the tail, connection is failing
                                 }
                                 // Else still full, leave pendingLen/CNTL_TFULL/EPOLLOUT
@@ -1087,9 +1174,9 @@ struct epoll_event event;
                 {
                     did_our_event = true;
 
-                    // Remove from epoll and close the fd immediately.  Without this,
-                    // epoll_wait() would return EPOLLHUP on every call, creating a
-                    // polling storm while the fd remains registered.
+                    // Remove from epoll and close the fd immediately.
+                    // Without this, // epoll_wait() would return EPOLLHUP on every call,
+                    // creating a polling storm while the fd remains registered.
                     epoll_ctl(epoll_fd, EPOLL_CTL_DEL, chanP->chan_fd, 0);
                     close(chanP->chan_fd);
                     chanP->chan_fd = -1;
@@ -1132,6 +1219,8 @@ struct epoll_event event;
                     epoll_ctl(epoll_fd, EPOLL_CTL_MOD, chanP->chan_fd, &tfEvent);
                 }
             }
+
+            ++eventP;               // on to the next event
         }
 
         if( need_general_completion && did_our_event )   // rwe is waiting
@@ -1139,6 +1228,44 @@ struct epoll_event event;
             iotLog("Posting completion for rwe\n");
             IOCOMPLETE(pdp1P);
             need_general_completion = false;
+        }
+    }
+
+    // Outside the block above, so held interrupts are still requested on a poll
+    // that found no events or failed.
+    postHeldInterrupts(pdp1P);
+}
+
+// Request the interrupts that canPost() held back while an earlier interrupt on the
+// same channel was in progress.
+// rci clears the in-progress state and leaves the held kinds in interrupts_queued,
+// so a channel that is enabled, not in an interrupt, and has something held gets
+// one interrupt for all of them now, postInterrupt() ors them into interrupts_in_process
+// so rcs shows every cause.
+// Nothing is requested while the sequence break system is off, as canPost() does.
+// A type 0 modify that enables interrupts with a character already waiting also
+// leaves CNTL_IOR here, this is the only place held interrupts are requested.
+void
+postHeldInterrupts(PDP1P pdp1P)
+{
+int i;
+ChannelP chanP;
+
+    if( !pdp1P->sbm )
+    {
+        return;
+    }
+
+    for( i = 0; i < NUM_CHANS; ++i )
+    {
+        chanP = &channels[i];
+
+        if( isTrue(chanP->control_flags, (CNTL_OPEN | CNTL_IE)) &&
+            !chanP->interrupt_issued && chanP->interrupts_queued )
+        {
+            iotLog("Posting held interrupts %o on chan %d\n", chanP->interrupts_queued, i);
+            postInterrupt(chanP, chanP->interrupts_queued);
+            chanP->interrupts_queued = 0;
         }
     }
 }
@@ -1155,19 +1282,35 @@ Word word;
 ChannelP chanP;
 struct epoll_event event;
 
-    cmd = (io >> 12) & 07;
+    rqstP = 0;                          // only set and modify have a block
+    word = 0;
+    cmd = (io >> 12) & 017;             // IO bits 2-5, one bit per request
+
+    // More than one request bit is an invalid command.
+    // Reject it before anything is decoded, so the request is not mistaken for one
+    // of its parts and a bad channel number is not reported instead.
+    if( (cmd != SCBCLEAR) && (cmd != SCBOPEN) && (cmd != SCBREBIND) &&
+        (cmd != SCBRESET) && (cmd != SCBMODIFY) )
+    {
+        iotLog("manageChannels got invalid request %o\n", cmd);
+        return( IO_ERR_FLAG | IO_ERR_ILLEGAL );
+    }
 
     if( cmd != SCBRESET )
     {
-        if( cmd == SCBREBIND )
+        if( (cmd == SCBOPEN) || (cmd == SCBMODIFY) )
         {
-            chan_no = io & 07777;
-        }
-        else
-        {
+            // Set and modify have a request block, the channel is in its word 0.
+            // The current bank is honored.
             rqstP = getFullAddress(pdp1P, io & 07777);
             word = (int)*rqstP++;
             chan_no = word & REQ_CHAN_MSK;
+        }
+        else
+        {
+            // Clear and rebind have no block, the channel is in IO bits 12-17
+            // and bits 6-11 are ignored.
+            chan_no = io & REQ_CHAN_MSK;
         }
 
         if( chan_no >= NUM_CHANS )
@@ -1247,8 +1390,8 @@ struct epoll_event event;
             event.data.u32 = chan_no;
             epoll_ctl(epoll_fd, EPOLL_CTL_ADD, chanP->chan_fd, &event);   // op and fd were swapped
 
-            // Initiate the non-blocking connection.  EINPROGRESS is expected and
-            // normal; the actual result is signalled via EPOLLOUT in iotPoll().
+            // Initiate the non-blocking connection.
+            // EINPROGRESS is expected and normal, the actual result is signalled via EPOLLOUT in iotPoll().
             if( connect(chanP->chan_fd,
                         (struct sockaddr *)&chanP->address,
                         sizeof(chanP->address)) < 0 )
@@ -1323,11 +1466,75 @@ struct epoll_event event;
         initialized = false;
         break;
 
+    case SCBMODIFY:
+        // Checked in this order: the channel range (above), the type, then open.
+        // Types 1-3 are invalid, type 1 (telnet) is not specified yet.
+        if( (word & MOD_TYPE_MSK) != MOD_TYPE_GENERAL )
+        {
+            iotLog("Channel modify on %d, type %o not supported\n", chan_no, (word & MOD_TYPE_MSK) >> 16);
+            return( IO_ERR_FLAG | IO_ERR_ILLEGAL );
+        }
+
+        if( !(chanP->control_flags & CNTL_OPEN) )
+        {
+            iotLog("Channel modify on %d, not open\n", chan_no);
+            return( IO_ERR_FLAG | IO_ERR_NOTOPEN );
+        }
+
+        iotLog("Channel modify on %d, %o\n", chan_no, word);
+        modifyChannel(chanP, word);
+        break;
+
     default:
-        return( IO_ERR_FLAG | IO_ERR_ILLEGAL );
+        return( IO_ERR_FLAG | IO_ERR_ILLEGAL );     // not reached, rejected above
     }
 
     return(0);
+}
+
+// Apply a type 0 (general) modification to an open channel.
+// Word is word 0 of the modification request block.
+// Its E, C, e, r and i bits replace the channel's echo and interrupt flags, a 0 turns
+// a flag off, and every other control flag is kept (telnet, Flexo, server, the state).
+// ssss is taken only when i is 1, it is unused while interrupts are off.
+// Enabling the received-character interrupt with a character already waiting holds
+// CNTL_IOR, so postHeldInterrupts() requests the interrupt on the next poll instead of
+// it waiting for another character.
+// Connect, close and error events are edges and are not replayed.
+// Disabling interrupts discards any interrupt in progress or held, as rci would, so
+// the channel is not left with interrupt_issued set and unable to interrupt again.
+// last_intr_chan is left alone, an interrupt routine already running may still use ric.
+void
+modifyChannel(ChannelP chanP, int word)
+{
+bool iorWasOn;
+
+    iorWasOn = isTrue(chanP->control_flags, (CNTL_IE | CNTL_IOR));
+
+    chanP->control_flags &= ~CNTL_MODIFY_MASK;
+    chanP->control_flags |= (word & RQST_IE)?CNTL_IE:0;
+    chanP->control_flags |= (word & RQST_IOR)?CNTL_IOR:0;
+    chanP->control_flags |= (word & RQST_IOE)?CNTL_IOE:0;
+    chanP->control_flags |= (word & RQST_IOC)?CNTL_IOC:0;
+    chanP->control_flags |= (word & RQST_ECHO)?CNTL_ECHO:0;
+
+    if( word & RQST_IE )
+    {
+        chanP->sbs_chan = (word & REQ_SBS_MSK) >> REQ_SBS_SHIFT;
+
+        // A character that arrived while the r interrupt was off will never be
+        // requested by the poll on its own, so hold one for it now.
+        if( !iorWasOn && (chanP->control_flags & CNTL_IOR) && hasChar(chanP) )
+        {
+            chanP->interrupts_queued |= CNTL_IOR;
+        }
+    }
+    else
+    {
+        chanP->interrupt_issued = false;
+        chanP->interrupts_in_process = 0;
+        chanP->interrupts_queued = 0;
+    }
 }
 
 // Completely reset a channel.
@@ -1421,6 +1628,10 @@ postInterrupt(ChannelP chanP, int kind)
         initiateBreak(chanP->sbs_chan);
         chanP->interrupt_issued = true;
         chanP->interrupts_in_process |= kind;
+        // This interrupt delivers these, so a copy held for them is dropped.
+        // Otherwise an IOR held by modifyChannel() and then posted by the poll would
+        // interrupt a second time, after rci, for a character already read.
+        chanP->interrupts_queued &= ~kind;
         last_intr_reason = chanP->interrupts_in_process;
         last_intr_chan = chanP->chan_no;
     }
@@ -1545,12 +1756,16 @@ unsigned char reply[3];
 }
 
 // Fetch the next data-plane byte, a raw socket byte with telnet IAC framing stripped
-// if CNTL_TELNET and echoed if CNTL_ECHO, or a byte stashed by a prior cr/lf
-// lookahead in getCollapsedByte().
+// if CNTL_TELNET, or a byte stashed by the poll's peek or a prior cr/lf lookahead in
+// getCollapsedByte().
+// Deliver is true when the byte is being handed to the program (rch/rcr), false for a
+// peek or lookahead that only looks at it.
+// If echo is enabled, Only a delivered byte is echoed, and only when the program reads it,
+// A stashed byte is never echoed, it is echoed when it is delivered.
 // Protocol bytes consumed by telnetFilter() are never echoed.
 // Returns NONE if nothing is available right now, FAIL on error/close, else the byte, 0-255.
 int
-getDataByte(ChannelP chanP)
+getDataByte(ChannelP chanP, bool deliver)
 {
 int i;
 int resolved;
@@ -1559,6 +1774,12 @@ unsigned char ch;
     if( chanP->crlf_stash_valid )
     {
         chanP->crlf_stash_valid = false;
+
+        if( deliver )
+        {
+            echoByte(chanP, chanP->crlf_stash);
+        }
+
         return( chanP->crlf_stash );
     }
 
@@ -1606,18 +1827,47 @@ unsigned char ch;
             ch = (unsigned char)resolved;
         }
 
-        if( chanP->control_flags & CNTL_ECHO )
+        if( deliver )
         {
-            send(chanP->chan_fd, &ch, sizeof(ch), MSG_NOSIGNAL);
+            echoByte(chanP, ch);
         }
 
         return( ch );
     }
 }
 
+// Echo one received data byte back to the remote end if the channel has CNTL_ECHO.
+// In telnet mode a 0377 data byte is sent as IAC IAC, a bare 0377 would start a
+// telnet command at the remote end.
+// Anything else goes out as the single byte.
+// Best-effort, as the telnet greeting and negotiation replies are, a lost echo byte is
+// not worth failing the connection over.
+void
+echoByte(ChannelP chanP, int ch)
+{
+unsigned char buf[2];
+int len;
+
+    if( !(chanP->control_flags & CNTL_ECHO) || (chanP->chan_fd < 0) )
+    {
+        return;
+    }
+
+    buf[0] = (unsigned char)ch;
+    len = 1;
+
+    if( (ch == TN_IAC) && (chanP->control_flags & CNTL_TELNET) )
+    {
+        buf[1] = TN_IAC;
+        len = 2;
+    }
+
+    send(chanP->chan_fd, buf, len, MSG_NOSIGNAL);
+}
+
 // Apply telnet cr/lf collapsing on top of getDataByte() so the rest of getChar() only
 // ever sees one character per line ending, regardless of whether the wire sent cr/lf,
-// a bare cr, or (leniently, in Flex mode) a bare lf.
+// a bare cr, or leniently in Flex mode, a bare lf.
 // Only active when CNTL_TELNET is set, otherwise this is a pass-through.
 //
 // A bare cr always resolves immediately as cr which asciiToFlex() below turns into
@@ -1628,6 +1878,11 @@ unsigned char ch;
 // If more data is already available and it's an lf, the pair collapses to one character.
 // If it's some other byte, that byte has already been pulled off the wire so it is stashed for the
 // next getDataByte() call rather than lost.
+// This is only called to deliver a character to the program, so the first byte is
+// fetched with deliver true and echoed.
+// The lookahead is not delivered, an lf that completes a cr/lf pair is consumed with the cr,
+// so it is echoed here with it.
+// Anything else goes to the stash unechoed and is echoed when it is delivered.
 int
 getCollapsedByte(ChannelP chanP)
 {
@@ -1635,7 +1890,7 @@ int ch;
 int peek;
 bool isFlex;
 
-    ch = getDataByte(chanP);
+    ch = getDataByte(chanP, true);
 
     if( (ch == NONE) || (ch == FAIL) )
     {
@@ -1651,11 +1906,13 @@ bool isFlex;
 
     if( ch == '\r' )
     {
-        peek = getDataByte(chanP);
+        peek = getDataByte(chanP, false);
 
         if( peek == '\n' )
         {
             // cr/lf pair -- collapses to a single line-end character.
+            // The lf is consumed now, so it is echoed now, after the cr.
+            echoByte(chanP, peek);
             return( isFlex?'\r':'\n' );
         }
 
@@ -1663,6 +1920,7 @@ bool isFlex;
         {
             // Got a real byte that isn't part of this cr's line ending.
             // Stash it so it isn't lost, and resolve the cr on its own.
+            // It is not echoed until it is delivered.
             chanP->crlf_stash = peek;
             chanP->crlf_stash_valid = true;
         }
@@ -1676,7 +1934,7 @@ bool isFlex;
     {
         // A bare linefeed in Flex mode is treated leniently as a line ending too, since
         // Concise has no linefeed of its own. Not strictly conforming telnet, but a
-        // practical accommodation -- see Docs/UsingDCS2.md.
+        // practical accommodation.
         return( '\r' );
     }
 
@@ -1684,15 +1942,19 @@ bool isFlex;
 }
 
 // Fetch the next char from the channel's fd.
-// If echo needed, echo it.
+// If echo needed, echo it (getDataByte() does, on delivery).
 // If in Flexo, translate it.
 // If a shift is needed, buffer the real character and return the shift code.
 // If there is no character to read, return NONE, -1, or FAIL, -2.
+// Otherwise returns the character, 0-0377 in ascii mode, a Concise code in Flexo mode.
+// ch is unsigned and ch2 an int: with a plain char, which is signed on x86, a byte
+// 0200-0377 came back negative and was taken for NONE or FAIL.
 int
 getChar(ChannelP chanP)
 {
 int i;
-char ch, ch2;
+unsigned char ch;
+int ch2;
 
     if( hasRcvPushback(chanP) )
     {
@@ -1708,7 +1970,7 @@ char ch, ch2;
             return( i );            // NONE or FAIL
         }
 
-        ch = (char)i;
+        ch = (unsigned char)i;
     }
 
     if( chanP->control_flags & CNTL_FLEX )
@@ -1750,8 +2012,7 @@ ChannelP chanP;
 
     // Save the channel being released so the scan can start from the next one.
     // cur_chan must be cleared BEFORE the scan so that if no ready channel is
-    // found, it remains -1.  Using cur_chan after clearing it caused the loop
-    // termination test (i != cur_chan, i.e. i != -1) to be always true.
+    // found, it remains -1.
     old_chan = cur_chan;
     cur_chan = -1;
     cur_chan_locked = false;
@@ -1887,10 +2148,10 @@ PortMapP mapP;
 
 // Remote side failed on recv(), close things up.
 // The channel becomes available for a new connection (server) or stays closed (client).
-// Note: releasePort() is NOT called here.  For server channels the listen socket must
-// remain active so that a new client can connect; the port map entry is only torn down
-// by resetChannel().  For client channels, primaryPortP is NULL so calling releasePort()
-// would crash.
+// Note: releasePort() is NOT called here.
+// For server channels the listen socket must remain active so that a new client can connect.
+// The port map entry is only torn down by resetChannel().
+// For client channels, primaryPortP is NULL.
 void
 closeRemoteSocket(ChannelP chanP, int errnum)
 {

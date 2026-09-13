@@ -175,9 +175,9 @@ drainb,
     endloc
 
     // Close both
-    lio [ctl04_0]           // channel 0: addr of ctl04_0; SCBCLEAR reads chan# from there
+    lio [0]                 // channel 0; SCBCLEAR takes the channel from IO
     scb                     // SCBCLEAR
-    lio [ctl04_1]           // channel 1: addr of ctl04_1
+    lio [1]                 // channel 1
     scb                     // SCBCLEAR channel 1
 
     lio [scbrst]

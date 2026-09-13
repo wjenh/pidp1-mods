@@ -323,6 +323,12 @@ through unchanged, and a bare cr (no following lf) also passes through
 unchanged; each decoded character is echoed back out, re-escaping the 0xFF
 and re-expanding lf to cr/lf on the way out.
 
+**Echo note:** the channel also has dcfecho, and DCS2 echoes a character's
+received bytes when the program reads it.  So for each character the peer
+gets DCS2's echo first, then the program's copy: 21 bytes in all, derived
+in `dcstestharness.c`'s `modeTelnetEchoClient`.  The peer also expects the
+refusal of its DO to be WONT (RFC 854).
+
 **Harness:**
 ```
 ./dcstestharness telnet-echo-client 127.0.0.1 2112
@@ -347,6 +353,59 @@ T12-8 byte6 cr pass
 T12-9 byte7 D pass
 T12-10 chan closed pass
 10 PASS, 0 FAIL, 0 SKIP
+```
+
+---
+
+## T13 -- scb modify (port 2113)
+
+**What it tests:** the modify request (`scbmod`) on server channel 5 (ASCII,
+opened with echo and interrupts off), and the fixes made with it:
+
+- modify errors: a closed channel (dseno), channel 077 (dseic), types 1-3
+  and modify together with set (dseil);
+- the error word: `ssb` with channel 010 returns exactly `dserr dseic`, and
+  `rrc` does not leave the channel number for `rle`;
+- `rch` without `rchclr` keeps the bits above the character ("HI" builds
+  011111);
+- echo turned off, on and off again by modify, and decided when the program
+  reads the character, not when it arrives;
+- interrupts: enabling them with a character already waiting interrupts;
+  turning them off inside the interrupt routine and on again later still
+  interrupts; a close that happens while an interrupt is in progress is
+  delivered as the next interrupt after `rci`, with dsfioc.
+
+**Harness:**
+```
+./dcstestharness echo-toggle-client 127.0.0.1 2113
+```
+Start AFTER the program prints `T13 listening on 2113`.
+T13 sends a marker byte to start each phase, and the harness replies with
+the next letter.  When what it saw before a marker was wrong (an echo
+missing, or one that should not be there) it replies in lowercase, so the
+PDP-1 side reports that phase as FAIL.  It exits 0 only if every step
+matched.  The script is in `T13.am1`'s header.
+
+**Load:** `T13.rim`
+
+**Expected output:**
+```
+T13 listening on 2113
+T13-1 modify, channel not open pass
+T13-2 modify, channel 077 pass
+T13-11 ssb channel 010 pass
+T13-12 rrc leaves rle 0 pass
+T13-13 rch builds a word pass
+T13-3 modify types 1-3 pass
+T13-4 modify with set pass
+T13-5 echo off, no echo pass
+T13-6 echo on, echoed pass
+T13-7 echo off again pass
+T13-7b echo at read time pass
+T13-8 waiting char on enable pass
+T13-9 interrupts after disable pass
+T13-10 held close delivered pass
+14 PASS, 0 FAIL, 0 SKIP
 ```
 
 ---
@@ -380,6 +439,7 @@ Load `dcstest.rim`, type characters on the typewriter; they are echoed back.
 | `T10.am1` | RXL standalone |
 | `T11.am1` | SBS interrupt on receive |
 | `T12.am1` | Telnet mode |
+| `T13.am1` | scb modify, echo and interrupt fixes |
 | `dcstestharness.c` | C test peer (all modes) |
 | `dcstest.am1` | Legacy interactive client test |
 | `dcsecho.c` | Legacy simple echo server |

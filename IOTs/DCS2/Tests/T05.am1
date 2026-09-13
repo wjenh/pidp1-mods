@@ -138,8 +138,10 @@ waitboth,
     and [dsfrdy]
     sza i           // skip if ch1 ready
     jmp waitboth
+    jmp %bothrdy    // both ready: do not run into the data words below
 %s0, 0
 %s1, 0
+%bothrdy,
     endloc
 
 // ---- read from each channel using rcr (read-and-release) -----------------
@@ -258,9 +260,9 @@ t2_done,
 
 // ---- close both channels and clean up ------------------------------------
 
-    lio [ctl05_0]           // channel 0: SCBCLEAR reads chan# from control block
+    lio [0]                 // channel 0; SCBCLEAR takes the channel from IO
     scb                     // SCBCLEAR
-    lio [ctl05_1]           // channel 1
+    lio [1]                 // channel 1
     scb                     // SCBCLEAR
 
     lio [scbrst]

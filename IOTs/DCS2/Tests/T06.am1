@@ -190,7 +190,7 @@ t6_done,
 
 // ---- cleanup and halt ----------------------------------------------------
 
-    lio [ctl06]
+    lio [0]                 // SCBCLEAR takes the channel from IO
     scb                     // SCBCLEAR channel 0
 
     lio [scbrst]

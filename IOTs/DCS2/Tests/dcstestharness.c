@@ -64,13 +64,29 @@
  *            representing a literal 0xFF, then "A\r\nB\nC\rD" mixing a
  *            cr/lf pair, a bare lf, and a bare cr) in one write.
  *         3. Read exactly 3 bytes and verify DCS2 refused the probe
- *            (IAC DONT 46).
- *         4. Read exactly 11 bytes and verify the round-tripped data: the
- *            PDP-1 side (T12.am1) echoes back whatever it decoded, so this
- *            also confirms cr/lf collapsing on input and cr/lf expansion
- *            plus IAC escaping on output all agree with each other.
+ *            (IAC WONT 46, the RFC 854 refusal of a DO).
+ *         4. Read exactly 21 bytes and verify the round-tripped data: DCS2
+ *            echoes each character's received bytes as it is read (dcfecho)
+ *            and the PDP-1 side (T12.am1) then sends back whatever it
+ *            decoded, so this also confirms cr/lf collapsing on input and
+ *            cr/lf expansion plus IAC escaping on output all agree with each
+ *            other.
  *       Exit code: 0 if every step matched, 1 on any mismatch or socket error.
  *       Used by: T12 (telnet mode).
+ *
+ *   echo-toggle-client <host> <port>
+ *       Connect to <host>:<port>, where T13.am1's server channel is
+ *       listening, and follow a fixed script of steps (see
+ *       modeEchoToggleClient for the table).  Each step waits for the
+ *       marker byte T13 sends, preceded by the echo of the previous reply
+ *       when T13 must echo it, then sends the step's reply.  Any other byte
+ *       is a mismatch and is skipped; the marker ends the step even if an
+ *       echo it expected never came.  A step with a mismatch replies in
+ *       lowercase, so T13 sees the failure as a wrong letter and the
+ *       stream stays in step.
+ *       Exit code: 0 if every step matched exactly, 1 otherwise, or on a
+ *       timeout waiting for a marker or a socket error.
+ *       Used by: T13 (scb modify).
  *
  * Architecture:
  *   Single-file, blocking I/O throughout except where noted.  select(2) is
@@ -118,6 +134,12 @@
 /* How long (ms) reconnect-client and delay-connect modes keep the
  * connection alive before closing, allowing the PDP-1 to observe it. */
 #define HOLD_MS         500
+
+/* Timeouts (seconds) used by echo-toggle-client: waiting for a marker
+ * covers the typewriter output T13 does between some markers; waiting
+ * for an echo with no marker behind it is how a missing echo is seen. */
+#define ECHO_TOGGLE_MARKER_S    20
+#define ECHO_TOGGLE_ECHO_S      2
 
 /* -------------------------------------------------------------------------
  * Global state
@@ -979,7 +1001,7 @@ modeTelnetEchoClient(const char *hostP, int port)
 {
     int             connFd;
     int             result;
-    unsigned char   buf[16];
+    unsigned char   buf[24];
     unsigned char   probeAndData[13];
     ssize_t         wr;
 
@@ -991,8 +1013,10 @@ modeTelnetEchoClient(const char *hostP, int port)
         TN_IAC, TN_DONT, TELOPT_LINEMODE
     };
 
+    /* A DO for an option DCS2 does not support is refused with WONT
+     * (RFC 854); DONT is the refusal of a WILL. */
     static const unsigned char expectReply[3] = {
-        TN_IAC, TN_DONT, TELNET_PROBE_OPTION
+        TN_IAC, TN_WONT, TELNET_PROBE_OPTION
     };
 
     /* Negotiation probe (3 bytes) followed immediately by the data stream
@@ -1006,11 +1030,30 @@ modeTelnetEchoClient(const char *hostP, int port)
     };
 
     /* Expected echo: the PDP-1 side decodes the above to 8 characters
-     * (0xFF, 'A', LF, 'B', LF, 'C', CR, 'D') and echoes each one straight
-     * back out through the same telnet-mode channel, which re-escapes the
-     * 0xFF and re-expands each bare LF to CR LF. */
-    static const unsigned char expectEcho[11] = {
-        TN_IAC, TN_IAC, 'A', '\r', '\n', 'B', '\r', '\n', 'C', '\r', 'D'
+     * (0xFF, 'A', LF, 'B', LF, 'C', CR, 'D').  The channel has dcfecho, so
+     * as each character is read DCS2 first echoes the bytes it received for
+     * it; T12.am1 then sends the character back out through the same
+     * telnet-mode channel, which re-escapes the 0xFF and re-expands each
+     * bare LF to CR LF.  Per character, echo then send:
+     *   0xFF  FF FF (echo, 0377 goes out as IAC IAC)  FF FF
+     *   'A'   A                                        A
+     *   LF    CR LF (the pair it was collapsed from)   CR LF
+     *   'B'   B                                        B
+     *   LF    LF                                       CR LF
+     *   'C'   C                                        C
+     *   CR    CR                                       CR
+     *   'D'   D (looked ahead after the CR, echoed     D
+     *          only when read)
+     * 21 bytes. */
+    static const unsigned char expectEcho[21] = {
+        TN_IAC, TN_IAC, TN_IAC, TN_IAC,
+        'A', 'A',
+        '\r', '\n', '\r', '\n',
+        'B', 'B',
+        '\n', '\r', '\n',
+        'C', 'C',
+        '\r', '\r',
+        'D', 'D'
     };
 
     connFd   = -1;
@@ -1071,6 +1114,209 @@ modeTelnetEchoClient(const char *hostP, int port)
 }
 
 /* =========================================================================
+ * Mode: echo-toggle-client <host> <port>
+ * ========================================================================= */
+
+/* One step of the echo-toggle-client script. */
+typedef struct
+{
+    int         marker;     /* byte T13 sends to start the step, 0 for none */
+    int         echoPrev;   /* 1 if the previous reply must come back first */
+    const char *replyP;     /* sent when the step ends, NULL to close */
+    int         timeoutS;   /* per-byte read timeout */
+} EchoToggleStep;
+
+/*
+ * readByteTimeout -- read one byte from fd, waiting at most timeoutS seconds.
+ * Returns 1 with the byte in *byteP, 0 on a timeout, -1 on close or error.
+ */
+static int
+readByteTimeout(int fd, unsigned char *byteP, int timeoutS)
+{
+    fd_set          readSet;
+    struct timeval  tv;
+    int             n;
+
+    FD_ZERO(&readSet);
+    FD_SET(fd, &readSet);
+    tv.tv_sec  = timeoutS;
+    tv.tv_usec = 0;
+
+    n = select((fd + 1), &readSet, NULL, NULL, &tv);
+
+    if( n == 0 )
+    {
+        return(0);
+    }
+
+    if( n < 0 )
+    {
+        fprintf(stderr, "%s: echo-toggle-client: select() failed: %s\n",
+                progName, strerror(errno));
+        return(-1);
+    }
+
+    n = (int)recv(fd, byteP, 1, 0);
+
+    if( n == 1 )
+    {
+        return(1);
+    }
+
+    fprintf(stderr, "%s: echo-toggle-client: recv() returned %d: %s\n",
+            progName, n, (n == 0) ? "connection closed" : strerror(errno));
+    return(-1);
+}
+
+/*
+ * modeEchoToggleClient -- run the T13 script below.
+ * The comments give the T13 test each step's expectation decides.
+ * Returns 0 if every step matched exactly, 1 otherwise.
+ */
+static int
+modeEchoToggleClient(const char *hostP, int port)
+{
+    static const EchoToggleStep script[] =
+    {
+        { '0', 0, "HI", ECHO_TOGGLE_MARKER_S },     /* T13-13: two characters to build a word */
+        { '1', 0, "A",  ECHO_TOGGLE_MARKER_S },     /* echo off from here */
+        { '2', 0, "B",  ECHO_TOGGLE_MARKER_S },     /* T13-5: A not echoed */
+        { '3', 1, "C",  ECHO_TOGGLE_MARKER_S },     /* T13-6: B echoed, then 3 */
+        { '4', 0, "D",  ECHO_TOGGLE_MARKER_S },     /* T13-7: C not echoed */
+        { 0,   1, "E",  ECHO_TOGGLE_ECHO_S },       /* T13-7b: D echoed, no marker */
+        { '5', 0, "F",  ECHO_TOGGLE_MARKER_S },     /* T13-9: F must interrupt */
+        { '6', 0, "G",  ECHO_TOGGLE_MARKER_S },     /* T13-10: G interrupts */
+        { '7', 0, NULL, ECHO_TOGGLE_MARKER_S }      /* T13-10: close from the handler */
+    };
+    int             connFd;
+    int             failed;
+    int             stepBad;
+    int             s;
+    int             n;
+    int             k;
+    int             r;
+    int             len;
+    unsigned char   b;
+    unsigned char   expect[8];
+    unsigned char   sent[8];
+    int             sentLen;
+
+    failed  = 0;
+    sentLen = 0;
+
+    if( (connFd = connectTo(hostP, port)) < 0 )
+    {
+        return(1);
+    }
+
+    for( s = 0; s < (int)(sizeof(script) / sizeof(script[0])); s++ )
+    {
+        /* What must arrive: the echo of the last reply if T13 echoes it,
+         * then the marker. */
+        n = 0;
+
+        if( script[s].echoPrev )
+        {
+            memcpy(expect, sent, (size_t)sentLen);
+            n = sentLen;
+        }
+
+        if( script[s].marker != 0 )
+        {
+            expect[n++] = (unsigned char)script[s].marker;
+        }
+
+        stepBad = 0;
+        k = 0;
+
+        while( k < n )
+        {
+            r = readByteTimeout(connFd, &b, script[s].timeoutS);
+
+            if( r < 0 )
+            {
+                close(connFd);
+                return(1);
+            }
+
+            if( r == 0 )
+            {
+                fprintf(stderr, "%s: echo-toggle-client: step %d timed out waiting "
+                        "for 0x%02X\n", progName, s, (unsigned int)expect[k]);
+                stepBad = 1;
+
+                if( script[s].marker != 0 )
+                {
+                    /* T13 is not progressing, nothing more will come. */
+                    close(connFd);
+                    return(1);
+                }
+
+                break;
+            }
+
+            if( b == expect[k] )
+            {
+                k++;
+                continue;
+            }
+
+            fprintf(stderr, "%s: echo-toggle-client: step %d got 0x%02X, "
+                    "wanted 0x%02X\n", progName, s,
+                    (unsigned int)b, (unsigned int)expect[k]);
+            stepBad = 1;
+
+            if( (script[s].marker != 0) && (b == script[s].marker) )
+            {
+                k = n;          /* the marker ends the step, an echo was missing */
+            }
+        }
+
+        if( stepBad )
+        {
+            failed = 1;
+        }
+
+        if( script[s].replyP == NULL )
+        {
+            break;
+        }
+
+        /* A step that did not match replies in lowercase, so T13 sees it. */
+        len = (int)strlen(script[s].replyP);
+
+        for( k = 0; k < len; k++ )
+        {
+            sent[k] = (unsigned char)script[s].replyP[k];
+
+            if( stepBad && (sent[k] >= 'A') && (sent[k] <= 'Z') )
+            {
+                sent[k] = (unsigned char)(sent[k] + ('a' - 'A'));
+            }
+        }
+
+        sentLen = len;
+
+        if( send(connFd, sent, (size_t)sentLen, MSG_NOSIGNAL) != (ssize_t)sentLen )
+        {
+            fprintf(stderr, "%s: echo-toggle-client: send() failed: %s\n",
+                    progName, strerror(errno));
+            close(connFd);
+            return(1);
+        }
+
+        fprintf(stdout, "%s: echo-toggle-client: step %d %s, sent %.*s\n",
+                progName, s, (stepBad ? "MISMATCH" : "ok"), sentLen, (const char *)sent);
+        fflush(stdout);
+    }
+
+    close(connFd);
+    fprintf(stdout, "%s: echo-toggle-client done, %s\n", progName,
+            (failed ? "FAILED" : "all steps matched"));
+    return(failed);
+}
+
+/* =========================================================================
  * Usage
  * ========================================================================= */
 
@@ -1090,7 +1336,8 @@ printUsage(void)
         "  delay-connect <host> <port> <delay_ms>\n"
         "  reconnect-client <host> <port>\n"
         "  interrupt-client <host> <port>\n"
-        "  telnet-echo-client <host> <port>\n",
+        "  telnet-echo-client <host> <port>\n"
+        "  echo-toggle-client <host> <port>\n",
         progName);
 }
 
@@ -1217,6 +1464,19 @@ main(int argc, char *argv[])
 
         port = atoi(argv[3]);
         return(modeTelnetEchoClient(argv[2], port));
+    }
+
+    /* ---- echo-toggle-client <host> <port> ---- */
+    if( strcmp(modeP, "echo-toggle-client") == 0 )
+    {
+        if( argc != 4 )
+        {
+            fprintf(stderr, "%s: echo-toggle-client requires <host> <port>\n", progName);
+            return(1);
+        }
+
+        port = atoi(argv[3]);
+        return(modeEchoToggleClient(argv[2], port));
     }
 
     fprintf(stderr, "%s: unknown mode '%s'\n", progName, modeP);

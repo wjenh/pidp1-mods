@@ -90,8 +90,8 @@ dsfser=000040
 dsfcls=000100
 dsfien=000200
 dsfior=000400
-dsfioc=001000
-dsfioe=002000
+dsfioc=002000
+dsfioe=001000
 dsfcur=004000
 
 / and some combined ones

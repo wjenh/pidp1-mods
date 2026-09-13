@@ -214,11 +214,11 @@ t5_done,
 //
 // SCBCLEAR (scbclr=0, cmd bits 12-14 = 0) calls resetChannel() directly and
 // returns synchronously.  There is no async close phase to wait for.
-// IO must contain the address of the channel control block; SCBCLEAR reads
-// mem[IO & 07777] to extract the channel number from bits 0-5 of word 0.
+// SCBCLEAR has no request block: the channel number is in IO bits 12-17
+// (bits 6-11 are ignored).
 // On success IO is 0; on failure dserr is set.
 
-    lio [ctl01]             // IO = address of ctl01; SCBCLEAR reads chan# from there
+    lio [0]                 // IO = channel 0; SCBCLEAR takes the channel from IO
     scb                     // SCBCLEAR: calls resetChannel() inline
     lai
     and [dserr]             // any error from the close?

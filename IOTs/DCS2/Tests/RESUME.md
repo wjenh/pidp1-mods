@@ -23,6 +23,7 @@ PDP-1 program and running the matching dcstestharness mode in a terminal.
   T09   port 2109   PDP-1 client,  harness echo-server
   T10   (no port)   standalone RXL test, no harness
   T11   port 2111   PDP-1 server,  harness interrupt-client
+  T13   port 2113   PDP-1 server (channel 5),  harness echo-toggle-client
 
 ## Test descriptions
 
@@ -37,6 +38,7 @@ PDP-1 program and running the matching dcstestharness mode in a terminal.
   T09  Flexo mode: client opened with dcfflex, send Concise 061 -> harness receives ASCII 'a' -> harness echoes -> PDP-1 receives Concise 061, LF -> flxnch
   T10  RXL standalone: ascii->flex and flex->ascii spot checks, shift-state change flag, unmappable char returns flxnch
   T11  SBS interrupt: server open with dcfie|dcfior on SBS ch 2 -> harness connects+sends 0x41 -> verify SBS fires, RIC returns ch0, RCS shows dsfior, rch gets 0x41
+  T13  scb modify (scbmod): errors (dseno, dseic, dseil), ssb/rrc/rle error word, rch building a word, echo toggled by modify and decided at read time, interrupts enabled with a character waiting, re-enabled after a disable, and a close held during an interrupt delivered after rci
 
 ## Harness modes (dcstestharness <mode> [args])
 
@@ -69,6 +71,13 @@ PDP-1 program and running the matching dcstestharness mode in a terminal.
       Connect, send 0x41, then wait up to 2s for server to close.
       Exit 0 on clean close, exit 1 on timeout or error.
       Used by T11.
+
+  echo-toggle-client <host> <port>
+      Connect, then for each marker byte T13 sends (after the echo it
+      must see, if any) reply with the next letter; lowercase if what
+      came before the marker was wrong.  Close after marker '7'.
+      Exit 0 only if every step matched.
+      Used by T13.
 
 ## am1 structure conventions
 

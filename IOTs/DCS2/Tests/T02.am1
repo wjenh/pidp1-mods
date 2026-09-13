@@ -173,7 +173,7 @@ t4_done,
 
 // ---- T02-5: SCBCLEAR and verify closed -----------------------------------
 
-    lio [ctl02]             // IO = addr of ctl02; SCBCLEAR reads chan# from there
+    lio [0]                 // IO = channel 0; SCBCLEAR takes the channel from IO
     scb
 
     local

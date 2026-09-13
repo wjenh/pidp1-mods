@@ -13,6 +13,7 @@
  *
  * 26-Aug-2026 wje initial version
  * 28-Aug-2026 wje add load-to-memory-file
+ * 12-Sep-2026 wje add more detail to usage
 */
 
 #include <unistd.h>
@@ -498,6 +499,10 @@ void
 usage(void)
 {
     fprintf(stderr, "Usage: fastload [-m] ]-f memfilename] rimfile\n");
+    fprintf(stderr, "    By default, this will load directly into active memory,\n");
+    fprintf(stderr, "    but the pidp-1 must be running and shared=yes set in pidp-1.connfig.\n");
+    fprintf(stderr, "    Otherwise, -m will update the coremem file, the program must be manually started.\n");
     fprintf(stderr, "    if -f is not used, the default is /opt/pidp1-mods/coremem\n");
+    fprintf(stderr, "    Don't use -m if the pidp-1 is running, the memory file will be overwritten by it.\n");
     exit(1);
 }

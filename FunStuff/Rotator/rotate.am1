@@ -2,7 +2,9 @@ ROTATE THRU SIX PROGRAMS ON THE DRUM
 
 // This uses the IOT 32 clock 1 minute interrupt.
 // It runs in the bank defined by 'bnkno'.
-// It immediately halts to allow the test switches to be set for the first 3 programs.
+//
+// If started at the default address, 0100 in its install bank, it immediately halts to allow
+// the test switches to be set for the first 3 programs.
 // They are specified by 3 groups of 6 switches with the drum track in each group.
 // If the switches are all off, it uses the last loaded values since this program was loaded,
 // defaulting to 2,1,0 9,8,7 decimal. Be sure there are programs on the drum for those!
@@ -12,8 +14,13 @@ ROTATE THRU SIX PROGRAMS ON THE DRUM
 // It selects the program to load and fetches it from the drum then transfers control
 // to the start address that drumloader established.
 //
-// Note that it is important to be sure no type 340 program is running before
-// loading the new image. If one is, it will try to execute whatever data overwrites its program.
+// It can be restarted either at the original start address to repeat the setup,
+// or it can be started at 0101 in its install bank to restart using whatever programs were set up
+// previously.
+// It does not halt, it executes immediately.
+//
+// Note that this will forceably halt the Type 340 display if it's running.
+// Otherwise, the 340 would try to execute whatever data overwrites its program.
 
 #include <memory.ah>
 #include <CLOCK/clockdefs.ah>
@@ -44,8 +51,15 @@ bank bnkno
 
 var pgm=020100, pgm2=111007
 
-// We start at 100
+// We start at 100.
+// Starting at 101 resumes with the last set values.
 100/
+    jmp initialize
+    lem
+    lsm
+    jmp resume
+
+initialize,
     lem
     lsm
     hlt

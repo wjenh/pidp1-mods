@@ -1,0 +1,95 @@
+Microtape probe -- END and the stop
+
+#include <MICROTAPE/type550defs.ah>
+
+// Phase 5 of Magtape/TASK-TYPE550.md. Needs drive 1 mounted and freshly at the load point
+// (remount it, or restart the emulator, before the run): the load point is at the edge of
+// the end zone at the start of the tape.
+// Leg 1, the control: move forward, away from that end, for about half a second. No END:
+// the status must show GO and no error.
+// Leg 2: stop, then move in reverse, back toward the end. END comes as the tape reaches
+// speed; the tape is stopped and GO cleared.
+// Halts at pass with AC = 0, or at fail with AC = the leg that failed (1 or 2) and
+// IO = the status word.
+
+100/
+begin,
+    lio [mtu1]
+    mse
+    lio [mtgo mtmove]
+    mlc                     // move forward, out of the end zone's reach
+    law i 0d25
+    jda wait                // 500 ms
+    law 1
+    dac leg
+    mrs
+    dio stat
+    lac stat
+    and [mterf mtend mtgos]
+    sas [mtgos]             // skip if GO and no error
+    jmp fail
+    cli
+    mlc                     // stop: 150 ms
+    law i 0d10
+    jda wait                // 200 ms
+
+    law 2
+    dac leg
+    lio [mtgo mtrev mtmove]
+    mlc                     // reverse: at speed in 200 ms, then END
+    law i 0d50
+    dac tries
+end1,
+    mrs
+    dio stat
+    ril 2s                 // the error flag to IO bit 0
+    spi                     // skip unless it is up
+    jmp end2
+    law i 1
+    jda wait                // 20 ms
+    isp tries
+    jmp end1
+    jmp fail                // no END within a second
+end2,
+    law i 0d10
+    jda wait                // 200 ms: the tape stops in 150
+    mrs
+    dio stat
+    lac stat
+    and [mterf mtend mtgos]
+    sas [mterf mtend]       // skip if END, the error flag, and GO cleared
+    jmp fail
+    cla
+pass,
+    hlt                     // AC = 0: both legs passed
+    jmp begin
+
+fail,
+    lac leg
+    lio stat
+    hlt                     // AC = the failing leg, IO = the status word
+    jmp begin
+
+// Waits about 20 ms for each count jda left, negated, in wait.
+wait,
+    0
+    dap waitx
+wt1,
+    law i 0d1333            // 1333 passes of 15 us
+    dac inner
+wt2,
+    isp inner
+    jmp wt2
+    isp wait
+    jmp wt1
+waitx,
+    jmp .
+
+leg,    0
+stat,   0
+tries,  0
+inner,  0
+
+constants
+
+start begin

@@ -187,15 +187,18 @@ while true; do
                 # The drum tools
 		make -C $INSTALLDIR/Tools/Drumupdater install
 		make -C $INSTALLDIR/Tools/Drumupdater clean
+                # The microtape tools
+		make -C $INSTALLDIR/Tools/TapeUtils install
+		make -C $INSTALLDIR/Tools/TapeUtils clean
 
-                # The new Type 30 display, either the SDL2 or SDL3 version
-                if dpkg-query -W -f='${Status}' libsdl3-dev 2>/dev/null | grep -q "ok installed"; then
-                    echo "SDL3 found, installing type30dpy3 as type30dpy."
-                    make -C $INSTALLDIR/Tools/T30dpy installdpy3
-                else
-                    echo "No SDL3 library is present, installing SDL2 type30dpy."
-                    make -C $INSTALLDIR/Tools/T30dpy install
-                fi
+        # The new Type 30 display, either the SDL2 or SDL3 version
+        if dpkg-query -W -f='${Status}' libsdl3-dev 2>/dev/null | grep -q "ok installed"; then
+            echo "SDL3 found, installing type30dpy3 as type30dpy."
+            make -C $INSTALLDIR/Tools/T30dpy installdpy3
+        else
+            echo "No SDL3 library is present, installing SDL2 type30dpy."
+            make -C $INSTALLDIR/Tools/T30dpy install
+        fi
 		make -C $INSTALLDIR/Tools/T30dpy clean
 
 		# the macro1_1 cross-compiler:
@@ -270,13 +273,16 @@ while true; do
 	    sudo ln -sf $INSTALLDIR/bin/ad1 /usr/local/bin/ad1
 	    sudo ln -sf $INSTALLDIR/bin/drumupdater /usr/local/bin/drumupdater
 	    sudo ln -sf $INSTALLDIR/bin/drumlist /usr/local/bin/drumlist
+
+	    sudo ln -sf $INSTALLDIR/bin/mtp /usr/local/bin/mtp
+	    sudo ln -sf $INSTALLDIR/bin/mkmicrotape /usr/local/bin/mkmicrotape
+
 	    sudo ln -sf $INSTALLDIR/bin/t30dpy /usr/local/bin/t30dpy
             #
 	    sudo ln -sf $INSTALLDIR/bin/tkaskopenfile /usr/local/bin/tkaskopenfile
 	    sudo ln -sf $INSTALLDIR/bin/tkaskopenfilewrite /usr/local/bin/tkaskopenfilewrite
         #
 	    sudo ln -sf $INSTALLDIR/bin/pdp1audio /usr/local/bin/pdp1audio
-	    sudo ln -sf $INSTALLDIR/bin/mkmicrotape /usr/local/bin/mkmicrotape
 
 	    break
 	    ;;

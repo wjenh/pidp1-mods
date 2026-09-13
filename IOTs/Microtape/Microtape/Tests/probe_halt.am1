@@ -1,0 +1,318 @@
+Microtape probe -- a halt in the middle of a write stops the tape
+
+#include <MICROTAPE/type550defs.ah>
+
+// MiscTasks/Completed/TASK-TAPE-HALT-WRITE.md. Needs drive 1 freshly mounted on a blank image (the
+// tape must start before block BLK: remount, or restart the emulator, before each run).
+// Writes block BLK of drive 1 with the words 1, 2, ... and stops after HWD of them with
+// the tape still writing: at pause, a hlt, the halt the control's stop IOT never sees.
+// The harness waits a few seconds and continues the program (ad1 continue, or the
+// continue switch). A halt stops every moving tape and clears GO (All Halt), and the
+// writers go off with it, so the program then checks:
+//   check 1 (AC bit 17): the status as found after the halt shows GO = 0;
+//   check 2 (AC bit 16): block BLK fails its check: it holds its first words and
+//                        nothing after them;
+//   check 3 (AC bit 15): blocks BLK+1 and BLK+2 are untouched: they read as a blank
+//                        block does, a -0 leading checksum and every other word 0.
+// Halts at pause with AC = the words given (HWD), then at pass with AC = 0, or at fail
+// with AC = the checks that failed and IO = the status as found. A device error where
+// none should come halts at oops with AC = where it came (1-5) and IO = the status.
+// The control leg is the plugin from before All Halt, where the tape kept writing the
+// last word through the halt: checks 1 and 3 fail (AC = 5).
+//
+// For the other kinds of halt the harness sets hkind before starting at begin:
+//   0 (as assembled) the hlt at pause;
+//   1 run on to brk, where the harness has set a breakpoint, and continue from it;
+//   2 spin at spin until the harness stops the CPU, then start it at after.
+// phase is 1 once the HWD words are given, and 2 at pass or fail.
+// estep is the single-step leg: stepped, its mlc starts the tape and the step's end
+// drops RUN. It halts with AC = the status, then estop stops the tape. Measured
+// 13-Sep-2026: the tape was still moving after the steps, since the I/O poll sees few of
+// single-step's short RUN pulses (Tests/README.md).
+
+#define BLK 20
+#define HWD 0d100
+
+100/
+begin,
+    dzm phase
+    dzm mask
+    lio [mtu1]
+    mse                     // select unit 1; the 34 ms selection delay starts
+    lio [mtgo mtsrch]
+    mlc                     // search forward
+    law 1
+    dac where
+    lac [BLK]
+    dac want
+    jsp find                // block BLK's mark: write it
+
+    law 2
+    dac where
+    dzm n
+    law i HWD
+    dac left
+    lio [mtgo mtwrit]
+    mlc                     // write: the first data flag comes at once
+wr1,
+    mrs                     // IO = status
+    spi i                   // skip if the data flag is up
+    jmp wr2
+    idx n                   // the next word: 1, 2, ...
+    lio n
+    mwr
+    isp left                // skip once HWD words are given
+    jmp wr1
+    jmp wr3
+wr2,
+    ril 2s                  // the error flag to IO bit 0
+    spi i                   // skip if it is up
+    jmp wr1                 // nothing yet
+    jmp oops
+
+wr3,
+    idx phase               // phase 1: the tape is writing and the next flag is not answered
+    lac hkind
+    sad [1]
+    jmp brk
+    sad [2]
+    jmp spin
+    lac n                   // AC = the words given
+pause,
+    hlt                     // the harness continues from here
+after,
+    mrs
+    dio stat                // the status as found after the halt
+    cli
+    mlc                     // stop the tape, if the halt has not
+    lac stat
+    and [mtgos]
+    sza                     // check 1: skip if GO is clear
+    jsp mark1
+
+    law 3                   // read block BLK back: search in reverse to below BLK-2
+    dac where               // (a start passes 500 spaces, nearly 2 blocks, before the
+    lio [mtgo mtrev mtsrch] // first flag), then forward to block BLK's mark
+    mlc
+    jsp below
+    law 4
+    dac where
+    lio [mtgo mtsrch]
+    mlc
+    lac [BLK]
+    dac want
+    jsp find
+    law 5
+    dac where
+    dzm sum
+    dzm orw
+    jsp read                // block BLK
+    lac sum
+    dac sumb
+    lio [mtgo mtsrch]
+    mlc                     // back to search, within 800 us of the block end flag
+    dzm sum
+    dzm orw
+    lac [BLK+1]
+    dac want
+    jsp find
+    jsp read                // block BLK+1
+    lio [mtgo mtsrch]
+    mlc
+    lac [BLK+2]
+    dac want
+    jsp find
+    jsp read                // block BLK+2
+    cli
+    mlc                     // stop the tape
+    lac orw
+    dac orn
+
+    lac sumb                // check 2: block BLK must not total zero, + or -
+    sza i                   // skip unless +0
+    jsp mark2
+    lac sumb
+    sad [777777]            // skip unless -0
+    jsp mark2
+    lac orn                 // check 3: blocks BLK+1 and BLK+2 must be all zero
+    sza                     // skip if they are
+    jsp mark3
+    idx phase               // phase 2
+    lac mask
+    sza                     // skip if every check passed
+    jmp fail
+pass,
+    hlt                     // AC = 0: the halt stopped the tape and spoiled only block BLK
+    jmp begin
+
+fail,
+    lac mask
+    lio stat
+    hlt                     // AC = the checks that failed, IO = the status as found
+    jmp begin
+
+oops,
+    mrs                     // a device error: IO = the status
+    dio stat
+    cli
+    mlc                     // stop the tape
+    lac where
+    lio stat
+    hlt                     // AC = where: 1 search, 2 write, 3 reverse search, 4 search, 5 read
+    jmp begin
+
+// Record a failed check in mask; called with jsp.
+mark1,
+    dap m1x
+    law 1
+    ior mask
+    dac mask
+m1x,
+    jmp .
+mark2,
+    dap m2x
+    law 2
+    ior mask
+    dac mask
+m2x,
+    jmp .
+mark3,
+    dap m3x
+    law 4
+    ior mask
+    dac mask
+m3x,
+    jmp .
+
+// hkind 1: the harness's breakpoint is here.
+brk,
+    nop
+    jmp after
+
+// hkind 2: the harness stops the CPU here and starts it at after.
+spin,
+    jmp spin
+
+// The single-step leg.
+estep,
+    lio [mtu1]
+    mse                     // the same unit: no selection delay
+    lio [mtgo mtsrch]
+    mlc                     // stepped: the tape starts, and the step's end stops it
+    mrs
+    dio stat
+    lac stat
+    hlt                     // AC = the status: GO clear if the step's end stopped the tape
+estop,
+    cli
+    mlc                     // stop the tape
+    hlt
+    jmp begin
+
+// Takes search flags until the one for block want, and returns at once.
+find,
+    dap findx
+find1,
+    mrs                     // IO = status
+    spi i                   // skip if the data flag is up
+    jmp find2
+    mrd                     // IO = mark code | block number
+    dio word
+    lac word
+    and [mtblk]
+    sad want                // skip if it is not block want
+findx,
+    jmp .                   // it is: return
+    jmp find1
+find2,
+    ril 2s                  // the error flag to IO bit 0
+    spi i                   // skip if it is up
+    jmp find1               // nothing yet
+    jmp oops
+
+// Takes search flags until one for a block below BLK-2, and returns at once.
+below,
+    dap belowx
+bel1,
+    mrs                     // IO = status
+    spi i                   // skip if the data flag is up
+    jmp bel2
+    mrd                     // IO = mark code | block number
+    dio word
+    lac word
+    and [mtblk]
+    sub [BLK-2]
+    spa                     // skip unless the block is below BLK-2
+belowx,
+    jmp .                   // it is: return
+    jmp bel1
+bel2,
+    ril 2s                  // the error flag to IO bit 0
+    spi i                   // skip if it is up
+    jmp bel1                // nothing yet
+    jmp oops
+
+// Reads the block whose search flag was just taken, forward (mlc within 600 us of that
+// flag), adding each of its 258 words into sum and ORing it into orw. The first word, the
+// leading checksum, is -0 on a block never written (and on any block written forward),
+// so it goes into orw XORed with -0: orw stays 0 while every block read is blank.
+read,
+    dap readx
+    lac [777777]
+    dac lead
+    lio [mtgo mtread]
+    mlc                     // read: a flag with each word
+rd1,
+    mrs                     // IO = status
+    spi i                   // skip if the data flag is up
+    jmp rd2
+    mrd                     // IO = the word
+    jsp acc
+    jmp rd1
+rd2,
+    ril 1s                  // the block end flag to IO bit 0
+    spi                     // skip unless it is up
+    jmp rd3
+    ril 1s                  // the error flag to IO bit 0
+    spi i                   // skip if it is up
+    jmp rd1                 // nothing yet
+    jmp oops
+rd3,
+    mrd                     // the trailing checksum
+    jsp acc
+readx,
+    jmp .
+
+// sum = sum + IO, orw = orw | (IO ^ lead); lead is -0 for a block's first word, then 0.
+acc,
+    dap accx
+    dio word
+    lac word
+    add sum
+    dac sum
+    lac word
+    xor lead
+    ior orw
+    dac orw
+    dzm lead
+accx,
+    jmp .
+
+hkind,  0
+phase,  0
+mask,   0
+where,  0
+want,   0
+word,   0
+stat,   0
+n,      0
+left,   0
+sum,    0
+orw,    0
+lead,   0
+sumb,   0
+orn,    0
+
+constants
+
+start begin

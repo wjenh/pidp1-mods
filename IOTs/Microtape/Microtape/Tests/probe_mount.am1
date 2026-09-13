@@ -1,0 +1,161 @@
+Microtape probe -- the mount IOT and the mode 7 erase
+
+#include <MICROTAPE/type550defs.ah>
+
+// Phase 5, for Magtape/TASK-REWORK.md. Needs drive 2 mounted locked (2 <image>,locked in
+// microtapes.txt) and no line for drive 4. Mounts probemnt.img, relative to /opt/pidp1-mods,
+// on drive 4: the file is created if it does not exist, and is left behind (delete it after).
+//   1  mmt drive 4, "probemnt.img"         IO = 0 (mounted, unlocked)
+//   2  search forward on drive 4           a search flag within 2 s, word 260000 (block 0)
+//   3  drive 4: mode 7                     accepted (0): the erase
+//   4  drive 2, locked: mode 7             refused (101000), the control leg for 3
+//   5  mmt drive 4, AC = 0, then move      IO = 0, and the move refused (101000): no tape
+//   6  mmt with drive 0 in IO              IO = 777776
+//   7  mmt drive 4, an empty name          IO = 777776
+// Halts at pass with AC = 0, or at fail with AC = the failing check and IO = what it got.
+
+100/
+begin,
+    law 1
+    dac which
+    lio [mtu4]
+    law name
+    mmt                     // mount drive 4
+    dio got
+    lac got
+    sas [mtmok]
+    jmp fail
+
+    law 2
+    dac which
+    lio [mtu4]
+    mse
+    lio [mtgo mtsrch]
+    mlc                     // search forward from the load point
+    law i 0d100
+    dac tries
+srch1,
+    mrs
+    dio got
+    lac got
+    and [mtdf]
+    sza                     // skip while the data flag is down
+    jmp srch2
+    law i 1
+    jda wait                // 20 ms
+    isp tries
+    jmp srch1
+    jmp fail                // no search flag within 2 s
+srch2,
+    mrd
+    dio got
+    lac got
+    sas [mtbmf]             // skip if it is block 0, read forward
+    jmp fail
+    cli
+    mlc                     // stop: 150 ms
+    law i 0d10
+    jda wait
+
+    law 3
+    dac which
+    lio [mtfmt]
+    mlc                     // erase drive 4's reel; the tape stays stopped
+    mrs
+    dio got
+    lac got
+    and [mterf mtunab]
+    sza                     // skip if accepted
+    jmp fail
+
+    law 4
+    dac which
+    lio [mtu2]
+    mse
+    lio [mtfmt]
+    mlc                     // erase the locked drive 2: refused
+    mrs
+    dio got
+    lac got
+    and [mterf mtunab]
+    sas [mterf mtunab]
+    jmp fail
+
+    law 5
+    dac which
+    lio [mtu4]
+    cla
+    mmt                     // unmount drive 4
+    dio got
+    lac got
+    sas [mtmok]
+    jmp fail
+    lio [mtu4]
+    mse
+    lio [mtgo mtmove]
+    mlc                     // no tape: refused
+    mrs
+    dio got
+    lac got
+    and [mterf mtunab]
+    sas [mterf mtunab]
+    jmp fail
+
+    law 6
+    dac which
+    cli                     // drive 0
+    law name
+    mmt
+    dio got
+    lac got
+    sas [mtmerr]
+    jmp fail
+
+    law 7
+    dac which
+    lio [mtu4]
+    law empty
+    mmt
+    dio got
+    lac got
+    sas [mtmerr]
+    jmp fail
+
+    cla
+pass,
+    hlt                     // AC = 0: every check passed
+    jmp begin
+
+fail,
+    lac which
+    lio got
+    hlt                     // AC = the failing check, IO = what it got
+    jmp begin
+
+// Waits about 20 ms for each count jda left, negated, in wait.
+wait,
+    0
+    dap waitx
+wt1,
+    law i 0d1333            // 1333 passes of 15 us
+    dac inner
+wt2,
+    isp inner
+    jmp wt2
+    isp wait
+    jmp wt1
+waitx,
+    jmp .
+
+which,  0
+got,    0
+tries,  0
+inner,  0
+
+name,
+    ascii "probemnt.img"
+empty,  0
+
+constants
+
+start begin

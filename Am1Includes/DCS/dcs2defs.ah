@@ -68,7 +68,7 @@
 #define scbset 010000
 #define scbbnd 020000
 #define scbrst 040000
-#define scbmod 100000     // TENTATIVE name, 13-Sep-2026
+#define scbmod 100000
 #define scbclr 000000
 
 // Modification Request Block first word

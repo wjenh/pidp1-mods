@@ -727,11 +727,9 @@ These are included:
 #define scbset 010000
 #define scbbnd 020000
 #define scbrst 040000
-#define scbmod 100000     // TENTATIVE name, 13-Sep-2026
+#define scbmod 100000
 #define scbclr 000000
 
-// TENTATIVE names, 13-Sep-2026: this block and the error-word block below
-// are not final and may be renamed before the release.
 // Modification Request Block first word
 // dcmmty - bitmask, the modification type
 // dcmgen - modification type 0, general
@@ -787,7 +785,6 @@ These are included:
 #define dserr 400000
 
 // The rest of the error word, see the section on the error word
-// TENTATIVE names, 13-Sep-2026
 // dseflc - flag, no character was ready (rch, rcr, 8-bit mode)
 // dseflf - flag, the transmit buffer is full (tcb, tcc)
 // dsefle - flag, a Linux errno is in dsemen

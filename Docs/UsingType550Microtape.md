@@ -5,11 +5,19 @@ Type 555 drives.
 
 The DEC manual *550_prelimManual.pdf* (1963) is the companion; a program written to it
 should run unchanged.
+Where DEC's later documents fill its gaps or correct it, the emulation follows them:
+*H-550, DECtape Control Unit 550*, the maintenance manual, 1965, Hantman's DECUS paper
+*Microtape: Its Features and Applications* (1963), the F-03 brochure (1964), and DEC's
+field-service memos.
 
-This is version 1.1\
-Edit date 11-Sep-2026\
+This is version 1.3\
+Edit date 13-Sep-2026\
 
-Version 1.0, 10-Sep-2026: initial version
+Version 1.0, 10-Sep-2026: initial version\
+Version 1.2, 13-Sep-2026: warning about halting during a write, the example stops the tape on an error\
+Version 1.3, 13-Sep-2026: matched to DEC's later documents: a halt stops the tapes, any error stops
+writing, the block mark and the deadlines are DEC's, the end-of-block latch; `mse` rereads
+*microtapes.txt*; the *mtp* tool added.
 
 ## What is the Type 550 Microtape?
 
@@ -27,14 +35,15 @@ The control does no memory transfers of its own; the program must move every wor
 The tape's IOTs share device 01 with the paper tape reader's `rpa`, and are told apart from
 it by the sub-device field of the instruction, as the real machine's decoding did.
 
-The timing is the manual's, a word every 200 usec, 52.8 ms per block, 200 ms to
+The timing is DEC's, a word every 200 usec, 52.8 ms per block, 200 ms to
 start, 150 ms to stop and 300 ms to reverse.
 
 ## What you need
 
 - The image tool *mkmicrotape*, only needed to check images and to convert simh tapes.
-- A line in */opt/pidp1-mods/microtapes.txt* for each drive that should have a tape at start-up.
-A program can also mount tapes itself via the *mnt* IOT, below
+- A line in */opt/pidp1-mods/microtapes.txt* for each drive that should have a tape.
+The tool */usr/local/bin/mtp* changes a drive's line for you.
+A program can also mount tapes itself via the *mmt* IOT, below.
 
 ## Setting up
 
@@ -52,39 +61,63 @@ List the drive to file mapping in */opt/pidp1-mods/microtapes.txt*, one line per
 - Blank lines and lines starting with `#` are ignored. A drive with no line has no tape.
   With no *microtapes.txt* at all, no drive has a tape.
 - A file that is not a tape image is created as a blank tape when first used unless the line specifies locked.
-  If specifed as locked but it is not a tape image, it will give a read error if used.
+  If specified as locked but it is not a tape image, it will give a read error if used.
 
 In *pidp1.config*, `microtapesbs` is the sequence break channel, 0-15, to use if sbs is enabled,
 the default is 2.
 ```
 microtapesbs=2
 ```
-To change tapes while the emulator runs, edit *microtapes.txt* and reload the
-configuration with `bin/pdp1control.sh reload`.
+To change tapes while the emulator runs, edit *microtapes.txt*, or let *mtp* do it:
+```
+bin/mtp 1 microtapes/tape2.img
+bin/mtp 2 /home/pi/tapes/system.img,locked
+bin/mtp -f /some/other/list.txt 3 scratch.img
+```
+*mtp* replaces the drive's line or adds one.
+The image name is written into the list as given, so a relative name is relative to
+*/opt/pidp1-mods* here too.
+`-f` names a list other than */opt/pidp1-mods/microtapes.txt*.
 
-Only drives whose line changed are remounted, plus any drive whose tape ran off its reel,
-and any drive whose line could not be mounted last time.\
-A drive that is running is not disturbed.\
+The change takes effect at the program's next `mse`.
+An unchanged file changes nothing, so a program's `mse` never rewinds a tape or undoes its `mmt`.
+To make a change take effect at once instead, reload the configuration with
+`bin/pdp1control.sh reload`, which applies the list whether or not it changed.
+
+Either way, only drives whose line changed are remounted, plus any drive whose tape ran off its
+reel, and any drive whose line could not be mounted last time.\
+A drive whose line did not change is not disturbed, even if it is running.\
+A file rewritten with the same lines changes nothing, but it does retry a line that failed,
+for instance, a locked line for an image that has since been made.\
 A drive whose tape a program chose with `mmt` keeps it until its line in *microtapes.txt* is changed.\
-A freshly mounted tape is stopped at the load point, just before the end zone at the start of the tape.
+A freshly mounted tape is stopped at the load point, just before the end zone at the start of the tape.\
 
 ## How does it work?
 
-Within the tape, each block is 264 word spaces:
-```
-  word space   0-2           3          4 ... 259     260         261-263
-               block mark    leading    256 data      trailing    block mark
-               and lock,     checksum   words         checksum    and lock,
-               forward                                            reverse
-```
+Within the tape, each block is 264 word spaces, as DEC's figures show them, counted forward:
+
+| Space | Mark | What it is |
+|---|---|---|
+| 0 | M | block mark, where search raises its flag |
+| 1 | -G | reverse guard |
+| 2 | L | lock: writing, the control loads -0 here for the leading checksum |
+| 3 | -C | leading checksum |
+| 4-259 | | the 256 data words |
+| 260 | C | trailing checksum |
+| 261 | -L | reverse lock |
+| 262 | G | guard |
+| 263 | -M | reverse block mark, where a reverse search raises its flag |
+
 The mark track, which the emulation keeps, tells the control what each space is.
 The control senses the block mark, the checksums, and the data words as they pass the virtual head
 in either direction.
 
 The checksum rule makes every block total zero.\
 When a block is written the control puts -0 (777777) in the leading checksum space itself,
-and the program writes the trailing checksum, which is
-the complement of the 1's-complement sum of the 256 data words.
+and the program writes the trailing checksum, which DEC defines as
+the complement of the 1's-complement sum of the leading checksum (-0) and the 256 data words.
+Adding -0 changes a 1's-complement sum only when the data words sum to +0, and the block totals
+zero either way.
 Read back, the 258 words, both checksums included, add up to zero.
 Note that 1's complement has two zeros.
 The PDP-1 `add` turns a -0 result into +0, so a
@@ -97,7 +130,7 @@ A tape in any mode that runs into the end zone ahead of it is stopped with an er
 
 The *<MICROTAPE/type550defs.ah>* include file defines the mnemonics used here.
 
-All six IOTs act immedately and do not need nor supprt the `i` or the `C` bit.
+All six IOTs act immediately and do not need nor support the `i` or the `C` bit.
 All pass their argument in the IO register.
 
 Note that `mmt` is a new convenience feature allowing a program to mount a tape itself.
@@ -128,7 +161,7 @@ IO returns:
 1       mtmlck   mounted write-locked, the image file is read-only
 777776  mtmerr   failed
 ```
-It fails for a drive number outside 1-8, changing nothing, otherwise leafing the
+It fails for a drive number outside 1-8, changing nothing, otherwise leaving the
 drive with no tape for a name that is empty, holds a character outside 040-176,
 has no end in its bank or is too long, for a file that is not a tape image or that is already on
 another drive, or for a file that cannot be created.
@@ -151,9 +184,15 @@ bits 2-5, the drive, 1-7, or 10 for drive 8; 0 or 11-17 select no drive
 The defines *mtu1* to *mtu8* are the drive numbers already in place.
 
 Clears the data, block end and error flags, and with them END, MISS, MTE and UNABLE.
+Writing stays off after an error until the next `mlc` in write mode.\
 Selecting a different drive starts a 34 ms selection delay during which no flags are asserted.
+DEC's field-service memo of June 1964 gives the same 34 ms, as something the program must allow
+for: when changing drives, deselect the last one (select drive 0) for 34 ms.\
 The drive that was selected keeps moving as it was told, but is no longer visible.
 If left running, it will run off its reel.
+
+Before selecting, `mse` rereads */opt/pidp1-mods/microtapes.txt* and, if it has changed, brings
+the drives in line with it; see Setting up.
 
 -IOT 401, mlc, 720401, load control
 
@@ -170,14 +209,19 @@ Clears the same flags as `mse`.\
 From rest the tape takes 200 ms to reach speed, and a change of direction takes 300 ms.\
 No flags are asserted until the tape is at speed.\
 Stopping takes 150 ms.\
-Changing mode while the tape is at speed takes effect at once.
+Changing mode while the tape is at speed takes effect at once, except at the end of a block
+being written: an `mlc` given after the flag for the last data word, before the trailing
+checksum is on the tape, waits until the checksum has been written.
+This is DEC's D256 latch; see Write, below.\
+Only an `mlc` with go and write mode turns the writers on.
+Any other `mlc`, a halt and any error turn them off.
 
 Mode 7 erases the whole reel at once, back to a blank initialized tape with every block numbered,
 every block reading without error, its data words zero.
 Then it acts as move, raising no flags.
 
 For the original, control mode 7 wrote the mark track with a switch on the control panel to allow it.
-The functio here is the same, formatting a tape.
+The function here is the same, formatting a tape.
 
 The control refuses the command, setting UNABLE and the error flag and changing nothing
 if no drive is selected, the drive has no tape, its tape ran off the reel, or the mode is
@@ -204,7 +248,8 @@ bit 3, END, the tape ran into the end zone      mtend  040000
 bit 4, MISS, a flag came before the last one was answered
                                                 mtmiss 020000
 bit 5, reverse was commanded                    mtrevs 010000
-bit 6, go was commanded (END clears it)         mtgos  004000
+bit 6, go was commanded; END and a halt clear it
+                                                mtgos  004000
 bit 7, MTE, a mark track error; never set       mtmte  002000
 bit 8, UNABLE, the last mlc was refused         mtunab 001000
 bits 9-17 are 0
@@ -221,7 +266,7 @@ The buffer then holds the mark code and the block number, 260000 plus the block 
 The define *mtblk* masks the block number.
 To read or write that block, change to read or write mode within the allowed timing window, see Deadlines.
 
-**Read** raises the data flag 400 us after the block mark with the leading checksum, then
+**Read** raises the data flag 600 us after the block mark's flag with the leading checksum, then
 256 more data flags 200 us apart for each data word, then for block end flag with the
 trailing checksum.
 Take each word with `mrd` within the time between the reads.
@@ -234,8 +279,12 @@ Answer every data flag with `mwr` and the next word; each flag asks for a word t
 times before it is written.
 After the 256th word the block end flag is raised, answer it with `mwr` and the trailing checksum.
 
-The checksum reaches the tape 200 us after the block end flag, wait at least that long
-(the manual says 240 us) before you change the mode or stop or the checksum will not be written.
+The checksum reaches the tape 200 us after the block end flag.
+An `mlc` given from the flag for the last data word until then is held, and carried out as the
+checksum is written (DEC's D256 latch), so the program can search or stop right after the
+checksum's `mwr`.
+Only the last `mlc` given in that time is carried out, and an `mse` to another drive carries it
+out at once, before the checksum is written.
 Written in reverse, the words go on the tape last word first, and the two checksums change
 places, the block still totals zero.
 
@@ -252,24 +301,25 @@ lands in the third space after the last one read.
 
 The program has one word time, 200 us, to answer every data flag and block end flag.\
 The other deadlines count from a flag to the `mlc` that changes the mode.
-The windows are from the origional manual or up to 200 us more generous.
+Every window is DEC's figure (the DECUS paper's Figs. 4 and 5 and the brochure).
 
-| From | To | Emulation | Manual |
+| From | To | Emulation | DEC |
 |---|---|---|---|
 | every data or block end flag | `mrd` or `mwr` | 200 us | 200 us |
-| search flag | write (`mlc` and the first `mwr`) | 400 us | 400 us |
-| search flag | read, to get the leading checksum | 400 us | |
-| search flag | read, to get the first data word | 600 us | 600 us |
-| read block end flag | search, to see the next block | 1.0 ms | 800 us |
+| search flag | write, the `mlc` | 400 us | 400 us |
+| search flag | write, the first `mwr` | 600 us | 600 us |
+| search flag | read, to get the leading checksum | 600 us | 600 us |
+| read block end flag | search, to see the next block | 800 us | 800 us |
 | read block end flag | write the next block | 1.2 ms | 1.2 ms |
-| write block end flag | search, to see the next block | 1.4 ms | 1.2 ms |
-| write block end flag | the mode change, at the earliest | 200 us | 240 us |
+| write block end flag | search, to see the next block | 1.2 ms | 1.2 ms |
 
-Keep to the manual's figures for authenticity.
+The 600 us for reading after a search is the time DEC allows to change from search to read.
+It ends where the first data flag says the leading checksum has been read.
+A read commanded later starts with the first data word; a block written forward has -0 as its
+leading checksum, so its total still comes out zero, but a program should not count on that.
 
-The manual's 600 us for reading after a search is to catch the first data word, the leading
-checksum, and is -0.
-Leaving it out of the total changes nothing.
+A write commanded after 400 us misses the lock: the leading checksum space keeps what was on
+the tape, and the block fails its check.
 
 A search flag need only be answered before the next one, 52.8 ms later.
 
@@ -282,22 +332,49 @@ Only `mse` and `mlc` clear them.
 - **MISS** -- a data flag or block end flag came due while the last one was still up.
   The new flag is raised anyway, and the tape keeps going.
   Reading, the word that wasn't taken is lost.
-  Writing, the old buffer contents are written in its place.
-  The block's checksum will refect the value actually written.
+  Writing, the control stops writing at the missed word: that space and the rest of the block
+  keep what was on the tape, and the block fails its check.
 - **END** -- the tape ran into the end zone in any mode. The tape is stopped
   and GO is cleared. Move the other way, reversing out of an end zone is not an error.
 - **UNABLE** -- the last `mlc` was refused because of no drive, no tape, a tape off the reel, or
   write or erase on a locked drive.
 
-MTE, the mark track error is never set, emulator tapes are awlays perfect.
+MTE, the mark track error is never set, emulator tapes are always perfect.
+
+Every error switches the writers off, as DEC's control did (H-550: the error conditions hold
+WRITE ENABLE at 0).
+Writing resumes only when the error has been cleared and write mode is commanded again with an
+`mlc`; an `mse` alone clears the error but writes nothing.
+So a program that falls behind spoils at most the block it was writing, never the ones after it.
 
 A drive that is deselected while it moves is not watched, so no end zone stops it.
 It runs to the end of the tape and off the reel, and then it is unusable (UNABLE) until
-its tape is remounted by a configuration reload or by `mmt`.
+its tape is remounted: by `mmt`, by a configuration reload, or by any change to
+*microtapes.txt* that an `mse` then reads (rewriting the drive's line with *mtp* will do).
 The image file is not harmed.
 
-The tapes keep moving while the processor is halted, just as the real ones did.
-Keep this in mind if you use the stop switch or are using the ad1 debugger.
+## Halting the processor
+
+When the processor halts, every moving drive stops, deselected ones included, and GO is
+cleared.
+This is DEC's "All Halt" (H-550): the drives' go relays were held only while the computer's
+RUN flip-flop was 1.
+A `hlt`, a breakpoint, the stop switch and ad1's `stop` all do it.
+
+- The writers go off with it. A halt during a write spoils only the block being written: it
+  keeps the words written before the halt and fails its check. The blocks after it are not
+  touched.
+- The mode, reverse and the flags are left as they were.
+- When the program runs again the tape stays stopped until it gives an `mlc` with go.
+  A program that was waiting for a flag will wait forever, so a wait loop should also watch
+  GO (`mtgos`) or the error flag, or the program should restart the transfer after a halt:
+  search back to the block and write it again.
+
+**Single-step does not stop the tape.**
+On the real machine each step dropped RUN, and so stopped the tapes.
+The emulator sees too few of single-step's short RUN pulses, and a tape started by a stepped
+`mlc` keeps moving.
+Stop the tape (`cli` `mlc`) before stepping through tape code, or use a breakpoint.
 
 ## Sequence breaks
 
@@ -358,6 +435,9 @@ word takes 40-60 us of the 200 us allowed.
 It looks at the error flag only when no flag is up, and once more at the end of the
 block, the error flag stays up until the next `mse` or `mlc`, so a MISS cannot slip by.
 The checksum is worked out before the write starts, and the total after the read ends.
+On an error it saves the status and stops the tape before it halts.
+The halt would stop the tape too (see Halting the processor), but a program that goes on after
+an error has to stop it itself.
 ```
 Type 550 microtape sample -- write a block, read it back in reverse
 
@@ -412,9 +492,11 @@ good,
     jmp begin
 
 fail,
-    mrs                     // an error: AC = the status word
-    dio stat
-    lac stat
+    mrs                     // an error: IO = the status word
+    dio stat                // saved first, the mlc below clears the error bits
+    cli
+    mlc                     // stop the tape (the halt below would stop it too)
+    lac stat                // AC = the status word
 bad,
     hlt                     // AC = the status word, or the block total
     jmp begin
@@ -466,10 +548,11 @@ fill2,
 fillx,
     jmp .
 
-// Writes buf and cksum into the block whose search flag was just taken (mlc and
-// the first mwr within 400 us of that flag), then sets the tape searching forward
-// again. Every flag must be answered within 200 us, so the loop only looks at
-// the data flag; a MISS leaves the error flag up, checked once at the end.
+// Writes buf and cksum into the block whose search flag was just taken (the
+// mlc within 400 us of that flag, the first mwr within 600 us), then sets the
+// tape searching forward again. Every flag must be answered within 200 us, so
+// the loop only looks at the data flag; a MISS leaves the error flag up,
+// checked once at the end.
 write,
     dap writex
     law buf
@@ -510,7 +593,7 @@ wr4,
 writex,
     jmp .
 
-// Reads the block whose reverse search flag was just taken (mlc within 400 us
+// Reads the block whose reverse search flag was just taken (mlc within 600 us
 // of that flag), backward. The words come last first, so they are stored from
 // the end of rbuf down, and rbuf ends up holding the block as written: the
 // leading checksum, the MTWDS data words, the trailing checksum.
@@ -579,13 +662,15 @@ when it has gone past.
 - The MIT PDP-1 controller, a different design
 - Mode 7 as the manual has it, writing the mark track, and the WRTM switch that allows it.
   Mode 7 erases the current tape instead.
-- Modes 5 and 6, reading and writing through block ends, which the manual lists as "not
-  presently connected". They act as move.
-- The +-20% variation of the tape speed in reverse. Both directions run at the nominal
-  speed.
+- Modes 5 and 6, reading and writing through block ends. The 1963 documents call them "not
+  presently connected"; H-550 (1965) describes them as working. They act as move.
+- The variation of the tape speed in reverse, +-20% in the brochures and the DECUS paper,
+  +-30% in H-550. Both directions run at the nominal speed.
 - Mark track errors; MTE is never set.
 - The "dummy flag" of a change from write to read, and the 140-480 us latch that holds a
-  stop or read command while a written word is being shifted out.
+  stop or read command while a written word is being shifted out. The latch at the end of a
+  block being written, DEC's D256, is emulated; see `mlc`.
+- Mode 7 raising flags from a clock, as the real control did.
 
-The block layout is reconstructed from the manual's text.
-The figures that would confirm it are missing from the surviving copy.
+The block layout is confirmed by DEC's figures: Fig. 4 of the June 1964 brochure, and
+Figs. 2, 4 and 5 of the DECUS paper.

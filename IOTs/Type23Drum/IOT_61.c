@@ -289,7 +289,7 @@ iotStart()
     iotCondLog(LOG_START, "IOT 61 started\n");
     if( drumFd < 0 )
     {
-        drumFd = open(DRUMFILE, O_RDWR + O_CREAT + O_SYNC, 0666);
+        drumFd = open(DRUMFILE, O_RDWR + O_CREAT, 0666);
         iotCondLog(LOG_START, "IOT 61 drumFd = %d\n", drumFd);
     }
 

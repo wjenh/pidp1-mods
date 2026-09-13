@@ -17,7 +17,12 @@
  *     file already on another drive, a file of the wrong size left untouched, a read-only file;
  *   - SIGHUP (iotUpdate): an unchanged line leaves a program's mount alone, a changed line
  *     wins, a removed line unmounts, a failed line is retried, an off-reel tape is rethreaded;
- *     the break channel follows microtapesbs.
+ *     the break channel follows microtapesbs;
+ *   - All Halt (TASK-TAPE-HALT-WRITE): the I/O poll stops every moving drive when RUN falls,
+ *     and does nothing while RUN stays 0 or when it rises;
+ *   - mse rereads microtapes.txt: an edited, renamed-over, removed or restored list takes
+ *     effect at the next mse; an unchanged file undoes no program mount and rewinds no tape;
+ *     two tapes can trade drives in one edit; a bad line is reported once.
  *
  * Architectural scope: a standalone host program. It stands in for the emulator: the PDP1
  * struct, the configuration (getConfiguration()/findConfigurationSetting()) and the break
@@ -34,6 +39,7 @@
  * the deliberately bad lines and names) are expected.
  *
  * 11-Sep-2026 Claude -- initial version, for Magtape/TASK-REWORK.md.
+ * 13-Sep-2026 Claude -- All Halt (MiscTasks/Completed/TASK-TAPE-HALT-WRITE.md); mse rereads the list.
  */
 
 #define NOT_IN_PDP1
@@ -540,6 +546,210 @@ int chan;
     iotStop();
 }
 
+// Advances simtime by ms milliseconds in 1 ms steps, polling the plugin at each, as the main
+// loop does. No return value.
+static void
+pollFor(int ms)
+{
+int i;
+
+    for( i = 0; i < ms; ++i )
+    {
+        pdp.simtime += MS;
+        iotIOPoll(&pdp);
+    }
+}
+
+// All Halt through the plugin's I/O poll: RUN held at 0 (as the rest of this program runs,
+// and as the machine is at load time) stops nothing; RUN falling from 1 to 0 stops every
+// moving drive, the selected one and a deselected one; RUN rising starts none of them.
+static void
+testAllHalt(void)
+{
+    // Drive 5 moving, then deselected; drive 1 selected and searching. RUN is 0 throughout.
+    pdp.run = 0;
+    pdp.io = 050000;
+    iot(1, 0720301);
+    pdp.io = (MT_CTL_GO | MT_MODE_MOVE);
+    iot(1, 0720401);
+    pdp.io = 010000;
+    iot(1, 0720301);
+    pdp.io = (MT_CTL_GO | MT_MODE_SEARCH);
+    iot(1, 0720401);
+    pollFor(300);
+    check(((unit(1)->motion == MT_CRUISE) && (unit(5)->motion == MT_CRUISE) && unit(1)->goCmd && unit(5)->goCmd),
+        "RUN held at 0 stopped a tape");
+
+    // RUN rises: nothing changes.
+    pdp.run = 1;
+    pollFor(5);
+    check(((unit(1)->motion == MT_CRUISE) && (unit(5)->motion == MT_CRUISE)), "RUN rising stopped a tape");
+
+    // RUN falls: both stop, and GO reads 0.
+    pdp.run = 0;
+    pollFor(1);
+    check(((unit(1)->motion == MT_DECEL) && (unit(5)->motion == MT_DECEL) && !unit(1)->goCmd && !unit(5)->goCmd),
+        "RUN falling did not stop both tapes");
+    iot(1, 0720701);
+    check(((pdp.io & MT_ST_GO) == 0), "after RUN fell, mrs shows GO (%06o)", pdp.io);
+
+    // RUN rises again: they stay stopped until a program commands them.
+    pdp.run = 1;
+    pollFor(1000);
+    check(((unit(1)->motion == MT_STOPPED) && (unit(5)->motion == MT_STOPPED)), "a tape moved again after RUN rose");
+    pdp.run = 0;
+    pollFor(1);
+}
+
+// Sends everything written to stderr to DIR/stderr.txt while on is true, and back to the
+// terminal when it is false. No return value.
+static void
+captureStderr(bool on)
+{
+static int saved = -1;
+int fd;
+
+    fflush(stderr);
+    if( on && (saved < 0) )
+    {
+        saved = dup(2);
+        if( (fd = open(DIR "/stderr.txt", (O_WRONLY | O_CREAT | O_TRUNC), 0644)) >= 0 )
+        {
+            dup2(fd, 2);
+            close(fd);
+        }
+    }
+    else if( !on && (saved >= 0) )
+    {
+        dup2(saved, 2);
+        close(saved);
+        saved = -1;
+    }
+}
+
+// Returns how many times strP occurs in DIR/stderr.txt.
+static int
+stderrCount(const char *strP)
+{
+char buf[4096];
+FILE *fP;
+char *cP;
+size_t len;
+int n;
+
+    n = 0;
+    if( (fP = fopen(DIR "/stderr.txt", "r")) )
+    {
+        len = fread(buf, 1, (sizeof(buf) - 1), fP);
+        buf[len] = 0;
+        fclose(fP);
+        for( cP = buf; (cP = strstr(cP, strP)); ++cP )
+        {
+            ++n;
+        }
+    }
+
+    return(n);
+}
+
+// Issues mse for drive u. No return value.
+static void
+mse(int u)
+{
+    pdp.io = ((Word)u << 12);
+    iot(1, 0720301);
+}
+
+// mse rereads microtapes.txt (owner, 13-Sep-2026): an edited list takes effect at the next
+// mse, with no SIGHUP; an unchanged file changes nothing.
+static void
+testSelectReread(void)
+{
+Mt550P cP;
+FILE *fP;
+int64_t pos;
+const char *baseP;
+
+    cP = mtControl();
+
+    // As testUpdate left it: drive 1 t1b.img, 3 missing3.img locked, 5 second5.img, from the
+    // list; drive 7 a program's t7.img. A program mounts over drive 1, and mse with the file
+    // unchanged undoes nothing.
+    putString(06300, "prog1b.img");
+    mount(1, 06300);
+    mse(2);
+    check((mountedAs(1, "prog1b.img") && mountedAs(7, "t7.img") && mountedAs(3, "missing3.img")),
+        "mse with the list unchanged disturbed a drive");
+    check((cP->selUnit == 2), "mse selected unit %d, want 2", cP->selUnit);
+
+    // A changed line takes effect at the next mse, and the mse still selects.
+    baseP = "1 t1c.img\n3 missing3.img,locked\n5 second5.img\n";
+    writeList(baseP);
+    mse(4);
+    check((mountedAs(1, "t1c.img") && (fileSize(DIR "/t1c.img") == 0)), "mse did not remount drive 1 from the edited list");
+    check((cP->selUnit == 4), "mse after an edit selected unit %d, want 4", cP->selUnit);
+    check((mountedAs(3, "missing3.img") && mountedAs(5, "second5.img") && mountedAs(7, "t7.img")),
+        "an edit to drive 1's line disturbed drive 3, 5 or 7");
+
+    // Rewritten with the same bytes: a changed file, but no changed line, so the tape in use is
+    // not rewound. Drive 1 is moved off the load point first.
+    mse(1);
+    pdp.io = (MT_CTL_GO | MT_MODE_MOVE);
+    iot(1, 0720401);
+    pollFor(400);
+    pdp.io = 0;
+    iot(1, 0720401);
+    pollFor(300);
+    pos = mt555Position(unit(1), pdp.simtime);
+    check((pos != MT_LOAD_POS), "drive 1 did not leave the load point, so the next check proves nothing");
+    writeList(baseP);
+    mse(1);
+    check((mountedAs(1, "t1c.img") && (mt555Position(unit(1), pdp.simtime) == pos)),
+        "rewriting the list unchanged rewound or remounted drive 1");
+
+    // Two tapes trade drives in one edit: every changed drive is emptied before any is
+    // mounted, so neither image is refused as already on the other drive.
+    writeList("1 second5.img\n3 missing3.img,locked\n5 t1c.img\n");
+    mse(2);
+    check((mountedAs(1, "second5.img") && mountedAs(5, "t1c.img")),
+        "drives 1 and 5 did not trade tapes (1 %s, 5 %s)", unit(1)->path, unit(5)->path);
+
+    // A list written elsewhere and renamed over (as Tools/TapeUtils/mtp writes it).
+    if( (fP = fopen(DIR "/microtapes.tmp", "w")) )
+    {
+        fputs("1 second5.img\n3 missing3.img,locked\n5 t1c.img\n8 t8.img\n", fP);
+        fclose(fP);
+    }
+    rename(DIR "/microtapes.tmp", LIST);
+    mse(2);
+    check(mountedAs(8, "t8.img"), "a list renamed into place was not read at mse");
+
+    // A bad line is reported once, when it appears, not at every mse.
+    captureStderr(true);
+    writeList("1 second5.img\n3 missing3.img,locked\n5 t1c.img\n8 t8.img\nbogus line\n");
+    mse(2);
+    mse(3);
+    mse(2);
+    captureStderr(false);
+    check((stderrCount("want \"<drive 1-8>") == 1), "a bad line was reported %d times over three mse, want 1",
+        stderrCount("want \"<drive 1-8>"));
+
+    // A removed line unmounts at the next mse; so does a removed file, for every listed drive.
+    // Drive 7 has no line and keeps the program's tape.
+    writeList("1 second5.img\n5 t1c.img\n8 t8.img\n");
+    mse(2);
+    check((!unit(3)->mounted && mountedAs(1, "second5.img")), "a removed line did not unmount drive 3 at mse");
+    unlink(LIST);
+    mse(2);
+    check((!unit(1)->mounted && !unit(5)->mounted && !unit(8)->mounted && mountedAs(7, "t7.img")),
+        "with the list removed, mse left a listed tape mounted or took drive 7's");
+
+    // The list comes back: its drives are mounted at the next mse.
+    writeList("1 t1c.img\n");
+    mse(1);
+    check(mountedAs(1, "t1c.img"), "a list that reappeared was not read at mse");
+}
+
 // ---- main ---------------------------------------------------------------------------------
 
 // Runs every test group. Returns 0 if every check passed, 1 otherwise.
@@ -567,6 +777,8 @@ main(void)
     runTest(testRouting, "device 01 routing: rpa, other sub-devices, the tape, read-in's rpb");
     runTest(testMountIot, "mount IOT 201: AC mask, unmount, bank end, bad names, same file, read-only");
     runTest(testUpdate, "SIGHUP: program mounts kept, changed and removed lines, retry, rethread, microtapesbs");
+    runTest(testAllHalt, "All Halt: RUN falling stops every moving drive; RUN at 0 at load and RUN rising do not");
+    runTest(testSelectReread, "mse rereads microtapes.txt: edits take effect, unchanged file inert, trades, one warning");
 
     cleanDir();
     printf("%d checks, %d failed\n", checkCount, failCount);

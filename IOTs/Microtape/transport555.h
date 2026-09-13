@@ -33,7 +33,9 @@
 #define MT_TURN_ACCEL_NS    150000000LL     // turnaround = 150 ms stop + 150 ms start = 300 ms
 
 // Physical slot numbers used by both layers (forward order; reverse mirrors s to 263 - s).
-#define MT_SLOT_BLOCKMARK   1
+// The block mark is space 0 and the reverse block mark space 263 (DECUS 1963 Figs. 2, 4-6;
+// brochure F-03 Fig. 4); 1 is the reverse guard and 2 the lock.
+#define MT_SLOT_BLOCKMARK   0
 #define MT_SLOT_LOCK        2
 #define MT_SLOT_REVCHECK    3
 #define MT_SLOT_FIRSTDATA   4

@@ -13,6 +13,7 @@
 #
 # 11-Sep-2026 Claude -- plugintest and probe_mount added; the loader test plugins removed
 #                       with the combined-code loader change (Magtape/TASK-REWORK.md).
+# 13-Sep-2026 Claude -- probe_halt added (MiscTasks/Completed/TASK-TAPE-HALT-WRITE.md).
 
 CC      = gcc
 CFLAGS  = -Wall -Wextra -O2 -I..
@@ -25,7 +26,8 @@ PLUGIN_SRC = ../../Reader/IOT_2.c ../microtape.c $(CORE)
 
 AM1     ?= am1
 AM1INC  ?= ../../../Am1Includes
-PROBES  = mtsample.am1 probe_period.am1 probe_miss.am1 probe_end.am1 probe_unable.am1 probe_mount.am1
+PROBES  = mtsample.am1 probe_period.am1 probe_miss.am1 probe_end.am1 probe_unable.am1 probe_mount.am1 \
+          probe_halt.am1
 
 .PHONY: test roundtrip probes clean
 

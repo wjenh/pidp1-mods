@@ -25,7 +25,7 @@
 #define MT_MODE_MOVE        0
 #define MT_MODE_SEARCH      1
 #define MT_MODE_READ        2
-#define MT_MODE_WRITE       3               // 4-6 are spare or "not presently connected": move
+#define MT_MODE_WRITE       3               // 4-6 act as move (5 and 6, through block ends, not emulated)
 #define MT_MODE_ERASE       7               // manual: write mark track. Here: erase the reel, then move
 
 // ---- SELECT word: unit number in IO bits 2-5 ---------------------------------------------------
@@ -45,12 +45,14 @@
 #define MT_ST_MTE           0002000         // bit 7 mark track error (never set: the mark track is perfect)
 #define MT_ST_UNABLE        0001000         // bit 8 tape unable
 
-// ---- Search words: mark code in bits 0-5, block number in bits 6-17 (research doc 5) ----------
+// ---- Search words: mark code in bits 0-5, block number in bits 6-17 (DECUS 1963 p. 10, Fig. 6) --
 
 #define MT_MARK_FWD         0260000         // block mark code 26 as read forward
 #define MT_MARK_REV         0450000         // its complement obverse, 45, as read in reverse
 
-#define MT_SELECT_DIP_NS    34000000LL      // selection delay, 34 ms (MIT PDP-21; DEC gives none)
+#define MT_SELECT_DIP_NS    34000000LL      // selection delay, 34 ms: DEC's field-service memo (Vonada,
+                                            // June 1964) has the program deselect for 34 ms when changing
+                                            // drives; modeled as a control-imposed period with no flags
 #define MT_DEFAULT_SBS      2               // default sequence break channel
 
 // Called whenever the control raises the data, block end or error flag, all of which
@@ -77,9 +79,13 @@ typedef struct
     uint64_t selDipEnd;
 
     // Write pipeline (see onBoundary() in control550.c).
+    bool wren;                  // WRITE ENABLE: set by an mlc with go and write mode; cleared by any
+                                // other mlc, by any error, and by a halt (H-550 pp. 2-19, 2-32)
     bool writeReqOutstanding;   // a word has been asked for and not yet taken to the tape
     bool writeSkip;             // read -> write inside a block: the next boundary is lost
     bool writeDFPending;        // write was entered below speed: raise its DF on reaching it
+    bool ctlHeld;               // an mlc given at the last data word waits for the checksum (D256)
+    uint32_t heldCtl;           // its IO word
 
     uint64_t lastTime;      // time the control was last serviced to
     uint64_t nextEvent;     // earliest time anything can happen; service is a no-op before it
@@ -103,5 +109,6 @@ uint32_t mt550Status(Mt550P cP, uint64_t now);
 Mt555UnitP mt550Unit(Mt550P cP, int unit);
 void mt550UnitRemounted(Mt550P cP, int unit, uint64_t now);
 void mt550FlushAll(Mt550P cP);
+void mt550AllHalt(Mt550P cP, uint64_t now);
 
 #endif

@@ -2,6 +2,9 @@
  * microtape.c -- shim layer between the paper tape reader IOT and the microtape implementation.
  *
  * 11-Sep-2026 wje/Claude - initial version
+ * 13-Sep-2026 Claude - All Halt: the I/O poll stops the tapes when RUN falls
+ *                      (MiscTasks/Completed/TASK-TAPE-HALT-WRITE.md)
+ * 13-Sep-2026 Claude - mse rereads microtapes.txt and applies it if it changed (owner)
  */
 
 #define NOT_IN_PDP1
@@ -10,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 #include "configuration.h"
 #include "iotLogger.h"                      // DOLOGGING is not defined: the calls compile away
@@ -29,6 +33,7 @@
 
 #define SPEC_MAX        (MT_PATH_MAX + 16)  // a drive entry: path plus ",locked"
 #define LINE_MAX_LEN    (SPEC_MAX + 32)     // a line of microtapes.txt
+#define LIST_MAX_BYTES  16384               // microtapes.txt is read whole, up to this much
 
 extern void initiateBreak(int chan);        // iotHandler.h, in the reader plugin
 
@@ -36,12 +41,24 @@ static Mt550 ctl;                           // the control and its eight drives
 static bool ctlReady;                       // ctl initialized and configured once
 static int sbsChan = MT_DEFAULT_SBS;        // break channel for every flag
 static char listSpec[MT_UNITS + 1][SPEC_MAX];   // each drive's microtapes.txt entry, last read
-static bool listFailed[MT_UNITS + 1];       // mounting that entry failed; SIGHUP retries it
+static bool listFailed[MT_UNITS + 1];       // mounting that entry failed; the next list retries it
 static bool ioErrorReported[MT_UNITS + 1];
+static bool lastRun;                        // RUN as the last I/O poll saw it; false at load, so
+                                            // a machine loaded halted stops nothing
+
+// microtapes.txt as the last read found it, so that mse can tell whether it has changed.
+static char listText[LIST_MAX_BYTES + 1];   // its bytes
+static size_t listLen;                      // how many were read, up to LIST_MAX_BYTES + 1
+static int listErr = -1;                    // 0 if it was read, else the errno; -1: never read
+static struct stat listStat;                // its device, inode, size and times then
 
 static void ensureReady(uint64_t now);
 static void configure(uint64_t now);
-static void readList(char specs[][SPEC_MAX]);
+static void rereadList(uint64_t now);
+static bool readListFile(void);
+static void parseList(char specs[][SPEC_MAX]);
+static void parseListLine(char *lineP, int lineNo, char specs[][SPEC_MAX]);
+static void applyList(char specs[][SPEC_MAX], uint64_t now);
 static void applyListEntry(int unit, uint64_t now);
 static bool parseSpec(const char *specP, char *pathP, bool *lockedP);
 static int mountDrive(int unit, const char *pathP, bool locked, uint64_t now, const char *whoP);
@@ -105,6 +122,8 @@ uint64_t now;
         break;
 
     case MT_SUB_MSE:
+        mt550Service(&ctl, now);            // the drives up to now before any tape changes
+        rereadList(now);                    // an edited microtapes.txt takes effect here
         mt550Select(&ctl, now, pdp1P->io);
         break;
 
@@ -137,14 +156,31 @@ uint64_t now;
 }
 
 // Brings every drive up to the current simtime, raising the flags (and breaks) that have come
-// due. Called once per main-loop iteration; between events it is one comparison.
+// due. Called once per main-loop iteration, halted or not; between events it is one
+// comparison. When the RUN flip-flop falls -- a hlt, a breakpoint, the stop switch, ad1's
+// stop, or single-step between instructions -- every moving drive is stopped (All Halt, H-550
+// p. 2-17; see mt550AllHalt()). The core calls iotStop() only for the stop switch, so the
+// fall is looked for here, where every halt shows. RUN rising does nothing: a stopped tape
+// waits for the program's mlc.
 // No return value.
 void
 mtIOPoll(PDP1 *pdp1P)
 {
+bool halted;
+
+    halted = (lastRun && !pdp1P->run);
+    lastRun = (pdp1P->run != 0);
+
     if( !ctlReady )
     {
         return;                             // not configured yet: no tape can be moving
+    }
+
+    if( halted )
+    {
+        mt550AllHalt(&ctl, pdp1P->simtime);
+        reportIoErrors();
+        return;
     }
 
     mt550Service(&ctl, pdp1P->simtime);
@@ -152,15 +188,17 @@ mtIOPoll(PDP1 *pdp1P)
 
 // Called when the reader plugin loads and whenever the machine goes from halt to run. The
 // first call initializes the control and mounts the tapes in microtapes.txt; later calls
-// change nothing, since the tapes do not care whether the CPU is running. No return value.
+// change nothing: a tape stopped by a halt stays stopped until the program commands it.
+// No return value.
 void
 mtStart(void)
 {
     ensureReady(0);
 }
 
-// Called when the machine halts. Writes any partly written block back to its image file;
-// the tapes keep moving (the I/O poll still runs while halted). No return value.
+// Called when the stop switch halts the machine (ad1's stop drives it too). Writes any partly
+// written block back to its image file. The tapes themselves are stopped by the I/O poll,
+// which sees every halt, this one included. No return value.
 void
 mtStop(void)
 {
@@ -172,7 +210,8 @@ mtStop(void)
 }
 
 // Called on SIGHUP after pidp1.config has been reloaded: picks up a new break channel and
-// rereads microtapes.txt (see configure()). No return value.
+// rereads microtapes.txt, applying it even if it has not changed (see configure()). An mse
+// rereads the list too, but acts only on a changed file (see rereadList()). No return value.
 void
 mtUpdate(void)
 {
@@ -212,20 +251,14 @@ ensureReady(uint64_t now)
 }
 
 // Reads the break channel from pidp1.config and the drive list from microtapes.txt, and
-// brings each drive in line with it. A drive's line is acted on only if it changed since the
-// last read (a new line mounts, a changed one remounts, a removed one unmounts), so a SIGHUP
-// neither rewinds a tape in use nor undoes a program's mount IOT. Two more cases are
-// remounted: a tape that ran off its reel (the emulator's way of rethreading it), and a line
-// whose mount failed last time. No return value.
+// brings each drive in line with the list (see applyList()). Used at the first IOT or plugin
+// start, and on SIGHUP, which applies the list whether or not the file changed.
+// No return value.
 static void
 configure(uint64_t now)
 {
 ConfigurationSettingP settingP;
-Mt555UnitP uP;
 char specs[MT_UNITS + 1][SPEC_MAX];
-char path[MT_PATH_MAX];
-bool locked;
-int unit;
 
     sbsChan = MT_DEFAULT_SBS;
     if( (settingP = findConfigurationSetting(getConfiguration(), "microtapesbs")) )
@@ -234,14 +267,62 @@ int unit;
         {
             sbsChan = settingP->ivalue;
         }
+        else
+        {
+            fprintf(stderr, "microtapesbs must be a channel number 0-15; using %d\n", MT_DEFAULT_SBS);
+        }
     }
 
-    readList(specs);
+    readListFile();
+    parseList(specs);
+    applyList(specs, now);
+}
+
+// mse: rereads microtapes.txt, and if it is not what the last read found (see readListFile()),
+// brings the drives in line with it as a SIGHUP would (see applyList()). An unchanged file
+// changes nothing, so a program's mount IOT and a tape in use are left alone, and a bad line
+// is reported once, when it appears, not at every mse. No return value.
+static void
+rereadList(uint64_t now)
+{
+char specs[MT_UNITS + 1][SPEC_MAX];
+
+    if( readListFile() )
+    {
+        parseList(specs);
+        applyList(specs, now);
+    }
+}
+
+// Brings each drive in line with specs[1..8], the list just read. A drive's line is acted on
+// only if it changed since the last list (a new line mounts, a changed one remounts, a
+// removed one unmounts), so rereading neither rewinds a tape in use nor undoes a program's
+// mount IOT. Every changed drive is emptied before any is mounted, so tapes can trade drives
+// in one edit (each image may be on one drive only). Two more cases are remounted: a tape that
+// ran off its reel (the emulator's way of rethreading it), and a line whose mount failed last
+// time. No return value.
+static void
+applyList(char specs[][SPEC_MAX], uint64_t now)
+{
+Mt555UnitP uP;
+char path[MT_PATH_MAX];
+bool changed[MT_UNITS + 1];
+bool locked;
+int unit;
+
+    for( unit = 1; unit <= MT_UNITS; ++unit )
+    {
+        changed[unit] = (strcmp(specs[unit], listSpec[unit]) != 0);
+        if( changed[unit] && mt550Unit(&ctl, unit)->mounted )
+        {
+            unmountDrive(unit, now);
+        }
+    }
 
     for( unit = 1; unit <= MT_UNITS; ++unit )
     {
         uP = mt550Unit(&ctl, unit);
-        if( strcmp(specs[unit], listSpec[unit]) != 0 )
+        if( changed[unit] )
         {
             strcpy(listSpec[unit], specs[unit]);
             applyListEntry(unit, now);
@@ -261,89 +342,180 @@ int unit;
     }
 }
 
-// Reads microtapes.txt into specs[1..8] ("" for a drive with no line). A line is
+// Reads microtapes.txt whole into listText (listLen bytes), noting its device, inode, size
+// and times in listStat, or the reason it could not be read in listErr. A missing file reads
+// as an empty one, which lists no tapes; any other failure to read it is reported on stderr.
+// Returns true if the file is not what the last read found -- different bytes, a different
+// file (renamed over, as Tools/TapeUtils/mtp writes it), different times, or readable where
+// it was not -- and always on the first read.
+static bool
+readListFile(void)
+{
+static char buf[LIST_MAX_BYTES + 1];
+struct stat st;
+FILE *fP;
+size_t len;
+int err;
+bool changed;
+
+    memset(&st, 0, sizeof(st));
+    len = 0;
+    err = 0;
+
+    if( !(fP = fopen(MT_LIST_FILE, "r")) )
+    {
+        err = errno;
+    }
+    else
+    {
+        if( fstat(fileno(fP), &st) != 0 )
+        {
+            err = errno;
+        }
+        else
+        {
+            len = fread(buf, 1, sizeof(buf), fP);     // one byte more than is used: too long
+            if( ferror(fP) )
+            {
+                err = EIO;
+                len = 0;
+            }
+        }
+
+        fclose(fP);
+    }
+
+    changed = ((err != listErr) || (len != listLen) || (memcmp(buf, listText, len) != 0)
+        || (st.st_dev != listStat.st_dev) || (st.st_ino != listStat.st_ino)
+        || (st.st_size != listStat.st_size)
+        || (st.st_mtim.tv_sec != listStat.st_mtim.tv_sec) || (st.st_mtim.tv_nsec != listStat.st_mtim.tv_nsec)
+        || (st.st_ctim.tv_sec != listStat.st_ctim.tv_sec) || (st.st_ctim.tv_nsec != listStat.st_ctim.tv_nsec));
+
+    if( changed )
+    {
+        memcpy(listText, buf, len);
+        listLen = len;
+        listErr = err;
+        listStat = st;
+
+        if( (err != 0) && (err != ENOENT) )
+        {
+            fprintf(stderr, "%s: %s\n", MT_LIST_FILE, strerror(err));
+        }
+
+        if( len > LIST_MAX_BYTES )
+        {
+            fprintf(stderr, "%s: longer than %d bytes; the rest is ignored\n", MT_LIST_FILE, LIST_MAX_BYTES);
+        }
+    }
+
+    return(changed);
+}
+
+// Parses listText, the file readListFile() read, into specs[1..8] ("" for a drive with no
+// line); see parseListLine(). A line too long for any valid entry is reported on stderr and
+// skipped. No return value.
+static void
+parseList(char specs[][SPEC_MAX])
+{
+char line[LINE_MAX_LEN];
+const char *cP;
+const char *endP;
+const char *nlP;
+size_t len;
+int lineNo;
+
+    memset(specs, 0, (sizeof(specs[0]) * (MT_UNITS + 1)));
+
+    cP = listText;
+    endP = (listText + ((listLen > LIST_MAX_BYTES) ? LIST_MAX_BYTES : listLen));
+
+    for( lineNo = 1; cP < endP; ++lineNo )
+    {
+        nlP = memchr(cP, '\n', (size_t)(endP - cP));
+        len = (size_t)((nlP ? nlP : endP) - cP);
+
+        if( len >= (sizeof(line) - 1) )
+        {
+            fprintf(stderr, "%s line %d: too long, skipped\n", MT_LIST_FILE, lineNo);
+        }
+        else
+        {
+            memcpy(line, cP, len);
+            line[len] = 0;
+            parseListLine(line, lineNo, specs);
+        }
+
+        cP = (nlP ? (nlP + 1) : endP);
+    }
+}
+
+// Parses line lineNo of microtapes.txt, lineP (no newline), into specs. A line is
 // "<drive> <path>[,locked]": the drive number in decimal, 1-8 (the octal 01-10 of the mse
 // field), then at least one space or tab, then the rest of the line with trailing spaces
 // dropped. Blank lines and lines whose first non-space character is # are skipped. A bad line
-// is reported on stderr and skipped; a drive listed twice gets the later line. A missing file
-// means no tapes. No return value.
+// is reported on stderr and skipped; a drive listed twice gets the later line.
+// No return value.
 static void
-readList(char specs[][SPEC_MAX])
+parseListLine(char *lineP, int lineNo, char specs[][SPEC_MAX])
 {
-FILE *fP;
-char line[LINE_MAX_LEN];
 char *cP;
 char *endP;
 size_t len;
 long unit;
-int lineNo;
-int ch;
 
-    memset(specs, 0, (sizeof(specs[0]) * (MT_UNITS + 1)));
+    len = strlen(lineP);
+    while( (len > 0) && ((lineP[len - 1] == '\r') || (lineP[len - 1] == ' ') || (lineP[len - 1] == '\t')) )
+    {
+        lineP[--len] = 0;
+    }
 
-    if( !(fP = fopen(MT_LIST_FILE, "r")) )
+    for( cP = lineP; (*cP == ' ') || (*cP == '\t'); ++cP )
+    {
+        // skip leading white space
+    }
+
+    if( (*cP == 0) || (*cP == '#') )
     {
         return;
     }
 
-    for( lineNo = 1; fgets(line, sizeof(line), fP); ++lineNo )
+    errno = 0;
+    unit = strtol(cP, &endP, 10);
+    if( (endP == cP) || ((*endP != ' ') && (*endP != '\t')) )
     {
-        len = strlen(line);
-        if( (len > 0) && (line[len - 1] != '\n') && !feof(fP) )
-        {
-            while( ((ch = fgetc(fP)) != EOF) && (ch != '\n') )
-            {
-                // discard the rest of the line
-            }
-            continue;
-        }
-
-        while( (len > 0) && ((line[len - 1] == '\n') || (line[len - 1] == '\r') || (line[len - 1] == ' ')
-            || (line[len - 1] == '\t')) )
-        {
-            line[--len] = 0;
-        }
-
-        for( cP = line; (*cP == ' ') || (*cP == '\t'); ++cP )
-        {
-            // skip leading white space
-        }
-
-        if( (*cP == 0) || (*cP == '#') )
-        {
-            continue;
-        }
-
-        errno = 0;
-        unit = strtol(cP, &endP, 10);
-        if( (endP == cP) || ((*endP != ' ') && (*endP != '\t')) )
-        {
-            continue;
-        }
-
-        if( (unit < 1) || (unit > MT_UNITS) || (errno != 0) )
-        {
-            continue;
-        }
-
-        for( cP = endP; (*cP == ' ') || (*cP == '\t'); ++cP )
-        {
-            // skip to the path
-        }
-
-        if( strlen(cP) >= SPEC_MAX )
-        {
-            continue;
-        }
-
-        strcpy(specs[unit], cP);
+        fprintf(stderr, "%s line %d: want \"<drive 1-8> <path>[,locked]\"\n", MT_LIST_FILE, lineNo);
+        return;
     }
 
-    fclose(fP);
+    if( (unit < 1) || (unit > MT_UNITS) || (errno != 0) )
+    {
+        fprintf(stderr, "%s line %d: drive %ld; the drives are 1-8\n", MT_LIST_FILE, lineNo, unit);
+        return;
+    }
+
+    for( cP = endP; (*cP == ' ') || (*cP == '\t'); ++cP )
+    {
+        // skip to the path
+    }
+
+    if( strlen(cP) >= SPEC_MAX )
+    {
+        fprintf(stderr, "%s line %d: path too long\n", MT_LIST_FILE, lineNo);
+        return;
+    }
+
+    if( specs[unit][0] )
+    {
+        fprintf(stderr, "%s line %d: drive %ld is listed again; this line wins\n", MT_LIST_FILE, lineNo, unit);
+    }
+
+    strcpy(specs[unit], cP);
 }
 
 // Mounts, or for an empty entry unmounts, drive unit from its microtapes.txt entry, and
-// records whether that failed so the next SIGHUP retries it. No return value.
+// records whether that failed so that the next SIGHUP, or the next mse that finds the file
+// changed, retries it. No return value.
 static void
 applyListEntry(int unit, uint64_t now)
 {
@@ -362,6 +534,7 @@ bool locked;
 
     if( !parseSpec(listSpec[unit], path, &locked) )
     {
+        fprintf(stderr, "%s: bad entry \"%s\" in %s (want path[,locked])\n", who, listSpec[unit], MT_LIST_FILE);
         unmountDrive(unit, now);
         listFailed[unit] = true;
         return;
@@ -418,6 +591,7 @@ int len;
 
     if( (len < 0) || (len >= (int)sizeof(full)) )
     {
+        fprintf(stderr, "%s: image path too long: %s\n", whoP, pathP);
         unmountDrive(unit, now);
         return(MT_MOUNT_FAILED);
     }
@@ -453,8 +627,21 @@ int result;
         }
     }
 
-    if( (other > MT_UNITS) && mt555MountFile(uP, fullP, locked, true, err, (int)sizeof(err)) )
+    if( other <= MT_UNITS )
     {
+        fprintf(stderr, "%s: %s is already mounted on drive %d\n", whoP, fullP, other);
+    }
+    else if( !mt555MountFile(uP, fullP, locked, true, err, (int)sizeof(err)) )
+    {
+        fprintf(stderr, "%s: %s\n", whoP, err);
+    }
+    else
+    {
+        if( uP->created )
+        {
+            fprintf(stderr, "%s: %s did not exist; created it as a blank tape\n", whoP, fullP);
+        }
+
         iotCondLog(LOG_MT_CONFIG, "%s: mounted %s%s\n", whoP, fullP, (uP->locked ? " (locked)" : ""));
         result = (uP->locked ? MT_MOUNT_LOCKED : MT_MOUNT_OK);
     }
@@ -507,6 +694,7 @@ int unit;
 
     if( !unpackName(pdp1P, addr, name, sizeof(name)) )
     {
+        fprintf(stderr, "%s: no valid image name at %06o (packed ascii, ending in its own bank)\n", who, addr);
         unmountDrive(unit, now);
         return(MT_MOUNT_FAILED);
     }
@@ -570,6 +758,7 @@ int unit;
         uP = mt550Unit(&ctl, unit);
         if( uP->ioError && !ioErrorReported[unit] )
         {
+            fprintf(stderr, "microtape%d: writing %s failed; the image on disk is out of date\n", unit, uP->path);
             ioErrorReported[unit] = true;
         }
     }

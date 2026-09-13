@@ -15,9 +15,13 @@ IOT 201, 720201, mmt   MOUNT (not a 1963 IOT)
 IOT 301, 720301, mse   SELECT
    IO --uuuu------------
       uuuu          unit 1-7, 10 = unit 8; 0 or 11-17 select no unit
-   Clears DF, BEF, ERF, END, MISS, MTE and UNABLE.
-   A different unit starts the 34 ms selection delay, no flags until it ends.
+   Clears DF, BEF, ERF, END, MISS, MTE and UNABLE. Writing stays off until the next write mlc.
+   A different unit starts the 34 ms selection delay, no flags until it ends (DEC's field-service
+   memo of June 1964 asks the program to allow 34 ms).
    The unit that was selected keeps moving as it was told, unwatched. It can run off its reel.
+   First rereads /opt/pidp1-mods/microtapes.txt; if the file changed since it was last read,
+   each drive whose line changed is remounted from it (or unmounted), as SIGHUP does. An
+   unchanged file changes nothing.
 
 IOT 401, 720401, mlc   LOAD CONTROL
    IO ------------gr-mmm
@@ -30,6 +34,10 @@ IOT 401, 720401, mlc   LOAD CONTROL
    Erase, mode 7, truncates the whole reel at once, then acts as move.
    Starting takes 200 ms and reversing 300 ms; no flags until the tape is at speed.
    Entering write mode raises DF at once (at speed) to ask for the first word.
+   Writing is enabled only by an mlc with go and write mode, and is switched off by any other
+   mlc and by any error (MISS, END, UNABLE): nothing more is written until the next write mlc.
+   An mlc given while writing, after the flag for the last data word and before the checksum
+   is on the tape, waits until the checksum has been written (DEC's D256 latch).
 
 IOT 501, 720501, mrd   READ
    the buffer -> IO (IO is replaced).  Clears DF and BEF.
@@ -43,19 +51,28 @@ IOT 701, 720701, mrs   READ STATUS
       200000  BEF     block end flag
       100000  ERF     error flag (END, MISS or UNABLE)
       040000  END     the tape ran into the end zone ahead and was stopped
-      020000  MISS    a flag came due while DF or BEF was still set
+      020000  MISS    a flag came due while DF or BEF was still set; in write mode the word
+                      due was never given, and writing stops there
       010000  REV     reverse commanded
-      004000  GO      go commanded (cleared by END)
+      004000  GO      go commanded (cleared by END and by a halt)
       002000  MTE     mark track error, never set (the emulated mark track is perfect)
       001000  UNABLE  the last mlc was refused
    bits 9-17 are 0.  Clears nothing.
 
 Every raise of DF, BEF or ERF requests a sequence break, on channel 2 unless microtapesbs in
-pidp1.config says otherwise. The drives' tapes are listed in /opt/pidp1-mods/microtapes.txt.
+pidp1.config says otherwise. The drives' tapes are listed in /opt/pidp1-mods/microtapes.txt
+(Tools/TapeUtils/mtp changes a line).
+
+All Halt: when the processor halts (hlt, a breakpoint, the stop switch, ad1 stop), every
+moving drive stops, selected or not, GO is cleared and writing stops; a block being written
+keeps what it had and fails its check. The mode, REV and the flags are left as they were.
+Nothing moves again until the program gives an mlc with go. Single-step does not stop the
+tape (the emulator sees too few of its RUN pulses).
 
 Per block, at speed (200 us per word), forward; reverse is the mirror image.
-   search   DF at the block mark, buffer = 260000 + block (reverse: 450000 + block)
-   read     DF 400 us after the mark with the leading checksum, 256 DFs with the data every
+   search   DF at the block mark (the end of space 0), buffer = 260000 + block
+            (reverse: 450000 + block)
+   read     DF 600 us after the mark with the leading checksum, 256 DFs with the data every
             200 us, then BEF with the trailing checksum.  Read in reverse, a block gives the
             same words, last first.
    write    DF asks for each word two word-times before it is written; BEF asks for the
@@ -63,10 +80,10 @@ Per block, at speed (200 us per word), forward; reverse is the mirror image.
             Checksum is the complement of the ones'-complement sum of -0 and the 256 data words,
             so the whole block totals -0.
 
-Deadlines, see Docs/UsingType550Microtape.md:
+Deadlines, DEC's figures, see Docs/UsingType550Microtape.md:
    every data flag             mrd or mwr within 200 us
-   search flag -> write        mlc and the first mwr within 400 us
-   search flag -> read         mlc within 400 us to get the leading checksum, 600 us for word 1
-   read BEF -> next block      its first DF comes 1.4 ms later; search within 1.0 ms (manual: 800 us),
+   search flag -> write        mlc within 400 us, the first mwr within 600 us
+   search flag -> read         mlc within 600 us to get the leading checksum
+   read BEF -> next block      its first DF comes 1.4 ms later; search within 800 us,
                                write within 1.2 ms
-   write BEF -> next block     its first DF comes 1.6 ms later; search within 1.4 ms (manual: 1.2 ms)
+   write BEF -> next block     its first DF comes 1.6 ms later; search within 1.2 ms

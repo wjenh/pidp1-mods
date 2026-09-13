@@ -25,6 +25,8 @@
  *
  * 10-Sep-2026 Claude -- initial version, for the Type 550 task (Magtape/TASK-TYPE550.md).
  * 11-Sep-2026 Claude -- mode 7 and deferred formatting (Magtape/TASK-REWORK.md).
+ * 13-Sep-2026 Claude -- DEC's block mark and deadlines, write enable, the D256 latch and All
+ *                       Halt (MiscTasks/Completed/TASK-TAPE-HALT-WRITE.md).
  */
 
 #include <stdio.h>
@@ -665,13 +667,14 @@ unsigned long breaks;
     selectUnit(1);
 
     // From the load position (start of the reverse end zone): 200 ms start covering half its
-    // time at speed, then the rest of the end zone, then the end of block 0's slot 1.
+    // time at speed, then the rest of the end zone, then the end of block 0's space 0, the
+    // block mark.
     t0 = now;
     breaks = ctl.breakCount;
     mlc(GO | SEARCH);
     check(waitFlag(3000 * MS), "no search flag from the load position");
     want = (t0 + (uint64_t)MT_START_NS + (uint64_t)(MT_BA - (MT_LOAD_POS + (MT_START_NS / 2)))
-        + (uint64_t)(2 * MT_SLOT_NS));
+        + (uint64_t)MT_SLOT_NS);
     check((flagTime == want), "first search flag at +%llu ns, want +%llu",
         (unsigned long long)(flagTime - t0), (unsigned long long)(want - t0));
     check((ctl.df && !ctl.bef && !ctl.erf), "search raises DF only");
@@ -683,22 +686,23 @@ unsigned long breaks;
 
     // Start delay: from rest inside the block area, the marks passed during the 200 ms ramp
     // raise nothing. Parked at block 10 slot 0, the ramp ends 500 slots on (block 11 slot
-    // 236); block 11's mark went by during it, and block 12's comes 30 slots after.
+    // 236); block 11's mark went by during it, and block 12's (its space 0) ends 29 slots after.
     parkSlot(1, absSlot(10, 0));
     t0 = now;
     mlc(GO | SEARCH);
     check(waitFlag(1000 * MS), "no search flag after a start in the block area");
-    check((flagTime == (t0 + (uint64_t)MT_START_NS + (30 * (uint64_t)MT_SLOT_NS))),
-        "start delay: first flag at +%llu ns, want +206000000", (unsigned long long)(flagTime - t0));
+    check((flagTime == (t0 + (uint64_t)MT_START_NS + (29 * (uint64_t)MT_SLOT_NS))),
+        "start delay: first flag at +%llu ns, want +205800000", (unsigned long long)(flagTime - t0));
     check((mrd() == (MT_MARK_FWD | 12)), "start delay: first flag is not block 12 (block 11 passed during the ramp)");
 
     // Turnaround delay: reversing at speed stops in 150 ms (375 slots) and comes back to speed
-    // 150 ms later exactly where it began, then the reverse mark of block 11 is 4 slots on.
+    // 150 ms later exactly where it began, the end of block 12's space 0. Moving in reverse the
+    // head then passes that space and block 11's space 263, the reverse block mark: 2 slots.
     t1 = now;
     mlc(GO | REV | SEARCH);
     check(waitFlag(1000 * MS), "no search flag after a turnaround");
-    check((flagTime == (t1 + (uint64_t)MT_STOP_NS + (uint64_t)MT_TURN_ACCEL_NS + (4 * (uint64_t)MT_SLOT_NS))),
-        "turnaround: first flag at +%llu ns, want +300800000", (unsigned long long)(flagTime - t1));
+    check((flagTime == (t1 + (uint64_t)MT_STOP_NS + (uint64_t)MT_TURN_ACCEL_NS + (2 * (uint64_t)MT_SLOT_NS))),
+        "turnaround: first flag at +%llu ns, want +300400000", (unsigned long long)(flagTime - t1));
     check((mrd() == (MT_MARK_REV | 11)), "turnaround: reverse search word for block 11");
 
     // Selection delay, control leg: reselecting 10 ms after a mark, the delay is over before
@@ -764,8 +768,8 @@ uint32_t sum;
     mountImage(1, imageA, false);
     selectUnit(1);
 
-    // Forward: DF at the end of slot 3 (the leading checksum), 256 data DFs 200 us apart,
-    // BEF at the end of slot 260 (the trailing checksum).
+    // Forward: DF at the end of slot 3 (the leading checksum), 600 us after the block mark's
+    // search flag, 256 data DFs 200 us apart, BEF at the end of slot 260 (the trailing checksum).
     check(gotoBlock(0, 5), "forward search to block 5 failed");
     ts = flagTime;
     breaks = ctl.breakCount;
@@ -777,7 +781,7 @@ uint32_t sum;
     wordsOk = true;
     for( i = 0; i < MT_STORED_WORDS; ++i )
     {
-        timingOk = (timingOk && (flagTimes[i] == (ts + (400 * US) + ((uint64_t)i * 200 * US))));
+        timingOk = (timingOk && (flagTimes[i] == (ts + (600 * US) + ((uint64_t)i * 200 * US))));
         timingOk = (timingOk && (flagKinds[i] == ((i == (MT_STORED_WORDS - 1)) ? 'B' : 'D')));
         wordsOk = (wordsOk && (words[i] == bP[i]));
     }
@@ -796,7 +800,7 @@ uint32_t sum;
     sum = 0;
     for( i = 0; i < MT_STORED_WORDS; ++i )
     {
-        timingOk = (timingOk && (flagTimes[i] == (ts + (400 * US) + ((uint64_t)i * 200 * US))));
+        timingOk = (timingOk && (flagTimes[i] == (ts + (600 * US) + ((uint64_t)i * 200 * US))));
         wordsOk = (wordsOk && (words[i] == bP[(MT_STORED_WORDS - 1) - i]));
         sum = mt555RingAdd(sum, words[i]);
     }
@@ -830,8 +834,9 @@ bool ok;
     cs = checksumFor(dataW);
 
     // Forward write of block 7. Entering write raises DF at once (the request for word 1);
-    // the second DF comes at the end of slot 3 as word 1 goes to slot 4, then every 200 us;
-    // BEF at the end of slot 258 (PREFINAL) asks for the checksum.
+    // the second DF comes at the end of slot 3 (600 us after the search flag, which ends slot
+    // 0) as word 1 goes to slot 4, then every 200 us; BEF at the end of slot 258 (PREFINAL)
+    // asks for the checksum.
     check(gotoBlock(0, 7), "forward search to block 7 failed");
     ts = flagTime;
     flushes = ctl.units[1].flushCount;
@@ -841,10 +846,10 @@ bool ok;
     ok = true;
     for( i = 1; i < MT_DATA_WORDS; ++i )
     {
-        ok = (ok && (flagTimes[i] == (ts + (400 * US) + ((uint64_t)(i - 1) * 200 * US))) && (flagKinds[i] == 'D'));
+        ok = (ok && (flagTimes[i] == (ts + (600 * US) + ((uint64_t)(i - 1) * 200 * US))) && (flagKinds[i] == 'D'));
     }
     check(ok, "forward write: data flags not at the ends of slots 3-257");
-    check(((flagKinds[MT_DATA_WORDS] == 'B') && (flagTimes[MT_DATA_WORDS] == (ts + (257 * 200 * US)))),
+    check(((flagKinds[MT_DATA_WORDS] == 'B') && (flagTimes[MT_DATA_WORDS] == (ts + (258 * 200 * US)))),
         "forward write: BEF not at the end of slot 258");
     check((tapeWord(1, 7, 0) == MT_MINUS_ZERO), "forward write: leading checksum %06o, want -0", tapeWord(1, 7, 0));
     ok = true;
@@ -947,13 +952,13 @@ writeToBef(int block)
 }
 
 // The block-end deadlines: read BEF -> next DF 1.4 ms, write BEF -> next DF 1.6 ms,
-// read BEF -> search (manual 800 us), write BEF -> search (manual 1.2 ms), read BEF -> write
-// (1.2 ms). Each is hit and missed.
+// read BEF -> search 800 us, write BEF -> search 1.2 ms, read BEF -> write 1.2 ms (DEC's
+// figures, DECUS 1963 p. B-2 and brochure F-03 p. 10). Each is hit and missed.
 static void
 testBlockEndDeadlines(void)
 {
-static const uint64_t readSearch[3] = { 800 * US, 999 * US, 1001 * US };
-static const uint64_t writeSearch[3] = { 1200 * US, 1399 * US, 1401 * US };
+static const uint64_t readSearch[3] = { 700 * US, 799 * US, 801 * US };
+static const uint64_t writeSearch[3] = { 1100 * US, 1199 * US, 1201 * US };
 uint64_t tb;
 uint32_t word;
 int i;
@@ -962,6 +967,8 @@ bool hit;
 
     resetAll();
     blankImage(imageA);
+    junkBlock(imageA, 32);
+    junkBlock(imageA, 33);
     junkBlock(imageA, 51);
     junkBlock(imageA, 55);
     mountImage(1, imageA, false);
@@ -993,17 +1000,30 @@ bool hit;
     check(!ctl.miss, "write: BEF answered in time still raised MISS");
     mlc(GO | SEARCH);
     check((tapeBlockSum(1, 30) == MT_MINUS_ZERO), "write: block 30 does not check");
+    // Write BEF unanswered: the checksum is due at the interchange 200 us later. The flag is
+    // still up there, so MISS, and the writers go off before the stale buffer reaches the
+    // tape: the checksum space keeps what the tape held. Flags keep coming, and the next
+    // block's leading -0 is not written either.
     check(writeToBef(32), "write to block 32's BEF failed (miss leg)");
     tb = flagTime;
+    at((tb + (200 * US)) - 1);
+    check(!ctl.miss, "write: MISS before the checksum was due");
+    at(tb + (200 * US));
+    check((ctl.miss && ctl.erf && !ctl.wren), "write: BEF unanswered at 200 us did not raise MISS and stop writing");
+    check((tapeWord(1, 32, 257) == blockP(imageA, 32)[257]), "write MISS: the checksum space was written (%06o)",
+        tapeWord(1, 32, 257));
+    check(((tapeWord(1, 32, 256) == dataW[255]) && (tapeBlockSum(1, 32) != MT_MINUS_ZERO)),
+        "write MISS: the last data word missing, or the block still checks");
     at((tb + (1600 * US)) - 1);
-    check(!ctl.miss, "write: MISS before the next DF was due");
+    check(!ctl.df, "write MISS: a DF before the next block's lock");
     at(tb + (1600 * US));
-    check((ctl.miss && ctl.erf), "write: BEF unanswered at 1.6 ms did not raise MISS");
-    check((tapeWord(1, 32, 257) == dataW[255]), "write MISS: the stale buffer was not written as the checksum");
+    check(ctl.df, "write MISS: the next DF did not come at 1.6 ms");
+    check((tapeWord(1, 33, 0) == blockP(imageA, 33)[0]), "write MISS: the next block's leading checksum was written");
+    check(((mrs() & MT_ST_GO) && (ctl.units[1].motion == MT_CRUISE)), "write MISS stopped the tape");
     mlc(GO | SEARCH);
 
-    // Read BEF -> search. The manual says 800 us; the model catches the next mark if search is
-    // set before the end of its slot 1, 1.0 ms after BEF.
+    // Read BEF -> search, DEC's 800 us: the next mark (the end of its space 0) is caught if
+    // search is set before it, 800 us after BEF.
     for( i = 0; i < 3; ++i )
     {
         check(readToBef(40), "read to block 40's BEF failed");
@@ -1016,12 +1036,12 @@ bool hit;
             (unsigned long long)(readSearch[i] / US), word, (hit ? 41 : 42));
         if( hit )
         {
-            check((flagTime == (tb + (1000 * US))), "read BEF -> search: block 41's flag not 1.0 ms after BEF");
+            check((flagTime == (tb + (800 * US))), "read BEF -> search: block 41's flag not 800 us after BEF");
         }
     }
-    note("read BEF -> search window: manual 800 us, model 1000 us (lenient by one slot)");
+    note("read BEF -> search window: 800 us, as DEC gives it");
 
-    // Write BEF -> search. The manual says 1.2 ms; the model allows 1.4 ms.
+    // Write BEF -> search, DEC's 1.2 ms.
     for( i = 0; i < 3; ++i )
     {
         check(writeToBef(44), "write to block 44's BEF failed");
@@ -1037,7 +1057,7 @@ bool hit;
         check((tapeBlockSum(1, 44) == MT_MINUS_ZERO), "write BEF -> search at %llu us: block 44 does not check",
             (unsigned long long)(writeSearch[i] / US));
     }
-    note("write BEF -> search window: manual 1200 us, model 1400 us (lenient by one slot)");
+    note("write BEF -> search window: 1200 us, as DEC gives it");
 
     // Read BEF -> write the next block, within 1.2 ms (manual and model agree).
     check(readToBef(50), "read to block 50's BEF failed");
@@ -1074,23 +1094,25 @@ bool hit;
         tapeWord(1, 55, 0), tapeWord(1, 55, 1), tapeWord(1, 55, 2));
 }
 
-// The search-flag deadlines: switch to write within 400 us, or to read within 600 us, of a
-// block's search flag.
+// The search-flag deadlines (DECUS 1963 Figs. 4 and 5): switch to write within 400 us of a
+// block's search flag, with the first mwr within 600 us; switch to read within 600 us.
 static void
 testSearchDeadlines(void)
 {
-static const uint64_t toWrite[3] = { 150 * US, 380 * US, 410 * US };
-static const uint64_t toRead[4] = { 390 * US, 410 * US, 590 * US, 610 * US };
+static const uint64_t toWrite[3] = { 150 * US, 390 * US, 410 * US };
+static const uint64_t toRead[3] = { 390 * US, 599 * US, 601 * US };
 uint64_t ts;
 uint32_t *bP;
 uint32_t word;
 int block;
 int i;
+int k;
 int n;
+bool ok;
 
     resetAll();
     blankImage(imageA);
-    for( block = 60; block < 63; ++block )
+    for( block = 60; block < 65; ++block )
     {
         junkBlock(imageA, block);
     }
@@ -1100,8 +1122,9 @@ int n;
     selectUnit(1);
     makeData(dataW, 11);
 
-    // Search -> write: the leading checksum and word 1 are placed correctly up to the end of
-    // slot 3, 400 us after the search flag (the word must be in the buffer by then too).
+    // Search -> write: an mlc before the lock (the end of space 2, 400 us after the search
+    // flag, which ends space 0) gets the control's -0 leading checksum. After the lock, space
+    // 3 keeps what the tape held (junk here), and word 1 still goes to space 4.
     for( i = 0; i < 3; ++i )
     {
         block = (60 + i);
@@ -1123,37 +1146,69 @@ int n;
         }
         else
         {
-            check(((tapeWord(1, block, 1) == blockP(imageA, block)[1]) && (tapeWord(1, block, 2) == dataW[0])),
-                "search -> write at 410 us: word 1 did not slip to slot 5");
+            check(((n == MT_DATA_WORDS) && (tapeWord(1, block, 0) == blockP(imageA, block)[0])
+                && (tapeWord(1, block, 1) == dataW[0]) && (tapeBlockSum(1, block) != MT_MINUS_ZERO)),
+                "search -> write at 410 us: -0 written after the lock, or word 1 not in space 4");
         }
     }
 
-    // Search -> read. The leading checksum (slot 3) is caught if read is set within 400 us;
-    // data word 1 (slot 4) within 600 us, the manual's figure. On a block written forward the
-    // leading checksum is the automatic -0, which leaves a ring sum unchanged, so a program
-    // that switches between 400 and 600 us still checks the block.
-    for( i = 0; i < 4; ++i )
+    // The first mwr is due by the interchange at the end of space 3, 600 us after the search
+    // flag. At 590 us the block is written correctly; at 610 us word 1 is missed, and nothing
+    // is written from space 4 on.
+    check(gotoBlock(0, 63), "search to block 63 failed");
+    ts = flagTime;
+    at(ts + (150 * US));
+    mlc(GO | WRITE);
+    at(ts + (590 * US));
+    mwr(dataW[0]);
+    n = feedUntilBef(&dataW[1], (10 * US));
+    waitNs(10 * US);
+    mwr(checksumFor(dataW));
+    waitNs(500 * US);
+    mlc(GO | SEARCH);
+    check(((n == (MT_DATA_WORDS - 1)) && (tapeWord(1, 63, 1) == dataW[0]) && (tapeBlockSum(1, 63) == MT_MINUS_ZERO)),
+        "search -> write, first mwr at 590 us: block 63 not written correctly");
+
+    check(gotoBlock(0, 64), "search to block 64 failed");
+    ts = flagTime;
+    at(ts + (150 * US));
+    mlc(GO | WRITE);
+    at(ts + (610 * US));
+    check((ctl.miss && ctl.erf && !ctl.wren), "search -> write, first mwr at 610 us: no MISS");
+    mwr(dataW[0]);
+    for( n = 1; (n < 50) && waitDataFlag(10 * MS); ++n )
+    {
+        waitNs(10 * US);
+        mwr(dataW[n]);
+    }
+    mlc(GO | SEARCH);
+    ok = (tapeWord(1, 64, 0) == MT_MINUS_ZERO);
+    for( k = 1; k < MT_STORED_WORDS; ++k )
+    {
+        ok = (ok && (tapeWord(1, 64, k) == blockP(imageA, 64)[k]));
+    }
+    check(ok, "search -> write, first mwr at 610 us: something was written after the lock's -0");
+
+    // Search -> read: the leading checksum (slot 3) is caught if read is set within 600 us of
+    // the search flag, DEC's figure; later, the first word is data word 1.
+    for( i = 0; i < 3; ++i )
     {
         check(gotoBlock(0, 70), "search to block 70 failed");
         ts = flagTime;
         at(ts + toRead[i]);
         mlc(GO | READ);
         word = (waitFlag(10 * MS) ? mrd() : 0);
-        if( i == 0 )
+        if( i < 2 )
         {
-            check(((flagTime == (ts + (400 * US))) && (word == bP[0])), "search -> read at 390 us: first word not the leading checksum");
-        }
-        else if( i < 3 )
-        {
-            check(((flagTime == (ts + (600 * US))) && (word == bP[1])), "search -> read at %llu us: first word not data word 1",
-                (unsigned long long)(toRead[i] / US));
+            check(((flagTime == (ts + (600 * US))) && (word == bP[0])),
+                "search -> read at %llu us: first word not the leading checksum", (unsigned long long)(toRead[i] / US));
         }
         else
         {
-            check(((flagTime == (ts + (800 * US))) && (word == bP[2])), "search -> read at 610 us: first word not data word 2");
+            check(((flagTime == (ts + (800 * US))) && (word == bP[1])), "search -> read at 601 us: first word not data word 1");
         }
     }
-    note("search -> read window: model 400 us for the leading checksum, 600 us for data word 1 (manual 600 us)");
+    note("search -> read window: 600 us for the leading checksum, as DEC gives it");
 }
 
 // The per-word deadline: each data flag answered within 200 us, in read and in write; and
@@ -1195,8 +1250,11 @@ bool ok;
     check(ok, "read: words up to 150 (word 100 answered at 199 us) wrong or MISS");
     check((ctl.units[1].motion == MT_CRUISE), "read MISS stopped the tape");
 
-    // Write: flag 100 answered at 199 us is fine; flag 150 at 201 us is too late, so the old
-    // buffer (word 149) is written again in word 150's place and MISS is raised.
+    // Write: flag 100 answered at 199 us is fine; flag 150 at 201 us is too late. MISS is
+    // raised at the interchange where word 150 was due, and the writers go off before the
+    // stale buffer (word 149) can be written: word 150's space and every one after it keep
+    // what the tape held, and the block fails its check. The flags keep coming, the tape keeps
+    // moving and GO stays set.
     check(gotoBlock(0, 81), "search to block 81 failed");
     mlc(GO | WRITE);
     for( n = 0; (n < 200) && waitDataFlag(10 * MS); ++n )
@@ -1204,15 +1262,23 @@ bool ok;
         waitNs((n == 99) ? (199 * US) : ((n == 149) ? (201 * US) : RESPOND_NS));
         if( n == 149 )
         {
-            check((ctl.miss && ctl.erf), "write: flag answered at 201 us did not raise MISS");
+            check((ctl.miss && ctl.erf && !ctl.wren), "write: flag answered at 201 us did not raise MISS and stop writing");
         }
         mwr(dataW[n]);
     }
+    check((n == 200), "write MISS: the flags stopped after %d", n);
+    check(((mrs() & MT_ST_GO) && (ctl.units[1].motion == MT_CRUISE)), "write MISS stopped the tape");
     mlc(GO | SEARCH);
     check((tapeWord(1, 81, 100) == dataW[99]), "write: word 100 answered at 199 us not written");
-    check((tapeWord(1, 81, 150) == dataW[148]), "write MISS: slot of word 150 holds %06o, want the stale %06o",
-        tapeWord(1, 81, 150), dataW[148]);
-    check((tapeWord(1, 81, 151) == dataW[149]), "write MISS: the late word did not go to the next slot");
+    check((tapeWord(1, 81, 149) == dataW[148]), "write: word 149, the last answered in time, not written");
+    ok = true;
+    for( n = 150; n < MT_STORED_WORDS; ++n )
+    {
+        ok = (ok && (tapeWord(1, 81, n) == blockP(imageA, 81)[n]));
+    }
+    check(ok, "write MISS: something was written from word 150's space on (word 150's space holds %06o)",
+        tapeWord(1, 81, 150));
+    check((tapeBlockSum(1, 81) != MT_MINUS_ZERO), "write MISS: the block still totals -0");
 
     // Search: a search flag not taken before the next block's mark raises MISS; the tape runs on.
     check(gotoBlock(0, 90), "search to block 90 failed");
@@ -1260,12 +1326,13 @@ int seen;
     check(((ctl.units[1].motion == MT_STOPPED) && (pos == (MT_FEZ + (MT_STOP_NS / 2)))), "forward END: tape not stopped 375 slots in");
 
     // Turning around inside the end zone is not an error: reverse search finds block 574
-    // (575's reverse mark passed during the start).
+    // (575's reverse mark passed during the start). At speed the head is at the start of
+    // block 575's space 139; spaces 138-0 and then 574's space 263 go by: 140 slots.
     t0 = now;
     mlc(GO | REV | SEARCH);
     check((waitFlag(1000 * MS) && !ctl.erf), "reverse out of the end zone raised an error");
     check((mrd() == (MT_MARK_REV | 574)), "reverse out of the end zone: first block not 574");
-    check((flagTime == (t0 + (uint64_t)MT_START_NS + (141 * (uint64_t)MT_SLOT_NS))), "reverse out of the end zone: flag timing");
+    check((flagTime == (t0 + (uint64_t)MT_START_NS + (140 * (uint64_t)MT_SLOT_NS))), "reverse out of the end zone: flag timing");
 
     // Reverse from the load position: already in the reverse end zone heading off it, so END
     // comes the moment the tape is at speed.
@@ -1486,6 +1553,305 @@ int k;
         "read -> write into slot 260: first flag not at the next block's slot 2");
     mlc(GO | SEARCH);
     check((tapeWord(1, 104, 257) == dataW[0]), "read -> write into slot 260: word not in the checksum slot");
+}
+
+// ---- Write enable, the D256 latch, All Halt (TASK-TAPE-HALT-WRITE) ----------------------------
+
+// Returns the stored-word index k of the space the next write interchange on the selected,
+// cruising unit (moving forward) would fill: the space after the one the head is in.
+static int
+nextWriteK(void)
+{
+    return( (int)((ctl.units[ctl.selUnit].nextBoundary - 1) % MT_SLOTS_PER_BLOCK) + 1 - MT_SLOT_REVCHECK );
+}
+
+// WRITE ENABLE (H-550 p. 2-32): a MISS switches the writers off; mse clears the error but the
+// writers stay off; only an mlc with go and write mode turns them on again. END during a
+// write switches them off too.
+static void
+testWriteEnable(void)
+{
+uint32_t cs;
+int n;
+int k;
+int kOn;
+bool ok;
+
+    resetAll();
+    blankImage(imageA);
+    junkBlock(imageA, 120);
+    mountImage(1, imageA, false);
+    selectUnit(1);
+    makeData(dataW, 31);
+    cs = checksumFor(dataW);
+
+    // Write block 120, answering the flag for data word 11 at 201 us: MISS, writers off.
+    check(gotoBlock(0, 120), "search to block 120 failed");
+    mlc(GO | WRITE);
+    check(ctl.wren, "mlc go write did not set WRITE ENABLE");
+    for( n = 0; (n < 20) && waitDataFlag(10 * MS); ++n )
+    {
+        waitNs((n == 10) ? (201 * US) : RESPOND_NS);
+        mwr(dataW[n]);
+    }
+    check((ctl.miss && ctl.erf && !ctl.wren), "a missed word did not raise MISS and stop writing");
+
+    // mse alone clears the error; the flags keep coming and are answered in time, and still
+    // nothing is written.
+    mse(1);
+    check((!ctl.miss && !ctl.erf && !ctl.wren), "mse did not clear MISS, or turned writing back on");
+    for( ; (n < 40) && waitDataFlag(10 * MS); ++n )
+    {
+        waitNs(RESPOND_NS);
+        mwr(dataW[n]);
+    }
+    check(((n == 40) && !ctl.miss), "after mse, flags stopped or answered ones gave MISS");
+    ok = (tapeWord(1, 120, 10) == dataW[9]);
+    for( k = 11; k < MT_STORED_WORDS; ++k )
+    {
+        ok = (ok && (tapeWord(1, 120, k) == blockP(imageA, 120)[k]));
+    }
+    check(ok, "words were written between the MISS and the next write mlc");
+
+    // An mlc with go and write mode turns writing on again: it asks for a word at once, and
+    // that word lands in the next space.
+    mlc(GO | WRITE);
+    check((ctl.wren && ctl.df), "mlc go write after mse: writing not enabled, or no DF");
+    kOn = nextWriteK();
+    waitNs(RESPOND_NS);
+    mwr(0123456);
+    check(waitDataFlag(10 * MS), "no DF after the write mlc");
+    check(((tapeWord(1, 120, kOn) == 0123456) && (tapeWord(1, 120, (kOn - 1)) == blockP(imageA, 120)[kOn - 1])),
+        "after the write mlc the word is not in space k=%d (holds %06o)", kOn, tapeWord(1, 120, kOn));
+    mlc(GO | SEARCH);
+    check(!ctl.wren, "mlc search left writing enabled");
+
+    // END during a write: the last block is written whole, then the end zone stops the tape
+    // with END, and the writers are off.
+    check(gotoBlock(0, (MT_BLOCKS - 1)), "search to the last block failed");
+    check((writeBlock(0, dataW, cs, RESPOND_NS) == MT_DATA_WORDS), "write of the last block failed");
+    check((tapeBlockSum(1, (MT_BLOCKS - 1)) == MT_MINUS_ZERO), "the last block does not check");
+    mlc(GO | WRITE);
+    check(ctl.wren, "write mlc before the end zone: writing not enabled");
+    check((waitFlag(1000 * MS) && ctl.df), "no DF after the write mlc before the end zone");
+    mwr(0);
+    check((waitFlag(1000 * MS) && ctl.end && ctl.erf && !ctl.wren), "END during a write did not stop writing");
+    check(((mrs() & MT_ST_GO) == 0), "END during a write: GO still set");
+    check((tapeBlockSum(1, (MT_BLOCKS - 1)) == MT_MINUS_ZERO), "the last block was changed after it was written");
+}
+
+// The D256 latch (DECUS 1963 p. B-2, brochure F-03 p. 10): an mlc given while writing, after
+// the control has asked for the last data word and before the checksum is on the tape, waits
+// for the checksum; one given earlier takes effect at once.
+static void
+testD256Latch(void)
+{
+uint32_t cs;
+uint64_t tb;
+uint64_t tf;
+int block;
+int n;
+bool ok;
+
+    resetAll();
+    blankImage(imageA);
+    for( block = 130; block < 140; ++block )
+    {
+        junkBlock(imageA, block);
+    }
+    mountImage(1, imageA, false);
+    mountImage(2, imageA, false);
+    selectUnit(1);
+    makeData(dataW, 41);
+    cs = checksumFor(dataW);
+
+    // Search at once after the checksum's mwr: held (the mode and GO read as before), the
+    // checksum is written, the block checks, and the next block's search flag comes 1.2 ms
+    // after the BEF, as if search had been given as the checksum was written.
+    check(writeToBef(130), "write to block 130's BEF failed");
+    tb = flagTime;
+    waitNs(RESPOND_NS);
+    mwr(cs);
+    waitNs(10 * US);
+    mlc(GO | SEARCH);
+    check((ctl.ctlHeld && (ctl.mode == WRITE) && (mrs() & MT_ST_GO)), "search after the checksum's mwr was not held");
+    check((waitFlag(10 * MS) && (flagTime == (tb + (1200 * US))) && (mrd() == (MT_MARK_FWD | 131))),
+        "held search: block 131's flag not 1.2 ms after BEF");
+    check(((tapeWord(1, 130, 257) == cs) && (tapeBlockSum(1, 130) == MT_MINUS_ZERO) && !ctl.ctlHeld),
+        "held search: the checksum was not written, or the block does not check");
+
+    // Stop at the last data word's flag: held; the BEF still comes and is answered, and the
+    // tape stays at speed until the checksum is written, then begins to stop.
+    check(gotoBlock(0, 132), "search to block 132 failed");
+    mlc(GO | WRITE);
+    for( n = 0; (n < MT_DATA_WORDS) && waitDataFlag(10 * MS) && !ctl.bef; ++n )
+    {
+        waitNs(RESPOND_NS);
+        mwr(dataW[n]);
+    }
+    check((n == MT_DATA_WORDS), "block 132: %d data flags before the stop", n);
+    mlc(MOVE);
+    check((ctl.ctlHeld && (ctl.units[1].motion == MT_CRUISE)), "stop at the last data word was not held");
+    check((waitFlag(10 * MS) && ctl.bef), "held stop: no BEF");
+    tf = (flagTime + (200 * US));
+    waitNs(RESPOND_NS);
+    mwr(cs);
+    at(tf - 1);
+    check((ctl.units[1].motion == MT_CRUISE), "held stop: the tape slowed before the checksum");
+    at(tf);
+    check(((ctl.units[1].motion == MT_DECEL) && ((mrs() & MT_ST_GO) == 0) && (ctl.mode == MOVE)),
+        "held stop: not carried out as the checksum was written");
+    check(((tapeWord(1, 132, 256) == dataW[255]) && (tapeBlockSum(1, 132) == MT_MINUS_ZERO)),
+        "held stop: block 132 does not check");
+
+    // Control leg: search given in the space before the window (at the flag for data word
+    // 255) takes effect at once. Neither word 255, word 256 nor the checksum is written.
+    check(gotoBlock(0, 134), "search to block 134 failed");
+    mlc(GO | WRITE);
+    for( n = 0; (n < 255) && waitDataFlag(10 * MS); ++n )
+    {
+        waitNs(RESPOND_NS);
+        mwr(dataW[n]);
+    }
+    mlc(GO | SEARCH);
+    check((!ctl.ctlHeld && (ctl.mode == SEARCH)), "search at word 255's flag was held");
+    waitNs(1 * MS);
+    ok = true;
+    for( n = 255; n < MT_STORED_WORDS; ++n )
+    {
+        ok = (ok && (tapeWord(1, 134, n) == blockP(imageA, 134)[n]));
+    }
+    check((ok && (tapeWord(1, 134, 254) == dataW[253])), "search at word 255's flag: the block's end was written");
+
+    // Two commands in the window: the later one is carried out.
+    check(writeToBef(136), "write to block 136's BEF failed");
+    tb = flagTime;
+    waitNs(RESPOND_NS);
+    mwr(cs);
+    mlc(GO | MOVE);
+    mlc(GO | SEARCH);
+    check((waitFlag(10 * MS) && (flagTime == (tb + (1200 * US))) && (mrd() == (MT_MARK_FWD | 137))),
+        "two held commands: the later one (search) was not carried out");
+
+    // A selection change in the window carries the held command out at once, on the drive
+    // it was given for; that drive is no longer watched, so its checksum is not written.
+    check(writeToBef(138), "write to block 138's BEF failed");
+    waitNs(RESPOND_NS);
+    mwr(cs);
+    mlc(GO | MOVE);
+    mse(2);
+    check((!ctl.ctlHeld && (ctl.mode == MOVE) && ctl.units[1].goCmd && !ctl.wren),
+        "held command not carried out by the selection change");
+    waitNs(1 * MS);
+    check((tapeWord(1, 138, 257) == blockP(imageA, 138)[257]), "selection change in the window: the checksum was written");
+}
+
+// All Halt (H-550 p. 2-17) through mt550AllHalt(), as the plugin calls it when RUN falls.
+static void
+testAllHalt(void)
+{
+uint64_t t0;
+int64_t pos1;
+int64_t pos2;
+unsigned long breaks;
+unsigned long flushes;
+int n;
+bool ok;
+
+    resetAll();
+    blankImage(imageA);
+    junkBlock(imageA, 140);
+    junkBlock(imageA, 141);
+    junkBlock(imageA, 142);
+    mountImage(1, imageA, false);
+    mountImage(2, imageA, false);
+    mountImage(3, imageA, false);
+    makeData(dataW, 51);
+
+    // The selected drive writing block 140, and a deselected drive at speed.
+    selectUnit(2);
+    parkSlot(2, absSlot(300, 0));
+    mlc(GO | SEARCH);
+    selectUnit(1);
+    check(gotoBlock(0, 140), "search to block 140 failed");
+    mlc(GO | WRITE);
+    for( n = 0; (n < 50) && waitDataFlag(10 * MS); ++n )
+    {
+        waitNs(RESPOND_NS);
+        mwr(dataW[n]);
+    }
+    check(((ctl.units[1].motion == MT_CRUISE) && (ctl.units[2].motion == MT_CRUISE)), "setup: drives 1 and 2 not at speed");
+    flushes = ctl.units[1].flushCount;
+    breaks = ctl.breakCount;
+    t0 = now;
+    mt550AllHalt(&ctl, now);
+    check(((ctl.units[1].motion == MT_DECEL) && (ctl.units[2].motion == MT_DECEL)), "All Halt: a drive is not stopping");
+    check((!ctl.units[1].goCmd && !ctl.units[2].goCmd && ((mrs() & MT_ST_GO) == 0)), "All Halt: GO still set");
+    check(((ctl.mode == WRITE) && !ctl.wren && !ctl.erf), "All Halt: mode changed, writing enabled, or an error");
+    check(((ctl.units[1].flushCount == (flushes + 1)) && (ctl.units[1].dirtyBlock < 0)), "All Halt: the partial block was not flushed");
+    at(t0 + (1000 * MS));
+    check(((ctl.units[1].motion == MT_STOPPED) && (ctl.units[2].motion == MT_STOPPED)), "All Halt: not stopped after 1 s");
+    check((ctl.breakCount == breaks), "All Halt: %lu flags raised after the halt", (ctl.breakCount - breaks));
+    ok = (tapeWord(1, 140, 49) == dataW[48]);
+    for( n = 50; n < MT_STORED_WORDS; ++n )
+    {
+        ok = (ok && (tapeWord(1, 140, n) == blockP(imageA, 140)[n]));
+    }
+    check((ok && (tapeBlockSum(1, 140) != MT_MINUS_ZERO)), "All Halt: block 140 not written up to the halt and no further");
+    for( n = 0; n < MT_STORED_WORDS; ++n )
+    {
+        ok = (ok && (tapeWord(1, 141, n) == blockP(imageA, 141)[n]));
+    }
+    check(ok, "All Halt: block 141 was touched");
+    pos1 = mt555Position(&ctl.units[1], now);
+    pos2 = mt555Position(&ctl.units[2], now);
+    at(t0 + (60000 * MS));
+    check(((mt555Position(&ctl.units[1], now) == pos1) && (mt555Position(&ctl.units[2], now) == pos2)
+        && !ctl.units[2].offReel), "All Halt: a drive moved again, or the deselected one ran off its reel");
+
+    // Nothing moves until an mlc with go.
+    mlc(GO | SEARCH);
+    check(((ctl.units[1].motion == MT_ACCEL) && waitFlag(3000 * MS) && ctl.df), "after All Halt, an mlc go did not move drive 1");
+    mlc(MOVE);
+
+    // A drive still accelerating (selected), and a deselected one part way through a
+    // turnaround, both stop; the turnaround does not complete.
+    selectUnit(3);
+    parkSlot(3, absSlot(200, 0));
+    mlc(GO | SEARCH);
+    waitNs(300 * MS);
+    mlc(GO | REV | SEARCH);
+    check(((ctl.units[3].motion == MT_DECEL) && ctl.units[3].pendingAccel), "setup: drive 3 not turning around");
+    selectUnit(1);                      // 34 ms into drive 3's 150 ms stop
+    mlc(GO | SEARCH);
+    waitNs(50 * MS);
+    check((ctl.units[1].motion == MT_ACCEL), "setup: drive 1 not accelerating");
+    breaks = ctl.breakCount;
+    mt550AllHalt(&ctl, now);
+    check(((ctl.units[1].motion == MT_DECEL) && (ctl.units[3].motion == MT_DECEL) && !ctl.units[3].pendingAccel),
+        "All Halt: an accelerating or turning drive did not simply stop");
+    waitNs(1000 * MS);
+    check(((ctl.units[1].motion == MT_STOPPED) && (ctl.units[3].motion == MT_STOPPED) && (ctl.units[3].dir == 1)
+        && (ctl.breakCount == breaks)), "All Halt: drives 1 and 3 not stopped forward with no flags");
+
+    // An mlc held for a checksum is dropped: the tape stops short of the checksum.
+    check(gotoBlock(0, 142), "search to block 142 failed");
+    mlc(GO | WRITE);
+    for( n = 0; (n < MT_DATA_WORDS) && waitDataFlag(10 * MS) && !ctl.bef; ++n )
+    {
+        waitNs(RESPOND_NS);
+        mwr(dataW[n]);
+    }
+    check((waitFlag(10 * MS) && ctl.bef), "block 142: no BEF");
+    waitNs(RESPOND_NS);
+    mwr(checksumFor(dataW));
+    mlc(GO | SEARCH);
+    check(ctl.ctlHeld, "setup: search after the checksum's mwr not held");
+    mt550AllHalt(&ctl, now);
+    waitNs(1000 * MS);
+    check((!ctl.ctlHeld && (ctl.mode == WRITE) && (ctl.units[1].motion == MT_STOPPED)),
+        "All Halt: the held command survived the halt");
+    check((tapeWord(1, 142, 257) == blockP(imageA, 142)[257]), "All Halt: the checksum was written after the halt");
 }
 
 // ---- Image files ------------------------------------------------------------------------------
@@ -1764,6 +2130,9 @@ main(int argc, char **argv)
     runTest(testUnable, "tape unable: no unit, no tape, locked write");
     runTest(testOffReel, "deselected tape runs off the reel; remount recovers");
     runTest(testWriteEntry, "write entered below speed; read -> write and its two exceptions");
+    runTest(testWriteEnable, "write enable: off on MISS and END, mse keeps it off, a write mlc turns it on");
+    runTest(testD256Latch, "D256 latch: an mlc at the last data word waits for the checksum");
+    runTest(testAllHalt, "All Halt: every moving drive stops, GO 0, block flushed, nothing moves until mlc");
     runTest(testImageFile, "image file mount, write-through, remount, locked, bad files");
     runTest(testDeferredImage, "deferred formatting: create, grow without holes, short files, mode 7 truncates");
 

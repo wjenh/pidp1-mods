@@ -51,9 +51,11 @@ good,
     jmp begin
 
 fail,
-    mrs                     // an error: AC = the status word
-    dio stat
-    lac stat
+    mrs                     // an error: IO = the status word
+    dio stat                // saved first, the mlc below clears the error bits
+    cli
+    mlc                     // stop the tape (the halt below would stop it too)
+    lac stat                // AC = the status word
 bad,
     hlt                     // AC = the status word, or the block total
     jmp begin
@@ -105,10 +107,11 @@ fill2,
 fillx,
     jmp .
 
-// Writes buf and cksum into the block whose search flag was just taken (mlc and
-// the first mwr within 400 us of that flag), then sets the tape searching forward
-// again. Every flag must be answered within 200 us, so the loop only looks at
-// the data flag; a MISS leaves the error flag up, checked once at the end.
+// Writes buf and cksum into the block whose search flag was just taken (the
+// mlc within 400 us of that flag, the first mwr within 600 us), then sets the
+// tape searching forward again. Every flag must be answered within 200 us, so
+// the loop only looks at the data flag; a MISS leaves the error flag up,
+// checked once at the end.
 write,
     dap writex
     law buf
@@ -149,7 +152,7 @@ wr4,
 writex,
     jmp .
 
-// Reads the block whose reverse search flag was just taken (mlc within 400 us
+// Reads the block whose reverse search flag was just taken (mlc within 600 us
 // of that flag), backward. The words come last first, so they are stored from
 // the end of rbuf down, and rbuf ends up holding the block as written: the
 // leading checksum, the MTWDS data words, the trailing checksum.

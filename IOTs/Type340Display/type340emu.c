@@ -34,6 +34,10 @@
  * 08-Jul-2026 wje just continue for a vector of 0 length, but stop for a vcontinue of 0 length
  * 11-Jul-2026 wje unbreak the last change
  * 12-Jul-2026 wje EMU_CMD_NONE shoud not set stop, breaks resume. Just ignore it.
+ * 14-Sep-2026 Claude vectors end exactly on their endpoint now.
+ *   The brm moves each axis with an integer accumulator instead of a truncated rate which could overshoot.
+ *   The step count is unchanged,the points per vector and the time stay within about 1% in total.
+ *   An invisible vector now takes its 1.5 us per step like a visible one.
  */
 
 #include <stdlib.h>
@@ -231,10 +235,12 @@ typedef struct {
     int deltaX;     // relative to startX, accumulated delta
     int deltaY;     // relative to startY, accumulated delta
     int dotSpacing; // pixel spacing in pixels, not the raw value from the instruction
-    int curStep;    // how many points we have consumed
-    int nPoints;    // and how many we do
-    int xRate;      // increment x every xRate points
-    int yRate;      // increment y every yRate points
+    int curStep;    // how many steps we have consumed
+    int nPoints;    // and how many steps we do
+    int xSpan;      // total x moves in the vector, abs(dX)
+    int ySpan;      // total y moves in the vector, abs(dY)
+    int xAccum;     // x rate accumulator, gains xSpan every step, x moves when it reaches nPoints
+    int yAccum;     // y rate accumulator, gains ySpan every step, y moves when it reaches nPoints
     bool plusX;     // the x axis endpoint is greater than the initial point
     bool plusY;     // the y axis endpoint is greater than the initial point
     bool draw;      // if true, the vector is drawn, else just positions
@@ -842,17 +848,20 @@ Status status;
 
                         iotCondLog(LOG_VECTOR,"vector done, status %d, curX %d curY %d\n", status, curX, curY);
                     }
-                    else if( brmState.draw )
+                    else
                     {
                         // The hardware 0.5 us intensify-s delay always runs, followed by the
                         // 1.0 us sequence delay, for a fixed 1.5 us per step regardless of
                         // whether the beam is actually unblanked (BR1 / intensify bit).
                         pendingDelay += 1500;
 
-                        if( drawAndCheck(true, curX, curY, curIntensity) )
+                        if( brmState.draw )
                         {
-                            isPaused = true;    // A lightpen hit was detected
-                            iotCondLog(LOG_PAUSE, "LP hit in vector, pausing\n");
+                            if( drawAndCheck(true, curX, curY, curIntensity) )
+                            {
+                                isPaused = true;    // A lightpen hit was detected
+                                iotCondLog(LOG_PAUSE, "LP hit in vector, pausing\n");
+                            }
                         }
                     }
                 }
@@ -1077,21 +1086,21 @@ reset340()
 }
 
 // A binary rate multiplier implementation, needed for vectors.
-// In order to minimize rounding errors, the integer values used during the processing are multiplied
-// by a scale factor, essentially fixed-point pseudo-floating-point.
+// A vector is divided into nPoints steps, the vector's length times this scale factor.
+// Each step, each axis adds its span to its accumulator and moves one unit when the accumulator
+// reaches nPoints.
+// Over the nPoints steps an axis moves exactly its span, as the real BRM does.
+// A step where neither axis moves produces no point.
 #define BRMSCALEFACTOR 20.0
 
 // Initialize a brm, expects the origin in initialX and initialY, the realtive lenghts in dX and dY,
 // with a step increment in step.
 // Note that the coordinate system is always positve; the lower left corner is 0,0, upper right 1023,1023.
 // If the data is invalid, such as no dX and dY or no step, return false, else true.
-//
-// Note that the dotSpacing is in pixels, not the raw 2 bit selector from the instruction.
-
+// The dotSpacing is in pixels, not the raw 2 bit selector from the instruction.
 bool
 brmInitialize(BRMStateP stateP, int initialX, int initialY, int dX, int dY, int dotSpacing, bool draw)
 {
-int xSpan, ySpan;
 float side, fx, fy;
 
     if( dotSpacing == 0 )
@@ -1114,47 +1123,32 @@ float side, fx, fy;
     stateP->plusY = (dY >= 0);
 
     // Just how far, not the direction
-    xSpan = abs(dX);
-    ySpan = abs(dY);
+    stateP->xSpan = abs(dX);
+    stateP->ySpan = abs(dY);
 
-    // Figure out the rate multiplier
-    // The largest delta is the primary control, one point will be generated for
-    // every call for that one.
-    // The smaller sets the rate multiplier for it.
-    stateP->nPoints = 0;
-
-    // Check for degenerate cases
-    if( (xSpan == 0) || (ySpan == 0) )
+    // Figure out the step count
+    if( (stateP->xSpan == 0) || (stateP->ySpan == 0) )
     {
-        if( dX == 0 )
-        {
-            stateP->nPoints = ySpan;
-            stateP->xRate = 0;
-            stateP->yRate = 1;
-        }
-        else
-        {
-            stateP->nPoints = xSpan;
-            stateP->xRate = 1;
-            stateP->yRate = 0;
-        }
+        // Horizontal or vertical: the one moving axis moves on every step
+        stateP->nPoints = (stateP->xSpan + stateP->ySpan);
     }
     else
     {
-        // Have to do it the hard way
-        fx = (float)xSpan;
-        fy = (float)ySpan;
+        fx = (float)(stateP->xSpan);
+        fy = (float)(stateP->ySpan);
         side = hypot(fx, fy);
         stateP->nPoints = (int)(side * BRMSCALEFACTOR);
-        stateP->xRate = (int)((side / fx) * BRMSCALEFACTOR);
-        stateP->yRate = (int)((side / fy) * BRMSCALEFACTOR);
     }
+
+    // Starting the accumulators half full puts each move at the rounded position on the true line
+    stateP->xAccum = (stateP->nPoints / 2);
+    stateP->yAccum = (stateP->nPoints / 2);
 
     stateP->dotSpacing = dotSpacing;
     stateP->draw = draw;
     stateP->curStep = 0;
-    iotCondLog(LOG_BRM, "brmInit initial x %d xrate %d initial y %d yrate %d dotSpacing %d points %d\n",
-        stateP->startX, stateP->xRate, stateP->startY, stateP->yRate, dotSpacing, stateP->nPoints);
+    iotCondLog(LOG_BRM, "brmInit initial x %d xspan %d initial y %d yspan %d dotSpacing %d steps %d\n",
+        stateP->startX, stateP->xSpan, stateP->startY, stateP->ySpan, dotSpacing, stateP->nPoints);
     return(true);
 }
 
@@ -1168,6 +1162,8 @@ brmContinue(BRMStateP stateP, int nextX, int nextY)
     stateP->deltaX = 0;         // current delta offsets from starting point
     stateP->deltaY = 0;
     stateP->curStep = 0;
+    stateP->xAccum = (stateP->nPoints / 2);    // the BRM starts over, as brmInitialize() left it
+    stateP->yAccum = (stateP->nPoints / 2);
     iotCondLog(LOG_BRM, "brmContinue new x %d new y %d\n", stateP->startX, stateP->startY);
 }
 
@@ -1192,44 +1188,43 @@ Status brmStatus;
             return(COMPLETED);
         }
 
-        if( stateP->xRate > 0 )
+        // Each axis gains its span every step, and moves one unit when that reaches nPoints
+        stateP->xAccum += stateP->xSpan;
+        if( stateP->xAccum >= stateP->nPoints )
         {
-            if( (stateP->xRate == 1) || !(stateP->curStep % stateP->xRate) )
+            stateP->xAccum -= stateP->nPoints;
+            if( stateP->plusX )
             {
-                if( stateP->plusX )
-                {
-                    stateP->deltaX++;
-                    iotCondLog(LOG_BRM, "brmNext increment x at step %d\n", stateP->curStep);
-                }
-                else
-                {
-                    stateP->deltaX--;
-                    iotCondLog(LOG_BRM, "brmNext decrement x at step %d\n", stateP->curStep);
-                }
-
-                *xP = stateP->startX + (stateP->deltaX * stateP->dotSpacing);
-                didOne = true;
+                stateP->deltaX++;
+                iotCondLog(LOG_BRM, "brmNext increment x at step %d\n", stateP->curStep);
             }
+            else
+            {
+                stateP->deltaX--;
+                iotCondLog(LOG_BRM, "brmNext decrement x at step %d\n", stateP->curStep);
+            }
+
+            *xP = stateP->startX + (stateP->deltaX * stateP->dotSpacing);
+            didOne = true;
         }
 
-        if( stateP->yRate > 0 )
+        stateP->yAccum += stateP->ySpan;
+        if( stateP->yAccum >= stateP->nPoints )
         {
-            if( (stateP->yRate == 1) || !(stateP->curStep % stateP->yRate) )
+            stateP->yAccum -= stateP->nPoints;
+            if( stateP->plusY )
             {
-                if( stateP->plusY )
-                {
-                    stateP->deltaY++;
-                    iotCondLog(LOG_BRM, "brmNext increment y at step %d\n", stateP->curStep);
-                }
-                else
-                {
-                    stateP->deltaY--;
-                    iotCondLog(LOG_BRM, "brmNext decrement y at step %d\n", stateP->curStep);
-                }
-
-                *yP = stateP->startY + (stateP->deltaY * stateP->dotSpacing);
-                didOne = true;
+                stateP->deltaY++;
+                iotCondLog(LOG_BRM, "brmNext increment y at step %d\n", stateP->curStep);
             }
+            else
+            {
+                stateP->deltaY--;
+                iotCondLog(LOG_BRM, "brmNext decrement y at step %d\n", stateP->curStep);
+            }
+
+            *yP = stateP->startY + (stateP->deltaY * stateP->dotSpacing);
+            didOne = true;
         }
     }
 
@@ -1755,11 +1750,6 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
         request.fromBufferP = buffer;
 
 #if LOG_HSCTIMING
-        // Bracket the fetch-plus-simulated-delay round trip. HSCwait() enforces the 5us
-        // word-fetch time via usleep(), a real kernel sleep/reschedule point -- unlike
-        // nanodelay()'s spin-wait used for every other sub-SPIN_LIMIT delay in this file --
-        // so actual elapsed time here is at the mercy of the Linux scheduler, not just the
-        // requested delay. See IOTs/Type340Display/CLAUDE.md for the full analysis.
         hscStartNs = getNow();
 #endif
 

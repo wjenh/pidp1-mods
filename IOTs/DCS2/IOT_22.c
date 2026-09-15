@@ -29,6 +29,16 @@
  *    An epoll_wait() error no longer walks the event table, and every event
  *    epoll_wait() returns is handled.
  *    Bytes 0200-0377 are read correctly where char is signed (x86).
+ * 15-Sep-2026 wje (Claude) - beter telnet negotiation added, telnet state
+ *    reset on a connection open.
+ *    The three options the the greeting offers, our ECHO, our SGA, and the client's SGA
+ *    are negotiated by a cut-down RFC 1143 Q method, every other option is refused.
+ *    A server channel's per-connection state, pushback, un-sent tail, negotiation,
+ *    is cleared on every accept and at rebind, nothing from one connection persists.
+ * 15-Sep-2026 wje (Claude) - telnet mode now follows the standard for a bare CR.
+ *    A received CR NUL is taken as CR LF (RFC 1123), so the NUL never reaches the
+ *    program, and a CR the program sends, or an echoed CR with no LF after it,
+ *    goes out as CR NUL (RFC 854).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -192,8 +202,9 @@
 #define EP_SERVER       0100000
 
 // Telnet protocol bytes (RFC 854) needed for the limited IAC support telnet mode provides.
-// Only enough of the option-negotiation dance is implemented to refuse
-// everything cleanly and not choke on the framing, no option is ever actually honored.
+// Only the options the greeting offers are negotiated (see negotiateOption()),
+// every other option is refused cleanly, and the framing is parsed so it never
+// reaches the program.
 #define TN_SE           240
 #define TN_NOP          241
 #define TN_BRK          243
@@ -210,10 +221,17 @@
 #define TN_DONT         254
 #define TN_IAC          255
 
-// Telnet options used only by sendTelnetGreeting()'s canned character-mode request.
+// Telnet options used by sendTelnetGreeting()'s canned character-mode request,
+// ECHO and SGA are also the ones negotiateOption() negotiates.
 #define TELOPT_ECHO     1
 #define TELOPT_SGA      3
 #define TELOPT_LINEMODE 34
+
+// The state of one option the greeting offers, a cut-down RFC 1143 Q method.
+// The WANTNO states are not needed, DCS2 never asks for an option to be turned off.
+#define TNQ_NO          0   // off, and not asked for
+#define TNQ_WANTYES     1   // DCS2 asked for it (the greeting), no answer yet
+#define TNQ_YES         2   // on, both ends agreed
 
 // telnet_rstate values, incoming IAC parser state, resumable across getChar() calls
 // since a non-blocking recv() can run dry mid-sequence.
@@ -253,9 +271,14 @@ int flexo_rcv_pushback;     // we got a case change and returned a shift char, t
 char pendingBuf[2];         // un-sent tail byte(s) from a short send(), e.g. a split CR/LF pair
 int pendingLen;             // valid byte count in pendingBuf, 0 if nothing is queued
 int telnet_rstate;          // TNS_x, incoming telnet IAC parser state
-int telnet_reply_cmd;       // TN_WONT or TN_DONT pending once a WILL/DO's option byte arrives, 0 if none
-bool crlf_stash_valid;      // true if crlf_stash holds a data byte taken off the wire but not yet delivered, so not yet echoed
-int crlf_stash;             // stashed data-plane byte bumped by a cr/lf lookahead, see getCollapsedByte()
+int telnet_opt_cmd;         // TN_WILL/WONT/DO/DONT received, waiting for its option byte (TNS_OPT)
+bool crlf_stash_valid;      // true if crlf_stash holds a data byte taken but not yet delivered, not yet echoed
+int crlf_stash;             // stashed data-plane byte bumped by a cr/lf lookahead
+bool telnet_negotiating;    // this connection was sent the greeting, its offered options are being negotiated
+int telnet_us_echo;         // TNQ_x, DCS2's ECHO option
+int telnet_us_sga;          // TNQ_x, DCS2's SGA option
+int telnet_him_sga;         // TNQ_x, the client's SGA option
+bool telnet_after_cr;       // the last data byte telnetFilter() passed was a CR, so a NUL now is its CR NUL
 } Channel, *ChannelP;
 
 static bool initialized;    // we have been started
@@ -291,6 +314,9 @@ int getDataByte(ChannelP, bool);
 int getCollapsedByte(ChannelP);
 void echoByte(ChannelP, int);
 void sendTelnetGreeting(ChannelP);
+void sendTelnetCommand(ChannelP, int, int);
+void negotiateOption(ChannelP, int, int);
+void clearConnectionState(ChannelP);
 
 extern int flexToAscii(char, int *);
 extern char asciiToFlex(char, int *);
@@ -562,6 +588,15 @@ char wbuf[8];
             {
                 wbuf[0] = '\r';
                 wbuf[1] = ich;
+                i = 2;
+            }
+            else if( (ich == '\r') && (chanP->control_flags & CNTL_TELNET) )
+            {
+                // RFC 854: a CR with no LF after it goes out as CR NUL.
+                // DCS2 cannot know whether the program's next character is an LF, so
+                // every CR gets its NUL, a CR then an LF go out as CR NUL CR LF.
+                wbuf[0] = '\r';
+                wbuf[1] = '\0';
                 i = 2;
             }
             else if( (ich == TN_IAC) && (chanP->control_flags & CNTL_TELNET) )
@@ -932,6 +967,10 @@ struct epoll_event event;
                             }
                             else
                             {
+                                // A server channel takes its next caller without being reset,
+                                // so nothing the previous caller left behind may carry over.
+                                clearConnectionState(chanP);
+
                                 chanP->control_flags |= CNTL_CONNECTED;
                                 chanP->control_flags &= ~CNTL_RESET_MASK;
 
@@ -1441,6 +1480,10 @@ struct epoll_event event;
             chanP->chan_fd = -1;
         }
 
+        // The program is done with this caller, so a read after the rebind must not
+        // return a byte of theirs, the accept clears it again for the next caller.
+        clearConnectionState(chanP);
+
         // now available, poll will take it from here
         chanP->control_flags  &= ~(CNTL_CONNECTED|CNTL_RREADY|CNTL_TFULL|CNTL_CONNERR);
         break;
@@ -1495,7 +1538,7 @@ struct epoll_event event;
 // Apply a type 0 (general) modification to an open channel.
 // Word is word 0 of the modification request block.
 // Its E, C, e, r and i bits replace the channel's echo and interrupt flags, a 0 turns
-// a flag off, and every other control flag is kept (telnet, Flexo, server, the state).
+// a flag off, and every other control flag is kept.
 // ssss is taken only when i is 1, it is unused while interrupts are off.
 // Enabling the received-character interrupt with a character already waiting holds
 // CNTL_IOR, so postHeldInterrupts() requests the interrupt on the next poll instead of
@@ -1638,13 +1681,15 @@ postInterrupt(ChannelP chanP, int kind)
 }
 
 // Send the initial telnet option negotiation for a newly-accepted server connection.
-// Best-effort only, same as echo elsewhere in this file.
-// A dropped negotiation byte is not worth failing the connection over
-// and no reply is expected or required from the remote end.
+// Best-effort only, same as echo.
+// A dropped negotiation byte is not worth failing the connection over.
 // This is what asks a real telnet client to switch out of line-buffered,
-// locally-echoed mode, we will echo.
-// Client-mode (outbound) channels stay silent until the remote side speaks first.
-// telnetFilter() then just refuses whatever it offers.
+// locally-echoed mode, and says we will echo.
+// The three options it offers start negotiating here, each is WANTYES until the
+// client answers, and negotiateOption() takes the answers.
+// Must follow clearConnectionState(), which the accept calls first.
+// Client-mode (outbound) channels send no greeting and stay silent until the remote
+// side speaks first, telnetFilter() then refuses whatever it offers.
 void
 sendTelnetGreeting(ChannelP chanP)
 {
@@ -1656,22 +1701,167 @@ unsigned char greeting[] = {
     TN_IAC, TN_DONT, TELOPT_LINEMODE
 };
 
+    // Set before the send, so an answer can never be seen ahead of the offer's state.
+    chanP->telnet_negotiating = true;
+    chanP->telnet_us_echo = TNQ_WANTYES;
+    chanP->telnet_us_sga = TNQ_WANTYES;
+    chanP->telnet_him_sga = TNQ_WANTYES;
+
     send(chanP->chan_fd, greeting, sizeof(greeting), MSG_NOSIGNAL);
 }
 
-// Advance the incoming telnet IAC parser by one raw wire byte.
-// Returns NONE if the byte was fully consumed by the protocol layer.
-// State is kept in the channel so this survives a non-blocking recv() running dry
-// mid-sequence, exactly as flexo_rcv_pushback already does for Flex shift codes.
-// Scope is deliberately limited, every offered option is refused (WONT/DONT), and
-// subnegotiation content is discarded rather than interpreted.
-// That is enough to interoperate without choking on the framing.
-// No option is ever actually honored.
-int
-telnetFilter(ChannelP chanP, unsigned char c)
+// Send one three-byte telnet command, IAC cmd opt, to the remote end.
+// Best-effort, as the greeting and echo are, a lost negotiation reply is not worth
+// failing the connection over.
+void
+sendTelnetCommand(ChannelP chanP, int cmd, int opt)
 {
 unsigned char reply[3];
 
+    reply[0] = TN_IAC;
+    reply[1] = (unsigned char)cmd;
+    reply[2] = (unsigned char)opt;
+    send(chanP->chan_fd, reply, sizeof(reply), MSG_NOSIGNAL);
+}
+
+// Take one complete option command from the client, cmd is TN_WILL, TN_WONT, TN_DO
+// or TN_DONT and opt its option byte, and send whatever reply it needs.
+//
+// Only the options the greeting offered are negotiated, and only on a connection the
+// greeting was sent to.
+// DO/DONT ECHO and DO/DONT SGA are about DCS2's side, WILL/WONT SGA about the client's.
+// Each has an RFC 1143 state, and the rules are the Q method's, cut down to the three
+// states DCS2 can be in, it never asks for an option to be turned off.
+//
+//     state     agreeing (DO/WILL)            disagreeing (DONT/WONT)
+//     WANTYES   -> YES, no reply              -> NO, no reply (the offer was refused)
+//     YES       no reply (stops the loop)     -> NO, reply WONT/DONT (the acknowledgment)
+//     NO        -> YES, reply WILL/DO         no reply
+//
+// The NO row agrees to a client asking again, since DCS2 wants all three options.
+// The state changes, so it cannot loop.
+//
+// Anything else, any other option, or any option on a channel that sent no greeting,
+// is refused as before, a WILL gets DONT and a DO gets WONT, a WONT or DONT gets no
+// reply since it only confirms what is already so.
+//
+// The state records the agreement, it does not drive echo, whether a byte is echoed
+// or not stays under the program's control, even after a client's DONT ECHO.
+void
+negotiateOption(ChannelP chanP, int cmd, int opt)
+{
+int *stateP;
+bool agreeing;
+bool ourSide;
+
+    stateP = NULL;
+    agreeing = ((cmd == TN_DO) || (cmd == TN_WILL));
+    ourSide = ((cmd == TN_DO) || (cmd == TN_DONT));     // DO/DONT ask about DCS2's side
+
+    if( chanP->telnet_negotiating )
+    {
+        if( ourSide && (opt == TELOPT_ECHO) )
+        {
+            stateP = &(chanP->telnet_us_echo);
+        }
+        else if( ourSide && (opt == TELOPT_SGA) )
+        {
+            stateP = &(chanP->telnet_us_sga);
+        }
+        else if( !ourSide && (opt == TELOPT_SGA) )
+        {
+            stateP = &(chanP->telnet_him_sga);
+        }
+    }
+
+    if( stateP == NULL )
+    {
+        // Not an option DCS2 offered.
+        // The refusal reply to a WILL is DONT (not WONT); the refusal reply to a
+        // DO is WONT (not DONT).
+        if( cmd == TN_WILL )
+        {
+            sendTelnetCommand(chanP, TN_DONT, opt);
+        }
+        else if( cmd == TN_DO )
+        {
+            sendTelnetCommand(chanP, TN_WONT, opt);
+        }
+        return;
+    }
+
+    if( agreeing )
+    {
+        if( *stateP == TNQ_NO )
+        {
+            // The client asks again after the option went off, agree to it.
+            *stateP = TNQ_YES;
+            sendTelnetCommand(chanP, (ourSide?TN_WILL:TN_DO), opt);
+        }
+        else
+        {
+            // WANTYES: the answer to the greeting's offer, taken quietly.
+            // YES: already agreed, answering would start a loop.
+            *stateP = TNQ_YES;
+        }
+    }
+    else
+    {
+        if( *stateP == TNQ_YES )
+        {
+            // The client turns an agreed option off, which RFC 1143 requires to be
+            // acknowledged, once.
+            *stateP = TNQ_NO;
+            sendTelnetCommand(chanP, (ourSide?TN_WONT:TN_DONT), opt);
+        }
+        else
+        {
+            // WANTYES: the client refused the offer, taken quietly.
+            // NO: already off, nothing to say.
+            *stateP = TNQ_NO;
+        }
+    }
+}
+
+// Clear everything on a channel that belongs to one connection.
+// A server channel is not reset between callers, so this is needed.
+// Flexo_snd_shift and flexo_rcv_shift are kept.
+// They are the program's side of the stream, the case the program last sent
+// and the case DCS2 last told the program it was in.
+// The interrupt fields, last_err and the control flags have their own rules and are
+// not touched here.
+void
+clearConnectionState(ChannelP chanP)
+{
+    chanP->telnet_rstate = TNS_DATA;
+    chanP->telnet_opt_cmd = 0;
+    chanP->crlf_stash_valid = false;
+    chanP->crlf_stash = 0;
+    chanP->flexo_rcv_pushback = 0;
+    chanP->pendingLen = 0;
+    chanP->telnet_negotiating = false;
+    chanP->telnet_us_echo = TNQ_NO;
+    chanP->telnet_us_sga = TNQ_NO;
+    chanP->telnet_him_sga = TNQ_NO;
+    chanP->telnet_after_cr = false;
+}
+
+// Advance the incoming telnet IAC parser by one raw wire byte.
+// Returns NONE if the byte was fully consumed by the protocol layer, else the data byte.
+// State is kept in the channel so this survives a non-blocking recv() running dry
+// mid-sequence, exactly as flexo_rcv_pushback already does for Flex shift codes.
+// Scope is deliberately limited: a complete option command goes to negotiateOption(),
+// which negotiates only the options the greeting offered and refuses the rest, and
+// subnegotiation content is discarded rather than interpreted.
+// The NUL of a CR NUL is passed as an LF.  RFC 854 sends a CR that has no LF after it
+// as CR NUL, and RFC 1123 has a server treat CR NUL as it treats CR LF, the end of a
+// line.  Changing it here, where every byte passes in wire order, means everything
+// above, the cr/lf lookahead, the echo and the poll's peek, sees exactly a CR LF.
+// Only the byte right after a CR is changed, a NUL anywhere else is data.
+// DCS2 refuses TRANSMIT-BINARY, so the stream is always the NVT's and this always applies.
+int
+telnetFilter(ChannelP chanP, unsigned char c)
+{
     switch( chanP->telnet_rstate )
     {
     case TNS_DATA:
@@ -1680,6 +1870,13 @@ unsigned char reply[3];
             chanP->telnet_rstate = TNS_IAC;
             return( NONE );
         }
+
+        if( (c == '\0') && chanP->telnet_after_cr )
+        {
+            c = '\n';
+        }
+
+        chanP->telnet_after_cr = (c == '\r');
         return( c );
 
     case TNS_IAC:
@@ -1687,21 +1884,15 @@ unsigned char reply[3];
 
         if( c == TN_IAC )
         {
+            chanP->telnet_after_cr = false;
             return( c );            // escaped 0377, a literal data byte
         }
 
-        if( (c == TN_WILL) || (c == TN_DO) )
+        if( (c == TN_WILL) || (c == TN_WONT) || (c == TN_DO) || (c == TN_DONT) )
         {
-            // The refusal reply to a WILL is DONT (not WONT); the refusal reply to a
-            // DO is WONT (not DONT).
-            chanP->telnet_reply_cmd = (c == TN_WILL)?TN_DONT:TN_WONT;
-            chanP->telnet_rstate = TNS_OPT;
-            return( NONE );
-        }
-
-        if( (c == TN_WONT) || (c == TN_DONT) )
-        {
-            chanP->telnet_reply_cmd = 0;     // no reply needed, just consume the option byte
+            // Hold the command until its option byte arrives, negotiateOption()
+            // decides the reply then.
+            chanP->telnet_opt_cmd = c;
             chanP->telnet_rstate = TNS_OPT;
             return( NONE );
         }
@@ -1718,14 +1909,8 @@ unsigned char reply[3];
 
     case TNS_OPT:
         chanP->telnet_rstate = TNS_DATA;
-
-        if( chanP->telnet_reply_cmd )
-        {
-            reply[0] = TN_IAC;
-            reply[1] = (unsigned char)chanP->telnet_reply_cmd;
-            reply[2] = c;
-            send(chanP->chan_fd, reply, sizeof(reply), MSG_NOSIGNAL);   // best-effort
-        }
+        negotiateOption(chanP, chanP->telnet_opt_cmd, c);
+        chanP->telnet_opt_cmd = 0;
         return( NONE );
 
     case TNS_SUBNEG:
@@ -1867,7 +2052,8 @@ int len;
 
 // Apply telnet cr/lf collapsing on top of getDataByte() so the rest of getChar() only
 // ever sees one character per line ending, regardless of whether the wire sent cr/lf,
-// a bare cr, or leniently in Flex mode, a bare lf.
+// cr/nul, a bare cr, or leniently in Flex mode, a bare lf.
+// A cr/nul arrives here as a cr/lf, telnetFilter() passes its nul as an lf.
 // Only active when CNTL_TELNET is set, otherwise this is a pass-through.
 //
 // A bare cr always resolves immediately as cr which asciiToFlex() below turns into
@@ -1915,6 +2101,11 @@ bool isFlex;
             echoByte(chanP, peek);
             return( isFlex?'\r':'\n' );
         }
+
+        // The cr stands alone, and it was echoed as a bare CR when it was read.
+        // The echo is telnet data too, so it gets the NUL RFC 854 asks for, whether
+        // the next byte is something else or has not arrived yet.
+        echoByte(chanP, '\0');
 
         if( (peek != NONE) && (peek != FAIL) )
         {

@@ -1,8 +1,8 @@
 # Using the DCS Communication System
 
 This document describes how to use the enhanced multi-channel Type 630 Data Communication System replacement.
-Updated 13-Sep-2026\
-add modify-channel operations; error word, echo timing, rle, rci, and interrupt causes corrected
+Updated 14-Sep-2026\
+add new telnet rules
 
 ## What is DCS2?
 
@@ -129,9 +129,10 @@ If telnet cr/lf is on, then sending a flexo carriage return will result in sendi
 carriage return followed by an ascii newline.
 
 If flexo mode is off, then the rules are a bit different.
-If telnet cr/lf is on, then sending an ascii carriage return will result in a carriage return followed by a newline
-being sent.
-Sending a newline does not have any special meaning, it is sent as it is.
+If telnet cr/lf is on, then sending an ascii newline will result in a carriage return followed by a newline
+being sent, and sending a carriage return will result in a carriage return followed by a nul, the telnet standard's
+form of a carriage return on its own.
+If telnet cr/lf is off, both are sent as they are.
 
 See the section on Telnet cr/lf procesing for more detail.
 
@@ -236,6 +237,8 @@ at the moment the program reads it with rch or rcr.
 Nothing is echoed for a character the program has not read yet, and nothing is echoed
 for the telnet protocol bytes DCS2 handles itself.
 In telnet mode, a cr/lf pair that is read as one character is echoed as the pair,
+a cr/nul pair is echoed as cr/lf, the line end it stands for,
+a cr read with no lf after it is echoed as a cr followed by a nul,
 and a received 0377 is echoed as the telnet escape pair 0377 0377.
 The echo setting in effect when the character is read is the one that applies.
 
@@ -256,7 +259,8 @@ And the new extended commands:
     IO register bits 12-17 are the channel number to rebind
     ```
     Rebind only applies to server channels.\
-    This closes any currently open socket on the channel and returns to listen mode.
+    This closes any currently open socket on the channel and returns to listen mode.\
+    Anything the closed caller sent that the program has not read is discarded, the next caller starts afresh.
 
     ```
     IO register bit 3 set to 1 is a reset request, no other bits used
@@ -552,16 +556,33 @@ Changing ssss   Takes effect for the next interrupt requested.
 ## Telnet mode rules
 
 Enabling telnet is transparent to the pdp-1 program side.
-It handles protocl negotiation in both active and passive modes and transforms
-cr and lf characters internally.
+It handles the telnet protocol itself and transforms cr and lf characters internally.
+
+DCS2 offers to echo and to suppress go-ahead, and accepts a client's agreement,
+whether the client negotiates first or waits for the server; every other option is refused.\
+The offer goes to every new connection on a server channel, and asks a real telnet client for character mode.
+A client channel makes no offer and refuses every option.\
+Whether a character is echoed stays the program's choice (dcfecho and the modify request),
+even when a client asks DCS2 not to echo.
+
+Each connection starts afresh: nothing a previous caller sent reaches the next one,
+whether the server channel took the new caller by itself or after a rebind.
 
 On output, Flexo carriage return is converted to cr/lf.\
-Ascii carriage return is sent as-is, lf, aka newline, is converted to cr/lf on output.
+Ascii lf, aka newline, is converted to cr/lf on output.\
+Ascii carriage return is sent as cr followed by a nul, as the telnet standard requires for a carriage return
+with no lf after it.
+DCS2 cannot know what the program sends next, so a cr then an lf go out as cr, nul, cr, lf,
+which a terminal shows the same as cr/lf.
 
 On input, in Flexo mode cr/lf is converted to Flexo carriage return.\
 A linefeed with no carriage return is also converted to Flexo carriage return, not strictly conforming.\
 In ascii mode cr/lf is converted to lf, a newline.\
-A bare lf is left unchanged.
+A bare lf is left unchanged.\
+A cr followed by a nul is taken exactly as cr/lf, in both modes, as the telnet standard requires of a server;
+it is what a client sends for a carriage return on its own, and some send it for the Return key.
+The nul never reaches the program.
+A nul anywhere else is data.
 
 This is close to the telnet standard, but sightly relaxed.
 
@@ -694,7 +715,8 @@ These are included:
 // dcmxxx are multibit masks
 // Channel Request Block first word
 // dcftel - enable telnet mode: symmetric cr/lf framing on send and receive plus
-//          limited IAC handling (option negotiation refused, IAC escaping honored).
+//          limited IAC handling (a server offers ECHO and SGA, other options
+//          refused, IAC escaping honored).
 // dcfflex - flexo mode, do automatic conversion
 // dcfecho - echo received characters
 // dcfioc - interrupt on connection open or close
@@ -727,9 +749,11 @@ These are included:
 #define scbset 010000
 #define scbbnd 020000
 #define scbrst 040000
-#define scbmod 100000
+#define scbmod 100000     // TENTATIVE name, 13-Sep-2026
 #define scbclr 000000
 
+// TENTATIVE names, 13-Sep-2026: this block and the error-word block below
+// are not final and may be renamed before the release.
 // Modification Request Block first word
 // dcmmty - bitmask, the modification type
 // dcmgen - modification type 0, general
@@ -785,6 +809,7 @@ These are included:
 #define dserr 400000
 
 // The rest of the error word, see the section on the error word
+// TENTATIVE names, 13-Sep-2026
 // dseflc - flag, no character was ready (rch, rcr, 8-bit mode)
 // dseflf - flag, the transmit buffer is full (tcb, tcc)
 // dsefle - flag, a Linux errno is in dsemen

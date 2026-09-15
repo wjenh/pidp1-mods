@@ -15,6 +15,9 @@
  * 6-May-2026 wje a stop or start from the pidp-1 stops the 340 and reverts to param mode
  * 17-Jun-2026 wje fix a potential arm cortex issue around synchronization with type340emu.
  * 23-Jun-2026 wje change arm/cortex cpu fencing to be more efficient, was causing display flicker
+ * 14-Sep-2026 Claude - drs clears the flags here as well as in the 340 thread, as dla already did.
+ *    The thread clears them only when it gets to the resume, so a dsp just after a drs could see the
+ *    hit it had just answered, and a program polling dsp counted one hit two or three times.
  */
 
 #include <unistd.h>
@@ -84,6 +87,14 @@ EmuControlP ctlP;
         if( cmd & 01 )
         {
             // drs, display resume sequence
+            // The 340 thread clears the flags when it takes the resume, but that can be a while after
+            // this instruction. Clear them now, as dla does, so a dsp right after the drs does not see
+            // the hit again. Only when the resume will be taken: the 340 is paused, or has a hit and is
+            // finishing its word before it pauses. A drs at any other time is ignored, flags included.
+            if( emuIsPaused() || (emuGetFlags() & FLAG_LP) )
+            {
+                emuClearFlags();
+            }
             ctlP->command = EMU_CMD_RESUME;
             iotCondLog(LOG_IOT, "drs%s\n", (cmd & 02)?" and clear flags":"");
         }

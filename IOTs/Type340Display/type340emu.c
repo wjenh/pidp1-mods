@@ -34,10 +34,15 @@
  * 08-Jul-2026 wje just continue for a vector of 0 length, but stop for a vcontinue of 0 length
  * 11-Jul-2026 wje unbreak the last change
  * 12-Jul-2026 wje EMU_CMD_NONE shoud not set stop, breaks resume. Just ignore it.
- * 14-Sep-2026 Claude vectors end exactly on their endpoint now.
- *   The brm moves each axis with an integer accumulator instead of a truncated rate which could overshoot.
- *   The step count is unchanged,the points per vector and the time stay within about 1% in total.
- *   An invisible vector now takes its 1.5 us per step like a visible one.
+ * 14-Sep-2026 Claude - vectors end exactly on their endpoint: the brm moves each axis with an
+ *    integer accumulator instead of a truncated rate, which overshot by up to 6 units. The step
+ *    count is unchanged, so the points per vector, and the time, stay within about 1% in total.
+ *    An invisible vector now takes its 1.5 us per step like a visible one (H-340 pp. 3-6, 3-7).
+ * 14-Sep-2026 Claude - the first lightpen hit is latched until the 340 is resumed or restarted
+ *    (lpHitLatched). The 340 finishes the current word after a hit, and display.c no longer uses up
+ *    the pen position on a hit, so the rest of the word would otherwise hit again and replace the
+ *    coordinates drc reports. drc now reports the hit from the moment the flag is set, not only once
+ *    the pause has taken effect at the end of the word; before, a drc in that window read the beam.
  */
 
 #include <stdlib.h>
@@ -278,6 +283,8 @@ static int cacheSize = 0;           // if nonzero, size of instruction cache to 
 static int cacheBase = -1;          // address cached at the first entry in the cache
 static bool threadRunning = false;  // emulator thread is set up
 static bool isPaused = false;       // got a PAUSE command
+static volatile bool lpHitLatched = false;  // a hit was seen and the 340 has not been resumed since;
+                                            // keeps lpX, lpY and lpDisplay at that first hit
 static bool needBreak = false;      // edge violation occurred and an interrupt is needed
 static bool origCharsets = false;   // initial twoCharsets from config or default
 static bool twoCharsets = false;
@@ -428,11 +435,17 @@ emuOrFlags(int newFlags)
 // Return the current x and y coordinates.
 // Note that unless the emulator is stopped or paused, this is a snapshot of the last drawn point.
 // If paused, it was because of a lightpen hit, so return those coords instead of the current x and y.
+// The same goes for the time between the hit and the pause, while the 340 finishes the word it was
+// drawing: the flag is already set, so a program may read the coordinates then.
 void
 emuGetXY(int *dispP, int *xP, int *yP)
 {
+    // Pairs with the release fence in drawAndCheck(): once dsp has seen the flag, the hit's
+    // coordinates and the latch read here are the ones stored before it.
+    atomic_thread_fence(memory_order_acquire);
+
     // A lightpen hit will pause
-    if( isPaused )
+    if( isPaused || lpHitLatched )
     {
         *xP = lpX;
         *yP = lpY;
@@ -546,6 +559,7 @@ Status status;
             {
                 emuClearFlags();
                 lpEnabled = isPaused = false;
+                lpHitLatched = false;
                 iotCondLog(LOG_PAUSE, "Received resume while paused\n");
             }
             break;
@@ -1079,6 +1093,7 @@ reset340()
     curState = STOPPED;
     curMode = PARAMETER;
     isPaused = false;
+    lpHitLatched = false;
     flags = 0;
     slavesEnabled = false;
     lpEnabled = false;
@@ -1088,8 +1103,7 @@ reset340()
 // A binary rate multiplier implementation, needed for vectors.
 // A vector is divided into nPoints steps, the vector's length times this scale factor.
 // Each step, each axis adds its span to its accumulator and moves one unit when the accumulator
-// reaches nPoints.
-// Over the nPoints steps an axis moves exactly its span, as the real BRM does.
+// reaches nPoints, so over the nPoints steps an axis moves exactly its span, as the real BRM does.
 // A step where neither axis moves produces no point.
 #define BRMSCALEFACTOR 20.0
 
@@ -1097,7 +1111,9 @@ reset340()
 // with a step increment in step.
 // Note that the coordinate system is always positve; the lower left corner is 0,0, upper right 1023,1023.
 // If the data is invalid, such as no dX and dY or no step, return false, else true.
-// The dotSpacing is in pixels, not the raw 2 bit selector from the instruction.
+//
+// Note that the dotSpacing is in pixels, not the raw 2 bit selector from the instruction.
+
 bool
 brmInitialize(BRMStateP stateP, int initialX, int initialY, int dX, int dY, int dotSpacing, bool draw)
 {
@@ -1134,6 +1150,11 @@ float side, fx, fy;
     }
     else
     {
+        // The step count is the one the older truncated-rate code used, so a vector still
+        // produces about the same number of points (over all vectors, within about 1%), and so
+        // takes about the same time. That timing was tuned against the Linux scheduler.
+        // Only which steps move is different: the truncated rates moved an axis up to 6 units
+        // past its span.
         fx = (float)(stateP->xSpan);
         fy = (float)(stateP->ySpan);
         side = hypot(fx, fy);
@@ -1621,6 +1642,8 @@ bool sawHit;
 // Display 0 is always the primary display.
 // Set the LP flag if a hit occurred.
 // Return true if an lp hit occurred, else false.
+// Only the first hit counts until the 340 is resumed or restarted: the rest of the word is still
+// drawn after a hit, and a pen held on it would otherwise hit again and move lpX and lpY along.
 bool
 drawAndCheck(bool tryLightpen, int x, int y, int intensity)
 {
@@ -1660,7 +1683,7 @@ bool gotLpHit;
                 minY = y;
             }
 #endif
-            if( tryLightpen && !gotLpHit )
+            if( tryLightpen && !gotLpHit && !lpHitLatched )
             {
                 if( (i == 0) ? lpEnabled : (slaves[i-1].lpEnabled != 0) )
                 {
@@ -1669,6 +1692,10 @@ bool gotLpHit;
                         lpX = x;
                         lpY = y;
                         lpDisplay = i;          // which one
+                        lpHitLatched = true;    // before the flag, so drc sees the hit once dsp does
+                        // Make the coordinates and the latch visible before the flag, on ARM too.
+                        // Pairs with the acquire fence in emuGetXY(). Runs only on a hit.
+                        atomic_thread_fence(memory_order_release);
                         emuOrFlags(FLAG_LP);
                         iotCondLog(LOG_LP,"lp hit screen %d at x %d y %d\n", i, x, y);
                     }
@@ -1750,6 +1777,11 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
         request.fromBufferP = buffer;
 
 #if LOG_HSCTIMING
+        // Bracket the fetch-plus-simulated-delay round trip. HSCwait() enforces the 5us
+        // word-fetch time via usleep(), a real kernel sleep/reschedule point -- unlike
+        // nanodelay()'s spin-wait used for every other sub-SPIN_LIMIT delay in this file --
+        // so actual elapsed time here is at the mercy of the Linux scheduler, not just the
+        // requested delay. See IOTs/Type340Display/CLAUDE.md for the full analysis.
         hscStartNs = getNow();
 #endif
 

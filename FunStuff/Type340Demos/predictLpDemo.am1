@@ -1,6 +1,8 @@
 Demo of the new fast lightpen builtin predictive tracking supported in the pidp-1 core display logic.
 // This uses the new motion prediction code and an interrupt driven lightpen handler.
 // Compare this to the earlier simplistic tracking!
+// 14-Sep-2026 Claude - penISR resumes the 340 (drs) instead of restarting it at the target (dla);
+//                      a held pen now hits on every pass, and the restart looped on the target
 #include <TYPE340/type340defs.ah>
 #include <TYPE340/trackingTarget.ah>
 
@@ -59,11 +61,11 @@ penISR,
     ior [y(0) next(point)]
     dac tgtY
 
-    // We now do something rather clever, we usurp the 340 program and restart it at
-    // the lightpen drawing location.
-    // That will return to normal processing by itself, but this gets an immediate tracking update.
-    lio [target]
-    dla
+    // Resume the 340 where the hit stopped it. The resume leaves the lightpen off until the
+    // target's next lpon, so the target is hit at most once per refresh and moves on the next pass.
+    // Restarting the 340 at the target here instead loops on the target while the pen rests on
+    // it, since a held pen hits on every pass, and the prompt is never drawn.
+    drs
     lio 2               // restore the pre-break IO
     lac 0               // restore the pre-break AC -- must be last before DEBREAK
     jmp i 1             // DEBREAK

@@ -24,6 +24,19 @@
 //    instead of risking a dpyBuf[] overflow if the buffer stays full after a flush.
 // 26-Jun-2026 wje (Claude) deep analysis of possible bottlenecks done, tuning changes made
 // 8-Aug-2026 wje add lightpen exponential moving average prediction logic
+// 14-Sep-2026 wje (Claude) a lightpen hit no longer uses up the pen position.
+//    checkLightpen() used to clear lpData on every hit, and only a new position from the client set it
+//    again. The client sends a position only when the mouse moves, so a pen held still got one hit and
+//    then none. A real pen sees phosphor, not motion: now every point drawn inside the aperture while
+//    the pen is down is a hit. lpData is cleared when the pen is lifted instead.
+//    With motion prediction on, a pen that stops is fed its last position again every
+//    PENHOLDRESAMPLE, so the prediction settles on where it stopped instead of extrapolating
+//    from the last velocity it saw.
+// 14-Sep-2026 wje (Claude) predictLightpen() no longer dereferences a null control pointer when the
+//    screen is not configured, and it reads the filters under dataLock. lightpenReader() resets the
+//    filters on pen up under dataLock too; it did that unlocked while checkLightpen() predicted
+//    from them. initializeDisplay() publishes a new screen's control entry with a release store
+//    (getDisplayControlP() loads it with acquire), since the worker thread is already running.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -67,6 +80,11 @@
 #define CMDBUFSIZE  4096           // buffer up to this many display commands (sized to the 4096-word display memory)
 #define DPYBUFSIZE  4096           // buffer up to this many outgoing dpy commands
 #define DPYFULLRETRIES 100         // addDpyCommand: max retries while dpy buf is full before dropping a command
+// A pen that is down but has sent nothing for this long, in ns, has stopped moving, and the motion
+// prediction filters are given its last position again (see lightpenReader()).
+// It is the predictor's own extrapolation limit, so a pen that is merely moving slowly is not
+// mistaken for a stopped one.
+#define PENHOLDRESAMPLE ((uint64_t)(DELTA_TIME_CLAMP * 1000.0 * 1000.0 * 1000.0))
 #undef NEVER
 #define NEVER ~((uint64_t)0)       // a long time from now
 #define null 0
@@ -87,8 +105,10 @@ typedef struct {
     uint64_t lastTime;             // used by addDpyCommand();
     uint64_t ageTime;              // used by addDpyCommand() and ageDisplay();
     bool penDown;                  // lightpen is on the screen
-    bool lpData;                   // set when lp data comes in, cleared when read
+    bool lpData;                   // set when a pen position comes in, cleared when the pen is lifted
     int lpX, lpY;                  // last x,y lightpen coordinates received
+    int rawX, rawY;                // last x,y the client sent, never replaced by a prediction
+    uint64_t lpSampleTime;         // when the prediction filters were last given a position, ns
     int lpRadius2;                 // used by the lightpen check
     pthread_mutex_t controlLock;   // for interlocking with the worker thread
     pthread_mutex_t dataLock;      // for locking get/setDisplayData
@@ -373,6 +393,9 @@ DisplayControlP ctlP;
 // The coordinates to check are passed.
 // The coordinates are expected to be in 0-1024 range!
 // If so, return true, else false.
+// A hit does not use up the pen position: a pen held still hits every point drawn inside its
+// aperture, every time it is drawn, as a real pen does. Limiting how often that is seen is
+// the display's business, e.g. the Type 340 pauses and turns the pen off until it is resumed.
 bool
 checkLightpen(int screenNo, int x, int y)
 {
@@ -411,7 +434,6 @@ DisplayControlP ctlP;
     {
         logger(LOG_LP, "LP hit\n");
         gotHit = true;
-        ctlP->lpData = false;
     }
 
     unlockDisplayDataByCtlP(ctlP);
@@ -421,22 +443,36 @@ DisplayControlP ctlP;
 // The outside interface for getting the predicted lightpen coordinates.
 // It will set the coordiates and return true if there is a valid prediction, else false.
 // The predicted location is updated automatically when a lightpen event comes in from the display.
+// If the screen is not configured, the coordinates passed in are left as they are.
 bool
 predictLightpen(int screenNo,  int *xP, int *yP)
 {
 DisplayControlP ctlP;
+bool predicted;
 
-    if( !(ctlP = getDisplayControlP(screenNo)) || !isOpen(ctlP) || !ctlP->penDown )
+    if( !(ctlP = getDisplayControlP(screenNo)) )
+    {
+        return(false);
+    }
+
+    // The filters and the pen state are changed by the display thread, so read them under its lock.
+    lockDisplayDataByCtlP(ctlP);
+    if( !isOpen(ctlP) || !ctlP->penDown )
     {
         // Return whatever coords we last had, could be invalid.
         *xP = ctlP->lpX;
         *yP = ctlP->lpY;
-        return(false);
+        predicted = false;
     }
+    else
+    {
+        *xP = motionFilterPredict(&(ctlP->xFilter));
+        *yP = motionFilterPredict(&(ctlP->yFilter));
+        predicted = true;
+    }
+    unlockDisplayDataByCtlP(ctlP);
 
-    *xP = motionFilterPredict(&(ctlP->xFilter));
-    *yP = motionFilterPredict(&(ctlP->yFilter));
-    return(true);
+    return(predicted);
 }
 
 // End of external functions, these are all internal.
@@ -513,6 +549,8 @@ int created;
 static DisplayControlP
 initializeDisplay(int screenNo)
 {
+DisplayControlP ctlP;
+
     // displays[] has MAXDISPLAYS entries (valid indices 0..MAXDISPLAYS-1), so the
     // upper bound must be >= MAXDISPLAYS, not > MAXDISPLAYS (which let index
     // MAXDISPLAYS through and read/write one past the array).
@@ -525,10 +563,20 @@ initializeDisplay(int screenNo)
 
     if( !displays[screenNo] )
     {
-        displays[screenNo] = calloc(1, sizeof(DisplayControl));
-        initializeDisplayControl(displays[screenNo]);
-        motionFilterReset(&(displays[screenNo]->xFilter));
-        motionFilterReset(&(displays[screenNo]->yFilter));
+        ctlP = calloc(1, sizeof(DisplayControl));
+        if( !ctlP )
+        {
+            return(0);
+        }
+
+        initializeDisplayControl(ctlP);
+        motionFilterReset(&(ctlP->xFilter));
+        motionFilterReset(&(ctlP->yFilter));
+
+        // The worker thread is already running and finds the entry through getDisplayControlP().
+        // Publish it only once it is complete, with a release store paired with that acquire load,
+        // so another core cannot see the pointer before the fields and the mutexes behind it.
+        __atomic_store_n(&(displays[screenNo]), ctlP, __ATOMIC_RELEASE);
     }
 
     return( displays[screenNo] );
@@ -546,7 +594,7 @@ getDisplayControlP(int screenNo)
     }
 
     initializeDisplaySubsystem();
-    return( displays[screenNo] );
+    return( __atomic_load_n(&(displays[screenNo]), __ATOMIC_ACQUIRE) );    // see initializeDisplay()
 }
 
 // Initialize a display, setting all of its fields to the default values.
@@ -561,6 +609,8 @@ initializeDisplayControl(DisplayControlP ctlP)
     ctlP->ageTime = 50 * 1000;  // 50 milliseconds
     ctlP->curX = ctlP->curY = ctlP->intensity = 0;
     ctlP->lpX = ctlP->lpY = 0;
+    ctlP->rawX = ctlP->rawY = 0;
+    ctlP->lpSampleTime = ctlP->now;
     ctlP->penDown = false;
     ctlP->lpData = false;
     ctlP->lpRadius2 = curRadius2;      // latest setting from config
@@ -860,6 +910,9 @@ int cmd;
 // Whenever a dpy completion occurs, check the status and if the pen is down, see if the
 // dpy coordinates match the current position within the aperture boundaries and if so,
 // set the appropriate flags.
+// The position stays valid until the pen moves or is lifted; a hit does not use it up.
+// The client sends nothing while the mouse is still, so a pen held still is simply one
+// whose last position is still current.
 //
 // A command from the client is a 32 bit word:
 // FFpccccc where:
@@ -884,18 +937,23 @@ int sockFlag = 1;
 int lastX, lastY;
 bool gotPosition;
 bool penDown;
+bool penLifted;
 
 uint32_t penBuf[PENBUFSIZE];
 uint32_t cmd;
 
     if( !isOpen(ctlP) )
     {
+        lockDisplayDataByCtlP(ctlP);
         ctlP->lpX = ctlP->lpY = 0;
         ctlP->penDown = false;
+        ctlP->lpData = false;
+        unlockDisplayDataByCtlP(ctlP);
         return(false);                          // nothing open yet
     }
 
     gotPosition = false;
+    penLifted = false;
     lastX = 0;                                  // audit M10: hygiene init, gotPosition guards real use
     lastY = 0;
     penDown = ctlP->penDown;                    // audit M10: preserve current state across a no-data pass
@@ -914,8 +972,7 @@ uint32_t cmd;
                 {
                     penDown = false;
                     gotPosition = false;
-                    motionFilterReset(&(ctlP->xFilter));
-                    motionFilterReset(&(ctlP->yFilter));
+                    penLifted = true;           // the filters are reset below, under the lock
                     logger(LOG_LP, "Pen up\n");
                 }
                 else
@@ -934,13 +991,39 @@ uint32_t cmd;
 
     // This is the only data modified in the display thread that is externally used.
     lockDisplayDataByCtlP(ctlP);
+    if( penLifted )
+    {
+        // Any position read after the last pen up is still set in gotPosition/lastX/lastY, and is
+        // added below, after the reset, the same order the commands came in.
+        motionFilterReset(&(ctlP->xFilter));
+        motionFilterReset(&(ctlP->yFilter));
+    }
+
     if( gotPosition )
     {
         ctlP->lpX = lastX;
         ctlP-> lpY = lastY;
+        ctlP->rawX = lastX;
+        ctlP->rawY = lastY;
         ctlP->lpData = true;
         motionFilterAdd(&(ctlP->xFilter), lastX);
         motionFilterAdd(&(ctlP->yFilter), lastY);
+        ctlP->lpSampleTime = ctlP->now;
+    }
+    else if( penDown && useMotionPrediction && ((ctlP->now - ctlP->lpSampleTime) >= PENHOLDRESAMPLE) )
+    {
+        // The pen is down and has sent nothing for PENHOLDRESAMPLE: it is being held still.
+        // Without new samples the filters would go on extrapolating from the last velocity they saw,
+        // and the prediction would stay off to one side of where the pen stopped.
+        // Giving them the last position again lets the velocity decay and the prediction settle on it.
+        motionFilterAdd(&(ctlP->xFilter), ctlP->rawX);
+        motionFilterAdd(&(ctlP->yFilter), ctlP->rawY);
+        ctlP->lpSampleTime = ctlP->now;
+    }
+
+    if( !penDown )
+    {
+        ctlP->lpData = false;       // a lifted pen has no position
     }
 
     ctlP->penDown = penDown;

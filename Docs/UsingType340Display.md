@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.9
+This is version 1.10
 
-Edit date 8-Aug-2026\
-Add description of the motion estimator and IOT, minor typo corrections
+Edit date 15-Sep-2026\
+Add details about using drs/dla
 
 ## What is it?
 
@@ -422,12 +422,35 @@ A violation will also cause an interrupt unless the nonstandard *specialinterrup
 a *sequence break*, assuming the SBS system has been enabled.
 
 If enabled, a lightpen hit will also immediately halt the display, but it *can* be resumed via the *drs* IOT.
-If given before a new *dla*, processing will resume from where it left off.
+If given before a new *dla*, display list execution will resume from where it left off.
 A mandatory interrupt will also be issued, the same as for an edge violation, unless disabled with the
 nonstandard *specialinterrupt* flag.
 
 When the display halts because of a lightpen hit, the location of the hit can be fetched via the *drc* IOT.
 When resumed, the lightpen is automatically disabled. It must be enabled again via a *parameter* command.
+
+**After a lightpen hit**, resume with *drs* if you want the rest of your display list to execute.
+
+A lightpen that is held down sees every lightpen-enabled point drawn within its aperture every time
+it's drawn, whether the pen is moving or not.
+A program tracking the pen gets a hit on each rendering of those points for as long as the pen is down.
+
+What the program does after the hit decides whether the rest of the display gets drawn.
+
+- *drs* resumes the display where it paused. The lightpen is disabled by the resume and the rest of
+  the display list is drawn without further hits.
+  The pen is enabled only when a *parameter* command turns it on again.
+  The result is one hit per pass through the display program.
+- *dla*, used to change the position of the points hit or to modify the display list, starts the
+  display again with the lightpen enabled. The pen is still on the display,
+  the display restarts at the new address, and if execution causes the points to be
+  redrawn, and the hit repeats until the lightpen is lifted.
+- The display loops on the points for as long as the pen touches them, and nothing after that
+  point in the display program ever gets a chance to be drawn.
+
+So after a lightpen hit, save the coordinates with *drc*, update the display list or or whatever
+the lightpen interrupt code is for, then resume with *drs*.
+You can then reenable the lightpen in your next pass, allowing the entire display list to be processed.
 
 ## Timing
 

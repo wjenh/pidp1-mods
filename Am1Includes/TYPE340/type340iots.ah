@@ -11,15 +11,15 @@
  * but won't match the historic three-letter style.
  */
 
-#define dla 0720015
-#define drs 0720115
-#define dcf 0720215
-#define dra 0720016
-#define drc 0720116
-#define drp 0720216
-#define dsp 0720117
-#define dss 0720217
-#define dsv 0720417
-#define dsh 0721017
+#define dla iot 015
+#define drs iot 0115
+#define dcf iot 0215
+#define dra iot 016
+#define drc iot 0116
+#define drp iot 0216
+#define dsp iot 0117
+#define dss iot 0217
+#define dsv iot 0417
+#define dsh iot 01017
 
 #endif

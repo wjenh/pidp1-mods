@@ -2,8 +2,8 @@
 
 This document describes the funcionality and how to create your own IOTs.
 
-Updated 6-Jul-2026
-Add warning about cycle-stealing.
+Updated 16-Sep-2026
+Clean up some typos.
 
 ## What is a dynamic IOT?
 
@@ -187,15 +187,15 @@ If you have any special initialization to do before your IOT is called, implemen
 It will be called whenever the pidp1 goes into run state, or after your IOT is first loaded but
 before iotHandler() is called.
 
-If you have any special clenup to do, as the fclose() in the example IOT_57, implement `iotStop()`.
+If you have any special cleanup to do, as the fclose() in the example IOT_57, implement `iotStop()`.
 It will be called whenever the pidp1 is halted either by the `hlt` instruction or by the front panel switch.
 
 ## Interrupts aka Sequence Breaks
 
 The -1 implements a simple interrupt system that your IOTs can use.
 First, read the -1 documentation on the Sequence Break System.
-A handler can reqest a sequence break by calling the builtin `initiateBreak(int channel)`.
-This is typically called when pulse is 1, but can be called asyncrhonously from an *iotPoll()*.
+A handler can request a sequence break by calling the builtin `initiateBreak(int channel)`.
+This is typically called when pulse is 1, but can be called asynchronously from an *iotPoll()*.
 
 If the 16 channel break system is installed, the channel numbers are 0-15.
 The channel in question must have been enabled via the enable sequence channel IOT `asc`, which has the format
@@ -205,19 +205,19 @@ Similarly, a channel can be disabled with the disable sequence break IOT `dsc`, 
 If the standard one channel sbs is installed, any channel number is ignored and will always be treated as 0.
 IOTs asc, dsc are also ignored in this case.
 
-For either system, sequence break must be enabled in general via the enter system break mode IOT, `esb`, 72xx55.
-It can be disabled via the leave system break moode IOT, `lsb`, 72xx54.
+For either system, sequence break must be enabled in general via the enter system break mode IOT, `esm`, 72xx55.
+It can be disabled via the leave system break mode IOT, `lsm`, 72xx54.
 
 ## Aliases
 
-If the IOT being inmplemented should be processed by another IOT, just implement the `iotAlias()`
+If the IOT being inplemented should be processed by another IOT, just implement the `iotAlias()`
 function, which should return the IOT number of the handler to actually process it. Remember to keep your octal
 vs decimal numbers correct.
 
 That IOT will be loaded if it hasn't already been.
 
 No other functions need to be implemented, they will be ignored.
-Whenver your alias IOT is executed, the alias target code will actually be invoked.
+Whenever your alias IOT is executed, the alias target code will actually be invoked.
 You can tell what IOT device code caused the invocation by looking at the `dev` parameter.
 
 The code for the Type 23 Parallel Drum gives examples of this.

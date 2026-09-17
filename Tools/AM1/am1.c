@@ -1,6 +1,7 @@
 /* am1.c - another macro1 assembler
  *
- * Usage: am1 [-abdlmMnrsvz[ykp]] [-O[=modifier]] [-i path] [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
+ * Usage: am1 [-abdlmMnNrsSTvz[ykp]] [-O[=modifier]] [-i path] [-Dsymbol[=value]]... [-W[=warning]] ...
+ *  [-I path]... sourcefile
  *
  * Valid switches are:
  *
@@ -131,6 +132,7 @@
  * 8-Sep-2026 claude - add -O, the optimizer advisor, see Docs-OPTIMIZER.md.
  * 9-Sep-2026 wje - fixes (finally) for line numbers sometimes being off by one in error messages, fix some of the
  *    directives, e.g. table, not allowing use of location 07777
+ * 14-Sep-2026 wje - clean up usage and explicitly initialize doMacro and doBinary
  *
 */
 #include <unistd.h>
@@ -181,7 +183,7 @@ char str1[256];                 // scratch strings
 char str2[256];
 
 bool doMacro;
-bool doBinary;
+bool doBinary;                  // a misnaming, it actually means 'full am1 syntax, am1 loader in rim'
 bool keepMinusZero;
 bool spaceIsAdd;
 bool doListing;
@@ -250,6 +252,7 @@ BankContextP bankP, lastBankP;
     dropIncludeText = false;
     showMemUsage = false;
     testMode = false;
+    doMacro = doBinary = false;
 
     for(i = 1; i < NSIG;)
     {
@@ -1172,10 +1175,10 @@ leave(int signo)
 int
 usage()
 {
-    fprintf(stderr, "Usage: am1 [-abdmMlnNsSvz[xykp]] [-O[=dump|decode|refs|flow|rules|check]] [-Dsymbol]... [-Ipath]... [-irootpath]\n");
-    fprintf(stderr, "  [-W[=warning]]... sourcefile\n\n");
+    fprintf(stderr, "Usage: am1 [-abdmMlnNrsSTvz[xykp]] [-O[=dump|decode|refs|flow|rules|check]]\n");
+    fprintf(stderr, "  [-Dsymbol]... [-Ipath]... [-irootpath] [-W[=warning]]... sourcefile\n\n");
     fprintf(stderr, "  -a treat space in expressions as add, not or\n");
-    fprintf(stderr, "  -b generate binary code\n");
+    fprintf(stderr, "  -b generate binary code, the default if neither -b or -m is given\n");
     fprintf(stderr, "  -d generate both a listing and symbol file, combines -s and -l\n");
     fprintf(stderr, "  -l generate listing\n");
     fprintf(stderr, "  -m generate macro1 code\n");
@@ -1199,15 +1202,17 @@ usage()
     fprintf(stderr, "  -i define the include root directory\n");
     fprintf(stderr, "  -W print all warnings\n");
     fprintf(stderr, "  -W=[-]warning (- don't) print this warnng\n");
+    fprintf(stderr, "  These are primarily for testing, not generally useful:\n");
     fprintf(stderr, "  -x enable flex debug output on stderr\n");
     fprintf(stderr, "  -y enable yacc debug output on stderr\n");
     fprintf(stderr, "  -k don't delete cpp tmp file\n");
     fprintf(stderr, "  -p dump parse tree to stdout\n");
-    fprintf(stderr, "  -T special test mode, see docs\n");
+    fprintf(stderr, "  -T special test mode, see docs, disables several other flags\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "If neither -b nor -m are given, -b is assumed.\n");
+    fprintf(stderr, "If -m is given, -b must be given if am1 binary is desired also and vice-versa.\n");
     fprintf(stderr, "By default, space is or, -0 is converted to 0.\n");
-    fprintf(stderr, "See the documenation for the supported warnings.\n");
+    fprintf(stderr, "See the documentation for the supported warnings.\n");
     exit(1);
 }
 

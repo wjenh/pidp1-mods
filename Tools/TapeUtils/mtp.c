@@ -23,8 +23,9 @@
  *
  * Revision history:
  *
- * 13/09/2026 wje - initial version
- * 13/09/2026 Claude - -u unmounts a drive
+ * 13/09/2026 wje initial version
+ * 13/09/2026 Claude -u unmounts a drive
+ * 16/09/2026 wje -l lists the mounted drives
  *
  */
 #include <stdlib.h>
@@ -71,32 +72,45 @@ mode_t mode;
 long drive;
 bool exists;
 bool unmount;
+bool list;
 int dropped;
 int removed;
 int opt;
+FILE *fP;
 
     listArgP = DEFAULT_LIST;
     driveArgP = NULL;
-    unmount = false;
-    while( (opt = getopt(argc, argv, "f:u:")) != -1 )
+    list = unmount = false;
+    while( (opt = getopt(argc, argv, "f:u:l")) != -1 )
     {
-        if( opt == 'f' )
+        switch( opt )
         {
+        case 'f':
             listArgP = optarg;
-        }
-        else if( opt == 'u' )
-        {
-            driveArgP = optarg;             // unmounting: the drive is -u's argument
+            break;
+
+        case 'u':
             unmount = true;
-        }
-        else
-        {
+            driveArgP = optarg;
+            break;
+
+        case 'l':
+            list = true;
+            break;
+
+        default:
             usage();
         }
     }
 
+    // One or the other
+    if( list && unmount )
+    {
+        usage();
+    }
+
     // Mounting takes a drive and a filename; -u has already given the drive, and takes no filename.
-    if( (argc - optind) != (unmount ? 0 : 2) )
+    if( (argc - optind) != ((unmount || list)?0:2) )
     {
         usage();
     }
@@ -106,23 +120,43 @@ int opt;
         driveArgP = argv[optind];
     }
 
-    // The drive, decimal 1-8.
-    errno = 0;
-    drive = strtol(driveArgP, &endP, 10);
-    if( (endP == driveArgP) || (*endP != 0) || (errno != 0) || (drive < 1) || (drive > UNITS) )
+    if( !list )
     {
-        fprintf(stderr, "A drive number must be 1-8.\n");
-        return(1);
+        // The drive, decimal 1-8.
+        errno = 0;
+        drive = strtol(driveArgP, &endP, 10);
+        if( (endP == driveArgP) || (*endP != 0) || (errno != 0) || (drive < 1) || (drive > UNITS) )
+        {
+            fprintf(stderr, "A drive number must be 1-8.\n");
+            return(1);
+        }
     }
 
     nameP = NULL;
-    if( !unmount )
+    if( !unmount && !list )
     {
         nameP = argv[optind + 1];
         if( !checkName(nameP) )
         {
             return(1);
         }
+    }
+
+    if( list )
+    {
+        if( !(fP = fopen(listArgP, "r")) )
+        {
+            printf("There is no tape mount file '%s'.\n", listArgP);
+            exit(1);
+        }
+
+        while( fgets(newLine, sizeof(newLine), fP) )
+        {
+            fputs(newLine, stdout);
+        }
+
+        fclose(fP);
+        exit(0);
     }
 
     // Replace the list itself, not a symbolic link to it.
@@ -433,11 +467,11 @@ bool locked;
 
     if( locked )
     {
-        printf("%s does not exist, a lock for a missing image mounts nothing.\n", path);
+        printf("%s does not exist, a lock for a missing tape does nothing.\n", path);
     }
     else
     {
-        printf("%s does not exist, a blank tape is being created.\n", path);
+        printf("%s does not exist, a blank tape will be created on first use.\n", path);
     }
 }
 
@@ -488,11 +522,13 @@ usage(void)
     fprintf(stderr,
         "Usage: mtp [-f mapfile] <drive-number> <filename>\n"
         "       mtp [-f mapfile] -u <drive-number>\n"
+        "       mtp [-u mapfile] -l\n"
         "  Mounts filename on microtape drive drive-number (1-8),\n"
         "  updating %s unless -f names another.\n"
         "  A relative filename is relative to /opt/pidp1-mods;\n"
         "  \",locked\" on the end mounts it write-locked.\n"
         "  -u unmounts the drive instead, removing its line.\n"
+        "  -l lists all mounted drives.\n"
         "  The change takes effect on the next IOT mse.\n", DEFAULT_LIST);
     exit(1);
 }

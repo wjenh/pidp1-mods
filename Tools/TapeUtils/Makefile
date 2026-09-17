@@ -1,4 +1,5 @@
-CC=gcc -O3
+#CC=gcc -O3
+CC=gcc -g
 
 all: mtp
 

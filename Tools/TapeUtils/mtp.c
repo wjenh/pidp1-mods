@@ -26,6 +26,7 @@
  * 13/09/2026 wje initial version
  * 13/09/2026 Claude -u unmounts a drive
  * 16/09/2026 wje -l lists the mounted drives
+ * 17/09/2026 wje minor cleanup, no functionality change
  *
  */
 #include <stdlib.h>
@@ -81,7 +82,7 @@ FILE *fP;
     listArgP = DEFAULT_LIST;
     driveArgP = NULL;
     list = unmount = false;
-    while( (opt = getopt(argc, argv, "f:u:l")) != -1 )
+    while( (opt = getopt(argc, argv, "f:ul")) != -1 )
     {
         switch( opt )
         {
@@ -91,7 +92,6 @@ FILE *fP;
 
         case 'u':
             unmount = true;
-            driveArgP = optarg;
             break;
 
         case 'l':
@@ -109,41 +109,13 @@ FILE *fP;
         usage();
     }
 
-    // Mounting takes a drive and a filename; -u has already given the drive, and takes no filename.
-    if( (argc - optind) != ((unmount || list)?0:2) )
-    {
-        usage();
-    }
-
-    if( !unmount )
-    {
-        driveArgP = argv[optind];
-    }
-
-    if( !list )
-    {
-        // The drive, decimal 1-8.
-        errno = 0;
-        drive = strtol(driveArgP, &endP, 10);
-        if( (endP == driveArgP) || (*endP != 0) || (errno != 0) || (drive < 1) || (drive > UNITS) )
-        {
-            fprintf(stderr, "A drive number must be 1-8.\n");
-            return(1);
-        }
-    }
-
-    nameP = NULL;
-    if( !unmount && !list )
-    {
-        nameP = argv[optind + 1];
-        if( !checkName(nameP) )
-        {
-            return(1);
-        }
-    }
-
     if( list )
     {
+        if( optind != argc )
+        {
+            usage();
+        }
+
         if( !(fP = fopen(listArgP, "r")) )
         {
             printf("There is no tape mount file '%s'.\n", listArgP);
@@ -157,6 +129,36 @@ FILE *fP;
 
         fclose(fP);
         exit(0);
+    }
+
+    // Mounting takes a drive and a filename; -u takes a drive, no filename.
+    if( (argc - optind) < 1 )
+    {
+        usage();
+    }
+
+    // The drive, decimal 1-8.
+    errno = 0;
+    driveArgP = argv[optind++];
+    drive = strtol(driveArgP, &endP, 10);
+    if( (endP == driveArgP) || (*endP != 0) || (errno != 0) || (drive < 1) || (drive > UNITS) )
+    {
+        fprintf(stderr, "A drive number must be 1-8.\n");
+        return(1);
+    }
+
+    if( !unmount && ((argc - optind) != 1) )
+    {
+        usage();
+    }
+
+    if( !unmount )
+    {
+        nameP = argv[optind];
+        if( !checkName(nameP) )
+        {
+            return(1);
+        }
     }
 
     // Replace the list itself, not a symbolic link to it.

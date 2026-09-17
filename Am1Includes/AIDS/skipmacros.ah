@@ -3,25 +3,25 @@
 // Various defines to reduce confusion over skip use.
 // These are primarily for Claude to avoid confusion with modern compiler if/then assumptions.
 
-// ---- sza (skip-group, `i`-invertible): skip if AC == 0 / AC != 0 -------
+// ---- sza skip-group, sets i appropriately, skip if AC == 0 / AC != 0 -------
 #define SKIP_NEXT_IF_AC_ZERO sza
 #define SKIP_NEXT_IF_AC_NOT_ZERO sza i
 
-// ---- spa (skip-group, `i`-invertible): skip if AC's sign bit is clear
+// ---- spa skip-group, sets i appropriately, skip if AC's sign bit is clear
 // "positive" includes +0 
 #define SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO spa
 #define SKIP_NEXT_IF_AC_NOT_POSITIVE_OR_ZERO spa i
 
-// ---- sma (skip-group, `i`-invertible): skip if AC's sign bit is set
+// ---- sma skip-group, sets i appropriately, skip if AC's sign bit is set
 // "negative" includes -0.
 #define SKIP_NEXT_IF_AC_NEGATIVE sma
 #define SKIP_NEXT_IF_AC_NOT_NEGATIVE sma i
 
-// ---- szf (skip-group, `i`-invertible, takes a flag-number operand) -----
+// ---- szf skip-group, sets i appropriately, takes a flag-number operand
 #define SKIP_NEXT_IF_FLAG_SET szf i
 #define SKIP_NEXT_IF_FLAG_CLEAR szf
 
-// ---- szs (skip-group, `i`-invertible, takes a sense-switch-number operand) ----
+// ---- szs skip-group, sets i appropriately, takes a sense-switch-number operand
 #define SKIP_NEXT_IF_SWITCH_SET szs i
 #define SKIP_NEXT_IF_SWITCH_CLEAR szs
 
@@ -29,12 +29,21 @@
 // "negative" includes -0.
 #define SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE sma sza
 
-// -- sad / sas (memory-reference equality pair, NOT `i`-invertible) --
+// ---- spi skip-group, sets i appropriately, it only tests the high bit for a 0 value
+#define SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO spi
+#define SKIP_NEXT_IF_IO_NEGATIVE spi i
+
+// -- sad / sas (memory-reference equality pair, NOT `i`-invertible)
 // `i` on these means indirect addressing, never inversion; a stray
 // trailing `i` after either macro below still means indirect addressing.
 // completely unrelated to which of the two macros was chosen. To invert
 // an equality skip, use the OTHER macro.
 #define SKIP_NEXT_IF_DIFFERENT sad     // skip if AC != operand
 #define SKIP_NEXT_IF_SAME sas          // skip if AC == operand
+
+// 1D new skips
+// The following 2 test for an actual binary 0, all bits off.
+#define SKIP_NEXT_IF_IO_NOT_ZERO sni
+#define SKIP_NEXT_IF_IO_IS_ZERO szi
 
 #endif

@@ -1,0 +1,977 @@
+// ZMachine BOOT -- story header parsing, memory layout and resident load.
+// #include-only fragment (no `start`/`stop`): pulled into zmemcore.am1's
+// ZLEAF_BANK section, first among the leaf fragments so the header words
+// it owns are defined above their readers.
+//
+// It reads the story's own header off the drum, refuses a file this
+// interpreter cannot run, computes the memory layout, copies the resident
+// region from the drum into banks 0d1 upward, and sets the header fields
+// the interpreter owns. One assembled image runs whichever story zloader
+// last copied onto the drum, of version 3, 4 or 5.
+//
+// The resident region is as much of the story as fits in
+// Z_RESIDENT_BANKS banks, never less than dynamic memory; zhResidentTop
+// is the byte address every fetch routes on (section 8).
+//
+// ---- Public entry points (all entered with farjsp) --------------------
+//   zBootInit    -- no arguments. AC = 0 (ZBOOT_OK) if the story on the
+//                   drum booted, else the ZBOOT_* code that refused it.
+//                   IO is clobbered. Never prints and never halts -- see
+//                   zmemcore.am1's `boot` header.
+//   zBootRefuse  -- IO = a ZBOOT_* code. Prints the matching refusal on
+//                   the already-open DCS2 channel. AC and IO are
+//                   clobbered.
+//   zbRestHdr    -- no arguments. Sets the header fields again after a
+//                   restore. AC and IO are clobbered.
+//
+// Dependencies: zmemcore.am1's manifest constants (Z_PAGE_WORDS,
+// Z_STACK_WORDS, Z_MAX_DYN_BANKS, Z_RESIDENT_BANKS, Z_DRUM_TRACKS,
+// DYNMEM_BANK1, DYNMEM_CACHE_BANK), zdispatch.ac's ZSTOP_* numbering,
+// skipmacros.ah, memory.ah, type550defs.ah, zpatch.ac's zpApply (bank
+// ZPATCH_BANK), and -- all in bank 0, assembled
+// before this #include -- zfDrumFillPage, fillTrack, fillTrackOffset,
+// zhStaticBase, zhInitialPC, zhGlobalsAddr, zhResidentTop, and zstack.ac's
+// zsGlobPtr. Plus zPrintChar, which is in THIS bank.
+//
+// ---- Where the parsed words live, and why some are duplicated --------
+// The use sites are split across two banks, and a cross-bank read is
+// three words and an eem hazard where an in-bank read is one word and
+// neither. So the words bank-0 code reads are written into bank 0 here
+// at boot, and every reader gets a one-word direct reference:
+//
+//   zhStaticBase    bank 0   zarith.ac
+//   zhInitialPC     bank 0   zdispatch.ac
+//   zhGlobalsAddr   bank 0   zstack.ac
+//   zhResidentTop   bank 0   zmemcore.am1 -- computed, not a header
+//                            field, and bank 0 ONLY (section 8)
+//   zhObjTableAddr  ZLEAF    zobjects.ac
+//   zhObjEntriesBase ZLEAF   zobjects.ac
+//   zhFileLenPlus1  ZLEAF    zobjects.ac
+//   zhDictAddr      ZLEAF    zparser.ac
+//   zhAbbrevAddr    ZLEAF    ztext.ac
+//
+// zFetchContainingWord tests zhResidentTop on every fetch; a cross-bank
+// read there would put a three-word extend-window sequence on the
+// hottest path in the program. Boot runs once and pays a fardac each;
+// every reader pays nothing.
+//
+// zhObjEntriesBase and zhFileLenPlus1 are precomputed into their own
+// words rather than re-added at every use, so every use site stays one
+// instruction.
+//
+// The remaining words below are read by zsave.ac (save/restore/restart/
+// verify), in this bank.
+//
+// ---- The eem discipline in this file ---------------------------------
+// The public routines use farenter at entry, which closes the window,
+// and farrtn to return, which opens it.
+//
+// zmemcore.am1's ONE RULE FOR CODE IN THIS BANK says an indirect through
+// a BARE in-bank pointer is only correct with eem OFF, because with eem
+// on `lac i ptr` takes ptr's full 16 bits and a bare ZLEAF offset has no
+// bank number in it, so it resolves in bank 0. This file has three
+// indirects, of two opposite kinds:
+//
+//   zbHdrWord's `lac i ptr`      -- a full 16-bit (bank:offset) pointer
+//                                   into zCacheSlot0 in bank 0d13. eem
+//                                   ON, explicitly, and closed again.
+//   zBootRefuse's `lac i msgPtr` -- a BARE in-bank pointer at a message
+//                                   in this bank. eem OFF, and every
+//                                   zPrintChar call in that loop is
+//                                   followed by a `lem` because
+//                                   zPrintChar returns through farrtn
+//                                   with the window open.
+//   zbHeaderSetup's `lac i ptr`  -- a BARE in-bank pointer into its
+//                                   table. eem OFF, with a `lem` after
+//                                   each zStoreWord call.
+//
+// Each site says which, in a comment, where it is.
+
+#ifndef ZBOOT_AC_H
+#define ZBOOT_AC_H
+
+#include <memory.ah>
+#include <AIDS/skipmacros.ah>
+#include <MICROTAPE/type550defs.ah>
+
+// ---- What zBootInit returns -------------------------------------------
+// The same numbers as zdispatch.ac's ZSTOP_* codes, aliased rather than
+// renumbered, so `boot` can write the returned value straight into
+// zdpStopReason with no mapping table between the check and the refusal
+// it prints (followed by the error prompt and the end of the session,
+// not a halt). A headless script reads the same number out of
+// testBootResult, which testBootInit writes before it halts.
+//
+// Only a file this interpreter cannot run at all produces a code. The
+// saves are on a tape image, so the story may have the whole drum.
+#define ZBOOT_OK      0
+#define ZBOOT_BADVER  ZSTOP_BADVER
+#define ZBOOT_TOOBIG  ZSTOP_TOOBIG
+#define ZBOOT_TOODYN  ZSTOP_TOODYN
+
+// ---- Header field word indices ---------------------------------------
+// The story is packed two bytes per PDP-1 word, big-endian
+// (zloader.h's zl_pack_word), so for an EVEN Z-machine byte address the
+// containing word IS the Z-machine word there -- which every header field
+// below is, by the format's own layout. Each of these is therefore
+// (byteOffset >> 1) and needs no shifting or masking after the read.
+// Byte offsets are zloader.h's ZH_* set, Standard 1.1's V1-V5 shared
+// header layout.
+#define ZBH_VERSION      0d0    // byte 0x00, in the word's HIGH half
+#define ZBH_HIGHMEM      0d2    // byte 0x04
+#define ZBH_INITIAL_PC   0d3    // byte 0x06
+#define ZBH_DICT         0d4    // byte 0x08
+#define ZBH_OBJTABLE     0d5    // byte 0x0A
+#define ZBH_GLOBALS      0d6    // byte 0x0C
+#define ZBH_STATIC_BASE  0d7    // byte 0x0E -- also the dynamic-memory size
+#define ZBH_FLAGS2       0d8    // byte 0x10
+#define ZBH_ABBREV       0d12   // byte 0x18
+#define ZBH_FILE_LENGTH  0d13   // byte 0x1A -- in units, not bytes; see below
+#define ZBH_CHECKSUM     0d14   // byte 0x1C
+
+// The property-defaults table's size, which object entries immediately
+// follow (S12.2): 0d31 words, 0d62 bytes, in V3; 0d63 words, 0d126
+// bytes, in V4+. It is the word zbPropDefBytes, patched at boot
+// (zpatch.ac).
+
+// One past the largest Z-machine BYTE ADDRESS that can exist, in any
+// version: addresses in the object, property and dictionary regions are
+// 16-bit, so 0d65535 is the ceiling and 0d65536 is above all of them.
+//
+// This is zobjects.ac's zObjCount sentinel at V4+. In a V3 session that
+// sentinel is zhFileLenPlus1, the story's own length in bytes plus one,
+// which exceeds every address in the file. At V4+ there is no byte count
+// to use (see section 3), and the word count plus one would not bound
+// the addresses. 0d65536 is correct by construction for every story.
+#define ZB_ADDR_CEILING  0d65536
+
+// A V5 story whose file sets Flags2's UNDO bit has undo, and keeps
+// at most eleven banks resident, because bank 0d12 is the undo log
+// (zsave.ac). zBootInit's step 3 and section 8, and zbHeaderSetup.
+#define ZB_FLAGS2_UNDO   020          // Flags2 bit 4
+#define ZB_UNDO_CAP      0130000      // eleven banks, in words
+
+// ========================================================================
+// zBootInit -- reads and checks the story header, loads the resident
+// region and sets the interpreter's header fields.
+// No arguments. Returns AC = ZBOOT_OK, or a ZBOOT_* refusal; IO is
+// clobbered. Called via farjsp; returns through farrtn.
+//
+// The version check comes first, before any layout arithmetic, because
+// the header's fields mean what the story's version says they mean: the
+// check refuses a version this image does not claim, and zpApply then
+// patches the version-dependent words the arithmetic reads. The capacity
+// checks come next, before the load, which is what would overwrite
+// zStack.
+//
+// It never prints and never halts; both are the caller's business (see
+// zmemcore.am1's `boot` and `testBootInit`).
+// ========================================================================
+zBootInit,
+    local rtn, pageNo, pageCount, trackNo, inTrack, fillDest, storyTracks, cap
+    farenter(rtn)              // dac rtn; lem -- the window is CLOSED from
+                               //   here on except where a far* macro opens
+                               //   it and closes it again
+
+    // ---- 0. The save tape's drive, stopped -----------------------------
+    // Boot is where a machine restarted at a new entry point comes back
+    // in, so it stops drive 2 before anything else. Every halt already
+    // stops the tapes; this covers a start that does not pass through one.
+    // With no tape mounted the control refuses the stop (UNABLE), which
+    // changes nothing; zsvMount's `mse` clears the flag.
+    lio [mtu2]
+    mse
+    cli
+    mlc
+
+    // ---- 1. The header page, read WITHOUT the page cache --------------
+    // The cache cannot be used here: its address translation depends on
+    // zhStaticBase, which is one of the values this step exists to
+    // produce. It needs no new scratch buffer either -- zCacheSlot0 is
+    // 0d256 words, uninitialized, and slot0Tag is 0 (empty) until the
+    // first real miss. Fill it with page 0 through the ordinary drum
+    // primitive, read the header out of it, and LEAVE slot0Tag AT 0 so the
+    // first genuine pageable fetch refills it normally. Nothing else on
+    // boot's path touches the cache.
+    //
+    // fillTrack/fillTrackOffset are zfDrumFillPage's bank-0 input words;
+    // page 0 of the story is track 0, offset 0, because the whole file
+    // sits on the drum from track 0.
+    cla
+    fardac(fillTrack:0)
+    cla
+    fardac(fillTrackOffset:0)
+    farjsp(zfDrumFillPage:0)
+    zCacheSlot0:DYNMEM_CACHE_BANK   // trailing destination, a genuine
+                                    //   compile-time constant here
+    lem                        // zfDrumFillPage returns through farrtn,
+                               //   i.e. with the window OPEN
+
+    // ---- 2. Version, checked before anything is believed --------------
+    lio [ZBH_VERSION]
+    jsp zbHdrWord
+    sar 8s                     // the version byte is the word's HIGH half
+    and [0377]
+    dac zhVersion
+    // V3, V4 and V5 are claimed; anything else is refused. The two tests
+    // are sign tests on differences that cannot overflow (the byte is
+    // 0..0377), and 3 - 3 leaves PLUS zero.
+    sub [3]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE         // sma i: skip (fallthrough) if >= 3
+    jmp zbiBadVer                           // no-skip: V1, V2 or 0
+    sub [3]
+    SKIP_NEXT_IF_AC_NEGATIVE             // sma: skip (fallthrough) if < 6
+    jmp zbiBadVer                           // no-skip: V6 and up
+    // Every version-dependent word, for this story's version, before
+    // anything below reads one (zbPropDefBytes, zbFlScale, ...). The walk
+    // is total: see zpatch.ac.
+    lio zhVersion
+    farjsp(zpApply:*)
+    lem                        // farrtn left the window open
+
+    // ---- 3. The rest of the header ------------------------------------
+    lio [ZBH_HIGHMEM]
+    jsp zbHdrWord
+    dac zhHighMemBase
+
+    lio [ZBH_INITIAL_PC]
+    jsp zbHdrWord
+    fardac(zhInitialPC:0)      // bank-0 only: zdispatch.ac is its one
+                               //   reader and nothing in ZLEAF wants it
+
+    lio [ZBH_DICT]
+    jsp zbHdrWord
+    dac zhDictAddr
+
+    lio [ZBH_OBJTABLE]
+    jsp zbHdrWord
+    dac zhObjTableAddr
+
+    lio [ZBH_GLOBALS]
+    jsp zbHdrWord
+    fardac(zhGlobalsAddr:0)    // bank-0 only: zstack.ac's two reads
+    // zstack.ac's zsGlobPtr, zReadVar's in-place pointer: global
+    // 16's resident word, less 16 -- the word index plus bank 1's base.
+    // Only for an EVEN address, where the containing word is the Z-machine
+    // word; an odd one stores 0, and zReadVar keeps zFetchWord's path. The
+    // globals are dynamic memory, so always resident. Stored at every boot,
+    // so a new session never inherits another story's pointer.
+    cli
+    rcr 1s                     // AC = the word index; IO's sign = the low bit
+    add [DYNMEM_BANK1*010000-0d16]
+    spi                        // skip (fallthrough) if IO positive: even
+    cla                           // no-skip: odd -- 0, no pointer
+    fardac(zsGlobPtr:0)
+
+    lio [ZBH_STATIC_BASE]
+    jsp zbHdrWord
+    dac zbStaticBase           // ZLEAF working copy -- the layout
+                               //   arithmetic below needs it in this bank
+    fardac(zhStaticBase:0)     // and the bank-0 copy zarith.ac's store
+                               //   bounds read (fetches route on
+                               //   zhResidentTop, section 8)
+
+    lio [ZBH_FLAGS2]
+    jsp zbHdrWord
+    dac zhFlags2
+
+    // UNDO, for a V5 story whose own file asks for it (Flags2 bit
+    // 4) and never in a census image, whose tables hold bank 14 where the
+    // undo code and its stack copy would be. zbUndoBit is 020 or 0: the bit
+    // zbHeaderSetup leaves in Flags2, and section 8's test for the smaller
+    // resident region. zuBoot records it and discards any snapshot, before
+    // the load and the header writes below, so no store of this boot is
+    // logged against an earlier session's snapshot.
+    dzm zbUndoBit
+#if !Z_CENSUS
+    lac zhVersion
+    SKIP_NEXT_IF_SAME [5]      // sas: skip (fallthrough) if V5
+    jmp zbiUndoSet                // no-skip: V3 or V4 -- no undo
+    lac zhFlags2
+    and [ZB_FLAGS2_UNDO]
+    dac zbUndoBit              // 020 if the story asks for undo, else 0
+zbiUndoSet,
+#endif
+    lio zbUndoBit
+    farjsp(zuBoot:*)           // zsave.ac, bank 14
+    lem                        // farrtn left the window open
+
+    lio [ZBH_ABBREV]
+    jsp zbHdrWord
+    dac zhAbbrevAddr
+
+    // The file-length header field is not in bytes: it is in units of 2
+    // for V1-V3, 4 for V4-V5, 8 for V6-V8 (Standard 1.1 S11.1.6). The
+    // version check above has already refused anything but V3-V5, and
+    // zpApply has set the three patched words below for this version.
+    //
+    // A V4/V5 LENGTH IN BYTES DOES NOT FIT IN THIS MACHINE'S WORD. The AC
+    // is 18-bit ones' complement, so the largest positive value it holds
+    // is 0d131071. The field is 16 bits, so:
+    //
+    //   V1-V3   field x2, at most 0d131070 bytes -- fits, with 1 to spare
+    //   V4-V5   field x4, at most 0d262140 bytes -- DOES NOT FIT
+    //
+    // A word holding a larger byte count reads as NEGATIVE, after which
+    // every `sar` sign-extends and every sign test answers backwards. So
+    // every version computes the length in WORDS -- at most 0d131070 --
+    // which is the unit every consumer wants:
+    //
+    //   storyTracks (below)          words / 0d4096, rounded up
+    //   zsave.ac's `verify` walk     zhFileLengthWords
+    //
+    // V3's field unit IS a word. At V4+ zhFileLengthBytes is left ZERO
+    // rather than filled with a wrong number, and nothing reads it. Three
+    // words are PATCHED.
+    lio [ZBH_FILE_LENGTH]
+    jsp zbHdrWord
+zbFlScale,
+    nop                        // PATCHED: V4/V5 `sal 1s` -- field x2 = the
+                               //   length in WORDS, the unit being 4 BYTES
+    dac zhFileLengthWords
+zbFlBytes,
+    sal 1s                     // PATCHED: V4/V5 `cla` -- unrepresentable
+    dac zhFileLengthBytes      //   there, and zeroed rather than left stale
+    add zbFlAdd                // V3: bytes + 1; V4/V5: 0 + ZB_ADDR_CEILING
+    dac zhFileLenPlus1         // zobjects.ac's zObjCount sentinel. At V4+
+                               //   NOT derived from the length: see
+                               //   ZB_ADDR_CEILING's own comment
+
+    lio [ZBH_CHECKSUM]
+    jsp zbHdrWord
+    dac zhChecksum
+
+    // ---- 4. The constant-expression words -----------------------------
+    lac zhObjTableAddr
+    add zbPropDefBytes         // PATCHED word: 0d62 (V3), 0d126 (V4+)
+    dac zhObjEntriesBase
+
+    // ---- 5. Dynamic-memory size ---------------------------------------
+    // ROUNDED UP, and that is load-bearing rather than defensive: an odd
+    // static base is legal, and its final word then holds one byte of
+    // dynamic memory and one byte of static. Truncating it would leave
+    // the last byte of dynamic memory unloaded.
+    lac zbStaticBase
+    add [1]
+    sar 1s
+    dac zhDynWords
+
+    lac zhDynWords
+    add [0d4095]
+    sar 6s
+    sar 6s                     // no `sar 12s` on this machine: 0d9 is the
+    dac zhDynBanks             //   largest shift count, so 6+6
+
+    lac zhDynBanks
+    SKIP_NEXT_IF_DIFFERENT [Z_MAX_DYN_BANKS]  // sad: skip if not exactly at it
+    jmp zbiDynOk                                 // no-skip: exactly fits
+    sub [Z_MAX_DYN_BANKS]      // unequal now, so no ones'-complement -0;
+    SKIP_NEXT_IF_AC_NEGATIVE   //   only the SIGN is used
+    jmp zbiTooDyn                 // no-skip: more banks than we have
+zbiDynOk,
+
+    // ---- 6. Story size against the drum -------------------------------
+    // storyWords is zhFileLengthWords (see section 3). It is parked in
+    // zhResidentWords, which section 8 clips to the resident region.
+    //
+    // zloader.c installs the story to the header's declared length and
+    // drops any padding after it, so the two programs agree on the story's
+    // size and share this fit test. The one exception is a length field of
+    // 0: zloader installs the whole file, and this arithmetic, with no
+    // length to read, reaches 0 tracks, passes the fit test, and section 8
+    // keeps dynamic memory alone.
+    //
+    // THE TRACK COUNT IS TAKEN BY ROTATING, NOT SHIFTING. A story of more
+    // than 126,976 words adds past the AC's largest positive value,
+    // 0377777, and a `sar` would fill with the sign. The 18-bit sum is
+    // still the right UNSIGNED number (at most 131,070 + 4,095, under
+    // 2^18), so it is rotated right 12 places, which brings in no sign,
+    // and masked to its top six bits: the tracks. Section 5's zhDynBanks
+    // can shift: dynamic memory is at most 32,768 words.
+    lac zhFileLengthWords
+    dac zhResidentWords        // storyWords, for section 8; dac leaves AC
+    add [0d4095]
+    rar 6s
+    rar 6s                     // the sum's top six bits are now its bottom six
+    and [077]
+    dac storyTracks
+
+    lac storyTracks
+    SKIP_NEXT_IF_DIFFERENT [Z_DRUM_TRACKS]   // sad: skip if not exactly at it
+    jmp zbiSizeOk                               // no-skip: fills it exactly
+    sub [Z_DRUM_TRACKS]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zbiTooBig                 // no-skip: over the end of the drum
+zbiSizeOk,
+
+    // ---- 7. (no step 7) ------------------------------------------------
+    // zsave.ac's zsvMount sizes a save's tape position from zhDynWords
+    // when a save or restore first needs it.
+
+    // ---- 8. The resident region: how much of the story to keep --------
+    // Every fetch below zhResidentTop is a direct read of banks
+    // 1..N, and only high memory above it goes through the page cache. So
+    // boot keeps as much of the story as zbResidentCap allows, not
+    // dynamic memory alone:
+    //
+    //     residentWords = min(storyWords, zbResidentCap)
+    //     residentWords = max(residentWords, zhDynWords)
+    //     zhResidentTop = residentWords << 1        (a BYTE address)
+    //
+    // THE max IS THE COHERENCY INVARIANT, not decoration: zhResidentTop >=
+    // zhStaticBase, always. Stores write only the resident copy
+    // (zResidentWordPtr), and the one store bound, zarith.ac's zaCheckDyn,
+    // is on zhStaticBase, so an address below the static base must never
+    // be served from the cache.
+    // The max also makes every odd header degrade to keeping dynamic
+    // memory alone resident. That includes a zero or short length field,
+    // which some early V3 files carry (the Standard marks the field "3+"
+    // for that reason) and which would otherwise put the top below dynamic
+    // memory. A cap of 0 takes the same path.
+    //
+    // THE ARITHMETIC STAYS POSITIVE. storyWords is at most 0d131070 (see
+    // section 3) and the cap is Z_RESIDENT_BANKS banks = 0140000, so the
+    // result is at most 0140000 and its byte address at most 0300000 --
+    // below the sign bit, so `sal` zero-fills it. The top is therefore
+    // always below 0x20000, which is what lets zFetchContainingWord's V4+
+    // sign test stay first and still send only pageable addresses on.
+    //
+    // NO EQUALITY TEST IN FRONT OF EITHER COMPARE, unlike section 5's.
+    // There the equal case must go the "fits" way while a zero difference
+    // goes the other, so the equality branch is the <= half of the test.
+    // Here an equal pair gives the same answer down either arm, and `sub`
+    // of two equal values is +0, so the sign alone is exact.
+    //
+    // A STORY WITH UNDO KEEPS AT MOST ZB_UNDO_CAP WORDS, eleven
+    // banks, because bank 0d12 is the undo log (zsave.ac). The cap used is
+    // the smaller of the two, in `cap`, and zbResidentCap itself is not
+    // changed: the next session's story may have no undo.
+    lac zbResidentCap
+    dac cap
+    lac zbUndoBit
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if the story has undo
+    jmp zbiCap                    // no-skip: no undo -- zbResidentCap as it is
+    lac cap
+    sub [ZB_UNDO_CAP]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE  // sma i: skip (fallthrough) if at or over it
+    jmp zbiCap                       // no-skip: below eleven banks -- keep it
+    lac [ZB_UNDO_CAP]
+    dac cap
+zbiCap,
+    lac cap
+    sub zhResidentWords        // cap - storyWords
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if the story is over the cap
+    jmp zbiCapOk                  // no-skip: it fits under the cap
+    lac cap
+    dac zhResidentWords        // over: keep the first `cap` words
+zbiCapOk,
+    lac zhResidentWords
+    sub zhDynWords             // residentWords - dynWords
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if below dynamic memory
+    jmp zbiFloorOk                // no-skip: at or above it -- keep it
+    lac zhDynWords
+    dac zhResidentWords        // below: never less than dynamic memory
+zbiFloorOk,
+    lac zhResidentWords
+    sal 1s                     // the byte address of the first word NOT kept
+    fardac(zhResidentTop:0)    // bank-0 only: zFetchContainingWord routes on
+                               //   it, and nothing in ZLEAF wants the byte form
+
+    // ---- 9. Load the resident region from the drum --------------------
+    // The arithmetic at both ends of this copy is the SAME arithmetic,
+    // offset by one bank number, because a drum track and a memory bank
+    // are both 0d4096 words. For 0d256-word page p of the story:
+    //
+    //     drum track       =  p >> 4          destination bank = (p >> 4) + 1
+    //     in-track offset  = (p & 017) << 8   in-bank offset   = the SAME
+    //
+    // so the loop computes each of the two quantities once and uses each
+    // twice. zResidentWordPtr is deliberately NOT used: it takes a byte
+    // address and re-derives what this loop already has in hand. The
+    // identity holds for tracks 0..0d11 against banks 1..0d12, which is
+    // all the resident region can reach.
+    //
+    // Each page costs about one drum revolution, since the next transfer
+    // is issued just after the drum has passed its start, so a full twelve
+    // banks takes several seconds.
+    //
+    // The page count is rounded UP. A partial final page over-reads into
+    // whatever follows the resident region on the drum -- more of the
+    // story, or the tail of its last track -- which is harmless: every
+    // word it lands on is at or above zhResidentTop, so no fetch reads it,
+    // and the alternative is losing the last few real ones. It never
+    // carries the copy past bank 0d12, because the cap is a whole number
+    // of pages.
+    lac zhResidentWords
+    add [0d255]
+    sar 8s
+    dac pageCount
+
+    cla
+    dac pageNo
+zbiLoadLoop,
+    lac pageNo
+    SKIP_NEXT_IF_DIFFERENT pageCount   // sad: skip (fallthrough) if more to do
+    jmp zbiLoadDone                       // no-skip: pageNo == pageCount
+
+    lac pageNo
+    sar 4s
+    dac trackNo                // the drum track, and one below the bank
+
+    lac pageNo
+    and [017]
+    sal 8s
+    dac inTrack                // in-track offset AND in-bank offset
+
+    lac trackNo
+    fardac(fillTrack:0)
+    lac inTrack
+    fardac(fillTrackOffset:0)
+
+    lac trackNo
+    add [DYNMEM_BANK1]
+    sal 6s
+    sal 6s                     // AC = destination bank << 12
+    ior inTrack
+    dac fillDest               // the trailing parameter, written here:
+                               //   zfDrumFillPage takes its destination as
+                               //   the word after the jsp, and this one
+                               //   varies per page
+    farjsp(zfDrumFillPage:0)
+fillDest, 0
+    lem                        // farrtn left the window open
+
+    idx pageNo
+    jmp zbiLoadLoop
+zbiLoadDone,
+    // ---- 10. The header fields the interpreter sets -------------------
+    // After the copy, so the writes land in the resident words the story
+    // reads, and on every boot, so a restart (which re-runs this routine
+    // whole) sets them again. eem is off here: the loop's last act was
+    // the `lem` after zfDrumFillPage, and the loop test that jumped here
+    // touches no window. The word is PATCHED: V4/V5 run zbHeaderSetup, and
+    // V3 runs zbV3Flags1.
+zbiHdrSetup,
+    jsp zbV3Flags1             // PATCHED: V4/V5 `jsp zbHeaderSetup`
+
+    cla                        // AC = ZBOOT_OK
+    farrtn(rtn)
+
+zbiBadVer,
+    lac [ZBOOT_BADVER]
+    farrtn(rtn)
+
+zbiTooDyn,
+    lac [ZBOOT_TOODYN]
+    farrtn(rtn)
+
+zbiTooBig,
+    lac [ZBOOT_TOOBIG]
+    farrtn(rtn)
+
+rtn, 0
+pageNo, 0
+pageCount, 0
+trackNo, 0
+inTrack, 0
+storyTracks, 0
+cap, 0
+    endlocal
+
+// ------------------------------------------------------------------
+// zbHdrWord -- reads one word of the story header from the cache slot
+// zBootInit filled.
+// On call IO has a header word index 0..0d31. Returns AC = the packed
+// story word at that index.
+// Called via jsp, same bank only, and must be entered with eem OFF.
+// ------------------------------------------------------------------
+zbHdrWord,
+    local rtn, ptr
+    dap rtn
+    lai
+    add [zCacheSlot0:DYNMEM_CACHE_BANK]
+    dac ptr                    // ptr = a full 16-bit (bank:offset) pointer
+    eem                        // ONE RULE: ptr carries its own bank number,
+                               //   so this indirect needs the window OPEN
+    lac i ptr
+    lem                        //   and closed again before returning, since
+                               //   everything above runs with it closed
+    jmp rtn
+rtn, jmp 0
+ptr, 0
+    endlocal
+
+// ------------------------------------------------------------------
+// zbHeaderSetup -- writes the V4+ header fields S11.1 marks "Int": the
+// interpreter's own answers, which the story reads at run time.
+// No arguments; AC and IO clobbered. Called via jsp, same bank only, and
+// must be entered with eem OFF, which the bare-pointer table walk needs.
+// Two callers: zBootInit, at zbiHdrSetup, and zbRestHdr, after every
+// restore (V4/V5's values of those patched words).
+//
+//   byte       field                        value
+//   0x00-0x01  version, Flags1              the story's (zbHdrVer), 0234;
+//                                             0200 in plain mode;
+//                                             V5 0235 if the client claimed
+//                                             color
+//   0x1E       interpreter number           1 (DECSystem-20)
+//   0x1F       interpreter version          'A'
+//   0x20       screen height, lines         the terminal's rows (24)
+//   0x21       screen width, characters     the terminal's columns (80)
+//   0x22 (V5)  screen width in units        the columns again
+//   0x24 (V5)  screen height in units       the rows again
+//   0x26 (V5)  font width, height in units  1, 1
+//   0x2C (V5)  default background, foreground  2 (black), 9 (white)
+//   0x10 (V5)  Flags2: bits 3, 5, 7, 8 cleared; bit 4 too
+//              unless the story has undo
+//
+// THE SIZE IS THE CONNECTION'S. ztext.ac's zTermQuery asks the terminal
+// before every session's zBootInit and writes the three size words of
+// zbHdrTab below (zbHdrSize, zbHdrWidthU, zbHdrHeightU), and zbF1Mask.
+// The figures in brackets above are their initial values: what an image
+// that never asks -- every test entry -- writes, and what the query
+// writes for a client that answered badly or not at all. zpApply patches
+// two neighbors of these words at every boot (zbHdrVer and zbHdrV5),
+// after the query, and none of the four.
+//
+// FLAGS1 = 0234: bit 7, timed keyboard input is available, honored by
+// read_char, sread through V4, and V5 aread. (A census build reads lines
+// untimed: zinput.ac's `#if Z_CENSUS`.) Bits 2-4 are boldface, italic and
+// fixed-space, which set_text_style renders (zscreen.ac): italic as
+// underline, since a VT100 has no italic. Bit 0 (colors) is set only in
+// V5's value in zpApply's table, 0235, and is kept only for a client that
+// claimed color (ztext.ac's zTermQuery). The byte is written whole, so it
+// holds none of whatever the story file carried. The query sets zbF1Mask,
+// and the first thing below masks zbHdrVer with it -- here and not in the
+// query, because zpApply rewrites zbHdrVer at every boot, after the
+// query. The mask clears bit 0 unless color was claimed, and in plain
+// mode bits 2-4 too, since a plain client can show no style. A test entry
+// never asks, and zbF1Mask's initial value clears bit 0.
+//
+// THE DEFAULT COLORS, 0x2C background 2 and 0x2D foreground 9, black and
+// white, are what zscreen.ac's zsReset means by the default (SGR 39 and
+// 49). V5 only, like the rest of the table from 0x22, and written whether
+// or not color was claimed.
+//
+// INTERPRETER 1, VERSION 'A'. A story prints these in its banner
+// ("Interpreter 1 Version A"). THE HEIGHT is the VT100-class terminal's,
+// not S8.4.1's "infinite" 255: V5 stories size their full-screen menus
+// from it (`loadb 0 0x20; sub 1; split_window`). The interpreter never
+// pages (no [MORE]); the terminal scrolls the lower window. THE WIDTH is
+// what stories compute their text margins from.
+//
+// FLAGS2: S11.1, "For bits 3,4,5,7 and 8, Int clears again if it cannot
+// provide the requested effect" -- pictures, UNDO, mouse, sound effects
+// and menus. None but UNDO is provided, and UNDO only to a story whose
+// file asks for it: zbUndoBit puts bit 4 back for those, and is 0 for
+// every other. Bit 6 (colors) is left as the story set it: color
+// availability is Flags1 bit 0. Bits 0-2 are the story's and the
+// transcript's business, and zsave.ac's restart merges its own survivors
+// in AFTER zBootInit returns, so a restart keeps them.
+//
+// RESTORE RUNS ALL OF THIS AGAIN. A save carries dynamic memory, header
+// included, as the image and the terminal that made it set it. S11.1
+// marks every field above "Rst" -- "the interpreter must set it correctly
+// after loading the game, after a restore or after a restart" -- and the
+// size is the connection's, so a game saved on a 30x100 terminal and
+// restored on a 24x80 one must be told 24x80. Nothing written here is
+// summed by `verify` (from 0x40), none of the zh* words zBootInit parsed
+// changes, and Flags2's bits 0-2 are left as they are. The Standard
+// revision word, 0x32, stays 0.
+//
+// V5 ALSO SETS THE KEYPAD'S MODE: the last call, ztext.ac's zkKeypad,
+// sends ESC = to a client that answered the query when the story's
+// terminating characters take the keypad. It is sent again at a restart
+// and a restore, which a terminal takes as a no-op.
+// ------------------------------------------------------------------
+#define ZB_HDR_END      0777         // not an even header byte address
+#define ZB_FLAGS1       0234         // bit 7 timed input; bits 2-4 styles
+#define ZB_F1_COLOR     1            // bit 0, colors: V5's value only
+#define ZB_COLORS       0d2*0400+0d9 // 0x2C background black, 0x2D foreground white
+#define ZB_INTERP_NUM   1            // DECSystem-20
+#define ZB_INTERP_VER   0101         // 'A'
+#define ZB_SCREEN_H     030          // 24 lines: zbHdrTab's initial size
+#define ZB_SCREEN_W     0120         // 80 characters
+#define ZB_FLAGS2_KEEP  0177107      // V5: every bit but 3, 4, 5, 7 and 8
+
+zbHeaderSetup,
+    local rtn, ptr, addr
+    dap rtn
+    lac zbHdrVer               // Flags 1's color and styles bits, masked
+    and zbF1Mask               //   per the client; the query set the mask,
+    dac zbHdrVer               //   and zpApply has just rewritten the word
+    law zbHdrTab
+    dac ptr                    // a BARE in-bank pointer: eem must be OFF
+zbhsLoop,
+    lac i ptr                  // the byte address, or ZB_HDR_END
+    SKIP_NEXT_IF_DIFFERENT [ZB_HDR_END]  // sad: skip (fallthrough) if a pair follows
+    jmp zbhsFlags2                          // no-skip: the end of the table
+    dac addr
+    idx ptr
+    lac i ptr
+    lia                        // IO = the word to write there
+    idx ptr
+    lac addr
+    farjda(zStoreWord:0)
+    lem                        // zStoreWord's farrtn left the window open,
+    jmp zbhsLoop               //   and the next `lac i ptr` needs it shut
+zbhsFlags2,
+    jmp zbhsRet                // PATCHED: V5 `nop` -- Flags2 is V5's alone
+    lio [0d16]                 // Flags2, the word at 0x10
+    farjsp(zFetchWord:0)
+    lem
+    and [ZB_FLAGS2_KEEP]
+    ior zbUndoBit              // bit 4 stays for a story with undo
+    lia
+    lac [0d16]
+    farjda(zStoreWord:0)
+    lem
+    lac [1]                    // arm zReadLine's S switch (ztext.ac, this
+    dac zsFirst                //   bank) until the first line of this
+                               //   boot, restart or restore
+    jsp zkKeypad               // ESC =, the keypad's
+                               //   application mode, for a story whose
+                               //   terminating characters take the keypad
+                               //   (ztext.ac, this bank; eem is off)
+zbhsRet,
+    jmp rtn
+rtn, jmp 0
+ptr, 0
+addr, 0
+    endlocal
+
+// ------------------------------------------------------------------
+// zbV3Flags1 -- the V3 counterpart of zbHeaderSetup: sets the V1-3
+// Flags 1 bits that S11.1 marks "Int" and "Rst" and that this interpreter
+// has an answer for, and leaves every other bit of the byte as the story
+// shipped it.
+// No arguments; AC and IO clobbered. Called via jsp, same bank only.
+// Two callers: zBootInit, at zbiHdrSetup, so it runs at boot, at every
+// `restart` and at each serve-loop connect; and zbRestHdr (below), so it
+// runs after every successful restore (V3's values of those patched
+// words).
+//
+//   bit 4  "Status line not available?"   CLEARED: zdhShowStatus draws it
+//   bit 5  "Screen-splitting available?"  SET: split_window works in V3
+//   bit 6  "Is a variable-pitch font      CLEARED: a terminal's
+//           the default?"                 font is fixed-pitch
+//
+// Bits 1-3 are the story's (status line type, the two-disc flag). A story
+// that tests bit 5 before splitting would otherwise not split. Plain mode
+// leaves bit 5 set: window 1's text still comes out, as lines.
+//
+// A restore rewrites the byte with whatever the save carried (zBootInit
+// does not run), so S11.1's "Rst" is honored by zbRestHdr.
+// ------------------------------------------------------------------
+zbV3Flags1,
+    local rtn
+    dap rtn
+    lio [1]                    // Flags 1, header byte 1
+    farjsp(zFetchByte:0)
+    lem                        // zFetchByte's farrtn left the window open
+    and [0257]                 // bit 4 clear: the status line is available;
+                               //   bit 6 clear: fixed-pitch
+    ior [040]                  // bit 5 set: the screen can be split
+    lia
+    lac [1]
+    farjda(zStoreByte:0)
+    lem
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+// ------------------------------------------------------------------
+// zbRestHdr -- sets the header fields S11.1 marks "Rst" again after a
+// restore, since the save carries whatever the image, and the terminal,
+// that made it wrote. zsave.ac's restore calls it once memory is the
+// save's (zsvrDone).
+// No arguments; AC and IO clobbered. Called via farjsp; returns through
+// farrtn, so the window comes back OPEN.
+// The word is PATCHED: V3 runs zbV3Flags1, and V4/V5 run zbHeaderSetup.
+// Both are entered with the window closed, by farenter.
+// ------------------------------------------------------------------
+zbRestHdr,
+    local rtn
+    farenter(rtn)
+zbrhCall,
+    jsp zbV3Flags1             // PATCHED: V4/V5 `jsp zbHeaderSetup`
+    farrtn(rtn)
+rtn, 0
+    endlocal
+
+// The (byte address, word) pairs, ended by ZB_HDR_END. Each word is two
+// header bytes, high byte first, as S11 lays them out.
+// Two words are PATCHED -- the version byte (zbHdrVer), and zbHdrV5,
+// which ends the table after 0x20 unless the story is V5.
+// Three words are the connection's -- zbHdrSize, zbHdrWidthU and
+// zbHdrHeightU, written by ztext.ac's zTermQuery (zbHeaderSetup's header).
+zbHdrTab,
+    0                                    // 0x00: version, Flags1
+zbHdrVer, 3*0400+ZB_FLAGS1               // PATCHED: the story's version
+    0d30                                 // 0x1E: interpreter number, version
+    ZB_INTERP_NUM*0400+ZB_INTERP_VER
+    0d32                                 // 0x20: height, width in characters
+zbHdrSize, ZB_SCREEN_H*0400+ZB_SCREEN_W  // the query's rows, columns
+zbHdrV5, ZB_HDR_END                      // PATCHED: V5 0d34, 0x22: width in units
+zbHdrWidthU, ZB_SCREEN_W                 // the query's columns
+    0d36                                 // 0x24: height in units
+zbHdrHeightU, ZB_SCREEN_H                // the query's rows
+    0d38                                 // 0x26: font width, height in units
+    0401
+    0d44                                 // 0x2C, 0x2D: the default colors
+    ZB_COLORS
+    ZB_HDR_END
+
+// What zbHeaderSetup masks zbHdrVer with. The query writes it at every
+// connect: bit 0 (colors) clear unless the client claimed color, and
+// Flags 1's bits 2-4 (the styles) clear in plain mode. The initial value,
+// what a test entry runs with, clears bit 0.
+zbF1Mask, 0777776
+
+// The two patched constants zBootInit reads (see section 3 and the
+// property-defaults note at the top of this file).
+zbPropDefBytes, 0d62                     // PATCHED: V4/V5 0d126
+zbFlAdd, 1                               // PATCHED: V4/V5 ZB_ADDR_CEILING
+
+// ========================================================================
+// zBootRefuse -- prints the refusal for a failed zBootInit on the DCS2
+// channel the caller has already opened.
+// On call IO has the ZBOOT_* code. AC and IO clobbered.
+// Called via farjsp; returns through farrtn.
+//
+// Only `boot` calls this, after zBootInit has returned non-zero. It is
+// separate from zBootInit so that every refusal can be reached with no
+// client attached (zmemcore.am1's testBootInit).
+//
+// Any code other than ZBOOT_TOOBIG or ZBOOT_TOODYN prints the version
+// message, so no refusal goes unexplained.
+// ========================================================================
+zBootRefuse,
+    local rtn, msgPtr, packed, code
+    farenter(rtn)              // dac rtn; lem -- the window is CLOSED, which
+                               //   is what the bare-pointer walk below needs
+    lai
+    dac code
+
+    SKIP_NEXT_IF_DIFFERENT [ZBOOT_TOOBIG]   // sad: AC still holds the code
+    jmp zbrBigMsg                              // no-skip: it is TOOBIG
+    lac code
+    SKIP_NEXT_IF_DIFFERENT [ZBOOT_TOODYN]
+    jmp zbrDynMsg                              // no-skip: it is TOODYN
+    law zbMsgBadVer                            // everything else
+    jmp zbrHaveMsg
+zbrBigMsg,
+    law zbMsgTooBig
+    jmp zbrHaveMsg
+zbrDynMsg,
+    law zbMsgTooDyn
+zbrHaveMsg,
+    dac msgPtr
+
+    // The message is an `ascii` block: two characters per word, the first
+    // in the HIGH 9 bits and the second in the low 9, terminated by a zero
+    // byte exactly as a C string is (Docs/UsingAM1.md, "Ascii"). The line
+    // breaks are \r, ZSCII 13 -- NOT \n. zPrintChar passes 13 through as
+    // the Z-machine's own newline and DROPS 10 as an out-of-range control
+    // code, so a message written with \n would print as one run-on line.
+zbrLoop,
+    lac i msgPtr               // ONE RULE: msgPtr is a BARE in-bank pointer,
+                               //   so this is only correct with eem OFF --
+                               //   farenter closed it, and the `lem` after
+                               //   each zPrintChar below keeps it closed
+    dac packed
+    sar 9s                     // the first character, from the high half
+    and [0777]
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if there IS a char
+    jmp zbrDone                   // no-skip: zero byte -- end of string
+    lia
+    jsp zPrintChar             // same-bank call; returns through farrtn,
+    lem                        //   i.e. with the window OPEN -- close it
+
+    lac packed
+    and [0777]                 // the second character, from the low half
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zbrDone
+    lia
+    jsp zPrintChar
+    lem
+
+    idx msgPtr
+    jmp zbrLoop
+zbrDone,
+    farrtn(rtn)
+
+rtn, 0
+msgPtr, 0
+packed, 0
+code, 0
+    endlocal
+
+// ---- The refusal messages --------------------------------------------
+// Deliberately short: they cost 2 characters a word out of this bank.
+// They say which of the three conditions fired; the exact numbers are in
+// zhVersion, zhDynBanks and zhFileLengthWords for anyone reading core.
+// Under `boot` the machine is then waiting at the error prompt, not
+// halted; under testBootInit it has halted.
+zbMsgBadVer,
+    ascii "\rNot a V3, V4 or V5 story file.\r"
+zbMsgTooBig,
+    ascii "\rStory is too large for the drum.\r"
+zbMsgTooDyn,
+    ascii "\rStory dynamic memory is too large.\r"
+
+// ---- The boot-parsed header words (ZLEAF_BANK) ------------------------
+// Read by the leaf fragments in this bank. See this file's header for
+// which reader wants which, and why the three hot ones are duplicated in
+// bank 0 instead of living here.
+zhObjTableAddr, 0
+zhObjEntriesBase, 0
+zhFileLenPlus1, 0
+zhDictAddr, 0
+zhAbbrevAddr, 0
+
+// Read by zsave.ac: zhChecksum for the `verify` opcode and a save's
+// identity, zhDynWords for a save's size, zhFileLengthWords for
+// `verify`'s own checksum walk; zhFlags2 for the transcript/fixed-pitch
+// bits the spec has the interpreter maintain.
+zhVersion, 0
+zhHighMemBase, 0
+zhChecksum, 0
+zhFileLengthBytes, 0
+// The file's length in words, every version (section 3's block comment).
+zhFileLengthWords, 0
+zhFlags2, 0
+zhDynWords, 0
+zhDynBanks, 0
+
+// The resident region's size in WORDS, as section 8 left it --
+// min(storyWords, zbResidentCap), never below zhDynWords. Nothing in the
+// interpreter reads it; the bank-0 byte-address form, zhResidentTop, is
+// what the fetch router uses. It is recorded for tests and for anyone
+// reading a halted machine.
+zhResidentWords, 0
+
+// How many words of the story boot may keep resident: Z_RESIDENT_BANKS
+// banks, in every build.
+//
+// It is a WORD, not a literal in section 8, so it can be changed without
+// reassembling. A test pokes it before `start testBootInit` -- safe, the
+// CPU is halted until the start -- and a value of 0 makes the floor in
+// section 8 reduce the resident region to dynamic memory. A poke above
+// Z_RESIDENT_BANKS banks is outside the contract: it would load over
+// zStack.
+zbResidentCap, Z_RESIDENT_BANKS*0d4096
+
+// 020 (Flags2's UNDO bit) when this session's story has undo, 0
+// otherwise. zBootInit sets it; zbHeaderSetup puts the bit back into
+// Flags2 with it, and section 8 lowers the cap by it.
+zbUndoBit, 0
+
+// zboot's own working copy of the static base. NOT named zhStaticBase:
+// that name belongs to the bank-0 word zarith.ac's store bounds read, and
+// giving the ZLEAF copy the same name would make a bare reference in this
+// bank pick up a different word from the one a reader expects (am1 keeps
+// a separate symbol table per bank, so both would assemble silently).
+zbStaticBase, 0
+
+#endif // ZBOOT_AC_H

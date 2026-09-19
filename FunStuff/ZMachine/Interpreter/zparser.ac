@@ -1,0 +1,660 @@
+// ========================================================================
+// zparser.ac -- dictionary lookup and the input lexer (S13).
+//
+// #included into zmemcore.am1's ZLEAF_BANK (bank 15) section, after
+// zboot.ac, zobjects.ac and ztext.ac.
+//
+// Entry points, each called via jda with the farenter/farrtn cross-bank
+// shape (see each routine's header for its arguments):
+//   zParseText    lex a text buffer into a parse buffer
+//   zDictLookup   look up one encoded word in the dictionary
+//   zTokeniseSet  the bank-15 half of VAR:27 tokenise
+//   zetStoreOut   the bank-15 half of VAR:28 encode_text
+// The internal helpers zpDictInit, zpIsSep, zLexWord and zlwFetch are
+// same-bank only and called via jsp.
+//
+// Text buffer, V1-4: byte 0 = the maximum length (not read here), then
+// lower-case text from byte 1, zero-terminated. V5 (S15): byte 0 = the
+// maximum, byte 1 = the count typed, text from byte 2 with NO terminator.
+// ZPT_TEXT is the text's offset (1, or 2 in V5).
+//
+// Parse buffer: byte 0 = caller-supplied max word count, byte 1 = actual
+// word count found (written by zParseText), then one 4-byte block per
+// word: 2-byte dictionary address (0 if not found), 1-byte word length,
+// 1-byte position of the word's first letter as a byte offset from the
+// text buffer's byte 0.
+//
+// Lexing follows S13.6.1: spaces divide words and are dropped, and each
+// word-separator character is its own one-character word. Each word is
+// encoded by ztext.ac's zEncodeText (S13.6.2) and found by a binary chop,
+// which S13.5's numeric ordering makes valid. V4+ dictionary words are 9
+// Z-characters, 3 words (S13.4): the third, zEncodeTextOut2, is compared
+// when the first two tie -- still one 48-bit ordering. A negative entry
+// count is S15's unsorted dictionary, searched in order instead.
+//
+// Running out of parse-buffer room is an ordinary condition, not an
+// error: zParseText just stops recording further words.
+//
+// tokenise (VAR:27, V5): zTokeniseSet names a user dictionary and the
+// "leave unknown words' slots alone" flag for the next zParseText only.
+// ========================================================================
+
+#ifndef ZPARSER_AC_H
+#define ZPARSER_AC_H
+
+#include <AIDS/skipmacros.ah>
+#include "ztext.ac"
+
+// V5's text starts at byte 2, V1-4's at byte 1 -- zReadLine's ZRL_TEXT,
+// so the one patched word serves both (ztext.ac's zrlText).
+#define ZPT_TEXT zrlText
+
+// ========================================================================
+// zpDictInit -- read the dictionary table's header (S13.2) from story
+// memory and cache it in the words below. zpIsSep and zLexWord rely on
+// the cache and do not call this themselves.
+//
+// The dictionary is zptDict if tokenise named one, else the story's own
+// (zhDictAddr). zpDictValid holds the ADDRESS of the one cached (0: none
+// yet), so switching to a user dictionary and back re-reads the header;
+// zTokeniseSet also clears it, since a user dictionary in dynamic memory
+// can change between calls. A negative entry count (bit 0100000 of the
+// 16-bit word) is S15's unsorted dictionary: zpNumEntries becomes its
+// magnitude and zpUnsorted is set (0400000), which zDictLookup reads.
+// A V3 or V4 count is never negative.
+//
+// No arguments; nothing is returned.
+// Called via jsp.
+// ========================================================================
+zpDictInit,
+    local rtn, n, base
+    dap rtn
+    lac zptDict
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if tokenise named one
+    lac zhDictAddr                      // no-skip: the story's own dictionary
+    dac base
+    SKIP_NEXT_IF_DIFFERENT zpDictValid  // sad: skip (fallthrough) unless it is the one cached
+    jmp rtn                             // no-skip: already read
+    dac zpDictValid                  // AC is still base: sad leaves AC alone
+    lia
+    farjsp(zFetchByte:0)             // AC = n, the separator-byte count
+    dac n
+    dac zpNSep
+    lac base
+    add [1]
+    dac zpSepBase                    // separator bytes start right after the count byte
+    add n
+    lia
+    crossBankjsp(zFetchByte:0, NOEEM)   // AC = entry-length byte, at base+1+n
+    dac zpEntryLen
+    lac base
+    add [2]
+    add n
+    lia
+    crossBankjsp(zFetchWord:0, NOEEM)   // AC = number of entries (2-byte word), at +2+n
+    dac zpNumEntries
+    dzm zpUnsorted
+    and [0100000]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) on a negative count
+    jmp zpdSorted                       // no-skip: sorted -- the binary chop
+    lac [0200000]
+    sub zpNumEntries                 // 0200000 - w = |count| as a 16-bit negative
+    dac zpNumEntries
+    lac [0400000]
+    dac zpUnsorted                   // unsorted: zDictLookup searches it in order
+zpdSorted,
+    lac base
+    add [4]
+    add n                            // entries start right after the header, at +4+n
+    dac zpEntriesBase
+    jmp rtn
+
+rtn, jmp 0
+n, 0
+base, 0
+    endlocal
+
+zpDictValid, 0
+zpNSep, 0
+zpSepBase, 0
+zpEntryLen, 0
+zpNumEntries, 0
+zpEntriesBase, 0
+
+// ========================================================================
+// zpIsSep -- test for one of the dictionary's word-separator characters
+// (S13.2). Requires zpDictInit to have run.
+// On call IO has a ZSCII/ASCII character.
+// Returns AC nonzero if it is a separator, else 0.
+// Called via jsp.
+// ========================================================================
+zpIsSep,
+    local rtn, ch, ix, ptr
+    dap rtn
+    dio ch
+    cla
+    dac ix
+
+zisLoop,
+    lac ix
+    sub zpNSep
+    SKIP_NEXT_IF_AC_NEGATIVE     // sma: skip (fallthrough) if ix<zpNSep -- still a valid index
+    jmp zisNotFound                  // no-skip: ix>=zpNSep -- exhausted the table, no match
+
+    lac zpSepBase
+    add ix
+    dac ptr                        // ptr = zpSepBase+ix, a Z-machine byte address, not a PDP-1 one
+    lac ptr
+    lia
+    farjsp(zFetchByte:0)
+    sub ch
+    SKIP_NEXT_IF_AC_NOT_ZERO      // sza i: skip (fallthrough) if separator[ix]!=ch -- no match here
+    jmp zisFound                       // no-skip: separator[ix]==ch -- match
+    idx ix
+    jmp zisLoop
+
+zisFound,
+    lac [1]
+    jmp rtn
+
+zisNotFound,
+    cla
+    jmp rtn
+
+rtn, jmp 0
+ch, 0
+ix, 0
+ptr, 0
+    endlocal
+
+// ========================================================================
+// zLexWord -- find the next word in the text at zlwBufAddr (S13.6.1:
+// spaces divide words and are dropped; each word-separator character is
+// its own one-character word; any other run of non-space, non-separator
+// characters is one word), stopping at the end of the text. The caller
+// sets zlwBufAddr once per text buffer. Requires zpDictInit to have run.
+// On call IO has the 0-based starting position.
+// Returns AC = the position to resume scanning from on the next call
+// (meaningful only when zlwWordLen != 0). Also sets zlwWordStart (the
+// word's 0-based start) and zlwWordLen (its length; 0 = end of text).
+// Called via jsp.
+// ========================================================================
+zLexWord,
+    local rtn, pos, ch, wstart
+    dap rtn
+    dio pos
+
+zlwSkipSpaces,
+    lio pos
+    jsp zlwFetch                     // 0 at the end of the text
+    dac ch
+
+    lac ch
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if ch!=0 -- not the terminator
+    jmp zlwNone                        // no-skip: ch==0 -- end of text, no word here
+    lac ch
+    sub [0d32]
+    SKIP_NEXT_IF_AC_ZERO           // sza: skip (fallthrough) if ch==32 -- it's a space
+    jmp zlwGotStart                     // no-skip: ch!=32 (and !=0, already excluded) -- real char
+    idx pos
+    jmp zlwSkipSpaces
+
+zlwGotStart,
+    lac pos
+    dac wstart
+    dac zlwWordStart
+
+    lio ch
+    jsp zpIsSep
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if result==0 -- not a separator
+    jmp zlwSepWord                        // no-skip: result!=0 -- IS a separator, one-char word
+    jmp zlwScanWord
+
+zlwSepWord,
+    lac [1]
+    dac zlwWordLen
+    lac pos
+    add [1]
+    jmp rtn                              // AC = nextPos = pos+1
+
+zlwScanWord,
+    idx pos
+
+zlwScanLoop,
+    lio pos
+    jsp zlwFetch                     // 0 at the end of the text
+    dac ch
+
+    lac ch
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if ch!=0 -- not the terminator
+    jmp zlwWordDone                       // no-skip: ch==0 -- word ends at the terminator
+    lac ch
+    sub [0d32]
+    SKIP_NEXT_IF_AC_NOT_ZERO          // sza i: skip (fallthrough) if ch!=32 -- not a space
+    jmp zlwWordDone                        // no-skip: ch==32 -- word ends at a space
+    lio ch
+    jsp zpIsSep
+    SKIP_NEXT_IF_AC_ZERO               // sza: skip (fallthrough) if not a separator
+    jmp zlwWordDone                         // no-skip: IS a separator -- word ends here (not consumed)
+    idx pos
+    jmp zlwScanLoop
+
+zlwWordDone,
+    lac pos
+    sub wstart
+    dac zlwWordLen
+    lac pos
+    jmp rtn                                 // AC = nextPos = pos (the terminator/space/separator itself)
+
+zlwNone,
+    cla
+    dac zlwWordLen
+    lac pos
+    jmp rtn
+
+rtn, jmp 0
+pos, 0
+ch, 0
+wstart, 0
+    endlocal
+
+// zlwFetch -- fetch one text byte for zLexWord.
+// On call IO has a position p, 0-based from zlwBufAddr.
+// Returns AC = the text byte at p, or 0 once p reaches zlwEnd, the count
+// zParseText read from byte 1: V5's text has no terminator, and 0 is what
+// V1-4's text ends with. Without the bound, "look" typed over an older,
+// longer command would be read as "look" plus what that command left.
+// testLexWordOnly does not set zlwEnd, so it lexes against whatever the
+// last zParseText left, or the assembled no-bound value before any.
+// Called via jsp.
+zlwFetch,
+    local rtn, p
+    dap rtn
+    dio p
+    lac p
+    sub zlwEnd
+    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if p < zlwEnd
+    jmp zlfEnd                          // no-skip: at the count -- the end of the text
+    lac zlwBufAddr
+    add p
+    lia
+    farjsp(zFetchByte:0)
+    jmp rtn
+zlfEnd,
+    cla
+rtn, jmp 0
+p, 0
+    endlocal
+zlwEnd, 0377777                      // V5: byte 1 of the text buffer, the count;
+                                     //   V1-4: no bound (zParseText sets it
+                                     //   in every session)
+
+zlwBufAddr, 0
+zlwWordStart, 0
+zlwWordLen, 0
+
+// ========================================================================
+// zDictLookup -- binary-search the dictionary for an encoded word.
+// On call AC has the encoded word's first word (zEncodeTextOut0's shape),
+// IO its second. In V4+ the entry's third word is compared, on a tie of
+// the first two, against zEncodeTextOut2 -- a global, since jda has no
+// third channel. zParseText sets it by calling zEncodeText first; a
+// direct caller (testDictLookup) must set it too, or the compare uses
+// whatever the last encode left.
+// Returns AC = the matching entry's byte address, or 0 if not found.
+// Called via jda.
+//
+// Entries are sorted as if each one's encoded text were one big number
+// (S13.5), so a plain word-by-word compare is correct with no decoding.
+// Every dictionary word value fits in 16 bits and so is non-negative as
+// an 18-bit word, and equality is always excluded before any sign test,
+// so a -0 never reaches one. A dictionary tokenise marked unsorted
+// (zpUnsorted) is searched in order: mid is always lo, and every miss
+// moves right.
+// ========================================================================
+zDictLookup, 0
+    local rtn, targetW0, targetW1, lo, hi, mid, midAddr, entryW0, entryW1
+    farenter(rtn)
+    lac zDictLookup
+    dac targetW0
+    dio targetW1
+
+    jsp zpDictInit
+
+    cla
+    dac lo
+    lac zpNumEntries
+    sub [1]
+    dac hi
+
+zdlLoop,
+    lac hi
+    sub lo
+    SKIP_NEXT_IF_AC_NEGATIVE          // sma: skip (fallthrough) if hi<lo -- exhausted, not found
+    jmp zdlContinue                        // no-skip: hi>=lo -- AC holds (hi-lo), valid range
+    cla
+    farrtn(rtn)                                // skip case: not found, return 0
+
+zdlContinue,
+    sar 1s                                  // AC = (hi-lo)>>1 -- still holds (hi-lo) from above
+    add lo
+    lio zpUnsorted                   // 0 outside V5 -- see zpDictInit
+    spi                              // skip (fallthrough) if the dictionary is sorted
+    lac lo                              // no-skip: unsorted -- one entry at a time, from lo
+    dac mid
+
+    lac mid
+    mul zpEntryLen           // AC:IO = double-length product; low-order bits land in IO
+    lai                          // AC = IO -- the product easily fits in 18 bits here
+    sar 1s                    // mul leaves the product shifted left one place
+    add zpEntriesBase
+    dac midAddr
+
+    lac midAddr
+    lia
+    farjsp(zFetchWord:0)
+    dac entryW0
+    lac midAddr
+    add [2]
+    lia
+    crossBankjsp(zFetchWord:0, NOEEM)
+    dac entryW1
+
+    lac entryW0
+    sub targetW0
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if entryW0==targetW0 -- check w1
+    jmp zdlDecide                         // no-skip: differ -- AC holds a valid nonzero diff
+    lac entryW1
+    sub targetW1
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if entryW1==targetW1 too -- FOUND
+    jmp zdlDecide                         // no-skip: w1 differs -- AC holds a valid nonzero diff
+zdlW3Fork,
+    jmp zdlFound                     // PATCHED: V4/V5 `nop` -- V3's entry text is two
+                                     //   words; bytes 4-5 are the story's data
+    lac midAddr                      // V4+: and the third word (S13.4),
+    add [4]                          //   from zEncodeTextOut2 -- the target has no
+    lia                              //   argument channel left for it
+    crossBankjsp(zFetchWord:0, NOEEM)
+    sub zEncodeTextOut2
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if word 3 matches too -- FOUND
+    jmp zdlDecide                         // no-skip: w2 differs -- AC holds a valid nonzero diff
+    jmp zdlFound
+
+zdlDecide,
+    lio zpUnsorted
+    spi                              // skip (fallthrough) if the dictionary is sorted
+    jmp zdlSearchRight                  // no-skip: unsorted (tokenise) -- always onward
+    SKIP_NEXT_IF_AC_NEGATIVE           // sma: skip (fallthrough) if diff<0 -- entry<target
+    jmp zdlSearchLeft                       // no-skip: diff>0 -- entry>target -- search left half
+    jmp zdlSearchRight                       // skip case: entry<target -- search right half
+
+zdlSearchLeft,
+    lac mid
+    sub [1]
+    dac hi
+    jmp zdlLoop
+
+zdlSearchRight,
+    lac mid
+    add [1]
+    dac lo
+    jmp zdlLoop
+
+zdlFound,
+    lac midAddr
+    farrtn(rtn)
+
+rtn, 0
+targetW0, 0
+targetW1, 0
+lo, 0
+hi, 0
+mid, 0
+midAddr, 0
+entryW0, 0
+entryW1, 0
+    endlocal
+
+// ========================================================================
+// zParseText -- lex the text buffer into the parse buffer (layouts in
+// this file's header). Each word is found with zLexWord, encoded with
+// zEncodeText, looked up with zDictLookup, and its four-field block
+// written, stopping at the end of the text or at the parse buffer's
+// maximum word count (byte 0), whichever comes first. Tokenise's
+// dictionary and flag are cleared at the end.
+// On call AC has the text-buffer address, IO the parse-buffer address.
+// Nothing is returned.
+// Called via jda.
+// ========================================================================
+zParseText, 0
+    local rtn, textBufAddr, parseBufAddr, maxWords, wordCount, curPos, dictAddr, blockAddr, wordPos
+    farenter(rtn)
+    lac zParseText
+    dac textBufAddr
+    dio parseBufAddr
+
+    jsp zpDictInit
+
+    lac textBufAddr
+    add ZPT_TEXT
+    dac zlwBufAddr                 // text starts right after the text buffer's own header
+    lac [0377777]                    // V1-4: no bound; the terminator ends it
+zptEndFork,
+    jmp zptEndSet                    // PATCHED: V5 `nop` -- the bound is byte 1
+    lac textBufAddr
+    add [1]
+    lia
+    farjsp(zFetchByte:0)             // V5: no terminator; byte 1 is the count
+zptEndSet,
+    dac zlwEnd
+
+    lac parseBufAddr
+    lia
+    farjsp(zFetchByte:0)                  // AC = caller's own max-word-count field (parse buffer byte 0)
+    dac maxWords
+
+    cla
+    dac wordCount
+    dac curPos
+
+zptLoop,
+    lac wordCount
+    sub maxWords
+    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if wordCount<maxWords -- room left
+    jmp zptDone                          // no-skip: wordCount>=maxWords -- buffer full, stop
+
+    lio curPos
+    jsp zLexWord
+    dac curPos                            // AC = nextPos -- save for the next iteration regardless
+
+    lac zlwWordLen
+    SKIP_NEXT_IF_AC_NOT_ZERO          // sza i: skip (fallthrough) if wordLen!=0 -- a word was found
+    jmp zptDone                            // no-skip: wordLen==0 -- no more words, stop
+
+    lac zlwBufAddr
+    add zlwWordStart
+    lio zlwWordLen
+    jda zEncodeText                    // fills zEncodeTextOut0/zEncodeTextOut1 (and Out2, V4+)
+
+    lac zEncodeTextOut0
+    lio zEncodeTextOut1
+    jda zDictLookup
+    dac dictAddr
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if not found
+    jmp zptStore                        // no-skip: found -- record it
+    lac zptFlag                      // 0 outside V5's tokenise
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) unless tokenise's flag is set
+    jmp zptNext                         // no-skip: flag set -- leave this slot as it is (S15)
+zptStore,
+
+    lac wordCount
+    sal 2s                              // *4 -- each parse-buffer block is 4 bytes
+    add [2]                                // +2 -- past the parse buffer's own 2-byte header
+    add parseBufAddr
+    dac blockAddr
+
+    lac blockAddr
+    lio dictAddr
+    crossBankjda(zStoreWord:0, NOEEM)   // block bytes 0-1: dictionary address (0 if not found)
+
+    lac blockAddr
+    add [2]
+    lio zlwWordLen
+    crossBankjda(zStoreByte:0, NOEEM)   // block byte 2: word length
+
+    lac zlwWordStart
+    add ZPT_TEXT
+    dac wordPos                             // position, a byte offset from the text buffer's own byte 0
+    lac blockAddr
+    add [3]
+    lio wordPos
+    crossBankjda(zStoreByte:0, NOEEM)   // block byte 3: position in the text buffer
+
+zptNext,                                // a slot the flag left alone still counts (S15)
+    idx wordCount
+    jmp zptLoop
+
+zptDone,
+    dzm zptDict                      // tokenise's dictionary and flag are for ONE
+    dzm zptFlag                      //   call: the next aread uses the story's own
+    lac parseBufAddr
+    add [1]
+    lio wordCount
+    farjda(zStoreByte:0)                            // parse buffer byte 1: actual word count found
+
+    crossBankrtn(rtn, NOEEM)
+
+rtn, 0
+textBufAddr, 0
+parseBufAddr, 0
+maxWords, 0
+wordCount, 0
+curPos, 0
+dictAddr, 0
+blockAddr, 0
+wordPos, 0
+    endlocal
+
+// zTokeniseSet and zetStoreOut are reached only from V5's tokenise and
+// encode_text, which zInstDecode refuses in V3 and V4.
+// ========================================================================
+// zTokeniseSet -- the bank-15 half of VAR:27 tokenise (S15).
+// On call AC has the user dictionary's byte address (0: the story's own),
+// IO the flag (nonzero: a word not found leaves its parse-buffer slot
+// unchanged). Both hold for the next zParseText only, which clears them
+// at zptDone. zpDictValid is cleared so the next zpDictInit re-reads the
+// header even when the address is the one cached: a user dictionary may
+// live in dynamic memory and change between calls.
+// Nothing is returned.
+// Called via jda.
+// ========================================================================
+zTokeniseSet, 0
+    local rtn
+    farenter(rtn)
+    lac zTokeniseSet
+    dac zptDict
+    dio zptFlag
+    dzm zpDictValid                  // re-read: a user dictionary may have changed
+    farrtn(rtn)
+rtn, 0
+    endlocal
+
+// ========================================================================
+// zetStoreOut -- the bank-15 half of VAR:28 encode_text (S15). Stores the
+// three words zEncodeText left in zEncodeTextOut0/1/2, the 6 bytes of a
+// V4+ dictionary word (S13.4), so that bank 0 need not read bank-15 words.
+// On call AC has the coded-text byte address.
+// Nothing is returned.
+// Called via jda.
+// ========================================================================
+zetStoreOut, 0
+    local rtn, dst
+    farenter(rtn)
+    lac zetStoreOut
+    dac dst
+    lio zEncodeTextOut0
+    farjda(zStoreWord:0)
+    lac dst
+    add [2]
+    lio zEncodeTextOut1
+    crossBankjda(zStoreWord:0, NOEEM)
+    lac dst
+    add [4]
+    lio zEncodeTextOut2
+    crossBankjda(zStoreWord:0, NOEEM)
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+dst, 0
+    endlocal
+
+zptDict, 0                           // tokenise's dictionary, 0 = the story's own
+zptFlag, 0                           // tokenise's flag: leave unknown words' slots
+zpUnsorted, 0                        // 0400000: zpDictInit read a negative count
+
+// ========================================================================
+// Test-driver entry points for the ad1 test harness. Each is started
+// directly, runs one call against the test words, and halts.
+//
+// Assembled only when Z_TEST_HARNESS is nonzero (default 1, defined in
+// zmemcore.am1); a production build uses -DZ_TEST_HARNESS=0.
+// ========================================================================
+#if Z_TEST_HARNESS
+
+testDictW0In, 0
+testDictW1In, 0
+testDictResultOut, 0
+testParseTextBufIn, 0
+testParseBufIn, 0
+
+// Two words in, so in a V4+ session the third word compared is whatever
+// zEncodeTextOut2 holds from the last encode. Use testParseText, which
+// encodes first, for V4+.
+testDictLookup,
+    lac testDictW0In
+    lio testDictW1In
+    jda zDictLookup
+    dac testDictResultOut
+    hlt
+
+testParseText,
+    lac testParseTextBufIn
+    lio testParseBufIn
+    jda zParseText
+    hlt
+
+// Isolated zpIsSep test -- exercises the separator-table lookup without
+// going through zLexWord/zParseText.
+testIsSepCharIn, 0
+testIsSepResultOut, 0
+testIsSepOnly,
+    jsp zpDictInit
+    lio testIsSepCharIn
+    jsp zpIsSep
+    dac testIsSepResultOut
+    hlt
+
+// Isolated zLexWord test -- one lexer call on a caller-set zlwBufAddr
+// and starting position, bypassing zParseText. The caller must poke a
+// text buffer into scratch memory and call testIsSepOnly (or
+// testDictLookup) at least once first so zpDictInit's separator table is
+// populated.
+testLexBufIn, 0
+testLexPosIn, 0
+testLexNextPosOut, 0
+testLexWordStartOut, 0
+testLexWordLenOut, 0
+testLexWordOnly,
+    lac testLexBufIn
+    dac zlwBufAddr
+    lio testLexPosIn
+    jsp zLexWord
+    dac testLexNextPosOut
+    lac zlwWordStart
+    dac testLexWordStartOut
+    lac zlwWordLen
+    dac testLexWordLenOut
+    hlt
+
+#endif // Z_TEST_HARNESS
+
+#endif // ZPARSER_AC_H

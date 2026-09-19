@@ -1,0 +1,646 @@
+// ========================================================================
+// zfont3.ac -- font 3: the translator from a font 3 code to the bytes the
+// connection's terminal draws it with, and the VT220 soft font.
+//
+// #include-only fragment, assembled into bank ZPATCH_BANK (0d14) after
+// zsave.ac. Entry points: zfSend and zfLoad, both far calls (farenter,
+// farrtn), from bank 15 (ztext.ac's zpcSend and zTermQuery) and bank 13
+// (zscreen.ac's zsPutUpper).
+//
+// ---- The tiers ----------------------------------------------------------
+// ztext.ac's zTermQuery decides one for each connection, in zsTier:
+//   3  A  soft font   the DA reply lists 7 (DRCS). The font is loaded
+//                     once, at connect (zfLoad, below), into G1, and each
+//                     character goes as SO, its own code, SI
+//   2  U  Unicode     the UTF-8 test reported column 2. The code point of
+//                     zfExact, or of zfSafe after the player's S (zsSafe)
+//                     for a code that has a safe entry, UTF-8 encoded.
+//                     No SO, no SI
+//   1  D  DEC         the terminal answered, but not as A or U. G1 is DEC
+//                     Special Graphics (ESC ) 0, sent at connect): a line
+//                     or a corner goes as SO, its DEC byte, SI; anything
+//                     else as its stand-in
+//   0  C  plain       a silent client: the stand-in, and no escapes
+// SO and SI go round EVERY character on tiers A and D, never a held shift:
+// DCS2 echoes typing in whatever set is locked in.
+//
+// Every glyph is one column, whatever its bytes: zsPutUpper counts one.
+//
+// ---- The tables ---------------------------------------------------------
+// Built from the font 3 glyphs of the Z-Machine Standard (S16):
+//   zfInfo    95 words, 32-126: the stand-in, the DEC byte, the safe index
+//   zfExact   95 words, 32-126: tier U's code point
+//   zfSafe    30 words: the safe code points
+//   zfGlyph   94 glyphs, 33-126, 5 words each: the soft font's sixels
+// zfGlyph and zfLoad are left out of a census image (Z_CENSUS): the census
+// keeps its tables at the top of this bank, from 04440, and a census
+// image never offers tier A.
+// ========================================================================
+
+#ifndef ZFONT3_AC_H
+#define ZFONT3_AC_H
+
+#include <memory.ah>
+#include <AIDS/skipmacros.ah>
+
+#define ZF_SO 016                        // shift out: G1
+#define ZF_SI 017                        // shift in: G0
+
+// ========================================================================
+// zfSend -- sends a font 3 code's bytes for the connection's tier with `tcc`.
+// Called via farjsp(zfSend:*); returns with the window open (farrtn).
+//   IO in   a font 3 code, 32-126 (range-checked by the caller; 13 is
+//           the caller's). With 0400000 added: send nothing, only look up.
+//   AC out  the code's ASCII stand-in, for the transcript.
+// ========================================================================
+zfSend,
+    local rtn, code, look, info, cp, ptr
+    farenter(rtn)                        // the window is closed: `lac i ptr`
+    dio code
+    lac code
+    and [0400000]
+    dac look                             // nonzero: look up only
+    lac code
+    and [0177]
+    dac code
+    add [zfInfo-0d32]
+    dac ptr
+    lac i ptr
+    dac info
+    lac look
+    SKIP_NEXT_IF_AC_ZERO                 // sza: skip (fallthrough) to send
+    jmp zfsRet                              // no-skip: the stand-in only
+    farlac(zsTier:*)                     // AC = the tier; the window closed again
+    SKIP_NEXT_IF_DIFFERENT [3]           // sad: skip (fallthrough) unless A
+    jmp zfsSoft
+    SKIP_NEXT_IF_DIFFERENT [2]           // sad: skip (fallthrough) unless U
+    jmp zfsUni
+    SKIP_NEXT_IF_DIFFERENT [1]           // sad: skip (fallthrough) unless D
+    jmp zfsDec
+
+// Tier C, and tier D's codes with no DEC byte: the stand-in.
+zfsStand,
+    lac info
+    and [0177]
+    lia
+    tcc
+zfsRet,
+    lac info
+    and [0177]                           // AC = the stand-in
+    farrtn(rtn)
+
+// Tier A: SO, the code, SI. A space has no glyph in the soft font (it
+// holds 33-126) and goes as a space, which is its stand-in.
+zfsSoft,
+    lac code
+    SKIP_NEXT_IF_DIFFERENT [0d32]        // sad: skip (fallthrough) unless a space
+    jmp zfsStand
+    dac cp
+zfsShift,                                // SO, cp, SI
+    lio [ZF_SO]
+    tcc
+    lio cp
+    tcc
+    lio [ZF_SI]
+    tcc
+    jmp zfsRet
+
+// Tier D: the DEC byte in SO and SI, or the stand-in.
+zfsDec,
+    lac info
+    sar 7s
+    and [037]
+    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) if a DEC byte
+    jmp zfsStand
+    add [0140]
+    dac cp
+    jmp zfsShift
+
+// Tier U: the safe code point if the player chose the safe set and the
+// code has one, else the exact one; then UTF-8.
+zfsUni,
+    lac info
+    sar 9s
+    sar 3s
+    and [077]                            // the safe index, 1-30, or 0
+    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) if it has one
+    jmp zfsExact
+    add [zfSafe-1]
+    dac ptr
+    farlac(zsSafe:*)
+    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) if S was chosen
+    jmp zfsExact
+    jmp zfsCp
+zfsExact,
+    lac code
+    add [zfExact-0d32]
+    dac ptr
+zfsCp,
+    lac i ptr                            // the window is closed
+    dac cp
+
+// UTF-8: below 0200 one byte; below 04000 two, 110xxxxx 10xxxxxx; else
+// three, 1110xxxx 10xxxxxx 10xxxxxx. Every code point is below U+10000
+// and positive, so `sar` brings in zeros.
+    sub [0200]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE         // sma i: skip (fallthrough) if 0200 or above
+    jmp zfsOne
+    lac cp
+    sub [04000]
+    SKIP_NEXT_IF_AC_NEGATIVE             // sma: skip (fallthrough) if below 04000
+    jmp zfsThree
+    lac cp
+    sar 6s
+    ior [0300]
+    lia
+    tcc
+    jmp zfsLow
+zfsThree,
+    lac cp
+    sar 9s
+    sar 3s
+    ior [0340]
+    lia
+    tcc
+    lac cp
+    sar 6s
+    and [077]
+    ior [0200]
+    lia
+    tcc
+zfsLow,
+    lac cp
+    and [077]
+    ior [0200]
+    jmp zfsByte
+zfsOne,
+    lac cp
+zfsByte,
+    lia
+    tcc
+    jmp zfsRet
+
+rtn, 0
+code, 0
+look, 0
+info, 0
+cp, 0
+ptr, 0
+    endlocal
+
+#if !Z_CENSUS
+// ========================================================================
+// zfLoad -- sends the soft font, then designates it into G1. Called via
+// farjsp(zfLoad:*) from zTermQuery on tier A, once for each connection.
+// No arguments; AC and IO clobbered; returns with the window open.
+//
+//   ESC P 1 ; 1 ; 0 ; 4 ; 1 ; 1 { SP @   DECDLD: font buffer 1, from
+//                                          character 1 (033, '!'), erase
+//                                          the set, a 7x10 matrix (Pcms
+//                                          4), 80 columns, a text font
+//   94 glyphs, each  upper/lower,  separated by ';'
+//   ESC \                                  the string terminator
+//   ESC ) SP @                             G1 = the soft set
+// (DEC's VT220 Programmer Reference, section 4.16.)
+// About 1,530 bytes, on `tcc`, as zTermQuery sends its query.
+// ========================================================================
+zfLoad,
+    local rtn, ptr, w, k, n3, ng
+    farenter(rtn)                        // the window is closed: `lac i ptr`
+    lio [zfDldHead]
+    jsp zfPuts
+    law zfGlyph
+    dac ptr
+    law i 0d94
+    dac ng
+zflGlyph,
+    dzm k                                // sixels sent of this glyph
+zflWord,
+    lac i ptr
+    dac w
+    idx ptr
+    law i 3
+    dac n3
+zflSix,
+    lac w
+    ral 6s                               // the next sixel into the low six bits
+    dac w
+    and [077]
+    add [077]                            // '?' is sixel 0
+    lia
+    tcc
+    idx k                                // AC = sixels sent
+    SKIP_NEXT_IF_DIFFERENT [7]           // sad: skip (fallthrough) unless the band ends
+    jmp zflSlash
+    SKIP_NEXT_IF_DIFFERENT [0d14]        // sad: skip (fallthrough) unless the glyph ends
+    jmp zflEnd
+zflNext,
+    isp n3
+    jmp zflSix                              // no-skip: this word has more
+    jmp zflWord
+zflSlash,
+    lio [0d47]                           // '/': the lower band
+    tcc
+    jmp zflNext
+zflEnd,
+    isp ng
+    jmp zflSemi                             // no-skip: glyphs remain
+    lio [zfDldTail]
+    jsp zfPuts
+    farrtn(rtn)
+zflSemi,
+    lio [0d59]                           // ';': the next glyph
+    tcc
+    jmp zflGlyph
+
+// zfPuts -- sends a 0-terminated table of one byte a word with `tcc`.
+// Called via jsp, from zfLoad only. IO = a bare in-bank pointer to the
+// table. The window is closed.
+zfPuts,
+    dap zfpX
+    dio zfpP
+zfpLoop,
+    lac i zfpP
+    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) on a byte
+    jmp zfpX
+    lia
+    tcc
+    idx zfpP
+    jmp zfpLoop
+zfpX, jmp .
+zfpP, 0
+
+rtn, 0
+ptr, 0
+w, 0
+k, 0
+n3, 0
+ng, 0
+    endlocal
+
+zfDldHead,                               // ESC P 1;1;0;4;1;1 { SP @
+    033
+    0d80                                 // 'P'
+    0d49                                 // '1'
+    0d59                                 // ';'
+    0d49                                 // '1'
+    0d59
+    0d48                                 // '0'
+    0d59
+    0d52                                 // '4'
+    0d59
+    0d49                                 // '1'
+    0d59
+    0d49                                 // '1'
+    0d123                                // '{'
+    0d32                                 // SP
+    0d64                                 // '@'
+    0
+zfDldTail,                               // ESC \, then ESC ) SP @
+    033
+    0d92                                 // '\'
+    033
+    0d41                                 // ')'
+    0d32
+    0d64
+    0
+#endif // !Z_CENSUS
+
+// ---- zfInfo: one word per code, 32-126 --------------------------
+//   bits 12-17  the safe entry, 1-30 (zfSafe's index + 1); 0: none
+//   bits 7-11   the DEC Special Graphics byte less 0140; 0: none
+//   bits 0-6    the ASCII stand-in
+zfInfo,
+    000040                        //  32  safe -      DEC -   stand-in space   blank
+    000074                        //  33  safe -      DEC -   stand-in '<'     left arrow
+    000076                        //  34  safe -      DEC -   stand-in '>'     right arrow
+    010057                        //  35  safe '/'    DEC -   stand-in '/'     diagonal, top right to bottom left
+    020134                        //  36  safe '\'    DEC -   stand-in '\'     diagonal, top left to bottom right
+    000040                        //  37  safe -      DEC -   stand-in space   blank
+    004255                        //  38  safe -      DEC q   stand-in '-'     horizontal line, just below center
+    004255                        //  39  safe -      DEC q   stand-in '-'     horizontal line, just above center
+    006174                        //  40  safe -      DEC x   stand-in '|'     vertical line, just right of center
+    006174                        //  41  safe -      DEC x   stand-in '|'     vertical line, just left of center
+    005453                        //  42  safe -      DEC v   stand-in '+'     junction, line up
+    005653                        //  43  safe -      DEC w   stand-in '+'     junction, line down
+    005053                        //  44  safe -      DEC t   stand-in '+'     junction, line right
+    005253                        //  45  safe -      DEC u   stand-in '+'     junction, line left
+    003253                        //  46  safe -      DEC m   stand-in '+'     corner, up and right
+    003053                        //  47  safe -      DEC l   stand-in '+'     corner, down and right
+    002653                        //  48  safe -      DEC k   stand-in '+'     corner, down and left
+    002453                        //  49  safe -      DEC j   stand-in '+'     corner, up and left
+    003253                        //  50  safe -      DEC m   stand-in '+'     corner up and right, diagonal to bottom left
+    003053                        //  51  safe -      DEC l   stand-in '+'     corner down and right, diagonal from top left
+    002653                        //  52  safe -      DEC k   stand-in '+'     corner down and left, diagonal from top right
+    002453                        //  53  safe -      DEC j   stand-in '+'     corner up and left, diagonal to bottom right
+    000243                        //  54  safe -      DEC a   stand-in '#'     full block
+    000243                        //  55  safe -      DEC a   stand-in '#'     upper 5/8 block
+    030243                        //  56  safe U+2584 DEC a   stand-in '#'     lower 5/8 block
+    040243                        //  57  safe U+258C DEC a   stand-in '#'     left 5/8 block
+    000243                        //  58  safe -      DEC a   stand-in '#'     right 5/8 block
+    050243                        //  59  safe U+2584 DEC a   stand-in '#'     lower 5/8 block, line up
+    000243                        //  60  safe -      DEC a   stand-in '#'     upper 5/8 block, line down
+    060243                        //  61  safe U+258C DEC a   stand-in '#'     left 5/8 block, line right
+    000243                        //  62  safe -      DEC a   stand-in '#'     right 5/8 block, line left
+    070243                        //  63  safe U+2590 DEC a   stand-in '#'     upper right quadrant
+    100243                        //  64  safe U+2590 DEC a   stand-in '#'     lower right quadrant
+    110243                        //  65  safe U+258C DEC a   stand-in '#'     lower left quadrant
+    120243                        //  66  safe U+258C DEC a   stand-in '#'     upper left quadrant
+    130243                        //  67  safe U+2590 DEC a   stand-in '#'     upper right quadrant, diagonal to bottom left
+    140243                        //  68  safe U+2590 DEC a   stand-in '#'     lower right quadrant, diagonal from top left
+    150243                        //  69  safe U+258C DEC a   stand-in '#'     lower left quadrant, diagonal from top right
+    160243                        //  70  safe U+258C DEC a   stand-in '#'     upper left quadrant, diagonal to bottom right
+    170047                        //  71  safe '''    DEC -   stand-in '''     pixel, top right
+    200056                        //  72  safe '.'    DEC -   stand-in '.'     pixel, bottom right
+    210056                        //  73  safe '.'    DEC -   stand-in '.'     pixel, bottom left
+    220140                        //  74  safe '`'    DEC -   stand-in '`'     pixel, top left
+    233655                        //  75  safe U+00AF DEC o   stand-in '-'     top edge line
+    244737                        //  76  safe '_'    DEC s   stand-in '_'     bottom edge line
+    256174                        //  77  safe U+2502 DEC x   stand-in '|'     left edge line
+    266174                        //  78  safe U+2502 DEC x   stand-in '|'     right edge line
+    000056                        //  79  safe -      DEC -   stand-in '.'     bar cell, empty (rails top and bottom)
+    270053                        //  80  safe space  DEC -   stand-in '+'     bar cell, 1/8 filled
+    300053                        //  81  safe space  DEC -   stand-in '+'     bar cell, 2/8 filled
+    310053                        //  82  safe U+258C DEC -   stand-in '+'     bar cell, 3/8 filled
+    000053                        //  83  safe -      DEC -   stand-in '+'     bar cell, 4/8 filled
+    320053                        //  84  safe U+258C DEC -   stand-in '+'     bar cell, 5/8 filled
+    330053                        //  85  safe U+2588 DEC -   stand-in '+'     bar cell, 6/8 filled
+    340053                        //  86  safe U+2588 DEC -   stand-in '+'     bar cell, 7/8 filled
+    000043                        //  87  safe -      DEC -   stand-in '#'     bar cell, full
+    000133                        //  88  safe -      DEC -   stand-in '['     bar's left end cap (a line at the cell's right edge)
+    000135                        //  89  safe -      DEC -   stand-in ']'     bar's right end cap (a line at the cell's left edge)
+    350130                        //  90  safe 'X'    DEC -   stand-in 'X'     diagonal cross
+    003453                        //  91  safe -      DEC n   stand-in '+'     cross of lines
+    000136                        //  92  safe -      DEC -   stand-in '^'     up arrow
+    000166                        //  93  safe -      DEC -   stand-in 'v'     down arrow
+    000174                        //  94  safe -      DEC -   stand-in '|'     up-down arrow
+    360043                        //  95  safe '#'    DEC -   stand-in '#'     framed cell
+    000077                        //  96  safe -      DEC -   stand-in '?'     question mark
+    000141                        //  97  safe -      DEC -   stand-in 'a'     rune ac
+    000142                        //  98  safe -      DEC -   stand-in 'b'     rune beorc
+    000143                        //  99  safe -      DEC -   stand-in 'c'     rune eoh, for eo
+    000144                        // 100  safe -      DEC -   stand-in 'd'     rune daeg
+    000145                        // 101  safe -      DEC -   stand-in 'e'     rune eh
+    000146                        // 102  safe -      DEC -   stand-in 'f'     rune feoh
+    000147                        // 103  safe -      DEC -   stand-in 'g'     rune gyfu
+    000150                        // 104  safe -      DEC -   stand-in 'h'     rune haegl
+    000151                        // 105  safe -      DEC -   stand-in 'i'     rune is
+    000152                        // 106  safe -      DEC -   stand-in 'j'     rune ger
+    000153                        // 107  safe -      DEC -   stand-in 'k'     rune calc, the other k
+    000154                        // 108  safe -      DEC -   stand-in 'l'     rune lagu
+    000155                        // 109  safe -      DEC -   stand-in 'm'     rune mann
+    000156                        // 110  safe -      DEC -   stand-in 'n'     rune nyd
+    000157                        // 111  safe -      DEC -   stand-in 'o'     rune os
+    000160                        // 112  safe -      DEC -   stand-in 'p'     rune peorth
+    000161                        // 113  safe -      DEC -   stand-in 'q'     rune cen, Anglian k
+    000162                        // 114  safe -      DEC -   stand-in 'r'     rune rad
+    000163                        // 115  safe -      DEC -   stand-in 's'     rune sigel
+    000164                        // 116  safe -      DEC -   stand-in 't'     rune tir
+    000165                        // 117  safe -      DEC -   stand-in 'u'     rune ur
+    000166                        // 118  safe -      DEC -   stand-in 'v'     rune ear, for ea
+    000167                        // 119  safe -      DEC -   stand-in 'w'     rune wynn
+    000170                        // 120  safe -      DEC -   stand-in 'x'     rune eolhx, for z
+    000171                        // 121  safe -      DEC -   stand-in 'y'     rune yr
+    000172                        // 122  safe -      DEC -   stand-in 'z'     rune ethel, for oe
+    000136                        // 123  safe -      DEC -   stand-in '^'     up arrow, inverse
+    000166                        // 124  safe -      DEC -   stand-in 'v'     down arrow, inverse
+    000174                        // 125  safe -      DEC -   stand-in '|'     up-down arrow, inverse
+    000077                        // 126  safe -      DEC -   stand-in '?'     question mark, inverse
+
+// ---- zfExact: tier U's code point per code, 32-126 ---------------
+zfExact,
+    000040                        //  32  space
+    020620                        //  33  U+2190
+    020622                        //  34  U+2192
+    022561                        //  35  U+2571
+    022562                        //  36  U+2572
+    000040                        //  37  space
+    022400                        //  38  U+2500
+    022400                        //  39  U+2500
+    022402                        //  40  U+2502
+    022402                        //  41  U+2502
+    022464                        //  42  U+2534
+    022454                        //  43  U+252C
+    022434                        //  44  U+251C
+    022444                        //  45  U+2524
+    022424                        //  46  U+2514
+    022414                        //  47  U+250C
+    022420                        //  48  U+2510
+    022430                        //  49  U+2518
+    022424                        //  50  U+2514
+    022414                        //  51  U+250C
+    022420                        //  52  U+2510
+    022430                        //  53  U+2518
+    022610                        //  54  U+2588
+    022600                        //  55  U+2580
+    022605                        //  56  U+2585
+    022613                        //  57  U+258B
+    022620                        //  58  U+2590
+    022605                        //  59  U+2585
+    022600                        //  60  U+2580
+    022613                        //  61  U+258B
+    022620                        //  62  U+2590
+    022635                        //  63  U+259D
+    022627                        //  64  U+2597
+    022626                        //  65  U+2596
+    022630                        //  66  U+2598
+    022635                        //  67  U+259D
+    022627                        //  68  U+2597
+    022626                        //  69  U+2596
+    022630                        //  70  U+2598
+    024010                        //  71  U+2808
+    024200                        //  72  U+2880
+    024100                        //  73  U+2840
+    024001                        //  74  U+2801
+    022624                        //  75  U+2594
+    022601                        //  76  U+2581
+    022617                        //  77  U+258F
+    022625                        //  78  U+2595
+    000040                        //  79  space
+    022617                        //  80  U+258F
+    022616                        //  81  U+258E
+    022615                        //  82  U+258D
+    022614                        //  83  U+258C
+    022613                        //  84  U+258B
+    022612                        //  85  U+258A
+    022611                        //  86  U+2589
+    022610                        //  87  U+2588
+    000133                        //  88  '['
+    000135                        //  89  ']'
+    022563                        //  90  U+2573
+    022474                        //  91  U+253C
+    020621                        //  92  U+2191
+    020623                        //  93  U+2193
+    020625                        //  94  U+2195
+    022641                        //  95  U+25A1
+    000077                        //  96  '?'
+    013252                        //  97  U+16AA
+    013322                        //  98  U+16D2
+    013307                        //  99  U+16C7
+    013336                        // 100  U+16DE
+    013326                        // 101  U+16D6
+    013240                        // 102  U+16A0
+    013267                        // 103  U+16B7
+    013273                        // 104  U+16BB
+    013301                        // 105  U+16C1
+    013304                        // 106  U+16C4
+    013343                        // 107  U+16E3
+    013332                        // 108  U+16DA
+    013327                        // 109  U+16D7
+    013276                        // 110  U+16BE
+    013251                        // 111  U+16A9
+    013310                        // 112  U+16C8
+    013263                        // 113  U+16B3
+    013261                        // 114  U+16B1
+    013313                        // 115  U+16CB
+    013317                        // 116  U+16CF
+    013242                        // 117  U+16A2
+    013340                        // 118  U+16E0
+    013271                        // 119  U+16B9
+    013311                        // 120  U+16C9
+    013243                        // 121  U+16A3
+    013337                        // 122  U+16DF
+    022662                        // 123  U+25B2
+    022674                        // 124  U+25BC
+    023146                        // 125  U+2666
+    000077                        // 126  '?'
+
+// ---- zfSafe: the 30 safe code points, by index - 1 ---------------
+zfSafe,
+    000057                        //  1, for  35  '/'
+    000134                        //  2, for  36  '\'
+    022604                        //  3, for  56  U+2584
+    022614                        //  4, for  57  U+258C
+    022604                        //  5, for  59  U+2584
+    022614                        //  6, for  61  U+258C
+    022620                        //  7, for  63  U+2590
+    022620                        //  8, for  64  U+2590
+    022614                        //  9, for  65  U+258C
+    022614                        // 10, for  66  U+258C
+    022620                        // 11, for  67  U+2590
+    022620                        // 12, for  68  U+2590
+    022614                        // 13, for  69  U+258C
+    022614                        // 14, for  70  U+258C
+    000047                        // 15, for  71  '''
+    000056                        // 16, for  72  '.'
+    000056                        // 17, for  73  '.'
+    000140                        // 18, for  74  '`'
+    000257                        // 19, for  75  U+00AF
+    000137                        // 20, for  76  '_'
+    022402                        // 21, for  77  U+2502
+    022402                        // 22, for  78  U+2502
+    000040                        // 23, for  80  space
+    000040                        // 24, for  81  space
+    022614                        // 25, for  82  U+258C
+    022614                        // 26, for  84  U+258C
+    022610                        // 27, for  85  U+2588
+    022610                        // 28, for  86  U+2588
+    000130                        // 29, for  90  'X'
+    000043                        // 30, for  95  '#'
+
+#if !Z_CENSUS
+// ---- zfGlyph: the soft font, codes 33-126 -----------------------
+// Five words a glyph: its 14 sixels, three to a word from the top six
+// bits down -- the 7 of the upper band (rows 1-6, top row the low bit),
+// then the 7 of the lower band (rows 7-10) -- and a last slot of 0.
+// Drawn from the Standard's 8x8 glyphs (S16): each source column
+// to its nearest of 7 (the two center columns become one); the top and
+// bottom rows drawn twice and the six between once, so 10 rows.
+zfGlyph,
+    406070; 404040; 000001; 030000; 000000   //  33 ......./......./......./..#..../.##..../######./.##..../..#..../......./.......
+    404040; 706040; 000000; 000301; 000000   //  34 ......./......./......./...#.../...##../######./...##../...#.../......./.......
+    000000; 601004; 031402; 010000; 000000   //  35 ......#/......#/.....#./....#../...#.../...#.../..#..../.#...../#....../#......
+    030410; 600000; 000000; 000001; 021400   //  36 #....../#....../.#...../..#..../...#.../...#.../....#../.....#./......#/......#
+    000000; 000000; 000000; 000000; 000000   //  37 ......./......./......./......./......./......./......./......./......./.......
+    404040; 404040; 400000; 000000; 000000   //  38 ......./......./......./......./......./#######/......./......./......./.......
+    202020; 202020; 200000; 000000; 000000   //  39 ......./......./......./......./#######/......./......./......./......./.......
+    000000; 770000; 000000; 001700; 000000   //  40 ...#.../...#.../...#.../...#.../...#.../...#.../...#.../...#.../...#.../...#...
+    000000; 770000; 000000; 001700; 000000   //  41 ...#.../...#.../...#.../...#.../...#.../...#.../...#.../...#.../...#.../...#...
+    202020; 372020; 200000; 000000; 000000   //  42 ...#.../...#.../...#.../...#.../#######/......./......./......./......./.......
+    404040; 404040; 400000; 001700; 000000   //  43 ......./......./......./......./......./#######/...#.../...#.../...#.../...#...
+    000000; 774040; 400000; 001700; 000000   //  44 ...#.../...#.../...#.../...#.../...#.../...####/...#.../...#.../...#.../...#...
+    404040; 770000; 000000; 001700; 000000   //  45 ...#.../...#.../...#.../...#.../...#.../####.../...#.../...#.../...#.../...#...
+    000000; 774040; 400000; 000000; 000000   //  46 ...#.../...#.../...#.../...#.../...#.../...####/......./......./......./.......
+    000000; 602020; 200000; 001700; 000000   //  47 ......./......./......./......./...####/...#.../...#.../...#.../...#.../...#...
+    202020; 600000; 000000; 001700; 000000   //  48 ......./......./......./......./####.../...#.../...#.../...#.../...#.../...#...
+    404040; 770000; 000000; 000000; 000000   //  49 ...#.../...#.../...#.../...#.../...#.../####.../......./......./......./.......
+    000000; 774040; 401402; 010000; 000000   //  50 ...#.../...#.../...#.../...#.../...#.../...####/..#..../.#...../#....../#......
+    030410; 602020; 200000; 001700; 000000   //  51 #....../#....../.#...../..#..../...####/...#.../...#.../...#.../...#.../...#...
+    202020; 601004; 030000; 001700; 000000   //  52 ......#/......#/.....#./....#../####.../...#.../...#.../...#.../...#.../...#...
+    404040; 770000; 000000; 000001; 021400   //  53 ...#.../...#.../...#.../...#.../...#.../####.../....#../.....#./......#/......#
+    777777; 777777; 771717; 171717; 171700   //  54 #######/#######/#######/#######/#######/#######/#######/#######/#######/#######
+    777777; 777777; 770000; 000000; 000000   //  55 #######/#######/#######/#######/#######/#######/......./......./......./.......
+    606060; 606060; 601717; 171717; 171700   //  56 ......./......./......./......./#######/#######/#######/#######/#######/#######
+    777777; 770000; 001717; 171700; 000000   //  57 ####.../####.../####.../####.../####.../####.../####.../####.../####.../####...
+    000000; 777777; 770000; 001717; 171700   //  58 ...####/...####/...####/...####/...####/...####/...####/...####/...####/...####
+    606060; 776060; 601717; 171717; 171700   //  59 ...#.../...#.../...#.../...#.../#######/#######/#######/#######/#######/#######
+    777777; 777777; 770000; 001700; 000000   //  60 #######/#######/#######/#######/#######/#######/...#.../...#.../...#.../...#...
+    777777; 774040; 401717; 171700; 000000   //  61 ####.../####.../####.../####.../####.../#######/####.../####.../####.../####...
+    404040; 777777; 770000; 001717; 171700   //  62 ...####/...####/...####/...####/...####/#######/...####/...####/...####/...####
+    000000; 777777; 770000; 000000; 000000   //  63 ...####/...####/...####/...####/...####/...####/......./......./......./.......
+    000000; 606060; 600000; 001717; 171700   //  64 ......./......./......./......./...####/...####/...####/...####/...####/...####
+    606060; 600000; 001717; 171700; 000000   //  65 ......./......./......./......./####.../####.../####.../####.../####.../####...
+    777777; 770000; 000000; 000000; 000000   //  66 ####.../####.../####.../####.../####.../####.../......./......./......./.......
+    000000; 777777; 771402; 010000; 000000   //  67 ...####/...####/...####/...####/...####/...####/..#..../.#...../#....../#......
+    030410; 606060; 600000; 001717; 171700   //  68 #....../#....../.#...../..#..../...####/...####/...####/...####/...####/...####
+    606060; 601004; 031717; 171700; 000000   //  69 ......#/......#/.....#./....#../####.../####.../####.../####.../####.../####...
+    777777; 770000; 000000; 000001; 021400   //  70 ####.../####.../####.../####.../####.../####.../....#../.....#./......#/......#
+    000000; 000000; 030000; 000000; 000000   //  71 ......#/......#/......./......./......./......./......./......./......./.......
+    000000; 000000; 000000; 000000; 001400   //  72 ......./......./......./......./......./......./......./......./......#/......#
+    000000; 000000; 001400; 000000; 000000   //  73 ......./......./......./......./......./......./......./......./#....../#......
+    030000; 000000; 000000; 000000; 000000   //  74 #....../#....../......./......./......./......./......./......./......./.......
+    030303; 030303; 030000; 000000; 000000   //  75 #######/#######/......./......./......./......./......./......./......./.......
+    000000; 000000; 001414; 141414; 141400   //  76 ......./......./......./......./......./......./......./......./#######/#######
+    770000; 000000; 001700; 000000; 000000   //  77 #....../#....../#....../#....../#....../#....../#....../#....../#....../#......
+    000000; 000000; 770000; 000000; 001700   //  78 ......#/......#/......#/......#/......#/......#/......#/......#/......#/......#
+    040404; 040404; 040202; 020202; 020200   //  79 ......./......./#######/......./......./......./......./#######/......./.......
+    740404; 040404; 040302; 020202; 020200   //  80 ......./......./#######/#....../#....../#....../#....../#######/......./.......
+    747404; 040404; 040303; 020202; 020200   //  81 ......./......./#######/##...../##...../##...../##...../#######/......./.......
+    747474; 040404; 040303; 030202; 020200   //  82 ......./......./#######/###..../###..../###..../###..../#######/......./.......
+    747474; 740404; 040303; 030302; 020200   //  83 ......./......./#######/####.../####.../####.../####.../#######/......./.......
+    747474; 740404; 040303; 030302; 020200   //  84 ......./......./#######/####.../####.../####.../####.../#######/......./.......
+    747474; 747404; 040303; 030303; 020200   //  85 ......./......./#######/#####../#####../#####../#####../#######/......./.......
+    747474; 747474; 040303; 030303; 030200   //  86 ......./......./#######/######./######./######./######./#######/......./.......
+    747474; 747474; 740303; 030303; 030300   //  87 ......./......./#######/#######/#######/#######/#######/#######/......./.......
+    000000; 000000; 740000; 000000; 000300   //  88 ......./......./......#/......#/......#/......#/......#/......#/......./.......
+    740000; 000000; 000300; 000000; 000000   //  89 ......./......./#....../#....../#....../#....../#....../#....../......./.......
+    030410; 601004; 031402; 010001; 021400   //  90 #.....#/#.....#/.#...#./..#.#../...#.../...#.../..#.#../.#...#./#.....#/#.....#
+    404040; 774040; 400000; 001700; 000000   //  91 ...#.../...#.../...#.../...#.../...#.../#######/...#.../...#.../...#.../...#...
+    101004; 770410; 100000; 000300; 000000   //  92 ...#.../...#.../..###../##.#.##/...#.../...#.../...#.../...#.../......./.......
+    404000; 770040; 400000; 010301; 000000   //  93 ...#.../...#.../...#.../...#.../...#.../##.#.##/..###../...#.../......./.......
+    505004; 770450; 500000; 010301; 000000   //  94 ...#.../...#.../..###../##.#.##/...#.../##.#.##/..###../...#.../......./.......
+    770303; 030303; 771714; 141414; 141700   //  95 #######/#######/#.....#/#.....#/#.....#/#.....#/#.....#/#.....#/#######/#######
+    000407; 633714; 000000; 000200; 000000   //  96 ..###../..###../.##.##./....##./...##../...#.../......./...#.../......./.......
+    772344; 140300; 000300; 000100; 000000   //  97 ##..#../##..#../#.##.../#..#.../##...../#.#..../#..#.../#....../......./.......
+    007723; 740000; 000003; 020100; 000000   //  98 .##..../.##..../.#.#.../.#.#.../.###.../.#.#.../.#.#.../.##..../......./.......
+    204000; 771020; 000000; 010300; 000000   //  99 ...#.../...#.../...#.../...##../#..#.#./.#.#.../..##.../...#.../......./.......
+    770450; 700477; 000301; 000001; 030000   // 100 #....#./#....#./##..##./#.##.#./#..#.#./#.##.#./##..##./#....#./......./.......
+    770410; 300477; 000300; 000000; 030000   // 101 #....#./#....#./##..##./#.##.#./#..#.#./#....#./#....#./#....#./......./.......
+    775024; 170300; 000300; 000000; 000000   // 102 #..##../#..##../#.##.../##.#.../#.#..../##...../#....../#....../......./.......
+    030450; 700403; 000201; 000001; 020000   // 103 #....#./#....#./.#..#../..##.../...#.../..##.../.#..#../#....#./......./.......
+    771324; 704077; 000300; 000102; 030000   // 104 ##...#./##...#./#.#..#./##.#.#./#.##.#./#..###./#..#.#./#...##./......./.......
+    000000; 770000; 000000; 000300; 000000   // 105 ...#.../...#.../...#.../...#.../...#.../...#.../...#.../...#.../......./.......
+    205004; 775020; 000000; 010300; 000000   // 106 ...#.../...#.../..##.../.#.##../#..#.#./.#.##../..##.../...#.../......./.......
+    004020; 774000; 000300; 000300; 030000   // 107 ...#.../...#.../...#.../...#.../..##.../.#.##../#..#.#./#..#.#./......./.......
+    000000; 771020; 000000; 000300; 000000   // 108 ...#.../...#.../...#.../...##../...#.#./...#.../...#.../...#.../......./.......
+    774324; 344377; 000300; 000000; 030000   // 109 ##..##./##..##./#.##.#./#..#.#./#.##.#./##..##./#....#./#....#./......./.......
+    030410; 772040; 000000; 000300; 000000   // 110 #..#.../#..#.../.#.#.../..##.../...##../...#.#./...#.../...#.../......./.......
+    771324; 741700; 000300; 000000; 000000   // 111 ##..#../##..#../#.###../##.##../#.##.../#..#.../#....../#....../......./.......
+    770040; 600000; 000301; 000001; 020000   // 112 #....../#....../#....../#....../#..#.../#.##.../##..#../#....#./......./.......
+    007720; 204000; 000003; 000003; 000000   // 113 .#...../.#...../.#...../.#...../.###.../.#..#../.#..#../.#..#../......./.......
+    007743; 340000; 000003; 000300; 000000   // 114 .##..../.##..../.#.#.../.#.#.../.#.#.../.##..../.#.#.../.#.#.../......./.......
+    007740; 307400; 000001; 000003; 000000   // 115 .#...../.#...../.#..#../.#.##../.#.##../.##.#../.#..#../....#../......./.......
+    201004; 771020; 000000; 000300; 000000   // 116 ...#.../...#.../..##.../.#.##../#..#.#./...#.../...#.../...#.../......./.......
+    007703; 146000; 000003; 000003; 000000   // 117 .##..../.##..../.#.#.../.#.#.../.#..#../.#..#../.#..#../.#..#../......./.......
+    041004; 771004; 000000; 000300; 000000   // 118 ...#.../...#.../#.##.#./.#.##../...#.../...#.../...#.../...#.../......./.......
+    007743; 340000; 000003; 000000; 000000   // 119 .##..../.##..../.#.#.../.#.#.../.#.#.../.##..../.#...../.#...../......./.......
+    030410; 770403; 000000; 000300; 000000   // 120 #..#.#./#..#.#./.#.##../..##.../...#.../...#.../...#.../...#.../......./.......
+    770713; 742040; 000300; 000301; 030000   // 121 ###..../###..../##.#.../#.##.../#..##../#..#.#./#..###./#..#.#./......./.......
+    001024; 671000; 000002; 010102; 000000   // 122 ...#.../...#.../..##.../.#..#../..##.../...#.../..##.../.#..#../......./.......
+    676773; 007367; 671717; 171417; 171700   // 123 ###.###/###.###/##...##/..#.#../###.###/###.###/###.###/###.###/#######/#######
+    373777; 007737; 371717; 161416; 171700   // 124 ###.###/###.###/###.###/###.###/###.###/..#.#../##...##/###.###/#######/#######
+    272773; 007327; 271717; 161416; 171700   // 125 ###.###/###.###/##...##/..#.#../###.###/..#.#../##...##/###.###/#######/#######
+    777370; 344063; 771717; 171517; 171700   // 126 ##...##/##...##/#..#..#/####..#/####.##/###.###/#######/###.###/#######/#######
+#endif // !Z_CENSUS
+
+#endif // ZFONT3_AC_H

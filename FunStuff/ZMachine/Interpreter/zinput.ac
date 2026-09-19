@@ -1,0 +1,472 @@
+// ========================================================================
+// zinput.ac -- the input opcodes: VAR:4 sread (V1-4) / aread (V5), VAR:22
+// read_char (V4+), and VAR:27 tokenise and VAR:28 encode_text (V5).
+//
+// Bank 0, #included into zmemcore.am1's bank-0 section after zprint.ac.
+// Entry points: the opcode handlers zdhSread, zdhReadChar, zdhTokenise and
+// zdhEncodeText, and zrcResume, jumped to by zdpReturn when an interrupt
+// routine returns.
+//
+// zmemcore.am1 assembles ZLEAF_BANK after bank 0, so every cross-bank call
+// here is a forward reference and takes the `sym:*` form:
+// farjda(zReadLine:*), farjda(zParseText:*), farjsp(zReadKey:*). All the
+// callees are farenter/farrtn routines. zPrintStatus (zprint.ac) is a
+// plain same-bank jsp.
+//
+// The only halt is ziNoConn's, for a dropped connection under a test
+// entry. Everything else a read can meet degrades.
+//
+// Input is timed at V4+: the time and routine operands of read_char, the
+// V4 sread and the V5 aread are honored on the BBN clock's countdown timer
+// (ztext.ac's zReadKey). This is what lets zboot.ac set Flags1 bit 7,
+// "timed keyboard input available".
+//
+// ---- How a timed read works ------------------------------------------
+// The read waits on the key (or the line) with a countdown running. When
+// the time runs out, the story's interrupt routine is called, as an
+// ordinary Z-machine call (zrcTimeout, through zdpCall), with the result
+// variable ZRV_INTERRUPT (zdispatch.ac) marking its frame, and the
+// interpreter goes back to its loop: the routine runs as plain Z-code and
+// may print. Its return comes back through zdpReturn, which sees the
+// marker and jumps to zrcResume with the routine's value. True ends the
+// read (read_char stores 0; sread ends with an empty line). False carries
+// on reading with a fresh timer.
+//
+// The read resumes by continuation, not by re-executing the instruction:
+// decoding it again would pop the stack a second time for any stack
+// operand (`read_char 1 sp sp`). What the read needs is in the zrc*/zrs*
+// state words below, and its store goes through zWriteVar with the saved
+// variable number, into the frame zCallReturn has just restored -- the
+// read's own frame, as S4.6 requires. zdispatch.ac's zdpReturn header
+// records the invariant this relies on.
+//
+// The interrupt call's degrades:
+//   - A timed read inside an interrupt routine runs untimed: zrcActive is
+//     set and zFP - zrcFP > 0. It reads and stores (or parses) for itself
+//     and leaves the outer read's state words alone.
+//   - An interrupt routine abandoned by throw (V5) to a frame at or below
+//     the read's: zdhThrow clears zrcActive, so the next timed read, at
+//     any depth, starts fresh.
+//   - A stale ZRV_INTERRUPT frame with no read waiting (zrcActive = 0 at
+//     zrcResume) returns without storing and carries on. Only a restored
+//     game can produce it, and S15 makes a save inside an interrupt
+//     routine illegal.
+//   - A restart or a successful restore during an interrupt routine
+//     abandons the read the same way: zdhRestart and zdhRestore clear
+//     zrcActive.
+//
+// zdhSread serves V5's aread too; the timed setup and continuation are
+// shared. V5 differs in four places only: the operand checks, zrcVar
+// saved for the store, a parse buffer of 0, and ziParsed's store of the
+// terminating character (13, or 0). zReadLine and zParseText (bank 15)
+// handle V5's buffer shape.
+// ========================================================================
+
+#ifndef ZINPUT_AC_H
+#define ZINPUT_AC_H
+
+// A dropped DCS2 connection. Distinct from every other ZSTOP_ reason
+// because it says nothing about the story file: the interpreter's own
+// terminal went away, so there is nothing to degrade to. Under boot the
+// session ends, and the machine waits for the next player; zdpStopReason
+// keeps this reason until the next session ends. Under a test entry it
+// halts.
+#define ZSTOP_NOCONN 6
+
+// ---- VAR:228 sread: read and parse one command line (S15) -------------
+// Two operands: the text buffer and the parse buffer, both Z-machine byte
+// addresses. Stores nothing and branches nothing in V1-4.
+//
+// ---- VAR:228 aread text parse time routine -> (result), V5 ------------
+// The same handler. V5's differences, each at a word patched at boot
+// (zpatch.ac) unless it says otherwise:
+//   - No operands: ziNoOps stores 0 and reads nothing. One: the parse
+//     buffer reads 0 from the decoder's cleared block, which is S15's "no
+//     lexical analysis". In V1-4 one operand is a no-op.
+//   - Timed: every timed read saves zdStoreVar in zrcVar (not patched:
+//     V4's sread stores nothing through it), as read_char does, since
+//     after a resume the decoder's block belongs to the interrupt
+//     routine's last instruction.
+//   - Parse buffer 0: the lexical analysis is skipped.
+//   - ziParsed stores ziTerm, the terminating character: 13 for CR or LF
+//     (both end a line; there is no terminating-characters table), 0 when
+//     an interrupt routine ended the read or there were no operands.
+//
+// The degrades: byte 0 = 0 reads and echoes, stores nothing, writes
+// byte 1 = 0; a byte 1 above byte 0 is clamped; a buffer under S15's 3/6
+// bytes does not halt.
+//
+// The status line is redisplayed before a single character is read, so
+// the player never answers a prompt they cannot see. Only V3 redisplays
+// it: S15 says Versions 1 to 3 do so automatically, so zisStatus is
+// `jsp zPrintStatus` for a V3 story and `nop` for V4 and V5.
+zdhSread,
+    // Fewer than two operands is spec-illegal and there is nothing to
+    // degrade to -- with no text-buffer address there is nowhere to put
+    // what the player types. The opcode becomes a no-op rather than a
+    // halt. Four words here are patched at boot (zpatch.ac).
+    lac zdOpCount
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if any operands
+zisNone,
+    jmp zipNext                     // no-skip: none at all. PATCHED: V5
+                                    //   `jmp ziNoOps` -- aread still stores (0)
+    SKIP_NEXT_IF_DIFFERENT [1]   // sad: skip (fallthrough) if not exactly one
+zisOne,
+    jmp zipNext                     // no-skip: one operand -- no parse buffer.
+                                    //   PATCHED: V5 `nop` -- parse reads 0
+    lac [0d13]
+    dac ziTerm                   // Enter ends the line, S15's 13
+                                 //   (only V5's ziParsed reads it)
+zisStatus,
+    jsp zPrintStatus             // PATCHED: V4/V5 `nop` -- only V1-3 redraw it
+
+    lac zdOp0
+    and [ZW_MASK]
+    dac ziTextBuf
+    lac zdOp1
+    and [ZW_MASK]
+    dac ziParseBuf
+
+    // ---- The V4+ timed read -------------------------------------------
+    // Operands 3 and 4 are time (tenths of a second) and routine. The read
+    // is timed only when both are nonzero -- a missing operand reads 0 from
+    // the decoder's cleared result block -- and not inside an interrupt
+    // routine, by the same test read_char uses. zReadLine's IO is its
+    // mode: 0 untimed, 1..0xFFFF a fresh timed read (ztext.ac's header
+    // for zReadLine has the full table). V1-3 sread is never timed, so a
+    // V3 session jumps past all of this at zisV3Untimed.
+    cli                          // IO = 0: untimed, unless set below
+#if Z_CENSUS
+    // A census build reads every line untimed, so its run is
+    // deterministic. Flags1 bit 7 is still set.
+    jmp zisGo                    // census: every line read untimed
+#endif
+zisV3Untimed,
+    jmp zisGo                    // PATCHED: V4/V5 `lac zdOp2`. V1-3 sread is
+                                 //   never timed, whatever operands it has
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if a time was given
+    jmp zisGo                       // no-skip: no time -- untimed
+    lac zdOp3
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if a routine was given
+    jmp zisGo                       // no-skip: no routine -- untimed
+    lac zrcActive
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if an interrupt call is out
+    jmp zisTimed                    // no-skip: none -- a timed read
+    lac zFP
+    sub zrcFP                    // both zStack indices: cannot overflow
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE  // sma sza: skip (fallthrough) if that
+                                      //   call was abandoned (at or below its read)
+    jmp zisGo                       // no-skip: inside the interrupt routine --
+                                    //   untimed, and the outer read's words
+                                    //   are left alone
+zisTimed,
+    lac zdStoreVar               // aread's store variable, for after a
+    dac zrcVar                   //   resume -- read_char's word, and read_char
+                                 //   cannot be waiting while this one is
+                                 //   (V4 stores nothing through it)
+    lac zdOp2
+    dac zrcTime
+    lac zdOp3
+    dac zrcRoutine
+    // Both buffer addresses are saved in words of their own. A nested,
+    // untimed sread inside the interrupt routine reuses ziTextBuf and
+    // ziParseBuf; zrsResume puts these back before the line carries on.
+    lac ziTextBuf
+    dac zrsText
+    lac ziParseBuf
+    dac zrsParse
+    lac [1]
+    dac zrcKind                  // a line read (sread/aread) is what is waiting
+    cla
+    dac zrcActive                // any stale call state is dropped
+    lio zrcTime                  // IO = the time: a fresh timed read
+zisGo,                           // zrsResume re-enters here with its own IO
+    lac ziTextBuf
+    farjda(zReadLine:*)          // AC = 0 on success, 1 if the line dropped
+                                 //   (V4+: 2 if the time ran out)
+    SKIP_NEXT_IF_AC_ZERO         // sza: skip (fallthrough) on a good line
+    jmp zisNotLine                  // no-skip: dropped, or the time ran out
+                                    //   (an untimed V1-3 read never
+                                    //   answers 2, so this is ziNoConn)
+
+    lac ziParseBuf
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if there is one
+zisParse0,
+    nop                             // no-skip: parse 0. PATCHED: V5 `jmp
+                                    //   ziParsed` -- no lexical analysis (S15)
+    lac ziTextBuf
+    lio ziParseBuf
+    crossBankjda(zParseText:*, NOEEM)   // the buffers are already spec-shaped.
+                                        //   NOEEM: zReadLine's own return
+                                        //   above left the window open.
+ziParsed,
+    lem                          // close the window zReadLine/zParseText left open
+    lio ziTerm
+ziStoreTerm,
+    nop                          // PATCHED: V5 `jsp zdpStore` -- the
+    jmp zipNext                  //   terminating character, 13 or 0
+
+// aread with no operands -- nowhere to read to, but the opcode stores, so
+// it stores 0 (as a read the routine ended does) and moves on. Reached
+// only through zisNone's V5 patch.
+ziNoOps,
+    dzm ziTerm
+    jmp ziParsed
+
+// The connection dropped mid-line: the one condition in the input path
+// that stops the game, since no story file can cause it and nothing can
+// be done about it. Under boot the session ends and the machine waits for
+// the next player. Under a test entry it halts; the `hlt` must stay within
+// the first eight words of this label. eem may be on here (from
+// zisNotLine, straight after zReadLine's farrtn): the direct words below
+// are bank 0's own, and zSessionEnd closes the window.
+ziNoConn,
+    lac [ZSTOP_NOCONN]
+    dac zdpStopReason
+    lac zServing                 // is this boot's session loop?
+    SKIP_NEXT_IF_AC_ZERO         // sza: skip (fallthrough) if not -- a test entry
+    jmp zSessionEnd                 // no-skip: the session is over
+    hlt
+    jmp zipNext                  // if a debugger continues the machine, the
+                                 //   PC is valid and the buffer holds
+                                 //   whatever arrived before the drop
+
+// zReadLine came back without a line. AC is 1 (the connection dropped) or
+// 2 (the time ran out, and the text so far is paused in the story's
+// buffer, terminated -- in V5, counted in byte 1). eem is still open from
+// zReadLine's farrtn.
+zisNotLine,
+    SKIP_NEXT_IF_DIFFERENT [1]   // sad: skip (fallthrough) unless it dropped
+    jmp ziNoConn                    // no-skip: the connection dropped
+    lem                          // AC = 2: close the window zReadLine left
+    jmp zrcTimeout               //   open, and call the interrupt routine
+
+// ---- VAR:246 read_char 1 [time routine] -> (result), V4+ --------------
+// Reads one key and stores its ZSCII code. zReadKey (ztext.ac) does the
+// waiting and maps the key: NUL is swallowed, LF becomes 13 and DEL
+// becomes 8, and nothing is case-folded. The key is not echoed: both
+// waits below set zReadKey's no-echo bit, 0400000, which turns DCS2's
+// echo off for the wait and on again when it returns, whatever it
+// returns.
+//
+// The first operand must be 1 (S15) and is not checked: no other value
+// means anything. The read is timed when time (operand 2, in tenths of a
+// second) and routine (operand 3) are both nonzero, and it is not already
+// inside an interrupt routine. The timed path saves what the continuation
+// needs in the zrc* words, because after an interrupt call the decoder's
+// result block belongs to whatever the routine executed last.
+zdhReadChar,
+    lac zdOp1
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if a time was given
+    jmp zrcUntimed                  // no-skip: no time -- untimed
+    lac zdOp2
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if a routine was given
+    jmp zrcUntimed                  // no-skip: no routine -- untimed
+    lac zrcActive
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if an interrupt call is out
+    jmp zrcFresh                    // no-skip: none -- a timed read
+    lac zFP
+    sub zrcFP                    // both zStack indices: cannot overflow
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE  // sma sza: skip (fallthrough) if that
+                                      //   call was abandoned (at or below its read)
+    jmp zrcUntimed                  // no-skip: inside the interrupt routine --
+                                    //   untimed, the outer read left alone
+zrcFresh,
+    lac zdStoreVar
+    dac zrcVar
+    lac zdOp1
+    dac zrcTime
+    lac zdOp2
+    dac zrcRoutine
+    cla
+    dac zrcActive                // any stale call state is dropped
+    dac zrcKind                  // 0: a read_char is the read that is waiting
+
+    // The timed wait. zrcResume comes back here after a routine that
+    // returned false, for a fresh full interval.
+zrcRead,
+    lac zrcTime                  // a plain 1..0xFFFF: zReadKey arms afresh --
+    ior [0400000]                //   with no echo; zrcTime itself never
+    lia                          //   carries the bit (zrsOn reuses it for lines)
+    farjsp(zReadKey:*)           // AC = the key, 0 = the time ran out,
+    lem                          //   negative = the connection dropped
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE // sma i: skip (fallthrough) unless it dropped
+    jmp ziNoConn                    // no-skip: the connection dropped
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) on a key
+    jmp zrcTimeout                  // no-skip: the time ran out
+    lia
+    lac zrcVar                   // the saved store variable, not zdStoreVar:
+    jda zWriteVar                //   after a resume, the decoder's block is
+    lem                          //   the interrupt routine's last instruction
+    jmp zipNext
+
+// ---- The time ran out: call the interrupt routine (both opcodes) -----
+// An ordinary call with no arguments, whose frame carries ZRV_INTERRUPT as
+// its result variable. zdpCall records zPC as the return PC -- the
+// instruction after the read, where the loop left it -- so when the
+// routine returns, zCallReturn restores the read's frame and zPC exactly as
+// they were. zrcFP is the read's frame, for the "inside the routine?" test
+// above. Then the routine runs as Z-code, from the loop.
+zrcTimeout,
+    lac zFP
+    dac zrcFP
+    lac [1]
+    dac zrcActive
+    lac zrcRoutine
+    dac zdpCallAddr              // packed; nonzero, or the read was untimed
+    cla
+    dac zdpCallArgc
+    lac [ZRV_INTERRUPT]
+    dac zdpCallResVar
+    jsp zdpCall
+    jmp zipNext
+
+// ---- The routine returned: zdpReturn jumps here, IO = its value ------
+// zCallReturn has already restored the read's frame and set zPC to the
+// instruction after the read. eem is off.
+zrcResume,
+    lac zrcActive
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if a read is waiting
+    jmp zipNext                     // no-skip: a stale frame, from a restored
+                                    //   game -- store nothing, carry on
+    cla
+    dac zrcActive                // the call is over
+    lac zrcKind
+    SKIP_NEXT_IF_AC_ZERO         // sza: skip (fallthrough) if a read_char waits
+    jmp zrsResume                   // no-skip: a line read (sread/aread) is waiting
+    lai
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if it returned true
+    jmp zrcRead                     // no-skip: false -- read on, a fresh timer
+    cli                          // true: S15's "terminating character code
+    lac zrcVar                   //   is 0" -- read_char stores 0
+    jda zWriteVar
+    lem
+    jmp zipNext
+
+// ---- Untimed: wait for a key, however long ---------------------------
+zrcUntimed,
+    lio [0400000]                // IO = no timer, and no echo
+    farjsp(zReadKey:*)           // AC = the key, or negative if it dropped
+    lem
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE // sma i: skip (fallthrough) unless it dropped
+    jmp ziNoConn                    // no-skip: the connection dropped
+    lia
+    jsp zdpStore                 // this instruction's own store byte
+    jmp zipNext
+
+// ---- An sread's interrupt routine returned: IO = its value -----------
+// The buffer addresses go back first -- a nested sread inside the routine
+// may have replaced them. The line itself survived in the story's buffer
+// (zReadLine left it terminated at the pause), so zReadLine recovers it
+// from there. Then back into zdhSread at zisGo, with zReadLine's mode in
+// IO:
+//   true  -> negative: stop. The input is erased (byte 1 = 0) and the
+//            empty line is parsed, giving 0 words; nothing is printed, so
+//            the cursor stays at the end of the typed text (S15).
+//   false -> time | 0200000: continue the line with a fresh full timer,
+//            redrawing it first if the routine printed anything.
+//
+// For V5 aread, the store variable goes back into zdStoreVar, for
+// ziParsed's zdpStore, and ziTerm is set afresh -- 13 to carry on, 0 for
+// a stop (S15's terminating character for a read the routine ended) --
+// since a nested read inside the routine may have changed both. The
+// store lands in the read's own frame, which zCallReturn has restored.
+zrsResume,
+    lac zrsText
+    dac ziTextBuf
+    lac zrsParse
+    dac ziParseBuf
+    lac zrcVar                   // (V4's ziParsed stores nothing)
+    dac zdStoreVar               // aread's own store, for ziParsed
+    lac [0d13]
+    dac ziTerm                   // a nested read may have changed it
+    lai
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if it returned true
+    jmp zrsOn                       // no-skip: false -- continue
+    dzm ziTerm                   // S15: a read the routine ended stores 0
+    lio [0400000]                // true: stop
+    jmp zisGo
+zrsOn,
+    lac zrcTime                  // 1..0xFFFF, so the flag cannot collide
+    ior [0200000]
+    lia
+    jmp zisGo
+
+// The timed reads' state. Bank 0, so zdpReturn and zdhThrow reach it
+// directly. Not reentrant; a nested timed read runs untimed so that it
+// never needs a second set.
+zrcVar, 0                        // read_char's store variable (V5: aread's too)
+zrcTime, 0                       // the time operand, tenths of a second
+zrcRoutine, 0                    // the interrupt routine, packed
+zrcFP, 0                         // zFP of the waiting read's own frame
+zrcActive, 0                     // nonzero while an interrupt call is out
+zrcKind, 0                       // 0: a read_char waits; 1: a line read waits
+zrsText, 0                       // the waiting line read's text buffer
+zrsParse, 0                      //   and parse buffer
+
+ziTerm, 0                        // aread's terminating character
+ziTextBuf, 0
+ziParseBuf, 0
+
+// ---- VAR:251 tokenise text parse [dictionary flag], V5 ----------------
+// aread's lexical analysis on its own (S15): the text buffer is in aread's
+// V5 form (count in byte 1, text from byte 2), and the parse buffer is
+// filled as aread fills it. Two optional operands, both handed to
+// zparser.ac's zTokeniseSet for this one zParseText: a user dictionary (0,
+// or absent: the story's own), which may be unsorted -- a negative entry
+// count, searched in order -- and a flag, which leaves the parse-buffer
+// slot of a word not found unchanged instead of writing 0 there (the word
+// is still counted). Fewer than two operands is a no-op, as V1-4's sread
+// with no parse buffer is: there is nothing to fill. So is a parse buffer
+// of 0: "no lexical analysis", as V5 aread treats a parse buffer of 0.
+zdhTokenise,
+    lac zdOpCount
+    sub [2]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if two or more
+    jmp zipNext                         // no-skip: no parse buffer -- a no-op
+    lac zdOp1
+    and [ZW_MASK]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if parse != 0
+    jmp zipNext                         // no-skip: parse 0 -- a no-op
+    lac zdOp2
+    and [ZW_MASK]                    // the dictionary; 0 from the cleared block if absent
+    lio zdOp3                        // the flag; likewise 0
+    farjda(zTokeniseSet:*)
+    lac zdOp1
+    and [ZW_MASK]
+    lia                              // IO = the parse buffer
+    lac zdOp0
+    and [ZW_MASK]                    // AC = the text buffer
+    crossBankjda(zParseText:*, NOEEM)   // NOEEM: zTokeniseSet left the window open
+    jmp zipNext
+
+// ---- VAR:252 encode_text zscii-text length from coded-text, V5 --------
+// Encodes `length` ZSCII characters starting at zscii-text + from as one
+// dictionary word (S13.4: 9 Z-characters, 3 words) and stores its 6 bytes
+// at coded-text. ztext.ac's zEncodeText does the encoding exactly as for
+// the dictionary -- no case fold, so uppercase text escapes (the story's
+// own lower-casing, S3.7) -- and it reads at most 9 characters whatever
+// the length. zparser.ac's zetStoreOut does the three stores. Fewer than
+// four operands is a no-op: there is nowhere to put the result.
+zdhEncodeText,
+    lac zdOpCount
+    sub [4]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if all four
+    jmp zipNext                         // no-skip: nowhere to put it -- a no-op
+    lac zdOp2
+    and [ZW_MASK]
+    dac ziEncFrom
+    lac zdOp0
+    and [ZW_MASK]
+    add ziEncFrom
+    and [ZW_MASK]                    // AC = zscii-text + from, a byte address
+    lio zdOp1                        // IO = the length
+    farjda(zEncodeText:*)
+    lac zdOp3
+    and [ZW_MASK]                    // AC = coded-text
+    crossBankjda(zetStoreOut:*, NOEEM)  // NOEEM: zEncodeText left the window open
+    lem
+    jmp zipNext
+ziEncFrom, 0
+
+#endif // ZINPUT_AC_H

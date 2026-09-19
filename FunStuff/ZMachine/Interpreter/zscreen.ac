@@ -1,0 +1,962 @@
+// ========================================================================
+// zscreen.ac -- the screen model: split_window, set_window, erase_window,
+// erase_line, set_cursor, get_cursor, set_text_style, buffer_mode,
+// print_table, set_colour, and the V3 status line.
+//
+// Bank DYNMEM_STACK_BANK (0d13), from 06000 up, #included by zmemcore.am1
+// in a second bank-13 block with its own `constants`. No origin is named:
+// am1 resumes the bank where it left off.
+//
+// Entry points: zScreenOp (farjda), zsReset, zsPutUpper, zsStatusOn,
+// zsStatusCol and zsStatusOff (farjsp).
+//
+// ---- Terminal -------------------------------------------------------
+// A VT100-class client of zsRows x zsCols (from ztext.ac's zTermQuery;
+// 24x80 if never asked). Only these sequences are sent:
+//   CUP      ESC [ r ; c H      the cursor, 1-based
+//   EL       ESC [ K, ESC [ 2 K  to the end of the line; the whole line
+//   ED       ESC [ J, ESC [ 2 J  to the end of the screen; all of it
+//   DECSTBM  ESC [ t ; b r      the scroll region -- the lower window
+//   DECSC    ESC 7              save the cursor (and its attributes)
+//   DECRC    ESC 8              restore them
+//   SGR      ESC [ n m          0 roman, 1 bold, 4 underline, 7 reverse;
+//                               30-37/39 and 40-47/49 when color is claimed
+// The lower window scrolls because a newline reaches the client as CR LF.
+//
+// ---- Windows --------------------------------------------------------
+// Upper window: rows 1..zsUpH (below the status line in V3). Its cursor
+// is tracked in zsRow/zsCol (0-based). It never scrolls (S8.7.3.1): a
+// newline on its last row, or a character past the last column, is
+// dropped.
+// Lower window: the scroll region below it. Its cursor is bottom-anchored:
+// every clear puts it bottom-left (S8.7.3.2.1's V4 rule), so it is never
+// tracked. set_window 1 saves it with DECSC, set_window 0 restores it with
+// DECRC, and every DECSTBM (which homes the cursor) is wrapped in the same
+// pair when window 0 is selected.
+// zsWin lives in ZLEAF_BANK, where ztext.ac's zpcSend reads it. Window 1's
+// characters come here through zsPutUpper: screen only, never the
+// transcript, never zosPrinted.
+//
+// ---- eem --------------------------------------------------------------
+// Every routine runs with eem on from entry to exit, and returns by
+// `jmp i` through the full return address. Bank-13 data is reached
+// directly; other banks only through full-address literals (`i [zsWin:*]`,
+// `jsp i [zPrintChar:*]`). Never dereference a bare pointer here: under
+// eem it resolves in bank 0. Same-bank subroutines are dap-style and take
+// arguments in IO or a named word, never AC (jsp loads AC).
+//
+// ---- Output ---------------------------------------------------------
+// Escape sequences and window 1's characters go out on a bare `tcc`
+// (zsOut, zsPutUpper); everything the story prints goes through
+// zPrintChar/zpcSend.
+// Plain mode (zsPlain: the client did not answer the size query): zsOut
+// sends nothing, so no escape sequence goes out; window 1 is printed as a
+// teletype would, one line per row (zsPlOpen, zsPlEnd), and not while a
+// timed read's interrupt routine is out; the size is 24x80. The cursor is
+// still tracked.
+//
+// ---- Word-wrap and the V3 status line -------------------------------
+// ztext.ac's zpcSend holds window 0's words for wrapping, so zScreenOp,
+// zsReset and zsStatusOn call zwFlush before moving the cursor. Clearing
+// the lower window and zsPlEnd reset zwCol.
+// zsTop (patched) is 1 in V3, where row 1 is the status line, and 0 in
+// V4/V5. Upper-window rows, the scroll region and the tallest split are
+// all offset by it, so the status line never scrolls.
+//
+// ---- Color ------------------------------------------------------------
+// Only when the client claimed color (zsColOk). zsFg/zsBg hold the
+// story's colors as SGR foreground numbers. zsColSend resends them after
+// every SGR 0 and every DECRC, and after set_colour; zsReset restores the
+// defaults (39/49).
+//
+// No halts: an unknown window is ignored, rows and columns are capped,
+// set_cursor in the lower window is ignored (S8.7.2.3).
+// ========================================================================
+
+#ifndef ZSCREEN_AC_H
+#define ZSCREEN_AC_H
+
+// Operands are read from the decoder's result block in bank 0.
+// On call AC has the opcode number.
+// Called via jda, nothing is returned.
+zScreenOp, 0
+    dac zsRtn                    // the return, full: jda under eem saved it
+    jsp i [zwFlush:*]            // a held word goes out first; returns eem on
+    lac i [zdOp0:0]
+    and [ZW_MASK]
+    dac zsA0
+    lac i [zdOp1:0]
+    and [ZW_MASK]
+    dac zsA1
+    lac zScreenOp
+    SKIP_NEXT_IF_DIFFERENT [0d10]    // sad: skip (fallthrough) unless split_window
+    jmp zsSplit
+    SKIP_NEXT_IF_DIFFERENT [0d11]    // sad: skip (fallthrough) unless set_window
+    jmp zsSetWin
+    // The rest are V4+ (30: V5).
+    SKIP_NEXT_IF_DIFFERENT [0d13]
+    jmp zsEraseWin
+    SKIP_NEXT_IF_DIFFERENT [0d14]
+    jmp zsEraseLine
+    SKIP_NEXT_IF_DIFFERENT [0d15]
+    jmp zsSetCur
+    SKIP_NEXT_IF_DIFFERENT [0d16]
+    jmp zsGetCur
+    SKIP_NEXT_IF_DIFFERENT [0d17]
+    jmp zsStyle
+    SKIP_NEXT_IF_DIFFERENT [0d18]
+    jmp zsBufMode
+    SKIP_NEXT_IF_DIFFERENT [0d30]
+    jmp zsPTable
+    SKIP_NEXT_IF_DIFFERENT [0d27]    // 2OP:27, V5 only
+    jmp zsColor
+zsDone,                          // every opcode ends here
+    jmp i zsRtn
+
+// VAR:11 set_window.
+// 1 homes the upper cursor, first saving the lower cursor if window 0 was selected.
+// 0 restores the lower cursor if window 1 was selected.
+// Anything else is ignored.
+zsSetWin,
+    lac zsA0
+    SKIP_NEXT_IF_DIFFERENT [1]       // sad: skip (fallthrough) unless window 1
+    jmp zswUp
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if window 0
+    jmp zsDone                          // no-skip: no such window -- ignored
+    lac i [zsWin:*]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if 1 was selected
+    jmp zsDone                          // no-skip: window 0 already
+    dzm i [zsWin:*]
+    jsp zsFontRoute                  // window 0's font decides the route
+    jsp zsRestore                    // DECRC: the lower window's cursor
+    jsp zsPlEnd                      // plain mode's line ends
+    jmp zsDone
+zswUp,
+    lac i [zsWin:*]
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if 0 was selected
+    jmp zswHome                         // no-skip: 1 already -- just home it
+    jsp zsSave                       // DECSC: the lower window's cursor
+    lac [1]
+    dac i [zsWin:*]
+    jsp zsFontRoute                  // window 1's font decides the route
+zswHome,
+    dzm zsRow
+    dzm zsCol
+    jsp zsCup
+    jmp zsDone
+
+// VAR:10 split_window.
+// n is capped at zsMaxUp. V3 also clears the new upper window (S15).
+zsSplit,
+    lac zsA0
+    add zsTop                        // V3's status line takes a row
+    sub zsRows                       // zsMaxUp + 1
+    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if it fits
+    jmp zssCap                          // no-skip: taller than the screen allows
+    lac zsA0
+    jmp zssSet
+zssCap,
+    lac zsMaxUp
+    sub zsTop
+zssSet,
+    dac zsUpH
+    jsp zsResplit
+zssTail,
+    jmp zsewUp                       // V3: erase_window 1's own path.
+                                     //   PATCHED: V4/V5 `jmp zsDone`
+
+// zsResplit -- set the scroll region for zsUpH (DECSC/DECRC around it if
+// window 0 is selected); home the upper cursor if its row is now outside.
+// Leaves the terminal on the selected window's cursor.
+// Called via jsp (dap-style).
+zsResplit,
+    dap zsrsX
+    lac zsRow
+    sub zsUpH
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if now outside
+    jmp zsrsIn                          // no-skip: the row is still in the window
+    dzm zsRow
+    dzm zsCol
+zsrsIn,
+    lac i [zsWin:*]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip the save if window 1 is selected
+    jsp zsSave                          // no-skip: window 0 -- keep its cursor
+    jsp zsRegion                     // DECSTBM, which homes the cursor
+    lac i [zsWin:*]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if window 1
+    jmp zsrsLow                         // no-skip: window 0
+    jsp zsCup
+    jmp zsrsX
+zsrsLow,
+    jsp zsRestore
+zsrsX, jmp .
+
+// VAR:13 erase_window, and the reset.
+//   0   the lower window: from its first row to the end of the screen,
+//       then its cursor to the bottom-left
+//   1   the upper window, one row at a time; its cursor goes home
+//   -1  everything: the region reset, roman, the screen cleared, the
+//       window unsplit, window 0 selected, its cursor to the bottom-left
+//   -2  the screen cleared, without the unsplit
+// Any other value is ignored. zsReset uses -1; V3's split_window uses 1.
+zsEraseWin,
+    lac zsA0
+    SKIP_NEXT_IF_DIFFERENT [ZW_MASK]     // sad: skip (fallthrough) unless -1
+    jmp zsewAll
+    SKIP_NEXT_IF_DIFFERENT [ZW_MASK-1]   // sad: skip (fallthrough) unless -2
+    jmp zsewBoth
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp zsewUp
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if window 0
+    jmp zsDone                          // no-skip: no such window -- ignored
+    lac [1]
+    dac zsCc
+    lac zsUpH
+    add [1]                          // the lower window's first row
+    dac zsCr
+    jsp zsCupAt
+    jsp zsCsi
+    lio [0d74]                       // 'J': ED 0, to the end of the screen
+    jsp zsOut
+    jsp zsLowerHome
+    jmp zsDone
+zsewUp,
+    jsp zsPlEnd                      // plain mode's line ends
+    lac i [zsWin:*]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip the save if window 1 is selected
+    jsp zsSave
+    jsp zsClrUpper
+    dzm zsRow
+    dzm zsCol
+    lac i [zsWin:*]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if window 1
+    jmp zsewRest                        // no-skip: window 0 -- back to its cursor
+    jsp zsCup
+    jmp zsDone
+zsewRest,
+    jsp zsRestore
+    jmp zsDone
+zsewAll,
+    dzm zsUpH
+    dzm i [zsWin:*]
+    jsp zsFontRoute                  // window 0's font decides the route
+    jsp zsRegion                     // the whole screen is the region again
+    lio [0d48]
+    jsp zsSgr                        // SGR 0: roman
+zsewBoth,
+    jsp zsPlEnd                      // plain mode's line ends
+    jsp zsCsi
+    lio [0d50]                       // '2'
+    jsp zsOut
+    lio [0d74]                       // 'J': ED 2, the whole screen
+    jsp zsOut
+    dzm zsRow
+    dzm zsCol
+    jsp zsLowerHome
+    jmp zsDone
+
+// zsReset -- erase_window -1 plus the default colors, at boot and every
+// restart (from zdispatch.ac's zInterpretStart).
+// No arguments, no return value.
+// Called via farjsp.
+zsReset,
+    dac zsRtn
+    jsp i [zwFlush:*]                // anything held, before the clear
+    dzm i [zwOff:*]                  // and buffering on, as at a load
+    lac [0d39]                       // the default colors, which
+    dac zsFg                         //   zsewAll's SGR 0 sends
+    dac zsBg
+    jmp zsewAll
+
+// zsLowerHome -- move the lower cursor to the bottom-left and reset the
+// wrap (zwCol, zwSoft). If window 1 is selected, save that position for
+// the next DECRC and return to the upper cursor.
+// Called via jsp (dap-style).
+zsLowerHome,
+    dap zslhX
+    dzm i [zwCol:*]
+    dzm i [zwSoft:*]
+    lac [1]
+    dac zsCc
+    lac zsRows
+    dac zsCr
+    jsp zsCupAt
+    lac i [zsWin:*]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if window 1
+    jmp zslhX                           // no-skip: window 0 -- done
+    jsp zsSave
+    jsp zsCup
+zslhX, jmp .
+
+// zsClrUpper -- EL 2 on every upper-window row; the caller restores the
+// cursor.
+// Called via jsp (dap-style).
+zsClrUpper,
+    dap zscuX
+    dzm zsT
+zscuLoop,
+    lac zsT
+    sub zsUpH
+    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) while rows remain
+    jmp zscuX
+    lac [1]
+    dac zsCc
+    lac zsT
+    add [1]
+    add zsTop                        // below V3's status line
+    dac zsCr
+    jsp zsCupAt
+    jsp zsCsi
+    lio [0d50]                       // '2'
+    jsp zsOut
+    lio [0d75]                       // 'K': EL 2, the whole line
+    jsp zsOut
+    idx zsT
+    jmp zscuLoop
+zscuX, jmp .
+
+// VAR:14 erase_line. Only 1 does anything (S15): EL 0.
+zsEraseLine,
+    lac zsA0
+    SKIP_NEXT_IF_SAME [1]            // sas: skip (fallthrough) if 1
+    jmp zsDone                          // no-skip: any other value does nothing
+    jsp zsCsi
+    lio [0d75]                       // 'K'
+    jsp zsOut
+    jmp zsDone
+
+// VAR:15 set_cursor.
+// Upper window only (S8.7.2.3). Row 0 is ignored; column 0 reads as 1;
+// both are capped to the screen. A row below the upper window grows it
+// (the implicit split ZSpec 1.1 recommends).
+zsSetCur,
+    lac i [zsWin:*]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if window 1
+    jmp zsDone                          // no-skip: the lower window -- ignored
+    lac zsA0
+    sub [1]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if row >= 1
+    jmp zsDone                          // no-skip: row 0 -- ignored
+    dac zsT                          // the row, 0-based
+    sub zsMaxUp
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if off the bottom
+    jmp zsscRowOk
+    lac zsMaxUp
+    sub [1]
+    dac zsT                          // the upper window's last possible row
+zsscRowOk,
+    lac zsA1
+    sub [1]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip the cla if column >= 1
+    cla                                 // no-skip: column 0 -- the first column
+    dac zsCc                         // the column, 0-based
+    sub zsCols
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if past the last column
+    jmp zsscColOk
+    lac zsCols
+    sub [1]
+    dac zsCc
+zsscColOk,
+    lac zsT
+    sub zsUpH
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if below the window
+    jmp zsscIn
+    lac zsT
+    add [1]
+    dac zsUpH                        // the implicit split
+    lac zsCc
+    dac zsA1                         // zsResplit's zsCup overwrites zsCc
+    jsp zsResplit
+    lac zsA1
+    dac zsCc
+zsscIn,
+    lac zsT
+    dac zsRow
+    lac zsCc
+    dac zsCol
+    jsp zsCup
+    jmp zsDone
+
+// VAR:16 get_cursor.
+// Word 0 the row, word 1 the column, 1-based (S15). Upper window: its
+// tracked cursor. Lower window: the bottom row and zwCol + 1, capped at
+// the last column.
+zsGetCur,
+    lac i [zsWin:*]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if window 1
+    jmp zsgcLow
+    lac zsRow
+    add [1]
+    dac zsT
+    lac zsCol
+    add [1]
+    jmp zsgcPut
+zsgcLow,
+    lac zsRows
+    dac zsT
+    lac i [zwCol:*]
+    sub zsCols
+    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if on the line
+    lac [-1]                            // no-skip: at or past the end -- the last column
+    add zsCols
+    add [1]
+zsgcPut,
+    dac zsCc
+    lac zsA0
+    lio zsT
+    crossBankjda(zStoreWord:0, NOEEM)    // eem is already on
+    lac zsA0
+    add [2]
+    and [ZW_MASK]
+    lio zsCc
+    crossBankjda(zStoreWord:0, NOEEM)
+    jmp zsDone
+
+// VAR:17 set_text_style.
+// 0 is roman (SGR 0). Otherwise each bit adds its attribute (S8.7.1.1):
+// 1 reverse (SGR 7), 2 bold (SGR 1), 4 italic as underline (SGR 4);
+// 8 fixed-pitch sends nothing.
+zsStyle,
+    lac zsA0
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if not roman
+    jmp zstRoman
+    and [1]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if reverse
+    jmp zst2
+    lio [0d55]                       // '7'
+    jsp zsSgr
+zst2,
+    lac zsA0
+    and [2]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if bold
+    jmp zst4
+    lio [0d49]                       // '1'
+    jsp zsSgr
+zst4,
+    lac zsA0
+    and [4]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if italic
+    jmp zsDone
+    lio [0d52]                       // '4'
+    jsp zsSgr
+    jmp zsDone
+zstRoman,
+    lio [0d48]                       // '0'
+    jsp zsSgr
+    jmp zsDone
+
+// VAR:18 buffer_mode.
+// 0 turns the lower window's word-wrap off (zwOff = 1); anything else
+// turns it on (S15).
+zsBufMode,
+    dzm i [zwOff:*]
+    lac zsA0
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip the idx unless the flag is 0
+    idx i [zwOff:*]                     // no-skip: 0 -- off
+    jmp zsDone
+
+// 2OP:27 set_colour.
+// Does nothing unless the client claimed color. Each operand (S8.3.1):
+// 0 keeps that color, 1 is the default, 2-9 black, red, green, yellow,
+// blue, magenta, cyan, white; anything else keeps it too. Then both are
+// sent (zsColSend).
+zsColor,
+    lac zsColOk
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if color was claimed
+    jmp zsDone                          // no-skip: no claim -- nothing
+    lio zsA0
+    jsp zsColDig
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip the store if it keeps the color
+    dac zsFg
+    lio zsA1
+    jsp zsColDig
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip the store if it keeps the color
+    dac zsBg
+    jsp zsColSend
+    jmp zsDone
+
+// VAR:30 print_table zscii-text width [height [skip]].
+// `width` characters per row, each through zPrintChar as print_char
+// sends it; between rows the text advances by width + skip. Height
+// defaults to 1, skip to 0 (S15).
+// Upper window: each row starts one row down at the first row's column,
+// growing the window up to zsMaxUp rows, then overwriting the last row.
+// Lower window: rows are separated by a newline.
+zsPTable,
+    lac zsA0
+    dac zsPText
+    lac i [zdOpCount:0]
+    sub [3]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if a height was given
+    jmp zsptOne
+    lac i [zdOp2:0]
+    and [ZW_MASK]
+    jmp zsptH
+zsptOne,
+    lac [1]
+zsptH,
+    dac zsPH
+    lac i [zdOp3:0]
+    and [ZW_MASK]
+    dac zsPSkip
+    lac zsCol
+    dac zsPCol
+zsptRow,
+    lac zsPH
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if rows remain
+    jmp zsDone
+    lac zsA1
+    dac zsPN
+zsptChar,
+    lac zsPN
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if characters remain
+    jmp zsptEol
+    lio zsPText
+    jsp i [zFetchByte:0]             // AC = the byte; eem stays on
+    lia
+    jsp i [zPrintChar:*]             // through the router, as print_char goes
+    lac zsPText
+    add [1]
+    and [ZW_MASK]
+    dac zsPText
+    lac zsPN
+    sub [1]
+    dac zsPN
+    jmp zsptChar
+zsptEol,
+    lac zsPText
+    add zsPSkip
+    and [ZW_MASK]
+    dac zsPText
+    lac zsPH
+    sub [1]
+    dac zsPH
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if rows remain
+    jmp zsDone                          // no-skip: the last row -- nothing after it
+    lac i [zsWin:*]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if window 1
+    jmp zsptNl
+    lac zsRow
+    add [1]
+    dac zsRow                        // the next row
+    sub zsUpH
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if below the window
+    jmp zsptAt
+    lac zsRow
+    sub zsMaxUp
+    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if it can still grow
+    jmp zsptLast                        // no-skip: the window is as tall as it gets
+    lac zsRow
+    add [1]
+    dac zsUpH                        // grow it, as set_cursor does
+    jsp zsResplit
+    jmp zsptAt
+zsptLast,
+    lac zsMaxUp
+    sub [1]
+    dac zsRow                        // the rest overwrite its last row
+zsptAt,
+    lac zsPCol
+    dac zsCol                        // the first row's column
+    jsp zsCup
+    jmp zsptRow
+zsptNl,
+    lio [0d13]
+    jsp i [zPrintChar:*]
+    jmp zsptRow
+
+// zsPutUpper -- print one window-1 character (screen only).
+// IO holds a ZSCII code, already range-checked by zPrintChar.
+// A newline moves to the next row's first column, except on the last row
+// (S8.7.3.1). A character past the last column is dropped. In font 3
+// (zsF3) the character goes through zfont3.ac's zfSend and still counts
+// one column. In plain mode it is counted, but printed only when no
+// interrupt routine is out, with a newline first if its row's line is not
+// the open one (zsPlOpen = that row + 1, or 0).
+// No return value.
+// Called via farjsp from ztext.ac's zpcSend.
+zsPutUpper,
+    dac zspuR
+    dio zspuC
+    lac zspuC
+    SKIP_NEXT_IF_DIFFERENT [0d13]    // sad: skip (fallthrough) unless a newline
+    jmp zspuNl
+    lac zsCol
+    sub zsCols
+    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if on the row
+    jmp i zspuR                         // no-skip: past the last column -- dropped
+    lac zsPlain
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) on a VT100
+    jmp zspuPlain                       // no-skip: plain mode
+zspuSend,
+    lio zspuC
+    lac i [zsF3:*]
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) unless font 3
+    jmp zspuF3                          // no-skip: font 3 -- the translator's
+    tcc
+zspuNext,
+    idx zsCol                        // one column, whatever the bytes were
+    jmp i zspuR
+zspuF3,
+    farjsp(zfSend:*)                 // IO = the code; the stand-in in AC is
+    jmp zspuNext                     //   not wanted: window 1 has no transcript
+zspuPlain,
+    lac i [zrcActive:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if a routine was called
+    jmp zspuLine                        // no-skip: none -- print it
+    lac i [zFP:0]
+    sub i [zrcFP:0]                  // both zStack indices: cannot overflow
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE // sma sza: skip (fallthrough) if that call
+                                     //   was abandoned (at or below its read)
+    jmp zspuNext                        // no-skip: the routine is out -- not printed
+zspuLine,
+    lac zsRow
+    add [1]
+    SKIP_NEXT_IF_DIFFERENT zsPlOpen  // sad: skip (fallthrough) unless this row's line is open
+    jmp zspuSend                        // no-skip: carry on along the open line
+    dac zsPlOpen                     // another row: a line of its own
+    lio [0d10]                       // LF, which telnet mode sends as CR LF
+    tcc
+    jmp zspuSend
+zspuNl,
+    lac zsRow
+    add [1]
+    dac zsT
+    sub zsUpH
+    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if a row remains
+    jmp i zspuR                         // no-skip: the last row -- it never scrolls
+    lac zsT
+    dac zsRow
+    dzm zsCol
+    jsp zsCup
+    jmp i zspuR
+
+// The V3 status line on screen row 1. Three entries, each called via
+// farjsp from zprint.ac's zPrintStatus, no arguments, no return value:
+//   zsStatusOn   flush, save the lower cursor, select window 1's path,
+//                reverse video, fill row 1 with spaces, cursor to column 2
+//   zsStatusCol  cursor to column zsCols - 24, so the 25-character score
+//                ends at the last column (nothing if the screen is narrower)
+//   zsStatusOff  roman; restore the window and its cursor
+// They share zsRtn with zScreenOp and zsReset, so none may be called while
+// another is out. In plain mode zsRow 0100 (no upper-window row) gives the
+// status line a line of its own.
+zsStatusOn,
+    dac zsRtn
+    jsp i [zwFlush:*]                // the prompt goes out on its own line first
+    lac i [zsWin:*]
+    dac zsSWin
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip the save if window 1 is selected
+    jsp zsSave                          // no-skip: window 0 -- DECSC
+    lac zsRow
+    dac zsSRow
+    lac zsCol
+    dac zsSCol
+    lac [1]
+    dac i [zsWin:*]                  // window 1's path through the router
+    lac [0100]
+    dac zsRow                        // no upper row (plain mode's line of its own)
+    lio [0d55]                       // '7'
+    jsp zsSgr                        // SGR 7, reverse -- before the CUP: zsSgr
+                                     //   uses zsCr
+    lac [1]
+    dac zsCr
+    dac zsCc
+    jsp zsCupAt                      // row 1, column 1
+    lac zsCols
+    dac zsT
+zsstFill,
+    lio [0d32]
+    jsp zsOut
+    lac zsT
+    sub [1]
+    dac zsT
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) once the row is full
+    jmp zsstFill
+    lac [2]
+    dac zsCc                         // zsCr still holds 1
+    jsp zsCupAt
+    lac [1]
+    dac zsCol
+    jmp i zsRtn
+
+zsStatusCol,
+    dac zsRtn
+    lac zsCols
+    sub [0d25]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO // spa: skip (fallthrough) if 25 columns or more
+    jmp i zsRtn                         // no-skip: too narrow -- carry on
+    dac zsCol                        // the score's column, 0-based
+    add [1]
+    dac zsCc
+    lac [1]
+    dac zsCr
+    jsp zsCupAt
+    jmp i zsRtn
+
+zsStatusOff,
+    dac zsRtn
+    lio [0d48]                       // '0'
+    jsp zsSgr                        // SGR 0, roman
+    lac zsSRow
+    dac zsRow
+    lac zsSCol
+    dac zsCol
+    jsp zsPlEnd                      // plain mode: the line ends
+    lac zsSWin
+    dac i [zsWin:*]
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if window 0 was selected
+    jmp zssfUp                          // no-skip: window 1
+    jsp zsRestore                    // DECRC: the lower window's cursor
+    jmp i zsRtn
+zssfUp,
+    jsp zsCup                        // the upper window's cursor
+    jmp i zsRtn
+
+// The emitters. Each sends one sequence.
+// All are this bank only and called via jsp (dap-style).
+zsCup,                           // CUP to the upper cursor
+    dap zscX
+    lac zsCol
+    add [1]
+    dac zsCc
+    lac zsRow
+    add [1]
+    add zsTop                    // below V3's status line
+    dac zsCr
+    jsp zsCupAt
+zscX, jmp .
+
+zsCupAt,                         // CUP: zsCr = the row, zsCc = the column, 1-based
+    dap zscaX
+    jsp zsCsi
+    lio zsCr
+    jsp zsNum
+    lio [0d59]                   // ';'
+    jsp zsOut
+    lio zsCc
+    jsp zsNum
+    lio [0d72]                   // 'H'
+    jsp zsOut
+zscaX, jmp .
+
+// zsRegion -- DECSTBM, rows zsUpH+1 (+zsTop) to zsRows, with the top
+// capped at zsMaxUp: a VT100 ignores a region under two lines, which would
+// leave the old region in force.
+zsRegion,
+    dap zsrgX
+    jsp zsCsi
+    lac zsUpH
+    add [1]
+    add zsTop                        // V3's status line is above it
+    sub zsMaxUp
+    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip the cla if the top is above zsMaxUp
+    cla                                 // no-skip: zsMaxUp or below -- zsMaxUp
+    add zsMaxUp
+    lia
+    jsp zsNum
+    lio [0d59]                   // ';'
+    jsp zsOut
+    lio zsRows
+    jsp zsNum
+    lio [0d114]                  // 'r'
+    jsp zsOut
+zsrgX, jmp .
+
+zsSgr,                           // SGR: IO = the parameter, as its digit
+    dap zsgX
+    dio zsCr                     // zsCsi's own lio overwrites IO
+    jsp zsCsi
+    lio zsCr
+    jsp zsOut
+    lio [0d109]                  // 'm'
+    jsp zsOut
+    lac zsCr
+    SKIP_NEXT_IF_DIFFERENT [0d48]    // sad: skip unless SGR 0, which
+    jsp zsColSend                    //   reset the colors -- send them again
+zsgX, jmp .
+
+zsSave,                          // DECSC
+    dap zssvX
+    lio [033]
+    jsp zsOut
+    lio [0d55]                   // '7'
+    jsp zsOut
+zssvX, jmp .
+
+zsRestore,                       // DECRC
+    dap zsrtX
+    lio [033]
+    jsp zsOut
+    lio [0d56]                   // '8'
+    jsp zsOut
+    jsp zsColSend                // DECRC restored DECSC's colors, not
+                                 //   the current ones
+zsrtX, jmp .
+
+// zsColSend -- send ESC [ zsFg ; zsBg+10 m if the client claimed color.
+zsColSend,
+    dap zsclX
+    lac zsColOk
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if color was claimed
+    jmp zsclX
+    jsp zsCsi
+    lio zsFg
+    jsp zsNum
+    lio [0d59]                   // ';'
+    jsp zsOut
+    lac zsBg
+    add [0d10]                   // 40-47 or 49
+    lia
+    jsp zsNum
+    lio [0d109]                  // 'm'
+    jsp zsOut
+zsclX, jmp .
+
+// zsColDig -- IO = a set_colour operand. Returns in AC its SGR
+// foreground number: 39 for 1, 30-37 for 2-9, else 0 (keep the color).
+zsColDig,
+    dap zscdX
+    lai                              // AC = the operand
+    sub [0d10]
+    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if 0-9
+    lac [-0d10]                         // no-skip: 10 and up -- read as 0 below
+    add [0d10]                       // -10 + 10 leaves plus zero
+    SKIP_NEXT_IF_DIFFERENT [1]       // sad: skip unless 1
+    lac [0d11]                          // no-skip: the default, 11 + 28 = 39
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip the add on 0 -- keep
+    add [0d28]                       // 2-9: 30-37
+zscdX, jmp .
+
+zsCsi,                           // ESC [
+    dap zscsX
+    lio [033]
+    jsp zsOut
+    lio [0d91]                   // '['
+    jsp zsOut
+zscsX, jmp .
+
+// zsNum -- IO = 1..255, sent in decimal, no leading zero. The hundreds
+// and the tens are each zsDigit's; the ones follow.
+zsNum,
+    dap zsnX
+    dio zsOnes                       // the value; what is left of it, below
+    dzm zsLead
+    lio [0d100]
+    jsp zsDigit
+    lio [0d10]
+    jsp zsDigit
+    lac zsOnes
+    add [0d48]                       // '0'
+    lia
+    jsp zsOut
+zsnX, jmp .
+
+// zsDigit -- IO = 100 or 10. Divides zsOnes by it by repeated subtraction
+// (leaving the remainder) and sends the quotient digit unless it is a
+// leading zero.
+zsDigit,
+    dap zsdX
+    dio zsPow
+    dzm zsTens
+zsdLoop,
+    lac zsOnes
+    sub zsPow
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if one came off
+    jmp zsdSend
+    dac zsOnes
+    idx zsTens
+    idx zsLead                       // a digit that is not a leading zero
+    jmp zsdLoop
+zsdSend,
+    lac zsLead
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) past the leading zeros
+    jmp zsdX
+    lac zsTens
+    add [0d48]                       // '0'
+    lia
+    jsp zsOut
+zsdX, jmp .
+
+// zsOut -- IO = one byte, sent with `tcc`; nothing in plain mode.
+zsOut,
+    dap zsoX
+    lac zsPlain
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip the tcc in plain mode
+    tcc                                 // no-skip: a VT100 -- send it
+zsoX, jmp .
+
+// zsFontRoute -- set zsF3 (ztext.ac) to 1 if the selected window's font
+// (zdispatch.ac's zdsfFont0/1) is 3, else 0.
+// Called via jsp (dap-style).
+zsFontRoute,
+    dap zsfrX
+    lac i [zsWin:*]
+    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if window 0
+    jmp zsfrUp
+    lac i [zdsfFont0:0]
+    jmp zsfrSet
+zsfrUp,
+    lac i [zdsfFont1:0]
+zsfrSet,
+    dzm i [zsF3:*]
+    SKIP_NEXT_IF_DIFFERENT [3]       // sad: skip (fallthrough) unless font 3
+    idx i [zsF3:*]                      // no-skip: font 3 -- the route is 1
+zsfrX, jmp .
+
+// zsPlEnd -- in plain mode, end the open window-1 line with a newline.
+// Called via jsp (dap-style).
+zsPlEnd,
+    dap zspeX
+    lac zsPlOpen
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if a line is open
+    jmp zspeX
+    dzm zsPlOpen
+    lio [0d10]                       // LF, which telnet mode sends as CR LF
+    tcc
+    dzm i [zwCol:*]                  // the lower window's text starts a line
+zspeX, jmp .
+
+// ---- State ----------------------------------------------------------------
+zsRtn, 0                         // zScreenOp's and zsReset's return
+zspuR, 0                         // zsPutUpper's return, and its character
+zspuC, 0
+zsA0, 0                          // operands 0 and 1, masked
+zsA1, 0
+zsUpH, 0                         // the upper window's height in rows
+zsRow, 0                         // the upper window's cursor, 0-based
+zsCol, 0
+zsT, 0                           // scratch
+zsCr, 0                          // a CUP's row, an SGR's digit
+zsCc, 0                          // a CUP's column
+zsTens, 0                        // zsNum's digit count, value, the power
+zsOnes, 0                        //   it takes off, and "a digit was sent"
+zsPow, 0
+zsLead, 0
+zsPText, 0                       // print_table: the text, rows left, the
+zsPH, 0                          //   skip, the first row's column, and
+zsPSkip, 0                       //   characters left in this row
+zsPCol, 0
+zsPN, 0
+zsSWin, 0                        // the status line's saved window and
+zsSRow, 0                        //   upper cursor
+zsSCol, 0
+zsTop, 1                         // rows above the upper window -- 1 in V3,
+                                 //   the status line. PATCHED: V4/V5 0
+
+// The terminal, written by ztext.ac's zTermQuery on each connection; the
+// initial values apply when it never runs (test entries).
+zsRows, 0d24                     // the screen's rows (story header 0x20)
+zsCols, 0d80                     // and columns (0x21)
+zsMaxUp, 0d23                    // the tallest upper window, zsRows - 1: the
+                                 //   lower window always keeps one line
+zsPlain, 0                       // 1: plain output (see the file header)
+zsPlOpen, 0                      // plain mode: the open line's row + 1, or 0
+zsColOk, 0                       // nonzero: the client claimed color
+                                 //   (zTermQuery writes it with the rest)
+
+// The story's colors, as SGR foreground numbers; zsReset sets both to 39.
+zsFg, 0d39
+zsBg, 0d39
+
+#endif // ZSCREEN_AC_H

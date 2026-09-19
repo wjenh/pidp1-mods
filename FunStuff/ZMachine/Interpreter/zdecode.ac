@@ -1,0 +1,899 @@
+// zdecode.ac -- the Z-machine instruction decoder: instruction form,
+// operand count, types and values, store byte, branch data and the two
+// text-bearing opcodes (S4), plus the version-legality rule (S14.2).
+// Nothing here executes an opcode or decodes an inline string.
+// #include-only fragment, assembled into zmemcore.am1's bank 0.
+//
+// Entry point: zInstDecode, called by zdispatch.ac's zipLoop.
+//
+// Depends on skipmacros.ah, memory.ah, zFetchByte/zFetchWord
+// (zmemcore.am1), zReadVar (zstack.ac), and the opcode tables in
+// zdispatch.ac, which is assembled after this file.
+//
+// ---- Version parameterization ----------------------------------------
+// The story's version is fixed at boot, not at assembly: one image decodes
+// V3, V4 and V5. Every version-dependent decision below is a word
+// zBootInit patches for the story's version from zpatch.ac's table -- an
+// opcode's table word (the zdA* and zdpE* labels in zdispatch.ac) or the
+// jump that takes the EXT form (zidExtJmp) -- so no code here tests the
+// version. What a V3 or V4 session pays for the V5 code is the byte-190
+// test in front of zidExtJmp, run on every instruction and never taken
+// (and, for a VAR-form instruction, the ZA_DBL test).
+//
+//   - the extended (EXT) form and its opcode table are in the image for
+//     every session, but only a V5 session reaches them: below V5
+//     zidExtJmp is a `nop`, and byte 190 decodes as the illegal 0OP:14;
+//   - the second operand-types byte (S4.4.3.1's call_vs2/call_vn2) is
+//     driven by a per-opcode ZA_DBL attribute bit, and only those two
+//     opcodes' V4/V5 attributes carry it;
+//   - the opcode tables carry patched entries for the opcodes that keep
+//     their number but change decode shape between versions (save,
+//     restore, pop/catch, not/call_1n, sread/aread) -- getting one of
+//     those wrong mis-computes the next instruction's address.
+//
+// ---- Tables, one pass, the stream ------------------------------------
+// Each class has one opcode table, in zdispatch.ac beside the handler
+// names, whose word is the opcode's attribute in the top six bits and its
+// handler's bank-0 address in the low twelve (the ZA_* and ZAT_* values
+// below). Legal is the sign bit, so the legality test is one `sma` on the
+// word as it is loaded. The word is left in zdEntry, and zipLoop
+// dispatches on it with a `dap`.
+//
+// The operands are decoded in one pass: the long and short forms test
+// their bits and fetch directly, and the VAR and EXT forms rotate the
+// types byte into the top of zdTW and walk it two bits at a time
+// (zidOpLoop). When the whole instruction is resident its bytes are read
+// as a stream (zdFetch1's header).
+//
+// The result block at the bottom is built to the V5 ceiling in every
+// session -- 8 operand slots even for a V3 story, and a class code for
+// EXT -- because every opcode handler is written against it.
+//
+// ---- Not reentrant ---------------------------------------------------
+// zInstDecode keeps its running fetch pointer (zdPC) and a few working
+// words at file scope rather than in `local` storage, because the
+// internal helpers below share them. One instruction is decoded at a time.
+
+#ifndef ZDECODE_AC_H
+#define ZDECODE_AC_H
+
+#include <memory.ah>
+#include <AIDS/skipmacros.ah>
+
+// ---- Operand-count class codes (zdOpClass) ----------------------------
+// ZC_EXT is defined unconditionally so the class numbering never shifts;
+// only a V5 session can ever store it.
+#define ZC_0OP 0
+#define ZC_1OP 1
+#define ZC_2OP 2
+#define ZC_VAR 3
+#define ZC_EXT 4
+
+// ---- Operand type codes, S4.2's own numbering -------------------------
+// Not stored anywhere; these are names for the two-bit fields zidOpLoop
+// reads.
+#define ZT_LARGE 0
+#define ZT_SMALL 1
+#define ZT_VAR   2
+#define ZT_OMIT  3
+
+// ---- Branch resolution kinds (zdBranchKind), S4.7.1/S4.7.2 ------------
+#define ZDB_ADDR   0
+#define ZDB_RFALSE 1
+#define ZDB_RTRUE  2
+
+// ---- Attribute bits, in an opcode table word -------------------------
+// The table word is `attribute | handler`: the handler's bank-0 address is
+// the low twelve bits, and these are the bits above it. LEGAL is the sign
+// bit, so a table word is negative exactly when the opcode is legal for
+// this story's version. `dap` takes only the low twelve bits, so zipLoop
+// dispatches on the whole word.
+#define ZA_LEGAL  0400000
+#define ZA_STORE  010000
+#define ZA_BRANCH 020000
+#define ZA_TEXT   040000
+#define ZA_DBL    0100000
+
+// Named combinations, so the tables read as data rather than as
+// arithmetic. An entry is written `ZAT_B+zdhJe`: `+` rather than am1's
+// space-is-or, so no entry depends on that rule.
+#define ZAT_NONE 0            // not legal for this story version -- halt
+#define ZAT_X    0400000      // legal; no store, branch or text
+#define ZAT_S    0410000      // legal + store byte
+#define ZAT_B    0420000      // legal + branch data
+#define ZAT_SB   0430000      // legal + store byte + branch data
+#define ZAT_T    0440000      // legal + inline text (print / print_ret)
+#define ZAT_XD   0500000      // legal + second operand-types byte
+#define ZAT_SD   0510000      // legal + store byte + second types byte
+
+// zidIllegal's stop reason, stored only when boot is serving (see
+// zstack.ac's ZSTOP_STACK; it belongs to zdispatch.ac's ZSTOP_* list).
+#define ZSTOP_ILLEGAL 0d14     // an opcode not legal in this version (S14.2)
+
+// The opcode tables are in zdispatch.ac: zdpTab2OP, zdpTab1OP, zdpTab0OP,
+// zdpTabVAR and zdpTabEXT, one word per opcode, each indexed by the opcode
+// number within its class. Every entry whose legality or shape depends on
+// the story version is marked there with its S14 version column.
+
+// zdFetch1 -- fetch the next instruction byte. Internal.
+// No arguments.
+// Returns the byte at zdPC in AC and advances zdPC by 1. Every instruction
+// byte this file reads goes through here or zdFetch2. Returns with the
+// extend window closed: everything that follows a fetch does plain bank-0
+// indirect work.
+//
+// zdf1Mode, set by zInstDecode, selects one of two paths:
+//   - zdf1Stream, when the whole instruction is resident: the bytes are
+//     read in order with no routing. zdSPtr is the 16-bit pointer to the
+//     word holding the next byte; zdSOdd is 1 when that byte is the low
+//     half of zdSWord, already loaded, and 0 when it is the high half of a
+//     word not yet read. zdPC is not kept while streaming; zdSync
+//     recomputes it after the last byte.
+//   - zdf1Route, which keeps zdPC. A zdPC below zhResidentTop is read in
+//     place with zmemcore.am1's arithmetic (zfResident's add); anything
+//     else goes through zFetchByte. One `rcr 1s` after a `cli` gives both
+//     the word index (AC, sign clear) and zdPC's low bit (IO's sign). The
+//     routing is zFetchContainingWord's, in its order: the sign bit first
+//     (a V4/V5 address at or above 0x20000 is always pageable, and tested
+//     after the compare it could look resident), then `zdPC -
+//     zhResidentTop`, resident only if negative. An address equal to the
+//     top gives +0 and goes slow. Before boot zhResidentTop is 0, so every
+//     fetch goes slow.
+// Called via jsp.
+zdFetch1,
+    local rtn
+    dap rtn
+zdf1Mode,
+    jmp zdf1Route              // PATCHED at each decode's entry: zdf1Route
+                               //   or zdf1Stream (zInstDecode)
+zdf1Stream,
+    lac zdSOdd
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if the high half
+    jmp zdf1SOdd                  // no-skip: the held word's low half
+    idx zdSOdd                 // 0 -> 1: after this, the low half is next
+    eem
+    lac i zdSPtr               // the word holding this byte and the next
+    lem
+    dac zdSWord
+    sar 8s
+    and [0377]
+    jmp rtn
+zdf1SOdd,
+    dzm zdSOdd
+    idx zdSPtr                 // the next byte is the next word's high half
+    lac zdSWord
+    and [0377]
+    jmp rtn
+
+zdf1Route,
+    lac zdPC
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE       // sma i: skip (fallthrough) if the sign is clear
+    jmp zdf1Slow                          // no-skip: 0400000 or above -- never resident
+    sub zhResidentTop
+    SKIP_NEXT_IF_AC_NEGATIVE           // sma: skip (fallthrough) if below the top
+    jmp zdf1Slow                          // no-skip: at or above the top -- the cache
+    cli
+    lac zdPC
+    rcr 1s                             // AC = the word index, sign clear (IO's low
+                                       //   bit was 0); IO's sign = zdPC's low bit
+    add [DYNMEM_BANK1*010000]          // + bank 1's base: the 16-bit pointer
+    dac zdFptr
+    idx zdPC                           // positive and below the top: no wrap
+    spi                                // skip (fallthrough) if IO positive: zdPC was even
+    jmp zdf1Odd                           // no-skip: odd -- the low byte
+    eem                                // even: the high byte
+    lac i zdFptr                       // the containing word
+    lem
+    sar 8s
+    jmp zdf1Byte
+zdf1Odd,
+    eem
+    lac i zdFptr                       // the containing word
+    lem
+zdf1Byte,
+    and [0377]
+    jmp rtn
+
+zdf1Slow,
+    lio zdPC
+    jsp zFetchByte
+    lem
+    dac zdFtmp
+    lac zdPC
+    add [1]
+    dac zdPC
+    lac zdFtmp
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+// zdFetch2 -- fetch the next instruction word. Internal.
+// No arguments.
+// Returns the 2-byte big-endian word at zdPC (S4.2.1) in AC and advances
+// zdPC by 2. Returns with the extend window closed, as zdFetch1.
+//
+// Routed as zdFetch1 routes. A zdPC that is not resident goes through
+// zFetchWord, which handles either parity. At an even resident zdPC the
+// containing word is the Z-word (zloader.h's packing), read in place;
+// zhResidentTop is even, so zdPC + 1 is below it too. At an odd resident
+// zdPC the two bytes lie in two words, so they are two zdFetch1 calls, each
+// routed by itself.
+//
+// On the stream, at an even position the word at zdSPtr is the Z-word; at
+// an odd one the high byte is the held word's low half and the low byte is
+// the next word's high half, which is then held.
+// Called via jsp.
+zdFetch2,
+    local rtn
+    dap rtn
+zdf2Mode,
+    jmp zdf2Route              // PATCHED at each decode's entry: zdf2Route
+                               //   or zdf2Stream (zInstDecode)
+zdf2Stream,
+    lac zdSOdd
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if even
+    jmp zdf2SOdd                  // no-skip: odd -- across two words
+    eem
+    lio i zdSPtr               // the word itself
+    lem
+    idx zdSPtr                 // still even: the next word's high half
+    lai
+    jmp rtn
+zdf2SOdd,
+    lac zdSWord
+    and [0377]                 // the held low half is the high byte
+    sal 8s                     // at most 0377, so no sign to shift
+    dac zdF2hi
+    idx zdSPtr
+    eem
+    lac i zdSPtr               // the next word: its high half is the low
+    lem                        //   byte, and its low half is next (still odd)
+    dac zdSWord
+    sar 8s
+    and [0377]
+    ior zdF2hi
+    jmp rtn
+
+zdf2Route,
+    lac zdPC
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE       // sma i: skip (fallthrough) if the sign is clear
+    jmp zdf2Slow                          // no-skip: 0400000 or above -- never resident
+    sub zhResidentTop
+    SKIP_NEXT_IF_AC_NEGATIVE           // sma: skip (fallthrough) if below the top
+    jmp zdf2Slow                          // no-skip: at or above the top -- the cache
+    cli
+    lac zdPC
+    rcr 1s                             // AC = the word index; IO's sign = the low bit
+    spi                                // skip (fallthrough) if IO positive: zdPC is even
+    jmp zdf2Odd                           // no-skip: odd -- two bytes
+    add [DYNMEM_BANK1*010000]
+    dac zdFptr
+    idx zdPC
+    idx zdPC
+    eem
+    lac i zdFptr                       // the word itself
+    lem
+    jmp rtn
+
+zdf2Odd,
+    jsp zdFetch1                       // the high byte; zdPC + 1
+    sal 8s                             // at most 0377, so no sign to shift
+    dac zdF2hi                         //   (zdf1Slow uses zdFtmp)
+    jsp zdFetch1                       // the low byte; zdPC + 1
+    ior zdF2hi
+    jmp rtn
+
+zdf2Slow,
+    lio zdPC
+    jsp zFetchWord
+    lem
+    dac zdFtmp
+    lac zdPC
+    add [2]
+    dac zdPC
+    lac zdFtmp
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+// zdSync -- make zdPC the address of the next byte the decoder would
+// read, from the stream's pointer and parity. Internal.
+// Used once, after the last byte, before anything reads zdPC. Routed
+// decodes keep zdPC themselves, so their mode is zdsDone, which returns
+// at once. The word index is below 11 banks' worth, so doubling it cannot
+// reach the sign.
+// No arguments, no return value; AC is not preserved.
+// Called via jsp.
+zdSync,
+    local rtn
+    dap rtn
+zdsMode,
+    jmp zdsDone                // PATCHED at each decode's entry: zdsDone
+                               //   or zdsFast (zInstDecode)
+zdsFast,
+    lac zdSPtr
+    sub [DYNMEM_BANK1*010000]  // the word index
+    sal 1s                     // its first byte's address
+    add zdSOdd                 // + 1 if the low half is next
+    dac zdPC
+zdsDone,
+rtn, jmp 0
+    endlocal
+
+// zInstDecode -- decode one instruction.
+// IO holds the Z-machine byte address of the instruction.
+// Returns zdNextPC in AC: the byte address the next instruction starts
+// at -- except for print/print_ret, where AC is 0 and zdHasText is set.
+// Everything else is delivered through the result block at the bottom of
+// this file, and zdEntry:
+//   zdOpClass       ZC_0OP / ZC_1OP / ZC_2OP / ZC_VAR / ZC_EXT
+//   zdOpNum         opcode number within that class
+//   zdOpCount       number of operands actually present, 0-8
+//   zdOp0..zdOp7    their values, already resolved: a Variable-typed
+//                   operand holds what zReadVar returned, not the
+//                   variable number (S4.5.2's left-to-right evaluation
+//                   order is honored, which matters when the stack
+//                   appears more than once -- the spec's own
+//                   `sub sp sp -> i` example); 0 past zdOpCount
+//   zdHasStore      1 if a store byte was present (S4.6)
+//   zdStoreVar      that byte -- captured only, never written to
+//   zdHasBranch     1 if branch data was present (S4.7)
+//   zdBranchOnTrue  1 = branch when the test is true, 0 = when false
+//   zdBranchKind    ZDB_ADDR / ZDB_RFALSE / ZDB_RTRUE  (S4.7.1)
+//   zdBranchTarget  the resolved target byte address, when ZDB_ADDR
+//   zdHasText       1 for print / print_ret (S4.8)
+//   zdTextAddr      where that inline string starts
+//   zdNextPC        next instruction's byte address, or 0 when
+//                   zdHasText is set -- resolving that one requires
+//                   walking the string, which is ztext.ac's job
+// And, outside the block:
+//   zdEntry         the opcode's table word, `attribute | handler`, which
+//                   zipLoop dispatches on
+//
+// Halts (S14.2; under boot, ends the session) if the opcode is not legal
+// for the story's version (its table word, patched at boot, has the sign
+// bit clear): an opcode with no attribute leaves the decoder unable to
+// find the next instruction.
+// Returns through farrtn.
+// Called via jsp.
+zInstDecode,
+    local rtn
+    dac rtn                    // FULL-word capture -- cross-bank safe
+    lai
+    dac zdPC
+    lem                        // a cross-bank caller arrives with eem on;
+                               //   everything below is bank-0 indirect
+
+    // ---- the result block's defaults, stored directly ------------------
+    // Three of the block's words are written by every decode that returns
+    // -- zdOpClass and zdOpNum by each form, zdNextPC by both exits -- so
+    // only the other 17 need a zero. zidFail halts or ends the session, so
+    // no consumer reads the block after it.
+    //
+    // Adding a field to the block means adding its default here.
+    dzm zdOpCount              // the 0OP form relies on it; the short form
+                               //   steps it to 1 with idx
+    dzm zdOp0                  // no consumer is audited for reading past
+    dzm zdOp1                  //   zdOpCount, so all eight are zeroed
+    dzm zdOp2
+    dzm zdOp3
+    dzm zdOp4
+    dzm zdOp5
+    dzm zdOp6
+    dzm zdOp7
+    dzm zdHasStore
+    dzm zdStoreVar
+    dzm zdHasBranch
+    dzm zdBranchOnTrue
+    dzm zdBranchKind
+    dzm zdBranchTarget
+    dzm zdHasText
+    dzm zdTextAddr
+
+    // ---- the stream, if the whole instruction is resident --------------
+    // The longest instruction is 20 bytes (call_vs2 with eight large
+    // operands and a store byte), so if zdPC + 24 is below zhResidentTop
+    // every byte is resident and the stream reads them in order with no
+    // routing (zdFetch1's header). The test is zdFetch1's, in its order:
+    // the sign bit first (an address at or above 0x20000 is never
+    // resident), then `zdPC - top`, which must be negative, then + 24,
+    // which must still be negative. Neither step can overflow: both
+    // operands of the `sub` are non-negative, and the `add` is to a
+    // negative number. An exact -24 + 24 gives +0, which goes routed.
+    // Before boot the top is 0, so every decode goes routed. Inline text is
+    // not read here, so it does not count.
+    lac zdPC
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE       // sma i: skip (fallthrough) if the sign is clear
+    jmp zidRouted                         // no-skip: 0400000 or above -- never resident
+    sub zhResidentTop
+    SKIP_NEXT_IF_AC_NEGATIVE           // sma: skip (fallthrough) if below the top
+    jmp zidRouted                         // no-skip: at or above the top
+    add [0d24]
+    SKIP_NEXT_IF_AC_NEGATIVE           // sma: skip (fallthrough) if 24 more are too
+    jmp zidRouted                         // no-skip: the instruction may cross the top
+    lac zdMS1
+    dac zdf1Mode
+    lac zdMS2
+    dac zdf2Mode
+    lac zdMSS
+    dac zdsMode
+    cli
+    lac zdPC
+    rcr 1s                             // AC = the word index, sign clear; IO's
+                                       //   sign = zdPC's low bit (zdFetch1)
+    add [DYNMEM_BANK1*010000]
+    dac zdSPtr
+    dzm zdSOdd
+    spi i                              // skip (fallthrough) if IO negative: zdPC is odd
+    jmp zidOpcode                         // no-skip: even -- nothing held yet
+    eem
+    lac i zdSPtr                       // odd: hold the word, whose low half
+    lem                                //   is the opcode byte
+    dac zdSWord
+    idx zdSOdd
+    jmp zidOpcode
+zidRouted,
+    lac zdMR1
+    dac zdf1Mode
+    lac zdMR2
+    dac zdf2Mode
+    lac zdMRS
+    dac zdsMode
+
+    // ---- opcode byte, and the form it selects (S4.3) ------------------
+zidOpcode,
+    jsp zdFetch1
+    dac zdB0
+
+    // S4.3: "if the opcode is 190 and the version is 5 or later, the
+    // form is extended". Below V5, 190 is an ordinary (and illegal) 0OP
+    // opcode byte, so the jump is patched to a `nop` (zpatch.ac).
+    SKIP_NEXT_IF_DIFFERENT [0d190]   // sad: skip if this is not 190
+zidExtJmp,
+    nop                                 // PATCHED: V5 `jmp zidExtForm`
+    lac zdB0
+    and [0300]                 // top two bits
+    SKIP_NEXT_IF_DIFFERENT [0300]    // sad: skip if they are not $$11
+    jmp zidVarForm                      // no-skip: $$11 -> variable form
+    SKIP_NEXT_IF_DIFFERENT [0200]    // sad (AC survives sad) : not $$10?
+    jmp zidShortForm                    // no-skip: $$10 -> short form
+                               // falls through: long form (S4.3.2)
+
+// ---- long form: always 2OP; types from bits 6 and 5 (S4.4.2) ---------
+// A clear bit is a small constant, a set one a variable. The two operands
+// are fetched here directly, first then second (S4.5.2).
+    lac [ZC_2OP]
+    dac zdOpClass
+    lac zdB0
+    and [037]                  // bottom 5 bits
+    dac zdOpNum
+    add zdT2OP                 // this opcode's table word
+    dac zdPtr
+    lac i zdPtr
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if legal (the sign)
+    jmp zidFail                   // no-skip: not legal for this version
+    dac zdEntry
+    lac [2]
+    dac zdOpCount
+    lac zdB0
+    and [0100]                 // bit 6 -> the first operand's type
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if the bit is 0
+    jmp zidL1Var                  // no-skip: bit set -> Variable
+    jsp zdFetch1               // a small constant
+    jmp zidL1Set
+zidL1Var,
+    jsp zdFetch1               // the variable NUMBER (S4.2.2)
+    lia
+    jsp zReadVar               // resolved now, in sequence
+    lem                        // zReadVar returns with eem on
+zidL1Set,
+    dac zdOp0
+    lac zdB0
+    and [040]                  // bit 5 -> the second operand's type
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zidL2Var                  // no-skip: bit set -> Variable
+    jsp zdFetch1
+    jmp zidL2Set
+zidL2Var,
+    jsp zdFetch1
+    lia
+    jsp zReadVar
+    lem
+zidL2Set,
+    dac zdOp1
+    jmp zidOpsDone
+
+// ---- short form: 0OP or 1OP, type in bits 4-5 (S4.3.1, S4.4.1) -------
+zidShortForm,
+    lac zdB0
+    and [060]                  // bits 4-5
+    SKIP_NEXT_IF_DIFFERENT [060]     // sad: skip if they are not $$11
+    jmp zid0OPForm                      // no-skip: $$11 -> 0OP
+    lac [ZC_1OP]
+    dac zdOpClass
+    lac zdB0
+    and [017]                  // bottom 4 bits
+    dac zdOpNum
+    add zdT1OP
+    dac zdPtr
+    lac i zdPtr
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if legal
+    jmp zidFail                   // no-skip: not legal for this version
+    dac zdEntry
+    idx zdOpCount              // 0 (the default) -> 1
+    lac zdB0
+    and [060]                  // the sole operand's type (S4.2)
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if not $$00
+    jmp zidS1Large                // no-skip: $$00 -> large constant
+    SKIP_NEXT_IF_DIFFERENT [020]     // sad: skip if not $$01
+    jmp zidS1Small                      // no-skip: $$01 -> small constant
+    jsp zdFetch1               // $$10 -> Variable
+    lia
+    jsp zReadVar
+    lem
+    jmp zidS1Set
+zidS1Large,
+    jsp zdFetch2
+    jmp zidS1Set
+zidS1Small,
+    jsp zdFetch1
+zidS1Set,
+    dac zdOp0
+    jmp zidOpsDone
+
+zid0OPForm,
+    lac [ZC_0OP]
+    dac zdOpClass
+    lac zdB0
+    and [017]
+    dac zdOpNum
+    add zdT0OP
+    dac zdPtr
+    lac i zdPtr
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if legal
+    jmp zidFail                   // no-skip: not legal for this version
+    dac zdEntry
+    jmp zidOpsDone             // zdOpCount stays 0 from the default
+
+// ---- variable form: 2OP or VAR by bit 5 (S4.3.3) ---------------------
+zidVarForm,
+    lac zdB0
+    and [037]
+    dac zdOpNum
+    lac zdB0
+    and [040]                  // bit 5
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zidVarIsVar               // no-skip: bit set -> VAR
+    lac [ZC_2OP]
+    dac zdOpClass
+    lac zdOpNum
+    add zdT2OP
+    jmp zidVarLook
+zidVarIsVar,
+    lac [ZC_VAR]
+    dac zdOpClass
+    lac zdOpNum
+    add zdTVAR
+zidVarLook,                    // AC = the table word's address
+    dac zdPtr
+    lac i zdPtr
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if legal
+    jmp zidFail                   // no-skip: not legal for this version
+    jmp zidTypes
+
+// ---- extended form: VAR count, opcode number in a second byte (S4.3.4)
+// Reached only through zidExtJmp, which only a V5 session patches in.
+// S14.2.1: EXT:29 to EXT:255 are to be ignored, not halted on. They still
+// have to be decoded (operand types byte and operands) so the next PC is
+// known, so "ignore" means the word zdEntIgnore, ZAT_X+zdhNop -- legal,
+// no store, no branch, no text, and a handler that does nothing. 29 is
+// tested for separately, before the subtract, as zReadVar's local-number
+// test is.
+zidExtForm,
+    lac [ZC_EXT]
+    dac zdOpClass
+    jsp zdFetch1
+    dac zdOpNum
+    SKIP_NEXT_IF_DIFFERENT [0d29]     // sad: skip if opNum != 29
+    jmp zidExtIgnore                     // no-skip: exactly 29 -> ignore
+    sub [0d29]
+    SKIP_NEXT_IF_AC_NEGATIVE          // sma: skip if opNum < 29
+    jmp zidExtIgnore                     // no-skip: opNum > 29 -> ignore
+    lac zdOpNum
+    add zdTEXT
+    jmp zidVarLook
+zidExtIgnore,
+    lac zdEntIgnore
+
+// ---- the operand-types byte, or two (S4.4.3, S4.4.3.1) ----------------
+// AC = the opcode's table word, known legal. The byte's four two-bit
+// fields go to bits 17-10 of zdTW, first field on top, with ones below
+// them; S4.4.3.1's second byte, for the ZA_DBL opcodes, is fetched now,
+// BEFORE any operand, as the bytes are laid out, and its fields go to
+// bits 9-2, with ones below them. So the field after the last one read is
+// always 11, omitted, which is what ends zidOpLoop after 4 or 8.
+zidTypes,
+    dac zdEntry
+    jsp zdFetch1               // the operand-types byte
+    ral 9s
+    ral 1s                     // at most 0377, so bits 7-0 go to 17-10
+    dac zdTW
+    lac zdEntry
+    and [ZA_DBL]
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if a second byte
+    jmp zidOneTypes               // no-skip: a single types byte
+    jsp zdFetch1               // the second types byte
+    ral 2s                     // bits 7-0 to 9-2
+    ior [3]
+    ior zdTW
+    jmp zidTypesSet
+zidOneTypes,
+    lac zdTW
+    ior [01777]
+zidTypesSet,
+    dac zdTW
+    lac [zdOp0]
+    dac zdOpPtr
+
+    // ---- operand values, strictly left to right (S4.5, S4.5.2) -------
+    // One pass. The top two bits of zdTW are the next field: 00 large,
+    // 01 small, 10 variable, 11 omitted -- and S4.4.3 says once one is
+    // omitted all the rest are, so 11 ends the pass (a present field
+    // after an omitted one is ignored). Two sign tests
+    // with a `ral 1s` between read the field, and a second `ral 1s`
+    // brings up the next. zReadVar is called INSIDE the pass, so two
+    // stack-typed operands pop in the order written (the spec's
+    // `sub sp sp -> i`). zdOpPtr steps through zdOp0-zdOp7; the ones below
+    // the fields end the pass after 8 at most.
+zidOpLoop,
+    lac zdTW
+    SKIP_NEXT_IF_AC_NEGATIVE          // sma: skip (fallthrough) if $$1x
+    jmp zidOpConst                       // no-skip: $$0x -- a constant
+    ral 1s
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE      // sma i: skip (fallthrough) if $$10
+    jmp zidOpEnd                         // no-skip: $$11 -- omitted, the end
+    ral 1s
+    dac zdTW
+    jsp zdFetch1               // the variable NUMBER (S4.2.2)
+    lia
+    jsp zReadVar               // resolve it now, in sequence
+    lem                        // zReadVar returns with eem on
+    jmp zidOpStore
+zidOpConst,
+    ral 1s
+    SKIP_NEXT_IF_AC_NEGATIVE          // sma: skip (fallthrough) if $$01
+    jmp zidOpLarge                       // no-skip: $$00 -- large
+    ral 1s
+    dac zdTW
+    jsp zdFetch1               // a small constant
+    jmp zidOpStore
+zidOpLarge,
+    ral 1s
+    dac zdTW
+    jsp zdFetch2               // a large constant
+zidOpStore,
+    dac i zdOpPtr
+    idx zdOpPtr
+    jmp zidOpLoop
+zidOpEnd,
+    lac zdOpPtr
+    sub [zdOp0]
+    dac zdOpCount
+
+zidOpsDone,
+    // ---- store byte (S4.6) -- captured, never written -----------------
+    lac zdEntry
+    and [ZA_STORE]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zidNoStore                // no-skip: this opcode has no store byte
+    idx zdHasStore             // 0 (the default) -> 1
+    jsp zdFetch1
+    dac zdStoreVar
+zidNoStore,
+
+    // ---- branch data (S4.7) ------------------------------------------
+    // zsave.ac saves zdBranchOnTrue (0 or 1), zdBranchKind and
+    // zdBranchTarget, on tape and in the undo log, and a V3 restore replays
+    // them, so their meanings and values are part of the save format. The
+    // target is computed eagerly, though an untaken branch never uses it:
+    // the saves need it at the moment they run.
+    lac zdEntry
+    and [ZA_BRANCH]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zidNoBranch               // no-skip: this opcode has no branch data
+    idx zdHasBranch            // 0 (the default) -> 1
+    jsp zdFetch1
+    dac zdBr1
+    and [0200]                 // bit 7: branch on true, or on false
+    sar 7s
+    dac zdBranchOnTrue         // exactly 1 or 0
+    lac zdBr1
+    and [0100]                 // bit 6: one branch byte, or two
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if one byte
+    jmp zidBrLong                 // no-skip: bit clear -> 2-byte offset
+    lac zdBr1
+    and [077]                  // 1-byte form: offset 0-63, unsigned
+    dac zdBrOff
+    jmp zidBrPos
+
+zidBrLong,
+    // 2-byte form: a SIGNED 14-bit offset, bits 0-5 of the first byte
+    // followed by all 8 of the second.
+    lac zdBr1
+    and [077]
+    sal 8s
+    dac zdBrOff
+    jsp zdFetch1
+    ior zdBrOff
+    dac zdBrOff
+    and [020000]               // bit 13 -> the offset is negative
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if non-negative
+    jmp zidBrNeg                  // no-skip: negative -> always an address
+
+zidBrPos,
+    // S4.7.1's two special cases are offsets 0 and 1, which only a
+    // non-negative offset can be.
+    jsp zdSync                 // the last byte is read: zdPC now
+    lac zdBrOff
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zidBrRFalse               // no-skip: offset 0 -> return false
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp zidBrRTrue                // no-skip: offset 1 -> return true
+    // S4.7.2: "Address after branch data + Offset - 2". zdPC is exactly
+    // "address after branch data" at this point.
+    lac zdPC
+    add zdBrOff
+    sub [2]
+    jmp zidBrTarget
+zidBrNeg,
+    jsp zdSync                 // the last byte is read: zdPC now
+    lac zdPC
+    add zdBrOff
+    sub [2]
+    sub [0d16384]              // fold the 14-bit sign in as a bias, so
+                               //   no negative value is ever formed
+zidBrTarget,
+    dac zdBranchTarget         // zdBranchKind stays ZDB_ADDR, the default
+    jmp zidText
+zidBrRFalse,
+    lac [ZDB_RFALSE]
+    jmp zidBrKind
+zidBrRTrue,
+    lac [ZDB_RTRUE]
+zidBrKind,
+    dac zdBranchKind           // zdBranchTarget stays 0, the default
+    jmp zidText
+zidNoBranch,
+    jsp zdSync                 // the last byte is read: zdPC now
+
+    // ---- inline text (S4.8) -- flagged, deliberately not resolved ----
+zidText,
+    lac zdEntry
+    and [ZA_TEXT]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zidNoText                 // no-skip: an ordinary opcode
+    idx zdHasText              // 0 (the default) -> 1
+    lac zdPC
+    dac zdTextAddr             // where the encoded string starts
+    dzm zdNextPC               // "pending": only walking the string can
+    cla                        //   say where the next instruction is, and
+                               //   that is ztext.ac's job, not this one's;
+                               //   AC = zdNextPC on return
+    farrtn(rtn)
+
+zidNoText,
+    lac zdPC
+    dac zdNextPC
+    farrtn(rtn)
+
+// Under boot, the session ends with an error report -- the "suitable
+// message" below -- and the machine waits for the next player. Under a
+// test entry it halts at zidIllegal.
+zidFail,
+    lac zServing
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if boot is serving
+    jmp zidIllegal                    // no-skip: a test entry -- halt
+    lac [ZSTOP_ILLEGAL]
+    jmp zSessionFail
+zidIllegal,
+    hlt                        // S14.2: "an interpreter should normally
+                               //   halt with a suitable message"
+rtn, 0
+    endlocal
+
+// ========================================================================
+// The result block, 20 words. THESE WORDS MUST STAY CONSECUTIVE AND IN
+// THIS ORDER: zInstDecode's operand pass stores through a pointer that
+// starts at zdOp0 and counts the operands by subtracting zdOp0 from it,
+// and zstack.ac's zCallFrame reads a call's arguments from zdOp1 onward by
+// stepping a pointer. Each default is stored by name in zInstDecode, so a
+// new field needs its default added there.
+//
+// Eight operand slots in every session, including V3 ones that can never
+// fill more than four (see the file header).
+// ========================================================================
+zdOpClass, 0
+zdOpNum, 0
+zdOpCount, 0
+zdOp0, 0
+zdOp1, 0
+zdOp2, 0
+zdOp3, 0
+zdOp4, 0
+zdOp5, 0
+zdOp6, 0
+zdOp7, 0
+zdHasStore, 0
+zdStoreVar, 0
+zdHasBranch, 0
+zdBranchOnTrue, 0
+zdBranchKind, 0
+zdBranchTarget, 0
+zdHasText, 0
+zdTextAddr, 0
+zdNextPC, 0
+
+// ---- Decoder working state (bank 0) -----------------------------------
+// Not part of the result block and not cleared with it. zdPC is shared
+// with zdFetch1/zdFetch2, and zdPtr is the indirect-addressing scratch
+// word the table lookups borrow -- file scope rather than `local` because
+// those helpers are separate routines and am1 locals are per-routine names.
+zdEntry, 0                     // the opcode's table word, which
+                               //   zipLoop dispatches on (see zInstDecode)
+zdPC, 0
+zdB0, 0
+zdPtr, 0
+zdFtmp, 0
+zdFptr, 0                      // the fast paths' 16-bit pointer
+zdF2hi, 0                      // zdFetch2's high byte, odd zdPC
+zdTW, 0                        // the operand-type fields, zidTypes
+zdOpPtr, 0                     // the next operand slot
+zdSPtr, 0                      // the stream's 16-bit word pointer
+zdSWord, 0                     // the word it last loaded
+zdSOdd, 0                      // 1 if that word's low half is next
+
+// The three mode words zInstDecode writes at each entry, one set for the
+// stream and one for the routed path.
+zdMS1, jmp zdf1Stream
+zdMS2, jmp zdf2Stream
+zdMSS, jmp zdsFast
+zdMR1, jmp zdf1Route
+zdMR2, jmp zdf2Route
+zdMRS, jmp zdsDone
+zdBr1, 0
+zdBrOff, 0
+
+// Each class's opcode table (zdispatch.ac, assembled after this
+// file), as data words the forms `add`; and the word an ignored EXT
+// opcode (S14.2.1) takes in place of a table word. Data words rather than
+// `[zdpTab2OP]`-style constants: all six are forward references, which
+// do not go through the constant pool this way.
+zdT0OP, zdpTab0OP
+zdT1OP, zdpTab1OP
+zdT2OP, zdpTab2OP
+zdTVAR, zdpTabVAR
+zdTEXT, zdpTabEXT
+zdEntIgnore, ZAT_X+zdhNop
+
+// ========================================================================
+// Test-driver scaffolding (ad1). testInstDecode, run with `start`, decodes
+// the instruction at testDecodeAddrIn and halts; the result block is read
+// directly with ad1's `show`.
+//
+// Guarded by Z_TEST_HARNESS (default 1, defined in zmemcore.am1); a
+// production build assembles with -DZ_TEST_HARNESS=0 and omits all of it.
+// ========================================================================
+#if Z_TEST_HARNESS
+
+testDecodeAddrIn, 0
+testDecodeResultOut, 0
+
+testInstDecode,
+    lio testDecodeAddrIn
+    jsp zInstDecode
+    dac testDecodeResultOut
+    hlt
+
+#endif // Z_TEST_HARNESS
+
+#endif // ZDECODE_AC_H

@@ -1,0 +1,690 @@
+// ========================================================================
+// zprint.ac -- the print and output opcode handlers, the status line,
+// and the transcript's Flags2 sync.
+//
+// BANK 0, #included into zmemcore.am1's bank-0 section immediately after
+// zobjops.ac. The handlers are dispatched to by `jmp` from zInterpret,
+// which is bank-0 code.
+//
+// Entry points: the zdh* opcode handlers; zPrintStatus (jsp, also called
+// by zinput.ac's sread); zpDecimal (jsp); zpWatch, the tail of zarith.ac's
+// storew and storeb.
+//
+// THE BANK QUALIFIER DIRECTION: zmemcore.am1 assembles ZLEAF_BANK
+// (bank 15) AFTER bank 0, so bank 0 calling IN to it is a FORWARD
+// reference and takes the `sym:*` form -- farjsp(zPrintChar:*),
+// farjda(zOutSelect:*). Every cross-bank call this file makes is of that
+// kind. Same-bank calls (zReadVar, zFetchByte, zStoreByte, zStackPop,
+// zaDivMod, zUnpackString) are plain `jsp`/`jda`.
+//
+// THE `lem` AFTER A SAME-BANK CALL is required. zstack.ac's and
+// zmemcore.am1's routines are entered with a plain `dac rtn` but RETURN
+// through `farrtn`, which leaves extend mode ON. Bank-0 code needs it
+// off. Every `jsp zReadVar`, `jsp zFetchByte`, `jsp zStackPop` and
+// `jda zStoreByte` below is therefore followed by `lem`. zaDivMod and
+// zUnpackString use `dap`/`jmp rtn` instead and do NOT need one.
+//
+// THE CROSS-BANK CALLS BELOW DO NOT GET ONE. farjsp/farjda leave extend
+// mode ON at the return, so a handler that ends `farjsp(zPrintChar:*)` /
+// `jmp zipNext` re-enters the dispatch loop with the window open. That is
+// safe here because zInterpret's own `lem` after zInstDecode closes it
+// every iteration, and because nothing in this file dereferences a
+// non-bank-0 pointer. It is NOT safe in ZLEAF_BANK -- see zmemcore.am1's
+// "ONE RULE" block.
+//
+// Only EXT:12 check_unicode stores (through zdpStore); nothing here
+// branches. Every other handler ends at `jmp zipNext` with no zdpStore
+// and no zdpBranch call, and the decoder has already advanced the PC.
+//
+// WHERE THE DEVICE WORK IS SPLIT, and why. Output stream 2 is the Type 62
+// line printer (S7.1.2.2 calls stream 2 the printer; on a PDP-1 it is
+// one). The per-character work -- `flb`, `prl` -- lives in ztext.ac's
+// router in ZLEAF_BANK, because it runs on every character. The device SETUP
+// -- `lpf`, `lpm` -- lives here in bank 0, because `lpf` reads a filename
+// STRING out of memory through IO and a bare address is only unambiguous
+// in bank 0. The header Flags2 sync lives here too, where zStoreByte is
+// same-bank, and it runs in BOTH directions (S7.4): output_stream keeps
+// the bit truthful (zpFlags2On/Off), and a story's own storew/storeb of
+// the bit opens or closes the transcript (zpWatch). See
+// ztext.ac's own "OUTPUT STREAMS" header for the other half of this split.
+//
+// WHICH PRINTER: IOT 45 is TWO different devices, the Type 62 and the
+// Type 64, and the emulator decides which one it presents from a RUNTIME
+// setting -- `lptType64` in /opt/pidp1-mods/pidp1.config, where false
+// (the default) selects the Type 62. The two do not merely differ in
+// behavior, they REUSE THE SAME IOT NUMBERS FOR DIFFERENT FUNCTIONS:
+// iot 0045 is the Type 62's `prl` but the Type 64's `lpb`, and iot 1045
+// is the Type 62's `flb` but the Type 64's `pas`. A Type 62 sequence run
+// against a Type 64 is therefore not inert, it is garbage.
+//
+// The assembler cannot read pidp1.config, so zmemcore.am1 picks a side at
+// build time with ZLPT_TYPE64 (default 0 = Type 62) and every printer
+// instruction below and in ztext.ac's router is written for both. If the
+// transcript comes out empty or scrambled, check that the build flag and
+// the config agree before suspecting anything else. `lpf` and `lpm` are
+// the one pair that IS common to both (iot 3045 / 3145).
+//
+// TWO FACTS about the Type 62 that this file and the router both depend
+// on: `flb` takes its character from IO, not AC; and a line is committed
+// by `prl` FOLLOWED BY `slp`, never by `prl` alone. The router uses
+// LPT_SP0, which is single spacing. On the Type 64 the pair collapses
+// into a single `pas`, and the spacing code does NOT carry over: there
+// SP0 means OVERSTRIKE and writes nothing at all, so the router uses SP1
+// and a Type 64 transcript is double-spaced.
+//
+// VERSION-AGNOSTIC except for one opcode: 0OP:9 is `pop` in V1-4 and
+// `catch` in V5, so the pop handler is reached only through zdispatch.ac's
+// patched entry zdpE0op9, which holds zdhCatch for a V5 story.
+//
+// Nothing here halts: every bad input is a value a story can compute, and
+// each degrades.
+// ========================================================================
+
+// ---- shared scratch ----------------------------------------------------
+zpTmp, 0
+
+// ========================================================================
+// zpPuts -- prints a zero-terminated list of ZSCII codes, one per word,
+// in bank 0.
+// On call AC has the list's address. Called via jda.
+// ========================================================================
+zpPuts, 0
+    local rtn, ptr
+    dac rtn
+    lac zpPuts
+    dac ptr
+zppLoop,
+    lac i ptr
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) on a real character
+    jmp zppDone                    // no-skip: the zero terminator
+    lia
+    farjsp(zPrintChar:*)
+    lac ptr
+    add [1]
+    dac ptr
+    jmp zppLoop
+zppDone,
+    jmp i rtn
+rtn, 0
+ptr, 0
+    endlocal
+
+// ========================================================================
+// zpDecimal -- prints a 16-bit Z-machine value as signed decimal.
+// On call IO has the value. Called via jsp.
+// Used by print_num and the status line.
+//
+// 1. No intermediate goes negative. The sign is taken first and the
+//    magnitude computed as 65536-value, which is positive for every
+//    negative input (see zarith.ac's header).
+//
+// 2. -32768 is printed from a literal. Its magnitude, 32768, reads as
+//    -32768 again, so zaDivMod, which decomposes its operands by sign,
+//    cannot be handed it.
+//
+// The digits come out most-significant first by dividing by a descending
+// table of powers of ten, so there is no digit buffer and no reversal
+// pass. Leading zeros are suppressed, except at the units place, so 0
+// prints as "0".
+// ========================================================================
+zpDecimal,
+    local rtn, val, neg, digit, seen, ptr
+    dac rtn
+    lai
+    and [ZW_MASK]
+    dac val
+
+    SKIP_NEXT_IF_SAME [0100000]  // sas: skip (fallthrough) if the value is -32768
+    jmp zpdSigned                   // no-skip: any other value
+    lac [zpdMin]
+    jda zpPuts
+    jmp i rtn
+
+zpdSigned,
+    cla
+    dac neg
+    lac val
+    and [0100000]                // bit 15 is the sign (S2.1)
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if negative
+    jmp zpdMag                      // no-skip: zero or positive
+    lac [1]
+    dac neg
+    lac [0200000]                // 65536
+    sub val                      // magnitude: positive, and at most 32767
+    dac val                      //   here, because 32768 left above
+    lac [0d45]                   // '-'
+    lia
+    farjsp(zPrintChar:*)
+
+zpdMag,
+    cla
+    dac seen
+    lac [zpdPow]
+    dac ptr
+
+zpdLoop,
+    lac i ptr
+    dac zaDivB
+    lac val
+    dac zaDivA
+    jsp zaDivMod                 // dap/jmp rtn -- no `lem` needed
+    lac zaDivQ
+    dac digit
+    lac zaDivR
+    dac val
+
+    lac digit
+    SKIP_NEXT_IF_AC_ZERO         // sza: skip (fallthrough) if this digit is 0
+    jmp zpdShow                     // no-skip: nonzero -- always printed
+    lac seen
+    SKIP_NEXT_IF_AC_ZERO         // sza: skip (fallthrough) if nothing printed yet
+    jmp zpdShow                     // no-skip: already printing -- interior zero
+    lac ptr
+    SKIP_NEXT_IF_SAME [zpdOne]   // sas: skip (fallthrough) at the units place
+    jmp zpdNext                     // no-skip: a leading zero -- suppress it
+
+zpdShow,
+    lac [1]
+    dac seen
+    lac digit
+    add [0d48]                   // '0'
+    lia
+    farjsp(zPrintChar:*)
+
+zpdNext,
+    lac ptr
+    add [1]
+    dac ptr
+    SKIP_NEXT_IF_SAME [zpdEnd]   // sas: skip (fallthrough) once past the table
+    jmp zpdLoop                     // no-skip: more places to do
+    jmp i rtn
+
+// The descending powers. zpdOne and zpdEnd are addressed as literals
+// above, so these six words MUST STAY CONSECUTIVE AND IN THIS ORDER.
+zpdPow,
+    0d10000
+    0d1000
+    0d100
+    0d10
+zpdOne,
+    1
+zpdEnd,
+    0
+
+// The ZSCII lists here and at the end of the file hold ONE CODE PER LINE:
+// am1 ORs space-separated terms on one line into a single word.
+zpdMin,
+    // the one magnitude that cannot be divided
+    0d45                          // -
+    0d51                          // 3
+    0d50                          // 2
+    0d55                          // 7
+    0d54                          // 6
+    0d56                          // 8
+    0
+
+rtn, 0
+val, 0
+neg, 0
+digit, 0
+seen, 0
+ptr, 0
+    endlocal
+
+// ========================================================================
+// zpFlags2On / zpFlags2Off -- set or clear the transcript bit, Flags2
+// bit 0, at header byte 0x11 (S11.1).
+// No arguments. Called via jsp.
+//
+// S7.4: "stream 2 can be selected or deselected by setting or clearing
+// bit 0 of 'Flags 2'. Whichever method is used, the interpreter must
+// ensure that this flag holds the current status of stream 2." These two
+// are the output_stream half of that; zpWatch below is the storew/storeb
+// half.
+// ========================================================================
+zpFlags2On,
+    local rtn
+    dac rtn
+    lac [0d17]
+    lia
+    jsp zFetchByte
+    lem
+    ior [1]
+    lia
+    lac [0d17]
+    jda zStoreByte
+    lem
+    jmp i rtn
+rtn, 0
+    endlocal
+
+zpFlags2Off,
+    local rtn
+    dac rtn
+    lac [0d17]
+    lia
+    jsp zFetchByte
+    lem
+    and [0376]
+    lia
+    lac [0d17]
+    jda zStoreByte
+    lem
+    jmp i rtn
+rtn, 0
+    endlocal
+
+// ========================================================================
+// The handlers.
+// ========================================================================
+
+// ---- 1OP:135 print_addr: print the string at a BYTE address -----------
+// No address guard: zDecodeString's own zdsBad covers a malformed string.
+zdhPrintAddr,
+    lac zdOp0
+    and [ZW_MASK]
+    lia
+    farjsp(zDecodeString:*)
+    jmp zipNext
+
+// ---- 1OP:141 print_paddr: print the string at a PACKED address --------
+zdhPrintPaddr,
+    lac zdOp0
+    and [ZW_MASK]
+    lia
+    jsp zUnpackString            // dap/jmp rtn -- no `lem` needed
+    lia
+    farjsp(zDecodeString:*)
+    jmp zipNext
+
+// ---- VAR:229 print_char: print one ZSCII code -------------------------
+// An out-of-range code is DROPPED, inside zPrintChar (its zpcBad), so
+// this handler needs no check of its own.
+zdhPrintChar,
+    lac zdOp0
+    and [ZW_MASK]
+    lia
+    farjsp(zPrintChar:*)
+    jmp zipNext
+
+// ---- EXT:11 print_unicode and EXT:12 check_unicode (V5) ----------------
+// Both use zpuPrintable below, the one definition of what this
+// interpreter can print, so the two opcodes never disagree about a code
+// point.
+//
+// WHAT IS PRINTABLE HERE: Unicode 32 to 126, and nothing else. Everything
+// downstream of zPrintChar is a raw byte on the DCS2 channel, and ZSCII
+// 32-126 agrees with ASCII exactly (S3.8.3). Above 126 there is no
+// translation table -- zPrintChar's zpcBad drops S3.8's 155-251 "extra
+// characters" range -- and the terminal is in no particular 8-bit or
+// UTF-8 mode except where font 3 asks the player for one.
+//
+// UNICODE 10 AND 13 ARE NOT SPECIAL-CASED. They are outside the set, so
+// print_unicode prints `?` for them and check_unicode answers 0; a story
+// that wants a line break has new_line.
+//
+// A code point above 0xFFFF cannot be expressed in one Z-machine operand,
+// so ZW_MASK is the whole of the range question.
+// ------------------------------------------------------------------
+// zpuPrintable -- tests whether a code is printable.
+// On call IO has the 16-bit code. Returns AC = the code if this
+// interpreter can print it, 0 if it cannot (ZSCII 0 prints nothing and is
+// outside the set either way).
+// Called via jsp, same bank only; no `lem` is needed after it.
+zpuPrintable,
+    local rtn, code
+    dap rtn
+    lai                            // AC = the code, from IO
+    dac code
+    sub [0d32]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE   // sma i: skip (fallthrough) if 32 or above
+    jmp zpuNo                         // no-skip: below 32 -- a control code
+    lac code
+    sub [0d127]
+    SKIP_NEXT_IF_AC_NEGATIVE       // sma: skip (fallthrough) if below 127
+    jmp zpuNo                         // no-skip: 127 or above
+    lac code
+    jmp rtn
+zpuNo,
+    cla
+    jmp rtn
+rtn, jmp 0
+code, 0
+    endlocal
+
+// ---- EXT:11 print_unicode: print one Unicode code point ---------------
+// Neither stores nor branches (ZAT_X). A code this interpreter cannot
+// print becomes `?` (ZSCII 63), the Standard's own answer, rather than
+// being dropped the way print_char's out-of-range code is.
+zdhPrintUnicode,
+    lac zdOp0
+    and [ZW_MASK]
+    lia                          // the argument travels in IO (zpuPrintable)
+    jsp zpuPrintable
+    SKIP_NEXT_IF_AC_ZERO         // sza: skip (fallthrough) if it cannot be printed
+    jmp zpuSend                     // no-skip: AC is the code itself -- send it
+    lac [0d63]                   // skip: `?`, the substitute
+zpuSend,
+    lia
+    farjsp(zPrintChar:*)
+    jmp zipNext
+
+// ---- EXT:12 check_unicode: can this code be printed and typed? --------
+// Stores 3 (bit 0 printable, bit 1 receivable from the keyboard) for a
+// code in the set and 0 for one outside it. Both bits move together
+// because both are the same fact here: the channel carries raw bytes in
+// each direction, so a code that survives one way survives the other.
+zdhCheckUnicode,
+    lac zdOp0
+    and [ZW_MASK]
+    lia                          // the argument travels in IO (zpuPrintable)
+    jsp zpuPrintable
+    SKIP_NEXT_IF_AC_ZERO         // sza: skip (fallthrough) if it cannot be printed
+    lac [3]                         // no-skip: printable, and so receivable
+    lia                          // skip: AC is still 0 -- neither
+    jsp zdpStore
+    jmp zipNext
+
+// ---- VAR:230 print_num: print a signed 16-bit value in decimal --------
+zdhPrintNum,
+    lac zdOp0
+    lia
+    jsp zpDecimal
+    jmp zipNext
+
+// ---- 0OP:185 pop: discard the top of the stack ------------------------
+// V1-4 only. 0OP:9 is `catch` in V5 (zdispatch.ac's zdhCatch); the
+// dispatch entry is patched at boot (zdpE0op9).
+zdhPop,
+    jsp zStackPop
+    lem
+    jmp zipNext
+
+// ---- 0OP:188 show_status: draw the V3 status line ---------------------
+// THE CONTENT is fixed by S8.2 and is what everything below computes: the
+// short name of the object in global 0, then either score and turns from
+// globals 1 and 2, or the time from the same two globals when Flags1 bit 1
+// says this is a time game.
+//
+// THE PRESENTATION is zscreen.ac's: screen row 1, in reverse video, the
+// name from column 2 and the score or time ending at the last column
+// (zsStatusOn, zsStatusCol, zsStatusOff, which bracket the body below).
+// The separator (zpsSep) is still printed: on a VT100 it is three more
+// spaces of the reversed row, and in plain mode, where no cursor moves,
+// it is what separates the name from the score.
+//
+// THE STATUS LINE IS KEPT OUT OF THE TRANSCRIPT: zsStatusOn selects
+// window 1's path through the router, which never reaches the
+// transcript.
+//
+// zPrintStatus -- draws the V3 status line; reached only in a V3 session.
+// No arguments, no result. Clobbers AC, IO and zpTmp.
+// Called via jsp, from bank 0 only: by zdhShowStatus below, and by
+// zinput.ac's sread, since S15 makes V1-3 `read` redisplay the status
+// line before it reads.
+//
+// The far calls leave the window open. Nothing here dereferences a
+// bank-0 pointer: every call below is a direct `jsp` or its own far*
+// macro, and zisStatus's caller in zinput.ac goes on with direct
+// references.
+zPrintStatus,
+    local rtn
+    dap rtn
+    farjsp(zsStatusOn:*)         // row 1, reverse, window 1's path
+    lac [0d16]                   // global 0 -- the location object
+    lia
+    jsp zReadVar
+    lem
+    and Z_OBJ_MASK
+    // Object 0 is not an object: the object table is 1-based, so entry 0
+    // overlaps the property defaults. Nothing is printed for it.
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if a real object
+    jmp zssNoName                   // no-skip: object 0 -- no name to print
+    lia
+    farjsp(zPrintObj:*)
+zssNoName,
+    lac [zpsSep]
+    jda zpPuts
+    farjsp(zsStatusCol:*)        // the score's or the time's column
+
+    lac [1]                      // header byte 0x01 -- Flags1
+    lia
+    jsp zFetchByte
+    lem
+    and [2]                      // bit 1: this is a time game (S8.2)
+    SKIP_NEXT_IF_AC_ZERO         // sza: skip (fallthrough) for a score game
+    jmp zssTime                     // no-skip: bit set -- hours and minutes
+
+    lac [zpsScore]
+    jda zpPuts
+    lac [0d17]                   // global 1 -- the score, SIGNED
+    lia
+    jsp zReadVar
+    lem
+    lia
+    jsp zpDecimal
+    lac [zpsMoves]
+    jda zpPuts
+    lac [0d18]                   // global 2 -- the turn count
+    lia
+    jsp zReadVar
+    lem
+    lia
+    jsp zpDecimal
+    jmp zssEnd
+
+zssTime,
+    lac [zpsTime]
+    jda zpPuts
+    lac [0d17]                   // global 1 -- hours
+    lia
+    jsp zReadVar
+    lem
+    lia
+    jsp zpDecimal
+    lac [zpsColon]
+    jda zpPuts
+    lac [0d18]                   // global 2 -- minutes
+    lia
+    jsp zReadVar
+    lem
+    and [ZW_MASK]
+    dac zpTmp
+    // Minutes are zero-padded to two digits, so 9 must print as "09".
+    // The `sad` below is redundant: `sub` of equal operands leaves PLUS
+    // zero, so 10 would take the "eleven or more" path correctly anyway.
+    SKIP_NEXT_IF_DIFFERENT [0d10]   // sad: skip (fallthrough) if not exactly ten
+    jmp zssMin                         // no-skip: exactly ten -- two digits already
+    sub [0d10]
+    SKIP_NEXT_IF_AC_NEGATIVE        // sma: skip (fallthrough) if under ten
+    jmp zssMin                         // no-skip: eleven or more
+    lac [0d48]                      // a leading '0'
+    lia
+    farjsp(zPrintChar:*)
+zssMin,
+    lac zpTmp
+    lia
+    jsp zpDecimal
+
+zssEnd,
+    farjsp(zsStatusOff:*)        // roman, and the cursor back where
+    jmp rtn                      //   the player types. No newline: row 1 is
+rtn, jmp 0                       //   not a line of the lower window
+    endlocal
+
+// ---- 0OP:188 show_status: the dispatch handler ------------------------
+// All of it is zPrintStatus above; this is the dispatch entry.
+zdhShowStatus,
+    jsp zPrintStatus
+    jmp zipNext
+
+// ---- VAR:243 output_stream: select or deselect an output stream -------
+// Operand 0 is a SIGNED stream number: positive selects, negative
+// deselects, zero does nothing (S7.1.2.2). Operand 1, when present, is
+// stream 3's table address.
+//
+// The sign is taken by testing bit 15, then the magnitude computed as
+// 65536-value, so no intermediate goes negative.
+zdhOutputStream,
+    lac zdOp0
+    and [ZW_MASK]
+    dac zpTmp
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) on a real stream
+    jmp zipNext                     // no-skip: stream 0 -- nothing to do
+    lac zpTmp
+    and [0100000]
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if negative
+    jmp zdosSelect                  // no-skip: positive -- select
+
+    // ---- deselect ----
+    lac [0200000]
+    sub zpTmp
+    dac zpTmp
+    lac zpTmp
+    SKIP_NEXT_IF_SAME [2]        // sas: skip (fallthrough) if it is the transcript
+    jmp zdosDesel                   // no-skip: some other stream
+    jsp zpFlags2Off              // the header must stop claiming a transcript
+zdosDesel,
+    lac zpTmp
+    lia
+    farjsp(zOutDeselect:*)       // flushes a partial transcript line
+    jmp zipNext
+
+// ---- zpWatch: Flags2 bit 0 written by the story (S7.4) ------------------
+// zarith.ac's storew and storeb end here, by `jmp`, instead of at
+// zipNext; it is a tail of those two handlers, not a handler of its own.
+// S7.4: "stream 2 can be selected or deselected by setting or clearing
+// bit 0 of 'Flags 2'", and V3 stories ask for a transcript that way --
+// `script` is `loadw #0 #8; or sp #1; storew #0 #8 sp`.
+//
+//   - zaTmp holds the byte address just written (masked to 16 bits and
+//     checked by zaCheckDyn). Only a store at 0..0x11 can reach Flags2's
+//     low byte -- a storew at 0x10 or 0x11, a storeb at 0x11 -- so every
+//     store at 0x12 and up pays the four instructions to the first
+//     `jmp zipNext` and nothing more. A store at 0..0x0F is checked too;
+//     it cannot change the bit, so the compare below finds the two in step.
+//   - The bit the story left is compared with zosTrans. That compare is
+//     exact only because zosTrans is only ever 0 or 1 (zOutSelect and
+//     zOutDeselect are its only writers).
+//   - In step -- the usual case, and every write that leaves bit 0 as it
+//     was -- nothing happens.
+//   - The story SET it with stream 2 off: it falls into the select path
+//     below, exactly output_stream 2's: `lpf`, `lpm`, zpFlags2On (which
+//     rewrites the bit already set, harmlessly), zOutSelect. zdosSel3
+//     hands zOutSelect the store's own zdOp1 as IO, which stream 2
+//     ignores.
+//   - The story CLEARED it with stream 2 on: it jumps to zdosDesel, past
+//     zpFlags2Off (the bit is already clear), and zOutDeselect flushes the
+//     partial line and closes the stream.
+// Not watched: copy_table (V5) and tokenise writing into the header, and
+// restore and restart, which keep the live bits 0 and 1 themselves
+// (zsave.ac, S6.1.3).
+zpWatch,
+    lac zaTmp                    // the byte address just written
+    sub [0d18]
+    SKIP_NEXT_IF_AC_NEGATIVE     // sma: skip (fallthrough) if below byte 0x12
+    jmp zipNext                     // no-skip: 0x12 or above -- not the flags
+    lac [0d17]                   // header byte 0x11, Flags2's low byte
+    lia
+    jsp zFetchByte
+    lem
+    and [1]
+    dac zpTmp                    // the bit the story left
+    farlac(zosTrans:*)
+    SKIP_NEXT_IF_DIFFERENT zpTmp // sad: skip (fallthrough) if they disagree
+    jmp zipNext                     // no-skip: already in step -- nothing to do
+    lio [2]
+    dio zpTmp                    // stream 2, for the paths below; AC kept
+    SKIP_NEXT_IF_AC_ZERO         // sza: skip (fallthrough) if it was off -- select
+    jmp zdosDesel                   // no-skip: it was on and the bit is clear
+
+    // ---- select ----
+zdosSelect,
+    lac zpTmp
+    SKIP_NEXT_IF_SAME [2]        // sas: skip (fallthrough) if it is the transcript
+    jmp zdosSel3                    // no-skip: some other stream
+    // Open the printer here in bank 0 -- see this file's header for why
+    // `lpf` cannot be issued from the router's bank.
+    lio [zpTransName]
+    lpf
+    lio [1]
+    lpm                          // ascii mode, and resets the device state
+    jsp zpFlags2On
+zdosSel3,
+    // Stream 3's table address is passed through only when a second
+    // operand is actually present. A stream-3 selection without one is
+    // spec-illegal; handing zOutSelect a stale operand word would let it
+    // write a count word to a wild address, so pass zero and let it
+    // write to address 0 instead of somewhere load-bearing.
+    cli
+    lac zdOpCount
+    SKIP_NEXT_IF_DIFFERENT [1]   // sad: skip (fallthrough) if a table was given
+    jmp zdosNoTab                   // no-skip: one operand -- no table
+    lio zdOp1
+zdosNoTab,
+    lac zpTmp
+    farjda(zOutSelect:*)
+    jmp zipNext
+
+// ---- VAR:244 input_stream: select an input stream ---------------------
+// Stream 0 is the keyboard and stream 1 is a command file (S10.2). There
+// is no file input source in this interpreter, so this records the
+// request in zisRequested and changes nothing.
+zdhInputStream,
+    lac zdOp0
+    and [ZW_MASK]
+    dac zisRequested
+    jmp zipNext
+
+zisRequested, 0
+
+// ---- literals ---------------------------------------------------------
+// The transcript's destination. One fixed path, so two interpreters
+// running at once would write over each other.
+zpTransName,
+    ascii "/tmp/ztranscript.txt"
+
+// The status line's ZSCII lists, one code per line (see zpdMin).
+zpsSep,
+    // location/status separator
+    0d32                          // space
+    0d32                          // space
+    0d32                          // space
+    0
+zpsScore,
+    // score label
+    0d83                          // S
+    0d99                          // c
+    0d111                         // o
+    0d114                         // r
+    0d101                         // e
+    0d58                          // :
+    0d32                          // space
+    0
+zpsMoves,
+    // turn-count label
+    0d32                          // space
+    0d32                          // space
+    0d32                          // space
+    0d77                          // M
+    0d111                         // o
+    0d118                         // v
+    0d101                         // e
+    0d115                         // s
+    0d58                          // :
+    0d32                          // space
+    0
+zpsTime,
+    // time-game label
+    0d84                          // T
+    0d105                         // i
+    0d109                         // m
+    0d101                         // e
+    0d58                          // :
+    0d32                          // space
+    0
+zpsColon,
+    // hours/minutes separator
+    0d58                          // :
+    0
+

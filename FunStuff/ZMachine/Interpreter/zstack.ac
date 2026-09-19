@@ -1,0 +1,955 @@
+// zstack.ac -- the Z-machine evaluation stack, call frames and variable
+// access (S4.2.2, S5, S6).
+// #include-only fragment, assembled into zmemcore.am1's bank 0. The
+// zStack table itself lives in bank DYNMEM_STACK_BANK (13).
+//
+// Depends on zmemcore.am1 (zStack, DYNMEM_STACK_BANK, Z_STACK_WORDS,
+// zFetchByte, zFetchWord, zStoreWord), zboot.ac's zhGlobalsAddr,
+// skipmacros.ah and memory.ah.
+//
+// Entry points: zStackInit, zStackPush, zStackPop, zCallFrame, zCallReturn,
+// zFrameArgCount, zUnwindTo, zReadVar, zWriteVar. Each captures the full
+// return address and returns through farrtn/crossBankrtn. The internal
+// helpers zsGet, zsPut, zsTopIndex and zsFrameSync are bank-0 only
+// (`dap rtn`/`jmp rtn`); zsFrameSync is also called by zdispatch.ac.
+//
+// ---- Frame layout ---------------------------------------------------
+// One `zStack` array holds the evaluation stack and the call frames,
+// addressed by zSP (next free slot) and zFP (base index of the current
+// routine's frame):
+//
+//   zStack[zFP+0]              return PC (Z-machine byte address)
+//   zStack[zFP+1]              caller's zFP
+//   zStack[zFP+2]              result variable number, or ZRV_DISCARD
+//   zStack[zFP+3]              local count N (0-15, S5.2); in a V5 session,
+//                              two fields -- see below
+//   zStack[zFP+4 .. zFP+3+N]   the N locals
+//   zStack[zFP+4+N .. zSP-1]   this routine's own evaluation stack
+//
+// In a V5 session the count word is argc << 4 | N, where argc is how many
+// arguments the call supplied (0-7) and N is the local count; V5's
+// check_arg_count (S15) needs argc. V1-4 sessions store N alone
+// (zCallFrame's patched zcfArgcShift). zsFrameSync and zCallReturn mask
+// the word with `and [017]`, and zFrameArgCount shifts it with `sar 4s`.
+// Any other reader of zFP+3 must mask.
+//
+// The result-variable field carries a call's store byte (S4.6) from the
+// call to the return. ZRV_DISCARD marks a frame whose result is thrown
+// away (V5's call_vn family, and the initial pseudo-frame).
+//
+// zFP is the value zSP had before the frame's header went on, so a return's
+// `zSP := zFP` discards the header, the locals and any stray evaluation-
+// stack values in one step (S6.3.2).
+//
+// The return PC is one word: every Z-machine byte address fits in 18 bits.
+//
+// ---- The frame cache ------------------------------------------------
+// Three bank-0 words describe the current frame, so a local access or a
+// pop does not go to bank 13 to learn its shape:
+//   zsNLoc     N, the count word masked with 017
+//   zsLocPtr   the 16-bit pointer to zStack[zFP+3]: local v is at +v
+//   zsEvBase   zFP+4+N, the first evaluation-stack slot
+// Every change to zFP or to the frame's count word must be followed by a
+// refresh. A missed site fails silently: a stale cache reads another
+// frame's local. The sites, all in bank 0:
+//   zStackInit, zUnwindTo                   jsp zsFrameSync
+//   zCallFrame                              sets the three words itself
+//   zCallReturn                             refills them inline, with
+//                                             zsFrameSync's computation
+//   zdispatch.ac's zdhRestore (the tape
+//     restore, on success), zdhRestoreUndo
+//     and testRestoreFromSlot               jsp zsFrameSync
+// The restores write zFP in bank 14 (zsave.ac); their bank-0 callers do the
+// refresh. A test that pokes zFP or a count word directly must
+// `start testFrameSync` before anything reads a local or pops.
+//
+// ---- Initial state --------------------------------------------------
+// zStackInit lays down a pseudo-frame at index 0 (return PC 0, saved FP
+// ZFP_NONE, result variable ZRV_DISCARD, local count 0) and sets zFP=0,
+// zSP=4. This represents S5.5's initial environment in the same layout
+// as every real frame: a local access there finds local count 0 and takes
+// the missing-local path, and a return from it finds ZFP_NONE and halts.
+
+#ifndef ZSTACK_AC_H
+#define ZSTACK_AC_H
+
+#include <memory.ah>
+#include <AIDS/skipmacros.ah>
+
+// ZFP_NONE -- the "no enclosing frame" marker stored in the initial
+// pseudo-frame's saved-FP field. No real frame base can equal it: a
+// frame's header alone is 3 words, so the largest possible frame base is
+// Z_STACK_WORDS-3.
+#define ZFP_NONE Z_STACK_WORDS
+
+// ZRV_DISCARD -- the "throw this routine's result away" marker stored in
+// a frame's result-variable field. 0400 is one past the largest legal
+// variable number (S4.2.2 numbers them 0-255).
+#define ZRV_DISCARD 0400
+
+// Stop reasons for this file's halts. Under boot each halt ends the
+// session with an error report (zmemcore.am1's zSessionFail) instead of
+// stopping the machine; under a test entry zdpStopReason is left
+// unchanged. They belong to zdispatch.ac's ZSTOP_* list but are defined
+// here because this file is assembled first. ZSTOP_BADVAR is not produced
+// (a missing local degrades); it keeps its number and zErrReport its text.
+#define ZSTOP_STACK  0d12      // the Z stack: empty, full, or no frame to return to
+#define ZSTOP_BADVAR 0d13      // a local variable the routine does not have
+
+// ---- Addressing zStack ------------------------------------------------
+// A zStack word's 16-bit (bank:offset) pointer is its index plus the
+// assembler-computed `zStack:DYNMEM_STACK_BANK`, dereferenced with `eem`/
+// `lac i`/`dio i`/`lem`. The bank number is a compile-time constant, so
+// no runtime shifting is needed and nothing hardcodes zStack's offset.
+//
+// No bounds check anywhere: every caller validates the index (against
+// zSP, the frame's own local count, or Z_STACK_WORDS) first.
+// ========================================================================
+
+// zsGet -- read a zStack word. Internal.
+// IO holds the zStack index.
+// Returns zStack[index] in AC, with the extend window closed.
+// Called via jsp.
+zsGet,
+    local rtn, ptr
+    dap rtn
+    lai                            // AC = the zStack index (from IO)
+    add [zStack:DYNMEM_STACK_BANK] // its 16-bit pointer
+    dac ptr
+    eem                            // the pointer names bank 13
+    lac i ptr
+    lem                            // close it: bank-0 code runs with eem off
+    jmp rtn
+rtn, jmp 0
+ptr, 0
+    endlocal
+
+// zsPut -- write a zStack word. Internal.
+// AC holds the zStack index, IO the value.
+// Has no return value; returns with the extend window closed.
+// Called via jda.
+zsPut, 0
+    local rtn, ptr
+    dap rtn
+    lac zsPut                      // AC = the deposited index argument
+    add [zStack:DYNMEM_STACK_BANK] // its 16-bit pointer
+    dac ptr
+    eem                            // the pointer names bank 13
+    dio i ptr                      // IO is still the value: nothing above
+                                   //   touches it
+    lem                            // close it: bank-0 code runs with eem off
+    jmp rtn
+rtn, jmp 0
+ptr, 0
+    endlocal
+
+// zsFrameSync -- refill the frame cache (zsNLoc, zsLocPtr, zsEvBase; see
+// the file header) from zFP and the current frame's count word. Internal.
+// N is the count word masked with 017, which also keeps local numbers
+// above N on the missing-local path when a call supplied more arguments
+// than the routine has locals. zSP equal to zsEvBase means the routine has
+// pushed nothing (S6.3.1); zSP below it means the frame chain is corrupt.
+// No arguments, no return value; returns with the extend window closed.
+// Preserves IO, which zdispatch.ac's zdhRestoreUndo relies on.
+// Called via jsp.
+zsFrameSync,
+    local rtn
+    dap rtn
+    lac zFP
+    add [zStack:DYNMEM_STACK_BANK] // the 16-bit pointer to zStack[zFP]...
+    add [3]
+    dac zsLocPtr                   // ...+3, the count word; local v is at +v
+    eem                            // it names bank 13
+    lac i zsLocPtr
+    lem                            // close it: bank-0 code runs with eem off
+    and [017]                      // N only: argc << 4 rides above it in V5
+    dac zsNLoc
+    add zFP
+    add [4]
+    dac zsEvBase                   // zFP+4+N
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+// zsTopIndex -- locate the current routine's top-of-stack value. Internal.
+// No arguments.
+// Returns in AC the zStack index of the top value, zSP-1.
+// Halts if the routine has pushed nothing (S6.3.1), or if zSP is below
+// zsEvBase (a corrupt frame chain). The equality test comes first because
+// zSP == zsEvBase, the empty case, needs its own branch.
+// Called via jsp.
+zsTopIndex,
+    local rtn
+    dap rtn
+    lac zSP
+    SKIP_NEXT_IF_DIFFERENT zsEvBase  // sad: skip (fallthrough) if zSP != base
+    jmp ztiFail                         // no-skip: zSP == base -> nothing pushed
+
+    sub zsEvBase                   // AC still holds zSP (sad doesn't alter it)
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE   // sma i: skip (fallthrough) if zSP > base
+    jmp ztiFail                       // no-skip: zSP < base -> frame corrupt
+
+    lac zSP
+    sub [1]
+    jmp rtn
+
+// Under boot, the session ends with an error report. Every halt in this
+// file has this shape: the jumps come to a *Fail label, which halts only
+// under a test entry.
+ztiFail,
+    lac zServing
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if boot is serving
+    jmp ztiEmpty                      // no-skip: a test entry -- halt
+    lac [ZSTOP_STACK]
+    jmp zSessionFail
+ztiEmpty,
+    hlt
+rtn, jmp 0
+    endlocal
+
+// zStackInit -- reset the Z-machine stack to its start-of-game state: the
+// initial pseudo-frame (see the file header), zFP = 0, zSP = 4. Also
+// clears zVarIndirect so a stale one-shot modifier cannot survive a
+// restart.
+// No arguments, no return value.
+// Called via jsp.
+zStackInit,
+    local rtn
+    dac rtn
+
+    cla
+    dac zFP                        // the pseudo-frame's base is index 0
+    dac zVarIndirect
+
+    cli
+    cla
+    jda zsPut                      // zStack[0] = 0 -- return PC, never used
+
+    lio [ZFP_NONE]
+    lac [1]
+    jda zsPut                      // zStack[1] = ZFP_NONE -- no enclosing frame
+
+    lio [ZRV_DISCARD]
+    lac [2]
+    jda zsPut                      // zStack[2] = ZRV_DISCARD -- S5.5 makes a
+                                   //   return from here illegal anyway, but the
+                                   //   field must hold something well-defined
+
+    cli
+    lac [3]
+    jda zsPut                      // zStack[3] = 0 -- local count (S5.5: none);
+                                   //   in a V5 session also argc 0
+
+    lac [4]
+    dac zSP                        // evaluation stack starts past the header
+    jsp zsFrameSync                // the frame cache, for frame 0
+    farrtn(rtn)
+rtn, 0
+    endlocal
+
+// zStackPush -- push a value onto the Z-machine stack.
+// IO holds the value (a 16-bit Z-machine word).
+// Has no return value.
+// Halts on overflow (zSP already at Z_STACK_WORDS). An equality test is
+// enough: zSP advances one word at a time here, and zCallFrame, which
+// advances it by a whole frame, does its own >= check first.
+// Called via jsp.
+zStackPush,
+    local rtn, ptr
+    dac rtn
+    lac zSP
+    SKIP_NEXT_IF_DIFFERENT [Z_STACK_WORDS]  // sad: skip (fallthrough) if room left
+    jmp zpuFail                                // no-skip: zSP == Z_STACK_WORDS -> full
+
+    add [zStack:DYNMEM_STACK_BANK] // AC still holds zSP: the slot's pointer
+    dac ptr
+    idx zSP                        // the slot is taken
+    eem                            // the pointer names bank 13
+    dio i ptr                      // IO is still the value: nothing above
+                                   //   touches it
+    crossBankrtn(rtn, NOEEM)       // the `eem` just above opened the window
+
+zpuFail,                           // see ztiFail
+    lac zServing
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if boot is serving
+    jmp zpuOverflow                   // no-skip: a test entry -- halt
+    lac [ZSTOP_STACK]
+    jmp zSessionFail
+zpuOverflow,
+    hlt
+rtn, 0
+ptr, 0
+    endlocal
+
+// zStackPop -- pop a value from the Z-machine stack.
+// No arguments.
+// Returns the popped value in AC. Underflow (S6.3.1) halts inside
+// zsTopIndex.
+// Called via jsp.
+zStackPop,
+    local rtn, ptr
+    dac rtn
+    jsp zsTopIndex                 // AC = zSP-1, or hlt if nothing pushed
+    dac zSP                        // the popped slot becomes the new top
+    add [zStack:DYNMEM_STACK_BANK] // AC survives dac: the slot's pointer
+    dac ptr
+    eem                            // the pointer names bank 13
+    lac i ptr
+    crossBankrtn(rtn, NOEEM)       // the `eem` just above opened the window
+rtn, 0
+ptr, 0
+    endlocal
+
+// zCallFrame -- push a new call frame for a routine (S5, S6.4).
+// AC holds the routine's unpacked Z-machine byte address, IO the argument
+// count (0-7; V3 itself caps at 3, S6.4.1). The other inputs are globals:
+//   zCallFrameRetPC        the Z-machine byte address to resume the caller
+//                          at when this routine returns.
+//   zCallFrameResVar       the variable number the return value is to be
+//                          stored into (S4.6), or ZRV_DISCARD. Recorded in
+//                          the frame and handed back by zCallReturn.
+//   zdOp1..zdOp7           the arguments, read in place from the decoder's
+//                          operand block (zdecode.ac); these words must
+//                          stay consecutive.
+// Returns in AC the byte address of the routine's first instruction (S5.3).
+//
+// The routine header is read (S5.2, S5.2.1) and the count and the room
+// checked before anything is written. The frame is then written through
+// one pointer: the four header words, locals 1..k from the arguments,
+// where k = min(argc, N) (S6.4.4), then locals k+1..N from their initial
+// values. Spare arguments are thrown away (S6.4.4.1).
+//
+// The header has two forms, chosen by three words boot patches for the
+// story's version (zpatch.ac): zcfArgcShift, zcfInitForm and zcfFirstN.
+//   V1-4  a local-count byte, then that many 2-byte initial values; the
+//         first instruction is at addr + 1 + 2N. Local k+1's initial value
+//         is at addr + 1 + 2k.
+//   V5    a local-count byte and nothing else: every local starts at
+//         zero, and the first instruction is at addr + 1 (S5.2.1, S5.3).
+//         zcfInitForm is patched to a jump to the zero-fill loop.
+// In a V5 session the count word also records argc, the number of
+// arguments the call supplied (S15), even when some are thrown away.
+//
+// The extend window: zFetchByte and zFetchWord return with it open, and
+// the frame is written with it open. The argument reads `lac i argPtr` use
+// a bare bank-0 address, which under the window resolves to bank 0, where
+// zdOp1.. are. Each V1-4 initial-value fetch is made with the window
+// closed. The routine returns through farrtn with the window open; its
+// callers close it.
+//
+// Halts (see ztiFail) on a local count above 15 (S5.2) and on stack
+// overflow. Both tests run before the frame is written, so a refused call
+// changes nothing in zStack.
+// Called via jda.
+zCallFrame, 0
+    local rtn, addrSave, argc, nLocals, newSP, nArgs, hdrAddr, ptr, argPtr, cnt
+    dac rtn
+    lac zCallFrame                 // AC = the deposited routine address
+    dac addrSave
+    dio argc
+
+    // ---- routine header: the local-count byte (S5.2) ----
+    lio addrSave
+    jsp zFetchByte                 // returns with the window open
+    dac nLocals
+
+    SKIP_NEXT_IF_DIFFERENT [0d15]  // sad: skip (fallthrough) if nLocals != 15
+    jmp zcfCountOk                    // no-skip: exactly 15 -- the legal maximum
+    sub [0d15]
+    SKIP_NEXT_IF_AC_NEGATIVE       // sma: skip (fallthrough) if nLocals < 15
+    jmp zcfFail                       // no-skip: nLocals > 15 -> spec-illegal
+
+zcfCountOk,
+    // ---- room for the whole frame? (header + N locals) ----
+    lac zSP
+    add [4]
+    add nLocals
+    dac newSP                      // where zSP will end up if this call proceeds
+    SKIP_NEXT_IF_DIFFERENT [Z_STACK_WORDS]  // sad: skip (fallthrough) if not an exact fit
+    jmp zcfRoomOk                              // no-skip: fills the stack exactly -- legal
+    sub [Z_STACK_WORDS]
+    SKIP_NEXT_IF_AC_NEGATIVE       // sma: skip (fallthrough) if it fits
+    jmp zcfFail                       // no-skip: past the end of zStack
+
+zcfRoomOk,
+    // ---- the header, at zStack[zSP] -- the new frame's base ----
+    lac zSP
+    add [zStack:DYNMEM_STACK_BANK] // the 16-bit pointer to zStack[newFP]
+    dac ptr
+    eem                            // it names bank 13: open the window (it
+                                   //   is open already off zFetchByte, but
+                                   //   two labels stand between)
+    lac zCallFrameRetPC
+    dac i ptr                      // zStack[newFP+0] = return PC
+    idx ptr
+    lac zFP
+    dac i ptr                      // zStack[newFP+1] = caller's frame base
+    idx ptr
+    lac zCallFrameResVar
+    dac i ptr                      // zStack[newFP+2] = result variable (or
+                                   //   ZRV_DISCARD) -- see this file's header
+    idx ptr                        // AC = the pointer to zStack[newFP+3]:
+    dac zsLocPtr                   //   the frame cache's local pointer, set
+                                   //   now while it is in hand. Nothing reads
+                                   //   the cache before zFP changes below.
+    lac argc                       // V5: argc << 4 | N -- this file's header.
+zcfArgcShift,
+    cla                            // PATCHED (zpatch.ac): V5 `sal 4s`. V1-4
+    ior nLocals                    //   keep `cla`, so the word is N alone
+    dac i ptr                      // zStack[newFP+3] = local count (and, in
+    idx ptr                        //   V5, the supplied-argument count)
+
+    // ---- k = min(argc, N): the locals the arguments fill (S6.4.4) ----
+    lac argc
+    sub nLocals                    // argc - N
+    SKIP_NEXT_IF_AC_NEGATIVE       // sma: skip (fallthrough) if argc < N
+    cla                               // no-skip: argc >= N -- k is N, so add it to 0
+    add nLocals                    // argc < N: (argc - N) + N = argc. Never -0:
+    dac nArgs                      //   an add of x and -x leaves plus zero
+                                   //   so argc 0 gives +0
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if k != 0
+    jmp zcfLocals                     // no-skip: no argument lands in a local
+
+    // ---- locals 1..k: the arguments, zdOp1.. in order ----
+    cma
+    dac cnt                        // -k, for isp: k trips
+    lac [zdOp1]
+    dac argPtr                     // a BARE bank-0 address: under the window
+                                   //   it resolves to bank 0 (header note)
+zcfArgLoop,
+    lac i argPtr                   // argument j
+    dac i ptr                      //   into local j
+    idx ptr
+    idx argPtr
+    isp cnt
+    jmp zcfArgLoop
+
+zcfLocals,
+    // ---- locals k+1..N: their initial values (V1-4) or zero (V5) ----
+    lac nLocals
+    sub nArgs                      // N - k, never negative
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if any remain
+    jmp zcfLocalsDone                 // no-skip: every local has its argument
+    cma
+    dac cnt                        // -(N - k), for isp
+    lac nArgs
+zcfInitForm,
+    sal 1s                         // PATCHED: V5 `jmp zcfZeroFill`. V1-4: 2k
+    add addrSave
+    add [1]
+    dac hdrAddr                    // local k+1's initial value: addr + 1 + 2k
+zcfInitLoop,
+    lem                            // the fetch runs with the window closed,
+    lio hdrAddr                    //   like every zFetchWord call here
+    jsp zFetchWord                 // AC = the initial value; window open again
+    dac i ptr
+    idx ptr
+    idx hdrAddr
+    idx hdrAddr                    // the next 2-byte initial value
+    isp cnt
+    jmp zcfInitLoop
+    jmp zcfLocalsDone              // every local written
+zcfZeroFill,                       // V5 only: every local starts at zero
+    cli                            //   (S5.2.1). The window is open: straight
+zcfZeroLoop,                       //   from the header writes above
+    dio i ptr
+    idx ptr
+    isp cnt
+    jmp zcfZeroLoop
+
+zcfLocalsDone,
+    // ---- the new frame is the current one ----
+    lac zSP
+    dac zFP                        // the old top of stack is the new base
+    lac nLocals                    // the rest of the frame cache,
+    dac zsNLoc                     //   set here rather than by zsFrameSync.
+    lac newSP                      //   nLocals is the count byte, 0-15, so it
+    dac zSP                        //   needs no mask, and the new routine's
+    dac zsEvBase                   //   evaluation stack starts where zSP now
+                                   //   does. zsLocPtr was set above.
+
+    // AC result = first instruction (S5.3).
+    // V1-4: past the count byte and the N 2-byte initial values. V5: just
+    // past the count byte, because the patched `cla` makes the 2N term 0.
+    lac nLocals
+zcfFirstN,
+    sal 1s                         // PATCHED: V5 `cla`
+    add addrSave
+    add [1]
+    farrtn(rtn)
+
+zcfFail,                           // see ztiFail
+    lac zServing
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if boot is serving
+    jmp zcfOverflow                   // no-skip: a test entry -- halt
+    lac [ZSTOP_STACK]
+    jmp zSessionFail
+zcfBadCount,
+zcfOverflow,
+    hlt
+
+rtn, 0
+addrSave, 0
+argc, 0
+nLocals, 0
+newSP, 0
+nArgs, 0
+hdrAddr, 0
+ptr, 0
+argPtr, 0
+cnt, 0
+    endlocal
+
+// zCallReturn -- return from the current routine (S6.4.5), restoring zSP
+// and zFP (see the file header) and refilling the frame cache for the
+// caller's frame.
+// IO holds the return value.
+// Returns:
+//   AC = the caller's resume PC (the return PC this frame recorded)
+//   IO = the return value, passed straight back
+//   zCallReturnResVar = the variable number the call's store byte named,
+//                       or ZRV_DISCARD.
+// The caller applies the store after this routine has restored the
+// caller's frame, so a store to $00 or a local lands in the caller's frame.
+// Returns with the extend window open (crossBankrtn NOEEM); zdpReturn, the
+// one caller, closes it.
+// Halts (see ztiFail) on a return from the initial environment (saved FP
+// == ZFP_NONE, S5.5), with nothing changed.
+// Called via jsp.
+zCallReturn,
+    local rtn, valSave, retPC, savedFP, ptr
+    dac rtn
+    dio valSave
+
+    lac zFP
+    add [zStack:DYNMEM_STACK_BANK] // the 16-bit pointer to zStack[zFP]
+    dac ptr
+    eem                            // it names bank 13
+    lac i ptr
+    dac retPC                      // zStack[zFP+0]
+    idx ptr
+    lac i ptr                      // zStack[zFP+1], the caller's frame base
+    SKIP_NEXT_IF_DIFFERENT [ZFP_NONE]  // sad: skip (fallthrough) if a real caller
+    jmp zcrFail                           // no-skip: return from the initial env (S5.5)
+                                   // NOTE: this test reads AC, which holds the
+                                   //   word just read. Nothing may be inserted
+                                   //   between the two.
+    dac savedFP
+    idx ptr
+    lac i ptr
+    dac zCallReturnResVar          // zStack[zFP+2] -- where the CALLER wanted
+                                   //   this routine's result put (S4.6), or
+                                   //   ZRV_DISCARD. Read while zFP still names
+                                   //   the RETURNING frame.
+
+    lac zFP
+    dac zSP                        // discards header, locals, and stray values (S6.3.2)
+    lac savedFP
+    dac zFP
+
+    // ---- the caller's frame, cached: zsFrameSync's computation, inline.
+    // Before the dispatch loop's store, which may be to one of its locals.
+    add [zStack:DYNMEM_STACK_BANK] // AC still holds the new zFP
+    add [3]
+    dac zsLocPtr                   // the pointer to zStack[zFP+3]
+    lac i zsLocPtr                 // the count word: the window is still open
+    and [017]                      // N only: argc << 4 rides above it in V5
+    dac zsNLoc
+    add zFP
+    add [4]
+    dac zsEvBase                   // zFP+4+N
+
+    lio valSave                    // IO = the return value (see header comment)
+    lac retPC                      // AC = the caller's resume PC
+    crossBankrtn(rtn, NOEEM)       // the `eem` above opened the window
+
+zcrFail,                           // see ztiFail
+    lem                            // reached with the window open: close it
+    lac zServing
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if boot is serving
+    jmp zcrNoFrame                    // no-skip: a test entry -- halt
+    lac [ZSTOP_STACK]
+    jmp zSessionFail
+zcrNoFrame,
+    hlt
+rtn, 0
+valSave, 0
+retPC, 0
+savedFP, 0
+ptr, 0
+    endlocal
+
+// zFrameArgCount -- the number of arguments the current routine's call
+// supplied, for V5's check_arg_count (S15).
+// No arguments.
+// Returns the count (0-7) in AC: the high field of the frame's count word,
+// argc << 4 | N. The word is at most 0177, so `sar 4s` alone extracts it.
+// The initial pseudo-frame's word is 0, so the answer there is 0.
+// Returns through farrtn; the caller closes the window.
+// Called via jsp.
+zFrameArgCount,
+    local rtn
+    dac rtn
+    lac zFP
+    add [3]
+    lia
+    jsp zsGet                      // AC = argc << 4 | N
+    sar 4s                         // AC = argc
+    farrtn(rtn)
+rtn, 0
+    endlocal
+
+// zUnwindTo -- unwind to a frame, for V5's throw.
+// IO holds a frame value as catch stores it (zdispatch.ac's zdhCatch
+// stores zFP, the zStack index of the frame's base).
+// If that value is the base of a frame on the live chain, sets zFP to it
+// and returns AC = 1; the caller then does an ordinary return, and
+// zCallReturn's `zSP := zFP` discards every frame above it (S6.3.2).
+// Otherwise returns AC = 0 and changes nothing.
+//
+// The walk starts at zFP and follows each frame's saved-FP word
+// (zStack[fp+1]). It tests for ZFP_NONE before it tests for a match, so a
+// frame value equal to ZFP_NONE (0d1024, a legal 16-bit operand) cannot
+// match the end of the chain. Saved FPs strictly decrease, so the walk
+// ends. Frame 0, the pseudo-frame, is on the chain; a throw to it halts in
+// zCallReturn's S5.5 guard.
+// Returns through farrtn; the caller closes the window.
+// Called via jsp.
+zUnwindTo,
+    local rtn, want
+    dac rtn
+    dio want
+    lac zFP
+zutWalk,
+    SKIP_NEXT_IF_DIFFERENT [ZFP_NONE]  // sad: skip (fallthrough) if a real frame
+    jmp zutNone                           // no-skip: off the end of the chain
+    SKIP_NEXT_IF_DIFFERENT want        // sad: skip (fallthrough) if not the target
+    jmp zutFound                          // no-skip: this frame is the one
+    add [1]                            // AC still holds the frame's base (sad
+    lia                                //   leaves it alone): IO = base + 1
+    jsp zsGet                          // AC = this frame's caller's base
+    jmp zutWalk
+
+zutFound,
+    dac zFP                            // AC is the frame's base
+    jsp zsFrameSync                    // the caller's zCallReturn syncs again;
+                                       //   this keeps the routine safe on its own
+    lac [1]
+    farrtn(rtn)
+
+zutNone,
+    cla                                // zFP untouched
+    farrtn(rtn)
+rtn, 0
+want, 0
+    endlocal
+
+// zReadVar -- read a Z-machine variable.
+// IO holds the variable number (0-255, S4.2.2).
+// Returns the variable's value in AC:
+//   $00        the stack -- popped (S6.3), or peeked in place when
+//              zVarIndirect is set
+//   $01-$0f    the current frame's locals, found through the frame cache.
+//              A number beyond the frame's local count reads 0: S4.2.2
+//              calls it illegal but asks for no halt, and the number may
+//              be one the story computed (the indirect opcodes). A harness
+//              build counts it in zsDgBadLocalRead.
+//   $10-$ff    the global table, zhGlobalsAddr + 2*(n-16) (S6.2): read in
+//              place through zsGlobPtr when boot formed it, else through
+//              zFetchWord
+//
+// zVarIndirect is the one-shot modifier for S6.3.4's seven
+// indirect-reference opcodes (inc, dec, inc_chk, dec_chk, load, store,
+// pull), where a reference to the stack reads or writes the top item in
+// place instead of popping or pushing it. The caller sets it nonzero
+// immediately before the call; zReadVar and zWriteVar clear it on every
+// path, so a forgotten reset cannot leak into the next operand. Only the
+// stack arm reads it. zarith.ac sets it.
+// Called via jsp.
+zReadVar,
+    local rtn, varNum, ptr
+    dac rtn
+    lai
+    dac varNum                     // AC still holds it for the first test
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if varNum != 0
+    jmp zrvStack                      // no-skip: varNum == 0 -> the stack
+    SKIP_NEXT_IF_DIFFERENT [0d15]  // sad: skip (fallthrough) if varNum != 15
+    jmp zrvLocal                      // no-skip: varNum == 15 -> the last local
+    sub [0d15]
+    SKIP_NEXT_IF_AC_NEGATIVE       // sma: skip (fallthrough) if varNum < 15
+    jmp zrvGlobal                     // no-skip: varNum > 15 -> a global
+
+zrvLocal,
+    dzm zVarIndirect               // one-shot: always back to normal mode
+    lac varNum
+    SKIP_NEXT_IF_DIFFERENT zsNLoc  // sad: skip (fallthrough) if varNum != N
+    jmp zrvLocalOk                    // no-skip: varNum == N -> the last local, legal
+    sub zsNLoc
+    SKIP_NEXT_IF_AC_NEGATIVE       // sma: skip (fallthrough) if varNum < N
+    jmp zrvFail                       // no-skip: varNum > N -> no such local
+
+zrvLocalOk,
+    lac varNum
+    add zsLocPtr                   // -> zStack[zFP+3+varNum], the local
+zrvDeref,
+    dac ptr                        // AC = a 16-bit pointer, a local's, a stack
+    eem                            //   slot's or a global's resident word
+    lac i ptr
+    crossBankrtn(rtn, NOEEM)       // the `eem` just above opened the window
+
+zrvGlobal,
+    // When boot has formed zsGlobPtr (an even globals address), a global
+    // is read in place: dynamic memory is always resident, and at an even
+    // address the containing word is the Z-machine word. zsGlobPtr is the
+    // 16-bit pointer to global 16's word less 16, so adding the variable
+    // number lands on the global's. An odd address leaves it 0, and the
+    // read goes through zFetchWord.
+    dzm zVarIndirect               // one-shot: always back to normal mode
+    lac zsGlobPtr
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if boot formed it
+    jmp zrvGlobSlow                   // no-skip: 0 -- no pointer, zFetchWord's path
+    add varNum
+    jmp zrvDeref
+
+zrvGlobSlow,
+    lac varNum
+    sal 1s
+    sub [0d32]                     // 2*varNum - 32 == 2*(varNum - 16)
+    add zhGlobalsAddr
+    lia
+    jsp zFetchWord
+    crossBankrtn(rtn, NOEEM)
+
+zrvStack,
+    lac zVarIndirect               // the only arm that reads the modifier:
+    dzm zVarIndirect               //   read, then cleared (one-shot)
+    SKIP_NEXT_IF_AC_ZERO           // sza: skip (fallthrough) if normal mode
+    jmp zrvPeek                       // no-skip: indirect -> read in place (S6.3.4)
+    jsp zsTopIndex                 // a pop, zStackPop's body: AC = zSP-1, or
+    dac zSP                        //   hlt inside if nothing was pushed
+zrvTop,
+    add [zStack:DYNMEM_STACK_BANK] // AC survives dac: the slot's pointer
+    jmp zrvDeref
+
+zrvPeek,
+    jsp zsTopIndex                 // hlt inside if the stack is empty
+    jmp zrvTop
+
+zrvFail,                           // no such local -> reads 0
+#if Z_TEST_HARNESS
+    idx zsDgBadLocalRead               // the degrade ran
+#endif
+    cla
+    farrtn(rtn)
+rtn, 0
+varNum, 0
+ptr, 0
+    endlocal
+
+// zWriteVar -- write a Z-machine variable.
+// AC holds the variable number (0-255), IO the value.
+// Has no return value.
+// The same three-way dispatch and zVarIndirect modifier as zReadVar.
+// Variable $00 pushes (S6.3), or writes the top item in place when
+// zVarIndirect is set. A local number the frame does not have drops the
+// write, counted in zsDgBadLocalWrite in a harness build. Globals are
+// written through zStoreWord, which carries the undo hook.
+// Called via jda.
+zWriteVar, 0
+    local rtn, varNum, valSave, ptr
+    dac rtn
+    dio valSave
+    lac zWriteVar                  // AC = the deposited variable number
+    dac varNum                     // AC still holds it for the first test
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if varNum != 0
+    jmp zwvStack                      // no-skip: varNum == 0 -> the stack
+    SKIP_NEXT_IF_DIFFERENT [0d15]  // sad: skip (fallthrough) if varNum != 15
+    jmp zwvLocal                      // no-skip: varNum == 15 -> the last local
+    sub [0d15]
+    SKIP_NEXT_IF_AC_NEGATIVE       // sma: skip (fallthrough) if varNum < 15
+    jmp zwvGlobal                     // no-skip: varNum > 15 -> a global
+
+zwvLocal,
+    dzm zVarIndirect               // one-shot: always back to normal mode
+    lac varNum
+    SKIP_NEXT_IF_DIFFERENT zsNLoc  // sad: skip (fallthrough) if varNum != N
+    jmp zwvLocalOk                    // no-skip: varNum == N -> the last local, legal
+    sub zsNLoc
+    SKIP_NEXT_IF_AC_NEGATIVE       // sma: skip (fallthrough) if varNum < N
+    jmp zwvFail                       // no-skip: varNum > N -> no such local
+
+zwvLocalOk,
+    lac varNum
+    add zsLocPtr                   // -> zStack[zFP+3+varNum], the local
+zwvStore,
+    dac ptr                        // AC = a 16-bit pointer, a local's or a
+zwvPut,                            //   stack slot's
+    lio valSave
+    eem                            // the pointer names bank 13
+    dio i ptr
+    crossBankrtn(rtn, NOEEM)       // the `eem` just above opened the window
+
+zwvGlobal,
+    dzm zVarIndirect               // one-shot: always back to normal mode
+    lac varNum
+    sal 1s                         // shift-before-subtract, as zrvGlobSlow
+    sub [0d32]
+    add zhGlobalsAddr
+    lio valSave
+    jda zStoreWord
+    crossBankrtn(rtn, NOEEM)
+
+zwvStack,
+    lac zVarIndirect               // the only arm that reads the modifier:
+    dzm zVarIndirect               //   read, then cleared (one-shot)
+    SKIP_NEXT_IF_AC_ZERO           // sza: skip (fallthrough) if normal mode
+    jmp zwvPoke                       // no-skip: indirect -> write in place (S6.3.4)
+    lac zSP                        // a push, zStackPush's body
+    SKIP_NEXT_IF_DIFFERENT [Z_STACK_WORDS]  // sad: skip (fallthrough) if room left
+    jmp zpuFail                                // no-skip: full -- zStackPush's own halt
+    add [zStack:DYNMEM_STACK_BANK] // AC still holds zSP: the slot's pointer
+    dac ptr
+    idx zSP                        // the slot is taken
+    jmp zwvPut
+
+zwvPoke,
+    jsp zsTopIndex                 // hlt inside if the stack is empty
+    add [zStack:DYNMEM_STACK_BANK] // the top slot's pointer
+    jmp zwvStore
+
+zwvFail,                           // no such local -> nothing written
+#if Z_TEST_HARNESS
+    idx zsDgBadLocalWrite              // the degrade ran
+#endif
+    farrtn(rtn)
+rtn, 0
+varNum, 0
+valSave, 0
+ptr, 0
+    endlocal
+
+// ---- Stack machine state (bank 0, resident) ---------------------------
+// zSP -- next free zStack slot. zFP -- base index of the current frame.
+// Both meaningless until zStackInit has run.
+zSP, 0
+zFP, 0
+
+// The frame cache (see the file header): N, the pointer to zStack[zFP+3],
+// and zFP+4+N. Assembled with the initial pseudo-frame's values (N 0,
+// frame 0), so an image nothing has run yet agrees with the frame
+// zStackInit lays down -- a pop there halts as empty rather than reading
+// the frame header.
+zsNLoc, 0
+zsLocPtr, zStack:DYNMEM_STACK_BANK+3
+zsEvBase, 4
+
+// zsGlobPtr -- zReadVar's pointer for a global: the 16-bit pointer to
+// global 16's resident word, less 16, so that adding a variable number
+// 16-255 lands on its global. zboot.ac's zBootInit forms it from
+// zhGlobalsAddr when that address is even, and stores 0 when it is odd,
+// which sends every global read through zFetchWord. 0 until boot has run.
+// Writes do not use it: zWriteVar uses zStoreWord, which carries the undo
+// hook.
+zsGlobPtr, 0
+
+// zCallFrameRetPC -- zCallFrame's resume-PC input (see its header).
+zCallFrameRetPC, 0
+
+// zCallFrameResVar -- zCallFrame's result-variable input: the variable
+// number the routine's return value is to be stored into, or ZRV_DISCARD.
+// Goes into the frame at zFP+2; comes back out of zCallReturn in
+// zCallReturnResVar.
+zCallFrameResVar, 0
+
+// zCallReturnResVar -- zCallReturn's third result (see its header).
+zCallReturnResVar, 0
+
+// zVarIndirect -- zReadVar/zWriteVar's one-shot S6.3.4 modifier (see
+// zReadVar's header). Read and cleared by both.
+zVarIndirect, 0
+
+// Degrade counters: bumped by one `idx` at the site, read by a test with a
+// bare `show`, never read by the interpreter, absent from production.
+#if Z_TEST_HARNESS
+zsDgBadLocalRead, 0            // a read of a local the frame lacks
+zsDgBadLocalWrite, 0           // a write to a local the frame lacks
+#endif
+
+// ========================================================================
+// Test-driver scaffolding (ad1). Each entry is run with `start` and ends
+// in `hlt`. zVarIndirect, zdOp1..zdOp7 (testCallFrame's arguments), zSP,
+// zFP and the frame-cache words are plain bank-0 words, set and read
+// directly with ad1's `set`/`show`; after poking zFP or a count word, a
+// test must `start testFrameSync`.
+//
+// Guarded by Z_TEST_HARNESS (default 1, defined in zmemcore.am1); a
+// production build assembles with -DZ_TEST_HARNESS=0 and omits all of it.
+// ========================================================================
+#if Z_TEST_HARNESS
+
+testStackValueIn, 0
+testStackIndexIn, 0
+testStackVarIn, 0
+testStackAddrIn, 0
+testStackArgcIn, 0
+testStackRetPCIn, 0
+testStackResultOut, 0
+testStackResultIoOut, 0
+
+testStackInit,
+    jsp zStackInit
+    hlt
+
+testStackPush,
+    lio testStackValueIn
+    jsp zStackPush
+    hlt
+
+testStackPop,
+    jsp zStackPop
+    dac testStackResultOut
+    hlt
+
+// Raw zStack read, to inspect a frame's layout directly. No bounds check.
+testStackPeek,
+    lio testStackIndexIn
+    jsp zsGet
+    dac testStackResultOut
+    hlt
+
+testCallFrame,
+    lac testStackRetPCIn
+    dac zCallFrameRetPC
+    lac testStackAddrIn
+    lio testStackArgcIn
+    jda zCallFrame
+    dac testStackResultOut
+    hlt
+
+testCallReturn,
+    lio testStackValueIn
+    jsp zCallReturn
+    dac testStackResultOut
+    dio testStackResultIoOut       // dac left IO alone -- capture both results
+    hlt
+
+testReadVar,
+    lio testStackVarIn
+    jsp zReadVar
+    dac testStackResultOut
+    hlt
+
+testWriteVar,
+    lac testStackVarIn
+    lio testStackValueIn
+    jda zWriteVar
+    hlt
+
+// Refills the frame cache after a test has poked zFP or a count word.
+testFrameSync,
+    jsp zsFrameSync
+    hlt
+
+#endif // Z_TEST_HARNESS
+
+#endif // ZSTACK_AC_H

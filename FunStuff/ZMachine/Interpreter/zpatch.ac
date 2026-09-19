@@ -1,0 +1,206 @@
+// ZMachine VERSION PATCH TABLE
+// #include-only fragment, assembled into bank ZPATCH_BANK (0d14).
+// Entry point: zpApply.
+//
+// One image serves V3, V4 and V5. Every word whose right value depends on
+// the story's version is listed here, four words an entry:
+//
+//     target     a full 16-bit (bank:offset) address, `sym:bank`
+//     V3 value   the word the site holds in a V3 session
+//     V4 value
+//     V5 value
+//
+// ended by a 0 target. zpApply (below) writes the entry's value for the
+// story's version into every target, on every zBootInit -- the session
+// start, `restart`, and each serve-loop connect -- so the patch is total:
+// no word keeps a value from a session of another version. An entry is
+// written even where its value is the one already there.
+//
+// The image is assembled with the V3 value at every site, so an unbooted
+// harness entry runs as V3; testSetVersion (zmemcore.am1) runs zpApply
+// for a poked version without booting. Every target's assembled word must
+// equal its V3 column, and no target may be listed twice.
+//
+// To add a version difference: label the site's word, assemble it with the
+// V3 value, and add one entry here. No code anywhere tests the story's
+// version.
+//
+// A value that is an instruction is written as one: `cla`, `sal 1s`. A
+// jump or jsp to a label in another bank cannot be (`sym:bank` is 16
+// bits, and the top four would land in the opcode), so ZP_JMP and ZP_JSP
+// build the word from the target's 12-bit offset.
+
+#define ZP_JMP(t)  (0600000 | ((t) & 07777))
+#define ZP_JSP(t)  (0620000 | ((t) & 07777))
+#define ZP_LAC(t)  (0200000 | ((t) & 07777))
+#define ZP_ADD(t)  (0400000 | ((t) & 07777))
+#define ZP_SUB(t)  (0420000 | ((t) & 07777))
+#define ZP_B0      0                       // bank 0
+#define ZP_B13     0d13
+#define ZP_B14     0d14                    // this bank: zsave.ac, below the table
+#define ZP_B15     0d15
+
+zpTab,
+// ---- zstack.ac: the routine header and the frame's count word (S5, S6.4)
+    zcfArgcShift:ZP_B0;  cla;  cla;  sal 4s
+    zcfInitForm:ZP_B0;   sal 1s;  sal 1s;  ZP_JMP(zcfZeroFill:ZP_B0)
+    zcfFirstN:ZP_B0;     sal 1s;  sal 1s;  cla
+
+// ---- zdispatch.ac's opcode tables (S14), and zdecode.ac's EXT form (S4.3)
+// An opcode table word is `attribute | handler` (zdecode.ac's ZAT_*, and a
+// bank-0 handler address), so each value is written as the sum, and an
+// opcode whose attribute and handler both change -- 1OP:15 not/call_1n,
+// 0OP:9 pop/catch -- is one entry.
+    zdA2op25:ZP_B0;  ZAT_NONE+zdhCall:ZP_B0;  ZAT_S+zdhCall:ZP_B0;     ZAT_S+zdhCall:ZP_B0      // call_2s
+    zdA2op26:ZP_B0;  ZAT_NONE+zdhCall:ZP_B0;  ZAT_NONE+zdhCall:ZP_B0;  ZAT_X+zdhCall:ZP_B0      // call_2n
+    zdA2op27:ZP_B0;  ZAT_NONE+zdhScreen:ZP_B0;  ZAT_NONE+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0  // set_colour
+    zdA2op28:ZP_B0;  ZAT_NONE+zdhThrow:ZP_B0; ZAT_NONE+zdhThrow:ZP_B0; ZAT_X+zdhThrow:ZP_B0     // throw
+    zdA1op8:ZP_B0;   ZAT_NONE+zdhCall:ZP_B0;  ZAT_S+zdhCall:ZP_B0;     ZAT_S+zdhCall:ZP_B0      // call_1s
+    zdpE1op15:ZP_B0; ZAT_S+zdhNot:ZP_B0;      ZAT_S+zdhNot:ZP_B0;      ZAT_X+zdhCall:ZP_B0      // not / call_1n
+    zdA0op5:ZP_B0;   ZAT_B+zdhSave:ZP_B0;     ZAT_S+zdhSave:ZP_B0;     ZAT_NONE+zdhSave:ZP_B0   // save
+    zdA0op6:ZP_B0;   ZAT_B+zdhRestore:ZP_B0;  ZAT_S+zdhRestore:ZP_B0;  ZAT_NONE+zdhRestore:ZP_B0 // restore
+    zdpE0op9:ZP_B0;  ZAT_X+zdhPop:ZP_B0;      ZAT_X+zdhPop:ZP_B0;      ZAT_S+zdhCatch:ZP_B0     // pop / catch
+    zdpE0op12:ZP_B0; ZAT_X+zdhShowStatus:ZP_B0;  ZAT_X+zdhNop:ZP_B0;   ZAT_X+zdhNop:ZP_B0       // show_status
+    zdA0op15:ZP_B0;  ZAT_NONE+zdhPiracy:ZP_B0;   ZAT_NONE+zdhPiracy:ZP_B0;  ZAT_B+zdhPiracy:ZP_B0  // piracy
+    zdAVar4:ZP_B0;   ZAT_X+zdhSread:ZP_B0;    ZAT_X+zdhSread:ZP_B0;    ZAT_S+zdhSread:ZP_B0     // sread / aread
+    zdAVar12:ZP_B0;  ZAT_NONE+zdhCall:ZP_B0;  ZAT_SD+zdhCall:ZP_B0;    ZAT_SD+zdhCall:ZP_B0     // call_vs2
+    zdAVar13:ZP_B0;  ZAT_NONE+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0   // erase_window
+    zdAVar14:ZP_B0;  ZAT_NONE+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0   // erase_line
+    zdAVar15:ZP_B0;  ZAT_NONE+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0   // set_cursor
+    zdAVar16:ZP_B0;  ZAT_NONE+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0   // get_cursor
+    zdAVar17:ZP_B0;  ZAT_NONE+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0   // set_text_style
+    zdAVar18:ZP_B0;  ZAT_NONE+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0;  ZAT_X+zdhScreen:ZP_B0   // buffer_mode
+    zdAVar22:ZP_B0;  ZAT_NONE+zdhReadChar:ZP_B0;   ZAT_S+zdhReadChar:ZP_B0;   ZAT_S+zdhReadChar:ZP_B0    // read_char
+    zdAVar23:ZP_B0;  ZAT_NONE+zdhScanTable:ZP_B0;  ZAT_SB+zdhScanTable:ZP_B0; ZAT_SB+zdhScanTable:ZP_B0  // scan_table
+    zdAVar24:ZP_B0;  ZAT_NONE+zdhNot:ZP_B0;   ZAT_NONE+zdhNot:ZP_B0;   ZAT_S+zdhNot:ZP_B0       // not (VAR)
+    zdAVar25:ZP_B0;  ZAT_NONE+zdhCall:ZP_B0;  ZAT_NONE+zdhCall:ZP_B0;  ZAT_X+zdhCall:ZP_B0      // call_vn
+    zdAVar26:ZP_B0;  ZAT_NONE+zdhCall:ZP_B0;  ZAT_NONE+zdhCall:ZP_B0;  ZAT_XD+zdhCall:ZP_B0     // call_vn2
+    zdAVar27:ZP_B0;  ZAT_NONE+zdhTokenise:ZP_B0;    ZAT_NONE+zdhTokenise:ZP_B0;    ZAT_X+zdhTokenise:ZP_B0    // tokenise
+    zdAVar28:ZP_B0;  ZAT_NONE+zdhEncodeText:ZP_B0;  ZAT_NONE+zdhEncodeText:ZP_B0;  ZAT_X+zdhEncodeText:ZP_B0  // encode_text
+    zdAVar29:ZP_B0;  ZAT_NONE+zdhCopyTable:ZP_B0;   ZAT_NONE+zdhCopyTable:ZP_B0;   ZAT_X+zdhCopyTable:ZP_B0   // copy_table
+    zdAVar30:ZP_B0;  ZAT_NONE+zdhScreen:ZP_B0;      ZAT_NONE+zdhScreen:ZP_B0;      ZAT_X+zdhScreen:ZP_B0      // print_table
+    zdAVar31:ZP_B0;  ZAT_NONE+zdhCheckArgCount:ZP_B0;  ZAT_NONE+zdhCheckArgCount:ZP_B0;  ZAT_B+zdhCheckArgCount:ZP_B0  // check_arg_count
+    zidExtJmp:ZP_B0; nop;       nop;       ZP_JMP(zidExtForm:ZP_B0)
+
+// ---- zdispatch.ac: the packed-address scale (S1.2.3) and save/restore's
+// ---- result (S15) ----------------------------------------------------
+    zurShift:ZP_B0;   sal 1s;  ral 2s;  ral 2s
+    zusShift:ZP_B0;   sal 1s;  ral 2s;  ral 2s
+    zdhSaveRes:ZP_B0;        ZP_JSP(zdpBranch:ZP_B0);  ZP_JSP(zdpStore:ZP_B0);  ZP_JSP(zdpStore:ZP_B0)
+    zdhRestoreRes:ZP_B0;     ZP_JSP(zdpBranch:ZP_B0);  ZP_JSP(zdpStore:ZP_B0);  ZP_JSP(zdpStore:ZP_B0)
+    zdhRestoreFailRes:ZP_B0; ZP_JSP(zdpBranch:ZP_B0);  ZP_JSP(zdpStore:ZP_B0);  ZP_JSP(zdpStore:ZP_B0)
+
+// ---- zobjops.ac / zprint.ac: the object-number mask (S12.3.1) --------
+    zObjMask:ZP_B0;  0377;  0177777;  0177777
+
+// ---- zinput.ac: sread (V1-4) / aread (V5), S15 ----------------------
+    zisNone:ZP_B0;      ZP_JMP(zipNext:ZP_B0);  ZP_JMP(zipNext:ZP_B0);  ZP_JMP(ziNoOps:ZP_B0)
+    zisOne:ZP_B0;       ZP_JMP(zipNext:ZP_B0);  ZP_JMP(zipNext:ZP_B0);  nop
+    zisStatus:ZP_B0;    ZP_JSP(zPrintStatus:ZP_B0);  nop;  nop
+    zisV3Untimed:ZP_B0; ZP_JMP(zisGo:ZP_B0);  ZP_LAC(zdOp2:ZP_B0);  ZP_LAC(zdOp2:ZP_B0)
+    zisParse0:ZP_B0;    nop;  nop;  ZP_JMP(ziParsed:ZP_B0)
+    ziStoreTerm:ZP_B0;  nop;  nop;  ZP_JSP(zdpStore:ZP_B0)
+
+// ---- zscreen.ac: V3's split_window clears the upper window (S8.7.3.1)
+    zssTail:ZP_B13;  ZP_JMP(zsewUp:ZP_B13);  ZP_JMP(zsDone:ZP_B13);  ZP_JMP(zsDone:ZP_B13)
+// ---- zscreen.ac: V3's status line is screen row 1 ---------------------
+    zsTop:ZP_B13;    1;  0;  0
+
+// ---- zboot.ac: the file-length unit (S11.1.6), the property defaults
+// ---- (S12.2), and the header fields the interpreter writes (S11.1) ---
+    zbFlScale:ZP_B15;       nop;     sal 1s;  sal 1s
+    zbFlBytes:ZP_B15;       sal 1s;  cla;     cla
+    zbFlAdd:ZP_B15;         1;       ZB_ADDR_CEILING;  ZB_ADDR_CEILING
+    zbPropDefBytes:ZP_B15;  0d62;    0d126;   0d126
+    zbiHdrSetup:ZP_B15;     ZP_JSP(zbV3Flags1:ZP_B15);  ZP_JSP(zbHeaderSetup:ZP_B15);  ZP_JSP(zbHeaderSetup:ZP_B15)
+    zbrhCall:ZP_B15;        ZP_JSP(zbV3Flags1:ZP_B15);  ZP_JSP(zbHeaderSetup:ZP_B15);  ZP_JSP(zbHeaderSetup:ZP_B15)  // restore
+    zbhsFlags2:ZP_B15;      ZP_JMP(zbhsRet:ZP_B15);  ZP_JMP(zbhsRet:ZP_B15);  nop
+    zbHdrVer:ZP_B15;        3*0400+ZB_FLAGS1;  4*0400+ZB_FLAGS1;  5*0400+ZB_FLAGS1+ZB_F1_COLOR  // V5 0235
+    zbHdrV5:ZP_B15;         ZB_HDR_END;  ZB_HDR_END;  0d34
+
+// ---- zobjects.ac: the object entry (S12.3) and the property family ---
+// ---- (S12.4), whose six routines are forked whole -------------------
+    zoeaMul:ZP_B15;       ZP_ADD(zoeaX:ZP_B15);  ZP_SUB(zoeaX:ZP_B15);  ZP_SUB(zoeaX:ZP_B15)
+    zoeaDbl:ZP_B15;       nop;  sal 1s;  sal 1s
+    zoOffParent:ZP_B15;   4;  6;     6
+    zoOffSibling:ZP_B15;  5;  0d8;   0d8
+    zoOffChild:ZP_B15;    6;  0d10;  0d10
+    zoOffProps:ZP_B15;    7;  0d12;  0d12
+    zoLinkFetch:ZP_B15;   zFetchByte:ZP_B0;    zFetchWord:ZP_B0;    zFetchWord:ZP_B0
+    zoLinkStore:ZP_B15;   zStoreByte:ZP_B0;    zStoreWord:ZP_B0;    zStoreWord:ZP_B0
+    zoLinkStore1:ZP_B15;  zStoreByte:ZP_B0+1;  zStoreWord:ZP_B0+1;  zStoreWord:ZP_B0+1
+    zpFindPropFork:ZP_B15;    ZP_JMP(zpFindPropV3:ZP_B15);    ZP_JMP(zpFindPropV4:ZP_B15);    ZP_JMP(zpFindPropV4:ZP_B15)
+    zGetPropAddrFork:ZP_B15;  ZP_JMP(zGetPropAddrV3:ZP_B15);  ZP_JMP(zGetPropAddrV4:ZP_B15);  ZP_JMP(zGetPropAddrV4:ZP_B15)
+    zGetPropLenFork:ZP_B15;   ZP_JMP(zGetPropLenV3:ZP_B15);   ZP_JMP(zGetPropLenV4:ZP_B15);   ZP_JMP(zGetPropLenV4:ZP_B15)
+    zGetPropFork:ZP_B15;      ZP_JMP(zGetPropV3:ZP_B15);      ZP_JMP(zGetPropV4:ZP_B15);      ZP_JMP(zGetPropV4:ZP_B15)
+    zPutPropFork:ZP_B15;      ZP_JMP(zPutPropV3:ZP_B15);      ZP_JMP(zPutPropV4:ZP_B15);      ZP_JMP(zPutPropV4:ZP_B15)
+    zGetNextPropFork:ZP_B15;  ZP_JMP(zGetNextPropV3:ZP_B15);  ZP_JMP(zGetNextPropV4:ZP_B15);  ZP_JMP(zGetNextPropV4:ZP_B15)
+
+// ---- ztext.ac: the dictionary word's length (S3.7, S13.4) and the -----
+// ---- line reader's buffer (S15) -------------------------------------
+    zetZChars:ZP_B15;     6;        011;  011
+    zetEnd2:ZP_B15;       0100000;  0;    0
+    zrlText:ZP_B15;       1;  1;  2          // also zparser.ac's ZPT_TEXT
+    zrlRoomW:ZP_B15;      2;  2;  1
+    zrlCountFork:ZP_B15;  ZP_JMP(zrlCounted:ZP_B15);  ZP_JMP(zrlCounted:ZP_B15);  nop
+    zrlContFork:ZP_B15;   ZP_JMP(zrlScan:ZP_B15);     ZP_JMP(zrlScan:ZP_B15);     nop
+    zrlTermFork:ZP_B15;   ZP_JMP(zrlTermNul:ZP_B15);  ZP_JMP(zrlTermNul:ZP_B15);  nop
+    zrlTermTab:ZP_B15;    ZP_JMP(zrlNotTerm:ZP_B15);  ZP_JMP(zrlNotTerm:ZP_B15);  nop   // header 0x2E
+
+// ---- zparser.ac: the dictionary entry's third word (S13.4), V5's -----
+// ---- counted text (S15) ---------------------------------------------
+    zdlW3Fork:ZP_B15;     ZP_JMP(zdlFound:ZP_B15);   nop;  nop
+    zptEndFork:ZP_B15;    ZP_JMP(zptEndSet:ZP_B15);  ZP_JMP(zptEndSet:ZP_B15);  nop
+
+// ---- zsave.ac: the save format -------------------------------------
+    zsvFormat:ZP_B14;     0d1;  0d2;  0d2
+
+// ---- the undo log's hook, before each write to Z memory --------------
+// ---- (zmemcore.am1's two stores, zobjects.ac's two attribute writes) -
+// V5 only: V3 and V4 have no undo, and jump over the call.
+// These rows are the same in every image, census included: a census
+// image's `zuHook` is a stub that returns at once (zsave.ac).
+    zswHook:ZP_B0;   ZP_JMP(zswWrite:ZP_B0);   ZP_JMP(zswWrite:ZP_B0);   nop
+    zsbHook:ZP_B0;   ZP_JMP(zsbWrite:ZP_B0);   ZP_JMP(zsbWrite:ZP_B0);   nop
+    zsaHook:ZP_B15;  ZP_JMP(zsaSet:ZP_B15);    ZP_JMP(zsaSet:ZP_B15);    nop
+    zcaHook:ZP_B15;  ZP_JMP(zcaClear:ZP_B15);  ZP_JMP(zcaClear:ZP_B15);  nop
+
+    0                                        // the end of the table
+
+// Writes every table entry's value for the story's version into its target.
+// On call IO has the version, 3, 4 or 5 (zBootInit has refused any other;
+// testSetVersion trusts its caller).
+// Called via farjsp(zpApply:*). AC and IO are clobbered.
+// The walk runs in extend mode, so `lac i` and `dac i` take the table's
+// 16-bit words as they stand.
+zpApply,
+    local rtn, ptr, tgt, vp, off
+    farenter(rtn)
+    lai
+    sub [2]
+    dac off                          // 1, 2 or 3: the value's place in an entry
+    lac [zpTab:.]
+    dac ptr                          // 16 bits: the table's first entry
+    eem
+zpaLoop,
+    lac i ptr                        // the target
+    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) on a real entry
+    jmp zpaDone                         // no-skip: 0 -- the end of the table
+    dac tgt
+    lac ptr
+    add off
+    dac vp
+    lac i vp                         // the value for this version
+    dac i tgt
+    lac ptr
+    add [4]
+    dac ptr
+    jmp zpaLoop
+zpaDone,
+    farrtn(rtn)
+rtn, 0
+ptr, 0
+tgt, 0
+vp, 0
+off, 0
+    endlocal

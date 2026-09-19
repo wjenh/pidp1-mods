@@ -1,0 +1,1540 @@
+// ========================================================================
+// zobjects.ac -- the object table, attributes and properties (S12):
+// object entry access (parent/sibling/child, property-table pointer),
+// the object count (derived, not stored in the header), insert_obj/
+// remove_obj's tree surgery, the attribute flags, and the property
+// family (get/put/addr/len/next-prop, default-table-aware). The opcode
+// handlers that call these live in bank 0, in zobjops.ac.
+//
+// #included into zmemcore.am1's ZLEAF_BANK (bank 15) section, after
+// zboot.ac.
+//
+// Entry points (see each routine's header for its arguments):
+//   jsp, object number in IO:
+//       zObjEntryAddr zGetParent zGetSibling zGetChild zGetPropTableAddr
+//       zObjCount (no argument) zRemoveObj zGetPropLen (a data address)
+//   jda, object number in AC, second argument in IO:
+//       zSetParent zSetSibling zSetChild zInsertObj zTestAttr zSetAttr
+//       zClearAttr zGetPropAddr zGetProp zPutProp zGetNextProp
+// Every routine uses the farenter/farrtn cross-bank shape; bank-0
+// callers reach them with farjsp/farjda. A jda routine recovers the
+// object number with a plain `lac <name>` of its entry word: the
+// deposited value is the argument itself, not a pointer. zPutProp's
+// third argument, the value, is passed in the global zPutPropValue.
+// Results return in AC.
+//
+// TWO FORMATS, V1-3 against V4+, and boot picks one:
+//   - property defaults: 31 words (62 bytes) against 63 (126 bytes) --
+//     zboot.ac's patched zbPropDefBytes, so zhObjEntriesBase follows;
+//   - an entry: 9 bytes against 14. V4+ is 6 attribute bytes, then
+//     parent, sibling and child as WORDS at +6/+8/+10, then the
+//     property-table pointer at +12 (V3: bytes at +4/+5/+6, pointer +7);
+//   - object numbers 1-255 against 1-65535; attributes 0-31 against
+//     0-47; property numbers 1-31 against 1-63;
+//   - a property block's header: one byte against one or two, and
+//     lengths 1-8 against 1-64 (see "Property family" below).
+// The entry's size, the link offsets and the link fetch and store are
+// patched words (zoeaMul, zoeaDbl, zoOff*, zoLink*), and the six
+// property routines are forked whole, each entry a patched jump to its
+// V4 body or its V3 body (<name>V4, <name>V3). zObjCount, the tree
+// surgery, the attribute routines and zpPropHeaderEnd have no fork:
+// they reach the layout only through the primitives.
+//
+// THE 16-BIT INVARIANT (V4+). zResidentWordPtr, zStoreByte and zStoreWord
+// do not bound their address, and a Z address of 0x18000 or above lands
+// in bank 13 (the stack and page cache) or bank 15 (this code). V3 is
+// safe by construction: its object numbers are 8 bits. V4+ object
+// numbers are 16, and on this machine `sal` truncates a positive AC
+// modulo 2^17, so an unmasked (N-1)*14 climbs past 0x18000 in bands
+// (from about object 6,930). So the V4+ code masks to 16 bits every
+// address it FORMS from a caller's number or from a length: the entry
+// address, the next property block, and the default. With those masks
+// the highest store any object opcode can make is 0x11FFE (an attribute
+// byte, attribute unmasked), which is resident bank 9.
+//
+// Attribute-bit translation (zaAttrLoc, internal) wraps bitsets.ac's
+// plain *InWord routines, not *InList: *InList assumes an array of full
+// 18-bit words, which does not fit the Z-machine's byte-addressed
+// attribute field packed two bytes per word.
+//
+// Spec-illegal caller input (get_prop/put_prop on a property longer
+// than 2 bytes; put_prop on an absent property; get_next_prop on a
+// property that doesn't exist for the object) DEGRADES and nothing
+// halts: a real story is one ordinary mistake away from all four, and
+// none of them corrupts state. get_prop of a long property reads its
+// first two bytes as a word; put_prop of one writes its first two bytes;
+// put_prop of an absent property writes nothing; get_next_prop of an
+// absent property returns 0. A harness build counts each degrade in a
+// word of its own (zoDgLongGet et al., beside zPutPropValue).
+// ========================================================================
+
+#ifndef ZOBJECTS_AC_H
+#define ZOBJECTS_AC_H
+
+#include <AIDS/skipmacros.ah>
+#include "bitsets.ac"
+
+// The stop reason for a missing or wrong-sized property (zdispatch.ac's
+// ZSTOP_* list). Nothing produces it: the property routines degrade
+// instead. zErrReport keeps its text.
+#define ZSTOP_BADPROP 0d16     // V3: a property missing, or the wrong size
+
+// The object entries start right after the property-defaults table, at
+// zboot.ac's zhObjEntriesBase, computed once at boot as zhObjTableAddr
+// plus zbPropDefBytes (62 in V3, 126 in V4+; S12.2).
+
+// ========================================================================
+// Object entry access
+// ========================================================================
+
+// zObjEntryAddr -- the Z-machine byte address of an object's entry (9
+// bytes in V3, 14 in V4+).
+// On call IO has the object number (1-255 in V3, 1-65535 in V4+).
+// Returns AC = the entry's address, or 0 for object 0 ("no object").
+// Called via jsp.
+//
+// (N-1)*9 is `sal 3s` plus one add. V4+'s (N-1)*14 is *8, minus one,
+// then doubled; the two words that differ are patched (zoeaMul, zoeaDbl),
+// and `x` is the global zoeaX because zpatch.ac names it. The sum is
+// masked to 16 bits: the 16-bit invariant in the header. Up to object
+// 16,384 the result is exact modulo 2^16; past that `sal 3s` has
+// truncated modulo 2^17 and the mask keeps the garbage inside the 64 KB
+// space. A V3 entry is below 0x10000, so the mask changes nothing there.
+//
+// Object 0 would otherwise compute an address nine bytes below the entry
+// table, inside the property-defaults table. The handlers in zobjops.ac
+// never call with object 0; the guard covers a caller that does, and a
+// fetch then reads the story header, which is wrong but inert. Callers
+// that need "was there an object at all?" must test the object number
+// themselves.
+zObjEntryAddr,
+    local rtn
+    farenter(rtn)
+    lai                     // AC = object number
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zoeaNoObject              // no-skip: object 0 -- see the header above
+    sub [1]
+    dac zoeaX
+    sal 3s                   // AC = x*8
+zoeaMul,
+    add zoeaX                  // PATCHED: V4/V5 `sub zoeaX` -- x*7
+zoeaDbl,
+    nop                        // PATCHED: V4/V5 `sal 1s` -- x*14
+    add zhObjEntriesBase
+    and [0177777]              // 16 bits, always -- see the header above
+    farrtn(rtn)
+
+zoeaNoObject,
+    cla                        // AC is already 0 here; made explicit so the
+                               //   "no object" return value is visible
+    farrtn(rtn)
+
+rtn, 0
+    endlocal
+zoeaX, 0
+
+// The link and property-table offsets, and the fetch and store the links
+// use (a byte in V3, a word in V4+, S12.3). PATCHED words, read by the
+// getters and setters below.
+zoOffParent, 4                 // V4/V5: 6
+zoOffSibling, 5                // V4/V5: 0d8
+zoOffChild, 6                  // V4/V5: 0d10
+zoOffProps, 7                  // V4/V5: 0d12
+zoLinkFetch, zFetchByte:0      // V4/V5: zFetchWord
+zoLinkStore, zStoreByte:0      // V4/V5: zStoreWord -- a jda pair
+zoLinkStore1, zStoreByte:0+1   // V4/V5: zStoreWord+1
+
+// zGetParent / zGetSibling / zGetChild -- read an object's link.
+// On call IO has the object number.
+// Returns AC = the parent/sibling/child object number (0 = none).
+// Called via jsp.
+// Byte reads at the entry's offset +4/+5/+6 in V3; WORD reads at
+// +6/+8/+10 in V4+ (S12.3.2). The fetch width and the offset are patched
+// words (zoLinkFetch, zoOff*). zObjEntryAddr's farrtn leaves eem on, so
+// `jsp i zoLinkFetch` takes the pointer's full 16 bits.
+zGetParent,
+    local rtn
+    farenter(rtn)
+    jsp zObjEntryAddr
+    add zoOffParent
+    lia
+    jsp i zoLinkFetch
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+    endlocal
+
+zGetSibling,
+    local rtn
+    farenter(rtn)
+    jsp zObjEntryAddr
+    add zoOffSibling
+    lia
+    jsp i zoLinkFetch
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+    endlocal
+
+zGetChild,
+    local rtn
+    farenter(rtn)
+    jsp zObjEntryAddr
+    add zoOffChild
+    lia
+    jsp i zoLinkFetch
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+    endlocal
+
+// zSetParent / zSetSibling / zSetChild -- write an object's link.
+// On call AC has the object number, IO the new parent/sibling/child.
+// Nothing is returned.
+// Called via jda.
+// Byte writes at the entry's offset +4/+5/+6 in V3; WORD writes at
+// +6/+8/+10 in V4+, as for the getters above.
+zSetParent, 0
+    local rtn, valSave
+    farenter(rtn)
+    lac zSetParent
+    dio valSave
+    lia
+    jsp zObjEntryAddr
+    add zoOffParent
+    lio valSave
+    dac i zoLinkStore          // crossBankjda through the patched pair
+    jsp i zoLinkStore1
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+valSave, 0
+    endlocal
+
+zSetSibling, 0
+    local rtn, valSave
+    farenter(rtn)
+    lac zSetSibling
+    dio valSave
+    lia
+    jsp zObjEntryAddr
+    add zoOffSibling
+    lio valSave
+    dac i zoLinkStore
+    jsp i zoLinkStore1
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+valSave, 0
+    endlocal
+
+zSetChild, 0
+    local rtn, valSave
+    farenter(rtn)
+    lac zSetChild
+    dio valSave
+    lia
+    jsp zObjEntryAddr
+    add zoOffChild
+    lio valSave
+    dac i zoLinkStore
+    jsp i zoLinkStore1
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+valSave, 0
+    endlocal
+
+// zGetPropTableAddr -- read an object's property-table pointer.
+// On call IO has the object number.
+// Returns AC = the 16-bit Z-machine byte address of the property table.
+// Called via jsp.
+// Word read at the entry's offset +7 in V3, +12 in V4+. print_obj's
+// short name (ztext.ac) and zObjCount reach the table through here.
+zGetPropTableAddr,
+    local rtn
+    farenter(rtn)
+    jsp zObjEntryAddr
+    add zoOffProps
+    lia
+    crossBankjsp(zFetchWord:0, NOEEM)
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+    endlocal
+
+// ========================================================================
+// zObjCount -- the number of objects, which the header does not store.
+// No arguments.
+// Returns AC = the object count.
+// Called via jsp.
+//
+// Walk entries from 1, tracking the minimum property-table address seen
+// so far; stop the first time a candidate entry's own start address
+// would reach (>=) that minimum. Object entries and property-table data
+// are laid out contiguously, so the lowest property-table address is
+// also the address right after the last object entry (S12's Remarks).
+// minPropAddr starts at a sentinel, zboot.ac's zhFileLenPlus1 (0d65536
+// in V4+), above any real address. Computed once and cached
+// (zocCachedValid starts at 0, "not yet computed").
+//
+// V4+ edge case: a lowest property table in the top 13 bytes of the
+// 64 KB space would let the masked entry addresses step over it and
+// wrap. No real story is near that: the lowest table is the end of the
+// entries, in dynamic memory.
+// ========================================================================
+zObjCount,
+    local rtn, n, entryAddr, minPropAddr, propAddr
+    farenter(rtn)
+
+    lac zocCachedValid
+    SKIP_NEXT_IF_AC_ZERO         // sza: skip (fallthrough) if not yet cached
+    jmp zocReturnCached              // no-skip: already cached -> return it
+
+    lac [1]
+    dac n
+    lac zhFileLenPlus1
+    dac minPropAddr
+
+zocLoop,
+    lio n
+    jsp zObjEntryAddr
+    dac entryAddr
+    sub minPropAddr
+    SKIP_NEXT_IF_AC_NEGATIVE       // skip (fallthrough) if entryAddr < minPropAddr
+    jmp zocDone                        // no-skip: entryAddr >= minPropAddr -> stop
+
+    lio n
+    jsp zGetPropTableAddr
+    dac propAddr
+    sub minPropAddr
+    SKIP_NEXT_IF_AC_NEGATIVE        // skip (fallthrough) if propAddr < minPropAddr
+    jmp zocSkipUpdate                    // no-skip: propAddr >= minPropAddr, no update
+    lac propAddr
+    dac minPropAddr
+zocSkipUpdate,
+    idx n
+    jmp zocLoop
+
+zocDone,
+    lac n
+    sub [1]
+    dac zocCachedResult
+    lac [1]
+    dac zocCachedValid
+
+zocReturnCached,
+    lac zocCachedResult
+    farrtn(rtn)
+
+rtn, 0
+n, 0
+entryAddr, 0
+minPropAddr, 0
+propAddr, 0
+    endlocal
+
+zocCachedValid, 0
+zocCachedResult, 0
+
+// ========================================================================
+// Tree surgery -- insert_obj / remove_obj
+//
+// These live next to the primitives they call, so the many calls are
+// same-bank `jsp`/`jda` rather than farjsps.
+//
+// STATUS RETURN. Both public routines return a status in AC: 0 = done,
+// ZOU_CYCLE = the parent's child chain never reached the object within
+// zObjCount steps, i.e. it is cyclic. They do NOT halt themselves. The
+// halt belongs to the bank-0 caller (zobjops.ac's zdoObjStatus), where
+// every other ZSTOP_* in the interpreter is set.
+//
+// A cycle is the one thing that halts, because the walk cannot complete
+// and an unbounded one would hang the machine with no diagnostic. A
+// chain that ENDS (sibling 0) without ever containing the object -- the
+// object's parent field and that parent's chain disagree -- terminates,
+// so it is ignored: the chain is left as it was, the object's own links
+// are fixed up, and execution carries on.
+// ========================================================================
+
+// zoUnlink's cyclic-chain status. A local status code, not a
+// zdpStopReason: this file knows nothing about zdispatch.ac.
+#define ZOU_CYCLE 1
+
+// zoUnlink (internal) -- detach object O from its current parent's child
+// chain and clear O's own sibling pointer. O's parent field is not
+// touched: zRemoveObj clears it and zInsertObj rewrites it. O's CHILDREN
+// are never touched, which is what makes them travel with it on insert
+// and stay with it on remove (S15). A parent of 0 is spec-legal for
+// insert_obj: there is nothing to unlink, and only the sibling clear runs.
+// On call IO has O.
+// Returns AC = 0 (done) or ZOU_CYCLE (cyclic chain).
+// Called via jsp.
+zoUnlink,
+    local rtn, obj, par, sib, cur, next, limit, steps
+    farenter(rtn)
+    dio obj                    // IO still holds O; dio does not disturb it
+
+    jsp zGetParent             // IO = O from the caller, untouched above
+    dac par
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if O has a parent
+    jmp zouClearSib               // no-skip: parent 0 -- nothing to unlink
+
+    lio obj
+    jsp zGetSibling
+    dac sib                    // whatever follows O is what replaces it
+
+    lio par
+    jsp zGetChild
+    dac cur                    // P's first child
+    SKIP_NEXT_IF_DIFFERENT obj // sad: skip (fallthrough) if O is NOT first
+    jmp zouFirst                  // no-skip: O is P's own child pointer
+
+    // O is somewhere further down the chain: find the node whose sibling
+    // is O. Bounded by zObjCount -- no tree can hold a longer honest
+    // chain than it has objects, so exceeding it means a cycle.
+    jsp zObjCount
+    dac limit
+    cla
+    dac steps
+
+zouLoop,
+    // Counting UP to limit, never DOWN to zero: `1-1` on this machine is
+    // ones'-complement -0, which `sza` does not call zero.
+    lac steps
+    SKIP_NEXT_IF_DIFFERENT limit  // sad: skip (fallthrough) while steps < limit
+    jmp zouCycle                     // no-skip: walked further than the tree
+                                     //   has objects -- the chain is cyclic
+    add [1]
+    dac steps
+
+    lio cur
+    jsp zGetSibling
+    dac next
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if the chain goes on
+    jmp zouClearSib               // no-skip: chain ended without O -- already
+                                  //   inconsistent, but terminating, so leave
+                                  //   P's chain alone and carry on
+
+    lac next
+    SKIP_NEXT_IF_DIFFERENT obj // sad: skip (fallthrough) if this is not O yet
+    jmp zouFound                  // no-skip: cur's sibling IS O
+    lac next
+    dac cur
+    jmp zouLoop
+
+zouFound,
+    // cur -> O -> sib   becomes   cur -> sib
+    lac cur
+    lio sib
+    jda zSetSibling
+    jmp zouClearSib
+
+zouFirst,
+    // P's child pointer moves past O, to O's own sibling.
+    lac par
+    lio sib
+    jda zSetChild
+
+zouClearSib,
+    // O leaves the chain with no stale sibling of its own -- on every
+    // path, including the parent-0 and inconsistent-chain ones, so a
+    // stray sibling can never leak into a new chain on insert.
+    lac obj
+    cli
+    jda zSetSibling
+    cla                        // status 0 -- done
+    crossBankrtn(rtn, NOEEM)
+
+zouCycle,
+    lac [ZOU_CYCLE]
+    farrtn(rtn)
+
+rtn, 0
+obj, 0
+par, 0
+sib, 0
+cur, 0
+next, 0
+limit, 0
+steps, 0
+    endlocal
+
+// zRemoveObj -- detach object O from its parent and leave it parentless;
+// O keeps its own children (S15). Object 0 is not tested for here:
+// zobjops.ac's handler makes it a no-op, and zObjEntryAddr's guard
+// covers a caller that does not.
+// On call IO has O.
+// Returns AC = zoUnlink's status (0 or ZOU_CYCLE).
+// Called via jsp.
+zRemoveObj,
+    local rtn, obj
+    farenter(rtn)
+    dio obj                    // IO still holds O; dio does not disturb it
+
+    jsp zoUnlink               // IO = O, still, from the caller
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if the unlink is done
+    jmp zroFail                   // no-skip: cyclic chain -- pass it up
+
+    lac obj
+    cli
+    jda zSetParent             // parent = 0
+    cla
+    crossBankrtn(rtn, NOEEM)
+
+zroFail,
+    lac [ZOU_CYCLE]
+    farrtn(rtn)
+
+rtn, 0
+obj, 0
+    endlocal
+
+// zInsertObj -- make object O the FIRST child of object D; O's new
+// sibling is D's old first child. O's own children travel with it.
+// On call AC has O, IO has D.
+// Returns AC = zoUnlink's status (0 or ZOU_CYCLE).
+// Called via jda.
+//
+// D is assumed nonzero: zobjops.ac's handler routes "insert into object
+// 0" to zRemoveObj. D = 0 here would write near the story header
+// through zObjEntryAddr's guard -- inert, but not meaningful.
+//
+// D's old child is read AFTER the unlink, not before: when O is ALREADY
+// a child of D, the unlink is what moves D's child pointer, and reading
+// it first would relink O to itself.
+zInsertObj, 0
+    local rtn, obj, dest
+    farenter(rtn)
+    lac zInsertObj
+    dac obj
+    dio dest
+
+    lio obj
+    jsp zoUnlink
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if the unlink is done
+    jmp zioFail                   // no-skip: cyclic chain -- pass it up
+
+    lio dest
+    jsp zGetChild              // AC = D's current first child (0 if none)
+    lia                        // IO = it
+    lac obj
+    jda zSetSibling            // O's sibling = D's old first child
+
+    lac dest
+    lio obj
+    jda zSetChild              // D's first child = O
+
+    lac obj
+    lio dest
+    jda zSetParent             // O's parent = D
+
+    cla                        // status 0 -- done
+    crossBankrtn(rtn, NOEEM)
+
+zioFail,
+    lac [ZOU_CYCLE]
+    farrtn(rtn)
+
+rtn, 0
+obj, 0
+dest, 0
+    endlocal
+
+// ========================================================================
+// Attribute ops
+// ========================================================================
+
+// zaAttrLoc (internal) -- locate an attribute's bit.
+// On call AC has the object number, IO the Z-machine attribute number
+// (0-31 in V3, 0-47 in V4+; MSB-is-0 per the spec).
+// Returns AC = the 16-bit resident word pointer to the attribute byte,
+// and zaBitNum = the bitsets.ac LSB-is-0 bit position within that word
+// (0-17).
+// Called via jda.
+//
+// No fork: the byte index is attr >> 3 from the entry start, so 48
+// attributes use bytes 0-5, the six attribute bytes S12.3.2 puts first
+// in a V4+ entry. The attribute is not masked: 48 or more reaches the
+// link words, as 32 or more reaches the link bytes in V3, and the store
+// still lands in the resident banks.
+zaAttrLoc, 0
+    local rtn, objSave, attrSave, byteIndex, bitInByteMSB, attrAddr, oddFlag, bitNum
+    farenter(rtn)
+    lac zaAttrLoc
+    dac objSave
+    dio attrSave
+
+    lac attrSave
+    and [7]
+    dac bitInByteMSB
+    lac attrSave
+    sar 3s
+    dac byteIndex
+
+    lio objSave
+    jsp zObjEntryAddr
+    add byteIndex
+    dac attrAddr
+
+    lac attrAddr
+    and [1]
+    dac oddFlag
+
+    lac [7]
+    sub bitInByteMSB
+    dac bitNum                    // bitNum = 7 - bitInByteMSB (LSB-in-byte position)
+
+    lac oddFlag
+    SKIP_NEXT_IF_AC_ZERO          // sza: skip (fallthrough) if AC==0 (even -> high byte)
+    jmp zalOddByte                    // no-skip: odd -> low byte, offset 0
+    lac bitNum
+    add [010]                 // +8, decimal, written in octal (default radix)
+    dac zaBitNum
+    jmp zalDone
+zalOddByte,
+    lac bitNum
+    dac zaBitNum
+zalDone,
+
+    lio attrAddr
+    farjsp(zResidentWordPtr:0)
+    crossBankrtn(rtn, NOEEM)
+
+rtn, 0
+objSave, 0
+attrSave, 0
+byteIndex, 0
+bitInByteMSB, 0
+attrAddr, 0
+oddFlag, 0
+bitNum, 0
+    endlocal
+
+zaBitNum, 0
+
+// zTestAttr -- test an object's attribute.
+// On call AC has the object number, IO the attribute number.
+// Returns AC = 0 (clear) or nonzero (set).
+// Called via jda.
+zTestAttr, 0
+    local rtn
+    farenter(rtn)
+    lac zTestAttr
+    jda zaAttrLoc              // returns through farrtn, so the extend
+                               //   window is already OPEN here -- the bitsets
+                               //   call and the return both take the NOEEM
+                               //   form rather than re-opening it
+    lio zaBitNum
+    crossBankjda(testBitInWord:0, NOEEM)
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+    endlocal
+
+// zSetAttr -- set an object's attribute.
+// On call AC has the object number, IO the attribute number.
+// Nothing is returned.
+// Called via jda.
+zSetAttr, 0
+    local rtn
+    farenter(rtn)
+    lac zSetAttr
+    jda zaAttrLoc              // returns through farrtn, so the extend
+                               //   window is already OPEN here -- the bitsets
+                               //   call and the return both take the NOEEM
+                               //   form rather than re-opening it
+zsaHook,
+    jmp zsaSet                 // PATCHED: V5 `nop` -- the undo log sees
+    crossBankjda(zuHook:*, NOEEM)  // the page first (zsave.ac); it hands the
+                               //   pointer back in AC, the window still open
+zsaSet,
+    lio zaBitNum
+    crossBankjda(setBitInWord:0, NOEEM)
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+    endlocal
+
+// zClearAttr -- clear an object's attribute.
+// On call AC has the object number, IO the attribute number.
+// Nothing is returned.
+// Called via jda.
+zClearAttr, 0
+    local rtn
+    farenter(rtn)
+    lac zClearAttr
+    jda zaAttrLoc              // returns through farrtn, so the extend
+                               //   window is already OPEN here -- the bitsets
+                               //   call and the return both take the NOEEM
+                               //   form rather than re-opening it
+zcaHook,
+    jmp zcaClear               // PATCHED: V5 `nop` -- as zSetAttr's
+    crossBankjda(zuHook:*, NOEEM)
+zcaClear,
+    lio zaBitNum
+    crossBankjda(clearBitInWord:0, NOEEM)
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+    endlocal
+
+// ========================================================================
+// Property family -- zpPropHeaderEnd and zpFindProp are the shared
+// internal walk; zGetPropAddr/zGetProp/zPutProp/zGetNextProp each do a
+// small amount of their own post-processing on top of it.
+//
+// zpPropHeaderEnd is shared; the other six routines are forked whole,
+// the V4+ body first (<name>V4), then the V3 body (<name>V3, its labels
+// suffixed 3). The entry's patched jump (<name>Fork, set by zpatch.ac)
+// picks the body for the session.
+//
+// THE V4+ BLOCK HEADER (S12.4.2, from the Standard's sect12.html):
+//   - first byte, bit 7 SET: a two-byte header. The first byte holds the
+//     property number in bits 0-5. The second holds the length in bits
+//     0-5, where 0 MEANS 64 (S12.4.2.1.1), and its bit 7 is always set;
+//   - first byte, bit 7 CLEAR: a one-byte header. Number in bits 0-5; bit
+//     6 set means length 2, clear means length 1.
+// Bit 6 of either byte of a two-byte header is "undetermined" and never
+// read here.
+//
+// ONE LENGTH RULE, READ BACKWARDS. In V4+ zpFindProp returns the DATA
+// address, not the header's. From a data address there is then exactly
+// one byte to read, the one just before it, and it means the same thing
+// in both forms: bit 7 set, it is a two-byte header's second byte (bits
+// 0-5 the length, 0 = 64); bit 7 clear, it is the only header byte (bit
+// 6 gives 2 or 1). S12's Remarks give this as the reason the second
+// byte's top bit is set: so the size field parses "either forwards or
+// backwards". zGetPropLen is that rule, and the walk advances by CALLING
+// it, so the walk, get_prop_len and get_next_prop cannot disagree about
+// a block, at the cost of a second fetch per block walked.
+//
+// A V4+ list ends at a property NUMBER of 0. S12 has no V4+ counterpart
+// to 12.4.1's "size byte of 0"; lists end on 0x00, which this reads as
+// number 0.
+// ========================================================================
+
+// zpPropHeaderEnd (internal) -- find an object's first property block.
+// On call IO has the object number.
+// Returns AC = the Z-machine byte address of the first property's size
+// byte (past the property table's text-length byte and short-name text).
+// Called via jsp.
+zpPropHeaderEnd,
+    local rtn, propTableAddr
+    farenter(rtn)
+    jsp zGetPropTableAddr
+    dac propTableAddr
+    lia
+    crossBankjsp(zFetchByte:0, NOEEM)   // AC = text-length byte (2-byte-word count)
+    sal 1s                    // AC = textLen*2
+    add propTableAddr
+    add [1]
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+propTableAddr, 0
+    endlocal
+
+// zpFindProp (internal) -- find an object's property block.
+// On call AC has the object number, IO the property number.
+// Returns AC = the Z-machine byte address of the property's DATA in V4+,
+// of its SIZE byte in V3, or 0 if absent.
+// Called via jda.
+// The entry word is shared; the jump after it is PATCHED (zpatch.ac) to
+// the version's body.
+zpFindProp, 0
+zpFindPropFork,
+    jmp zpFindPropV3                  // PATCHED: V4/V5 `jmp zpFindPropV4`
+// zpFindPropV4 -- the V4+ body; see the section header for why it
+// returns the data address. Stops early at the first lower property
+// number, relying on the descending order S12.4 calls essential, or at
+// number 0, the list end.
+//
+// `cur` walks header byte to data address to next header byte. The next
+// block is masked to 16 bits (the header's invariant); the data address
+// is not, and at most 0x10200 it needs no mask.
+//
+// THE WALK IS BOUNDED: after 64 blocks it stops and answers "not found".
+// A malformed list with no number 0 and no lower number would otherwise
+// walk forever -- the mask keeps it inside 64 KB, so it cycles -- and
+// under boot a runaway is worse than a halt: no error is reported, and
+// the serve loop never reaches the next player. Property numbers
+// strictly descend (S12.4), so a legal list has at most 63 blocks (31 in
+// V3), and the bound never changes an answer on one. The V3 walk has the
+// same bound; a harness build counts either reaching it in zoDgLongWalk.
+zpFindPropV4,
+    local rtn, propSave, cur, sizeByte, pn, cnt
+    farenter(rtn)
+    lac zpFindProp
+    dio propSave
+    lia
+    jsp zpPropHeaderEnd
+    dac cur                        // cur = the first block's first header byte
+    law i 0d64
+    dac cnt                        // -64, the bound on blocks walked
+
+zpfLoop,
+    lio cur
+    farjsp(zFetchByte:0)
+    dac sizeByte
+    and [077]                      // the property number, 6 bits
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if number != 0
+    jmp zpfNotFound                    // no-skip: number 0 -- the list ended
+    dac pn
+
+    lac sizeByte
+    and [0200]
+    sar 7s                         // AC = 1 if a second header byte follows
+    add cur
+    add [1]
+    dac cur                        // cur = this block's data address
+
+    lac pn
+    sub propSave
+    SKIP_NEXT_IF_AC_ZERO           // skip (fallthrough) if pn == propSave -> FOUND
+    jmp zpfCheckLess                   // no-skip: pn != propSave
+    lac cur
+    crossBankrtn(rtn, NOEEM)
+
+zpfCheckLess,
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE   // skip (fallthrough) if pn > propSave -> walk on
+    jmp zpfNotFound                    // no-skip: pn < propSave -> not present
+    lio cur
+    jsp zGetPropLen                // the one length rule, from the data address
+    add cur
+    and [0177777]                  // 16 bits -- the header's invariant
+    dac cur                        // cur = the next block's first header byte
+    isp cnt                        // skip once 64 blocks are walked
+    jmp zpfLoop
+#if Z_TEST_HARNESS
+    idx zoDgLongWalk                   // the bound was reached: the degrade ran
+#endif
+
+zpfNotFound,
+    cla
+    farrtn(rtn)
+
+rtn, 0
+propSave, 0
+cur, 0
+sizeByte, 0
+pn, 0
+cnt, 0
+    endlocal
+// zpFindPropV3 -- the V3 body: returns the SIZE byte's address. Relies
+// on the descending property-number order (S12.4) to stop early once a
+// lower property number is seen. Bounded at 64 blocks, as the V4+ walk
+// is (see zpFindPropV4).
+zpFindPropV3,
+    local rtn, propSave, cur, sizeByte, pn, len, cnt
+    farenter(rtn)
+    lac zpFindProp
+    dio propSave
+    lia
+    jsp zpPropHeaderEnd
+    dac cur
+    law i 0d64
+    dac cnt                        // -64, the bound on blocks walked
+
+zpfLoop3,
+    lio cur
+    farjsp(zFetchByte:0)
+    dac sizeByte
+
+    SKIP_NEXT_IF_AC_NOT_ZERO     // sza i: skip (fallthrough) if sizeByte != 0
+    jmp zpfNotFound3                  // no-skip: sizeByte == 0 -> list ended
+
+    lac sizeByte
+    and [037]
+    dac pn
+
+    lac pn
+    sub propSave
+    SKIP_NEXT_IF_AC_ZERO           // skip (fallthrough) if pn == propSave -> FOUND
+    jmp zpfCheckLess3                   // no-skip: pn != propSave
+    lac cur
+    crossBankrtn(rtn, NOEEM)
+
+zpfCheckLess3,
+    SKIP_NEXT_IF_AC_NEGATIVE       // skip (fallthrough) if pn < propSave -> not present
+    jmp zpfAdvance3                     // no-skip: pn > propSave -> keep walking
+    jmp zpfNotFound3
+
+zpfAdvance3,
+    lac sizeByte
+    sar 5s
+    add [1]
+    dac len
+
+    lac cur
+    add [1]
+    add len
+    dac cur
+    isp cnt                        // skip once 64 blocks are walked
+    jmp zpfLoop3
+#if Z_TEST_HARNESS
+    idx zoDgLongWalk                   // the bound was reached: the degrade ran
+#endif
+
+zpfNotFound3,
+    cla
+    farrtn(rtn)
+
+rtn, 0
+propSave, 0
+cur, 0
+sizeByte, 0
+pn, 0
+len, 0
+cnt, 0
+    endlocal
+
+// zGetPropAddr -- find a property's data.
+// On call AC has the object number, IO the property number.
+// Returns AC = the byte address of the property's DATA, or 0 if the
+// object doesn't have that property.
+// Called via jda.
+// The entry word is shared; the jump after it is PATCHED (zpatch.ac) to
+// the version's body.
+zGetPropAddr, 0
+zGetPropAddrFork,
+    jmp zGetPropAddrV3                  // PATCHED: V4/V5 `jmp zGetPropAddrV4`
+// zGetPropAddrV4 -- zpFindProp already returns the data address in V4+,
+// so this is a pass-through: the header is one or two bytes, and only
+// the walk knows which.
+zGetPropAddrV4,
+    local rtn
+    farenter(rtn)
+    lac zGetPropAddr
+    jda zpFindProp                 // IO = the property, still, from the caller
+    crossBankrtn(rtn, NOEEM)
+rtn, 0
+    endlocal
+// zGetPropAddrV3 -- the data address is one past the size byte
+// zpFindProp returns.
+zGetPropAddrV3,
+    local rtn, found
+    farenter(rtn)
+    lac zGetPropAddr
+    jda zpFindProp
+    dac found
+
+    SKIP_NEXT_IF_AC_NOT_ZERO      // sza i: skip (fallthrough) if found != 0
+    jmp zgpaNotFound3                  // no-skip: found == 0
+    add [1]
+    crossBankrtn(rtn, NOEEM)
+
+zgpaNotFound3,
+    cla
+    farrtn(rtn)
+
+rtn, 0
+found, 0
+    endlocal
+
+// zGetPropLen -- a property's length.
+// On call IO has a property DATA address, as returned by zGetPropAddr.
+// Returns AC = the property's length in bytes (1-8 in V3, 1-64 in V4+).
+// Address 0 returns 0, per S15's "@get_prop_len 0 must return 0".
+// Called via jsp.
+// The entry label is shared; the jump after it is PATCHED (zpatch.ac) to
+// the version's body.
+zGetPropLen,
+zGetPropLenFork,
+    jmp zGetPropLenV3                  // PATCHED: V4/V5 `jmp zGetPropLenV4`
+// zGetPropLenV4 -- the section header's one length rule; zpFindProp and
+// zGetNextProp walk by calling it:
+//   - the byte before the data has bit 7 set: bits 0-5, and 0 means 64;
+//   - bit 7 clear: bit 6 set gives 2, clear gives 1.
+// S15 says get_prop_len of an address that is not a property's should
+// halt "if it can efficiently check". It cannot: the byte before is read
+// as a header whatever it is, as in V3.
+zGetPropLenV4,
+    local rtn, sizeByte
+    farenter(rtn)
+    lai
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if addr != 0
+    jmp zgplZero                       // no-skip: addr == 0
+    sub [1]
+    lia
+    farjsp(zFetchByte:0)           // AC = the byte before the data
+    dac sizeByte
+    and [0200]
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if bit 7 is set
+    jmp zgplOne                        // no-skip: a one-byte header
+    lac sizeByte
+    and [077]                      // a two-byte header's length field
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip if the field is nonzero...
+    lac [0d64]                         // ...else S12.4.2.1.1: 0 means 64
+    crossBankrtn(rtn, NOEEM)
+
+zgplOne,
+    lac sizeByte
+    and [0100]
+    sar 6s
+    add [1]                        // bit 6: 2, else 1
+    farrtn(rtn)
+
+zgplZero,
+    cla
+    farrtn(rtn)
+
+rtn, 0
+sizeByte, 0
+    endlocal
+// zGetPropLenV3 -- the size byte just before the data gives the length.
+zGetPropLenV3,
+    local rtn
+    farenter(rtn)
+    lai
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if addr != 0
+    jmp zgplZero3                       // no-skip: addr == 0
+    sub [1]
+    lia
+    farjsp(zFetchByte:0)
+    sar 5s
+    add [1]
+    crossBankrtn(rtn, NOEEM)
+
+zgplZero3,
+    cla
+    farrtn(rtn)
+
+rtn, 0
+    endlocal
+
+// zGetProp -- a property's value.
+// On call AC has the object number, IO the property number.
+// Returns AC = the property's value: a length-1 property zero-extended,
+// any other length as the 16-bit word at its data address. A property
+// LONGER than 2 -- illegal for get_prop, "the result is unspecified" --
+// DEGRADES to its first two bytes as a word, counted in zoDgLongGet in a
+// harness build. An absent property reads the defaults table, entry
+// prop-1, masked to 16 bits because the property number is unmasked.
+// Called via jda.
+// The entry word is shared; the jump after it is PATCHED (zpatch.ac) to
+// the version's body.
+zGetProp, 0
+zGetPropFork,
+    jmp zGetPropV3                  // PATCHED: V4/V5 `jmp zGetPropV4`
+// zGetPropV4 -- the V4+ body.
+zGetPropV4,
+    local rtn, propSave, dataAddr
+    farenter(rtn)
+    lac zGetProp
+    dio propSave
+    jda zGetPropAddr               // IO = the property, still, from the caller
+    dac dataAddr
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if dataAddr != 0
+    jmp zgpDefault                     // no-skip: absent -> the defaults table
+
+    lio dataAddr
+    jsp zGetPropLen
+    SKIP_NEXT_IF_SAME [1]          // sas: skip (fallthrough) if length == 1
+    jmp zgpWord                        // no-skip: any other length -> a word
+    lio dataAddr
+    crossBankjsp(zFetchByte:0, NOEEM)
+    crossBankrtn(rtn, NOEEM)
+
+zgpWord,
+#if Z_TEST_HARNESS
+    SKIP_NEXT_IF_SAME [2]          // sas: skip the count if length == 2
+    idx zoDgLongGet                    // longer than 2: the degrade ran
+#endif
+    lio dataAddr
+    farjsp(zFetchWord:0)
+    crossBankrtn(rtn, NOEEM)
+
+zgpDefault,
+    lac propSave
+    sub [1]
+    sal 1s
+    add zhObjTableAddr
+    and [0177777]                  // 16 bits -- the header's invariant
+    lia
+    farjsp(zFetchWord:0)
+    crossBankrtn(rtn, NOEEM)
+
+rtn, 0
+propSave, 0
+dataAddr, 0
+    endlocal
+// zGetPropV3 -- the V3 body, the same rules as the V4+ one.
+zGetPropV3,
+    local rtn, objSave, propSave, dataAddr, len
+    farenter(rtn)
+    lac zGetProp
+    dac objSave
+    dio propSave
+
+    lio propSave
+    lac objSave
+    jda zGetPropAddr
+    dac dataAddr
+
+    SKIP_NEXT_IF_AC_NOT_ZERO        // sza i: skip (fallthrough) if dataAddr != 0
+    jmp zgpDefault3                      // no-skip: dataAddr == 0 -> use default table
+
+    lio dataAddr
+    jsp zGetPropLen
+    dac len
+
+    lac len
+    SKIP_NEXT_IF_SAME [1]             // sas: skip (fallthrough) if len == 1
+    jmp zgpWord3                           // no-skip: any other length -> a word
+    lio dataAddr
+    crossBankjsp(zFetchByte:0, NOEEM)
+    crossBankrtn(rtn, NOEEM)
+
+zgpWord3,                           // AC = len, still
+#if Z_TEST_HARNESS
+    SKIP_NEXT_IF_SAME [2]          // sas: skip the count if length == 2
+    idx zoDgLongGet                    // longer than 2: the degrade ran
+#endif
+    lio dataAddr
+    farjsp(zFetchWord:0)
+    crossBankrtn(rtn, NOEEM)
+
+zgpDefault3,
+    lac propSave
+    sub [1]
+    sal 1s
+    add zhObjTableAddr
+    and [0177777]                  // 16 bits -- the header's invariant
+    lia
+    farjsp(zFetchWord:0)
+    crossBankrtn(rtn, NOEEM)
+
+rtn, 0
+objSave, 0
+propSave, 0
+dataAddr, 0
+len, 0
+    endlocal
+
+// zPutProp -- write a property's value.
+// On call AC has the object number, IO the property number, and the
+// global zPutPropValue the value (the caller stores it first).
+// Nothing is returned.
+// Called via jda.
+// Length 1 stores the value's low byte, per spec; any other length
+// stores a word at the data address. The two spec-illegal cases DEGRADE
+// (see the header's error policy):
+//   - a property longer than 2 (S15: undefined) gets its first two bytes
+//     written and the rest untouched -- counted in zoDgLongPut;
+//   - an absent property (S15: "should halt") gets nothing written --
+//     counted in zoDgMissingPut.
+// The counts exist only in harness builds.
+// The entry word is shared; the jump after it is PATCHED (zpatch.ac) to
+// the version's body.
+zPutProp, 0
+zPutPropFork,
+    jmp zPutPropV3                  // PATCHED: V4/V5 `jmp zPutPropV4`
+// zPutPropV4 -- the V4+ body.
+zPutPropV4,
+    local rtn, dataAddr
+    farenter(rtn)
+    lac zPutProp
+    jda zGetPropAddr               // IO = the property, still, from the caller
+    dac dataAddr
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if dataAddr != 0
+    jmp zppMissing                     // no-skip: absent -> write nothing
+
+    lio dataAddr
+    jsp zGetPropLen
+    SKIP_NEXT_IF_SAME [1]          // sas: skip (fallthrough) if length == 1
+    jmp zppWord                        // no-skip: any other length -> a word
+    lac dataAddr
+    lio zPutPropValue
+    crossBankjda(zStoreByte:0, NOEEM)
+    crossBankrtn(rtn, NOEEM)
+
+zppWord,
+#if Z_TEST_HARNESS
+    SKIP_NEXT_IF_SAME [2]          // sas: skip the count if length == 2
+    idx zoDgLongPut                    // longer than 2: the degrade ran
+#endif
+    lac dataAddr
+    lio zPutPropValue
+    farjda(zStoreWord:0)
+    crossBankrtn(rtn, NOEEM)
+
+zppMissing,
+#if Z_TEST_HARNESS
+    idx zoDgMissingPut             // the absent-property degrade ran
+#endif
+    farrtn(rtn)
+
+rtn, 0
+dataAddr, 0
+    endlocal
+// zPutPropV3 -- the V3 body, the same rules as the V4+ one.
+zPutPropV3,
+    local rtn, objSave, propSave, dataAddr, len
+    farenter(rtn)
+    lac zPutProp
+    dac objSave
+    dio propSave
+
+    lio propSave
+    lac objSave
+    jda zGetPropAddr
+    dac dataAddr
+
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if dataAddr != 0
+    jmp zppMissing3                      // no-skip: absent -> write nothing
+
+    lio dataAddr
+    jsp zGetPropLen
+    dac len
+
+    lac len
+    SKIP_NEXT_IF_SAME [1]             // sas: skip (fallthrough) if len == 1
+    jmp zppWord3                           // no-skip: any other length -> a word
+    lac dataAddr
+    lio zPutPropValue
+    crossBankjda(zStoreByte:0, NOEEM)
+    crossBankrtn(rtn, NOEEM)
+
+zppWord3,                           // AC = len, still
+#if Z_TEST_HARNESS
+    SKIP_NEXT_IF_SAME [2]          // sas: skip the count if length == 2
+    idx zoDgLongPut                    // longer than 2: the degrade ran
+#endif
+    lac dataAddr
+    lio zPutPropValue
+    farjda(zStoreWord:0)
+    crossBankrtn(rtn, NOEEM)
+
+zppMissing3,
+#if Z_TEST_HARNESS
+    idx zoDgMissingPut             // the absent-property degrade ran
+#endif
+    farrtn(rtn)
+
+rtn, 0
+objSave, 0
+propSave, 0
+dataAddr, 0
+len, 0
+    endlocal
+
+zPutPropValue, 0
+
+// The degrade counters: one word per kind of degrade, bumped by an `idx`
+// at each site in both the V3 and V4+ bodies. The interpreter never
+// reads them; a test reads them through the debugger. They start at 0 on
+// every load and are not in production builds.
+#if Z_TEST_HARNESS
+zoDgLongGet, 0                     // get_prop of a property longer than 2
+zoDgLongPut, 0                     // put_prop of a property longer than 2
+zoDgMissingPut, 0                  // put_prop of an absent property
+zoDgMissingNext, 0                 // get_next_prop of an absent property
+zoDgLongWalk, 0                    // a property walk hit its 64-block bound
+#endif
+
+// zGetNextProp -- the next property of an object.
+// On call AC has the object number, IO a property number (0 = "give me
+// the first property").
+// Returns AC = the next property number present, 0 at the end of the
+// list. A property the object does not have (S15: should halt "if it can
+// efficiently check") DEGRADES to 0, as at the end of the list; a
+// harness build counts it in zoDgMissingNext.
+// Called via jda.
+// The entry word is shared; the jump after it is PATCHED (zpatch.ac) to
+// the version's body.
+zGetNextProp, 0
+zGetNextPropFork,
+    jmp zGetNextPropV3                  // PATCHED: V4/V5 `jmp zGetNextPropV4`
+// zGetNextPropV4 -- the next block is the data address plus zGetPropLen,
+// masked to 16 bits -- the same step the walk takes.
+zGetNextPropV4,
+    local rtn, objSave, cur
+    farenter(rtn)
+    lac zGetNextProp
+    dac objSave
+    lai
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if prop != 0
+    jmp zgnFirst                       // no-skip: prop == 0 -> first property
+
+    lac objSave
+    jda zpFindProp                 // IO = the property, still, from the caller
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if found
+    jmp zgnMissing                     // no-skip: absent -> 0
+    dac cur                        // cur = its data address
+    lia
+    jsp zGetPropLen
+    add cur
+    and [0177777]                  // 16 bits -- the header's invariant
+    lia
+    crossBankjsp(zFetchByte:0, NOEEM)   // AC = the next first header byte
+    and [077]                      // its number; 0 at the list end
+    crossBankrtn(rtn, NOEEM)
+
+zgnFirst,
+    lio objSave
+    jsp zpPropHeaderEnd
+    lia
+    crossBankjsp(zFetchByte:0, NOEEM)   // AC = the first block's first byte
+    and [077]
+    crossBankrtn(rtn, NOEEM)
+
+zgnMissing,
+#if Z_TEST_HARNESS
+    idx zoDgMissingNext            // the absent-property degrade ran
+#endif
+    cla
+    farrtn(rtn)
+
+rtn, 0
+objSave, 0
+cur, 0
+    endlocal
+// zGetNextPropV3 -- the V3 body, the same rules as the V4+ one.
+zGetNextPropV3,
+    local rtn, objSave, propSave, cur, len
+    farenter(rtn)
+    lac zGetNextProp
+    dac objSave
+    dio propSave
+
+    lac propSave
+    SKIP_NEXT_IF_AC_NOT_ZERO       // sza i: skip (fallthrough) if prop != 0
+    jmp zgnFirst3                       // no-skip: prop == 0 -> first property
+
+    lio propSave
+    lac objSave
+    jda zpFindProp
+    dac cur
+
+    SKIP_NEXT_IF_AC_NOT_ZERO        // sza i: skip (fallthrough) if found != 0
+    jmp zgnMissing3                       // no-skip: not found -> 0
+
+    lio cur
+    crossBankjsp(zFetchByte:0, NOEEM)   // AC = prop's own size byte
+    sar 5s
+    add [1]
+    dac len
+
+    lac cur
+    add [1]
+    add len
+    dac cur
+
+    lio cur
+    crossBankjsp(zFetchByte:0, NOEEM)   // AC = next size byte (0 at list end)
+    and [037]
+    crossBankrtn(rtn, NOEEM)
+
+zgnFirst3,
+    lio objSave
+    jsp zpPropHeaderEnd
+    dac cur
+    lio cur
+    crossBankjsp(zFetchByte:0, NOEEM)
+    and [037]
+    crossBankrtn(rtn, NOEEM)
+
+zgnMissing3,
+#if Z_TEST_HARNESS
+    idx zoDgMissingNext            // the absent-property degrade ran
+#endif
+    cla
+    farrtn(rtn)
+
+rtn, 0
+objSave, 0
+propSave, 0
+cur, 0
+len, 0
+    endlocal
+
+// ========================================================================
+// Test-driver entry points for the ad1 test harness.
+// Protocol: deposit into testObjIn (and testArg2In / testObjValueIn for
+// 2-/3-argument routines), `start` at the entry point named for the
+// routine under test, wait for the halt, read testObjResultOut. Routines
+// with no result are checked with a follow-up read-side test entry.
+//
+// Assembled only when Z_TEST_HARNESS is nonzero (default 1, defined in
+// zmemcore.am1); a production build uses -DZ_TEST_HARNESS=0.
+// ========================================================================
+#if Z_TEST_HARNESS
+
+testObjIn, 0
+testArg2In, 0
+testObjValueIn, 0
+testObjResultOut, 0
+
+// testArg3In gives testSetLinks a fourth input channel; testObjLinksOut
+// lets testObjLinks return two bytes alongside testObjResultOut's third.
+testArg3In, 0
+testObjLinksOut, 0
+
+testGetParent,
+    lio testObjIn
+    jsp zGetParent
+    dac testObjResultOut
+    hlt
+
+testGetSibling,
+    lio testObjIn
+    jsp zGetSibling
+    dac testObjResultOut
+    hlt
+
+testGetChild,
+    lio testObjIn
+    jsp zGetChild
+    dac testObjResultOut
+    hlt
+
+testGetPropTableAddr,
+    lio testObjIn
+    jsp zGetPropTableAddr
+    dac testObjResultOut
+    hlt
+
+testSetParent,
+    lac testObjIn
+    lio testArg2In
+    jda zSetParent
+    hlt
+
+testSetSibling,
+    lac testObjIn
+    lio testArg2In
+    jda zSetSibling
+    hlt
+
+testSetChild,
+    lac testObjIn
+    lio testArg2In
+    jda zSetChild
+    hlt
+
+testObjCount,
+    jsp zObjCount
+    dac testObjResultOut
+    hlt
+
+testTestAttr,
+    lac testObjIn
+    lio testArg2In
+    jda zTestAttr
+    dac testObjResultOut
+    hlt
+
+testSetAttr,
+    lac testObjIn
+    lio testArg2In
+    jda zSetAttr
+    hlt
+
+testClearAttr,
+    lac testObjIn
+    lio testArg2In
+    jda zClearAttr
+    hlt
+
+testGetPropAddr,
+    lac testObjIn
+    lio testArg2In
+    jda zGetPropAddr
+    dac testObjResultOut
+    hlt
+
+testGetPropLen,
+    lio testObjIn          // testObjIn doubles as the property-DATA address here
+    jsp zGetPropLen
+    dac testObjResultOut
+    hlt
+
+testGetProp,
+    lac testObjIn
+    lio testArg2In
+    jda zGetProp
+    dac testObjResultOut
+    hlt
+
+testPutProp,
+    lac testObjValueIn
+    dac zPutPropValue
+    lac testObjIn
+    lio testArg2In
+    jda zPutProp
+    hlt
+
+testGetNextProp,
+    lac testObjIn
+    lio testArg2In
+    jda zGetNextProp
+    dac testObjResultOut
+    hlt
+
+testPropHeaderEnd,
+    lio testObjIn
+    jsp zpPropHeaderEnd
+    dac testObjResultOut
+    hlt
+
+// testFindProp returns what zpFindProp returns: the size byte's address
+// in a V3 session, the DATA address in a V4+ one.
+testFindProp,
+    lac testObjIn
+    lio testArg2In
+    jda zpFindProp
+    dac testObjResultOut
+    hlt
+
+// Both of these store their result, the zoUnlink status (0 on a
+// well-formed tree).
+testRemoveObj,
+    lio testObjIn
+    jsp zRemoveObj
+    dac testObjResultOut
+    hlt
+
+testInsertObj,
+    lac testObjIn
+    lio testArg2In
+    jda zInsertObj
+    dac testObjResultOut
+    hlt
+
+testObjEntryAddr,
+    lio testObjIn
+    jsp zObjEntryAddr
+    dac testObjResultOut
+    hlt
+
+// testSetLinks / testObjLinks -- whole-entry link write and read, in ONE
+// `start` each rather than three, to cut round trips when setting up
+// and checking object trees.
+//
+// testSetLinks: testObjIn = object, testArg2In = parent,
+// testObjValueIn = sibling, testArg3In = child.
+testSetLinks,
+    lac testObjIn
+    lio testArg2In
+    jda zSetParent
+    lac testObjIn
+    lio testObjValueIn
+    jda zSetSibling
+    lac testObjIn
+    lio testArg3In
+    jda zSetChild
+    hlt
+
+// testObjLinks: testObjIn = object. testObjLinksOut = (parent<<8)|sibling
+// -- both are single bytes in V3, so the pair fits an 18-bit word with
+// room to spare -- and testObjResultOut = child.
+//
+// V3 ONLY in meaning. In a V4+ session the links are 16 bits and the
+// packing loses them. testSetLinks is fine in both.
+testObjLinks,
+    lio testObjIn
+    jsp zGetParent
+    sal 8s
+    dac testObjLinksOut
+    lio testObjIn
+    jsp zGetSibling
+    ior testObjLinksOut
+    dac testObjLinksOut
+    lio testObjIn
+    jsp zGetChild
+    dac testObjResultOut
+    hlt
+
+#endif // Z_TEST_HARNESS
+
+#endif // ZOBJECTS_AC_H

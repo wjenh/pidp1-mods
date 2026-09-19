@@ -1,0 +1,1399 @@
+// ZMachine opcode dispatch and interpreter loop.
+// #include-only fragment, assembled into zmemcore.am1's bank 0.
+//
+// Holds the per-class opcode tables, the main execution loop, and the
+// machinery every opcode handler shares: apply a store, apply a branch,
+// call a routine, return from one, unpack a packed address, print an
+// inline string. Also the handlers for call, ret, rtrue, rfalse,
+// ret_popped, jump, print, print_ret, new_line, quit, nop, piracy, add,
+// je, save, restore, restart, verify, catch, throw, check_arg_count,
+// save_undo, restore_undo and set_font, and the stub that passes the
+// screen opcodes to zscreen.ac.
+//
+// Entry points:
+//   zInterpretStart  jmp. Resets the stack and screen, takes zPC from the
+//                    story header, and runs the loop; never returns.
+//   zInterpret       jmp, with zPC already set; never returns.
+//   zUnpackRoutine, zUnpackString, zdpStore, zdpReturn, zdpBranch,
+//   zdpPrintInline, zdpCall  -- jsp, used by the handlers.
+//
+// Uses zmemcore.am1's manifest constants and zhInitialPC, and, assembled
+// before this file, zdecode.ac (zInstDecode and its result block),
+// zstack.ac and ztext.ac.
+//
+// ---- Legal vs. implemented -------------------------------------------
+// Whether an opcode is legal for this story's version is its attribute,
+// and the decoder halts (S14.2) on an illegal one before dispatch. Which
+// code runs is its handler. One table per class, below, holds both:
+// `attribute | handler`. The decoder takes the word, halts if its legal
+// bit (the sign) is clear, and leaves it in zdEntry; zipLoop dispatches on
+// its low twelve bits. The attribute half of a version-dependent entry is
+// patched per version at boot. Every zdpUnimpl entry is on an opcode no
+// supported version makes legal (V6, or a number that does not exist).
+//
+// ---- How a handler is entered and left --------------------------------
+// The loop sets zPC to the decoder's next-instruction address before
+// dispatching, then jumps into the handler through the dap-patched
+// `zipGo` word. So:
+//
+//   - an ordinary handler does its work and jumps to zipNext;
+//   - a control-flow handler (jump/call/ret/branch-taken) overwrites zPC
+//     before jumping to zipNext;
+//   - print/print_ret overwrite it too: the decoder hands back a next-PC
+//     of 0 for them, since only walking the encoded string can say where
+//     they end.
+//
+// Handlers are entered by `jmp`, not `jsp`, and every handler must end
+// with `jmp zipNext` (or another explicit exit); falling off the end of
+// one runs into the next handler.
+//
+// wje/Claude initial version
+
+#ifndef ZDISPATCH_AC_H
+#define ZDISPATCH_AC_H
+
+#include <memory.ah>
+#include <AIDS/skipmacros.ah>
+
+// Why the interpreter stopped, in zdpStopReason, set before the `hlt`
+// that ends a run under a test entry. Under boot the machine does not
+// halt: see the note at the end of this list.
+// Numbering continues in the file that raises each reason: zarith.ac
+// adds 3 and 4, zobjops.ac adds 5, zinput.ac adds 6. 3 and 4 are no
+// longer produced (division by zero and a store outside dynamic memory
+// degrade); their numbers stay taken.
+#define ZSTOP_QUIT   1         // 0OP:186 quit -- an orderly end (S15)
+#define ZSTOP_UNIMPL 2         // a legal opcode with no handler
+
+// The three boot refusals. zboot.ac raises them and returns these values
+// (its ZBOOT_* names are aliases for them). Under a test entry they halt
+// (testBootInit); under boot the refusal is printed with the error prompt
+// and the session ends.
+// The `0d` prefixes matter: `octal` is in effect where these expand, so a
+// bare `10` would be 0d8.
+#define ZSTOP_BADVER 0d7       // story's version byte is not 3, 4 or 5
+#define ZSTOP_TOOBIG 0d8       // story does not fit on the 32-track drum
+#define ZSTOP_TOODYN 0d9       // dynamic memory needs > Z_MAX_DYN_BANKS banks
+
+// A tape failure part way through a restore, when dynamic memory is
+// already half the old game and half the new one; there is nothing to
+// degrade to.
+// zsave.ac's zsvDoRestore first reads the whole save in a forward pass
+// that stores nothing, and refuses anything wrong before overwriting a
+// word: a tape error, two 0d17-word headers that differ (a save cut
+// short), a block that fails its checksum, and then the magic, format,
+// release, serial, checksum, geometry and saved stack pointers. Only a
+// miss, a halt or a bad block in the reverse pass that follows can reach
+// this. Under a test entry it halts, the tape stopped first; under boot
+// it ends the session.
+//
+// save, restart and verify add no halt of their own: a failed save
+// branches false, and a save cut short reads as "Nothing saved there."
+// because its two headers' generation words differ; a failed verify
+// branches false, and a restart that cannot re-boot reuses the ZBOOT_*
+// code zBootInit returned, as `boot` does.
+#define ZSTOP_RESTORE 0d10     // tape error mid-restore -- state is mixed
+
+// V5's throw (2OP:28) to a frame that is not on the live chain -- most
+// likely the catch value of a routine that has since returned. Only a
+// story with a bug reaches it, and the stack cannot be unwound. zstack.ac's
+// zUnwindTo leaves zFP alone when it does not find the frame.
+#define ZSTOP_BADTHROW 0d11    // throw to a frame that is not running
+
+// Under boot, none of these halts the machine. Every halt site tests
+// zServing first: boot sets it, and the site goes to zmemcore.am1's
+// zSessionFail, which prints the message for zdpStopReason, waits for a
+// key, and starts the next session. Quit and a dropped connection go to
+// zSessionEnd without a message, and a boot refusal prints its own
+// message and then the same prompt. Under a test entry every site halts.
+//
+// The remaining codes are defined in the file that raises each, because
+// that file is assembled before this one:
+//   0d12 ZSTOP_STACK    zstack.ac   the Z stack: empty, full, no frame
+//   0d13 ZSTOP_BADVAR   zstack.ac   a local the routine does not have
+//   0d14 ZSTOP_ILLEGAL  zdecode.ac  an opcode not legal in this version
+//   0d15 ZSTOP_BADTEXT  ztext.ac    an abbreviation inside an abbreviation
+//   0d16 ZSTOP_BADPROP  zobjects.ac V3's property halts
+// 13, 15 and 16 are no longer produced: those cases degrade. zmemcore.am1's
+// zerTab has one message per code; a new code needs a row there as well.
+
+// The result-variable marker a timed read's interrupt call puts in the
+// routine's frame, in place of a variable number. When the time a
+// read_char (or a V4 sread) was given runs out, zinput.ac calls the
+// story's interrupt routine as an ordinary Z-machine call with this as its
+// result variable; its `ret` comes back through zdpReturn below, which
+// sees this marker and hands the value to the waiting read instead of
+// storing it.
+//
+// It is ZRV_DISCARD (zstack.ac, 0400) plus one. Both lie above the largest
+// variable number, 255. zCallFrame records the field and zCallReturn hands
+// it back without reading it, so it is defined here, beside its one
+// reader. V4+ only.
+#define ZRV_INTERRUPT 0401     // the frame belongs to a timed read's interrupt call
+
+// ---- Z_CENSUS: the harness-only opcode census --------------------------
+// A census build records, in bank 14, the first execution of each opcode
+// the interpreter decodes: which one, where, and after how many
+// instructions (see zdCensus below). Off by default, and it needs the
+// test harness. It adds a `jsp` to the dispatch loop, so every other build
+// is unaffected; its bank-14 tables are scratch space above the patch
+// table and zsave.ac.
+#ifndef Z_CENSUS
+#define Z_CENSUS 0
+#endif
+#if Z_CENSUS && !Z_TEST_HARNESS
+#error Z_CENSUS needs Z_TEST_HARNESS -- the census is test scaffolding
+#endif
+// The census takes the top 03340 words of bank 14; zpatch.ac's table,
+// zpApply and zsave.ac are below them, and the clear loop must not reach
+// them. So the seen table is compact: one word per opcode that can exist
+// (0d352), indexed through zcBase.
+#define ZC_SEEN 0164440        // bank 14 offset 04440: 0d352 words, one per opcode
+#define ZC_LOG  0165200        // bank 14 offset 05200: four words per first touch
+#define ZC_END  0170000        // one past bank 14, where the clear loop stops
+
+// ========================================================================
+// The opcode tables: one word per opcode, per class, indexed by opcode
+// number within the class. The word is `attribute | handler`: the
+// attribute (zdecode.ac's ZAT_* -- legal, store byte, branch data, inline
+// text, second types byte) in the top six bits and the handler's bank-0
+// address in the low twelve. zInstDecode reads the word, halts if its
+// sign (legal) is clear, and leaves it in zdEntry; zipLoop `dap`s it into
+// zipGo.
+//
+// Built from Section 14 of the Z-machine Standard. Every entry whose
+// legality or shape depends on the story version carries a label, holds
+// its V3 value as assembled, and is rewritten at boot from zpatch.ac,
+// which lists all three values; these are marked PATCHED.
+//
+// The handlers are plain bank-0 addresses, dereferenced with eem off. A
+// handler in another bank would not fit in twelve bits.
+// ========================================================================
+
+// ---- 2OP: opcode numbers 0-31 (long form, or variable form bit 5 = 0)
+zdpTab2OP,
+    ZAT_NONE+zdpUnimpl      // 0  -- does not exist
+    ZAT_B+zdhJe             // 1  je
+    ZAT_B+zdhJl             // 2  jl
+    ZAT_B+zdhJg             // 3  jg
+    ZAT_B+zdhDecChk         // 4  dec_chk
+    ZAT_B+zdhIncChk         // 5  inc_chk
+    ZAT_B+zdhJin            // 6  jin
+    ZAT_B+zdhTest           // 7  test
+    ZAT_S+zdhOr             // 8  or
+    ZAT_S+zdhAnd            // 9  and
+    ZAT_B+zdhTestAttr       // 10 test_attr
+    ZAT_X+zdhSetAttr        // 11 set_attr
+    ZAT_X+zdhClearAttr      // 12 clear_attr
+    ZAT_X+zdhStore          // 13 store
+    ZAT_X+zdhInsertObj      // 14 insert_obj
+    ZAT_S+zdhLoadw          // 15 loadw
+    ZAT_S+zdhLoadb          // 16 loadb
+    ZAT_S+zdhGetProp        // 17 get_prop
+    ZAT_S+zdhGetPropAddr    // 18 get_prop_addr
+    ZAT_S+zdhGetNextProp    // 19 get_next_prop
+    ZAT_S+zdhAdd            // 20 add
+    ZAT_S+zdhSub            // 21 sub
+    ZAT_S+zdhMul            // 22 mul
+    ZAT_S+zdhDiv            // 23 div
+    ZAT_S+zdhMod            // 24 mod
+// An opcode that only some versions have is assembled with its V3
+// attribute, ZAT_NONE, so the decoder refuses it in a session of a
+// version without it; zpatch.ac gives it its attribute for the others.
+zdA2op25, ZAT_NONE+zdhCall   // 25 call_2s  (V4)                     PATCHED
+zdA2op26, ZAT_NONE+zdhCall   // 26 call_2n  (V5)                     PATCHED
+zdA2op27, ZAT_NONE+zdhScreen // 27 set_colour (V5): zscreen.ac's zsColor;
+                             //    it sends nothing unless the client
+                             //    claimed color                    PATCHED
+zdA2op28, ZAT_NONE+zdhThrow  // 28 throw    (V5/6)                   PATCHED
+    ZAT_NONE+zdpUnimpl      // 29 -- does not exist
+    ZAT_NONE+zdpUnimpl      // 30 -- does not exist
+    ZAT_NONE+zdpUnimpl      // 31 -- does not exist
+
+// ---- 1OP: opcode numbers 0-15 (opcode bytes 128-175) ------------------
+zdpTab1OP,
+    ZAT_B+zdhJz             // 0  jz
+    ZAT_SB+zdhGetSibling    // 1  get_sibling
+    ZAT_SB+zdhGetChild      // 2  get_child
+    ZAT_S+zdhGetParent      // 3  get_parent
+    ZAT_S+zdhGetPropLen     // 4  get_prop_len
+    ZAT_X+zdhInc            // 5  inc
+    ZAT_X+zdhDec            // 6  dec
+    ZAT_X+zdhPrintAddr      // 7  print_addr
+zdA1op8, ZAT_NONE+zdhCall   // 8  call_1s  (V4)                      PATCHED
+    ZAT_X+zdhRemoveObj      // 9  remove_obj
+    ZAT_X+zdhPrintObj       // 10 print_obj
+    ZAT_X+zdhRet            // 11 ret
+    ZAT_X+zdhJump           // 12 jump   -- NOT a branch opcode: its single
+                            //    operand IS the offset (S4.7.2's formula
+                            //    reused), resolved by its handler
+    ZAT_X+zdhPrintPaddr     // 13 print_paddr
+    ZAT_S+zdhLoad           // 14 load
+// 1OP:15 is `not` (V1-4, stores) and `call_1n` (V5, NO store byte): its
+// attribute AND its handler change, so the whole word is patched.
+zdpE1op15, ZAT_S+zdhNot     // 15 not; call_1n (V5)                  PATCHED
+
+// ---- 0OP: opcode numbers 0-15 (opcode bytes 176-191) ------------------
+zdpTab0OP,
+    ZAT_X+zdhRtrue          // 0  rtrue
+    ZAT_X+zdhRfalse         // 1  rfalse
+    ZAT_T+zdhPrint          // 2  print      (inline text)
+    ZAT_T+zdhPrintRet       // 3  print_ret  (inline text)
+    ZAT_X+zdhNop            // 4  nop
+zdA0op5, ZAT_B+zdhSave      // 5  save    -- V1-3 branch, V4 store, V5
+                            //    illegal                           PATCHED
+zdA0op6, ZAT_B+zdhRestore   // 6  restore -- as save                 PATCHED
+    ZAT_X+zdhRestart        // 7  restart
+    ZAT_X+zdhRetPopped      // 8  ret_popped
+// 0OP:9 is `pop` (V1-4) and `catch`, which stores (V5/6): attribute and
+// handler both, so the whole word is patched.
+zdpE0op9, ZAT_X+zdhPop      // 9  pop; catch (V5)                    PATCHED
+    ZAT_X+zdhQuit           // 10 quit
+    ZAT_X+zdhNewLine        // 11 new_line
+zdpE0op12, ZAT_X+zdhShowStatus // 12 show_status (V3);               PATCHED
+                            //    V4/V5 zdhNop. S15 has later versions
+                            //    treat it as a nop, since a released V5
+                            //    story contains it, so it is decoded in
+                            //    every version
+    ZAT_B+zdhVerify         // 13 verify   (V3 -- every version claimed)
+    ZAT_NONE+zdpUnimpl      // 14 -- opcode byte 190. In a V5 session this
+                            //    is the extended-form introducer and is
+                            //    intercepted by zInstDecode's form decode
+                            //    before this table is ever consulted; in a
+                            //    V3 or V4 session it is a genuine illegal
+                            //    opcode. Either way ZAT_NONE is right.
+zdA0op15, ZAT_NONE+zdhPiracy // 15 piracy (V5/-): branches
+                            //                                      PATCHED
+
+// ---- VAR: opcode numbers 0-31 (opcode bytes 224-255) ------------------
+// Opcode bytes 192-223 are the variable-form encodings of 2OP:0-31 and
+// use zdpTab2OP above, not this table.
+zdpTabVAR,
+    ZAT_S+zdhCall           // 0  call / call_vs
+    ZAT_X+zdhStorew         // 1  storew
+    ZAT_X+zdhStoreb         // 2  storeb
+    ZAT_X+zdhPutProp        // 3  put_prop
+zdAVar4, ZAT_X+zdhSread     // 4  sread (V1-4, no store); aread (V5,
+                            //    STORES) PATCHED. The same handler: every
+                            //    difference (a stored terminating
+                            //    character, S15's V5 buffer format, parse 0)
+                            //    is a patched word inside zdhSread,
+                            //    zReadLine and zParseText.
+    ZAT_X+zdhPrintChar      // 5  print_char
+    ZAT_X+zdhPrintNum       // 6  print_num
+    ZAT_S+zdhRandom         // 7  random
+    ZAT_X+zdhPush           // 8  push
+    ZAT_X+zdhPull           // 9  pull  -- V6 grows a store form; not supported
+    ZAT_X+zdhScreen         // 10 split_window  (V3)
+    ZAT_X+zdhScreen         // 11 set_window    (V3)
+zdAVar12, ZAT_NONE+zdhCall  // 12 call_vs2 (V4) -- second operand-types
+                            //    byte                              PATCHED
+zdAVar13, ZAT_NONE+zdhScreen // 13 erase_window  (V4)                PATCHED
+zdAVar14, ZAT_NONE+zdhScreen // 14 erase_line (V4/-)                 PATCHED
+zdAVar15, ZAT_NONE+zdhScreen // 15 set_cursor    (V4)                PATCHED
+zdAVar16, ZAT_NONE+zdhScreen // 16 get_cursor (V4/6 -- no store byte)
+                             //                                     PATCHED
+zdAVar17, ZAT_NONE+zdhScreen // 17 set_text_style (V4)               PATCHED
+zdAVar18, ZAT_NONE+zdhScreen // 18 buffer_mode (V4): the word-wrap's
+                             //    switch (zscreen.ac's zsBufMode)  PATCHED
+    ZAT_X+zdhOutputStream   // 19 output_stream (V3; more operands in V5/V6,
+                            //    but VAR form states its own operand
+                            //    count, so that costs the decoder nothing)
+    ZAT_X+zdhInputStream    // 20 input_stream  (V3)
+    ZAT_X+zdhNop            // 21 sound_effect -- a deliberate departure from
+                            //    S14.2: Section 14 specifies this as V5
+                            //    ("5/3" = spec V5, first seen in a V3 game),
+                            //    so for a V3 story it is formally illegal.
+                            //    It is decoded and ignored in every version:
+                            //    the PDP-1 has no sound hardware.
+zdAVar22, ZAT_NONE+zdhReadChar  // 22 read_char (V4, timed)
+                                //                                  PATCHED
+zdAVar23, ZAT_NONE+zdhScanTable // 23 scan_table (V4 -- stores AND
+                                //    branches)                     PATCHED
+zdAVar24, ZAT_NONE+zdhNot   // 24 not (V5/6 VAR form of 1OP not)
+                            //    (V5: moved here from 1OP:15, same
+                            //    handler body)                     PATCHED
+zdAVar25, ZAT_NONE+zdhCall  // 25 call_vn  (V5)                      PATCHED
+zdAVar26, ZAT_NONE+zdhCall  // 26 call_vn2 (V5) -- second operand-types
+                            //    byte                              PATCHED
+zdAVar27, ZAT_NONE+zdhTokenise   // 27 tokenise (V5)                 PATCHED
+zdAVar28, ZAT_NONE+zdhEncodeText // 28 encode_text (V5)              PATCHED
+zdAVar29, ZAT_NONE+zdhCopyTable  // 29 copy_table (V5)               PATCHED
+zdAVar30, ZAT_NONE+zdhScreen     // 30 print_table (V5)              PATCHED
+zdAVar31, ZAT_NONE+zdhCheckArgCount // 31 check_arg_count (V5 -- BRANCH,
+                                    //    not store)                PATCHED
+
+// ---- EXT: opcode numbers 0-28 (second byte after introducer 190) ------
+// Only zidExtForm sets ZC_EXT, and only a V5 session patches the jump to
+// it in (zidExtJmp).
+// Numbers 29-255 are not in this table at all: S14.2.1 says they are to
+// be ignored rather than halted on, which zidExtForm handles with a range
+// test before it ever indexes here (zdecode.ac's zdEntIgnore, ZAT_X +
+// zdhNop). Every V6-only entry is ZAT_NONE, which is what a V5 session
+// needs.
+zdpTabEXT,
+    ZAT_S+zdhSave           // 0  save  (V5) (0OP:5's handler)
+    ZAT_S+zdhRestore        // 1  restore (V5) (0OP:6's handler)
+    ZAT_S+zdhLogShift       // 2  log_shift (V5)
+    ZAT_S+zdhArtShift       // 3  art_shift (V5/-)
+    ZAT_S+zdhSetFont        // 4  set_font (V5)
+    ZAT_NONE+zdpUnimpl      // 5  draw_picture   (V6)
+    ZAT_NONE+zdpUnimpl      // 6  picture_data   (V6)
+    ZAT_NONE+zdpUnimpl      // 7  erase_picture  (V6)
+    ZAT_NONE+zdpUnimpl      // 8  set_margins    (V6)
+    ZAT_S+zdhSaveUndo       // 9  save_undo (V5)
+    ZAT_S+zdhRestoreUndo    // 10 restore_undo (V5)
+    ZAT_X+zdhPrintUnicode   // 11 print_unicode (V5/*): 32-126,
+                            //    else `?`
+    ZAT_S+zdhCheckUnicode   // 12 check_unicode (V5/* -- see note below):
+                            //    3 or 0, the same set
+                            //    zdhPrintUnicode prints (zprint.ac)
+    ZAT_X+zdhNop            // 13 set_true_colour (V5/*): ignored
+    ZAT_NONE+zdpUnimpl      // 14 -- does not exist
+    ZAT_NONE+zdpUnimpl      // 15 -- does not exist
+    ZAT_NONE+zdpUnimpl      // 16 move_window    (V6)
+    ZAT_NONE+zdpUnimpl      // 17 window_size    (V6)
+    ZAT_NONE+zdpUnimpl      // 18 window_style   (V6)
+    ZAT_NONE+zdpUnimpl      // 19 get_wind_prop  (V6)
+    ZAT_NONE+zdpUnimpl      // 20 scroll_window  (V6)
+    ZAT_NONE+zdpUnimpl      // 21 pop_stack      (V6)
+    ZAT_NONE+zdpUnimpl      // 22 read_mouse     (V6)
+    ZAT_NONE+zdpUnimpl      // 23 mouse_window   (V6)
+    ZAT_NONE+zdpUnimpl      // 24 push_stack     (V6)
+    ZAT_NONE+zdpUnimpl      // 25 put_wind_prop  (V6)
+    ZAT_NONE+zdpUnimpl      // 26 print_form     (V6)
+    ZAT_NONE+zdpUnimpl      // 27 make_menu      (V6)
+    ZAT_NONE+zdpUnimpl      // 28 picture_table  (V6)
+// EXT:12 check_unicode is marked ZAT_S on the strength of its syntax
+// line ("char-number -> (result)") even though Section 14's own St
+// column is blank for that row -- the only row in the whole table where
+// the two disagree. A store opcode decoded without its store byte would
+// desynchronise the next-PC computation for every following
+// instruction, so the syntax line is the safer of the two readings.
+
+// ========================================================================
+// zUnpackRoutine / zUnpackString -- IO = a packed address as it appeared
+// in the instruction. Returns AC = the Z-machine byte address.
+// Called via jsp (dap-style: bank 0 only).
+//
+// S1.2.3's scale factor is a patched shift (zurShift, zusShift): x2 in
+// V1-3, x4 in V4-5. Routine and string addresses are separate entry
+// points because V6/V7 give them separate offsets.
+//
+// V4/V5 multiply by rotating, not shifting: a result reaches 0x3FFFC, and
+// anything at or above 0x20000 = 0400000 has the sign bit set, which `sal`
+// would not produce. `ral 2s` is exact, because the operand is a 16-bit
+// value: the two bits it rotates out of the top are zero. The result is
+// an unsigned 18-bit byte address. V3 keeps `sal 1s`: its largest result,
+// 0x1FFFE, is positive.
+// ========================================================================
+zUnpackRoutine,
+    local rtn
+    dap rtn
+    lai
+zurShift,
+    sal 1s                     // PATCHED: V4/V5 `ral 2s` (x4, unsigned)
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+zUnpackString,
+    local rtn
+    dap rtn
+    lai
+zusShift,
+    sal 1s                     // PATCHED: V4/V5 `ral 2s` (x4, unsigned)
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+// ========================================================================
+// zdpStore -- IO = the value to store. Writes it to the variable
+// zInstDecode captured from this instruction's store byte (S4.6).
+// Called via jsp (dap-style: bank 0 only).
+//
+// Only called by a handler whose opcode has a store byte; zdHasStore is
+// not re-tested here.
+// ========================================================================
+zdpStore,
+    local rtn
+    dap rtn
+    lac zdStoreVar             // IO still holds the value
+    jda zWriteVar
+    lem                        // zWriteVar returns with eem on
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+// ========================================================================
+// zdpReturn -- IO = the value to return. Performs one complete routine
+// return: restores the caller's frame through zCallReturn, applies the
+// store the original call asked for, and sets zPC to the caller's resume
+// point. Called via jsp (dap-style: bank 0 only).
+//
+// The store uses the variable number recorded in the frame, after the
+// frame is restored, so a store to $00 or a local lands in the caller's
+// frame.
+//
+// A frame whose result variable is ZRV_INTERRUPT belongs to a timed read's
+// interrupt routine. Its value is not stored: once zCallReturn has
+// restored the read's frame and zPC holds the instruction after the read,
+// control leaves by `jmp zrcResume` (zinput.ac) with the value in IO, and
+// the read carries on from its saved state. This routine's own return
+// address is abandoned. That is safe only because every caller does
+// nothing after this routine returns except `jmp zipNext` (zdpBranch's own
+// calls are followed by `jmp rtn` back to a caller that is), and
+// zrcResume ends by jumping to zipNext itself. A caller that does work
+// after this routine returns would lose that work on an interrupt return.
+// A V3 frame never carries ZRV_INTERRUPT.
+//
+// The routine's value arrives in IO from zCallReturn and is still there
+// at the `jda zWriteVar` and at zdprInterrupt; the `sad`s leave AC alone,
+// so AC still holds zCallReturnResVar at the `jda`. An instruction added
+// between zCallReturn and those two exits must not change IO.
+// ========================================================================
+zdpReturn,
+    local rtn
+    dap rtn
+    jsp zCallReturn            // AC = resume PC, IO = value, and
+    lem                        //   zCallReturnResVar = where to put it
+    dac zPC
+
+    lac zCallReturnResVar      // IO still holds the value (header)
+    SKIP_NEXT_IF_DIFFERENT [ZRV_DISCARD]  // sad: skip if a real variable
+    jmp rtn                                  // no-skip: discard the result
+    SKIP_NEXT_IF_DIFFERENT [ZRV_INTERRUPT]  // sad: AC still holds the variable;
+                                            //   skip if an ordinary return
+    jmp zdprInterrupt                          // no-skip: an interrupt routine
+                                               //   returned -- back to its read
+                                               //   (only a V4+ timed read
+                                               //   sets it)
+
+    jda zWriteVar              // AC = the variable, IO = the value
+    lem
+    jmp rtn
+zdprInterrupt,
+    jmp zrcResume              // IO = the routine's value, for zrcResume to
+                               //   judge. Abandons rtn: see the invariant
+                               //   above. eem is off here (zCallReturn's lem)
+rtn, jmp 0
+    endlocal
+
+// ========================================================================
+// zdpBranch -- IO = the condition this instruction tested (0 for false,
+// anything else for true). Applies S4.7's branch decision using the
+// sense, kind and target zInstDecode already resolved.
+// Called via jsp (dap-style: bank 0 only).
+//
+// Not taken: nothing to do -- the loop set zPC to the next instruction
+// before dispatching. Taken: either zPC = the resolved target, or
+// S4.7.1's two special cases, which are full routine returns (returning
+// false or true respectively), not jumps.
+// ========================================================================
+zdpBranch,
+    local rtn
+    dap rtn
+    lai
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if the test was true
+    jmp zdbFalse                  // no-skip: the test was false
+    lac zdBranchOnTrue
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if on true: taken
+    jmp rtn                       // no-skip: branches on false -- zPC stands
+
+zdbTaken,
+    lac zdBranchKind
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if not ZDB_ADDR
+    jmp zdbAddr                   // no-skip: ZDB_ADDR -- an ordinary jump
+    SKIP_NEXT_IF_DIFFERENT [ZDB_RFALSE]  // sad: skip if not ZDB_RFALSE
+    jmp zdbRetFalse                         // no-skip: S4.7.1 return false
+    lac [1]                    // ZDB_RTRUE -- S4.7.1 return true
+    lia
+    jsp zdpReturn
+    jmp rtn
+zdbRetFalse,
+    cli
+    jsp zdpReturn
+    jmp rtn
+zdbAddr,
+    lac zdBranchTarget
+    dac zPC
+    jmp rtn
+zdbFalse,
+    lac zdBranchOnTrue
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if on false: taken
+    jmp rtn                       // no-skip: branches on true -- zPC stands
+    jmp zdbTaken
+rtn, jmp 0
+    endlocal
+
+// ========================================================================
+// zdpPrintInline -- IO = the byte address of an encoded string. Prints it
+// through zDecodeString and returns AC = the byte address just past it.
+// Called via jsp (dap-style: bank 0 only).
+//
+// zDecodeString leaves its running pointer zdsAddr just past the string's
+// terminating word, which is the address returned.
+// ========================================================================
+zdpPrintInline,
+    local rtn
+    dap rtn
+    farjsp(zDecodeString:*)     // in ZLEAF_BANK. The macro leaves
+                                //   extend mode ON at the return, so the
+                                //   read below opens no window of its own
+                                //   and only closes the one already
+                                //   standing.
+    crossBanklac(zdsAddr:*, EEMCLOSE)   // ztext.ac global, in ZLEAF_BANK
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+// ========================================================================
+// zdpCall -- performs one routine call. Called via jsp (dap-style: bank 0
+// only). Inputs, in shared globals:
+//   zdpCallAddr    -- the PACKED routine address, exactly as decoded
+//   zdpCallArgc    -- argument count, 0-7
+//   zdOp1..zdOp7   -- the arguments, where the decoder left them: zCallFrame
+//                     reads them in place
+//   zdpCallResVar  -- variable to store the result in, or ZRV_DISCARD
+// On return zPC is the routine's first instruction -- or, for S6.4.3's
+// call to address 0, the instruction after the call, with false stored.
+// ========================================================================
+zdpCall,
+    local rtn, addr
+    dap rtn
+
+    // S6.4.3: "calling routine 0 ... does nothing and returns false".
+    // Tested on the PACKED value, before unpacking, since 0 unpacks to 0.
+    lac zdpCallAddr
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real routine
+    jmp zdpcZero                  // no-skip: address 0
+
+    lio zdpCallAddr
+    jsp zUnpackRoutine
+    dac addr
+
+    lac zPC                    // the loop already set this to the
+    dac zCallFrameRetPC        //   instruction after the call
+    lac zdpCallResVar
+    dac zCallFrameResVar
+
+    lac addr
+    lio zdpCallArgc
+    jda zCallFrame             // AC = the routine's first instruction (S5.3)
+    lem
+    dac zPC
+    jmp rtn
+
+zdpcZero,
+    // No frame is pushed and nothing is executed -- but the call's own
+    // store byte still applies, and the result is false.
+    lac zdpCallResVar
+    SKIP_NEXT_IF_DIFFERENT [ZRV_DISCARD]  // sad: skip if a real variable
+    jmp rtn                                  // no-skip: nothing to store
+    cli
+    jsp zdpStore               // IO = 0 -- S6.4.3's "returns false"
+    jmp rtn
+rtn, jmp 0
+addr, 0
+    endlocal
+
+// ========================================================================
+// zInterpretStart -- entered by jmp, at boot and at every restart. Resets
+// the Z-machine stack, both windows' fonts and the screen, sets zPC to the
+// story's initial PC, and falls into the loop below.
+//
+// Never returns. Under a test entry the loop ends at a `hlt`; under boot,
+// quit, a dropped connection or an error ends the session instead, at
+// zmemcore.am1's zSessionEnd or zSessionFail.
+// ========================================================================
+zInterpretStart,
+    jsp zStackInit
+    lem
+    lac [1]                    // both windows back to font 1. A
+    dac zdsfFont0              //   restart keeps only Flags2 bits 0 and 1
+    dac zdsfFont1              //   (S15), and each session is a new game.
+                               //   Before the reset, whose font
+                               //   route (zsFontRoute) reads them
+    farjsp(zsReset:*)          // erase_window -1 -- a clear screen,
+    lem                        //   unsplit, the cursor bottom-left; at boot
+                               //   and at every restart (zdhRestart comes
+                               //   back here). testInterpret, which has no
+                               //   client, enters at zInterpret instead
+    lac zhInitialPC            // boot-parsed from the story header
+    dac zPC
+                               // falls into zInterpret
+
+// ========================================================================
+// zInterpret -- the main execution loop. Entered by `jmp` with zPC
+// already set; never returns.
+// ========================================================================
+zInterpret,
+zipLoop,
+    lio zPC
+    jsp zInstDecode
+    lem                        // zInstDecode returns with eem on; the
+                               //   handlers run with it off
+#if Z_CENSUS
+    jsp zdCensus               // census builds only. zPC is still the
+                               //   instruction being executed here.
+#endif
+
+    lac zdNextPC
+    dac zPC                    // the DEFAULT next PC -- a control-flow
+                               //   handler simply overwrites it, and the
+                               //   text opcodes must (this is 0 for them)
+
+    lac zdEntry                // the opcode's table word, which the
+    dap zipGo                  //   decoder found; `dap` keeps its low twelve
+                               //   bits, the handler. (EXT:29-255, ignored by
+                               //   S14.2.1, arrive as zdhNop: zidExtForm.)
+zipGo, jmp 0                   // dispatch -- never runs unpatched
+
+zipNext,                       // every handler jumps back here
+    jmp zipLoop
+
+// ========================================================================
+// Opcode handlers. Every one ends with `jmp zipNext` or another explicit
+// exit; see this file's header on why they are entered by jmp.
+// ========================================================================
+
+// ---- 0OP:180 nop, and VAR:245 sound_effect (decoded, ignored) --------
+// Also EXT:13 set_true_colour, and V4/V5 0OP:188 show_status.
+zdhNop,
+    jmp zipNext
+
+// ---- 0OP:191 piracy (V5) ----------------------------------------------
+// S15: interpreters are asked to be gullible and branch unconditionally.
+// V3 and V4 decode 0OP:15 as illegal (zdA0op15 is patched to a branch
+// opcode for V5 only), so only a V5 session reaches this.
+zdhPiracy,
+    lio [1]
+    jsp zdpBranch
+    jmp zipNext
+
+// ---- The screen family: VAR:10, 11, 13-18 and 30, and 2OP:27 ----------
+// One stub for all of them. zscreen.ac's zScreenOp (bank 13) takes the
+// opcode number in AC, reads its operands from the decoder's block
+// itself, and dispatches; none of these opcodes stores or branches.
+// farjda leaves eem on, and zInterpret's own `lem` after the decode is
+// what closes it -- the shape every far-calling handler here ends with.
+zdhScreen,
+    lac zdOpNum
+    farjda(zScreenOp:*)
+    jmp zipNext
+
+// ---- 0OP:186 quit (S15) ----------------------------------------------
+// Under boot, quit ends the session: zSessionEnd closes the connection,
+// after the story's last lines have gone out, and the machine waits for
+// the next player. Under a test entry it halts.
+zdhQuit,
+    farjsp(zwFlush:*)          // a word the wrap still holds goes out
+                               //   before the session ends or the harness halts.
+                               //   The window stays open: nothing below indirects,
+                               //   zSessionEnd closes it, and zInterpret's own
+                               //   `lem` does after a debugger's continue
+    lac [ZSTOP_QUIT]
+    dac zdpStopReason
+    lac zServing               // is this boot's session loop?
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if not -- a test entry
+    jmp zSessionEnd               // no-skip: the session is over
+    hlt
+    jmp zipNext                // if a debugger continues the machine, carry
+                               //   on at whatever follows -- zPC is valid
+
+// ---- any legal opcode with no handler ---------------------------------
+zdpUnimpl,
+    lac [ZSTOP_UNIMPL]
+    dac zdpStopReason
+    lac zServing               // is boot serving?
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if not -- a test entry
+    jmp zSessionFailR             // no-skip: an error report, then the next player
+    hlt
+    jmp zipNext
+
+// ========================================================================
+// save / restore / restart / verify.
+//
+// The work is in zsave.ac, in bank ZPATCH_BANK (14). Its entry points
+// return 1 or 0 in AC -- the branch condition in V1-3, the stored result
+// in V4+ -- and nothing else. A DCS2 connection dropped while the slot
+// prompt was waiting is handled inside zsave.ac and never comes back
+// here; ZSTOP_NOCONN is a `#define` in zinput.ac, which cpp reaches after
+// this file, so this file cannot name it.
+//
+// The `lem` after each farjsp is required: a far transfer leaves the
+// extend window open, and everything below is bank-0 direct or a bank-0
+// indirect.
+// ========================================================================
+
+// ---- 0OP:181 save (S15): branches on success in V1-3 -------------------
+// V4 stores the result instead -- 1 on success, 0 on failure -- and V5's
+// EXT:0 save is the same handler.
+//
+// V5's table form (S15: `save table bytes name`, an auxiliary file, any
+// operand at all) is not supported. It stores 0, "failed", without a
+// prompt: 0 is S15's own failure value, which a story using auxiliary
+// files must already handle.
+zdhSave,
+    lac zdOpCount              // the 0OP form has no operands
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if no operands
+    jmp zdhRestoreFail            // no-skip: the table form -- store 0
+    farjsp(zSaveOp:*)
+    lem
+    lia                        // AC is 1 or 0 -- the result
+zdhSaveRes,
+    jsp zdpBranch              // PATCHED: V1-3 the branch condition;
+    jmp zipNext                //   V4+ `jsp zdpStore`, stored
+
+// ---- 0OP:182 restore (S15) --------------------------------------------
+// The two outcomes take different branch data:
+//
+//   success -- zRestoreOp has already replaced zPC and the decoder's
+//              three branch words with the ones the SAVE recorded, so
+//              zdpBranch here replays the save's own branch decision with
+//              the condition forced true. That is what makes execution
+//              resume where the save left off. (S6.1.2's mechanism, done
+//              with resolved words instead of by re-reading the branch
+//              byte -- see zsvBuildHdr's header for why.)
+//
+//   refusal -- nothing was touched, so this restore instruction's own
+//              branch data is still intact and a false condition through
+//              the same routine does the ordinary thing.
+//
+// V4+ is the same mechanism with a store in place of the branch. On
+// success zRestoreOp has put back the SAVE's store variable, and 2 goes
+// there -- S15: execution resumes as if the save had just returned 2. On
+// refusal this instruction's own store variable is intact and gets 0.
+// V5's EXT:1 is the same handler; its table form stores 0, as zdhSave's
+// does.
+//
+// A successful restore also clears zrcActive: a read waiting on its
+// interrupt routine went with the replaced stack, as it does for restart.
+zdhRestore,
+    lac zdOpCount              // the 0OP form has no operands
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if no operands
+    jmp zdhRestoreFail            // no-skip: the table form -- store 0
+    farjsp(zRestoreOp:*)
+    lem
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if it succeeded
+    jmp zdhRestoreFail            // no-skip: AC == 0 -- refused, nothing moved
+    jsp zsFrameSync            // zFP and the stack are the save's,
+                               //   so zstack.ac's frame cache is refilled --
+                               //   here in bank 0, not in zsave.ac's bank 14
+    dzm zrcActive              // the waiting read went with the stack
+    lio [2]                    // V4+ S15's 2; V1-3 any nonzero is "true"
+zdhRestoreRes,
+    jsp zdpBranch              // PATCHED: V1-3 the SAVE's branch words,
+    jmp zipNext                //   V4+ `jsp zdpStore`, its store variable
+zdhRestoreFail,
+    cli
+zdhRestoreFailRes,
+    jsp zdpBranch              // PATCHED: V4+ `jsp zdpStore` -- this
+    jmp zipNext                //   instruction's own branch/store
+
+// ---- 0OP:183 restart (S6.1.3) -----------------------------------------
+// ZAT_X: it neither stores nor branches, and it does not come back to
+// zipNext. zRestartOp reloads dynamic memory from the drum and preserves
+// the two Flags2 bits the spec keeps; zInterpretStart then resets the
+// stack and takes zPC from the story's own initial PC.
+//
+// A restart inside an interrupt routine abandons the waiting read, as a
+// throw past it does (zdhThrow's header): the stack reset takes the read's
+// frame with it, so zrcActive is cleared here. Otherwise zinput.ac's "am
+// I inside the interrupt routine?" test would keep answering yes for
+// every later timed read deeper than the stale zrcFP, and those reads
+// would run untimed.
+zdhRestart,
+    farjsp(zRestartOp:*)
+    lem
+    dzm zrcActive              // the waiting read went with the stack
+    jmp zInterpretStart
+
+// ---- 0OP:189 verify (S15) ---------------------------------------------
+zdhVerify,
+    farjsp(zVerifyOp:*)
+    lem
+    lia
+    jsp zdpBranch
+    jmp zipNext
+
+// ---- 0OP:187 new_line -------------------------------------------------
+zdhNewLine,
+    lio [0d13]                 // ZSCII 13 is the Z-machine's newline
+    farjsp(zPrintChar:*)       // in ZLEAF_BANK
+    jmp zipNext
+
+// ---- 0OP:178 print (S4.8) --------------------------------------------
+zdhPrint,
+    lio zdTextAddr
+    jsp zdpPrintInline
+    dac zPC                    // the address the string walk ended at --
+                               //   the next-PC the decoder could not compute
+    jmp zipNext
+
+// ---- 0OP:179 print_ret: print the string, a newline, then return true
+zdhPrintRet,
+    lio zdTextAddr
+    jsp zdpPrintInline
+    dac zPC                    // kept correct even though the return below
+                               //   immediately replaces it
+    lio [0d13]
+    farjsp(zPrintChar:*)       // in ZLEAF_BANK
+    lac [1]
+    lia
+    jsp zdpReturn
+    jmp zipNext
+
+// ---- 0OP:176 rtrue / 0OP:177 rfalse -----------------------------------
+zdhRtrue,
+    lac [1]
+    lia
+    jsp zdpReturn
+    jmp zipNext
+
+zdhRfalse,
+    cli
+    jsp zdpReturn
+    jmp zipNext
+
+// ---- 1OP:139 ret <value> ----------------------------------------------
+zdhRet,
+    lio zdOp0
+    jsp zdpReturn
+    jmp zipNext
+
+// ---- 0OP:184 ret_popped: return the top of the evaluation stack -------
+zdhRetPopped,
+    jsp zStackPop
+    lem
+    lia
+    jsp zdpReturn
+    jmp zipNext
+
+// ---- 1OP:140 jump ------------------------------------------------------
+// Not a branch-byte instruction: the sole operand is a signed 16-bit
+// offset, and the target is S4.7.2's formula, "address after the
+// instruction + offset - 2". zdecode.ac hands the operand over raw;
+// interpreting its sign is this handler's job.
+zdhJump,
+    lac zdOp0
+    and [0100000]              // the 16-bit sign bit
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if non-negative
+    jmp zdhJumpNeg                // no-skip: a backward jump
+    lac zPC
+    add zdOp0
+    sub [2]
+    dac zPC
+    jmp zipNext
+zdhJumpNeg,
+    lac zPC
+    add zdOp0
+    sub [2]
+    sub [0d65536]              // fold the 16-bit sign in as a bias, so no
+    dac zPC                    //   negative value is ever formed
+    jmp zipNext
+
+// ---- 2OP:20 add -------------------------------------------------------
+// S2.1: Z-machine values are 16-bit, so the sum is masked back down.
+zdhAdd,
+    lac zdOp0
+    add zdOp1
+    and [0177777]              // back to 16 bits
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+// ---- 2OP:1 je ---------------------------------------------------------
+// S15: branch if the first operand equals any of the others; je takes 2
+// to 4 operands.
+zdhJe,
+    cla
+    dac zdpTmp                 // the condition, false until a match
+    lac [1]
+    dac zdpIx
+zdhJeLoop,
+    lac zdpIx
+    SKIP_NEXT_IF_DIFFERENT zdOpCount  // sad: skip if operands remain
+    jmp zdhJeDone                        // no-skip: all compared, no match
+    lac [zdOp0]
+    add zdpIx
+    dac zdpPtr
+    lac i zdpPtr
+    SKIP_NEXT_IF_DIFFERENT zdOp0      // sad: skip if this one differs
+    jmp zdhJeHit                         // no-skip: equal -> branch condition true
+    lac zdpIx
+    add [1]
+    dac zdpIx
+    jmp zdhJeLoop
+zdhJeHit,
+    lac [1]
+    dac zdpTmp
+zdhJeDone,
+    lio zdpTmp
+    jsp zdpBranch
+    jmp zipNext
+
+// ---- VAR:224 call -----------------------------------------------------
+// Operand 0 is the packed routine address; operands 1..n-1 are the
+// arguments. The store byte names where the eventual return value goes,
+// which is recorded in the new frame rather than applied now.
+//
+// A `call` with no operands is S6.4.3's call to address 0: it does
+// nothing and returns false. zdOp0 is 0 from the decoder's cleared result
+// block, so zdpCall's zdpcZero path answers it, and the argument count
+// treats a count of 0 as it treats 1. A harness build counts it in
+// zdDgCallNone.
+zdhCall,
+#if Z_TEST_HARNESS
+    lac zdOpCount
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip the count if there is an operand
+    idx zdDgCallNone              // no-skip: no operands -- the degrade ran
+#endif
+    lac zdOp0
+    dac zdpCallAddr
+
+    // Where the result goes. Every call opcode dispatches here (call_1s,
+    // call_2s and call_vs2 from V4, and call_1n, call_2n, call_vn and
+    // call_vn2 from V5), and the `_n` forms have no store byte -- for which
+    // zdStoreVar is a cleared 0, indistinguishable from a store to the
+    // stack. So zdHasStore is read, not zdStoreVar.
+    lac zdHasStore
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if there IS a store byte
+    jmp zdhCallDiscard            // no-skip: no store byte -- throw the result away
+    lac zdStoreVar
+    jmp zdhCallResSet
+zdhCallDiscard,
+    lac [ZRV_DISCARD]
+zdhCallResSet,
+    dac zdpCallResVar
+    // argc = zdOpCount - 1, and 0 for a count of 0. A count of 1 subtracts
+    // to plus zero, not ones'-complement -0, so the loop's `sad` below sees
+    // it as zero. A count of 0 subtracts to -1, which is replaced by 0.
+    lac zdOpCount
+    sub [1]
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE      // sma i: skip (fallthrough) if count >= 1
+    cla                                  // no-skip: count 0 -- no arguments, as 1
+    dac zdpCallArgc
+    // The arguments stay where the decoder put them, zdOp1..; zCallFrame
+    // reads them itself.
+    jsp zdpCall
+    jmp zipNext
+
+// ========================================================================
+// catch, throw and check_arg_count, V5 only: reached only through opcodes
+// the decoder accepts in a V5 session.
+// ========================================================================
+
+// ---- 0OP:185 catch (V5): store the current routine's frame value ------
+// S15 leaves the value's form to the interpreter. This one's is zFP, the
+// zStack index of the current frame's base: a plain bank-0 word, and what
+// throw needs to find the frame again. In the initial environment it is
+// 0, the pseudo-frame.
+zdhCatch,
+    lio zFP
+    jsp zdpStore
+    jmp zipNext
+
+// ---- 2OP:28 throw value frame (V5) -------------------------------------
+// "Returns as if from the routine which executed the catch which found
+// this stack frame value" (S15). zUnwindTo makes that frame current if it
+// is still running; then an ordinary return does the rest -- zCallReturn
+// reads the caught frame's own return PC, saved FP and result variable,
+// and its `zSP := zFP` discards every frame above.
+//
+// A throw to the current routine's own frame is a plain return. A throw
+// to frame 0, the value catch gives outside any routine, reaches
+// zCallReturn's S5.5 halt.
+//
+// A frame that is not running stops with ZSTOP_BADTHROW; zUnwindTo has
+// changed nothing by then.
+//
+// A throw out of an interrupt routine abandons the waiting read. While a
+// timed read waits on its interrupt routine (zrcActive set), the live
+// frames above the read's own frame zrcFP are the routine and whatever it
+// called. So a caught frame at or below zrcFP means the throw has unwound
+// the interrupt call itself, and the read will never be resumed: its
+// state is cleared here, so the next timed read starts fresh. Otherwise
+// zinput.ac's "am I inside the interrupt routine?" test (zFP - zrcFP > 0)
+// would keep answering yes for every later timed read deeper than the
+// stale zrcFP, and those reads would run untimed. A caught frame above
+// zrcFP is inside the routine, and the read is still waiting.
+zdhThrow,
+    lio zdOp1
+    jsp zUnwindTo              // zFP = that frame, if it is on the live chain
+    lem                        //   (its farrtn left the window open)
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if it was found
+    jmp zdhThrowBad               // no-skip: no such frame is running
+    lac zFP                    // both are zStack indices, 0..Z_STACK_WORDS,
+    sub zrcFP                  //   so the difference cannot overflow
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE  // sma sza: skip (fallthrough) if the throw
+    jmp zdhThrowRet                   //   leaves the read's frame; no-skip:
+                                      //   caught inside the interrupt routine
+    cla
+    dac zrcActive              // the interrupt call is gone with its frames
+zdhThrowRet,
+    lio zdOp0
+    jsp zdpReturn              // return from it, as if its routine had
+    jmp zipNext                //   executed `ret value`
+
+zdhThrowBad,
+    lac [ZSTOP_BADTHROW]
+    dac zdpStopReason
+    lac zServing               // is boot serving?
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if not -- a test entry
+    jmp zSessionFailR             // no-skip: an error report, then the next player
+    hlt
+    jmp zdhThrowBad            // if a debugger continues the machine, stop
+                               //   again: there is no frame to return to
+
+// ---- VAR:255 check_arg_count n (V5): a branch --------------------------
+// Branches if argument n was supplied to the current routine's call, i.e.
+// if n <= argc (S15). zdOp0 is a 16-bit operand and argc is at most 7, so
+// argc - n cannot overflow and its sign is the whole answer. n == argc
+// leaves plus zero, which is not negative, so the branch is taken; so
+// `check_arg_count 0` always branches.
+zdhCheckArgCount,
+    jsp zFrameArgCount         // AC = arguments the current call supplied
+    lem                        //   (its farrtn left the window open)
+    sub zdOp0                  // argc - n: non-negative iff n was supplied
+    cli                        // IO = 0, the condition if n was not
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if n > argc
+    lio [1]                       // no-skip: n <= argc -- the condition is true
+    jsp zdpBranch
+    jmp zipNext
+
+// ========================================================================
+// save_undo and restore_undo, V5 only: a write log. The work is zsave.ac's
+// zuSave and zuRestore, in bank 14; these handlers only store what they
+// answer.
+// ========================================================================
+
+// ---- EXT:9 save_undo, EXT:10 restore_undo (V5) ------------------------
+// Each answer comes back in IO, and zdpStore stores it:
+//   save_undo     1 a snapshot was taken; -1 the story has no undo (its
+//                 file does not ask, or a census image), or a timed read's
+//                 interrupt routine is running (S6.1.1.3)
+//   restore_undo  2 the snapshot is back; 0 there is none; -1 the story
+//                 has no undo
+// On a 2, zuRestore has already put back the SAVE's store variable, as
+// zdhRestore's tape restore does, so the 2 goes where save_undo's 1 went
+// and the story resumes after its save_undo. On anything else nothing has
+// moved, and this instruction's own store variable gets the answer.
+// Z values are 16-bit patterns: -1 is 0177777. zdpStore goes through
+// zWriteVar, so a store to sp pushes. Neither opcode takes an operand.
+zdhSaveUndo,
+    farjsp(zuSave:*)
+    jmp zdhUndoRes
+zdhRestoreUndo,
+    farjsp(zuRestore:*)
+    lem
+    jsp zsFrameSync            // on a 2, zFP and the stack are the
+                               //   snapshot's, so zstack.ac's frame cache is
+                               //   refilled. Unconditional: on anything else
+                               //   it refills the same values, and IO, the
+                               //   answer, passes through it untouched
+zdhUndoRes,
+    lem                        // farrtn left the window open
+    jsp zdpStore               // IO = the answer
+    jmp zipNext
+
+// ---- EXT:4 set_font font -> (result) (V5) -----------------------------
+//   0          the current window's font; nothing changes (Standard 1.1)
+//   1, 4       selected for the current window; the answer is that
+//              window's previous font. 4 is fixed pitch, which a terminal
+//              always is (S8.1, S8.7.2.4), so nothing is sent
+//   3          selected for the current window, and the route word zsF3
+//              (ztext.ac) sends its characters through zfont3.ac.
+//              The answer is the previous font -- except on tier C, a
+//              terminal that answered nothing, where it is 0: the game
+//              then draws with its own characters, and anything it prints
+//              in font 3 anyway gets zfont3.ac's stand-ins. 1 and 4 put
+//              the route back
+//   2, others  0: S8.1.4 refuses the picture font, and 5-1023 are reserved
+// The font is per window (S15: "chosen for the current window"). zsWin is
+// bank 15's word (ztext.ac), read with farlac, and is only ever 0 or 1, so
+// the pointer lands on zdsfFont0 or zdsfFont1 and nowhere else.
+// zInterpretStart puts both back to 1. The V6 window operand does not
+// exist in V5; a second operand would be ignored.
+zdhSetFont,
+    farlac(zsWin:*)            // AC = the selected window, 0 or 1
+    add [zdsfFont0]
+    dac zdsfPtr                // that window's font word
+    lio i zdsfPtr              // IO = its font: font 0's answer, and the
+                               //   previous font that 1 and 4 answer
+    lac zdOp0                  // the font asked for
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if one was named
+    jmp zdsfStore                 // no-skip: font 0 -- IO is the answer
+    SKIP_NEXT_IF_DIFFERENT [1] // sad: skip (fallthrough) unless font 1
+    jmp zdsfSelect                // no-skip: font 1, the normal font
+    SKIP_NEXT_IF_DIFFERENT [4] // sad: skip (fallthrough) unless font 4
+    jmp zdsfSelect                // no-skip: font 4, fixed pitch
+    SKIP_NEXT_IF_DIFFERENT [3] // sad: skip (fallthrough) unless font 3
+    jmp zdsfGraph                 // no-skip: font 3, character graphics
+    cli                        // 2 and the rest: unavailable -- 0, and
+                               //   nothing changes
+zdsfStore,
+    jsp zdpStore
+    jmp zipNext
+zdsfSelect,
+    dac i zdsfPtr              // AC still holds the font; IO the previous one
+    cla
+    fardac(zsF3:*)             // the ordinary route (IO kept)
+    jmp zdsfStore
+zdsfGraph,
+    dac i zdsfPtr              // selected on every tier
+    lac [1]
+    fardac(zsF3:*)             // font 3's route (IO kept)
+    farlac(zsTier:*)
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) unless tier C
+    cli                           // no-skip: tier C -- selected, answering 0
+    jmp zdsfStore
+
+zdsfPtr, 0                     // the selected window's font word
+zdsfFont0, 1                   // window 0's font -- and the two stay
+zdsfFont1, 1                   //   consecutive: zdhSetFont indexes them
+
+#if Z_CENSUS
+// ========================================================================
+// zdCensus -- census builds only. Called via jsp (dap-style) from zipLoop.
+// Counts every decoded instruction in a two-word counter and, on the first
+// execution of each opcode, appends [key, zPC, count high, count low] to a
+// log in bank 14. The key is zdOpClass << 8 | zdOpNum.
+//
+// The layout, and why neither table can overflow:
+//   ZC_SEEN  bank 14 offset 04440: one word per opcode, 0 until it is
+//            first seen, then its rank (1 = first). The word is
+//            zcBase[class] + number -- 0OP and 1OP 16 each, 2OP and VAR 32
+//            each, EXT 256 -- so 0d352 words.
+//   ZC_LOG   bank 14 offset 05200: four words per rank, rank 1 first.
+//            Only a decoded opcode reaches the loop, so at most 16 + 16 +
+//            32 + 32 opcodes occur, plus all 256 EXT numbers (S14.2.1
+//            accepts every one): 0d352. The log has room for exactly that,
+//            0d1408 words to the bank's end.
+//
+// The counter is zcCountHi * 0400000 + zcCountLo: the low word counts up
+// to 0377777, and the `idx` that would carry into its sign bit instead
+// bumps the high word and restarts the low one at 0.
+//
+// It opens the extend window for the bank-14 words and closes it again.
+// testInterpretDcs clears both tables (ZC_SEEN to ZC_END) and the
+// counters before each census run.
+// ========================================================================
+zdCensus,
+    local rtn, key
+    dap rtn
+    idx zcCountLo              // AC = the new low count
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) on the carry
+    jmp zdcCounted                // no-skip: no carry, the count stands
+    idx zcCountHi
+    cla
+    dac zcCountLo
+zdcCounted,
+    lac zdOpClass
+    sal 8s
+    add zdOpNum
+    dac key
+    lac [zcBase]               // the compact index --
+    add zdOpClass              //   zcBase[class] + number
+    dac zcPtr
+    lac i zcPtr                // window closed: a bank-0 word
+    add zdOpNum
+    add [ZC_SEEN]
+    dac zcPtr                  // 16-bit pointer to this opcode's seen word
+    eem
+    lac i zcPtr
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if first time seen
+    jmp zdcDone                   // no-skip: seen before, nothing to log
+    idx zcDistinct             // AC = this key's rank, 1-based
+    dac i zcPtr
+    sal 2s
+    add [ZC_LOG-4]             // rank 1 logs at ZC_LOG itself
+    dac zcPtr
+    lac key
+    dac i zcPtr
+    idx zcPtr
+    lac zPC                    // the instruction being executed: zipLoop
+    dac i zcPtr                //   has not replaced zPC yet
+    idx zcPtr
+    lac zcCountHi
+    dac i zcPtr
+    idx zcPtr
+    lac zcCountLo
+    dac i zcPtr
+zdcDone,
+    lem
+    jmp rtn
+rtn, jmp 0
+key, 0
+    endlocal
+
+// The census's bank-0 words, global so the clear loop can reset them and
+// a test can read them with a bare `show`.
+zcPtr, 0
+zcBase, 0; 0d16; 0d32; 0d64; 0d96    // by class -- 0OP, 1OP, 2OP, VAR, EXT
+zcCountHi, 0
+zcCountLo, 0
+zcDistinct, 0
+#endif // Z_CENSUS
+
+// ---- Interpreter state (bank 0) ---------------------------------------
+// zPC -- the Z-machine program counter: the byte address of the
+// instruction being executed, or about to be.
+zPC, 0
+
+// Why the interpreter last stopped -- one of the ZSTOP_* codes above.
+zdpStopReason, 0
+
+// zdpCall's input block (see its header).
+zdpCallAddr, 0
+zdpCallArgc, 0
+zdpCallResVar, 0
+
+// Dispatch/handler working words. Not reentrant.
+zdpPtr, 0
+zdpTmp, 0
+zdpIx, 0
+
+// Degrade counter: bumped by one `idx` at the site, read by a test with a
+// bare `show`, never read by the interpreter, absent from production.
+#if Z_TEST_HARNESS
+zdDgCallNone, 0                // a `call` with no operands, as call 0
+#endif
+
+// ========================================================================
+// Test entry points (harness builds only).
+//
+// testInterpret runs the loop on a Z-code program already poked into
+// memory: set zPC (a plain bank-0 word), start testInterpret once, and
+// inspect the machine after it halts. zdpStopReason says which halt it
+// was.
+// ========================================================================
+#if Z_TEST_HARNESS
+
+// Only boot serves. The entries that can reach quit or a dropped
+// connection clear zServing first, so their halts stay halts even on a
+// core where boot has already run.
+testInterpret,
+    dzm zServing
+    lac [ZSTOP_UNIMPL]
+    dac zdpStopReason          // pre-set, so a halt from somewhere OTHER
+                               //   than quit is never mistaken for one
+    jmp zInterpret
+
+// The same loop, reached as a real session reaches it: a live DCS2
+// client, and zPC taken from the story header. Run testBootInit first.
+// Use one `start` only: every start resets DCS2, so a second one drops
+// the connection this entry waited for.
+testInterpretDcs,
+    dzm zServing
+#if Z_CENSUS
+    // A census starts empty: its part of bank 14, then the counters.
+    // Before DCS2 opens, so the client never waits on it.
+    lac [ZC_SEEN]
+    dac zcPtr
+    eem
+zcClear,
+    dzm i zcPtr
+    idx zcPtr
+    SKIP_NEXT_IF_SAME [ZC_END]    // sas: skip (fallthrough) when past the bank
+    jmp zcClear                      // no-skip: more of bank 14 to clear
+    lem
+    cla
+    dac zcCountHi
+    dac zcCountLo
+    dac zcDistinct
+#endif
+    farjsp(zTextDcsOpen:*)     // blocks until a client connects
+    lac [ZSTOP_UNIMPL]
+    dac zdpStopReason
+    jmp zInterpretStart        // resets the stack and takes zPC from the
+                               //   header, unlike testInterpret above
+
+// ---- save / restore / verify, with no client attached -----------------
+// These reach zsave.ac's mechanism entry points (zsvDoSave, zsvDoRestore,
+// zVerifyOp) rather than the opcodes, which need a DCS2 client for the
+// prompt.
+//
+// The slot number goes in testSaveSlotIn; the answer comes back in
+// testSaveResult. Poison testSaveResult before each run: these routines
+// return 0 for a legitimate refusal.
+testSaveToSlot,
+    lio testSaveSlotIn
+    farjsp(zsvDoSave:*)
+    lem
+    dac testSaveResult
+    hlt
+    jmp testSaveToSlot         // if a debugger continues, stop again rather
+                               //   than running into the entry below
+
+testRestoreFromSlot,
+    lio testSaveSlotIn
+    farjsp(zsvDoRestore:*)
+    lem
+    dac testSaveResult
+    jsp zsFrameSync            // as zdhRestore does (unconditional:
+                               //   a refusal moved nothing, so it refills the
+                               //   same values)
+    hlt
+    jmp testRestoreFromSlot
+
+testVerifyStory,
+    farjsp(zVerifyOp:*)
+    lem
+    dac testSaveResult
+    hlt
+    jmp testVerifyStory
+
+// restart without the jump to zInterpretStart that zdhRestart makes, so
+// the reloaded machine can be inspected.
+testRestart,
+    farjsp(zRestartOp:*)
+    lem
+    dac testSaveResult
+    hlt
+    jmp testRestart
+
+// ---- the slot prompt, which needs a client -----------------------------
+// Opens DCS2 once and then calls zSaveOp in a loop, never halting, since
+// a second `start` would reset DCS2 and drop the connection. zSaveOp
+// blocks in getach until a line arrives, answers, and comes back for the
+// next one. testSaveCount counts the answers, since consecutive answers
+// can be equal.
+testSaveOpDcs,
+    dzm zServing
+    farjsp(zTextDcsOpen:*)     // blocks until a client connects
+    lem
+    cla
+    dac testSaveCount
+tsodLoop,
+    farjsp(zSaveOp:*)
+    lem
+    dac testSaveResult
+    idx testSaveCount
+    jmp tsodLoop
+
+testSaveSlotIn, 0
+testSaveResult, 0
+testSaveCount, 0
+
+// ---- the two unpack routines, with no interpreter running -------------
+// Runs both on the packed address in testAddrIn: the routine answer lands
+// in testResultOut, the string answer in testUnpackStrOut. Poison both
+// first -- a packed 0 unpacks to 0. It uses whichever scale the last boot
+// (or testSetVersion) patched into zurShift and zusShift.
+testUnpack,
+    lio testAddrIn
+    jsp zUnpackRoutine         // dap/jmp rtn, same bank -- no eem involved
+    dac testResultOut
+    lio testAddrIn
+    jsp zUnpackString
+    dac testUnpackStrOut
+    hlt
+    jmp testUnpack             // if a debugger continues, stop again rather
+                               //   than running into the word below
+
+testUnpackStrOut, 0
+
+#endif // Z_TEST_HARNESS
+
+#endif // ZDISPATCH_AC_H

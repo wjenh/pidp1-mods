@@ -1,0 +1,1982 @@
+// zsave.ac -- save, restore, restart and verify, and V5's save_undo and
+// restore_undo.
+// #include-only fragment, assembled into bank ZPATCH_BANK (0d14) after
+// zpatch.ac.
+// Entry points: zSaveOp, zRestoreOp, zRestartOp, zVerifyOp, zuSave,
+// zuRestore and zuBoot, all farjsp; zuHook, crossBankjda.
+//
+// Saves go to the Type 550 Microtape on drive 2, mounted by the player
+// with mtp (Docs/UsingType550Microtape.md):
+//   - Block 0 is the label: the story whose saves the tape holds.
+//   - Position p is S = ceil(dynWords / 256) + 6 blocks from block
+//     1 + (p-1)*S: leading header, dynamic memory (last block padded),
+//     four stack blocks, trailing header.
+//   - The tape flags a word every 200 us and does not wait, so the
+//     transfer loops poll with the extend window open and 16-bit pointers.
+//   - A halt clears GO with no error, so every no-flag path also tests GO.
+//   - Both headers carry a generation word G, new for every save; a
+//     restore requires them identical, so an interrupted save reads as
+//     empty.
+//   - A restore checks every block in a forward pass before a reverse pass
+//     reads anything into core.
+//   - Every transfer starts by seeking to a search flag.
+
+#ifndef ZSAVE_AC_H
+#define ZSAVE_AC_H
+
+#include <memory.ah>
+#include <MICROTAPE/type550defs.ah>
+#include <CLOCK/clockdefs.ah>
+#include <AIDS/skipmacros.ah>
+
+// ---- The save format ----------------------------------------------------
+// A never-written block reads as zeros and passes the checksum, so the
+// nonzero magic is what marks a save.
+#define ZSV_MAGIC        0525252
+// The patched word zsvFormat: 0d1 in V3, 0d2 in V4/V5.
+#define ZSV_FORMAT       zsvFormat
+// Sixteen words, then G.
+#define ZSV_HDR_WORDS    0d17
+
+// ---- The tape -----------------------------------------------------------
+#define ZSV_DRIVE        mtu2     // drive 1 is left for a game tape
+#define ZSV_MAX_POS      0d9      // the prompt's ceiling: one keystroke
+#define ZSV_LAST_BLOCK   0d575    // blocks 0-575; block 0 is the label
+#define ZSV_FIXED_BLOCKS 0d6      // two headers and Z_STACK_WORDS / 0d256
+                                  //   (= 4) stack blocks
+// Idle polls before a flag wait gives up: about 3 s. The first flag after
+// a mount comes 1.6 s after the search starts.
+#define ZSV_TMO          0d70000
+
+// Block 0's label: ZSV_LABEL, the story's identity (release, three serial
+// words, checksum) and S. A blank tape reads as zeros: no label.
+#define ZSV_LABEL        0636363
+#define ZSV_LBL_WORDS    0d7
+
+// Z-machine byte addresses of header fields; all even, so one zFetchWord
+// each.
+#define ZSV_ZA_RELEASE   0d2      // 0x02
+#define ZSV_ZA_FLAGS2    0d16     // 0x10
+#define ZSV_ZA_SERIAL    0d18     // 0x12, six ASCII bytes = three words
+
+// S6.1.2/S6.1.3: restore and restart keep the interpreter's transcribing
+// and fixed-pitch bits, Flags2 bits 0 and 1.
+#define ZSV_FLAGS2_KEEP  0d3
+#define ZSV_FLAGS2_DROP  0777774  // everything else -- the complement, on
+                                  //   0d18 bits
+
+// zsvAskSlot's cancel answer: above any index (0..0d8), and not minus zero.
+#define ZSV_CANCEL       0777
+
+// Prints an `ascii` block: two characters a word, zero-terminated, line
+// breaks as \r (zPrintChar drops \n). Closes the extend window.
+// Called via jsp, IO = a bare in-bank pointer to the block.
+zsvPrint,
+    local rtn, msgPtr, packed
+    dap rtn
+    lem
+    lai
+    dac msgPtr
+zsvpLoop,
+    lac i msgPtr
+    dac packed
+    sar 9s                      // the first character, from the high half
+    and [0777]
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if there IS a char
+    jmp zsvpDone                   // no-skip: zero byte -- end of string
+    lia
+    farjsp(zPrintChar:*)        // ZLEAF_BANK from bank 14; it returns
+    lem                         //   through farrtn -- with the window open
+    lac packed
+    and [0777]                  // the second character, from the low half
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zsvpDone
+    lia
+    farjsp(zPrintChar:*)
+    lem
+    idx msgPtr
+    jmp zsvpLoop
+zsvpDone,
+    jmp rtn
+rtn, jmp 0
+msgPtr, 0
+packed, 0
+    endlocal
+
+// Selects drive 2, checks it has a tape, and computes S and N.
+// `mse` picks up whatever tape is on the drive now. The test is a stop,
+// which is refused with UNABLE only when there is no tape; a write-locked
+// tape passes, and a save to it then fails. Also enables the 1 ms clock,
+// for G.
+// Called via jsp, no arguments.
+// Returns AC = 0 ready, nonzero = no tape (it has printed why).
+zsvMount,
+    local rtn, used
+    dap rtn
+    lem
+    lac [clsena]
+    cls                         // the 1 ms clock, for G
+    lio [ZSV_DRIVE]
+    mse                         // select it; rereads microtapes.txt, clears
+                                //   any flag a previous operation left up
+    cli
+    mlc                         // stop: refused, UNABLE, with no tape
+    mrs
+    ril 2s                      // the error flag to bit 0
+    spi                         // skip (fallthrough) if it is clear: a tape
+    jmp zsvmNoTape                 // no-skip: refused -- no tape
+
+    // ---- S blocks a position, N positions offered; N is always >= 2 ----
+    farlac(zhDynWords:*)        // ZLEAF_BANK's, from bank 14
+    add [0d255]
+    sar 8s                      // ceil(dynWords / 256)
+    add [ZSV_FIXED_BLOCKS]
+    dac zsvSlotBlocks
+    dac used                    // the last block of position n+1
+    cla
+    dac zsvNumPos
+zsvmGeo,
+    lac zsvNumPos
+    SKIP_NEXT_IF_DIFFERENT [ZSV_MAX_POS]  // sad: skip if below the ceiling
+    jmp zsvmDone                             // no-skip: at the ceiling
+    lac [ZSV_LAST_BLOCK]
+    sub used                    // plus zero when it ends on the last block
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO      // spa: skip (fallthrough) if it fits
+    jmp zsvmDone                             // no-skip: past the tape's end
+    idx zsvNumPos
+    lac used
+    add zsvSlotBlocks
+    dac used
+    jmp zsvmGeo
+zsvmDone,
+    cla
+    jmp rtn
+zsvmNoTape,
+    lio [zsvMsgNoTape]
+    jsp zsvPrint
+    lac [1]
+    jmp rtn
+rtn, jmp 0
+used, 0
+    endlocal
+
+// Stores the story's identity: release, three serial words, checksum.
+// Called via jsp, IO = a bare in-bank pointer to five words.
+zsvIdent,
+    local rtn, p, za
+    dap rtn
+    lem
+    dio p
+    lac [ZSV_ZA_RELEASE]
+    dac za
+zsviLoop,
+    lio za
+    farjsp(zFetchWord:0)
+    lem
+    dac i p
+    idx p
+    lac za
+    SKIP_NEXT_IF_DIFFERENT [ZSV_ZA_RELEASE]  // sad: skip (fallthrough) past the release
+    lac [ZSV_ZA_SERIAL-0d2]                     // no-skip: the serial is next
+    add [0d2]
+    dac za
+    SKIP_NEXT_IF_SAME [ZSV_ZA_SERIAL+0d6]    // sas: skip (fallthrough) when done
+    jmp zsviLoop
+    farlac(zhChecksum:*)
+    dac i p
+    jmp rtn
+rtn, jmp 0
+p, 0
+za, 0
+    endlocal
+
+// Builds this story's block-0 label. zsvMount must have run (S).
+// Called via jsp, IO = a bare in-bank pointer to ZSV_LBL_WORDS words.
+zsvLblBuild,
+    local rtn, p
+    dap rtn
+    lem
+    dio p
+    lac [ZSV_LABEL]
+    dac i p
+    idx p                       // AC = the next word's address
+    lia
+    jsp zsvIdent
+    lac p
+    add [0d5]
+    dac p
+    lac zsvSlotBlocks
+    dac i p
+    jmp rtn
+rtn, jmp 0
+p, 0
+    endlocal
+
+// Checks the tape's label against this story's (zsvLblOut). No label, or
+// a match: go on. Anything else: another story's tape.
+// Block 0 is read when the first flag seen is block 0's (the tape is at
+// its load point, as after a mount) or when zsvLblKnown is 0; otherwise
+// the copy in zsvLblWords is used and the tape is left searching forward.
+// Called via jsp, no arguments; zsvMount must have run.
+// Returns AC = 0 go on; nonzero = refused, the tape possibly still moving
+// -- the caller stops it and prints zsvFailMsg, which this sets for
+// another story's label.
+zsvLabel,
+    local rtn, ptr, p2, cnt
+    dap rtn
+    lem
+    lio [zsvLblOut]
+    jsp zsvLblBuild
+    lac [1]
+    dac zsvOnce                 // zsvSeek: return at the first flag
+    cla
+    dac zsvDir
+    dac zsvWant                 // block 0, if the tape must go back to it
+    jsp zsvSeek
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) if a flag came
+    jmp rtn                        // no-skip: no flag -- AC nonzero, still moving
+    lac zsvWord
+    SKIP_NEXT_IF_DIFFERENT [mtbmf] // sad: skip (fallthrough) unless block 0, forward
+    jmp zsvlRead                      // no-skip: at the load point -- read it now
+    lac zsvLblKnown
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) if block 0 is unknown
+    jmp zsvlJudge                  // no-skip: known -- the tape carries on
+    jsp zsvSeek                 // back to block 0, forward (zsvOnce is clear)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rtn                        // no-skip: the tape failed -- AC nonzero
+
+    // ---- read the leading checksum and the label's words -------------
+zsvlRead,
+    lio [mtgo mtread]
+    mlc
+    cla
+    dac zsvLblKnown             // until the read is whole
+    lac [zsvLblIn]
+    dac ptr
+    law i ZSV_LBL_WORDS+1
+    dac cnt
+zsvlRdLoop,
+    mrs
+    spi i                       // skip if the data flag is up
+    jmp zsvlNoDF
+    mrd
+    dio i ptr
+    idx ptr
+    isp cnt
+    jmp zsvlRdLoop
+    cli
+    mlc                         // stop: the rest of block 0 is not needed
+    lac [1]
+    dac zsvLblKnown
+
+    // ---- judge it, at rest or not -----------------------------------
+zsvlJudge,
+    lac zsvLblWords
+    SKIP_NEXT_IF_SAME [ZSV_LABEL]  // sas: skip (fallthrough) if it has a label
+    jmp zsvlGo                        // no-skip: no label -- go on
+    lac [zsvLblWords]
+    dac ptr
+    lac [zsvLblOut]
+    dac p2
+    law i ZSV_LBL_WORDS
+    dac cnt
+zsvlCmp,
+    lac i ptr
+    SKIP_NEXT_IF_SAME i p2      // sas: skip (fallthrough) if the same
+    jmp zsvlOther                  // no-skip: another story's
+    idx ptr
+    idx p2
+    isp cnt
+    jmp zsvlCmp
+zsvlGo,
+    cla
+    jmp rtn
+zsvlOther,
+    lac [zsvMsgOtherTape]
+    dac zsvFailMsg
+    lac [1]
+    jmp rtn
+zsvlNoDF,
+    ril 2s                      // the error flag to bit 0 (the block end flag
+    spi                         //   cannot come before the eighth word)
+    jmp zsvlFail                   // an error: MISS, END or UNABLE
+    ril 4s                      // GO (bit 6) to bit 0: a halt clears it
+    spi
+    jmp zsvlRdLoop                 // still moving: wait for the word
+zsvlFail,
+    lac [1]
+    jmp rtn
+rtn, jmp 0
+ptr, 0
+p2, 0
+cnt, 0
+    endlocal
+
+// Finds a position's first block. The index is range-checked here.
+// Called via jsp, IO = a 0-based position index; zsvMount must have run.
+// Returns AC = the first block, or 0 if there is no such position.
+zsvPosBase,
+    local rtn, ix, base
+    dap rtn
+    lem
+    lai
+    dac ix
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO  // spa: skip (fallthrough) if >= 0
+    jmp zsvpbNo                          // no-skip: negative
+    sub zsvNumPos
+    SKIP_NEXT_IF_AC_NEGATIVE          // sma: skip (fallthrough) if index < N
+    jmp zsvpbNo                          // no-skip: index >= N
+    lac [1]
+    dac base
+zsvpbLoop,
+    lac ix
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if steps remain.
+    jmp zsvpbDone               //   ix counts DOWN with sub, which ends on
+    sub [1]                     //   plus zero; a count made with cma of 0
+    dac ix                      //   would be minus zero, which sza does not
+    lac base                    //   see
+    add zsvSlotBlocks
+    dac base
+    jmp zsvpbLoop
+zsvpbDone,
+    lac base
+    jmp rtn
+zsvpbNo,
+    cla
+    jmp rtn
+rtn, jmp 0
+ix, 0
+base, 0
+    endlocal
+
+// Searches to block zsvWant's flag in direction zsvDir (0 forward, or
+// mtrev), letting each flag steer; END turns it, MISS is ignored.
+// With zsvOnce set it returns at the first flag of any kind, its word in
+// zsvWord; zsvOnce is cleared on return.
+// Called via jsp.
+// Returns AC = 0 as the flag arrives (the caller has 400 us to issue its
+// `mlc`); nonzero = failed, the tape still moving.
+zsvSeek,
+    local rtn, n
+    dap rtn
+    lem
+    lac zsvDir
+    ior [mtgo mtsrch]
+    lia
+    mlc
+zsvskArm,
+    lac [ZSV_TMO]
+    cma
+    dac zsvTmo
+zsvskLoop,
+    mrs
+    spi i                       // skip if the data flag is up
+    jmp zsvskNoDF
+    mrd
+    dio zsvWord
+    lac zsvOnce
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) unless any flag will do
+    jmp zsvskFound                 // no-skip: the first flag
+    lac zsvWord
+    and [mtblk]
+    dac n
+    lac zsvWord
+    SKIP_NEXT_IF_AC_NEGATIVE    // sma: skip if a REVERSE mark (sign set)
+    jmp zsvskFwd
+    lac n                       // ---- a reverse flag
+    sub zsvWant                 // n - want; equal gives plus zero
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip if n != want
+    jmp zsvskRevAt
+    SKIP_NEXT_IF_AC_NEGATIVE    // sma: skip if n < want
+    jmp zsvskArm                   // n > want: keep reversing
+    jmp zsvskGoFwd
+zsvskRevAt,
+    lac zsvDir
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip if FORWARD wanted -- pass it
+    jmp zsvskFound
+    jmp zsvskArm
+zsvskFwd,
+    lac n                       // ---- a forward flag
+    sub zsvWant
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zsvskFwdAt
+    SKIP_NEXT_IF_AC_NEGATIVE    // sma: skip if n < want: keep going
+    jmp zsvskGoRev                 // n > want
+    jmp zsvskArm
+zsvskFwdAt,
+    lac zsvDir
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip if forward wanted -- found
+    jmp zsvskArm                   // reverse wanted: pass it
+zsvskFound,
+    cla
+    dac zsvOnce                 // one flag only, once
+    jmp rtn
+zsvskGoRev,
+    lio [mtgo mtrev mtsrch]
+    mlc
+    jmp zsvskArm
+zsvskGoFwd,
+    lio [mtgo mtsrch]
+    mlc
+    jmp zsvskArm
+zsvskNoDF,
+    ril 2s                      // the error flag to bit 0
+    spi i                       // skip if it is up
+    jmp zsvskIdle
+    mrs
+    dio zsvStat
+    lac zsvStat
+    and [mtend]
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip if END
+    jmp zsvskErr
+    lac zsvStat
+    and [mtrevs]
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip if END going forward
+    jmp zsvskGoFwd                 // END in reverse: the start end zone
+    jmp zsvskGoRev                 // END forward: the far end zone
+zsvskErr,
+    lac zsvStat
+    and [mtmiss]
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip if a MISS -- carry on
+    jmp zsvskFail                  // UNABLE: no tape, or off the reel
+    lac zsvStat
+    and [mtrevs]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zsvskGoRev              // the same direction again; mlc clears it
+    jmp zsvskGoFwd
+zsvskIdle,
+    isp zsvTmo
+    jmp zsvskLoop
+zsvskFail,
+    cla
+    dac zsvOnce                 // a failed wait leaves nothing armed
+    lac [1]
+    jmp rtn
+rtn, jmp 0
+n, 0
+    endlocal
+
+// Prepares a forward pass over zsvRegions: zsvBlk = -S and the first
+// block set up, before the seek. The caller sets zsvRgTrail first.
+// Called via jsp; returns with eem off.
+zsvPassStart,
+    local rtn
+    dap rtn
+    lem
+    farlac(zhDynWords:*)
+    dac zsvRgDynWords
+    lac [zsvRegions:.]
+    dac zsvTp
+    cla
+    dac zsvLeft
+    dac zsvBad
+    lac zsvSlotBlocks
+    cma
+    dac zsvBlk
+    eem
+    jsp zsvBlkSetup
+    lem
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+// Sets up the next forward block: zsvPtr, zsvCnt (-words, at most 0d256),
+// zsvMode, and zsvSum = 0.
+// Called via jsp with the window open.
+zsvBlkSetup,
+    local rtn
+    dap rtn
+    lac zsvLeft
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) at a region's end
+    jmp zsvbsMore
+    lac i zsvTp
+    dac zsvRPtr
+    idx zsvTp
+    lac i zsvTp
+    dac zsvLeft
+    idx zsvTp
+    lac i zsvTp
+    dac zsvMode
+    idx zsvTp
+zsvbsMore,
+    lac zsvLeft
+    sub [0400]
+    SKIP_NEXT_IF_AC_NEGATIVE    // sma: skip if fewer than 256 left
+    jmp zsvbsFull
+    lac zsvLeft
+    cma
+    dac zsvCnt
+    cla
+    dac zsvLeft
+    jmp zsvbsGo
+zsvbsFull,
+    dac zsvLeft
+    law i 0400
+    dac zsvCnt
+zsvbsGo,
+    lac zsvRPtr
+    dac zsvPtr
+    sub zsvCnt                  // + the words this block takes
+    dac zsvRPtr
+    cla
+    dac zsvSum
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+// Prepares the reverse pass: the stack from its last word, then dynamic
+// memory from its last; zsvBlk = -(S - 2).
+// Called via jsp; returns with eem off.
+zsvRevStart,
+    local rtn
+    dap rtn
+    lem
+    lac [zStack:DYNMEM_STACK_BANK]
+    add [Z_STACK_WORDS-1]
+    dac zsvRPtr
+    lac [Z_STACK_WORDS]
+    dac zsvLeft
+    farlac(zhDynWords:*)
+    add [DYNMEM_BANK1*010000-1]
+    dac zsvRPtr2                // dynamic memory's last word
+    lac zsvSlotBlocks
+    sub [2]
+    cma
+    dac zsvBlk
+    jsp zsvRevSetup
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+// Sets up the next reverse block: real = ((left - 1) & 0377) + 1 words,
+// stored descending from zsvRPtr. The checksum and the pad words come
+// first in reverse, so zsvSkip = -(257 - real).
+// Called via jsp.
+zsvRevSetup,
+    local rtn, real
+    dap rtn
+    lac zsvLeft
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) when the stack is done
+    jmp zsvrsGo
+    lac zsvRPtr2
+    dac zsvRPtr
+    crossBanklac(zhDynWords:*, EEMOPEN)  // window left open: the reverse
+    dac zsvLeft                 //   pass's `dio i zsvPtr` needs eem
+zsvrsGo,
+    lac zsvLeft
+    sub [1]
+    and [0377]
+    add [1]
+    dac real
+    cma
+    dac zsvCnt
+    lac [0401]
+    sub real
+    cma
+    dac zsvSkip
+    lac zsvLeft
+    sub real
+    dac zsvLeft
+    lac zsvRPtr
+    dac zsvPtr
+    sub real
+    dac zsvRPtr
+    cla
+    dac zsvSum
+    jmp rtn
+rtn, jmp 0
+real, 0
+    endlocal
+
+// Prompts "Position 1-N?" and reads one key, echoing it itself: a digit
+// 1..N (or keypad digit) is the answer, anything else prints "Canceled.".
+// Then drains any following RETURN. A dropped connection ends the session
+// (halts under a test entry).
+// Called via jsp, no arguments; zsvMount must have run (N).
+// Returns AC = a 0-based position index, or ZSV_CANCEL.
+zsvAskSlot,
+    local rtn, ch, slots
+    dap rtn
+    lem
+    lac zsvNumPos
+    dac slots
+
+    lio [zsvMsgSlot]
+    jsp zsvPrint
+    lac slots
+    add [0d48]                  // ASCII '0'; slots is 2..9, one digit
+    lia
+    farjsp(zPrintChar:*)
+    lem                         // zPrintChar returns through farrtn
+    lio [zsvMsgQuery]
+    jsp zsvPrint
+
+zsvaKey,                        // read once, not until CR
+    lio [0400000]               // untimed, and no echo
+    farjsp(zReadKey:*)          // AC = the key, or negative if the connection
+    lem                         //   dropped; LF reads as CR
+    dac ch
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE  // sma i: skip (fallthrough) if real
+    jmp zsvaNoConn                   // no-skip: bit 0 set -- connection dropped
+
+    SKIP_NEXT_IF_DIFFERENT [0d13] // sad: skip (fallthrough) if not CR
+    jmp zsvaEndCancel                // no-skip: CR, or LF -- an empty line
+
+    sub [0d145]                 // a keypad key, 145-154,
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE  //   answers as its digit. sma i: skip
+    jmp zsvaNotPad                   //   (fallthrough) if 145 or above
+    sub [0d10]
+    SKIP_NEXT_IF_AC_NEGATIVE    // sma: skip (fallthrough) if 145-154
+    jmp zsvaNotPad                 // no-skip: above the keypad
+    add [0d58]                  // ch - 155 + 58 = ch - 97: keypad 0 is '0'
+    dac ch
+zsvaNotPad,
+    lac ch
+    sub [0d32]                  // ch is 1..0232: no overflow
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE  // sma i: skip (fallthrough) if a visible character
+    jmp zsvaEndCancel                // no-skip: a control character -- cancels, unechoed
+    sub [0d95]                  // ch - 127 (zReadKey reads DEL as 8)
+    SKIP_NEXT_IF_AC_NEGATIVE    // sma: skip (fallthrough) if below 127
+    jmp zsvaEndCancel              // no-skip: an arrow or F key -- cancels, unechoed
+    lio ch
+    tcc                         // the answer, echoed
+    jmp zsvaEnd                 // this one key decides
+
+zsvaEndCancel,                  // nothing that could be a position.
+    dzm ch                      //   0 is below '1', so the test below cancels
+zsvaEnd,
+    lio [0d10]                  // the line's end on the screen: LF,
+    tcc                         //   which DCS2 sends as CR LF
+    eem                         // the word-wrap's column (ztext.ac)
+    dzm i [zwCol:*]             //   starts again after it
+    lem
+    jsp zsvDrain                // the RETURN typed after the digit
+    // '1' subtracts to plus zero, a valid answer: the test must be spa.
+    lac ch
+    sub [0d49]                  // ASCII '1'
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO  // spa: skip (fallthrough) if >= '1'
+    jmp zsvaCancel                       // no-skip: below '1', empty line included
+    dac ch                      // ch now holds the 0-based index
+    SKIP_NEXT_IF_DIFFERENT slots  // sad: skip (fallthrough) if not exactly N
+    jmp zsvaCancel                   // no-skip: index == N, one too many
+    sub slots
+    SKIP_NEXT_IF_AC_NEGATIVE    // sma: skip (fallthrough) if index < N
+    jmp zsvaCancel                 // no-skip: index > N
+    lac ch
+    jmp rtn
+
+zsvaCancel,
+    lio [zsvMsgCancel]
+    jsp zsvPrint
+    lac [ZSV_CANCEL]
+    jmp rtn
+
+zsvaNoConn,
+    lac [ZSTOP_NOCONN]          // nothing is printed: the terminal that
+    fardac(zdpStopReason:0)     //   would show it is what went away
+    farlac(zServing:0)          // is this boot's session loop?
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if it is
+    jmp zsvaNoConnHlt              // no-skip: a test entry -- stop
+    farjmp(zSessionEnd:0)       // the session is over (eem on: it closes it)
+    // A skip cannot jump over a farjmp's two words, hence the jmp above.
+zsvaNoConnHlt,
+    hlt
+    jmp zsvaNoConn              // if continued, stop again
+rtn, jmp 0
+ch, 0
+slots, 0
+    endlocal
+
+// Discards input until a tenth of a second passes with no key, so a
+// RETURN after the prompt's answer is not read as an empty command. A
+// dropped connection just ends it; the next reader handles the drop.
+// Called via jsp, no arguments; AC and IO are clobbered.
+zsvDrain,
+    local rtn
+    dap rtn
+zsvdKey,
+    lio [0400001]               // one tenth (IO in is tenths), and no echo
+    farjsp(zReadKey:*)          // AC = the key, 0 if the tenth ran out,
+    lem                         //   negative if the connection dropped
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE  // sma i: skip (fallthrough) if not a drop
+    jmp rtn                          // no-skip: dropped -- nothing to drain
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if a key came
+    jmp rtn                        // no-skip: 0 -- a quiet tenth, done
+    jmp zsvdKey                 // a key: discarded, unechoed, and wait again
+rtn, jmp 0
+    endlocal
+
+// Fills the save header from the live machine; G is the 1 ms clock.
+// Called via jsp, no arguments.
+zsvBuildHdr,
+    local rtn
+    dap rtn
+    lem
+    lac [ZSV_MAGIC]
+    dac zsvHdrMagic
+    lac ZSV_FORMAT
+    dac zsvHdrFormat
+
+    lio [zsvHdrRelease]         // release, serial, checksum --
+    jsp zsvIdent                //   shared with the tape's label
+    farlac(zhDynWords:*)
+    dac zsvHdrDynWords
+
+    farlac(zPC:0)               // the instruction AFTER this save -- the
+    dac zsvHdrPC                //   loop set zPC before dispatching
+    farlac(zdBranchKind:0)
+    dac zsvHdrBKind
+    farlac(zdBranchTarget:0)
+    dac zsvHdrBTarget
+    farlac(zdBranchOnTrue:0)
+    dac zsvHdrBOnTrue
+    farlac(zSP:0)
+    dac zsvHdrSP
+    farlac(zFP:0)
+    dac zsvHdrFP
+
+    lac [Z_STACK_WORDS]
+    dac zsvHdrStkWords
+    farlac(zdStoreVar:0)        // V4+: a restore stores 2 here; unused in V3
+    dac zsvHdrStoreVar
+    rck                         // G, from the clock zsvMount enabled
+    dio zsvHdrG
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+// 0OP:181 save: checks the tape, prompts, saves, drains.
+// Called via farjsp(zSaveOp:*) from zdispatch.ac's zdhSave, no arguments.
+// Returns AC = 1 on success, 0 on failure.
+zSaveOp,
+    local rtn, slot
+    farenter(rtn)
+    jsp zsvMount
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) if the tape is ready
+    jmp zsvSaveRefused             // no-skip: zsvMount printed why
+    jsp zsvAskSlot             // never returns if the connection dropped
+    dac slot
+    SKIP_NEXT_IF_DIFFERENT [ZSV_CANCEL]  // sad: skip if a real position
+    jmp zsvSaveRefused                      // no-skip: canceled; it printed
+    lio slot
+    jsp zsvDoSave
+    lem                         // close the window before same-bank work
+    dac slot                    // the answer, parked: zsvDrain clobbers AC
+    jsp zsvDrain
+    lac slot
+    farrtn(rtn)
+zsvSaveRefused,
+    cla                         // failed (V1-3 no branch, V4+ stores 0)
+    farrtn(rtn)
+rtn, 0
+slot, 0
+    endlocal
+
+// Saves to a position with no prompt: checks the label (writing one first
+// on an unlabeled tape), then writes the position's S blocks in one
+// forward pass. A failure leaves the position reading as empty.
+// Called via jsp from zSaveOp, or via farjsp(zsvDoSave:*) by zdispatch.ac's
+// testSaveToSlot; IO = a 0-based position index.
+// Returns AC = 1 on success, 0 on failure (it printed why).
+zsvDoSave,
+    local rtn, slot
+    farenter(rtn)              // full-word capture: entered from bank 0 too
+    dio slot                   // IO survives farenter
+    lac [zsvMsgFailed]
+    dac zsvFailMsg             // what a failure prints
+    jsp zsvMount
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zsvSaveBadSlot           // no tape; it printed why
+    lio slot
+    jsp zsvPosBase
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if it exists
+    jmp zsvSaveBadSlot            // no-skip: not on this tape
+    jsp zsvLabel               // see the header
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if the tape may be written
+    jmp zsvwErr                   // no-skip: another story's, or a tape error
+    jsp zsvBuildHdr            // G read here, after zsvMount's cls
+    lac [zsvHdr:.]
+    dac zsvRgTrail             // the same header at both ends
+    lac zsvLblWords
+    SKIP_NEXT_IF_DIFFERENT [ZSV_LABEL]  // sad: skip (fallthrough) if no label
+    jmp zsvwPos                           // no-skip: labeled, this story's
+
+    // ---- write this story's label on block 0 first -------------------
+    cla
+    dac zsvLblKnown            // block 0 is unknown until the write is whole
+    lio [zsvLblWords]
+    jsp zsvLblBuild            // what block 0 will hold
+    lac [zsvLblRegion:.]
+    dac zsvTp
+    cla
+    dac zsvLeft
+    dac zsvDir
+    dac zsvWant                // block 0, forward
+    law i 1
+    dac zsvBlk                 // one block
+    eem
+    jsp zsvBlkSetup
+    lem
+    jsp zsvSeek
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zsvwErr
+    jmp zsvwWrite
+
+zsvwPos,
+    lio slot
+    jsp zsvPosBase
+    dac zsvWant
+    jsp zsvPassStart
+    cla
+    dac zsvDir
+    jsp zsvSeek
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zsvwErr
+zsvwWrite,
+    lio [mtgo mtwrit]
+    mlc                         // the control asks for the first word at once
+    eem
+zsvwData,
+    mrs
+    spi i                       // the data flag, straight from IO
+    jmp zsvwNoDF
+    lio i zsvPtr
+    mwr
+    idx zsvPtr                  // carries into the bank field: no split
+    lai
+    add zsvSum
+    dac zsvSum
+    isp zsvCnt
+    jmp zsvwData
+zsvwPad,                        // the rest of a short block: zeros
+    mrs
+    spi i
+    jmp zsvwPdNo
+    cli
+    mwr
+    jmp zsvwPad
+zsvwNoDF,
+    ril 1s                      // the block end flag to bit 0
+    spi
+    jmp zsvwBEF
+    ril 1s                      // the error flag to bit 0
+    spi
+    jmp zsvwErr
+    ril 4s                      // GO (mtgos, bit 6) to bit 0: clear after
+    spi                         //   a halt, so no flag will come
+    jmp zsvwData
+    jmp zsvwErr
+zsvwPdNo,
+    ril 1s
+    spi
+    jmp zsvwBEF
+    ril 1s
+    spi
+    jmp zsvwErr
+    ril 4s
+    spi
+    jmp zsvwPad
+    jmp zsvwErr
+zsvwBEF,
+    lac zsvSum
+    cma
+    lia
+    mwr                         // the trailing checksum
+    isp zsvBlk
+    jmp zsvwNext
+    lem
+    law i 0d20                  // about 300 us: the checksum reaches the
+    dac zsvTmo                  //   tape 200 us after the flag
+zsvwTail,
+    isp zsvTmo
+    jmp zsvwTail
+    mrs
+    dio zsvStat
+    cli
+    mlc                         // stop
+    lac zsvStat
+    and [mterf]
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) if no error
+    jmp zsvSaveFailed
+    lac zsvLblKnown
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if that was the position
+    jmp zsvwLblDone                // no-skip: that was the label
+    lac [1]                     // success: the game prints "Ok."
+    farrtn(rtn)
+zsvwLblDone,
+    lac [1]
+    dac zsvLblKnown             // block 0 now holds zsvLblWords
+    jmp zsvwPos                 // and now the position
+zsvwNext,
+    jsp zsvBlkSetup
+    jmp zsvwData
+zsvwErr,
+    lem
+    cli
+    mlc                         // stop: a moving tape runs off its reel
+zsvSaveFailed,
+    lio zsvFailMsg              // "Save failed.", or zsvLabel's
+    jsp zsvPrint
+zsvSaveBadSlot,
+    cla
+    farrtn(rtn)
+rtn, 0
+slot, 0
+    endlocal
+
+// 0OP:182 restore: checks the tape, prompts, restores, drains.
+// Called via farjsp(zRestoreOp:*) from zdispatch.ac's zdhRestore, no
+// arguments.
+// Returns AC = 1 if the machine was replaced, 0 if nothing was touched.
+zRestoreOp,
+    local rtn, slot
+    farenter(rtn)
+    jsp zsvMount
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zsvRestCanceled
+    jsp zsvAskSlot             // never returns if the connection dropped
+    dac slot
+    SKIP_NEXT_IF_DIFFERENT [ZSV_CANCEL]
+    jmp zsvRestCanceled
+    lio slot
+    jsp zsvDoRestore
+    lem                         // as at zSaveOp
+    dac slot
+    jsp zsvDrain
+    lac slot
+    farrtn(rtn)
+zsvRestCanceled,
+    cla
+    farrtn(rtn)
+rtn, 0
+slot, 0
+    endlocal
+
+// Restores from a position with no prompt:
+// 1. Forward pass, storing only the two headers; every block's 258 words
+//    must total plus zero.
+// 2. With the tape stopped, validate: no tape error; headers identical
+//    (else "Nothing saved there."); every block good (else "Restore
+//    failed."); magic, format, identity, geometry, stack pointers.
+// 3. Reverse pass: read the stack and dynamic memory into core. A failure
+//    here is ZSTOP_RESTORE.
+// Called via jsp from zRestoreOp, or via farjsp(zsvDoRestore:*) by
+// zdispatch.ac's testRestoreFromSlot; IO = a 0-based position index.
+// Returns AC = 1 if the machine was replaced, 0 if nothing was touched.
+zsvDoRestore,
+    local rtn, slot, flags2, merged, p1, p2, cnt
+    farenter(rtn)              // full-word capture: entered from bank 0 too
+    dio slot
+    lac [zsvMsgRestFail]
+    dac zsvFailMsg             // what a failure prints
+    jsp zsvMount
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zsvRestRefused            // no tape; it printed why
+    lio slot
+    jsp zsvPosBase
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zsvRestRefused            // not on this tape
+    jsp zsvLabel               // another story's tape is refused;
+    SKIP_NEXT_IF_AC_ZERO       //   no label is fine, each position's header
+    jmp zsvRestTape               //   checks the identity
+    lio slot
+    jsp zsvPosBase             // again: zsvLabel used zsvWant
+    dac zsvWant
+    add zsvSlotBlocks
+    sub [2]
+    dac zsvLastData            // T - 1, the last stack block
+    lac [zsvHdrT:.]
+    dac zsvRgTrail
+    jsp zsvPassStart
+    cla
+    dac zsvDir
+    jsp zsvSeek
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zsvRestTape
+    lio [mtgo mtread]
+    mlc
+    eem
+    // ---- 1. the forward pass ------------------------------------------
+zsvfLead,
+    mrs
+    spi i
+    jmp zsvfLdNo
+    mrd                         // the leading checksum
+    lai
+    add zsvSum
+    dac zsvSum
+    lac zsvMode
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip if this region is stored
+    jmp zsvfSum
+zsvfStore,
+    mrs
+    spi i
+    jmp zsvfStNo
+    mrd
+    dio i zsvPtr
+    idx zsvPtr
+    lai
+    add zsvSum
+    dac zsvSum
+    isp zsvCnt
+    jmp zsvfStore
+zsvfSum,                        // the rest of the block: summed, not kept
+    mrs
+    spi i
+    jmp zsvfSmNo
+    mrd
+    lai
+    add zsvSum
+    dac zsvSum
+    jmp zsvfSum
+zsvfLdNo,
+    ril 1s
+    spi
+    jmp zsvfBEF
+    ril 1s
+    spi
+    jmp zsvfErr
+    ril 4s                      // GO clear: a halt stopped the tape
+    spi
+    jmp zsvfLead
+    jmp zsvfErr
+zsvfStNo,
+    ril 1s
+    spi
+    jmp zsvfBEF
+    ril 1s
+    spi
+    jmp zsvfErr
+    ril 4s
+    spi
+    jmp zsvfStore
+    jmp zsvfErr
+zsvfSmNo,
+    ril 1s
+    spi
+    jmp zsvfBEF
+    ril 1s
+    spi
+    jmp zsvfErr
+    ril 4s
+    spi
+    jmp zsvfSum
+    jmp zsvfErr
+zsvfBEF,
+    mrd                         // the trailing checksum
+    lai
+    add zsvSum
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip if the block totals plus zero
+    idx zsvBad
+    isp zsvBlk
+    jmp zsvfNext
+    lem
+    mrs
+    dio zsvStat
+    cli
+    mlc                         // stop: validate with the tape at rest
+    lac zsvStat
+    and [mterf]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zsvRestFail
+    jmp zsvfValid               // the block tally is judged after the
+                                //   header compare: see there
+zsvfNext,
+    jsp zsvBlkSetup
+    jmp zsvfLead
+zsvfErr,
+    lem
+zsvRestTape,
+    cli
+    mlc                         // stop
+zsvRestFail,
+    lio zsvFailMsg              // "Restore failed.", or zsvLabel's
+    jsp zsvPrint
+    jmp zsvRestRefused
+
+    // ---- 2. validate: the two headers, word for word, G included ------
+zsvfValid,
+    lac [zsvHdr]
+    dac p1
+    lac [zsvHdrT]
+    dac p2
+    law i ZSV_HDR_WORDS
+    dac cnt
+zsvcmpLoop,
+    lac i p1
+    SKIP_NEXT_IF_SAME i p2      // sas: skip (fallthrough) if the same
+    jmp zsvRestEmpty               // no-skip: an interrupted save
+    idx p1
+    idx p2
+    isp cnt
+    jmp zsvcmpLoop
+
+    // Bad blocks are judged after the header compare, so an interrupted
+    // save reads as empty rather than failed.
+    lac zsvBad
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) if every block was good
+    jmp zsvRestFail                // no-skip: the tape is already stopped
+
+    lac zsvHdrMagic
+    SKIP_NEXT_IF_SAME [ZSV_MAGIC]   // sas: skip (fallthrough) if it is ours
+    jmp zsvRestEmpty                   // no-skip: zero, or not ours
+
+    lac zsvHdrFormat
+    SKIP_NEXT_IF_SAME ZSV_FORMAT
+    jmp zsvRestOther
+
+    lio [ZSV_ZA_RELEASE]
+    farjsp(zFetchWord:0)
+    lem
+    SKIP_NEXT_IF_SAME zsvHdrRelease
+    jmp zsvRestOther
+
+    lio [ZSV_ZA_SERIAL]
+    farjsp(zFetchWord:0)
+    lem
+    SKIP_NEXT_IF_SAME zsvHdrSerial0
+    jmp zsvRestOther
+    lio [ZSV_ZA_SERIAL+0d2]
+    farjsp(zFetchWord:0)
+    lem
+    SKIP_NEXT_IF_SAME zsvHdrSerial1
+    jmp zsvRestOther
+    lio [ZSV_ZA_SERIAL+0d4]
+    farjsp(zFetchWord:0)
+    lem
+    SKIP_NEXT_IF_SAME zsvHdrSerial2
+    jmp zsvRestOther
+
+    farlac(zhChecksum:*)
+    SKIP_NEXT_IF_SAME zsvHdrChecksum
+    jmp zsvRestOther
+
+    // Geometry: dynWords and Z_STACK_WORDS must match.
+    farlac(zhDynWords:*)
+    SKIP_NEXT_IF_SAME zsvHdrDynWords
+    jmp zsvRestOther
+    lac [Z_STACK_WORDS]
+    SKIP_NEXT_IF_SAME zsvHdrStkWords
+    jmp zsvRestOther
+
+    // 0 <= SP <= Z_STACK_WORDS and 0 <= FP <= SP - 4, each value bounded
+    // before it is subtracted, so no subtraction can flip sign.
+    lac zsvHdrSP
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO   // spa: skip (fallthrough) if SP >= 0
+    jmp zsvRestOther
+    lac [Z_STACK_WORDS]
+    sub zsvHdrSP
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO   // spa: skip if SP is in the stack
+    jmp zsvRestOther
+    lac zsvHdrFP
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO   // spa: skip if FP >= 0
+    jmp zsvRestOther
+    lac zsvHdrSP
+    sub [4]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO   // spa: skip if SP >= 4
+    jmp zsvRestOther
+    sub zsvHdrFP                       // AC = SP - 4 - FP
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO   // spa: skip if the frame fits
+    jmp zsvRestOther
+
+    // The store variable must be 0..0d255.
+    lac zsvHdrStoreVar
+    and [0777400]
+    SKIP_NEXT_IF_AC_ZERO               // sza: skip (fallthrough) if 0..0d255
+    jmp zsvRestOther
+
+    // ---- S6.1.2's preserved header bits, read before they are replaced
+    lio [ZSV_ZA_FLAGS2]
+    farjsp(zFetchWord:0)
+    lem
+    and [ZSV_FLAGS2_KEEP]
+    dac flags2
+
+    // ---- 3. the reverse pass ------------------------------------------
+    lac zsvLastData
+    dac zsvWant
+    lac [mtrev]
+    dac zsvDir
+    jsp zsvRevStart
+    jsp zsvSeek
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zsvRestTape             // still safe: nothing stored yet
+    // ================ PAST HERE, MEMORY IS BEING REPLACED =============
+    lio [mtgo mtrev mtread]
+    mlc
+    eem
+zsvrSkip,                       // the trailing checksum, then any pad words
+    mrs
+    spi i
+    jmp zsvrSkNo
+    mrd
+    lai
+    add zsvSum
+    dac zsvSum
+    isp zsvSkip
+    jmp zsvrSkip
+zsvrStore,
+    mrs
+    spi i
+    jmp zsvrStNo
+    mrd
+    dio i zsvPtr
+    lac zsvPtr
+    sub [1]                     // descending; a 16-bit pointer, so this
+    dac zsvPtr                  //   borrows out of the bank field too
+    lai
+    add zsvSum
+    dac zsvSum
+    isp zsvCnt
+    jmp zsvrStore
+zsvrWait,                       // only the block end flag is due now
+    mrs
+    ril 1s
+    spi
+    jmp zsvrBEF
+    ril 1s
+    spi
+    jmp zsvrErr
+    ril 4s                      // GO clear: a halt stopped the tape
+    spi
+    jmp zsvrWait
+    jmp zsvrErr
+zsvrSkNo,
+    ril 1s
+    spi
+    jmp zsvrBEF
+    ril 1s
+    spi
+    jmp zsvrErr
+    ril 4s
+    spi
+    jmp zsvrSkip
+    jmp zsvrErr
+zsvrStNo,
+    ril 1s
+    spi
+    jmp zsvrBEF
+    ril 1s
+    spi
+    jmp zsvrErr
+    ril 4s
+    spi
+    jmp zsvrStore
+    jmp zsvrErr
+zsvrBEF,
+    mrd                         // the leading checksum comes last
+    lai
+    add zsvSum
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zsvrErr
+    isp zsvBlk
+    jmp zsvrNext
+    lem
+    mrs
+    dio zsvStat
+    cli
+    mlc                         // stop
+    lac zsvStat
+    and [mterf]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zsvRestBroken
+    jmp zsvrDone
+zsvrNext,
+    jsp zsvRevSetup
+    jmp zsvrSkip
+zsvrErr,
+    lem
+    cli
+    mlc
+    jmp zsvRestBroken
+
+zsvrDone,
+    // ---- drop any undo snapshot, before the header writes below ------
+    jsp zuDiscard
+    lem                         // its farrtn left the window open
+
+    // ---- put the preserved bits back into the restored header --------
+    lio [ZSV_ZA_FLAGS2]
+    farjsp(zFetchWord:0)
+    lem
+    and [ZSV_FLAGS2_DROP]
+    ior flags2
+    dac merged
+    lia                         // IO = the value zStoreWord will write
+    lac [ZSV_ZA_FLAGS2]         // AC = the address it is deposited with
+    farjda(zStoreWord:0)
+    lem
+
+    // ---- the header bits S11.1 marks "Rst" --------------------------
+    farjsp(zbRestHdr:*)
+    lem                         // its farrtn left the window open
+
+    // ---- and the machine itself --------------------------------------
+    lac zsvHdrSP
+    fardac(zSP:0)
+    lac zsvHdrFP
+    fardac(zFP:0)
+    lac zsvHdrPC
+    fardac(zPC:0)
+    lac zsvHdrBKind
+    fardac(zdBranchKind:0)
+    lac zsvHdrBTarget
+    fardac(zdBranchTarget:0)
+    lac zsvHdrBOnTrue
+    fardac(zdBranchOnTrue:0)
+    lac zsvHdrStoreVar          // zdhRestore stores 2 through it (V4+)
+    fardac(zdStoreVar:0)
+
+    lac [1]
+    farrtn(rtn)
+
+zsvRestEmpty,
+    lio [zsvMsgEmpty]
+    jsp zsvPrint
+    cla
+    farrtn(rtn)
+
+zsvRestOther,
+    lio [zsvMsgOther]
+    jsp zsvPrint
+zsvRestRefused,
+    cla
+    farrtn(rtn)
+
+zsvRestBroken,
+    lac [ZSTOP_RESTORE]
+    fardac(zdpStopReason:0)
+    farlac(zServing:0)          // is boot serving?
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if it is
+    jmp zsvRestBrokenHlt           // no-skip: a test entry -- stop
+    farjmp(zSessionFailR:0)     // an error report, then the next player
+zsvRestBrokenHlt,               // (see zsvaNoConnHlt)
+    hlt
+    jmp zsvRestBroken           // if continued, stop again
+rtn, 0
+slot, 0
+flags2, 0
+merged, 0
+p1, 0
+p2, 0
+cnt, 0
+    endlocal
+
+// 0OP:183 restart: empties the page cache (zBootInit uses zCacheSlot0's
+// buffer and needs slot0Tag 0), re-runs zBootInit, and keeps the S6.1.3
+// Flags2 bits.
+// Called via farjsp(zRestartOp:*) from zdispatch.ac's zdhRestart, no
+// arguments. AC on return is not used.
+zRestartOp,
+    local rtn, flags2, merged, status
+    farenter(rtn)
+
+    lio [ZSV_ZA_FLAGS2]
+    farjsp(zFetchWord:0)
+    lem
+    and [ZSV_FLAGS2_KEEP]       // S6.1.3 keeps transcribing and fixed-pitch
+    dac flags2
+
+    farjsp(zCacheReset:0)       // mandatory: see the header
+    lem                         // its farrtn left the window open
+
+    farjsp(zBootInit:*)         // ZLEAF_BANK; returns through farrtn,
+    lem                         //   so the window comes back open
+    dac status
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if it refused
+    jmp zsvRestartOk               // no-skip: AC == 0 -- the story reloaded
+
+    // A refusal now means the drum changed under a running game.
+zsvRestartHalt,
+    lac status
+    fardac(zdpStopReason:0)
+    farlac(zServing:0)          // is boot serving?
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if it is
+    jmp zsvRestartHlt              // no-skip: a test entry -- stop
+    farjmp(zSessionFailR:0)     // an error report, then the next player
+zsvRestartHlt,                  // (see zsvaNoConnHlt)
+    hlt
+    jmp zsvRestartHalt          // if continued, stop again
+
+zsvRestartOk,
+    lio [ZSV_ZA_FLAGS2]
+    farjsp(zFetchWord:0)
+    lem
+    and [ZSV_FLAGS2_DROP]
+    ior flags2
+    dac merged
+    lia
+    lac [ZSV_ZA_FLAGS2]
+    farjda(zStoreWord:0)
+    lem
+    cla
+    farrtn(rtn)
+rtn, 0
+flags2, 0
+merged, 0
+status, 0
+    endlocal
+
+// 0OP:189 verify (S15): sums the file's bytes from 0x40, 16 bits, and
+// compares with the header checksum. Reads the pristine image from the
+// drum a page at a time into zCacheSlot0's buffer, so slot0Tag is cleared
+// first.
+// Called via farjsp(zVerifyOp:*) from zdispatch.ac's zdhVerify, no
+// arguments.
+// Returns AC = 1 if the checksum matches, 0 otherwise.
+zVerifyOp,
+    local rtn, sum, left, drum, chunk, ptr, count, wval, skip
+    farenter(rtn)
+
+    cla
+    fardac(slot0Tag:0)          // see this routine's header
+
+    cla
+    dac sum
+    dac drum                    // the story starts at drum word 0
+    farlac(zhFileLengthWords:*) // the file's length in words
+    dac left                    // words from this page's start to the end
+    lac [0d32]
+    dac skip                    // S15 starts at byte 0x40, word 0d32
+
+zsvvLoop,
+    lac left
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zsvvDone
+    lac left
+    dac chunk
+    sub [Z_PAGE_WORDS]
+    SKIP_NEXT_IF_AC_NEGATIVE    // sma: skip (fallthrough) if under a page
+    jmp zsvvCapPage                // no-skip: a full page or more
+    jmp zsvvHaveChunk
+zsvvCapPage,
+    lac [Z_PAGE_WORDS]
+    dac chunk
+
+zsvvHaveChunk,
+    lac drum
+    sar 6s
+    sar 6s                      // drum >> 0d12 == the track
+    fardac(fillTrack:0)
+    lac drum
+    and [07777]
+    fardac(fillTrackOffset:0)
+    farjsp(zfDrumFillPage:0)
+    zCacheSlot0:DYNMEM_CACHE_BANK   // trailing destination
+    lem                         // zfDrumFillPage returns with the window open
+
+    lac [zCacheSlot0:DYNMEM_CACHE_BANK]
+    add skip
+    dac ptr
+    lac chunk
+    sub skip
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO  // spa: skip if anything to sum
+    cla
+    dac count
+    cla
+    dac skip
+zsvvSumLoop,
+    lac count
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zsvvSumDone
+    eem
+    lac i ptr
+    lem
+    dac wval
+
+    // Two bytes per word; the sum is masked to 0d16 bits after each.
+    sar 8s                      // wval is still in AC -- the high byte
+    and [0377]
+    add sum
+    and [0177777]
+    dac sum
+    lac wval
+    and [0377]                  // the low byte
+    add sum
+    and [0177777]
+    dac sum
+
+    idx ptr
+    lac count
+    sub [1]
+    dac count
+    jmp zsvvSumLoop
+zsvvSumDone,
+    lac drum
+    add chunk
+    dac drum
+    lac left
+    sub chunk
+    dac left
+    jmp zsvvLoop
+
+zsvvDone,
+    farlac(zhChecksum:*)           // ZLEAF_BANK's, from bank 14
+    SKIP_NEXT_IF_SAME sum          // sas: skip (fallthrough) if it matches
+    jmp zsvvBad                       // no-skip: it does not
+    lac [1]
+    farrtn(rtn)
+zsvvBad,
+    cla
+    farrtn(rtn)
+rtn, 0
+sum, 0
+left, 0
+drum, 0
+chunk, 0
+ptr, 0
+count, 0
+wval, 0
+skip, 0
+    endlocal
+
+// ---- The tape transport's words ------------------------------------------
+zsvFailMsg, 0                   // the message a failure prints
+zsvOnce, 0                      // zsvSeek returns at the first flag
+zsvLblKnown, 0                  // 1 = zsvLblWords matches the tape's block 0
+zsvSlotBlocks, 0                // S, blocks a position (zsvMount)
+zsvNumPos, 0                    // N, positions offered (zsvMount)
+zsvWant, 0                      // zsvSeek's block
+zsvDir, 0                       // zsvSeek's direction: 0 or mtrev
+zsvLastData, 0                  // T - 1, where the reverse pass starts
+zsvTmo, 0
+zsvStat, 0
+zsvWord, 0
+zsvBlk, 0                       // -(blocks left in this pass)
+zsvBad, 0                       // forward-pass blocks that did not total +0
+zsvTp, 0                        // 16-bit pointer into zsvRegions
+zsvRPtr, 0                      // the next block's first word (forward: up;
+zsvRPtr2, 0                     //   reverse: down); dynamic memory's last
+zsvLeft, 0                      // words left in this region
+zsvMode, 0                      // nonzero: this region is stored on a read
+zsvPtr, 0                       // the transfer loops' 16-bit pointer
+zsvCnt, 0                       // -(real words left in this block)
+zsvSkip, 0                      // reverse: -(checksum + pad words)
+zsvSum, 0                       // this block's running total
+
+// A position's regions in tape order: (16-bit pointer, words, stored on
+// a read).
+zsvRegions,
+    zsvHdr:.
+    ZSV_HDR_WORDS
+    1
+    DYNMEM_BANK1*010000         // bank 1 offset 0: Z-machine byte 0
+zsvRgDynWords, 0
+    0
+    zStack:DYNMEM_STACK_BANK
+    Z_STACK_WORDS
+    0
+zsvRgTrail, 0
+    ZSV_HDR_WORDS
+    1
+
+// Block 0 as read (checksum, then label words), this story's label, and
+// the one-region table for writing zsvLblWords.
+zsvLblIn,
+    0
+zsvLblWords,
+    table ZSV_LBL_WORDS
+zsvLblOut,
+    table ZSV_LBL_WORDS
+zsvLblRegion,
+    zsvLblWords:.
+    ZSV_LBL_WORDS
+    0
+
+// ---- The header, in tape order -----------------------------------------
+// The order is the on-tape format: a change needs a new ZSV_FORMAT.
+zsvFormat, 0d1                  // PATCHED -- V4/V5 0d2 (ZSV_FORMAT);
+                                //   not part of the header block below
+zsvHdr,
+zsvHdrMagic, 0                  // 0 = empty
+zsvHdrFormat, 0
+zsvHdrRelease, 0                // } the story's identity
+zsvHdrSerial0, 0                // }
+zsvHdrSerial1, 0                // }
+zsvHdrSerial2, 0                // }
+zsvHdrChecksum, 0               // }
+zsvHdrDynWords, 0               // the length of the image that follows
+zsvHdrPC, 0                     // } the branch triple: how a V3 restore
+zsvHdrBKind, 0                  // } resumes
+zsvHdrBTarget, 0                // }
+zsvHdrBOnTrue, 0                // }
+zsvHdrSP, 0
+zsvHdrFP, 0
+zsvHdrStkWords, 0               // Z_STACK_WORDS as saved -- a geometry check
+zsvHdrStoreVar, 0               // V4+ the save's store variable
+zsvHdrG, 0                      // the generation word
+
+// The trailing header as a restore read it.
+zsvHdrT,
+    table ZSV_HDR_WORDS
+
+// ---- Messages (\r line breaks; nothing is printed on success) ---------
+zsvMsgSlot,
+    ascii "\rPosition 1-"
+zsvMsgQuery,
+    ascii "? "
+zsvMsgNoTape,
+    ascii "\rNo tape on drive 2.\r"
+zsvMsgOtherTape,
+    ascii "\rThis tape holds another story's saves.\r"
+zsvMsgCancel,
+    ascii "\rCanceled.\r"
+zsvMsgEmpty,
+    ascii "\rNothing saved there.\r"
+zsvMsgOther,
+    ascii "\rThat save is for a different story.\r"
+zsvMsgFailed,
+    ascii "\rSave failed.\r"
+zsvMsgRestFail,
+    ascii "\rRestore failed.\r"
+
+// ---- UNDO: V5's save_undo and restore_undo, as a write log ------------
+// save_undo copies the stack and the state words and clears the page map;
+// then zuHook copies each 64-word page into the log before its first
+// write. restore_undo copies the logged pages back, then the stack and
+// the state words.
+// The log is bank 0d12, 64 pages; the stack copy is this bank from 06000.
+// The page map, its bit masks and the page list (zuMap, zuBits, zuList)
+// are in ZLEAF_BANK (zmemcore.am1). All pointers are 16 bits; every
+// indirect runs with the window open.
+// zuOn is 020 for a V5 story whose Flags2 bit 4 asks for undo, else 0 and
+// both opcodes answer -1. No snapshot = a map of all ones (zuDrop).
+// A census image assembles the stubs at the end instead.
+
+#if !Z_CENSUS
+
+// State first: am1 needs these references to be backward.
+zuCount, 0                      // pages in the log
+zuValid, 0                      // 1 while there is a snapshot
+zuOn, 0                         // 020 if this session's story has undo
+
+// zuHook's page cache: the last page it found needing nothing, or 0 (no
+// hooked pointer is below 010000, so page 0 never occurs).
+zuLastPage, 0
+
+// The state words save_undo records.
+zuSPC, 0
+zuSBKind, 0
+zuSBTarget, 0
+zuSBOnTrue, 0
+zuSSP, 0
+zuSFP, 0
+zuSStoreVar, 0
+
+// The write hook, run before every store of a V5 session. Logs the page
+// on its first write after save_undo; if the log is full, drops the
+// snapshot. zuLastPage skips the map probe for a repeated page; anything
+// that clears a map bit must clear it (zuFill does).
+// Called via crossBankjda(zuHook:*, NOEEM) with the window open,
+// AC = the 16-bit pointer to the word about to be written.
+// Returns AC = that pointer, the window still open; IO kept.
+zuHook, 0
+    local rtn, page, mapPtr, bitPtr, dst
+    dac rtn                     // full word: called from banks 0 and 0d15
+    lac zuHook
+    and [0177700]               // the page this pointer is in
+    SKIP_NEXT_IF_DIFFERENT zuLastPage  // sad: skip (fallthrough) on a new page
+    jmp zuhOut                     // no-skip: the cached page -- nothing to do
+    lac zuHook
+    sar 6s                      // the page, counting from bank 0
+    dac page
+    sar 4s
+    add [zuMap:ZLEAF_BANK-4]    // its map word: (zuMap:ZLEAF_BANK) - 4
+    dac mapPtr
+    lac page
+    and [017]
+    add [zuBits:ZLEAF_BANK]
+    dac bitPtr                  // its bit's mask
+    lac i bitPtr
+    and i mapPtr
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) if the page is new
+    jmp zuhSeen                    // no-skip: logged, or no snapshot
+
+    // ---- The first write to this page since save_undo ----------------
+    lac zuValid                 // no snapshot: an unbooted image, so make
+    SKIP_NEXT_IF_AC_NOT_ZERO    //   the map ones
+    jmp zuhDrop
+    lac i bitPtr
+    ior i mapPtr
+    dac i mapPtr                // logged
+    lac zuCount
+    sub [ZU_LOG_PAGES]
+    SKIP_NEXT_IF_AC_NEGATIVE    // sma: skip (fallthrough) if the log has room
+    jmp zuhDrop                    // no-skip: full -- no snapshot after all
+    lac zuCount
+    add [zuList:ZLEAF_BANK]
+    dac dst
+    lac zuHook
+    and [0177700]               // the page's first word
+    dac i dst                   // into the list
+    dac zucSrc
+    lac zuCount
+    sal 6s
+    add [ZU_LOG_BASE]
+    dac zucDst                  // the log's next page
+    lac [ZU_PAGE_WORDS]
+    dac zucCnt
+    idx zuCount
+    jsp zuCopy                  // leaves the window open
+zuhSeen,                        // this page now needs nothing: cache it
+    lac zuHook
+    and [0177700]
+    dac zuLastPage
+zuhOut,
+    lac zuHook
+    jmp i rtn
+zuhDrop,
+    jsp zuDrop                  // leaves the window open; clears zuLastPage
+    jmp zuhOut
+rtn, 0
+page, 0
+mapPtr, 0
+bitPtr, 0
+dst, 0
+    endlocal
+
+// zuSave: EXT:9 save_undo.
+// Called via farjsp(zuSave:*) from zdispatch.ac's zdhSaveUndo.
+// Returns IO = 1, or -1; the window open.
+// zuRestore: EXT:10 restore_undo.
+// Called via farjsp(zuRestore:*) from zdhRestoreUndo.
+// Returns IO = 2, 0 or -1; the window open.
+// The two share one `rtn`.
+zuSave,
+    local rtn, ix, flags2
+    farenter(rtn)
+    lac zuOn
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if it has undo
+    jmp zuNone                     // no-skip: -1
+    farlac(zrcActive:0)
+    SKIP_NEXT_IF_AC_ZERO        // sza: skip unless in an interrupt routine,
+    jmp zuNone                  //   where S6.1.1.3 makes a save illegal: -1
+    // The live stack, zSP words from zStack's first.
+    farlac(zSP:0)
+    dac zucCnt
+    lac [zStack:DYNMEM_STACK_BANK]
+    dac zucSrc
+    lac [ZU_STACK_COPY]
+    dac zucDst
+    jsp zuCopy                  // leaves the window open
+    // The state words; zPC is already the next instruction.
+    lac i [zPC:0]
+    dac zuSPC
+    lac i [zdBranchKind:0]
+    dac zuSBKind
+    lac i [zdBranchTarget:0]
+    dac zuSBTarget
+    lac i [zdBranchOnTrue:0]
+    dac zuSBOnTrue
+    lac i [zSP:0]
+    dac zuSSP
+    lac i [zFP:0]
+    dac zuSFP
+    lac i [zdStoreVar:0]
+    dac zuSStoreVar
+    // An empty log and a clear map: the snapshot is taken.
+    cli
+    jsp zuFill
+    dzm zuCount
+    lac [1]
+    dac zuValid
+    lio [1]
+    farrtn(rtn)
+
+zuRestore,
+    farenter(rtn)
+    lac zuOn
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if it has undo
+    jmp zuNone                     // no-skip: -1
+    lac zuValid
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if there is a snapshot
+    jmp zuNothing                  // no-skip: 0
+    // S6.1.2: keep the current Flags2 bits.
+    lio [ZSV_ZA_FLAGS2]
+    farjsp(zFetchWord:0)
+    lem
+    and [ZSV_FLAGS2_KEEP]
+    dac flags2
+    // Every logged page back where it came from.
+    dzm ix
+zurPage,
+    lac ix
+    SKIP_NEXT_IF_DIFFERENT zuCount  // sad: skip (fallthrough) if pages remain
+    jmp zurStack                       // no-skip: all of them are back
+    add [zuList:ZLEAF_BANK]
+    dac zucDst
+    eem
+    lac i zucDst
+    dac zucDst                  // the page's home
+    lac ix
+    sal 6s
+    add [ZU_LOG_BASE]
+    dac zucSrc                  // its old words
+    lac [ZU_PAGE_WORDS]
+    dac zucCnt
+    jsp zuCopy
+    idx ix
+    jmp zurPage
+zurStack,
+    // The stack and the state words.
+    lac zuSSP
+    dac zucCnt
+    lac [ZU_STACK_COPY]
+    dac zucSrc
+    lac [zStack:DYNMEM_STACK_BANK]
+    dac zucDst
+    jsp zuCopy                  // leaves the window open
+    lac zuSPC
+    dac i [zPC:0]
+    lac zuSBKind
+    dac i [zdBranchKind:0]
+    lac zuSBTarget
+    dac i [zdBranchTarget:0]
+    lac zuSBOnTrue
+    dac i [zdBranchOnTrue:0]
+    lac zuSSP
+    dac i [zSP:0]
+    lac zuSFP
+    dac i [zFP:0]
+    lac zuSStoreVar
+    dac i [zdStoreVar:0]        // the save's store: the 2 goes there
+    cla
+    dac i [zrcActive:0]         // a waiting read went with the stack
+    // Flags2's bits back in, with no snapshot so the store is not logged.
+    // zbRestHdr is not run: nothing it writes changes within a session.
+    jsp zuDrop
+    lio [ZSV_ZA_FLAGS2]
+    farjsp(zFetchWord:0)
+    lem
+    and [ZSV_FLAGS2_DROP]
+    ior flags2
+    lia                         // IO = the word
+    lac [ZSV_ZA_FLAGS2]         // AC = its address
+    farjda(zStoreWord:0)
+    lem
+    // Memory is the snapshot again: re-arm it.
+    cli
+    jsp zuFill
+    dzm zuCount
+    lac [1]
+    dac zuValid
+    lio [2]
+    farrtn(rtn)
+
+zuNone,
+    lio [0177777]               // -1 as a 16-bit Z-machine word
+    farrtn(rtn)
+zuNothing,
+    cli
+    farrtn(rtn)
+rtn, 0
+ix, 0
+flags2, 0
+    endlocal
+
+// zuBoot: records whether the story has undo, and drops any snapshot.
+// Called via farjsp(zuBoot:*) from zBootInit, IO = zbUndoBit (020 or 0).
+// zuDiscard: drops any snapshot. Called via jsp from zsvrDone.
+// Both return through farrtn, the window open.
+zuBoot,
+    local rtn
+    farenter(rtn)
+    dio zuOn
+    jmp zubDrop
+zuDiscard,
+    farenter(rtn)
+zubDrop,
+    jsp zuDrop
+    farrtn(rtn)
+rtn, 0
+    endlocal
+
+// zuDrop: no snapshot -- zuValid 0 and every map bit set.
+// zuFill: IO = the word to write into every map word.
+// Both clear zuLastPage. Called via jsp; return with the window open.
+zuDrop,
+    local rtn, val, ptr, cnt
+    dap rtn
+    dzm zuValid
+    lio [0177777]
+    jmp zufGo
+zuFill,
+    dap rtn
+zufGo,
+    dzm zuLastPage              // the map is about to change
+    dio val
+    lac [zuMap:ZLEAF_BANK]
+    dac ptr
+    lac [-ZU_MAP_WORDS]
+    dac cnt
+    eem
+zufLoop,
+    lac val
+    dac i ptr
+    idx ptr
+    isp cnt
+    jmp zufLoop
+    jmp rtn
+rtn, jmp 0
+val, 0
+ptr, 0
+cnt, 0
+    endlocal
+
+// Copies zucCnt words from zucSrc to zucDst (16-bit pointers), upward;
+// all three are used up.
+// Called via jsp; returns with the window open.
+zuCopy,
+    local rtn
+    dap rtn
+    eem
+    lac zucCnt
+    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if any words
+    jmp rtn                        // no-skip: none
+    cma
+    dac zucCnt                  // -count, for isp
+zucLoop,
+    lac i zucSrc
+    dac i zucDst
+    idx zucSrc
+    idx zucDst
+    isp zucCnt
+    jmp zucLoop
+    jmp rtn
+rtn, jmp 0
+    endlocal
+zucSrc, 0
+zucDst, 0
+zucCnt, 0
+
+#else // Z_CENSUS
+
+// ---- A census image: no undo --------------------------------------------
+// Stubs: both opcodes answer -1; the hook, still called in V5, returns
+// its pointer with IO and the window untouched.
+zuHook, 0
+    local rtn
+    dac rtn                     // full word: called from banks 0 and 0d15
+    lac zuHook                  // the pointer back
+    jmp i rtn
+rtn, 0
+    endlocal
+zuSave,
+zuRestore,
+    local rtn
+    farenter(rtn)
+    lio [0177777]
+    farrtn(rtn)
+rtn, 0
+    endlocal
+zuBoot,
+zuDiscard,
+    local rtn
+    farenter(rtn)
+    farrtn(rtn)
+rtn, 0
+    endlocal
+
+#endif // Z_CENSUS
+
+#endif // ZSAVE_AC_H

@@ -1,0 +1,1309 @@
+// ========================================================================
+// zarith.ac -- the arithmetic, comparison, logic, variable and table
+// opcode handlers.
+//
+// #included into zmemcore.am1's BANK 0, after zdispatch.ac. Bank 0 is
+// required: zdispatch.ac's tables hold plain 12-bit bank-0 addresses
+// dereferenced with eem OFF (see that file's header).
+//
+// Entry points: the zdh* opcode handlers, and zaDivMod, which zprint.ac
+// also calls. `add` and `je` are in zdispatch.ac. EXT:2 and EXT:3 are
+// reached only in a V5 session: below V5 the EXT form is never decoded
+// (zdecode.ac's patched zidExtJmp).
+//
+// Every handler is entered by `jmp` from zInterpret's dispatch and ends
+// with `jmp zipNext` (storew and storeb end at zprint.ac's zpWatch). The
+// four helpers (zaCmp16, zaMul16, zaDivMod, zaCheckDyn) are same-bank
+// `dap` routines called with jsp.
+// ========================================================================
+
+// ========================================================================
+// Signed 16-bit values on a ones'-complement machine
+// ========================================================================
+// A Z-machine value is 16-bit TWO'S complement (S2.1); the AC is 18-bit
+// ONES' complement. Those two representations disagree by one on every
+// negative number, so "do the arithmetic, then mask to 16 bits" is wrong
+// whenever the 18-bit intermediate goes negative:
+//
+//     0 - 1  ->  AC = 0777776  ->  & 0177777 = 0xFFFE      WRONG
+//                                  S15 wants   0xFFFF
+//
+// Two rules keep it out of the file entirely:
+//
+//   1. Never let an intermediate go negative. Subtraction is done as
+//      a + (65536 - b), and -1 is added as the positive residue 65535.
+//      Every masked result in this file comes from a non-negative sum.
+//      (zdhSub, zdhDec, zdhDecChk, zaDivMod's negations, zdhRandom.)
+//
+//   2. Where a value IS allowed to go negative, use only its SIGN and
+//      never its bit pattern. Ones' complement gets the sign right.
+//      (zaCmp16's difference, zaCheckDyn's bounds test.)
+//
+// Minus zero is NOT a hazard of subtracting equal values: `x - x`
+// leaves plus zero; only (-0) - (+0) yields -0. The equality tests that
+// zaCmp16 and zaCheckDyn make first, and the shift loops that count up
+// to a limit rather than down to zero, are therefore not required, but
+// they are correct. The real hazard is a value that is already -0 (from
+// `cma`, `cla cma`, `law -0`).
+// ========================================================================
+
+// ========================================================================
+// PDP-1 mul and div
+// ========================================================================
+// MUL. `lac a` / `mul b` leaves the 35-bit product in the AC:IO pair
+// LEFT-SHIFTED ONE PLACE -- IO's least significant bit is not used, so
+// the 36-bit concatenation holds (product << 1). `scr 1s` (shift
+// combined right, 36-bit) restores the alignment; the low 18 bits are
+// then in IO. So the sequence is:
+//
+//     lac a  /  mul b  /  scr 1s  /  dio result       // then mask 16 bits
+//
+// `lai` + `sar 1s` would be correct only where the whole product fits in
+// AC alone, which a 16x16 multiply's 32-bit product does not.
+//
+// DIV. The 36-bit AC:IO DIVIDEND must be PRE-shifted left one place.
+// Given that, the results need no post-correction: quotient in AC,
+// remainder in IO. So the sequence is:
+//
+//     lac n  /  lia  /  cla  /  scl 1s  /  div d
+//     (skip taken)  ->  AC = quotient, IO = remainder
+//
+// DIV SKIPS. `div` skips the next instruction on SUCCESSFUL completion
+// and does NOT skip on overflow -- and divide-by-zero is the only
+// overflow reachable here, since a 16-bit dividend over a divisor of 1
+// or more always yields a quotient that fits. Nothing multi-word may sit
+// where its skip lands.
+//
+// Am1Includes/rand18.ac's probabilitySelector-family routines divide with
+// an UNSHIFTED dividend and a `rcr 1s` POST-shift. That is correct there
+// only because their dividend is a random number, which the missing
+// pre-shift merely rotates. This file calls only `rand18` and
+// `rand18seed`, which use no division.
+// ========================================================================
+
+// VAR:231 random's generator, used as it stands. Both its entry points
+// capture with `dac`.
+#include <RANDOM/rand18.ac>
+
+// ---- Halt reasons (see zdispatch.ac's ZSTOP_*) -----------------------
+// Neither is produced: both conditions degrade (zaDivMod, zaCheckDyn).
+// The numbers keep their meaning, and zErrReport keeps their texts.
+#define ZSTOP_DIVZERO 3        // div or mod with a zero divisor (S15)
+#define ZSTOP_BADSTORE 4       // storew/storeb outside dynamic memory
+
+// ---- The 16-bit mask, used by nearly every handler here --------------
+#define ZW_MASK 0177777
+
+// ---- Signed-comparison bias (see zaCmp16) ----------------------------
+#define ZA_BIAS 0100000        // 32768
+
+// rand18.ac's own load-time default seed, repeated here because that
+// file does not export it. If it changes there, this must change.
+#define ZA_SEED_DEFAULT 0x321E3
+
+// ========================================================================
+// zaCmp16 -- signed 16-bit comparison of zaCmpA against zaCmpB.
+// Returns AC = 0 if A == B, AC negative if A < B, AC positive if A > B.
+// Called via jsp.
+//
+// Flipping bit 15 (`xor`, not `add`) maps [-32768, 32767] onto
+// [0, 65535] in order, so the signed compare becomes an unsigned compare
+// of two 16-bit quantities. The equality case is tested before the
+// subtraction.
+// ========================================================================
+zaCmp16,
+    local rtn, bb
+    dap rtn
+    lac zaCmpB
+    and [ZW_MASK]              // mask BEFORE the xor: a stray bit above
+    xor [ZA_BIAS]              //   bit 15 would survive it and mis-order
+    dac bb
+    lac zaCmpA
+    and [ZW_MASK]
+    xor [ZA_BIAS]
+    SKIP_NEXT_IF_DIFFERENT bb  // sad: skip (fallthrough) if A != B
+    jmp zacEqual                  // no-skip: exactly equal
+    sub bb                     // both biased and positive -- no -0 here,
+    jmp rtn                    //   because the equal case already left
+zacEqual,
+    cla
+    jmp rtn
+rtn, jmp 0
+bb, 0
+    endlocal
+
+zaCmpA, 0
+zaCmpB, 0
+
+// ========================================================================
+// zaMul16 -- returns AC = the low 16 bits of zaMulA * zaMulB.
+// Called via jsp.
+//
+// No sign handling is needed: the low 16 bits of a two's-complement
+// product are the same whether the operands are read as signed or
+// unsigned.
+// ========================================================================
+zaMul16,
+    local rtn
+    dap rtn
+    lac zaMulA
+    mul zaMulB                 // AC:IO = product << 1 (see header)
+    scr 1s                     // realign; low 18 bits now in IO
+    lai
+    and [ZW_MASK]
+    jmp rtn
+rtn, jmp 0
+    endlocal
+
+zaMulA, 0
+zaMulB, 0
+
+// ========================================================================
+// zaDivMod -- signed 16-bit division of zaDivA by zaDivB, per S15.
+// Returns the quotient in zaDivQ and the remainder in zaDivR, both masked
+// to 16 bits. Called via jsp.
+//
+// The quotient truncates toward zero, and the remainder takes the sign
+// of the dividend: -11/2 = -5 and -11 mod 2 = -1, while 11/-2 = -5 and
+// 11 mod -2 = 1. Magnitudes are divided and the signs reapplied, so
+// every value handed to `div` is positive.
+//
+// A divisor of 0 degrades rather than halts: the quotient and the
+// remainder are both 0. A harness build counts it in zaDgDivZero.
+// ========================================================================
+zaDivMod,
+    local rtn, negQ, negR, ma, mb
+    dap rtn
+
+    // ---- divisor zero: both results 0 --------------------------------
+    lac zaDivB
+    and [ZW_MASK]
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if divisor != 0
+    jmp zadZero                   // no-skip: divide by zero
+
+    // ---- decompose both operands into sign + magnitude ---------------
+    // Bit 15 of a 16-bit Z-machine value is its sign (S2.1). Magnitude
+    // of a negative value is (0200000 - v) & 0177777, i.e. the two's-
+    // complement negation, computed on the 18-bit word and re-masked.
+    dzm negQ
+    dzm negR
+
+    lac zaDivA
+    and [ZW_MASK]
+    dac ma
+    and [0100000]              // sign bit of the 16-bit value
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if dividend < 0
+    jmp zadAPos                   // no-skip: dividend >= 0
+    lac [0200000]
+    sub ma
+    and [ZW_MASK]
+    dac ma                     // magnitude of the dividend
+    law 1
+    dac negQ                   // quotient sign flips
+    law 1
+    dac negR                   // remainder takes the DIVIDEND's sign
+zadAPos,
+
+    lac zaDivB
+    and [ZW_MASK]
+    dac mb
+    and [0100000]
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if divisor < 0
+    jmp zadBPos                   // no-skip: divisor >= 0
+    lac [0200000]
+    sub mb
+    and [ZW_MASK]
+    dac mb                     // magnitude of the divisor
+    lac negQ
+    xor [1]
+    dac negQ                   // quotient sign flips again
+zadBPos,
+
+    // ---- unsigned magnitude divide -----------------------------------
+    // The dividend is pre-shifted left one place in the 36-bit AC:IO
+    // pair; see this file's header. `div` skips on success.
+    lac ma
+    lia                        // IO = magnitude of the dividend
+    cla                        // AC = 0 (high half)
+    scl 1s                     // AC:IO = dividend << 1
+    div mb
+    jmp zadZero                // no skip = overflow; unreachable, since
+                               //   mb is nonzero here
+    dac zaDivQ                 // skipped: AC = quotient, IO = remainder,
+    dio zaDivR                 //   both already correct, no post-shift
+
+    // ---- reapply S15's signs -----------------------------------------
+    lac negQ
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if quotient negative
+    jmp zadQDone                  // no-skip: quotient stays positive
+    lac [0200000]
+    sub zaDivQ
+    and [ZW_MASK]
+    dac zaDivQ
+zadQDone,
+
+    lac negR
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if remainder negative
+    jmp zadRDone                  // no-skip: remainder stays positive
+    lac [0200000]
+    sub zaDivR
+    and [ZW_MASK]
+    dac zaDivR
+zadRDone,
+
+    // A zero magnitude negated is 0200000 & 0177777 = 0, which is what
+    // -0 must become in a 16-bit two's-complement world. Both masks
+    // above already do that, so no special case is needed.
+    jmp rtn
+
+zadZero,
+#if Z_TEST_HARNESS
+    idx zaDgDivZero            // the divide-by-zero degrade ran
+#endif
+    dzm zaDivQ
+    dzm zaDivR
+    jmp rtn
+
+rtn, jmp 0
+negQ, 0
+negR, 0
+ma, 0
+mb, 0
+    endlocal
+
+zaDivA, 0
+zaDivB, 0
+zaDivQ, 0
+zaDivR, 0
+
+// Test-harness degrade counters: one word per degrade site, bumped by an
+// `idx` there. The interpreter never reads them; they start at 0 on
+// every load and are not in production builds.
+#if Z_TEST_HARNESS
+zaDgDivZero, 0                 // div or mod by 0
+zaDgBadStore, 0                // storew/storeb outside dynamic memory
+#endif
+
+// ========================================================================
+// The handlers.
+// ========================================================================
+
+// ---- 2OP:21 sub ------------------------------------------------------
+// Computed as a + (65536 - b), with every intermediate positive, rather
+// than `sub` followed by a 16-bit mask, which is one short for every
+// negative result (see this file's header). (65536 - b) lies in
+// [1, 65536] and a in [0, 65535], so the sum fits in 17 bits and its low
+// 16 are exactly (a - b) mod 65536.
+zdhSub,
+    lac zdOp1
+    and [ZW_MASK]
+    dac zaTmp
+    lac [0200000]              // 65536
+    sub zaTmp                  // both positive, and never equal (zaTmp is
+                               //   16-bit), so no -0 arises here either
+    add zdOp0
+    and [ZW_MASK]
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+// ---- 2OP:22 mul ------------------------------------------------------
+zdhMul,
+    lac zdOp0
+    dac zaMulA
+    lac zdOp1
+    dac zaMulB
+    jsp zaMul16
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+// ---- 2OP:23 div ------------------------------------------------------
+zdhDiv,
+    lac zdOp0
+    dac zaDivA
+    lac zdOp1
+    dac zaDivB
+    jsp zaDivMod
+    lac zaDivQ
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+// ---- 2OP:24 mod ------------------------------------------------------
+zdhMod,
+    lac zdOp0
+    dac zaDivA
+    lac zdOp1
+    dac zaDivB
+    jsp zaDivMod
+    lac zaDivR
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+// ---- 2OP:8 or --------------------------------------------------------
+zdhOr,
+    lac zdOp0
+    ior zdOp1
+    and [ZW_MASK]
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+// ---- 2OP:9 and -------------------------------------------------------
+zdhAnd,
+    lac zdOp0
+    and zdOp1
+    and [ZW_MASK]
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+// ---- 1OP:143 not (V1-4), VAR:248 not (V5) ----------------------------
+// S15: "all 16 bits reversed". One body, two dispatch entries patched at
+// boot (zpatch.ac): 1OP:15 below V5, VAR:24 in V5, where 1OP:15 becomes
+// call_1n.
+zdhNot,
+    lac zdOp0
+    xor [ZW_MASK]              // complement exactly the low 16 bits
+    and [ZW_MASK]
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+// ---- 2OP:7 test ------------------------------------------------------
+// S15: branch if bitmap & flags == flags.
+zdhTest,
+    lac zdOp0
+    and zdOp1
+    and [ZW_MASK]
+    dac zaTmp
+    lac zdOp1
+    and [ZW_MASK]
+    SKIP_NEXT_IF_DIFFERENT zaTmp  // sad: skip (fallthrough) if NOT all set
+    jmp zdhTestYes                   // no-skip: (bitmap & flags) == flags
+    cli                        // condition false
+    jsp zdpBranch
+    jmp zipNext
+zdhTestYes,
+    lac [1]
+    lia
+    jsp zdpBranch
+    jmp zipNext
+
+// ---- 2OP:2 jl --------------------------------------------------------
+zdhJl,
+    lac zdOp0
+    dac zaCmpA
+    lac zdOp1
+    dac zaCmpB
+    jsp zaCmp16
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if A < B
+    jmp zdhJlNo                   // no-skip: A >= B
+    lac [1]
+    lia
+    jsp zdpBranch
+    jmp zipNext
+zdhJlNo,
+    cli
+    jsp zdpBranch
+    jmp zipNext
+
+// ---- 2OP:3 jg --------------------------------------------------------
+// "A > B" is "not (A < B) and not (A == B)". zaCmp16 returns a positive
+// nonzero for greater, so testing zero and sign separately is what this
+// needs; a bare `spa` would also accept the equal case.
+zdhJg,
+    lac zdOp0
+    dac zaCmpA
+    lac zdOp1
+    dac zaCmpB
+    jsp zaCmp16
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if A != B
+    jmp zdhJgNo                   // no-skip: equal -> not greater
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE  // sma i: skip (fallthrough) if A > B
+    jmp zdhJgNo                      // no-skip: A < B
+    lac [1]
+    lia
+    jsp zdpBranch
+    jmp zipNext
+zdhJgNo,
+    cli
+    jsp zdpBranch
+    jmp zipNext
+
+// ---- 1OP:128 jz ------------------------------------------------------
+zdhJz,
+    lac zdOp0
+    and [ZW_MASK]
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if operand == 0
+    jmp zdhJzNo                   // no-skip: nonzero
+    lac [1]
+    lia
+    jsp zdpBranch
+    jmp zipNext
+zdhJzNo,
+    cli
+    jsp zdpBranch
+    jmp zipNext
+
+// ========================================================================
+// The seven S6.3.4 indirect-reference opcodes.
+//
+// store, load, inc, dec, inc_chk, dec_chk and pull do not take a VALUE
+// as their variable operand -- they take a variable NUMBER, and S6.3.4
+// carves out what happens when that number is 0: the stack is read or
+// written IN PLACE rather than popped or pushed.
+//
+// zVarIndirect is a one-shot modifier: zReadVar and zWriteVar each read
+// it and immediately clear it. Each setter below sits immediately before
+// the call it modifies, because several of these handlers also make a
+// normal-mode access (load's own store byte, store's second operand),
+// and a modifier set too early would apply to the wrong one.
+// ========================================================================
+
+// ---- 2OP:13 store ----------------------------------------------------
+// store (variable) value -- zdOp0 is the variable NUMBER.
+zdhStore,
+    lac [1]
+    dac zVarIndirect           // one-shot, immediately before the write
+    lac zdOp0
+    and [0377]
+    lio zdOp1
+    jda zWriteVar
+    lem
+    jmp zipNext
+
+// ---- 1OP:142 load ----------------------------------------------------
+// load (variable) -> (result). The READ is indirect (S6.3.4); the store
+// byte that follows is an ordinary one and must NOT be.
+zdhLoad,
+    lac [1]
+    dac zVarIndirect           // one-shot, immediately before the read
+    lac zdOp0
+    and [0377]
+    lia
+    jsp zReadVar
+    lem
+    lia
+    jsp zdpStore               // ordinary store, normal mode
+    jmp zipNext
+
+// ---- 1OP:133 inc / 1OP:134 dec ---------------------------------------
+// Both read the variable in place, adjust by one with 16-bit wrap, and
+// write it back in place. S15: signed, so -1 increments to 0 and 0
+// decrements to -1 -- which is exactly what adding the delta and masking
+// to 16 bits gives, with no sign handling needed at all, PROVIDED the
+// delta itself is a positive 16-bit residue.
+zdhInc,
+    lac [1]
+    dac zaDelta
+    jmp zaAdjust
+
+zdhDec,
+    lac [0177777]              // 65535, i.e. -1 (mod 65536), not `law i 1`:
+                               //   the positive residue keeps the sum in
+                               //   [0, 131070], where the mask is exact
+    dac zaDelta
+    jmp zaAdjust
+
+// Shared body for inc/dec. Not a subroutine -- a joined tail, reached by
+// jmp, ending in `jmp zipNext` like every other handler.
+zaAdjust,
+    lac zdOp0
+    and [0377]
+    dac zaVarNum
+    lac [1]
+    dac zVarIndirect           // one-shot, immediately before the read
+    lac zaVarNum
+    lia
+    jsp zReadVar
+    lem
+    add zaDelta
+    and [ZW_MASK]              // 16-bit wrap; also absorbs -0
+    dac zaTmp
+    lac [1]
+    dac zVarIndirect           // one-shot, immediately before the write
+    lac zaVarNum
+    lio zaTmp
+    jda zWriteVar
+    lem
+    jmp zipNext
+
+// ---- 2OP:5 inc_chk / 2OP:4 dec_chk -----------------------------------
+// S15: increment (decrement) the variable FIRST, then branch if the new
+// value is greater than (less than) the value operand, signed.
+zdhIncChk,
+    lac [1]
+    dac zaDelta
+    jmp zaAdjChk
+
+zdhDecChk,
+    lac [0177777]              // -1 as a positive residue; see zdhDec
+    dac zaDelta
+    jmp zaAdjChk
+
+zaAdjChk,
+    lac zdOp0
+    and [0377]
+    dac zaVarNum
+    lac [1]
+    dac zVarIndirect
+    lac zaVarNum
+    lia
+    jsp zReadVar
+    lem
+    add zaDelta
+    and [ZW_MASK]
+    dac zaTmp
+    dac zaCmpA                 // the NEW value is what gets compared
+    lac [1]
+    dac zVarIndirect
+    lac zaVarNum
+    lio zaTmp
+    jda zWriteVar
+    lem
+
+    lac zdOp1
+    dac zaCmpB
+    jsp zaCmp16
+    dac zaTmp                  // AC: 0 equal, negative less, positive greater
+
+    // Which of the two entry points got here. Tested by value, not by
+    // sign: both deltas are positive 16-bit residues (see zdhDec).
+    lac zaDelta
+    SKIP_NEXT_IF_DIFFERENT [1] // sad: skip (fallthrough) if delta != 1
+    jmp zaChkInc                  // no-skip: delta == 1 -> inc_chk
+
+    // dec_chk: branch if new < value
+    lac zaTmp
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if less
+    jmp zaChkNo                   // no-skip: not less
+    jmp zaChkYes
+
+zaChkInc,
+    // inc_chk: branch if new > value -- not equal AND not less
+    lac zaTmp
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if not equal
+    jmp zaChkNo                   // no-skip: equal -> not greater
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE  // sma i: skip (fallthrough) if greater
+    jmp zaChkNo                      // no-skip: less -> not greater
+
+zaChkYes,
+    lac [1]
+    lia
+    jsp zdpBranch
+    jmp zipNext
+zaChkNo,
+    cli
+    jsp zdpBranch
+    jmp zipNext
+
+// ---- VAR:232 push ----------------------------------------------------
+zdhPush,
+    lac zdOp0
+    and [ZW_MASK]
+    lia
+    jsp zStackPush
+    lem
+    jmp zipNext
+
+// ---- VAR:233 pull ----------------------------------------------------
+// pull (variable) -- pops the stack and writes the value to the variable
+// whose NUMBER is zdOp0. The POP is a real pop (normal mode); only the
+// WRITE is indirect, so that `pull sp` replaces the new top in place
+// rather than pushing the value straight back on.
+zdhPull,
+    jsp zStackPop
+    lem
+    dac zaTmp
+    lac [1]
+    dac zVarIndirect           // one-shot, immediately before the write
+    lac zdOp0
+    and [0377]
+    lio zaTmp
+    jda zWriteVar
+    lem
+    jmp zipNext
+
+// ========================================================================
+// The array-access four: thin wrappers over zmemcore.am1's primitives.
+// ========================================================================
+
+// ---- 2OP:15 loadw ----------------------------------------------------
+// S15: array-->word-index, i.e. the word at array + 2*word-index.
+zdhLoadw,
+    lac zdOp1
+    and [ZW_MASK]
+    sal 1s                     // 2*index
+    add zdOp0
+    and [ZW_MASK]
+    lia
+    jsp zFetchWord
+    lem
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+// ---- 2OP:16 loadb ----------------------------------------------------
+// S15: array->byte-index, i.e. the byte at array + byte-index.
+zdhLoadb,
+    lac zdOp0
+    add zdOp1
+    and [ZW_MASK]
+    lia
+    jsp zFetchByte
+    lem
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+// ---- VAR:225 storew --------------------------------------------------
+// Both stores end at zprint.ac's zpWatch rather than zipNext. A store at
+// or below header byte 0x11 may have set or cleared Flags2 bit 0, which is
+// how V3 stories ask for a transcript (`script` is `storew #0 #8`), and
+// S7.4 has the interpreter keep stream 2 in step with the bit. zpWatch
+// reads zaTmp, the address just written: zStoreWord and zStoreByte leave
+// it alone. Any other store costs zpWatch four instructions.
+zdhStorew,
+    lac zdOp1
+    and [ZW_MASK]
+    sal 1s
+    add zdOp0
+    and [ZW_MASK]
+    dac zaTmp
+    jsp zaCheckDyn             // not writable -> the store is refused
+    lac zaTmp
+    lio zdOp2
+    jda zStoreWord
+    lem
+    jmp zpWatch                // Flags2 bit 0 (S7.4), then zipNext
+
+// ---- VAR:226 storeb --------------------------------------------------
+zdhStoreb,
+    lac zdOp0
+    add zdOp1
+    and [ZW_MASK]
+    dac zaTmp
+    jsp zaCheckDyn
+    lac zaTmp
+    lio zdOp2
+    jda zStoreByte
+    lem
+    jmp zpWatch                // as storew
+
+// ---- VAR:253 copy_table first second size (V5) ------------------------
+// S15, exactly:
+//   - second = 0: |size| bytes of first are zeroed;
+//   - size negative: copy |size| bytes FORWARDS, even when the tables
+//     overlap and that corrupts first (Beyond Zork's fill idiom depends on
+//     it);
+//   - size positive: copy in whichever direction does NOT corrupt first.
+// Size 0 copies nothing, which S15 says and the arithmetic agrees with.
+// Stores nothing and branches nothing (ZAT_X, decoded that way already).
+//
+// THE DESTINATION MUST BE DYNAMIC, AND A DESTINATION THAT IS NOT IS
+// REFUSED WHOLE. The last byte to be written is tested against
+// zhStaticBase before a single byte moves; if it is at or above the base,
+// nothing is written and the instruction is a no-op. zStoreByte has no
+// bound check of its own, so without this test a story could overwrite
+// static memory in place. storeb/storew refuse the same condition
+// (zaCheckDyn below).
+//
+// A ZEROING CALL WITH A NEGATIVE SIZE is not given a meaning by S15, which
+// says only "size bytes of first are zeroed". This takes |size| for both
+// forms -- one count, one bound.
+//
+// THE RANGES ("bound before subtracting"). Every operand is a 16-bit
+// pattern from the decoder, 0..0xFFFF, never negative, so:
+//   n, size positive       0..0x7FFF        bit 15 clear
+//   n, size negative       1..0x8000        0x10000 - [0x8000, 0xFFFF]
+//   dst + n - 1            0..0x17FFE       `sub [1]` of 1 leaves PLUS zero
+//   ... - zhStaticBase     -0xFFFF..0x17FFE the base is 64 or more
+//   first - second         -0xFFFF..0xFFFF  equal: plus zero, so forward,
+//                                           which is right for first = second
+//   backward src start     0..0x17FFD       backward only for a positive
+//                                           size, so n <= 0x7FFF
+// all far inside +-0377777. The source pointer is masked to 16 bits at
+// each fetch, so a source running past 0xFFFF wraps to 0: spec-illegal,
+// and it degrades rather than halts. Pointer steps are `add` of +1 or
+// -1 (0777776), and `add` never manufactures minus zero: in a backward
+// copy the smallest source is 0, reached as 1 + (-1), which is plus zero.
+//
+// The byte loop costs about 70 instructions a byte, so the forward shapes
+// the stories use take a word path instead (zaCtFwd, below). Its result
+// is byte-for-byte the byte loop's, including the refusal and the source
+// wrap.
+zdhCopyTable,
+    // ---- n = |size| ---------------------------------------------------
+    lac zdOp2
+    and [0100000]              // the 16-bit sign bit of size
+    dac zaCtNeg                // nonzero: size is negative, copy forward
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if size is negative
+    jmp zaCtPos                   // no-skip: size is positive or 0
+    lac [0200000]
+    sub zdOp2                  // 0x10000 - size: 1..0x8000, both operands
+    jmp zaCtHaveN              //   positive, so no sign question arises
+zaCtPos,
+    lac zdOp2
+zaCtHaveN,
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if there are bytes
+    jmp zipNext                   // no-skip: size 0 -- nothing to copy or zero
+    dac zaCtCount
+
+    // ---- dst = second, or first when zeroing --------------------------
+    lac zdOp1
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if second is a table
+    lac zdOp0                     // no-skip: second = 0 -- zero first in place
+    dac zaCtDst
+
+    // ---- refuse a destination that reaches static memory --------------
+    add zaCtCount              // dst is still in AC
+    sub [1]                    // the last byte to be written, 0..0x17FFE
+    sub zhStaticBase           // negative iff that byte is dynamic
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if it is all dynamic
+    jmp zipNext                   // no-skip: it reaches static memory --
+                                  //   refuse the whole copy, write nothing
+
+    // ---- direction ----------------------------------------------------
+    // Forward (step +1 from the first byte of each) unless the size is
+    // positive, this is a copy, and second lies above first INSIDE the
+    // source -- the only case where a forward copy could overwrite source
+    // bytes before they are read. A second at or past first + n (the
+    // tables do not overlap) goes forward too. Every forward call enters
+    // at zaCtFwd, which picks the word path or the byte loop; a backward
+    // one goes straight to the byte loop.
+    law zipNext
+    dac zaCtNext               // where the byte loop ends: the whole call
+    lac zdOp0
+    dac zaCtSrc
+    lac [1]
+    dac zaCtStep
+    lac zaCtNeg
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if size is positive
+    jmp zaCtFwd                   // no-skip: negative size -- forward, always
+    lac zdOp1
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if copying
+    jmp zaCtFwd                   // no-skip: zeroing -- direction is moot
+    lac zdOp0
+    sub zdOp1                  // first - second
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if second > first
+    jmp zaCtFwd                   // no-skip: second at or below first --
+                                  //   forward is safe
+    lac zdOp1
+    sub zdOp0
+    sub zaCtCount              // second - first - n, each operand 0..0xFFFF:
+                               //   bounded; equal gives plus zero
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if second is inside
+    jmp zaCtFwd                   // no-skip: no overlap -- forward is safe
+    // Backward: both pointers start at their LAST byte, and step -1.
+    lac zaCtCount
+    sub [1]
+    dac zaCtStep               // n - 1, parked in the step word briefly
+    add zaCtSrc
+    dac zaCtSrc                // first + n - 1
+    lac zaCtStep
+    add zaCtDst
+    dac zaCtDst                // second + n - 1, below zhStaticBase (tested)
+    lac [-1]
+    dac zaCtStep
+
+    // ---- the copy -----------------------------------------------------
+zaCtLoop,
+    cli                        // the byte to store, when zeroing
+    lac zdOp1
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if copying
+    jmp zaCtPut                   // no-skip: zeroing -- IO = 0 already
+    lac zaCtSrc
+    and [ZW_MASK]              // a source past 0xFFFF wraps (see above)
+    lia
+    jsp zFetchByte             // AC = the source byte
+    lem                        //   (zFetchByte returns with eem on)
+    lia
+zaCtPut,
+    lac zaCtDst
+    jda zStoreByte             // IO = the byte
+    lem
+    lac zaCtSrc
+    add zaCtStep
+    dac zaCtSrc
+    lac zaCtDst
+    add zaCtStep
+    dac zaCtDst
+    lac zaCtCount
+    sub [1]                    // `sub [1]` of 1 leaves plus zero, so sza ends it
+    dac zaCtCount
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) when every byte is done
+    jmp zaCtLoop                  // no-skip: bytes remain
+    jmp i zaCtNext             // zipNext, or the word path's next step
+
+// ---- the forward word path ----------------------------------------------
+// The byte loop above moves one byte per trip through zFetchByte,
+// zStoreByte and the undo hook: about 70 instructions a byte. A forward
+// call whose shape allows it moves whole words instead, two bytes for
+// about 10 instructions, and calls the undo hook once per 64-word page
+// rather than once per byte.
+//
+// THE SHAPES, all forward:
+//   - zeroing: every byte 0.
+//   - the fill idiom, size negative AND second = first + 1: every byte
+//     copied is the one just written, so all n become the byte at first.
+//     A positive size with the same second is a backward shift and never
+//     gets here.
+//   - a copy whose source and destination have the SAME PARITY (so their
+//     words line up), whose source ends at or below 0xFFFF (the byte loop
+//     masks a source past it and wraps to 0; a word pointer would not) and
+//     below zhResidentTop (read in place). zhResidentTop alone is not
+//     enough: it can be as high as 0x18000. Overlap is safe here, as the
+//     direction test above chose forward: a destination below its source
+//     writes only words already read, and a negative size with an EVEN
+//     distance reads each word after it was wholly written, exactly as
+//     the byte-by-byte copy would.
+// Anything else keeps the byte loop, unchanged.
+//
+// THE SPLIT. The destination is dynamic, so resident, and its word
+// pointer is (addr >> 1) + DYNMEM_BANK1 * 010000, as zStoreByte's is. An
+// odd destination's first byte, and an odd byte left at the end, go
+// through the byte loop (count 1, zaCtNext steering it back), which is
+// also what writes a fill's or a copy's edge bytes correctly: the loop
+// reads the byte the call would. The source pointer advances with the
+// destination, so a fill's trailing byte is copied from the byte just
+// before it, which the words made the fill byte.
+//
+// THE UNDO HOOK, once per page: for the first word, and whenever the
+// destination pointer reaches a page's first word (low six bits 0) with
+// words still to write, so a page is logged before its first write and
+// never logged unwritten. Called unconditionally: copy_table is V5+,
+// illegal in V3 and V4 (zdispatch.ac), and a census image's zuHook is a
+// stub that returns. zuHook takes the pointer in AC with the
+// window open, and returns AC = the pointer, IO kept, the window open.
+zaCtFwd,
+    lac zdOp1
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if copying
+    jmp zaCtSetZ                  // no-skip: zeroing -- the word is 0
+    lac zaCtNeg
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if size negative
+    jmp zaCtCopyQ                 // no-skip: positive -- a copy, perhaps
+    lac zdOp0
+    add [1]
+    SKIP_NEXT_IF_DIFFERENT zdOp1  // sad: skip (fallthrough) unless a fill
+    jmp zaCtSetF                  // no-skip: second = first + 1 -- the fill
+zaCtCopyQ,
+    lac zdOp0
+    xor zdOp1
+    and [1]
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) on the same parity
+    jmp zaCtLoop                  // no-skip: words do not line up
+    lac zaCtSrc
+    add zaCtCount
+    sub [1]                    // the last source byte, 0..0x17FFE
+    dac zaCtW
+    sub [0200000]              // - 0x10000
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if at or below 0xFFFF
+    jmp zaCtLoop                  // no-skip: it wraps -- the byte loop's case
+    lac zaCtW
+    sub zhResidentTop
+    SKIP_NEXT_IF_AC_NEGATIVE   // sma: skip (fallthrough) if below the top
+    jmp zaCtLoop                  // no-skip: some of it is pageable
+    dzm zaCtMode               // 0: copy words
+    jmp zaCtSplit
+zaCtSetF,
+    lio zdOp0                  // the fill byte is the byte at first
+    jsp zFetchByte             // AC = it
+    lem                        //   (zFetchByte returns with eem on)
+    jmp zaCtSetW
+zaCtSetZ,
+    cla
+zaCtSetW,
+    dac zaCtW
+    sal 8s
+    ior zaCtW
+    dac zaCtW                  // the fill word, byte << 8 | byte
+    lac [1]
+    dac zaCtMode               // 1: store the fill word
+
+zaCtSplit,
+    lac zaCtDst
+    and [1]
+    dac zaCtLead               // 1: an odd destination's first byte
+    lac zaCtCount
+    sub zaCtLead
+    dac zaCtW2                 // the bytes after it
+    sar 1s
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if a word fits
+    jmp zaCtLoop                  // no-skip: no whole word -- all bytes
+    dac zaCtWords
+    lac zaCtW2
+    and [1]
+    dac zaCtTrail              // 1: an odd byte left at the end
+    lac zaCtLead
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if odd
+    jmp zaCtWordPh                // no-skip: even -- straight to the words
+    dac zaCtCount              // 1: the byte loop does the leading byte,
+    law zaCtWordPh             //   then comes back here
+    dac zaCtNext
+    jmp zaCtLoop
+
+zaCtWordPh,
+    lac zaCtDst
+    sar 1s                     // even and 0..0x3FFF: a word index
+    add [DYNMEM_BANK1*010000]
+    dac zaCtPD
+    lac zaCtSrc
+    sar 1s                     // 0..0xFFFF (tested): read only in copy mode
+    add [DYNMEM_BANK1*010000]
+    dac zaCtPS
+    lac zaCtWords
+    dac zaCtWC
+    eem                        // the pointers are 16-bit
+    lac zaCtPD
+    crossBankjda(zuHook:*, NOEEM)  // the first word's page
+    lac zaCtMode
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if storing a word
+    jmp zaCtCpLp                  // no-skip: copying
+zaCtSetLp,
+    lac zaCtW
+    dac i zaCtPD
+    lac zaCtWC
+    sub [1]
+    dac zaCtWC
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if words remain
+    jmp zaCtWDone                 // no-skip: the last word is written
+    idx zaCtPD                 // AC = the next word's pointer
+    and [077]
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) at a new page
+    jmp zaCtSetLp                 // no-skip: the same page
+    lac zaCtPD
+    crossBankjda(zuHook:*, NOEEM)
+    jmp zaCtSetLp
+zaCtCpLp,
+    lac i zaCtPS
+    dac i zaCtPD
+    lac zaCtWC
+    sub [1]
+    dac zaCtWC
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if words remain
+    jmp zaCtWDone                 // no-skip: the last word is written
+    idx zaCtPS
+    idx zaCtPD                 // AC = the next word's pointer
+    and [077]
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) at a new page
+    jmp zaCtCpLp                  // no-skip: the same page
+    lac zaCtPD
+    crossBankjda(zuHook:*, NOEEM)
+    jmp zaCtCpLp
+zaCtWDone,
+    lem
+    lac zaCtWords
+    sal 1s                     // the bytes the words moved
+    dac zaCtW2
+    add zaCtSrc
+    dac zaCtSrc
+    lac zaCtW2
+    add zaCtDst
+    dac zaCtDst
+    law zipNext
+    dac zaCtNext
+    lac zaCtTrail
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if a byte is left
+    jmp zipNext                   // no-skip: done
+    dac zaCtCount              // 1: the byte loop does the trailing byte
+    jmp zaCtLoop
+
+// copy_table's working words. Not reentrant, like every handler here.
+zaCtNeg, 0                     // nonzero if size was negative
+zaCtCount, 0                   // bytes still to move, n down to 1
+zaCtSrc, 0                     // the next source byte address
+zaCtDst, 0                     // the next destination byte address
+zaCtStep, 0                    // +1 forward, -1 (0777776) backward
+zaCtNext, 0                    // where the byte loop goes when done
+zaCtMode, 0                    // 0 copy words, 1 store zaCtW
+zaCtW, 0                       // the fill word; a scratch word first
+zaCtW2, 0                      // scratch
+zaCtLead, 0                    // 1 if the destination starts odd
+zaCtTrail, 0                   // 1 if an odd byte is left at the end
+zaCtWords, 0                   // whole words to move
+zaCtWC, 0                      // words still to move
+zaCtPD, 0                      // the destination word pointer
+zaCtPS, 0                      // the source word pointer
+
+// ---- VAR:247 scan_table x table len [form] -> (result) ?(label) (V4+) --
+// S15: "Is x one of the words in table, which is len words long?
+// If so, return the address where it first occurs and branch. If not,
+// return 0 and don't." The optional form, as the Standard 1.1 errata
+// corrects it (bit 7, not bit 8): bit 7 set for words, clear for bytes;
+// bits 0-6 the length of each field in bytes, the first word or byte of a
+// field being the one compared. The default is 0x82 (0202): words, two
+// bytes apart.
+//
+// THE FORM IS HONORED WHENEVER IT IS PRESENT, IN V4 AS WELL AS V5. S15
+// says "only used in Version 5?", with the question mark; a V4 story that
+// supplies one is taken at its word. Presence is judged by the operand
+// COUNT, not the value, so an explicit form of 0 means what it says --
+// bytes, fields of length 0 -- and not the default.
+//
+// NOTHING HERE HALTS. Every degenerate input has a natural meaning:
+//   - len 0, or no len (the decoder leaves an omitted operand 0): not found;
+//   - a field length of 0: the same field is compared len times;
+//   - x above 0xFF against a byte table: no byte equals it, so not found;
+//   - a table running past 0xFFFF: the pointer wraps to 0, as copy_table's
+//     source does -- spec-illegal, degraded rather than halted.
+// The table may be anywhere below 0x10000, static and high memory
+// included, and at an odd address; zFetchWord takes any byte address.
+//
+// THE RANGES. Operands are 16-bit patterns from the decoder, 0..0xFFFF.
+// The count runs len..1 by `sub [1]`, which leaves PLUS zero at the end.
+// The pointer is at most 0xFFFF + 0x7F before its
+// mask, far inside 0377777. The compare is `sad` of two values that are
+// both 0..0xFFFF, so no sign question arises and no subtraction is made.
+//
+// THE STORE COMES BEFORE THE BRANCH, as S4.7.1 needs when the branch is a
+// return: a store to sp pushes onto the frame that the return then
+// discards. Both exits end `jsp zdpBranch; jmp zipNext`, which keeps
+// zdpReturn's invariant (zdispatch.ac).
+//
+// FOUND AT ADDRESS 0 -- a table starting at the header -- stores 0 and
+// still branches: the branch follows "found", as S15 words it, not the
+// value stored.
+zdhScanTable,
+    lac [0202]                 // S15's default form: words, 2-byte fields
+    dac zaStForm
+    lac zdOpCount
+    SKIP_NEXT_IF_SAME [4]      // sas: skip (fallthrough) if a form was given
+    jmp zaStHaveForm              // no-skip: three operands -- the default
+    lac zdOp3
+    dac zaStForm
+zaStHaveForm,
+    lac zaStForm
+    and [0177]                 // bits 0-6: the field length in bytes
+    dac zaStLen
+    lac zdOp1
+    dac zaStPtr                // the field being compared
+    lac zdOp2
+    dac zaStCount              // fields still to compare, len down to 1
+zaStLoop,
+    lac zaStCount
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if fields remain
+    jmp zaStMiss                  // no-skip: none left -- not found
+    lio zaStPtr
+    lac zaStForm
+    and [0200]                 // bit 7: a word table
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for words
+    jmp zaStByte                  // no-skip: a byte table
+    jsp zFetchWord             // AC = the field's first word
+    jmp zaStCmp
+zaStByte,
+    jsp zFetchByte             // AC = the field's first byte
+zaStCmp,
+    lem                        // both fetches return with eem on
+    SKIP_NEXT_IF_DIFFERENT zdOp0   // sad: skip if this field is not x
+    jmp zaStHit                       // no-skip: found
+    lac zaStPtr
+    add zaStLen
+    and [ZW_MASK]              // past 0xFFFF wraps (see above)
+    dac zaStPtr
+    lac zaStCount
+    sub [1]
+    dac zaStCount
+    jmp zaStLoop
+zaStHit,
+    lio zaStPtr                // the address where x first occurs
+    jsp zdpStore
+    lac [1]
+    lia
+    jsp zdpBranch              // found: the condition is true
+    jmp zipNext
+zaStMiss,
+    cli
+    jsp zdpStore               // not found: 0
+    cli
+    jsp zdpBranch
+    jmp zipNext
+
+// scan_table's working words. Not reentrant, like every handler here.
+zaStForm, 0                    // the form: bit 7 words, bits 0-6 field length
+zaStLen, 0                     // the field length in bytes, 0..0177
+zaStPtr, 0                     // the address of the field being compared
+zaStCount, 0                   // fields still to compare
+
+// ========================================================================
+// zaCheckDyn -- checks that a store address lies in dynamic memory, which
+// S15 requires for storew/storeb. On call zaTmp has the Z-machine byte
+// address. Called via jsp; returns if the address is dynamic.
+// If it is not, the store is refused: control goes straight to zipNext,
+// so nothing is written and the instruction is over. Its only callers
+// are zdhStorew and zdhStoreb, which have nothing pending when
+// abandoned. A harness build counts the degrade in zaDgBadStore.
+// ========================================================================
+// The boundary test before the subtraction is redundant: an address of
+// exactly zhStaticBase subtracts to +0, which `sma` reads as not
+// negative, so it would be refused without the test as well.
+zaCheckDyn,
+    local rtn
+    dap rtn
+    lac zaTmp
+    SKIP_NEXT_IF_DIFFERENT zhStaticBase  // sad: skip if not exactly at it
+    jmp zacdBad                                // no-skip: on the boundary
+    sub zhStaticBase        // only the SIGN is used, which ones'
+    SKIP_NEXT_IF_AC_NEGATIVE   //   complement gets right
+    jmp zacdBad                   // no-skip: above the base -- not writable
+    jmp rtn
+zacdBad,
+#if Z_TEST_HARNESS
+    idx zaDgBadStore           // the refused-store degrade ran
+#endif
+    jmp zipNext                // refused -- nothing is written
+rtn, jmp 0
+    endlocal
+
+// ========================================================================
+// VAR:231 random (S15), built on Am1Includes/rand18.ac.
+//
+//   range > 0   uniform 1..range
+//   range < 0   seed the generator with |range|, return 0
+//   range == 0  S15 says reseed "in as random a way as the interpreter
+//               can". There is no entropy source, so it reseeds to
+//               rand18.ac's own load-time constant, and the sequence
+//               repeats exactly as after a load.
+//
+// rand18 does not preserve IO and is not reentrant.
+// ========================================================================
+zdhRandom,
+    lac zdOp0
+    and [ZW_MASK]
+    dac zaTmp
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if range != 0
+    jmp zdhRandReseed             // no-skip: range == 0
+
+    lac zaTmp
+    and [0100000]              // sign bit of the 16-bit range
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if range < 0
+    jmp zdhRandPos                // no-skip: range > 0
+
+    // ---- range < 0: seed with the magnitude, return 0 -----------------
+    lac [0200000]
+    sub zaTmp
+    and [ZW_MASK]
+    lia
+    jsp rand18seed             // seed comes from IO
+    lem
+    cli
+    jsp zdpStore               // S15: the return value is 0
+    jmp zipNext
+
+zdhRandReseed,
+    lac [ZA_SEED_DEFAULT]
+    lia
+    jsp rand18seed
+    lem
+    cli
+    jsp zdpStore
+    jmp zipNext
+
+zdhRandPos,
+    // Uniform 1..range: an 18-bit xorshift value, forced non-negative,
+    // modulo range (through zaDivMod), plus 1.
+    jsp rand18
+    lem
+    and [077777]               // 15 bits: zaDivMod reads bit 15 as a sign
+    dac zaDivA
+    lac zaTmp
+    dac zaDivB                 // range, known positive and nonzero here
+    jsp zaDivMod
+    lac zaDivR
+    add [1]                    // 1..range
+    and [ZW_MASK]
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+// ========================================================================
+// EXT:2 log_shift / EXT:3 art_shift (V5).
+//
+// S15: places positive shifts left, negative shifts right. log_shift
+// zeroes the sign on a right shift; art_shift preserves it. Range is
+// -15..+15.
+// ========================================================================
+zdhLogShift,
+    dzm zaArith
+    jmp zaShift
+
+zdhArtShift,
+    lac [1]
+    dac zaArith
+    jmp zaShift
+
+zaShift,
+    lac zdOp0
+    and [ZW_MASK]
+    dac zaTmp
+    lac zdOp1
+    and [ZW_MASK]
+    dac zaShiftN
+    and [0100000]              // sign of `places`
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if shifting right
+    jmp zaShiftLeft               // no-skip: places >= 0 -> left
+
+    // ---- right by |places| -------------------------------------------
+    lac [0200000]
+    sub zaShiftN
+    and [ZW_MASK]
+    dac zaShiftN
+
+    // art_shift on a negative value must shift the sign down with it.
+    // Doing that on an 18-bit word means sign-extending the 16-bit value
+    // first, shifting arithmetically, then re-masking.
+    lac zaArith
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if art_shift
+    jmp zaShiftRLoop              // no-skip: log_shift -- zeroes come in
+    lac zaTmp
+    and [0100000]
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) if value < 0
+    jmp zaShiftRLoop              // no-skip: value >= 0, nothing to extend
+    lac zaTmp
+    xor [0600000]              // set bits 16-17 of the 18-bit word, so the
+    dac zaTmp                  //   PDP-1 sign matches the Z-machine sign
+
+// Both loops count up from 0 to zaShiftN and end on equality.
+zaShiftRLoop,
+    dzm zaShiftI
+zaShiftRNext,
+    lac zaShiftI
+    SKIP_NEXT_IF_DIFFERENT zaShiftN  // sad: skip (fallthrough) while i != n
+    jmp zaShiftDone                     // no-skip: i == n, done
+    add [1]
+    dac zaShiftI
+    lac zaTmp
+    sar 1s                     // arithmetic: replicates bit 0 of the word
+    dac zaTmp
+    jmp zaShiftRNext
+
+zaShiftLeft,
+    dzm zaShiftI
+zaShiftLNext,
+    lac zaShiftI
+    SKIP_NEXT_IF_DIFFERENT zaShiftN
+    jmp zaShiftDone
+    add [1]
+    dac zaShiftI
+    lac zaTmp
+    sal 1s
+    dac zaTmp
+    jmp zaShiftLNext
+
+zaShiftDone,
+    lac zaTmp
+    and [ZW_MASK]
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+zaArith, 0
+zaShiftN, 0
+zaShiftI, 0
+
+// ---- shared working storage for this file ----------------------------
+zaTmp, 0
+zaDelta, 0
+zaVarNum, 0

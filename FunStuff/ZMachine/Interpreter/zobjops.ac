@@ -1,0 +1,404 @@
+// ========================================================================
+// zobjops.ac -- the object, attribute and property opcode handlers:
+// 2OP jin, test_attr, set_attr, clear_attr, insert_obj, get_prop,
+// get_prop_addr, get_next_prop; 1OP get_sibling, get_child, get_parent,
+// get_prop_len, remove_obj, print_obj; VAR put_prop.
+//
+// #included into zmemcore.am1's bank 0, after zarith.ac. It must be bank
+// 0: zdispatch.ac's tables hold 12-bit bank-0 addresses used with eem off.
+//
+// The entry points are the zdh* handlers. Each is entered by jmp from
+// zInterpret's dispatch and ends with jmp zipNext; none is a subroutine.
+//
+// ========================================================================
+// Cross-bank calls
+// ========================================================================
+// The primitives live in ZLEAF_BANK (zobjects.ac, plus ztext.ac's
+// zPrintObj). zmemcore.am1 assembles ZLEAF_BANK after bank 0, so every
+// call from here is a forward reference and takes the `sym:*` form,
+// `farjsp(zGetParent:*)`.
+//
+// farjda versus farjsp, per primitive. Getting it wrong does not fail
+// loudly -- it reads the wrong word and returns a wrong object number:
+//   farjsp (single argument in IO):
+//       zGetParent zGetSibling zGetChild zGetPropLen zRemoveObj zPrintObj
+//   farjda (object in AC-before-the-call, second argument in IO):
+//       zTestAttr zSetAttr zClearAttr zGetProp zGetPropAddr zGetNextProp
+//       zPutProp zInsertObj
+//
+// One cross-bank data reference: zPutProp's third argument, the value,
+// travels through the global zPutPropValue in ZLEAF_BANK, which
+// zdhPutProp writes with `fardac(zPutPropValue:*)`.
+//
+// farjsp/farjda/farrtn leave extend mode on at the call site, so every
+// handler runs with eem on between calls. That is safe because nothing
+// here dereferences a returned address: values are passed straight on to
+// the next primitive, and every reference in this file is direct.
+//
+// ========================================================================
+// Object 0 is not an error
+// ========================================================================
+// Object 0 means "no object": queries store 0, mutations are no-ops, and
+// jin/test_attr/get_sibling/get_child do not branch. Inform-generated
+// code reaches get_parent, jin and get_sibling with 0 during ordinary
+// play. The guard is the first thing each handler does; the shared exits
+// below carry it out. print_obj prints nothing, although S15 asks for a
+// halt: a missing word is a better failure than a halt mid-description.
+//
+// Two exceptions:
+//
+//   - `jin` guards its FIRST operand only. `jin obj 0` -- "has this
+//     object no parent?" -- is ordinary Inform-generated code and must
+//     compare normally and branch when the parent really is 0. As a
+//     consequence `jin 0 0` does not branch.
+//
+//   - `get_prop_len` gets no guard at all. Its operand is a property
+//     DATA ADDRESS, not an object number, and zGetPropLen already
+//     returns 0 for address 0, as S15 requires. Fourteen guards, not
+//     fifteen.
+//
+// Attribute and property NUMBERS are not range-masked. An out-of-range
+// one can only come from a malformed story file.
+//
+// The handlers are version-agnostic: they call primitives and never
+// touch the object layout, which zobjects.ac handles. The single version
+// difference here is Z_OBJ_MASK (the word zObjMask, patched at boot),
+// which clamps a variable-typed operand to the legal object range.
+// ========================================================================
+
+#ifndef ZOBJOPS_AC_H
+#define ZOBJOPS_AC_H
+
+#include <memory.ah>
+#include <AIDS/skipmacros.ah>
+
+// ---- Halt reason (see zdispatch.ac's ZSTOP_*) -------------------------
+// The only halt in this file: a cyclic object-tree child chain, which
+// zoUnlink detects by exceeding its zObjCount bound.
+#define ZSTOP_OBJCYCLE 5
+
+// zarith.ac's 16-bit mask, relied on here rather than redefined --
+// zarith.ac is #included immediately before this file.
+#ifndef ZW_MASK
+#define ZW_MASK 0177777
+#endif
+
+// ---- The object-number mask used by all fourteen guards ---------------
+// Masking makes the object-0 test correct and clamps a garbage
+// variable-typed operand to the legal range instead of letting the entry
+// address computation run wild. A value that masks down to 0 degrades to
+// "no object". V3 object numbers are a byte (S12.3.1), V4+ are 16 bits;
+// the mask is the word zObjMask at the end of this file, patched at boot.
+#define Z_OBJ_MASK zObjMask
+
+// ========================================================================
+// Shared handler exits.
+//
+// The object-0 guards and the handler bodies converge on six tails, so
+// the object-0 policy is in one place per outcome.
+// ========================================================================
+
+// Store AC (masked) and fall through to the next instruction. Entered
+// directly by the store-only handlers; entered at zdoZeroStore by their
+// object-0 guards.
+zdoZeroStore,
+    cla                        // object 0 -- the answer is 0 (see the header)
+zdoStore,
+    and [ZW_MASK]
+    lia
+    jsp zdpStore
+    jmp zipNext
+
+// Store AC and then branch on it (ZAT_SB), used by get_sibling and
+// get_child only.
+//
+// The store must come first because zdpBranch, on a taken branch with
+// S4.7.1's rfalse/rtrue kind, performs a complete routine RETURN: it pops
+// the frame the store byte belongs to. A store issued afterwards would
+// land in the caller's frame instead of this instruction's.
+zdoStoreBranch,
+    and [ZW_MASK]
+    dac zdoTmp
+    lia
+    jsp zdpStore
+    lac zdoTmp
+    lia                        // the stored value IS the branch condition:
+    jsp zdpBranch              //   S15 branches iff it is nonzero
+    jmp zipNext
+
+// Object 0 reaching get_sibling/get_child: store 0, and therefore do not
+// branch. Both halves are required -- the opcode has a store byte AND
+// branch data, and skipping either would leave the instruction stream
+// mis-consumed.
+zdoZeroStoreBranch,
+    cli
+    jsp zdpStore
+    cli
+    jsp zdpBranch
+    jmp zipNext
+
+// The two branch-only outcomes. zdhJin falls into zdoBranchFalse rather
+// than jumping to it.
+zdoBranchFalse,
+    cli
+    jsp zdpBranch
+    jmp zipNext
+
+zdoBranchTrue,
+    lac [1]
+    lia
+    jsp zdpBranch
+    jmp zipNext
+
+// Shared exit for the two tree-surgery handlers. AC = zInsertObj's or
+// zRemoveObj's status: 0 = done, anything else = the child-chain walk
+// exceeded its zObjCount bound, i.e. the tree is cyclic, and there is
+// nothing to carry on with.
+zdoObjStatus,
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) on a cyclic chain
+    jmp zipNext                   // no-skip: status 0 -- the surgery is done
+zdoObjCycle,
+    lac [ZSTOP_OBJCYCLE]
+    dac zdpStopReason
+    lac zServing               // is boot serving?
+    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if not -- a test entry
+    jmp zSessionFailR             // no-skip: an error report, then the next player
+    hlt
+    jmp zipNext                // if a debugger continues the machine, carry
+                               //   on -- zPC is valid, the tree is not
+
+// One working word, shared. Not reentrant; no handler below uses it
+// across a call that could reach another handler.
+zdoTmp, 0
+
+// ========================================================================
+// 1OP handlers
+// ========================================================================
+
+// ---- 1OP:129 get_sibling ---------------------------------------------
+// S15: store the sibling, branch if it is nonzero.
+zdhGetSibling,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zdoZeroStoreBranch        // no-skip: object 0 -- store 0, no branch
+    lia
+    farjsp(zGetSibling:*)
+    jmp zdoStoreBranch
+
+// ---- 1OP:130 get_child -----------------------------------------------
+// S15: store the first child, branch if it is nonzero.
+zdhGetChild,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zdoZeroStoreBranch        // no-skip: object 0 -- store 0, no branch
+    lia
+    farjsp(zGetChild:*)
+    jmp zdoStoreBranch
+
+// ---- 1OP:131 get_parent ----------------------------------------------
+// S15 gives this one NO branch clause, unlike its two neighbours above.
+zdhGetParent,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zdoZeroStore              // no-skip: object 0 -- store 0
+    lia
+    farjsp(zGetParent:*)
+    jmp zdoStore
+
+// ---- 1OP:132 get_prop_len --------------------------------------------
+// S15: the length in bytes of the property at the given DATA address --
+// an address, NOT an object number, which is why there is no object-0
+// guard here. zGetPropLen already implements the "@get_prop_len 0 must
+// return 0" compatibility rule.
+zdhGetPropLen,
+    lac zdOp0
+    and [ZW_MASK]
+    lia
+    farjsp(zGetPropLen:*)
+    jmp zdoStore
+
+// ---- 1OP:137 remove_obj ----------------------------------------------
+// S15: detach from its parent. Its own children stay with it.
+zdhRemoveObj,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zipNext                   // no-skip: object 0 -- no-op
+    lia
+    farjsp(zRemoveObj:*)
+    jmp zdoObjStatus
+
+// ---- 1OP:138 print_obj -----------------------------------------------
+// S15: print the object's short name from its property-table header.
+// Object 0 prints nothing, not the halt S15 asks for; see this file's
+// header.
+zdhPrintObj,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zipNext                   // no-skip: object 0 -- print nothing
+    lia
+    farjsp(zPrintObj:*)
+    jmp zipNext
+
+// ========================================================================
+// 2OP handlers
+// ========================================================================
+
+// ---- 2OP:6 jin -------------------------------------------------------
+// S15: branch if the parent of obj1 is obj2.
+//
+// Only obj1 is guarded. `jin obj 0` is the ordinary Inform idiom for
+// "has no parent" and must be answered by a real comparison; see this
+// file's header.
+zdhJin,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zdoBranchFalse            // no-skip: object 0 -- never branches
+    lia
+    farjsp(zGetParent:*)
+    dac zdoTmp                 // obj1's parent (0 = none)
+    lac zdOp1
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_DIFFERENT zdoTmp // sad: skip (fallthrough) if obj2 is NOT it
+    jmp zdoBranchTrue                // no-skip: obj2 IS obj1's parent
+    jmp zdoBranchFalse         // obj2 is not the parent
+
+// ---- 2OP:10 test_attr ------------------------------------------------
+// S15: branch if the object has the attribute. zTestAttr returns 0 or
+// nonzero, which is exactly the condition zdpBranch wants, so there is
+// no test in between.
+zdhTestAttr,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zdoBranchFalse            // no-skip: object 0 -- never branches
+    lio zdOp1
+    farjda(zTestAttr:*)
+    lia
+    jsp zdpBranch
+    jmp zipNext
+
+// ---- 2OP:11 set_attr -------------------------------------------------
+zdhSetAttr,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zipNext                   // no-skip: object 0 -- no-op
+    lio zdOp1
+    farjda(zSetAttr:*)
+    jmp zipNext
+
+// ---- 2OP:12 clear_attr -----------------------------------------------
+zdhClearAttr,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zipNext                   // no-skip: object 0 -- no-op
+    lio zdOp1
+    farjda(zClearAttr:*)
+    jmp zipNext
+
+// ---- 2OP:14 insert_obj -----------------------------------------------
+// S15: make O the first child of D; O's new sibling is D's old child;
+// O's own children move with it; O may legally have parent zero.
+//
+// Destination 0 is treated as remove_obj.
+zdhInsertObj,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zipNext                   // no-skip: object 0 -- no-op
+    dac zdoTmp                 // O, held across the destination test
+
+    lac zdOp1
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real destination
+    jmp zdhInsObjNoDest           // no-skip: destination 0 -- this is remove_obj
+    lia                        // IO = D
+    lac zdoTmp                 // AC = O
+    farjda(zInsertObj:*)
+    jmp zdoObjStatus
+
+zdhInsObjNoDest,
+    lio zdoTmp
+    farjsp(zRemoveObj:*)
+    jmp zdoObjStatus
+
+// ---- 2OP:17 get_prop -------------------------------------------------
+// S15: the property value, or the DEFAULT if the object does not declare
+// it. zGetProp is default-table-aware, and halts on a property longer
+// than two bytes ("illegal ... unspecified"): that is a story-file
+// malformation, and the property walk cannot produce a meaningful value
+// to continue with.
+zdhGetProp,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zdoZeroStore              // no-skip: object 0 -- store 0
+    lio zdOp1
+    farjda(zGetProp:*)
+    jmp zdoStore
+
+// ---- 2OP:18 get_prop_addr --------------------------------------------
+// S15: the byte address of the property DATA, or 0 if the object has not
+// got it -- which zGetPropAddr already returns.
+zdhGetPropAddr,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zdoZeroStore              // no-skip: object 0 -- store 0
+    lio zdOp1
+    farjda(zGetPropAddr:*)
+    jmp zdoStore
+
+// ---- 2OP:19 get_next_prop --------------------------------------------
+// S15: the next property number; 0 in gives the FIRST, 0 out means the
+// end of the list. Both already handled by zGetNextProp.
+zdhGetNextProp,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zdoZeroStore              // no-skip: object 0 -- store 0
+    lio zdOp1
+    farjda(zGetNextProp:*)
+    jmp zdoStore
+
+// ========================================================================
+// VAR handlers
+// ========================================================================
+
+// ---- VAR:227 put_prop ------------------------------------------------
+// S15: write the value; a length-1 property stores only the low byte, so
+// -1 becomes 255. zPutProp implements the length rule, and halts if the
+// object has not got the property at all, for the same reason as
+// zGetProp's halt above.
+//
+// The value is the third operand and travels through zPutPropValue in
+// ZLEAF_BANK. It is set immediately before the call, so nothing can come
+// between them.
+zdhPutProp,
+    lac zdOp0
+    and Z_OBJ_MASK
+    SKIP_NEXT_IF_AC_NOT_ZERO   // sza i: skip (fallthrough) for a real object
+    jmp zipNext                   // no-skip: object 0 -- no-op
+    dac zdoTmp                 // O, held across the value marshalling
+
+    lac zdOp2
+    and [ZW_MASK]
+    fardac(zPutPropValue:*)    // zPutProp's third argument channel
+
+    lac zdoTmp
+    lio zdOp1
+    farjda(zPutProp:*)
+    jmp zipNext
+
+// The object-number mask (see its block above). Patched at boot: 0377 in
+// a V3 session, 0177777 in V4 and V5.
+zObjMask, 0377
+
+#endif // ZOBJOPS_AC_H

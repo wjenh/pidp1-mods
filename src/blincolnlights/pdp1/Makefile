@@ -26,7 +26,7 @@ endif
 # Add a new source by adding it to LOCAL_SRCS for those in this directory  or PARENT_SRCS
 # for those one directory up. Nothing else needs to change.
 LOCAL_SRCS = main.c panel1.c typtelnet.c audio.c lowpass.c pdp1.c dynamicIots.c \
-    highSpeedChannels.c configuration.c display.c lpPredictor.c
+    highSpeedChannels.c configuration.c display.c lpPredictor.c ad1server.c
 PARENT_SRCS = ../common.c ../pollfd.c ../logger.c
 
 OBJS = $(LOCAL_SRCS:.c=.o) $(notdir $(PARENT_SRCS:.c=.o))

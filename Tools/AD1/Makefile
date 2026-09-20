@@ -1,10 +1,10 @@
-CC=gcc -O3 -Wno-unused-result
+CC=gcc -O3 -Wno-unused-result -I../../src/blincolnlights/pdp1
 #CC=gcc -g
 BISONFLAGS=
 #CONFLICTS=-Wcounterexamples
 
 OBJS=ad1.o helpText.o eval.o lex.yy.o y.tab.o listFile.o files.o commands.o \
-	flexToAscii.o loader.o ../Disassembler/decode_instruction.o
+	flexToAscii.o loader.o ad1link.o target.o ../Disassembler/decode_instruction.o
 
 .PHONY: all clean install
 .DELETE_ON_ERROR:
@@ -21,26 +21,32 @@ install: ad1
 	cp ad1 ../../bin
 	strip ../../bin/ad1
 
-ad1.o: ad1.c ad1.h pdp1inc.h helpmsgs.h y.tab.h
+ad1.o: ad1.c ad1.h target.h ad1link.h helpmsgs.h y.tab.h
 	$(CC) -c ad1.c
 
 helpText.o: helpText.c
 	$(CC) -c helpText.c
 
-files.o: files.c ad1.h
+files.o: files.c ad1.h target.h ad1link.h
 	$(CC) -c files.c
 
-eval.o: eval.c ad1.h y.tab.h
+eval.o: eval.c ad1.h target.h ad1link.h y.tab.h
 	$(CC) -c eval.c
 
-commands.o: commands.c ad1.h pdp1inc.h helpmsgs.h y.tab.h ../Disassembler/decode_instruction.h
+commands.o: commands.c ad1.h target.h ad1link.h helpmsgs.h y.tab.h ../Disassembler/decode_instruction.h
 	$(CC) -c commands.c
 
-listFile.o: listFile.c ad1.h
+listFile.o: listFile.c ad1.h target.h ad1link.h
 	$(CC) -c listFile.c
 
-loader.o: loader.c ad1.h pdp1inc.h
+loader.o: loader.c ad1.h target.h ad1link.h
 	$(CC) -c loader.c
+
+ad1link.o: ad1link.c ad1link.h ad1proto.h
+	$(CC) -c ad1link.c
+
+target.o: target.c target.h ad1link.h ad1proto.h
+	$(CC) -c target.c
 
 flexToAscii.o: flexToAscii.c
 	$(CC) -c flexToAscii.c

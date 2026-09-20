@@ -2,9 +2,9 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 1.16 and covers up through ad1 version 1.19; it will be updated as needed.\
-Edit date 20-Aug-2026
-Switch meaning of colon and comma for am1 consistency
+This is version 2.0 and covers up through ad1 version 2.0; it will be updated as needed.\
+Edit date 20-Sep-2026
+Rework to use a socket instead of shared memory
 
 ## What is **ad1**?
 
@@ -25,8 +25,9 @@ To be fair, many of these issues were a result of the very limited memory availa
 
 One major difference from **DDT**, aside from the obvious added features,
 is that **ad1** is not memory resident in the pidp-1's memory.
-It is a standalone C program that interacts with the pidp-1 via a shared memory segment and hence
+It is a standalone C program that interacts with the pidp-1 over a network connection and hence
 does not need to be loaded nor does it consume any pidp-1 memory at all.
+The pidp-1 can be on the same machine or on another one.
 
 Features
 - Uses symbol tables from **am1** to provide symbolic names for program locations and variables
@@ -53,13 +54,19 @@ Features
 
 It is implemented in **C** using **Flex** and **Bison** for command parsing.
 
-Central to its operation is the use of a shared memory segment that contains the full operating state of
-the pidp-1.
-This becomes available when the pidp-1 is started in *shared* mode via its configuration file.
-This does impose the restriction that **ad1** must be running on the same machine as the pidp-1 instance
-being debugged.
+Central to its operation is a TCP connection to a debugger server built into the pidp-1.
+The server is on by default and listens on the loopback address, port 1044, so **ad1** works on the
+same machine with no setup.
+The *ad1port* setting in the pidp-1 configuration file changes the port, and 0 or *off* disables it.
 
-This is not only used for interrogating and setting the above registers and memory, it also allows control over
+A second setting, *ad1remoteport*, opens a port on all network interfaces at the same time, so that
+**ad1** can debug a pidp-1 on another machine.
+It is off by default.
+
+Only one client, **ad1** or *fastload*, can be connected at a time, on either port.
+See *pidp1.config.example*.
+
+The link is used for interrogating and setting the above registers and memory, and it also allows control over
 starting, stopping, single-stepping and processing of breakpoints and watches.
 
 Commands are handled in the pidp-1 by *switch spoofing*.
@@ -69,16 +76,20 @@ In this way, the behavior is exactly as if the panel switches had been used.
 
 **Ad1** operates totally asynchnronously, all operations can be done while the pidp-1 is running.
 
-Breakpoints are implemented by a breakpoint table in shared memory.
+Breakpoints are implemented by a breakpoint table in the pidp-1.
 When breakpoints are active, an assignemnt to the PC register is checked to see if it is a breakpoint address
-and if so and its hit count is reached, a flag is set to indicate that to **ad1** and the pidp-1 halted.
+and if so and its hit count is reached, a flag is set to indicate that and the pidp-1 halted.
 
-Watchpoints are implemented similarly with a watch table in shared memory.
+Watchpoints are implemented similarly with a watch table in the pidp-1.
 When watches are active, the addresses have their contents checked to see if they have changed and
 optionally match a given value.
-If so a flag is set to indicate that to **ad1** and the pidp-1 halted.
+If so a flag is set to indicate that and the pidp-1 halted.
 
 Both breakpoints and watches are checked in the pidp-1 at the end of every machine cycle.
+
+When a breakpoint or watch is hit, the pidp-1 sends **ad1** a message right away, so the hit is
+reported at once and no polling is done.
+A hit that happens while no debugger is connected is remembered and reported when one connects.
 
 **Ad1** commands can then be given and when ready the program resumed.
 
@@ -104,7 +115,7 @@ lines can be displayed by line number.
 
 ## Usage
 
-ad1 [-v] [-y] [-x] [-T] [filename ...]
+ad1 [-v] [-y] [-x] [-T] [-h host[:port]] [filename ...]
 
 The **-v** option prints the version number and exits.
 
@@ -116,6 +127,23 @@ The **-T** option starts in test mode. No connection to a running pidp-1 is made
 state container is used instead.
 An attempt is made to load the test memory with the last saved actual pidp-1 coremem save file from
 the */opt/pidp1-mods* directory.
+There is no processor in test mode, so *step* and *monitor* are not available, and *start*, *stop*
+and *continue* only record what was asked.
+
+The **-h** option names the machine the pidp-1 is running on as a host name or address with an optional port.
+The default is the pidp-1 on this machine, port 1044.
+A host with no port gets 1044 if it is this machine (*localhost* or a loopback address) and 1045,
+the usual *ad1remoteport*, if it is another one.
+The value can follow the option after a space or be attached to it, as in *-h 192.168.1.20:1045*.
+
+If **ad1** cannot connect, it says which host and port it tried and exits.
+If the connection is lost while **ad1** is running, it says so and exits.
+
+When **ad1** leaves, the breakpoints and watches are handled as before.
+The *exit* command keeps them but disables them, so they are still listed the next time.
+The *quit* command, end of input, or a signal deletes them.
+This is done by the pidp-1, so it also happens if **ad1** is killed or the network connection drops.
+A running pidp-1 is left running.
 
 If no filename is given, then no symbols or source will be available until a file is specified by the *file* command.
 
@@ -136,7 +164,8 @@ If so, the same information will be available for them.
 
 For full functionality, programs should be assembled using the **am1** *-d* flag.
 
-Note that the *shared* option must be on in the pidp-1 configuration file in order to be useful.
+The *shared* option that older versions needed in the pidp-1 configuration file is no longer used.
+It is accepted and ignored.
 
 ## Building it
 
@@ -521,6 +550,11 @@ tape with a *stop* directive, in which case no starting address is set.
 
 It does **not** change the current PC.
 
+The whole tape is read and checked first, then written to the pidp-1's memory in one step.
+A tape that turns out to be bad changes nothing.\
+If the pidp-1 is running it is stopped first, and *ad1* says so.
+It is not started again, use *start* to run the loaded program.
+
 ## Monitor count filename
 
 This executes *count* cycles and writes the address and instruction at the pc address
@@ -561,7 +595,8 @@ Exit **preserves* any breakpoints and watches bud disables them and **ad1** exit
 However, they are preserved only until the pidp-1 is restarted.
 
 Any normal termination other than via exit is equivalent to quit, all watches and breakpoints are deleted.\
-A kill via a signal will leave all breakpoints and watches in whatever state they are in.
+So is termination by a signal, including kill -9, and a lost connection to the pidp-1: the pidp-1
+deletes them when the connection closes.
 
 The pidp-1 is left in whatever state it is in.
 

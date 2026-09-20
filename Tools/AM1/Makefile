@@ -3,6 +3,8 @@ CCFLAGS= -O3 -s
 #CCFLAGS= -g
 #BISONFLAGS=-Wcounterexamples
 BISONFLAGS=
+# LINKDIR is where fastload finds the socket info for connecting to the pdp-1
+LINKDIR=../AD1
 
 OBJS=am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o eval.o \
 	maccodegen.o bincodegen.o listcodegen.o testcodegen.o listSymtab.o optimizer.o
@@ -12,8 +14,8 @@ all: am1 fastload
 am1:	$(OBJS)
 	$(CC) -o am1 $^
 
-fastload: fastload.c
-	$(CC) fastload.c -o fastload
+fastload: fastload.c $(LINKDIR)/ad1link.c $(LINKDIR)/ad1link.h
+	$(CC) -I$(LINKDIR) fastload.c $(LINKDIR)/ad1link.c -o fastload
 
 clean:
 	@rm -f *.o lex.yy.c y.tab.c y.tab.h permsyms.def.c am1 fastload symtabgen cvtxldr \

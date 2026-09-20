@@ -8,12 +8,12 @@ Test rg10: local scoping
     b, hlt
     endlocal
 
-    local c
+    local c, tgt
     addlocal d
-    jmp %tgt
+    jmp tgt
     c, hlt
     d, hlt
-    %tgt, hlt
+    tgt, hlt
     endlocal
 
     loc e

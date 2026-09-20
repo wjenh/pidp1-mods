@@ -1,8 +1,8 @@
 /*
- * This is a program to do real-time interactions with the pidp-1 when it is running in
- * shared memory mode.
+ * This is a program to do real-time interactions with a running pidp-1 over its TCP debugger
+ * link.
  * It can read am1 symbol files and probe memory to examine the state of memory and other items.
- * It requires the pidp1-mods version of the pidp-1 with shared memory turned on.
+ * It requires the pidp1-mods version of the pidp-1, whose debugger port is on by default.
  *
  * Original author: Bill Ezell (wje) pdp1@quackers.net
  *
@@ -30,6 +30,7 @@
  * 20-Aug-26 wje swap the , and : for file and bank separators to be consistent with am1,
  *   increase max lines per file to 10K for line mapping array.
  * 2-Sep-26 wje clean up some of the exit handlers
+ * 20-Sep-26 Claude - talk to the emulator over its TCP debugger link instead of shared memory
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -39,19 +40,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <signal.h>
-#include <fcntl.h>
+#include <errno.h>
 #include <sys/select.h>
-#include <sys/mman.h>
 
 #include "ad1.h"
-#include "pdp1inc.h"
 #include "helpmsgs.h"
 #include "y.tab.h"
 
 #define MEMFILE "/opt/pidp1-mods/coremem"
-#define SHM_NAME "/pidp1"
-
-PDP1P pdp1P;            // the emulator state in shared memory
 
 int exitReason;         // EXIT or QUIT, tells leave() how to treat breakpoints, 0 means an abnormal exit.
 
@@ -116,22 +112,14 @@ static bool flexShifted = true; // last shift state returned by flexToAscii(), t
 
 DispatchP findCommand(DispatchP tableP, char *nameP);
 
-BreakpointP isBreakpoint(int addr);
-BreakpointP checkBreakpoints();
+int isBreakpoint(int addr);
 bool validateBreakpointNumber(int num);
-void clearBreakpoint(BreakpointP brkP);
 void deleteAllBreakpoints(void);
 void listBreaks();
 
-WatchP isWatch(int addr);
-WatchP checkWatches();
 bool validateWatchNumber(int num);
-void clearWatch(WatchP watchP);
 void deleteAllWatches(void);
 void listWatches();
-
-void disableAllWatchesAndBreakpoints(void);
-void restoreAllWatchesAndBreakpoints(void);
 
 void sigHandler(int signo);
 int getCurrentPC(void);
@@ -148,10 +136,9 @@ bool loadMemoryFromFile(char *filenameP, Word memory[], Word memSize);
 void usage(void);
 
 static void leave(int, void *);
+static bool serviceEvents(void);
 
-extern int brkCount;    // number of set breakpoints
-extern int watchCount;  // number of set watches
-extern int base;        // current number base
+extern int base;       // current number base
 extern int lastFormat;  // the last format type used
 extern int curStartAddr;     // set by the start or load commands
 extern int curBank;     // set by the bank cmd
@@ -187,24 +174,21 @@ int
 main(int argc, char **argv)
 {
 int i;
-int shmFd;
 int inFd;
+int linkFd;
+int maxFd;
 int exitStatus;
-bool wantDelay;
 bool testMode;
 char *cP;
-DispatchP cmdP;
-BreakpointP activeBrkP; // we hit a breakpoint, this is it
-WatchP activeWatchP;    // we hit a watch, this is it
-MapEntryP mapP;
+char *hostP;            // -h host[:port], NIL means the emulator on this machine
 FileInfoP infoP;
 fd_set read_fds;
-struct timeval timeout;
 char line[256];
 
     yy_flex_debug = yydebug = 0;
     symFileNameP = NIL;
     testMode = false;
+    hostP = NIL;
 
     /* do the command line processing */
     ++argv;
@@ -218,6 +202,25 @@ char line[256];
             {
             case 'T':
                 testMode = 1;
+                break;
+
+            case 'h':
+                // The value is the rest of this argument or the whole next one.
+                if( *cP )
+                {
+                    hostP = cP;
+                    cP += strlen(cP);
+                }
+                else if( argc > 1 )
+                {
+                    --argc;
+                    ++argv;
+                    hostP = *argv;
+                }
+                else
+                {
+                    usage();
+                }
                 break;
 
             case 'v':
@@ -258,134 +261,95 @@ char line[256];
     curStartAddr = -1;
     curLine = -1;
 
-    // Initialize the file descriptor set
     inFd = STDIN_FILENO;            // File descriptor for standard input
-    FD_ZERO(&read_fds);
 
-    // Set the timeout value
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
+    // The command loop selects on stdin and the link together, so a line the user has already
+    // typed must not sit hidden in stdio's buffer where select() cannot see it.
+    setvbuf(stdin, NULL, _IONBF, 0);
 
     if( testMode )
     {
-        // Just a local copy for standalone testing.
-        static PDP1 fakePDP1;
-        pdp1P = &fakePDP1;
-        memset(pdp1P, 0, sizeof(PDP1));
-        if( !loadMemoryFromFile(MEMFILE, pdp1P->core, MAXMEM) )
+        // A local image with no emulator behind it, for standalone testing.
+        tgtOpenLocal();
+        if( !loadMemoryFromFile(MEMFILE, tgtLocalCore(), MAXMEM) )
         {
             printf("Can't load memory image from file '%s', memory may be empty.", MEMFILE);
         }
     }
     else
     {
-        shmFd = shm_open(SHM_NAME, O_RDWR, 0666);
-        if( shmFd < 0 )
+        if( tgtOpen(hostP) != 0 )
         {
-            fprintf(stderr, "shm_open of %s failed, is pdp1 running?\n", SHM_NAME);
+            fprintf(stderr, "%s\n", ad1LinkError());
             exit(1);
         }
-        else
-        {
-            pdp1P = mmap(NIL, sizeof(PDP1), PROT_READ | PROT_WRITE, MAP_SHARED, shmFd, 0);
-            if( pdp1P == NIL )
-            {
-                fprintf(stderr, "mmap failed\n");
-                close(shmFd);
-                exit(1);
-            }
 
-            close(shmFd);
-        }
+        // Whatever kills us, from the kill command to a lost network, the emulator should drop our
+        // breakpoints and watches. The exit command changes this to disable-only just before it
+        // closes.
+        tgtSetPolicy(AD1P_POLICY_DELETE_ALL);
     }
 
     // Now we want to be sure we exit cleanly, even if interrupted
     signal(SIGINT, sigHandler);
     signal(SIGTERM, sigHandler);
 
-    // We might have breakpoints already set because of a prior exit.
-    restoreAllWatchesAndBreakpoints();
-
     on_exit(leave, 0);
-    activeBrkP = NIL;
-    activeWatchP = NIL;
     base = OCTAL;               // default is octal
     lastFormat = OCTAL;
     printf("Type 'help' for help.\n");
 
     while( true )
     {
+        // Hits that arrived while a command was running are reported before the prompt.
+        // Flushed here because the prompt below goes out by write(), ahead of anything buffered.
+        tgtPump();
+        if( serviceEvents() )
+        {
+            fflush(stdout);
+        }
+
         write(STDOUT_FILENO, "Cmd? ", 5);   // this silliness to get around buffering issues with select
 
         while( true )
         {
-            // We only need to have timeouts if we have a reason
-            if( (brkCount > 0) || (watchCount > 0) )
+            FD_ZERO(&read_fds);
+            FD_SET(inFd, &read_fds);
+            maxFd = inFd;
+            if( (linkFd = tgtFd()) >= 0 )
             {
-                FD_SET(inFd, &read_fds);    // has to be reset each time
-                i = select(inFd + 1, &read_fds, NULL, NULL, &timeout);
-            }
-            else
-            {
-                break;
-            }
-
-            if( i == 0 )                // timeout, do our breakpoint cheks
-            {
-                if( (activeBrkP = checkBreakpoints()) )
+                FD_SET(linkFd, &read_fds);
+                if( linkFd > maxFd )
                 {
-                    break;              // hit one
-                }
-
-                if( (activeWatchP = checkWatches()) )
-                {
-                    break;              // hit one
+                    maxFd = linkFd;
                 }
             }
-            else if( i < 0 )
+
+            if( (i = select(maxFd + 1, &read_fds, NULL, NULL, NULL)) < 0 )
             {
+                if( errno == EINTR )
+                {
+                    continue;
+                }
+
                 printf("Error in select(), terminating,\n");
                 exit(1);
             }
-            else if( FD_ISSET(inFd, &read_fds) )
-            {
-                break;      // input ready
-            }
-        }
 
-        if( activeBrkP )
-        {
-            // breakpoint hit
-            printf("\nBreakpoint %d hit", activeBrkP->number);
-            lastAddr = activeBrkP->address;
-            if( !printHitText(activeBrkP->address) )
+            if( (linkFd >= 0) && FD_ISSET(linkFd, &read_fds) )
             {
-                i = activeBrkP->address;
-                cP = findNameByAddr(i);
-                i = pdp1P->core[i];
-                decodeInstr(i, ADDRESSOF(i), false, " ", cP, line, 0);
-                printf(": %s\n", line);
+                tgtPump();              // ends the program if the emulator has gone away
+                if( serviceEvents() )
+                {
+                    fflush(stdout);         // nothing else will flush it until the next line is typed
+                    write(STDOUT_FILENO, "Cmd? ", 5);
+                }
             }
 
-            write(STDOUT_FILENO, "Cmd? ", 5);
-            activeBrkP = NIL;
-        }
-        else if( activeWatchP )
-        {
-            // watch hit
-            printf("\nWatch %d hit", activeWatchP->number);
-            lastAddr = activeWatchP->address;
-            if( !printHitText(activeWatchP->address) )
+            if( FD_ISSET(inFd, &read_fds) )
             {
-                i = activeWatchP->address;
-                cP = findNameByAddr(i);
-                i = pdp1P->core[i];
-                decodeInstr(i, ADDRESSOF(i), false, " ", cP, line, 0);
-                printf(": %s\n", line);
+                break;                  // input ready
             }
-
-            write(STDOUT_FILENO, "Cmd? ", 5);
-            activeWatchP = NIL;
         }
 
         if( !fgets(line, sizeof(line), stdin) )
@@ -404,7 +368,10 @@ char line[256];
         }
 
         cP = strchr(line, '\n');
-        *cP = NUL;
+        if( cP )
+        {
+            *cP = NUL;
+        }
 
         exitStatus = parseAndExecute(line);
         if( (exitStatus == EXIT) || (exitStatus == QUIT) )
@@ -644,25 +611,6 @@ char *cP;
     formatAndPrintOne(fmt2, value);
 }
 
-// Clear all state for a breakpoint.
-void
-clearBreakpoint(BreakpointP brkP)
-{
-    if( !brkP->isSet )
-    {
-        return;
-    }
-
-    brkP->isSet = brkP->isEnabled = false;
-
-    brkP->address = 0;  // not necessary, but for completeness
-    if( --brkCount <= 0 )
-    {
-        AD1_DISABLE_BREAKPOINTS(pdp1P);
-        brkCount = 0;
-    }
-}
-
 // Check for a valid breakpoint nunber.
 // If ok, return true, else false.
 bool
@@ -678,135 +626,60 @@ validateBreakpointNumber(int num)
 }
 
 // See if the address has a breakpoint set on it.
-// If so, return the breakpoint else return nil.
-BreakpointP
+// If so, return its number, else 0.
+int
 isBreakpoint(int addr)
 {
 int i;
-BreakpointP brkP;
+Ad1BpEntry bps[AD1_NUM_BREAKPOINTS];
 
-    brkP = pdp1P->ad1Breakpoints;
-    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i, ++brkP )
+    if( tgtBpList(bps) != AD1P_ST_OK )
     {
-        // Check the pc addresses
-        if( brkP->isSet && (brkP->address == addr) )
+        return(0);
+    }
+
+    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
+    {
+        if( bps[i].isSet && (bps[i].address == (uint32_t)(addr & 0177777)) )
         {
-            return(brkP);
+            return( (int)bps[i].number );
         }
     }
 
-    return(NIL);
+    return(0);
 }
 
-BreakpointP
-checkBreakpoints()
-{
-int i;
-BreakpointP brkP;
-
-    // see if a breakpoint was signaled
-    //if( !pdp1P->run && AD1_BREAKPOINT_HIT(pdp1P) )
-    if( AD1_BREAKPOINT_HIT(pdp1P) )
-    {
-        brkP = &(pdp1P->ad1Breakpoints[pdp1P->ad1brkNo]);
-        AD1_CLEAR_BREAKPOINT_HIT(pdp1P);
-        return( brkP );
-    }
-
-    return(NIL);
-}
-
-// called on termination by the exit command
-void
-disableAllWatchesAndBreakpoints()
-{
-int i;
-BreakpointP brkP;
-WatchP watchP;
-
-    brkP = pdp1P->ad1Breakpoints;
-
-    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i, ++brkP )
-    {
-        brkP->isEnabled = false;
-    }
-
-    watchP = pdp1P->ad1Watches;
-
-    for( i = 0; i < AD1_NUM_WATCHES; ++i, ++watchP )
-    {
-        watchP->isEnabled = false;;
-    }
-}
-
-// called on startup
-void
-restoreAllWatchesAndBreakpoints()
-{
-int i;
-BreakpointP brkP;
-WatchP watchP;
-
-    watchCount = brkCount = 0;
-
-    brkP = pdp1P->ad1Breakpoints;
-
-    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i, ++brkP )
-    {
-        if( brkP->isSet )
-        {
-            ++brkCount;
-        }
-    }
-
-    watchP = pdp1P->ad1Watches;
-
-    for( i = 0; i < AD1_NUM_WATCHES; ++i, ++watchP )
-    {
-        if( watchP->isSet )
-        {
-            ++watchCount;
-        }
-    }
-}
 // Does what is says.
 void
 deleteAllBreakpoints()
 {
-int i;
-BreakpointP brkP;
-
-    brkP = pdp1P->ad1Breakpoints;
-
-    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i, ++brkP )
-    {
-        clearBreakpoint(brkP);
-    }
-
-    AD1_DISABLE_BREAKPOINTS(pdp1P);
-    brkCount = 0;
+    tgtBpDelete(0);
 }
 
 void
 listBreaks()
 {
 int i;
-BreakpointP brkP;
+int nSet;
+Ad1BpEntry bps[AD1_NUM_BREAKPOINTS];
 
-    if( brkCount > 0 )
+    nSet = 0;
+    if( tgtBpList(bps) == AD1P_ST_OK )
     {
-        for( i = 0, brkP = pdp1P->ad1Breakpoints; i < AD1_NUM_BREAKPOINTS; ++i, ++brkP )
+        for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
         {
-            if( brkP->isSet )
+            if( bps[i].isSet )
             {
-                printf("%d: ", brkP->number);
-                formatAndPrintOne(SYMBOLIC, brkP->address);
-                printf(" ,count %d ,currently %d,", brkP->count, brkP->curCount);
-                printf(" %s\n", (brkP->isEnabled)?"enabled":"disabled");
+                ++nSet;
+                printf("%d: ", bps[i].number);
+                formatAndPrintOne(SYMBOLIC, bps[i].address);
+                printf(" ,count %d ,currently %d,", bps[i].count, bps[i].curCount);
+                printf(" %s\n", (bps[i].isEnabled)?"enabled":"disabled");
             }
         }
     }
-    else
+
+    if( nSet == 0 )
     {
         printf("No breakpoints set.\n");
     }
@@ -836,27 +709,6 @@ int bpno;
     return( bpno-1 );
 }
 
-// Clear all state for a watch
-void
-clearWatch(WatchP watchP)
-{
-    if( !watchP->isSet )
-    {
-        return;
-    }
-
-    watchP->isSet = watchP->isEnabled = false;
-
-    watchP->address = 0;  // not necessary, but for completeness
-    watchP->value = 0;
-
-    if( --watchCount <= 0 )
-    {
-        AD1_DISABLE_WATCHES(pdp1P);
-        watchCount = 0;
-    }
-}
-
 // Check for a valid watch nunber.
 // If ok, return true, else false.
 bool
@@ -871,90 +723,44 @@ validateWatchNumber(int num)
     return(true);
 }
 
-// See if the address has a watch set on it.
-// If so, return the watch else return nil.
-WatchP
-isWatch(int addr)
-{
-int i;
-WatchP watchP;
-
-    watchP = pdp1P->ad1Watches;
-    for( i = 0; i < AD1_NUM_WATCHES; ++i, ++watchP )
-    {
-        // Check the pc and mem addresses
-        if( watchP->isSet && (watchP->address == addr) )
-        {
-            return(watchP);
-        }
-    }
-
-    return(NIL);
-}
-
-WatchP
-checkWatches()
-{
-int i;
-WatchP watchP;
-
-    // see if a watch was signaled
-    if( !pdp1P->run && AD1_WATCH_HIT(pdp1P) )
-    {
-        watchP = &(pdp1P->ad1Watches[pdp1P->ad1watchNo]);
-        AD1_CLEAR_WATCH_HIT(pdp1P);
-        return( watchP );
-    }
-
-    return(NIL);
-}
-
 // Does what is says.
 void
 deleteAllWatches()
 {
-int i;
-WatchP watchP;
-
-    watchP = pdp1P->ad1Watches;
-
-    for( i = 0; i < AD1_NUM_WATCHES; ++i, ++watchP )
-    {
-        clearWatch(watchP);
-    }
-
-    // Should already be done, but be sure
-    AD1_DISABLE_WATCHES(pdp1P);
-    watchCount = 0;
+    tgtWatchDelete(0);
 }
 
 void
 listWatches()
 {
 int i;
-WatchP watchP;
+int nSet;
+Ad1WatchEntry watches[AD1_NUM_WATCHES];
 
-    if( watchCount )
+    nSet = 0;
+    if( tgtWatchList(watches) == AD1P_ST_OK )
     {
-        for( i = 0, watchP = pdp1P->ad1Watches; i < AD1_NUM_WATCHES; ++i, ++watchP )
+        for( i = 0; i < AD1_NUM_WATCHES; ++i )
         {
-            if( watchP->isSet )
+            if( watches[i].isSet )
             {
-                printf("%d: address ", watchP->number);
-                formatAndPrintOne(SYMBOLIC, watchP->address);
-                if( watchP->onAny )
+                ++nSet;
+                printf("%d: address ", watches[i].number);
+                formatAndPrintOne(SYMBOLIC, watches[i].address);
+                if( watches[i].onAnyChange )
                 {
                     printf(" any value");
                 }
                 else
                 {
-                    printf(" value %06o", watchP->value);
+                    printf(" value %06o", watches[i].value);
                 }
-                printf(" %s\n", (watchP->isEnabled)?"enabled":"disabled");
+                printf(" %s\n", (watches[i].isEnabled)?"enabled":"disabled");
             }
         }
     }
-    else
+
+    if( nSet == 0 )
     {
         printf("No watches set.\n");
     }
@@ -1090,11 +896,63 @@ Word data;
     return( true );
 }
 
-// Return the current full address of the pc in the emulator, pd and epc.
+// Return the current full address of the pc in the emulator, extension bits included.
 int
 getCurrentPC()
 {
-    return( (pdp1P->epc & 0170000) | ADDRESSOF(pdp1P->pc) );
+uint32_t state[AD1P_STATE_WORDS];
+
+    tgtGetState(state);
+    return( (int)state[AD1P_STATE_PC] );
+}
+
+// Print a breakpoint or watch hit the emulator reported, and tell it we have seen it so the
+// latch clears.
+static void
+reportHit(const Ad1Event *evP)
+{
+int number;
+int address;
+int word;
+char *cP;
+char line[256];
+
+    if( (evP->type != AD1P_EVT_HIT_BREAK) && (evP->type != AD1P_EVT_HIT_WATCH) )
+    {
+        return;
+    }
+
+    number = (int)evP->words[0];
+    address = (int)evP->words[1];
+    word = (int)evP->words[2];      // what is in memory at the address now
+
+    printf("\n%s %d hit", (evP->type == AD1P_EVT_HIT_BREAK)?"Breakpoint":"Watch", number);
+    lastAddr = address;
+    if( !printHitText(address) )
+    {
+        cP = findNameByAddr(address);
+        decodeInstr(word, ADDRESSOF(word), false, " ", cP, line, 0);
+        printf(": %s\n", line);
+    }
+
+    tgtAckHit((evP->type == AD1P_EVT_HIT_BREAK)?AD1P_HIT_BREAK:AD1P_HIT_WATCH);
+}
+
+// Report every hit queued so far. Returns true if there were any.
+static bool
+serviceEvents(void)
+{
+Ad1Event event;
+bool any;
+
+    any = false;
+    while( tgtNextEvent(&event) )
+    {
+        reportHit(&event);
+        any = true;
+    }
+
+    return( any );
 }
 
 // Print the source lines at a location, used to report breapoint and watchpoint hits.
@@ -1127,38 +985,27 @@ FileInfoP infoP;
 void
 leave(int status, void *ignore)
 {
-    AD1_CLEAR_SINGLE(pdp1P);        // be sure we turn off single step, might have been on
-
-    // Exit will preserve all the breakpoints, but disable them.
-    if( exitReason == EXIT )
-    {
-        disableAllWatchesAndBreakpoints();
-    }
-    else
-    {
-        deleteAllBreakpoints();
-        deleteAllWatches();
-    }
-
+    // The emulator drops the sticky single-step state itself when we disconnect. Exit preserves
+    // all the breakpoints but disables them, anything else deletes them.
+    tgtClose( (exitReason == EXIT)?AD1P_POLICY_DISABLE_ALL:AD1P_POLICY_DELETE_ALL );
     closeFiles();
 }
 
+// The emulator applies the delete-all policy set at startup when the connection closes.
 void
 sigHandler(int signo)
 {
-    AD1_CLEAR_SINGLE(pdp1P);        // be sure we turn off single step, might have been on
-    deleteAllBreakpoints();
-    deleteAllWatches();
     _exit(1);
 }
 
 void
 usage()
 {
-    printf("Usage: ad1 [-v] [-y] [-x] [-T] [filename ...]\n");
+    printf("Usage: ad1 [-v] [-y] [-x] [-T] [-h host[:port]] [filename ...]\n");
     printf("-v prints the version and exits\n");
     printf("-y enables yacc debugging\n");
     printf("-x enables lex debugging\n");
     printf("-T enables test mode\n");
+    printf("-h connects to the emulator on another machine, default is this one\n");
     exit(1);
 }

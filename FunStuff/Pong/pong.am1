@@ -11,7 +11,7 @@ pong game, v1.1 written by Hrvoje Cavrak, 12/2018
 
 #define point(A, B)\
 local;\
-%forcelocal;\
+%%forcelocal;\
  \
 	law B;\
 	add y;\
@@ -31,7 +31,7 @@ endloc
 // 5 points
 #define circle(A, B)\
 local;\
-%forcelocal;\
+%%forcelocal;\
  \
 	point( 0, 1);\
 	point( 0, 3);\
@@ -47,7 +47,7 @@ endloc
 
 #define paddle(X, Y)\
 local;\
-%forcelocal;\
+%%forcelocal;\
  \
 	lac pdlwidth;\
 	cma;\
@@ -72,7 +72,7 @@ endloc
 
 #define line(C, D)\
 local;\
-%forcelocal;\
+%%forcelocal;\
  \
  	law 0	;\
 	sub maxdown ;\
@@ -129,7 +129,7 @@ jmp loop
 
 #define testkey(K, N)\
 local;\
-%forcelocal;\
+%%forcelocal;\
  \
 	lac controls;\
 	and K;\
@@ -141,7 +141,7 @@ endloc
 
 #define padmove(Y, A)\
 local;\
-%forcelocal;\
+%%forcelocal;\
  \
 	lac Y;\
 	dac pdly;\
@@ -180,7 +180,7 @@ mvret,   jmp .
 
 #define flip(A)\
 local;\
-%forcelocal;\
+%%forcelocal;\
  \
 	lac A;\
 	cma;\

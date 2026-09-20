@@ -9,7 +9,7 @@ Test rg07: operators (all operators in precedence order)
     law 5-2         // subtract: 3
     law 3*4         // multiply: 14 (octal)
     law 10/3        // divide: 2 (octal 10 = decimal 8, 8/3=2)
-    law 7%%3        // modulo: 1
+    law 7%3        // modulo: 1
     ~1              // bitwise complement: 777776 (standalone, same as math.am1)
     -3              // unary minus: 777774 (standalone; law takes 12-bit positive only)
     law (1+2)*3     // parenthesized expression: 11 (octal)

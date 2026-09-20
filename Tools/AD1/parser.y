@@ -10,7 +10,6 @@
 #include <stdbool.h>
 
 #include "ad1.h"
-#include "pdp1inc.h"
 
 static int lastShowAddress = NONE;
 static int lastShowBase = NONE;
@@ -19,6 +18,7 @@ static bool lastShowDeref = false;
 
 extern int curFileNo;
 extern int lastAddr;
+extern int getCurrentPC(void);
 extern int lastFormat;
 extern int curStartAddr;
 extern int base;
@@ -27,10 +27,7 @@ extern char *fmt8P;
 extern char *fmt10P;
 extern char *fmt16P;
 extern char *fmt2P;
-extern PDP1P pdp1P;
 
-extern int brkCount;           // number of set breakpoints
-extern BreakpointP activeBrkP; // we hit a breakpoint, this is it
 
 int yyerror(const char *errstr);
 
@@ -141,6 +138,7 @@ typedef struct argitem_t {
 %token LPAREN
 %token RPAREN
 %token LINEAT
+%token LOCAL
 %token SEPARATOR
 
 /* non-terminals */
@@ -230,7 +228,7 @@ cmd		: QUIT
                     }
 
                     // set from the current extended address in use
-                    curBank = BANKOF(pdp1P->epc);
+                    curBank = BANKOF(getCurrentPC());
                 }
                 | BANK
                 {
@@ -429,7 +427,7 @@ cmd		: QUIT
                 }
                 | DOT
                 {
-                    formatAndPrintTwo(SYMBOLIC, lastAddr, base, pdp1P->core[lastAddr]);
+                    formatAndPrintTwo(SYMBOLIC, lastAddr, base, tgtRead(lastAddr));
                     NEWLINE;
                 }
 		;

@@ -8,10 +8,8 @@
 #include <stdbool.h>
 #include <fcntl.h>
 #include <sys/select.h>
-#include <sys/mman.h>
 
 #include "ad1.h"
-#include "pdp1inc.h"
 #include "helpmsgs.h"
 #include "y.tab.h"
 #include "../Disassembler/decode_instruction.h"
@@ -22,8 +20,6 @@ int lastFormat;         // last format used, 0 means use base
 int curStartAddr;       // set by the start or load commands
 int curBank;            // set by the bank cmd
 int windowSize = 6;     // default window size
-int brkCount;           // number of set breakpoints
-int watchCount;         // number of set watches
 
 extern int numFiles;
 extern int curFileNo;
@@ -57,11 +53,10 @@ void disableWatchFn(int num);
 void setWindowFn(int size);
 void debugFn(void);
 
-extern PDP1P pdp1P;     // the emulator state in shared memory
 extern char *symNameP;
 extern Dispatch dispatchTable[];
 extern Dispatch extraHelpTable[];
-extern BreakpointP isBreakpoint(int addr);
+extern int isBreakpoint(int addr);
 
 extern int getMapForFileNo(MapEntryP mapP, int fileNo);
 extern MapEntryP getLinesFromAddress(int address);
@@ -79,12 +74,10 @@ extern void listSymbols(void);
 
 extern void listBreaks(void);
 extern bool validateBreakpointNumber(int num);
-extern void clearBreakpoint(BreakpointP brkP);
 extern void deleteAllBreakpoints(void);
 
 extern void listWatches(void);
 extern bool validateWatchNumber(int num);
-extern void clearWatch(WatchP watchP);
 extern void deleteAllWatches(void);
 
 extern int onesCompl(int val);
@@ -102,6 +95,30 @@ extern void setCurrentLineNumber(int lineNo);
 extern int loadTape(char *filenameP);
 extern bool findRimFile(FileInfoP infoP, char *rsltP);
 extern DispatchP findCommand(DispatchP dipatchTable, char *nameP);
+
+// Report a status from the emulator that the caller has no wording of its own for.
+// Returns true if the status was ok.
+static bool
+statusOk(int status)
+{
+    if( status == AD1P_ST_OK )
+    {
+        return( true );
+    }
+
+    printf("The emulator refused that: %s.\n", ad1StatusText(status));
+    return( false );
+}
+
+// True if the machine is in extend mode, where an indirect names a bank.
+static bool
+extendedMode(void)
+{
+uint32_t state[AD1P_STATE_WORDS];
+
+    tgtGetState(state);
+    return( state[AD1P_STATE_EXD] != 0 );
+}
 
 void
 helpFn(char *nameP)
@@ -199,7 +216,7 @@ int val;
     }
     else
     {
-        val = (int)pdp1P->core[addr];
+        val = (int)tgtRead(addr);
         formatAndPrintTwo(ADDRESS, addr, base, val);
         NEWLINE;
     }
@@ -210,46 +227,49 @@ showRegisterFn(int reg, int base)
 {
 u32 val;
 char *nameP;
+uint32_t state[AD1P_STATE_WORDS];
+
+    tgtGetState(state);
 
     switch( reg )
     {
     case ACREG:
         nameP = "AC";
-        val = pdp1P->ac;
+        val = state[AD1P_STATE_AC];
         break;
     case IOREG:
         nameP = "IO";
-        val = pdp1P->io;
+        val = state[AD1P_STATE_IO];
         break;
     case PCREG:
         nameP = "PC";
-        val = pdp1P->epc | pdp1P->pc;
+        val = state[AD1P_STATE_PC];
         break;
     case TWREG:
         nameP = "Test word switches";
-        val = pdp1P->tw;
+        val = state[AD1P_STATE_TW];
         break;
     case PFREG:
-        printf("Program flags: %06b\n", pdp1P->pf);
+        printf("Program flags: %06b\n", state[AD1P_STATE_PF]);
         return;
     case SSREG:
-        printf("Sense switches: %06b\n", pdp1P->ss);
+        printf("Sense switches: %06b\n", state[AD1P_STATE_SS]);
         return;
     case ASREG:
         nameP = "Address switches";
-        val = pdp1P->ta;
+        val = state[AD1P_STATE_TA];
         break;
     case MAREG:
         nameP = "MA";
-        val = pdp1P->ma;
+        val = state[AD1P_STATE_MA];
         break;
     case MBREG:
         nameP = "MB";
-        val = pdp1P->mb;
+        val = state[AD1P_STATE_MB];
         break;
     case DOT:
         nameP = ".";
-        val = pdp1P->core[lastAddr];
+        val = tgtRead(lastAddr);
         break;
     case SYREG:
         listSymbols();
@@ -275,12 +295,12 @@ void
 setFn(int type, int addr, int value)
 {
 int flag;
+int brkNo;
 bool clr;
-BreakpointP brkP;
 
-    if( (type != REGISTER) && (brkP = isBreakpoint(addr)) )
+    if( (type != REGISTER) && (brkNo = isBreakpoint(addr)) )
     {
-        printf("The address cannot be set unless breakpoint %d is deleted first.\n", brkP->number);
+        printf("The address cannot be set unless breakpoint %d is deleted first.\n", brkNo);
         return;
     }
 
@@ -297,25 +317,24 @@ BreakpointP brkP;
                 return;
             }
 
-            pdp1P->pc = ADDRESSOF(value);
-            pdp1P->epc = value & 0170000;    
-            pdp1P->exd = (pdp1P->epc != 0);
-
-            lastAddr = value;
+            if( statusOk(tgtSetReg(AD1P_REG_PC, AD1P_OP_ASSIGN, value)) )
+            {
+                lastAddr = value;
+            }
             break;
 
         case ACREG:
-            pdp1P->ac = onesCompl(value);
+            statusOk(tgtSetReg(AD1P_REG_AC, AD1P_OP_ASSIGN, onesCompl(value)));
             break;
 
         case IOREG:
-            pdp1P->io = onesCompl(value);
+            statusOk(tgtSetReg(AD1P_REG_IO, AD1P_OP_ASSIGN, onesCompl(value)));
             break;
 
         case PFREG:
             if( value == 0 )
             {
-                pdp1P->pf = 0;
+                statusOk(tgtSetReg(AD1P_REG_PF, AD1P_OP_ASSIGN, 0));
             }
             else if( value > 0x3F )
             {
@@ -324,7 +343,7 @@ BreakpointP brkP;
             }
             else
             {
-                pdp1P->pf = value;
+                statusOk(tgtSetReg(AD1P_REG_PF, AD1P_OP_ASSIGN, value));
             }
             break;
 
@@ -337,6 +356,7 @@ BreakpointP brkP;
             if( (value < 0) || (value > 1) )
             {
                 printf("The value must be 0 to clear or 1 to set.\n");
+                break;
             }
 
             if( value == 0 )
@@ -350,14 +370,7 @@ BreakpointP brkP;
             }
 
             flag = 5 - (addr - PF1REG);
-            if( clr )
-            {
-                pdp1P->pf &= ~(1 << flag) & 0x3F;
-            }
-            else
-            {
-                pdp1P->pf |= 1 << flag;
-            }
+            statusOk(tgtSetReg(AD1P_REG_PF, clr?AD1P_OP_CLEAR:AD1P_OP_OR, 1 << flag));
             break;
 
         default:
@@ -367,8 +380,10 @@ BreakpointP brkP;
     }
     else
     {
-        pdp1P->core[addr] = value;
-        lastAddr = addr;
+        if( statusOk(tgtWrite(addr, value)) )
+        {
+            lastAddr = addr;
+        }
     }
 }
 
@@ -379,13 +394,8 @@ startFn(int addr)
     {
         printf("No start address has been set, give one or load a tape.\n");
     }
-    else
+    else if( statusOk(tgtStart(addr)) )
     {
-        pdp1P->run_enable = 0;      // stop it
-        pdp1P->ad1StartAddr = ADDRESSOF(addr);
-        pdp1P->ad1ExtendedAddr = addr & 0170000;    
-        AD1_CLEAR_SINGLE(pdp1P);    // shouldn't be set, but be sure
-        AD1_SET_START(pdp1P);
         curStartAddr = lastAddr = addr;
     }
 }
@@ -393,10 +403,13 @@ startFn(int addr)
 void
 stopFn(void)
 {
-    AD1_CLEAR_SINGLE(pdp1P);    // shouldn't be set, but be sure
-    AD1_SET_STOP(pdp1P);
-    usleep(1000);       // plenty of time for the stop to happen, we need the pc at that point
-    lastAddr = pdp1P->epc | pdp1P->pc;
+uint32_t pc;
+
+    // The reply comes after the machine has halted, so the pc is where it stopped.
+    if( statusOk(tgtStop(&pc)) )
+    {
+        lastAddr = pc;
+    }
 }
 
 // If count is the number of instruction cycles to step.
@@ -404,9 +417,20 @@ stopFn(void)
 void
 stepFn(int count)
 {
+int stalled;
+uint32_t state[AD1P_STATE_WORDS];
+int status;
+Ad1StepResult res;
 MapEntryP entryP;
 
-    if( pdp1P->run )
+    if( tgtIsLocal() )
+    {
+        printf("Stepping is not available in test mode.\n");
+        return;
+    }
+
+    tgtGetState(state);
+    if( state[AD1P_STATE_RUN] )
     {
         printf("Must be stopped to step.\n");
     }
@@ -417,19 +441,28 @@ MapEntryP entryP;
             count = 1;
         }
 
-        AD1_SET_SINGLE(pdp1P);   // this is a 'sticky' setting and must be cleared to get out of ss
-
-        while( count-- > 0 )
+        // The emulator gives up on a very long run of steps and says how far it got, so ask again
+        // for the rest. It leaves the sticky single-step state set, as the panel would.
+        stalled = 0;
+        while( count > 0 )
         {
-            AD1_SET_CONTINUE(pdp1P);
-            while( AD1_CONTINUE(pdp1P) )
+            status = tgtStep(count, false, &res);
+            if( (status != AD1P_ST_OK) && (status != AD1P_ST_TIMEOUT) )
             {
-                usleep(1);       // wait for completion
+                statusOk(status);
+                return;
             }
 
-            if( AD1_BREAKPOINT_HIT(pdp1P) || AD1_WATCH_HIT(pdp1P) )
+            if( res.reason == AD1P_END_HIT )
             {
-                return;             // stop now, main loop will detect this
+                return;             // stop now, the main loop reports the hit
+            }
+
+            count -= (res.done > (uint32_t)count) ? count : (int)res.done;
+            if( (res.done == 0) && (++stalled >= 3) )
+            {
+                printf("The pdp-1 is not stepping.\n");
+                return;
             }
         }
 
@@ -449,8 +482,7 @@ MapEntryP entryP;
 void
 continueFn(void)
 {
-    AD1_CLEAR_SINGLE(pdp1P);
-    AD1_SET_CONTINUE(pdp1P);
+    statusOk(tgtContinue());
 }
 
 void
@@ -459,6 +491,7 @@ setBankFn(int bankno)
     if( (bankno < 0) || (bankno >= MEMBANKS) )
     {
         printf("A bank number must be 0-%d decimal or the hex or octal equivalent.\n", MEMBANKS - 1);
+        return;
     }
 
     curBank = bankno;
@@ -467,49 +500,30 @@ setBankFn(int bankno)
 void
 setBpFn(int addr, int count)
 {
-int i;
-BreakpointP brkP;
+int status;
+uint32_t number;
 
     if( count == BADNUM )
     {
         count = 1;          // no count was given, default to 1
     }
 
-    // Find an empty slot
-    brkP = pdp1P->ad1Breakpoints;
-
-    for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
-    {
-        if( !brkP->isSet )
-        {
-            break;
-        }
-
-        ++brkP;
-    }
-
-    if( i >= AD1_NUM_BREAKPOINTS )
+    status = tgtBpSet(addr, count, &number);
+    if( status == AD1P_ST_NO_SLOT )
     {
         printf("No breakpoints are left, delete one first\n");
-        return;
     }
-
-    brkP->isSet = true;
-    brkP->number = i + 1;
-    brkP->address = addr;
-    brkP->count = count;
-    brkP->curCount = 0;
-    brkP->isEnabled = true;
-
-    AD1_ENABLE_BREAKPOINTS(pdp1P);
-    ++brkCount;
+    else
+    {
+        statusOk(status);
+    }
 }
 
 // 0 means all of them
 void
 deleteBpFn(int bpno)
 {
-BreakpointP brkP;
+int status;
 char line[32];
 
     if( !validateBreakpointNumber((bpno)?bpno:1) )
@@ -531,14 +545,14 @@ char line[32];
     }
     else
     {
-        brkP = &(pdp1P->ad1Breakpoints[bpno - 1]);
-        if( !brkP->isSet )
+        status = tgtBpDelete(bpno);
+        if( status == AD1P_ST_NOT_SET )
         {
             printf("Breakpoint %d is not set.\n", bpno);
         }
         else
         {
-            clearBreakpoint(brkP);
+            statusOk(status);
         }
     }
 }
@@ -546,56 +560,50 @@ char line[32];
 void
 enableBpFn(int bpno)
 {
-BreakpointP brkP;
+int status;
 
     if( !validateBreakpointNumber(bpno) )
     {
         return;
     }
 
-    brkP = &(pdp1P->ad1Breakpoints[bpno-1]);
-    if( brkP->isSet )
+    status = tgtBpEnable(bpno);
+    if( status == AD1P_ST_ALREADY )
     {
-        if( brkP->isEnabled )
-        {
-            printf("Breakpoint %d is already enabled.\n", brkP->number);
-        }
-        else
-        {
-            brkP->isEnabled = true;
-        }
+        printf("Breakpoint %d is already enabled.\n", bpno);
+    }
+    else if( status == AD1P_ST_NOT_SET )
+    {
+        printf("Breakpoint %d is not set, can't enable it.\n", bpno);
     }
     else
     {
-        printf("Breakpoint %d is not set, can't enable it.\n", bpno);
+        statusOk(status);
     }
 }
 
 void
 disableBpFn(int bpno)
 {
-BreakpointP brkP;
+int status;
 
     if( !validateBreakpointNumber(bpno) )
     {
         return;
     }
 
-    brkP = &(pdp1P->ad1Breakpoints[bpno - 1]);
-    if( brkP->isSet )
+    status = tgtBpDisable(bpno);
+    if( status == AD1P_ST_ALREADY )
     {
-        if( !brkP->isEnabled )
-        {
-            printf("Breakpoint %d is already diabled.\n", brkP->number);
-        }
-        else
-        {
-            brkP->isEnabled = false;
-        }
+        printf("Breakpoint %d is already diabled.\n", bpno);
+    }
+    else if( status == AD1P_ST_NOT_SET )
+    {
+        printf("Breakpoint %d is not set, can't disable it.\n", bpno);
     }
     else
     {
-        printf("Breakpoint %d is not set, can't disable it.\n", bpno);
+        statusOk(status);
     }
 }
 
@@ -781,7 +789,7 @@ char tmpstr[128];
     }
 
     tmpaddr = addr;             // used if the instruction doesn't indirect
-    word = pdp1P->core[addr];
+    word = tgtRead(addr);
 
     // We need to decode to get the flags.
     bank = curBank;
@@ -795,13 +803,13 @@ char tmpstr[128];
         {
             printf("%s", instr);
             printf(" indirects to ");
-            addr = pdp1P->core[addr];
+            addr = tgtRead(addr);
             formatAndPrintOne(SYMBOLIC, FULLADDR(bank, addr));
             NEWLINE;
 
             // The behavior of indirect depends upon whether or not eem is in effect.
             // If it is, there is no subsequent indirection.
-            if( pdp1P->exd )
+            if( extendedMode() )
             {
                 bank = BANKOF(addr);
             }
@@ -818,7 +826,7 @@ char tmpstr[128];
             while( addr & INDIRECT_BIT )
             {
                 addr &= ~INDIRECT_BIT;
-                tmpaddr = pdp1P->core[FULLADDR(bank, addr)];
+                tmpaddr = tgtRead(FULLADDR(bank, addr));
                 printf("The value at address ");
                 formatAndPrintOne(SYMBOLIC, addr);
                 printf(" is an indirect to ");
@@ -877,6 +885,7 @@ char filename[1024];
     if( !filenameP )
     {
         printf("There are no current files, use an explicit name.\n");
+        return;
     }
 
     if( (addr = loadTape(filenameP)) == LOADFAILED )
@@ -902,11 +911,23 @@ char filename[1024];
 void
 monitorFn(int count, char *filenameP)
 {
-int addr, word;
+int chunk;
+int stalled;
+int status;
+uint32_t i;
+uint32_t state[AD1P_STATE_WORDS];
 bool singleState;
 FILE *fP;
+Ad1StepResult res;
 
-    if( pdp1P->run )
+    if( tgtIsLocal() )
+    {
+        printf("Monitoring is not available in test mode.\n");
+        return;
+    }
+
+    tgtGetState(state);
+    if( state[AD1P_STATE_RUN] )
     {
         printf("Must be stopped to begin monitoring.\n");
         return;
@@ -918,26 +939,41 @@ FILE *fP;
         return;
     }
 
-    singleState = AD1_SINGLE(pdp1P);
-    AD1_SET_SINGLE(pdp1P);
+    singleState = (state[AD1P_STATE_SINGLE] != 0);
 
     printf("Monitoring for %d instruction cycles.\n", count);
-    while( count-- > 0 )
-    {
-        addr = pdp1P->epc | pdp1P->pc;
-        word = pdp1P->core[addr];
-        fprintf(fP, "%06o: %06o\n", addr, word);
 
-        AD1_SET_CONTINUE(pdp1P);
-        while( AD1_CONTINUE(pdp1P) )
+    // The emulator records the address and word before each step, up to a limit per request. A
+    // breakpoint or watch hit ends a request early with the hit still latched, so the next
+    // request steps one more and ends the same way; that keeps the run going as the old
+    // monitor did, and the hit is reported once it is over.
+    stalled = 0;
+    while( count > 0 )
+    {
+        chunk = (count > AD1P_MAX_RECORDS) ? AD1P_MAX_RECORDS : count;
+        status = tgtStep(chunk, true, &res);
+        if( (status != AD1P_ST_OK) && (status != AD1P_ST_TIMEOUT) )
         {
-            usleep(1);       // wait for completion
+            statusOk(status);
+            break;
+        }
+
+        for( i = 0; i < res.nRecords; ++i )
+        {
+            fprintf(fP, "%06o: %06o\n", res.recordsP[i * 2], res.recordsP[(i * 2) + 1]);
+        }
+
+        count -= (res.done > (uint32_t)chunk) ? chunk : (int)res.done;
+        if( (res.done == 0) && (++stalled >= 3) )
+        {
+            printf("The pdp-1 is not stepping.\n");
+            break;
         }
     }
 
     if( !singleState )
     {
-        AD1_CLEAR_SINGLE(pdp1P);
+        tgtClearSingle();
     }
 
     fclose(fP);
@@ -946,55 +982,32 @@ FILE *fP;
 void
 setWatchFn(int addr, int value)
 {
-int i;
-int flags;
-WatchP watchP;
-
-    // Find an empty slot
-    watchP = pdp1P->ad1Watches;
-
-    for( i = 0; i < AD1_NUM_WATCHES; ++i )
-    {
-        if( !watchP->isSet )
-        {
-            break;
-        }
-
-        ++watchP;
-    }
-
-    if( i >= AD1_NUM_WATCHES )
-    {
-        printf("No watches are left, delete one first\n");
-        return;
-    }
-
-    watchP->isSet = true;
-    watchP->number = i + 1;
-    watchP->address = addr & 0177777;
-    watchP->lastVal = pdp1P->core[watchP->address];
+int status;
+uint32_t number;
 
     if( value == BADNUM )
     {
-        watchP->onAny = true;
-        watchP->value = 0;      // just to keep it clean
+        status = tgtWatchSet(addr & 0177777, true, 0, &number);
     }
     else
     {
-        watchP->onAny = false;
-        watchP->value = value;
+        status = tgtWatchSet(addr & 0177777, false, value, &number);
     }
 
-    watchP->isEnabled = true;
-    AD1_ENABLE_WATCHES(pdp1P);
-
-    ++watchCount;
+    if( status == AD1P_ST_NO_SLOT )
+    {
+        printf("No watches are left, delete one first\n");
+    }
+    else
+    {
+        statusOk(status);
+    }
 }
 
 void
 deleteWatchFn(int num)
 {
-WatchP watchP;
+int status;
 char line[32];
 
     if( num < 1 )
@@ -1016,19 +1029,14 @@ char line[32];
             return;
         }
 
-        watchP = &(pdp1P->ad1Watches[num - 1]);
-        if( !watchP->isSet )
+        status = tgtWatchDelete(num);
+        if( status == AD1P_ST_NOT_SET )
         {
             printf("Watch %d is not set.\n", num);
         }
         else
         {
-            clearWatch(watchP);
-
-            if( --watchCount <= 0 )
-            {
-                AD1_DISABLE_WATCHES(pdp1P);
-            }
+            statusOk(status);
         }
     }
 }
@@ -1036,57 +1044,51 @@ char line[32];
 void
 enableWatchFn(int num)
 {
-WatchP watchP;
+int status;
 
     if( !validateWatchNumber(num) )
     {
         return;
     }
 
-    watchP = &(pdp1P->ad1Watches[num-1]);
-    if( watchP->isSet )
+    // The emulator refreshes the remembered value so the watch does not fire until the next change.
+    status = tgtWatchEnable(num);
+    if( status == AD1P_ST_ALREADY )
     {
-        if( watchP->isEnabled )
-        {
-            printf("Watch %d is already enabled.\n", watchP->number);
-        }
-        else
-        {
-            watchP->isEnabled = true;
-            watchP->lastVal = pdp1P->core[watchP->address]; // update so we don't fire until the next change
-        }
+        printf("Watch %d is already enabled.\n", num);
+    }
+    else if( status == AD1P_ST_NOT_SET )
+    {
+        printf("Watch %d is not set, can't enable it.\n", num);
     }
     else
     {
-        printf("Watch %d is not set, can't enable it.\n", num);
+        statusOk(status);
     }
 }
 
 void
 disableWatchFn(int num)
 {
-WatchP watchP;
+int status;
 
     if( !validateWatchNumber(num) )
     {
         return;
     }
 
-    watchP = &(pdp1P->ad1Watches[num - 1]);
-    if( watchP->isSet )
+    status = tgtWatchDisable(num);
+    if( status == AD1P_ST_ALREADY )
     {
-        if( !watchP->isEnabled )
-        {
-            printf("Watch %d is already diabled.\n", watchP->number);
-        }
-        else
-        {
-            watchP->isEnabled = false;
-        }
+        printf("Watch %d is already diabled.\n", num);
+    }
+    else if( status == AD1P_ST_NOT_SET )
+    {
+        printf("Watch %d is not set, can't disable it.\n", num);
     }
     else
     {
-        printf("Watch %d is not set, can't disable it.\n", num);
+        statusOk(status);
     }
 }
 
@@ -1108,40 +1110,46 @@ void
 debugFn()
 {
 int i;
-int val;
-BreakpointP brkP;
-WatchP watchP;
+uint32_t val;
+uint32_t state[AD1P_STATE_WORDS];
+Ad1BpEntry bps[AD1_NUM_BREAKPOINTS];
+Ad1WatchEntry watches[AD1_NUM_WATCHES];
 
-    printf("ad1flags %x, pc %06o epc %o exd %d\n", pdp1P->ad1flags, pdp1P->pc, pdp1P->epc, pdp1P->exd);
-    printf("bps %s ad1brkno %d ad1brkhit %d\n",
-         AD1_BREAKPOINTS_ENABLED(pdp1P)?"on":"off",
-         pdp1P->ad1brkNo, pdp1P->ad1brkHit);
-    printf("watches %s ad1watchno %d ad1watchhit %d\n",
-         AD1_WATCHES_ENABLED(pdp1P)?"on":"off",
-         pdp1P->ad1watchNo, pdp1P->ad1watchHit);
+    tgtGetState(state);
+    printf("pc %06o exd %d run %d single %d dropped events %d\n", state[AD1P_STATE_PC],
+        state[AD1P_STATE_EXD], state[AD1P_STATE_RUN], state[AD1P_STATE_SINGLE],
+        state[AD1P_STATE_DROPPED]);
+    printf("bps %s brkno %d brkhit %d\n", state[AD1P_STATE_BRK_ENABLED]?"on":"off",
+        state[AD1P_STATE_BRK_NO], state[AD1P_STATE_BRK_HIT]);
+    printf("watches %s watchno %d watchhit %d\n", state[AD1P_STATE_WATCH_ENABLED]?"on":"off",
+        state[AD1P_STATE_WATCH_NO], state[AD1P_STATE_WATCH_HIT]);
 
-    for(i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
+    if( tgtBpList(bps) == AD1P_ST_OK )
     {
-        brkP = &pdp1P->ad1Breakpoints[i];
-        printf("bkp %d set %d enabled %d address %06o\n", i+1, brkP->isSet, brkP->isEnabled, brkP->address);
+        for(i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
+        {
+            printf("bkp %d set %d enabled %d address %06o\n", i+1, bps[i].isSet, bps[i].isEnabled, bps[i].address);
+        }
     }
 
-    for(i = 0; i < AD1_NUM_WATCHES; ++i )
+    if( tgtWatchList(watches) == AD1P_ST_OK )
     {
-        watchP = &pdp1P->ad1Watches[i];
-        printf("watch %d set %d enabled %d address %06o,",
-            i+1, watchP->isSet, watchP->isEnabled, watchP->address);
-
-        val = pdp1P->core[watchP->address];
-
-        if( watchP->onAny )
+        for(i = 0; i < AD1_NUM_WATCHES; ++i )
         {
-            printf(" value any, value %06o, lastval %06o, memval %06o\n",
-                watchP->value, watchP->lastVal, val);
-        }
-        else
-        {
-            printf(" value %06o, lastVal %06o, memval %06o\n", watchP->value, watchP->lastVal, val);
+            printf("watch %d set %d enabled %d address %06o,",
+                i+1, watches[i].isSet, watches[i].isEnabled, watches[i].address);
+
+            val = tgtRead(watches[i].address);
+
+            if( watches[i].onAnyChange )
+            {
+                printf(" value any, value %06o, lastval %06o, memval %06o\n",
+                    watches[i].value, watches[i].lastValue, val);
+            }
+            else
+            {
+                printf(" value %06o, lastVal %06o, memval %06o\n", watches[i].value, watches[i].lastValue, val);
+            }
         }
     }
 }

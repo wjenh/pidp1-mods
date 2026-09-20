@@ -120,28 +120,28 @@ waitcon1,
 //
 // Poll both channels' status words until both have dsfrdy set.
 
-    local
+    local s0, s1, bothrdy
 waitboth,
     lio [0]
     rcs
     lai
-    dac %s0
+    dac s0
     lio [1]
     rcs
     lai
-    dac %s1
-    lac %s0
+    dac s1
+    lac s0
     and [dsfrdy]
     sza i           // skip if ch0 ready
     jmp waitboth
-    lac %s1
+    lac s1
     and [dsfrdy]
     sza i           // skip if ch1 ready
     jmp waitboth
-    jmp %bothrdy    // both ready: do not run into the data words below
-%s0, 0
-%s1, 0
-%bothrdy,
+    jmp bothrdy    // both ready: do not run into the data words below
+s0, 0
+s1, 0
+bothrdy,
     endloc
 
 // ---- read from each channel using rcr (read-and-release) -----------------

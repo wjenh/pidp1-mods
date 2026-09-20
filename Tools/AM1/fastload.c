@@ -2,9 +2,10 @@
  * Load a binary tape as if it had been done via read-in.
  * A tape in bin or am1 format can be loaded.
  * There are two modes.
- * If the emulator is running and and in shared memory mode,
- * the tape can be loaded directly into the pdp-1 live memory.
- * If not, the core-image save vile, coremem, can be overwritten
+ * If the emulator is running, the tape can be loaded directly into the
+ * pdp-1 live memory over the emulator's debugger link (TCP, the ad1port
+ * setting in pidp1.config; -h names a host on another machine).
+ * If not, the core-image save file, coremem, can be overwritten
  * with the tape so that on the next pdp-1 boot the program will
  * be memory resident.
  *
@@ -14,6 +15,8 @@
  * 26-Aug-2026 wje initial version
  * 28-Aug-2026 wje add load-to-memory-file
  * 12-Sep-2026 wje add more detail to usage
+ * 20-Sep-2026 Claude replace the shared-memory link with the network link; the tape is parsed
+ *    completely first and then written in one request, so a bad tape changes nothing.
 */
 
 #include <unistd.h>
@@ -23,16 +26,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <sys/mman.h>
 
-// pdp1.h needs these defined
-typedef uint64_t u64;
-typedef uint32_t u32;
-typedef uint16_t u16;
-
-// We need this to pick up the definition of the PDP1 data structure.
-#define USEAM1
-#include "/opt/pidp1-mods/src/blincolnlights/pdp1/pdp1.h"
+#include "../AD1/ad1link.h"
 
 #define DEFAULT_MEMFILE "/opt/pidp1-mods/coremem"
 
@@ -43,26 +38,31 @@ typedef uint16_t u16;
 #define MEMSIZE 4096
 #define MEMBANKS 16
 
-#define SHM_NAME "/pidp1"
-
-#define NIL 0
-
 #define LOADFAILED  -1
 #define LOADSTOP    -2
 #define BANKOF(x) (((x) >> 12) & 017)
 #define ADDRESSOF(x) ((x) & 07777)
 #define FULLADDR(bank, addr) (((bank) << 12) | ADDRESSOF(addr))
 
-PDP1P pdp1P;                    // how we get to pdp-1 memory
-
 static int savedWord;
+
+// The words of the tape, block after block, and where each block goes. They are collected while
+// the tape is parsed and sent only when it has parsed cleanly.
+static uint32_t *imageP;
+static uint32_t imageWords;
+static uint32_t imageCap;
+static Ad1Block *blocksP;
+static uint32_t nBlocks;
+static uint32_t blocksCap;
 
 static int loadTape(char *filenameP, FILE *memFileFp, bool toFile);
 static int getWord(FILE *fP);
 static int skipLoader(FILE *fP);
 static int loadAm1(FILE *fP, FILE *memFilefP, bool toFile);
-static int loadBin(FILE *fP);
-static bool attachMemory(void);
+static int loadBin(FILE *fP, FILE *memFilefP, bool toFile);
+static bool beginBlock(uint32_t address);
+static bool addWord(uint32_t word);
+static bool sendImage(Ad1Link *linkP, bool *wasRunningP);
 static void ungetWord(int word);
 static void usage(void);
 
@@ -76,9 +76,14 @@ char *cP;
 char *filenameP;
 char *lineP;
 char *memFileNameP;
+char *hostP;
 FILE *memFilefP;
+Ad1Link link;
+bool wasRunning;
+int status;
 
     memFileNameP = DEFAULT_MEMFILE;
+    hostP = NULL;
     useMemFile = false;
 
     // do the command line processing
@@ -99,6 +104,17 @@ FILE *memFilefP;
                 --argc;
                 ++argv;
                 memFileNameP = *argv;
+                break;
+
+            case 'h':               // host[:port] of the emulator, if not this machine
+                --argc;
+                ++argv;
+                if( argc < 1 )
+                {
+                    usage();
+                }
+
+                hostP = *argv;
                 break;
 
             default:
@@ -156,22 +172,36 @@ FILE *memFilefP;
     }
     else
     {
-        if( !attachMemory() )
-        {
-            fprintf(stderr, "Can't attach to the pdp-1, is it running and is shared=yes in the config file?\n");
-            exit(1);
-        }
-
-        // Ok, be sure pdp-1 is stopped and load it.
-        AD1_SET_STOP(pdp1P);
+        // Parse the whole tape before touching the emulator, so a bad tape changes nothing.
         if( (address = loadTape(filenameP, 0, false)) == LOADFAILED )
         {
             fprintf(stderr, "Can't load the tape, is it a valid macro or am1 rim tape?\n");
             exit(1);
         }
-        else if( address == LOADSTOP )
+
+        if( ad1LinkOpen(&link, hostP, 0, "fastload") != 0 )
+        {
+            fprintf(stderr, "%s\n", ad1LinkError());
+            exit(1);
+        }
+
+        // Stops the pdp-1 if it is running, then stores every block in one step.
+        wasRunning = false;
+        if( !sendImage(&link, &wasRunning) )
+        {
+            ad1LinkClose(&link);
+            exit(1);
+        }
+
+        if( wasRunning )
+        {
+            printf("The pdp-1 was running and has been stopped.\n");
+        }
+
+        if( address == LOADSTOP )
         {
             printf("Tape loaded, an am1 program with a stop directive.\n");
+            ad1LinkClose(&link);
             exit(0);
         }
 
@@ -180,26 +210,23 @@ FILE *memFilefP;
         {
             if( *lineP == 'y' )
             {
-                pdp1P->ad1StartAddr = ADDRESSOF(address);
-                pdp1P->ad1ExtendedAddr = address & 0170000;    
-                AD1_CLEAR_SINGLE(pdp1P);    // shouldn't be set, but be sure
-                AD1_SET_START(pdp1P);
+                if( (status = ad1Start(&link, (uint32_t)address, NULL, NULL)) != AD1P_ST_OK )
+                {
+                    fprintf(stderr, "Can't start the pdp-1: %s\n", ad1StatusText(status));
+                    ad1LinkClose(&link);
+                    exit(1);
+                }
             }
         }
+
+        ad1LinkClose(&link);
     }
 
     exit(0);
 }
 
-// Attempt to load a tape directly into pdp-1 active memory.
-// If the file can't be opened, say so and exit.
-// If the file isn't a valid binary load tape, say so and exit.
-// If the shared memory segment can't be attached, say so and exit.
-// Otherwise, stop the pdp-1 and load its memory from the tape.
-// If it succeeds, print the starting address, ask if it should be started.
-// If so, start the pdp-1 at that address before exiting..
-
-// Do the actual loading.
+// Read and check a tape. To a file, the words are written as they are read. Otherwise they are
+// only collected, for sendImage() to send once the whole tape has been read.
 // Return the starting address or LOADSTOP on success, else LOADFAILED.
 int
 loadTape(char *filenameP, FILE *memFileFp, bool toFile)
@@ -244,7 +271,7 @@ FILE *fP;
     }
     else if( kind == BINTAPE )
     {
-        if( (addr = loadBin(fP)) == LOADFAILED )
+        if( (addr = loadBin(fP, memFileFp, toFile)) == LOADFAILED )
         {
             printf("Loading failed, tape is not the correct format.\n");
             return(LOADFAILED);
@@ -331,6 +358,10 @@ int kind;
         ungetWord(word);        // am1 tape with no loader, put back the beginning of the am1 data
         return( AM1TAPE );
     }
+    else
+    {
+        return(EOF);            // neither: kind would be used unset below
+    }
 
     // Ok, we have a tape with a read-in loader, skip it
     while( (word = getWord(fP)) != EOF )
@@ -352,8 +383,8 @@ int kind;
 }
 
 // Load an am1 binary, return the starting address or LOADSTOP, or LOADFAIL for an error.
-// LOADSTOP is returned if the program ended with a stop direcive.
-// If toFile is true, write to the memory file, else to shared memory.
+// LOADSTOP is returned if the program ended with a stop directive.
+// If toFile is true, write to the memory file, else collect the words for sendImage().
 int
 loadAm1(FILE *fP, FILE *memFilefP, bool toFile)
 {
@@ -375,6 +406,10 @@ bool loading;
                 curAddr = word & 0177777;
                 endAddr = getWord(fP);
                 loading = true;
+                if( !toFile && !beginBlock((uint32_t)curAddr) )
+                {
+                    return(LOADFAILED);
+                }
             }
             else if( op == 0400000 )    // starting address, done
             {
@@ -402,7 +437,12 @@ bool loading;
             }
             else
             {
-                pdp1P->core[curAddr++] = word;      // just put the data into the current addr
+                if( !addWord((uint32_t)word) )
+                {
+                    return(LOADFAILED);
+                }
+
+                ++curAddr;
             }
 
             if( curAddr == endAddr )
@@ -416,8 +456,10 @@ bool loading;
 }
 
 // Load a macro-style binary, return the starting address or LOADFAIL for an error.
+// If toFile is true, write to the memory file, else collect the words for sendImage(). (A bin
+// tape with -m used to store through a null pointer, since there is no live memory to store to.)
 int
-loadBin(FILE *fP)
+loadBin(FILE *fP, FILE *memFilefP, bool toFile)
 {
 int word;
 int op;
@@ -438,6 +480,10 @@ bool loading;
                 curAddr = ADDRESSOF(word);
                 endAddr = ADDRESSOF(getWord(fP));
                 loading = true;
+                if( !toFile && !beginBlock((uint32_t)curAddr) )
+                {
+                    return(LOADFAILED);
+                }
             }
             else if( op == 0600000 )    // JMP starting address, done
             {
@@ -455,7 +501,20 @@ bool loading;
                 return(LOADFAILED);
             }
 
-            pdp1P->core[curAddr++] = word;      // just put the data into the current addr
+            if( toFile )
+            {
+                fprintf(memFilefP,"%06o: %06o\n", curAddr++, word);
+            }
+            else
+            {
+                if( !addWord((uint32_t)word) )
+                {
+                    return(LOADFAILED);
+                }
+
+                ++curAddr;
+            }
+
             if( curAddr == endAddr )
             {
                 getWord(fP);                    // discard the checksum
@@ -467,29 +526,92 @@ bool loading;
     return(LOADFAILED);
 }
 
-// Attach the shared memory segment,
-// return true for success, else false.
+// Start a new block of the image at address. Returns false if out of memory.
 bool
-attachMemory(void)
+beginBlock(uint32_t address)
 {
-int shmFd;
+    if( nBlocks == blocksCap )
+    {
+        Ad1Block *newP;
 
-    shmFd = shm_open(SHM_NAME, O_RDWR, 0666);
-    if( shmFd < 0 )
-    {
-        return(false);                          // not found, pdp1 not running or not set up for shared memory
-    }
-    else
-    {
-        pdp1P = mmap(NIL, sizeof(PDP1), PROT_READ | PROT_WRITE, MAP_SHARED, shmFd, 0);
-        if( pdp1P == NIL )
+        blocksCap = (blocksCap == 0) ? 16 : (blocksCap * 2);
+        if( !(newP = realloc(blocksP, blocksCap * sizeof(Ad1Block))) )
         {
-            fprintf(stderr, "mmap failed\n");
-            close(shmFd);
-            exit(1);
+            fprintf(stderr, "Out of memory.\n");
+            return(false);
         }
 
-        close(shmFd);
+        blocksP = newP;
+    }
+
+    blocksP[nBlocks].address = address;
+    blocksP[nBlocks].count = 0;
+    ++nBlocks;
+    return(true);
+}
+
+// Add one word to the current block. Returns false if out of memory.
+bool
+addWord(uint32_t word)
+{
+    if( imageWords == imageCap )
+    {
+        uint32_t *newP;
+
+        imageCap = (imageCap == 0) ? 4096 : (imageCap * 2);
+        if( !(newP = realloc(imageP, imageCap * sizeof(uint32_t))) )
+        {
+            fprintf(stderr, "Out of memory.\n");
+            return(false);
+        }
+
+        imageP = newP;
+    }
+
+    imageP[imageWords++] = word;
+    ++blocksP[nBlocks - 1].count;
+    return(true);
+}
+
+// Stop the pdp-1 if it is running and write the collected blocks, all together or not at all.
+// Sets *wasRunningP. Returns false, after saying why, if it could not be done.
+bool
+sendImage(Ad1Link *linkP, bool *wasRunningP)
+{
+uint32_t i;
+uint32_t used;
+uint32_t wasRunning;
+int status;
+
+    // A block that ended up with no words has nothing to write; drop it, keeping the words of
+    // the others in step.
+    used = 0;
+    for( i = 0; i < nBlocks; ++i )
+    {
+        if( blocksP[i].count > 0 )
+        {
+            blocksP[used++] = blocksP[i];
+        }
+    }
+
+    nBlocks = used;
+    if( nBlocks == 0 )
+    {
+        return(true);               // an empty tape, nothing to store
+    }
+
+    wasRunning = 0;
+    status = ad1WriteBlocks(linkP, blocksP, nBlocks, imageP, 1, &wasRunning, NULL);
+    *wasRunningP = (wasRunning != 0);
+    if( status != AD1P_ST_OK )
+    {
+        fprintf(stderr, "Can't load the pdp-1: %s\n", ad1StatusText(status));
+        if( status == AD1P_ST_TIMEOUT )
+        {
+            fprintf(stderr, "It did not stop in time, nothing was stored.\n");
+        }
+
+        return(false);
     }
 
     return(true);
@@ -498,11 +620,13 @@ int shmFd;
 void
 usage(void)
 {
-    fprintf(stderr, "Usage: fastload [-m] ]-f memfilename] rimfile\n");
-    fprintf(stderr, "    By default, this will load directly into active memory,\n");
-    fprintf(stderr, "    but the pidp-1 must be running and shared=yes set in pidp-1.connfig.\n");
+    fprintf(stderr, "Usage: fastload [-h host[:port]] [-m] [-f memfilename] rimfile\n");
+    fprintf(stderr, "    By default, this will load directly into active memory, stopping the pdp-1\n");
+    fprintf(stderr, "    if it is running. The pidp-1 must be running with its debugger port enabled\n");
+    fprintf(stderr, "    (ad1port in pidp1.config, on by default). -h names a pidp-1 on another machine,\n");
+    fprintf(stderr, "    default localhost:1044; a host other than localhost with no port gets 1045.\n");
     fprintf(stderr, "    Otherwise, -m will update the coremem file, the program must be manually started.\n");
-    fprintf(stderr, "    if -f is not used, the default is /opt/pidp1-mods/coremem\n");
+    fprintf(stderr, "    If -f is not used, the default is /opt/pidp1-mods/coremem\n");
     fprintf(stderr, "    Don't use -m if the pidp-1 is running, the memory file will be overwritten by it.\n");
     exit(1);
 }

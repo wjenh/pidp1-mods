@@ -29,7 +29,7 @@ extern BankContextP curBankP;
 int countNLs(char *strP);
 SymNodeP resolveLocalSymbol(char *nameP);
 
-void gdbtarget(void);    // this is a do-nothng just to add as a gdb breakpoint target
+void gdbtarget(void);    // this is a do-nothing just to add as a gdb breakpoint target
 
 extern int processEscape(char);
 extern int type340Shift(char);
@@ -145,7 +145,7 @@ extern void vwarn(int errtype, char *msgP, ...);
                         return(COMMENT);
                     }
 
-\%forcelocal		{ return(FORCELOC); }
+[ \t]*%%forcelocal	{ return(FORCELOC); }
 
 loc(al)?[ \t]*		{ return(LOCAL); }
 addloc(al)?[ \t]*	{ return(ADDLOCAL); }
@@ -156,6 +156,11 @@ var[ \t]*	    	{ return(VAR); }
 table[ \t]*	    	{ return(TABLE); }
 bank[ \t]*	    	{ return(BANK); }
 thisbank[ \t]*  	{ return(THISBANK); }
+
+[ \t]*%%[a-zA-Z_][a-zA-Z0-9_]*	{
+                        verror("%s is not an am1 directive", strchr(yytext, '%'));
+                        return(BAD);
+                    }
 
 \:		        	{ return(BREF); }
 ^[ \t]*start[ \t]*	{ return(START); }
@@ -223,6 +228,8 @@ flexo[ \t][^\n;]{1,3}	{
 
                                 default:
                                     verror("\\%c in text is not valid", *cP);
+                                    // never returns, just to shut up overly-picky c compilers
+                                    ch = NONE;
                                 }
                             }
                             else
@@ -325,7 +332,7 @@ octal		    	{ decimalMode = false; }
 [ ]*\-[ ]*	    	{ return(MINUS); }
 [ ]*\/[ ]*	    	{ return(DIV); }
 [ ]*\*[ ]*	    	{ return(MUL); }
-[ ]*%%[ ]*	    	{ return(MOD); }
+[ ]*%[ ]*	    	{ return(MOD); }    /* task A36: was %% */
 [ ]*<<[ ]*	    	{ return(LSHIFT); }
 [ ]*>>[ ]*	    	{ return(RSHIFT); }
 \.		       	    { return(DOT); }
@@ -355,9 +362,10 @@ octal		    	{ decimalMode = false; }
                         yylval.ival = (int)strtol(yytext+2,0,10);
                         if( yylval.ival > WRDMASK )
                         {
-                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
+                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)",
+                                yytext, WRDMASK);
                             return(BAD);
-                            }
+                        }
                         return(INTEGER);
                     }
 
@@ -438,7 +446,7 @@ octal		    	{ decimalMode = false; }
                                     return(OPORABLE);
 
                                 default:
-                                    verror("inernal error in perm sym lookup");
+                                    verror("internal error in perm sym lookup");
                                 }
                             }
                             else if( (symP = resolveLocalSymbol(yytext)) )
@@ -458,22 +466,6 @@ octal		    	{ decimalMode = false; }
                                 return(NAME);
                             }
                         }
-
-%[a-zA-Z_][a-zA-Z0-9_]*	{
-                    SymNodeP nodeP;
-
-                        if( (nodeP = resolveLocalSymbol(yytext)) )
-                        {
-                            yylval.symP = nodeP;
-                            return(LCLADDR);
-                        }
-                        else
-                        {
-                            yylval.strP = malloc(yyleng+1);
-                            strcpy(yylval.strP,yytext);
-                            return(LCLNAME);
-                        }
-                    }
 
 ^[\t ]+	            { }
 
@@ -849,6 +841,8 @@ octal		    	{ decimalMode = false; }
 
                                 default:
                                     verror("\\%c in text is not valid", tmpc);
+                                    // never returns, just to shut up overly-picky c compilers
+                                    rslt = NONE;
                                 }
                             }
                             else

@@ -50,40 +50,40 @@ octal
 // "sub [X]; sza; jmp fail" fires on mismatch -- the correct sense.
 
 #define checkError(expected_code, label_addr) \
-    /* Scratch storage at start of macro, jumped over by jmp %body.   */ \
-    /* %done is at the END of the macro so jmp %done reaches the      */ \
+    /* Scratch storage at start of macro, jumped over by jmp body.   */ \
+    /* done is at the END of the macro so jmp done reaches the      */ \
     /* first instruction of whatever follows the macro invocation.     */ \
-    local; \
-    jmp %body; \
-%saved, 0; \
-%body, \
+    local body, saved, has_err, done, fail_code; \
+    jmp body; \
+saved, 0; \
+body, \
     /* Step 1: verify dserr bit set */ \
     lai; \
-    dac %saved; \
+    dac saved; \
     and [dserr]; \
     sza; \
-    jmp %has_err; \
+    jmp has_err; \
     /* dserr NOT set -- IO was 0 or lacked error bit, that is a fail */ \
     lio [REPORT_FAIL]; \
     lac [label_addr]; \
     jda reportResult; \
-    jmp %done; \
-%has_err, \
+    jmp done; \
+has_err, \
     /* Step 2: isolate low 6 bits and compare to expected code */ \
-    lac %saved; \
+    lac saved; \
     and [077]; \
     sub [expected_code]; \
     sza; \
-    jmp %fail_code; \
+    jmp fail_code; \
     lio [REPORT_PASS]; \
     lac [label_addr]; \
     jda reportResult; \
-    jmp %done; \
-%fail_code, \
+    jmp done; \
+fail_code, \
     lio [REPORT_FAIL]; \
     lac [label_addr]; \
     jda reportResult; \
-%done, \
+done, \
     endloc
 
 // ---- program origin -------------------------------------------------------

@@ -4,18 +4,18 @@ Test of local scoping
     private d
 
     loc a, b
-    addlocal x, y
-    jmp %a
+    addlocal x, y, a2   // a2 was the ad-hoc local %a until task A36
+    jmp a2
         local b
         lac x
         jmp c
-        jmp %a
+        jmp a2
         jmp a
     b, 0
         endloc 2
     d, jmp b        // nested address declaration of outer scope declared but not resolved local
        jmp d
-    %a, 0
+    a2, 0
     a, 1
     b, 0
     x, 0

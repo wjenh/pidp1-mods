@@ -11,6 +11,7 @@
  *
  * 15-Dec-2025 - initial version
  * 5-Jan-2026 - fix bug terminating a #define macro with no endloc
+ * 19-Sep-2026 - update for the %%forcelocal syntax change
  *
 */
 
@@ -103,7 +104,7 @@ FILE *errfP;
 			    {
 				fprintf(yyout, "%s)\\\n", yytext);
 				fprintf(yyout, "local;\\\n");
-				fprintf(yyout, "%%forcelocal;\\\n");
+				fprintf(yyout, "%%%%forcelocal;\\\n");
 				needSemi = false;
 				// Discard in case there is a comment following
 				eatLine();

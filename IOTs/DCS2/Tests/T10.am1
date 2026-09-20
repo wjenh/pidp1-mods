@@ -70,21 +70,21 @@ octal
 //   label    -- am1 [constant] address of the result label
 
 #define verifyRxl(expected, label) \
-    local; \
+    local fail, done; \
     lai; \
     and [0377]; \
     sub [expected]; \
     sza; \
-    jmp %fail; \
+    jmp fail; \
     lio [REPORT_PASS]; \
     lac [label]; \
     jda reportResult; \
-    jmp %done; \
-%fail, \
+    jmp done; \
+fail, \
     lio [REPORT_FAIL]; \
     lac [label]; \
     jda reportResult; \
-%done, \
+done, \
     endloc
 
 // ---- program origin -------------------------------------------------------
@@ -148,52 +148,52 @@ begin,
     rxl
 
     // Verify we got CSHIFT code (074)
-    local
+    local fail5a, t5b
     lai
     and [077]               // isolate Concise code
     sub [con_ucs]           // should be 074
     sza
-    jmp %fail5a
+    jmp fail5a
     // Also verify RXL_CHANGE is set
     lai
     and [rxlchg]
     sza i                   // skip if rxlchg != 0 (it IS set -- expected)
-    jmp %fail5a
+    jmp fail5a
     lio [REPORT_PASS]
     lac [lbl5a]
     jda reportResult
-    jmp %t5b
-%fail5a,
+    jmp t5b
+fail5a,
     lio [REPORT_FAIL]
     lac [lbl5a]
     jda reportResult
-%t5b,
+t5b,
     endloc
 
     // Step 5b: second call with shift=1 (rxlucs), expect Concise 061
     lio [rxlucs ascii_A]    // IO = 0000400 | 0101 = shift=1, char='A'
     rxl
 
-    local
+    local fail5b, t5b_done
     lai
     and [077]
     sub [con_a]             // should be 061 (upper case 'A' maps to Concise 061)
     sza
-    jmp %fail5b
+    jmp fail5b
     // Also verify RXL_CHANGE is NOT set (shift was already upper)
     lai
     and [rxlchg]
     sza                     // skip if rxlchg == 0 (not set -- expected)
-    jmp %fail5b
+    jmp fail5b
     lio [REPORT_PASS]
     lac [lbl5b]
     jda reportResult
-    jmp %t5b_done
-%fail5b,
+    jmp t5b_done
+fail5b,
     lio [REPORT_FAIL]
     lac [lbl5b]
     jda reportResult
-%t5b_done,
+t5b_done,
     endloc
 
 // ---- T10-6: ASCII->Concise, unmappable char SOH (0x01) -> flxnch (013) --
@@ -216,26 +216,26 @@ begin,
     rxl
 
     // Verify ascnch (077) returned
-    local
+    local fail7, t7done
     lai
     and [0377]
     sub [ascnch]
     sza
-    jmp %fail7
+    jmp fail7
     // Verify RXL_CHANGE set (shift state flipped)
     lai
     and [rxlchg]
     sza i
-    jmp %fail7
+    jmp fail7
     lio [REPORT_PASS]
     lac [lbl7]
     jda reportResult
-    jmp %t7done
-%fail7,
+    jmp t7done
+fail7,
     lio [REPORT_FAIL]
     lac [lbl7]
     jda reportResult
-%t7done,
+t7done,
     endloc
 
 // ---- cleanup and halt ----------------------------------------------------

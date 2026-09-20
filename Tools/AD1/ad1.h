@@ -2,7 +2,10 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define VERSION "1.19 20-Aug-2026"
+#include "ad1link.h"
+#include "target.h"
+
+#define VERSION "2.0 20-Sep-2026"
 
 #define MAXFILES    8    // maximum number of open files we can have
 #define MAXLINES    10000 // max number of lines in a file
@@ -71,6 +74,12 @@
 #define ADDRESS 105       // marker for symbolic, use base 8 if no symbol
 
 typedef uint32_t u32;
+typedef uint32_t Word;    // an 18-bit PDP-1 word held in 32 bits
+
+// Sizes come from the link protocol, so ad1 follows whatever the emulator was built with.
+#define MAXMEM AD1P_MEM_WORDS
+#define AD1_NUM_BREAKPOINTS AD1P_NUM_BREAKPOINTS
+#define AD1_NUM_WATCHES AD1P_NUM_WATCHES
 
 // Nothing fancy, just a linear list. Won't be enough symbols to need otherwise.
 typedef struct {

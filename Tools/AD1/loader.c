@@ -7,7 +7,6 @@
 #include <stdbool.h>
 
 #include "ad1.h"
-#include "pdp1inc.h"
 
 // The kind of tape we are loading
 #define BINTAPE 1
@@ -15,15 +14,23 @@
 
 int loadTape(char *filenameP);
 
-extern PDP1P pdp1P;
-
 static int savedWord;
+
+// The words of the tape, block after block, and where each block goes. They are collected while
+// the tape is parsed and sent only when it has parsed cleanly, so a bad tape changes nothing.
+static uint32_t imageWords[MAXMEM];
+static uint32_t nWords;
+static Ad1Block blocks[MAXMEM];
+static uint32_t nBlocks;
 
 static int getWord(FILE *fP);
 static void ungetWord(int word);
 static int skipLoader(FILE *fP);
 static int loadAm1(FILE *fP);
 static int loadBin(FILE *fP);
+static bool beginBlock(uint32_t address);
+static bool addWord(uint32_t word);
+static bool sendImage(void);
 
 // Attempt to load a tape.
 // If the file can't be opened, say so and return LOADFAILED.
@@ -44,6 +51,8 @@ FILE *fP;
     }
 
     savedWord = -1;             // for ungetWord() pushback
+    nWords = 0;
+    nBlocks = 0;
 
     // A tape can be a bin tape, an am1 tape with a loader, or an am1 tape with no loader.
     // Tapes with loaders are loaded by read-in.
@@ -65,22 +74,25 @@ FILE *fP;
     // ready to load
     if( kind == AM1TAPE )
     {
-        if( (addr = loadAm1(fP)) == LOADFAILED )
-        {
-            printf("Loading failed, tape is not the correct format.\n");
-            return(LOADFAILED);
-        }
+        addr = loadAm1(fP);
     }
     else if( kind == BINTAPE )
     {
-        if( (addr = loadBin(fP)) == LOADFAILED )
-        {
-            printf("Loading failed, tape is not the correct format.\n");
-            return(LOADFAILED);
-        }
+        addr = loadBin(fP);
     }
 
     fclose(fP);
+    if( addr == LOADFAILED )
+    {
+        printf("Loading failed, tape is not the correct format.\n");
+        return(LOADFAILED);
+    }
+
+    if( !sendImage() )
+    {
+        return(LOADFAILED);
+    }
+
     return(addr);
 }
 
@@ -160,6 +172,10 @@ int kind;
         ungetWord(word);        // am1 tape with no loader, put back the beginning of the am1 data
         return( AM1TAPE );
     }
+    else
+    {
+        return(EOF);            // neither: kind would be used unset below
+    }
 
     // Ok, we have a tape with a read-in loader, skip it
     while( (word = getWord(fP)) != EOF )
@@ -202,6 +218,10 @@ bool loading;
                 curAddr = word & 0177777;
                 endAddr = getWord(fP);
                 loading = true;
+                if( !beginBlock((uint32_t)curAddr) )
+                {
+                    return(LOADFAILED);
+                }
             }
             else if( op == 0400000 )    // starting address, done
             {
@@ -223,7 +243,12 @@ bool loading;
                 return(LOADFAILED);
             }
 
-            pdp1P->core[curAddr++] = word;      // just put the data into the current addr
+            if( !addWord((uint32_t)word) )
+            {
+                return(LOADFAILED);
+            }
+
+            ++curAddr;
             if( curAddr == endAddr )
             {
                 loading = false;                // end of a data block
@@ -257,6 +282,10 @@ bool loading;
                 curAddr = ADDRESSOF(word);
                 endAddr = ADDRESSOF(getWord(fP));
                 loading = true;
+                if( !beginBlock((uint32_t)curAddr) )
+                {
+                    return(LOADFAILED);
+                }
             }
             else if( op == 0600000 )    // JMP starting address, done
             {
@@ -274,7 +303,12 @@ bool loading;
                 return(LOADFAILED);
             }
 
-            pdp1P->core[curAddr++] = word;      // just put the data into the current addr
+            if( !addWord((uint32_t)word) )
+            {
+                return(LOADFAILED);
+            }
+
+            ++curAddr;
             if( curAddr == endAddr )
             {
                 getWord(fP);                    // discard the checksum
@@ -284,4 +318,81 @@ bool loading;
     }
 
     return(LOADFAILED);
+}
+
+// Start a new block at an address. The words that follow belong to it.
+static bool
+beginBlock(uint32_t address)
+{
+    if( nBlocks >= MAXMEM )
+    {
+        return(false);
+    }
+
+    blocks[nBlocks].address = address;
+    blocks[nBlocks].count = 0;
+    ++nBlocks;
+    return(true);
+}
+
+// Add a word to the current block. A tape with more words than the machine has memory is not one
+// that could have been meant to load.
+static bool
+addWord(uint32_t word)
+{
+    if( nWords >= MAXMEM )
+    {
+        return(false);
+    }
+
+    imageWords[nWords++] = word;
+    ++blocks[nBlocks - 1].count;
+    return(true);
+}
+
+// Send the tape to the emulator in one request, stopping it first if it is running. Nothing is
+// stored unless all of it can be. Returns true on success.
+static bool
+sendImage(void)
+{
+uint32_t i;
+uint32_t used;
+bool wasRunning;
+int status;
+
+    // A block that ended up with no words has nothing to write; drop it, keeping the words of
+    // the others in step.
+    used = 0;
+    for( i = 0; i < nBlocks; ++i )
+    {
+        if( blocks[i].count > 0 )
+        {
+            blocks[used++] = blocks[i];
+        }
+    }
+
+    nBlocks = used;
+    if( nBlocks == 0 )
+    {
+        return(true);               // an empty tape, nothing to store
+    }
+
+    status = tgtWriteBlocks(blocks, nBlocks, imageWords, true, &wasRunning);
+    if( status != AD1P_ST_OK )
+    {
+        printf("Can't load the pdp-1: %s.\n", ad1StatusText(status));
+        if( status == AD1P_ST_TIMEOUT )
+        {
+            printf("It did not stop in time, nothing was stored.\n");
+        }
+
+        return(false);
+    }
+
+    if( wasRunning )
+    {
+        printf("The pdp-1 was running and has been stopped.\n");
+    }
+
+    return(true);
 }

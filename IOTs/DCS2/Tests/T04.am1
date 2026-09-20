@@ -165,13 +165,13 @@ t2_done,
     lio [byte_B]
     tcb                     // send something to ch1 to drain it cleanly
 
-    local
+    local done_drain
 drainb,
-    lio [1]; rcs; lai; and [dsfcls dsfser]; sza; jmp %done_drain
+    lio [1]; rcs; lai; and [dsfcls dsfser]; sza; jmp done_drain
     lio [1]; rcs; lai; and [dsfrdy]; sza i; jmp drainb
     lio [1]; roc
     rch rchclr
-%done_drain,
+done_drain,
     endloc
 
     // Close both

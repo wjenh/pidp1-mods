@@ -176,16 +176,16 @@ t4_done,
     lio [0]                 // IO = channel 0; SCBCLEAR takes the channel from IO
     scb
 
-    local
+    local closed_ok
 waitclosed,
     lio [0]
     rcs
     lai
     and [dsfopn]
     sza i                   // skip if still open
-    jmp %closed_ok
+    jmp closed_ok
     jmp waitclosed
-%closed_ok,
+closed_ok,
     lio [REPORT_PASS]
     lac [lbl5]
     jda reportResult

@@ -12,10 +12,11 @@ T12: DCS2 TELNET MODE TEST
  *   The harness verifies the 15-byte character-mode greeting DCS2 sends on
  *   accept, sends an unsolicited option probe and verifies DCS2 refuses it,
  *   then sends a 10-byte data stream (an escaped IAC pair plus a mix of a
- *   cr/lf pair, a bare lf, and a bare cr) and verifies the 21 bytes that
+ *   cr/lf pair, a bare lf, and a bare cr) and verifies the 23 bytes that
  *   come back: for each character, DCS2's own dcfecho echo of the received
  *   bytes as the character is read, then this program's tcc of the decoded
- *   character, re-escaped/re-expanded (see modeTelnetEchoClient).
+ *   character, re-escaped/re-expanded, a cr as CR NUL (see
+ *   modeTelnetEchoClient).
  *
  * What the program does:
  *   1. Opens channel 0 as a TCP server (dcftel dcfecho, no dcfflex) on
@@ -428,16 +429,16 @@ b8_done,
     lio [0]                 // SCBCLEAR takes the channel from IO
     scb
 
-    local
+    local closed_ok
 waitclosed,
     lio [0]
     rcs
     lai
     and [dsfopn]
     sza i
-    jmp %closed_ok
+    jmp closed_ok
     jmp waitclosed
-%closed_ok,
+closed_ok,
     lio [REPORT_PASS]
     lac [lbl10]
     jda reportResult

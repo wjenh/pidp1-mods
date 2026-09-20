@@ -5,10 +5,21 @@
 # For options that are on or off, 'y', 'yes', 'on' all mean enabled,
 # any other value means off.
 
-# If on, then the pidp-1 emulator state is kept in shared memory
-# instead of local memory.
-# This only needs to be enabled if other programs need to access the pidp1 state.
-shared=false
+# Obsolete. The emulator no longer keeps its state in shared memory; ad1 and fastload talk to
+# it over TCP, this will be ignored.
+#shared=false
+
+# The debugger server that ad1 and fastload connect to, one client at a time, on either port.
+# ad1port is the loopback port (localmachine, 127.0.0.1 only).
+# Set it to 0 or off to disable it.
+# The default is port 1044 and enabled.
+# Use ad1 -h host:port to reach it from another machine.
+#ad1port=1044
+
+# ad1remoteport listens on all interfaces at the same time as ad1port.
+# It is off by default, uncomment to allow remote debugging and fastloading.
+# IT HAS NO AUTHENTICATION, enable it only on a network you trust.
+#ad1remoteport=1045
 
 # Enable/disable various PDP-1D extensions
 # lai and lia are available in the main branch pidp1 if compiled in.

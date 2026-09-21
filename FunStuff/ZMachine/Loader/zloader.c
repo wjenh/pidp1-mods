@@ -9,7 +9,7 @@
  *   Constants shared with the interpreter are in zloader.h.
  *
  *   It computes no layout for the interpreter. The interpreter parses the
- *   story header off the drum at boot and works out its own dynamic-memory
+ *   story header off the drum at boot and works out its dynamic-memory
  *   size, bank count and page addressing from it, so one assembled
  *   interpreter runs any story with no reassembly.
  *
@@ -39,6 +39,7 @@
  * is started. Not part of the emulator or any IOT plugin.
  *
  * 19-Sep-2026 wje/Claude initial release
+ * 21-Sep-2026 wje shorten the load report, too verbose
  */
 
 #include <stdio.h>
@@ -48,14 +49,12 @@
 
 #include "zloader.h"
 
-// The live drum the Type 23 plugin pair reads (IOTs/Type23Drum/IOT_61.c's
-// own DRUMFILE). The -i option overrides it.
+// The live drum the Type 23 plugin pair reads.
+// The -i option overrides it.
 #define DEFAULT_DRUM "/opt/pidp1-mods/pdp23drum"
 
-// ---- Globals -----------------------------------------------------------
 static uint8_t  *g_storyP;              // the whole story file in memory
-static long      g_storyLen;            // its actual size in bytes, padding
-                                        //   included
+static long      g_storyLen;            // its actual size in bytes, padding included
 
 static uint8_t   g_version;
 static uint16_t  g_release;
@@ -73,7 +72,7 @@ static uint32_t  g_lengthScale;         // that unit: 2 for V3, 4 for V4/V5
 static uint32_t  g_installLen;          // the bytes put on the drum: the
                                         //   declared length, or the whole
                                         //   file when the field is 0
-static uint16_t  g_storySum;            // the story's own checksum, bytes
+static uint16_t  g_storySum;            // the story's checksum, bytes
                                         //   0x40 .. g_installLen-1, mod 2^16
 static char      g_serial[7];
 
@@ -105,7 +104,7 @@ usage(const char *progNameP)
         progNameP, DEFAULT_DRUM);
 }
 
-// Read a big-endian 16-bit field, the Z-machine's own word order.
+// Read a big-endian 16-bit field, the Z-machine' word order.
 // Returns the field's value.
 static uint16_t
 be16(const uint8_t *pP)
@@ -184,7 +183,7 @@ readHeader(void)
     memcpy(g_serial, g_storyP + ZH_SERIAL, 6);
     g_serial[6] = '\0';
 
-    // The version refusal comes BEFORE the file-length scale, because the
+    // The version refusal comes before the file-length scale, because the
     // scale is a function of the version.
     //
     // Only V3, V4 and V5 are supported: V1, V2 and V6-V8 are refused.
@@ -196,8 +195,8 @@ readHeader(void)
         exit(1);
     }
 
-    // The file-length field is stored DIVIDED by a version-dependent unit
-    // (Standard 1.1 S11.1.6): 2 for V1-V3, 4 for V4-V5, 8 for V6-V8.
+    // The file-length field is stored divided by a version-dependent unit
+    // (standard 1.1 S11.1.6): 2 for V1-V3, 4 for V4-V5, 8 for V6-V8.
     // V6-V8 have already been refused above.
     g_lengthScale     = (g_version <= 3u) ? 2u : 4u;
     g_fileLengthField = (uint32_t)be16(g_storyP + ZH_FILE_LENGTH)
@@ -235,12 +234,11 @@ readHeader(void)
         exit(1);
     }
 
-    // ---- What is installed --------------------------------------------
     // The story is the file up to its DECLARED length; the bytes after it
-    // are padding, which the header's own checksum already leaves out
+    // are padding, which the header's checksum already leaves out
     // (S11.1.6's `verify` sums 0x40 to the declared end).
     //
-    // A field of 0 installs the whole file. The Standard marks the field
+    // A field of 0 installs the whole file. The standard marks the field
     // "3+" because some early V3 files carry 0 there, and zboot.ac's
     // section 8 keeps only dynamic memory resident for such a story.
     //
@@ -255,10 +253,8 @@ readHeader(void)
         g_installLen = (uint32_t)g_storyLen;
     }
 
-    // The static-base test above is against the FILE. This one is against
-    // what is INSTALLED: dynamic memory is loaded from the drum at boot,
-    // so a static base past the declared end would have boot load zeros
-    // as game state.
+    // This test is against what is installed, dynamic memory is loaded from the drum at boot,
+    // so a static base past the declared end would have boot load zeros as game state.
     if( (uint32_t)g_staticBase > g_installLen )
     {
         fprintf(stderr,
@@ -269,12 +265,11 @@ readHeader(void)
     }
 }
 
-// Sum the story the way the `verify` opcode does (Standard 1.1 S11.1.6's
+// Sum the story the way the `verify` opcode does (standard 1.1 S11.1.6's
 // checksum): every byte from 0x40 up to the end of what is installed,
 // added unsigned, modulo 0x10000.
 //
-// Precondition: readHeader() has set g_installLen, which is at least
-// ZH_HEADER_BYTES.
+// Precondition: readHeader() has set g_installLen, which is at least ZH_HEADER_BYTES.
 //
 // Returns the 16-bit sum. The caller reports a mismatch with the header's
 // field but still installs the story.
@@ -301,7 +296,7 @@ uint32_t sum;
 static void
 computeLayout(void)
 {
-    // Round UP on both halves of the word count. An odd static base is
+    // Round up on both halves of the word count. An odd static base is
     // legal, and its final word then holds one byte of dynamic memory and
     // one byte of static; the interpreter loads that word whole. The
     // installed length is odd only for a whole file installed under a
@@ -327,7 +322,7 @@ computeLayout(void)
         exit(1);
     }
 
-    // Only a story that does not fit on the drum AT ALL is refused.
+    // Only a story that does not fit on the drum at all is refused.
     //
     // This is reachable only through a length field of 0. The field is
     // 16 bits, so a V4/V5 story declares at most 65535 x 4 = 262140 bytes
@@ -359,13 +354,13 @@ computeLayout(void)
 static void
 writeDrum(const char *pathP)
 {
-FILE     *fP;
-int32_t  *trackBufP;
-uint32_t  track;
-uint32_t  word;
-uint32_t  storyWordIx;
-uint32_t  byteOff;
-uint8_t   hi, lo;
+FILE *fP;
+int32_t *trackBufP;
+uint32_t track;
+uint32_t word;
+uint32_t storyWordIx;
+uint32_t byteOff;
+uint8_t hi, lo;
 
     if( !(trackBufP = (int32_t *)malloc(ZL_TRACK_SIZE * sizeof(int32_t))) )
     {
@@ -400,7 +395,7 @@ uint8_t   hi, lo;
                 hi = g_storyP[byteOff];
                 // Guard the last byte of an odd installed length, which
                 // only a whole file under a length field of 0 can have.
-                // The guard is on what is INSTALLED, not on the file: a
+                // The guard is on what is installed, not on the file: a
                 // byte of padding must not ride into the last word.
                 lo = ((byteOff + 1u) < g_installLen)
                         ? g_storyP[byteOff + 1u] : 0u;
@@ -429,70 +424,51 @@ uint8_t   hi, lo;
     free(trackBufP);
 }
 
-// Print what was installed, for the person running the tool.
+// Print what was installed.
 static void
 report(const char *storyPathP, const char *drumPathP)
 {
     printf("zloader: '%s' -> '%s'\n", storyPathP, drumPathP);
-    printf("  story             : V%u, release %u, serial %s, %ld bytes\n",
+    printf("  Story             : V%u, release %u, serial %s, %ld bytes.\n",
         g_version, g_release, g_serial, g_storyLen);
-    printf("  header            : static 0x%04X, high 0x%04X, initial PC 0x%04X\n",
+    printf("  Header            : static 0x%04X, high 0x%04X, initial PC 0x%04X,\n",
         g_staticBase, g_highMemBase, g_initialPC);
-    printf("                      dict 0x%04X, objects 0x%04X, globals 0x%04X, "
-        "abbrev 0x%04X\n",
+    printf("                      dict 0x%04X, objects 0x%04X, globals 0x%04X, abbrev 0x%04X,\n",
         g_dictAddr, g_objTableAddr, g_globalsAddr, g_abbrevAddr);
 
     // The checksum, over the same bytes the `verify` opcode sums. A
     // mismatch is reported and the story installed anyway.
     if( g_storySum == g_headerChecksum )
     {
-        printf("                      checksum 0x%04X, and bytes 0x40 to the "
-            "story's end sum to it\n", g_headerChecksum);
+        printf("                      checksum valid.\n");
     }
     else
     {
-        printf("                      checksum 0x%04X, but the story sums to "
-            "0x%04X: NO MATCH.\n"
-            "                      Installed anyway; the `verify` opcode "
-            "will report failure.\n", g_headerChecksum, g_storySum);
+        printf("                      checksum INVALID."
+               "                      Installed anyway. the 'verify' command will report it.\n");
     }
 
     // What was installed, and what was dropped.
     if( g_fileLengthField != 0u )
     {
-        printf("  declared length   : %u bytes (header field x%u, S11.1.6), "
-            "installed\n", g_fileLengthField, g_lengthScale);
-        if( (uint32_t)g_storyLen > g_installLen )
-        {
-            printf("  padding dropped   : %lu byte(s) after the declared end "
-                "(not part of the story)\n",
-                (unsigned long)((uint32_t)g_storyLen - g_installLen));
-        }
-        else
-        {
-            printf("  padding dropped   : none\n");
-        }
+        printf("Declared length     : %u bytes.\n", g_fileLengthField);
     }
     else
     {
-        printf("  declared length   : none (the header's field is 0); the "
-            "whole %ld-byte file is installed\n", g_storyLen);
+        printf("Declared length     : none (the header's field is 0); the "
+            "whole %ld-byte file is installed.\n", g_storyLen);
     }
-    printf("  interpreter       : zmachine.rim, the one image for V3, V4 "
-        "and V5; boot sets\n"
-        "                      it up for V%u from the header.\n",
+    printf("Boot set up for V%u.\n",
         g_version);
-    printf("  story on drum     : %u words = tracks 0..%u\n",
+    printf("Story on drum       : %u words = tracks 0..%u.\n",
         g_storyWords, g_storyTracks - 1u);
-    printf("  dynamic memory    : %u words = %u bank(s), loaded at boot into "
-        "banks 1..%u\n", g_dynWords, g_dynBanks, g_dynBanks);
-    printf("  drum tracks unused: %u (zeroed)\n", ZL_MAX_TRACKS - g_storyTracks);
+    printf("Dynamic memory      : %u words = %u bank(s), loaded at boot into "
+        "banks 1..%u.\n", g_dynWords, g_dynBanks, g_dynBanks);
+    printf("%u drum tracks unused and zeroed.\n", ZL_MAX_TRACKS - g_storyTracks);
 
     // Saves go to whatever tape the player mounted on drive 2.
-    printf("  saved games       : Saves go to the tape on drive 2 "
-        "(bin/mtp 2 <image> mounts one).\n"
-        "                      (not on the drum; this install leaves them "
-        "alone)\n");
+    printf("Remember, saves go to the tape mounted on drive 2.\n");
+    printf("Have fun!\n");
 }
 
 // Parse the command line, then load the story, check it, write the drum

@@ -651,11 +651,11 @@ type340Shift(char ch)
     {
         return(1);
     }
-    else if( strchr("!\"#$%'()*+,-./i:;<=>?", ch) )
+    else if( strchr("!\"#$%&'()*+,-./:;<=>?", ch) )    // character set 1
     {
         return(1);
     }
-    else if( strchr("~\\[]{}_|", ch) )
+    else if( strchr("~\\[]{}_|`^", ch) )    // character set 2
     {
         return(-1);
     }

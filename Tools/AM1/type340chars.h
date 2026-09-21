@@ -15,4 +15,17 @@
 #define TYPE340AUTO     101 // special case, doesn't really exist, just a marker
 #define TYPE340NOEND    102 // special case, doesn't really exist, just a marker
 
+// More markers, returned by the escape routine.
+// They sit above the 6-bit character range so they can never be mistaken for a code.
+#define TYPE340CONT     103 // backslash-newline, a line continuation, store nothing
+#define TYPE340PLAIN    104 // the escaped character is an ordinary ASCII character
+#define TYPE340BKSP     105 // backspace, lower-set code 072
+#define TYPE340SUBSCR   106 // subscript, lower-set code 073
+#define TYPE340SUPER    107 // superscript, lower-set code 077
+
+// The lower-set codes those three markers stand for.
+#define TYPE340CODE_BKSP    072
+#define TYPE340CODE_SUBSCR  073
+#define TYPE340CODE_SUPER   077
+
 #endif

@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v2.1 21-Sep-2026"
-#define AM1SHORTVERSION "am1 v2.1"
+#define AM1VERSION "am1 v2.2 21-Sep-2026"
+#define AM1SHORTVERSION "am1 v2.2"
 #define SYMFILEVERSION "V3"             // used for import to check proper version, must match listSymtab.c
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -34,6 +34,7 @@
 #define WARN_BREF 8
 #define WARN_MEMORY 9
 #define WARN_LAW 10
+#define WARN_T340 11
 
 // actually the max local scope nesting
 #define MAXLOCALS   128

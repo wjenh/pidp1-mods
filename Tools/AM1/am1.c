@@ -135,6 +135,7 @@
  * 14-Sep-2026 wje - clean up usage and explicitly initialize doMacro and doBinary
  * 19-Sep-2026 wje - rework lexer, % is now mod like it should be, %% is a directive, the old use of % in locals is gone
  * 21-Sep-2026 wje - and finally fix xxx/ stmt for an origin statement
+ * 21-Sep-2026 wje - some edge-case fixes in eval.c and in type340chars
  *
 */
 #include <unistd.h>
@@ -169,6 +170,7 @@ Warning warnings[] = {
     {"bref", WARN_BREF, false, false, false},
     {"memory", WARN_MEMORY, false, true, false},
     {"law", WARN_LAW, true, true, false},
+    {"type340", WARN_T340, true, true, false},
     {0, 0, false}  // end marker
 };
 

@@ -9,7 +9,7 @@
 extern int lineno;
 extern int localDepth;
 extern int maxLocalDepth;                   // the deepest nexting we've seen
-extern LocalContextP localContextP;	    // used while a local scope is enabled
+extern LocalContextP localContextP;        // used while a local scope is enabled
 extern LocalContextP localStack[];
 extern char *filenameP;                     // current input file name
 static char filename[1024];
@@ -82,42 +82,42 @@ int ctr;
 
     switch( ch )
     {
-    case '\n':  	// \<newline> ignored
-	ch = '\0';
-	break;
+    case '\n':      // \<newline> ignored
+    ch = '\0';
+    break;
 
     case 'e':
-	ch = '\033';	// an escape
-	break;
+    ch = '\033';    // an escape
+    break;
 
     case 'b':
-	ch = '\b';	// a backspace
-	break;
+    ch = '\b';      // a backspace
+    break;
 
-    case '^':		// ^char is control char
-	ch = input() & 037;
-	break;
+    case '^':       // ^char is control char
+    ch = input() & 037;
+    break;
 
     case 'f':
-	ch= '\f';	// formfeed
-	break;
+    ch= '\f';      // formfeed
+    break;
 
-    case 'n':		// a newline
-	ch= '\n';
-	break;
+    case 'n':      // a newline
+    ch= '\n';
+    break;
 
     case 'r':
-	ch = '\r';	// return
-	break;
+    ch = '\r';     // return
+    break;
 
-    case 't':		// a tab
-	ch = '\t';
-	break;
+    case 't':      // a tab
+    ch = '\t';
+    break;
 
-    case '\\':		// an esc'd backslash
-	break;
+    case '\\':     // an esc'd backslash
+    break;
 
-    case '0':		// numeric escape
+    case '0':      // numeric escape
     case '1':
     case '2':
     case '3':
@@ -125,31 +125,33 @@ int ctr;
     case '5':
     case '6':
     case '7':
-	number = ch - '0';
-	ctr = 1;
+    number = ch - '0';
+    ctr = 1;
 
-	ch = input();
+    ch = input();
 
-	while( isdigit(ch) && (ctr < 3) )
-	{
-	    number = number*8 + (ch - '0');
-	    ++ctr;
-	    ch = input();
-	}
+    while( (ch >= '0') && (ch <= '7') && (ctr < 3) )    // octal, so not 8 or 9
+    {
+        number = number*8 + (ch - '0');
+        ++ctr;
+        ch = input();
+    }
 
-	unput(ch);
-	ch = number;
-	break;
+    unput(ch);
+    ch = number;
+    break;
 
-    default:		// just char as is
-	break;
+    default:    // just char as is
+    break;
     }
 
     return( ch );
 }
 
 // Handle the backslash-x conversions for type 340 characters.
-// Return the character or 0 if it was a line continuation.
+// Returns a Type 340 code or one of the TYPE340xxx markers above the 6-bit range.
+// TYPE340CONT means store nothing and TYPE340PLAIN means the caller should treat ch
+// as an ordinary character.
 char
 processType340Escape(char ch)
 {
@@ -158,11 +160,14 @@ int ctr;
 
     switch( ch )
     {
-    case '\n':  	// backslash-<newline> ignored, it's a line continuation
-        return(0);
+    case '\n':          // backslash-<newline> ignored, it's a line continuation
+    case '\0':          // end of file, the caller finds it on its next read
+    case (char)EOF:
+        return(TYPE340CONT);
 
     case '\\':
-        return(ch);         // a backslash
+    case '"':
+        return(TYPE340PLAIN);   // a backslash or a quote
 
     case 'e':
         ch = TYPE340END;    // an explicit end marker, we're done
@@ -180,8 +185,16 @@ int ctr;
         ch = TYPE340AUTO;   // back to automatic shift
         break;
 
-    case 'b':		    // blob character
-        ch = TYPE340BLOB;
+    case 'b':              // backspace
+        ch = TYPE340BKSP;
+        break;
+
+    case 's':              // superscript
+        ch = TYPE340SUPER;
+        break;
+
+    case 'u':              // subscript
+        ch = TYPE340SUBSCR;
         break;
 
     case 'n':
@@ -192,11 +205,11 @@ int ctr;
         ch = TYPE340LF;     // newline, a line feed
         break;
 
-    case 'r':		    // a carriage return
+    case 'r':              // a carriage return
         ch = TYPE340CR;
         break;
 
-    case '0':		    // numeric escape
+    case '0':             // numeric escape
     case '1':
     case '2':
     case '3':
@@ -204,24 +217,25 @@ int ctr;
     case '5':
     case '6':
     case '7':
-	number = ch - '0';
-	ctr = 1;
+    number = ch - '0';
+    ctr = 1;
 
-	ch = input();
+    ch = input();
 
-	while( isdigit(ch) && (ctr < 2) )
-	{
-	    number = number*8 + (ch - '0');
-	    ++ctr;
-	    ch = input();
-	}
+    while( (ch >= '0') && (ch <= '7') && (ctr < 2) )    // octal, so not 8 or 9
+    {
+        number = number*8 + (ch - '0');
+        ++ctr;
+        ch = input();
+    }
 
-	unput(ch);
-	ch = number;
-	break;
+    unput(ch);
+    ch = number;
+    break;
 
-    default:		    // not supported
-        ch = TYPE340BLOB;
+    default:        // not an escape we know, so keep the character
+        vwarn(WARN_T340, "\\%c is not a type340 escape, using the %c", ch, ch);
+        ch = TYPE340PLAIN;
         break;
     }
 

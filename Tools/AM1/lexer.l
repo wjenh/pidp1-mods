@@ -1,7 +1,5 @@
 %{
-/* am1.l - lex for am1
- * 21-Sep-2026 wje - a blank after an origin's slash now makes the rest of the line a statement, not a divisor
- */
+/* am1.l - lex for am1 */
 
 #include <stdlib.h>
 #include <ctype.h>
@@ -639,7 +637,7 @@ octal		    	{ decimalMode = false; }
 
                                 tmpc = input();
 
-                                while( isdigit(tmpc) && (ctr < 3) )
+                                while( (tmpc >= '0') && (tmpc <= '7') && (ctr < 3) )    /* octal, so not 8 or 9 */
                                 {
                                     number = number*8 + (tmpc - '0');
                                     ++ctr;
@@ -709,9 +707,11 @@ octal		    	{ decimalMode = false; }
 <T340STR>\"		    {
                     int i;
                     int tmpc;
+                    int esc;
                     int charCount;
                     bool sawEnd;
                     bool sawForcedShift;
+                    bool plain;      // tmpc is an ASCII character, not yet a Type 340 code
                     char *cP;
                     bool inUpper;    // current shift state, false if lower
                     char string[STRBUF];
@@ -734,15 +734,41 @@ octal		    	{ decimalMode = false; }
                                 verror("unterminated quote in type340 string");
                             }
 
+                            plain = true;    // ordinary character, converted and shifted below
+
                             if( tmpc == '\\' )
                             {
-                                tmpc = processType340Escape(input());
-                                if( !tmpc )
+                                esc = input();
+                                tmpc = processType340Escape(esc);
+                                if( tmpc == TYPE340CONT )
                                 {
                                     continue;    // meant a line continuation
                                 }
 
-                                if( tmpc == TYPE340UPPER )
+                                // Only a marker from the escape routine is not a
+                                // character; a code, including 0, is stored as is.
+                                plain = (tmpc == TYPE340PLAIN);
+
+                                if( plain )
+                                {
+                                    tmpc = esc;    // \\ and \" go through the plain path
+                                }
+                                else if( (tmpc == TYPE340BKSP) || (tmpc == TYPE340SUBSCR) ||
+                                    (tmpc == TYPE340SUPER) )
+                                {
+                                    // these codes are in the lower set, so under
+                                    // automatic shifting get there first
+                                    if( !sawForcedShift && inUpper )
+                                    {
+                                        inUpper = false;
+                                        *cP++ = TYPE340LOWER;
+                                        ++charCount;
+                                    }
+
+                                    tmpc = (tmpc == TYPE340BKSP) ? TYPE340CODE_BKSP :
+                                        ((tmpc == TYPE340SUBSCR) ? TYPE340CODE_SUBSCR : TYPE340CODE_SUPER);
+                                }
+                                else if( tmpc == TYPE340UPPER )
                                 {
                                     inUpper = true;
                                     sawForcedShift = true;
@@ -771,7 +797,8 @@ octal		    	{ decimalMode = false; }
                                     sawEnd = true;
                                 }
                             }
-                            else
+
+                            if( plain )
                             {
                                 i = type340Shift(tmpc);
                                 if( !sawForcedShift && (i > 0) && !inUpper )
@@ -919,12 +946,58 @@ gdbtarget()
 // Any other token, a separator and a label's comma included ends that, so a
 // directive's operands are never mistaken for an origin.
 // Every token that ends a statement starts the next one bare.
+//
+// Additionally, the rule for a complement swallows the blanks in front
+// of the ~ so that "a & ~b" and "(~b)" need no separator, and that leaves
+// "lac ~07" with no separator token between the two operands.
+// When a complement that had a blank in front of it follows an operand, that blank was
+// the separator and it is handed over as one ahead of the complement.
 int
 yylex(void)
 {
+    static bool afterOperand = false;    // the last token can end an operand
+    static bool haveCmpl = false;        // a complement is queued behind a separator
     int token;
 
-    token = scan();
+    if( haveCmpl )
+    {
+        haveCmpl = false;
+        token = CMPL;
+    }
+    else
+    {
+        token = scan();
+
+        if( (token == CMPL) && afterOperand && (yytext[0] == ' ') )
+        {
+            haveCmpl = true;
+            token = SEPARATOR;
+        }
+    }
+
+    switch( token )
+    {
+    case INTEGER:
+    case NAME:
+    case ADDR:
+    case LCLADDR:
+    case DOT:
+    case VALUESPEC:
+    case OPCODE:
+    case OPADDR:
+    case OPORABLE:
+    case THISBANK:
+    case CHAR:
+    case LITCHAR:
+    case ENDCONST:
+    case ')':
+        afterOperand = true;
+        break;
+
+    default:
+        afterOperand = false;
+        break;
+    }
 
     switch( token )
     {

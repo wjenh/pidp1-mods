@@ -3,8 +3,8 @@
  *
  * 11-Sep-2026 wje/Claude - initial version
  * 13-Sep-2026 Claude - All Halt: the I/O poll stops the tapes when RUN falls
- *                      (MiscTasks/Completed/TASK-TAPE-HALT-WRITE.md)
- * 13-Sep-2026 Claude - mse rereads microtapes.txt and applies it if it changed (owner)
+ * 13-Sep-2026 Claude - mse rereads microtapes.txt and applies it if it changed
+ * 21-Sep-2026 Claude - mse now remounts if its image file changed
  */
 
 #define NOT_IN_PDP1
@@ -64,6 +64,7 @@ static bool parseSpec(const char *specP, char *pathP, bool *lockedP);
 static int mountDrive(int unit, const char *pathP, bool locked, uint64_t now, const char *whoP);
 static int mountResolved(int unit, const char *fullP, bool locked, uint64_t now, const char *whoP);
 static void unmountDrive(int unit, uint64_t now);
+static void remountIfChanged(uint32_t io, uint64_t now);
 static Word mountIot(PDP1 *pdp1P, uint64_t now);
 static bool unpackName(PDP1 *pdp1P, unsigned int addr, char *nameP, size_t size);
 static void reportIoErrors(void);
@@ -124,6 +125,7 @@ uint64_t now;
     case MT_SUB_MSE:
         mt550Service(&ctl, now);            // the drives up to now before any tape changes
         rereadList(now);                    // an edited microtapes.txt takes effect here
+        remountIfChanged(pdp1P->io, now);   // and so does a new tape file under an old name
         mt550Select(&ctl, now, pdp1P->io);
         break;
 
@@ -657,6 +659,45 @@ unmountDrive(int unit, uint64_t now)
     mt555Unmount(mt550Unit(&ctl, unit));
     ioErrorReported[unit] = false;
     mt550UnitRemounted(&ctl, unit, now);
+}
+
+// mse: if the image file behind the drive being selected (IO bits 2-5, as mse reads them) was
+// replaced, changed in place or removed since it was mounted (see mt555FileChanged()), mounts
+// it again: the file is read afresh and the reel is at the load point, as for any new tape.
+// The image is held in memory from the mount on, so without this a tape put under the old name
+// (mtp -u then mtp with the same name changes no line of microtapes.txt) is never seen.
+// Only the selected drive is looked at, and only here: a program that selects a drive between
+// blocks meets an unchanged file and loses nothing, and a drive nobody selects is not
+// disturbed. A block not yet written back is dropped, not written: it belongs to the old file.
+// A removed unlocked image comes back as a blank tape, as at any first mount; a removed locked
+// one leaves the drive empty. The mount is reported on stderr. No return value.
+static void
+remountIfChanged(uint32_t io, uint64_t now)
+{
+Mt555UnitP uP;
+char path[MT_PATH_MAX];
+char who[32];
+bool locked;
+int unit;
+
+    unit = (int)((io >> MT_SEL_SHIFT) & MT_SEL_MASK);
+    if( (unit < 1) || (unit > MT_UNITS) )
+    {
+        return;                             // selects nothing
+    }
+
+    uP = mt550Unit(&ctl, unit);
+    if( !mt555FileChanged(uP) )
+    {
+        return;
+    }
+
+    snprintf(who, sizeof(who), "microtape%d", unit);
+    snprintf(path, sizeof(path), "%s", uP->path);
+    locked = uP->locked;
+    fprintf(stderr, "%s: %s changed on disk; mounting it again\n", who, path);
+    uP->dirtyBlock = -1;
+    mountResolved(unit, path, locked, now, who);
 }
 
 // The mount IOT, 720201 is non-historic.

@@ -2,6 +2,7 @@
  * transport555.c - the implementation of the Type 555 microtape transport itself.
  *
  * 11-Sep-2026 wje/Claude - initial version
+ * 21-Sep-2026 Claude - detect any tape file change when mounting, flush cache if seen
  */
 
 #include <stdio.h>
@@ -19,6 +20,7 @@ static int64_t ceilDiv(int64_t num, int64_t den);
 static void startDecel(Mt555UnitP uP, uint64_t t, int64_t ramp);
 static void startAccel(Mt555UnitP uP, uint64_t t, int dir, int64_t ramp);
 static void blankFrom(uint32_t *wordsP, int firstBlock);
+static void noteStamp(Mt555UnitP uP, const struct stat *stP);
 
 // Puts a unit into its power-on state: no tape mounted, stopped at the load position,
 // no file. Must be called once before any other function on the unit. No return value.
@@ -58,6 +60,17 @@ ceilDiv(int64_t num, int64_t den)
 }
 
 // ---- Reel and image ------------------------------------------------------------------------
+
+// Records the size and times of the image file, from stP, as the state this unit knows: what
+// the mount read, or what our own last write left. mt555FileChanged() compares against it.
+// No return value.
+static void
+noteStamp(Mt555UnitP uP, const struct stat *stP)
+{
+    uP->fileSize = stP->st_size;
+    uP->fileMtime = stP->st_mtim;
+    uP->fileCtime = stP->st_ctim;
+}
 
 // Makes one block blank, as an unwritten tape reads: the leading checksum -0 and everything else
 // 0, so the block totals -0 and checks. blockWordsP points at its MT_STORED_WORDS words.
@@ -199,6 +212,7 @@ int i;
     strcpy(uP->path, pathP);
     uP->fileDev = st.st_dev;
     uP->fileIno = st.st_ino;
+    noteStamp(uP, &st);
     uP->created = created;
     uP->mounted = true;
     uP->locked = locked;
@@ -266,6 +280,9 @@ mt555Unmount(Mt555UnitP uP)
     uP->path[0] = 0;
     uP->fileDev = 0;
     uP->fileIno = 0;
+    uP->fileSize = 0;
+    memset(&uP->fileMtime, 0, sizeof(uP->fileMtime));
+    memset(&uP->fileCtime, 0, sizeof(uP->fileCtime));
     uP->fileBlocks = 0;
     uP->created = false;
     uP->mounted = false;
@@ -289,6 +306,7 @@ int block;
 int first;
 ssize_t size;
 ssize_t put;
+struct stat st;
 
     if( (block = uP->dirtyBlock) < 0 )
     {
@@ -318,6 +336,13 @@ ssize_t put;
         uP->fileBlocks = (block + 1);
     }
 
+    // Our own write moved the file's size and times; note them, or the next mse would take
+    // the write for someone else's change and mount the tape again.
+    if( fstat(uP->fd, &st) == 0 )
+    {
+        noteStamp(uP, &st);
+    }
+
     return(true);
 }
 
@@ -332,6 +357,8 @@ ssize_t put;
 bool
 mt555Erase(Mt555UnitP uP)
 {
+struct stat st;
+
     if( !uP->mounted || uP->locked )
     {
         return(false);
@@ -349,6 +376,10 @@ mt555Erase(Mt555UnitP uP)
         }
 
         uP->fileBlocks = 0;
+        if( fstat(uP->fd, &st) == 0 )
+        {
+            noteStamp(uP, &st);         // our own truncation, as in mt555Flush()
+        }
     }
 
     return(true);
@@ -368,6 +399,32 @@ struct stat st;
     }
 
     return( (st.st_dev == uP->fileDev) && (st.st_ino == uP->fileIno) );
+}
+
+// Returns true if the image file behind the mounted unit is no longer the one the mount read,
+// or the one our own last write left: another file under the same name, or the same file with a
+// different size, modification time or change time (the change time cannot be put back the way
+// cp -p puts the modification time back), or no file at all. The image is read whole at mount,
+// so a tape put under an old name is otherwise never seen. An in-memory image, an unmounted
+// unit, and a path that cannot be examined for any reason but being absent are never changed.
+bool
+mt555FileChanged(Mt555UnitP uP)
+{
+struct stat st;
+
+    if( !uP->mounted || (uP->fd < 0) )
+    {
+        return(false);
+    }
+
+    if( stat(uP->path, &st) != 0 )
+    {
+        return( (errno == ENOENT) || (errno == ENOTDIR) );
+    }
+
+    return( (st.st_dev != uP->fileDev) || (st.st_ino != uP->fileIno) || (st.st_size != uP->fileSize)
+        || (st.st_mtim.tv_sec != uP->fileMtime.tv_sec) || (st.st_mtim.tv_nsec != uP->fileMtime.tv_nsec)
+        || (st.st_ctim.tv_sec != uP->fileCtime.tv_sec) || (st.st_ctim.tv_nsec != uP->fileCtime.tv_nsec) );
 }
 
 // Returns stored word k (0 = leading checksum slot 3, 1-256 = data, 257 = trailing checksum

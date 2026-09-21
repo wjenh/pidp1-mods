@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <time.h>
 #include <sys/types.h>
 
 #define MT_UNITS            8               // up to 4 dual transports = 8 drives, numbered 1-8
@@ -69,6 +70,9 @@ typedef struct
     char path[MT_PATH_MAX]; // image path, "" for an in-memory image
     dev_t fileDev;          // the image file's device and inode, for mt555SameFile()
     ino_t fileIno;
+    off_t fileSize;         // its size and times as the mount or our last write left them, so
+    struct timespec fileMtime;  // that mt555FileChanged() can tell a change made by someone else
+    struct timespec fileCtime;
     int fileBlocks;         // blocks 0 .. fileBlocks-1 are in the file; the rest are blank
     bool created;           // the last mount created the file (the plugin reports it)
     uint32_t *wordsP;       // MT_IMAGE_WORDS words when mounted, each 18 bits
@@ -106,6 +110,7 @@ void mt555Unmount(Mt555UnitP uP);
 bool mt555Flush(Mt555UnitP uP);
 bool mt555Erase(Mt555UnitP uP);
 bool mt555SameFile(Mt555UnitP uP, const char *pathP);
+bool mt555FileChanged(Mt555UnitP uP);
 void mt555BlankBlock(uint32_t *blockWordsP);
 uint32_t mt555GetWord(Mt555UnitP uP, int block, int k);
 void mt555PutWord(Mt555UnitP uP, int block, int k, uint32_t word);

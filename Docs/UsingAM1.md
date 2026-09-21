@@ -2,16 +2,16 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 1.42 and covers up through am1 version 1.42; it will be updated as needed.\
-Edit date 8-Sep-2026
-Minor correction for cmi and dpy values, explain start behavior when in a bank, add 1D instruction explanations.
+This is version 2.01 and covers up through am1 version 2.01; it will be updated as needed.\
+Edit date 21-Sep-2026
+Fix origin statements, they can now have following code
 
 ## What is **am1**?
 
-(Yet) Another Macro assmbler for the PDP-1.
+(Yet) Another Macro assembler for the PDP-1.
 
 Why do we need another one?
-Simply because the avaialble ones seem to essentially duplcate the old **macro1** assembler with minor tweaks.
+Simply because the available ones seem to essentially duplicate the old **macro1** assembler with minor tweaks.
 It's time for a modern assembler that brings productive features and better error checking and better readability.
 
 Am1 provides some significant new features while maintaining some compatibility with existing macro sources.
@@ -22,13 +22,13 @@ It can, in fact, produce as its output valid source that can be assembled by **m
 
 ## The features and differences
 
-First, two different assembly modes are supported, generating of **macro1** source and direct generation of rim-lodable
+First, two different assembly modes are supported, generating of **macro1** source and direct generation of rim-loadable
 binary code.
 While most of the language constructs apply to both, no extended memory features such as *bank* and
-*bank references*,are supported by **macro1**, and neither are the PDP-1D extended instructions.
+*bank references*, are supported by **macro1**, and neither are the PDP-1D extended instructions.
 
 Code will still be generated but should just be for reference as any code in extended memory will just overlay
-code in bank 0, and the PDP-1D and special instructions will give an error unless defined in *macro1**.
+code in bank 0, and the PDP-1D and special instructions will give an error unless defined in **macro1**.
 
 Features
 
@@ -60,14 +60,14 @@ These changes were done to allow the above changes and to remove some of the amb
 use of characters in **macro1** that were poorly handled.
 
 - Constants are now of the form *[xxx* and *[xxx]*, not *(xxx* and *(xxx)*
-- Multiple statemens on a line are separated by *;* not tab
+- Multiple statements on a line are separated by *;* not tab
 - Tabs are not statement delimiters and are treated as a space
 - Cpp directives of the form *#xxx* are supported
-- The operators *& | ~ ^ \* \/*, %% (mod), as well as *(expr)* are added
-- *C* is defined as 04000 for use with IOTS
+- The operators *& | ~ ^ \* \/ %* (% is mod), as well as *(expr)* are added
+- *C* is defined as 04000 for use with IOTs
 - *dpyc* is defined as 724007 for convenience
 - *sdb* is defined as 722007 for Type 33 support, equivalent to dpy-i if Type 33 not configured
-- *%* is added to indicate a local variable, *%xxx*
+- Directives special to **am1**, such as *%%optimize*, are spelled with a leading *%%*
 - The numeric prefixes 0x, 0d, 0o are added to mean hex, decimal, octal regardless of the current radix
 - *'x'* is allowed to mean the value of a single ascii character, the usual escapes are recognized
 - *ascii "xxx"* is provided to create a table of ascii character values similar to *text*
@@ -118,7 +118,7 @@ In this document, no matter what it's called, it's *concise*.
 The PDP-1 used 1's complement math, which no modern computers use.
 But, **am1** runs on a modern computer and uses 2's complement math.
 It automatically converts 1's complement to 2's complement for the math operations
-*+, -, \*, /, %%*, and unary minus, then converts the result back to the 1's complement
+*+, -, \*, /, %*, and unary minus, then converts the result back to the 1's complement
 representation after computation.\
 The values in the binary output will be the correct 1's complement values.
 
@@ -158,7 +158,7 @@ Constants are handled specially to allow for constant reuse.
 When a constant is encountered, its defining expression is used to create a hash code that is saved
 as the key in the constants symbol table.
 Thus, the next time the same value is seen the existing entry will be used.
-When a *constants* directive is seen, all constants added since the last instance of the diretive are assigned
+When a *constants* directive is seen, all constants added since the last instance of the directive are assigned
 locations starting from the current location, which will be updated to one past the last constant processed.
 However, the actual value is not computed until the end of the program so that forward references can be used.
 
@@ -172,9 +172,9 @@ The context is created the first time a bank is specified by the *bank* directiv
 The contexts are automatically switched when banks are switched.
 
 A cross-bank reference looks up the given symbol in the global symbol table of the target bank and becomes
-the full 16-bit address if that symbol.
+the full 16-bit address of that symbol.
 If the symbol does not exist currently in the bank, it will be created.
-If it is never reolved in that bank, an error will be given at the end of the program.
+If it is never resolved in that bank, an error will be given at the end of the program.
 
 Three code generators are implemented, one that emits correct macro1 code that can be assembled by it,
 and one that emits binary suitable for rim loading, and one for generating listings.
@@ -197,7 +197,7 @@ Just type make.
 
 ## Usage
 
-**am1** [-abdmMlnNsSTvz[xykp]] [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
+**am1** [-abdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=modifier]... [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
 
 - a space means add, default is or
 - b generate binary tape image code, the default action
@@ -207,6 +207,10 @@ Just type make.
 - l generate a program listing
 - n don't run **cpp** on the input
 - N don't keep any text from an included file in a listing
+- O run the optimizer advisor, which writes *sourcefile.opt* and changes nothing about the assembled program, see *UsingTheAm1Optimizer.md*
+- O=modifier as -O, with a modifier: *-O=xform* prints what -O1 or -O2 does with each finding on stdout; the others switch rewrites off to find the one that broke a build, or set the limits of the rewrites that change a program's length, see *UsingTheAm1Optimizer.md*. The optimizer's debug dumps are accepted only by **am1test**, a testing build that is not installed
+- O1 as -O, and also rewrite the words five layout-neutral rules fire on, one word for one word at the same address, inside *%%optimize*/*%%endoptimize* regions only; without a region it assembles exactly what -O does, see *UsingTheAm1Optimizer.md*
+- O2 as -O1 with no region needed: it guesses where code must not be touched, and warns that the guess can be wrong, see *UsingTheAm1Optimizer.md*
 - r don't output an initial rim loader
 - s generate a symbol table, automatic if exports are done
 - S print a list of the highest address used in each bank
@@ -253,14 +257,23 @@ It can load traditional macro rim tapes or am1 rim tapes, with extended memory s
 It supports 2 loading options, directly into running memory or into the memory file read when
 the pidp-1 is started.
 
-For direct loading,the pidp-1 must be running and shared=yes set in the pidp1.config file.
+For direct loading, the pidp-1 must be running with its debugger port enabled.
+That is the *ad1port* setting in the pidp1.config file, which is on by default.
+The pidp-1 is stopped if it is running, the whole tape is checked and written in one step (a bad tape
+changes nothing), and *fastload* then offers to start the program.
+It can be on another machine, see *-h* below.
 
 For loading into the memory file, the pidp-1 process must not be running.\
 If it is, the memory file will be overwritten.\
 You will be asked to confirm it is not running before loading occurs.\
 Load with -m first, then start the pidp-1.
 
-Usage: fastload [-m] [-f memfilename]  *rimtapefile*
+Usage: fastload [-h host[:port]] [-m] [-f memfilename]  *rimtapefile*
+
+The *-h* option names a pidp-1 on another machine, as for **ad1**. The default is *localhost:1044*.
+A host other than this machine with no port gets 1045, the usual *ad1remoteport*.
+Only one debugger client can be connected to a pidp-1 at a time, so *fastload* will refuse if
+**ad1** is connected.
 
 It will report the starting address and offer to start the program at that address.
 
@@ -275,7 +288,7 @@ that has been generated, basically a loaderless *rim* tape but in ascii.
 Each line consists of two 18-bit octal numbers separated by a space.
 For every 18 bit word that would be loaded into memory its memory address and its value is written.
 
-The last line is the value of the *start* or *stop* diretive at the end of the program.
+The last line is the value of the *start* or *stop* directive at the end of the program.
 While technically not a storage word, it is needed for validation.
 Its address and value will both be whatever was specified in the statement in the source program.
 
@@ -297,7 +310,7 @@ The warnings are:
 - flex, a flexo op is used but shift codes make it exceed 3 characters, repeats
 - vars, a variables statement was used but there are no variables to emit, repeats
 - memory, an expression's address is the same as one that already has had code written to it, but see below
-- law, an law -n or law out of the range law i 07777 to law 07777 was used, repeats and enabled by default
+- law, a law -n or law out of the range law i 07777 to law 07777 was used, repeats and enabled by default
 
 Examples:
 ```
@@ -307,7 +320,7 @@ Examples:
 -W=-flex
 ```
 
-The first form enables all warnings, but individual ones can be then diabled.\
+The first form enables all warnings, but individual ones can be then disabled.\
 Prefacing the warning name with a minus turns off the warning, useful with -W.
 
 Errors are always printed and cause assembly to stop.
@@ -321,7 +334,7 @@ The first two will be obvious, the third covers a variety of errors.
 These are invalid code syntax, e.g. *1++2*, unterminated text or ascii strings, and number base violations,
 e.g. using 9 when the base is octal.
 
-For the forth, **am1** checks for multiple kinds of memory violations.
+For the fourth, **am1** checks for multiple kinds of memory violations.
 These are only checked if binary, executable code is being produced.
 
 - if code tries to go past the end of its bank, i.e. code at an address greater than 07777,
@@ -329,10 +342,20 @@ a fatal error will occur.
 - when generating binary code, but not macro code, if code or data is placed in a location that already
 contains code or data, an *overwrite*, a fatal error or warning will occur.
 - when emitting a *table*, *text*, or *ascii* directive, a fatal error on an overwrite will occur.
-- when emitting *variables* or *constants* either explictily or implicitly, a fatal error on an overwrite will occur.
+- when emitting *variables* or *constants* either explicitly or implicitly, a fatal error on an overwrite will occur.
 
 The second, overwrite by code, can be made a warning via the *-M* flag.
 By default, it is a fatal error.
+
+Every word **am1** writes to the tape is checked, in both directions: a word cannot land on an address
+already used, and a later word cannot land on it.
+The words the author writes -- an expression, an instruction or expression on a label's line,
+and each element of a *table* with an initializer -- are the ones *-M* covers.
+*text*, *ascii*, *variables* and *constants* are always fatal, with or without *-M*.
+
+Note that *-M* only changes an overwrite from an error to a warning; the warning itself is printed only if
+warnings are enabled, with *-w* or *-wmemory*.
+Without them, *-M* lets the overwrite happen in silence.
 
 ## Listing file
 
@@ -362,7 +385,7 @@ The following can be produced:
 
 - *file*.rim - binary output that can be read-in loaded
 - *file*.bin - binary output that has no rim loader
-- *file*.mac - text output that can (usually) be assembeld by **macro1**
+- *file*.mac - text output that can (usually) be assembled by **macro1**
 - *file*.lst - text output that is a listing of the assembled program, only generated for binary mode
 - *file*.cpp - text output that is the intermediate output from the **cpp** preprocessor
 - *file*.sym - text output that is a listing of the global symbols in the program
@@ -370,7 +393,7 @@ The following can be produced:
 The sym file contains 3 initial lines, a label, a version, and the filename of the original file
 followed by one line per symbol of the form:
 ```
-%%am1 symbab file%%
+%%am1 symtab file%%
 Vnnn
 aaaaaa F symbol-name lineno
 ```
@@ -387,7 +410,7 @@ written.
 This is useful for creating tapes that will be loaded after a program and is used in conjunction with the *stop*
 directive.
 
-Addional tapes loaded must have been generated with the *-r* flag; if not, the results will be undefined.
+Additional tapes loaded must have been generated with the *-r* flag; if not, the results will be undefined.
 
 Common uses are loading tables of data or loading additional already assembled code.
 
@@ -396,7 +419,7 @@ A no-loader tape can then be mounted and the *continue* switch pressed to load t
 As long as tapes end with a *stop*, the process can be repeated.
 
 If the program is to automatically start, the last tape should end with a *start* statement with the
-appropiate start address.
+appropriate start address.
 
 ## Using macros
 
@@ -430,7 +453,7 @@ There is one non-obvious side-effect of this. Consider:
 ```
 
 This will fail completely because the comment hides the backslash line continuation.
-What this results in is::
+What this results in is:
 ```
 #define mymacro(a,b) \
     lio a; \
@@ -521,8 +544,8 @@ Comments and empty lines do not affect the current location.
 Finally, the last line must be a *start xxx* statement to tell the loader where to start executing
 or a *stop* statement to allow for loading additional tapes before starting a program.
 
-The original **macro1** was not particulary good at reporting errors, and a missing start would generally cause
-unintened behavior. This statement is now mandatory, enforced by the assembler.
+The original **macro1** was not particularly good at reporting errors, and a missing start would generally cause
+unintended behavior. This statement is now mandatory, enforced by the assembler.
 
 ## Expressions
 
@@ -552,10 +575,37 @@ Unlike **macro1**, a digit cannot be used as the first character of a symbol.
 Symbols are of four general and one special types.
 
 - location symbol e.g. *abc34*, which represents a named location in memory
-- local symbol, e.g. *%mylocal*, which represents a location specifically within a local block
+- local symbol, e.g. *mylocal* named in a *local* directive, which represents a location specifically within a local block
 - reserved symbol, e.g. *lac*, generally an opcode
 - variable
 - constant symbol, e.g [123]
+
+## Origin symbols
+
+An example of origin symbols is:
+
+```
+100/
+4/ lem
+start+10/
+```
+Origin symbols don't generate any code themselves, the just set the current memory location.
+New code will be placed starting at the address before the /.
+However, any code-generating statements following the / will of course generate code.
+
+The syntax must be followed, the formal definition is:\
+*A slash with no blank before it and a blank after it, at the
+end of the first expression of a statement, is an origin and the rest of the line is the next statement.*
+
+**NOTE** the important wording. If you use division, /, it *must* have no blank following it.
+Otherwise it will be interpreted as the origin character.
+```
+foo/5/ cli   valid
+foo /5/      valid
+foo/5 /      FAIL! A syntax error
+foo/5 / cli  FAIL! Evaluates as (foo/5/cli)
+```
+To avoid all the pain, don't use a divide in an origin expression, it would rarely be useful anyway.
 
 ## Location symbols
 
@@ -577,30 +627,26 @@ The form for *zip* is a *fully-qualified* symbol that results in its full 16 bit
 It is an error to reference a symbol that never has a location assigned to it, and it is an error to define
 a location for the same symbol more than once in the same memory bank.
 
-Note that this is a departure from **macro1** which allow arbitrary redefinition of *any* symbol, a bad idea.
+Note that this is a departure from **macro1** which allows arbitrary redefinition of *any* symbol, a bad idea.
 
 A location symbol is *defined* when its name is first used.
 It is *resolved* when it is used as a location.
 In the example, the first use of *foo* is a definition, the second is the resolution.
-The second form is also called a *location asssignment*.
+The second form is also called a *location assignment*.
 
 ## Local and private symbols
 
 Local symbols are a variation of location symbols.
-They are defined between *local* and *endlocal* directives and come in two forms, *predefined* and *ad-hoc*.
-Predefined locals are specified following the *local* statement while ad-hoc symbols are declared when used
-via a leading per-cent, %, symbol.
-
-The two are distinct, predefinded *a* and ad-hoc *%a* are separate symbols.
+They are defined between *local* and *endlocal* directives, and are named following the *local* statement.
 
 ```
-    local a, b
-    %target, iot 31
+    local a, b, target
+    target, iot 31
     a, cla
     .
     .
     b,
-    jmp %target
+    jmp target
     endlocal
 ```
 
@@ -640,7 +686,7 @@ If no local scope exists, one is created just as if *local* had been used.
 This will only happen at the top level of a program where no local scope will exist.
 
 Why is this useful?
-It allows an outer scope to access a symbol in an inner scope while hiding it from sopes outside the
+It allows an outer scope to access a symbol in an inner scope while hiding it from scopes outside the
 declaring scope.
 
 A common case is peculiar to the PDP-1's ability to modify its own code.
@@ -652,11 +698,13 @@ they do *not* allocate any storage or assign addresses.
 That still needs to be done just like regular location symbols.
 This isn't **C**.
 
+**NOTE** an older syntax, %xxx, has been dropped.
+
 ## Symbol exports and imports
 
 A program can export its global symbols for other programs to use. This is useful for allowing separately assembled and loaded programs to interact. The exported symbols are in a *.sym* file, see above.
 
-Symbols from other programs can be imported, making symbols in those programs accessable when loaded.
+Symbols from other programs can be imported, making symbols in those programs accessible when loaded.
 
 A program has control over exporting and importing symbols by using the *export* and *import* directives.
 See the directives *import* and *export*, below.
@@ -696,7 +744,7 @@ Examples of constants are:
    lio [a+456   // a trailing comment
 ```
 
-Functionally, the above is eqivalent to:
+Functionally, the above is equivalent to:
 ```
    lac const1
    lio const2
@@ -707,7 +755,7 @@ const2, a+456
 ```
 
 But, constants are also tracked and kept in a *constants pool*.
-Sucessive uses of the same constant all share one memory location for their value, saving space.
+Successive uses of the same constant all share one memory location for their value, saving space.
 
 If a constant is the last thing on a line except for a trailing comment, the trailing ] can be omitted.\
 *Note* that *last* means **last**, nothing but an optional trailing comment is allowed.\
@@ -741,7 +789,7 @@ foo, table 5
 ```
 is **not** legal.
 
-Functionally, it is eqivalent to the same number of the initializer value, e.g.
+Functionally, it is equivalent to the same number of the initializer value, e.g.
 ```
 table 5, 17
 -or-
@@ -774,18 +822,14 @@ The priority is the same as that for **C** and the operations are the same.
 | &        | bitwise and            |
 | << >>    | left-shift right-shift |
 | \+ \-    | addition subtraction   |
-| \* / %%  | multiply divide modulo |
+| \* / %   | multiply divide modulo |
 | ~        | complement             |
 | -        | unary minus, -n        |
 | ( )      | expression nesting     |
 
-Note that the *modulo* operator is as shown, double percents.
-This is because the percent symbol is already used for local variables.
-The doubling is to distinguish it from the beginning of a local symbol.
-
 Internally, 2's complement arithmetic is used for most of the operators, but the result is adjusted to be
 a 1's complement value.
-The 1's complement -0 value, 7777777, can be produced by math operations such as -1+1,
+The 1's complement -0 value, 0777777, can be produced by math operations such as -1+1,
 but by default will be converted to +0.
 This can be overridden if -0 is to be kept, see *Usage*.
 
@@ -795,7 +839,7 @@ If a -0 bit pattern results, it is kept as-is.
 ## Numbers
 
 Numbers are just that, an optional leading *-* followed by sequence of digits.
-However, the interpretation of the digitis can be either as octal or decimal numbers, depending upon
+However, the interpretation of the digits can be either as octal or decimal numbers, depending upon
 the current radix, see *octal* and *decimal* below.
 
 Several special representations for numbers are also provided, they override the current radix:
@@ -848,13 +892,15 @@ Directives are:
 - variables
 - constants
 - bank
+- %%optimize
+- %%endoptimize
 - start
 - stop
 - import
 - export
 - two special directives, see below
 
-## Location assigment 
+## Location assignment 
 
 *Location assignments* directly set the current location to the value given, which must be an expression
 that evaluates *at that time* to a value. This means that for any use of a symbolic location, that
@@ -871,14 +917,14 @@ Examples are:
 .+10/   the location counter is incremented by 10
 
 a, foo
-a+10/   the location couter is set to the location of foo plus 10, a must be defined *prior* to its use
+a+10/   the location counter is set to the location of foo plus 10, a must be defined *prior* to its use
 
 200/; cla
 ```
 
 ## Octal and decimal
 
-These two set the current radix for numbers entered without an explict radix specification.
+These two set the current radix for numbers entered without an explicit radix specification.
 They stay in effect until the next one is seen.
 Any 'bare' number will be interpreted in that radix and an error given if the digits 8 or 9 are used in octal mode.
 
@@ -1013,7 +1059,7 @@ Various special escape sequences can be used inside the string:
 | \\00 | 1 or 2 octal digits 0-7 |
 
 The characters marked with an asterisk, *, are only valid when character set 2 is in use.\
-If octal digits are given, the a character of that octal value is inserted.
+If octal digits are given, a character of that octal value is inserted.
 
 ** - newline maps to carriage return because the Type 340 treats a cr as cr-lf internally.
 
@@ -1032,7 +1078,7 @@ This will, assuming the second character set is enabled, display the string *Thi
 ## Variables and constants
 
 These cause any declared variables or constants to be emitted at the current location.
-Subsequent declarations will be held until the next variables or constants constants.
+Subsequent declarations will be held until the next variables or constants directive.
 
 If no directive is given, any variables and constants will be written at the end of the program, the
 location where the start or stop directive is given.
@@ -1132,6 +1178,62 @@ The **macro** and **macro1** compilers do not support extended memory,
 so code using banks will generate code that isn't actually usable, but it will be annotated
 to show where banks were switched.
 
+## %%optimize and %%endoptimize
+
+These two directives mark out a span of code that you are willing to have
+**am1** rewrite under `-O1`. They are the assembler's half of the optimizer;
+`Docs/UsingTheAm1Optimizer.md` describes what the advisor and `-O1` do with
+them and what the report says.
+
+```
+%%optimize
+        cla
+        lac count
+%%endoptimize
+```
+
+**They generate no code and they cost nothing.** No word is emitted, the
+current location does not move, and the line does not appear in the listing, in
+the macro1 source or in the binary tape. A source with the directives in it
+assembles to output byte for byte identical to the same source without them.
+They are markers in the parse tree and nothing else. That holds with and
+without `-O`; under `-O1` the words *inside* a region may be rewritten, which
+is what the region is for, but the directive lines still contribute nothing.
+
+What they mean is a statement *by you* about the code between them:
+
+- no word of it is modified while the program runs,
+- no word's address is used as a value,
+- and none of it is there to take the time it takes.
+
+That is the one thing the assembler cannot work out for itself. The optimizer
+checks the first two against what it can see and tells you if it disagrees.
+The third it cannot check at all.
+
+Four arrangements are errors, each reported with the line it is on:
+
+- an `%%optimize` inside a region that is already open. A region is a flat
+  span; it does not nest, and the `%%endoptimize` that followed would be
+  ambiguous about which of the two it closed.
+- an `%%endoptimize` with no region open. Almost always a deleted `%%optimize`.
+- a region still open at the end of the source. Taking it as reaching to the
+  end of the file would hand out a permission you did not give.
+- a region opened in one file and closed in an included one, or the other way
+  about. An include is expanded wherever it is used, so half of such a region
+  is text the author of the other half never saw.
+
+The directives take no arguments. There is no way to name a transform or a
+level, and that is deliberate: `-O1` is the only thing that acts on a region
+so far, and fixing that syntax before there is a second thing to tell apart is
+how it gets fixed wrong.
+
+Like every directive special to **am1**, they are spelled with a leading `%%`,
+so the plain words `optimize` and `endoptimize` are ordinary names. A `%%`
+before a name that is not a directive is a syntax error, and so is a
+directive's name with more of a name run on after it (`%%optimizex`): the
+next character may be anything but a letter, a digit or an underscore --
+usually a blank, a tab, a `;`, a comment or the end of the line.
+
 ## Thisbank
 
 You can use *thisbank* in any expression.
@@ -1153,7 +1255,7 @@ The start address can be a numeric address or a location symbol.
 The start address can also be in any bank and can be a shared location symbol.
 
 The *stop* directive tells the loader to halt instead of starting the program.
-Additional tapes can the be loaded via read-in.
+Additional tapes can then be loaded via read-in.
 
 **IMPORTANT** - an unqualified start means *in the current bank*:
 ```
@@ -1207,7 +1309,7 @@ import "foo.sym"
 import <libx.sym>
 ```
 
-Just as for include files, the bracketed form looks in the sytem include directory for the file.
+Just as for include files, the bracketed form looks in the system include directory for the file.
 
 The exported symbols in the file will be created in the global symbol table for the bank they were exported from
 and will be resolved to the address they were exported with.
@@ -1228,7 +1330,7 @@ They are accessed using the normal inter-bank notation, *sym:n*.
 
 There are two special directives that are not of general use.
 
-One is *%forcelocal*, which is a terrible hack to allow **mactoam1** to convert macro-style defines to
+One is *%%forcelocal*, which is a terrible hack to allow **mactoam1** to convert macro-style defines to
 **cpp** style.
 It causes any location symbol, even if not marked as local, seen in a local scope to be assumed local.
 If that same symbol is then used outside local scopes, it is made non-local.
@@ -1381,7 +1483,7 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 |Various IOTs    | Value |
 |----------------|-------|
 |iot | 0720000|
-|ioh | 0720000|
+|ioh | 0730000|
 |tyi | 0720004|
 |rrb | 0720030|
 |cks | 0720033|
@@ -1391,7 +1493,7 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 |ppa | 0730005|
 |ppb | 0730006|
 |dpy | 0730007|
-|dpyc | 0740007|
+|dpyc | 0724007|
 |sdb | 0722007|
 |lem | 0720074|
 |eem | 0724074|
@@ -1411,9 +1513,11 @@ However, **cpp** can redefine them via the *#define* directive, since it runs fi
 
 If a keyword has parentheses, e.g. loc(al), the part in the parentheses is optional.
 
-| Keywords    |
-|-------------|
-| %forcelocal |
+| Keywords      |
+|---------------|
+| %%endoptimize |
+| %%forcelocal  |
+| %%optimize    |
 | addloc(al)  |
 | ascii       |
 | bank        |

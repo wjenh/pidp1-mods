@@ -11,8 +11,15 @@ Where DEC's later documents fill its gaps or correct it, the emulation follows t
 field-service memos.
 
 This is version 1.4\
-Edit date 16-Sep-2026\
-add mtp -l description
+Edit date 21-Sep-2026\
+
+Version 1.0, 10-Sep-2026: initial version\
+Version 1.2, 13-Sep-2026: warning about halting during a write, the example stops the tape on an error\
+Version 1.3, 13-Sep-2026: matched to DEC's later documents: a halt stops the tapes, any error stops
+writing, the block mark and the deadlines are DEC's, the end-of-block latch; `mse` rereads
+*microtapes.txt*; the *mtp* tool added.\
+Version 1.4, 21-Sep-2026: `mse` mounts the selected drive's tape again if its image file was replaced,
+changed or removed since it was mounted.
 
 ## What is the Type 550 Microtape?
 
@@ -42,8 +49,7 @@ A program can also mount tapes itself via the *mmt* IOT, below.
 
 ## Setting up
 
-The default drive to file mapping is in */opt/pidp1-mods/microtapes.txt*, one line per drive.\
-Example:
+List the drive to file mapping in */opt/pidp1-mods/microtapes.txt*, one line per drive.
 ```
 # drive  image
 1 microtapes/tape1.img
@@ -66,32 +72,42 @@ microtapesbs=2
 ```
 To change tapes while the emulator runs, edit *microtapes.txt*, or let *mtp* do it:
 ```
-mtp 1 microtapes/tape2.img
-mtp 2 /home/pi/tapes/system.img,locked
-mtp -f /some/other/list.txt 3 scratch.img
+bin/mtp 1 microtapes/tape2.img
+bin/mtp 2 /home/pi/tapes/system.img,locked
+bin/mtp -f /some/other/list.txt 3 scratch.img
 ```
 *mtp* replaces the drive's line or adds one.
-
-`-f` names a list other than */opt/pidp1-mods/microtapes.txt*.
 The image name is written into the list as given, so a relative name is relative to
 */opt/pidp1-mods* here too.
+`-f` names a list other than */opt/pidp1-mods/microtapes.txt*.
 
-```
-mtp -u 4
-mtp -l
-```
+The change takes effect at the program's next `mse`.
+An unchanged file changes nothing, so a program's `mse` never rewinds a tape or undoes its `mmt`.
 
-`-u` unmounts a mounted tape for the given drive.\
-`-l` lists the mounted tapes.
-
-Changes take effect at the program's next `mse` IOT.
-To make a change take effect at once, reload the configuration with
+The list is not the only thing `mse` looks at. The image is read into memory when it is mounted,
+so a different tape put in the same file would never be seen, and `mtp -u 2` followed by
+`mtp 2 same.img` changes no line of the list. So `mse` also checks the image file of the drive it
+selects, and if that file was replaced, changed in place (its modification time put back or not)
+or removed since the tape was mounted, it mounts the tape again: the file is read afresh and the
+reel is at the load point. The emulator says so on stderr.
+- Only the selected drive is checked, and only by `mse`. A drive nobody selects keeps its tape,
+  and a program that selects the same drive between blocks finds nothing changed.
+- The emulator's own writes to the image are not a change.
+- A block that was not yet written back when the file changed is dropped, as it belongs to
+  the old file.
+- A removed image is a new blank tape, as it is at any first mount, unless the drive is locked,
+  which leaves it empty.
+- This applies to a tape a program mounted with `mmt` too, whatever the list says.
+- Do not edit an image while a program is using it. It is noticed at the next `mse`, but what the
+  program had already read is what it read.
+To make a change take effect at once instead, reload the configuration with
 `bin/pdp1control.sh reload`, which applies the list whether or not it changed.
 
 Either way, only drives whose line changed are remounted, plus any drive whose tape ran off its
 reel, and any drive whose line could not be mounted last time.\
-A drive whose line did not change is not disturbed.\
-A file rewritten with the same lines changes nothing, but it does retry a mount that failed.
+A drive whose line did not change is not disturbed, even if it is running.\
+A file rewritten with the same lines changes nothing, but it does retry a line that failed,
+for instance, a locked line for an image that has since been made.\
 A drive whose tape a program chose with `mmt` keeps it until its line in *microtapes.txt* is changed.\
 A freshly mounted tape is stopped at the load point, just before the end zone at the start of the tape.\
 
@@ -195,7 +211,8 @@ The drive that was selected keeps moving as it was told, but is no longer visibl
 If left running, it will run off its reel.
 
 Before selecting, `mse` rereads */opt/pidp1-mods/microtapes.txt* and, if it has changed, brings
-the drives in line with it; see Setting up.
+the drives in line with it, and mounts the drive it selects again if its image file has changed;
+see Setting up.
 
 -IOT 401, mlc, 720401, load control
 
@@ -353,7 +370,8 @@ So a program that falls behind spoils at most the block it was writing, never th
 A drive that is deselected while it moves is not watched, so no end zone stops it.
 It runs to the end of the tape and off the reel, and then it is unusable (UNABLE) until
 its tape is remounted: by `mmt`, by a configuration reload, or by any change to
-*microtapes.txt* that an `mse` then reads (rewriting the drive's line with *mtp* will do).
+*microtapes.txt* that an `mse` then reads (rewriting the drive's line with *mtp* will do),
+or by a change to its image file, which `mse` notices on that drive.
 The image file is not harmed.
 
 ## Halting the processor

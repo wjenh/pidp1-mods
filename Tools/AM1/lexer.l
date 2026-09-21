@@ -1,5 +1,7 @@
 %{
-/* am1.l - lex for am1 */
+/* am1.l - lex for am1
+ * 21-Sep-2026 wje - a blank after an origin's slash now makes the rest of the line a statement, not a divisor
+ */
 
 #include <stdlib.h>
 #include <ctype.h>
@@ -17,6 +19,11 @@ static bool decimalMode = false;
 static bool inConstant = false;
 static bool sawSemi = false;
 static bool noIncrement = false;
+
+// What the slash rule needs to know about the statement so far, kept by yylex()
+// below from the tokens the scanner returns.
+static bool stmtBare = true;    // nothing yet but one expression with no separator in it
+static int parenDepth = 0;      // open parentheses in that expression
 
 static char *commentP;
 static char commentBuf[MAXCCOMMENT];
@@ -41,6 +48,9 @@ extern void verror(char *msgP, ...);
 extern void vwarn(int errtype, char *msgP, ...);
 
 #define YY_USER_INIT BEGIN FIRST
+
+// yylex() wraps the generated scanner, see the end of the file.
+#define YY_DECL static int scan(void)
 
 %}
 
@@ -330,9 +340,24 @@ octal		    	{ decimalMode = false; }
 [ ]*\~[ ]*	    	{ return(CMPL); }
 [ ]*\+[ ]*	    	{ return(PLUS); }
 [ ]*\-[ ]*	    	{ return(MINUS); }
+\/[ \t]+	    	{
+                        // A slash with no blank before it and a blank after it, at the
+                        // end of the first expression of a statement, is an origin and
+                        // the rest of the line is the next statement.
+                        // This must come before the DIV rule.
+                        // The text gets rewritten as xxx/; followed by the rest of the line.
+                        if( stmtBare && (parenDepth == 0) )
+                        {
+                            unput(';');
+                            return(ORIGIN);
+                        }
+
+                        return(DIV);
+                    }
+
 [ ]*\/[ ]*	    	{ return(DIV); }
 [ ]*\*[ ]*	    	{ return(MUL); }
-[ ]*%[ ]*	    	{ return(MOD); }    /* task A36: was %% */
+[ ]*%[ ]*	    	{ return(MOD); }
 [ ]*<<[ ]*	    	{ return(LSHIFT); }
 [ ]*>>[ ]*	    	{ return(RSHIFT); }
 \.		       	    { return(DOT); }
@@ -886,6 +911,76 @@ void
 gdbtarget()
 {
     return;
+}
+
+// The scanner the parser calls.
+// From each token keeps stmtBare and parenDepth for the slash rule.
+// Only the tokens that can be part of an origin's expression leave the statement bare.
+// Any other token, a separator and a label's comma included ends that, so a
+// directive's operands are never mistaken for an origin.
+// Every token that ends a statement starts the next one bare.
+int
+yylex(void)
+{
+    int token;
+
+    token = scan();
+
+    switch( token )
+    {
+    case TERMINATOR:
+    case SEMI:
+    case EMPTYLINE:
+    case COMMENT:
+    case CSCOMMENT:
+    case CSSTART:
+    case FILENAME:
+    case HEADER:
+        stmtBare = true;
+        parenDepth = 0;
+        break;
+
+    case INTEGER:
+    case NAME:
+    case ADDR:
+    case LCLADDR:
+    case DOT:
+    case VALUESPEC:
+    case OPCODE:
+    case OPADDR:
+    case OPORABLE:
+    case THISBANK:
+    case PLUS:
+    case MINUS:
+    case MUL:
+    case DIV:
+    case MOD:
+    case AND:
+    case OR:
+    case XOR:
+    case CMPL:
+    case LSHIFT:
+    case RSHIFT:
+    case BREF:       // the colon of a bank reference, "name:bank"
+        break;
+
+    case '(':
+        ++parenDepth;
+        break;
+
+    case ')':
+        if( parenDepth > 0 )
+        {
+            --parenDepth;
+        }
+        break;
+
+    default:
+        stmtBare = false;
+        break;
+    }
+
+    return(token);
 }
 
 #include "lexfuncs.c"

@@ -133,6 +133,8 @@
  * 9-Sep-2026 wje - fixes (finally) for line numbers sometimes being off by one in error messages, fix some of the
  *    directives, e.g. table, not allowing use of location 07777
  * 14-Sep-2026 wje - clean up usage and explicitly initialize doMacro and doBinary
+ * 19-Sep-2026 wje - rework lexer, % is now mod like it should be, %% is a directive, the old use of % in locals is gone
+ * 21-Sep-2026 wje - and finally fix xxx/ stmt for an origin statement
  *
 */
 #include <unistd.h>

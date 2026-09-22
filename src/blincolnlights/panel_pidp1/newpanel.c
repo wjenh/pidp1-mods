@@ -55,6 +55,7 @@
  *    pins/drive-levels array and issue one gpio_set_multi_drive().
  *    This lets a chip batch every entry into a handful of bank-masked SET/CLR register writes.
  *    Real batching is implemented for the BCM2835/2711 (Pi 4 and earlier) and RP1 (Pi 5's).
+ * wje 22-Sep-26 wje update for ppporch's power off change
  */
 #include <stdlib.h>
 #include <stdarg.h>
@@ -691,6 +692,24 @@ struct sched_param sp;
         // This keeps the scaling correct regardless of pdp1's actual cycle rate.
         currentCycleCount = panelP->cyclecount;
         expectedCycles = currentCycleCount - lastCycleCount;
+
+        // The emulator stops advancing cyclecount when the physical POWER switch is off.
+        // Do not leave the last computed PWM image displayed in that state: clear the
+        // filter, the inactive display buffer, and any counts accumulated before the
+        // emulator observed the switch transition. Publishing the cleared buffer keeps
+        // the panel thread's double-buffer handoff intact.
+        if( !(panelP->sw0 & SW_POWER) )
+        {
+            memset(panelP->pwmcount, 0, sizeof(panelP->pwmcount));
+            memset(lightsP->lightsF, 0, sizeof(lightsP->lightsF));
+
+            writeIdx = 1 - atomic_load_explicit(&lightsP->lightsReadyIdx, memory_order_relaxed);
+            memset(lightsP->lights[writeIdx], 0, sizeof(lightsP->lights[writeIdx]));
+            atomic_store_explicit(&lightsP->lightsReadyIdx, writeIdx, memory_order_release);
+
+            lastCycleCount = currentCycleCount;
+            continue;
+        }
 
         // pdp1's main loop runs in bursts, pacing itself to 5us/cycle
         // using usleep(1000), so cyclecount advances in chunks of ~200 every ~1ms rather than smoothly.

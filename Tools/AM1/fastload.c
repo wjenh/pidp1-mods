@@ -17,6 +17,7 @@
  * 12-Sep-2026 wje add more detail to usage
  * 20-Sep-2026 Claude replace the shared-memory link with the network link; the tape is parsed
  *    completely first and then written in one request, so a bad tape changes nothing.
+ * 22-Sep-2026 wje add ppporch's len and lineP initialization
 */
 
 #include <unistd.h>
@@ -139,6 +140,8 @@ int status;
         printf("Loading into memory file, be sure the pdp-1 isn't running!\n");
         printf("If it is, this load will be overwritten when it exits.\n");
         printf("Continue? (y/n) ");
+        lineP = 0;
+        len = 0;
         if( (getline(&lineP, &len, stdin)) != -1 )
         {
             if( *lineP != 'y' )

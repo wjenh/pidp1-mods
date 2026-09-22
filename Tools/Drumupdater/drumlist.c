@@ -11,6 +11,7 @@
  *
  * 02/01/2026 wje - Initial version
  * 14/01/2026 wje - fix usage check
+ * 22/09/2026 wje - add ppporch's adventure check
  *
  */
 #include <stdlib.h>

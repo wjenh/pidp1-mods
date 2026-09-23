@@ -17,8 +17,10 @@
  * 19-Jun-2026 wje initial version.
  * 20-Jun-2026 wje stop conflating case and ribbon-color; forward tb raw.
  * 23-Jun-2026 wje add tyo fast mode via the config file, sick of waiting for that slooow output.
+ * 23-Sep-2026 Claude write() blocked forever with nothing draining the typtelnet
+ *   socketpair with no client on port 1041, freezing the whole emulator thread, now non-blocking
  */
-#include <unistd.h>
+#include <sys/socket.h>
 #include "iotHandler.h"
 #include "configuration.h"
 
@@ -82,10 +84,14 @@ iotPoll(PDP1 *pdp1P)
         pdp1P->tbb = (pdp1P->tb == 074);
     }
 
+    // MSG_DONTWAIT: iotPoll() runs inline in cycle()'s main loop, so a blocking write()
+    // here would stall the entire emulator.
+    // Drop the character on backpressure instead; real hardware has no flow control from tyo
+    // back to the CPU either, so this authentic.
     if(pdp1P->typ_fd.fd >= 0)
     {
         char c = pdp1P->tb;
-        write(pdp1P->typ_fd.fd, &c, 1);
+        send(pdp1P->typ_fd.fd, &c, 1, MSG_DONTWAIT);
     }
 
     pdp1P->tyo = 0;

@@ -1,9 +1,44 @@
 ## Pidp-1 mods
 
 This contains files modified from https://github.com/obsolescence/pidp1 to add new functionality and fix some issues.
-Note that this no longer tracks the original repo since this branch has diverged too much for automatic tracking.
-The link was removed on 3-Feb-26 to make this a fully-independent repository.
-Selective updates will be added from original branch if any are made.
+Note that this no longer tracks the original repo since this branch has diverged too much.
+
+The guiding principle is historical accuracy within the constraints imposed by the modern systems this runs on.
+In this world, 'historically accurate' means an exact basic functional duplication including correct timing.
+It also means that if somethong could have been done in the era, even if it wasn't, then that something is
+historically accurate, the PDP-1 was a hacker's dream and if someone had thought up some hack and it was useful,
+it probably happened.
+
+Two examples are the Adventure game and the ZMachine that are here. Did they exist in the 60's?
+No. But they could have if someone had thought of them, they both would run on a real PDP-1 with the proper
+hardware with only a minor tweak for the use of the DCS device, necessary because of the modern host.
+
+## Checking it out
+
+Checkout must be done in the /opt directory.
+
+It is strongly recommended to use:
+
+```
+sudo git clone --depth 1 https://github.com/wjenh/pidp1-mods.git
+```
+to avoid also pulling down all the historical changes, which can be large.
+
+## Installing and building
+
+It contains a full build tree.
+When checked out in the /opt directory it will make its own installation directory, which will always be pidp1-mods.
+
+Everything after this proceeds as for the original install.
+Go into the /opt/pidp1-mods/install directory, type
+```
+./install.sh
+```
+and follow the prompts.
+
+**READ THE DOCUMENTATION!**, there's a lot of important stuff there.
+
+## What's different?
 
 Many unused files from the original have been cleaned out and some of the original **C** files updated to
 have some comments and be more readable.
@@ -17,9 +52,16 @@ the ad1 symbolic debuger, drum utilities, documentation, etc.
 
 Implementations of the Type23 drum, the DCS communications system, the Type 33 symbol generator, the Type 340
 advanced graphics display with all options and multiterminal support,
-both the Type 62 and Type 64 line printers and the BBN timesharing clock are provided.
+both the Type 62 and Type 64 line printers, the Type 550/500 Microtape drives,
+and the BBN timesharing clock are provided.
 
 Full-coverage test suites have been created for the added devices, etc. and are in the repository
+
+Significant changes to the original code to properly deal with IOTs as separate 'hardware' have been made,
+as well as bug fixes and many improvements to the original audio support, display support, etc.
+
+Completely new implementations of the hardware panel and the Type 30/340 have been done, with much better
+performance and better duplication of the real hardware.
 
 Deep analysis and verification of the entire end-to-end execution flow including thread interactions has been done.
 Verification of the pdp1 emulator functionality and validatiion of the simulated timing for devices has been done
@@ -49,28 +91,6 @@ sure the pdp1 runtime instance matches.
 
 Moral - running parallel versions is tricky. Best way is to do a full install from whichever one you want to use,
 you can always reinstall from the other one if you want to switch back.
-
-## Checking it out
-
-Checkout must be done in the /opt directory.
-
-It is strongly recommended to use:
-
-```
-sudo git clone --depth 1 https://github.com/wjenh/pidp1-mods.git
-```
-to avoid also pulling down all the historical changes, which can be large.
-
-As of 4-March-26, pdf versions of the documentation is no longer being checked in, use a good md viewer
-in your browser, such as Markdown Viewer.
-
-## Installing and building
-
-It contains a full build tree.
-When checked out in the /opt directory it will make its own installation directory, which will always be pidp1-mods.
-
-Everything after this proceeds as for the original install.
-Go into the /opt/pidp1-mods/install directory, type './install.sh' and follow the prompts.
 
 ## Configuration file
 
@@ -106,8 +126,9 @@ The following IOTs are also built:
 - Type 630 Data Communications System
 - BBN-style real time clock
 - Type 340 Vector Graphics Display
+- Type 550/500 Microtape controller and 4 tape drives
 
-These features can be enabled and diabled via the configuration file, as can
+These features can be tweaked via the configuration file, as can
 the lightpen, audio, mult/div, PDP-1D extensions,  dpy origin shift, and sdb.
 
 One dpy option, reorigin dpy coordinates, conflicts with the lightpen sdb iot.
@@ -118,12 +139,13 @@ If both are enabled, the lightpen sdb iot takes priority.
 The visible changes are in the hardware front paenl, gui, and Type 30 display.
 
 - gui app now has lightpen support, set in the config file
-- Type 30 display now has lightpen support, set in the config file
-- Type 30 display now has the ability to set the screen size on startup, command line -s size or config file
-- Type 30 display can start bordered or borderless, command line -n, no border, or config file
-- Type 30 border/borderless can be toggled using the 'b' key while running
-- Improved performance hardware panel driver, panel_pidp1, not configurable. Looks more authentic, too
-- Improved performance of p7sim
+- Type 30/340 display now has lightpen support, set in the config file
+- Type 30/340 display now has the ability to set the screen size on startup, command line -s size or config file
+- Type 30/340 display can start bordered or borderless, command line -n, no border, or config file
+- Type 30/340 border/borderless can be toggled using the 'b' key while running
+- Type 30/340 has many configurable parameters and duplicates the p7 phosphor more accurately
+- Improved performance hardware panel driver, panel_pidp1, highly configurable. Looks more authentic, too
+- Improved performance of p7sim, although this is deprecated
 
 ## Lightpen support
 
@@ -135,9 +157,10 @@ Mouse button up means the lightpen has been moved away from the screen.
 
 As far as code is concered, the operation looks just the same as the original lightpen.
 
-The simulation is fairly accurate, but because there is no real detection of light on the screen
+The simulation is remarkably accurate, but because there is no real detection of light on the screen
 some magic hadwaving is done in the emulator to correlate mouse coordinates with the dpy instructions.
-It works surprisingly well.
+There is also motion prediction logic to deal with the fact that modern displays are raster displays
+and communication is via sockets through the Linux stack.
 
 ## **NOTE**
 
@@ -157,9 +180,11 @@ There are several reasons, but the primary one is a difference in philosopy.
 
 The original branch was centered around a view of *inside the black box is what is important*.
 While this did provide a pretty accurate representation in software of the detailed operation of the original hardware,
-software is not a collection of wires, flip-flops, etc. This approach, while fascinating and laudable, definitely meant
-complexity and obscure operational details. It also resulted in logic that was never an intrinsic part of the actual
-processor being intermingled, specifically the I/O system.
+software is not a collection of wires, flip-flops, etc.
+This approach, while fascinating and laudable, definitely meant
+complexity and obscure operational details.
+It also resulted in logic that was never an intrinsic part of the actual processor being intermingled,
+specifically the I/O system.
 
 This version goes in the opposite direction. The PDP-1 is a cabinet with stuff in it. What that stuff is in detail is
 not what is important, the externally-visible behavior is. This is the "it's a black box" approach.
@@ -181,6 +206,7 @@ New code is commented and formatted, and documentation is provided for all of th
 On the other hand, there were some hardware features that could be added that were modifications to the main logic.
 One example is additional instructions added in various PDP-1 versions, such as the -1D instructions.
 Another is standard extensions like high speed channels.
+These remain in the emulator itself.
 
 An effort has been made to add these features in a reasonably authentic way. For example, the -1D extensions operate
 in the currect subcycles. But, the high speed channels worry more about the external behavior and operate internally

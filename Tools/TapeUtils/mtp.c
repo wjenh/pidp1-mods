@@ -7,7 +7,7 @@
  * -f mapfile   - update mapfile instead of /opt/pidp1-mods/microtapes.txt
  * -u           - unmount: remove the drive's line(s) instead of mounting a tape
  * drive-number - the drive, 1-8 (decimal, as microtapes.txt numbers them)
- * filename     - the tape to mount, a relative name is relative to /opt/pidp1-mods,
+ * filename     - the tape to mount, a relative name is relative to /opt/pidp1-mods/Microtapes,
  *                appending ",locked" mounts it write-locked
  *
  * The drive's line in the mount file is replaced or added as needed.
@@ -23,10 +23,11 @@
  *
  * Revision history:
  *
- * 13/09/2026 wje initial version
- * 13/09/2026 Claude -u unmounts a drive
- * 16/09/2026 wje -l lists the mounted drives
- * 17/09/2026 wje minor cleanup, no functionality change
+ * 13-Sep-2026 wje initial version
+ * 13-Sep-2026 Claude -u unmounts a drive
+ * 16-Sep-2026 wje -l lists the mounted drives
+ * 17-Sep-2026 wje minor cleanup, no functionality change
+ * 26-Sep-2026 wje change the default tape dir to /opt/pidp1-mod/Microtapes
  *
  */
 #include <stdlib.h>
@@ -40,6 +41,7 @@
 
 #define BASE_DIR        "/opt/pidp1-mods"   // where the emulator resolves a relative image name
 #define DEFAULT_LIST    BASE_DIR "/microtapes.txt"
+#define TAPE_DIR    BASE_DIR "/microtapes"
 #define UNITS           8                   // drives 1-8
 #define PATH_MAX_LEN    256                 // the emulator's limit on an image path (MT_PATH_MAX)
 #define LIST_MAX_BYTES  16384               // the emulator reads no more of the list than this
@@ -440,7 +442,7 @@ size_t pathLen;
 static void
 noteImage(const char *nameP)
 {
-char path[PATH_MAX_LEN + sizeof(BASE_DIR) + 1];
+char path[PATH_MAX_LEN + sizeof(TAPE_DIR) + 1];
 const char *commaP;
 size_t pathLen;
 bool locked;
@@ -459,7 +461,7 @@ bool locked;
     }
     else
     {
-        snprintf(path, sizeof(path), "%s/%.*s", BASE_DIR, (int)pathLen, nameP);
+        snprintf(path, sizeof(path), "%s/%.*s", TAPE_DIR, (int)pathLen, nameP);
     }
 
     if( access(path, F_OK) == 0 )
@@ -524,7 +526,7 @@ usage(void)
     fprintf(stderr,
         "Usage: mtp [-f mapfile] <drive-number> <filename>\n"
         "       mtp [-f mapfile] -u <drive-number>\n"
-        "       mtp [-u mapfile] -l\n"
+        "       mtp [-f mapfile] -l\n"
         "  Mounts filename on microtape drive drive-number (1-8),\n"
         "  updating %s unless -f names another.\n"
         "  A relative filename is relative to /opt/pidp1-mods;\n"

@@ -1,1 +1,0 @@
-monas: monas.c

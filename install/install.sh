@@ -167,7 +167,6 @@ while true; do
         [Yy]* )
 		make -C $INSTALLDIR/src/blincolnlights/panel_pidp1 all 	# panel driver
 		make -C $INSTALLDIR/src/blincolnlights/pdp1 	# simulator
-		make -C $INSTALLDIR/src/p7sim			# type 30 displays
 		make -C $INSTALLDIR/src/scanpf 			# returns sense switches
 		make -C $INSTALLDIR/src/blincolnlights/tapevis	# visualize a rim tape
 		make -C $INSTALLDIR/src/pidp1_test 		# hardware test program
@@ -224,8 +223,6 @@ while true; do
 
                 ln -sf $INSTALLDIR/src/macro/macro1_1 $INSTALLDIR/bin/macro1_1
                 ln -sf $INSTALLDIR/src/blincolnlights/tools/mkptyfio_telnet $INSTALLDIR/bin/mkptyfio_telnet
-                ln -sf $INSTALLDIR/src/p7sim/p7sim $INSTALLDIR/bin/p7sim
-                ln -sf $INSTALLDIR/src/p7sim/p7simES $INSTALLDIR/bin/p7simES
                 ln -sf $INSTALLDIR/src/blincolnlights/vpanel_pdp1/panel_pdp1 $INSTALLDIR/bin/vpanel_pdp1
                 ln -sf $INSTALLDIR/src/blincolnlights/pdp1/pdp1 $INSTALLDIR/bin/pdp1
                 ln -sf $INSTALLDIR/src/pdp1_periph/pdp1_periphES $INSTALLDIR/bin/pdp1_periphES
@@ -261,7 +258,7 @@ while true; do
 	    #
 	    #
 	    sudo ln -sf $INSTALLDIR/bin/encode_fiodec /usr/local/bin/encode_fiodec
-            sudo ln -sf $INSTALLDIR/bin/decode_fiodec /usr/local/bin/decode_fiodec
+        sudo ln -sf $INSTALLDIR/bin/decode_fiodec /usr/local/bin/decode_fiodec
 	    sudo ln -sf $INSTALLDIR/bin/tape_visualizer /usr/local/bin/tape_visualizer
 	    #
 	    sudo ln -sf $INSTALLDIR/bin/macro1_1 /usr/local/bin/macro1_1
@@ -278,7 +275,7 @@ while true; do
 	    sudo ln -sf $INSTALLDIR/bin/mkmicrotape /usr/local/bin/mkmicrotape
 
 	    sudo ln -sf $INSTALLDIR/bin/t30dpy /usr/local/bin/t30dpy
-            #
+        #
 	    sudo ln -sf $INSTALLDIR/bin/tkaskopenfile /usr/local/bin/tkaskopenfile
 	    sudo ln -sf $INSTALLDIR/bin/tkaskopenfilewrite /usr/local/bin/tkaskopenfilewrite
         #
@@ -453,7 +450,6 @@ while true; do
 
             chmod u+x /home/$usr/Desktop/tty.desktop
             chmod u+x /home/$usr/Desktop/pdp1control.desktop
-            chmod u+x /home/$usr/Desktop/type30.desktop
             chmod u+x /home/$usr/Desktop/t30dpy.desktop
             chmod u+x /home/$usr/Desktop/ptr.desktop
             chmod u+x /home/$usr/Desktop/ptp.desktop

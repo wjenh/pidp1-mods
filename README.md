@@ -36,7 +36,10 @@ Go into the /opt/pidp1-mods/install directory, type
 ```
 and follow the prompts.
 
-**READ THE DOCUMENTATION!**, there's a lot of important stuff there.
+**READ THE DOCUMENTATION!**, for a feature you think doesn't work.
+There's a lot of important stuff there and most reported problems are because someone didn't bother.\
+**USE t30dpy!** if you want the lightpen and the more sophisticated graphis demos to run nicely, p7sim won't do it.
+It has been dropped from this version for a reason.
 
 ## What's different?
 

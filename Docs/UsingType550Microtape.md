@@ -10,16 +10,10 @@ Where DEC's later documents fill its gaps or correct it, the emulation follows t
 *Microtape: Its Features and Applications* (1963), the F-03 brochure (1964), and DEC's
 field-service memos.
 
-This is version 1.4\
-Edit date 21-Sep-2026\
+This is version 1.5\
+Edit date 26-Sep-2026\
 
-Version 1.0, 10-Sep-2026: initial version\
-Version 1.2, 13-Sep-2026: warning about halting during a write, the example stops the tape on an error\
-Version 1.3, 13-Sep-2026: matched to DEC's later documents: a halt stops the tapes, any error stops
-writing, the block mark and the deadlines are DEC's, the end-of-block latch; `mse` rereads
-*microtapes.txt*; the *mtp* tool added.\
-Version 1.4, 21-Sep-2026: `mse` mounts the selected drive's tape again if its image file was replaced,
-changed or removed since it was mounted.
+mtp now defaults to /opt/pidp1-mods/Microtapes
 
 ## What is the Type 550 Microtape?
 
@@ -59,7 +53,7 @@ List the drive to file mapping in */opt/pidp1-mods/microtapes.txt*, one line per
   spaces, then the image's path, which runs to the end of the line and may contain spaces.
   Add `,locked` to write-lock the drive. It can then only be read, not written, and mode 7 is
   refused. An image file that is read-only is also mounted locked.
-- A path that does not start with `/` is relative to */opt/pidp1-mods*.
+- A path that does not start with `/` is relative to */opt/pidp1-mods/Microtapes*.
 - Blank lines and lines starting with `#` are ignored. A drive with no line has no tape.
   With no *microtapes.txt* at all, no drive has a tape.
 - A file that is not a tape image is created as a blank tape when first used unless the line specifies locked.
@@ -78,7 +72,7 @@ bin/mtp -f /some/other/list.txt 3 scratch.img
 ```
 *mtp* replaces the drive's line or adds one.
 The image name is written into the list as given, so a relative name is relative to
-*/opt/pidp1-mods* here too.
+*/opt/pidp1-mods/Microtapes*,
 `-f` names a list other than */opt/pidp1-mods/microtapes.txt*.
 
 The change takes effect at the program's next `mse`.

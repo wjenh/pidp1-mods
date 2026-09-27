@@ -68,7 +68,6 @@ lines, scale(0) intensity(3) next(point)
     next(point)
     y(0d950) show next(vcontinue)
     visible deltax(0d127) right deltay(0)
-    next(point)
 
     halt
 

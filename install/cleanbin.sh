@@ -34,5 +34,19 @@ sudo rm -f /usr/local/bin/ad1 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/drumupdater 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/drumlist 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/t30dpy 2>&1 >/dev/null
+sudo rm -f /usr/local/bin/mkmicrotape 2>&1 >/dev/null
+sudo rm -f /usr/local/bin/mtp 2>&1 >/dev/null
+sudo rm -f /usr/local/bin/p7sim 2>&1 >/dev/null
+sudo rm -f /usr/local/bin/monas 2>&1 >/dev/null
 
-echo Done.
+usr=$(whoami)
+
+sudo rm /home/$usr/Desktop/tty.desktop
+sudo rm /home/$usr/Desktop/pdp1control.desktop
+sudo rm /home/$usr/Desktop/type30.desktop
+sudo rm /home/$usr/Desktop/t30dpy.desktop
+sudo rm /home/$usr/Desktop/ptr.desktop
+sudo rm /home/$usr/Desktop/ptp.desktop
+sudo rm /home/$usr/Desktop/audioOn.desktop
+sudo rm /home/$usr/Desktop/audioOff.desktop 
+

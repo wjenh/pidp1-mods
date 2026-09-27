@@ -5,10 +5,6 @@
 # For options that are on or off, 'y', 'yes', 'on' all mean enabled,
 # any other value means off.
 
-# Obsolete. The emulator no longer keeps its state in shared memory; ad1 and fastload talk to
-# it over TCP, this will be ignored.
-#shared=false
-
 # The debugger server that ad1 and fastload connect to, one client at a time, on either port.
 # ad1port is the loopback port (localmachine, 127.0.0.1 only).
 # Set it to 0 or off to disable it.
@@ -96,16 +92,17 @@ two340charsets=no
 # tuning shifts the frequency, but is not implemented until SDL3 is available.
 audio=off
 
-alpha=0.20
+#alpha=0.20
+
 # Each channel's alpha can also be set separately.
 # The alphas below are directly derived from the actual component values the
 # rc filters PDP-1 at the Computer History Museum have, per notes provided by them.
 # They correspond to cutoff frequencies of 816, 740, 339, and 176 Hz.
 # These should be the authentic experience.
-#alpha1=0.2070
-#alpha2=0.1904
-#alpha3=0.0921
-#alpha4=0.0409
+alpha1=0.2070
+alpha2=0.1904
+alpha3=0.0921
+alpha4=0.0409
 
 # Gain adjusts the volume, but a value that is too large will cause clipping of the audio, adjust with caution.
 gain=0.95
@@ -122,7 +119,7 @@ gain=0.95
 # This feature only works for the SDL3 version, SDL2 doesn't have the capability.
 tuning=1.0
 
-# samplerate sets how often audio is sent to SDL in rate samples per second.
+# Samplerate sets how often audio is sent to SDL in rate samples per second.
 # However, the 5 usec cycle time of the emulator is the controlling factor, the rate will have a 5 usec
 # granularity.
 # The sample rate also directly affects the frequency response of the filters, adjust both as needed.
@@ -131,6 +128,7 @@ samplerate=22000
 # Settings for the IOT 45 line printer
 # The line printer type defaults to Type 62
 lptType64=false
+
 # Set the number of lines the spacing field advances for setting 0-7.
 # A setting of 0 means overstrike, -1 means form feed.
 # Note that the Type 62 does overstrikes differently, so setting it here isn't necessary.
@@ -156,7 +154,8 @@ newmemfile=true
 # Timing statistics can be gathered for the pidp-1 intruction cycle time.
 # If enabled, whenever the pidp-1 enters stop state, the current timing data
 # is written to the file /tmp/pidp1-timing.txt in readable form.
-# The file will grow as long as timing is on, remove it when you are done with it.
+# The file will grow as long as timing is on, updated on each stop.
+# Remove it when you are done with it.
 # This is primarily useful for seeing now much time is being used in a cycle.
 pidp1timing=off
 
@@ -180,30 +179,27 @@ panelrealtime=false
 
 # If you get to the point you just can't stand waiting on the (accurately) slow typewriter,
 # you can pretend someone invented a supercharged soroban and up it to 200 chars/sec instead of 10.
-# Heresy? Well, then don't use it.
+# Heresy? Well,then don't use it.
 fasttyo=false
 
 # Setting a cache size for the Type 340 is totally historically inaccurate.
-# However, the original didn't have to live with the Linux scheduloer.
+# However, the original didn't have to live with the Linux scheduler.
 # If you get display upate jitter running a high-demand Type 340 program,
 # turning on the cache prevents an instruction fetch every 5us via the high speed channel,
 # which keeps the Linux scheduler from intermittently suspending the 340 emulator itself
 # when it doesn't expect it.
 # You can set the cache up to 1024 Type 340 instructions in size.
-# cycle stealing is not since the instructions are locally cached.
 # The h.s. cycle light is still activated, even though there is no high speed cycle unless there is a
 # cache miss.
 # One downside is that this increases cpu demand since the 340 emulator gets more runtime.
 # If the cache size is changed here, you have to restart the pidp1 emulator for it to be applied.
-# Use of this should be very rare, but an example of a program that can show display jitter is
-# type340demo, it is a demanding rendering program.
-#
-# The overall timing is maintained in terms of displayed points per second, but the high speed channel
+# Use of this should be very rare.
+# The overall timing is maintained in terms of displayed points per second.
 # Finally, one could argue that a cache could have been added to the original hardware, like many
 # other PDP-1 hacks, so you can pretend this is semi-legitimate.
 t340cachesize=0
 
 # Type 550 Microtape break channel.
-# Set the equence break channel for the data, block end and error flags.
+# Set the sequence break channel for the data, block end, and error flags.
 # The default is 2.
 #microtapesbs=2

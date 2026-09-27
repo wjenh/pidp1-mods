@@ -23,6 +23,7 @@ ADVENTURE 1977 WOODS VERSION
 // 'inven', 'inventory', 'invenfoo' are all equivalent.
 //
 // 31-Aug-26 wje initial version
+// 27-Sep-26 wje wlErr was not returning correctly, removed superflous jmp rtn just before rtn in multiple places
 
 #include <DCS/dcs2defs.ah>
 #include <DRUM/type23drumdefs.ah>
@@ -1418,7 +1419,6 @@ cpcAllowed,
     jmp rtn
 cpcBlocked,
     cla
-    jmp rtn
 rtn, jmp 0
 ptr, 0
 cpcIdx, 0
@@ -3210,9 +3210,7 @@ tkTwoWords,               // the shared "one or two words" return
     jmp i rtn
 tkTooMany,
     law 1
-    jmp i rtn             // was a fall-through into the dap-patched `rtn, jmp 0`;
-                            // the dual-mode return is a data word, so this exit
-                            // has to say so (the one word this change costs)
+    jmp i rtn
 rtn, 0
 ptr, 0
     endloc
@@ -4588,7 +4586,6 @@ ohPresent,
     lac gateTok
     dac parseObj
     cla
-    jmp rtn
 rtn, jmp 0
 ohWant, 0
 ohRoomWant, 0
@@ -5807,7 +5804,8 @@ wrlTerm,
     jmp i rtn
 wrlErr,
     law 1
-rtn, jmp 0
+    jmp i rtn
+rtn, 0
 ptr, 0
     endloc
 // playerDiedAt -- alternate entry for the ONE death whose drop room is
@@ -5971,7 +5969,6 @@ poFirst,                               // panicked == 0 (skipped): falls through
     dac clock2
     law 1
     dac panicked
-    jmp rtn
 rtn, jmp 0
     endloc
 
@@ -8971,7 +8968,6 @@ dmoSetSeen,
     dac i [dwarfSeen:0]
     lac i [curRoom:0]
     dac i locPtr                                // snap dwarfLoc[ix] = curRoom immediately
-    jmp rtn
 rtn, jmp 0
 ix, 0
 locPtr, 0
@@ -10465,7 +10461,6 @@ scChainReset,
     dac i [clock1:0]
     law 1
     dac i [closing:0]
-    jmp rtn
 rtn, jmp 0
     endloc
 
@@ -10856,7 +10851,6 @@ sgPointPlural,
     law sgMsgPointPlural
     jda txtascB2
 sgReportDone,
-    jmp rtn
 rtn, jmp 0
 scoreVal, 0
 classIx, 0
@@ -10909,7 +10903,6 @@ sgP3DoTens, jda sgPrintDigit
 sgP3DoOnes,
     lai
     jda sgPrintDigit
-    jmp rtn
 rtn, jmp 0
 value, 0
 sawDigit, 0
@@ -10960,7 +10953,6 @@ sgP4DoTens, jda sgPrintDigit
 sgP4DoOnes,
     lai
     jda sgPrintDigit
-    jmp rtn
 rtn, jmp 0
 value, 0
 sawDigit, 0
@@ -15073,7 +15065,6 @@ worHave,
     lac i wordAddr
     ior mask
     dac i wordAddr
-    jmp rtn
 rtn, jmp .
 shiftN, 0
 wordAddr, 0

@@ -99,6 +99,9 @@
  * 02-Jul-2026 wje SDL_RenderClear() is only needed when the visible window's aspect ratio
  *    differs from the 1024x1024 logical area.
  * 14-Jul-2026 wje Process mouse events in subframe intervals, faster lightpen updats.
+ * 30-Sep-2026 Claude - exit on Escape even when the display is idle (shut the socket down to wake the reader),
+ *    and the SIGINT/SIGTERM handler only sets quit, so a kill can no longer deadlock inside SDL.
+ * 30-Sep-2026 Claude - the SIGHUP reload runs from the main loop, not inside the signal handler.
 */
 
 #include <stdio.h>
@@ -257,6 +260,7 @@ int niceValue = DEFAULTNICE;    // see DEFAULTNICE; 0 disables, config "nice=N" 
 bool allowLabwcFix = true;
 bool usingLabwc = false;
 volatile bool quit = false;
+volatile bool reloadRequested = false;  // set by SIGHUP, acted on by the main loop, see sighup()
 bool border;
 bool doLinear = LINEAR;
 bool mikecMode = false;
@@ -309,7 +313,8 @@ void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int inte
 void updatePen(int sockFD, bool penDown, int winX, int winY);
 void loadConfig(bool full);
 void sighandler(int sig);
-void reconfigure(int sig);
+void sighup(int sig);
+void reconfigure(void);
 void reportTiming(void);
 void usage(void);
 FILE *getFile(char *nameP);
@@ -491,7 +496,7 @@ EventState evState;         // see typedef above main(): bundles the old penDown
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
 
     // SIGHUP will cause reloading of the configuration file, SIGTERM and SIGINT exit cleanly.
-    signal(SIGHUP, reconfigure);
+    signal(SIGHUP, sighup);
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
 
@@ -635,6 +640,12 @@ EventState evState;         // see typedef above main(): bundles the old penDown
             handleEvent(&event, &evState);
         }
 
+        if( reloadRequested )
+        {
+            reloadRequested = false;
+            reconfigure();
+        }
+
         if( evState.cursorTime && (((now() - evState.cursorTime) / NSECPERMSEC) > CURSORTIMEOUT) )
         {
             SDL_HideCursor();
@@ -776,13 +787,16 @@ EventState evState;         // see typedef above main(): bundles the old penDown
         reportTiming();
     }
 
-    SOCKCLOSE(pdp1FD);
-
-    // Closing the socket unblocks the blocking SOCKREAD in the reader thread, causing
-    // it to see a zero/error return and set quit = true, then exit.
+    // Shutting the socket down wakes the reader thread's blocking SOCKREAD, which then returns 0 and
+    // the thread exits. Closing it would not: on Linux a close() does not wake a read another thread
+    // is already waiting in, so the reader would wait for the emulator's next word, and an idle
+    // display sends none.
     // Wait for it here so we do not destroy the mutex while the reader thread might
     // still be inside SDL_LockMutex() / SDL_UnlockMutex().
+    // The socket is closed only after that, so its fd number can't be reused under the reader.
+    SOCKSHUTDOWN(pdp1FD);
     SDL_WaitThread(threadP, NULL);
+    SOCKCLOSE(pdp1FD);
 
     // Do not call SDL_DestroyRenderer / SDL_DestroyWindow explicitly.
     // On X11, those calls trigger SDL's internal XTranslateCoordinates cleanup
@@ -857,7 +871,7 @@ uint32_t buffer[READBUFSIZE];
 
 static bool skipOne = false;
 
-    for(;;)
+    while( !quit )
     {
         if( (count = SOCKREAD(pdp1FD, buffer, sizeof(buffer))) <= 0 )
         {
@@ -916,6 +930,8 @@ static bool skipOne = false;
 
         SDL_UnlockMutex(busyLockP);
     }
+
+    return(0);
 }
 
 // Precompute the rgba values used for displaying points.
@@ -1578,29 +1594,28 @@ char tmpstr2[4096];
     return( fopen(nameP, "r") );
 }
 
-// Just close and exit
+// SIGINT and SIGTERM: stop the main loop, which then exits the way Escape does, timing report included.
+// Nothing else is done here: SDL, stdio and exit() are not safe in a signal handler, and could
+// deadlock on a lock held by the code the signal interrupted.
 void
 sighandler(int sig)
 {
-    if( pdp1FD )
-    {
-        SOCKCLOSE(pdp1FD);
-    }
+    (void)sig;
+    quit = true;
+}
 
-    // Not really necessary, but it's good form.
-    SDL_Quit();
-    winSockCleanup();
-
-    if( doTiming )
-    {
-        reportTiming();
-    }
-    exit(0);
+// SIGHUP: ask the main loop to reload the configuration. The reload itself (file I/O, SDL calls,
+// the timing report) is not safe in a signal handler, so reconfigure() runs from the main loop.
+void
+sighup(int sig)
+{
+    (void)sig;
+    reloadRequested = true;
 }
 
 // Called on SIGHUP to reload config file, doesn't affect host, poort, size, bordered.
 void
-reconfigure(int sig)
+reconfigure(void)
 {
     loadConfig(false);
     initializeRgbas();

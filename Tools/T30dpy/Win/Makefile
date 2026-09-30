@@ -46,10 +46,10 @@ all: t30dpy.exe
 t30dpy: t30dpy.exe
 t30dpy3: t30dpy3.exe
 
-t30dpy.o: ../t30dpy.c
+t30dpy.o: ../t30dpy.c ../wincompat.h
 	$(GCC) $(SDL2_CFLAGS) -I.. -c ../t30dpy.c -o t30dpy.o
 
-t30dpy3.o: ../t30dpy3.c
+t30dpy3.o: ../t30dpy3.c ../wincompat.h
 	$(GCC) $(SDL3_CFLAGS) -I.. -c ../t30dpy3.c -o t30dpy3.o
 
 wincompat.o: ../wincompat.c ../wincompat.h

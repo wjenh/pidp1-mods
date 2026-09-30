@@ -31,6 +31,9 @@
  *    the console thread (console.c).
  * Claude 29-Sep-2026 display.c no longer sends display aging; the display clients keep their own clocks.
  * Claude 29-Sep-2026 display.c keeps the client's stream on word boundaries across a partial write.
+ * Claude 30-Sep-2026 display.c closes a display client that has left, and lifts its pen, without waiting for a write to fail.
+ * Claude 30-Sep-2026 display.c lifts the pen of a display client dropped after a failed write too, and no longer
+ *    reads the lightpen from that client's fd once it is closed.
 */
 
 #include <fcntl.h>

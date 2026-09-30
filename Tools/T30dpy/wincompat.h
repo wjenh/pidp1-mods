@@ -52,6 +52,7 @@
 #define SOCKREAD(fd, bufP, len)  recv((fd), (char *)(bufP), (int)(len), 0)
 #define SOCKWRITE(fd, bufP, len) send((fd), (const char *)(bufP), (int)(len), 0)
 #define SOCKCLOSE(fd)            closesocket(fd)
+#define SOCKSHUTDOWN(fd)         shutdown((fd), SD_BOTH)
 
 // ---- Signals ----------------------------------------------------------------
 // Windows has no SIGHUP. SIGBREAK (delivered for Ctrl-Break) is the closest
@@ -80,6 +81,7 @@ void winSockCleanup(void);
 #define SOCKREAD(fd, bufP, len)  read((fd), (bufP), (len))
 #define SOCKWRITE(fd, bufP, len) write((fd), (bufP), (len))
 #define SOCKCLOSE(fd)            close(fd)
+#define SOCKSHUTDOWN(fd)         shutdown((fd), SHUT_RDWR)
 
 #endif /* _WIN32 */
 

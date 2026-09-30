@@ -44,6 +44,8 @@ typedef struct
     bool sbs16Enabled;
     bool muldivEnabled;
     int sampleRate;
+    // alpha-alpha4 are no longer set (the filters are set by cutoff); kept so the layout the
+    // plugins were built against does not move.
     float alpha;
     float alpha1;
     float alpha2;

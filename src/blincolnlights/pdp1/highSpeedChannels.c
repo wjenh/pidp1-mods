@@ -2,9 +2,17 @@
  * This is a loose implementation of the Type 19 High Speed Channel Control.
  * It is for use in IOTs or other emulator code to package up direct memory access
  * and simulate the behavior of the PDP-1 dma, hiding details of memory back wraparound, etc.
- * It does one read/write operation every run cycle, 5us.
- * It can cycle-steal, when it does it takes over for as long as it takes to transfer all data at 5us per
- * word transfer, a simultaenous read/write counts as one word transfer, 5us.
+ *
+ * Execution model. processHSCchannels() runs on the emulator thread once per main-loop pass
+ * (one 5us memory cycle) while the machine runs. Each pass, the highest-priority channel that
+ * wants a memory cycle on that pass takes it, and the CPU loses that cycle; a busy channel that
+ * wants no cycle on this pass lets a lower one through, as the Type 19 arbitrated each memory
+ * cycle (F25; F17 3-31). Every word reaches core at its own stolen cycle, except in IMMEDIATE
+ * and THREADED modes, whose requester moves the data itself and leaves only the cycles owed.
+ * Requests can come from any thread (the 340 has its own); the emulator thread never takes a
+ * lock or waits on another thread here, so every field the two share is an atomic, and a
+ * request is published by storing scanKind last. Only the emulator thread writes the panel's
+ * hsc lamp, and only processHSCchannels() does; the tally belongs to main.c and cycle().
  *
  * 23-Apr-2026 wje - rework to make it more realistic
  * 29-Apr-2026 wje - fix overrun of channel list
@@ -27,11 +35,17 @@
  *    The channel's busy/done timing is accurate on its own and a device no longer needs a
  *    separate real-clock completion check.
  *    Note this means a TRUESTEAL channel reports HSC_BUSY for its full durationa.
+ * 23-Sep-2026 claude - per-cycle arbitration, owed cycles for THREADED and HSCsteal(), TRUESTEAL
+ *    timed from simtime with one word per steal, lock-free publication and wake-up, lamp on the
+ *    emulator thread only.
+ *    The same day: TRUESTEAL's spreading is computed rather than accumulated. The accumulator
+ *    made one word too many on about a quarter of transfer sizes, found by the DEC drum diagnostic.
 */
 
 #include <unistd.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <time.h>
 
 //#define DOLOGGING
@@ -44,34 +58,47 @@
 #include "logger.h"
 #include "highSpeedChannels.h"
 
-// Stretch any high speed transfer request of < HSC_STRETCH words to this.
-// Otherwise, we would rarely see the light wen using the type340 which
+// Stretch any lamp request of < HSC_STRETCH passes to this.
+// Otherwise, we would rarely see the light when using the type340 which
 // does single-word transfers.
 #define HSC_STRETCH 20
 
-typedef struct {
-    bool isInitialized;
-    bool isAssigned;
-    bool isWaiting;
-    bool needLightoff;      // HSC_MODE_UPDATE_PANEL was requested
-    bool trueSteal;             // true while a TRUESTEAL transfer is in progress on this channel
-    int status;
-    int waitDelay;          // if we are in THREADED mode, how long to sleep in HSCwait()
-    int brkCount;           // if we are in THREADED mode, simulate break requests, more or less
-    int onCount;            // HSC_MODE_UPDATEPANEL was usd, number of cycles to keep hsc cylcle on for
-    int stealsLeft;    // steal-ticks (one per word) still owed
-    int ticksLeft;     // total ticks (steal + free) still owed; the live DDA denominator
-    int stealAcc;           // DDA accumulator
-    sem_t accessSemaphore;  // how we synchrnonize modification of the control structure
-    sem_t waitSemaphore;    // how we synchrnonize completion
-    HSCRequest request;     // pending request if any, copied by execute from user space
-    } HSCControl, *HSCControlP;
+// One memory cycle in simtime units (ns).
+#define HSC_CYCLE_NS 5000
+
+// What the scan does for a channel besides paying owed cycles.
+#define SCAN_IDLE       0
+#define SCAN_NORMAL     1
+#define SCAN_TRUESTEAL  2
 
 // Original had three channels, priority ordered 1-3, we do 5, same priority order
 #define NUMCHANS 5
 
 // THe threshold where we usleep() instead of spin-wait.
 #define HSC_SPIN_LIMIT_US 20
+
+// Fields marked "emulator" are touched only by the emulator thread once a request is published;
+// "requester" fields only by the thread that owns the channel.
+typedef struct {
+    bool isInitialized;
+    bool isAssigned;
+    atomic_int status;
+    atomic_int scanKind;        // SCAN_*; stored last when a request is set up, so the scan sees all of it
+    atomic_int owed;            // memory cycles owed to the CPU, paid one per pass
+    atomic_int lampWanted;      // passes the requester wants the hsc lamp lit; taken by the scan
+    atomic_int isWaiting;       // a thread is blocked, or about to block, on waitSemaphore
+    int waitDelay;              // requester: THREADED delay, in us, HSCwait() still has to time
+    int onCount;                // emulator: passes this channel keeps the lamp lit
+    bool started;               // emulator: TRUESTEAL startSim has been taken
+    uint64_t startSim;          // emulator: simtime the TRUESTEAL transfer's ticks count from
+    long capSeen;               // emulator: throttleCapFirings when last looked at
+    int ticksTotal;             // TRUESTEAL: 5us ticks the whole transfer occupies
+    int ticksDone;              // emulator: ticks already run through the spreading
+    int wordsMade;              // emulator: words the spreading has made due so far
+    int wordsDue;               // emulator: words due but not yet moved (lost arbitration, or after a mul/div)
+    sem_t waitSemaphore;        // how a waiter is told of completion
+    HSCRequest request;         // the request, copied from the caller in normal and TRUESTEAL modes
+    } HSCControl, *HSCControlP;
 
 static HSCControl chan1;
 static HSCControl chan2;
@@ -82,76 +109,59 @@ static HSCControl chan5;
 static HSCControlP chans[] = {&chan1, &chan2, &chan3, &chan4, &chan5};
 
 static HSCControlP getControlP(HSCChannelP chanP);
-static void lockControl(HSCControlP ctlP);
-static void unlockControl(HSCControlP ctlP);
-static void HSCdone(HSCControlP ctlP);
+static void completeChannel(HSCControlP ctlP);
+static void wakeWaiter(HSCControlP ctlP);
+static void requestLamp(HSCControlP ctlP, int passes);
 static void processImmediate(HSCRequestP requestP);
-static bool processChannel(HSCControlP controlP);
+static void moveWord(HSCRequestP rqstP);
+static void advanceTrueSteal(HSCControlP ctlP);
+static bool serviceChannel(HSCControlP ctlP, bool mayTake);
 static void hscSpinWait(int us);
 
 extern PDP1P pdp1P;     // from main.c
 
-// Service routine called from run loop.
-// This happens every simulated 5 microsecond cycle.
-// Returns 0 if it took no time, 1 if it did a 'memory cycle' and we are in steal mode.
+// Service routine called from the run loop on the emulator thread, once per 5us pass.
+// Returns true if a channel took this pass's memory cycle (the CPU must not cycle), else false.
 bool
 processHSCchannels()
 {
 int i;
-bool done, steal;
+int lamp;
+bool steal;
+bool lampOn;
 HSCControlP ctlP;
 
-    // We do in priority order, 0 being highest.
-    done = steal = false;
+    // Every channel is visited every pass, in priority order: a channel that has lost
+    // arbitration still keeps its TRUESTEAL clock and its lamp running.
+    steal = false;
+    lampOn = false;
     for( i = 0; i < NUMCHANS; ++i )
     {
-        // The channels are scanned from low to high, first one that's busy wins.
-        // If a channel still needs lightoff processing, let that happen,
-        // Any THREADED or IMMEDATE mode that dis not specify HSC_MODE_UPDATEPANEL
-        // has to do its own.
         ctlP = chans[i];
 
-        // Check to see if the light needs turning off.
-        if( ctlP->needLightoff )
+        if( atomic_load_explicit(&(ctlP->lampWanted), memory_order_relaxed) )
         {
-            if( ctlP->onCount-- <= 0 )
+            lamp = atomic_exchange(&(ctlP->lampWanted), 0);
+            if( lamp > ctlP->onCount )
             {
-                ctlP->onCount = 0;
-                ctlP->needLightoff = false;
-                pdp1P->hsc = 0;
-                updatelights(pdp1P, pdp1P->panel);
-                updatelights_pwm(pdp1P->panel, 1);
-            }
-            else if( pdp1P->hsc == 0 )
-            {
-                // It was turned off by a higher priority channel, turn it back on
-                pdp1P->hsc = 1;
-                updatelights(pdp1P, pdp1P->panel);
-                updatelights_pwm(pdp1P->panel, 1);
+                ctlP->onCount = lamp;
             }
         }
 
-        if( ctlP->status == HSC_BUSY )
+        if( serviceChannel(ctlP, !steal) )
         {
-            if( ctlP->onCount > 0 )
-            {
-                pdp1P->hsc = 1;         // be sure the light is on
-            }
-
-            if( processChannel(ctlP) )
-            {
-                steal = true;        // we processed one, steal a cycle
-            }
-            
-            done = true;                // finished processing
+            steal = true;
         }
 
-        if( done )
+        if( ctlP->onCount > 0 )
         {
-            break;
+            --(ctlP->onCount);
+            lampOn = true;
         }
     }
 
+    // The lamp state is only recorded here; main.c and cycle() snapshot and tally it.
+    pdp1P->hsc = (lampOn) ? 1 : 0;
     return(steal);
 }
 
@@ -180,16 +190,14 @@ HSCControlP ctlP;
 
     if( !ctlP->isInitialized )
     {
-        sem_init(&(ctlP->accessSemaphore), 0, 1);
         sem_init(&(ctlP->waitSemaphore), 0, 0);
-        ctlP->status = HSC_OK;
+        atomic_store(&(ctlP->status), HSC_OK);
         ctlP->isInitialized = true;
     }
 
     ctlP->isAssigned = true;
-    ctlP->isWaiting = false;
-    ctlP->brkCount = 0;
-    ctlP->trueSteal = false;
+    atomic_store(&(ctlP->isWaiting), 0);
+    ctlP->waitDelay = 0;
 
     chanP = (HSCChannelP)malloc(sizeof(HSCChannel));
     chanP->chanNo = chanNo - 1;         // we keep it as an offset in the channel table
@@ -214,7 +222,8 @@ HSCControlP ctlP;
     return(true);
 }
 
-// Emulator says to stop everything in progress.
+// Emulator says to stop everything in progress. Called on the emulator thread, so it takes no
+// lock: a transfer stops at the word it had reached, and anyone blocked in HSCwait() is woken.
 void
 HSCreset()
 {
@@ -227,11 +236,13 @@ HSCControlP ctlP;
 
         if( ctlP->isAssigned )
         {
-            ctlP->status = HSC_ABORT;
-            ctlP->waitDelay = ctlP->brkCount = 0;
-            ctlP->isWaiting = false;
-            ctlP->trueSteal = false;
-            ctlP->stealsLeft = ctlP->ticksLeft = ctlP->stealAcc = 0;
+            atomic_store(&(ctlP->scanKind), SCAN_IDLE);
+            atomic_store(&(ctlP->owed), 0);
+            atomic_store(&(ctlP->lampWanted), 0);
+            ctlP->onCount = 0;
+            ctlP->wordsDue = 0;
+            atomic_store(&(ctlP->status), HSC_ABORT);
+            wakeWaiter(ctlP);
         }
     }
 
@@ -249,6 +260,7 @@ int
 HSCexecute(HSCChannelP chanP, HSCRequestP rqstP)
 {
 HSCControlP ctlP;
+int ticks;
 
     if( (rqstP->memBank > 15) || (rqstP->memBank < 0) || (rqstP->memAddr > 4095) || (rqstP->memAddr < 0) ||
         (rqstP->count > 4096) || (rqstP->count < 0) )
@@ -264,7 +276,7 @@ HSCControlP ctlP;
         return( HSC_ERR );
     }
 
-    if( ctlP->status == HSC_BUSY )
+    if( atomic_load(&(ctlP->status)) == HSC_BUSY )
     {
         logger(LOG_HSC, "execute called but channel is busy\n");
         return(HSC_BUSY);           // wait your turn
@@ -288,131 +300,118 @@ HSCControlP ctlP;
         return( HSC_ERR );      // bad address
     }
 
-    // IMMEDIATE, THREADED, and TRUESTEAL all handle the transfer in this call.
-    // IMMEDIATE does not check for busy nor does it do any timing emulation.
-    // THREADED operates as if in normal mode, including a 5usec delay per count, with busy and wait.
-    // TRUESTEAL is like THREADED but for a device slower than memory speed (wordTime > 50),
-    // it spreads its steal ticks evenly across the transfer's actual real-time duration.
-    if( rqstP->mode & (HSC_MODE_IMMEDIATE | HSC_MODE_THREADED | HSC_MODE_TRUESTEAL) )
+    // IMMEDIATE moves the data now and steals nothing.
+    // THREADED moves the data now, owes the CPU one cycle per word, and HSCwait() times the
+    // 5us per word in the requester's own thread.
+    // TRUESTEAL, for a device slower than memory (wordTime > 50), spreads one steal per word
+    // evenly across the transfer's simtime duration and moves each word at its steal.
+    switch( rqstP->mode & (HSC_MODE_IMMEDIATE | HSC_MODE_THREADED | HSC_MODE_TRUESTEAL) )
     {
-        switch( rqstP->mode & (HSC_MODE_IMMEDIATE | HSC_MODE_THREADED | HSC_MODE_TRUESTEAL) )
+    case HSC_MODE_IMMEDIATE:
+        logger(LOG_HSC, "request_channel immediate transfer\n");
+        processImmediate(rqstP);
+        atomic_store(&(ctlP->status), HSC_DONE);
+        if( rqstP->mode & HSC_MODE_UPDATEPANEL )
         {
-        case HSC_MODE_IMMEDIATE:
-            logger(LOG_HSC, "request_channel immediate transfer\n");
-            processImmediate(rqstP);
-            ctlP->status = HSC_DONE;
-            logger(LOG_HSC, "request_channel immediate transfer done\n");
-            if( rqstP->mode & HSC_MODE_UPDATEPANEL )
-            {
-                // We turn the hsc cycle light on, is turned off in the process loop.
-                pdp1P->hsc = 1;
-                updatelights(pdp1P, pdp1P->panel);
-                updatelights_pwm(pdp1P->panel, 1);
-                ctlP->onCount = rqstP->count;          // keep it on for the number of transfers we do
-                if( ctlP->onCount < HSC_STRETCH )
-                {
-                    ctlP->onCount = HSC_STRETCH;
-                }
-                ctlP->needLightoff = true;
-            }
-            return( HSC_OK );
-
-        case HSC_MODE_THREADED:
-            logger(LOG_HSC, "request_channel threaded transfer\n");
-            if( ctlP->status == HSC_BUSY )
-            {
-                return( HSC_ERR );      // not now
-            }
-
-            // Mark the channel busy so processHSCchannels() will process it.
-            ctlP->status = HSC_BUSY;
-
-            ctlP->waitDelay = rqstP->count * 5;       // 5us per word
-            ctlP->brkCount = rqstP->count;  // hack to vaguely simulate the break conditions
-
-            if( rqstP->mode & HSC_MODE_UPDATEPANEL )
-            {
-                pdp1P->hsc = 1;
-                updatelights(pdp1P, pdp1P->panel);
-                updatelights_pwm(pdp1P->panel, 1);
-                ctlP->onCount = rqstP->count;
-                if( ctlP->onCount < HSC_STRETCH )
-                {
-                    ctlP->onCount = HSC_STRETCH;
-                }
-                ctlP->needLightoff = true;
-            }
-
-            processImmediate(rqstP);
-            return(HSC_BUSY);
-
-        case HSC_MODE_TRUESTEAL:
-            logger(LOG_HSC, "request_channel TRUESTEAL transfer\n");
-            if( ctlP->status == HSC_BUSY )
-            {
-                return( HSC_ERR );      // not now
-            }
-
-            if( rqstP->wordTime < 50 )
-            {
-                // This mode is for devices slower than one memory cycle, 5us, such as the drum.
-                // A device at or faster than memory speed should use THREADED instead.
-                logger(LOG_HSC, "request_channel TRUESTEAL wordTime %d too fast for TRUESTEAL\n",
-                    rqstP->wordTime);
-                return( HSC_ERR );
-            }
-
-            // Mark the channel busy so processHSCchannels() will process it.
-            // Unlike THREADED, this channel stays busy for the transfer's total tick count,
-            // as the original hardware would do.
-            ctlP->status = HSC_BUSY;
-            ctlP->waitDelay = 0;
-            ctlP->brkCount = 0;
-            ctlP->trueSteal = true;
-            ctlP->stealsLeft = rqstP->count;
-            // Round count*word-transfer-time (in us/10) to the nearest whole 5us tick.
-            ctlP->ticksLeft = ((rqstP->count * rqstP->wordTime) + 25) / 50;
-
-            if( ctlP->ticksLeft < ctlP->stealsLeft )
-            {
-                ctlP->ticksLeft = ctlP->stealsLeft;   // never owe fewer ticks than steals
-            }
-            ctlP->stealAcc = 0;
-
-            logger(LOG_HSC, "TRUESTEAL ticks left %d, steals left %d\n", ctlP->ticksLeft, ctlP->stealsLeft);
-
-            if( rqstP->mode & HSC_MODE_UPDATEPANEL )
-            {
-                pdp1P->hsc = 1;
-                updatelights(pdp1P, pdp1P->panel);
-                updatelights_pwm(pdp1P->panel, 1);
-                ctlP->onCount = ctlP->ticksLeft;
-                if( ctlP->onCount < HSC_STRETCH )
-                {
-                    ctlP->onCount = HSC_STRETCH;
-                }
-                ctlP->needLightoff = true;
-            }
-
-            processImmediate(rqstP);
-            return(HSC_BUSY);
-
-        default:
-            logger(LOG_HSC, "request_channel illegal request\n");
-            return( HSC_ERR );  // can't have both
+            requestLamp(ctlP, rqstP->count);
         }
+        return( HSC_OK );
+
+    case HSC_MODE_THREADED:
+        logger(LOG_HSC, "request_channel threaded transfer\n");
+        processImmediate(rqstP);
+        ctlP->waitDelay = rqstP->count * 5;       // 5us per word
+        atomic_store(&(ctlP->status), HSC_BUSY);
+
+        // A stopped CPU has no cycles to lose, and the next start resets the channels anyway.
+        if( pdp1P->run )
+        {
+            atomic_fetch_add(&(ctlP->owed), rqstP->count);
+        }
+
+        if( rqstP->mode & HSC_MODE_UPDATEPANEL )
+        {
+            requestLamp(ctlP, rqstP->count);
+        }
+        return(HSC_BUSY);
+
+    case HSC_MODE_TRUESTEAL:
+        logger(LOG_HSC, "request_channel TRUESTEAL transfer\n");
+        if( rqstP->wordTime < 50 )
+        {
+            // This mode is for devices slower than one memory cycle, 5us, such as the drum.
+            // A device at or faster than memory speed should use THREADED instead.
+            logger(LOG_HSC, "request_channel TRUESTEAL wordTime %d too fast for TRUESTEAL\n",
+                rqstP->wordTime);
+            return( HSC_ERR );
+        }
+
+        memcpy(&(ctlP->request), rqstP, sizeof(HSCRequest));
+
+        // Round count*word-transfer-time (in us/10) to the nearest whole 5us tick,
+        // never fewer ticks than words.
+        ticks = ((rqstP->count * rqstP->wordTime) + 25) / 50;
+        if( ticks < rqstP->count )
+        {
+            ticks = rqstP->count;
+        }
+
+        ctlP->ticksTotal = ticks;
+        ctlP->ticksDone = 0;
+        ctlP->wordsMade = 0;
+        ctlP->wordsDue = 0;
+        ctlP->started = false;
+        logger(LOG_HSC, "TRUESTEAL ticks %d, steals %d\n", ticks, rqstP->count);
+
+        if( rqstP->mode & HSC_MODE_UPDATEPANEL )
+        {
+            requestLamp(ctlP, ticks);
+        }
+
+        // Unlike THREADED, this channel stays busy for the transfer's total tick count,
+        // as the original hardware would do.
+        atomic_store(&(ctlP->status), HSC_BUSY);
+        atomic_store_explicit(&(ctlP->scanKind), SCAN_TRUESTEAL, memory_order_release);
+        return(HSC_BUSY);
+
+    case 0:
+        break;              // normal mode, below
+
+    default:
+        logger(LOG_HSC, "request_channel illegal request\n");
+        return( HSC_ERR );  // can't have both
     }
 
-    // Ok, chan is free, set it up and go.
-    lockControl(ctlP);
+    // Normal mode: one word per stolen cycle, the lamp lit for the transfer.
     memcpy(&(ctlP->request), rqstP, sizeof(HSCRequest));
-    ctlP->status = HSC_BUSY;
     logger(LOG_EXEC, "channel %d set to BUSY, addr %d:%o\n", chanP->chanNo+1, rqstP->memBank, rqstP->memAddr);
-    pdp1P->hsc = 1;      // be sure our in-use light is on
-    ctlP->onCount = rqstP->count;
-    ctlP->needLightoff = true;
-    unlockControl(ctlP);
+    requestLamp(ctlP, rqstP->count);
+    atomic_store(&(ctlP->status), HSC_BUSY);
+    atomic_store_explicit(&(ctlP->scanKind), SCAN_NORMAL, memory_order_release);
     return( HSC_BUSY );
+}
+
+// Charge count memory cycles to the CPU without moving any data, as if count words had been
+// fetched through the channel now. For a device that prefetches with IMMEDIATE and uses the
+// words later, such as the 340's cache. Lights the lamp as a THREADED fetch would.
+// Returns HSC_OK, or HSC_ERR for an invalid or unassigned channel or a negative count.
+int
+HSCsteal(HSCChannelP chanP, int count)
+{
+HSCControlP ctlP;
+
+    if( !(ctlP = getControlP(chanP)) || !ctlP->isAssigned || (count < 0) )
+    {
+        return( HSC_ERR );
+    }
+
+    if( pdp1P->run )
+    {
+        atomic_fetch_add(&(ctlP->owed), count);
+    }
+
+    requestLamp(ctlP, count);
+    return( HSC_OK );
 }
 
 // Validate a channel and return its control ptr.
@@ -432,11 +431,14 @@ HSCControlP ctlP;
 }
 
 // Called from user to wait for a response.
-// Returns a status value or HSC_ERROR if the chanP is invalid.
+// Returns HSC_DONE when the transfer finished (or none was running and the last one finished),
+// HSC_ABORT if an HSCreset() stopped it, HSC_OK if the channel never ran a transfer, and
+// HSC_ERR if the chanP is invalid.
 int
 HSCwait(HSCChannelP chanP)
 {
 int status;
+int expected;
 HSCControlP ctlP;
 
     if( !(ctlP = getControlP(chanP)) )
@@ -445,22 +447,17 @@ HSCControlP ctlP;
     }
 
     // Emulator said to stop any ongoing transfers
-    if( ctlP->status == HSC_ABORT )
+    if( atomic_load(&(ctlP->status)) == HSC_ABORT )
     {
-        ctlP->status = HSC_DONE;
+        ctlP->waitDelay = 0;
+        atomic_store(&(ctlP->status), HSC_DONE);
         return( HSC_ABORT );
     }
 
-    // Special case for THREADED pseudo-delay
+    // THREADED: the data has moved and the cycles are owed, what is left is the requester's
+    // own 5us per word.
     if( ctlP->waitDelay > 0 )
     {
-        // If the channel already reached HSC_DONE on its own, we're done.
-        if( ctlP->status == HSC_DONE )
-        {
-            ctlP->waitDelay = 0;
-            return(HSC_DONE);
-        }
-
         // We aren't necessarily in the same thread as the main emulator,
         // just idle if it isn't in run state.
         while( !pdp1P->run )
@@ -468,7 +465,6 @@ HSCControlP ctlP;
             usleep(100);
         }
 
-        // Enforce the simulated transfer delay.
         // Short delays busy-spin, longer usleep().
         if( ctlP->waitDelay <= HSC_SPIN_LIMIT_US )
         {
@@ -481,31 +477,36 @@ HSCControlP ctlP;
 
         ctlP->waitDelay = 0;
 
-        // The real data transfer already happened synchronously back in HSCexecute(),
-        // all we were waiting for here is the simulated delay completion.
-        lockControl(ctlP);
-        ctlP->brkCount = 0;
-        ctlP->status = HSC_DONE;
-        HSCdone(ctlP);
-        unlockControl(ctlP);
+        // An HSCreset() during the delay leaves HSC_ABORT, which is reported once.
+        expected = HSC_BUSY;
+        if( atomic_compare_exchange_strong(&(ctlP->status), &expected, HSC_DONE) )
+        {
+            return(HSC_DONE);
+        }
 
-        return(HSC_DONE);
+        atomic_store(&(ctlP->status), HSC_DONE);
+        return( (expected == HSC_ABORT) ? HSC_ABORT : HSC_DONE );
     }
 
-    lockControl(ctlP);
-    if( (ctlP->status == HSC_BUSY) && !(ctlP->isWaiting) )
+    if( atomic_load(&(ctlP->status)) != HSC_BUSY )
     {
-        ctlP->isWaiting = true;
-        unlockControl(ctlP);
-        sem_wait(&(ctlP->waitSemaphore));
-        status = ctlP->status;
-    }
-    else
-    {
-        status = ctlP->status;
-        unlockControl(ctlP);
+        return( atomic_load(&(ctlP->status)) );
     }
 
+    // Announce the wait, then look again: completeChannel() and HSCreset() store the status
+    // before they take isWaiting, so either we see their status here or they see our flag.
+    // Whoever takes isWaiting back owns the wake-up; if it was them, their post is coming.
+    atomic_store(&(ctlP->isWaiting), 1);
+    if( atomic_load(&(ctlP->status)) != HSC_BUSY )
+    {
+        if( atomic_exchange(&(ctlP->isWaiting), 0) )
+        {
+            return( atomic_load(&(ctlP->status)) );
+        }
+    }
+
+    sem_wait(&(ctlP->waitSemaphore));
+    status = atomic_load(&(ctlP->status));
     return( status );
 }
 
@@ -519,31 +520,46 @@ HSCControlP ctlP;
         return( HSC_ERR );
     }
 
-    return( ctlP->status );
+    return( atomic_load(&(ctlP->status)) );
 }
 
-// And how we complete.
-// ctlP should be locked before calling this.
+// Finish a normal or TRUESTEAL transfer, on the emulator thread.
 static void
-HSCdone(HSCControlP ctlP)
+completeChannel(HSCControlP ctlP)
 {
-    if( ctlP->isWaiting )
+    logger(LOG_HSC, "channel marking DONE\n");
+    atomic_store(&(ctlP->scanKind), SCAN_IDLE);
+    atomic_store(&(ctlP->status), HSC_DONE);
+    wakeWaiter(ctlP);
+}
+
+// Post the waiter, if there is one and it has not already withdrawn. The status must be
+// stored before this is called; see HSCwait().
+static void
+wakeWaiter(HSCControlP ctlP)
+{
+    if( atomic_exchange(&(ctlP->isWaiting), 0) )
     {
-        ctlP->isWaiting = false;
         sem_post(&(ctlP->waitSemaphore));
     }
 }
 
+// Ask the scan to keep the lamp lit for at least passes passes (HSC_STRETCH minimum).
 static void
-lockControl(HSCControlP ctlP)
+requestLamp(HSCControlP ctlP, int passes)
 {
-    sem_wait(&(ctlP->accessSemaphore));
-}
+int cur;
 
-static void
-unlockControl(HSCControlP ctlP)
-{
-    sem_post(&(ctlP->accessSemaphore));
+    if( passes < HSC_STRETCH )
+    {
+        passes = HSC_STRETCH;
+    }
+
+    cur = atomic_load(&(ctlP->lampWanted));
+    while( (passes > cur) && !atomic_compare_exchange_weak(&(ctlP->lampWanted), &cur, passes) )
+    {
+        ;
+    }
 }
 
 // Busy-wait for approximately the given number of microseconds.
@@ -569,159 +585,173 @@ uint64_t targetNs;
     }
 }
 
-// This is a special case.
-// It does not block or wait, it immediately completes.
-// It does not set or clear the hs light.
+// Move a whole request at once, in the caller's thread, for IMMEDIATE and THREADED.
+// Works on a copy, so the caller's request is left as it was passed.
 static void
 processImmediate(HSCRequestP rqstP)
 {
-uint32_t *memBaseP;
+HSCRequest work;
 
-    memBaseP = &pdp1P->core[rqstP->memBank * 4096];
+    memcpy(&work, rqstP, sizeof(HSCRequest));
 
 #ifdef DOLOGGING
-    if( rqstP->mode & HSC_MODE_FROMMEM )
+    if( work.mode & HSC_MODE_FROMMEM )
     {
         logger(LOG_DATA,"Transfer %d words from core addr %06o\n",
-            rqstP->count, (rqstP->memBank * 4096) + rqstP->memAddr);
+            work.count, (work.memBank * 4096) + work.memAddr);
+    }
+
+    if( work.mode & HSC_MODE_TOMEM )
+    {
+        logger(LOG_DATA,"Transfer %d words to core addr %06o\n",
+            work.count, (work.memBank * 4096) + work.memAddr);
+    }
+#endif
+
+    while( work.count-- > 0 )
+    {
+        moveWord(&work);
+    }
+}
+
+// Move one word between core and the request's buffers and advance the request's address
+// and buffer pointers; the count is the caller's business.
+// A read from memory comes before a write to memory, same as the original hardware.
+static void
+moveWord(HSCRequestP rqstP)
+{
+uint32_t fullAddr;
+uint32_t data;
+
+    // We wrap within the bank
+    if( rqstP->memAddr > 4095 )
+    {
+        rqstP->memAddr = 0;
+    }
+
+    fullAddr = (rqstP->memBank * 4096) + rqstP->memAddr;
+
+    if( rqstP->mode & HSC_MODE_FROMMEM )
+    {
+        data = pdp1P->core[fullAddr];
+        *(rqstP->fromBufferP++) = data & 0777777;   // just for cleanliness
+        logger(LOG_DATA,"%06o from core %o\n", data, fullAddr);
     }
 
     if( rqstP->mode & HSC_MODE_TOMEM )
     {
-        logger(LOG_DATA,"Transfer %d words to core addr %06o\n",
-            rqstP->count, (rqstP->memBank * 4096) + rqstP->memAddr);
+        data = *(rqstP->toBufferP++) & 0777777;
+        logger(LOG_DATA,"%06o to core %o\n", data, fullAddr);
+        pdp1P->core[fullAddr] = data;
     }
-#endif
 
-    while( rqstP->count-- > 0 )
+    ++(rqstP->memAddr);
+}
+
+// Run a TRUESTEAL transfer's spreading up to the ticks simtime says are due, making words due.
+// Ticks come from simtime, not from passes, so a mul or div that spans several memory cycles
+// in one pass makes the words it covered due at once, to be stolen right after it, as the
+// hardware held its breaks until the instruction finished (F25; F17 3-31).
+// The spreading is computed, not accumulated: after t of the transfer's ticks, t*count/ticks
+// words (rounded down) are due. That is at most one new word a tick, since count <= ticks, and
+// exactly count at the last tick. The running accumulator this replaced made one word too
+// many on about a quarter of transfers (7 words over 12 ticks, for one), which moved a word
+// past the end of the block.
+static void
+advanceTrueSteal(HSCControlP ctlP)
+{
+uint64_t due;
+int made;
+
+    // The clock starts on the first pass that sees the request, and that pass is its first
+    // tick, so a transfer of n ticks is over on its nth pass. simtime is only read here, on
+    // the emulator thread.
+    if( !ctlP->started )
     {
-        if( rqstP->memAddr > 4095 )
-        {
-            rqstP->memAddr = 0;
-        }
+        ctlP->started = true;
+        ctlP->startSim = pdp1P->simtime - HSC_CYCLE_NS;
+        ctlP->capSeen = throttleCapFirings;
+    }
 
-        // Always get from mem first
-        if( rqstP->mode & HSC_MODE_FROMMEM )
-        {
-            *(rqstP->fromBufferP++) = *(memBaseP + rqstP->memAddr) & 0777777;   // just for cleanliness
-        }
+    due = (pdp1P->simtime - ctlP->startSim) / HSC_CYCLE_NS;
+    if( due > (uint64_t)ctlP->ticksTotal )
+    {
+        due = (uint64_t)ctlP->ticksTotal;
+    }
 
-        if( rqstP->mode & HSC_MODE_TOMEM )
-        {
-            *(memBaseP + rqstP->memAddr) = *(rqstP->toBufferP++) & 0777777;
-        }
+    // due > ticksDone >= 0 here, and due <= ticksTotal, so ticksTotal is not 0.
+    if( (uint64_t)ctlP->ticksDone < due )
+    {
+        ctlP->ticksDone = (int)due;
+        made = (int)(((uint64_t)ctlP->ticksDone * (uint64_t)ctlP->request.count) / (uint64_t)ctlP->ticksTotal);
+        ctlP->wordsDue += made - ctlP->wordsMade;
+        ctlP->wordsMade = made;
+    }
 
-        ++(rqstP->memAddr);
+    // A throttle lag-cap firing moved simtime forward over time the CPU never ran (pdp1.c,
+    // throttle()). The words that fell due in it move now without a steal: the cycles they
+    // would have taken are part of the forgiven time.
+    if( throttleCapFirings != ctlP->capSeen )
+    {
+        ctlP->capSeen = throttleCapFirings;
+        while( ctlP->wordsDue > 0 )
+        {
+            moveWord(&(ctlP->request));
+            --(ctlP->wordsDue);
+        }
     }
 }
 
-// Process one channel, one word.
-// We do a read before a write if both are enabled and we are in normal mode.
-// Returns true if a cycle steal is needed, else false.
+// Service one channel for this pass. mayTake is false once a higher-priority channel has
+// taken the cycle; the channel then only keeps its bookkeeping and may still complete.
+// Returns true if this channel took the pass's memory cycle, else false.
 static bool
-processChannel(HSCControlP ctlP)
+serviceChannel(HSCControlP ctlP, bool mayTake)
 {
-bool steal;
-uint32_t fullAddr;
-uint32_t data;
-HSCRequestP rqstP;
+int kind;
+bool took;
 
-    steal = false;
-    if( !ctlP->isAssigned || (ctlP->status != HSC_BUSY) )
+    took = false;
+
+    // Cycles already owed by a THREADED fetch or HSCsteal() go first: their words have moved.
+    if( mayTake && (atomic_load_explicit(&(ctlP->owed), memory_order_relaxed) > 0) )
     {
-        return(steal);
+        atomic_fetch_sub(&(ctlP->owed), 1);
+        took = true;
     }
 
-    lockControl(ctlP);
-    rqstP = &(ctlP->request);
-
-    // If a TRUESTEAL transfer is in progress, see if we need to steal a cycle.
-    // Spreads stealsLeft steal-ticks evenly across ticksLeft total total ticks.
-    // As a side note, this is a version of the Bresenham algorithm used for drawing smooth lines.
-    // That algorithm ended up being very useful for many things.
-    if( ctlP->trueSteal )
+    // The acquire pairs with HSCexecute()'s release, so the request is complete when seen.
+    kind = atomic_load_explicit(&(ctlP->scanKind), memory_order_acquire);
+    if( kind == SCAN_NORMAL )
     {
-        steal = false;
-        ctlP->stealAcc += ctlP->stealsLeft;
-
-        if( ctlP->stealAcc >= ctlP->ticksLeft )
+        if( !took && mayTake && (ctlP->request.count > 0) )
         {
-            ctlP->stealAcc -= ctlP->ticksLeft;
-            steal = true;
-            ctlP->stealsLeft--;
+            moveWord(&(ctlP->request));
+            --(ctlP->request.count);
+            took = true;
         }
 
-        ctlP->ticksLeft--;
-
-        if( ctlP->ticksLeft <= 0 )
+        if( ctlP->request.count <= 0 )
         {
-            logger(LOG_HSC, "processChannel TRUESTEAL marking DONE\n");
-            ctlP->status = HSC_DONE;
-            ctlP->trueSteal = false;
-            ctlP->needLightoff = true;
-            HSCdone(ctlP);
+            completeChannel(ctlP);
+        }
+    }
+    else if( kind == SCAN_TRUESTEAL )
+    {
+        advanceTrueSteal(ctlP);
+
+        if( !took && mayTake && (ctlP->wordsDue > 0) )
+        {
+            moveWord(&(ctlP->request));
+            --(ctlP->wordsDue);
+            took = true;
         }
 
-        unlockControl(ctlP);
-        return(steal);
+        if( (ctlP->ticksDone >= ctlP->ticksTotal) && (ctlP->wordsDue == 0) )
+        {
+            completeChannel(ctlP);
+        }
     }
 
-    // If a THREADED operation was done, fake break cycles.
-    if( ctlP->brkCount > 0 )
-    {
-        ctlP->brkCount--;
-        steal = true;
-
-        if( ctlP->brkCount <= 0 )
-        {
-            logger(LOG_HSC, "processChannel threaded marking DONE\n");
-            ctlP->status = HSC_DONE;
-            ctlP->needLightoff = true;
-            HSCdone(ctlP);
-        }
-
-        unlockControl(ctlP);
-        return(steal);
-    }
-
-    if( rqstP->count-- > 0 )
-    {
-        // We wrap
-        if( rqstP->memAddr > 4095 )
-        {
-            rqstP->memAddr = 0;
-        }
-
-        fullAddr = (rqstP->memBank * 4096) + rqstP->memAddr;
-
-        // We do a read from memory before a write to memory, same as the original hardware
-        if( rqstP->mode & HSC_MODE_FROMMEM )
-        {
-            data = pdp1P->core[fullAddr];
-            *(rqstP->fromBufferP++) = data & 0777777;
-            logger(LOG_DATA,"%06o from core %o\n", data, fullAddr);
-        }
-
-        if( rqstP->mode & HSC_MODE_TOMEM )
-        {
-            data = *(rqstP->toBufferP++) & 0777777;   // just for cleanliness
-            logger(LOG_DATA,"%06o to core %o\n", data, fullAddr);
-            pdp1P->core[fullAddr] = data;
-        }
-
-        rqstP->memAddr++;
-        steal = true;
-    }
-
-    // We might still need to steal a cycle if we completed a transfer, so don't change the steal state.
-    if( rqstP->count <= 0 )
-    {
-        logger(LOG_HSC, "processChannel marking DONE\n");
-        ctlP->status = HSC_DONE;
-        ctlP->needLightoff = true;
-        HSCdone(ctlP);
-    }
-
-    unlockControl(ctlP);
-    return( steal );
+    return(took);
 }

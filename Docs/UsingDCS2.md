@@ -1,8 +1,8 @@
 # Using the DCS Communication System
 
 This document describes how to use the enhanced multi-channel Type 630 Data Communication System replacement.
-Updated 14-Sep-2026\
-add new telnet rules
+Updated 29-Sep-2026\
+polling is every 5 ms while no channel is connected, and goes on while halted
 
 ## What is DCS2?
 
@@ -64,7 +64,9 @@ It is assumed that data can always be sent, but error are possible and can be de
 Each channel can be either a TCP/IP client or server.
 
 For server mode, the channel listens on the specified port for a connection request.
-A check is made for a request every 100us.
+A check is made for a request every 100us while any channel is connected, and every 5 ms while none is,
+so the first connection is seen within 5 ms.
+The checks go on while the PDP-1 is halted.
 When a connection is established, the status of the channel will indicate so.
 Only one remote system can connect to a channel and a channel will not be selected by the scanner
 until a channel is connected.
@@ -78,7 +80,8 @@ A client channel will be close and can only be used by opening it again.
 
 For client mode, when the channel is opened, it tries to connect to the specified host.
 In order to not halt the system while waiting, a non-blocking connect is used.
-As with server mode, it will be polled every 100us.
+As with server mode, it will be polled every 100us while another channel is connected, and every 5 ms
+while none is.
 When it is established, the channel becomes a candidate for selection by the scanner and can be used
 by the send commands.
 

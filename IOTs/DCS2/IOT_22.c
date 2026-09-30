@@ -39,6 +39,9 @@
  *    A received CR NUL is taken as CR LF (RFC 1123), so the NUL never reaches the
  *    program, and a CR the program sends, or an echoed CR with no LF after it,
  *    goes out as CR NUL (RFC 854).
+ * 29-Sep-2026 wje (Claude) - polling is a simtime deadline on the device time base, not a
+ *    count of executed cycles, so it also runs while the machine is halted: every 100 us while
+ *    a line is connected, and every 5 ms while none is.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -285,7 +288,12 @@ static bool initialized;    // we have been started
 static int epoll_fd = -1;   // used by epoll()
 static int last_error;      // error from the last failed command regardless of channel
 
-static int current_poll_interval = 20;  // default poll time, 100us
+// The poll interval, on the device time base: often while a line is connected, rarely while
+// none is (the owner, 28-Sep-2026), so an idle DCS2 costs 200 epoll_wait() calls a second, not
+// 10,000. A new caller, or a client line still connecting, is seen within 5 ms.
+#define POLL_CONNECTED_NS   USTONS(100)
+#define POLL_IDLE_NS        MSTONS(5)
+
 static int cur_chan = -1;       // which channel is currently selected, -1 for none
 static bool cur_chan_locked;
 static int send_chan = -1;      // if one was selected by ssb
@@ -317,6 +325,7 @@ void sendTelnetGreeting(ChannelP);
 void sendTelnetCommand(ChannelP, int, int);
 void negotiateOption(ChannelP, int, int);
 void clearConnectionState(ChannelP);
+void armPoll(void);
 
 extern int flexToAscii(char, int *);
 extern char asciiToFlex(char, int *);
@@ -336,7 +345,7 @@ ChannelP chanP;
 
     if( initialized )
     {
-        enablePolling(0);
+        iotPollCancel();
 
         for( i = 0; i < NUM_CHANS; ++i )
         {
@@ -407,7 +416,7 @@ char wbuf[8];
             return(1);
         }
 
-        enablePolling(20);              // every 20 cycles, 100us
+        armPoll();
 
         for( i = 0; i < NUM_CHANS; ++i )
         {
@@ -651,7 +660,7 @@ char wbuf[8];
             {
                 // Short send, e.g. the CR/LF pair from a CNTL_TELNET only got its '\r' onto the wire.
                 // Report FULL exactly as the EAGAIN case above does, but also queue the un-sent tail so
-                // iotPoll() can flush it the next time EPOLLOUT fires.
+                // iotDeadline() can flush it the next time EPOLLOUT fires.
                 // Without this the tail byte would simply be lost.
                 iotLog("TCC/TCB short send on %d, %d of %d bytes\n", cur_chan, j, i);
 
@@ -898,9 +907,10 @@ char wbuf[8];
     return(1);
 }
 
-// Used to update channels, etc.
+// Used to update channels, etc. Called at the deadline armPoll() set, running or halted, and
+// arms the next.
 void
-iotPoll(PDP1P pdp1P)
+iotDeadline(PDP1P pdp1P)
 {
 int i, j;
 int data;
@@ -1171,7 +1181,7 @@ struct epoll_event event;
                             {
                                 if( soErr != EAGAIN )
                                 {
-                                    iotLog("iotPoll pending-tail send errno %d on chan %d\n",
+                                    iotLog("iotDeadline pending-tail send errno %d on chan %d\n",
                                         soErr, chanP->chan_no);
                                     last_error = chanP->last_err =
                                         (IO_ERR_FLAG | IO_ERR_ERRNO | IO_ERR_SOCKET | ((soErr & 0377) << 4));
@@ -1273,6 +1283,28 @@ struct epoll_event event;
     // Outside the block above, so held interrupts are still requested on a poll
     // that found no events or failed.
     postHeldInterrupts(pdp1P);
+    armPoll();
+}
+
+// Arms the next poll, 100 us from now while any line is connected and 5 ms while none is.
+// A line is connected only in a poll, so the interval chosen here is right until the next.
+void
+armPoll(void)
+{
+int i;
+uint64_t interval;
+
+    interval = POLL_IDLE_NS;
+    for( i = 0; i < NUM_CHANS; ++i )
+    {
+        if( channels[i].control_flags & CNTL_CONNECTED )
+        {
+            interval = POLL_CONNECTED_NS;
+            break;
+        }
+    }
+
+    iotPollAt(IOT_TIME_DEVICE, (iotTime(IOT_TIME_DEVICE) + interval));
 }
 
 // Request the interrupts that canPost() held back while an earlier interrupt on the
@@ -1430,7 +1462,7 @@ struct epoll_event event;
             epoll_ctl(epoll_fd, EPOLL_CTL_ADD, chanP->chan_fd, &event);   // op and fd were swapped
 
             // Initiate the non-blocking connection.
-            // EINPROGRESS is expected and normal, the actual result is signalled via EPOLLOUT in iotPoll().
+            // EINPROGRESS is expected and normal, the actual result is signaled via EPOLLOUT in iotDeadline().
             if( connect(chanP->chan_fd,
                         (struct sockaddr *)&chanP->address,
                         sizeof(chanP->address)) < 0 )
@@ -1446,7 +1478,7 @@ struct epoll_event event;
                     chanP->last_err = last_error;
                     return( last_error );
                 }
-                // EINPROGRESS: connection is underway; iotPoll() will handle completion.
+                // EINPROGRESS: connection is underway; iotDeadline() will handle completion.
                 iotLog("channel %d connect() in progress\n", chan_no);
             }
             else
@@ -1489,7 +1521,7 @@ struct epoll_event event;
         break;
 
     case SCBRESET:
-        enablePolling(0);
+        iotPollCancel();
         iotLog("DCS full reset\n");
 
         for( i = 0; i < NUM_CHANS; ++i )

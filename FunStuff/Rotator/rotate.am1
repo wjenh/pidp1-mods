@@ -17,7 +17,7 @@ ROTATE THRU SIX PROGRAMS ON THE DRUM
 // It can be restarted either at the original start address to repeat the setup,
 // or it can be started at 0101 in its install bank to restart using whatever programs were set up
 // previously.
-// It does not halt, it executes immediately.
+// It then does not halt, it executes immediately.
 //
 // Note that this will forceably halt the Type 340 display if it's running.
 // Otherwise, the 340 would try to execute whatever data overwrites its program.
@@ -73,7 +73,9 @@ initialize,
 
 // Control transfers here on every timeout, we will already be in extended mode.
 // Get the drum pgm to load, 6 sets of 6 bits, high bit in each ignored, and rotate them.
-resume, 
+resume,
+     lsm                    // breaks off while bank 0 is replaced: the clock's break returns here
+                            // with them on, and the drum breaks at the end of the load
      jsp type340halt        // in case a 340 program is running, be sure it's stopped
      lac pgm
      lia
@@ -108,6 +110,7 @@ resume,
      isr:bnkno
      isr            // will be in bank 0
 // turn on ints, extended mem, and transfer back to bank 0, adr 0
+     cbs            // drop the drum's end-of-transfer break, or esm takes it into the new program
      esm
 // enable the clock
      law clsena clsimn   // 1 min interrupt enabled, clock enabled

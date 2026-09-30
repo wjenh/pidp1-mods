@@ -1,0 +1,14 @@
+Test rg50: a complement after an operand is a separator, like any other operand
+// The blanks in front of a ~ used to be swallowed with it, leaving no separator
+// between the operands: a syntax error. A tab is the same after cpp; the runner
+// assembles this again with -n, which keeps the tabs.
+100/
+    lac ~07             // lac | ~07
+    0777 ~07            // 0777 | ~07
+    lac 1 ~07           // lac | 1 | ~07
+    ~07 ~07             // ~07 | ~07
+    lac ~ 07            // blanks after the ~ are absorbed too
+    lac	~07             // a tab
+    lac 0777 & ~07      // unchanged: the & takes its own blanks
+    lac -07             // unchanged: still a binary minus
+stop

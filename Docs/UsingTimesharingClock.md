@@ -31,6 +31,15 @@ It uses the AC register to control the clock.
 
 Why the AC? Because all IOTs 30-37 automatically clear the IO register when invoked!
 
+## What the clock counts
+
+The clock and the countdown timer count the time the machine runs, and stop while it is halted.
+They keep time while a high speed channel steals cycles, as the Type 23 drum does during a transfer,
+and through the full length of a *mul* or *div*.
+They do not count a span the emulator skips to catch up after the host has fallen more than
+`throttlemaxlag` behind (see UsingTheConfigFile.md); the timing report counts each such span.
+So the clock is not a time of day; the Chronolog clock is (UsingTheChronologClock.md).
+
 # The IOT
 
 This is implemented via a single IOT, 32 as mentioned.

@@ -1,0 +1,151 @@
+Type 23 drum end-of-transfer break probe
+// Does the drum request a sequence break at the end of every transfer (H-23 2-21), and does a
+// dba still give its own break first? Run with sbs16=off: the break is the single-channel one
+// (AC to 0, PC to 1, IO to 2, then 3). Each leg reads 100 words of drum field 0 from address
+// 1000 into core 3000:
+//   1. breaks on, a transfer: one break, as it ends.
+//   2. breaks off, a transfer, then breaks on: none while off, and the waiting one at esm.
+//   3. breaks on, DBA, DWC, DCL: the dba break as the transfer starts, then the end break.
+// The break routine reads dra first, so the position it records is where the break found the
+// drum. It halts in about half a second. The 12 words at 2000, in order, and what a correct
+// drum gives (octal):
+//   r1n r1p r2n r2e r2p r3n r3a r3b pad pad pad done
+//   r1n = 1: leg 1 took one break. r1p, its drum position, is 1100 to 1110: the end of the
+//     transfer, a few words on.
+//   r2n = 0: no break with breaks off. r2e = 1: the waiting break taken at esm. r2p is
+//     wherever the drum was then.
+//   r3n = 2: both breaks. r3a, the first, is 1000 to 1010 (the dba address); r3b, the
+//     second, is 1100 to 1110 (the end).
+//   done = 1.
+// Before the end break was added, r1n = 0, r2e = 0 and r3n = 1.
+#include <DRUM/type23drumdefs.ah>
+
+3/
+    jmp brk
+
+100/
+    lsm
+    cbs
+    esm
+
+// Leg 1: breaks on, a transfer.
+    dzm nbrk
+    jsp xfr
+    jsp wt
+    lac nbrk
+    dac r1n
+    lac pos1
+    dac r1p
+
+// Leg 2: breaks off, a transfer, then breaks on.
+    lsm
+    cbs
+    dzm nbrk
+    jsp xfr
+    jsp wt
+    lac nbrk
+    dac r2n
+    esm
+    jsp wt
+    lac nbrk
+    dac r2e
+    lac pos1
+    dac r2p
+
+// Leg 3: DBA, DWC, DCL.
+    dzm nbrk
+    lio [401000
+    dba
+    lio [100
+    dwc
+    lio [3000
+    dcl
+    jsp bwt
+    jsp wt
+    lac nbrk
+    dac r3n
+    lac pos1
+    dac r3a
+    lac pos2
+    dac r3b
+
+    lsm
+    law 1
+    dac done
+    hlt
+
+// A 100-word read of field 0 from 1000 into 3000, waited out.
+// AC and IO are clobbered. Called via jsp.
+xfr, dap xfx
+    lio [401000
+    dia
+    lio [100
+    dwc
+    lio [3000
+    dcl
+    jsp bwt
+xfx, jmp .
+
+// Wait for the drum's busy bit to clear. AC and IO are clobbered. Called via jsp.
+bwt, dap bwx
+bwl, cli
+    cks
+    lai
+    and [cksdrm
+    sza
+    jmp bwl
+bwx, jmp .
+
+// Wait about 50 ms: 3500 decimal passes of isp and jmp, 15 us each.
+// AC is clobbered, IO is preserved. Called via jsp.
+wt, dap wtx
+    lac [771123
+    dac wtc
+wtl, isp wtc
+    jmp wtl
+wtx, jmp .
+
+// Sequence break, single channel: records the drum position of the first two breaks in pos1
+// and pos2 and counts them. AC and IO are restored from 0 and 2 before the return through 1.
+brk, dra
+    lai
+    and [7777
+    dac bp
+    lac nbrk
+    sza
+    jmp b2
+    lac bp
+    dac pos1
+    jmp bx
+b2, sas [1
+    jmp bx
+    lac bp
+    dac pos2
+bx, idx nbrk
+    lac 0
+    lio 2
+    jmp i 1
+
+wtc, 0
+nbrk, 0
+bp, 0
+pos1, 0
+pos2, 0
+
+// Results; every word holds 777777 until the program writes it.
+2000/
+r1n, 777777
+r1p, 777777
+r2n, 777777
+r2e, 777777
+r2p, 777777
+r3n, 777777
+r3a, 777777
+r3b, 777777
+    777777
+    777777
+    777777
+done, 777777
+
+constants
+start 100

@@ -2,7 +2,9 @@ Each of three IOTs for the drum expect parameters in the IO register.
 The proper IOTs for the drum are:
 
 IOT 61,  72xx61, dia
-IOT 2061 722061, dba same as dia except requests a break on channel 5 when the i/o is done
+IOT 2061 722061, dba same as dia except requests a break on channel 5 when the drum reaches the given address
+   A dwc and dcl after it keep the break armed (the DBA, DWC, DCL sequence of the DEC manual), and
+   the break arrives as the transfer starts. A dia before the break arrives cancels it.
    IO rfffffaaaaaaaaaaaa
       r             1 if a read is requested else 0
       fffff         the drum 'field' to read from, 0-037, 0-31 dec
@@ -16,6 +18,7 @@ IOT 62,   72xx62, dwc
 
 IOT 2062, 722062, dra
    current drum address -> IO, 0-07777, 0-4095 dec
+   IO bit 2 is set after a transfer that ended in error, and bit 0 with it (see halts, below)
 
 IOT 63,  72xx63, dcl
    IO 00bbbbaaaaaaaaaaaa
@@ -27,17 +30,38 @@ Both the drum and memory addresses wrap around if the tranfer count plus the sta
 
 A simultaneous read/write can be done.
 For this, the read happens first then the write for each word.
-The implementation actually reads all the data, then writes all the data, then copies the read data into memory.
-The effect is the same, but see below.
+The implementation reads the whole block from the drum file when dcl is executed, moves the words to and from
+core one at a time during the transfer, and writes the whole block to the drum file when the transfer completes.
+The effect is the same, see below.
 
 Bit 17 in cks is the busy flag, CKS_DRP, 000001.
 It is set when the drum is executing a read or write, cleared when done.
 
 The actual drum advances one word every 8.5 microseconds, which means the current drum address is incremented
-at that interval.  An effort is made to simualate this.
+at that interval.  An effort is made to simulate this.
 A transfer will take (counts for drum to reach starting drum address + number of words to read/write) * 8.5 us.
-Because of the granularity of the simulator clock, the time to reach the starting address is slightly inaccurate,
-but the read/write time is exact to 4 us.
+The start can come up to two word times after the drum reaches the starting address; after that each word is
+moved within one 5 us cycle of its own 8.5 us drum word time.
+A full 4096-word transfer is the exception: it uses every address of the field, so it starts at once instead of
+waiting for the drum to reach the starting address. Each word still goes between the same drum and core
+addresses as if it had waited.
 
-However, all the data is actually transferred within the dcl IOT, it's only the busy or interrupt that is held
-until the simulated completion time. In practice, this should not have any effect on existing code.
+The data moves through high speed channel 1 one word at a time, each word taking one stolen 5 us cycle at its
+own 8.5 us drum word time, so core changes word by word during the transfer, as it did on the hardware.
+When the drum file is read and written cannot be seen by a program.
+The busy flag is cleared when the last word has moved.
+
+At the end of every transfer, good or ended in error, the drum requests a sequence break on its channel
+(5 unless dss changed it), as dba does. With breaks off the request waits and is taken when they are
+turned on, so a program that transfers with breaks off and then turns them on should cbs first.
+A DBA, DWC, DCL sequence takes two breaks: the dba's as the transfer starts, then the end break.
+
+A halt does not drop a transfer. The drum keeps turning while the machine is halted, but no word moves.
+A halt is a hlt, the STOP switch, an ad1 stop or a single step; Continue, Start and read-in resume it alike.
+   Halted before the first word: after resume the transfer waits for the drum to reach its starting address
+      again, up to one revolution, about 35 ms. A full 4096-word transfer still starts at once.
+      A dba break not yet taken waits for its address the same way.
+   Halted after the first word: at resume the transfer ends with the transfer error set, dra IO bits 0
+      and 2, busy clears and the end break is requested. Core, for a read, or the drum, for a write,
+      holds only the words that moved before the halt.
+A power cycle does not reset the drum: a transfer pending at power-off still runs after power-on and Start.

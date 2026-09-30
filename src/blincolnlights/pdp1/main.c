@@ -22,9 +22,15 @@
  * wje 14-Jul-2026 wje some more cleanup
  * wje 8-Aug-2026 wje add motion prediction setting
  * wje 15-Aug-2026 wje if stopped, readin did not do an iot start causing failures
- * wje/claude 11-Sep-2026 extend the pidp1timing report for MiscTasks/TASK-THROTTLE-BURSTS.md
+ * wje/claude 11-Sep-2026 extend the pidp1timing report
  * Claude 20-Sep-2026 remove the shared-memory segment, ad1 and fastload now talk to the emulator
  *    through the network server in ad1server.c.
+ * Claude 24-Sep-2026 the reader and punch ports' sockets are non-blocking and are handed to the
+ *    emulator thread (mountReader()/mountPunch()) instead of replacing r_fd/p_fd here.
+ * Claude 27-Sep-2026 the startup tapes are mounted through papertape.c, and stdin commands run on
+ *    the console thread (console.c).
+ * Claude 29-Sep-2026 display.c no longer sends display aging; the display clients keep their own clocks.
+ * Claude 29-Sep-2026 display.c keeps the client's stream on word boundaries across a partial write.
 */
 
 #include <fcntl.h>
@@ -33,6 +39,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <limits.h>
+#include <math.h>
 #include <locale.h>
 #include <time.h>
 #include <sched.h>
@@ -49,6 +56,8 @@
 #include "dynamicIots.h"
 #include "highSpeedChannels.h"
 #include "ad1server.h"
+#include "papertape.h"
+#include "console.h"
 
 //#define DOLOGGING
 #include "logger.h"
@@ -98,6 +107,8 @@ extern bool setDisplayFD(int screen, int fd);
 
 static bool checkBreakpoints(PDP1 *pdp1P);
 static bool checkWatches(PDP1 *pdp1P);
+static u64 configThrottleDuration(char *nameP, u64 unitNs, u64 defaultNs);
+static float configCutoff(char *nameP, float fallback);
 
 static void timingRunStart(void);
 static void timingNoteCycle(PDP1 *pdp, u64 startNs, u64 deltaNs);
@@ -124,16 +135,7 @@ static bool newMemFile;
 static volatile sig_atomic_t reconfigRequested;     // SIGHUP synchronization, thread-safe
 
 // All for audio
-extern void setFilterAlpha(float);
-extern void setFilter1Alpha(float);
-extern void setFilter2Alpha(float);
-extern void setFilter3Alpha(float);
-extern void setFilter4Alpha(float);
-extern float getFilterAlpha(void);
-extern float getFilter1Alpha(void);
-extern float getFilter2Alpha(void);
-extern float getFilter3Alpha(void);
-extern float getFilter4Alpha(void);
+extern void setFilterCutoff(int, float);
 extern void setMixerGain(float);
 extern float getMixerGain(void);
 extern void setAudioTuning(float);
@@ -153,7 +155,7 @@ static long overflowCount;
 static long totalTime;
 static long totalCycles;
 
-// Extended timing (11-Sep-2026, see the file header and MiscTasks/TASK-THROTTLE-BURSTS.md).
+// Extended timing (11-Sep-2026, see the file header).
 // All of it is gathered only while pidp1timing is on and the machine is running, written by
 // timingReport() after the one-line summary above, and cleared by timingReset().
 static const u64 cycleEdges[TIMING_CYCLE_EDGES] =
@@ -203,8 +205,8 @@ static long runStartInvoluntary;// and involuntary ones (preemptions), -1 if unk
 // switches, services start/stop/continue/examine/deposit/readin switch edges via
 // spec()/cycle()/start_readin()/readin1()/readin2(), runs one machine cycle  or steals one for an active
 // high-speed-channel DMA transfer when pdp->run is set, services the panel lights in all states,
-// then services file-descriptor-backed I/O via handleio() and dynamicIotProcessorDoIOPoll() and the
-// network command listener cli().
+// then services file-descriptor-backed I/O via handleio() and dynamicIotProcessorDoIOPoll(), and
+// the console's cli(), which applies a staged load and passes stdin lines to the console thread.
 // No return value -- this function never returns normally.
 void
 emu(PDP1 *pdp, Panel *panel)
@@ -218,6 +220,9 @@ bool prev_readin_sw;
 
 FILE *tmpfP;    // used for timing
 u64 realtimeBefore;     // pdp->realtime before throttle(); it changes only if throttle() slept
+u64 passStartSim;       // simtime at the top of a powered pass
+u64 passNs;             // the pass's simtime up to throttle(): its mul/div time, not the lag cap
+bool ran;               // the pass ran the machine, a stolen cycle included
 
     pdp->panel = panel;
     pwrclr(pdp);
@@ -292,6 +297,9 @@ u64 realtimeBefore;     // pdp->realtime before throttle(); it changes only if t
 
         if( pdp->power_sw )
         {
+            passStartSim = pdp->simtime;
+            ran = false;
+
             if(Edge(start_sw) || Edge(continue_sw) || Edge(examine_sw) || Edge(deposit_sw))
             {
                 // We don't check for a bp hit until spec() runs, it sets the pc
@@ -347,6 +355,8 @@ u64 realtimeBefore;     // pdp->realtime before throttle(); it changes only if t
 
             if(pdp->run)
             {
+                ran = true;
+
                 if( audioEnabled )                   // handle new audio stream
                 {
                     svc_audio(pdp);
@@ -441,10 +451,14 @@ u64 realtimeBefore;     // pdp->realtime before throttle(); it changes only if t
                 updatelights_pwm(panel, 1);     // tally one halted cycle for new panel driver
             }
 
-            realtimeBefore = pdp->realtime;
-            ad1Throttle(pdp);
+            // throttle() moves simtime only through its lag cap, so measuring up to here leaves
+            // out the span the cap forgives: the plugins' deadline time bases do not count it.
+            passNs = pdp->simtime - passStartSim;
 
-            // ad1Throttle() only refreshes pdp->realtime after a sleep, so a change means it slept.
+            realtimeBefore = pdp->realtime;
+            throttle(pdp);
+
+            // throttle() only refreshes pdp->realtime after a sleep, so a change means it slept.
             // Only tracked inside a timed run (totalCycles is cleared when the run's report is written).
             if( timingEnabled && totalCycles && (pdp->realtime != realtimeBefore) )
             {
@@ -457,6 +471,7 @@ u64 realtimeBefore;     // pdp->realtime before throttle(); it changes only if t
             // devices keep their cadence regardless of run state. See dynamicIots.h/.c.
             dynamicIotProcessorDoIOPoll(pdp);
             pdp->simtime += 5000;
+            dynamicIotProcessorAdvance(pdp, (passNs + 5000), ran);
         }
         else
         {
@@ -480,13 +495,15 @@ u64 realtimeBefore;     // pdp->realtime before throttle(); it changes only if t
     }
 }
 
-// ---- Extended pidp1timing support (11-Sep-2026, MiscTasks/TASK-THROTTLE-BURSTS.md) ----
-// The throttle runs the CPU in bursts: flat out until simtime passes the wall clock, then
-// usleep(1000). These functions record what the one-line summary cannot show: how cycle times
-// are distributed (a few very slow cycles or uniformly slow ones), whether slow cycles are the
-// first after a sleep, how much untimed loop work sits between cycles, how long the sleeps
-// really are, how far simtime trails the wall clock, and how much CPU and how many preemptions
-// the emulator thread took. All run on the emulator thread only.
+// ---- Extended pidp1timing support (11-Sep-2026) ----
+// The throttle (throttle(), pdp1.c) runs the CPU in bursts: flat out until simtime leads the
+// wall clock by throttleburst (100us by default), then a wait chunked to at most throttlequantum
+// (1000us by default). These functions record
+// what the one-line summary cannot show: how cycle times are distributed (a few very slow cycles
+// or uniformly slow ones), whether slow cycles are the first after a sleep, how much untimed
+// loop work sits between cycles, how long the sleeps really are, how far simtime trails the wall
+// clock, and how much CPU and how many preemptions the emulator thread took. All run on the
+// emulator thread only.
 
 // Snapshot the start of a timed run: wall time, the emulator thread's CPU time and its context
 // switch counts, so timingReport() can give this run's deltas.
@@ -704,6 +721,12 @@ char stamp[64];
     fprintf(fP, "  lag (wall clock minus simtime at cycle start): max %lldus\n",
         ((lagMax == LLONG_MIN) ? 0LL : (lagMax / 1000)));
     timingPrintHist(fP, "lag", lagHist, lagEdges, TIMING_LAG_EDGES);
+
+    // Option D: how often the throttle's
+    // lag cap forgave simulated time instead of running an unpaced burst to catch up. Zero on
+    // every ordinary run; a nonzero count here is the only sign that this happened, since a
+    // firing does not show up as a burst or a slow cycle.
+    fprintf(fP, "  throttle lag-cap firings %ld\n", throttleCapFirings);
 }
 
 // Clear all extended timing data and give minimums and maximums their starting values.
@@ -738,6 +761,7 @@ timingReset(void)
     runStartCpu = 0;
     runStartVoluntary = -1;
     runStartInvoluntary = -1;
+    throttleCapFirings = 0;
 }
 
 // Find the histogram bucket for value given numEdges ascending bucket edges (see the
@@ -904,8 +928,8 @@ int n;
         r = handlecmd(pdp, line);
         n = strlen(r);
 
-        // handlecmd() returns a pointer to its own static 1024-byte response
-        // buffer (see pdp1.c). Only append our own newline terminator when
+        // handlecmd() returns a pointer to this thread's own 1024-byte response
+        // buffer (see console.c). Only append our own newline terminator when
         // doing so cannot walk past the end of that buffer; otherwise send
         // the response as-is rather than risk an out-of-bounds write.
         if( (n + 2) <= 1024 )
@@ -971,17 +995,18 @@ handledpy4(int fd, void *arg)
     connectdpy(3, fd);
 }
 
-// Called when a connection request comes in on the paper-tape-reader network port: closes
-// whatever reader fd pdp currently has open and replaces it with the newly-connected fd (put
-// into nonblocking mode), so the reader now reads from the network connection instead. No
-// return value (void).
+// Called when a connection request comes in on the paper-tape-reader network port: mounts
+// the newly-connected fd in the reader in place of whatever it had. The fd is made
+// non-blocking, so a client that pauses or stops reading the echoes cannot hold the emulator
+// thread, and it is handed over with mountReader() (pdp1.c), which the emulator thread adopts
+// at its next pass. No return value (void).
 void
 handleptr(int fd, void *arg)
 {
-    PDP1 *pdp = (PDP1*)arg;
-    close(pdp->r_fd);
-    pdp->r_fd = fd;
-    nodelay(pdp->r_fd);
+    (void)arg;      // signature matched to the pollfd accept-callback type; not needed here
+    nodelay(fd);
+    fcntl(fd, F_SETFL, (fcntl(fd, F_GETFL, 0) | O_NONBLOCK));
+    mountReader(fd);
 }
 
 // Same as handleptr() above, but for the paper-tape punch (p_fd) instead of the reader. No
@@ -989,10 +1014,10 @@ handleptr(int fd, void *arg)
 void
 handleptp(int fd, void *arg)
 {
-    PDP1 *pdp = (PDP1*)arg;
-    close(pdp->p_fd);
-    pdp->p_fd = fd;
-    nodelay(pdp->p_fd);
+    (void)arg;
+    nodelay(fd);
+    fcntl(fd, F_SETFL, (fcntl(fd, F_GETFL, 0) | O_NONBLOCK));
+    mountPunch(fd);
 }
 
 // Thread entry point that listens on all the network command/display/reader/punch ports
@@ -1173,9 +1198,14 @@ int fd[2];
 
     pthread_create(&th, NULL, netthread, pdp);
     ad1ServerStart(pdp, configurationP);
+    consoleStart(pdp);
 
-    pdp->r_fd = open(tape, O_RDONLY);
-    pdp->p_fd = open("punch.out", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    // Posted like any other mount and adopted at the first pass; opened non-blocking, so a FIFO
+    // here can't hang the start.
+    pdp->r_fd = -1;
+    pdp->p_fd = -1;
+    mountReaderPath(tape);
+    mountPunchPath("punch.out");
 
     pdp->typ_fd.id = -1;
     socketpair(AF_UNIX, SOCK_STREAM, 0, fd);
@@ -1297,6 +1327,54 @@ getConfiguration()
     return( configurationP );
 }
 
+// Read a throttle* extra as a duration, in unitNs per
+// config unit, or defaultNs if the key is absent, negative or not a plain number (reported and
+// defaulted, matching ad1server.c's configPort() convention for its own extras).
+static u64
+configThrottleDuration(char *nameP, u64 unitNs, u64 defaultNs)
+{
+ConfigurationSettingP settingP;
+
+    settingP = findConfigurationSetting(configurationP, nameP);
+    if( !settingP )
+    {
+        return( defaultNs );
+    }
+
+    if( settingP->strvalueP || (settingP->ivalue < 0) )
+    {
+        fprintf(stderr, "pidp1: %s must be a non-negative number; using %llu\n",
+            nameP, (unsigned long long)(defaultNs / unitNs));
+        return( defaultNs );
+    }
+
+    return( (u64)settingP->ivalue * unitNs );
+}
+
+// Read an audio cutoff extra, in Hz, or fallback if the key is absent or not a positive number
+// (reported). A fallback of 0 leaves the voice at the CHM interface's cutoff.
+static float
+configCutoff(char *nameP, float fallback)
+{
+ConfigurationSettingP settingP;
+float hz;
+
+    settingP = findConfigurationSetting(configurationP, nameP);
+    if( !settingP )
+    {
+        return( fallback );
+    }
+
+    hz = (isnan(settingP->fvalue) ? (float)settingP->ivalue : settingP->fvalue);
+    if( settingP->strvalueP || (hz <= 0.0f) )
+    {
+        fprintf(stderr, "pidp1: %s must be a positive number of Hz; ignored\n", nameP);
+        return( fallback );
+    }
+
+    return( hz );
+}
+
 // Read the config file, set our various settings
 void
 configure()
@@ -1322,11 +1400,28 @@ ConfigurationSettingP configSettingP;
     setMixerGain(configurationP->gain);
     setAudioTuning(configurationP->tuning);
     setSampleRate(configurationP->sampleRate);
-    setFilterAlpha(configurationP->alpha);
-    setFilter1Alpha(configurationP->alpha1);
-    setFilter2Alpha(configurationP->alpha2);
-    setFilter3Alpha(configurationP->alpha3);
-    setFilter4Alpha(configurationP->alpha4);
+
+    // The filters are set in Hz: cutoff for all four voices, cutoff1-cutoff4 for one. A voice with
+    // neither gets the CHM interface's cutoff, so a reload that drops a line puts that back. The old
+    // alpha keys were per sample, right only at the rate they were worked out for; they are named
+    // so a config that still has them is not taken to mean them.
+    for( i = 1; i <= 4; ++i )
+    {
+        char nameBuf[16];
+
+        snprintf(nameBuf, sizeof(nameBuf), "cutoff%d", i);
+        setFilterCutoff(i, configCutoff(nameBuf, configCutoff("cutoff", 0.0f)));
+    }
+    for( i = 0; i < 5; ++i )
+    {
+        static char *alphaNames[5] = { "alpha", "alpha1", "alpha2", "alpha3", "alpha4" };
+
+        if( findConfigurationSetting(configurationP, alphaNames[i]) )
+        {
+            fprintf(stderr, "pidp1: %s is no longer used; the filters are set by cutoff, in Hz "
+                "(see pidp1.config.example)\n", alphaNames[i]);
+        }
+    }
 
     // Extra stuff that is local
     if( (configSettingP = findConfigurationSetting(configurationP, "pidp1timing")) )
@@ -1347,6 +1442,15 @@ ConfigurationSettingP configSettingP;
         setLightpenRadius2(0, i * i);
         logger(LOG_APERTURE, "aperture %d\n",i);
     }
+
+    // throttlequantum/throttlespin/throttlemaxlag:
+    // parsed here, alongside the other config extras, then pushed into pdp1.c's throttle(),
+    // which owns the pacing state and the timer-slack reduction that goes with it.
+    // throttleConfigure() reads throttleburst itself, so its declaration in pdp1.h is unchanged.
+    throttleConfigure(
+        configThrottleDuration("throttlequantum", 1000, 1000000),
+        configThrottleDuration("throttlespin", 1000, 0),
+        configThrottleDuration("throttlemaxlag", 1000000, 20000000));
 }
 
 void

@@ -1,0 +1,10 @@
+# sym_inc_test.am1 and sym_inc_part.ah: the line each global label is defined
+# on, in the file it is WRITTEN in.  Read off the numbering of those two
+# sources and written before the first run; check 2 derives the same with awk.
+#
+# name          line    file
+afterinc        8       # sym_inc_test.am1, after the include returns
+beforeinc       6       # sym_inc_test.am1, before the include
+incfirst        9       # sym_inc_part.ah
+incfwd          11      # sym_inc_part.ah, referenced before it is defined
+inclast         12      # sym_inc_part.ah

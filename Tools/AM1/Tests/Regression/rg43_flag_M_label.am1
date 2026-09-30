@@ -1,0 +1,15 @@
+Test rg43: -M covers the newly checked words -- a labeled word and an initialized table
+// Overwrites are allowed under -M: a word the author wrote follows
+// -M, whether or not it carries a label, and so does an element of an
+// initialized table. Without -M this source is two fatal errors; with it, it
+// assembles, and its .ref pins the words that result. rg25 is the same
+// question for an unlabeled word.
+100/
+tgt,    cli
+100/
+    cla
+200/
+    cma
+200/
+table 2, 7
+stop

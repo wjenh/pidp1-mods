@@ -3,17 +3,26 @@ class p7sim {
 		this.canvas = canvas;
 		this.initGL();
 
-		this.time = 0;
-		this.points = [];
-		this.newpoints = [];
+		// The display keeps its own clock: each point is stamped with the browser's time when it
+		// arrives, and frames are drawn from requestAnimationFrame(), so the image fades when
+		// the emulator stops drawing. Times are in microseconds.
+		this.points = [];	// in arrival order
 //		this.indices = Array(1024*1024).fill(-1);
 
-		this.frameInterval = 33333; // ~30 FPS
+		this.frameInterval = 33333; // ~30 FPS; the excite pass's decay per frame assumes this rate
+		this.maxAge = 200000;		// a point is dropped this long after it arrived
+		this.lastFrame = null;
+		this.emptyFrames = 0;
+		// Frames with no points after which drawing stops; by then the yellow buffer is black.
+		this.idleFrames = 300;
 
 		this.pointSize = 2.0;
 
 		// for point processing
 		this.esc = false;
+
+		this.tick = this.tick.bind(this);
+		requestAnimationFrame(this.tick);
 	}
 
 	initGL() {
@@ -235,14 +244,16 @@ void main() {
 	}
 
 	processIncoming(data) {
+		const now = performance.now() * 1000;
+
 		for (let i = 0; i < data.length; i++) {
 			const cmd = data[i];
 			const dt = (cmd >> 23) & 0o777;
 
-			// escape for longer delays of nothing
+			// An older pdp1 sends a delay in each point, and an escape pair (511, then a delay)
+			// for a longer gap. Both are skipped: time is the browser's.
 			if(this.esc) {
 				this.esc = false;
-				this.time += cmd;
 			} else if(dt == 511) {
 				this.esc = true;
 			} else {
@@ -250,45 +261,62 @@ void main() {
 				const y = (cmd >> 10) & 0o1777;
 				const intensity = (cmd >> 20) & 7;
 
-				this.time += dt;
-
 				if(x != 0 || y != 0)
-					this.newpoints.push({
+					this.points.push({
 						x: x,
 						y: y,
 						intensity: intensity,
-						age: this.frameInterval - this.time
+						time: now
 					});
 			}
-
-			while(this.time >= this.frameInterval) {
-				this.time -= this.frameInterval;
-				this.process();
-				this.draw();
-			}
 		}
+
+		// While the tab is hidden no frames are drawn, so points are dropped here too. The
+		// extra frame interval keeps this to a few times a second while frames are running.
+		this.dropOld(now, this.maxAge + this.frameInterval);
 	}
 
-	process() {
-		// TODO?: indices
-
-		let points = [];
-		for(let p of this.points) {
-			p.age += this.frameInterval;
-			if(p.age < 200000)
-				points.push(p);
-		}
-		this.points = points;
-
-		this.points.push(...this.newpoints);
-		this.newpoints = [];
+	// Drop the points that arrived more than maxAge before now; they are in arrival order.
+	dropOld(now, maxAge) {
+		const oldest = now - maxAge;
+		let n = 0;
+		while(n < this.points.length && this.points[n].time <= oldest)
+			n++;
+		if(n > 0)
+			this.points.splice(0, n);
 	}
 
-	draw() {
+	tick(t) {
+		requestAnimationFrame(this.tick);
+
+		// Animation frames come at the screen's rate; a frame is drawn once an interval has
+		// passed, less a little, so a 60 Hz screen's jitter does not push one to a third tick.
+		// Advancing by the interval keeps the average at 30 a second; after a long gap (a
+		// hidden tab) it starts again rather than catching up.
+		const interval = this.frameInterval / 1000;
+		if(this.lastFrame === null || t - this.lastFrame > 4*interval)
+			this.lastFrame = t - interval;
+		if(t - this.lastFrame < interval - 4)
+			return;
+		this.lastFrame += interval;
+
+		const now = performance.now() * 1000;
+		this.dropOld(now, this.maxAge);
+		if(this.points.length == 0) {
+			if(this.emptyFrames >= this.idleFrames)
+				return;
+			this.emptyFrames++;
+		} else {
+			this.emptyFrames = 0;
+		}
+		this.draw(now);
+	}
+
+	draw(now) {
 		const gl = this.gl;
 
 		gl.viewport(0, 0, 1024, 1024);
-		this.drawWhite(this.whiteFBO.framebuffer);
+		this.drawWhite(this.whiteFBO.framebuffer, now);
 
 		gl.disable(gl.BLEND);
 		this.composePass(
@@ -307,7 +335,7 @@ void main() {
 		this.flip = 1 - this.flip;
 	}
 
-	drawWhite(fbo) {
+	drawWhite(fbo, now) {
 		const gl = this.gl;
 
 		const prog = this.pointProg.prog;
@@ -330,7 +358,7 @@ void main() {
 			const point = this.points[i];
 			positions[i*4 + 0] = point.x;
 			positions[i*4 + 1] = point.y;
-			positions[i*4 + 2] = point.age / 50000.0;
+			positions[i*4 + 2] = Math.max(now - point.time, 0) / 50000.0;
 			positions[i*4 + 3] = point.intensity/7.0;
 		}
 

@@ -23,7 +23,7 @@ ADVENTURE 1977 WOODS VERSION
 // 'inven', 'inventory', 'invenfoo' are all equivalent.
 //
 // 31-Aug-26 wje initial version
-// 27-Sep-26 wje wlErr was not returning correctly, removed superflous jmp rtn just before rtn in multiple places
+// 27-Sep-26 wje wlErr was not returning correctly, removed superfluous jmp rtn just before rtn in multiple places
 
 #include <DCS/dcs2defs.ah>
 #include <DRUM/type23drumdefs.ah>

@@ -19,9 +19,14 @@ Each test is a PDP-1 program (`.rim` file) plus an optional peer process
 load and start the PDP-1 program.
 
 The typewriter prints each test step as `<label> pass` or `<label> FAIL`,
-and a final summary line (`N PASS, N FAIL, N SKIP`).
+and a final summary line (`N PASS, N FAIL, N SKIP`).  The summary's count
+is wrong at 10 and above (`TESTUTIL/reportResult.ac`, `printCount`: 10
+prints as 0, 14 as 4), so T12, T13 and T15 should be judged by their result
+lines; the expected output below gives the true counts.
 
-The program halts with `IO = testFailCount` (0 = all passed).
+The program halts when it is done, with IO 0 whatever the result; the
+typewriter output and, for a test with a harness, the harness's exit code
+are the result.
 
 ---
 
@@ -320,12 +325,14 @@ character-mode greeting on accept; an unsolicited option offer from the peer
 is refused (WONT/DONT); an escaped IAC pair unescapes to a literal 0xFF; a
 cr/lf pair collapses to one line-end character on input, a bare lf passes
 through unchanged, and a bare cr (no following lf) also passes through
-unchanged; each decoded character is echoed back out, re-escaping the 0xFF
-and re-expanding lf to cr/lf on the way out.
+unchanged; each decoded character is echoed back out, re-escaping the 0xFF,
+re-expanding lf to cr/lf, and sending the cr as cr/nul (RFC 854) on the way
+out.
 
 **Echo note:** the channel also has dcfecho, and DCS2 echoes a character's
-received bytes when the program reads it.  So for each character the peer
-gets DCS2's echo first, then the program's copy: 21 bytes in all, derived
+received bytes when the program reads it, a cr with no lf after it as cr/nul.
+So for each character the peer
+gets DCS2's echo first, then the program's copy: 23 bytes in all, derived
 in `dcstestharness.c`'s `modeTelnetEchoClient`.  The peer also expects the
 refusal of its DO to be WONT (RFC 854).
 
@@ -410,6 +417,135 @@ T13-10 held close delivered pass
 
 ---
 
+## T14 -- Telnet negotiation (port 2114)
+
+**What it tests:** the options DCS2's greeting offers (its own ECHO and SGA,
+the client's SGA) are negotiated by RFC 1143's rules, and every other option
+is still refused:
+
+- PuTTY's opening (WILL NAWS, TSPEED, TTYPE, NEW-ENVIRON, DO ECHO, WILL SGA,
+  DO SGA): the four unoffered options get DONT, the agreement to the
+  greeting gets no reply;
+- the same agreement again gets no reply (no negotiation loop);
+- a WONT or DONT of an option never offered gets no reply; other options,
+  LINEMODE among them, are refused;
+- a client that turns an agreed option off is acknowledged once (DONT ECHO
+  gets WONT ECHO), and a second time gets nothing; a client that asks again
+  is agreed to (DO ECHO gets WILL ECHO); the same both ways for SGA;
+- a command split across two writes, and an IAC IAC, still read correctly;
+- DCS2 echoes throughout, even after DONT ECHO: echo stays the program's
+  choice.
+
+**How the harness checks:** each step sends its negotiation and one marker
+byte, and must read back exactly DCS2's replies and then the marker twice
+(DCS2's echo as T14 reads it, then T14's copy).  DCS2 handles bytes in wire
+order, so a reply that must not be sent would arrive before the marker; no
+check depends on a timeout.  The harness then sends its verdict, P or F,
+which T14 reports as T14-2.
+
+**Harness:**
+```
+./dcstestharness telnet-negotiate-client 127.0.0.1 2114
+```
+Start AFTER the program prints `T14 listening on 2114`.  The harness exits 0
+only if every step matched.
+
+**Load:** `T14.rim`
+
+**Expected output:**
+```
+T14 listening on 2114
+T14-1 connected pass
+T14-2 negotiation pass
+T14-3 chan closed pass
+3 PASS, 0 FAIL, 0 SKIP
+```
+
+---
+
+## T15 -- Clean start per connection (port 2115)
+
+**What it tests:** a telnet server channel's next caller starts clean, both
+when DCS2 re-accepts by itself after a close and after SCBREBIND.
+The harness plays
+three callers, and each must get the full greeting:
+
+- caller 1 closes in the middle of a subnegotiation (IAC SB, no IAC SE);
+  caller 2's first character must still arrive (T15-5), with no WILL ECHO
+  before it, so the option state is the new greeting's too;
+- caller 2 sends CR and 'y' together; reading the CR makes DCS2 look ahead
+  and hold the 'y' (the CR is echoed as CR NUL, RFC 854), then T15 rebinds;
+  caller 3's 'c' must be the first character read, not the 'y' (T15-9).
+
+**Harness:**
+```
+./dcstestharness telnet-reconnect-client 127.0.0.1 2115
+```
+Start AFTER the program prints `T15 listening on 2115`.  Caller 2 connects
+500 ms after caller 1 closes, so T15 sees the close first.  The harness exits
+0 only if every caller saw what it expected.  A failure closes the current
+caller, and T15 then ends its run at the failed step.
+
+**Load:** `T15.rim`
+
+**Expected output:**
+```
+T15 listening on 2115
+T15-1 caller 1 conn pass
+T15-2 caller 1 a pass
+T15-3 caller 1 close pass
+T15-4 caller 2 conn pass
+T15-5 caller 2 b pass
+T15-6 caller 2 cr pass
+T15-7 scbrebind pass
+T15-8 caller 3 conn pass
+T15-9 caller 3 c pass
+T15-10 verdict pass
+T15-11 chan closed pass
+11 PASS, 0 FAIL, 0 SKIP
+```
+
+---
+
+## T16 -- Telnet newlines (port 2116)
+
+**What it tests:** line ends and NUL in telnet mode follow the standard:
+
+- CR LF reaches the program as one LF, echoed as the pair;
+- CR NUL gives exactly what CR LF gives (RFC 1123): the NUL never reaches
+  the program, and the echo is CR LF;
+- a CR with other data after it reaches the program as a CR, and is echoed
+  as CR NUL; the program's CR goes out as CR NUL (RFC 854);
+- a NUL that does not follow a CR is data, read and sent back (CR NUL NUL is
+  a line end, then a NUL);
+- a CR NUL split across two writes: the CR is read alone, and the NUL still
+  reaches the program as an LF, not as a NUL.
+
+**How the harness checks:** as for T14.  T16 sends back every character it
+reads; each step sends its bytes and one marker, and must read back exactly
+DCS2's echo and T16's copy of each character, then the marker twice.  The
+harness then sends its verdict, P or F, which T16 reports as T16-2.
+
+**Harness:**
+```
+./dcstestharness telnet-newline-client 127.0.0.1 2116
+```
+Start AFTER the program prints `T16 listening on 2116`.  The harness exits 0
+only if every step matched.
+
+**Load:** `T16.rim`
+
+**Expected output:**
+```
+T16 listening on 2116
+T16-1 connected pass
+T16-2 newlines pass
+T16-3 chan closed pass
+3 PASS, 0 FAIL, 0 SKIP
+```
+
+---
+
 ## Legacy tests
 
 `dcstest.am1` and `dcsecho.c` are the original interactive tests and remain
@@ -440,6 +576,9 @@ Load `dcstest.rim`, type characters on the typewriter; they are echoed back.
 | `T11.am1` | SBS interrupt on receive |
 | `T12.am1` | Telnet mode |
 | `T13.am1` | scb modify, echo and interrupt fixes |
+| `T14.am1` | Telnet negotiation |
+| `T15.am1` | Clean start per connection |
+| `T16.am1` | Telnet newlines, CR NUL |
 | `dcstestharness.c` | C test peer (all modes) |
 | `dcstest.am1` | Legacy interactive client test |
 | `dcsecho.c` | Legacy simple echo server |

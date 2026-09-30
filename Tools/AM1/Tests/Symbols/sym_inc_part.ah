@@ -1,0 +1,12 @@
+// Tests/Symbols.  The included half.  A label here takes ITS line
+// in THIS file, not a line in the includer: cpp writes a "# N file" marker
+// and the lexer resets its counter from it (lexfuncs.c).  The padding below
+// is there so the numbers in the two files cannot coincide.
+//
+// pad
+// pad
+// pad
+incfirst,       0
+        lac incfwd
+incfwd,         5
+inclast,        0

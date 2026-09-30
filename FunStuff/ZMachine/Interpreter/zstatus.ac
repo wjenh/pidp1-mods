@@ -1,0 +1,318 @@
+// zstatus.ac -- print_num's decimal formatter and the V3 status line.
+//
+// Bank ZCOLD_BANK (0d12), #included into zmemcore.am1's ZCOLD_BANK block,
+// which is assembled after bank 0 and before ZLEAF_BANK and banks 13 and
+// 14. These routines run at most a few times a turn, so they live out of
+// bank 0, which reaches them through zprint.ac: zdhPrintNum by
+// farjsp(zpDecimal:*), and show_status and sread through the bank-0 stub
+// zPrintStatus.
+//
+// Entry points: zpDecimal (IO = the value) and zpStatus (no arguments),
+// both called via farjsp from another bank or jsp from this one. Both
+// return through farrtn, so the window is open at the return.
+//
+// Bank qualifiers: bank 0 is assembled before this bank, so zReadVar,
+// zFetchByte and zObjMask are backward references and take `:0`.
+// zPrintChar and zPrintObj (ZLEAF_BANK) and zsStatusOn, zsStatusCol and
+// zsStatusOff (bank 13) are assembled after it, so they take `:*`.
+//
+// Every far call here returns with the window open. The indirects through
+// a bare in-bank pointer -- zpPuts's list and zpDecimal's table of powers
+// -- are each preceded by a `lem`, since with the window open a bare
+// offset resolves in bank 0 (the in-bank pointer rule in zmemcore.am1,
+// above `bank ZLEAF_BANK`). Nothing else here is indirect except through a
+// literal that carries its own bank.
+//
+// Nothing here halts.
+//
+// 27-Sep-2026 wje/Claude
+
+#ifndef ZSTATUS_AC_H
+#define ZSTATUS_AC_H
+
+#include <memory.ah>
+#include <AIDS/skipmacros.ah>
+
+// Prints a zero-terminated list of ZSCII codes, one per word, in this bank.
+// Entry: AC = the list's address, a bare offset in this bank.
+// AC and IO are clobbered. Called via jda, from this bank only; returns with
+// the window open.
+zpPuts, 0
+    local rtn, ptr
+    dac rtn
+    lac zpPuts
+    dac ptr
+zppLoop,
+    lem                            // ptr is a bare offset: shut the window
+    lac i ptr
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zppDone                    // the zero terminator
+    lia
+    farjsp(zPrintChar:*)
+    lac ptr
+    add [1]
+    dac ptr
+    jmp zppLoop
+zppDone,
+    farrtn(rtn)
+rtn, 0
+ptr, 0
+    endlocal
+
+// Prints a 16-bit Z-machine value as signed decimal, for print_num and the
+// status line.
+// Entry: IO = the value.
+// AC and IO are clobbered. Called via farjsp from another bank, or jsp from
+// this one; returns with the window open.
+// No intermediate goes negative: the sign is taken first and a negative
+// value's magnitude computed as 65536 - value (zarith.ac's header). -32768
+// is printed from a literal, because its magnitude, 32768, reads as -32768
+// again in 16 bits.
+// Each digit, most significant first, is counted by subtracting a
+// descending power of ten until the remainder would go negative: no digit
+// buffer, no reversal, and no call to bank 0's zaDivMod, which is same-bank
+// only. Leading zeros are suppressed except at the units place, so 0
+// prints as "0".
+zpDecimal,
+    local rtn, val, pow, digit, seen, ptr
+    dac rtn
+    lai
+    and [ZW_MASK]
+    dac val
+
+    SKIP_NEXT_IF_SAME [0100000]
+    jmp zpdSigned                // any value but -32768
+    lac [zpdMin]
+    jda zpPuts
+    farrtn(rtn)
+
+zpdSigned,
+    lac val
+    and [0100000]                // bit 15 is the sign (S2.1)
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zpdMag                   // zero or positive
+    lac [0200000]                // 65536
+    sub val                      // magnitude: positive, and at most 32767
+    dac val                      //   here, because 32768 left above
+    lac [0d45]                   // '-'
+    lia
+    farjsp(zPrintChar:*)
+
+zpdMag,
+    cla
+    dac seen
+    lac [zpdPow]
+    dac ptr
+
+zpdLoop,
+    lem                          // ptr is a bare offset: shut the window
+    lac i ptr
+    dac pow
+    cla
+    dac digit
+zpdSub,
+    lac val
+    sub pow                      // equal operands leave plus zero: counted
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zpdGot                   // pow no longer fits: the digit is done
+    dac val
+    idx digit
+    jmp zpdSub
+
+    // A nonzero digit always prints; a zero prints once a digit has, or at
+    // the units place.
+zpdGot,
+    lac digit
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zpdShow
+    lac seen
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zpdShow                  // an interior zero
+    lac ptr
+    SKIP_NEXT_IF_SAME [zpdOne]
+    jmp zpdNext                  // a leading zero: suppressed
+
+zpdShow,
+    lac [1]
+    dac seen
+    lac digit
+    add [0d48]                   // '0'
+    lia
+    farjsp(zPrintChar:*)
+
+zpdNext,
+    lac ptr
+    add [1]
+    dac ptr
+    SKIP_NEXT_IF_SAME [zpdEnd]
+    jmp zpdLoop                  // more places to do
+    farrtn(rtn)
+
+// The descending powers. zpdOne and zpdEnd are addressed as literals
+// above, so these six words must stay consecutive and in this order.
+zpdPow,
+    0d10000
+    0d1000
+    0d100
+    0d10
+zpdOne,
+    1
+zpdEnd,
+    0
+
+// The ZSCII lists here and at the end of the file hold one code per line:
+// am1 ORs space-separated terms on one line into a single word.
+zpdMin,
+    // the one magnitude that cannot be counted
+    0d45                          // -
+    0d51                          // 3
+    0d50                          // 2
+    0d55                          // 7
+    0d54                          // 6
+    0d56                          // 8
+    0
+
+rtn, 0
+val, 0
+pow, 0
+digit, 0
+seen, 0
+ptr, 0
+    endlocal
+
+// Draws the V3 status line; reached only in a V3 session.
+// No arguments, no result. AC and IO are clobbered. Called via farjsp, from
+// zprint.ac's bank-0 stub zPrintStatus only; returns with the window open.
+// The content is fixed by S8.2: the short name of the object in global 0,
+// then either score and turns from globals 1 and 2, or the time from the
+// same two globals when Flags 1 bit 1 says this is a time game.
+// The presentation is zscreen.ac's: screen row 1, in reverse video, the
+// name from column 2 and the score or time ending at the last column
+// (zsStatusOn, zsStatusCol and zsStatusOff bracket the body). The separator
+// (zpsSep) is still printed: on a VT100 it is three more spaces of the
+// reversed row, and in plain mode, where no cursor moves, it is what
+// separates the name from the score.
+// The status line stays out of the transcript: zsStatusOn selects window
+// 1's path through the router, which never reaches the transcript.
+zpStatus,
+    local rtn, tmp
+    dac rtn
+    farjsp(zsStatusOn:*)         // row 1, reverse, window 1's path
+    lio [0d16]                   // global 0 -- the location object
+    farjsp(zReadVar:0)
+    dac tmp
+    farlac(zObjMask:0)           // patched at boot: 0377 for V3
+    and tmp
+    // Object 0 is not an object: the object table is 1-based, so entry 0
+    // overlaps the property defaults. Nothing is printed for it.
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zssNoName
+    lia
+    farjsp(zPrintObj:*)
+zssNoName,
+    lac [zpsSep]
+    jda zpPuts
+    farjsp(zsStatusCol:*)        // the score's or the time's column
+
+    lio [1]                      // header byte 0x01 -- Flags 1
+    farjsp(zFetchByte:0)
+    and [2]                      // bit 1: this is a time game (S8.2)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zssTime
+
+    lac [zpsScore]
+    jda zpPuts
+    lio [0d17]                   // global 1 -- the score, signed
+    farjsp(zReadVar:0)
+    lia
+    jsp zpDecimal
+    lac [zpsMoves]
+    jda zpPuts
+    lio [0d18]                   // global 2 -- the turn count
+    farjsp(zReadVar:0)
+    lia
+    jsp zpDecimal
+    jmp zssEnd
+
+zssTime,
+    lac [zpsTime]
+    jda zpPuts
+    lio [0d17]                   // global 1 -- hours
+    farjsp(zReadVar:0)
+    lia
+    jsp zpDecimal
+    lac [zpsColon]
+    jda zpPuts
+    lio [0d18]                   // global 2 -- minutes
+    farjsp(zReadVar:0)
+    and [ZW_MASK]
+    dac tmp
+    // Minutes are zero-padded to two digits, so 9 prints as "09". The
+    // equality test is redundant: `sub` of equal operands leaves plus
+    // zero, so 10 would take the "ten or more" path anyway.
+    SKIP_NEXT_IF_DIFFERENT [0d10]
+    jmp zssMin                      // exactly ten: two digits already
+    sub [0d10]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zssMin                      // eleven or more
+    lac [0d48]                      // a leading '0'
+    lia
+    farjsp(zPrintChar:*)
+zssMin,
+    lio tmp
+    jsp zpDecimal
+
+    // Roman, and the cursor back where the player types. No newline: row 1
+    // is not a line of the lower window.
+zssEnd,
+    farjsp(zsStatusOff:*)
+    farrtn(rtn)
+rtn, 0
+tmp, 0
+    endlocal
+
+// The status line's ZSCII lists, one code per line (see zpdMin).
+zpsSep,
+    // location/status separator
+    0d32                          // space
+    0d32                          // space
+    0d32                          // space
+    0
+zpsScore,
+    // score label
+    0d83                          // S
+    0d99                          // c
+    0d111                         // o
+    0d114                         // r
+    0d101                         // e
+    0d58                          // :
+    0d32                          // space
+    0
+zpsMoves,
+    // turn-count label
+    0d32                          // space
+    0d32                          // space
+    0d32                          // space
+    0d77                          // M
+    0d111                         // o
+    0d118                         // v
+    0d101                         // e
+    0d115                         // s
+    0d58                          // :
+    0d32                          // space
+    0
+zpsTime,
+    // time-game label
+    0d84                          // T
+    0d105                         // i
+    0d109                         // m
+    0d101                         // e
+    0d58                          // :
+    0d32                          // space
+    0
+zpsColon,
+    // hours/minutes separator
+    0d58                          // :
+    0
+
+#endif // ZSTATUS_AC_H

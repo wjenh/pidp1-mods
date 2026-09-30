@@ -15,9 +15,9 @@
  * 26-Aug-2026 wje initial version
  * 28-Aug-2026 wje add load-to-memory-file
  * 12-Sep-2026 wje add more detail to usage
- * 20-Sep-2026 Claude replace the shared-memory link with the network link; the tape is parsed
- *    completely first and then written in one request, so a bad tape changes nothing.
+ * 20-Sep-2026 claude replace the shared-memory link with the network link; a bad tape changes nothing
  * 22-Sep-2026 wje add ppporch's len and lineP initialization
+ * 25-Sep-2026 claude initialize lineP and len before the second getline too
 */
 
 #include <unistd.h>
@@ -209,6 +209,9 @@ int status;
         }
 
         printf("Tape loaded, start address 0%0o. Start it (y or n/newline)?\n", address);
+        // The memory-file path above has its own pair; this path never ran it.
+        lineP = 0;
+        len = 0;
         if( (getline(&lineP, &len, stdin)) != -1 )
         {
             if( *lineP == 'y' )
@@ -459,8 +462,7 @@ bool loading;
 }
 
 // Load a macro-style binary, return the starting address or LOADFAIL for an error.
-// If toFile is true, write to the memory file, else collect the words for sendImage(). (A bin
-// tape with -m used to store through a null pointer, since there is no live memory to store to.)
+// If toFile is true, write to the memory file, else collect the words for sendImage().
 int
 loadBin(FILE *fP, FILE *memFilefP, bool toFile)
 {

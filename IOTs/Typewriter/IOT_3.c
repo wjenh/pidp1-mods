@@ -10,15 +10,17 @@
  * This is am accurate port of pdp1.c's tyo logic:
  *   - the arm/load logic from iot_pulse()'s case 003, now in iotHandler()
  *   - the output-completion logic from handleio()'s Typewriter block
- *     is now in iotPoll() below
+ *     is now in iotDeadline() below
  *
- * Unlike the original, this uses iotPoll() instead of simtime comparisons.
+ * Like the original, the delay is timed on simtime, through a deadline on the device time
+ * base (iotPollAt() with IOT_TIME_DEVICE), which also runs in a halt.
  *
  * 19-Jun-2026 wje initial version.
  * 20-Jun-2026 wje stop conflating case and ribbon-color; forward tb raw.
  * 23-Jun-2026 wje add tyo fast mode via the config file, sick of waiting for that slooow output.
  * 23-Sep-2026 Claude write() blocked forever with nothing draining the typtelnet
  *   socketpair with no client on port 1041, freezing the whole emulator thread, now non-blocking
+ * 28-Sep-2026 Claude the output delay is a simtime deadline, not a count of executed cycles.
  */
 #include <sys/socket.h>
 #include "iotHandler.h"
@@ -32,11 +34,11 @@
 #define B5 010000
 #define B6 004000
 
-// Cycle-count equivalent of pdp1.c's TYODLY, 10 cps.
-#define TYO_POLL_CYCLES USTOCYCLES(100000)
+// pdp1.c's TYODLY, 10 cps.
+#define TYO_DELAY_NS USTONS(100000)
 
 // And fast mode, 200 cps.
-#define TYO_POLL_FASTCYCLES USTOCYCLES(5000)
+#define TYO_FAST_DELAY_NS USTONS(5000)
 
 static bool fastTyo = false;
 static bool configDone = false;
@@ -67,27 +69,26 @@ iotHandler(PDP1 *pdp1P, int device, int pulse, int completion)
         {
             pdp1P->tyo = 1;
             pdp1P->tb |= IO(pdp1P) & 077;
-            enablePolling((fastTyo)?TYO_POLL_FASTCYCLES:TYO_POLL_CYCLES);
+            iotPollAt(IOT_TIME_DEVICE, (iotTime(IOT_TIME_DEVICE) + ((fastTyo)?TYO_FAST_DELAY_NS:TYO_DELAY_NS)));
         }
     }
 
     return(1);
 }
 
-// Called by dynamicIotProcessorDoPoll() once TYO_POLL_CYCLES cycles have elapsed.
-// Polling is disabled again immediately after firing, the next tyo IOT re-arms it.
+// Called once the output delay has passed. The deadline is one-shot; the next tyo IOT arms it.
 void
-iotPoll(PDP1 *pdp1P)
+iotDeadline(PDP1 *pdp1P)
 {
     if(pdp1P->tb == 072 || pdp1P->tb == 074)
     {
         pdp1P->tbb = (pdp1P->tb == 074);
     }
 
-    // MSG_DONTWAIT: iotPoll() runs inline in cycle()'s main loop, so a blocking write()
+    // MSG_DONTWAIT: iotDeadline() runs inline in the main loop, so a blocking write()
     // here would stall the entire emulator.
     // Drop the character on backpressure instead; real hardware has no flow control from tyo
-    // back to the CPU either, so this authentic.
+    // back to the CPU either, so this is authentic.
     if(pdp1P->typ_fd.fd >= 0)
     {
         char c = pdp1P->tb;
@@ -102,7 +103,6 @@ iotPoll(PDP1 *pdp1P)
     }
 
     initiateBreak(TTO_CHAN);
-    enablePolling(0);
 }
 
 // Load any config settings.

@@ -1,0 +1,75 @@
+Drum outside-change probe
+// Does the drum see a change another program makes to its file while the machine runs?
+// Drum field 0 word 0 is read once, then read again every pass until it differs from that
+// first value; the machine then halts with the new value in AC and the pass count in IO.
+// Location 200, mode, is set before the start:
+//   0: each pass only reads.
+//   1: each pass first writes the pass count to drum field 1 word 0, so the drum's own
+//      writes are always in its write queue.
+// The pass count is kept at 202. Breaks stay off, so the break that ends each transfer is
+// never taken. Another program must change the drum file (pdp23drum) while it runs.
+#include <DRUM/type23drumdefs.ah>
+
+100/
+    lsm
+    dzm cnt
+    jsp rd
+    lac word
+    dac first
+lp, idx cnt
+    lac mode
+    sza i
+    jmp lr
+    jsp wr
+lr, jsp rd
+    lac word
+    sas first
+    jmp dn
+    jmp lp
+
+dn, lio cnt
+    hlt
+    jmp dn
+
+// Reads drum field 0 word 0 into word, and waits for the transfer to end.
+// AC and IO are not preserved.
+rd, dap rdx
+    lio [400000
+    dia
+    lio [1
+    dwc
+    lio [word
+    dcl
+    jsp tst
+rdx, jmp .
+
+// Writes cnt to drum field 1 word 0, and waits for the transfer to end.
+// AC and IO are not preserved.
+wr, dap wrx
+    cli
+    dia
+    lio [410001
+    dwc
+    lio [cnt
+    dcl
+    jsp tst
+wrx, jmp .
+
+// Waits until the drum is not busy. AC and IO are not preserved.
+tst, dap tsx
+tl, cla
+    cks
+    rcr 1
+    sza
+    jmp tl
+tsx, jmp .
+
+constants
+
+200/
+mode, 0
+first, 0
+cnt, 0
+word, 0
+
+start 100

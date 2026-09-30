@@ -12,8 +12,20 @@ void dynamicIotProcessorDoPoll(PDP1 *pdpP);
 // Returns 1 if a handler is loaded for dev, else 0.
 int dynamicIotOwnsDevice(int dev);
 
-// Called unconditionally every cycle regardless of the run/stop state.
+// Called once per main-loop pass while the power is on, whether the CPU is running or halted.
 void dynamicIotProcessorDoIOPoll(PDP1 *pdpP);
+
+// Called at the end of every main-loop pass while the power is on: advances the deadline time
+// bases by passNs (the pass's simtime, less any throttle lag-cap span) and calls iotDeadline()
+// for any plugin whose deadline has come. ran is true if the machine ran the pass, a stolen
+// cycle included.
+void dynamicIotProcessorAdvance(PDP1 *pdpP, uint64_t passNs, bool ran);
+
+// 11-Sep-2026 wje/claude: per-device handler and poll timing. main.c no longer calls these (its
+// calls were removed on purpose), so the timing stays off. Enable (non-zero) or disable timing;
+// the report writes one line per device used, then resets (a NULL stream resets without writing).
+void dynamicIotTimingEnable(int on);
+void dynamicIotTimingReport(FILE *fP);
 #endif
 
 // Called from an implemented handler
@@ -36,16 +48,28 @@ typedef void (*IotStopP)(void);
 // If implemented, will duplicate this IOT into the IOT number returned.
 typedef int (*IotAliasP)();
 
-// These two are implemented if the handler is to get poll calls from the emulator once per instruction cycle
+// These two are implemented if the handler is to get poll calls from the emulator every n executed
+// cycles, n set by enablePolling(). Executed cycles only: stolen cycles and halted passes are not
+// counted, and a mul or div counts as two.
 typedef void (*IotPollEnableP)(int);
 typedef void (*IotPollP)(PDP1 *);
 
-// If implemented, called every 5us cycle regardless of run/stop state.
+// If implemented, called once per main-loop pass (5us of simtime) while the power is on, running
+// or halted.
 typedef void (*IotIOPollP)(PDP1 *);
 
+// If implemented, called once the plugin's deadline, set by iotPollAt(), has come on its time
+// base. The deadline is one-shot: it is disarmed before the call.
+typedef void (*IotDeadlineP)(PDP1 *);
 
-// If implemented, will be called when the pdp1 emulator gets a SIGHUP.
-// Note that this is an asynchronous event, IOT implementations need to be aware of any threading issues.
+// The deadline time bases, in ns of simtime. Neither counts a throttle lag-cap span or time with
+// the power off. IOT_TIME_DEVICE also runs while the machine is halted; IOT_TIME_RUN does not.
+#define IOT_TIME_DEVICE 0
+#define IOT_TIME_RUN 1
+
+
+// If implemented, will be called after the pdp1 emulator gets a SIGHUP, to reload configuration.
+// It runs on the emulator thread, from the main loop between cycles, not in the signal handler.
 typedef void (*IotUpdateP)();
 
 // Additionally, a 'hidden' callback is set up to allow the handler to initiate a sequence break
@@ -66,7 +90,18 @@ typedef struct _IotEntry
     IotPollP pollP;
     IotIOPollP ioPollP;     // 19-Jun-2026 wje, see IotIOPollP above
     struct _IotEntry *actualEntryP;    // for aliases
+    // Added at the end, so a plugin built before them still loads.
+    int pollCount;          // executed cycles since the last iotPoll(); enablePolling() zeroes it
+    IotDeadlineP deadlineP;
+    int deadlineBase;       // IOT_TIME_DEVICE or IOT_TIME_RUN
+    bool deadlineArmed;
+    uint64_t deadline;      // ns on deadlineBase
 } IotEntry, *IotEntryP;
+
+// The deadline calls iotHandler.h makes for a plugin. Emulator thread only.
+uint64_t dynamicIotTime(int base);
+void dynamicIotSetDeadline(IotEntryP entryP, int base, uint64_t deadline);
+void dynamicIotCancelDeadline(IotEntryP entryP);
 
 #ifdef NOTIOTH
 typedef struct pollEntry
@@ -74,7 +109,6 @@ typedef struct pollEntry
     struct pollEntry *nextP;         // we link all polls in a chain
     IotEntryP iotEntryP;            // the definition for a given IOT
     int numCycles;                  // if not 0, how many cycles between calls
-    int curCount;                   // cycles since last entry call
     int iotNum;                     // just for convenience
 } PollEntry, *PollEntryP;
 

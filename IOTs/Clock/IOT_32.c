@@ -27,6 +27,14 @@
 // cccc is the channel to use for the interupt
 // ttttttttttttt is the count in milliseconds, 1-8191 dec, 0 to reset and disable
 // Why AC? Because all IOTs 30-37 automatically clear the IO register!
+//
+// Both count milliseconds of run time (IOT_TIME_RUN): simtime while the machine runs, so stolen
+// cycles and the whole of a mul or div count, and a halt, a single step's stop or a throttle
+// lag-cap span does not. Each has its own phase: the clock's from when it was enabled, the
+// countdown's from its IOT, so a count of N takes N ms. One deadline serves both, at the earlier
+// of the two next times.
+
+#define TICKNS MSTONS(1)
 
 static int enabled;
 static int counter;
@@ -40,6 +48,11 @@ static int countdown;
 static int counterInterrupt;
 static int counterChannel;
 static int counterCompleteNeeded;
+
+static uint64_t nextTick;           // run time of the clock's next 1 ms tick, while enabled
+static uint64_t nextCount;          // run time of the countdown's next 1 ms count, while counting
+
+static void armDeadline(void);
 
 int
 iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
@@ -62,8 +75,12 @@ int i;
 
         if( op & 04 )
         {
+            if( !enabled )
+            {
+                nextTick = iotTime(IOT_TIME_RUN) + TICKNS;  // an enabled clock keeps its phase
+            }
+
             enabled = 1;
-            enablePolling(200); // every 200 cycles, 1ms
             iotLog("In iot 32 clk enabled\n");
 
             enable32ms = enable1min = 0;
@@ -91,17 +108,14 @@ int i;
         else
         {
             enabled = enable32ms = enable1min = 0;
-
-            if( !countdown )                     // audit M6/G1-2: nothing left needing polling
-            {
-                enablePolling(0);
-            }
         }
 
         if( op & 010 )
         {
             pdp1P->sbs16 = 1;
         }
+
+        armDeadline();
     }
     else if( (MB(pdp1P) & 03700) == 02100 )     // IOT 2132, countdown timer
     {
@@ -114,24 +128,16 @@ int i;
             counterChannel = (AC(pdp1P) >> 13) & 017;
             counterInterrupt = AC(pdp1P) & 0400000;
             iotLog("IOT 2132, countdown set to %d, completion %d\n", countdown, counterCompleteNeeded);
-            if( !enabled )
-            {
-                iotLog("IOT 2132, polling enabled\n");
-                enablePolling(200); // every 200 cycles, 1ms
-            }
+            nextCount = iotTime(IOT_TIME_RUN) + TICKNS;    // a new count starts its own phase
         }
         else
         {
             counterInterrupt = 0;
             counterCompleteNeeded = 0;
-            if( !enabled )
-            {
-                enablePolling(0);
-            }
-
             iotLog("IOT 2132, countdown cleared\n");
         }
 
+        armDeadline();
         AC(pdp1P) = i;
     }
     else
@@ -146,11 +152,19 @@ int i;
     return(1);
 }
 
-void iotPoll(PDP1 *pdp1P)
+// Called at the earlier of the clock's next tick and the countdown's next count. Each is
+// checked against the run time now and, when due, done and moved on by exactly 1 ms, so neither
+// drifts. A pass is far shorter than 1 ms, so each is due at most once a call.
+void
+iotDeadline(PDP1 *pdp1P)
 {
-    // we are called every 1msec
-    if( enabled )
+uint64_t now;
+
+    now = iotTime(IOT_TIME_RUN);
+
+    if( enabled && (nextTick <= now) )
     {
+        nextTick += TICKNS;
         ++counter;
 
         if( enable32ms && ((counter & 0x1F) == 0x10) )  // audit M6: fires every 32 ticks of the 1ms counter
@@ -178,22 +192,56 @@ void iotPoll(PDP1 *pdp1P)
         }
     }
 
-    if( countdown && (--countdown == 0) )
+    if( countdown && (nextCount <= now) )
     {
-        iotLog("IOT 2132 poll, countdown reached\n");
-        if( counterInterrupt )
+        nextCount += TICKNS;
+        if( --countdown == 0 )
         {
-            iotLog("IOT 2132 poll, initiating break on %d\n", counterChannel);
-            initiateBreak(counterChannel);
-        }
+            iotLog("IOT 2132 poll, countdown reached\n");
+            if( counterInterrupt )
+            {
+                iotLog("IOT 2132 poll, initiating break on %d\n", counterChannel);
+                initiateBreak(counterChannel);
+            }
 
-        if( counterCompleteNeeded )
-        {
-            iotLog("IOT 2132 poll, issuing complete\n");
-            IOCOMPLETE(pdp1P);
-        }
+            if( counterCompleteNeeded )
+            {
+                iotLog("IOT 2132 poll, issuing complete\n");
+                IOCOMPLETE(pdp1P);
+            }
 
-        counterCompleteNeeded = 0;
-        CKS(pdp1P) |= COUNTER_CKS_FLAG;
+            counterCompleteNeeded = 0;
+            CKS(pdp1P) |= COUNTER_CKS_FLAG;
+        }
+    }
+
+    armDeadline();
+}
+
+// Arms the one deadline at the earlier of the next tick and the next count, or cancels it when
+// neither the clock nor the countdown is running.
+static void
+armDeadline(void)
+{
+uint64_t next;
+
+    next = UINT64_MAX;
+    if( enabled )
+    {
+        next = nextTick;
+    }
+
+    if( countdown && (nextCount < next) )
+    {
+        next = nextCount;
+    }
+
+    if( next == UINT64_MAX )
+    {
+        iotPollCancel();
+    }
+    else
+    {
+        iotPollAt(IOT_TIME_RUN, next);
     }
 }

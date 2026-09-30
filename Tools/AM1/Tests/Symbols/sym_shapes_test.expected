@@ -1,0 +1,20 @@
+# sym_shapes_test.am1: the line each global label is defined on, read off the
+# source's own numbering and written before the first run.  Check 2 has awk
+# derive the same thing from the source, so a mistake here cannot pass either.
+#
+# name          line    the shape it is there for
+afterblank      34      # a blank line before it
+aftercomment    13      # a "//" comment line before it
+afterblock      27      # a C-style comment block before it
+alone           19      # nothing at all after the comma
+exported        36      # named by an export before it is defined
+forward         28      # referenced before it is defined
+fwd340          31      # referenced, and a type340 trailer
+fwdascii        30      # referenced, and an ascii trailer
+fwdjmp          32      # referenced by a jmp
+fwdtext         29      # referenced, and a text trailer
+last            38      # the last label in the file
+onfirst         11      # the first word of the program
+semis           23      # two statements on the line, split by a semicolon
+withcomment     22      # a trailing "//" comment after it
+withexpr        21      # a plain expression after it

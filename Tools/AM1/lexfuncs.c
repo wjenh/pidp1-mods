@@ -8,7 +8,7 @@
 
 extern int lineno;
 extern int localDepth;
-extern int maxLocalDepth;                   // the deepest nexting we've seen
+extern int maxLocalDepth;                   // the deepest nesting we've seen
 extern LocalContextP localContextP;        // used while a local scope is enabled
 extern LocalContextP localStack[];
 extern char *filenameP;                     // current input file name
@@ -149,9 +149,11 @@ int ctr;
 }
 
 // Handle the backslash-x conversions for type 340 characters.
-// Returns a Type 340 code or one of the TYPE340xxx markers above the 6-bit range.
-// TYPE340CONT means store nothing and TYPE340PLAIN means the caller should treat ch
-// as an ordinary character.
+// Returns a Type 340 code (0 is the blob, a real character), or one of the
+// TYPE340xxx markers above the 6-bit range.  TYPE340CONT means store nothing,
+// and TYPE340PLAIN means the caller should treat ch itself as an ordinary
+// character, so that it gets the same automatic shift and ASCII conversion as
+// one typed without a backslash.
 char
 processType340Escape(char ch)
 {
@@ -248,7 +250,6 @@ int ctr;
 SymNodeP
 resolveLocalSymbol(char *nameP)
 {
-int i;
 SymNodeP symP;
 
     if( !localContextP )

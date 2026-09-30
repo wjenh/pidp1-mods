@@ -1,0 +1,7 @@
+Test rg51: -a flag, and a complement after an operand
+// With -a the separator adds: 0777 + ~07 = 0777 + 777770, and the carry out of
+// bit 18 comes back in at the bottom (ones complement): 000770. Without -a
+// it is an OR, 777777, as rg50 has it.
+100/
+    0777 ~07
+stop

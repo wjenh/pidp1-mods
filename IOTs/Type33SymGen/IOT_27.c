@@ -2,7 +2,14 @@
  * This is an implementation of the PDP-1 Type 33 Character Generator for the Type 30 display.
  * IOT 26 also alises to this.
  *
- * According to the DEC documentation, it takes approximately 300 usecs per character to render.
+ * DEC's Type 33 manual (1964, pages 3-19 to 3-22, Table 3-7) times a character as 35 dot
+ * positions, gpl's 17 then gpr's 18, one timing cycle each: 2 usec, plus 3 usec to intensify
+ * when the bit is 1. After the 35th, 4 to 7 more cycles (character sizes 1 to 4) move the
+ * matrix to the next character. So 78-84 usecs with no dot lit and 183-189 usecs with all 35
+ * lit, plus the program's own time between the two IOTs. This code times all of it, as
+ * deadlines on the device time base (iotPollAt(), iotHandler.h): each half charges its own
+ * positions, each lit dot is drawn when its position comes due, and gpr adds the increment
+ * cycles before it completes.
  *
  * Note that we store dpy coords in -511,+511 style, only used by this and the Type 33 symgen.
  *
@@ -39,7 +46,10 @@
 #define SUBOFFSET   2       // base number of dot spacings to offset for a subscript
 #define SEPSPACING  4       // base number of pixel for autospacing between chars
 
-#define DOTDELAY    1       // 5 usec cycles between dot updates
+#define DARKNS      USTONS(2)   // a dot position whose bit is 0: one timing cycle
+#define LITNS       USTONS(5)   // a bit of 1 adds 3 usecs to intensify
+#define INCREMENTNS USTONS(2)   // each increment cycle after the 35th position
+#define INCREMENTS  4           // increment cycles at size 1, one more for each size up
 
 static bool needCompletion;
 static bool draw;
@@ -55,7 +65,7 @@ static int xctr, yctr;
 static int xpos, ystart;
 static int shiftregister;
 static int bitCtr;
-static int onBits;              // track the number of on bits we saw, for timing computation
+static uint64_t dueNs;          // device time at which the next dot position, or the end, is due
 
 static void configure(void);
 static int flagToBits(int);
@@ -116,7 +126,6 @@ bool noWait;
     case 027:           // gpl, gpr, gcf
         if( MB(pdp1P) & GPLBIT )            // draw the left part of a character
         {
-            onBits = 0;
             bitCtr = 17;                    // only 17 bits in left side
             shiftregister = IO(pdp1P);
             subscript = (shiftregister & 01)?-dotSpacing * SUBOFFSET:0;
@@ -126,7 +135,8 @@ bool noWait;
             xctr = yctr = 0;
             draw = true;
             charDone = false;
-            enablePolling(DOTDELAY);
+            dueNs = iotTime(IOT_TIME_DEVICE);
+            iotPollAt(IOT_TIME_DEVICE, dueNs);
             iotCondLog(LOG_CMD, "Gpl, io %06o x %04o y %04o sr %06o\n",
                 IO(pdp1P), x, y, shiftregister);
         }
@@ -138,12 +148,12 @@ bool noWait;
         else                                // gpr
         {
             // xctr and yctr were left by gpl in the right state for gpr
-            onBits = 0;
             bitCtr = 18;                    // full 18 bits in right side
             shiftregister = IO(pdp1P);
             iotCondLog(LOG_CMD, "Gpr, io %06o sr %06o\n", IO(pdp1P), shiftregister);
             draw = true;
-            enablePolling(DOTDELAY);
+            dueNs = iotTime(IOT_TIME_DEVICE);
+            iotPollAt(IOT_TIME_DEVICE, dueNs);
         }
         break;
     }
@@ -170,18 +180,21 @@ iotStop()
     iotCloseLog();
 }
 
-// Actually put out our dots
+// Actually put out our dots, each when its position comes due, then complete when the
+// half, and for gpr the increment cycles, are over.
 void
-iotPoll(PDP1P pdp1P)
+iotDeadline(PDP1P pdp1P)
 {
 int bit;
-int totalTime;
 int x, y;
+uint64_t now;
+
+    now = iotTime(IOT_TIME_DEVICE);
 
     if( draw )
     {
-        // we draw one dot per poll
-        while( bitCtr )
+        // Several positions can come due in one main-loop pass: take them all.
+        while( bitCtr && (dueNs <= now) )
         {
             bit = shiftregister & 0400000;
             bitCtr--;
@@ -189,7 +202,6 @@ int x, y;
 
             if( bit )
             {
-                onBits++;
                 iotCondLog(LOG_DRAW, "Poll, sr %06o, drawing xctr %d yctr %d, xpos %d ypos %d\n",
                     shiftregister & 0777777, xctr, yctr, xpos, ystart + (yctr * dotSpacing) + subscript);
 
@@ -199,6 +211,11 @@ int x, y;
                     iotCondLog(LOG_BOUNDS, "Boundary, x %d y %d\n", xpos, y);
                 }
                 display( 0, cvtDpyTo1024(xpos), cvtDpyTo1024(y), type30Intensity(intensity));
+                dueNs += LITNS;
+            }
+            else
+            {
+                dueNs += DARKNS;
             }
 
             if( ++yctr > 6)
@@ -207,16 +224,18 @@ int x, y;
                 ++xctr;
                 xpos += dotSpacing;
             }
-
-            if( bit )
-            {
-                return;         // wait for the next dot time
-            }
         }
+
+        if( bitCtr )
+        {
+            iotPollAt(IOT_TIME_DEVICE, dueNs);     // the next position
+            return;
+        }
+
+        draw = false;                       // this half's positions are all taken
 
         if( xctr > 4 )          // completed a full character
         {
-            draw = false;
             charDone = true;
 
             if( autoSpace )
@@ -229,27 +248,18 @@ int x, y;
             setDisplayData(0, xpos, -1, -1);
             unlockDisplayData(0);
 
-            // Wait our remaining delay time, 2 usec for each bit that was off, we already waited
-            // 5usec per on bit plus the instruction cycle itself.
-            // We will always get called one more time with draw off to complete the operation.
-            totalTime = ((35 - onBits) * 2) / 5;    // converted to cycles
-            iotCondLog(LOG_BITS, "%d on, %d off\n", onBits, 35 - onBits);
-            if( totalTime > 0 )
-            {
-                draw = false;
-                enablePolling(totalTime);
-                iotCondLog(LOG_POLL, "Delay %d cycles\n", totalTime);
-                return;
-            }
-            else
-            {
-                iotCondLog(LOG_POLL, "No delay\n");
-            }
+            // The increment cycles move the matrix on to the next character.
+            dueNs += (INCREMENTS + charSize) * INCREMENTNS;
+            iotCondLog(LOG_BITS, "Increment cycles %d\n", INCREMENTS + charSize);
         }
 
-        if( bitCtr <= 0 )
+        // The last position, and for gpr the increment cycles, may still be running.
+        if( dueNs > now )
         {
-            draw = false;                   // end of left side, gdl ends
+            iotPollAt(IOT_TIME_DEVICE, dueNs);
+            iotCondLog(LOG_POLL, "Complete at %llu, now %llu\n",
+                (unsigned long long)dueNs, (unsigned long long)now);
+            return;
         }
     }
 
@@ -281,7 +291,6 @@ int x, y;
 
         getDisplayData(0, &x, &y, 0);
         iotCondLog(LOG_DRAW, "Character display complete, x %04o y %04o\n", x, y);
-        enablePolling(0);           // no need to poll now
     }
 }
 

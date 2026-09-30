@@ -1,0 +1,21 @@
+Test rg52: type340 automatic shifts for & ^ and `, and octal escapes stop at 7
+// & is in character set 1 (upper); ^ and ` are in character set 2 (lower).
+// They used to be uncategorized, so no shift was put in front of them and they
+// came out in whichever set the previous character had left behind.
+// An octal escape is 1 or 2 octal digits: 8 and 9 are not part of it.
+//   "a&b"   lower shift, a, upper shift, &, lower shift, b
+//   "a^b"   lower shift, a, ^, b: already lower, so no shift for the ^
+//   "A^B"   A, lower shift, ^, upper shift, B
+//   "a`b"   lower shift, a, `, b
+//   "A&B"   A, &, B: already upper
+//   "A\18"  A, code 01, then a plain 8
+//   "A\79"  A, code 07, then a plain 9
+100/
+    type340 "a&b"
+    type340 "a^b"
+    type340 "A^B"
+    type340 "a`b"
+    type340 "A&B"
+    type340 "A\18"
+    type340 "A\79"
+stop

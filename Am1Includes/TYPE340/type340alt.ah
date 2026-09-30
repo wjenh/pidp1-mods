@@ -1,5 +1,5 @@
 #ifndef TYPE340ALT_AH
-#define TYPE340DALT_AH
+#define TYPE340ALT_AH
 /* Alternate IOT defines for the Type 340 display.
  * These are the same as the documented ones buth with the prefix't340' added.
  * These avoid conflicts with the defines for the Type 23 Paralled Drum, which

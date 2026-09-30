@@ -22,6 +22,8 @@
  * 4-Jul-2026 wje (Claude) - bound the sscanf() line parse, honor onOff for "shared", and
  *    reset all state to a known baseline before each (re)load instead of leaving stale values or
  *    duplicate list nodes across a SIGHUP-triggered reload.
+ * 26-Sep-2026 wje (Claude) - the audio filters are set by cutoff (extras, read in main.c), so the
+ *    alpha keys are no longer parsed here; the default sample rate is 48,000.
 */
 
 #include <stdio.h>
@@ -40,18 +42,12 @@
 
 // Once loaded, this is globally available.
 // Some values are preinitialized.
-// The alpha values below are roughly what the rc filters PDP-1 at the Computer History Museum
-// have for frequency response, per notes provided by Peter Samson.
-// The actual active value in the config file example is a uniform setting across
-// all channels that gives a more aggressive rolloff, providing a more organ-like sound.
-// See the notes in /opt/pidp1-mods/pidp1.config.example for more details.
+// The audio filters' cutoffs are extras (cutoff, cutoff1-cutoff4), read in main.c; audio.c holds
+// their defaults, the CHM music interface's. An alpha line is kept as an extra, so main.c can say
+// it is no longer used.
 static const Configuration defaultConfigSettings = {
     // all the audio values have defaults
-    .sampleRate = 22000,    // samples/second for SDL
-    .alpha1 = 0.6446,
-    .alpha2 = 0.5545,
-    .alpha3 = 0.4267,
-    .alpha4 = 0.4267,
+    .sampleRate = 48000,    // samples/second for SDL
     .gain = 0.95,
     .tuning = 1.0,
     .muldivEnabled = true,
@@ -146,31 +142,6 @@ char answer[64];
         else if( !strcmp(option,"samplerate") )
         {
             configSettings.sampleRate = atoi(answer);
-        }
-        else if( !strcmp(option,"alpha") )
-        {
-            // Set all alphas, can be overridden if specific ones come later
-            configSettings.alpha = atof(answer);
-            configSettings.alpha1 = configSettings.alpha;
-            configSettings.alpha2 = configSettings.alpha;
-            configSettings.alpha3 = configSettings.alpha;
-            configSettings.alpha4 = configSettings.alpha;
-        }
-        else if( !strcmp(option,"alpha1") )
-        {
-            configSettings.alpha1 = atof(answer);
-        }
-        else if( !strcmp(option,"alpha2") )
-        {
-            configSettings.alpha2 = atof(answer);
-        }
-        else if( !strcmp(option,"alpha3") )
-        {
-            configSettings.alpha3 = atof(answer);
-        }
-        else if( !strcmp(option,"alpha4") )
-        {
-            configSettings.alpha4 = atof(answer);
         }
         else if( !strcmp(option, "gain") )
         {

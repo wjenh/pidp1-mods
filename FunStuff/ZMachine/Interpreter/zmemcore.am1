@@ -13,8 +13,11 @@ Z-MACHINE INTERPRETER
 // Bank layout:
 //   0            interpreter code: boot, the memory core, stack, decoder,
 //                dispatch, arithmetic, object opcodes, print and input
-//   0d1..0d12    the resident region, loaded at boot; nothing assembled
-//                (0d12 is the undo log for a V5 story with undo)
+//   0d1..0d11    the resident region, loaded at boot; nothing assembled
+//   0d12         below ZCOLD_CODE_BASE (07000): more of the resident
+//                region, or for a V5 story with undo its undo log; from
+//                07000, code off the hot path: bitsets.ac, and print_num's
+//                formatter and the V3 status line (zstatus.ac)
 //   0d13         the Z-machine stack, the page-cache buffers, and the
 //                screen model (zscreen.ac), the error reports
 //   0d14         the version patch table (zpatch.ac), save/restore
@@ -33,7 +36,8 @@ Z-MACHINE INTERPRETER
 //
 // Entry points:
 //   boot         the start address: serves one player after another over DCS2.
-//   Memory core, callable from any bank; argument in IO, result in AC:
+//   The memory core, callable from any bank; they return with the window
+//   open:
 //   zFetchByte   jsp. IO = byte address (any). AC = the byte (0-0377).
 //   zFetchWord   jsp. IO = byte address (any, odd included).
 //                AC = the 16-bit word there.
@@ -42,15 +46,17 @@ Z-MACHINE INTERPRETER
 //                16-bit word.
 //   zResidentWordPtr  jsp. IO = byte address in dynamic memory.
 //                AC = the 16-bit (bank:offset) pointer to its containing word.
-// These return with the extend window open.
 //
 // 19-Sep-2026 wje/Claude initial release
+// 27-Sep-2026 wje/Claude the undo hook's page test is made at the hook
+// sites, zuLastPage in bank 0; zStoreByte keeps its window open
+// 28-Sep-2026 wje/Claude the comments brought to the coding standard
 
 #include <DRUM/type23drumdefs.ah>
-// The line printer is output stream 2 (ztext.ac, zprint.ac).
-// IOT 45 is two different devices, chosen at runtime by lptType64 in
-// pidp1.config; ZLPT_TYPE64 must match it, since the two share IOT
-// numbers for different functions.
+// The line printer is output stream 2 (ztext.ac, zprint.ac). IOT 45 is two
+// different devices, chosen at run time by lptType64 in pidp1.config;
+// ZLPT_TYPE64 must match it, since the two share IOT numbers for
+// different functions.
 #ifndef ZLPT_TYPE64
 #define ZLPT_TYPE64 0
 #endif
@@ -64,20 +70,28 @@ Z-MACHINE INTERPRETER
 
 octal
 
-// ---- Local manifest constants -----------------------------------------
-// Dynamic memory starts at the base of bank 1 and grows upward. The
-// stack, the page cache and the leaf bank sit at the top of the 16-bank
-// space, so they do not depend on the story's size.
-//
-// Dynamic memory cannot exceed 0d8 banks (static base is a 2-byte header
-// field), so twelve banks leave headroom at no cost.
-//
+// The local manifest constants. Dynamic memory starts at the base of bank
+// 1 and grows upward. The stack, the page cache and the leaf bank sit at
+// the top of the 16-bank space, so they do not depend on the story's size.
+// Dynamic memory cannot exceed 0d8 banks (the static base is a 2-byte
+// header field), so eleven banks leave headroom at no cost.
 // ZLEAF_BANK holds the leaf fragments (zboot, zobjects, ztext, zparser).
-//
+// ZCOLD_BANK holds code that runs at most a few times a turn, so that bank
+// 0 is left to the decode and dispatch path.
 // The `0d` prefixes matter: `octal` is in effect, and both the `bank`
 // directive and the `sym:bankno` suffix read their argument in the
 // current radix. A bare `13` would mean bank 0d11.
 #define DYNMEM_BANK1        1
+#define ZCOLD_BANK          0d12
+
+// Where ZCOLD_BANK's code starts. Below it the bank is the top of the
+// resident region, or, for a V5 story with undo, the undo log. It is a
+// whole number of undo-log pages (ZU_LOG_PAGES, below, is derived from
+// it), and so of cache pages too. Lowering it gives code room and takes
+// log pages away: the largest log measured was 37 pages, in Beyond Zork,
+// so keep ZU_LOG_PAGES well above that. Written in octal with a leading
+// zero because both cpp and am1 read it.
+#define ZCOLD_CODE_BASE     07000
 #define DYNMEM_STACK_BANK   0d13
 #define DYNMEM_CACHE_BANK   DYNMEM_STACK_BANK
 #define ZLEAF_BANK          0d15
@@ -87,54 +101,55 @@ octal
 // form cache-buffer pointers; it is defined as the stack's bank so the
 // two cannot drift apart.
 
-// Highest bank dynamic memory may occupy, counting from DYNMEM_BANK1.
-// Bank 0d13 is next, so exceeding this would load the story over zStack.
-// zboot.ac refuses such a story (ZSTOP_TOODYN). A well-formed header
-// cannot trigger it; a corrupt one can.
-#define Z_MAX_DYN_BANKS     0d12
+// The highest bank dynamic memory may occupy, counting from DYNMEM_BANK1.
+// Bank ZCOLD_BANK is next, and exceeding this could load the story over
+// its code. zboot.ac refuses such a story (ZSTOP_TOODYN). A well-formed
+// header cannot trigger it; a corrupt one can.
+#define Z_MAX_DYN_BANKS     0d11
 
-// How many banks, counting from DYNMEM_BANK1, boot may fill with the
-// story. zboot.ac copies min(the story, this many banks) off the drum,
-// never less than dynamic memory. Every fetch below the resulting
-// zhResidentTop is a direct read; above it goes through the page cache.
-//
-// It equals Z_MAX_DYN_BANKS, since both are bounded by zStack at bank
-// 0d13, but it is a separate limit: dynamic memory is capped by the
-// header format, the resident region only by the bank map.
-//
+// How many words, counting from DYNMEM_BANK1's first, boot may fill with
+// the story: Z_RESIDENT_BANKS whole banks, then ZCOLD_BANK up to its code.
+// zboot.ac copies min(the story, this many words) off the drum, never less
+// than dynamic memory. Every fetch below the resulting zhResidentTop is a
+// direct read; above it goes through the page cache.
+// Z_RESIDENT_BANKS equals Z_MAX_DYN_BANKS, since both stop at ZCOLD_BANK,
+// but it is a separate limit: dynamic memory is capped by the header
+// format, the resident region only by the bank map.
 // It is the initial value of zboot.ac's zbResidentCap, a ZLEAF word, which
-// a test may poke before boot to cap the region.
-//
-// A V5 story with undo gets eleven: bank 0d12 is then its undo log, and
-// zboot.ac caps it with ZB_UNDO_CAP, leaving zbResidentCap alone.
-#define Z_RESIDENT_BANKS    0d12
+// a test may poke before boot to cap the region. A V5 story with undo gets
+// the eleven whole banks only: ZCOLD_BANK's lower part is then its undo
+// log, and zboot.ac caps it with ZB_UNDO_CAP, leaving zbResidentCap alone.
+#define Z_RESIDENT_BANKS    0d11
+#define Z_RESIDENT_WORDS    (Z_RESIDENT_BANKS*0d4096+ZCOLD_CODE_BASE)
 
-// ---- Constants of the interpreter, not the story ----------------------
+// Constants of the interpreter, not the story.
 // Z_PAGE_WORDS: 0d256 divides a 0d4096-word drum track exactly (0d16 pages
 // per track), so zfPageable's track arithmetic is two shifts.
-//
 // Z_STACK_WORDS: the Z-machine stack. zstack.ac's ZFP_NONE is defined off
 // it. A save carries all of it as whole tape blocks (zsave.ac's
 // ZSV_FIXED_BLOCKS counts four), so it must stay a multiple of 0d256, and
 // a change to it changes that define too.
-//
 // Z_MAX_DYN_BANKS (above) is duplicated in Loader/zloader.h as
 // ZL_MAX_DYN_BANKS, and nothing checks that they agree.
 #define Z_PAGE_WORDS             0d256
 #define Z_STACK_WORDS            0d1024
 
-// V5 undo's write log (see zsave.ac). The log is bank 0d12, which zboot.ac
-// keeps out of the resident region for a story with undo; the stack's
-// copy is bank ZPATCH_BANK's top Z_STACK_WORDS words. The page map covers
-// every 16-bit pointer the hook can be handed, 010000 to 0177777: pages
-// 0100 to 01777 of 64 words, whose map words are 4 to 077.
+// V5 undo's write log (see zsave.ac). The log is ZCOLD_BANK below its
+// code, which zboot.ac keeps out of the resident region for a story with
+// undo; the stack's copy is bank ZPATCH_BANK's top Z_STACK_WORDS words.
+// The page map covers every 16-bit pointer the hook can be handed, 010000
+// to 0177777: pages 0100 to 01777 of 64 words, whose map words are 4 to
+// 077.
 #define ZU_LOG_BASE     0140000     // bank 0d12, offset 0: the log's first page
-#define ZU_LOG_PAGES    0d64
+#define ZU_LOG_PAGES    070         // 0d56: ZCOLD_CODE_BASE / 0d64
+#if ZU_LOG_PAGES * 0100 != ZCOLD_CODE_BASE
+#error ZU_LOG_PAGES must fill ZCOLD_BANK below ZCOLD_CODE_BASE exactly
+#endif
 #define ZU_PAGE_WORDS   0d64
 #define ZU_STACK_COPY   0166000     // bank 0d14, offset 06000
 #define ZU_MAP_WORDS    0d60
 
-// Drum geometry, for zboot.ac's capacity checks (zloader.h's
+// The drum geometry, for zboot.ac's capacity checks (zloader.h's
 // ZL_MAX_TRACKS / ZL_TRACK_SIZE hold the same two numbers). A bank and a
 // track are both 0d4096 words.
 #define Z_DRUM_TRACKS       0d32
@@ -150,43 +165,35 @@ octal
 #endif
 #define ZPATCH_BANK 0d14
 
-// Cache slot count. This one line sizes the pool, the tag words, the
+// The cache slot count. This one line sizes the pool, the tag words, the
 // probe, the hit stubs and the eviction wrap, each unrolled under
-// `#if NUM_SLOTS > 04` and `> 010` below.
-//
-// It is written in octal with a leading zero because both cpp (the #if
-// guards) and am1 (under `octal`) read it; 010 is eight to both.
-//
-// Only 04, 010 and 014 (4, 8 or 12) are accepted. The screen model
-// occupies bank 0d13 from 06000 up, so 014 overflows the bank and the
-// build reports it.
+// `#if NUM_SLOTS > 04` and `> 010` below. It is written in octal with a
+// leading zero because both cpp (the #if guards) and am1 (under `octal`)
+// read it; 010 is eight to both. Only 04, 010 and 014 (4, 8 or 12) are
+// accepted. The screen model occupies bank 0d13 from 06000 up, so 014
+// overflows the bank and the build reports it.
 #define NUM_SLOTS 010
 #if NUM_SLOTS != 04 && NUM_SLOTS != 010 && NUM_SLOTS != 014
 #error NUM_SLOTS must be 04, 010 or 014 (4, 8 or 12) -- see its comment
 #endif
 
-// Test scaffolding switch. Every fragment's test* entry points sit inside
-// `#if Z_TEST_HARNESS`. It defaults to 1; the production build assembles
-// with -DZ_TEST_HARNESS=0 to leave them out.
-// bitsets.ac's testBitInWord/testBitInList are library routines, not
-// scaffolding, and are unguarded.
+// The test scaffolding switch. Every fragment's test* entry points sit
+// inside `#if Z_TEST_HARNESS`. It defaults to 1; the production build
+// assembles with -DZ_TEST_HARNESS=0 to leave them out. bitsets.ac's
+// testBitInWord/testBitInList are library routines, not scaffolding, and
+// are unguarded.
 #ifndef Z_TEST_HARNESS
 #define Z_TEST_HARNESS 1
 #endif
 
-// ========================================================================
-// Banks 0d1..Z_RESIDENT_BANKS -- the resident region. Nothing is
-// assembled into them: zboot.ac copies the story off the drum into these
-// banks at boot.
-//
-// The bank blocks are absent, not merely empty. An empty `bank 1` would
-// change what `sym:*` searches, and would put a zero word on the tape at
-// bank 1 offset 0.
-// ========================================================================
+// Banks 0d1..Z_RESIDENT_BANKS are the resident region, which goes on into
+// ZCOLD_BANK below ZCOLD_CODE_BASE. Nothing is assembled into them:
+// zboot.ac copies the story off the drum into these banks at boot. The
+// bank blocks are absent, not merely empty: an empty `bank 1` would change
+// what `sym:*` searches, and would put a zero word on the tape at bank 1
+// offset 0.
 
-// ========================================================================
-// Bank DYNMEM_STACK_BANK (0d13): the Z-machine stack, then the page cache
-// ========================================================================
+// Bank DYNMEM_STACK_BANK (0d13): the Z-machine stack, then the page cache.
 bank DYNMEM_STACK_BANK
 0/
 // The Z-machine stack (zstack.ac): Z_STACK_WORDS words.
@@ -194,14 +201,12 @@ zStack,
     table Z_STACK_WORDS
 
 // The cache buffer pool: NUM_SLOTS buffers of Z_PAGE_WORDS (0d256) words,
-// directly after zStack and contiguous: zfMiss and zfHitTail find slot
-// k's buffer as zCacheSlot0 + k * Z_PAGE_WORDS. Uninitialized; the drum
-// fills a buffer before its tag is set. At 8 slots the pool is
-// 02000-05777, and the screen model (the bank's second block, at the end
-// of this file) starts at 06000.
-//
-// A stack overflow would land here, so zstack.ac's two overflow checks
-// (zStackPush and zCallFrame) matter.
+// directly after zStack and contiguous: zfMiss and zfHitTail find slot k's
+// buffer as zCacheSlot0 + k * Z_PAGE_WORDS. Uninitialized; the drum fills
+// a buffer before its tag is set. At 8 slots the pool is 02000-05777, and
+// the screen model (the bank's second block, at the end of this file)
+// starts at 06000. A stack overflow would land here, so zstack.ac's two
+// overflow checks (zStackPush and zCallFrame) matter.
 zCacheSlot0,
     table Z_PAGE_WORDS
 zCacheSlot1,
@@ -235,55 +240,46 @@ zCacheSlot11,
     0
 #endif
 
-// ========================================================================
-// Bank 0 -- interpreter code
-// ========================================================================
+// Bank 0: the interpreter code, from 4, above the single sequence-break
+// vector.
 bank 0
-// Code starts at 4, above the single sequence-break vector.
 4/
-// ========================================================================
-// boot -- the start address. Serves one player after another over DCS2.
-//
-// boot opens DCS2, waits for a client, asks the terminal its size, calls
+// boot, the start address, serves one player after another over DCS2.
+// It opens DCS2, waits for a client, asks the terminal its size, calls
 // zBootInit (zboot.ac), and runs the story; a refused story gets its
 // message printed. zBootInit never prints and never halts: it returns
 // AC = 0, or a ZBOOT_* code. The channel is opened before the check so
-// that a refusal reaches the player.
-//
-// testBootInit (below) calls the same zBootInit without the console.
-//
+// that a refusal reaches the player. testBootInit (below) calls the same
+// zBootInit without the console.
 // A session ends at quit (zdhQuit), a dropped connection (zinput.ac's
-// ziNoConn, zsave.ac's zsvaNoConn), a refused story, or an error halt.
-// An error halt, and a refusal after its own message, print "Type a key,
-// you will be disconnected and the ZMachine restarted" and wait for the
-// key (zSessionFail, zErrPrompt). Each goes to zSessionEnd, which resets
-// the per-session state, closes the connection and waits for the next
-// client; zServeSession then loads the story again, so a story changed on
-// the drum between sessions is the one the next player gets. zServing is
-// how the stop sites tell boot from a test entry: only boot serves, and
-// every test entry halts.
-// ========================================================================
+// ziNoConn, zsave.ac's zsvaNoConn), a refused story, or an error halt. An
+// error halt, and a refusal after its own message, print "Type a key, you
+// will be disconnected and the ZMachine restarted" and wait for the key
+// (zSessionFail, zErrPrompt). Each goes to zSessionEnd, which resets the
+// per-session state, closes the connection and waits for the next client;
+// zServeSession then loads the story again, so a story changed on the drum
+// between sessions is the one the next player gets. zServing is how the
+// stop sites tell boot from a test entry: only boot serves, and every test
+// entry halts.
 boot,
     lem                        // in case the loader left eem on
     lac [1]
-    dac zServing               // this entry serves; the test
-                               //   entries that can end a session clear it
+    dac zServing               // this entry serves; the test entries that
+                               //   can end a session clear it
     jsp zServeReset            // a restart at 4 after a halt finds the last
                                //   session's words; a fresh load does not
     farjsp(zTextDcsOpen:*)     // blocks until a client connects; AC = the
                                //   wait's poll count
-    lem                        // farjsp leaves the window OPEN; close it --
-                               //   everything below is bank-0 direct or its
-                               //   own far* macro
+    lem                        // farjsp leaves the window open; everything
+                               //   below is bank-0 direct or its own far* macro
 
-// zServeSession -- every session starts here, AC = the poll count of the
-// wait that just ended. The random generator is seeded from it, mixed
-// with the generator's own state, so two players who connect equally fast
-// still get different dice. `random 0` still reseeds to the load-time
-// constant. zServeCount counts session starts.
-// Then the terminal is asked its size (ztext.ac's zTermQuery, which ends
-// by sending "Wait..."), before zBootInit, whose header setup uses it.
-// `restart` does not ask again.
+// Every session starts here, AC = the poll count of the wait that just
+// ended. The random generator is seeded from it, mixed with the
+// generator's own state, so two players who connect equally fast still get
+// different dice. `random 0` still reseeds to the load-time constant.
+// zServeCount counts session starts. Then the terminal is asked its size
+// (ztext.ac's zTermQuery, which ends by sending "Wait..."), before
+// zBootInit, whose header setup uses it. `restart` does not ask again.
 zServeSession,
     dac zServeSeed
     jsp rand18                 // AC = the generator's next value
@@ -292,34 +288,34 @@ zServeSession,
     lia
     jsp rand18seed
     idx zServeCount
-    farjsp(zTermQuery:*)       // the terminal's size, and plain or
-    lem                        //   VT100, for zBootInit's header and the screen
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE  // sma i: skip (fallthrough) unless it dropped
-    jmp ziNoConn                  // no-skip: the client left mid-query -- stop 6,
-                                  //   and the session ends as any drop does
+    farjsp(zTermQuery:*)       // the terminal's size, and plain or VT100,
+    lem                        //   for zBootInit's header and the screen
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp ziNoConn                  // the client left mid-query: stop 6, and
+                                  //   the session ends as any drop does
     farjsp(zBootInit:*)        // AC = 0, or a ZBOOT_* refusal code
     lem
     dac zbootStatus
-    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if AC == 0 -- good story
-    jmp zbootRefuse               // no-skip: AC != 0 -- refuse
-    jmp zInterpretStart           // skip case: run the game
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zbootRefuse               // the story is refused
+    jmp zInterpretStart           // run the game
 
 zbootRefuse,
     lio zbootStatus
     farjsp(zBootRefuse:*)      // prints the message for this code
     lem
     lac zbootStatus
-    dac zdpStopReason          // ZSTOP_BADVER / ZSTOP_TOOBIG / ZSTOP_TOODYN,
-                               //   which are the same numbers zBootInit
-                               //   returned -- see zdispatch.ac's ZSTOP block
-    farjsp(zErrPrompt:*)       // the "Type a key" prompt, and the key
-                               // falls into zSessionEnd, whose
-                               //   `lem` closes the window farjsp left open
+    dac zdpStopReason          // ZSTOP_BADVER / ZSTOP_TOOBIG / ZSTOP_TOODYN:
+                               //   the numbers zBootInit returned (see
+                               //   zdispatch.ac's ZSTOP block)
+    farjsp(zErrPrompt:*)       // the "Type a key" prompt, and the key; then
+                               //   into zSessionEnd, whose `lem` closes the
+                               //   window farjsp left open
 
-// zSessionEnd -- entered by `jmp` (zdhQuit, ziNoConn, and zSessionFail
-// below), by farjmp from bank 14 (zsvaNoConn), or by falling in from
-// zbootRefuse, with zdpStopReason already set. Nothing is pending at any
-// of them. The window may be open, so it is closed first.
+// Entered by `jmp` (zdhQuit, ziNoConn, and zSessionFail below), by farjmp
+// from bank 14 (zsvaNoConn), or by falling in from zbootRefuse, with
+// zdpStopReason already set. Nothing is pending at any of them. The window
+// may be open, so it is closed first.
 zSessionEnd,
     lem
     jsp zServeReset
@@ -328,8 +324,8 @@ zSessionEnd,
     lem
     jmp zServeSession
 
-// zSessionFail -- where every error halt goes under boot. Entered by
-// `jmp` from bank 0 or by farjmp from bank 14, the window in any state:
+// Where every error halt goes under boot. Entered by `jmp` from bank 0 or
+// by farjmp from bank 14, the window in any state:
 //   zSessionFail   AC = the stop reason
 //   zSessionFailR  the stop reason is already in zdpStopReason
 // zErrReport prints the message and the prompt and waits for a key (or a
@@ -344,12 +340,13 @@ zSessionFail,
     farjsp(zErrReport:*)       // IO = the stop reason
     jmp zSessionEnd
 
-// zServeReset -- jsp (dap-style: bank 0 only), no arguments.
 // Resets every word a session can leave changed that the next session
 // reads before writing: bank 0's here, bank 15's in ztext.ac's
 // zSessionReset, which this calls. The rest is reset at the start of the
 // next session: zBootInit reloads dynamic memory and the header and stops
 // drive 2, and zInterpretStart resets the stack, zPC and the screen.
+// No arguments. AC and IO are clobbered. Called via jsp, bank 0 only;
+// returns with the window closed.
 zServeReset,
     dap zsrRtn
     jsp zCacheReset            // every cache tag, and nextEvict
@@ -360,10 +357,11 @@ zServeReset,
     lem
 zsrRtn, jmp 0
 
-// zCacheReset -- empties the page cache: every slot's tag, and nextEvict.
-// Called via jsp (from zServeReset) or farjsp (from zsave.ac's
-// zRestartOp); no arguments, IO untouched. The story on the drum may have
-// changed since the slots were filled.
+// Empties the page cache, every slot's tag and nextEvict: the story on the
+// drum may have changed since the slots were filled.
+// No arguments. AC is clobbered, IO is preserved. Called via jsp (from
+// zServeReset) or farjsp (from zsave.ac's zRestartOp); returns with the
+// window open.
 zCacheReset,
     local rtn
     farenter(rtn)
@@ -389,48 +387,44 @@ rtn, 0
     endlocal
 
 zbootStatus, 0
-zServing, 0                    // 1 once boot has run; the stop
-                               //   sites end a session instead of halting
+zServing, 0                    // 1 once boot has run; the stop sites end
+                               //   a session instead of halting
 zServeCount, 0                 // sessions started since the load
 zServeSeed, 0                  // the seed the current session got
 
-// ------------------------------------------------------------------
-// zFetchByte -- IO = Z-machine byte address (any). Returns AC = the byte
-// (0-0377). Called via jsp or farjsp.
-//
+// Fetches a byte.
+// Entry: IO = a Z-machine byte address (any).
+// Exit:  AC = the byte (0-0377).
+// AC is the result, IO is clobbered. Called via jsp or farjsp; returns
+// with the window open.
 // A resident address takes the fast path. The routing matches
-// zFetchContainingWord's:
-//   - the sign bit first: a V4/V5 address at or above 0x20000 is always
-//     pageable.
-//   - then addr - zhResidentTop, resident only if negative. Before boot
-//     zhResidentTop is 0 and every fetch goes slow.
-// One `rcr 1s` after a `cli` gives both the word index (AC, sign clear)
-// and the address's low bit (IO's sign), which `spi` tests. An even
-// address is the containing word's high byte, an odd one its low byte.
-// Everything else takes zbSlow, through zFetchContainingWord.
-//
-// IO is not preserved. Returns with the extend window open.
-// ------------------------------------------------------------------
+// zFetchContainingWord's: the sign bit first (a V4/V5 address at or above
+// 0x20000 is always pageable), then addr - zhResidentTop, resident only if
+// negative. Before boot zhResidentTop is 0 and every fetch goes slow. One
+// `rcr 1s` after a `cli` gives both the word index (AC, sign clear) and
+// the address's low bit (IO's sign), which `spi` tests. An even address is
+// the containing word's high byte, an odd one its low byte. Everything
+// else takes zbSlow, through zFetchContainingWord.
 zFetchByte,
     local rtn, addrSave, oddFlag, wordVal, ptrWord
     dac rtn
-    lai                     // AC = the byte address (from IO)
+    lai
     dac addrSave
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE  // sma i: skip (fallthrough) if the sign is clear
-    jmp zbSlow                       // no-skip: 0400000 or above -- never resident
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zbSlow                       // 0400000 or above: never resident
     sub zhResidentTop
-    SKIP_NEXT_IF_AC_NEGATIVE      // sma: skip (fallthrough) if below the top
-    jmp zbSlow                       // no-skip: at or above the top -- the cache
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zbSlow                       // at or above the top: the cache
     cli
     lac addrSave
-    rcr 1s                  // AC = the word index, sign clear (IO's low bit
-                            //   was 0); IO's sign = the address's low bit
+    rcr 1s                  // AC = the word index, sign clear; IO's sign =
+                            //   the address's low bit
     add [DYNMEM_BANK1*010000]  // + bank 1's base: the 16-bit pointer
     dac ptrWord
-    spi                     // skip (fallthrough) if IO positive: an even address
-    jmp zbfOdd                 // no-skip: odd -- the low byte
-    eem                     // even: the word's high byte
-    lac i ptrWord              // the containing word
+    spi
+    jmp zbfOdd                 // odd: the low byte
+    eem                     // even: the containing word's high byte
+    lac i ptrWord
     sar 8s
     and [0377]
     crossBankrtn(rtn, NOEEM)
@@ -444,12 +438,12 @@ zbSlow,
     lac addrSave            // the `sub` above clobbered AC
     and [1]
     dac oddFlag
-    jsp zFetchContainingWord   // same-bank call; IO still holds the address
+    jsp zFetchContainingWord   // IO still holds the address
     dac wordVal
     lac oddFlag
-    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if AC == 0 (even)
-    jmp zbOddByte                // no-skip case: AC != 0 (odd) -> low byte
-    lac wordVal                  // skip case (even): high byte
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zbOddByte                // odd: the low byte
+    lac wordVal                  // even: the high byte
     sar 8s
     and [0377]
     crossBankrtn(rtn, NOEEM)
@@ -464,51 +458,46 @@ wordVal, 0
 ptrWord, 0
     endlocal
 
-// ------------------------------------------------------------------
-// zFetchWord -- IO = Z-machine byte address (any). Returns AC = the
-// 16-bit Z-machine word there. Called via jsp or farjsp.
-//
+// Fetches a word.
+// Entry: IO = a Z-machine byte address (any, odd included).
+// Exit:  AC = the 16-bit Z-machine word there.
+// AC is the result, IO is clobbered. Called via jsp or farjsp; returns
+// with the window open.
 // Odd addresses are legal: object entries are 9 bytes wide, so a word
 // field's parity alternates between objects. An even address's containing
 // word is the Z-machine word; an odd address is read as two zFetchByte
-// calls, combined big-endian.
-//
-// Routing is zFetchByte's, and is done before the parity test: an even
-// resident address is read directly, an odd resident address goes to
-// zfwOdd, and a non-resident address of either parity to zfwSlow.
+// calls, combined big-endian. The routing is zFetchByte's, done before the
+// parity test: an even resident address is read directly, an odd resident
+// one goes to zfwOdd, and a non-resident one of either parity to zfwSlow.
 // zhResidentTop is even, so an even address below it always has addr + 1
 // below it too.
-//
-// IO is not preserved. Returns with the extend window open.
-// ------------------------------------------------------------------
 zFetchWord,
     local rtn, addrSave, hiByte, ptrWord
     dac rtn
     lai
     dac addrSave
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE  // sma i: skip (fallthrough) if the sign is clear
-    jmp zfwSlow                      // no-skip: 0400000 or above -- never resident
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zfwSlow                      // 0400000 or above: never resident
     sub zhResidentTop
-    SKIP_NEXT_IF_AC_NEGATIVE      // sma: skip (fallthrough) if below the top
-    jmp zfwSlow                      // no-skip: at or above the top -- the cache
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zfwSlow                      // at or above the top: the cache
     cli
     lac addrSave
     rcr 1s                  // AC = the word index; IO's sign = the low bit
-    spi                     // skip (fallthrough) if IO positive: an even address
-    jmp zfwOdd                 // no-skip: odd -- two bytes, two routings
+    spi
+    jmp zfwOdd                 // odd: two bytes, two routings
     add [DYNMEM_BANK1*010000]  // + bank 1's base: the 16-bit pointer
     dac ptrWord
-    eem                     // even: the containing word IS the Z-machine word
+    eem                     // even: the containing word is the Z-machine word
     lac i ptrWord
     crossBankrtn(rtn, NOEEM)
 
 zfwSlow,
     lac addrSave            // the `sub` above clobbered AC
     and [1]
-    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if AC == 0 (even)
-    jmp zfwOdd                    // no-skip case: AC != 0 (odd)
-    // even: the containing word is the Z-machine word
-    lio addrSave
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zfwOdd                    // odd
+    lio addrSave            // even: the containing word is the Z-machine word
     jsp zFetchContainingWord
     crossBankrtn(rtn, NOEEM)
 
@@ -530,95 +519,86 @@ hiByte, 0
 ptrWord, 0
     endlocal
 
-// ------------------------------------------------------------------
-// zFetchContainingWord -- IO = any Z-machine byte address. Returns AC =
-// the 18-bit PDP-1 word (== Z-machine word) containing that byte.
-// Called via jsp.
-//
-// Addresses below zhResidentTop are resident (direct fetch, banks
-// 0d1..Z_RESIDENT_BANKS); addresses at or above it go through the page
-// cache below. addr == zhResidentTop is tested first and routed to the
-// cache.
-//
+// Fetches the word containing a byte.
+// Entry: IO = any Z-machine byte address.
+// Exit:  AC = the 18-bit PDP-1 word (the Z-machine word) containing it.
+// AC is the result, IO is clobbered. Called via jsp, bank 0 only; returns
+// with the window open.
+// Addresses below zhResidentTop are resident (a direct fetch, banks
+// 0d1..Z_RESIDENT_BANKS and the bottom of ZCOLD_BANK); addresses at or
+// above it go through the page cache below. addr == zhResidentTop is
+// tested first and routed to the cache.
 // The address is an unsigned 18-bit pattern: a V4/V5 story runs to
 // 0x3FFFF, and every address at or above 0x20000 = 0400000 has the sign
 // bit set. Such an address is always pageable, since zhResidentTop is at
-// most 0x18000, so the sign is tested first. zfPageable masks the sign
+// most 0x17C00, so the sign is tested first. zfPageable masks the sign
 // copy out of its word index after `sar 1s`; zfResident's `sar 1s` only
 // ever sees a positive address. A V3 address never sets the sign bit.
-// ------------------------------------------------------------------
 zFetchContainingWord,
     local rtn, addrSave, pageWordIx, pageIndex, offsetInPage, ptrWord, wantTag, tagPtr
     dac rtn
     lai
     dac addrSave
 
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE  // sma i: skip (fallthrough) if the sign is clear
-    jmp zfPageable                   // no-skip: 0400000 or above -- always pageable
-    sas zhResidentTop           // skip (fallthrough) if AC == zhResidentTop
-    jmp zfCheckSign               // no-skip: AC != zhResidentTop -> general test
-    jmp zfPageable                // skip case: AC == zhResidentTop -> pageable
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zfPageable                   // 0400000 or above: always pageable
+    sas zhResidentTop
+    jmp zfCheckSign               // not the top: the general test
+    jmp zfPageable                // the top itself: pageable
 zfCheckSign,
     lac addrSave
     sub zhResidentTop
-    SKIP_NEXT_IF_AC_NEGATIVE     // sma: skip (fallthrough) if AC negative
-    jmp zfPageable                 // no-skip: AC not negative -> pageable
-    // skip case falls through: AC negative -> resident (addr < zhResidentTop)
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zfPageable                 // above the top: pageable
 
-// ---- The resident region: direct fetch, banks 0d1..Z_RESIDENT_BANKS ----
-// The pointer is (bank << 12) | offset, with bank = DYNMEM_BANK1 + (i >>
-// 12) and offset = i & 07777, i the word index. That is i + DYNMEM_BANK1 *
-// 010000, one add: i is at most 0137777, so the sum is at most 0147777
-// with no carry out of the offset field. zResidentWordPtr uses the same add.
+// The resident region: a direct fetch from bank 0d1 on. The pointer is
+// (bank << 12) | offset, with bank = DYNMEM_BANK1 + (i >> 12) and offset =
+// i & 07777, i the word index. That is i + DYNMEM_BANK1 * 010000, one add:
+// i is at most 0136777, so the sum is at most 0146777, with no carry out
+// of the offset field. zResidentWordPtr uses the same add.
 zfResident,
     lac addrSave
     sar 1s                       // AC = addr >> 1, the word index
     add [DYNMEM_BANK1*010000]
-    dac ptrWord                  // ptrWord = full 16-bit (bank:offset) pointer
+    dac ptrWord                  // the full 16-bit (bank:offset) pointer
     jmp zfLoadFromPointer
 
-// ---- Pageable region: cache manager ------------------------------------
-// The drum holds the whole story from track 0, so an address's drum word
-// index is addr >> 1.
-//
-// The page containing zhResidentTop can hold words on both sides of it,
-// so words below the top may also sit in a cached page, and a store
-// updates only the resident copy. No reader can reach the stale copy:
-// routing on zhResidentTop happens before the cache is consulted, and
-// every word at or above the top is static (zboot.ac keeps zhResidentTop
-// >= zhStaticBase), so no legal store changes it.
-//
-// A spec-illegal store into static memory below the top, through any
-// store site other than storew/storeb, lands in a word later fetches read.
+// The pageable region: the cache manager. The drum holds the whole story
+// from track 0, so an address's drum word index is addr >> 1.
+// The page containing zhResidentTop can hold words on both sides of it, so
+// words below the top may also sit in a cached page, and a store updates
+// only the resident copy. No reader can reach the stale copy: routing on
+// zhResidentTop happens before the cache is consulted, and every word at
+// or above the top is static (zboot.ac keeps zhResidentTop >=
+// zhStaticBase), so no legal store changes it. A spec-illegal store into
+// static memory below the top, through any store site other than
+// storew/storeb, lands in a word later fetches read.
 zfPageable,
     lac addrSave
     sar 1s
-    and [0377777]                // unsigned >> 1: `sar` moved the
-                                 //   old sign bit correctly into bit 1 and
-                                 //   left a copy in the sign; drop the copy
-    dac pageWordIx               // drum word index = addr >> 1, absolute --
-                                 //   the whole story is on the drum from
-                                 //   track 0
+    and [0377777]                // unsigned >> 1: `sar` moved the old sign
+                                 //   bit correctly into bit 1 and left a copy
+                                 //   in the sign; drop the copy
+    dac pageWordIx               // the drum word index, absolute
 
     lac pageWordIx
     sar 8s
-    dac pageIndex                // pageIndex = drumWordIndex >> 8 (Z_PAGE_WORDS==0d256)
+    dac pageIndex                // the drum word index >> 8 (Z_PAGE_WORDS 0d256)
 
     lac pageWordIx
     and [0377]
-    dac offsetInPage             // offsetInPage = pageableWordIndex & 0377
+    dac offsetInPage
 
-    // ---- The probe: one tag word per slot ----------------------------
-    // A slot's tag is the page index it holds plus one; 0 means empty.
-    // The largest page index is 0777 (0x3FFFF >> 9), so a tag is at most
-    // 01000. The wanted tag stays in AC through the whole probe, since
-    // `sad` does not alter AC. The cache is fully associative, with
-    // round-robin eviction.
+    // The probe: one tag word per slot. A slot's tag is the page index it
+    // holds plus one; 0 means empty. The largest page index is 0777
+    // (0x3FFFF >> 9), so a tag is at most 01000. The wanted tag stays in
+    // AC through the whole probe, since the compares do not alter it. The
+    // cache is fully associative, with round-robin eviction.
     lac pageIndex
     add [1]
     dac wantTag
-    SKIP_NEXT_IF_DIFFERENT slot0Tag  // sad: skip (fallthrough) if slot 0 holds another page
-    jmp zfHitSlot0                      // no-skip: slot 0 holds this page -- HIT
+    SKIP_NEXT_IF_DIFFERENT slot0Tag
+    jmp zfHitSlot0                      // slot 0 holds this page: a hit
     SKIP_NEXT_IF_DIFFERENT slot1Tag
     jmp zfHitSlot1
     SKIP_NEXT_IF_DIFFERENT slot2Tag
@@ -645,34 +625,33 @@ zfPageable,
     SKIP_NEXT_IF_DIFFERENT slot11Tag
     jmp zfHitSlot11
 #endif
-                                     // falls through: no slot holds it -- a miss
 
+// No slot holds it: a miss. The track is pageIndex >> 4 with no base to
+// add (0d16 pages of Z_PAGE_WORDS to a 0d4096-word track, and the story
+// starts at track 0).
 zfMiss,
 #if Z_TEST_HARNESS
-    idx zfMissCount               // one per cache fill.
-                                  //   idx leaves the count in AC, which the
-                                  //   `lac pageIndex` below overwrites
+    idx zfMissCount               // one per cache fill
 #endif
     lac pageIndex
     sar 4s
-    dac fillTrack                 // track = pageIndex >> 4, no base to add --
-                                  //   0d16 pages of Z_PAGE_WORDS per 0d4096-word
-                                  //   track, and the story starts at track 0
+    dac fillTrack
 
     lac pageIndex
     and [017]
     sal 8s
-    dac fillTrackOffset            // trackOffset = (pageIndex & 017) << 8
+    dac fillTrackOffset            // (pageIndex & 017) << 8
 
     // The victim is slot nextEvict. Its buffer is zCacheSlot0 + nextEvict
     // * 0d256, written into zfDrumFillPage's trailing parameter word,
-    // zfFillDest, before the call.
+    // zfFillDest, before the call; AC still holds it after the dac, so the
+    // fetch pointer follows.
     lac nextEvict
     sal 8s                         // nextEvict * Z_PAGE_WORDS
     add [zCacheSlot0:DYNMEM_CACHE_BANK]
-    dac zfFillDest                 // the victim's buffer, as the parameter;
-    add offsetInPage               //   AC still holds it (dac leaves AC
-    dac ptrWord                    //   alone), so the fetch pointer follows
+    dac zfFillDest
+    add offsetInPage
+    dac ptrWord
     jsp zfDrumFillPage
 zfFillDest, 0                      // written above, on every miss
 
@@ -688,15 +667,15 @@ zfFillDest, 0                      // written above, on every miss
     lac nextEvict
     add [1]
 #if NUM_SLOTS == 014
-    SKIP_NEXT_IF_DIFFERENT [NUM_SLOTS]  // sad: skip (fallthrough) if still below 12
-    cla                                   // no-skip: 12 wraps to 0 -- no mask for 12
+    SKIP_NEXT_IF_DIFFERENT [NUM_SLOTS]
+    cla                                   // 12 wraps to 0: no mask for 12
 #else
-    and [NUM_SLOTS-1]              // wrap: NUM_SLOTS is a power of two
+    and [NUM_SLOTS-1]              // the wrap: NUM_SLOTS is a power of two
 #endif
     dac nextEvict
     jmp zfLoadFromPointer
 
-    // ---- Hits: AC = the slot number, then one shared tail -------------
+    // The hits: AC = the slot number, then one shared tail.
 zfHitSlot0,
     law 0
     jmp zfHitTail
@@ -741,16 +720,13 @@ zfHitTail,                         // the last slot's stub falls in here
     add [zCacheSlot0:DYNMEM_CACHE_BANK]
     add offsetInPage
     dac ptrWord
-                                    // falls through to zfLoadFromPointer
 
 zfLoadFromPointer,
     eem                            // ptrWord is a 16-bit (bank:offset) pointer
     lac i ptrWord
-    crossBankrtn(rtn, NOEEM)       // no `lem` first: farrtn would only re-open
-                                   //   the window it closed. The caller resumes
-                                   //   with eem on either way -- that is the
-                                   //   documented exit state of every routine
-                                   //   in this file.
+    crossBankrtn(rtn, NOEEM)       // no `lem` first: farrtn would only reopen
+                                   //   the window; every routine in this file
+                                   //   returns with it open
 
 rtn, 0
 addrSave, 0
@@ -762,12 +738,12 @@ wantTag, 0
 tagPtr, 0
     endlocal
 
-// ------------------------------------------------------------------
-// zfDrumFillPage -- fills one 0d256-word buffer from the drum.
-// Called via jsp, followed by a parameter word: the destination buffer's
-// 16-bit (bank:offset) pointer. The track and in-track word offset to read
-// are in the bank-0 words fillTrack and fillTrackOffset.
-// ------------------------------------------------------------------
+// Fills one 0d256-word buffer from the drum.
+// Entry: the word after the jsp = the destination buffer's 16-bit
+//        (bank:offset) pointer; fillTrack and fillTrackOffset (bank 0) =
+//        the track and in-track word offset to read.
+// No result. AC and IO are clobbered. Called via jsp or farjsp, followed
+// by the parameter word; returns past it with the window open (farrtn).
 zfDrumFillPage,
     local rtn, destPtr, diaWord
     dac rtn
@@ -800,13 +776,13 @@ destPtr, 0
 diaWord, 0
     endlocal
 
-// ------------------------------------------------------------------
-// zResidentWordPtr -- IO = Z-machine byte address in resident dynamic
-// memory. Returns AC = the 16-bit (bank:offset) pointer to the containing
-// word. Called via jsp or farjsp.
-// The same one add as zfResident. There is no pageable-region handling:
-// every caller is a store, and the spec confines stores to dynamic memory.
-// ------------------------------------------------------------------
+// The pointer to a resident word, by the same one add as zfResident. There
+// is no pageable-region handling: every caller is a store, and the spec
+// confines stores to dynamic memory.
+// Entry: IO = a byte address in resident dynamic memory.
+// Exit:  AC = the 16-bit (bank:offset) pointer to its containing word.
+// AC is the result, IO is preserved. Called via jsp or farjsp; returns
+// with the window open.
 zResidentWordPtr,
     local rtn
     dac rtn
@@ -817,45 +793,56 @@ zResidentWordPtr,
 rtn, 0
     endlocal
 
-// ------------------------------------------------------------------
-// zStoreWord -- AC = Z-machine byte address (any), IO = the 16-bit value.
-// Called via jda. Nothing is returned.
-// An even address is written directly: the containing word is the
-// Z-machine word. An odd address is split into two zStoreByte calls
-// (high byte at addr, low byte at addr+1).
-// There is no routing: stores only target dynamic memory, which is always
-// resident.
+// The undo hook's page cache: the last page zsave.ac's zuHook found
+// needing nothing before a write, as its 16-bit pointer masked to the
+// page's first word, or 0 (no hooked pointer is below 010000, so page 0
+// never occurs). In bank 0 so that the four patched hook sites below and
+// in zobjects.ac test it before calling the hook. zuHook sets it and
+// zuFill clears it, both through a full address; anything that clears a
+// map bit must clear it. Defined here, ahead of every reference.
+zuLastPage, 0
+
+// Stores a word. An even address is written directly: the containing word
+// is the Z-machine word. An odd address is split into two zStoreByte calls
+// (the high byte at addr, the low at addr+1). There is no routing: stores
+// only target dynamic memory, which is always resident.
+// Entry: AC = a Z-machine byte address (any), IO = the 16-bit value.
+// No result. AC and IO are clobbered. Called via jda; returns with the
+// window open.
 // For a V5 story with undo, zswHook is patched so the undo log (zsave.ac's
-// zuHook) sees the page before the write; AC then holds the pointer.
-// ------------------------------------------------------------------
+// zuHook) sees the page before the write, unless it is zuLastPage; AC
+// then holds the pointer.
 zStoreWord, 0
     local rtn, addrSave, valSave, ptrWord, byteVal
     dac rtn
-    dio valSave              // save IO (value) BEFORE `cli` clears it
+    dio valSave              // the value, before `cli` clears it
     cli
-    lac zStoreWord           // AC = the deposited address argument (plain
-                              // direct load -- the deposited value IS the
-                              // argument, not a further pointer, so no `i`)
+    lac zStoreWord           // the deposited address, loaded directly: it
+                             //   is the argument, not a pointer
     dac addrSave             // zswOdd needs the address itself
-    rcr 1s                   // AC = the word index, sign clear; IO's SIGN =
-                              //   the low bit of the address
-    spi                       // skip (fallthrough) if IO positive: an even
-                              //   address
-    jmp zswOdd                   // no-skip: odd -- two zStoreByte calls
+    rcr 1s                   // AC = the word index, sign clear; IO's sign =
+                             //   the address's low bit
+    spi
+    jmp zswOdd                   // odd: two zStoreByte calls
 
-    // even: the containing word IS the Z-machine word
+    // Even: the containing word is the Z-machine word.
     add [DYNMEM_BANK1*010000]    // + bank 1's base: the 16-bit pointer
     dac ptrWord                  //   (AC still holds it, for the hook)
     eem                          // ptrWord is a 16-bit (bank:offset) pointer
 zswHook,
-    jmp zswWrite                   // PATCHED: V5 `nop` -- the undo log
-    crossBankjda(zuHook:*, NOEEM)  //   sees the page first (zsave.ac); AC still
-                                   //   holds the pointer, the window is open,
-                                   //   and the hook's return leaves it open
+    jmp zswWrite                   // patched: V5 `nop`, the undo log sees
+                                   //   the page first (zsave.ac)
+    // The page the hook last found needing nothing needs nothing now.
+    and [0177700]
+    SKIP_NEXT_IF_DIFFERENT zuLastPage
+    jmp zswWrite
+    lac ptrWord
+    crossBankjda(zuHook:*, NOEEM)  // the window is open, and the hook's
+                                   //   return leaves it open
 zswWrite,
     lac valSave
     dac i ptrWord
-    crossBankrtn(rtn, NOEEM)       // no `lem` first -- see zfLoadFromPointer
+    crossBankrtn(rtn, NOEEM)       // no `lem` first: see zfLoadFromPointer
 
 zswOdd,
     lac valSave
@@ -863,7 +850,7 @@ zswOdd,
     dac byteVal
     lac addrSave
     lio byteVal
-    jda zStoreByte             // high-order byte at addrSave
+    jda zStoreByte             // the high-order byte at addrSave
 
     lac valSave
     and [0377]
@@ -871,7 +858,7 @@ zswOdd,
     lac addrSave
     add [1]
     lio byteVal
-    jda zStoreByte              // low-order byte at addrSave+1
+    jda zStoreByte              // the low-order byte at addrSave+1
     crossBankrtn(rtn, NOEEM)
 
 rtn, 0
@@ -881,40 +868,37 @@ ptrWord, 0
 byteVal, 0
     endlocal
 
-// ------------------------------------------------------------------
-// zStoreByte -- AC = Z-machine byte address (any), IO = the value (only
-// the low 8 bits are used). Called via jda. Nothing is returned.
-// Read-modify-write on the containing word: an even address is the
-// word's high byte, an odd address the low byte.
-// There is no routing: stores only target dynamic memory, which is always
-// resident. After `cli`, one `rcr 1s` leaves the word index in AC and the
-// address's low bit in IO's sign, which `spi` tests; nothing in between
-// touches IO. `cli` destroys the value in IO, so it is saved first.
-// For a V5 story with undo, zsbHook is patched as zStoreWord's zswHook is.
-// ------------------------------------------------------------------
+// Stores a byte, read-modify-write on the containing word: an even address
+// is the word's high byte, an odd one the low byte. There is no routing:
+// stores only target dynamic memory, which is always resident.
+// Entry: AC = a Z-machine byte address (any), IO = the value (only the low
+//        8 bits are used).
+// No result. AC and IO are clobbered. Called via jda; returns with the
+// window open.
+// After `cli`, one `rcr 1s` leaves the word index in AC and the address's
+// low bit in IO's sign, which `spi` tests; nothing between touches IO.
+// `cli` destroys the value in IO, so it is saved first. The window stays
+// open from the read to the write: everything between them is a direct
+// reference, which the window does not affect. For a V5 story with undo,
+// zsbHook is patched as zStoreWord's zswHook is.
 zStoreByte, 0
     local rtn, valSave, ptrWord, oldWord, newWord
     dac rtn
-    dio valSave               // save IO (value) BEFORE `cli` clears it
+    dio valSave               // the value, before `cli` clears it
     cli
-    lac zStoreByte            // AC = the deposited address argument (see
-                               // zStoreWord's comment above on `i` here)
-    rcr 1s                    // AC = the word index, sign clear (IO's low
-                               //   bit was 0); IO's SIGN = the low bit of
-                               //   the address
+    lac zStoreByte            // the deposited address (see zStoreWord)
+    rcr 1s                    // AC = the word index, sign clear; IO's sign =
+                              //   the address's low bit
     add [DYNMEM_BANK1*010000]  // + bank 1's base: the 16-bit pointer
     dac ptrWord
 
     eem                            // ptrWord is a 16-bit (bank:offset) pointer
     lac i ptrWord
-    lem                            // close it before returning to bank-0 code
     dac oldWord
 
-    spi                        // skip (fallthrough) if IO positive: an even
-                               //   address
-    jmp zsbOddByte                // no-skip: odd -> the low byte
-    // skip case falls through: even -> replace the HIGH byte
-    lac oldWord
+    spi
+    jmp zsbOddByte                // odd: the low byte
+    lac oldWord                // even: replace the high byte
     and [0377]                 // keep the existing low byte
     dac newWord
     lac valSave
@@ -932,15 +916,20 @@ zsbOddByte,
     ior newWord
     dac newWord
 zsbWriteBack,
-    eem                            // ptrWord is a 16-bit (bank:offset) pointer
 zsbHook,
-    jmp zsbWrite                   // PATCHED: V5 `nop` -- the undo log
-    lac ptrWord                    //   sees the page first (zsave.ac); the
-    crossBankjda(zuHook:*, NOEEM)  //   hook's return leaves the window open
+    jmp zsbWrite                   // patched: V5 `nop`, the undo log sees
+                                   //   the page first (zsave.ac)
+    // The page the hook last found needing nothing needs nothing now.
+    lac ptrWord
+    and [0177700]
+    SKIP_NEXT_IF_DIFFERENT zuLastPage
+    jmp zsbWrite
+    lac ptrWord
+    crossBankjda(zuHook:*, NOEEM)  // the hook's return leaves the window open
 zsbWrite,
     lac newWord
     dac i ptrWord
-    crossBankrtn(rtn, NOEEM)       // no `lem` first -- see zfLoadFromPointer
+    crossBankrtn(rtn, NOEEM)       // no `lem` first: see zfLoadFromPointer
 rtn, 0
 valSave, 0
 ptrWord, 0
@@ -948,7 +937,6 @@ oldWord, 0
 newWord, 0
     endlocal
 
-#include "bitsets.ac"
 #include "zstack.ac"
 #include "zdecode.ac"
 #include "zdispatch.ac"
@@ -957,15 +945,14 @@ newWord, 0
 #include "zprint.ac"
 #include "zinput.ac"
 
-// ---- Cache slot metadata (bank 0) -------------------------------------
-// One tag word per slot: the page index the slot holds plus one, or 0 for
-// an empty slot. They are contiguous, and slotTags names the first,
-// because zfMiss writes the victim's tag through slotTags + nextEvict.
-//
+// The cache slot metadata. One tag word per slot: the page index the slot
+// holds plus one, or 0 for an empty slot. They are contiguous, and
+// slotTags names the first, because zfMiss writes the victim's tag through
+// slotTags + nextEvict.
 // slot0Tag is also written from outside the cache: zBootInit and
 // zVerifyOp use zCacheSlot0's buffer as scratch, so zsave.ac's zRestartOp
-// (which re-runs zBootInit) and zVerifyOp clear it first; zBootInit
-// itself relies on its load-time 0.
+// (which re-runs zBootInit) and zVerifyOp clear it first; zBootInit itself
+// relies on its load-time 0.
 slotTags,
 slot0Tag, 0
 slot1Tag, 0
@@ -987,25 +974,24 @@ nextEvict, 0
 fillTrack, 0
 fillTrackOffset, 0
 
-// ---- Boot-parsed header words, bank-0 copies --------------------------
-// zboot.ac keeps the full set of parsed header words in ZLEAF_BANK, and
-// writes these three copies with a fardac each at the end of boot, since
-// all their readers are bank-0 code: zhStaticBase for zarith.ac's
+// The boot-parsed header words' bank-0 copies. zboot.ac keeps the full
+// set in ZLEAF_BANK, and writes these three with a fardac each at boot,
+// since all their readers are bank-0 code: zhStaticBase for zarith.ac's
 // storew/storeb bounds check (zaCheckDyn), zhInitialPC for zdispatch.ac's
-// zInterpretStart, zhGlobalsAddr for zstack.ac's global variables.
-// All three read 0 until zBootInit has run.
+// zInterpretStart, zhGlobalsAddr for zstack.ac's global variables. All
+// three read 0 until zBootInit has run.
 zhStaticBase, 0
 zhInitialPC, 0
 zhGlobalsAddr, 0
 
-// ---- The fetch-routing word -------------------------------------------
-// The first byte address not in the resident region: zFetchContainingWord
-// serves every address below it from banks 1..N and every address at or
-// above it from the page cache. zboot.ac computes it -- min(the story,
-// zbResidentCap words), never below dynamic memory's end -- keeps the word
-// count in ZLEAF as zhResidentWords, and writes this byte-address copy
-// here, where it is read on every fetch. It reads 0 until zBootInit has
-// run, so every address then routes to the pageable path.
+// The fetch-routing word: the first byte address not in the resident
+// region. zFetchContainingWord serves every address below it from banks
+// 1..N and every address at or above it from the page cache. zboot.ac
+// computes it (min(the story, zbResidentCap words), never below dynamic
+// memory's end), keeps the word count in ZLEAF as zhResidentWords, and
+// writes this byte-address copy here, where it is read on every fetch. It
+// reads 0 until zBootInit has run, so every address then routes to the
+// pageable path.
 zhResidentTop, 0
 
 #if Z_TEST_HARNESS
@@ -1014,9 +1000,9 @@ zhResidentTop, 0
 zfMissCount, 0
 #endif
 
-// ---- Test entry points (harness builds only) --------------------------
-// Deposit the Z-machine address into testAddrIn, `start` at testFetchByte
-// or testFetchWord, wait for the halt, read testResultOut (or AC).
+// The test entry points (harness builds only). Deposit the Z-machine
+// address into testAddrIn, `start` at testFetchByte or testFetchWord, wait
+// for the halt, and read testResultOut (or AC).
 #if Z_TEST_HARNESS
 
 testAddrIn, 0
@@ -1036,8 +1022,8 @@ testFetchWord,
     hlt
 
 // Deposit the address into testAddrIn and the value into testValueIn,
-// `start` at testStoreByte or testStoreWord, wait for the halt. There is
-// no result word; read the value back with testFetchByte/testFetchWord.
+// `start` at testStoreByte or testStoreWord, and wait for the halt. There
+// is no result word; read the value back with testFetchByte/testFetchWord.
 testStoreByte,
     lac testAddrIn
     lio testValueIn
@@ -1054,14 +1040,11 @@ testStoreWord,
 // the story on the drum booted, anything else is the ZBOOT_*/ZSTOP_* code
 // that refused it. Run it once after `load` and before other tests:
 // nothing else fills zhStaticBase or zhResidentTop or loads the story into
-// banks 0d1 and up.
-//
-// It takes one drum revolution per 0d256-word page, about 37 ms, so a
-// twelve-bank boot takes several seconds; poll testBootResult. A test can
-// poke zbResidentCap (ZLEAF) before the `start` to cap the resident region.
-//
-// This is `boot` without the console: it does not open DCS2 or print, so
-// it runs with no client attached.
+// banks 0d1 and up. It takes one drum revolution per 0d256-word page,
+// about 37 ms, so a twelve-bank boot takes several seconds; poll
+// testBootResult. A test can poke zbResidentCap (ZLEAF) before the `start`
+// to cap the resident region. This is `boot` without the console: it does
+// not open DCS2 or print, so it runs with no client attached.
 testBootInit,
     lem
     farjsp(zBootInit:*)
@@ -1073,9 +1056,9 @@ testBootInit,
 // cannot come from zBootInit, so it shows that testBootInit never ran.
 testBootResult, 0777
 
-// Like zdispatch.ac's testInterpretDcs, with the terminal query and a
-// boot between the connect and the loop. DCS2 is opened, the terminal
-// asked (ztext.ac's zTermQuery), and the story booted again, so the header
+// Like zdispatch.ac's testInterpretDcs, with the terminal query and a boot
+// between the connect and the loop. DCS2 is opened, the terminal asked
+// (ztext.ac's zTermQuery), and the story booted again, so the header
 // carries what the query found; then the loop runs from the story's
 // initial PC, with zdpStopReason preset as testInterpretDcs sets it. Run
 // testBootInit first. zServing is cleared, so a drop halts at ziNoConn
@@ -1087,20 +1070,20 @@ testTermDcs,
     lem
     farjsp(zTermQuery:*)
     lem
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE  // sma i: skip (fallthrough) unless it dropped
-    jmp ziNoConn                  // no-skip: stop 6, and the halt there
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp ziNoConn                  // the client left: stop 6, and the halt there
     farjsp(zBootInit:*)
     lem
     dac testBootResult
-    SKIP_NEXT_IF_AC_ZERO       // sza: skip (fallthrough) if the story booted
-    hlt                           // no-skip: refused
+    SKIP_NEXT_IF_AC_ZERO       // skip the halt if the story booted
+    hlt                           // refused
     lac [ZSTOP_UNIMPL]
     dac zdpStopReason
     jmp zInterpretStart
 
-// Deposit 3, 4 or 5 into testVersionIn, `start testSetVersion`, wait for
-// the halt. It runs zpApply for that version with no story loaded. A later
-// testBootInit patches for the story's own version.
+// Deposit 3, 4 or 5 into testVersionIn, `start testSetVersion`, and wait
+// for the halt. It runs zpApply for that version with no story loaded. A
+// later testBootInit patches for the story's own version.
 testSetVersion,
     lem
     lio testVersionIn
@@ -1113,25 +1096,40 @@ testVersionIn, 3
 
 constants
 
-// ========================================================================
-// Bank ZLEAF_BANK -- boot, objects and properties, the text engine, and
-// the dictionary/parser.
-//
-// These fragments sit after bank 0's code so that most references between
-// them are backward ones; the few forward ones use the `sym:*` form.
-//
-// An indirect reference through a bare in-bank pointer is only correct
-// with eem off. With eem on, `lac i ptr` takes ptr's full 16 bits, and a
-// bare ZLEAF_BANK offset has no bank number in it, so it resolves in bank
-// 0. Direct references stay in the current bank either way.
-//
-// Every public routine here returns through farrtn, and farjsp, farjda
-// and farrtn all leave extend mode on, so a caller that dereferences a
-// bare pointer after one of them must `lem` first. In ztext.ac zDecodeChar,
-// zetFindInRow and zetAppend `lem` at entry, and zpsTable after its farjda.
-// Same-bank calls that return with eem on need no `lem` when only direct
-// references follow.
-// ========================================================================
+// Bank ZCOLD_BANK: code that runs at most a few times a turn -- the
+// attribute bit routines (bitsets.ac, called from zobjects.ac only), and
+// print_num's formatter and the V3 status line (zstatus.ac, called from
+// zprint.ac's handlers). Bank 0 reaches it by forward `sym:*` references,
+// ZLEAF_BANK by backward `sym:ZCOLD_BANK` ones.
+// The code starts at ZCOLD_CODE_BASE, not 0: the bank below it is the top
+// of the resident region, or for a story with undo the undo log.
+// The in-bank pointer rule below applies here as in ZLEAF_BANK: zstatus.ac
+// shuts the window before each indirect through a bare offset. bitsets.ac
+// is only ever called with the window open and a full 16-bit pointer,
+// which its own header says it handles from any bank.
+// zobjects.ac #includes bitsets.ac as well; its include guard makes this
+// one, the first, the copy that is assembled.
+bank ZCOLD_BANK
+ZCOLD_CODE_BASE/
+#include "bitsets.ac"
+#include "zstatus.ac"
+constants
+
+// Bank ZLEAF_BANK: boot, objects and properties, the text engine, and the
+// dictionary/parser. These fragments sit after bank 0's code so that most
+// references between them are backward ones; the few forward ones use the
+// `sym:*` form.
+// The in-bank pointer rule: an indirect reference through a bare in-bank
+// pointer is only correct with eem off. With eem on, `lac i ptr` takes
+// ptr's full 16 bits, and a bare ZLEAF_BANK offset has no bank number in
+// it, so it resolves in bank 0. Direct references stay in the current bank
+// either way.
+// Every public routine here returns through farrtn, and farjsp, farjda and
+// farrtn all leave extend mode on, so a caller that dereferences a bare
+// pointer after one of them must `lem` first. In ztext.ac zetFindInRow and
+// zetAppend `lem` at entry, zDecodeString before its row-table read, and
+// zpsTable after its farjda. Same-bank calls that return with eem on need
+// no `lem` when only direct references follow.
 bank ZLEAF_BANK
 0/
 
@@ -1143,17 +1141,16 @@ bank ZLEAF_BANK
 #include "ztext.ac"
 #include "zparser.ac"
 
-// ---- The undo log's tables ---------------------------------------------
-// The code and state are zsave.ac's, in bank ZPATCH_BANK; these 140 words
-// are here because that bank has no room for them below the stack's copy
-// at 06000. zsave.ac reaches them only through 16-bit pointers.
-// A census image has no undo.
+// The undo log's tables. The code and state are zsave.ac's, in bank
+// ZPATCH_BANK; these 140 words are here because that bank has no room for
+// them below the stack's copy at 06000. zsave.ac reaches them only through
+// 16-bit pointers. A census image has no undo.
 #if !Z_CENSUS
-// The page map: one bit per 64-word page, 16 to a word. Page p (the pointer
-// >> 6) is word p >> 4, less the four words bank 0 would have had, and bit
-// p & 017, whose mask is zuBits's entry. 1 = logged, or no snapshot. It
-// assembles as zeros; zuHook drops any snapshot an unbooted image seems to
-// have, and every boot drops it anyway.
+// The page map: one bit per 64-word page, 16 to a word. Page p (the
+// pointer >> 6) is word p >> 4, less the four words bank 0 would have had,
+// and bit p & 017, whose mask is zuBits's entry. 1 = logged, or no
+// snapshot. It assembles as zeros; zuHook drops any snapshot an unbooted
+// image seems to have, and every boot drops it anyway.
 zuMap,
     table ZU_MAP_WORDS
 zuBits,
@@ -1168,23 +1165,20 @@ zuList,
 // Constants pools are per bank.
 constants
 
-// ========================================================================
-// Bank DYNMEM_STACK_BANK again -- the screen model, zscreen.ac, above the
+// Bank DYNMEM_STACK_BANK again: the screen model, zscreen.ac, above the
 // page cache (from 06000: 1024 + 8 x 256 words below it). A second block
 // for the bank, so that the bank-0 and ZLEAF_BANK symbols it reads (zdOp0,
 // zsWin, zPrintChar) are backward references. am1 resumes a bank where it
 // left it, so the code follows zCacheSlot7's table. The first block has no
-// constants, so this block's `constants` holds the bank's only pool.
-// With NUM_SLOTS at 014 the cache fills the bank and this block overflows
-// it; the build says so.
-// ========================================================================
+// constants, so this block's `constants` holds the bank's only pool. With
+// NUM_SLOTS at 014 the cache fills the bank and this block overflows it;
+// the build says so.
 bank DYNMEM_STACK_BANK
 #include "zscreen.ac"
 
-// ========================================================================
-// zErrReport, zErrPrompt -- the message an error halt gives the player
-// under boot, and the key it waits for. Both are called from bank 0 via
-// farjsp:
+// The message an error halt gives the player under boot, and the key it
+// waits for. Both are called from bank 0 via farjsp, and return with the
+// window open:
 //   zErrReport  IO = the stop reason. Prints
 //                 *** Z-machine error NN: <what>. ***
 //               and then does zErrPrompt's work.
@@ -1192,19 +1186,17 @@ bank DYNMEM_STACK_BANK
 //               and the ZMachine restarted.", and returns once a key
 //               arrives or the connection drops. zbootRefuse calls it
 //               after the refusal's own message.
-//
+// No result; AC and IO are clobbered.
 // The text goes straight to DCS2 with `tcc`, not through zPrintChar, so
 // the output streams (stream 3 open, the screen deselected) cannot swallow
 // it. Line breaks are LF, which DCS2's telnet mode sends as CR LF. The
 // screen model is left alone; in a V4+ story with the upper window
 // selected, the message lands at that window's cursor.
-//
 // Typeahead is discarded, with echo off, before the key is read with
 // getach, so a line typed before the error cannot answer the prompt. The
 // echo-off modify block, zerNoEcho, is in this bank: DCS2 reads it from
 // the bank the `scb` runs in, with the window closed. Echo stays off for
 // the key; ztext.ac's zSessionReset turns it on for the next player.
-// ========================================================================
 #define ZER_ROWS 0d17                  // zerTab's rows: stop reasons 0 to 0d16
 
 zErrReport,
@@ -1223,15 +1215,15 @@ zErrReport,
 zerTen,
     lac ones
     sub [0d10]
-    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO   // spa: skip (fallthrough) if ten or more
-    jmp zerDigits                        // no-skip: below ten
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp zerDigits                        // below ten
     dac ones
     idx tens
     jmp zerTen
 zerDigits,
     lac tens
-    SKIP_NEXT_IF_AC_NOT_ZERO           // sza i: skip (fallthrough) if a tens digit
-    jmp zerOnes                          // no-skip: one digit
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zerOnes                          // one digit
     add ['0']
     lia
     tcc
@@ -1246,11 +1238,11 @@ zerOnes,
     jsp zerPuts
     lio [zerMsgUnknown]
     lac code
-    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO   // spa: skip (fallthrough) if not negative
-    jmp zerWhat                          // no-skip: no row
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp zerWhat                          // negative: no row
     sub [ZER_ROWS]
-    SKIP_NEXT_IF_AC_NEGATIVE           // sma: skip (fallthrough) if it has a row
-    jmp zerWhat                          // no-skip: past the table
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zerWhat                          // past the table
     lac code
     add [zerTab]
     dac ptr
@@ -1274,8 +1266,8 @@ zerDrain,
     rcs
     lai
     and [dsfrdy]
-    SKIP_NEXT_IF_AC_NOT_ZERO           // sza i: skip (fallthrough) if a byte waits
-    jmp zerWait                          // no-skip: nothing typed ahead
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zerWait                          // nothing typed ahead
     cli
     rch                                // read it, and drop it
     jmp zerDrain
@@ -1291,9 +1283,11 @@ ones, 0
 ptr, 0
     endlocal
 
-// zerPuts -- IO = a bare in-bank pointer to an `ascii` block (two
-// characters a word, zero-terminated), sent with `tcc`.
-// Called via jsp (dap-style: this bank only), with the window closed.
+// Sends an `ascii` block (two characters a word, zero-terminated) with
+// `tcc`.
+// Entry: IO = a bare in-bank pointer to the block; the window is closed.
+// No result. AC and IO are clobbered. Called via jsp, this bank only;
+// returns with the window closed.
 zerPuts,
     local rtn, ptr, w
     dap rtn
@@ -1303,8 +1297,8 @@ zerpLoop,
     dac w
     sar 9s                             // the first character, from the high half
     and [0777]
-    SKIP_NEXT_IF_AC_NOT_ZERO           // sza i: skip (fallthrough) if there is one
-    jmp rtn                              // no-skip: the terminating zero
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rtn                              // the terminating zero
     lia
     tcc
     lac w
@@ -1326,8 +1320,8 @@ zerNoEcho, 0
 
 // One row per stop reason, 0 to 0d16 (zdispatch.ac's ZSTOP_* list). Quit
 // (1) and a dropped connection (6) never come here; 7 to 9 come here only
-// from restart, whose reload found a story it could not boot -- a boot
-// refusal at connect time prints zBootRefuse's own message instead.
+// from restart, whose reload found a story it could not boot (a boot
+// refusal at connect time prints zBootRefuse's own message instead).
 // ZER_ROWS, the row count, is defined above zErrReport.
 zerTab,
     zerMsgUnknown                      // 0
@@ -1386,17 +1380,14 @@ zerMsgBadProp,
 
 constants
 
-// ========================================================================
-// Bank ZPATCH_BANK -- the version patch table and zpApply (zpatch.ac),
-// save, restore, restart and undo (zsave.ac), and font 3's translator,
-// tables and VT220 soft font (zfont3.ac). zsave.ac is entered through
+// Bank ZPATCH_BANK: the version patch table and zpApply (zpatch.ac), save,
+// restore, restart and undo (zsave.ac), and font 3's translator, tables
+// and VT220 soft font (zfont3.ac). zsave.ac is entered through
 // farjsp(...:*) from bank 0; zfont3.ac from banks 15 and 13 through
-// `sym:*` references.
-//
-// The census build's tables (zdispatch.ac, ZC_SEEN) take the top 03340
-// words of this bank, so a census image must end below 04440 here; it
-// leaves out the soft font to fit. The build's bank table shows the end.
-// ========================================================================
+// `sym:*` references. The census build's tables (zdispatch.ac, ZC_SEEN)
+// take the top 03340 words of this bank, so a census image must end below
+// 04440 here; it leaves out the soft font to fit. The build's bank table
+// shows the end.
 bank ZPATCH_BANK
 0/
 #include "zpatch.ac"

@@ -1,14 +1,14 @@
 /*
  * symtabgen.c - generate a C file that is a pre-populated symbol table of all the opcodes and special values.
  * Usage: symtabgen deffile
- * A file with a name of the input definiton file with '.c' appended  will be created containing the symbol table,
+ * A file with a name of the input definition file with '.c' appended will be created containing the symbol table,
  * the global symbol pointer will be permSymP.
  *
  * The format of a line is:
  * # a comment, ignored, as are blank lines.
  * name type value trailing-chars-ignored.
  * where name is the symbol name,
- * type is one of 'value', 'opcode', 'opaddr', 'oporable', 1Dop, 'law', 'imod', or 'value'
+ * type is one of 'value', 'opcode', 'opaddr', 'oporable', '1Dop', 'lawop', or 'imod'
  * and value is the integer value.
 */
 #include <stdlib.h>
@@ -48,7 +48,7 @@ char line[1024];                                // and a line buffer
     strcpy(infile, argv[1]);
     if( !(infileP = fopen(infile, "r")) )
     {
-        fprintf( stderr, "btagben: can't open file '%s' for reading.\n", infile );
+        fprintf( stderr, "symtabgen: can't open file '%s' for reading.\n", infile );
         exit( 1 );
     }
 

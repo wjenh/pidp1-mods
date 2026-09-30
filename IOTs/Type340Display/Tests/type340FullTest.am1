@@ -51,6 +51,7 @@ main,
     jsp resetResults        // be sure our report counters are reset in case this is run multiple times
     jsp secBasicDra
     jsp secDcf
+    jsp secDcfRun
     jsp secScale
     jsp secPoint
     jsp secVector
@@ -151,6 +152,107 @@ progViolateV, scale(0) intensity(3) next(point)
     x(CENTER) show next(vcontinue)
     visible up deltay(0d127) right deltax(0)
     halt
+
+// ---------------------------------------------------------------------------
+// secDcfRun -- dcf leaves a running display running and takes nothing from IO (H-340 manual 3-15:
+// request for data is only the handshake for the next word). progLoop deposits into loopMark on
+// every pass, so the CPU can see whether the display still runs; progMark deposits into markWord
+// and halts, so the CPU can see whether it was ever started. The dcf is issued with progMark's
+// address in IO. Two controls show each check can fail: progMark marks when a dla starts it, and
+// loopMark stays clear once the display is halted.
+// ---------------------------------------------------------------------------
+secDcfRun,
+    local rtn, ctlMarkFail, ctlLoop, runFail, noStart, noStartFail, ctlStop, ctlStopFail
+    dap rtn
+
+    // control: a dla of progMark marks markWord
+    dzm markWord
+    lio [progMark
+    dla
+    jsp waitStop
+    lac markWord
+    sza i                   // skip if marked (expected)
+    jmp ctlMarkFail
+    lac [lblDcfCtlMark
+    lio [REPORT_PASS
+    jda reportResult
+    jmp ctlLoop
+ctlMarkFail,
+    lac [lblDcfCtlMark
+    lio [REPORT_FAIL
+    jda reportResult
+
+    // progLoop running, then the dcf with an address in IO
+ctlLoop,
+    dzm markWord
+    lio [progLoop
+    dla
+    jsp delay
+    lio [progMark
+    dcf
+    jsp delay
+    dzm loopMark
+    jsp delay
+    lac loopMark
+    sza i                   // skip if marked again (expected): the display still runs
+    jmp runFail
+    lac [lblDcfRun
+    lio [REPORT_PASS
+    jda reportResult
+    jmp noStart
+runFail,
+    lac [lblDcfRun
+    lio [REPORT_FAIL
+    jda reportResult
+
+noStart,
+    lac markWord
+    sza                     // skip if clear (expected): progMark never ran
+    jmp noStartFail
+    lac [lblDcfNoStart
+    lio [REPORT_PASS
+    jda reportResult
+    jmp ctlStop
+noStartFail,
+    lac [lblDcfNoStart
+    lio [REPORT_FAIL
+    jda reportResult
+
+    // control: once the display is halted, loopMark stays clear. A pass already in flight may
+    // still mark, so loopMark is cleared only after a delay.
+ctlStop,
+    lio [progStop
+    dla
+    jsp waitStop
+    jsp delay
+    dzm loopMark
+    jsp delay
+    lac loopMark
+    sza                     // skip if still clear (expected)
+    jmp ctlStopFail
+    lac [lblDcfCtlStop
+    lio [REPORT_PASS
+    jda reportResult
+    jmp rtn
+ctlStopFail,
+    lac [lblDcfCtlStop
+    lio [REPORT_FAIL
+    jda reportResult
+rtn, jmp .
+    endloc
+
+progLoop, scale(0) intensity(3) next(subroutine)
+    deposit loopMark next(point)
+    y(CENTER) next(point)
+    x(CENTER) show next(subroutine)
+    jump progLoop next(parameter)
+
+progMark, scale(0) intensity(3) next(subroutine)
+    deposit markWord next(parameter)
+    halt
+
+loopMark, 0
+markWord, 0
 
 // ---------------------------------------------------------------------------
 // secScale -- run the same small triangle at all 4 scale factors from a centered start point;
@@ -763,6 +865,21 @@ poll, dss
 rtn, jmp .
     endloc
 
+// delay -- wait some 50 ms of machine time: long enough for the 340 thread to take a command and
+// for a short looping display program to make many passes.
+// Called via jsp. AC is not preserved; IO is.
+delay,
+    local rtn, wait, n
+    dap rtn
+    lac [0d5000
+    cma
+    dac n
+wait, isp n
+    jmp wait
+rtn, jmp .
+n, 0
+    endloc
+
 // ---------------------------------------------------------------------------
 // Section labels and miscellaneous text, gathered together for readability.
 // ---------------------------------------------------------------------------
@@ -774,6 +891,18 @@ lblDcfSet,
     13
 lblDcfClear,
     text "dcf clears flags"
+    13
+lblDcfCtlMark,
+    text "control: dla runs a deposit program"
+    13
+lblDcfRun,
+    text "dcf leaves a running display running"
+    13
+lblDcfCtlStop,
+    text "control: a halted display leaves core alone"
+    13
+lblDcfNoStart,
+    text "dcf does not start at the IO address"
     13
 lblScale0,
     text "parameter scale 0"

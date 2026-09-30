@@ -1,0 +1,10 @@
+SYM ACROSS FILES
+// Tests/Symbols.  A label before an include, the include, and a
+// label after it: each takes its line in the file it is written in, and the
+// includer picks its own numbering up again where it left off.
+100/
+beforeinc,      0
+#include "sym_inc_part.ah"
+afterinc,       0
+        hlt
+        start beforeinc

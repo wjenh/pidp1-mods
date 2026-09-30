@@ -14,9 +14,6 @@
  * multiple instances can also be in the same bank.
  * The full address is used to resolve which symbol is where.
  *
- * wje 24-Feb-26 Add line number and versioning to symbol file, used by ad1.
- * wje 2-Sep-26 Add local symbols, now version V3.
- *
 */
 
 #include <unistd.h>

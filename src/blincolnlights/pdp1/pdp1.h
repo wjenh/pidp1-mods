@@ -221,7 +221,13 @@ void readin2(PDP1 *pdp);
 void handleio(PDP1 *pdp);
 void agedisplay(PDP1 *pdp, int i);
 void throttle(PDP1 *pdp);
+void throttleConfigure(uint64_t quantumNs, uint64_t spinNs, uint64_t maxLagNs);
 void cli(PDP1 *pdp);
+
+// Count of times throttle()'s option D lag cap fired since the last timing report reset. Read
+// (and reset to 0) by main.c's timingReset()/timingReport(); written only by throttle() on the
+// emulator thread, so no atomic is needed.
+extern long throttleCapFirings;
 void typtelnet(int port, int fd);
 char *handlecmd(PDP1 *pdp, char *line);
 

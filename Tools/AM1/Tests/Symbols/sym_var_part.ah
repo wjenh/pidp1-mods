@@ -1,0 +1,7 @@
+// Tests/Symbols.  The included half of sym_var_test.am1.  A var declared
+// here takes ITS line in THIS file.  The padding keeps the numbers in the
+// two files from coinciding.
+//
+// pad
+// pad
+        var incvar

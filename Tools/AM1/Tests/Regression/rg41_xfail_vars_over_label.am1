@@ -1,0 +1,12 @@
+Test rg41 (XFAIL): variables land on a word that carries a label -- must fail
+// The same collision seen from the other side: writeVars() checks the
+// address it is about to use, and finds the labeled word beneath it only
+// because that word is marked like any other. rg42 is the same for
+// constants.
+100/
+    cla
+tgt,    cma
+101/
+    var w
+    variables
+stop

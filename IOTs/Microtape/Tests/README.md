@@ -7,7 +7,7 @@ them with synthetic time, the same way the I/O poll and the IOTs do.
 `plugintest` builds the reader plugin itself (`../../Reader/IOT_2.c` with
 `../microtape.c` and the core) into a host program and calls its entry
 points as the IOT loader would. The pattern follows
-`IOTs/TestGateway/Tests/hscharness.c`. The Phase 5 probes (the `.am1`
+`IOTs/TestGateway/Tests/hscharness.c`. The probes (the `.am1`
 files) run on the emulator; see "Emulator probes" below.
 
 `IOTs/install.sh` skips directories named `Tests`, so nothing here is
@@ -31,12 +31,11 @@ and names it feeds the plugin on purpose.
 
 ## What mttest covers
 
-The references are to `Magtape/TASK-TYPE550.md` (sections 5.2 and 5.3)
-and to `Magtape/MICROTAPE-RESEARCH.md` (section 3.5, the program
-deadlines). The write enable, D256 latch and All Halt groups, and the
-deadlines as they now stand, come from `MiscTasks/Completed/TASK-TAPE-HALT-WRITE.md`
-(13-Sep-2026), which matched the model to DEC's documents: H-550 (1965),
-the DECUS 1963 paper and the F-03 brochure.
+The numbers in the group names (5.2, 5.3, 3.5) are sections of the
+design notes the tests were written against. The model, including the
+write enable, D256 latch and All Halt groups and the deadlines as they now
+stand, follows DEC's documents: H-550 (1965), the DECUS 1963 paper and
+the F-03 brochure.
 
 At 13-Sep-2026: `mttest` 337 checks, `plugintest` 68, `roundtrip.sh`
 20, all passing.
@@ -107,20 +106,19 @@ as those blocks then zeros; `check` finds exactly the one damaged block;
 a part-block file, a block plus two bytes and an oversize file are
 refused.
 
-## Emulator probes (Phase 5)
+## Emulator probes
 
 These need the emulator with the reader plugin built from these sources
 installed, and the emulator to themselves: run them **one at a time, and
 only when no other task holds the emulator**. Each program halts; the
 result is in AC and IO. `make probes` assembles them with `am1 -S` (set
 `AM1` and `AM1INC` if am1 or the include tree are not the defaults, e.g.
-`make probes AM1=../../../bin/am1`, as the other tasks in this sandbox
-use).
+`make probes AM1=../../../bin/am1`).
 
 ### The reader, first
 
 The reader plugin now carries the tape, so check that it behaves as
-before with a paper tape through the harness: `rpa`, `rpb`, and read-in
+before with a paper tape: `rpa`, `rpb`, and read-in
 (whose `rpb` pulses carry a dio word in MB). This is required, not
 optional: it is the one path where a mistake in the device-01 routing
 would show.
@@ -136,24 +134,12 @@ Configuration for the tape probes, in `/opt/pidp1-mods/microtapes.txt`:
 A missing unlocked image is created blank; for drive 2's, make an empty
 file first (or `../mkmicrotape blank <file>`), since a locked line does
 not create one. Give each probe a fresh mount (restart, or change the
-lines: the probe's first `mse` applies them). `probe_end` and
-`probe_halt` must start with drive 1 at the load point.
-
-Under the test harness, `/opt/pidp1-mods` is `run_in_opt.sh`'s per-run
-directory of links to the checkout, so a file the plugin creates at its
-top level lands there and goes when the run ends: `probe_mount`'s
-`probemnt.img` does. Keep the listed images in a subdirectory of the
-checkout (the 11-Sep runs used `1 mtimg/mt1.img` and
-`2 mtimg/mt2.img,locked`) to find them afterwards.
+lines: the probe's first `mse` applies them). `probe_halt` must start
+with drive 1 at the load point.
 
 | Program | Pass | Control leg |
 |---|---|---|
 | `mtsample.am1` | the example in Docs/UsingType550Microtape.md. It writes block 12 (octal; block 10 decimal) of drive 1 forward, reads it back in reverse, and halts at `good` with AC = 0. Afterwards, `mkmicrotape check` on drive 1's image finds no bad block, and the image is 11 blocks long (blocks 0-12 octal). | Its own total check: on a word lost at the search-to-read deadline it halts at `bad` with the total in AC. |
-| `probe_period.am1` | halts at `done` with AC = the 10-block search time and IO = the 5-block time, in ms: about 1020 and 410 octal (528 and 264 ms). | The 5-block time must be half the 10-block time. |
-| `probe_miss.am1` | halts at `done` with AC = 0 (the fast block: no error) and IO = 120000 (the slow block: ERF and MISS). | The fast block is the control. |
-| `probe_end.am1` | halts at `pass`, AC = 0: moving in reverse from the load point gives END, ERF and GO cleared, and the tape stops. | Leg 1, moving forward, must show GO and no error. |
-| `probe_unable.am1` | halts at `pass`, AC = 0: drive 3 with no tape, a write on locked drive 2, and no drive selected are refused (ERF and UNABLE); `mse` clears them. | Checks 3 and 4: a read on the locked drive and a write on drive 1 are accepted. |
-| `probe_mount.am1` | halts at `pass`, AC = 0: `mmt` mounts `probemnt.img` on drive 4 (IO = 0) and the tape searches to block 0; mode 7 on drive 4 is accepted; `mmt` with AC = 0 unmounts drive 4 and a move on it is then refused; `mmt` with drive 0 and with an empty name give IO = 777776. Delete `/opt/pidp1-mods/probemnt.img` afterwards. | Check 4: mode 7 on the locked drive 2 is refused. |
 | `probe_halt.am1` | needs a harness (see its header). It writes block 20 (octal) of drive 1 with the words 1, 2, ... and halts after 100 of them with the tape still writing; the harness waits 3 s and continues it. It then halts at `pass`, AC = 0: GO was clear after the halt (check 1), block 20 fails its check (check 2), and blocks 21 and 22 read as blank blocks (check 3). The image is 17 blocks (octal 0-20) and holds nothing past the halt. `hkind` picks the halt: 0 the `hlt` at `pause`, 1 a breakpoint at `brk`, 2 an ad1 `stop` while it spins at `spin`, restarted at `after`. `estep` is the single-step leg. | The plugin from before All Halt: `fail` with AC = 5 (checks 1 and 3), GO still set, and the image grown past block 20 with the last word written through the halt. |
 
 ### What has been checked without the emulator
@@ -167,18 +153,18 @@ gave its pass result. `mtsample` still passed with every instruction made
 2.5 times slower; at 2.8 times it lost the first word and halted at
 `bad`, and at 3 times and beyond it halted with MISS.
 
-11-Sep-2026: the tape moved into the reader plugin (Magtape/TASK-REWORK.md);
+11-Sep-2026: the tape moved into the reader plugin;
 the loader probe and its test plugins went with the loader change.
-Every probe, `probe_mount` included, assembles with `make probes`
+Every probe assembles with `make probes`
 (`bin/am1 -S`), and `plugintest` exercises the plugin's routing and
 mounting on the host.
 None of this replaces running the probes on the emulator.
 
 ### Emulator results, 11-Sep-2026
 
-Run through the harness on a private WSL copy of the sandbox, with `pdp1`
-(the `dynamicIots.c` alias fix in it) and every plugin rebuilt there by
-`IOTs/install.sh`, one test per emulator start. All passed.
+Run on the emulator, with `pdp1` (the `dynamicIots.c` alias fix in it)
+and every plugin rebuilt by `IOTs/install.sh`, one test per emulator
+start. All passed.
 
 | Test | Result |
 |---|---|
@@ -187,33 +173,22 @@ Run through the harness on a private WSL copy of the sandbox, with `pdp1`
 | read-in, am1 tape | an am1 `.rim` through its own loader: PC just past `done`, AC 3720 |
 | reader control leg | the same three with the pre-rework `IOT_1.so` and `IOT_2.so` swapped in: identical results |
 | `mtsample` | `good`, AC 0; the image is 11 blocks and `mkmicrotape check` finds no bad block |
-| `probe_period` | `done`, AC 1020, IO 410 (528 and 264 ms, exactly two to one) |
-| `probe_miss` | `done`, AC 0, IO 120000 |
-| `probe_end` | `pass`, AC 0; the status left in IO, 150000, is ERF, END and REV with GO clear |
-| `probe_unable` | `pass`, AC 0 |
-| `probe_mount` | `pass`, AC 0; the plugin reported creating `probemnt.img` and refusing the empty name |
 
 ### Emulator results, 13-Sep-2026
 
-`MiscTasks/Completed/TASK-TAPE-HALT-WRITE.md`, with the owner's `mse` reread.
-Run through the harness in WSL, from a private runtime root under `~`
-whose `IOTs/IOT_2.so` was this tree's build (the sandbox's `pdp1`, every
+The All Halt change, with the owner's `mse` reread.
+Run on the emulator with `IOTs/IOT_2.so` built from these sources (every
 other plugin as installed), one emulator start per test. The control
-legs swapped in the plugin installed before the task.
+legs swapped in the plugin from before the change.
 
 | Test | New plugin | Control leg (old plugin) |
 |---|---|---|
 | `mtsample` | `good`, AC 0; the image is 11 blocks and `mkmicrotape check` finds no bad block | |
-| `probe_period` | `done`, AC 1020, IO 410 | |
-| `probe_miss` | `done`, AC 0, IO 120000 | |
-| `probe_end` | `pass`, AC 0; IO 150000 | |
-| `probe_unable` | `pass`, AC 0 | |
-| `probe_mount` | `pass`, AC 0 | |
 | `probe_halt`, `hlt` | stopped at `pause`; then `pass`, AC 0, status after the halt 000000; block 20 holds words 1-99 and then zeros; image 17 blocks | `fail`, AC 5, status 724000 (GO set); the image grew to 106 blocks, the last word written through the halt |
 | `probe_halt`, breakpoint | stopped at `brk` (PC `brk`+1, twice, 1 s apart); `pass`, AC 0; image 17 blocks | `fail`, AC 5, GO set; 119 blocks |
 | `probe_halt`, ad1 `stop` | stopped at `spin`; `pass`, AC 0; status 720000 (DF, BEF, ERF, MISS; GO clear); block 20 holds words 1-100; image 17 blocks | `fail`, AC 5, GO set; 102 blocks |
 | `mse` reread (live) | drive 1 changed with `Tools/TapeUtils/mtp` while the emulator ran, no SIGHUP: at the next `mse`, a locked line for a missing image left it UNABLE (status 101000), and a new image was created and mounted (GO, able); mounting the same line again left it able | the edits had no effect: GO, able, the new image never created |
-| ZMachine Task 28, leg WS | ad1 `stop` during a save, the CPU halted 3 s: GO clear when the program looked; only the block being written is partial; the victim save 30 blocks later still totals zero block by block and restores whole; the image did not grow | the victim's 30 blocks all fail; the image grew to 136 blocks |
+| Z-machine save, halted | ad1 `stop` during a Z-machine save, the CPU halted 3 s: GO clear when the program looked; only the block being written is partial; the victim save 30 blocks later still totals zero block by block and restores whole; the image did not grow | the victim's 30 blocks all fail; the image grew to 136 blocks |
 
 The stop switch itself was not pressed; ad1 `stop` drives the same
 switch line. **Single-step does not stop the tape.** A stepped `mlc`

@@ -1,0 +1,9 @@
+Test rg42 (XFAIL): constants land on a word that carries a label -- must fail
+// As rg41 but for the constants pool: writeConstants() checks, and finds
+// the labeled word it lands on only because that word is marked.
+100/
+    lac [5]
+tgt,    cma
+101/
+    constants
+stop

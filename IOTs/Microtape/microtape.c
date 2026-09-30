@@ -5,6 +5,8 @@
  * 13-Sep-2026 Claude - All Halt: the I/O poll stops the tapes when RUN falls
  * 13-Sep-2026 Claude - mse rereads microtapes.txt and applies it if it changed
  * 21-Sep-2026 Claude - mse now remounts if its image file changed
+ * 27-Sep-2026 Claude - image writes go through a write-behind queue, so a slow card or disk does
+ *    not hold the emulator thread
  */
 
 #define NOT_IN_PDP1
@@ -18,9 +20,19 @@
 #include "configuration.h"
 #include "iotLogger.h"                      // DOLOGGING is not defined: the calls compile away
 #include "microtape.h"
+#include "writeBehind.h"
+
+// Weak, so the host tests, which link no writeBehind.o, still build: there wbCreate is NULL and
+// the images are written in place, as mkmicrotape writes them.
+#pragma weak wbCreate
+#pragma weak wbWrite
+#pragma weak wbTruncate
+#pragma weak wbDrain
 
 #define LOG_MT_IOT      0
 #define LOG_MT_CONFIG   0
+
+#define MT_WBMAXBYTES   (1024 * 1024)       // queued image writes: about 1000 blocks
 
 // Where the drive list lives, and what relative image paths are relative to. The host tests
 // compile with their own.
@@ -51,6 +63,15 @@ static char listText[LIST_MAX_BYTES + 1];   // its bytes
 static size_t listLen;                      // how many were read, up to LIST_MAX_BYTES + 1
 static int listErr = -1;                    // 0 if it was read, else the errno; -1: never read
 static struct stat listStat;                // its device, inode, size and times then
+
+static WbQueueP wbP;                        // the image writes' queue, NULL if writes are in place
+
+static void deferWrite(Mt555UnitP uP, const void *dataP, size_t len, off_t offset);
+static void deferTruncate(Mt555UnitP uP);
+static void deferDrain(void);
+static void deferDone(void *argP, int fd, bool ok);
+
+static const Mt555Deferred deferred = { deferWrite, deferTruncate, deferDrain };
 
 static void ensureReady(uint64_t now);
 static void configure(uint64_t now);
@@ -248,8 +269,39 @@ ensureReady(uint64_t now)
     memset(listSpec, 0, sizeof(listSpec));
     memset(listFailed, 0, sizeof(listFailed));
     memset(ioErrorReported, 0, sizeof(ioErrorReported));
+    if( wbCreate && (wbP = wbCreate(MT_WBMAXBYTES)) )
+    {
+        mt555DeferP = &deferred;
+    }
     ctlReady = true;
     configure(now);
+}
+
+// The transport's hooks (see Mt555Deferred): each queues its operation on the unit's image
+// file, with deferDone() to note the result in the unit.
+static void
+deferWrite(Mt555UnitP uP, const void *dataP, size_t len, off_t offset)
+{
+    wbWrite(wbP, uP->fd, dataP, len, offset, deferDone, uP);
+}
+
+static void
+deferTruncate(Mt555UnitP uP)
+{
+    wbTruncate(wbP, uP->fd, 0, deferDone, uP);
+}
+
+static void
+deferDrain(void)
+{
+    wbDrain(wbP);
+}
+
+// On the writer thread, when a queued image write or truncate is done.
+static void
+deferDone(void *argP, int fd, bool ok)
+{
+    mt555NoteWrite((Mt555UnitP)argP, fd, ok);
 }
 
 // Reads the break channel from pidp1.config and the drive list from microtapes.txt, and
@@ -797,7 +849,7 @@ int unit;
     for( unit = 1; unit <= MT_UNITS; ++unit )
     {
         uP = mt550Unit(&ctl, unit);
-        if( uP->ioError && !ioErrorReported[unit] )
+        if( __atomic_load_n(&uP->ioError, __ATOMIC_RELAXED) && !ioErrorReported[unit] )
         {
             fprintf(stderr, "microtape%d: writing %s failed; the image on disk is out of date\n", unit, uP->path);
             ioErrorReported[unit] = true;

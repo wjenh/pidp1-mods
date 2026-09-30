@@ -23,12 +23,25 @@
  * Build: see the "harness" target in this directory's Makefile.
  * Run: ./hscharness -- prints PASS/FAIL lines and exits nonzero on any failure.
  *
+ * It also covers what needs simtime, a second thread or the panel stubs, none of which an
+ * am1 program can arrange: per-cycle arbitration with a TRUESTEAL channel, one word per steal,
+ * words falling due across a long instruction or a throttle lag-cap firing, owed cycles for
+ * THREADED and HSCsteal(), and the wake-ups from completion and from HSCreset(). pass() below
+ * stands in for one main-loop pass: a scan, then 5us of simtime.
+ *
+ * Build with -DHSC_NO_STEAL to run the rest against an HSC that has no HSCsteal().
+ *
  * 02-Jul-2026 wje/claude -- written alongside the IOT 44 Test Gateway am1 suite, to close
  *    the one gap that suite documents but can't fill itself.
+ * 23-Sep-2026 claude -- THREADED status is now finished by HSCwait(), and checks HSC-25 on for
+ *    the channel rework.
  */
 
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 #include "pdp1.h"
 #include "highSpeedChannels.h"
@@ -42,24 +55,120 @@ bool processHSCchannels(void);
 PDP1P pdp1P;
 static PDP1 thePdp1;
 
+// Normally pdp1.c's; the HSC reads it to spot a throttle lag-cap firing.
+long throttleCapFirings;
+
 static int failCount = 0;
 
-// Trivial stand-ins for the panel-light update calls highSpeedChannels.c makes. The panel
-// pointer is never dereferenced by that code, only passed through, so NULL is fine here.
-// No return value.
+// Calls to the panel stubs; the HSC must make none (only main.c and cycle() touch the panel).
+static int lightsCalls;
+static int pwmCalls;
+
+// A waiter thread's result: set to 1 when its HSCwait() has returned, with the status.
+static atomic_int waiterReturned;
+static atomic_int waiterStatus;
+
+// Stand-in for the panel snapshot; counts calls. The panel pointer is never dereferenced.
 void
 updatelights(PDP1 *pdp, Panel *panel)
 {
     (void)pdp;
     (void)panel;
+    ++lightsCalls;
 }
 
-// See updatelights() above. No return value.
+// Stand-in for the panel tally; counts calls.
 void
 updatelights_pwm(Panel *panel, int n)
 {
     (void)panel;
     (void)n;
+    ++pwmCalls;
+}
+
+// One main-loop pass: the channel scan, then the 5us every pass adds to simtime (main.c).
+// Returns true if a channel stole the pass's cycle.
+static bool
+pass(void)
+{
+bool steal;
+
+    steal = processHSCchannels();
+    thePdp1.simtime += 5000;
+    return(steal);
+}
+
+// Run passes until a normal or TRUESTEAL channel is no longer busy (at most 500), then
+// HSCwait() on it, so a check that failed cannot leave the harness blocked in HSCwait().
+static void
+drainAndWait(HSCChannelP chanP)
+{
+int i;
+
+    for( i = 0; (i < 500) && (HSCgetStatus(chanP) == HSC_BUSY); ++i )
+    {
+        pass();
+    }
+    HSCwait(chanP);
+}
+
+// Fill count words of bank 0 from addr with value.
+static void
+fillCore(int addr, int count, Word value)
+{
+int i;
+
+    for( i = 0; i < count; ++i )
+    {
+        thePdp1.core[addr + i] = value;
+    }
+}
+
+// Returns how many of the count words of bank 0 from addr no longer hold value.
+static int
+countChanged(int addr, int count, Word value)
+{
+int i;
+int changed;
+
+    changed = 0;
+    for( i = 0; i < count; ++i )
+    {
+        if( thePdp1.core[addr + i] != value )
+        {
+            ++changed;
+        }
+    }
+
+    return(changed);
+}
+
+// Thread body: wait on the channel passed in and record what HSCwait() returned.
+static void *
+waiterThread(void *argP)
+{
+    atomic_store(&waiterStatus, HSCwait((HSCChannelP)argP));
+    atomic_store(&waiterReturned, 1);
+    return(NULL);
+}
+
+// Poll for the waiter thread to return, up to ms milliseconds.
+// Returns true if it returned in time.
+static bool
+waiterReturnedWithin(int ms)
+{
+int i;
+
+    for( i = 0; i < ms; ++i )
+    {
+        if( atomic_load(&waiterReturned) )
+        {
+            return(true);
+        }
+        usleep(1000);
+    }
+
+    return( atomic_load(&waiterReturned) != 0 );
 }
 
 // Reports one check's result to stdout and updates the running failure count.
@@ -251,7 +360,9 @@ int i, steal, threadedCount;
         check("HSC-18 steal returned true while THREADED chan2 draining", steal == 1);
     }
 
-    check("HSC-19 chan2 status DONE after THREADED drain", HSCgetStatus(chanP) == HSC_DONE);
+    // The requester finishes a THREADED transfer's status in HSCwait(); the scan only pays cycles.
+    check("HSC-19 chan2 status DONE after THREADED drain",
+        (HSCwait(chanP) == HSC_DONE) && (HSCgetStatus(chanP) == HSC_DONE));
     check("HSC-20 free chan2", HSCfreeChannel(chanP));
 
     // Re-allocate the same channel NUMBER and issue a plain (non-THREADED) request on it.
@@ -277,14 +388,403 @@ int i, steal, threadedCount;
     return(failCount != 0);
 }
 
+// TRUESTEAL alone: no word moves at request time, one word reaches core per steal, exactly
+// count steals, and the channel is done on its last tick. 4 words at 8.5us is 7 ticks.
+static void
+testTrueStealOneWordPerSteal(void)
+{
+HSCChannelP chanP;
+HSCRequest req;
+Word sentinel;
+int passes, steals, badOrder;
+
+    sentinel = 0242424;
+    fillCore(3300, 4, sentinel);
+
+    chanP = HSCallocateChannel(1);
+    memset(&req, 0, sizeof(req));
+    req.mode = HSC_MODE_TOMEM | HSC_MODE_TRUESTEAL;
+    req.count = 4;
+    req.memAddr = 3300;
+    req.wordTime = 85;
+    req.toBufferP = (uint32_t[]){ 0111111, 0222222, 0333333, 0444444 };
+    check("HSC-25 TRUESTEAL request returns busy", HSCexecute(chanP, &req) == HSC_BUSY);
+    check("HSC-26 TRUESTEAL moves no word at request time", countChanged(3300, 4, sentinel) == 0);
+
+    passes = steals = badOrder = 0;
+    while( (HSCgetStatus(chanP) == HSC_BUSY) && (passes < 50) )
+    {
+        if( pass() )
+        {
+            ++steals;
+        }
+        ++passes;
+
+        if( countChanged(3300, 4, sentinel) != steals )
+        {
+            ++badOrder;
+        }
+    }
+
+    check("HSC-27 one word reaches core per steal", badOrder == 0);
+    check("HSC-28 TRUESTEAL steals exactly count cycles", steals == 4);
+    check("HSC-29 TRUESTEAL done on its last tick", passes == 7);
+    check("HSC-30 TRUESTEAL data correct",
+        (thePdp1.core[3300] == 0111111) && (thePdp1.core[3303] == 0444444));
+    drainAndWait(chanP);
+    HSCfreeChannel(chanP);
+}
+
+// Per-cycle arbitration: a TRUESTEAL transfer on channel 1 (4 words over 16 ticks) leaves most
+// passes free, and a normal transfer on channel 5 takes them; channel 1 still finishes on time.
+static void
+testArbitrationPerCycle(void)
+{
+HSCChannelP chan1P, chan5P;
+HSCRequest req1, req5;
+Word sentinel;
+int passes, steals, chan5DoneFirst;
+
+    sentinel = 0242424;
+    fillCore(3400, 4, sentinel);
+    fillCore(3500, 3, sentinel);
+
+    chan1P = HSCallocateChannel(1);
+    chan5P = HSCallocateChannel(5);
+
+    memset(&req1, 0, sizeof(req1));
+    req1.mode = HSC_MODE_TOMEM | HSC_MODE_TRUESTEAL;
+    req1.count = 4;
+    req1.memAddr = 3400;
+    req1.wordTime = 200;
+    req1.toBufferP = (uint32_t[]){ 0111111, 0222222, 0333333, 0444444 };
+
+    memset(&req5, 0, sizeof(req5));
+    req5.mode = HSC_MODE_TOMEM;
+    req5.count = 3;
+    req5.memAddr = 3500;
+    req5.toBufferP = (uint32_t[]){ 0555555, 0666666, 0777777 };
+
+    HSCexecute(chan1P, &req1);
+    HSCexecute(chan5P, &req5);
+
+    passes = steals = chan5DoneFirst = 0;
+    while( (HSCgetStatus(chan1P) == HSC_BUSY) && (passes < 50) )
+    {
+        if( pass() )
+        {
+            ++steals;
+        }
+        ++passes;
+
+        if( (HSCgetStatus(chan5P) == HSC_DONE) && (HSCgetStatus(chan1P) == HSC_BUSY) )
+        {
+            chan5DoneFirst = 1;
+        }
+    }
+
+    check("HSC-31 lower channel is served while a TRUESTEAL channel is busy", chan5DoneFirst);
+    check("HSC-32 both transfers complete, one steal per word",
+        (steals == 7) && (countChanged(3400, 4, sentinel) == 4) && (countChanged(3500, 3, sentinel) == 3));
+    check("HSC-33 TRUESTEAL still done on its last tick", passes == 16);
+    drainAndWait(chan1P);
+    drainAndWait(chan5P);
+    HSCfreeChannel(chan1P);
+    HSCfreeChannel(chan5P);
+}
+
+// Ticks come from simtime: a pass that covers 45us, as a mul or div does, makes the words of
+// those ticks due at once, and they are stolen on the passes right after it. 4 words at 10us
+// is 8 ticks; the long pass makes all of them due.
+static void
+testTrueStealAfterLongInstruction(void)
+{
+HSCChannelP chanP;
+HSCRequest req;
+int i, steals;
+
+    fillCore(3600, 4, 0);
+    chanP = HSCallocateChannel(1);
+    memset(&req, 0, sizeof(req));
+    req.mode = HSC_MODE_TOMEM | HSC_MODE_TRUESTEAL;
+    req.count = 4;
+    req.memAddr = 3600;
+    req.wordTime = 100;
+    req.toBufferP = (uint32_t[]){ 0111111, 0222222, 0333333, 0444444 };
+    HSCexecute(chanP, &req);
+
+    pass();                             // tick 1: no word due yet
+    thePdp1.simtime += 40000;           // that pass was a 45us instruction
+
+    steals = 0;
+    for( i = 0; i < 4; ++i )
+    {
+        if( pass() )
+        {
+            ++steals;
+        }
+    }
+
+    check("HSC-34 words due across a long instruction are stolen on the next passes", steals == 4);
+    check("HSC-35 and the transfer is then done", HSCgetStatus(chanP) == HSC_DONE);
+    drainAndWait(chanP);
+    HSCfreeChannel(chanP);
+}
+
+// A throttle lag-cap firing forgives simtime; the words that fell due in it move without a steal.
+static void
+testTrueStealCapForgiven(void)
+{
+HSCChannelP chanP;
+HSCRequest req;
+bool steal;
+
+    fillCore(3700, 4, 0);
+    chanP = HSCallocateChannel(1);
+    memset(&req, 0, sizeof(req));
+    req.mode = HSC_MODE_TOMEM | HSC_MODE_TRUESTEAL;
+    req.count = 4;
+    req.memAddr = 3700;
+    req.wordTime = 100;
+    req.toBufferP = (uint32_t[]){ 0111111, 0222222, 0333333, 0444444 };
+    HSCexecute(chanP, &req);
+
+    pass();
+    thePdp1.simtime += 100000;          // throttle() moved simtime over forgiven time
+    ++throttleCapFirings;
+    steal = pass();
+
+    check("HSC-36 words due in forgiven time move without a steal",
+        !steal && (countChanged(3700, 4, 0) == 4) && (HSCgetStatus(chanP) == HSC_DONE));
+    drainAndWait(chanP);
+    HSCfreeChannel(chanP);
+}
+
+// THREADED owes its cycles to the CPU: returning from HSCwait() no longer cancels them, and
+// nothing is owed while the CPU is stopped. IMMEDIATE steals nothing.
+static void
+testOwedCycles(void)
+{
+HSCChannelP chanP;
+HSCRequest req;
+Word buf[8];
+int i, steals;
+
+    chanP = HSCallocateChannel(3);
+    memset(&req, 0, sizeof(req));
+    req.mode = HSC_MODE_FROMMEM | HSC_MODE_THREADED;
+    req.count = 3;
+    req.memAddr = 3800;
+    req.fromBufferP = buf;
+    HSCexecute(chanP, &req);
+    HSCwait(chanP);                     // the requester is done before the scan runs
+
+    steals = 0;
+    for( i = 0; i < 5; ++i )
+    {
+        if( pass() )
+        {
+            ++steals;
+        }
+    }
+    check("HSC-37 THREADED cycles are stolen even after HSCwait() returned", steals == 3);
+
+    // A request made while stopped; the scan runs before HSCwait(), so owed cycles would show.
+    thePdp1.run = 0;
+    req.count = 2;
+    HSCexecute(chanP, &req);
+    thePdp1.run = 1;
+    steals = 0;
+    for( i = 0; i < 3; ++i )
+    {
+        if( pass() )
+        {
+            ++steals;
+        }
+    }
+    check("HSC-38 nothing is owed while the CPU is stopped", steals == 0);
+    HSCwait(chanP);
+
+    req.mode = HSC_MODE_FROMMEM | HSC_MODE_IMMEDIATE;
+    req.count = 5;
+    HSCexecute(chanP, &req);
+    check("HSC-39 IMMEDIATE steals nothing", !pass());
+
+#ifndef HSC_NO_STEAL
+    check("HSC-40 HSCsteal accepts a count", HSCsteal(chanP, 2) == HSC_OK);
+    steals = 0;
+    for( i = 0; i < 4; ++i )
+    {
+        if( pass() )
+        {
+            ++steals;
+        }
+    }
+    check("HSC-41 HSCsteal's cycles are stolen, one per pass", steals == 2);
+    check("HSC-42 HSCsteal rejects a negative count", HSCsteal(chanP, -1) == HSC_ERR);
+#endif
+    HSCfreeChannel(chanP);
+}
+
+// Only the scan touches the lamp, and the HSC never calls the panel code: the requester's
+// thread leaves the panel alone, the scan lights the lamp, and it goes out after its stretch.
+static void
+testLampOnEmulatorThreadOnly(void)
+{
+HSCChannelP chanP;
+HSCRequest req;
+Word buf[2];
+int i;
+
+    for( i = 0; i < 30; ++i )
+    {
+        pass();                         // let every earlier lamp request run out
+    }
+
+    lightsCalls = pwmCalls = 0;
+    chanP = HSCallocateChannel(3);
+    memset(&req, 0, sizeof(req));
+    req.mode = HSC_MODE_FROMMEM | HSC_MODE_THREADED | HSC_MODE_UPDATEPANEL;
+    req.count = 1;
+    req.memAddr = 3900;
+    req.fromBufferP = buf;
+    HSCexecute(chanP, &req);
+    check("HSC-43 the requester does not touch the panel", (thePdp1.hsc == 0) && (pwmCalls == 0) && (lightsCalls == 0));
+
+    pass();
+    check("HSC-44 the scan lights the lamp", thePdp1.hsc == 1);
+    HSCwait(chanP);
+
+    for( i = 0; i < 25; ++i )
+    {
+        pass();
+    }
+    check("HSC-45 the lamp goes out after its stretch", thePdp1.hsc == 0);
+    check("HSC-46 the HSC never calls the panel code", (pwmCalls == 0) && (lightsCalls == 0));
+    HSCfreeChannel(chanP);
+}
+
+// Every TRUESTEAL transfer of 1 to 3000 words at the drum's 8.5us moves exactly its count and
+// steals exactly its count. The spreading once made one word too many on about a quarter of
+// these counts (7 words over 12 ticks, for one), which moved a word past the block.
+static void
+testTrueStealExactCount(void)
+{
+HSCChannelP chanP;
+HSCRequest req;
+Word buf[3000];
+int n, i, passes, steals, overran, badBlock, badSteals;
+
+    for( i = 0; i < 3000; ++i )
+    {
+        buf[i] = 0100000 + i;
+    }
+
+    chanP = HSCallocateChannel(1);
+    overran = badBlock = badSteals = 0;
+    for( n = 1; n <= 3000; ++n )
+    {
+        fillCore(4096, n + 1, 0777000);     // bank 1, clear of the other tests' words
+        memset(&req, 0, sizeof(req));
+        req.mode = HSC_MODE_TOMEM | HSC_MODE_TRUESTEAL;
+        req.count = n;
+        req.memBank = 1;
+        req.wordTime = 85;
+        req.toBufferP = buf;
+        HSCexecute(chanP, &req);
+
+        passes = steals = 0;
+        while( (HSCgetStatus(chanP) == HSC_BUSY) && (passes < 6000) )
+        {
+            if( pass() )
+            {
+                ++steals;
+            }
+            ++passes;
+        }
+        HSCwait(chanP);
+
+        if( thePdp1.core[4096 + n] != 0777000 )
+        {
+            ++overran;
+        }
+        for( i = 0; i < n; ++i )
+        {
+            if( thePdp1.core[4096 + i] != buf[i] )
+            {
+                ++badBlock;
+                break;
+            }
+        }
+        if( steals != n )
+        {
+            ++badSteals;
+        }
+    }
+
+    check("HSC-50 TRUESTEAL moves exactly its count, 1 to 3000 words", (overran == 0) && (badBlock == 0));
+    check("HSC-51 TRUESTEAL steals exactly its count, 1 to 3000 words", badSteals == 0);
+    HSCfreeChannel(chanP);
+}
+
+// A thread blocked in HSCwait() on a normal transfer is woken by completion, and by HSCreset().
+// Runs last: HSCreset() aborts every assigned channel.
+static void
+testWaiterWakeups(void)
+{
+HSCChannelP chanP;
+HSCRequest req;
+pthread_t tid;
+int i;
+
+    chanP = HSCallocateChannel(5);
+    memset(&req, 0, sizeof(req));
+    req.mode = HSC_MODE_TOMEM;
+    req.count = 2;
+    req.memAddr = 4000;
+    req.toBufferP = (uint32_t[]){ 0123456, 0654321 };
+
+    HSCexecute(chanP, &req);
+    atomic_store(&waiterReturned, 0);
+    pthread_create(&tid, NULL, waiterThread, chanP);
+    pthread_detach(tid);
+    usleep(20000);
+    check("HSC-47 a waiter blocks while the transfer is busy", !atomic_load(&waiterReturned));
+    for( i = 0; i < 2; ++i )
+    {
+        pass();
+    }
+    check("HSC-48 completion wakes the waiter with DONE",
+        waiterReturnedWithin(500) && (atomic_load(&waiterStatus) == HSC_DONE));
+
+    HSCexecute(chanP, &req);
+    atomic_store(&waiterReturned, 0);
+    pthread_create(&tid, NULL, waiterThread, chanP);
+    pthread_detach(tid);
+    usleep(20000);
+    HSCreset();
+    check("HSC-49 HSCreset wakes the waiter with ABORT",
+        waiterReturnedWithin(500) && (atomic_load(&waiterStatus) == HSC_ABORT));
+    HSCfreeChannel(chanP);
+}
+
 int
 main(void)
 {
     memset(&thePdp1, 0, sizeof(thePdp1));
     pdp1P = &thePdp1;
+    thePdp1.run = 1;                    // the CPU is running: THREADED and HSCsteal owe cycles
 
     testPriorityArbitration();
     testThreadedDrainNoDeadlock();
+    testTrueStealOneWordPerSteal();
+    testArbitrationPerCycle();
+    testTrueStealAfterLongInstruction();
+    testTrueStealCapForgiven();
+    testOwedCycles();
+    testLampOnEmulatorThreadOnly();
+    testTrueStealExactCount();
+    testWaiterWakeups();
 
     printf("\n%d check%s failed\n", failCount, (failCount == 1) ? "" : "s");
     return( failCount != 0 );

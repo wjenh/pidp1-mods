@@ -1,7 +1,7 @@
 INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib
-%.o:%.c ../iotHandler.h ../Lib/iotLogger.h
+%.o:%.c ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h ../Lib/iotLogger.h ../../src/blincolnlights/pdp1/display.h ../../src/blincolnlights/pdp1/configuration.h
 	gcc $(INC) -O3 -fPIC -c $< -o $@
-%.so:%.o
+%.so:%.o ../Lib/iotLogger.o ../Lib/display.o
 	gcc -shared $< ../Lib/iotLogger.o ../Lib/display.o -o $@
 
 install: IOT_7.so
@@ -9,3 +9,9 @@ install: IOT_7.so
 
 clean:
 	@rm *.o *.so 2>/dev/null || true
+
+# Lib's objects are built by its own Makefile, which knows their headers.
+../Lib/%.o: FORCE
+	$(MAKE) -C ../Lib $*.o
+
+FORCE:

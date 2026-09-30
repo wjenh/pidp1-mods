@@ -3,7 +3,7 @@
 # Targets:
 #   all          -- assemble all .rim files (default)
 #   T01 ... T05  -- assemble one test program
-#   harness      -- build hscharness, the standalone C priority-arbitration test
+#   harness      -- build hscharness, the standalone C channel test
 #   clean        -- remove all generated files
 #
 # To run a test: rim-load the .rim file into the emulator (with IOT_44.so installed,
@@ -38,15 +38,15 @@ T03: T03.rim
 T04: T04.rim
 T05: T05.rim
 
-# ---- standalone C priority-arbitration harness -----------------------------
+# ---- standalone C channel harness -------------------------------------------
 #
 # Links highSpeedChannels.c directly, bypassing the emulator binary/SDL/dlopen entirely --
-# see hscharness.c's header comment for why this is the only way to test true multi-channel
-# priority arbitration at all.
+# see hscharness.c's header comment for why this is the only way to test multi-channel
+# arbitration, simtime-driven TRUESTEAL, owed cycles and the wake-ups at all.
 
 harness: hscharness
 
-hscharness: hscharness.c $(PDP1DIR)/highSpeedChannels.c $(PDP1DIR)/highSpeedChannels.h
+hscharness: hscharness.c $(PDP1DIR)/highSpeedChannels.c $(PDP1DIR)/highSpeedChannels.h $(PDP1DIR)/pdp1.h $(PDP1DIR)/ad1intf.h ../../../src/blincolnlights/common.h ../../../src/blincolnlights/logger.h
 	$(CC) $(CFLAGS) $(PDP1INC) -o $@ hscharness.c $(PDP1DIR)/highSpeedChannels.c -lpthread -lrt
 
 clean:

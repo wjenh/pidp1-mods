@@ -101,6 +101,18 @@ typedef struct
     int64_t nextBoundary;
 } Mt555Unit, *Mt555UnitP;
 
+// Set by the plugin so that image writes are done by a writer thread instead of the emulator
+// thread (27-Sep-2026); NULL, as in mkmicrotape and the host tests, writes them in place. Each
+// queued write or truncate calls mt555NoteWrite() when it is done. drainP waits for all of them.
+typedef struct
+{
+    void (*writeP)(Mt555UnitP uP, const void *dataP, size_t len, off_t offset);
+    void (*truncateP)(Mt555UnitP uP);
+    void (*drainP)(void);
+} Mt555Deferred;
+
+extern const Mt555Deferred *mt555DeferP;
+
 void mt555Init(Mt555UnitP uP);
 
 // Reel and image.
@@ -111,6 +123,7 @@ bool mt555Flush(Mt555UnitP uP);
 bool mt555Erase(Mt555UnitP uP);
 bool mt555SameFile(Mt555UnitP uP, const char *pathP);
 bool mt555FileChanged(Mt555UnitP uP);
+void mt555NoteWrite(Mt555UnitP uP, int fd, bool ok);
 void mt555BlankBlock(uint32_t *blockWordsP);
 uint32_t mt555GetWord(Mt555UnitP uP, int block, int k);
 void mt555PutWord(Mt555UnitP uP, int block, int k, uint32_t word);

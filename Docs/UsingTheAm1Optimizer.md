@@ -2,10 +2,11 @@
 
 This document describes the `-O` flag and the report it writes, and the `-O1`
 and `-O2` flags, which act on the code.
+For **am1** itself, see *UsingAM1.md*. For which flags to use and what can go
+wrong, in a few pages, see *UsingTheAm1OptimizerQuickReference.md*.
 
-This is version 1.20 and covers up through am1 version 1.50; it will be updated as needed.\
-Edit date 19-Sep-2026\
-Directive naming changed to use %%, e.g. %%speed.
+This is version 1.34 and covers up through am1 version 3.0; it will be updated as needed.\
+Edit date 30-Sep-2026\
 
 ## What the advisor is
 
@@ -13,7 +14,7 @@ Directive naming changed to use %%, e.g. %%speed.
 naming places where the source could be shorter or faster.
 It is an advisor, no code is changed.
 
-`-O1`modifies code  and it is narrow in scope on purpose.
+`-O1` modifies code, and it is narrow in scope on purpose.
 It rewrites a word only where you have declared a region,
 only where a finding has passed every check the advisor can make,
 and only for the five rules that replace one word with another at the same address.
@@ -24,6 +25,11 @@ Without a region anywhere in the source, `-O1` does nothing.
 `-O2` makes the same five rewrites without asking for a region.
 It guesses instead, and the guess can be wrong, every `-O2` assembly says so on stderr.
 See "`-O2`: rewriting on a guess" below.
+
+`-O2 -O=undeclared` goes one step further.
+It lets the same guess stand in for a declaration for the rewrites that make the program shorter: space mode's deletions, the pool reclaim, the extend window's deletions and fall-through placement.
+Every word after one of those moves.
+See "`-O=undeclared`: shortening the program on the guess" below.
 
 Neither rewrites anything inside a `%%nooptimize` span.
 
@@ -45,7 +51,7 @@ This one does not, for two reasons that are not going away:
 
 So the advisor finds the patterns, checks what it *can* check, states plainly
 which check it cannot make, and leaves the decision with the author.
-`-O1` takes only the part of that decision that neither reason touches.
+`-O1` takes only the part of that decision that neither reason touches: a rewrite
 that moves nothing, in code the author has said is not modified, not
 address-taken and not timed.
 
@@ -65,24 +71,125 @@ The installed **am1** takes these modifiers:
 
 | Modifier | What it does |
 |---|---|
-| `-O=xform` | prints on stdout what `-O1` or `-O2` does with every live finding: rewritten, or which reason it was not; without either a dry run of `-O1` that rewrites nothing. With a speed declaration, also one `S1` line per declared call site: copied, or which reason it was not (see "Inline expansion"). With any region, also one `S4` line per declared placement site: moved, or which reason it was not (see "Fall-through placement"), and one `S2` line per declared loop: unrolled, or which reason it was not (see "Loop unrolling") |
+| `-O=xform` | prints on stdout what `-O1` or `-O2` does with every live finding: rewritten, or which reason it was not; without either, a dry run of `-O1`'s one-word-for-one-word rewrites alone, which rewrites nothing and lists every deletion as not carried. With a speed declaration, also one `S1` line per declared call site: copied, or which reason it was not (see "Inline expansion"). With any region, also one `S4` line per declared placement site: moved, or which reason it was not (see "Fall-through placement"), and one `S2` line per declared loop: unrolled, or which reason it was not (see "Loop unrolling") |
 | `-O=upto=N`, `-O=range=B:LO-HI`, `-O=off=FILE` | with `-O1` or `-O2`, switch rewrites off, to find the one that broke a build. See "Finding the rewrite that broke a build" |
 | `-O=inline=cap:N`, `-O=inline=reserve:N` | set inline expansion's body cap (8 words by default) and each bank's reserve (64 words by default), decimal, 0 to 4096. See "Inline expansion" |
-| `-O=place=undeclared` | under `-O2`, let fall-through placement move a site no region declares, on the guess. Refused without `-O2`. See "Fall-through placement" |
+| `-O=undeclared` | under `-O2`, let the guess license space mode's deletions, the pool reclaim, the extend window's deletions and fall-through placement where no region declares them. Refused without `-O2`. `-O=place=undeclared` is its first spelling, and does the same. See "`-O=undeclared`: shortening the program on the guess" |
 | `-O=unroll=cap:N` | set loop unrolling's cap, the most words a loop may become (64 by default), decimal, 0 to 4096. See "Loop unrolling" |
+| `-O=source` | write the program, as the level left it, as am1 source to `sourcefile.opt.am1` in the source's directory. Alone it runs the advisor, as `-O` does. See "Writing the program out as source: `-O=source`" |
 
 Any other modifier is refused with the usage text.
+
+### Writing the program out as source: `-O=source`
+
+`-O=source` writes the program to `sourcefile.opt.am1`. The file goes in the
+directory the source is in, not the working directory where the other outputs
+go. It is written after the optimizer, and under `-O1` or `-O2` after
+relayout, so it holds the program as that level left it. Each `%%` directive
+is written where it stood, and no new one is added.
+
+```bash
+am1 -b -O1 -O=source adventure.am1        # writes adventure.opt.am1
+am1 -b adventure.opt.am1                  # the optimized build's tape
+```
+
+**A line the optimizer did not change is copied** from the source, or from
+the include file it came from, exactly as you wrote it: its names, macro
+calls and comments, and every `#define`, `#if` and blank line around it. An
+include file with no change stays its `#include` line. So the file goes
+through cpp again, and is assembled as the source was. Its header comment
+names:
+
+- the source the file was written from;
+- the date and the level;
+- the `-D` and `-I` flags to assemble it with, which are the ones the source
+  was built with. A source built with `-n` gives a file to build with `-n`.
+
+The first line is the source's title line, which is punched on the tape.
+Under plain `-O` nothing is rewritten, so the file is the source itself with
+the header after its title, and it assembles to the same tape.
+
+**A line the optimizer changed is written from the program as assembled.**
+A comment line quotes the line it replaces:
+
+```
+// am1 -O1: was: w1,     lac [LIMIT]             // the limit
+w1,	law	5; local am1gone; endloc  // the limit  // am1 -O1: T8d, was lac [5]  // am1 -O1: after
+    the word, what the old one named first, so the pool keys hold
+```
+
+(The written line is one line; it is folded here.)
+
+A written line has numbers where the source had names, and a macro call
+comes out as its expansion. When a change falls inside an include file, that
+file is written out in place of its `#include` line, between two comment
+lines naming it, and so is each include around it. A quoted `#include`
+inside it that named a file beside it, in another directory, is rewritten to
+the path cpp found that file by, with a note.
+
+Under `-O1` and `-O2` the file gives the optimized build's own tape. Each
+change carries a comment beginning `am1 -O1:` or `am1 -O2:`, the level as
+run:
+
+- a rewritten word ends its line with the rule and the old word, e.g.
+  `// am1 -O2: T8d, was lac [dest]`;
+- a deleted word's line keeps its label and comment, and ends with
+  `// am1 -O1: deleted <word>`;
+- a moved run is written where it now runs, between `moved here` and
+  `the moved run ends` lines, and a line marks where it stood;
+- an inline copy, an unrolled body and an `-O=edits` copy are bracketed by
+  `begins` and `ends` lines.
+
+Assemble the file **without `-O`**, or it is optimized again: its `%%`
+directives are still in it.
+
+A few spellings in a written line exist only to keep the tape:
+
+- `table 0, [expr]` emits no word. It names a constant, so the pool holds its
+  word where the optimized pool has it.
+- After a T3 or T8 word, `; table 0, name` or `; local am1gone; endloc` makes
+  again what the old word made first, so the pool keeps its order.
+- A T3 whose target has no name is written from the nearest label below it,
+  e.g. `jmp go + 4`. A T8d constant that held an address is written as its
+  own expression, e.g. `law dest`.
+- A copied routine's local is written `. + N`, because the copy stands
+  outside the routine's scope.
+- A name written just before a parenthesized operand is written in
+  parentheses, `(name)`. The source did not follow it with `(`, but a
+  function-like macro may share its name, and cpp would take the pair for a
+  call.
+- Where the source switches to `decimal`, a number in a written line carries
+  `0o`, which reads as octal in either radix.
+
+**When the lines cannot be followed.** am1 pairs each statement with its
+source line through cpp's line markers. If that pairing fails, or the
+optimized order is one the copied text cannot give, am1 says why on stderr
+and writes every line from the program as assembled, after cpp, as
+`-O=source` did before it copied lines. That file is assembled with **-n**,
+and its header says so. A source whose title line comes from an include is
+one such case.
+
+**One build cannot be written exactly.** Under `-O2`, a T8 that no region
+declares keeps the pool word it stops naming. If relayout then moves that
+word's old address, no source line can give it the same place in the pool.
+The file's header and stderr say "NOT the optimized tape". Declaring a
+region over the rewrite removes the case, because the reclaim then takes the
+word.
+
+All of this is checked on real programs: every `.am1` in the repository
+round-trips under plain `-O`, and every optimizer test source
+and Adventure's regions give the optimized tape under `-O1` and `-O2`.
 
 ### The testing build: `am1test`
 
 The optimizer has fifteen more modifiers, each of which exists to test it:
 the debug dumps of each analysis, the decoder's self-check, and relayout's
-edit file. Since 19-Sep-2026 (task A34) the installed **am1** does not
+edit file. The installed **am1** does not
 recognize them, so they do not clutter its usage text. **am1test** does. It
 is **am1** built with `AM1_TEST_SWITCHES` defined, by `make am1test` in
-`Tools/AM1`, and it is never installed. The checks under `Tools/AM1/Tests`
-run it. Apart from these switches, it assembles every program byte for byte as
-**am1** does, and the `switches` check proves that. The one other difference is
+`Tools/AM1`, and it is never installed. `wordtable_check.sh` and the
+`Tests/Symbols` suite run it (see "Testing"). Apart from these switches, it
+assembles every program byte for byte as **am1** does. The one other difference is
 under `-O=xform` with `-O1` or `-O2`: **am1test** then also analyzes the
 rewritten program a second time and prints its `second` lines (see "What it
 reports").
@@ -100,15 +207,17 @@ two more for reading its structure:
 | `-O=flow` | the basic blocks, the control-flow edges, the sequence-break enable commands, reachability, and where each call returns to |
 | `-O=calls` | the routines, the call graph over them, its cycles, the sequence-break enable commands and the sequence-break pool |
 | `-O=share` | the return words the report proposes sharing, with every routine's color, pool and group |
-| `-O=regions` | the `%%optimize`/`%%endoptimize` regions, their extents, and every word whose region's declaration the evidence contradicts; then the `%%nooptimize` spans, when the source declares one; then the `%%speed` regions and the `%%inline` markings, when it declares one of those (task A32 step 2). `-O1` and `-O2` act on the speed declarations: see "Inline expansion" |
+| `-O=regions` | the `%%optimize`/`%%endoptimize` regions, their extents, and every word whose region's declaration the evidence contradicts; then the `%%nooptimize` spans, when the source declares one; then the `%%speed` regions and the `%%inline` markings, when it declares one of those. `-O1` and `-O2` act on the speed declarations: see "Inline expansion". Then one `ceiling` line per `%%ceiling`, when the source declares one: its bank, value, whether it is the one kept, its line and its file |
 | `-O=rules` | the findings, one per line, live and suppressed |
-| `-O=scratch` | the scratch-pool measurement: every storage local, the class its rules put it in, and what sharing the pool could free, block-local and pooled, per bank. The report's scratch-word sharing section is written from it (tasks A16 and A24) |
-| `-O=guess` | what `-O2`'s heuristics mark: the loops and their cycles, each classed plain, delay or device; the handler territory; device buffers; addresses written as numbers; and every live finding with the heuristics that refuse it. A measurement: it refuses nothing and changes no word |
-| `-O=values` | what each basic block already knows about AC and IO: every load whose register already holds the value, or that one word could replace (`lai`, `lia`, `law`), and every load or clear whose result the block overwrites unread; with the safety flags on each, the per-bank counts and what the pass cannot see. A measurement only (task A21): it changes nothing, and no finding comes of it |
-| `-O=speed` | what speed mode could do, site by site: inline expansion, loop unrolling, jump chains followed to their end and fall-through placement, each site eligible or refused with one reason, what an eligible site saves per execution and spends in words, with tallies per bank and each bank's free words. A site whose callee could not be copied at all -- a label defined in the copy, or a copied word naming a word of the body -- is refused `notcopyable`, and the line names the word that broke it. A placement whose `jmp` the program uses as a word is refused `jmpused`, and one whose code reaches a `hlt` is refused `falls` (task A32 step 5a). A loop whose body has a label but its own or names a word of the loop is refused `internal`; one with a word something may write, or whose setup, `isp` or `jmp` the program uses as data, `used`; one whose body reads AC before loading it, `acentry`; and one whose next code reads AC before loading it, `acexit` (task A32 step 5b). A measurement only (tasks A27 and A32 step 1): it changes nothing, and adds nothing to the report |
-| `-O=relayout` | lays the program out again, after any `-O=edits` edits, and prints what happened: each edit accepted or refused with its reason, where every moved word went, where every copy went, and the pool slots gained and lost. A testing instrument (task A22, extended by A32): with no edit it changes nothing. See "Testing relayout" |
+| `-O=scratch` | the scratch-pool measurement: every storage local, the class its rules put it in, and what sharing the pool could free, block-local and pooled, per bank. The report's scratch-word sharing section is written from it |
+| `-O=guess` | what `-O2`'s heuristics mark: the loops and their cycles, each classed plain, delay or device; the handler territory; device buffers; addresses written as numbers; the runs of code a computed address indexes; and every live finding with the heuristics that refuse it. A measurement: it refuses nothing and changes no word |
+| `-O=values` | what each basic block already knows about AC and IO: every load whose register already holds the value, or that one word could replace (`lai`, `lia`, `law`), and every load or clear whose result the block overwrites unread; with the safety flags on each, the per-bank counts and what the pass cannot see. A measurement only: it changes nothing, and no finding comes of it |
+| `-O=speed` | what speed mode could do, site by site: inline expansion, loop unrolling, jump chains followed to their end and fall-through placement, each site eligible or refused with one reason, what an eligible site saves per execution and spends in words, with tallies per bank and each bank's free words, counted to a declared `%%ceiling` where there is one and marked `(declared)`. A site whose callee could not be copied at all -- a label defined in the copy, or a copied word naming a word of the body -- is refused `notcopyable`, and the line names the word that broke it. A placement whose `jmp` the program uses as a word is refused `jmpused`, and one whose code reaches a `hlt` is refused `falls`. A loop whose body has a label but its own or names a word of the loop is refused `internal`; one with a word something may write, or whose setup, `isp` or `jmp` the program uses as data, `used`; one whose body reads AC before loading it, `acentry`; and one whose next code reads AC before loading it, `acexit`. A measurement only: it changes nothing, and adds nothing to the report |
+| `-O=relayout` | lays the program out again, after any `-O=edits` edits, and prints what happened: each edit accepted or refused with its reason, where every moved word went, where every copy went, and the pool slots gained and lost. A testing instrument: with no edit it changes nothing. See "Testing relayout" |
+| `-O=window` | the extend-window analysis: one line per reached `eem` and `lem` with its class (`redundant`, `freed`, `dead`, `needed`, `refused` with its reason, or `unreached`) and source line, one per hazard (`proved`, `unproved` or `possible`) with its pointer, one per reverse hazard (`window reverse`, the same classes, `return` when the pointer is a return word), one per indirect reference an unreached `eem` or `lem` guards (`window unexamined`, with its pointer when known), then, under `-O1` or `-O2`, one `window delete` line per declared deletion with its kind and fate, then the totals. A program with no `eem` or `lem` at all prints `window: no reached eem or lem`; one whose every `eem` and `lem` is unreached gets the dump. The dump itself changes nothing. See "The extend window: `eem` and `lem`" |
 | `-O=check` | runs the decoder's built-in self-check first, then proceeds |
 | `-O=edits=FILE` | not a dump: make the edits FILE lists, then lay the program out again. Relayout's test instrument; see "Testing relayout" |
+| `-O=reclaim=off` | not a dump: hold the pool reclaim off, so that a check whose oracle is one word for one word can still judge the same-length rewrites. It switches off no rewrite and changes no fate |
 
 `-O=decode` is the one to reach for when you want to know how **am1** read a
 word; `-O=flow` when you want to know why something is being called unreached.
@@ -264,10 +373,11 @@ the drum overwrites behind the program's back.
 The fourth matters once a rewrite changes a program's length. Such a rewrite
 moves every word after it, up to the next origin, and that includes words
 outside the region. A `law base` / `add n` pair that computes an address past
-an edited word would then compute the wrong one. No rewrite changes length yet
-(see "Testing relayout"). When one does, relayout checks the static cases: an
-edit is refused if a number, an offset or a `.` would name a different word. A
-computed address it cannot see. Timing, the drum and computed addresses are
+an edited word would then compute the wrong one. Inline expansion, placement,
+unrolling and space mode's deletions all change it (see those sections, and
+"Testing relayout"). Relayout checks the static cases: an edit is refused if a
+number, an offset or a `.` would name a different word. A computed address it
+cannot see. Timing, the drum and computed addresses are
 still yours.
 
 ## Keeping every level out: `%%nooptimize` and `%%endnooptimize`
@@ -317,8 +427,11 @@ So there are two ways to say a length-changing rewrite may happen, and
 `-O2`'s guess is not one of them. Fall-through placement, the smallest such
 rewrite, has two more, and "Fall-through placement" below gives them: an
 optimize region licenses it too, and so, if you ask for it by name, does the
-guess. Loop unrolling has one of those two: an optimize region licenses it
-too, and the guess never does.
+guess. Space mode's deletions, the smallest of all, the pool reclaim and the
+extend window's deletions have the same two. The name to ask by is
+`-O=undeclared`: see "`-O=undeclared`: shortening the program on the guess".
+Loop unrolling has one of those two: an optimize region licenses it too, and
+the guess never does.
 
 A **speed region** is the span form:
 
@@ -358,7 +471,8 @@ moves every address after it.
 Under `-O`, nothing acts on either declaration. They are recorded, and the
 report lists them in a Speed declarations section, with the `-O=regions` dump
 carrying the same figures. **Under `-O1` and `-O2` they license inline
-expansion, fall-through placement and loop unrolling**, below. A marking that names no routine is reported and not
+expansion, fall-through placement, loop unrolling and space mode's
+deletions**, below. A marking that names no routine is reported and not
 refused, so a marking left behind by a rename costs nothing, and being told
 beats being stopped. A second marking of a routine already marked is reported
 as a duplicate. A source that declares no speed region and no marking prints no
@@ -404,14 +518,17 @@ this order:
 2. **The spans and the guess.** A site or routine in a `%%nooptimize` span is
    left alone (`handsoff`). Under `-O2` the heuristics are asked as for any
    rewrite, H1 alone inside an optimize region and all five outside one, and
-   any mark on the site or the routine refuses it (`guessed`). The guess can
-   only refuse. The declaration is what licenses the copy.
+   any mark on the site or the routine refuses it (`guessed`). At every
+   level, H6 refuses a copy whose site is in a run a computed address
+   indexes. The guess can only refuse. The declaration is what licenses the
+   copy.
 3. **The edit must be writable** (`unrepresentable` if not). A `jda` must name
    its word by one plain name, since the `dac` is written with it, and a
    retargeted return must not hold a constant.
 4. **A routine with one call, and a marked routine**, are copied whatever
-   their size, as long as the bank has room below its ceiling (07750 in bank 0,
-   07777 elsewhere). A copy that does not fit is `full`.
+   their size, as long as the bank has room below its ceiling (07751 in bank 0,
+   the end of the bank elsewhere, or lower where the source declares one: see
+   "A bank's ceiling" below). A copy that does not fit is `full`.
 5. **Everything else** must have a body of at most the cap, 8 words
    (`-O=inline=cap:N`); a longer one is `cap`. The rest fill each bank's free
    words **cheapest first**, microseconds saved per word spent, and stop at
@@ -476,14 +593,11 @@ Either is your word that a length-changing rewrite may happen there, and this
 one moves code a short way and adds no word. Every word of the run must be
 declared too; a declared `jmp` with a run that is not is `partial`, and stays.
 
-**`-O=place=undeclared`** licenses it everywhere else as well, on `-O2`'s
-guess, including the run of a declared `jmp`. It is refused without `-O2`, and
-with it stderr gains two warning lines. Use it when you would rather test the
-program than declare it: the guess sees what the program does with its code
-as written, and **an address the program computes at run time is not seen**.
-A table of jump targets built by arithmetic, or a `jmp` found by counting
-from a label, is exactly what it cannot find. A line moved under the switch
-says `undeclared` where a declared one says `region`.
+**`-O=undeclared`** licenses it everywhere else as well, on `-O2`'s guess,
+including the run of a declared `jmp`.
+It licenses space mode's deletions, the pool reclaim and the window's deletions too; "`-O=undeclared`: shortening the program on the guess" says what it needs and what it cannot see.
+`-O=place=undeclared`, its first spelling, still works, and now licenses the same.
+A line moved under the switch says `undeclared` where a declared one says `region`, and the report marks the move `(undeclared)`.
 
 A site's fate is decided before any word moves, in this order:
 
@@ -503,7 +617,8 @@ A site's fate is decided before any word moves, in this order:
 3. **The spans.** A `jmp` or a run word in a `%%nooptimize` span is `handsoff`.
 4. **The guess.** Under `-O2` the heuristics are asked, H1 alone when the
    `jmp` is inside an optimize region and all five otherwise, and a mark on
-   the run refuses it (`guessed`). As for every rewrite, the guess only
+   the run refuses it (`guessed`). At every level, H6 refuses a `jmp` in a
+   run a computed address indexes. As for every rewrite, the guess only
    refuses.
 5. **No move touches another.** A site whose `jmp` or run holds a word
    another move, an inline copy or a T3 or T8 rewrite already touches is
@@ -562,7 +677,7 @@ loop run once or twice.
 **What licenses it.** The `isp` must be in an **optimize or a speed region**,
 and so must every word of the loop, setup to `jmp`; a declared `isp` with a
 word that is not is `partial`, and stays. There is no switch to unroll
-undeclared loops.
+undeclared loops: `-O=undeclared` does not reach them.
 
 A loop's fate is decided before any word moves, in this order:
 
@@ -597,7 +712,8 @@ A loop's fate is decided before any word moves, in this order:
    `-O=unroll=cap:N`) is `cap`.
 7. **The budget.** A loop that grows the program must fit in its bank's free
    words, less what the inline copies took and the inline reserve
-   (`-O=inline=reserve:N`); one that does not is `budget`.
+   (`-O=inline=reserve:N`); one that does not is `budget`. The free words
+   stop at a declared `%%ceiling`, below.
 
 Every loop's line in `-O=xform` reads
 
@@ -621,6 +737,189 @@ stays as it was. A setup word relayout keeps loads AC and stores to the dead
 counter, which the judge made sure nothing notices. The report and stderr say
 so in both cases.
 
+### Space mode: deleting a word
+
+Under `-O1` or `-O2`, the peephole rules that save a word by deleting one are
+made where you declared they may be:
+
+| Rule | The words | Become |
+|---|---|---|
+| T1 | two operate words, `cla` then `cma` | one, `cla cma` |
+| T1b | two shifts of one opcode, `ral 2s` then `ral 3s` | one, `ral 5s` |
+| T2 | a skip, then `jmp` over the next word | the opposite skip: `sza` becomes `sza i`, `spa i` becomes `spa`, `sad x` becomes `sas x` and `sas x` `sad x` |
+| T6 | `cla` before a word that loads AC outright (`lac`, `law`) | nothing |
+| T7 | `cli` before a `lio` | nothing |
+| T13 | `jmp` to the next word, written `.+1` or as its label | nothing |
+
+T1, T1b and T2 keep their first word, rewritten, and delete the second; T6, T7
+and T13 delete their one word. Every later word moves down, up to the next
+origin, and every name, constant and pointer that named a moved word follows
+it, as the other length-changing rewrites' do. A label on a deleted word moves
+to the word after it. T14, a copy between AC and IO through a temporary, is
+not made: it replaces two words with a PDP-1D instruction that a machine may
+not have.
+
+**What licenses it.** Every word of the pattern must be in an **optimize or a
+speed region**, or `-O2` must be given `-O=undeclared`, which licenses a
+deletion anywhere on the guess. Without the switch, `-O2` leaves an undeclared
+deletion as advice, and its report says *a deletion, which -O2 makes only
+inside an optimize or speed region*.
+
+A licensed finding's fate is decided before any word moves, in this order:
+
+1. **The spans.** A word of the pattern in a `%%nooptimize` span is `handsoff`.
+2. **The guess.** A deletion shortens every pass through the code after it, so
+   a pattern in a delay loop (H2) or a device loop (H3) is `timed`, **at every
+   level**. Under `-O2` the finding is also asked what `-O2` asks of T3 and T8:
+   H1 alone when the whole pattern is in optimize regions, all five when a word
+   of it is in a speed region only or, under `-O=undeclared`, in no region.
+   H6 is asked at every level, so a pattern
+   in a run a computed address indexes is `guessed` at `-O1` too, as is a
+   window deletion there. One any of those mark is `guessed`.
+3. **The words.** The deleted word must be a whole statement of one word, and
+   not one written on an origin's line, and the kept word must be one whose
+   expression can be replaced: otherwise `unrepresentable`. So is a merge or
+   an inversion am1 cannot spell -- a skip written as a number has no `i` to
+   take out, and `500000+x` has no `sad` to turn into `sas`.
+4. **No deletion touches another rewrite.** A pattern holding a word an earlier
+   deletion, an inline copy, a move or an unroll touches, or a word a T3 or T8
+   rewrites, is `overlap`, so bisection can switch any rewrite off on its own.
+   `cla` before a `lac [5]` that T8d makes `law 5` is left, for example.
+
+The kept word's new expression is built as the parser would build its
+spelling, and checked: it must assemble to exactly the word the rule names, and
+for T1 the merged word, simulated, must leave AC and IO as the two words did one
+after the other. A merge or an inversion that fails either check is
+`unrepresentable`, and its words stay as written.
+
+The deletions are relayout's, one delete each, and a kept word's new
+expression goes in with its delete, in the same edit. So when relayout refuses
+a deletion -- because a number, an offset or a `.` would name a different word,
+say -- the kept word stays as you wrote it too: a skip is never inverted
+without its `jmp` gone. The warning says so:
+
+```
+am1: warning: space: relayout refused T6's delete at bank 0 0204 (number), so its words stay as written; prog.am1:96
+```
+
+A deletion's line in `-O=xform` reads
+
+```
+xform fired T2 0 0101 prog.am1:18 deletes 0 0102 keeps 0 0101 640100 650100 region 1 | sza; jmp .+0o2 => sza i assumes H2,H3
+```
+
+It gives the pattern's bank, address and line, the word deleted, the word kept
+with its old and new values, and the region. After the `|` come the words as
+written and what they become, `(deleted)` for T6, T7 and T13. A deletion not
+made says why in the fate's place, `timed` and `guessed` adding the heuristics.
+The summary line gains `timed`, `overlap`, `spacewords` and `spaceus`, printed
+only when a licensed deletion was decided. With `-O=relayout`, a `space:` line
+per deletion says whether relayout made it. The report's Space mode section lists
+every licensed deleting finding with what happened to it, and counts the words
+and microseconds the ones made saved.
+A deletion only `-O=undeclared` licensed is marked `(undeclared)` there.
+Bisection numbers the deletions after the unrolls.
+
+On `adventure.am1`, with the regions `genregions.py` declares, `-O1` deletes
+83 words, 60 by T2 and 22 by T13, and leaves 12 that are timed and 5 that
+overlap another rewrite.
+
+### The pool reclaim: a constant nothing names
+
+T8a to T8d replace a `lac` or `lio` of a constant pool word with an instruction
+that loads the value outright: `cla`, `cli`, `cla cma` or a `law`. The
+instruction takes the same one word, so those rules change no address. What
+they do change is the pool: once the last word that named a pool word has been
+rewritten, the pool word holds a number nobody reads.
+
+Where **a declaration licensed every rewrite that stopped naming it**, that
+word is now dropped. The pool is a word shorter, everything after it moves
+down, and every reference to the constants after it follows them, exactly as
+after a deletion. A pool whose every word goes disappears, directive and all.
+
+The license is the point, and it is narrower than it looks:
+
+- **`-O1`** fires T8 only inside an `%%optimize` region, so every word it frees
+  is licensed and every one is collected.
+- **`-O2`** fires T8 anywhere. A word it frees inside a region is collected; a
+  word it frees on the guess alone is **kept**. Collecting that one would turn
+  a same-length rewrite, which the guess is allowed to make on its own, into
+  one that moves every word after it -- and a length change happens only where
+  you declared it may (ruling 1).
+- **`-O2 -O=undeclared`** collects every word it frees. The switch is your
+  word that a length change may happen wherever the guess allows one.
+- The test is **every** reference, not any: a pool word that two `lac`s read,
+  one of them in a region and one not, is freed by the pair and kept, because
+  one of the two rewrites was licensed by nothing.
+
+The reclaim is not a rewrite and **takes no bisection number of its own**. It
+follows the rewrite that freed the word: switch that rewrite off with
+`-O=upto`, `-O=range` or `-O=off` and the word stays, because something still
+names it. `-O=relayout` prints a `reclaim:` line per word, naming the rule and
+the address of the rewrite that freed it, and the report's **Pool reclaim**
+section says how many of the licensed words went, lists each with the word it
+collected, and -- ruling 1 again -- names the words freed with no declaration
+behind them, which an optimize region over those rewrites, or `-O=undeclared`,
+would collect.
+A word only the switch licensed is marked `(undeclared)`.
+The section is written whenever `-O1` or `-O2` made its rewrites, and says `0 of 0` when nothing was freed.
+
+Relayout rebuilds the pool after moving code, and the rebuilt pool is not always the old one less the collected words.
+A constant several references share, written as an address, can have different values once code has moved, and each value then takes a slot of its own.
+Constants whose values have become equal can share one.
+When either changes the pool's size, the section says so on a line of its own, `Relayout added N pool words, not counted above` or `Relayout dropped N more pool words than counted above`.
+The bank table of `-S` counts them; the section's other figures do not.
+
+On `adventure.am1`, with the regions `genregions.py` declares, both `-O1` and
+`-O2` collect all 44 of the pool words the declared T8s free. `zmemcore.am1`,
+which declares nothing, collects none: `-O2` frees 39 pool words there, and its
+report names all 39 as words a region would buy.
+
+### A bank's ceiling: `%%ceiling`
+
+Inline expansion and loop unrolling grow a bank into its free words, and free
+means no assembled word is there. A program that fills memory at run time --
+a stack copied up from below, a buffer it builds, a table a device writes --
+uses words no assembled word shows, and a copy that grew into them would be
+overwritten by the program, or would overwrite it. `%%ceiling` says where
+those words begin:
+
+```
+%%ceiling ZU_STACK_COPY & 07777
+```
+
+`EXPR` is the **first word no rewrite may reach**. It is an expression like
+any other, reduced to the bank (so a full address does as well as its last
+twelve bits), and it may name only what is already defined when the line is
+read: a name defined later is an error, since the ceiling must not depend on
+the layout it limits. It applies to the bank the line is in, wherever in the
+bank the line is. It can only **lower** the default, which is 07751 in bank 0
+(the read-in loader's first word) and the end of the bank elsewhere: 0, and a
+value above 07751 in bank 0, are errors. A bank may declare more than one,
+from several include files say, and keeps the lowest; the others are listed
+as not kept.
+
+Only the optimizer reads it. Plain assembly checks the expression and then
+ignores the line, so a source that declares a ceiling assembles to the same
+words with or without it, at every level, unless a copy or an unroll is
+stopped by it. Under `-O`, `-O1` and `-O2`:
+
+- the inline budget and the unroll budget count a bank's free words up to the
+  word before its ceiling. A copy that no longer fits is `full` or `budget`, and its
+  `-O=xform` line ends `declared ceiling N`; the report's refusal names the
+  `%%ceiling`.
+- a program whose highest assembled word in a bank is already at or above the
+  bank's ceiling stops the assembly, naming the directive and the word: no
+  rewrite made that, and the declaration or the program is wrong.
+- relayout refuses an `-O=edits` edit that would reach a ceiling, `ceiling` in
+  the `-O=relayout` dump. The transforms' own edits pass through states their
+  budget never counted -- an unroll's copies land before its setup is deleted
+  -- so they are checked once, after the last; a bank over its ceiling there
+  is an internal error, which stops the assembly.
+
+The report's Bank ceilings section, `-O=regions`' `ceiling` lines and
+`-O=speed`'s budget lines show what was declared and what it left free.
+
 ## `-O1`: rewriting inside a region
 
 ```bash
@@ -630,11 +929,14 @@ am1 -b -d -O1 program.am1
 `-O1` is `-O` plus one step: after the analysis, and before any output is
 written, it rewrites some words. `-O2`, below, is the same step with no region
 needed. There is no other level: `-O3` and above are refused, and so are
-`-O2s` and `-O2t`, the space and speed modes, which are not built yet.
+`-O2s` and `-O2t`. The space and speed modes they were once meant to name are
+made by `-O1` and `-O2` themselves, inside a declaration: see "Declaring where
+a length-changing rewrite may happen".
 
 ### What it rewrites
 
-Five rules, each of which replaces one word with one word at the same address:
+Anywhere in a region, five rules, each of which replaces one word with one word
+at the same address:
 
 | Rule | The word | Becomes |
 |---|---|---|
@@ -645,10 +947,12 @@ Five rules, each of which replaces one word with one word at the same address:
 | T8d | `lac [n]`, n from 0 to 7777 | `law n` |
 | T8d | `lac [~n]` | `law i n` |
 
-Nothing is inserted, nothing is deleted, no label moves and no symbol changes,
-so every other word of the program is where it would have been without the
-flag. The other rules -- T1, T1b, T2, T6, T7, T13 and T14 -- all change the
-program's length, and stay advice. So does return-word sharing, permanently.
+By these five, nothing is inserted, nothing is deleted, no label moves and no
+symbol changes, so every other word of the program is where it would have been
+without the flag. The other rules change the program's length. T1, T1b, T2, T6,
+T7 and T13 each delete a word, and space mode makes them inside a region too
+(see "Space mode: deleting a word"). The rest of this section is about the five.
+T14 stays advice, and so, permanently, does return-word sharing.
 
 ### Only where all of this holds
 
@@ -664,8 +968,9 @@ A word is rewritten only when **every** one of these is true:
 3. The **whole pattern is inside a region.** The report puts a pattern outside
    every region down as *outside every declared region*, and one partly inside
    as *straddling a region boundary*. Neither is rewritten.
-4. The rule is **one of the five.** Any other live finding is put down as *a
-   rule -O1 does not carry, because it changes the program's length*.
+4. The rule is **one of the five.** A deleting rule's finding is space mode's
+   to decide, and T14's is put down as *a rule -O1 does not carry, because
+   it changes the program's length*.
 5. For T3, the chain of jumps has **a far end**. On a chain `jmp a`, `a: jmp b`,
    `b: jmp c`, `-O1` follows the jumps to the end, so `jmp a` becomes `jmp c`,
    and `a: jmp b` becomes `jmp c` too. A second `-O1` run then has nothing left
@@ -705,11 +1010,12 @@ macro1 source read as if you had written it:
   source show `law 6` and the comment, on one line. Without one (`lac [5`),
   they show `law 5` on a line of its own, as if you had typed it.
 
-A pool word that no instruction names any more is **freed but not
-reclaimed**. It is still emitted, at the same address, holding the same value,
-because removing it would move every pool word after it. Reclaiming it is
-relayout's job, and relayout does not exist yet. The report counts these
-words.
+A pool word that no instruction names any more is **freed**. Where a
+declaration licensed every rewrite that stopped naming it, relayout removes it,
+and every word after it moves (see "The pool reclaim: a constant nothing
+names"). A word freed on `-O2`'s guess alone is still emitted, at the same
+address, holding the same value, because removing it would move every word
+after it. The report counts both.
 
 ### The checks it makes on itself
 
@@ -722,8 +1028,7 @@ Each rewrite is checked three ways as it is made:
 
 A failure of any of them is an internal error in **am1**, and it stops the
 assembly before a single output file is written, the `.opt` included. It looks
-like this, from a deliberately broken build recorded in
-`Tools/AM1/Tests/Transforms/README.md`:
+like this, from a deliberately broken build:
 
 ```
 am1: internal error in -O1: T8b at bank 0 0102 built a word that assembles to 760200, not the 764000 the rule names
@@ -737,23 +1042,24 @@ assembled at all, and the message is the thing to report.
 
 The header of an `-O1` report says it is also the record of what `-O1`
 changed, and a Transforms section follows the Optimize regions section. From
-`Tools/AM1/Tests/Transforms/fates_test.am1`, after the section's opening
+a small test source, `fates_test.am1`, after the section's opening
 paragraph:
 
 ```
   Rewritten: 1
-    T8d  bank  0 0101  fates_test.am1:36  region 1
-        before 200114  lac [0o7]
+    T8d  bank  0 0101  fates_test.am1:38  region 1
+        before 200115  lac [0o7]
         after  700007  law 0o7
 
   Not rewritten: 3
-    T8d  bank  0 0100  fates_test.am1:34  outside every declared region
-    T1   bank  0 0103  fates_test.am1:38  a rule -O1 does not carry, because it changes the program's length
-    T1   bank  0 0106  fates_test.am1:41  straddling a region boundary
+    T8d  bank  0 0100  fates_test.am1:36  outside every declared region
+    T14  bank  0 0103  fates_test.am1:40  a rule -O1 does not carry, because it changes the program's length
+    T1   bank  0 0106  fates_test.am1:43  straddling a region boundary
 ```
 
-After the lists it says what the rewrites realized: storage words freed and
-not reclaimed; microseconds from one pass through the rewritten words, 5 per
+After the lists it says what the rewrites realized: the code words space
+mode's deletions remove; the storage words freed, how many of them inside a
+declaration, which the Pool reclaim section says went; microseconds from one pass through the rewritten words, 5 per
 T8; and, separately, the rewritten jumps, which save a cycle only on a hop
 actually taken. If the evidence disputes any region, the warning is repeated
 there, with the rewritten words that sit in each disputed region.
@@ -768,8 +1074,11 @@ appears.
 program a second time and prints what a second `-O1` would do, which must be
 nothing (`second: dryrun fired 0`). The installed **am1** does not: the pass
 is a self-test, and it doubled the analysis of every such build.
-Without `-O1` it is a dry run: it says what `-O1` would do and changes nothing,
-not even the report. A rewritten T3 that followed more than one hop ends
+Without `-O1` it is a dry run: it says what `-O1` would do with the five rules
+above and changes nothing, not even the report. A deletion, a copy, a move and
+an unroll are decided only under a level, so the dry run lists a deleting
+finding as not carried and has no `S1`, `S2` or `S4` lines; give the level you
+build with to see them. A rewritten T3 that followed more than one hop ends
 `via` and the words it jumped through, and one whose chain ended at a span or
 a guess says `stopped`, the word, and `handsoff` or `guessed`.
 
@@ -783,9 +1092,11 @@ counted in microseconds out of your regions.
 
 Before you trust a rewritten program, assemble it twice, with and without
 `-O1`, and run both. On `adventure.am1`, with a region over every span the
-contradiction check reports clean, `-O1` rewrites 134 words: 126 T8d, 6 T3 and
-2 T8a. Task A18 ran Adventure's 78-test suite against both builds, and they
-reached the same pass/fail set.
+contradiction check reports clean, `-O1` rewrote 134 words when this was
+measured: 126 T8d, 6 T3 and 2 T8a. Adventure's 78-test suite, run against
+both builds, reached the same pass/fail set. The regions now
+license the length-changing rewrites too, so the same build also places code
+and deletes words; each of those sections gives its own count.
 
 ## `-O2`: rewriting on a guess
 
@@ -813,7 +1124,7 @@ source.
 
 ### The guess
 
-Five heuristics make it. Each marks words, and a finding is left alone when a
+Six heuristics make it. Each marks words, and a finding is left alone when a
 heuristic marks any word of its **footprint**: the words of its pattern, plus
 the pool word a T8 loads or the intermediate jump a T3 reads through.
 
@@ -824,7 +1135,36 @@ the pool word a T8 loads or the intermediate jump a T3 reads through.
 | H3 | a device loop: a cycle that holds an in-out transfer to a device, or executes with `xct` a word the program writes | not in a loop that transfers to a device |
 | H4 | a device buffer: a word whose address is loaded where an in-out transfer runs | not a device buffer |
 | H5 | an absolute address: a memory reference written as a number, and the word it names | no address involved is written as a number |
+| H6 | a computed address: a run of code that an address changed at run time indexes, from that address to the next label | no address changed at run time indexes the words it moves |
 
+**H6 is different from the other five.** It is asked only of a rewrite that
+changes the program's length, such as a deletion, a window deletion, a
+placement or an inline copy, and it is asked at **every** level, `-O1`
+included, inside a region or not. A rewrite of one word for one word, T3 or
+T8, never asks it.
+
+H6 exists for code like this:
+
+```
+        law tbl
+        add ix          // the entry, computed at run time
+        dap ent
+ent,    jmp .
+tbl,    law 1           // entry 0
+        cla             // entry 1
+        cli             // entry 2
+        ...
+```
+
+Merging the `cla` and `cli` would take a word out of the table and move
+every entry after it. The table is code, not data, and only `tbl` itself is
+taken, so nothing else refuses the merge. H6 looks for an address loaded
+with `law` (or from a word holding it), then changed in the same block by an
+`add` or `sub` of a variable or a constant, or stored into a pointer that an
+`idx` or `isp` walks. It marks the run from that address to the next label.
+It does not see arithmetic done in another block, or an entry past the run's
+first label: use a `%%nooptimize` span for those. `-O1` reports a finding
+it holds as `left alone on H6's guess`.
 A **cycle** is one loop header and one latch, the jump back to it, with the
 blocks between. So a spin wait that jumps back to the top of a main loop is
 seen as a delay even though the main loop as a whole writes state. Extend mode
@@ -843,8 +1183,9 @@ can read the guess on a program before you let `-O2` act on it.
 A region under `-O2` is not a permission, since none is needed. It is a
 narrower guess. Inside a region your declaration stands in for H2 to H5, and
 only H1 still applies: a region says nothing is there to take time or shares
-memory with a device, but it does not say no handler reaches it. A finding only
-partly inside a region gets all five, as one outside every region does.
+memory with a device, but it does not say no handler reaches it. H6 applies
+too, to a length change, as it does everywhere. A finding only partly inside
+a region gets them all, as one outside every region does.
 
 A span is absolute at every level. Use one when the guess misses something:
 a delay built from something the heuristics do not recognize, a device word
@@ -858,7 +1199,7 @@ guessed it, and that inside a region your declaration stands in for all but H1.
 Each finding's `region:` line says which heuristics `-O2` applied there. The
 Transforms section is titled `Transforms (-O2)`, begins its Rewritten list with
 what each heuristic assumes, and follows every rewritten word with the
-heuristics it assumed. From `Tools/AM1/Tests/Heuristic/heur_region_test.am1`:
+heuristics it assumed. From a test source, `heur_region_test.am1`:
 
 ```
   Rewritten: 2
@@ -868,6 +1209,7 @@ heuristics it assumed. From `Tools/AM1/Tests/Heuristic/heur_region_test.am1`:
     H3  not in a loop that transfers to a device
     H4  not a device buffer
     H5  no address involved is written as a number
+    H6  no address changed at run time indexes the words it moves
     T8d  bank  0 0101  heur_region_test.am1:56  region 1
         before 200600  lac [0o5]
         after  700005  law 0o5
@@ -890,8 +1232,9 @@ region and was left alone. A rewrite outside every region says `no region`
 where these say `region 1`, and assumes all five.
 
 `-O=xform` under `-O2` prints the same record: a rewritten line ends
-`assumes H1,H2,H3,H4,H5` or whichever applied, a left-alone line `by` the
-heuristics that marked it, and a line in a span `handsoff`.
+`assumes H1,H2,H3,H4,H5` or whichever applied (a length change adds `H6`), a
+left-alone line `by` the heuristics that marked it, and a line in a span
+`handsoff`.
 
 ### What stays yours
 
@@ -901,10 +1244,62 @@ guess: 13 in device loops and 2 in delay loops, among them the delay routine at
 bank 2 7034. The guess is applied before the rule is asked about, so some of
 the 15 are rules no level carries yet. Every word it rewrites is one `-O1` could rewrite inside a region, so
 the checks it makes on itself are `-O1`'s, and a second pass over the
-rewritten program rewrites nothing. Task A25 ran Adventure's 78-test suite
-against the `-O2` build and the stock one, and they reached the same pass/fail
-set. That is one program. Run yours, and when it breaks, the next section
+rewritten program rewrites nothing. Adventure's 78-test suite, run against
+the `-O2` build and the stock one, reached the same pass/fail set. That is one program. Run yours, and when it breaks, the next section
 finds the rewrite that did it.
+
+### `-O=undeclared`: shortening the program on the guess
+
+```bash
+am1 -b -d -O2 -O=undeclared program.am1
+```
+
+Plain `-O2` makes only the rewrites that leave every word where it was.
+`-O=undeclared` lets the same guess license the rewrites that shorten the program, where no region declares them:
+
+- space mode's deletions, T1, T1b, T2, T6, T7 and T13 (see "Space mode: deleting a word");
+- the pool reclaim, the pool words those rewrites and T8 stop naming (see "The pool reclaim: a constant nothing names");
+- the extend window's deletions, a redundant `eem` or `lem`, a dead `lem` and the `eem` it frees (see "Deleting `eem` and `lem`");
+- fall-through placement (see "Fall-through placement").
+
+Each is made wherever a region would have let it be made, less what the guess refuses.
+Outside a region every heuristic applies, H1 to H6; inside one, what applied before still applies.
+A deletion in a delay or device loop is still `timed`, and a `%%nooptimize` span still keeps every level out.
+Inline expansion and loop unrolling add words, within a budget you set, and still need their declarations: the switch does not reach them.
+
+It is refused without `-O2`:
+
+```
+am1: -O=undeclared lets -O2's guess license the length-changing rewrites, and needs -O2
+```
+
+With it, stderr gains three lines after `-O2`'s four:
+
+```
+am1: warning: -O=undeclared deletes and moves code outside every region, on the guess.
+am1: warning: It does not see arithmetic on an address outside the block that loads it,
+am1: warning: nor an entry past the first label of the run an address indexes.
+```
+
+Those are the two things H6 does not see (see "The guess").
+A table whose address is loaded in one block and advanced in another is the first.
+A computed jump that lands past a label inside the table is the second.
+A deletion or a move in either place shifts the entry the program computes, and nothing in the assembly says so.
+Put a `%%nooptimize` span around such code before you use the switch.
+
+The report says `licensed` where plain `-O2`'s says `declared`, and marks each rewrite only the switch licensed `(undeclared)`, in the Space mode, Pool reclaim, Extend window deletions and Fall-through placement sections.
+A rewrite a region licensed carries no mark.
+Bisection numbers each of them as it would a declared one, and a pool word follows the rewrite that freed it, so the next section finds a bad one the same way.
+
+`-O=place=undeclared`, the first spelling, once licensed placement alone.
+It is now the same switch, and stderr and the report name the spelling you gave.
+
+On `adventure.am1`, with no region, `-O2 -O=undeclared` saves 246 words: 75 deletions, 43 pool words, 118 window words and 10 moves.
+`genregions.py`'s 441 regions under `-O1` save 245.
+The two differ in detail.
+The switch asks all six heuristics where a region asks H1 alone, so it leaves a few words in device loops that the regions take.
+It also reaches the included library files, which the regions never wrap.
+Test the program you build with it.
 
 ## Finding the rewrite that broke a build
 
@@ -1081,11 +1476,15 @@ an edit. It recomputes each word's address, each label, each `.`, each
 resumed bank, the constant pools, the variables and `start`. It refuses any
 edit it cannot show leaves every reference naming the word it named.
 
-**One rewrite uses relayout: inline expansion**, and only inside a speed
-region or on a routine the author marked (see "Inline expansion"). Its copies
-and deletes are edits like the ones below, made after any `-O=edits` edits,
-and `-O=relayout` prints them as `inline:` lines, `copy` or `delete` with the
-site's source line. A delete whose copy was refused is `skipped`. The rest of
+**Every rewrite that changes a program's length uses relayout**: inline
+expansion, fall-through placement, loop unrolling, space mode's deletions, the
+`eem` and `lem` deletions and the pool reclaim, each only where a declaration
+licenses it (see their sections). Their copies, moves and deletes are edits
+like the ones below, made after any `-O=edits` edits. `-O=relayout` prints an
+inline expansion's as `inline:` lines, `copy` or `delete` with the site's
+source line, and a delete whose copy was refused is `skipped`; it prints the
+others as `place:`, `unroll:`, `space:`, `window:` and `reclaim:` lines. The
+rest of
 this section is the testing instrument that makes edits by hand, so the
 machinery can be held to plain **am1**:
 
@@ -1268,15 +1667,21 @@ longer patches anything, that entry is how you would find out.
 
 ## The report, section by section
 
-The `.opt` file has ten numbered sections, always in this order, and up to
-four lettered ones directly after section 4: 4a when the source declares a
+The `.opt` file has ten numbered sections, always in this order; 3a directly
+after section 3 when the program reaches an `eem` or `lem`; and up to
+five lettered ones directly after section 4: 4a when the source declares a
 `%%nooptimize` span, 4a-speed when it declares a `%%speed` region or an `%%inline`
-marking, 4b in every report, and 4c under `-O1` or `-O2`. Nine of
+marking, 4a-ceiling when it declares a `%%ceiling`, 4b in every report, and
+4c under `-O1` or `-O2`. Nine of
 the ten are in every report; the seventh, recursion, appears only when there
-is something to say. Up to three more come last, after the statistics, under
+is something to say. Up to six more come last, after the statistics, under
 `-O1` or `-O2`: Inline expansion when the source declares a `%%speed` region or
 an `%%inline` marking, then Fall-through placement when a placement site was
-recorded, then Loop unrolling when a loop was.
+recorded, then Loop unrolling when a loop was, then Space mode when a licensed
+deleting finding was decided, then Extend window deletions when a licensed
+`eem` or `lem` was, then Pool reclaim (4d) whenever the level made its
+rewrites. (Space mode was missing from this list since 1.22, and Pool reclaim
+since 1.32; both are added here.)
 
 **1. Header.** The program name, the **am1** version and date, the source file
 name, the statement that nothing was changed (under `-O1` or `-O2`, instead,
@@ -1327,6 +1732,17 @@ run time.
 the precondition or the fact that blocked it, and the evidence: which word,
 which writer, which label, at which line.
 
+**3a. Extend window, only when the program reaches an `eem` or `lem`, or
+has an unexamined reference.**
+Advisory: nothing in it is rewritten outside a declaration; the words inside
+one that `-O1` and `-O2` delete are in Extend window deletions. A paragraph says what the
+classes and hazards mean; then the counts of `eem`s, `lem`s, hazards and
+reverse hazards, and of unexamined references when there are any; the
+refusals by reason; and one line per redundant, freed or dead word, per proved
+or unproved hazard or reverse hazard and per unexamined reference, with its
+bank, address, file and line. See "The
+extend window: `eem` and `lem`". `-O=window` is the working.
+
 **4. Optimize regions.** Where the source has declared that `-O1` may
 rewrite, and whether the evidence agrees with that declaration. On a
 source that declares no region it is four lines saying so, and saying that
@@ -1351,8 +1767,16 @@ level out" above. `-O=regions` prints the spans after the regions.
 each `%%inline` marking with the routine it names -- its entry, its body's word
 count and how many sites call it -- or the note that it names no routine, or
 that an earlier marking named the same one. See "Declaring where a
-length-changing rewrite may happen" above. Nothing acts on any of it, and the
-section says so. `-O=regions` prints these after the hands-off spans.
+length-changing rewrite may happen" above. The section says what `-O1` and
+`-O2` do with it and where the sections that follow report that. `-O=regions`
+prints these after the hands-off spans.
+
+**4a-ceiling. Bank ceilings, only when the source declares one.** A paragraph
+on what a ceiling is, then one line per `%%ceiling` -- its bank, value, file
+and line, and `kept` or `not kept, a lower one is` -- and one line per bank
+that declares one: its highest assembled word, the last word a rewrite may
+use, and the words free between them. See "A bank's ceiling" above.
+`-O=regions` prints the `ceiling` lines after the speed declarations.
 
 **4b. What -O2 would assume.** In every report, at every level: the five
 heuristics, how many live findings each would refuse, and one line per refused
@@ -1367,6 +1791,16 @@ rewrite assumed); every live finding it did not rewrite, with the reason in one
 phrase; what the rewrites realized; and the region warning again when the
 evidence disputes a region. See "`-O1`: rewriting inside a region" above.
 `-O=xform` is the working.
+
+**4d. Pool reclaim.** Present whenever `-O1` or `-O2` made its rewrites, and
+written last, after relayout, which is what collects the words. It says how
+many of the licensed words went, `0 of 0` when no rewrite freed one, names each
+with the rule and address of the rewrite that freed it -- that is what you
+switch off to keep it, since the reclaim has no ordinal of its own -- and, for
+a word freed on `-O2`'s guess alone, says so and leaves it where it is. Under
+`-O=undeclared` the guess licenses the word, and the line is marked
+`(undeclared)`. A line of its own names any pool word relayout's rebuild added
+or dropped. See "The pool reclaim: a constant nothing names".
 
 **5. Classification conflicts.** Words that are two things at once -- code that
 is also data, code whose address field is patched at run time, code that is
@@ -1504,8 +1938,7 @@ must not be shared.
 Use `-O=scratch` for the working: it prints every unit, one line per population
 word with the class it was put in and why, the colorings, the per-bank classes
 and prizes, the blind spots, and a reconciliation line. The section and the
-dump are two printers over one pass, and `Tests/Scratch` checks them against
-each other figure by figure.
+dump are two printers over one pass, and agree figure by figure.
 
 **10. Statistics**, per bank: words by kind, the decode and spelling
 breakdowns, the code/data classification, the reference edges by role, the
@@ -1520,17 +1953,16 @@ Its heading gives the level and the declared and copied counts. A paragraph
 gives the cap, the reserve, the words spent, the words deleted with
 single-site routines, the microseconds saved per execution of every copied
 site, and how many copies relayout refused. After that come the words spent
-per bank with its ceiling, then one line per declared site: its bank,
+per bank with its ceiling, `(declared)` when a `%%ceiling` set it, then one line per declared site: its bank,
 address, source line and routine, and either `copied, N words, saves N us`
 (with `callee deleted` when its only call was copied) or `not copied:` and
 the reason in words. It is the same list as the `S1` lines of `-O=xform`.
 The Transforms section, 4c, counts the T3s and T8s alone.
 ## The rules
 
-Twelve rules, from the transform catalog in
-`Optimizer/CompletedTasks/FeasibilityStudy.md` section 6. Every example below is taken from
-the test suite in `Tools/AM1/Tests/Optimizer/`, where each rule has a source
-that fires it and one source per precondition that refuses it.
+Twelve rules. Every example below is taken from the optimizer's test sources,
+where each rule has a source that fires it and one source per precondition
+that refuses it.
 
 | Id | Finds | Suggests | Saves |
 |---|---|---|---|
@@ -1778,7 +2210,7 @@ That does not make P5 derivable and it does not withhold any advice. It moves
 the sentence from a caveat nobody can act on to a statement the author has made
 and the tool can argue with.
 
-`-O2` does not derive P5 either. It guesses, by five heuristics, and says so
+`-O2` does not derive P5 either. It guesses, by six heuristics, and says so
 every time it runs. A `%%nooptimize` span is the author's other answer: not
 "this code is safe to rewrite", but "leave it alone".
 
@@ -1810,6 +2242,19 @@ entries:
   unproved one the reason. A caller of a callee that could not be read can
   therefore still appear in this list; what has changed is that you can look
   up which callee and why instead of guessing.
+
+The statistics' `flow:` line says how much of this there is. Its `to the
+unknown sink:` counts are every edge the graph could not follow, and `of which
+routine returns:` counts the ones that are a routine leaving through its own
+return word: `rtn, jmp .` whose address field the entry's `dap` wrote, or
+`jmp i rtn`. Those lose nothing, since every call site keeps its own edge back,
+so the threads really lost are the rest. Two kinds of edge are followed that
+once were not, and `recovered:` counts them: `iot`, the skip of a Type 340 flag
+test (`dsp`, `dss`, `dsv`, `dsh`), and `stored`, a target of a `jmp` or `jsp`
+that a `dac` or `dio` stores whole, where the code in front of every store says
+what it stores. Where one store does not say, the sink stays beside the stored
+targets. `-O=flow` marks each recovered edge with `iot` or `stored` and each
+returning sink with `return`.
 
 And one caveat the other way: an `xct` is not treated as a block terminator,
 so the word after an `xct` of a jump is called reached when it may never run.
@@ -1866,167 +2311,213 @@ source. It is spare on a plain PDP-1, so a word with that code is a halt
 there; the advisor reads it as the 1D group because per the owner's decision
 the 1D decode is always on.
 
-## Testing
+## The extend window: `eem` and `lem`
 
-To run every check described below in one go, build the testing binary with
-`make am1test` in `Tools/AM1` (see "The testing build"), then use the runner,
-naming it: `bash Tools/AM1/Tests/run_all.sh Tools/AM1/am1test`. The binary
-is required, and there is no default. The runner refuses one that is not a
-testing build. It passes the binary to each of the twenty-two checks in that
-check's own argument convention, and it confirms that each check actually ran
-it. The twenty-second, `switches`, builds the installed kind of **am1** from
-the same sources, and proves that it refuses the testing modifiers and
-assembles everything else exactly as **am1test** does. It prints one table of results and exits non-zero,
-naming the checks that failed, if any did. A total that differs from the
-recorded baseline is marked for a person to read. It is not a failure. If you
-run a check by hand, remember that a check given no argument tests the build
-beside it, usually `Tools/AM1/am1test`. Pass the binary explicitly to test any other one.
-`Tools/AM1/Tests/README.md` lists the twenty-two checks and how each one takes
-its binary.
+On a PDP-1D, `eem` opens the extend window and `lem` closes it. With it closed,
+an indirect reference reads a 12-bit address in the current bank, and bit
+010000 of the pointer chains to another level; with it open, the pointer is a
+16-bit address, one level. So the same `lac i p` reads a different word
+depending on the state, unless the pointer holds a bank-0 address below 010000
+and the reference is made from bank 0, where both readings agree. Closed, the
+bits above 010000 are ignored, so a 16-bit address reaches its word only when it
+names the current bank and that bank is even. A `jsp` leaves the whole 16-bit
+return address in AC, bank bits included, whatever the state, and with the
+window open it sets 0200000 as well. (The closed-window facts were measured on
+the emulator, 21-Sep-2026.)
 
-`Tools/AM1/Tests/Optimizer/` holds 48 sources with a stored report each: four
-that exercise the word table, the decoder, the reference edges and the control
-flow, twelve that each fire exactly one rule, and thirty-two that each refuse
-one rule for one precondition.
+Under `-O` the advisor follows the state -- open, closed or not known --
+through every reached word and across calls, and follows backward what
+depends on it: an indirect reference, an `xct`, a `lap`, another device-74
+`iot`, or a call into a routine that may depend on it. It then classes every
+reached `eem` and `lem`:
 
-```bash
-./run_optimizer.sh                # the whole suite
-./run_optimizer.sh 33_t1_p4       # one test
+- **redundant**: it sets the state the window is already in on every path.
+- **dead** (`lem` only): nothing that depends on the window runs after it
+  before the window is set again, so the state it sets is never used.
+- **freed** (`eem` only): not redundant as written, but redundant once every
+  redundant and dead word is taken out.
+- **needed**: something depends on the state it sets.
+- **refused**, with one reason: the analysis cannot say. The reasons, in the
+  order the report counts them, are `patched` (the word is written or patched),
+  `xct` (it is executed by `xct`), `sbs` (the program enables sequence breaks,
+  and a handler could change the window between any two words), `timing` (it is
+  in a delay or device loop), `skip` (a skip can pass it), `start` (the state
+  at the start address is not recorded), `entry` (it can be entered from
+  outside the flow the analysis sees), `halt` (Continue resumes in an unknown
+  state), `callee`, `unknown-return`, `lost` (control leaves the graph),
+  `shape`, `pointer` (an indirect reference through a word whose value is not
+  known follows), `flag` (something reads the flag a `jsp` leaves in AC) and
+  `iot`.
+
+Outside a declaration nothing acts on these classes: they are there so that
+you can take out an `eem` or `lem` the program does not need, by hand, and test
+the result. Inside one, `-O1` and `-O2` take them out for you.
+
+### Deleting `eem` and `lem`
+
+Under `-O1` or `-O2`, every redundant `eem` or `lem`, dead `lem` and freed `eem`
+in an **optimize or speed region** is deleted, one relayout delete each, and
+every later word moves down as it does for space mode's deletions (see "Space
+mode: deleting a word"). A word outside every region is left alone at every
+level, unless `-O2` is given `-O=undeclared`, which lets the guess license it.
+
+Any set of redundant and dead words can go together: taking one out never
+changes what the window is at a word that depends on it. A freed `eem` is
+different. It is redundant only because a `lem` before it goes, so the analysis
+finds, for each freed `eem`, the `lem`s it depends on -- by putting each one
+back alone and seeing whether the `eem` still finds the window open -- and
+deletes the `eem` only when every one of them is deleted too. Words are refused
+in this order, with a fate the dump and the report name:
+
+- `handsoff`: the word is in a `%%nooptimize` span.
+- `guessed` (`-O2` only): the guess marks it -- H1 in an optimize region, any
+  of the five on a word only a speed region declares or, under
+  `-O=undeclared`, no region -- as for space mode.
+- `used`: the program reads the word as data, to copy or sum its code.
+- `unrepresentable`: relayout could not delete the statement.
+- `overlap`: another rewrite touches it -- a pattern, a T3 or T8 word, an inline
+  copy, a move or an unroll -- so bisection can switch either off on its own.
+- `depends`: a freed `eem` with a `lem` it depends on that is not deleted.
+
+A delay or device loop never gets this far: the analysis refuses an `eem` or
+`lem` there as `timing`, at every level.
+
+`-O=window` gives one line per licensed word:
+
+```
+window delete 0 0106 freed eem fired deps 0104,0105 line 21
 ```
 
-The runner does five checks per test, not one: the source assembles cleanly and
-writes a report; the report equals the stored reference; a second run produces
-the same report, which is what the sorted output is for; `-O=rules` agrees with
-the report and its dump matches the rule and the polarity the file *name*
-promises; and assembling without `-O` writes no report at all.
+with the kind, the fate, the ordinal under a bisection modifier, the `lem`s a
+freed `eem` depends on, and the line. The report's Extend window deletions
+section lists every licensed word with what happened to it, and marks one only
+`-O=undeclared` licensed `(undeclared)`. Bisection numbers
+the deletions after space mode's, redundant and dead words first, then freed
+`eem`s, so an `-O=upto` that keeps a freed `eem` keeps its `lem`s; a range or an
+`-O=off` that switches off a `lem` switches off the `eem`s that depend on it
+too. If relayout refuses a `lem`'s delete -- because a number, an offset or a
+`.` would name a different word -- an `eem` that depends on it is not tried
+either, and a warning says so for each:
 
-`byte_identity.sh` in the same directory is the check that matters most for
-trusting the flag: it assembles every regression source with two binaries, one
-without the optimizer and one with it, `-O` absent from both, and compares the
-`.rim`, `.lst`, `.sym`, `.mac` and `-T` outputs plus both streams and both exit
-statuses, byte for byte.
+```
+am1: warning: window: relayout refused the dead lem's delete at bank 0 0103 (number), so it stays; prog.am1:13
+am1: warning: window: the freed eem at bank 0 0105 stays, because a lem it depends on stays; prog.am1:15
+```
 
-The binary without the optimizer is built from `Tools/AM1/PreOptimizer`, a
-frozen copy of **am1**'s sources as they stood the moment before the optimizer
-was merged. That directory is what makes the check mean anything, which is why
-it must not be edited, built in place, or synced with its parent. A reference
-that turns out to accept `-O` is not a reference at all -- it would be
-comparing the optimizer against itself and passing every source -- so the
-script probes for that and stops with an error rather than a warning, whether
-the reference was built here or supplied with `-r`.
+With `-O=relayout`, a `window:` line per deletion says whether relayout made it.
 
-`Tests/Decoder`, `Tests/References`, `Tests/Flow`, `Tests/Routines`,
-`Tests/Rules`, `Tests/Sharing` and `Tests/Regions`, in the same
-`Tools/AM1/Tests/` directory, hold the acceptance checks for the individual
-analyses, and
-`Tools/AM1/wordtable_check.sh` checks the optimizer's word table against
-**am1**'s own `-T` dump for every regression source.
+On `adventure.am1`, with the regions `genregions.py` declares, `-O1` and `-O2`
+each delete 117 words -- 9 redundant `eem`s, 9 redundant `lem`s, 72 dead `lem`s
+and 27 freed `eem`s -- and leave 5 that overlap another rewrite. Relayout makes
+all of them, and the assembly takes about two seconds longer.
 
-`Tests/Regions/regions_check.sh` has two checks that are not about correctness
-either. One is that the directive costs nothing: each region-declaring source
-is assembled twice, once as written and once with the directive lines blanked
-out, and all four generators' outputs must be identical with `-O` absent and
-with `-O` present. The other reads the optimizer's sources for any write to
-the parse tree, and requires that only `opttransform.c`, the `-O1` rewrite,
-has one. Until `-O1` existed that check said there was no optimization level
-at all; the promise it keeps is the same one, that the rewrite lives in one
-place and nothing else in the optimizer touches the program.
+A **hazard** is an indirect reference in a bank other than 0 made with the
+window possibly open. It is **proved** when the pointer is never written and
+holds a bare in-bank address -- a label or a symbolic constant below 010000,
+with no bank qualifier -- and the window is certainly open: the reference
+reaches bank 0, not the word the address names in its own bank. It is
+**possible** when the same pointer is used with the state not known. It is
+**unproved** when the pointer is written at run time and the window is open;
+most of these are 16-bit pointers written on purpose, and the analysis cannot
+see their values. A return word saved by the routine's own entry is never a
+hazard: the `jsp` contract makes it a 16-bit address. A plain number is never
+taken as a bare address, so `farjmp(0)` is not flagged.
 
-Its third check is the one to run first if anything about the region design
-drifts: three files, one four-word program, the directives in three different
-places, and the same live finding count in all three. That is where the
-misreading — a source declaring nothing losing its advice — would show first
-and smallest.
+Each proved hazard is also a warning on stderr, one line, so a build log shows
+it without the report:
 
-`Tests/Transforms/transforms_check.sh` is `-O1`'s own suite. It has one source
-per rule with a hand-rewritten twin, and each `-O1` assembly must equal its
-twin in all four outputs, byte for byte. Then the test dumps must differ from
-the plain assembly's in exactly the words the `-O=xform` dump says it rewrote.
-Its control leg is the check to run first: the same sources with the directive
-lines blanked, where `-O1` must change nothing at all, and the same for every
-regression source and `adventure.am1`. It also runs Adventure with regions
-declared over every span the contradiction check reports clean, and requires
-the rewrite there to be exactly what it reports and stable under a second run.
-Beside it, `Tests/Transforms/Probes/` runs one small program per rule on the
-emulator: plain, with `-O1`, and with a deliberately wrong word, which must
-give a different answer. It needs a private copy of the tree, so it is not
-one of the twenty-two checks; the Transforms README says how to run it.
+```
+am1: warning: extend window: prog.am1 line 33: bank 1 0104 indirects through the bare address at bank 1 0112 with the window possibly open, which reaches bank 0
+```
 
-`Tests/Guess/guess_check.sh` holds the heuristics to hand-written loops,
-handlers, buffers and absolute addresses, each with a twin they must leave
-alone, and to the places in real programs they were authorized for: among them
-Adventure's delay routine, cgdemo's display wait and DCS2 T12's poll loops.
-`Tests/Heuristic/heuristic_check.sh` is `-O2`'s own suite. Two sources state
-every fate under `-O2` and `-O1`, spans and regions included. A control leg
-removes the spans, and the findings they held must then be rewritten or
-guessed; another wraps a whole program in one span, which must assemble
-unchanged. Over every `Tests/Optimizer` source and six programs, the test dump
-must differ in exactly the rewritten words, and, where the source declares no
-region or span, the findings `-O2` left alone on its guess must be exactly the
-ones `-O=guess` refuses.
+A program that copies code into bank 0 at run time and indirects through its
+bank-0 address on purpose draws this warning; that is the analysis reading the
+source as written. The assembly still succeeds.
 
-`Tests/Bisect/bisect_check.sh` holds the bisection modifiers to one claim: a
-bisected build is the stock build with exactly the selected rewrites of the
-full build in it. It does not ask **am1** which rewrites it kept. It works the
-selection out from the full build's dump, and then compares every word of the
-tape, the listing and the test dump, at `-O1` and `-O2`, on a hand-written
-source and on Adventure. It also runs `am1bisect.sh` against a test that fails
-on one chosen word, and requires it to refuse a test that never fails and one
-that always does.
+A **reverse hazard** is the other way round: an indirect reference made with
+the window possibly closed through a pointer meant as a 16-bit address, which
+the closed window misreads. A pointer is taken as meant when a bank qualifier
+(`w:1`, `w:*`) is among its leaves or its value is above 07777; a plain number
+no larger is taken as twelve bits. It is **proved** when the pointer is never
+written, the window may be closed, and the closed reading misses the word --
+it names another bank, or its own bank is odd and the reference chains. It is
+**possible** when the same pointer is used with the state not known, and
+**unproved** when the pointer is written at run time from such a constant
+(`lac [w:1]` then `dac p`) and the window may be closed.
 
-`Tests/Sharing/sharing_check.sh` has one check that is not about correctness at
-all. Return-word sharing must never become a finding and must never fire under
-any optimization level, so the first thing that script does is read the
-*sources*: `optshare.c` may not name the finding list in code, and the rule
-engine may not name `optshare.c`'s entry points at all. Everything else it
-checks would still pass if that condition were quietly dropped.
+A routine's return word is a pointer too. A `jsp` saves its caller's 16-bit
+address there, so a `jmp i rtn` (or `lac i rtn`) made closed misreads it
+whenever the caller's bank is odd or is not the routine's bank: in bank 1 a
+`dac rtn` ... `jmp i rtn` routine called and left with the window closed does
+not return. That is **proved** when such a caller may call with the window
+closed. When the only misreading callers call with it open -- a call from
+another bank must -- and the window is closed at the return only on other
+callers' paths, it is **possible** with the reason `callers`. A `dap`-form
+return keeps 12 bits and is never a reverse hazard.
 
-`Tests/Routines/routines_check.sh` carries a warning worth repeating here. No
-regression source contains a single `jsp`, `jda` or `cal` -- the suite tests
-the assembler, not programs -- so on all thirty-four of them the call graph is
-empty and every structural check over it is vacuous. What those sources prove
-is that the analysis neither crashes nor invents a routine where the program
-has none. What proves the rest is the suite's four hand-written sources and
-`adventure.am1`, which the script picks up from the repository root when the
-tree holds it, and the script refuses to report success unless the run
-actually saw routines, arcs, and one cycle of each of the three classes.
+Each proved reverse hazard is a warning under the same prefix:
 
-**Every one of those five scripts now carries a guard of that shape**, and
-each was confirmed to fail before it was accepted rather than merely to pass.
-`decoder_check.sh` requires the run to have decoded a word of every
-instruction group; `flow_check.sh` requires blocks, sink edges, call edges,
-unreached words, every block-end kind and every return case; `refs_check.sh`
-requires edges of every role and all three classification conflicts; and
-`rules_check.sh` requires the *regression sweep* to have produced findings of
-its own, since everything that sweep asserts is vacuously true of a source with
-no findings at all.
+```
+am1: warning: extend window: prog.am1 line 14: bank 0 0101 indirects through the 16-bit address at bank 0 0114 with the window possibly closed, which reads bank 0 instead of bank 2
+am1: warning: extend window: prog.am1 line 46: bank 1 0116 indirects through the return word at bank 1 0117 with the window possibly closed, which misreads the address a call from bank 1 saves there
+```
 
-### Decision coverage
+A pointer into an odd bank says "chains through bank N" in place of "reads".
 
-`Tests/Coverage/coverage_check.sh` asks a different question from all of the
-above. They ask whether the analysis gets the right answer. It asks **whether
-any source in the repository makes it take this path at all** -- because a
-code path with no source is one whose correctness rests on nothing, and its
-failure mode is silence rather than a red suite.
+An `eem` or `lem` no entry reaches is classed **unreached**, and the state
+after it is not followed, so no hazard or reverse hazard is decided for what
+it guards. Those references are not passed over in silence: each indirect
+reference its flow arrives at, before that flow joins code the analysis did
+reach, is an **unexamined** reference. The dump gives each one a
+`window unexamined` line with its pointer, the totals count them
+(`window totals: unexamined references N`), and the report lists them. The
+usual way into such code is a jump whose address is written at run time from
+a value the analysis cannot know, `lat` then `dac` for instance; a
+defect there -- a proved reverse hazard, say -- shows up only as an
+unexamined reference, so a dump that has any is not a clean bill of health
+for them. References before the `eem` or `lem` in its own block are not
+counted: it does not guard them.
 
-"Covered" here means one thing and deliberately not more: some source makes the
-analysis produce that outcome. Not that the outcome is right, and not that
-anybody read it -- only that there is something to read. The unit is a decision
-the analysis makes about a program, not a line of C; statement coverage of the
-C source would answer a different question.
+On `adventure.am1`, of 211 reached `eem`s 9 are redundant and 29 more freed, and of 202
+reached `lem`s 10 are redundant and 75 dead; it has no proved hazard and 117 unproved,
+and the analysis takes about a tenth of a second. It has no proved or unproved reverse
+hazard; 1010 references are possible ones, almost all through bank-qualified pointers in
+routines the analysis cannot see entered (`entry`, 681) or returned to (`unknown-return`,
+311), and 18 are return words closed only on other callers' paths (`callers`).
 
-The outcomes counted are the enumerated ones the four dumps print -- the sink
-reasons, the return cases and their reasons, the routine flags, the refusal
-reasons and the classification conflicts, 45 in all -- and the list is derived
-from the analysis sources themselves rather than written down in the script, so
-a new enum member is measured the day it is added. `covered.txt` is a ratchet
-naming the 44 that some source produces, and `uncovered.txt` holds the one that
-cannot be reached together with its reason. An outcome in neither file fails:
-an uncovered outcome with a stated reason is a decision, one without is a hole.
+## Testing
 
-The same script also re-derives the rule-and-precondition matrix from
-`optrules.c`'s own `checkShared()` call sites and requires a negative source for
-every pair the code consults -- in both directions, so a rule that gains a
-precondition and a negative that tests one nothing consults are both caught.
-`Tests/Coverage/README.md` says what each outcome means and which source covers
-it.
+**am1** ships with the checks that hold its output, all under `Tools/AM1`.
+Each takes the binary to test as its first argument, and exits non-zero if
+anything failed.
+
+| Check | What it holds | Binary it tests by default |
+|---|---|---|
+| `Tests/Regression/run_regression.sh` | the assembler's regression suite: each source must assemble, or for an expected failure must not, and the words it generates must equal a stored reference | the `am1` of the tree it sits in |
+| `Tests/Multibank/run_tests.sh` | assembling across memory banks | the `am1` of the tree it sits in |
+| `Tests/Symbols/symbols_check.sh` | the line a global label, or a var, is recorded on in the `.sym` file, whatever follows the label | `am1test` |
+| `wordtable_check.sh` | the optimizer's word table, `-O=dump`, against the `-T` dump and against the words decoded from the tape, for every regression source | `am1test` |
+
+Build **am1test** first for the last two: `make am1test` in `Tools/AM1` (see
+"The testing build"). For example, from `Tools/AM1`:
+
+```bash
+make am1 am1test
+Tests/Regression/run_regression.sh ./am1
+Tests/Multibank/run_tests.sh ./am1
+Tests/Symbols/symbols_check.sh ./am1test
+./wordtable_check.sh ./am1test
+```
+
+With `-O` absent, **am1** must assemble every program exactly as it would with
+no optimizer in it. The regression suite holds that: every source's words are
+checked against a stored reference, and none of them uses `-O`.
+`wordtable_check.sh` holds the other end: the word table every analysis reads
+must be the program the tape carries, word for word. Given a second binary
+built without the optimizer as its third argument, it also requires the two
+builds' `.rim`, `.lst`, `.sym` and `.dmp` to be byte-identical for every
+regression source.
+
+The optimizer's own acceptance checks, one suite per analysis and per level,
+each with a leg built to fail, are development material and do not ship with
+**am1**. They are where the figures in this document come from.

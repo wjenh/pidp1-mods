@@ -9,13 +9,46 @@
 # ad1port is the loopback port (localmachine, 127.0.0.1 only).
 # Set it to 0 or off to disable it.
 # The default is port 1044 and enabled.
-# Use ad1 -h host:port to reach it from another machine.
 #ad1port=1044
 
 # ad1remoteport listens on all interfaces at the same time as ad1port.
 # It is off by default, uncomment to allow remote debugging and fastloading.
 # IT HAS NO AUTHENTICATION, enable it only on a network you trust.
+# Use ad1 -h host:port to reach it from another machine.
 #ad1remoteport=1045
+
+# The throttle paces the emulated CPU to real time.
+# It runs the CPU until simtime is ahead of the wall clock by throttleburst microseconds,
+# then waits in chunks of at most throttlequantum microseconds, rechecking after each chunk.
+# The default (1000) reproduces the emulator's original cadence, a burst of cycles followed by
+# about a millisecond of waiting.
+# A shorter quantum (try 100 or 50) makes anything paced by the wall clock track real time more closely
+# at the cost of more wakeups per second on the host.
+#throttlequantum=1000
+
+# throttleburst is how far, in microseconds, simtime must get ahead of the wall clock before the
+# throttle waits at all.
+# The default, 100, runs about 20 cycles between waits, so the host wakes the emulator far less
+# often.
+# 0 waits whenever simtime is ahead at all, one to five cycles between waits, the behavior before
+# this setting.
+# The most is 250, since the Type 340 runs on the wall clock and can absorb a lead only up to that.
+#throttleburst=100
+
+# throttlespin is the final stretch of each wait, in microseconds, that busy-spins on the CPU
+# instead of sleeping to avoid the scheduler's wakeup latency at very short quanta.
+# 0, the default, never spins.
+# 5 measurements found little headroom to spare for it once a Type 340 program and the panel driver
+# are also running, so raise it only if a shorter throttlequantum alone is not enough
+# and a CPU core can be spared for it.
+#throttlespin=0
+
+# throttlemaxlag bounds how long, in milliseconds, the throttle will run flat out
+# to catch up after real time gets far ahead of simtime.
+# Past this, the rest of the deficit is forgiven rather than run off in one unpaced burst.
+# The default, 20 is well above anything an ordinary running program should see,
+# it should only ever fire after a real stall.
+#throttlemaxlag=20
 
 # Enable/disable various PDP-1D extensions
 # lai and lia are available in the main branch pidp1 if compiled in.
@@ -84,25 +117,26 @@ two340charsets=no
 # The following control the audio subsystem.
 # These values give excellent results.
 # It is important to read the UsingAudio.md document in Docs before changing values!!!
-# alpha sets the frequency response of all 4 digital filters the same.
-# It controls the -6db cutoff frequency point for the low pass filters.
-# The value ranges from 0.0 to 1.0; 0.0 means zero frequency, not useful. 1.0 and greater is infinite frequency,
-# effectively no filtering.
 # gain sets the 4 channel mixer gain, caution, too high and clipping will occur.
-# tuning shifts the frequency, but is not implemented until SDL3 is available.
+# tuning shifts the frequency, only available if SDL3 is present.
+# pdp1audio changes all of these while the emulator runs.
+# audio=on allows audio, but it still must be turned on via pdp1audio.
 audio=off
 
-#alpha=0.20
-
-# Each channel's alpha can also be set separately.
-# The alphas below are directly derived from the actual component values the
-# rc filters PDP-1 at the Computer History Museum have, per notes provided by them.
-# They correspond to cutoff frequencies of 816, 740, 339, and 176 Hz.
-# These should be the authentic experience.
-alpha1=0.2070
-alpha2=0.1904
-alpha3=0.0921
-alpha4=0.0409
+# Each program flag goes through its own RC low-pass filter, just like the original and the
+# Computer History Museum's PDP-1.
+# Each channel corresponds to a program flag, PF1-4.
+# cutoff sets the -3 dB point of all four outputs, in Hz; cutoff1-cutoff4 set each separately
+# and override cutoff. A flag with neither gets the default, below.
+# The hardware's analog filters had cutoffs of 1020, 925, 423 and 220 Hz according to figures provided by
+# the Computer History Museum and should give the original authentic sound.
+# The filters run on the emulator's clock so the sample rate does not change them.
+# cutoff by itself isn't authentic, but gives a reasonable compromise sound.
+#cutoff=781
+cutoff1=1020
+cutoff2=925
+cutoff3=423
+cutoff4=220
 
 # Gain adjusts the volume, but a value that is too large will cause clipping of the audio, adjust with caution.
 gain=0.95
@@ -120,10 +154,25 @@ gain=0.95
 tuning=1.0
 
 # Samplerate sets how often audio is sent to SDL in rate samples per second.
-# However, the 5 usec cycle time of the emulator is the controlling factor, the rate will have a 5 usec
-# granularity.
-# The sample rate also directly affects the frequency response of the filters, adjust both as needed.
-samplerate=22000
+# The samples are timed by the emulator clock so any rate is exact and each sample reads
+# the filters at the emulator cycle rate.
+# Neither the cutoffs nor the PF edges depend on samplerate.
+# 48000 is the native rate of most USB audio devices, this avoids SDL sampling conversions.
+samplerate=48000
+
+# audiodepth is how much sound, in milliseconds, is kept queued ahead of the audio device.
+# A pause of the emulator shorter than this is not heard.
+# It is also how far the sound trails the program flag lamps, not noticeable visually.
+# The emulator holds the queue near this depth by itself, matching the audio device's real playback
+# rate so the sound stays synchronized with the PF lights.
+# Range 10 to 500, default 40.
+# Keep it above what the audio device takes at a time, commonly about 20 ms, or it will run out of samples
+# and the sound will break up.
+# 30 or more is safe.
+# With a tuning other than 1.0 the sound can't stay with the lamps, it is played faster or slower
+# than the program runs.
+# The queue is then only kept from growing past 250 ms, or four times the depth if it is more.
+audiodepth=40
 
 # Settings for the IOT 45 line printer
 # The line printer type defaults to Type 62
@@ -159,6 +208,14 @@ newmemfile=true
 # This is primarily useful for seeing now much time is being used in a cycle.
 pidp1timing=off
 
+# Timing statistics for the displays, separate from pidp1timing.
+# If enabled, the Type 340 thread appends one line a second to /tmp/pidp1-340timing.txt while it is
+# running a display program, and the display worker appends one line a second to
+# /tmp/pidp1-dpytiming.txt for as long as the display subsystem is running, halted or not.
+# Both files grow as long as this is on, remove them when you are done with them.
+# This is only useful for looking at how the display threads spend their host time.
+displaytiming=off
+
 # Adjust the maximum brightness of the hardware panel lights.
 # This is an integer number ranging from 0 to 100, off to max brightness.
 # Many people think full bright is too bright, adjust as you like.
@@ -177,6 +234,19 @@ paneloffalpha=0.04
 # It has essentially no cpu loading impact.
 panelrealtime=false
 
+# These tune the new panel driver's lamp scanning, for the hardware panel.
+# The values shown are the driver's own defaults.
+# panellevels is the number of brightness levels each lamp can show, 8 to 64.
+# The row scan time stays the same, so more levels means shorter steps between them.
+#panellevels=8
+# panelcycletime is how often, in microseconds, the lamp brightnesses are recomputed from the
+# emulator's counts, at least 100.
+# At the emulator's 5 us cycle, 1000 is about 200 cycles a sample.
+#panelcycletime=1000
+# panelscantime is the time, in microseconds, to scan one row of lamps through all its levels,
+# at least 100.
+#panelscantime=1000
+
 # If you get to the point you just can't stand waiting on the (accurately) slow typewriter,
 # you can pretend someone invented a supercharged soroban and up it to 200 chars/sec instead of 10.
 # Heresy? Well,then don't use it.
@@ -189,8 +259,8 @@ fasttyo=false
 # which keeps the Linux scheduler from intermittently suspending the 340 emulator itself
 # when it doesn't expect it.
 # You can set the cache up to 1024 Type 340 instructions in size.
-# The h.s. cycle light is still activated, even though there is no high speed cycle unless there is a
-# cache miss.
+# The pidp-1 still loses one 5us cycle for every instruction the 340 uses, cached or not, and the
+# h.s. cycle light is lit for it, so the cache does not change how many cycles a pidp-1 program gets.
 # One downside is that this increases cpu demand since the 340 emulator gets more runtime.
 # If the cache size is changed here, you have to restart the pidp1 emulator for it to be applied.
 # Use of this should be very rare.

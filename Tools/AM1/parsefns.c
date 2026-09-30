@@ -113,8 +113,16 @@ char
 asciiToFlexo(char ac, int *shiftP)
 {
 int fc;
-    
-    fc = ascii2concise[ac];
+
+    // A byte above 0177 has no Flexo code.  ac is a signed char, so such a
+    // byte is negative here, and would index before the table.  The
+    // table has 128 entries, so nothing else can fall outside it.
+    if( ac < 0 )
+    {
+        return(NONE);
+    }
+
+    fc = ascii2concise[(int)ac];
     if( fc == NONE )
     {
         return(NONE);
@@ -176,7 +184,7 @@ int ac;
         fc |= SHIFT;
     }
 
-    ac = concise2ascii[fc];
+    ac = concise2ascii[(int)fc];
     if( ac == NONE )
     {
         return(NONE);

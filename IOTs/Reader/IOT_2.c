@@ -16,9 +16,12 @@
  *
  * 19-Jun-2026 wje initial version.
  * 11-Sep-2026 wje/Claude add magtape dispatching
+ * 24-Sep-2026 Claude a network tape no longer blocks the emulator: no data yet means try again next pass.
+ * 27-Sep-2026 Claude the echo's write() result is discarded explicitly (the -Wunused-result warning).
  */
 #include "iotHandler.h"
 #include "microtape.h"
+#include <errno.h>
 #include <unistd.h>
 
 // pdp1.c keeps these as private #defines not exposed via pdp1.h to plugins.
@@ -110,28 +113,42 @@ iotUpdate(void)
 // tape, echoes it back (in case r_fd is a socket needing synchronization), and once a full
 // character has been framed folds it into rb/IO, signals completion (ios/rbs) and, unless this
 // is part of read-in (rim), requests a sequence break on RD_CHAN.
+// A network tape is non-blocking (main.c): a character that has not arrived yet is tried for
+// again next pass, like tape that has not reached the read head, and the delay starts once it
+// is read. An echo the client's socket cannot take is dropped.
 // No return value (void).
 static void
 readerIOPoll(PDP1 *pdp1P)
 {
 uint8_t c;
+ssize_t got;
 
     if(!(pdp1P->rcl && pdp1P->r_time < pdp1P->simtime && pdp1P->r_fd >= 0))
     {
         return;
     }
 
-    pdp1P->r_time = pdp1P->simtime + RDLY;
-
-    if(read(pdp1P->r_fd, &c, 1) <= 0)
+    if((got = read(pdp1P->r_fd, &c, 1)) <= 0)
     {
+        if((got < 0) && ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == EINTR)))
+        {
+            return;
+        }
+
         close(pdp1P->r_fd);
         pdp1P->r_fd = -1;
         return;
     }
 
-    // write back in case this is over a socket and we need to synchronize
-    write(pdp1P->r_fd, &c, 1);
+    pdp1P->r_time = pdp1P->simtime + RDLY;
+
+    // write back in case this is over a socket and we need to synchronize. The result is not
+    // needed: a tape file opened read-only refuses the write, and a peer that has gone away shows
+    // up at the next read. The reader had no error status to report it with anyway.
+    if(write(pdp1P->r_fd, &c, 1) < 0)
+    {
+        ;
+    }
 
     if(pdp1P->rc && (!pdp1P->rby || (c & 0200)))
     {

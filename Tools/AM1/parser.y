@@ -15,7 +15,7 @@
 
 // We maintain a stack of local symtab ptrs for nested local scopes
 int localDepth = 0;
-int maxLocalDepth = 0;                  // the deepest nexting we've seen
+int maxLocalDepth = 0;                  // the deepest nesting we've seen
 LocalContextP localContextP;            // used while a local scope is enabled
 LocalContextP localStack[MAXLOCALS];
 bool sawForceLocal;
@@ -28,8 +28,31 @@ BankContextP curBankP;
 static SymNodeP pendingLabelSymP;
 static int pendingLabelLocType;
 static int pendingLabelPC;
+// A label's own line.  The lexer sets labelTokenLine at the label's comma; the
+// ADDR rule copies it to pendingLabelLine because it records the line in its
+// final action, after a comma inside labelTrailer may have moved it on.
+int labelTokenLine;
+static int pendingLabelLine;
+// A var name's own line, set by the lexer as it scans the name, for the same
+// reason.  The varname rules record it; setVarsPC() placing the var later
+// leaves it alone.
+int nameTokenLine;
 
-static char scratchStr[128];            // and string
+static char scratchStr[128];            // a scratch string
+
+// The optimizer directives.  Each kind of span is flat and independent of the
+// others, so one open span per kind is the whole state.  They emit nothing and
+// reserve no memory; what they mean is the optimizer's business.
+int optRegionTokenLine;                 // set by the lexer: the line the directive
+char *optRegionTokenFileP;              // it just scanned is on, and its file
+static int optRegionOpenLine;           // the open region's 'optimize' line, 0 when none
+static char *optRegionOpenFileP;        // and the file it is in, NILP when none
+// nooptimize spans: the hands-off mark wins wherever one overlaps a region.
+static int handsOffOpenLine;            // the open span's 'nooptimize' line, 0 when none
+static char *handsOffOpenFileP;         // and the file it is in, NILP when none
+// speed regions: "spend words here", a different claim from "P5 holds here".
+static int speedOpenLine;               // the open speed region's line, 0 when none
+static char *speedOpenFileP;            // and the file it is in, NILP when none
 
 extern PNodeListP wildcardsP;           // any wildcarded cross-bank refs
 extern SymNodeP permSymP;            // the instructions and other permanent values
@@ -57,6 +80,15 @@ BankContextP addBank(int bank);
 BankContextP swapBanks(int newBank);
 void initParser(void);
 SymNodeP addLocalSymbol(char *nameP);
+PNodeP openOptRegion(void);
+PNodeP closeOptRegion(void);
+void checkOptRegionClosed(void);
+PNodeP openHandsOff(void);
+PNodeP closeHandsOff(void);
+PNodeP openSpeedRegion(void);
+PNodeP closeSpeedRegion(void);
+PNodeP markInline(char *nameP);
+PNodeP markCeiling(PNodeP exprP);
 SymListP addToSymlist(SymListP listP, SymNodeP symP, int bank, int pc);
 SymNodeP findSymbolInBank(int bank, char *nameP);
 
@@ -116,7 +148,6 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %token <symP> LCLADDR
 %token <symP> LAW 
 %token <strP> NAME
-%token <strP> LCLNAME
 %token <strP> COMMENT
 %token <strP> CSCOMMENT
 %token <strP> ENDLOC
@@ -138,6 +169,13 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %token EXPR
 %token BANK
 %token THISBANK
+%token OPTIMIZE
+%token ENDOPTIMIZE
+%token NOOPTIMIZE
+%token ENDNOOPTIMIZE
+%token SPEED
+%token ENDSPEED
+%token INLINEDECL
 %token LOCATION
 %token LCLLOCATION
 %token LOCAL
@@ -163,6 +201,7 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %token SEPARATOR TERMINATOR SEMI EMPTYLINE
 
 %token CONSTANTS
+%token CEILINGDECL      /* last, so that no other token's number moves */
 
 /* union declarations for non-terminals */
 
@@ -176,6 +215,7 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 %type <pnodeP> directive_expr
 %type <pnodeP> var
 %type <pnodeP> varnames
+%type <strP> inline_name
 %type <pnodeP> varname
 %type <pnodeP> optExpr
 %type <pnodeP> labelTrailer
@@ -209,10 +249,17 @@ extern PNodeP newnode(int lineNo, int pc, int val, PNodeP leftP, PNodeP rightP);
 
 %expect 2       // terminators
 
+// A node only optrelayout.c makes; no rule uses it and the lexer never returns
+// it.  Declared last so that every other token keeps its number.
+%token RELAYOUT
+
 %%
 
 program         : optfilenames HEADER TERMINATOR body start
                 {
+                    // An optimizer span left open at the end of the source is
+                    // an error, not a warning.
+                    checkOptRegionClosed();
                     rootP = newnode(lineno, curBankP->cur_pc, HEADER, $4, $5);
                     rootP->value.strP = $2;
                 }
@@ -229,6 +276,7 @@ start           : START simple_expr TERMINATOR
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, START, NILP, NILP);
                     $$->value.ival = evalExpr($2);
+                    $$->exprP = $2;         // relayout re-evaluates it
                 }
                 | STOP TERMINATOR
                 {
@@ -378,6 +426,38 @@ one_stmt        : expr
                     swapBanks($2);
                     $$->value2.ival = curBankP->cur_pc;   // is the pc for the new bank
                 }
+                | OPTIMIZE
+                {
+                    $$ = openOptRegion();
+                }
+                | ENDOPTIMIZE
+                {
+                    $$ = closeOptRegion();
+                }
+                | NOOPTIMIZE
+                {
+                    $$ = openHandsOff();
+                }
+                | ENDNOOPTIMIZE
+                {
+                    $$ = closeHandsOff();
+                }
+                | SPEED
+                {
+                    $$ = openSpeedRegion();
+                }
+                | ENDSPEED
+                {
+                    $$ = closeSpeedRegion();
+                }
+                | INLINEDECL inline_name
+                {
+                    $$ = markInline($2);
+                }
+                | CEILINGDECL simple_expr
+                {
+                    $$ = markCeiling($2);
+                }
                 | VAR varnames
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, VAR, NILP, $2);
@@ -388,7 +468,7 @@ one_stmt        : expr
                     $$->value.ptr = curBankP->varNodesP;
                     if( !curBankP->varNodesP )
                     {
-                        vwarn(WARN_VARS, "no variables have been declareed, variables ignored");
+                        vwarn(WARN_VARS, "no variables have been declared, variables ignored");
                     }
                     else
                     {
@@ -401,6 +481,7 @@ one_stmt        : expr
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, ORIGIN, NILP, NILP);
                     $$->value.ival = curBankP->cur_pc = evalExpr($1);
+                    $$->exprP = $1;         // relayout holds the value and reads this
                 }
                 | NAME LOCATION
                 {
@@ -429,7 +510,7 @@ one_stmt        : expr
                     {
                         pendingLabelSymP = sym_make($1, 0);
                         pendingLabelSymP->flags |= SYMF_RESOLVED | SYM_GLOB;
-                        pendingLabelSymP->lineno = lineno - 1;
+                        pendingLabelSymP->lineno = labelTokenLine;
                         pendingLabelSymP->value = curBankP->cur_pc;
                         pendingLabelSymP->bank = curBank;
                         sym_add(&(curBankP->globalSymP), pendingLabelSymP);
@@ -455,6 +536,7 @@ one_stmt        : expr
                     // advance curBankP->cur_pc, and we need the label's starting
                     // address for both the symbol value and the node pc.
                     pendingLabelPC = curBankP->cur_pc;
+                    pendingLabelLine = labelTokenLine;
                 }
                 labelTrailer
                 {
@@ -473,7 +555,7 @@ one_stmt        : expr
                             $1->symP->value = pendingLabelPC;
                         }
 
-                        $1->lineno = lineno - 1;
+                        $1->lineno = pendingLabelLine;
                         $1->flags |= SYMF_RESOLVED;
                         $1->value = pendingLabelPC;
                         if( $4 && !($4->flags & PN_NOINC) )
@@ -484,29 +566,8 @@ one_stmt        : expr
                         $$->value.symP = $1;
                     }
                 }
-                | LCLNAME LOCATION
-                {
-                    // Capture curBankP->cur_pc before labelTrailer is parsed.
-                    pendingLabelPC = curBankP->cur_pc;
-                }
-                labelTrailer
-                {
-                SymNodeP symP;
-
-                    if( !(symP = addLocalSymbol($1)) )
-                    {
-                        verror("local symbol used, but not inside a local scope");
-                    }
-
-                    symP->flags = SYMF_RESOLVED | SYM_LOC;
-                    symP->value = pendingLabelPC;
-                    if( $4 && !($4->flags & PN_NOINC) )
-                    {
-                        ++curBankP->cur_pc;
-                    }
-                    $$ = newnode(lineno, pendingLabelPC, LCLLOCATION, NILP, $4);
-                    $$->value.symP = symP;
-                }
+                // A local label is always one declared by local/addlocal/private
+                // (or made by %%forcelocal), which arrives here as LCLADDR.
                 | LCLADDR LOCATION
                 {  
                     // Capture curBankP->cur_pc before labelTrailer is parsed.
@@ -538,7 +599,6 @@ one_stmt        : expr
                 }
                 | CONSTANTS
                 {
-                SymListP symlistP;
                 BankContextP ctxP;
                     // End this constant scope, if there is one, but include the node for listings
                     $$ = newnode(lineno+1, curBankP->cur_pc, CONSTANTS, NILP, NILP);
@@ -566,7 +626,7 @@ one_stmt        : expr
                 }
                 | TYPE340 T340STRING
                 {
-                    // Will aready have been converted in the lexer.
+                    // Will already have been converted in the lexer.
                     // We reuse the Flex struct because this is also a counted-length string.
                     $$ = newnode(lineno+1, curBankP->cur_pc, TYPE340, NILP, NILP);
                     $$->value.flexText = $2;
@@ -584,6 +644,7 @@ one_stmt        : expr
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, TABLE, NILP, NILP);
                     $$->value.ival = evalExpr($2);
+                    $$->exprP = $2;         // relayout holds the count and reads this
                     curBankP->cur_pc += $$->value.ival;
                     checkPCBound("Table", curBankP->cur_pc - 1, $$->lineNo);
                 }
@@ -591,12 +652,12 @@ one_stmt        : expr
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, TABLE, NILP, $4);
                     $$->value.ival = evalExpr($2);
+                    $$->exprP = $2;         // as above
                     curBankP->cur_pc += $$->value.ival;
                     checkPCBound("Table", curBankP->cur_pc - 1, $$->lineNo);
                 }
                 | EXPORT symList
                 {
-                SymNodeP symP;
                 PNodeP nodeP;
 
                     nodeP = $2->leftP;      // recover head link
@@ -804,7 +865,6 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                 }
                 | CONSTANT simple_expr endConst
                 {
-                int hash;
                 SymNodeP symP;
                 char *nameP;
 
@@ -847,7 +907,6 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                 }
                 | NAME bref
                 {
-                BankContextP bankP;
                 SymNodeP symP;
 
                     if( $2 != curBank )
@@ -900,13 +959,11 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                 }
                 | ADDR wildref
                 {
-                SymNodeP symP;
                 PNodeListP wildP;
 
                     if( $1->bank == curBank )
                     {
                         // This is a symbol in our own bank, resolve it now
-                        symP = $1;
                         $$ = newnode(lineno, curBankP->cur_pc, BREF, NILP, NILP);
                         $$->value.symP = $1;
                         $$->value2.ival = curBank;
@@ -953,21 +1010,6 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
 
                     $$->value.symP = symP;
                 }
-                | LCLNAME
-                {
-                SymNodeP symP;
-
-                    // a symbol we haven't seen yet, add to the local symtab
-                    if( !localContextP )
-                    {
-                        verror("local %s used outside a local scope", $1);
-                    }
-
-                    symP = addLocalSymbol($1);
-                    symP->flags = SYM_LOC;
-                    $$ = newnode(lineno, curBankP->cur_pc, LCLADDR, NILP, NILP);
-                    $$->value.symP = symP;
-                }
                 | LCLADDR
                 {
                     $$ = newnode(lineno, curBankP->cur_pc, LCLADDR, NILP, NILP);
@@ -994,7 +1036,7 @@ directive_expr  : FORCELOC
                 {
                     if( localDepth == 0 )
                     {
-                        verror("%%forcelocal without an opening local");
+                        verror("%%%%forcelocal without an opening local");    // prints %%forcelocal
                     }
 
                     localContextP->flags = CTX_FORCELOCAL;
@@ -1010,7 +1052,7 @@ directive_expr  : FORCELOC
 
                     // This can be a local, private, or an addlocal.
                     // If local, push any current local scope, establish a new one.
-                    // locaSymlPP can be null if there is no current scope.
+                    // localContextP can be null if there is no current scope.
                     // If addlocal, the scope must exist and the symbols are added to it
                     // If private, if a scope exists, add to it, otherwise establish a new one.
                     if( $2 )
@@ -1205,6 +1247,34 @@ symbol          : NAME
                 }
                 ;
 
+                /* The routine an 'inline' marking names.  The lexer returns NAME
+                   for a routine not yet defined and ADDR or LCLADDR for one that
+                   is; all three yield only the spelling, which optregion.c
+                   resolves against the call graph, so a marking may stand before
+                   or after its routine. */
+inline_name     : NAME
+                {
+                    $$ = $1;
+                }
+                | ADDR
+                {
+                    $$ = strdup($1->name);
+
+                    if( !$$ )
+                    {
+                        verror("out of memory recording an inline marking");
+                    }
+                }
+                | LCLADDR
+                {
+                    $$ = strdup($1->name);
+
+                    if( !$$ )
+                    {
+                        verror("out of memory recording an inline marking");
+                    }
+                }
+
 varnames        : var
                 {
                 PNodeListP varP;
@@ -1268,6 +1338,7 @@ varname         : NAME
                     symP->bank = curBank;
                     sym_add(&(curBankP->globalSymP), symP);
                     symP->flags = SYM_GLOB | SYMF_VAR;
+                    symP->lineno = nameTokenLine;
                     $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = symP;
                 }
@@ -1280,7 +1351,7 @@ varname         : NAME
 
                     $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = $1;
-                    $1->lineno = lineno - 1;
+                    $1->lineno = nameTokenLine;
                     $1->flags = SYM_GLOB | SYMF_VAR;
                 }
 %%
@@ -1381,7 +1452,7 @@ SymNodeP symP;
 
         if( (symP->flags & SYMF_VAR) && !(symP->flags & SYMF_RESOLVED) )
         {
-            symP->lineno = lineno - 1;
+            // The .sym line is the declaration's, recorded by varname.
             symP->flags |= SYMF_RESOLVED;
             symP->value = curBankP->cur_pc++;
             symP->bank = bank;
@@ -1411,7 +1482,6 @@ char typec;
 char *cP;
 FILE *infP;
 SymNodeP symP;
-BankContextP bankP;
 char str[256];
 char symbol[256];
 
@@ -1479,7 +1549,7 @@ char symbol[256];
 
         if( bank != lastBank )
         {
-            bankP = swapBanks(bank);
+            swapBanks(bank);
             lastBank = bank;
         }
 
@@ -1523,7 +1593,7 @@ resolveWildcards(PNodeListP listP, BankContextP banksP)
     }
 }
 
-// We search the banks backwards because the banks are listed in reverse order of firs use.
+// We search the banks backwards because the banks are listed in reverse order of first use.
 // Returns true if found, else false.
 bool
 resolveWildcard(PNodeListP itemP, BankContextP bankP)
@@ -1540,7 +1610,7 @@ SymNodeP symP;
 
     if( (symP = sym_find(&(bankP->globalSymP), itemP->nodeP->value.strP)) )
     {
-        if( !(symP->flags | SYMF_RESOLVED) )
+        if( !(symP->flags & SYMF_RESOLVED) )
         {
             verror("wildcarded symbol '%s' in bank %d was never resolved", symP->name, bankP->bank);
         }
@@ -1670,6 +1740,381 @@ int
 yywrap()                /* tell lex to clean up */
 {
     return(1);
+}
+
+// The optimize/endoptimize region directive.  A region declares its code
+// unmodified at run time, with no address taken and no timing requirement.  The
+// directives emit no word, reserve no memory and move no pc; their nodes are for
+// the optimizer.  A nested region, a close with none open and a region crossing
+// a file boundary are refused here, one left open by checkOptRegionClosed().
+
+// Open a region at the 'optimize' the lexer has just scanned; regions are flat,
+// so one inside another is refused.
+// Returns the new OPTIMIZE node, carrying the file in value.strP.
+PNodeP
+openOptRegion(void)
+{
+PNodeP nodeP;
+
+    if( optRegionOpenLine )
+    {
+        verror("%%%%optimize at line %d is inside the region opened at line %d in file %s; regions do not nest",
+            optRegionTokenLine, optRegionOpenLine, optRegionOpenFileP);
+    }
+
+    optRegionOpenLine = optRegionTokenLine;
+    optRegionOpenFileP = strdup(optRegionTokenFileP);
+
+    if( !optRegionOpenFileP )
+    {
+        verror("out of memory recording an optimize region");
+    }
+
+    // newnode() stores one less than the line it is given, for rules that have
+    // already taken their terminator as lookahead; this one has not.
+    nodeP = newnode(optRegionTokenLine + 1, curBankP->cur_pc, OPTIMIZE, NILP, NILP);
+    nodeP->value.strP = strdup(optRegionTokenFileP);
+    nodeP->flags |= PN_NOINC;
+
+    if( !nodeP->value.strP )
+    {
+        verror("out of memory recording an optimize region");
+    }
+
+    return(nodeP);
+}
+
+// Close the open region at the 'endoptimize' just scanned.  One with no region
+// open, or opened in another file (an include expands wherever it is used), is
+// refused.  Returns the ENDOPTIMIZE node, the opening line in value2.
+PNodeP
+closeOptRegion(void)
+{
+PNodeP nodeP;
+
+    if( !optRegionOpenLine )
+    {
+        verror("%%%%endoptimize at line %d with no optimize region open",
+            optRegionTokenLine);
+    }
+
+    if( strcmp(optRegionOpenFileP, optRegionTokenFileP) )
+    {
+        verror("%%%%endoptimize at line %d is in file %s and the region it closes was opened at line %d in file %s; a region may not cross a file boundary",
+            optRegionTokenLine, optRegionTokenFileP, optRegionOpenLine, optRegionOpenFileP);
+    }
+
+    nodeP = newnode(optRegionTokenLine + 1, curBankP->cur_pc, ENDOPTIMIZE, NILP, NILP);
+    nodeP->value.strP = strdup(optRegionTokenFileP);
+    nodeP->value2.ival = optRegionOpenLine;
+    nodeP->flags |= PN_NOINC;
+
+    if( !nodeP->value.strP )
+    {
+        verror("out of memory recording an optimize region");
+    }
+
+    free(optRegionOpenFileP);
+    optRegionOpenFileP = NILP;
+    optRegionOpenLine = 0;
+    return(nodeP);
+}
+
+// Refuse an optimize region, nooptimize span or speed region still open at the
+// end of the source; called from the 'program' rule.
+void
+checkOptRegionClosed(void)
+{
+    if( optRegionOpenLine )
+    {
+        verror("the optimize region opened at line %d in file %s was never closed",
+            optRegionOpenLine, optRegionOpenFileP);
+    }
+
+    // A hands-off span left open errs in the safe direction, but the span the
+    // author wrote is still not the span meant.
+    if( handsOffOpenLine )
+    {
+        verror("the nooptimize span opened at line %d in file %s was never closed",
+            handsOffOpenLine, handsOffOpenFileP);
+    }
+
+    // A speed region left open offers the rest of the file to rewrites that
+    // change lengths.
+    if( speedOpenLine )
+    {
+        verror("the speed region opened at line %d in file %s was never closed",
+            speedOpenLine, speedOpenFileP);
+    }
+}
+
+// The speed/endspeed region and the 'inline NAME' marking: the only places a
+// length-changing rewrite may happen; -O2's guess never licenses one.  A speed
+// region is its own span, not a modifier on an optimize region.  An 'inline'
+// marking names one routine to inline at every call, over the inline cap and
+// budget.  The nodes are OPTIMIZE and ENDOPTIMIZE carrying PN_SPEED or
+// PN_INLINE.
+
+// Open a speed region at the 'speed' just scanned; speed regions do not nest,
+// but one may open inside an optimize region or a nooptimize span, or hold one.
+// Returns the new node.
+PNodeP
+openSpeedRegion(void)
+{
+PNodeP nodeP;
+
+    if( speedOpenLine )
+    {
+        verror("%%%%speed at line %d is inside the speed region opened at line %d in file %s; speed regions do not nest",
+            optRegionTokenLine, speedOpenLine, speedOpenFileP);
+    }
+
+    speedOpenLine = optRegionTokenLine;
+    speedOpenFileP = strdup(optRegionTokenFileP);
+
+    if( !speedOpenFileP )
+    {
+        verror("out of memory recording a speed region");
+    }
+
+    // One higher, as openOptRegion() explains.
+    nodeP = newnode(optRegionTokenLine + 1, curBankP->cur_pc, OPTIMIZE, NILP, NILP);
+    nodeP->value.strP = strdup(optRegionTokenFileP);
+    nodeP->flags |= (PN_NOINC | PN_SPEED);
+
+    if( !nodeP->value.strP )
+    {
+        verror("out of memory recording a speed region");
+    }
+
+    return(nodeP);
+}
+
+// Close the open speed region at the 'endspeed' just scanned; one with none
+// open, or opened in another file, is refused, as for a region.
+// Returns the new node, with the line the region opened at in value2.
+PNodeP
+closeSpeedRegion(void)
+{
+PNodeP nodeP;
+
+    if( !speedOpenLine )
+    {
+        verror("%%%%endspeed at line %d with no speed region open",
+            optRegionTokenLine);
+    }
+
+    if( strcmp(speedOpenFileP, optRegionTokenFileP) )
+    {
+        verror("%%%%endspeed at line %d is in file %s and the speed region it closes was opened at line %d in file %s; a speed region may not cross a file boundary",
+            optRegionTokenLine, optRegionTokenFileP, speedOpenLine, speedOpenFileP);
+    }
+
+    nodeP = newnode(optRegionTokenLine + 1, curBankP->cur_pc, ENDOPTIMIZE, NILP, NILP);
+    nodeP->value.strP = strdup(optRegionTokenFileP);
+    nodeP->value2.ival = speedOpenLine;
+    nodeP->flags |= (PN_NOINC | PN_SPEED);
+
+    if( !nodeP->value.strP )
+    {
+        verror("out of memory recording a speed region");
+    }
+
+    free(speedOpenFileP);
+    speedOpenFileP = NILP;
+    speedOpenLine = 0;
+    return(nodeP);
+}
+
+// Record an 'inline NAME' marking; nameP is a copy the node takes over.  It is
+// not looked up here: optregion.c resolves it and reports one naming no routine.
+// Returns the new node, the file in value.strP and the name in value2.strP.
+PNodeP
+markInline(char *nameP)
+{
+PNodeP nodeP;
+
+    // One higher, as openOptRegion() explains.
+    nodeP = newnode(optRegionTokenLine + 1, curBankP->cur_pc, OPTIMIZE, NILP, NILP);
+    nodeP->value.strP = strdup(optRegionTokenFileP);
+    nodeP->value2.strP = nameP;
+    nodeP->flags |= (PN_NOINC | PN_INLINE);
+
+    if( !nodeP->value.strP || !nameP )
+    {
+        verror("out of memory recording an inline marking");
+    }
+
+    return(nodeP);
+}
+
+// The '%%ceiling EXPR' directive: the first word of the current bank that a
+// length-changing rewrite may not grow into, for memory the program fills only
+// at run time.  EXPR is evaluated here, so it may use only what is already
+// defined: a forward reference cannot be told from a mistake, and the value
+// must not depend on the layout it limits.  Whether the assembled program
+// already reaches it is the optimizer's check, under -O only.
+
+// The name of the first symbol in an expression whose value is not yet known,
+// or of a constant, whose address is not known until the pools are placed.
+// Returns the name, "a constant", or NILP when every leaf is known.
+static const char *
+ceilingUnknown(PNodeP nodeP)
+{
+const char *nameP;
+
+    for( ; nodeP; nodeP = nodeP->rightP )
+    {
+        switch( nodeP->type )
+        {
+        case ADDR:
+        case LCLADDR:
+        case BREF:
+            if( !(nodeP->value.symP->flags & SYMF_RESOLVED) )
+            {
+                return(nodeP->value.symP->name);
+            }
+            break;
+
+        case WILDREF:
+            return(nodeP->value.strP);
+
+        case CONSTANT:
+            return("a constant");
+
+        default:
+            break;
+        }
+
+        if( (nameP = ceilingUnknown(nodeP->leftP)) )
+        {
+            return(nameP);
+        }
+    }
+
+    return(NILP);
+}
+
+// Record a '%%ceiling EXPR' for the current bank, reduced to the bank (0166000
+// is 06000 in bank 14); undefined names, 0 and values above the default are
+// refused.  Returns the node, the ceiling in value2.ival and the bank in bank.
+PNodeP
+markCeiling(PNodeP exprP)
+{
+PNodeP nodeP;
+const char *nameP;
+int value;
+
+    if( (nameP = ceilingUnknown(exprP)) )
+    {
+        verror("%%%%ceiling at line %d names %s, which has no value yet; a ceiling may use only what is already defined",
+            optRegionTokenLine, nameP);
+    }
+
+    value = (evalExpr(exprP) & ADDRMASK);
+
+    if( value == 0 )
+    {
+        verror("%%%%ceiling at line %d is 0 in bank %d; it names the first word no rewrite may reach, so 0 would forbid the whole bank",
+            optRegionTokenLine, curBank);
+    }
+
+    if( (curBank == 0) && (value > 07751) )
+    {
+        verror("%%%%ceiling at line %d is %04o in bank 0, above the default of 07751 (the read-in loader's first word); a ceiling may only lower it",
+            optRegionTokenLine, value);
+    }
+
+    // One higher, as openOptRegion() explains.
+    nodeP = newnode(optRegionTokenLine + 1, curBankP->cur_pc, OPTIMIZE, NILP, NILP);
+    nodeP->value.strP = strdup(optRegionTokenFileP);
+    nodeP->value2.ival = value;
+    nodeP->bank = curBank;
+    nodeP->flags |= (PN_NOINC | PN_CEILING);
+
+    if( !nodeP->value.strP )
+    {
+        verror("out of memory recording a ceiling");
+    }
+
+    return(nodeP);
+}
+
+// The nooptimize/endnooptimize hands-off span: code no optimization level may
+// rewrite, whatever the analysis or -O2's guess says.  The same errors as a
+// region; the nodes are OPTIMIZE and ENDOPTIMIZE carrying PN_HANDSOFF.
+
+// Open a span at the 'nooptimize' the lexer has just scanned.  Refuses a
+// second one while a span is open.  A span may open inside a region.
+// Returns the new node; does not return if the span nests.
+PNodeP
+openHandsOff(void)
+{
+PNodeP nodeP;
+
+    if( handsOffOpenLine )
+    {
+        verror("%%%%nooptimize at line %d is inside the span opened at line %d in file %s; spans do not nest",
+            optRegionTokenLine, handsOffOpenLine, handsOffOpenFileP);
+    }
+
+    handsOffOpenLine = optRegionTokenLine;
+    handsOffOpenFileP = strdup(optRegionTokenFileP);
+
+    if( !handsOffOpenFileP )
+    {
+        verror("out of memory recording a nooptimize span");
+    }
+
+    // One higher, as openOptRegion() explains.
+    nodeP = newnode(optRegionTokenLine + 1, curBankP->cur_pc, OPTIMIZE, NILP, NILP);
+    nodeP->value.strP = strdup(optRegionTokenFileP);
+    nodeP->flags |= (PN_NOINC | PN_HANDSOFF);
+
+    if( !nodeP->value.strP )
+    {
+        verror("out of memory recording a nooptimize span");
+    }
+
+    return(nodeP);
+}
+
+// Close the open span at the 'endnooptimize' the lexer has just scanned.
+// Refuses one with no span open, and one that closes a span opened in another
+// file.
+// Returns the new node, with the line the span opened at in value2; does not
+// return on either error.
+PNodeP
+closeHandsOff(void)
+{
+PNodeP nodeP;
+
+    if( !handsOffOpenLine )
+    {
+        verror("%%%%endnooptimize at line %d with no nooptimize span open",
+            optRegionTokenLine);
+    }
+
+    if( strcmp(handsOffOpenFileP, optRegionTokenFileP) )
+    {
+        verror("%%%%endnooptimize at line %d is in file %s and the span it closes was opened at line %d in file %s; a span may not cross a file boundary",
+            optRegionTokenLine, optRegionTokenFileP, handsOffOpenLine, handsOffOpenFileP);
+    }
+
+    nodeP = newnode(optRegionTokenLine + 1, curBankP->cur_pc, ENDOPTIMIZE, NILP, NILP);
+    nodeP->value.strP = strdup(optRegionTokenFileP);
+    nodeP->value2.ival = handsOffOpenLine;
+    nodeP->flags |= (PN_NOINC | PN_HANDSOFF);
+
+    if( !nodeP->value.strP )
+    {
+        verror("out of memory recording a nooptimize span");
+    }
+
+    free(handsOffOpenFileP);
+    handsOffOpenFileP = NILP;
+    handsOffOpenLine = 0;
+    return(nodeP);
 }
 
 void

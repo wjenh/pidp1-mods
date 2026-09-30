@@ -126,7 +126,7 @@ skipText,
 // channel for an argument across a jsp call: jsp overwrites AC with the return address before
 // the callee's first instruction runs, so anything the caller left in AC is gone by the time
 // this code can look at it. IO survives untouched, which is why it's used here instead -- see
-// Claude/skill-updates/examples-additions.md's "Gotcha: jsp vs jda" note.
+// the am1 skill's examples.md, "jsp vs jda -- and arguments travel in IO".
 // IO in: digit (0-9, binary). IO out: the flex code. AC is clobbered, not preserved.
 digitToFlex,
     local rtn

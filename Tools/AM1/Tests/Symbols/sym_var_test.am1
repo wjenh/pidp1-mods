@@ -1,0 +1,25 @@
+SYM VARS
+// Tests/Symbols.  EVERY SHAPE A var NAME COMES IN.  Its line in the .sym is
+// the line its declaration names it on, not the line am1 has reached
+// when it PLACES the var, at a variables line or at the end of the
+// program, which gives every var placed together one number.  The lines
+// are in sym_var_test.expected: do not insert or delete a line above a
+// declaration without re-reading it.
+100/
+begin,  lac fwdvar
+        dac alone
+        hlt
+        var alone
+        var withcomment         // a trailing comment
+        var pairone, pairtwo
+        var initd=7
+/* a C-style comment
+   block before a declaration */
+        var afterblock
+        var fwdvar
+#include "sym_var_part.ah"
+        var afterinc
+        variables
+        var atend
+last,   0
+        start begin

@@ -27,16 +27,20 @@
 // 32-126 is ASCII (S3.8), so no translation is needed.
 //
 // Abbreviation expansion does not recurse. The Z-character stream state
-// (zdsAddr, zdsCurWord, zdsCharPos, zdsWordEndBit, zdsStreamDone,
-// zdsCurAlpha) is saved to the zdsSaved* words, pointed at the
-// abbreviation, and restored when the abbreviation ends; the same loop
-// then resumes. zdsInAbbrev marks that an abbreviation is being expanded.
-// A nested abbreviation (illegal, S3.3.1) is dropped.
+// (zdsAddr, zdsCurWord, zdsCharPos, zdsWordEndBit, zdsCurAlpha) is saved
+// to the zdsSaved* words, pointed at the abbreviation, and restored when
+// the abbreviation ends; the same loop then resumes. zdsInAbbrev marks
+// that an abbreviation is being expanded. A nested abbreviation (illegal,
+// S3.3.1) is dropped.
 //
-// zdsNextChar reports zdsStreamDone both at the end of the string and in
-// the middle of a multi-Z-character construction. S3.6.1 says an
-// incomplete trailing construction is discarded, so no separate case is
-// needed.
+// zdsNextChar reports the end of the string the same way whether it comes
+// between constructions or in the middle of a multi-Z-character one.
+// S3.6.1 says an incomplete trailing construction is discarded, so no
+// separate case is needed.
+//
+// 28-Sep-2026 wje/Claude Z-characters decoded by one lookup in 32-word
+// alphabet rows; zdsNextChar rotates each Z-character out of the word;
+// zPrintChar tests 32-126 first
 
 #ifndef ZTEXT_AC_H
 #define ZTEXT_AC_H
@@ -53,222 +57,94 @@
 #define ZSTOP_BADTEXT 0d15     // an abbreviation inside an abbreviation (S3.3.1)
 #include "zobjects.ac"
 
-// zDecodeChar's action codes (side output zdcAction, see below).
-#define ZDC_PRINT  0
-#define ZDC_SHIFT  1
-#define ZDC_ABBREV 2
-#define ZDC_ESCAPE 3
-
-// ========================================================================
-// Alphabet tables (S3.5.3, the default table; story-specific tables,
-// S3.5.5, are not supported). Each is 26 words, indexed by Z-char - 6.
-// A2's index 0 (Z-char 6) is the ZSCII-escape lead, which zDecodeChar
-// intercepts; its entry is a placeholder 0.
-// ========================================================================
+// The alphabet tables (S3.5.3, the default table; story-specific tables,
+// S3.5.5, are not supported).
+//
+// zdRows is three rows of 32 words, A0, A1 and A2, each indexed by the
+// Z-character, so decoding one is a single lookup: zDecodeString adds the
+// Z-character and the row's offset (zdsCurAlpha: 0, ZD_ROW_A1 or
+// ZD_ROW_A2) to zdRows and reads the word. A word above 0 is the ZSCII
+// code to print. The rest are the specials, told apart by zdsSpecial:
+//   0           Z-char 6 in A2, the ZSCII escape's lead (S3.4)
+//   -1 to -3    Z-chars 1-3, an abbreviation (S3.3): the complement is z
+//   -ZD_ROW_A1  Z-char 4, A1 for the next Z-character only: the
+//               complement is A1's row offset
+//   -ZD_ROW_A2  Z-char 5, the same for A2
+// Z-char 0 is a space in every alphabet (S3.5.1), so a row's first six
+// words are the same in all three.
+//
+// zAlphaA0 and zAlphaA2 label Z-chars 6-31 of their rows, 26 words indexed
+// by Z-char - 6, for the encoder's zetFindInRow; zAlphaA1 is labeled to
+// match. The escape lead's 0 is also the encoder's: a 0 byte matches it
+// and encodes as "5 6" (zEncodeText).
+#define ZD_ROW_A1 040
+#define ZD_ROW_A2 0100
+zdRows,
+    0d32; -1; -2; -3; -ZD_ROW_A1; -ZD_ROW_A2   // A0: Z-chars 0-5
 zAlphaA0,
     'a'; 'b'; 'c'; 'd'; 'e'; 'f'; 'g'; 'h'; 'i'; 'j'; 'k'; 'l'; 'm'
     'n'; 'o'; 'p'; 'q'; 'r'; 's'; 't'; 'u'; 'v'; 'w'; 'x'; 'y'; 'z'
 
+    0d32; -1; -2; -3; -ZD_ROW_A1; -ZD_ROW_A2   // A1: Z-chars 0-5
 zAlphaA1,
     'A'; 'B'; 'C'; 'D'; 'E'; 'F'; 'G'; 'H'; 'I'; 'J'; 'K'; 'L'; 'M'
     'N'; 'O'; 'P'; 'Q'; 'R'; 'S'; 'T'; 'U'; 'V'; 'W'; 'X'; 'Y'; 'Z'
 
+    0d32; -1; -2; -3; -ZD_ROW_A1; -ZD_ROW_A2   // A2: Z-chars 0-5
 zAlphaA2,
-    0                   // Z-char 6 -- escape lead, unused placeholder
-    0d13                // Z-char 7 -- newline (ZSCII 13)
+    0                   // Z-char 6: the escape lead
+    0d13                // Z-char 7: newline (ZSCII 13)
     '0'; '1'; '2'; '3'; '4'; '5'; '6'; '7'; '8'; '9'
     '.'; '\054'; '!'; '?'; '\137'; '#'; '\047'; '\042'; '/'; '\134'; '-'; ':'; '('; ')'
 
-// ========================================================================
-// zDecodeChar -- classify one Z-character (S3.2.3, S3.5).
-// On call AC has the current alphabet (0-2) and IO the Z-character (0-31).
-// Returns in AC a value whose meaning depends on zdcAction:
-//   PRINT  -- the ZSCII code to print;
-//   SHIFT  -- the alphabet (1 or 2) for the next Z-character only;
-//   ABBREV -- the Z-character (1-3), for the caller to combine with the
-//             next one into 32*(z-1)+x;
-//   ESCAPE -- nothing; the caller reads the next two Z-characters (S3.4).
-// The alphabet matters only for Z-characters 6-31.
-// Called via jda, same bank only.
-// ========================================================================
-zDecodeChar, 0
-    local rtn, curAlpha, zc, rowIdx, ptr
-    dap rtn
-    lem                        // `lac i ptr` below is a bare in-bank pointer,
-                               //   and a caller may arrive with eem on
-    lac zDecodeChar
-    dac curAlpha
-    lai
-    dac zc
-
-    lac zc
-    SKIP_NEXT_IF_SAME [0]          // sas: skip (fallthrough) if zc == 0
-    jmp zdcTest1                     // no-skip: zc != 0
-    lac [ZDC_PRINT]
-    dac zdcAction
-    lac [0d32]                       // Z-char 0 -> space (S3.5.1)
-    jmp rtn
-
-zdcTest1,
-    lac zc
-    SKIP_NEXT_IF_SAME [1]
-    jmp zdcTest2
-    jmp zdcAbbrev
-zdcTest2,
-    lac zc
-    SKIP_NEXT_IF_SAME [2]
-    jmp zdcTest3
-    jmp zdcAbbrev
-zdcTest3,
-    lac zc
-    SKIP_NEXT_IF_SAME [3]
-    jmp zdcTest4
-    jmp zdcAbbrev
-
-zdcAbbrev,
-    lac [ZDC_ABBREV]
-    dac zdcAction
-    lac zc
-    jmp rtn
-
-zdcTest4,
-    lac zc
-    SKIP_NEXT_IF_SAME [4]
-    jmp zdcTest5
-    lac [ZDC_SHIFT]
-    dac zdcAction
-    lac [1]                          // Z-char 4 -> shift to A1 for one char
-    jmp rtn
-
-zdcTest5,
-    lac zc
-    SKIP_NEXT_IF_SAME [5]
-    jmp zdcTable
-    lac [ZDC_SHIFT]
-    dac zdcAction
-    lac [2]                          // Z-char 5 -> shift to A2 for one char
-    jmp rtn
-
-// zc is 6-31: table lookup.
-zdcTable,
-    lac zc
-    sub [6]
-    dac rowIdx                        // rowIdx = zc-6, 0-25 (zc >= 6 here)
-
-    lac curAlpha
-    SKIP_NEXT_IF_SAME [2]
-    jmp zdcPickRow                     // no-skip: curAlpha != 2
-    lac rowIdx
-    SKIP_NEXT_IF_SAME [0]             // sas: skip (fallthrough) if idx==0
-    jmp zdcPickRow                     // no-skip: curAlpha==2, idx!=0 -- real A2 entry
-    lac [ZDC_ESCAPE]                     // curAlpha==2, idx==0 -- Z-char 6 from A2
-    dac zdcAction
-    cla
-    jmp rtn
-
-zdcPickRow,
-    lac curAlpha
-    SKIP_NEXT_IF_SAME [0]
-    jmp zdcNotA0
-    lac [zAlphaA0]
-    jmp zdcRowChosen
-zdcNotA0,
-    lac curAlpha
-    SKIP_NEXT_IF_SAME [1]
-    jmp zdcA2Row
-    lac [zAlphaA1]
-    jmp zdcRowChosen
-zdcA2Row,
-    lac [zAlphaA2]
-zdcRowChosen,
-    add rowIdx
-    dac ptr
-    lac [ZDC_PRINT]
-    dac zdcAction
-    lac i ptr
-    jmp rtn
-
-rtn, jmp 0
-curAlpha, 0
-zc, 0
-rowIdx, 0
-ptr, 0
-    endlocal
-
-zdcAction, 0
-
-// ========================================================================
-// zdsNextChar -- advance the Z-character stream (the zds* words below)
-// by one Z-character.
-// Returns the Z-character (0-31) in AC, valid only if zdsStreamDone is
-// still 0.
-// Called via jsp, same bank only.
-// ========================================================================
+// Advances the Z-character stream (the zds* words below) by one
+// Z-character.
+// Exit:  AC = the Z-character (0-31), or -1 at the end of the string.
+// AC is the result, IO is clobbered. Called via jsp, same bank only; a
+// call that fetches a word returns with the window open, any other leaves
+// it as it was.
+// zdsCurWord holds the word rotated so that its next Z-character is in
+// bits 0-4. `ral 3s` at the fetch puts Z-char 0 there, and the end bit
+// (bit 15 of the Z-word) in bit 17; each call then rotates bits 0-4 out
+// of IO into a clear AC. The end bit's copy moves up five bits a call, so
+// in three calls it never reaches bits 0-4.
 zdsNextChar,
-    local rtn, cp, resultVal
+    local rtn
     dap rtn
 
     lac zdsCharPos
-    SKIP_NEXT_IF_SAME [3]           // sas: skip (fallthrough) if charPos==3
-    jmp zncExtract                    // no-skip: charPos != 3 -- current word still has chars
+    SKIP_NEXT_IF_SAME [3]
+    jmp zncExtract                    // the current word still has characters
 
     lac zdsWordEndBit
-    SKIP_NEXT_IF_AC_ZERO            // sza: skip (fallthrough) if wordEndBit==0 (more words follow)
-    jmp zncDone                       // no-skip: wordEndBit != 0 -- stream exhausted
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zncDone                       // the end bit was set: the stream is done
 
     lac zdsAddr
     lia
     farjsp(zFetchWord:0)                    // AC = the fetched Z-word (0-65535)
+    ral 3s                            // Z-char 0 to bits 0-4, the end bit to 17
     dac zdsCurWord
+    and [1]                           // S3.2's end bit
+    dac zdsWordEndBit
     lac zdsAddr
     add [2]
     dac zdsAddr
-    lac zdsCurWord
-    and [0100000                      // S3.2's end bit
-    dac zdsWordEndBit
-    cla
-    dac zdsCharPos
+    dzm zdsCharPos
 
 zncExtract,
-    lac zdsCharPos
-    dac cp
-    idx zdsCharPos                     // advance position for the NEXT call
-
-    lac cp
-    SKIP_NEXT_IF_SAME [0]
-    jmp zneTest1
-    lac zdsCurWord                      // char 0 = bits 14-10 (word >> 10) & 037
-    sar 5s
-    sar 5s
-    and [037
-    dac resultVal
-    jmp zncReturn
-zneTest1,
-    lac cp
-    SKIP_NEXT_IF_SAME [1]
-    jmp zneChar2
-    lac zdsCurWord                      // char 1 = bits 9-5 (word >> 5) & 037
-    sar 5s
-    and [037
-    dac resultVal
-    jmp zncReturn
-zneChar2,
-    lac zdsCurWord                      // char 2 = bits 4-0, word & 037
-    and [037
-    dac resultVal
-
-zncReturn,
-    lac resultVal
+    idx zdsCharPos                     // the position for the next call
+    cla
+    lio zdsCurWord
+    rcl 5s                             // AC = the Z-character from bits 0-4
+    dio zdsCurWord
     jmp rtn
 
 zncDone,
-    lac [1]
-    dac zdsStreamDone
+    lac [-1]
     jmp rtn
 
 rtn, jmp 0
-cp, 0
-resultVal, 0
     endlocal
 
 // The Z-character stream state, and the outer string's copy saved while an
@@ -277,15 +153,13 @@ zdsAddr, 0
 zdsCurWord, 0
 zdsCharPos, 0
 zdsWordEndBit, 0
-zdsStreamDone, 0
-zdsCurAlpha, 0
+zdsCurAlpha, 0                     // the row offset: 0, ZD_ROW_A1 or ZD_ROW_A2
 zdsInAbbrev, 0
 zdsSavedAddr, 0
 zdsSavedCurWord, 0
 zdsSavedCharPos, 0
 zdsSavedWordEndBit, 0
 zdsSavedCurAlpha, 0
-zdsSavedStreamDone, 0
 
 // Test-harness degrade counter, as zobjects.ac's zoDg*: bumped at the
 // site, never read by the interpreter.
@@ -293,14 +167,13 @@ zdsSavedStreamDone, 0
 ztDgNestedAbbrev, 0                // an abbreviation inside one, dropped
 #endif
 
-// ========================================================================
-// zDecodeString -- decode and print a Z-encoded string through
-// zPrintChar, expanding abbreviations (S3.3) and ZSCII escapes (S3.4).
-// On call IO has the string's byte address, anywhere in the story.
-// Called via jsp, nothing is returned.
-// ========================================================================
+// Decodes and prints a Z-encoded string through zPrintChar, expanding
+// abbreviations (S3.3) and ZSCII escapes (S3.4).
+// Entry: IO = the string's byte address, anywhere in the story.
+// No result. AC and IO are clobbered. Called via jsp; returns with the
+// window open.
 zDecodeString,
-    local rtn, action, data, x, hi, lo, abbrevIndex, abbrevWordAddr
+    local rtn, data, x, hi, lo, abbrevIndex, abbrevWordAddr, ptr
     farenter(rtn)
 
     lai
@@ -309,58 +182,52 @@ zDecodeString,
     dac zdsCharPos
     cla
     dac zdsWordEndBit
-    dac zdsStreamDone
     dac zdsCurAlpha
     dac zdsInAbbrev
 
+// A Z-character to print, the common case, runs straight down to the
+// `jmp zdsLoop`.
 zdsLoop,
     jsp zdsNextChar
-    dac data
-    lac zdsStreamDone
-    SKIP_NEXT_IF_AC_ZERO           // sza: skip (fallthrough) if streamDone==0 -- char is valid
-    jmp zdsAtEnd                      // no-skip: streamDone != 0 -- nothing more
-
-    lac zdsCurAlpha
-    lio data
-    jda zDecodeChar
-    dac data
-    lac zdcAction
-    dac action
-
-    lac action
-    SKIP_NEXT_IF_SAME [ZDC_PRINT]
-    jmp zdsCheckShift
-    lio data
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zdsAtEnd                          // -1: the end of the string
+    add zdsCurAlpha
+    add [zdRows]
+    dac ptr
+    lem                                // `lac i ptr` is a bare in-bank pointer, and
+                                       //   zdsNextChar and zPrintChar can return
+                                       //   with eem on
+    lac i ptr
+    sma sza i                          // skip on a ZSCII code, above 0
+    jmp zdsSpecial                        // 0 or negative: a special (zdRows)
+    lia
     jsp zPrintChar
-    cla
-    dac zdsCurAlpha                   // shift-for-one allowance used up (no-op if already A0)
+    dzm zdsCurAlpha                    // a shift's one character is used up
     jmp zdsLoop
 
-zdsCheckShift,
-    lac action
-    SKIP_NEXT_IF_SAME [ZDC_SHIFT]
-    jmp zdsCheckAbbrev
-    lac data
-    dac zdsCurAlpha                    // applies to exactly the next char -- do not reset here
-    jmp zdsLoop
-
-zdsCheckAbbrev,
-    lac action
-    SKIP_NEXT_IF_SAME [ZDC_ABBREV]
-    jmp zdsEscape                       // only 4 action codes exist -- must be ESCAPE
+// A special from zdRows, in AC: 0 is the escape; otherwise the complement
+// is 1-3, an abbreviation's Z-character, or a shift's row offset.
+zdsSpecial,
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zdsEscape                         // 0: the escape lead
+    cma
+    dac data
+    sub [4]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zdsShift                          // ZD_ROW_A1 or ZD_ROW_A2: a shift
 
     jsp zdsNextChar
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zdsAtEnd                          // ran out mid-construction: S3.6.1,
+                                          //   discard and stop
     dac x
-    lac zdsStreamDone
-    SKIP_NEXT_IF_AC_ZERO
-    jmp zdsAtEnd                         // ran out mid-construction -- S3.6.1, discard & stop
 
     // An abbreviation inside an abbreviation (forbidden, S3.3.1) is
     // dropped: its index Z-character has been read, so it prints nothing
     // and decoding goes on in the outer abbreviation.
     lac zdsInAbbrev
-    SKIP_NEXT_IF_AC_ZERO                 // sza: skip (fallthrough) if not inside one
-    jmp zdsNested                        // no-skip: already inside an abbreviation
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zdsNested                        // already inside an abbreviation
 
     lac data
     sub [1]
@@ -386,8 +253,6 @@ zdsCheckAbbrev,
     dac zdsSavedWordEndBit
     lac zdsCurAlpha
     dac zdsSavedCurAlpha
-    lac zdsStreamDone
-    dac zdsSavedStreamDone
 
     lac abbrevWordAddr
     dac zdsAddr
@@ -400,33 +265,36 @@ zdsCheckAbbrev,
     dac zdsInAbbrev
     jmp zdsLoop
 
+zdsShift,
+    lac data
+    dac zdsCurAlpha                    // applies to exactly the next character,
+                                       //   so it is not reset here
+    jmp zdsLoop
+
 zdsEscape,
     jsp zdsNextChar
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zdsAtEnd                          // ran out mid-construction
     dac hi
-    lac zdsStreamDone
-    SKIP_NEXT_IF_AC_ZERO
-    jmp zdsAtEnd
 
     jsp zdsNextChar
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zdsAtEnd                          // ran out mid-construction
     dac lo
-    lac zdsStreamDone
-    SKIP_NEXT_IF_AC_ZERO
-    jmp zdsAtEnd
 
     lac hi
     sal 5s
     add lo
     lia
     jsp zPrintChar
-    cla
-    dac zdsCurAlpha
+    dzm zdsCurAlpha
     jmp zdsLoop
 
 zdsAtEnd,
     lac zdsInAbbrev
     SKIP_NEXT_IF_AC_ZERO
-    jmp zdsResumeOuter                   // no-skip: an abbreviation ended -- restore & resume
-    farrtn(rtn)                             // genuinely done
+    jmp zdsResumeOuter                   // an abbreviation ended: restore, resume
+    farrtn(rtn)                             // the string itself ended
 
 zdsResumeOuter,
     lac zdsSavedAddr
@@ -439,30 +307,27 @@ zdsResumeOuter,
     dac zdsWordEndBit
     lac zdsSavedCurAlpha
     dac zdsCurAlpha
-    lac zdsSavedStreamDone
-    dac zdsStreamDone
     cla
     dac zdsInAbbrev
     jmp zdsLoop
 
-zdsNested,                               // see zdsCheckAbbrev
+zdsNested,                               // see zdsSpecial
 #if Z_TEST_HARNESS
     idx ztDgNestedAbbrev                 // the nested-abbreviation degrade ran
 #endif
     jmp zdsLoop
 
 rtn, 0
-action, 0
 data, 0
 x, 0
 hi, 0
 lo, 0
 abbrevIndex, 0
 abbrevWordAddr, 0
+ptr, 0
     endlocal
 
-// ========================================================================
-// OUTPUT STREAMS (S7.1.2.2).
+// The output streams (S7.1.2.2).
 //
 // The stream state lives in this bank because zpcSend reads it for every
 // character; bank 0's output_stream handler (zprint.ac's zdhOutputStream)
@@ -473,7 +338,7 @@ abbrevWordAddr, 0
 // Stream 3 nests up to sixteen tables (S7.1.2.2.1): two parallel
 // sixteen-word arrays, indexed by adding the depth to the first word's
 // address, so each must stay consecutive.
-// ========================================================================
+
 // Nonzero once a character has gone to the screen since a timed read
 // paused for its interrupt routine. zReadLine clears it at the pause, and
 // if it is set when the line continues, the line so far is redrawn (S15).
@@ -522,7 +387,7 @@ zwCols, 0d80
 zwPtr, 0                                 // zpcSend's pointer into zwBuf
 zwBuf,
     table ZW_BUF
-zosScreen, 1                   // stream 1, the screen -- selected at reset
+zosScreen, 1                   // stream 1, the screen: selected at reset
 zosTrans, 0                     // stream 2, the transcript
 zosCmd, 0                       // stream 4, the command script. A flag only:
                                 //   stream 4 records the player's input, so
@@ -566,13 +431,12 @@ zosTabCount, 0
     0
     0
 
-// ------------------------------------------------------------------------
-// zOutSelect -- select an output stream.
-// On call AC has the stream number (1-4) and IO the table address
-// (stream 3 only). Selecting a selected stream is harmless; only stream 3
-// stacks. An unknown stream number is ignored.
-// Called via jda, nothing is returned.
-// ------------------------------------------------------------------------
+// Selects an output stream. Selecting a selected stream is harmless; only
+// stream 3 stacks. An unknown stream number is ignored.
+// Entry: AC = the stream number (1-4), IO = the table address (stream 3
+//        only).
+// No result. AC and IO are clobbered. Called via jda; returns with the
+// window open.
 zOutSelect, 0
     local rtn, num, tab, ptr
     farenter(rtn)
@@ -581,8 +445,8 @@ zOutSelect, 0
     dio tab
 
     lac num
-    SKIP_NEXT_IF_SAME [1]       // sas: skip (fallthrough) if stream 1
-    jmp zoseNot1                   // no-skip: some other stream
+    SKIP_NEXT_IF_SAME [1]
+    jmp zoseNot1                   // some other stream
     lac [1]
     dac zosScreen
     farrtn(rtn)
@@ -603,8 +467,8 @@ zoseNot2,
     // seventeenth is an error in the spec; ignore it and keep writing to
     // the level already open rather than corrupting a table address.
     lac zosDepth
-    SKIP_NEXT_IF_DIFFERENT [0d16]  // sad: skip (fallthrough) if room remains
-    jmp zoseFull                      // no-skip: already sixteen deep
+    SKIP_NEXT_IF_DIFFERENT [0d16]
+    jmp zoseFull                      // already sixteen deep
     lac zosDepth
     add [zosTabAddr]
     dac ptr
@@ -629,7 +493,7 @@ zoseFull,
 zoseNot3,
     lac num
     SKIP_NEXT_IF_SAME [4]
-    jmp zoseDone                   // no-skip: not 1, 2, 3 or 4 -- ignore it
+    jmp zoseDone                   // not 1, 2, 3 or 4: ignore it
     lac [1]
     dac zosCmd
 zoseDone,
@@ -641,12 +505,11 @@ tab, 0
 ptr, 0
     endlocal
 
-// ------------------------------------------------------------------------
-// zOutDeselect -- deselect an output stream.
-// On call IO has the stream number (1-4). Deselecting a stream that is not
-// selected is ignored. Deselecting stream 2 flushes an open printer line.
-// Called via jsp, nothing is returned.
-// ------------------------------------------------------------------------
+// Deselects an output stream. Deselecting a stream that is not selected
+// is ignored. Deselecting stream 2 flushes an open printer line.
+// Entry: IO = the stream number (1-4).
+// No result. AC and IO are clobbered. Called via jsp; returns with the
+// window open.
 zOutDeselect,
     local rtn, num
     farenter(rtn)
@@ -666,11 +529,11 @@ zodNot1,
     // A partial line must be flushed or the tail of the transcript is
     // lost: the printer is line-buffered (see zpsAfterScreen).
     lac zosDirty
-    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if a line is open
-    jmp zodNoFlush                 // no-skip: nothing buffered
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zodNoFlush                 // nothing buffered
 #if ZLPT_TYPE64
     pas i LPT_SP1               // Type 64: prints and spaces in one go, and
-                                //   SP1 is the tightest that WRITES -- see
+                                //   SP1 is the tightest that writes: see
                                 //   the router for why not SP0
 #else
     prl                         // Type 62: `prl` latches, `slp` writes
@@ -688,13 +551,13 @@ zodNot2,
     SKIP_NEXT_IF_SAME [3]
     jmp zodNot3
     lac zosDepth
-    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if a level is open
-    jmp zodDone                    // no-skip: none selected -- ignore
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zodDone                    // no level is open: ignore it
     // The last-level branch is redundant: `sub` of equal operands leaves
     // plus zero, so the plain decrement would reach zero on its own.
     lac zosDepth
-    SKIP_NEXT_IF_DIFFERENT [1]  // sad: skip (fallthrough) if more than one
-    jmp zodLast                    // no-skip: this is the last level
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp zodLast                    // this is the last level
     sub [1]
     dac zosDepth
     farrtn(rtn)
@@ -716,62 +579,29 @@ rtn, 0
 num, 0
     endlocal
 
-// ========================================================================
-// zPrintChar -- print one ZSCII character to the selected output streams.
-// On call IO has the ZSCII code.
+// Prints one ZSCII character to the selected output streams.
+// Entry: IO = the ZSCII code.
+// No result. AC and IO are clobbered. Called via jsp; returns with the
+// window open.
 // ZSCII 0 prints nothing (S3.8). 13 and 32-126 go to the router, zpcSend.
 // On the screen 13 is sent as LF, which DCS2's telnet mode sends as CR LF;
 // the transcript and stream 3 get 13 itself. Any other code, including
-// S3.8's 155-251 extra characters, is dropped.
-// Called via jsp, nothing is returned.
-// ========================================================================
+// S3.8's 155-251 extra characters, is dropped. 32-126, nearly every
+// character, is tested first and falls through into zpcSend; the rest
+// are sorted out at zpcLow, after zpsDone.
 zPrintChar,
     local rtn, code, tabPtr, tabAddr, tabCount
     farenter(rtn)
     lai
     dac code
+    sub [0d32]                       // sub makes no minus zero
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zpcLow                          // below 32
+    sub [0d95]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zpcBad                          // above 126
 
-    lac code
-    SKIP_NEXT_IF_AC_ZERO            // sza: skip if code == 0
-    jmp zpcTest13                      // no-skip: code != 0 -- continue to bounds checks
-    farrtn(rtn)                          // skip: code == 0 -- null, no effect
-
-zpcTest13,
-    lac code
-    SKIP_NEXT_IF_SAME [0d13]
-    jmp zpcTest32
-    jmp zpcSend
-
-zpcTest32,
-    lac code
-    SKIP_NEXT_IF_SAME [0d32]
-    jmp zpcTest126
-    jmp zpcSend
-
-zpcTest126,
-    lac code
-    SKIP_NEXT_IF_SAME [0d126]
-    jmp zpcLowerBound
-    jmp zpcSend
-
-zpcLowerBound,
-    lac code
-    sub [0d32]
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if code-32 >= 0 (code>32, ==32 excluded)
-    jmp zpcBad                          // no-skip: code-32 negative -- code < 32 -- bad
-    lac code
-    sub [0d126]
-    SKIP_NEXT_IF_AC_NEGATIVE          // sma: skip (fallthrough) if code-126 < 0 (code<126, ==126 excluded)
-    jmp zpcBad                          // no-skip: code-126 >= 0 -- code > 126 -- bad
-    jmp zpcSend
-
-zpcBad,
-    // print_char can hand this routine any value the story computed, so
-    // an unprintable code is dropped, as ZSCII 0 is, rather than halting.
-    farrtn(rtn)
-
-// ========================================================================
-// zpcSend -- the output router, part of zPrintChar.
+// zpcSend, the output router, part of zPrintChar.
 //
 // Every character of story text arrives here, through zPrintChar; the
 // player's finished input line arrives through zEchoChar.
@@ -785,19 +615,18 @@ zpcBad,
 //      zosPrinted.
 //   3. With font 3 selected (zsF3), window 0 goes through zpsFont3.
 //   4. Otherwise the screen (word-wrapped), then the transcript.
-// ========================================================================
 zpcSend,
     lac zosDepth
-    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) if no stream 3
-    jmp zpsTable                   // no-skip: stream 3 open -- it takes it all
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zpsTable                   // stream 3 is open: it takes it all
     lac zsWin
-    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) if window 0
-    jmp zpsUpper                   // no-skip: window 1 -- the screen model's
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zpsUpper                   // window 1: the screen model's
     lac zsF3
-    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) unless font 3
-    jmp zpsFont3                   // no-skip: font 3 -- the translator's
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zpsFont3                   // font 3: the translator's
 
-    // ---- stream 1: the screen ------------------------------------------
+    // Stream 1, the screen.
     // Word-wrap. A word -- anything but a space or a newline -- is held in
     // zwBuf until a space or a newline ends it; zwFlush then sends it on
     // this line if it fits, otherwise on the next. A newline goes out as
@@ -810,19 +639,19 @@ zpcSend,
     // zReadLine flushes a held word before its redraw.
 zpsScreen,
     lac zosScreen
-    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if selected
-    jmp zpsAfterScreen             // no-skip: screen deselected
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zpsAfterScreen             // the screen is deselected
     lac code
     dac zosPrinted              // a character reached the screen, so a paused
                                 //   read will redraw its line. AC is the code,
                                 //   never 0 (zPrintChar drops NUL)
-    SKIP_NEXT_IF_SAME [0d13]    // sas: skip (fallthrough) on a newline
-    jmp zpsChar                    // no-skip: any other character
+    SKIP_NEXT_IF_SAME [0d13]
+    jmp zpsChar                    // not a newline
     jsp zwFlush                 // the word before it; the window comes back
                                 //   open, and nothing below dereferences
     lac zwSoft
-    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) unless the wrap just broke
-    jmp zpsNlSoft                  // no-skip: the line is already ended
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zpsNlSoft                  // the wrap just broke: the line is ended
     jsp zwNewline               // LF, and the column is 0
     jmp zpsAfterScreen
 zpsNlSoft,
@@ -830,19 +659,19 @@ zpsNlSoft,
     jmp zpsAfterScreen
 zpsChar,
     lac zwOff
-    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) while buffering
-    jmp zpsDirect                  // no-skip: buffer_mode 0
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zpsDirect                  // buffer_mode 0
     lac code
-    SKIP_NEXT_IF_SAME [0d32]    // sas: skip (fallthrough) on a space
-    jmp zpsHold                    // no-skip: part of a word -- hold it
+    SKIP_NEXT_IF_SAME [0d32]
+    jmp zpsHold                    // part of a word: hold it
     jsp zwFlush                 // the word before the space
     lac zwSoft
-    SKIP_NEXT_IF_AC_ZERO        // sza: skip (fallthrough) unless the wrap just broke
-    jmp zpsAfterScreen             // no-skip: dropped from the screen
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zpsAfterScreen             // the wrap just broke: dropped from the screen
     lac zwCol
     sub zwCols
-    SKIP_NEXT_IF_AC_NEGATIVE    // sma: skip (fallthrough) while the line has room
-    jmp zpsFull                    // no-skip: full -- a newline instead
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zpsFull                    // the line is full: a newline instead
     lio [0d32]
     tcc
     idx zwCol
@@ -860,8 +689,8 @@ zpsHold,
                                 //   farenter closed the window, and nothing
                                 //   on the way here opened it
     idx zwLen                   // AC = the new length
-    SKIP_NEXT_IF_SAME [ZW_BUF]  // sas: skip (fallthrough) when the buffer is full
-    jmp zpsAfterScreen             // no-skip: room for more
+    SKIP_NEXT_IF_SAME [ZW_BUF]
+    jmp zpsAfterScreen             // room for more
     jsp zwFlush                 // full: out it goes, and the word carries on
     idx zwCont                  // ...without a second fit test (a direct
                                 //   address: the open window does not matter)
@@ -869,8 +698,8 @@ zpsHold,
 zpsDirect,
     lac zwCol
     sub zwCols
-    SKIP_NEXT_IF_AC_NEGATIVE    // sma: skip (fallthrough) while the line has room
-    dzm zwCol                      // no-skip: full -- the terminal wraps this one
+    SKIP_NEXT_IF_AC_NEGATIVE    // skip while the line has room
+    dzm zwCol                      // full: the terminal wraps this one
     lio code                    // never 13 here: the newline is above
     tcc
     idx zwCol
@@ -878,13 +707,13 @@ zpsDirect,
     jmp zpsAfterScreen
 
 zpsAfterScreen,
-    // ---- stream 2: the transcript, on the Type 62 line printer ---------
+    // Stream 2, the transcript, on the line printer.
     lac zosTrans
-    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if selected
-    jmp zpsDone                    // no-skip: no transcript open
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zpsDone                    // no transcript open
     lac code
-    SKIP_NEXT_IF_SAME [0d13]    // sas: skip (fallthrough) if newline
-    jmp zpsBuffer                  // no-skip: an ordinary character
+    SKIP_NEXT_IF_SAME [0d13]
+    jmp zpsBuffer                  // an ordinary character
     // ZSCII 13 ends the line. On the Type 62 that takes both instructions:
     // `prl` latches the line and clears the buffer, and `slp` writes it.
     // LPT_SP0 is single spacing ("line\n"), LPT_SP1 double.
@@ -922,17 +751,27 @@ zpsBuffer,
 zpsDone,
     farrtn(rtn)
 
-// ---- window 1 -- the screen only, never the transcript ------------------
+// Below 32 only a newline is printed; ZSCII 0 prints nothing (S3.8).
+zpcLow,
+    lac code
+    SKIP_NEXT_IF_DIFFERENT [0d13]
+    jmp zpcSend                         // 13
+zpcBad,
+    // print_char can hand this routine any value the story computed, so
+    // an unprintable code is dropped, as ZSCII 0 is, rather than halting.
+    farrtn(rtn)
+
+// Window 1: the screen only, never the transcript.
 // zsPutUpper returns with eem on; zpsDone's farrtn needs nothing else.
 zpsUpper,
     lac zosScreen
-    SKIP_NEXT_IF_AC_NOT_ZERO    // sza i: skip (fallthrough) if stream 1 is selected
-    jmp zpsDone                    // no-skip: screen deselected -- nowhere to go
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zpsDone                    // the screen is deselected: nowhere to go
     lio code
     farjsp(zsPutUpper:*)
     jmp zpsDone
 
-// ---- window 0 in font 3 --------------------------------------------------
+// Window 0 in font 3.
 // The screen gets the code as the connection's tier draws it (zfont3.ac's
 // zfSend), and zosPrinted is set. The transcript gets the code's ASCII
 // stand-in: it goes into `code` and on to stream 2's half. A newline is a
@@ -940,16 +779,17 @@ zpsUpper,
 // table is open.
 zpsFont3,
     lac code
-    SKIP_NEXT_IF_DIFFERENT [0d13]    // sad: skip (fallthrough) unless a newline
-    jmp zpsScreen                       // no-skip: the ordinary path
+    SKIP_NEXT_IF_DIFFERENT [0d13]
+    jmp zpsScreen                       // a newline: the ordinary path
     lac zosScreen
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if the screen is selected
-    jmp zpsF3Look                       // no-skip: the stand-in alone
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zpsF3Look                       // the screen is deselected: the
+                                        //   stand-in alone
     jsp zwFlush                      // the held word goes first, and the
     lac zwCol                        //   glyph counts one column of the line,
     sub zwCols                       //   starting the next if this one is full
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) while the line has room
-    jsp zwNewline                       // no-skip: full
+    SKIP_NEXT_IF_AC_NEGATIVE         // skip while the line has room
+    jsp zwNewline
     idx zwCol
     dzm zwSoft
     lac code
@@ -966,7 +806,7 @@ zpsF3Trans,
     dac code
     jmp zpsAfterScreen
 
-// ---- stream 3: a table in dynamic memory (S7.1.2.2.1) ------------------
+// Stream 3: a table in dynamic memory (S7.1.2.2.1).
 // The byte goes at table+2+count, and the count word at table+0 is kept
 // live rather than written once on deselect, so a run that stops early
 // still leaves a well-formed table behind.
@@ -980,7 +820,7 @@ zpsTable,
     lac zosDepth
     add [zosTabCount]
     sub [1]
-    dac tabPtr                  // &zosTabCount[depth-1] -- kept for the write-back
+    dac tabPtr                  // &zosTabCount[depth-1], kept for the write-back
     lac i tabPtr
     dac tabCount
 
@@ -992,8 +832,8 @@ zpsTable,
     lem                         // required: the transfer macros leave eem on,
                                 //   and `dac i tabPtr` below is a bare in-bank
                                 //   pointer, which under eem would resolve in
-                                //   bank 0 (zmemcore.am1's "ONE RULE FOR CODE
-                                //   IN THIS BANK")
+                                //   bank 0 (the in-bank pointer rule in
+                                //   zmemcore.am1, above `bank ZLEAF_BANK`)
 
     lac tabCount
     add [1]
@@ -1004,13 +844,12 @@ zpsTable,
     farjda(zStoreWord:0)        // eem is off here, so the macro's own is needed
     crossBankrtn(rtn, NOEEM)    // farjda above left the window open
 
-// ------------------------------------------------------------------------
-// zEchoChar -- send one byte of the player's finished input line to
-// stream 4 (the punch) and stream 2 (the transcript), as S7.1.1.1 asks.
-// On call IO has the byte, or 13 to end the line.
-// Called via jsp from zReadLine's zrlRecord only; nothing is returned.
-// It shares zPrintChar's `rtn` and `code`, so it must never be called from
-// inside zPrintChar.
+// Sends one byte of the player's finished input line to stream 4 (the
+// punch) and stream 2 (the transcript), as S7.1.1.1 asks.
+// Entry: IO = the byte, or 13 to end the line.
+// No result. AC and IO are clobbered. Called via jsp from zReadLine's
+// zrlRecord only; returns with the window open. It shares zPrintChar's
+// `rtn` and `code`, so it must never be called from inside zPrintChar.
 //
 // What is echoed is what stream 4 records: the finished line read back
 // from the story's buffer, so erased characters never appear and the case
@@ -1026,13 +865,12 @@ zpsTable,
 //     does not suppress the echo;
 //   - the bytes are sent raw, without zPrintChar's range tests. The Type
 //     62 in ascii mode writes any byte to the file as it is.
-// ------------------------------------------------------------------------
 zEchoChar,
     farenter(rtn)
     dio code                    // zpsAfterScreen's half reads the byte here
     lac zosCmd
-    SKIP_NEXT_IF_AC_ZERO        // sza: skip the punch unless stream 4 is selected
-    ppa i                          // no-skip: stream 4 -- IO is still the byte
+    SKIP_NEXT_IF_AC_ZERO        // skip the punch unless stream 4 is selected
+    ppa i                          // IO is still the byte
     jmp zpsAfterScreen          // stream 2, and the return, through zpsDone
 
 rtn, 0
@@ -1042,45 +880,43 @@ tabAddr, 0
 tabCount, 0
     endlocal
 
-// ========================================================================
-// zwFlush -- send the word zpcSend is holding, if any, and empty zwBuf:
-//   - IF IT DOES NOT FIT on the line -- the line is not empty and the
+// Sends the word zpcSend is holding, if any, and empties zwBuf:
+//   - if it does not fit on the line -- the line is not empty and the
 //     column plus the word's length passes zwCols -- a newline goes out
 //     first. A word that ends exactly at the last column fits: a VT100
 //     holds the wrap there until the next printable character, and the
 //     next thing zpcSend sends at a full line is a newline;
-//   - A WORD LONGER THAN THE LINE breaks at the last column, as many times
+//   - a word longer than the line breaks at the last column, as many times
 //     as it takes (the test at the loop's head). A word longer than zwBuf
 //     goes out in pieces, and zwCont skips the fit test for every piece
 //     after the first;
 //   - zwSoft is cleared, since characters followed any newline the wrap made.
 // The characters go out with `tcc`.
-// No arguments; AC and IO are not preserved.
-// Called via jsp, cross-bank safe; nothing is returned.
-// ========================================================================
+// No result. AC and IO are clobbered. Called via jsp, cross-bank safe;
+// returns with the window open.
 zwFlush,
     local rtn, ix, ptr
     farenter(rtn)                    // the window closed: `lio i ptr` below
     lac zwLen
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if a word is held
-    jmp zwfDone                         // no-skip: nothing to send
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zwfDone                         // no word is held: nothing to send
     lac zwCont
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) for a word's start
-    jmp zwfSend                         // no-skip: the rest of a long word
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zwfSend                         // the rest of a long word
     lac zwCol
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) unless at the line's start
-    jmp zwfSend                         // no-skip: column 0 -- no newline before it
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zwfSend                         // column 0: no newline before it
     add zwLen                        // both at most a few hundred: no overflow
     sub zwCols
-    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE // sma sza: skip (fallthrough) if it fits
-    jsp zwNewline                       // no-skip: it does not -- the next line
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE // skip if it fits
+    jsp zwNewline                       // it does not: the next line
 zwfSend,
     dzm ix
 zwfLoop,
     lac zwCol
     sub zwCols
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) while the line has room
-    jsp zwNewline                       // no-skip: full -- a hard break
+    SKIP_NEXT_IF_AC_NEGATIVE         // skip while the line has room
+    jsp zwNewline                       // full: a hard break
     lac ix
     add [zwBuf]
     dac ptr
@@ -1088,8 +924,8 @@ zwfLoop,
     tcc
     idx zwCol
     idx ix                           // AC = characters sent
-    SKIP_NEXT_IF_SAME zwLen          // sas: skip (fallthrough) once all are sent
-    jmp zwfLoop                         // no-skip: more to send
+    SKIP_NEXT_IF_SAME zwLen
+    jmp zwfLoop                         // more to send
     dzm zwLen
     dzm zwSoft
     dzm zwCont
@@ -1100,9 +936,10 @@ ix, 0
 ptr, 0
     endlocal
 
-// zwNewline -- a newline on the screen: LF, which DCS2's telnet mode sends
-// as CR LF, and the column is 0. Leaves eem as it found it.
-// Called via jsp, same bank only.
+// A newline on the screen: LF, which DCS2's telnet mode sends as CR LF,
+// and the column is 0.
+// No result. AC and IO are clobbered. Called via jsp, same bank only;
+// leaves the window as it found it.
 zwNewline,
     local rtn
     dap rtn
@@ -1113,13 +950,12 @@ zwNewline,
 rtn, jmp 0
     endlocal
 
-// ========================================================================
-// zPrintObj -- print an object's short name.
-// On call IO has the object number. The property table starts with the
+// Prints an object's short name. The property table starts with the
 // name's length byte, so the Z-encoded name starts one byte past
 // zGetPropTableAddr(obj).
-// Called via jsp, nothing is returned.
-// ========================================================================
+// Entry: IO = the object number.
+// No result. AC and IO are clobbered. Called via jsp; returns with the
+// window open.
 zPrintObj,
     local rtn
     farenter(rtn)
@@ -1131,16 +967,16 @@ zPrintObj,
 rtn, 0
     endlocal
 
-// ========================================================================
-// zetFindInRow -- find a character in an alphabet row.
-// On call AC has the row's address (zAlphaA0 or zAlphaA2) and IO the
-// character. Returns in AC the row index (0-25), or -1 if not found.
-// Called via jda, same bank only.
-// ========================================================================
+// Finds a character in an alphabet row.
+// Entry: AC = the row's address (zAlphaA0 or zAlphaA2), IO = the
+//        character.
+// Exit:  AC = the row index (0-25), or -1 if not found.
+// AC is the result, IO is preserved. Called via jda, same bank only;
+// returns with the window closed.
 zetFindInRow, 0
     local rtn, rowBase, target, ix, ptr
     dap rtn
-    lem                        // as zDecodeChar: `lac i ptr` below
+    lem                        // as zDecodeString: `lac i ptr` below
     lac zetFindInRow
     dac rowBase
     dio target
@@ -1149,9 +985,9 @@ zetFindInRow, 0
 
 zefLoop,
     lac ix
-    SKIP_NEXT_IF_SAME [0d26]         // sas: skip (fallthrough) if ix==26 -- exhausted
+    SKIP_NEXT_IF_SAME [0d26]
     jmp zefContinue
-    lac [-1]
+    lac [-1]                         // ix = 26: the row is exhausted
     jmp rtn
 
 zefContinue,
@@ -1159,8 +995,8 @@ zefContinue,
     add ix
     dac ptr
     lac i ptr
-    SKIP_NEXT_IF_DIFFERENT target      // sad: skip (fallthrough) if AC != target
-    jmp zefFound                          // no-skip: AC == target -- found at ix
+    SKIP_NEXT_IF_DIFFERENT target
+    jmp zefFound                          // found at ix
     idx ix
     jmp zefLoop
 
@@ -1175,13 +1011,12 @@ ix, 0
 ptr, 0
     endlocal
 
-// ========================================================================
-// zEncodeText -- encode text in dictionary form (S3.7).
-// On call AC has the text's byte address and IO its length.
-// Produces exactly ZET_ZCHARS Z-characters: 6 (2 words) in V1-3, 9
-// (3 words, S13.4) in V4+. The result goes to zEncodeTextOut0-2, since it
-// does not fit in the registers.
-// Called via jda, nothing is returned in the registers.
+// Encodes text in dictionary form (S3.7).
+// Entry: AC = the text's byte address, IO = its length.
+// Exit:  zEncodeTextOut0-2 = exactly ZET_ZCHARS Z-characters: 6 (2 words)
+//        in V1-3, 9 (3 words, S13.4) in V4+. They do not fit in the
+//        registers.
+// AC and IO are clobbered. Called via jda; returns with the window open.
 //
 // No abbreviations are used, and the pad is Z-char 5. A space encodes as
 // Z-char 0, a letter in A0 as its A0 index, and a character in A2 as a
@@ -1195,7 +1030,7 @@ ptr, 0
 // by zReadLine, and encode_text's text is the story's to fold.
 // A 0 byte matches A2's index-0 placeholder and encodes as "5 6", which
 // no dictionary word can match.
-// ========================================================================
+//
 // The Z-character count is the patched word zetZChars (6 in V3, 011 in
 // V4/V5), and the end bit on the 2nd word is the patched word zetEnd2
 // (zpatch.ac). The 3rd word is always packed; only V4/V5 read it.
@@ -1213,14 +1048,14 @@ zEncodeText, 0
 
 zetLoop,
     lac zetCount
-    SKIP_NEXT_IF_SAME ZET_ZCHARS    // sas: skip (fallthrough) if count==ZET_ZCHARS -- buffer full
+    SKIP_NEXT_IF_SAME ZET_ZCHARS
     jmp zetCheckMore
-    jmp zetPack
+    jmp zetPack                             // the buffer is full
 
 zetCheckMore,
     lac ix
-    SKIP_NEXT_IF_DIFFERENT lenSave      // sad: skip (fallthrough) if ix != lenSave
-    jmp zetPad                             // no-skip: ix == lenSave -- input exhausted
+    SKIP_NEXT_IF_DIFFERENT lenSave
+    jmp zetPad                             // the input is exhausted
 
     lac addrSave
     add ix
@@ -1229,9 +1064,9 @@ zetCheckMore,
     dac ch
 
     lac ch
-    SKIP_NEXT_IF_SAME [0d32]             // sas: skip if ch == space
-    jmp zetTryA0                            // no-skip: ch != space -- try alphabet lookup
-    lio [0]                                    // skip: ch == space -- append Z-char 0 directly
+    SKIP_NEXT_IF_SAME [0d32]
+    jmp zetTryA0                            // not a space: try the alphabets
+    lio [0]                                    // a space: Z-char 0
     jsp zetAppend
     idx ix
     jmp zetLoop
@@ -1242,8 +1077,8 @@ zetTryA0,
     jda zetFindInRow
     dac found
     lac found
-    SKIP_NEXT_IF_DIFFERENT [-1]          // sad: skip if found != -1 (i.e. found in A0)
-    jmp zetTryA2                            // no-skip: found == -1 -- not in A0, try A2
+    SKIP_NEXT_IF_DIFFERENT [-1]
+    jmp zetTryA2                            // not in A0: try A2
     lac found
     add [6]
     lia
@@ -1257,13 +1092,14 @@ zetTryA2,
     jda zetFindInRow
     dac found
     lac found
-    SKIP_NEXT_IF_DIFFERENT [-1]          // sad: skip if found != -1 (i.e. found in A2)
-    jmp zetBad                              // no-skip: found == -1 -- not space, not A0, not A2 -- unencodable
+    SKIP_NEXT_IF_DIFFERENT [-1]
+    jmp zetBad                              // not a space, A0 or A2: escape it
 
     lac zetCount
     SKIP_NEXT_IF_SAME ZET_ZCHARS
     jmp zetA2Shift
-    jmp zetPack                              // no room even for the shift -- leave incomplete
+    jmp zetPack                              // no room even for the shift:
+                                             //   leave it incomplete
 
 zetA2Shift,
     lio [5]
@@ -1271,7 +1107,8 @@ zetA2Shift,
     lac zetCount
     SKIP_NEXT_IF_SAME ZET_ZCHARS         // did the shift fill the last slot?
     jmp zetA2Char
-    jmp zetPack                              // no room for the paired char -- leave incomplete
+    jmp zetPack                              // no room for the paired character:
+                                             //   leave it incomplete
 
 zetA2Char,
     lac found
@@ -1281,7 +1118,7 @@ zetA2Char,
     idx ix
     jmp zetLoop
 
-// Not space, not A0, not A2 -- S3.4's ZSCII escape. The first Z-character
+// Not space, not A0, not A2: S3.4's ZSCII escape. The first Z-character
 // always fits (zetLoop tested the count before this character was
 // fetched), so it goes straight to zetAppend; the other three go through
 // zetEscPut, which packs and returns as soon as the result is full.
@@ -1357,17 +1194,18 @@ found, 0
 zEncodeTextOut0, 0
 zEncodeTextOut1, 0
 zEncodeTextOut2, 0                   // V4+'s 3rd word (7-9th Z-chars)
-zetZChars, 6                         // PATCHED -- V4/V5 011 (S13.4), V3 6 (S3.7)
-zetEnd2, 0100000                     // PATCHED -- V4/V5 0: the end bit is on word 3
+zetZChars, 6                         // patched: V4/V5 011 (S13.4), V3 6 (S3.7)
+zetEnd2, 0100000                     // patched: V4/V5 0, the end bit is on word 3
 
-// zetAppend -- append a Z-character to zetBuf at zetCount, and count it.
-// On call IO has the Z-character (0-31). The caller has checked that
-// zetCount < ZET_ZCHARS.
-// Called via jsp, same bank only.
+// Appends a Z-character to zetBuf at zetCount, and counts it. The caller
+// has checked that zetCount < ZET_ZCHARS.
+// Entry: IO = the Z-character (0-31).
+// No result. AC is clobbered, IO is preserved. Called via jsp, same bank
+// only; returns with the window closed.
 zetAppend,
     local rtn, val
     dap rtn
-    lem                        // as zDecodeChar: `dac i zetAppendPtr` below
+    lem                        // as zDecodeString: `dac i zetAppendPtr` below
     dio val
     lac [zetBuf0]
     add zetCount
@@ -1380,17 +1218,18 @@ rtn, jmp 0
 val, 0
     endlocal
 
-// zetEscPut -- zetBad's append for the 2nd-4th Z-characters of an escape.
-// On call IO has the Z-character. If the result is already full, the
-// escape is cut (S3.7): it jumps to zetPack, which returns from
-// zEncodeText, and this call never returns. Otherwise it appends, as
-// zetAppend does.
-// Called via jsp, same bank only.
+// zetBad's append for the 2nd-4th Z-characters of an escape. If the
+// result is already full, the escape is cut (S3.7): it jumps to zetPack,
+// which returns from zEncodeText, and this call never returns. Otherwise
+// it appends, as zetAppend does.
+// Entry: IO = the Z-character.
+// No result. AC is clobbered, IO is preserved. Called via jsp, same bank
+// only; returns with the window closed.
 zetEscPut,
     local rtn
     dap rtn
     lac zetCount
-    SKIP_NEXT_IF_SAME ZET_ZCHARS   // sas: skip (fallthrough) if the word is full
+    SKIP_NEXT_IF_SAME ZET_ZCHARS
     jmp zepPut
     jmp zetPack                      // full: the escape is cut here
 zepPut,
@@ -1410,10 +1249,8 @@ zetBuf6, 0                           // V4+'s 7th-9th Z-chars
 zetBuf7, 0
 zetBuf8, 0
 
-// ========================================================================
 // The DCS2 server channel's control block: telnet mode, echo on, server
 // mode, port 2031 (Adventure uses 2030).
-// ========================================================================
 zTextCtl, dcftel dcfecho dcfsrv
     0d2031
 
@@ -1426,9 +1263,8 @@ zTextCtl, dcftel dcfecho dcfsrv
 zTextNoEcho, 0
 zTextEcho, dcfecho
 
-// zTextDcsInit -- reset and open the server channel. Call once before
-// zTextDcsWaitConn.
-// Called via jsp, same bank only; no arguments, nothing returned.
+// Resets and opens the server channel. Call once before zTextDcsWaitConn.
+// No result. AC and IO are clobbered. Called via jsp, same bank only.
 zTextDcsInit,
     local rtn
     dap rtn
@@ -1442,14 +1278,13 @@ zTextDcsInit,
 rtn, jmp 0
     endlocal
 
-// zTextDcsWaitConn -- poll until a client has connected, then make
-// channel 0 the current channel with `roc`, which server mode needs: the
-// connect event does not set it. After this every `tcc` goes to the
-// connection.
-// Returns in AC a count of every status poll this routine has made since
-// the load; it is never reset. The session loop seeds the random
-// generator from it.
-// Called via jsp, same bank only; no arguments.
+// Polls until a client has connected, then makes channel 0 the current
+// channel with `roc`, which server mode needs: the connect event does not
+// set it. After this every `tcc` goes to the connection.
+// Exit:  AC = a count of every status poll this routine has made since
+//        the load; it is never reset. The session loop seeds the random
+//        generator from it.
+// AC is the result, IO is clobbered. Called via jsp, same bank only.
 zTextDcsWaitConn,
     local rtn, polls
     dap rtn
@@ -1459,8 +1294,8 @@ zdwLoop,
     rcs
     lai
     and [dsfcon
-    SKIP_NEXT_IF_AC_NOT_ZERO      // sza i: skip (fallthrough) if connected
-    jmp zdwLoop                      // no-skip: not yet connected -- poll again
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zdwLoop                      // not yet connected: poll again
     cli
     roc
     lac polls
@@ -1469,13 +1304,12 @@ rtn, jmp 0
 polls, 0
     endlocal
 
-// ========================================================================
-// zTextDcsOpen -- open the channel and block until a client connects:
-// zTextDcsInit and zTextDcsWaitConn behind a cross-bank-safe entry, since
-// both are same bank only.
-// Returns in AC zTextDcsWaitConn's poll count.
-// Called via jsp (farjsp from bank 0); no arguments.
-// ========================================================================
+// Opens the channel and blocks until a client connects: zTextDcsInit and
+// zTextDcsWaitConn behind a cross-bank-safe entry, since both are same
+// bank only.
+// Exit:  AC = zTextDcsWaitConn's poll count.
+// AC is the result, IO is clobbered. Called via jsp (farjsp from bank 0);
+// returns with the window open.
 zTextDcsOpen,
     local rtn
     farenter(rtn)
@@ -1485,15 +1319,14 @@ zTextDcsOpen,
 rtn, 0
     endlocal
 
-// ========================================================================
-// zTextDcsNext -- end one player's connection and wait for the next.
+// Ends one player's connection and waits for the next.
 // The rebind (scbbnd) closes the socket and puts channel 0 back to
 // listening; the channel stays open, so nothing needs setting up again.
 // The rebind delivers everything already queued for the client before it
 // closes, so no drain wait is needed, and it discards unread typeahead.
-// Returns in AC zTextDcsWaitConn's poll count.
-// Called via jsp (farjsp from bank 0's session loop); no arguments.
-// ========================================================================
+// Exit:  AC = zTextDcsWaitConn's poll count.
+// AC is the result, IO is clobbered. Called via jsp (farjsp from bank 0's
+// session loop); returns with the window open.
 zTextDcsNext,
     local rtn
     farenter(rtn)
@@ -1504,10 +1337,10 @@ zTextDcsNext,
 rtn, 0
     endlocal
 
-// ========================================================================
-// zSessionReset -- this bank's half of the reset between two players
-// (zmemcore.am1's zServeReset does bank 0's half and calls this).
-// Called via jsp, cross-bank safe; no arguments, nothing returned.
+// This bank's half of the reset between two players (zmemcore.am1's
+// zServeReset does bank 0's half and calls this).
+// No result. AC and IO are clobbered. Called via jsp, cross-bank safe;
+// returns with the window open.
 // Each word reset here is one a session can leave changed that the next
 // session reads before writing:
 //   - the output streams, put back as a load leaves them. The transcript's
@@ -1529,7 +1362,6 @@ rtn, 0
 //     anyway;
 //   - the word-wrap: a held word is dropped and buffering turned back on
 //     (zsReset zeroes zwCol).
-// ========================================================================
 zSessionReset,
     local rtn
     farenter(rtn)
@@ -1537,7 +1369,7 @@ zSessionReset,
     scb
     lio [2]
     jsp zOutDeselect             // same-bank; it returns through farrtn,
-    lem                          //   with the window open -- close it
+    lem                          //   with the window open: close it
     lac [1]
     dac zosScreen
     dzm zosCmd
@@ -1554,16 +1386,15 @@ zSessionReset,
 rtn, 0
     endlocal
 
-// ========================================================================
-// zReadLine -- read a line of input for sread/aread (S15).
-// On call AC has the byte address of the story's text buffer and IO the
-// mode (see the timed line, below; 0 is untimed).
-// Returns in AC 0 for a line (finished or stopped), 1 if the connection
-// dropped, 2 if the time ran out (call the interrupt routine).
-// IO is not preserved.
-// Called via jda, cross-bank safe.
+// Reads a line of input for sread/aread (S15).
+// Entry: AC = the byte address of the story's text buffer, IO = the mode
+//        (see the timed line, below; 0 is untimed).
+// Exit:  AC = 0 for a line (finished or stopped), 1 if the connection
+//        dropped, 2 if the time ran out (call the interrupt routine).
+// AC is the result, IO is clobbered. Called via jda, cross-bank safe;
+// returns with the window open.
 //
-// THE ECHO. Every key is read through zReadKey with its no-echo flag, so
+// The echo. Every key is read through zReadKey with its no-echo flag, so
 // DCS2 echoes nothing, and this routine puts on the screen exactly what
 // the buffer holds:
 //   - a stored character, as typed, before the case fold;
@@ -1580,7 +1411,7 @@ rtn, 0
 // and does not set zosPrinted. The transcript's copy of the line is sent
 // once, at zrlRecord, through zEchoChar.
 //
-// THE BUFFER, V1-4. Byte 0 is the story's limit; bytes 1 onward take the
+// The buffer, V1-4. Byte 0 is the story's limit; bytes 1 onward take the
 // lower-cased text and a zero terminator. The Standard says both that
 // byte 0 is "the maximum number of letters which can be typed, minus 1"
 // and that a buffer with n in byte 0 has n+1 bytes. The second is taken
@@ -1592,8 +1423,8 @@ rtn, 0
 // fits); the others are redundant, since `sub` of equal operands leaves
 // plus zero.
 //
-// ---- V4+: THE TIMED LINE ----------------------------------------------
-// IO before the call is the mode (a V3 sread always passes 0):
+// V4+, the timed line. IO before the call is the mode (a V3 sread always
+// passes 0):
 //
 //   IO                  mode
 //   0                   untimed
@@ -1604,18 +1435,18 @@ rtn, 0
 // The countdown zReadKey hands back after each key is handed straight
 // back in, so the interval runs across keystrokes.
 //
-//   - THE TIME RUNS OUT: the line pauses. The zero terminator goes after
+//   - The time runs out: the line pauses. The zero terminator goes after
 //     the text so far, where a finished line puts it; zosPrinted is
 //     cleared; nothing is recorded on stream 4 or echoed to stream 2;
 //     AC = 2. The count is not kept in a word, because a nested sread in
 //     the interrupt routine reuses the static locals; the terminator in
 //     the story's buffer survives any nesting.
-//   - CONTINUE: byte 0's limit is re-read and the count is recovered by
+//   - Continue: byte 0's limit is re-read and the count is recovered by
 //     scanning from byte 1 to the terminator, bounded by the store test's
 //     limit. If zosPrinted is set, each byte is re-sent with a bare `tcc`
 //     as it is scanned -- the redraw S15 asks for (the stored text, so
 //     lower-cased). Then the line reads on with a fresh full timer.
-//   - STOP: the terminator goes at byte 1 (none when the limit is 0),
+//   - Stop: the terminator goes at byte 1 (none when the limit is 0),
 //     nothing is recorded or printed, and AC = 0, so zdhSread parses the
 //     empty line (S15's "all input is erased").
 //
@@ -1623,33 +1454,31 @@ rtn, 0
 // ignores bytes of 0200-0377, and maps LF to 13 and DEL to 8; this routine
 // treats CR and LF alike and BS and DEL alike.
 //
-// ---- V5: AREAD'S BUFFER -----------------------------------------------
-// The modes and the timing are the same. V5 differs only where S15's
-// buffer does:
+// V5, aread's buffer. The modes and the timing are the same. V5 differs
+// only where S15's buffer does:
 //
-//   - Byte 0 is the maximum number of CHARACTERS (not "minus 1"), byte 1
-//     the count typed, and the text runs from byte 2 with NO terminator.
+//   - Byte 0 is the maximum number of characters (not "minus 1"), byte 1
+//     the count typed, and the text runs from byte 2 with no terminator.
 //     ZRL_TEXT is the text's offset; ZRL_ROOM makes the store test "a
 //     character fits while count < max", where V1-4's leaves room for the
 //     terminator.
-//   - ENTRY: the count is read from byte 1 and clamped to byte 0. On a
+//   - Entry: the count is read from byte 1 and clamped to byte 0. On a
 //     fresh read that is S15's left-over characters from an interrupted
-//     input: the new ones are written after them, they are NOT
+//     input: the new ones are written after them, they are not
 //     redisplayed (S15), and backspace can erase them, since they are in
 //     the count. A byte 1 above byte 0 is clamped: a degrade, not a halt.
 //     On a continue it is the paused line itself -- which is why V5 needs
 //     no scan: the pause wrote byte 1.
-//   - CONTINUE: if zosPrinted is set, `count` bytes from byte 2 are
+//   - Continue: if zosPrinted is set, `count` bytes from byte 2 are
 //     re-sent with a bare `tcc`, as V4 re-sends what it scans.
-//   - PAUSE and FINISH write byte 1 = count where V1-4 writes the
-//     terminator; STOP zeroes the count first, so byte 1 = 0 (S15's "all
+//   - Pause and finish write byte 1 = count where V1-4 writes the
+//     terminator; stop zeroes the count first, so byte 1 = 0 (S15's "all
 //     input is erased"). V5 needs no maxLen == 0 guard: byte 1 exists in
 //     every V5 buffer. Stream 4 records from byte 2.
 //
-// ---- THE ARROW, FUNCTION AND KEYPAD KEYS ------------------------------
-// zReadKey decodes a key's escape sequence into one code of 129-154
-// (S3.8). What happens to it:
-//   - V5, THE KEY IS IN THE STORY'S TERMINATING CHARACTERS (header 0x2E,
+// The arrow, function and keypad keys. zReadKey decodes a key's escape
+// sequence into one code of 129-154 (S3.8). What happens to it:
+//   - V5, the key is in the story's terminating characters (header 0x2E,
 //     S10.5.2.1; zkTermRange): the line ends as a finished one -- byte 1 =
 //     the count -- but with none of what CR adds: no newline, no record on
 //     stream 4 or echo to the transcript, and zsFirst left armed. S15
@@ -1658,10 +1487,10 @@ rtn, 0
 //     ziParsed stores as aread's result. The line is recorded later, when
 //     the story reads it again as left-over characters and the player
 //     ends it with CR.
-//   - NOT IN THE TABLE, or V1-4, which have no table (zrlTermTab jumps
+//   - Not in the table, or V1-4, which have no table (zrlTermTab jumps
 //     past the test): a keypad digit, 145-154, is stored and echoed as its
 //     digit, and any other key is dropped, unechoed.
-// ========================================================================
+//
 // One reader serves V3, V4 and V5. V3's zdhSread always passes IO = 0, so
 // V3 never reaches a pause or a stop. The version words are patched
 // (zpatch.ac): zrlText and zrlRoomW (ZRL_TEXT and ZRL_ROOM below), and
@@ -1685,51 +1514,51 @@ zReadLine, 0
     farjsp(zFetchByte:0)          // AC = byte 0, the story's own limit field
     dac maxLen
 zrlCountFork,
-    jmp zrlCounted                // PATCHED: V5 `nop` -- read byte 1's count
+    jmp zrlCounted                // patched: V5 `nop`, read byte 1's count
     lac bufAddr                      // V5: byte 1 is the count already
-    add [1]                          //   in the buffer -- left over (a fresh
+    add [1]                          //   in the buffer, left over (a fresh
     lia                              //   read) or the paused line (a continue)
     crossBankjsp(zFetchByte:0, NOEEM)
     dac count
     lac maxLen
     sub count                        // both are bytes, so no overflow
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if over the limit
-    jmp zrlCounted                      // no-skip: count <= max -- it stands
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrlCounted                      // count <= max: it stands
     lac maxLen
     dac count                        // clamped to byte 0's limit
 zrlCounted,
 
     lac tenths
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) unless told to stop
-    jmp zrlStop                         // no-skip: negative -- the routine said stop
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zrlStop                         // negative: the routine said stop
     and [0200000]
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if continuing
-    jmp zrlLoop                         // no-skip: 0 or a fresh time -- read as usual
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrlLoop                         // 0 or a fresh time: read as usual
     lac tenths
     and [0177777]                    // the time alone: the loop's first zReadKey
     dac tenths                       //   call arms a fresh full interval
 zrlContFork,
-    jmp zrlScan                      // PATCHED: V5 `nop` -- V5's redraw follows
+    jmp zrlScan                      // patched: V5 `nop`, V5's redraw follows
 
     // V5: the count is byte 1, already read and clamped at entry.
     // All that is left is the redraw, if the routine printed: the whole
     // line so far, left-over characters included, from byte 2.
     lac zosPrinted
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if the routine printed
-    jmp zrlLoop                         // no-skip: nothing printed -- no redraw
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrlLoop                         // nothing printed: no redraw
     cla
     dac ptr
 zrlRedraw,
     lac ptr
-    SKIP_NEXT_IF_DIFFERENT count     // sad: skip (fallthrough) if characters remain
-    jmp zrlLoop                         // no-skip: all re-sent -- read on
+    SKIP_NEXT_IF_DIFFERENT count
+    jmp zrlLoop                         // all re-sent: read on
     lac bufAddr
     add ZRL_TEXT
     add ptr
     lia
     farjsp(zFetchByte:0)             // AC = the byte at index ptr
     lia
-    tcc                              // re-send it -- a bare echo, as V4's scan does
+    tcc                              // re-send it: a bare echo, as V4's scan does
     idx ptr
     jmp zrlRedraw
 
@@ -1743,19 +1572,19 @@ zrlScan,
     lac count
     add [2]
     sub maxLen
-    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE // sma sza: skip (fallthrough) if there is room
-    jmp zrlLoop                         // no-skip: at the limit -- the count stands
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp zrlLoop                         // at the limit: the count stands
     lac bufAddr
     add [1]
     add count
     lia
     farjsp(zFetchByte:0)             // AC = the byte at index count + 1
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) on a character
-    jmp zrlLoop                         // no-skip: the terminator the pause left
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrlLoop                         // the terminator the pause left
     lia
     lac zosPrinted
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip the redraw if nothing was printed
-    tcc                                 // no-skip: re-send it -- a bare echo
+    SKIP_NEXT_IF_AC_ZERO             // skip the redraw if nothing was printed
+    tcc                                 // re-send it: a bare echo
     lac count
     add [1]
     dac count
@@ -1770,7 +1599,7 @@ zrlStop,
 
 zrlLoop,
     lac tenths                       // 0, a fresh time, or a running countdown,
-    ior [0400000]                    //   with zReadKey's no-echo flag --
+    ior [0400000]                    //   with zReadKey's no-echo flag:
     lia                              //   this routine echoes (see the header)
     jsp zReadKey                     // AC = the key, 0 = the time ran out,
                                      //   negative = the connection dropped
@@ -1781,69 +1610,69 @@ zrlLoop,
     // zReadKey ignores a stray NUL, so a 0 here is the time running out,
     // and the line pauses. An untimed read never sees one.
     lac ch
-    SKIP_NEXT_IF_AC_NOT_ZERO      // sza i: skip (fallthrough) on a real character
-    jmp zrlTerm                      // no-skip: the time ran out -- pause
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrlTerm                      // the time ran out: pause
 
     // zReadKey signals a dropped connection with AC = 0400000. This
     // is the one condition here that halts, and the halt is zdhSread's:
     // there is no interpreter left to run, and no story file caused it.
     lac ch
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE  // sma i: skip (fallthrough) if a real character
-    jmp zrlErr                       // no-skip: bit 0 set -- the connection dropped
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zrlErr                       // bit 0 set: the connection dropped
     sub [0200]                       // ch is 1..0232 here, so no overflow
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if below 0200
-    jmp zrlKey                          // no-skip: 129-154, an arrow, function or
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrlKey                          // 129-154, an arrow, function or
                                         //   keypad key (see the header)
 
-    // ---- backspace / rubout, BEFORE the case fold ----------------------
+    // Backspace and rubout, before the case fold.
     // DEL (0177) is above 'z', so if the fold ran first it could be turned
     // into another character and never recognized as an erase.
     lac ch
-    SKIP_NEXT_IF_DIFFERENT [0d8]     // sad: skip (fallthrough) if not BS
-    jmp zrlBksp                         // no-skip: backspace
-    SKIP_NEXT_IF_DIFFERENT [0d127]   // sad: skip (fallthrough) if not DEL
-    jmp zrlBksp                         // no-skip: rubout -- same handling
+    SKIP_NEXT_IF_DIFFERENT [0d8]
+    jmp zrlBksp                         // backspace
+    SKIP_NEXT_IF_DIFFERENT [0d127]
+    jmp zrlBksp                         // rubout: the same handling
 
-    // ---- CR or LF ends the line ----------------------------------------
-    SKIP_NEXT_IF_DIFFERENT [0d13]    // sad: skip (fallthrough) if not CR
-    jmp zrlTerm                         // no-skip: carriage return -- done
-    SKIP_NEXT_IF_DIFFERENT [0d10]    // sad: skip (fallthrough) if not LF
-    jmp zrlTerm                         // no-skip: line feed -- done
+    // CR or LF ends the line.
+    SKIP_NEXT_IF_DIFFERENT [0d13]
+    jmp zrlTerm                         // carriage return: done
+    SKIP_NEXT_IF_DIFFERENT [0d10]
+    jmp zrlTerm                         // line feed: done
 
-    // ---- a control character is dropped ---------------------------------
+    // A control character is dropped.
     // 1-31 but BS, CR and LF, which are handled above: TAB, ESC and the
     // rest are neither stored nor echoed. S3.8 allows no control code as
     // input but 8, 13 and 27, and none of them belongs in a text buffer.
     // So every stored character is visible, and BS SP BS always erases the
     // right cell.
     sub [0d32]                       // ch is 1..0177: no overflow
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if 32 or above
-    jmp zrlLoop                         // no-skip: a control character -- dropped
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zrlLoop                         // a control character: dropped
     lac ch
 
-    // ---- fold 'A'-'Z' to lower case (S15) ------------------------------
+    // Fold 'A'-'Z' to lower case (S15).
     // The equality tests on both endpoints are redundant (`sub` of equal
     // operands leaves plus zero). sad/sas do not alter AC, so ch is still
     // in AC below.
-    SKIP_NEXT_IF_DIFFERENT [0d65]    // sad: skip (fallthrough) if not 'A'
-    jmp zrlDoFold                       // no-skip: exactly 'A' -- fold it
-    SKIP_NEXT_IF_DIFFERENT [0d90]    // sad: skip (fallthrough) if not 'Z'
-    jmp zrlDoFold                       // no-skip: exactly 'Z' -- fold it
+    SKIP_NEXT_IF_DIFFERENT [0d65]
+    jmp zrlDoFold                       // exactly 'A': fold it
+    SKIP_NEXT_IF_DIFFERENT [0d90]
+    jmp zrlDoFold                       // exactly 'Z': fold it
     sub [0d65]                       // ch is neither 65 nor 90 here
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if above 'A'
-    jmp zrlRoom                         // no-skip: below 'A' -- store as-is
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zrlRoom                         // below 'A': store it as it is
     lac ch
     sub [0d90]
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if below 'Z'
-    jmp zrlRoom                         // no-skip: above 'Z' -- store as-is
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrlRoom                         // above 'Z': store it as it is
 zrlDoFold,
     lac ch
     add [0d32]
     dac ch
 
-    // ---- store it, if the story's own limit leaves room ----------------
+    // Store it, if the story's own limit leaves room.
     // Room for one more character means count+1 (its index) must still
-    // leave the terminator at index count+2 <= maxLen. Equality is a HIT,
+    // leave the terminator at index count+2 <= maxLen. Equality is a hit,
     // not a miss -- the terminator lands exactly on the last allocated
     // byte -- so it is tested before the subtraction rather than folded
     // into it. V5: no terminator, so the test is count+1 <= maxLen
@@ -1851,12 +1680,12 @@ zrlDoFold,
 zrlRoom,
     lac count
     add ZRL_ROOM
-    SKIP_NEXT_IF_DIFFERENT maxLen    // sad: skip (fallthrough) if not exactly at the limit
-    jmp zrlStore                        // no-skip: it exactly fits -- store it
+    SKIP_NEXT_IF_DIFFERENT maxLen
+    jmp zrlStore                        // it exactly fits: store it
     sub maxLen                       // count+ZRL_ROOM - maxLen, nonzero here
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if room remains
-    jmp zrlLoop                         // no-skip: buffer full -- discarded,
-                                        //   unechoed: the player sees the
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrlLoop                         // the buffer is full: discarded,
+                                        //   unechoed; the player sees the
                                         //   line stop
 zrlStore,
     lac bufAddr
@@ -1864,40 +1693,40 @@ zrlStore,
     add count
     lio ch
     farjda(zStoreByte:0)
-    lio key                          // stored, so echoed -- as typed,
+    lio key                          // stored, so echoed: as typed,
     tcc                              //   on a bare tcc (see the header)
     lac count
     add [1]
     dac count
     jmp zrlLoop
 
-    // ---- a key of 129-154 (see the header) -------------------------------
-    // zrlTermTab is PATCHED: V5 `nop`, so V5 asks zkTermRange whether the
+    // A key of 129-154 (see the header).
+    // zrlTermTab is patched: V5 `nop`, so V5 asks zkTermRange whether the
     // story's table lists this key. eem is on (zReadKey's farrtn): every
     // reference below until the jda is direct, and zkTermRange closes it.
 zrlKey,
 zrlTermTab,
-    jmp zrlNotTerm                   // PATCHED: V5 `nop` -- the table is V5's
+    jmp zrlNotTerm                   // patched: V5 `nop`, the table is V5's
     lac ch
     lia                              // lo = hi = the key: is it in the table?
     jda zkTermRange                  // AC nonzero if it is; the window closed
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if it is not
-    jmp zrlTerm                         // no-skip: a terminating key -- the line
-                                        //   ends (zrlRecord tells it from CR)
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zrlTerm                         // a terminating key: the line ends
+                                        //   (zrlRecord tells it from CR)
 zrlNotTerm,
     lac ch
     sub [0d145]
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if 145 or above
-    jmp zrlLoop                         // no-skip: an arrow or F key -- dropped, unechoed
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zrlLoop                         // an arrow or F key: dropped, unechoed
     sub [0d10]
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if 145-154, the keypad
-    jmp zrlLoop                         // no-skip: above the keypad -- dropped
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrlLoop                         // above the keypad: dropped
     add [0d58]                       // ch - 155 + 58 = ch - 97: keypad 0 is '0'
     dac ch                           // stored and echoed as the digit;
     dac key                          //   no fold applies to a digit
     jmp zrlRoom
 
-    // ---- backspace: erase the character last echoed ---------------------
+    // Backspace: erase the character last echoed.
     // BS back over the character, a space over it, and BS again, sent only
     // when a character is erased; a BS with nothing to erase sends nothing.
     // The echo goes out on bare `tcc`s, not through zPrintChar: terminal
@@ -1905,11 +1734,11 @@ zrlNotTerm,
     // stream 3 table.
 zrlBksp,
     lac count
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if there is something to erase
-    jmp zrlLoop                         // no-skip: nothing typed yet -- ignore it
-    SKIP_NEXT_IF_DIFFERENT [1]       // sad: skip (fallthrough) if more than one
-    jmp zrlBk1                          // no-skip: exactly one -- a redundant branch:
-                                        //   `sub [1]` leaves plus zero here
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrlLoop                         // nothing typed yet: ignore it
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp zrlBk1                          // exactly one: a redundant branch,
+                                        //   since `sub [1]` leaves plus zero here
     sub [1]
     dac count
     jmp zrlErase
@@ -1925,10 +1754,10 @@ zrlErase,
     tcc
     jmp zrlLoop
 
-    // ---- the line is complete ------------------------------------------
+    // The line is complete.
 zrlTerm,
 zrlTermFork,
-    jmp zrlTermNul                   // PATCHED: V5 `nop` -- byte 1 = the count
+    jmp zrlTermNul                   // patched: V5 `nop`, byte 1 = the count
     // V5: no terminator. Byte 1 = the count -- finished, paused
     // or stopped alike -- and byte 1 exists in every V5 buffer, so there
     // is no maxLen == 0 case to guard.
@@ -1946,15 +1775,15 @@ zrlTermNul,
     // corrupt the byte after the buffer, so it is skipped -- the input was
     // still consumed, and none of it echoed but the line end.
     lac maxLen
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if a text area exists
-    jmp zrlRecord                       // no-skip: byte 0 is zero -- nothing fits
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrlRecord                       // byte 0 is zero: nothing fits
     lac bufAddr
     add [1]
     add count
     cli
     farjda(zStoreByte:0)
 
-    // ---- output stream 4 and the transcript echo -------------------------
+    // Output stream 4 and the transcript echo.
     // Stream 4 (S7.1.2.3) records the accepted line, not the keystrokes:
     // the characters are read back out of the buffer, so erased
     // characters are gone and the case fold is applied, and the script can
@@ -1975,16 +1804,16 @@ zrlRecord,
     // ended. A paused line is recorded when it is finished; a stopped one
     // never is.
     lac ch
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) unless the time ran out
-    jmp zrlPaused                       // no-skip: 0 -- pause the line
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) unless stopped
-    jmp zrlDone                         // no-skip: negative -- an empty line, unrecorded
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrlPaused                       // 0: pause the line
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zrlDone                         // negative: an empty line, unrecorded
                                         //   (V3's ch here is always CR or LF)
     sub [0200]                       // CR or LF, or a key of 129-154
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if CR or LF
-    jmp zrlKeyEnd                       // no-skip: a terminating key (V5 only)
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrlKeyEnd                       // a terminating key (V5 only)
 
-    // ---- the S switch ------------------------------------------------------
+    // The S switch.
     // The first line a V5 game finishes, if it is a single s or S (folded to
     // s in the buffer), selects the safe glyphs for the connection. A story
     // that shipped with Flags 2 bit 3, the graphics bit, reads it as y: Beyond
@@ -1993,45 +1822,45 @@ zrlRecord,
     // so V5's buffer layout is certain here: the count at byte 1, the text
     // from byte 2. What the player typed stays on the screen as typed.
     lac zsFirst
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) on a V5 game's first line
-    jmp zrlNotFirst
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrlNotFirst                     // not a V5 game's first line
     dzm zsFirst
     lac count
-    SKIP_NEXT_IF_SAME [1]            // sas: skip (fallthrough) if one character
-    jmp zrlNotFirst
+    SKIP_NEXT_IF_SAME [1]
+    jmp zrlNotFirst                     // not one character
     lac bufAddr
     add [2]
     lia
     farjsp(zFetchByte:0)             // AC = the character
-    SKIP_NEXT_IF_SAME [0d115]        // sas: skip (fallthrough) if s
-    jmp zrlNotFirst
+    SKIP_NEXT_IF_SAME [0d115]
+    jmp zrlNotFirst                     // not s
     lac [1]
     dac zsSafe
     lac zhFlags2                     // zboot.ac: the story's Flags 2, as shipped
     and [010]
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if the graphics bit
-    jmp zrlNotFirst
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrlNotFirst                     // no graphics bit
     lac bufAddr
     add [2]
     lio [0d121]                      // y
     farjda(zStoreByte:0)
 zrlNotFirst,
     lio [0d10]                       // a finished line ends the screen's
-    tcc                              //   line too -- LF, which DCS2 sends as CR LF
+    tcc                              //   line too: LF, which DCS2 sends as CR LF
                                      //   (see the header); a paused or stopped
                                      //   line, above, gets none
     dzm zwCol                        // the wrap's column starts again
     dzm zwSoft
     lac zosCmd
     ior zosTrans                     // or stream 2, for the echo
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if stream 4 or 2 is selected
-    jmp zrlDone                         // no-skip: neither -- nothing to record or echo
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrlDone                         // neither: nothing to record or echo
     cla
     dac ptr
 zrlRecLoop,
     lac ptr
-    SKIP_NEXT_IF_DIFFERENT count     // sad: skip (fallthrough) if characters remain
-    jmp zrlRecEnd                       // no-skip: all punched -- end the line
+    SKIP_NEXT_IF_DIFFERENT count
+    jmp zrlRecEnd                       // all punched: end the line
     lac bufAddr
     add ZRL_TEXT
     add ptr
@@ -2088,24 +1917,24 @@ ptr, 0
 tenths, 0                            // the mode in, then the running countdown
 key, 0                               // the last key, before the case fold
     endlocal
-zrlText, 1                          // PATCHED -- V5 2 (ZRL_TEXT)
-zrlRoomW, 2                          // PATCHED -- V5 1 (ZRL_ROOM)
+zrlText, 1                          // patched: V5 2 (ZRL_TEXT)
+zrlRoomW, 2                          // patched: V5 1 (ZRL_ROOM)
 
-// ========================================================================
-// zReadKey -- wait for one key, for read_char and zReadLine.
-//   IO in   the time in tenths of a second; 0 = untimed. tenths | 0200000
-//           means a countdown from the last call is still running: count
-//           on from it. | 0400000 means no echo: the wait runs with DCS2's
-//           echo off.
-//   AC out  the key, 1..0177 or 129-154; 0 if the time ran out; negative
-//           (0400000) if the connection dropped.
-//   IO out  after a key in a timed wait, tenths left | 0200000 -- what a
-//           line read hands back in on its next call, so the interval
-//           runs across keystrokes. Otherwise undefined. The no-echo bit
-//           is never handed back.
-// Called via jsp, cross-bank safe (farjsp(zReadKey:*) from bank 0).
+// Waits for one key, for read_char and zReadLine.
+// Entry: IO = the time in tenths of a second; 0 = untimed. tenths | 0200000
+//        means a countdown from the last call is still running: count on
+//        from it. | 0400000 means no echo: the wait runs with DCS2's echo
+//        off.
+// Exit:  AC = the key, 1..0177 or 129-154; 0 if the time ran out; negative
+//        (0400000) if the connection dropped.
+//        IO = after a key in a timed wait, tenths left | 0200000 -- what a
+//        line read hands back in on its next call, so the interval runs
+//        across keystrokes. Otherwise IO is clobbered. The no-echo bit is
+//        never handed back.
+// Called via jsp, cross-bank safe (farjsp(zReadKey:*) from bank 0);
+// returns with the window open.
 //
-// NO ECHO. Every caller sets the no-echo bit, so DCS2 echoes nothing the
+// No echo. Every caller sets the no-echo bit, so DCS2 echoes nothing the
 // interpreter reads, and each caller puts on the screen what it keeps.
 // With the bit set, echo goes off on entry, before the first poll, and on
 // again at zrkOut, which every exit reaches -- a key, the time running
@@ -2114,46 +1943,46 @@ zrlRoomW, 2                          // PATCHED -- V5 1 (ZRL_ROOM)
 // client, so a key buffered before the modify is not echoed either. Echo
 // is back on before a timed read's interrupt routine runs.
 //
-// THE POLL is getach's (Am1Includes/DCS/getach.ac): `cli; rcs`, test
+// The poll is getach's (Am1Includes/DCS/getach.ac): `cli; rcs`, test
 // `dsfser dsfcls` for a dropped line, test `dsfrdy` for a character, then
 // `rch rchclr; spi`. getach itself cannot be used, because it blocks.
 // With a timer running, each pass also reads `cks` and tests the BBN
 // clock's countdown flag, cctcks (Am1Includes/CLOCK/clockdefs.ah).
 //
-// EACH TENTH IS ONE 100 ms COUNTDOWN: `lac [0d100]; cct`. When the flag
+// Each tenth is one 100 ms countdown: `lac [0d100]; cct`. When the flag
 // comes up the count drops by one; at zero the time has run out, and
 // otherwise the next tenth is armed. Starting a count resets the flag, so
 // a re-arm needs no separate clear.
 //
-// A KEY LEAVES THE COUNTDOWN RUNNING. read_char never looks at it again,
+// A key leaves the countdown running. read_char never looks at it again,
 // and the next arm resets the flag; a line read hands it back in. A
 // dropped line stops it (`cla; cct`).
 //
-// THE KEY IS MAPPED: NUL and any byte of 0200-0377 are ignored and the
+// The key is mapped: NUL and any byte of 0200-0377 are ignored and the
 // poll carries on; LF (10) becomes 13; DEL (127) becomes 8. Everything
 // else passes through as typed, including CR and BS; ESC starts a key's
 // escape sequence (below). DCS2's telnet mode resolves CR LF to one '\n'
 // only when the LF is already buffered, and a bare CR to '\r', so Enter
 // reaches the story as 13 whichever arrives.
 //
-// BYTES OF 0200-0377 are ignored because a terminal sends a non-ASCII
+// Bytes of 0200-0377 are ignored because a terminal sends a non-ASCII
 // letter as UTF-8, and the continuation bytes 0200-0277 are where ZSCII
 // puts the input-only keys (129-132 the cursor keys, 133-144 F1-F12): a
 // letter such as a-macron (C4 81) would otherwise reach read_char as 196
 // and then cursor up. With echo off, nothing of such a letter reaches the
 // screen.
 //
-// `cct` AND `cks` CLEAR IO (devices 30-37 all do, per
+// `cct` and `cks` clear IO (devices 30-37 all do, per
 // Docs/UsingTimesharingClock.md), which is why the key is kept in a local
 // across them and IO is loaded last.
 //
-// NO INTERRUPT IS ENABLED: cct's bit 0 stays clear, and the countdown needs
+// No interrupt is enabled: cct's bit 0 stays clear, and the countdown needs
 // neither the main clock enabled nor the sequence break system. The poll
 // is the whole mechanism.
 //
-// ---- THE KEYS' ESCAPE SEQUENCES ----------------------------------------
-// A terminal sends an arrow, function or keypad key as an escape sequence,
-// and this routine returns it as the one ZSCII code S3.8 gives the key:
+// The keys' escape sequences. A terminal sends an arrow, function or
+// keypad key as an escape sequence, and this routine returns it as the one
+// ZSCII code S3.8 gives the key:
 //
 //   the terminal sends                 the key
 //   ESC [ A-D, or ESC O A-D            129 up, 130 down, 132 right (C), 131 left (D)
@@ -2171,25 +2000,25 @@ zrlRoomW, 2                          // PATCHED -- V5 1 (ZRL_ROOM)
 //     and intermediates (040-077) are skipped without being counted;
 //   - any other ESC O byte.
 // Three bytes are not dropped:
-//   - A CONTROL BYTE (below 040) inside a sequence ends it, and is read as
+//   - a control byte (below 040) inside a sequence ends it, and is read as
 //     itself -- a CR, or a second ESC, which starts a sequence of its own;
-//   - after ESC, ANY BYTE BUT [ OR O (Alt+x sends ESC x): the ESC is
+//   - after ESC, any byte but [ or O (Alt+x sends ESC x): the ESC is
 //     dropped, and the byte is read as itself;
-//   - A LONE ESC is the key 27, once 100 ms pass with nothing after it.
+//   - a lone ESC is the key 27, once 100 ms pass with nothing after it.
 // NUL and bytes of 0200-0377 are ignored inside a sequence as they are
 // outside one. Not decoded: the mouse (252-254); 8-bit C1 controls, which
 // are ignored as bytes of 0200-0377; PuTTY's "Linux console" function
 // keys, ESC [ [ A, whose second [ is a final byte -- it ends there, and
 // the A is read as a letter.
 //
-// THE 100 ms WAIT. An ESC starts one 100 ms countdown on cct, the one that
+// The 100 ms wait. An ESC starts one 100 ms countdown on cct, the one that
 // times a read's tenths, and `seq` says how far into a sequence the poll
 // is: 0 none, 1 after ESC, 2 after ESC [, 3 after ESC O.
 //   - The rest arrives first: the sequence is decoded. The countdown keeps
 //     running, as a key always leaves it.
 //   - It ends first: a lone ESC is 27, and a sequence cut off part way is
 //     dropped.
-//   - In a TIMED wait, the ESC's countdown replaces the tenth that was
+//   - In a timed wait, the ESC's countdown replaces the tenth that was
 //     running, so each escape key can make the interval up to 100 ms
 //     longer, and never shorter. When it ends with the sequence cut off,
 //     the countdown counts as a tenth (zrkTick), so the interval cannot
@@ -2200,12 +2029,11 @@ zrlRoomW, 2                          // PATCHED -- V5 1 (ZRL_ROOM)
 // normally all in DCS2's buffer when the ESC is read; the wait is for a
 // sequence split across two writes.
 //
-// zReadKeyRaw IS THIS ROUTINE WITH THE DECODING OFF (`raw` = 1): every byte
-// is returned as it comes, ESC as 27, mapped only as above (NUL and
+// zReadKeyRaw is this routine with the decoding off (`raw` = 1): every
+// byte is returned as it comes, ESC as 27, mapped only as above (NUL and
 // 0200-0377 ignored, LF to 13, DEL to 8). zTermQuery reads the terminal's
 // replies through it, byte by byte. Same arguments and results; called via
 // jsp, same bank only.
-// ========================================================================
 #include <CLOCK/clockdefs.ah>
 
 zReadKeyRaw,
@@ -2223,8 +2051,8 @@ zrkEntry,
     jsp zwFlush                      // a held word goes out before any
     lem                              //   wait; the scb below needs the window shut
     lac quiet
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if no echo
-    jmp zrkMode                         // no-skip: echo stays as it is
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrkMode                         // echo stays as it is
     lio [scbmod zTextNoEcho]
     scb
     lac quiet
@@ -2232,11 +2060,11 @@ zrkEntry,
 zrkMode,
     dac tenths
     and [0200000]
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) unless one is running
-    jmp zrkRunning                      // no-skip: count on from the running one
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zrkRunning                      // count on from the running one
     lac tenths
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if untimed
-    jmp zrkArm                          // no-skip: a fresh time -- arm the first tenth
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zrkArm                          // a fresh time: arm the first tenth
     jmp zrkPoll                      // untimed: IO in was 0
 zrkRunning,
     lac tenths
@@ -2248,30 +2076,30 @@ zrkPoll,
     rcs                              // IO = the channel's status
     lai
     and [dsfser dsfcls]
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if the line is up
-    jmp zrkDrop                         // no-skip: an error, or the client closed
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zrkDrop                         // an error, or the client closed
     lai
     and [dsfrdy]
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if nothing has come
-    jmp zrkGot                          // no-skip: a character is waiting
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zrkGot                          // a character is waiting
     lac tenths
     ior seq                          // or a sequence's 100 ms is running
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if timed, or in one
-    jmp zrkPoll                         // no-skip: untimed -- poll on
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrkPoll                         // untimed, and in no sequence: poll on
     cks                              // IO = the check-status word
     lai
     and [cctcks]
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if this tenth ended
-    jmp zrkPoll                         // no-skip: still counting
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrkPoll                         // this tenth is still counting
     lac seq
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) unless in a sequence
-    jmp zrkSeqEnd                       // no-skip: 100 ms, and the sequence unfinished
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zrkSeqEnd                       // 100 ms, and the sequence unfinished
 zrkTick,
     lac tenths
     sub [1]                          // 1..0xFFFF before, so never below plus zero
     dac tenths
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if tenths remain
-    jmp zrkOut                          // no-skip: AC = 0 -- the time ran out
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrkOut                          // AC = 0: the time ran out
 zrkArm,
     lac [0d100]
     cct                              // 100 ms; starting it resets the flag
@@ -2279,54 +2107,54 @@ zrkArm,
 
 zrkGot,
     rch rchclr                       // IO = the character
-    spi                              // skip (fallthrough) if IO is positive
-    jmp zrkDrop                         // no-skip: the read failed
+    spi                              // skip if IO is positive
+    jmp zrkDrop                         // the read failed
     lai
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) on a real byte
-    jmp zrkPoll                         // no-skip: a stray NUL -- keep waiting
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zrkPoll                         // a stray NUL: keep waiting
     and [0200]                       // bit 7, a byte of 0200-0377
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if the byte is below 0200
-    jmp zrkPoll                         // no-skip: 0200-0377 -- ignored, as a NUL is
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zrkPoll                         // 0200-0377: ignored, as a NUL is
     lac seq
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) unless in a sequence
-    jmp zrkInSeq                        // no-skip: the byte continues one
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zrkInSeq                        // the byte continues a sequence
 zrkByte,                             // IO = a byte read as itself
     lai                              // AC = the character again: IO still holds it
-    SKIP_NEXT_IF_SAME [033]          // sas: skip (fallthrough) on ESC
-    jmp zrkPlain                        // no-skip: any other byte
+    SKIP_NEXT_IF_SAME [033]
+    jmp zrkPlain                        // not ESC
     lac raw
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) when decoding
-    jmp zrkPlainIO                      // no-skip: zReadKeyRaw -- ESC is a byte like any other
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zrkPlainIO                      // zReadKeyRaw: ESC is a byte like any other
     lac [1]
-    dac seq                          // an ESC -- a sequence may follow
+    dac seq                          // an ESC: a sequence may follow
     lac [0d100]
     cct                              // its 100 ms; starting it resets the flag
     jmp zrkPoll
 zrkPlainIO,
     lai
 zrkPlain,
-    SKIP_NEXT_IF_DIFFERENT [0d10]    // sad: skip (fallthrough) unless LF
-    lac [0d13]                          // no-skip: LF reads as CR
-    SKIP_NEXT_IF_DIFFERENT [0d127]   // sad: skip (fallthrough) unless DEL
-    lac [0d8]                           // no-skip: DEL reads as BS
+    SKIP_NEXT_IF_DIFFERENT [0d10]
+    lac [0d13]                          // LF reads as CR
+    SKIP_NEXT_IF_DIFFERENT [0d127]
+    lac [0d8]                           // DEL reads as BS
 zrkKey,                              // AC = the key, decoded or not
     dac key
     lac tenths
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if untimed
-    ior [0200000]                       // no-skip: timed -- still running
+    SKIP_NEXT_IF_AC_ZERO             // skip if untimed
+    ior [0200000]                       // timed: still running
     lia                              // IO = the countdown to hand back
     lac key                          // AC = the key
     jmp zrkOut
 
-// ---- the sequences (see the header) ---------------------------------------
+// The sequences (see the header).
 // The 100 ms ran out with a sequence unfinished. AC = seq.
 zrkSeqEnd,
     dzm seq
-    SKIP_NEXT_IF_DIFFERENT [1]       // sad: skip (fallthrough) unless an ESC alone
-    jmp zrkEsc                          // no-skip: a lone ESC -- the key 27
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp zrkEsc                          // a lone ESC: the key 27
     lac tenths                       // cut off part way: dropped
-    SKIP_NEXT_IF_AC_ZERO             // sza: skip (fallthrough) if untimed
-    jmp zrkTick                         // no-skip: timed -- the 100 ms was a tenth
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zrkTick                         // timed: the 100 ms was a tenth
     jmp zrkPoll
 zrkEsc,
     lac [033]
@@ -2334,10 +2162,10 @@ zrkEsc,
 
 // A byte inside a sequence. AC = seq (1, 2 or 3), IO = the byte.
 zrkInSeq,
-    SKIP_NEXT_IF_DIFFERENT [1]       // sad: skip (fallthrough) unless just after ESC
-    jmp zrkAfterEsc
-    SKIP_NEXT_IF_DIFFERENT [2]       // sad: skip (fallthrough) unless after ESC [
-    jmp zrkCsi
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp zrkAfterEsc                     // just after ESC
+    SKIP_NEXT_IF_DIFFERENT [2]
+    jmp zrkCsi                          // after ESC [
 
     // ESC O (SS3): the byte after it is the whole key. The tests walk up
     // the letters, each subtraction leaving AC = byte - the next range's
@@ -2345,38 +2173,38 @@ zrkInSeq,
     // punctuation, p-y its digits, and M its Enter.
     dzm seq
     lai
-    SKIP_NEXT_IF_DIFFERENT [0115]    // sad: skip (fallthrough) unless M
-    jmp zrkCR                           // no-skip: the keypad's Enter
+    SKIP_NEXT_IF_DIFFERENT [0115]
+    jmp zrkCR                           // M: the keypad's Enter
     sub [0101]                       // byte - 'A'
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if 'A' or above
-    jmp zrkSs3Low                       // no-skip: below 'A'
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zrkSs3Low                       // below 'A'
     sub [4]                          // byte - 'E'
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if A-D
-    jmp zrkSs3P
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrkSs3P                         // not A-D
     add [0d133]                      // 'A' - 'E' + 133 = 129
     jmp zrkArrow
 zrkSs3P,
     sub [013]                        // byte - 'P'
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if 'P' or above
-    jmp zrkPoll                         // no-skip: E-O -- dropped
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zrkPoll                         // E-O: dropped
     sub [4]                          // byte - 'T'
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if P-S
-    jmp zrkSs3K
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrkSs3K                         // not P-S
     add [0d137]                      // 'P' - 'T' + 137 = 133
     jmp zrkKey
 zrkSs3K,
     sub [026]                        // byte - 'j'
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if 'j' or above
-    jmp zrkPoll                         // no-skip: T-i -- dropped
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zrkPoll                         // T-i: dropped
     sub [6]                          // byte - 'p'
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if j-o
-    jmp zrkSs3D
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrkSs3D                         // not j-o
     add [0d48]                       // 'j' - 'p' + 48 = 42, '*'
     jmp zrkPlain
 zrkSs3D,
     sub [0d10]                       // byte - 'z'
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if p-y
-    jmp zrkPoll                         // no-skip: z and above -- dropped
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrkPoll                         // z and above: dropped
     add [0d155]                      // 'p' - 'z' + 155 = 145
     jmp zrkKey
 zrkCR,
@@ -2387,10 +2215,10 @@ zrkCR,
 // right and its D left, the other way round from ZSCII's 131 left and 132
 // right, so those two swap.
 zrkArrow,
-    SKIP_NEXT_IF_DIFFERENT [0d131]   // sad: skip (fallthrough) unless C
-    jmp zrkRight
-    SKIP_NEXT_IF_DIFFERENT [0d132]   // sad: skip (fallthrough) unless D
-    jmp zrkLeft
+    SKIP_NEXT_IF_DIFFERENT [0d131]
+    jmp zrkRight                        // C
+    SKIP_NEXT_IF_DIFFERENT [0d132]
+    jmp zrkLeft                         // D
     jmp zrkKey                          // up or down
 zrkRight,
     add [1]                          // 132
@@ -2400,18 +2228,18 @@ zrkLeft,
     jmp zrkKey
 zrkSs3Low,                           // AC = byte - 'A', negative
     add [041]                        // byte - 040
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if 040 or above
-    jmp zrkByte                         // no-skip: a control byte ends it, and is read
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zrkByte                         // a control byte ends it, and is read
     jmp zrkPoll                         // 040-0100: dropped
 
 // The byte after ESC: [ or O carries on; anything else drops the ESC and is
 // read as itself.
 zrkAfterEsc,
     lai
-    SKIP_NEXT_IF_DIFFERENT [0133]    // sad: skip (fallthrough) unless '['
-    jmp zrkToCsi
-    SKIP_NEXT_IF_DIFFERENT [0117]    // sad: skip (fallthrough) unless 'O'
-    jmp zrkToSs3
+    SKIP_NEXT_IF_DIFFERENT [0133]
+    jmp zrkToCsi                        // '['
+    SKIP_NEXT_IF_DIFFERENT [0117]
+    jmp zrkToSs3                        // 'O'
     dzm seq
     jmp zrkByte
 zrkToSs3,
@@ -2428,21 +2256,21 @@ zrkSeqSet,
 zrkCsi,
     lai
     sub [0100]                       // byte - '@'
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) on a final byte
-    jmp zrkCsiLow
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zrkCsiLow                       // not a final byte
     dzm seq
     sub [1]                          // byte - 'A'
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if 'A' or above
-    jmp zrkPoll                         // no-skip: '@' -- dropped
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zrkPoll                         // '@': dropped
     sub [4]                          // byte - 'E'
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if A-D
-    jmp zrkPoll                         // no-skip: another final byte -- dropped
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrkPoll                         // another final byte: dropped
     add [0d133]                      // 'A' - 'E' + 133 = 129
     jmp zrkArrow
 zrkCsiLow,                           // AC = byte - '@', negative
     add [040]                        // byte - 040
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) on a control byte
-    jmp zrkPoll                         // no-skip: a parameter or intermediate
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrkPoll                         // a parameter or intermediate
     dzm seq                          // a control byte ends it, and is read
     jmp zrkByte
 
@@ -2455,8 +2283,8 @@ zrkOut,
     dac key                          // the answer, kept across the modify
     dio tenths                       //   and the IO to hand back
     lac quiet
-    SKIP_NEXT_IF_AC_NEGATIVE         // sma: skip (fallthrough) if echo went off
-    jmp zrkRet                          // no-skip: nothing to undo
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zrkRet                          // echo did not go off: nothing to undo
     lio [scbmod zTextEcho]
     scb
 zrkRet,
@@ -2472,20 +2300,18 @@ raw, 0                               // 1 in zReadKeyRaw, no decoding
 seq, 0                               // 0 none, 1 ESC, 2 ESC [, 3 ESC O
     endlocal
 
-// ========================================================================
-// zkTermRange -- does the story's terminating characters table list a key
-// in a range?
-// On call AC has lo and IO hi, both key codes.
-//   AC out  nonzero if the story's terminating characters table (the byte
-//           address at header 0x2E) lists 255 or a code in lo..hi; 0 if it
-//           lists none, or if the header word is 0 (no table).
-// The window is closed on return. S10.5.2.1: the table is zero-terminated,
-// and 255 means "every function key", which is every code this routine is
-// asked about. It is read through zFetchWord and zFetchByte, so it may be
-// anywhere in the story. Only V5 calls it: V1-4 have no table (zrlTermTab),
-// and zkKeypad runs from zbHeaderSetup's V5 part.
-// Called via jda, same bank only (zReadLine and zkKeypad).
-// ========================================================================
+// Does the story's terminating characters table list a key in a range?
+// S10.5.2.1: the table is zero-terminated, and 255 means "every function
+// key", which is every code this routine is asked about. It is read
+// through zFetchWord and zFetchByte, so it may be anywhere in the story.
+// Only V5 calls it: V1-4 have no table (zrlTermTab), and zkKeypad runs
+// from zbHeaderSetup's V5 part.
+// Entry: AC = lo, IO = hi, both key codes.
+// Exit:  AC = nonzero if the story's terminating characters table (the
+//        byte address at header 0x2E) lists 255 or a code in lo..hi; 0 if
+//        it lists none, or if the header word is 0 (no table).
+// AC is the result, IO is clobbered. Called via jda, same bank only
+// (zReadLine and zkKeypad); returns with the window closed.
 zkTermRange, 0
     local rtn, lo, hi, addr
     dap rtn
@@ -2495,24 +2321,24 @@ zkTermRange, 0
     lio [0d46]                       // header 0x2E: the table's address
     farjsp(zFetchWord:0)
     lem
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if there is a table
-    jmp rtn                             // no-skip: AC = 0, none
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rtn                             // AC = 0: no table
     dac addr
 zktLoop,
     lio addr
     farjsp(zFetchByte:0)             // AC = the next code
     lem
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) on a code
-    jmp rtn                             // no-skip: the table's end -- AC = 0
-    SKIP_NEXT_IF_DIFFERENT [0d255]   // sad: skip (fallthrough) unless 255
-    jmp rtn                             // no-skip: every function key -- AC = 255
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rtn                             // the table's end: AC = 0
+    SKIP_NEXT_IF_DIFFERENT [0d255]
+    jmp rtn                             // every function key: AC = 255
     sub lo                           // both are bytes: no overflow
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE     // sma i: skip (fallthrough) if lo or above
-    jmp zktNext
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zktNext                         // below lo
     add lo
     sub hi
-    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE // sma sza: skip (fallthrough) if hi or below
-    jmp zktNext
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp zktNext                         // above hi
     lac [1]                          // in lo..hi
     jmp rtn
 zktNext,
@@ -2524,11 +2350,9 @@ hi, 0
 addr, 0
     endlocal
 
-// ========================================================================
-// zkKeypad -- put the keypad in application mode if the story can use it.
-// No arguments; AC and IO are not preserved.
-// Called via jsp, same bank only, with eem off: zboot.ac's zbHeaderSetup,
-// at a V5 boot, restart and restore.
+// Puts the keypad in application mode if the story can use it.
+// No result. AC and IO are clobbered. Called via jsp, same bank only, with
+// eem off: zboot.ac's zbHeaderSetup, at a V5 boot, restart and restore.
 //
 // A keypad sends its digits as digits until the host sends DECKPAM, ESC =.
 // This routine sends it when both hold:
@@ -2540,18 +2364,17 @@ addr, 0
 // Any other story keeps a numeric keypad, so digits typed there stay
 // digits. The mode is never turned off: it lasts for the connection,
 // which plays one story. Sent on bare `tcc`s: it is not story output.
-// ========================================================================
 zkKeypad,
     local rtn
     dap rtn
     lac zsTier
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) unless tier C
-    jmp rtn                             // no-skip: a plain client -- nothing sent
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rtn                             // tier C, a plain client: nothing sent
     lac [0d145]
     lio [0d154]
     jda zkTermRange                  // AC nonzero if the table takes the keypad
-    SKIP_NEXT_IF_AC_NOT_ZERO         // sza i: skip (fallthrough) if it does
-    jmp rtn
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rtn                             // it does not
     lio [033]                        // ESC =: the keypad's application mode
     tcc
     lio [075]
@@ -2560,18 +2383,17 @@ zkKeypad,
 rtn, jmp 0
     endlocal
 
-// ========================================================================
-// zTermQuery -- ask the terminal its size (by the VT100 cursor position
-// report), whether it has color, and how it can draw font 3.
-// No arguments.
-//   AC out  0; negative (0400000) if the connection dropped, when nothing
-//           has been written and the caller ends the session (stop 6).
-// Called via jsp, cross-bank safe: zmemcore.am1's zServeSession calls it
+// Asks the terminal its size (by the VT100 cursor position report),
+// whether it has color, and how it can draw font 3.
+// Exit:  AC = 0; negative (0400000) if the connection dropped, when
+//        nothing has been written and the caller ends the session (stop 6).
+// AC is the result, IO is clobbered. Called via jsp, cross-bank safe;
+// returns with the window open. zmemcore.am1's zServeSession calls it
 // with farjsp(zTermQuery:*) once for each connection, before zBootInit
 // (whose zbHeaderSetup writes the size into the header). The test-harness
 // entry testTermDcs also calls it.
 //
-// THE QUERY: ESC 7, ESC [ 999 ; 999 H (a terminal clamps the cursor to
+// The query: ESC 7, ESC [ 999 ; 999 H (a terminal clamps the cursor to
 // its bottom-right corner), ESC [ 6 n; the color question, ESC ] 4 ; 1 ;
 // ? BEL (OSC 4: what is color 1?); ESC [ c (the primary device
 // attributes); the UTF-8 test, ESC [ 1 ; 1 H, U+2588's three bytes
@@ -2579,7 +2401,7 @@ rtn, jmp 0
 // through zPrintChar: it is not story output, and must not reach a
 // transcript or stream 3.
 //
-// THE REPLIES come in the order asked: ESC [ rows ; cols R; then, from a
+// The replies come in the order asked: ESC [ rows ; cols R; then, from a
 // terminal that answers it at all, ESC ] 4 ; 1 ; rgb:... ended by BEL
 // (PuTTY) or by ST, ESC \ (Windows Terminal); then ESC [ ? p ; ... c;
 // then ESC [ 1 ; col R. The OSC reply arrives before the report that ends
@@ -2589,7 +2411,7 @@ rtn, jmp 0
 // no-echo flag, and with one running countdown of ZTQ_TENTHS for all of
 // them.
 //
-// WHAT THE ANSWERS BECOME:
+// What the answers become:
 //   - the first position report, if it parses: rows and columns, each
 //     capped at 255 (they are header bytes), unless below the floor of 2
 //     rows and 20 columns -- the least the screen model draws with -- which
@@ -2601,7 +2423,7 @@ rtn, jmp 0
 //     runs out: a client that answers the size and nothing else waits the
 //     rest of the 2 seconds. A reply cut off by the timeout counts as an
 //     answer;
-//   - THE TIER (zsTier, zfont3.ac's header): no ESC at all before the
+//   - the tier (zsTier, zfont3.ac's header): no ESC at all before the
 //     timeout is a silent client, tier C, with plain output (zscreen.ac's
 //     zsPlain) and a newline, so the game starts on a clean line after
 //     the query that such a client printed. Otherwise a DA reply listing 7
@@ -2609,7 +2431,7 @@ rtn, jmp 0
 //     the UTF-8 test at column 2 is tier U; anything else, column 4 or no
 //     report, tier D;
 //   - bytes before a reply's ESC are discarded;
-//   - COLOR is claimed only on positive evidence: a DA reply listing 22
+//   - color is claimed only on positive evidence: a DA reply listing 22
 //     (ANSI color), or an OSC reply, ESC ] read to its BEL or to its ESC
 //     and one byte more. Tier C never claims: both need an ESC. Without the
 //     claim Flags 1 bit 0 is cleared in zbF1Mask; with it zscreen.ac's
@@ -2621,11 +2443,11 @@ rtn, jmp 0
 // through the window. zsSafe and zsFirst are cleared: a V5 boot arms
 // zsFirst after this (zbHeaderSetup).
 //
-// THEN THE DESIGNATION: tier A loads the soft font and designates it into
+// Then the designation: tier A loads the soft font and designates it into
 // G1 (zfont3.ac's zfLoad); tier D designates DEC Special Graphics, ESC ) 0;
 // tiers U and C send nothing.
 //
-// LAST, "Wait..." AND A NEWLINE, on every tier, because zBootInit's load
+// Last, "Wait..." and a newline, on every tier, because zBootInit's load
 // of the story comes next and takes many seconds with nothing on the
 // screen. Sent with `tcc`. On an answering terminal ESC 8 has put the
 // cursor back where it was before the query, and the session's reset
@@ -2635,7 +2457,6 @@ rtn, jmp 0
 //
 // A test entry that does not call this runs with the words' initial
 // values: 24x80, VT100, tier C.
-// ========================================================================
 #define ZTQ_TENTHS 0d20                  // 2 seconds
 
 zTermQuery,
@@ -2647,8 +2468,8 @@ zTermQuery,
     dac ptr
 ztqSend,
     lac i ptr
-    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) on a byte
-    jmp ztqAsked                            // no-skip: the table's end
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ztqAsked                            // the table's end
     lia
     tcc
     idx ptr
@@ -2671,20 +2492,20 @@ ztqAsked,
     // among them, then its final byte. Anything before the ESC is dropped.
 ztqReply,
     lac ncpr
-    SKIP_NEXT_IF_DIFFERENT [2]           // sad: skip (fallthrough) until both reports are in
-    jmp ztqDone
+    SKIP_NEXT_IF_DIFFERENT [2]
+    jmp ztqDone                             // both reports are in
 ztqEsc,
     jsp ztqKey
-    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) on a byte
-    jmp ztqDone                             // no-skip: the time ran out
-    SKIP_NEXT_IF_SAME [033]              // sas: skip (fallthrough) on the ESC
-    jmp ztqEsc                              // no-skip: dropped
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ztqDone                             // the time ran out
+    SKIP_NEXT_IF_SAME [033]
+    jmp ztqEsc                              // not the ESC: dropped
     dac seen                             // something answered
     jsp ztqKey
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp ztqDone                             // cut off after the ESC
-    SKIP_NEXT_IF_SAME [0d91]             // sas: skip (fallthrough) on the '['
-    jmp ztqNotCsi
+    SKIP_NEXT_IF_SAME [0d91]
+    jmp ztqNotCsi                           // not '['
     dzm npar
     dzm seven
     dzm da22
@@ -2692,33 +2513,33 @@ ztqPar,
     jsp ztqNum                           // acc = a number; AC = the byte after it
     SKIP_NEXT_IF_AC_NOT_ZERO
     jmp ztqDone                             // the time ran out
-    SKIP_NEXT_IF_DIFFERENT [0d63]        // sad: skip (fallthrough) unless '?'
-    jmp ztqPar                              // no-skip: a DA reply's '?' -- read on
+    SKIP_NEXT_IF_DIFFERENT [0d63]
+    jmp ztqPar                              // a DA reply's '?': read on
     lac acc
-    SKIP_NEXT_IF_DIFFERENT [7]           // sad: skip unless 7
-    dac seven                               // no-skip: 7 -- DRCS, if this is a DA reply
-    SKIP_NEXT_IF_DIFFERENT [0d22]        // sad: skip unless 22 (AC is still acc)
-    dac da22                                // no-skip: 22 -- ANSI color, if a DA reply
+    SKIP_NEXT_IF_DIFFERENT [7]
+    dac seven                               // 7: DRCS, if this is a DA reply
+    SKIP_NEXT_IF_DIFFERENT [0d22]        // AC is still acc
+    dac da22                                // 22: ANSI color, if a DA reply
     lac npar
-    SKIP_NEXT_IF_AC_ZERO                 // sza: skip (fallthrough) on the first number
-    jmp ztqPar2
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ztqPar2                             // not the first number
     lac acc
     dac par0
     jmp ztqParN
 ztqPar2,
-    SKIP_NEXT_IF_SAME [1]                // sas: skip (fallthrough) on the second
-    jmp ztqParN
+    SKIP_NEXT_IF_SAME [1]
+    jmp ztqParN                             // not the second
     lac acc
     dac par1
 ztqParN,
     idx npar
     lac ch
-    SKIP_NEXT_IF_DIFFERENT [0d59]        // sad: skip (fallthrough) unless ';'
-    jmp ztqPar
-    SKIP_NEXT_IF_DIFFERENT [0d82]        // sad: skip (fallthrough) unless 'R'
-    jmp ztqCpr
-    SKIP_NEXT_IF_SAME [0d99]             // sas: skip (fallthrough) on a 'c'
-    jmp ztqSkip
+    SKIP_NEXT_IF_DIFFERENT [0d59]
+    jmp ztqPar                              // ';'
+    SKIP_NEXT_IF_DIFFERENT [0d82]
+    jmp ztqCpr                              // 'R'
+    SKIP_NEXT_IF_SAME [0d99]
+    jmp ztqSkip                             // not 'c'
     lac seven                            // a DA reply: DRCS if it listed 7
     SKIP_NEXT_IF_AC_ZERO
     dac soft
@@ -2731,19 +2552,19 @@ ztqParN,
     // the floor, or 24x80 stands. The second is the UTF-8 test's.
 ztqCpr,
     lac npar
-    SKIP_NEXT_IF_SAME [2]                // sas: skip (fallthrough) on two numbers
-    jmp ztqCprN
+    SKIP_NEXT_IF_SAME [2]
+    jmp ztqCprN                             // not two numbers
     lac ncpr
-    SKIP_NEXT_IF_AC_ZERO                 // sza: skip (fallthrough) on the first report
-    jmp ztqCol
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ztqCol                              // not the first report
     lac par0
     sub [2]
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE         // sma i: skip (fallthrough) if 2 rows or more
-    jmp ztqCprN                             // no-skip: below the floor
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp ztqCprN                             // below the floor
     lac par1
     sub [0d20]
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE         // sma i: skip (fallthrough) if 20 columns or more
-    jmp ztqCprN
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp ztqCprN                             // below the floor
     lac par0
     dac rows
     lac par1
@@ -2751,8 +2572,9 @@ ztqCpr,
     jmp ztqCprN
 ztqCol,
     lac par1
-    SKIP_NEXT_IF_DIFFERENT [2]           // sad: skip unless column 2
-    dac utf                                 // no-skip: the three bytes were one character
+    SKIP_NEXT_IF_DIFFERENT [2]
+    dac utf                                 // column 2: the three bytes were one
+                                            //   character
 ztqCprN,
     idx ncpr
     jmp ztqReply
@@ -2762,45 +2584,45 @@ ztqCprN,
     // ESC \ (Windows Terminal), whose ESC and one byte more end it. Anything
     // else is a reply gone wrong.
 ztqNotCsi,
-    SKIP_NEXT_IF_SAME [0d93]             // sas: skip (fallthrough) on a ']'
-    jmp ztqSkip
+    SKIP_NEXT_IF_SAME [0d93]
+    jmp ztqSkip                             // not ']'
     dac osc                              // AC = ']': an OSC reply came
 ztqOsc,
     jsp ztqKey
-    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) on a byte
-    jmp ztqDone                             // no-skip: the time ran out
-    SKIP_NEXT_IF_DIFFERENT [7]           // sad: skip (fallthrough) unless BEL
-    jmp ztqReply                            // no-skip: BEL ends it
-    SKIP_NEXT_IF_SAME [033]              // sas: skip (fallthrough) on an ESC
-    jmp ztqOsc                              // no-skip: the reply's text
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ztqDone                             // the time ran out
+    SKIP_NEXT_IF_DIFFERENT [7]
+    jmp ztqReply                            // BEL ends it
+    SKIP_NEXT_IF_SAME [033]
+    jmp ztqOsc                              // the reply's text
     jsp ztqKey                           // the ST's `\`, whatever it is
-    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) on a byte
-    jmp ztqDone                             // no-skip: the time ran out
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ztqDone                             // the time ran out
     jmp ztqReply
 
     // A reply went wrong at the byte in AC: read on to its R or its c, or to
     // the timeout.
 ztqSkip,
-    SKIP_NEXT_IF_DIFFERENT [0d82]        // sad: skip (fallthrough) unless 'R'
-    jmp ztqCprN                             // no-skip: still a report
-    SKIP_NEXT_IF_DIFFERENT [0d99]        // sad: skip (fallthrough) unless 'c'
-    jmp ztqReply
+    SKIP_NEXT_IF_DIFFERENT [0d82]
+    jmp ztqCprN                             // 'R': still a report
+    SKIP_NEXT_IF_DIFFERENT [0d99]
+    jmp ztqReply                            // 'c'
     jsp ztqKey
-    SKIP_NEXT_IF_AC_ZERO                 // sza: skip (fallthrough) if the time ran out
-    jmp ztqSkip
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ztqSkip                             // a byte: read on
 
     // The reading is over. AC = the tier, into ztqSet.
 ztqDone,
     lac osc                              // the color claim, 1 or 0. Both
     ior ansi                             //   need an ESC, so on tier C, below,
-    SKIP_NEXT_IF_AC_ZERO                 //   it is always 0. sza: skip unless claimed
+    SKIP_NEXT_IF_AC_ZERO                 //   it is always 0. Skip unless claimed
     lac [1]
     dac claim
     lac seen
-    SKIP_NEXT_IF_AC_ZERO                 // sza: skip (fallthrough) if nothing answered
-    jmp ztqTier
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ztqTier                             // something answered
     lac [1]
-    dac plain                            // part C: no escapes from here on
+    dac plain                            // tier C: no escapes from here on
     lac [0777742]                        // Flags 1 without bits 2-4, nor
     dac mask                             //   bit 0, colors
     lio [0d10]                           // LF, which telnet mode sends as CR LF
@@ -2814,12 +2636,12 @@ ztqTier,
     dac mask
 #if !Z_CENSUS
     lac soft
-    SKIP_NEXT_IF_AC_ZERO                 // sza: skip (fallthrough) without DRCS
-    jmp ztqTierA
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ztqTierA                            // DRCS: tier A
 #endif
     lac utf                              // 2, tier U, or 0
-    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip if tier U
-    lac [1]                                 // no-skip: tier D
+    SKIP_NEXT_IF_AC_NOT_ZERO             // skip if tier U
+    lac [1]                                 // tier D
     jmp ztqSet
 #if !Z_CENSUS
 ztqTierA,
@@ -2857,11 +2679,11 @@ ztqSet,
 
     // The designation for the tier.
     lac zsTier
-    SKIP_NEXT_IF_DIFFERENT [1]           // sad: skip (fallthrough) unless tier D
-    jmp ztqDec
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp ztqDec                              // tier D
 #if !Z_CENSUS
-    SKIP_NEXT_IF_DIFFERENT [3]           // sad: skip (fallthrough) unless tier A
-    jmp ztqSoft
+    SKIP_NEXT_IF_DIFFERENT [3]
+    jmp ztqSoft                             // tier A
 #endif
     // "Wait...", then the return. ztqSoft's farjsp comes back
     // with the window open, and `lac i ptr` needs it closed.
@@ -2871,8 +2693,8 @@ ztqRet,
     dac ptr
 ztqWait1,
     lac i ptr
-    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) on a byte
-    jmp ztqWaitX                            // no-skip: the table's end, AC = 0
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ztqWaitX                            // the table's end, AC = 0
     lia
     tcc
     idx ptr
@@ -2897,11 +2719,12 @@ ztqDrop,
     lac [0400000]                        // AC negative: the connection dropped
     farrtn(rtn)
 
-// ztqKey -- read the reply's next byte, into AC, or 0 if the time ran out.
-// A dropped line never comes back here: it leaves for ztqDrop, abandoning
-// the call. io carries the countdown, with the no-echo flag, from one call
-// to the next.
-// Called via jsp, from zTermQuery only.
+// Reads the reply's next byte. A dropped line never comes back here: it
+// leaves for ztqDrop, abandoning the call. io carries the countdown, with
+// the no-echo flag, from one call to the next.
+// Exit:  AC = the byte, or 0 if the time ran out.
+// AC is the result, IO is clobbered. Called via jsp, from zTermQuery only;
+// returns with the window open.
 ztqKey,
     dap ztqkX
     lio io
@@ -2909,8 +2732,8 @@ ztqKey,
                                          //   ESC comes through; same bank; eem
                                          //   comes back on, which nothing below
                                          //   the send loop minds
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE         // sma i: skip (fallthrough) unless it dropped
-    jmp ztqDrop
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp ztqDrop                             // the connection dropped
     dac ch
     lai
     ior [0400000]                        // the countdown still running, and no echo
@@ -2918,24 +2741,25 @@ ztqKey,
     lac ch
 ztqkX, jmp .
 
-// ztqNum -- read decimal digits into acc, capped at 255, up to the first
-// byte that is not one. Returns that byte in AC, or 0 if the time ran out;
-// ch holds it too.
-// Called via jsp, from zTermQuery only.
+// Reads decimal digits into acc, capped at 255, up to the first byte that
+// is not one; ch holds that byte too.
+// Exit:  AC = that byte, or 0 if the time ran out.
+// AC is the result, IO is clobbered. Called via jsp, from zTermQuery only;
+// returns with the window open.
 ztqNum,
     dap ztqnX
     dzm acc
 ztqnLoop,
     jsp ztqKey
     dac ch
-    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) on a byte
-    jmp ztqnX                               // no-skip: AC = 0, the time ran out
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ztqnX                               // AC = 0: the time ran out
     sub [0d48]
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE         // sma i: skip (fallthrough) if '0' or above
-    jmp ztqnEnd
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp ztqnEnd                             // below '0'
     sub [0d10]
-    SKIP_NEXT_IF_AC_NEGATIVE             // sma: skip (fallthrough) if a digit
-    jmp ztqnEnd                             // no-skip: above '9' (equal leaves plus zero)
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ztqnEnd                             // above '9' (equal leaves plus zero)
     add [0d10]
     dac dig
     lac acc
@@ -2945,8 +2769,8 @@ ztqnLoop,
     add dig
     dac acc
     sub [0d256]
-    SKIP_NEXT_IF_AC_NEGATIVE             // sma: skip (fallthrough) if below 256
-    jmp ztqnCap
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ztqnCap                             // 256 or more
     jmp ztqnLoop
 ztqnCap,
     lac [0d255]
@@ -3011,7 +2835,7 @@ ztqSeq,
     033                                  // ESC [ c, the device attributes
     0d91
     0d99                                 // 'c'
-    033                                  // the UTF-8 test -- ESC [ 1 ; 1 H,
+    033                                  // the UTF-8 test: ESC [ 1 ; 1 H,
     0d91
     0d49                                 // '1'
     0d59
@@ -3041,8 +2865,7 @@ ztqWait,
     0d10                                 // LF
     0
 
-// ========================================================================
-// Test-harness entries, driven through ad1.
+// The test-harness entries, driven through ad1.
 //
 // Every `start` resets DCS2 and closes every channel, so a routine that
 // prints over DCS2 cannot be tested with one `start` per call. Instead
@@ -3053,7 +2876,6 @@ ztqWait,
 //
 // Assembled only when Z_TEST_HARNESS is nonzero (the default in
 // zmemcore.am1); the production build passes -DZ_TEST_HARNESS=0.
-// ========================================================================
 #if Z_TEST_HARNESS
 
 testTextAddrIn, 0
@@ -3066,11 +2888,11 @@ testTextCmd, 0
 // by accident:
 //   testTextArm    -- the second half of the TTC_INTERPRET handshake; the
 //                     caller pokes TTC_ARM_MAGIC here before the command.
-//   testTextBadCmd -- the last command value this loop REFUSED to run.
+//   testTextBadCmd -- the last command value this loop refused to run.
 //                     Sticky: nothing in the loop ever clears it, so a
 //                     single stray value is still evidence at the end of
 //                     a session that ran fine afterwards.
-//   ttdCmd         -- PRIVATE to the dispatcher. The one observation of
+//   ttdCmd         -- private to the dispatcher. The one observation of
 //                     testTextCmd that a whole dispatch is decided on.
 //                     Nothing outside this loop may poke it.
 testTextArm, 0
@@ -3107,12 +2929,11 @@ testTextDone, 0
 // no plausible partial write, can spell it.
 #define TTC_ARM_MAGIC     0252525
 
-// testTextDispatchLoop -- start once. Opens the DCS2 channel, blocks
-// until a client connects, then polls testTextCmd forever: a nonzero
-// value dispatches to the matching routine (inputs already poked into
-// testTextAddrIn/testTextObjIn/testTextCharIn/testTextValueIn by the
-// caller), then clears testTextCmd back to 0 to signal completion.
-// Polling only, no interrupts.
+// Start once. Opens the DCS2 channel, blocks until a client connects, then
+// polls testTextCmd forever: a nonzero value dispatches to the matching
+// routine (inputs already poked into testTextAddrIn/testTextObjIn/
+// testTextCharIn/testTextValueIn by the caller), then clears testTextCmd
+// back to 0 to signal completion. Polling only, no interrupts.
 //
 // A value this loop does not recognize is recorded in testTextBadCmd and
 // testTextCmd is left as it is, so the caller's wait-for-zero times out.
@@ -3132,8 +2953,8 @@ testTextDispatchLoop,
 ttdLoop,
     lac testTextCmd
     dac ttdCmd                     // the one observation this pass acts on
-    SKIP_NEXT_IF_AC_ZERO           // sza: skip (fallthrough) if cmd==0 -- idle
-    jmp ttdDispatch                   // no-skip: a command is pending
+    SKIP_NEXT_IF_AC_ZERO           // skip if idle
+    jmp ttdDispatch                   // a command is pending
     jmp ttdLoop
 
 ttdDispatch,
@@ -3195,7 +3016,7 @@ ttdTestReadLine,
     SKIP_NEXT_IF_SAME [TTC_READ_LINE]
     jmp ttdTestInterpret
     lac testTextAddrIn
-    cli                           // IO is zReadLine's mode -- 0, untimed
+    cli                           // IO is zReadLine's mode: 0, untimed
     jda zReadLine
     dac testTextValueIn
     jmp ttdClear
@@ -3231,12 +3052,11 @@ ttdBad,
     dac testTextBadCmd
     jmp ttdLoop
 
-// The order of these two stores matters. testTextCmd is
-// cleared FIRST and the completion counter bumped SECOND, so that by the
-// time a caller can see the counter move, the command word is already 0
-// and this loop is on its way back to ttdLoop. Bumping first would open a
-// window in which the caller pokes its next command and this code then
-// zeroes it.
+// The order of these two stores matters. testTextCmd is cleared first and
+// the completion counter bumped second, so that by the time a caller can
+// see the counter move, the command word is already 0 and this loop is on
+// its way back to ttdLoop. Bumping first would open a window in which the
+// caller pokes its next command and this code then zeroes it.
 //
 // Value-returning arms (`dac testTextValueIn`) write their result before
 // jumping here, so "the counter moved" also means "the value is in

@@ -1,0 +1,121 @@
+Drum read word-count probe
+// The DEC drum diagnostic's "wce" check, isolated. Drum field 0 from address 0 gets the pattern
+// k+1 at word k, and the drum's read buffer is primed with it by one full read. Core 1000 on
+// then holds the complement. For wc = 1..3000 (decimal), wc words are read into 1000 on; the
+// word at 1000+wc must still hold its complement, and the word at 1000+wc-1 the pattern.
+// First halt: AC = reads that changed the word after the block, IO = the last wc that did.
+// Second halt: AC = reads whose last word was wrong, IO = the last such wc.
+// Continue after each of the first two halts. A correct drum gives AC 0 at the first and
+// second halts, and AC 000001, IO 772106 at the third. Either sbs16 setting; about 106 s
+// on WSL.
+#include <DRUM/type23drumdefs.ah>
+
+100/
+    dzm k
+fl, lac k
+    add [1000
+    dap fs
+    lac k
+    add [1
+fs, dac .
+    idx k
+    sas [0d3001
+    jmp fl
+
+// write 3001 words from 1000 to field 0 address 0, then read them back to prime the buffer
+    cli
+    dia
+    lio [405671
+    dwc
+    lio [1000
+    dcl
+    jsp tst
+    lio [400000
+    dia
+    lio [5671
+    dwc
+    lio [1000
+    dcl
+    jsp tst
+
+// complement core 1000 .. 1000+3000
+    dzm k
+cp, lac k
+    add [1000
+    dap c1
+    dap c2
+c1, lac .
+    cma
+c2, dac .
+    idx k
+    sas [0d3001
+    jmp cp
+
+    law 1
+    dac wc
+ml, lio [400000
+    dia
+    lio wc
+    dwc
+    lio [1000
+    dcl
+    jsp tst
+
+// the word after the block must be untouched
+    lac wc
+    add [1000
+    dap ck
+    lac wc
+    add [1
+    cma
+ck, sas .
+    jmp ex
+// the block's last word must be the pattern, wc
+nx, lac wc
+    add [777
+    dap cw
+    lac wc
+cw, sas .
+    jmp bd
+nb, idx wc
+    sas [0d3001
+    jmp ml
+
+    lac nex
+    lio lex
+    hlt
+    lac nbd
+    lio lbd
+    hlt
+    lac 1000
+    lio 6670
+    hlt
+
+ex, idx nex
+    lac wc
+    dac lex
+    jmp nx
+
+bd, idx nbd
+    lac wc
+    dac lbd
+    jmp nb
+
+tst, dac tmp
+lp1, cla
+    cks
+    rcr 1
+    sza
+    jmp lp1
+    jmp i tmp
+
+tmp, 0
+k, 0
+wc, 0
+nex, 0
+lex, 0
+nbd, 0
+lbd, 0
+
+constants
+start 100

@@ -1,0 +1,10 @@
+Test rg46: %% before a name that is not a directive
+// %% and a name that is no directive is refused by name, not left to the
+// grammar, so the diagnostic names the misspelled directive.
+// Without that check,
+// %%optimizer would lex as %%optimize followed by the name r, a
+// syntax error that says nothing about the spelling.
+100/
+    %%optimizer
+    hlt
+stop

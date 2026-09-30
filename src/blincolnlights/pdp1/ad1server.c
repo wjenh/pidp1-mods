@@ -14,6 +14,7 @@
 // actions; here they are set and waited on by the emulator thread instead of by another process.
 //
 // 20-Sep-2026 Claude: written to replace the shared-memory link.
+// 28-Sep-2026 Claude: the HELLO reply's build text no longer carries the build date.
 
 #define _GNU_SOURCE
 
@@ -525,7 +526,9 @@ int i;
         return( false );
     }
 
-    snprintf(build, sizeof(build), "pidp1 built %s", __DATE__);
+    // No __DATE__: it made two builds of the same sources on different days differ, and no client
+    // reads the text. The field stays, so the reply's layout is unchanged.
+    snprintf(build, sizeof(build), "pidp1");
     buildLen = (uint32_t)strlen(build);
 
     words[0] = AD1P_VERSION;
@@ -2224,35 +2227,36 @@ int state;
     }
 }
 
-// The throttle wait, as a drop-in for the plain sleep loop: sleep in one-millisecond steps until
-// real time catches up with simulated time, but let a request end a sleep so it is served at
-// once instead of after up to a millisecond. Simulated time is not advanced here.
+// The interruptible-wait primitive throttle() (pdp1.c) is built on (22-Sep-2026).
+// The pacing policy (the quantum/spin/cap loop) is throttle()'s; this is here because it needs
+// wakeFd and serverActive, both private to this file, and because "a request cuts the current
+// wait short" is this file's own concern.
+//
+// Waits up to durationNs, but if a request arrives, serves it at once (ad1Service()) instead of
+// making it wait out the rest of durationNs. A plain sleep when the server is not active or both
+// ports failed to bind. Does not touch pdp->realtime/pdp->simtime -- the caller owns those.
 void
-ad1Throttle(PDP1 *pdp)
+ad1ThrottleWait(PDP1 *pdp, uint64_t durationNs)
 {
 struct pollfd pfd;
-struct timespec oneMs;
+struct timespec ts;
 
-    while( pdp->realtime < pdp->simtime )
+    ts.tv_sec = (time_t)(durationNs / 1000000000ULL);
+    ts.tv_nsec = (long)(durationNs % 1000000000ULL);
+
+    if( serverActive )
     {
-        if( serverActive )
+        pfd.fd = wakeFd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        if( ppoll(&pfd, 1, &ts, NULL) > 0 )
         {
-            pfd.fd = wakeFd;
-            pfd.events = POLLIN;
-            pfd.revents = 0;
-            oneMs.tv_sec = 0;
-            oneMs.tv_nsec = 1000000;
-            if( ppoll(&pfd, 1, &oneMs, NULL) > 0 )
-            {
-                drainEventFd(wakeFd);
-                ad1Service(pdp);
-            }
+            drainEventFd(wakeFd);
+            ad1Service(pdp);
         }
-        else
-        {
-            usleep(1000);
-        }
-
-        pdp->realtime = gettime();
+    }
+    else
+    {
+        nanosleep(&ts, NULL);
     }
 }

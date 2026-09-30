@@ -1,15 +1,15 @@
 rg33 automatic placement of trailing constants and variables
 
-// Regression for the automatically emitted constants and variables blocks
-// (05-Sep-26). Three defects, all silent:
-//   - the block was stamped with whatever bank happened to be current when the
-//     program ended, not the bank it belongs to, so it could land in, and
+// Regression for the automatically emitted constants and variables blocks.
+// It guards against three defects, all silent:
+//   - the block stamped with whatever bank happens to be current when the
+//     program ends, not the bank it belongs to, so it can land in, and
 //     overwrite, another bank
-//   - the parser allocated variables before constants but every code generator
-//     emitted constants before variables, so the variables were written past
-//     the constants instead of where their symbols point
-//   - the code generators advanced the bank's cur_pc, so whichever one ran
-//     second reported or emitted the block at the wrong address
+//   - variables allocated before constants by the parser but emitted after
+//     them by a code generator, so the variables are written past the
+//     constants instead of where their symbols point
+//   - a code generator advancing the bank's cur_pc, so whichever one runs
+//     second reports or emits the block at the wrong address
 //
 // Both banks leave constants and variables dangling, and the program ends in
 // bank 0, so bank 1's trailing block is the one most likely to be misplaced.

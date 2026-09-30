@@ -1,0 +1,19 @@
+Test rg47: a statement on an origin's line
+// "NNN/ word" is the origin and then a statement, as DEC's macro writes it.
+// A slash anywhere else in a statement divides, with or without blanks.
+// Some lines separate the origin from its statement with a tab, as macro
+// sources do.  cpp turns a tab into a blank, so run_regression.sh assembles
+// this file a second time with -n, which keeps the tabs, and compares the two.
+100/ cla                // 0100: a statement on the origin's line
+    lac 30/ 2           // 0101: lac (030/2), not an origin
+    (30/ 2)             // 0102: a parenthesized divide
+    30 / 2              // 0103: blanks on both sides: divide
+    30/2                // 0104: no blank after the slash: divide
+110/	5               // 0110: an origin, then the word 5
+.+7/	x,	hlt         // 0120: the origin is an expression, and a label follows
+    lac x               // 0121: lac 0120
+130 + 10/	cma         // 0140: blanks inside the origin's expression
+150/ 160/ 5             // 0160: two origins, then a word
+170/ // a comment after an origin
+    hlt                 // 0170
+stop

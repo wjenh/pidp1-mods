@@ -1,0 +1,8 @@
+Test rg37 (XFAIL): a word that carries a label lands on a used word -- must fail
+// The other direction of rg36: here the labeled word is the one that
+// overwrites, and the collision must be caught this way too.
+100/
+    cli
+100/
+tgt,    cma
+stop

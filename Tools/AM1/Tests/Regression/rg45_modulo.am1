@@ -1,0 +1,11 @@
+Test rg45: modulo written with a single %
+// % is modulo with or without blanks around it.  a is 0100 (64) and b is
+// 0103 (67).  "b%a" is b modulo a, not a name.
+100/
+a,  b % a           // 67 mod 64: 3
+    7%3             // 1
+    b%(a)           // 3
+b,  b%a             // 3
+    b %a            // 3
+    (b+1) % 7       // 68 mod 7: 5
+stop

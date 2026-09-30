@@ -275,18 +275,26 @@ func (s *PeriphServer) displayCon(conn net.Conn) {
 
 	buf := make([]byte, 128*4)
 	cmds := make([]uint32, 128)
+	// A read can end partway through a word; its bytes are kept for the next read,
+	// or every word after it would be misaligned.
+	have := 0
 	for {
-		n, err := conn.Read(buf)
+		n, err := conn.Read(buf[have:])
 		if err != nil {
 			log.Printf("display: read error: %v\n", err)
 			s.sendToWeb(Message{Type: "dpy_disconnected"})
 			return
 		}
 
-		ncmds := n / 4
+		have += n
+		ncmds := have / 4
+		if ncmds == 0 {
+			continue
+		}
 		for i := 0; i < ncmds; i++ {
 			cmds[i] = uint32(binary.LittleEndian.Uint32(buf[i*4 : (i+1)*4]))
 		}
+		have = copy(buf, buf[ncmds*4:have])
 		s.sendToWeb(Message{
 			Type:   "points",
 			Points: cmds[:ncmds],

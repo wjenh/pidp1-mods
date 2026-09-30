@@ -9,7 +9,7 @@ using similar logic as the Type 62 printer used.
 **NOTE** that the operating mode must be switched to Type 64 from Type 62, Type 62 is the default.\
 Use the lptType64 setting in the /opt/pidp1-mods/pidp1.config file.
 
-Updated 23-Mar-2026
+Updated 27-Sep-2026
 
 ## The output
 
@@ -18,6 +18,14 @@ The file is opened in append mode if not already open and lines are written to i
 The file is flushed when each line is printed, the file can be viewed or copied at will.
 
 The file is closed when an *lpc* or a *lpm* instruction is issued, see below.
+
+The output file can also be a FIFO (named pipe, made with *mkfifo*) that another program reads.
+Until a reader opens it, the printer is simply not ready: printed lines are held, up to 16 KB of them,
+and a *pas* with wait or completion does not finish until a reader has taken its line.
+The rest of the machine keeps running meanwhile.
+If the reader goes away, the line being written when it left can be lost, and later lines are held
+until a reader opens the FIFO again.
+Changing the file with *lpf*, or closing it with *lpc* or *lpm*, drops any lines still held.
 
 In flexo mode, concise characters are converted to ascii with any character that has no equivalent printed as a space.
 The conversion set is the same as used by **macro1**, **am1**, **DCS2**, and any other character conversions
@@ -184,7 +192,8 @@ fname,
 Note that the file name cannot contain wildcards or other *globbing* characters, those are expanded
 by the shell.
 However, ~/, ~username/, and relative paths can be used, *../b*.
-In specific, the path must be one that linux *fopen()* accepts, with the addition of the ~ processing.
+In specific, the path must be one that linux *open()* accepts, with the addition of the ~ processing.
+It can name a FIFO, see *The output* above.
 
 Also note that unless an absolute path is given, the file will be relative to the current working directory
 of *the running pdp1 instance*, most likely */opt/pidp1-mods*, don't depend upon it.

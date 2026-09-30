@@ -4,7 +4,7 @@ Test of local scoping
     private d
 
     loc a, b
-    addlocal x, y, a2   // a2 was the ad-hoc local %a until task A36
+    addlocal x, y, a2   // more locals for the scope loc opened
     jmp a2
         local b
         lac x

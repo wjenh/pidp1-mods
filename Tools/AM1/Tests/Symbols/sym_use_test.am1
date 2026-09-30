@@ -1,0 +1,10 @@
+SYM USE
+// Tests/Symbols.  The importing half.  An imported symbol carries
+// the line ITS OWN source defined it on, through the library .sym -- so the
+// line reaches an importer too, and this is where that is held.
+100/
+        import "sym_lib_test.sym"
+usefirst,       0
+        lac libsym
+        hlt
+        start usefirst

@@ -4,10 +4,28 @@
  * 21-Jun-2026 wje minor revision for some timing changes
  * 3-Jul-2026 wje minor cleanup, also avoid extraneous IO completions
  *
+ * The output file is opened and written by a writer thread, never the emulator thread, through a
+ * non-blocking fd, so the path a program names can be a FIFO or a device, and a slow card or disk
+ * holds nothing (5 s writes were measured on a Pi 4 with a busy SD card). The printed text waits
+ * in a ring for the writer. With no FIFO reader yet, or one that isn't keeping up, the printer
+ * stays busy (its completion is held back) until the output is taken, as a printer out of paper
+ * would. A regular file does not hold the completion: the writer takes the text however long the
+ * disk takes. A close or a new file name (lpf, lpm, a Type 64 reset) is a mark in the stream,
+ * applied by the writer once the text before it is written.
+ *
+ * 27-Sep-2026 Claude the output file is a non-blocking fd; a FIFO no longer hangs the emulator.
+ * 27-Sep-2026 Claude the file is opened and written on a writer thread.
+ * 28-Sep-2026 Claude the print and spacing delays are simtime deadlines, not counts of executed cycles.
 */
 
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <time.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
 
@@ -41,6 +59,15 @@
 #define TYPE64CLEARDELAY 5 // milliseconds
 
 #define ERROR 0777776   // -1 in 1's cmpl 12 bit
+
+#define PENDMAX 16384           // printed text waiting for the writer
+#define RETRYDELAY TYPE62LINEDELAY  // ms between tries while the output is not taken
+#define MAXMARKS 8              // closes and file name changes waiting in the stream
+
+// What the writer last found: outState
+#define OPEN_OK 0
+#define OPEN_WAIT 1             // a FIFO with no reader yet, or one not keeping up: not ready
+#define OPEN_FAIL 2             // the file could not be opened
 
 // Define the actions that can be done, bits that are or'd
 #define PRINT   0x1     // print the current buffer, reset buffer counter to 0
@@ -81,7 +108,34 @@ static int linesPerPage = 66;       // override in config
 static char buffer[BUFSIZE + 1];    // the print buffer
 
 static char *filenameP = DEFAULTFILE;
-static FILE *outfP;
+
+// Shared with the writer thread, under outLock. The ring holds bytes appended to written:
+// written counts bytes the writer wrote, or dropped.
+typedef struct
+{
+    uint64_t pos;                   // close the file once the text before pos is written
+    char *nameP;                    // then use this name, if not NULL (the writer frees it)
+} OutMark;
+
+static pthread_mutex_t outLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t workCond = PTHREAD_COND_INITIALIZER;     // text, a mark, or an open wanted
+static pthread_cond_t roomCond = PTHREAD_COND_INITIALIZER;     // the writer took something
+static pthread_t writerThread;
+static bool writerStarted;
+static bool writerStop;             // the process is exiting
+static bool writerDone;             // the writer has ended: output is dropped
+static char ring[PENDMAX];
+static uint64_t appended;
+static uint64_t written;
+static OutMark marks[MAXMARKS];
+static int nMarks;
+static bool openWanted;             // an IOT ran: open the file if it isn't open
+static bool outOpen;                // the writer has the file open
+static int outState = OPEN_OK;
+
+// The writer thread's own.
+static int outFd = -1;
+static char *outNameP;              // NULL for DEFAULTFILE
 
 static bool configDone;             // config loaded
 static bool type64;                 // emulating a type 64, else a type 62
@@ -92,9 +146,342 @@ static bool inWait;                 // completion delay in effect
 static bool wantCompletion;         // did the instruction that armed the current delay actually request IOCOMPLETE?
 
 static void configure(void);
+static void startWriter(void);
+static void emitOutput(const char *sP, int len);
+static void closeOutput(const char *newNameP);
+static void wantOpen(void);
+static bool outputFailed(void);
+static bool outputBlocked(void);
+static void *writer(void *argP);
+static void waitRetry(void);
+static void stopWriter(void) __attribute__((destructor));
 
 extern int flexToAscii(char fc, int *shiftP);
 extern char *getFileName(PDP1P pdp1P, unsigned int addr, char *bufP, size_t bufLen);
+
+// Starts the writer thread, once. If it cannot be started the printer's output is dropped, as
+// for a file that cannot be opened. No return value.
+static void
+startWriter(void)
+{
+    if( writerStarted )
+    {
+        return;
+    }
+
+    writerStarted = true;
+    if( pthread_create(&writerThread, NULL, writer, NULL) != 0 )
+    {
+        writerStarted = false;
+        writerDone = true;
+        outState = OPEN_FAIL;
+    }
+}
+
+// Adds len bytes of sP to the text waiting for the writer. A full ring waits for the writer if
+// it is writing the file, however slowly, so nothing is lost; if the output is not being taken
+// (a FIFO with no reader, a file that cannot be opened) what does not fit is dropped and
+// logged, since a program that waits for the printer's completion never gets that far.
+static void
+emitOutput(const char *sP, int len)
+{
+int room;
+int at;
+int n;
+
+    pthread_mutex_lock(&outLock);
+    while( len > 0 )
+    {
+        room = (PENDMAX - (int)(appended - written));
+        if( room == 0 )
+        {
+            if( writerDone || (outState != OPEN_OK) )
+            {
+                iotCondLog(LOG45FILE, "Output not taken, %d bytes dropped\n", len);
+                break;
+            }
+
+            pthread_cond_wait(&roomCond, &outLock);
+            continue;
+        }
+
+        at = (int)(appended % PENDMAX);
+        n = len;
+        if( n > room )
+        {
+            n = room;
+        }
+        if( n > (PENDMAX - at) )
+        {
+            n = (PENDMAX - at);
+        }
+
+        memcpy(ring + at, sP, n);
+        appended += n;
+        sP += n;
+        len -= n;
+    }
+
+    pthread_cond_signal(&workCond);
+    pthread_mutex_unlock(&outLock);
+}
+
+// Closes the output file once the text printed so far is written, and from then on uses
+// newNameP, if not NULL. Text a FIFO reader has not taken by then is dropped. Waits only if
+// MAXMARKS closes are already waiting. No return value.
+static void
+closeOutput(const char *newNameP)
+{
+    pthread_mutex_lock(&outLock);
+    while( (nMarks >= MAXMARKS) && !writerDone )
+    {
+        pthread_cond_wait(&roomCond, &outLock);
+    }
+
+    if( !writerDone )
+    {
+        marks[nMarks].pos = appended;
+        marks[nMarks].nameP = (newNameP ? strdup(newNameP) : NULL);
+        ++nMarks;
+        pthread_cond_signal(&workCond);
+    }
+
+    pthread_mutex_unlock(&outLock);
+}
+
+// Every IOT asks the writer to open the file if it isn't open, as every IOT used to open it;
+// so a file that could not be opened is tried again. No return value.
+static void
+wantOpen(void)
+{
+    pthread_mutex_lock(&outLock);
+    if( !outOpen )
+    {
+        openWanted = true;
+        pthread_cond_signal(&workCond);
+    }
+    pthread_mutex_unlock(&outLock);
+}
+
+// Returns true if the writer's last try at opening the file failed.
+static bool
+outputFailed(void)
+{
+bool failed;
+
+    pthread_mutex_lock(&outLock);
+    failed = (outState == OPEN_FAIL);
+    pthread_mutex_unlock(&outLock);
+    return(failed);
+}
+
+// Returns true if printed text is waiting and is not being taken: the file is not open yet, or
+// it is a FIFO with no reader, or one not keeping up. The printer is not ready until it is.
+static bool
+outputBlocked(void)
+{
+bool blocked;
+
+    pthread_mutex_lock(&outLock);
+    blocked = (appended > written) && !writerDone && (!outOpen || (outState == OPEN_WAIT));
+    pthread_mutex_unlock(&outLock);
+    return(blocked);
+}
+
+// The writer thread: opens the file, writes the text in order and applies the marks, all
+// with outLock released, so the emulator thread never waits on the file. A FIFO with no reader
+// (ENXIO) or a full one (EAGAIN) is tried again every RETRYDELAY. A file that cannot be opened
+// drops the text waiting for it. Any other write error drops the text and closes the file, so
+// the next text opens it again. At exit it writes what it can and ends.
+static void *
+writer(void *argP)
+{
+uint64_t limit;
+int at;
+int n;
+int fd;
+int err;
+ssize_t put;
+char *nameP;
+
+    (void)argP;
+    pthread_mutex_lock(&outLock);
+    for( ;; )
+    {
+        limit = (nMarks ? marks[0].pos : appended);
+
+        if( writerStop && (outState != OPEN_OK) )
+        {
+            written = appended;             // exiting, and the output is not being taken
+            limit = appended;
+        }
+
+        // A close drops what the output is not taking; then it is applied.
+        if( nMarks && (written < marks[0].pos) && (outState != OPEN_OK) )
+        {
+            iotCondLog(LOG45FILE, "Closed with %d bytes unwritten\n", (int)(marks[0].pos - written));
+            written = marks[0].pos;
+            pthread_cond_broadcast(&roomCond);
+        }
+
+        if( nMarks && (written >= marks[0].pos) )
+        {
+            fd = outFd;
+            outFd = -1;
+            outOpen = false;
+            outState = OPEN_OK;
+            if( marks[0].nameP )
+            {
+                free(outNameP);
+                outNameP = marks[0].nameP;
+            }
+
+            --nMarks;
+            memmove(&marks[0], &marks[1], (nMarks * sizeof(OutMark)));
+            pthread_cond_broadcast(&roomCond);
+
+            if( fd >= 0 )
+            {
+                pthread_mutex_unlock(&outLock);
+                close(fd);
+                pthread_mutex_lock(&outLock);
+            }
+            continue;
+        }
+
+        if( (outFd < 0) && ((written < limit) || openWanted) && !writerStop )
+        {
+            openWanted = false;
+            nameP = (outNameP ? outNameP : DEFAULTFILE);
+            pthread_mutex_unlock(&outLock);
+            fd = open(nameP, (O_WRONLY | O_APPEND | O_CREAT | O_NONBLOCK), 0666);
+            err = errno;
+            pthread_mutex_lock(&outLock);
+
+            if( fd >= 0 )
+            {
+                outFd = fd;
+                outOpen = true;
+                outState = OPEN_OK;
+            }
+            else if( err == ENXIO )
+            {
+                outState = OPEN_WAIT;
+                if( written < limit )
+                {
+                    waitRetry();
+                }
+            }
+            else
+            {
+                iotCondLog(LOG45FILE, "Open file '%s' failed\n", nameP);
+                outState = OPEN_FAIL;
+                written = limit;
+                pthread_cond_broadcast(&roomCond);
+            }
+            continue;
+        }
+
+        if( (outFd >= 0) && (written < limit) )
+        {
+            at = (int)(written % PENDMAX);
+            n = (int)(limit - written);
+            if( n > (PENDMAX - at) )
+            {
+                n = (PENDMAX - at);
+            }
+
+            // The bytes from written to limit are not touched by emitOutput() until taken.
+            pthread_mutex_unlock(&outLock);
+            put = write(outFd, ring + at, n);
+            err = errno;
+            pthread_mutex_lock(&outLock);
+
+            if( put > 0 )
+            {
+                written += (uint64_t)put;
+                outState = OPEN_OK;
+                pthread_cond_broadcast(&roomCond);
+            }
+            else if( (put < 0) && (err == EINTR) )
+            {
+                ;
+            }
+            else if( (put < 0) && ((err == EAGAIN) || (err == EWOULDBLOCK)) )
+            {
+                outState = OPEN_WAIT;
+                waitRetry();
+            }
+            else
+            {
+                iotCondLog(LOG45FILE, "Write failed, errno %d, %d bytes dropped\n", err, (int)(limit - written));
+                written = limit;
+                fd = outFd;
+                outFd = -1;
+                outOpen = false;
+                outState = OPEN_OK;
+                pthread_cond_broadcast(&roomCond);
+                pthread_mutex_unlock(&outLock);
+                close(fd);
+                pthread_mutex_lock(&outLock);
+            }
+            continue;
+        }
+
+        if( writerStop )
+        {
+            break;                          // everything is written or dropped
+        }
+
+        pthread_cond_wait(&workCond, &outLock);
+    }
+
+    writerDone = true;
+    outState = OPEN_FAIL;
+    pthread_cond_broadcast(&roomCond);
+    pthread_mutex_unlock(&outLock);
+
+    if( outFd >= 0 )
+    {
+        close(outFd);
+        outFd = -1;
+    }
+
+    return(NULL);
+}
+
+// Waits RETRYDELAY, or less if something new comes. Called with outLock held. No return value.
+static void
+waitRetry(void)
+{
+struct timespec until;
+
+    clock_gettime(CLOCK_REALTIME, &until);
+    until.tv_nsec += (RETRYDELAY * 1000000L);
+    if( until.tv_nsec >= 1000000000L )
+    {
+        until.tv_sec += 1;
+        until.tv_nsec -= 1000000000L;
+    }
+
+    pthread_cond_timedwait(&workCond, &outLock, &until);
+}
+
+// At exit: the writer writes what it can and ends. No return value.
+static void
+stopWriter(void)
+{
+    if( !writerStarted )
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&outLock);
+    writerStop = true;
+    pthread_cond_signal(&workCond);
+    pthread_mutex_unlock(&outLock);
+    pthread_join(writerThread, NULL);
+}
 
 int
 iotHandler(PDP1 *pdp1P, int dev, int pulse, int completion)
@@ -103,7 +490,7 @@ int i, j;
 int word, addr;
 int actions;
 int spaceval;
-int delaytime;
+uint64_t delaytime;
 int fchar, achar;
 bool fail;
 bool noWait;
@@ -119,6 +506,7 @@ bool noWait;
     if( !configDone )
     {
         configure();
+        startWriter();
         configDone = true;
     }
 
@@ -132,7 +520,7 @@ bool noWait;
     // 1x45, print and space
     // 2045, reset
     actions = 0;
-    delaytime = 0;  // if 0, no delay, else cycles
+    delaytime = 0;  // if 0, no delay, else ns on the device time base
 
     if( (MB(pdp1P) & 03700) == 0 )             // 0045
     {
@@ -192,25 +580,21 @@ bool noWait;
         asciiMode = false;                      // also resets to the default flexo mode
         delaytime = 0;
 
-        if( outfP )
-        {
-            iotCondLog(LOG45FILE, "Closing file\n");
-            fclose(outfP);
-            outfP = NULL;
-        }
+        iotCondLog(LOG45FILE, "Closing file\n");
+        closeOutput(NULL);
 
-        delaytime = MSTOCYCLES(TYPE64CLEARDELAY);
+        delaytime = MSTONS(TYPE64CLEARDELAY);
         inWait = true;
     }
 
-    if( !outfP )
+    // The writer opens the file. A FIFO with no reader yet is not a failure: the output waits
+    // and the printer stays busy. A file the writer could not open fails this IOT, and this
+    // IOT's request has it tried again.
+    wantOpen();
+    if( outputFailed() )
     {
-        if( !(outfP = fopen(filenameP, "a")) )
-        {
-            fail = true;                      // sorry
-        }
-
-        iotCondLog(LOG45FILE, "Open file '%s', %d\n", filenameP, fail);
+        fail = true;                          // sorry
+        iotCondLog(LOG45FILE, "Open file '%s' failed\n", filenameP);
     }
 
     if( !fail && (actions & ADD) )                     // put chars in buffer
@@ -270,7 +654,7 @@ bool noWait;
     if( actions & OVER )
     {
         bufLoc = 0;
-        delaytime += (type64)?MSTOCYCLES(TYPE64PRINTDELAY):MSTOCYCLES(TYPE62PRINTDELAY);
+        delaytime += (type64)?MSTONS(TYPE64PRINTDELAY):MSTONS(TYPE62PRINTDELAY);
         inWait = true;
     }
 
@@ -280,11 +664,8 @@ bool noWait;
         // buffer will always be null terminated, just print it if not empty
         if( *buffer )
         {
-            if( fputs(buffer, outfP) < 0 )
-            {
-                fail = true;
-            }
-            iotCondLog(LOG45PRINT, "Printed '%s', status %d\n", buffer, fail);
+            emitOutput(buffer, strlen(buffer));
+            iotCondLog(LOG45PRINT, "Printed '%s'\n", buffer);
         }
 
         bufLoc = 0;
@@ -310,18 +691,22 @@ bool noWait;
                 // We go one more to termiate the current line
                 for( i = 0; i <= j; ++i )
                 {
-                    fputc('\n', outfP);
+                    emitOutput("\n", 1);
                 }
             }
             else
             {
                 iotCondLog(LOG45FF, "FF using formfeed\n");
-                fputs("\n\f", outfP);
+                emitOutput("\n\f", 2);
             }
 
             lineNo = 1;
-            delaytime += (type64)?MSTOCYCLES(TYPE64LINEDELAY * j):MSTOCYCLES(TYPE62LINEDELAY * j);
-            iotCondLog(LOG45FF, "FF delay time %d\n", delaytime);
+            // j is negative only for an lptLines below 1; MSTONS() of a negative count would wrap.
+            if( j > 0 )
+            {
+                delaytime += (type64)?MSTONS(TYPE64LINEDELAY * j):MSTONS(TYPE62LINEDELAY * j);
+            }
+            iotCondLog(LOG45FF, "FF delay time %llu ns\n", (unsigned long long)delaytime);
         }
         else
         {
@@ -333,8 +718,8 @@ bool noWait;
                     lineNo = 1;
                 }
 
-                fputc('\n', outfP);
-                delaytime += (type64)?MSTOCYCLES(TYPE64LINEDELAY):MSTOCYCLES(TYPE62LINEDELAY);
+                emitOutput("\n", 1);
+                delaytime += (type64)?MSTONS(TYPE64LINEDELAY):MSTONS(TYPE62LINEDELAY);
             }
         }
 
@@ -343,21 +728,16 @@ bool noWait;
         curShift = LCS;
         memset(buffer, 0, sizeof(buffer));
 
-        fflush(outfP);
+        // iotDeadline() holds the completion while the output is not being taken.
         inWait = true;
     }
 
     // Do even if there was a fail
     if( actions == LPF )
     {
-        if( outfP )
-        {
-            fclose(outfP);
-            outfP = NULL;
-        }
-
         if( IO(pdp1P) == 0 )                // just reset the file
         {
+            closeOutput(DEFAULTFILE);
             if( filenameP != DEFAULTFILE )
             {
                 free(filenameP);
@@ -373,10 +753,17 @@ bool noWait;
             iotCondLog(LOG45FILE, "Open  file, io %06o, addr %06o\n", IO(pdp1P), addr);
             if( !getFileName(pdp1P, addr, buffer, sizeof(buffer)) )
             {
+                closeOutput(NULL);
                 fail = true;
             }
             else
             {
+                closeOutput(buffer);
+                if( filenameP != DEFAULTFILE )
+                {
+                    free(filenameP);
+                }
+
                 filenameP = (char *)malloc(strlen(buffer) + 1);
                 strcpy(filenameP, buffer);
                 iotCondLog(LOG45FILE, "Open  file, filename '%s'\n", filenameP);
@@ -385,10 +772,10 @@ bool noWait;
                 bufLoc = 0;
                 memset(buffer, 0, sizeof(buffer));
                 curShift = LCS;
-                enablePolling(0);                   // just in case
+                iotPollCancel();                    // just in case
                 if( inWait )
                 {
-                    // If there is a pending completion requrest, post it.
+                    // If there is a pending completion request, post it.
                     inWait = false;
                     if( wantCompletion )
                     {
@@ -413,12 +800,8 @@ bool noWait;
         // It does not change ascii mode though, the above bit does that.
         if( IO(pdp1P) & 2 )
         {
-            if( outfP )
-            {
-                fclose(outfP);
-                outfP = NULL;
-                iotCondLog(LOG45FILE, "File closed\n");
-            }
+            closeOutput(NULL);
+            iotCondLog(LOG45FILE, "File closed\n");
 
             lineNo = 1;
             bufLoc = 0;
@@ -432,7 +815,7 @@ bool noWait;
     if( !fail && delaytime && !noWait )
     {
         wantCompletion = completion;
-        enablePolling(delaytime);
+        iotPollAt(IOT_TIME_DEVICE, (iotTime(IOT_TIME_DEVICE) + delaytime));
     }
 
     if( noWait && completion )
@@ -442,13 +825,8 @@ bool noWait;
 
     if( fail )
     {
-        iotCondLog(LOG45, "Fail, closing file\n");
-        if( outfP )
-        {
-            fclose(outfP);
-            outfP = NULL;
-        }
-
+        // The writer has no file open after a failed open, and lpf closed it already.
+        iotCondLog(LOG45, "Fail\n");
         IO(pdp1P) = ERROR;
     }
     else
@@ -459,13 +837,21 @@ bool noWait;
     return(1);
 }
 
-// Our 'interrupt' handler.
-// If we get here, we were delaying and now done.
+// Our 'interrupt' handler: the print or spacing delay is over. If the output is not being taken
+// (a FIFO with no reader, or a file not open yet), the printer stays busy and this looks again
+// after RETRYDELAY. The disk's own speed never holds the completion. The delays are simtime
+// deadlines on the device time base, so cycles the drum or the 340 steal count, and a halt does
+// not stop them.
 void
-iotPoll(PDP1 *pdp1P)
+iotDeadline(PDP1 *pdp1P)
 {
+    if( outputBlocked() )
+    {
+        iotPollAt(IOT_TIME_DEVICE, (iotTime(IOT_TIME_DEVICE) + MSTONS(RETRYDELAY)));
+        return;
+    }
+
     inWait = false;
-    enablePolling(0);                  // always disable polling regardless of completion
 
     // Post complete if one is pending.
     if( wantCompletion )

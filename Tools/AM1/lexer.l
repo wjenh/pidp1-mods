@@ -28,6 +28,10 @@ static char commentBuf[MAXCCOMMENT];
 
 extern int lineno;
 extern char *filenameP;
+extern int optRegionTokenLine;      // the line and file of the optimizer directive
+extern char *optRegionTokenFileP;   // just scanned, for the parser's messages
+extern int labelTokenLine;          // the line the comma just scanned is on
+extern int nameTokenLine;           // the line the NAME or ADDR just scanned is on
 extern SymNodeP permSymP;
 extern BankContextP curBankP;
 
@@ -44,6 +48,7 @@ extern char asciiToType340(char);
 extern void reset_line(void);
 extern void verror(char *msgP, ...);
 extern void vwarn(int errtype, char *msgP, ...);
+static int directiveToken(int token);
 
 #define YY_USER_INIT BEGIN FIRST
 
@@ -54,6 +59,9 @@ extern void vwarn(int errtype, char *msgP, ...);
 
 %s BODY
 %x FIRST DOASCII DOTEXT CONST CCOMMENT T340STR
+
+DIREND		[^A-Za-z0-9_ \t]
+DIRENDFL	[^A-Za-z0-9_]
 
 %%
 
@@ -153,7 +161,15 @@ extern void vwarn(int errtype, char *msgP, ...);
                         return(COMMENT);
                     }
 
-[ \t]*%%forcelocal	{ return(FORCELOC); }
+                    /* Every am1 directive is spelled with a leading %%; a single
+                       % is the modulo operator.  Each %% rule takes the blanks in
+                       front of it, or "    %%forcelocal" would lex as the longer
+                       match "    %", MOD.  A directive matches only when the next
+                       character cannot continue a name, so "%%inlinefoo" is not
+                       %%inline.  Blanks after a directive are taken by a second
+                       pattern with the same action, since trailing context cannot
+                       overlap them. */
+[ \t]*%%forcelocal/{DIRENDFL}	{ return(FORCELOC); }
 
 loc(al)?[ \t]*		{ return(LOCAL); }
 addloc(al)?[ \t]*	{ return(ADDLOCAL); }
@@ -165,6 +181,31 @@ table[ \t]*	    	{ return(TABLE); }
 bank[ \t]*	    	{ return(BANK); }
 thisbank[ \t]*  	{ return(THISBANK); }
 
+                    /* The optimizer directives.  Each records its own line and
+                       file through directiveToken() for the parser's errors:
+                       lineno may already count the terminator at reduction time,
+                       and reset_line() overwrites filenameP's buffer. */
+[ \t]*%%ceiling[ \t]+			{ return(directiveToken(CEILINGDECL)); }
+[ \t]*%%ceiling/{DIREND}		{ return(directiveToken(CEILINGDECL)); }
+[ \t]*%%endspeed[ \t]+			{ return(directiveToken(ENDSPEED)); }
+[ \t]*%%endspeed/{DIREND}		{ return(directiveToken(ENDSPEED)); }
+[ \t]*%%speed[ \t]+			{ return(directiveToken(SPEED)); }
+[ \t]*%%speed/{DIREND}			{ return(directiveToken(SPEED)); }
+[ \t]*%%inline[ \t]+			{ return(directiveToken(INLINEDECL)); }
+[ \t]*%%inline/{DIREND}			{ return(directiveToken(INLINEDECL)); }
+[ \t]*%%endnooptimize[ \t]+		{ return(directiveToken(ENDNOOPTIMIZE)); }
+[ \t]*%%endnooptimize/{DIREND}		{ return(directiveToken(ENDNOOPTIMIZE)); }
+[ \t]*%%nooptimize[ \t]+		{ return(directiveToken(NOOPTIMIZE)); }
+[ \t]*%%nooptimize/{DIREND}		{ return(directiveToken(NOOPTIMIZE)); }
+[ \t]*%%endoptimize[ \t]+		{ return(directiveToken(ENDOPTIMIZE)); }
+[ \t]*%%endoptimize/{DIREND}		{ return(directiveToken(ENDOPTIMIZE)); }
+[ \t]*%%optimize[ \t]+			{ return(directiveToken(OPTIMIZE)); }
+[ \t]*%%optimize/{DIREND}		{ return(directiveToken(OPTIMIZE)); }
+
+                    /* %% and a name that is no directive is an error that names
+                       it.  This rule must stay below every directive pattern:
+                       at the end of a line a directive matches the same length
+                       here, and flex breaks the tie by rule order. */
 [ \t]*%%[a-zA-Z_][a-zA-Z0-9_]*	{
                         verror("%s is not an am1 directive", strchr(yytext, '%'));
                         return(BAD);
@@ -359,7 +400,10 @@ octal		    	{ decimalMode = false; }
 [ ]*<<[ ]*	    	{ return(LSHIFT); }
 [ ]*>>[ ]*	    	{ return(RSHIFT); }
 \.		       	    { return(DOT); }
-\,[ \t]*	    	{ return(LOCATION); }
+                    /* A label's line is recorded here: by the time the label rule
+                       reduces, lineno may already count the TERMINATOR.  Only the
+                       label rules read it. */
+\,[ \t]*	    	{ labelTokenLine = lineno; return(LOCATION); }
 
 \[                  {
                         inConstant = true;
@@ -385,10 +429,9 @@ octal		    	{ decimalMode = false; }
                         yylval.ival = (int)strtol(yytext+2,0,10);
                         if( yylval.ival > WRDMASK )
                         {
-                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)",
-                                yytext, WRDMASK);
+                            verror("numeric literal %s exceeds the 18-bit PDP-1 word range (max %#o octal)", yytext, WRDMASK);
                             return(BAD);
-                        }
+                            }
                         return(INTEGER);
                     }
 
@@ -477,18 +520,27 @@ octal		    	{ decimalMode = false; }
                                 yylval.symP = symP;
                                 return(LCLADDR);
                             }
+                            /* A var name's line is recorded here, for the
+                               reason given at the comma rule above: its
+                               grammar rule cannot read it from lineno. */
                             else if( (symP = sym_find(&(curBankP->globalSymP),yytext)) )
                             {
                                 yylval.symP = symP;
+                                nameTokenLine = lineno;
                                 return(ADDR);
                             }
                             else
                             {
                                 yylval.strP = malloc(yyleng+1);
                                 strcpy(yylval.strP,yytext);
+                                nameTokenLine = lineno;
                                 return(NAME);
                             }
                         }
+
+                    /* % is the modulo operator; there is no %name local (use
+                       local/addlocal).  "jmp %c" assembles silently as jmp MOD c,
+                       since an opcode is an operand. */
 
 ^[\t ]+	            { }
 
@@ -496,6 +548,8 @@ octal		    	{ decimalMode = false; }
                         return(SEPARATOR);
                     }
 
+                    /* The '%' in this lookahead makes "x/%..." lex as DIV then
+                       MOD, a syntax error, rather than an origin and a %. */
 \/[ \t]*[^a-zA-Z0-9\~\%\[\/] {
                     int ch;
 
@@ -940,18 +994,18 @@ gdbtarget()
     return;
 }
 
-// The scanner the parser calls.
-// From each token keeps stmtBare and parenDepth for the slash rule.
-// Only the tokens that can be part of an origin's expression leave the statement bare.
-// Any other token, a separator and a label's comma included ends that, so a
-// directive's operands are never mistaken for an origin.
-// Every token that ends a statement starts the next one bare.
+// The scanner the parser calls.  It returns what the generated scanner returns,
+// and from each token keeps stmtBare and parenDepth for the slash rule.  Only the
+// tokens that can be part of an origin's expression leave the statement bare;
+// any other token, a separator and a label's comma included, ends that, so a
+// directive's operands are never mistaken for an origin.  Every token that ends
+// a statement starts the next one bare.
 //
-// Additionally, the rule for a complement swallows the blanks in front
+// One more thing it does: the rule for a complement swallows the blanks in front
 // of the ~ so that "a & ~b" and "(~b)" need no separator, and that leaves
-// "lac ~07" with no separator token between the two operands.
-// When a complement that had a blank in front of it follows an operand, that blank was
-// the separator and it is handed over as one ahead of the complement.
+// "lac ~07" with no separator token between the two operands.  So when a
+// complement that had a blank in front of it follows an operand, that blank was
+// the separator, and it is handed over as one, ahead of the complement.
 int
 yylex(void)
 {
@@ -1053,6 +1107,16 @@ yylex(void)
         break;
     }
 
+    return(token);
+}
+
+// Record where an optimizer directive was seen, for the parser's messages, and
+// return its token; both of each directive's patterns call this.
+static int
+directiveToken(int token)
+{
+    optRegionTokenLine = lineno;
+    optRegionTokenFileP = filenameP;
     return(token);
 }
 

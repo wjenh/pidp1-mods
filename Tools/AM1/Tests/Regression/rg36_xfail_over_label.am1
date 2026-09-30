@@ -1,0 +1,9 @@
+Test rg36 (XFAIL): a word lands on a word that carries a label -- must fail
+// The word on a label's line is marked like any other, so a collision on
+// it is an error, not a silent exit 0. The control is rg30, the same
+// collision between two unlabeled words.
+100/
+tgt,    cli
+100/
+    cma
+stop

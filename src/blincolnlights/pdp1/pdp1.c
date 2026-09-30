@@ -39,13 +39,21 @@
  * wje/claude 28-Jun-26 another bug fix in B5/B6 bit handling from original version
  * wje 3-Jul-26 minor cosmetic fix in help message
  * wje 14-Jul-2026 wje some more cleanup done
+ * 24-Sep-2026 claude b2 is changed atomically, since the Type 340's thread requests breaks too.
+ *   A new reader or punch fd is handed to the emulator thread instead of replacing r_fd/p_fd
+ *   from the network thread.
+ *   isb now requests the break on the single-channel system too; before, it did nothing there.
+ * 27-Sep-2026 Claude the console commands and the RIM loader moved to console.c, and the reader
+ *   and punch fd hand-off to papertape.c.
 */
 #include "common.h"
 #include "pdp1.h"
+#include "ad1server.h"
 #include <unistd.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <fcntl.h>
+#include <sys/prctl.h>
 
 //#define DOLOGGING
 #include "logger.h"
@@ -64,11 +72,20 @@
 
 #define NOTIOTH
 #include "dynamicIots.h"
+#include "configuration.h"
 
 bool audioEnabled = false;
 bool lailiaEnabled = false;
 bool core1DEnabled = false;
 bool all1DEnabled = false;
+
+// Flat core address and contents of the word the current memory cycle's
+// readmem() read. writemem() compares against them to skip a write-back
+// that would store the same word to the same place (see readmem()).
+// File-scope statics rather than PDP1 fields, so pdp1.h and the IOT
+// plugin ABI are untouched. Only the CPU thread (cycle()) touches them.
+static unsigned int lastReadAddr;
+static Word lastReadWord;
 
 // PDP-1 words are 18 bits wide, numbered left to right as bit 0 (sign,
 // most significant) through bit 17 (least significant). These masks
@@ -93,39 +110,20 @@ bool all1DEnabled = false;
 #define B16 0000002
 #define B17 0000001
 
-// US(us): convert a duration in microseconds to the integer "simtime"
-// units used by pdp->simtime/realtime (1 unit = 1us, -1 fudge to land
-// just under the boundary so periodic events fire at the right rate).
-#define US(us) ((us)*1000 - 1)
-#define PDLY US(15873)      // tape punch character delay: 63 chars/sec
+// b2, the raw break requests, is also set from the Type 340's own thread: its initiateBreak()
+// ends in req(). So every change to b2 is one atomic operation, and neither thread's update can
+// be lost in the middle of the other's read-modify-write. A request is released and sbs_sync()'s
+// load acquires it, so a device's state written before the request is visible to the program's
+// break routine. b2 is still a plain field, so pdp1.h and the plugin ABI are unchanged.
+#define B2_LOAD(pdp) __atomic_load_n(&(pdp)->b2, __ATOMIC_ACQUIRE)
+#define B2_STORE(pdp, v) __atomic_store_n(&(pdp)->b2, (v), __ATOMIC_RELAXED)
+#define B2_OR(pdp, v) __atomic_fetch_or(&(pdp)->b2, (v), __ATOMIC_RELEASE)
+#define B2_AND(pdp, v) __atomic_fetch_and(&(pdp)->b2, (v), __ATOMIC_RELAXED)
 
 int decflg(int flg);
 
 static void iot_pulse(PDP1 *pdp, int pulse, int dev, int nac);
 static void iot(PDP1 *pdp, int pulse);
-
-extern bool setDisplayFD(int screen, int fd);
-extern int getDisplayFD(int screen);
-
-// All for audio
-extern void setSampleRate(int);
-extern void setFilterAlpha(float);
-extern void setFilter1Alpha(float);
-extern void setFilter2Alpha(float);
-extern void setFilter3Alpha(float);
-extern void setFilter4Alpha(float);
-extern float getFilterAlpha(void);
-extern float getFilter1Alpha(void);
-extern float getFilter2Alpha(void);
-extern float getFilter3Alpha(void);
-extern float getFilter4Alpha(void);
-extern void setMixerGain(float);
-extern float getMixerGain(void);
-extern void setAudioTuning(float);
-extern float getAudioTuning(void);
-extern void setSampleRate(int);
-extern int getSampleRate(void);
-extern int getOverflowData(int *);
 
 // The emulator duplicates all of the original hardware
 // subcycles. Impressive.
@@ -232,23 +230,51 @@ enum
 #define STOP (IR_INCORR || MANUAL_RUN || !pdp->run_enable)
 
 // Read the core word addressed by (ema|MA) into MB (OR'd in -- callers
-// are expected to have cleared MB first) and destructively clear that
-// core location. This models the real core memory's read-then-restore
-// cycle: a separate writemem() later in the same machine cycle puts the
-// (possibly modified) word back.
+// are expected to have cleared MB first), and record the address and
+// the word in lastReadAddr/lastReadWord for writemem() later in the same
+// machine cycle.
+//
+// The real core read is destructive: it leaves the location at 0, and
+// the write half of the same memory cycle puts the (possibly modified)
+// word back. This used to be modeled literally, by zeroing core here.
+// Core is shared memory, though, and ad1 and the Type 340 display thread
+// read and write it concurrently with this thread, so for part of every
+// cycle they could see that transient 0, and a store they made in the
+// window was reverted by the write-back. The read no longer zeroes the
+// word. Paired with writemem() skipping an unchanged write-back, core
+// holds exactly what the old model left at every cycle boundary; only a
+// concurrent observer can tell the difference.
 static void
 readmem(PDP1 *pdp)
 {
-    MB |= pdp->core[(pdp->ema | MA) % MAXMEM];
-    pdp->core[(pdp->ema | MA) % MAXMEM] = 0;
+unsigned int addr;
+
+    addr = ((pdp->ema | MA) % MAXMEM);
+    lastReadAddr = addr;
+    lastReadWord = pdp->core[addr];
+    MB |= lastReadWord;
 }
 
-// Restore MB to the core location addressed by (ema|MA), completing the
-// read/restore cycle started by readmem().
+// Write MB to the core location addressed by (ema|MA): the write half of
+// the memory cycle readmem() started. The store is skipped when the
+// address is the one readmem() read and MB still equals the word it read,
+// because core already holds that word (readmem() no longer zeroes it).
+// Any other case stores, exactly as the unconditional write-back did, so
+// the skip can only ever drop a store of the same word to the same place.
+// The inhibit flip-flop (pdp->i) is not consulted: it is set in every
+// memory cycle, and it is how 0 bits are written, not a suppression of
+// the write (see inhibit()).
 static void
 writemem(PDP1 *pdp)
 {
-    pdp->core[(pdp->ema | MA) % MAXMEM] = MB;
+unsigned int addr;
+
+    addr = ((pdp->ema | MA) % MAXMEM);
+
+    if((addr != lastReadAddr) || (MB != lastReadWord))
+    {
+        pdp->core[addr] = MB;
+    }
 }
 
 // Advance the core-memory read/write/restore/inhibit flip-flop chain by
@@ -265,8 +291,12 @@ static void mop2379(PDP1 *pdp)
     pdp->r = !pdp->w;   // actually !pdp->rs but already clobbered
 }
 
-// Force the core memory "inhibit" flip-flop on, suppressing the write
-// (restore) pulse for the current cycle's memory access.
+// Force the core memory "inhibit" flip-flop on. Every memory cycle sets
+// it at TP8 (F17, Docs/F17_PDP1Maint.pdf, section 3-10). It does not
+// suppress the write: during the write half, inhibit current keeps the
+// cores for MB's 0 bits at 0 while the write current sets the rest to 1
+// (F17 section 8-5f), so inhibit is how zeros are written. writemem()
+// does not consult it.
 static void inhibit(PDP1 *pdp)
 {
     pdp->i = 1;
@@ -318,14 +348,14 @@ pwrclr(PDP1 *pdp)
     {
         pdp->b4 = rand() & 0177777;
         pdp->b3 = rand() & 0177777;
-        pdp->b2 = rand() & 0177777;
+        B2_STORE(pdp, rand() & 0177777);
         pdp->b1 = rand() & 0177777;
     }
     else
     {
         pdp->b4 = rand() & 1;
         pdp->b3 = rand() & 1;
-        pdp->b2 = rand() & 1;
+        B2_STORE(pdp, rand() & 1);
         pdp->b1 = rand() & 1;
     }
 
@@ -556,7 +586,7 @@ clr_sbs(PDP1 *pdp)
 {
 	pdp->b4 = 0;
 	pdp->b3 = 0;
-	pdp->b2 = 0;	// clear in all SBS modes: CBS clears all break state (hardware-correct)
+	B2_STORE(pdp, 0);	// clear in all SBS modes: CBS clears all break state (hardware-correct)
 	sbs_calc_req(pdp);
 }
 
@@ -569,14 +599,14 @@ clr_sbs(PDP1 *pdp)
 static void
 sbs_sync(PDP1 *pdp)
 {
-	pdp->b3 |= pdp->b2;
+	pdp->b3 |= B2_LOAD(pdp);
 	if(pdp->bc == 1) {
 		// HOLD BREAK
 		pdp->b4 |= pdp->sbs_seq;
 		if(pdp->sbs16)
 			pdp->b3 &= ~pdp->sbs_seq;
 		else
-			pdp->b2 = 0;
+			B2_STORE(pdp, 0);
 	}
 	sbs_calc_req(pdp);
 }
@@ -584,11 +614,12 @@ sbs_sync(PDP1 *pdp)
 // Called at TP10 of every cycle (16-channel SBS only): clear any raw
 // request bits (b2) that have already been synchronized into b3, so they
 // don't get synchronized again next cycle.
+// The atomic AND is done only when there is a bit to clear, so an idle cycle costs one load.
 static void
 sbs_reset_sync(PDP1 *pdp)
 {
-	if(pdp->sbs16)
-		pdp->b2 &= ~pdp->b3;
+	if(pdp->sbs16 && (__atomic_load_n(&pdp->b2, __ATOMIC_RELAXED) & pdp->b3))
+		B2_AND(pdp, (uint16_t)~pdp->b3);
 }
 
 // SC (clear): the machine's general "clear" pulse, issued on start,
@@ -612,7 +643,7 @@ sc(PDP1 *pdp)
     clr_pc(pdp);
     pdp->sbm = pdp->sbm_start_sw;
     clr_sbs(pdp);
-    pdp->b2 = 0;
+    B2_STORE(pdp, 0);
 
     pdp->lai = 0;
     pdp->lia = 0;
@@ -1097,17 +1128,10 @@ int hack;
     {
     default:
         // TP0: if "sho" with shift-count bit 12 set, do one shift step.
-        // If completing an "lai" (load AC from IO, a 1D extension), merge
-        // IO into MB now so it can be swapped into AC at TP1. Point MA at
-        // PC to fetch the instruction word.
+        // Point MA at PC to fetch the instruction word.
         if(IR_SHRO && (MB & B12))
         {
             shro(pdp);
-        }
-
-        if( pdp->lai)
-        {
-            MB |= IO;
         }
 
         pc_to_ma(pdp);
@@ -1121,31 +1145,6 @@ int hack;
             shro(pdp);
         }
 
-        // Complete the 1D "lai"/"lia" register-exchange extensions:
-        // lai+lia together swap AC and MB (via IO); lia alone moves AC
-        // into MB (clearing IO, to be OR'd back at TP2); lai alone loads
-        // AC from MB (the half merged with IO back at TP0).
-        if( pdp->lai && pdp->lia)
-        {
-            int t = MB;
-            MB = AC;
-            AC = t;
-            IO = 0;
-        }
-        else
-        {
-            if(pdp->lia)
-            {
-                MB = AC;
-                IO = 0;
-            }
-
-            if(pdp->lai)
-            {
-                AC = MB;
-            }
-        }
-
         pdp->emc = 0;
 
         TP(1)
@@ -1153,8 +1152,7 @@ int hack;
         // TP2: advance the core read/write chain, do another shro() step
         // (bit 10), advance PC past the instruction just fetched, and for
         // IOT decide whether the I/O completion pulse can fire this
-        // cycle (ioc) based on the in-out sync/hold flags. If completing
-        // "lia", OR the saved AC value (now in MB) into IO.
+        // cycle (ioc) based on the in-out sync/hold flags.
         mop2379(pdp);
 
         if(IR_SHRO && (MB & B10))
@@ -1170,12 +1168,6 @@ int hack;
         }
 
         pdp->ihs = 0;
-
-        if(pdp->lia)
-        {
-            IO |= MB;
-        }
-
         TP(2)
 
         // TP3: advance the core read/write chain, do another shro() step
@@ -1213,11 +1205,8 @@ int hack;
         IR = 0;
         TP(4)
 
-        // TP5: finish decoding IR from MB, and clear the 1D lai/lia
-        // request flags now that they've been acted on above.
+        // TP5: finish decoding IR from MB.
         IR |= MB >> 13;
-        pdp->lai = 0;
-        pdp->lia = 0;
         TP(5)
 
         // TP6: if the indirect-address bit (B5, bit 5) is set and this
@@ -1283,8 +1272,9 @@ int hack;
 
         TP(7)
 
-        // TP8: inhibit the memory write-back (this cycle's MB doesn't go
-        // back to core). For "jsp"/"jmp" with no indirect addressing,
+        // TP8: set inhibit, as every memory cycle does -- it is how the
+        // write half stores MB's 0 bits, not a suppression of the write
+        // (see inhibit()). For "jsp"/"jmp" with no indirect addressing,
         // store/clear PC now (if deferring, defer() does this instead).
         // Run the "skp" skip tests, the remaining shro()/law/opr effects,
         // and (if enabled) the 1D OPR1D extension instructions.
@@ -1458,14 +1448,17 @@ int hack;
         TP(8)
 
         // TP9: advance the core read/write chain and write MB back to
-        // core (a no-op since TP8 set inhibit, but kept for symmetry with
-        // the other cycles -- "approximate"). For "jmp"/"jsp" with no
+        // core, completing the instruction word's memory cycle. MB still
+        // holds the word just fetched unless an IOT changed it, so
+        // writemem() normally skips the store: core already holds that
+        // word (readmem() no longer zeroes it). For "jmp"/"jsp" with no
         // indirect addressing, load PC from MB now. Apply the rest of
         // "skp"'s overflow-clear, the last shro() step, opr/law AC
-        // complement, iot's in-out-halt clear, and decide whether to halt
+        // complement, the 1D lai/lia transfer, iot's in-out-halt clear,
+        // and decide whether to halt
         // (illegal opcode, opr-halt bit, or a stop condition).
         mop2379(pdp);
-        writemem(pdp);      // approximate
+        writemem(pdp);      // usually skipped: MB is the unchanged instruction word
 
         if(!pdp->df1 && (IR_JMP || IR_JSP))
         {
@@ -1485,6 +1478,30 @@ int hack;
         if((IR_OPR && (MB & B8)) || (IR_LAW && (MB & B5)))
         {
             AC ^= WORDMASK;
+        }
+
+        // Complete the 1D "lai"/"lia" transfers armed at TP8, after every
+        // other operate micro-op, so they see the cleared or complemented
+        // registers. They finish in this cycle: left to the next fetch, a
+        // sequence break taken in between saved AC and IO without them and
+        // the load was lost, and a stop in between showed the old value.
+        // Both together swap AC and IO.
+        if(pdp->lai || pdp->lia)
+        {
+            Word t = AC;
+
+            if(pdp->lai)
+            {
+                AC = IO;
+            }
+
+            if(pdp->lia)
+            {
+                IO = t;
+            }
+
+            pdp->lai = 0;
+            pdp->lia = 0;
         }
 
         if(IR_IOT && !pdp->ihs && pdp->ios)
@@ -1521,10 +1538,10 @@ int hack;
         // for the next fetch. Do the final shro() step (bit 13). For
         // IOT, update the in-out-halt/sync flags and fire the device's
         // TP10 completion pulse if ioc is set. Set "sign of MB seen"
-        // (smb) for the multiply/divide unit. If "lai" completed, clear
-        // MB. Finally, decide the next cycle: if a sequence break is
-        // pending, take it (cancelling this instruction first if
-        // mid-instruction breaks are allowed); otherwise, if this
+        // (smb) for the multiply/divide unit. Finally, decide the next
+        // cycle: if a sequence break is pending and may be taken now (see
+        // below), take it, cancelling this instruction first if
+        // mid-instruction breaks are allowed; otherwise, if this
         // instruction isn't done (it's a memory-reference opcode needing
         // defer/cycle1), set cyc so defer()/cycle1() runs next.
         sbs_reset_sync(pdp);
@@ -1563,12 +1580,10 @@ int hack;
             pdp->smb = 1;
         }
 
-        if(pdp->lai)
-        {
-            MB = 0;
-        }
-
-        if(SBS_BREAK)
+        // F17 6-19: a break is taken at the end of any cycle except cycle 0 of a jmp or jsp
+        // deferred once. That instruction is neither done nor cancellable here, so its defer
+        // cycle runs first and finishes the jump; defer() then takes the break.
+        if(SBS_BREAK && (CY0_INST_DONE || MIDBRK_PERMIT))
         {
             if(MIDBRK_PERMIT)
             {
@@ -1689,8 +1704,8 @@ int sbs_restore = 0;
 
     // If the word just read also has its indirect bit (B5) set, and we're
     // not in extend mode, chase the indirect chain another level: set df2
-    // so this defer cycle repeats, and inhibit the write-back -- nothing
-    // else to do this time around.
+    // so this defer cycle repeats, and set inhibit at TP8 as every memory
+    // cycle does (see inhibit()) -- nothing else to do this time around.
     if((MB & B5) && (!pdp->exd))
     {
         // TP6
@@ -1719,8 +1734,9 @@ int sbs_restore = 0;
         mop2379(pdp);
         TP(7)
 
-        // TP8: inhibit the write-back. For "jsp"/"jmp", store/clear PC
-        // now (cycle0() skipped this because df1 was set).
+        // TP8: set inhibit, as every memory cycle does (see inhibit()).
+        // For "jsp"/"jmp", store/clear PC now (cycle0() skipped this
+        // because df1 was set).
         inhibit(pdp);
 
         if(IR_JSP)
@@ -1747,10 +1763,12 @@ int sbs_restore = 0;
     }
 
     // TP9 (both paths): advance the core read/write chain and write MB
-    // back to core ("approximate" -- a no-op when inhibited). Stop the
+    // back to core, completing the address word's memory cycle. Nothing
+    // here changes MB after the read, so writemem() skips the store: core
+    // already holds that word (readmem() no longer zeroes it). Stop the
     // machine if a stop condition applies.
     mop2379(pdp);
-    writemem(pdp);      // approximate
+    writemem(pdp);      // skipped: MB is the unchanged address word
     if( STOP )
     {
         pdp->run = 0;
@@ -2031,9 +2049,9 @@ int hack;
 
         TP(7)
 
-        // TP8: inhibit the write-back if this instruction doesn't
-        // actually store to memory (set unconditionally here; TP9's
-        // writemem() is the no-op "approximate" case for those). "mus"
+        // TP8: set inhibit, as every memory cycle does, storing or not
+        // -- it is how the write half stores MB's 0 bits, not a
+        // suppression of the write (see inhibit()). "mus"
         // does one multiply-shift step. "cal"/"jda" save PC into AC (now
         // cleared) and clear PC, ready to be replaced by the call address
         // at TP9. The skip-class tests (sas/sad/isp) bump PC past the
@@ -2058,8 +2076,10 @@ int hack;
         TP(8)
 
         // TP9: advance the core read/write chain and write MB back to
-        // core (real for dac/dap/dio/dip/idx/isp/cal/jda; "approximate"
-        // no-op for the rest, per TP8's inhibit). "cal"/"jda" load PC
+        // core. dac/dap/dio/dip/idx/isp/cal/jda (and dzm) put a new word
+        // in MB at TP5/TP7, so writemem() stores it; for the rest MB is
+        // normally still the operand read at TP4, and writemem() skips
+        // the store because core already holds it. "cal"/"jda" load PC
         // from the call address (MA, set up at TP0). add/sub clear the
         // deferred-overflow flag if the result's sign matches the
         // operand's (no overflow after all). sub/dis-with-borrow
@@ -2067,7 +2087,7 @@ int hack;
         // the operand back in (restoring AC, with the skip at TP8 already
         // having recorded the outcome). Check for a stop condition.
         mop2379(pdp);
-        writemem(pdp);      // approximate
+        writemem(pdp);      // stores only if MB now differs from the operand read
 
         if(IR_CALJDA)
         {
@@ -2327,10 +2347,10 @@ int r;
 
     TP(7)
 
-    // TP8: inhibit nothing here (the save *is* the write-back at TP9);
-    // for bc==1, store the (overflow/extend/PC) "saved PC" word into AC
-    // and clear PC, ready to be replaced by the break-entry address at
-    // TP9.
+    // TP8: set inhibit, as every memory cycle does (see inhibit()); the
+    // save *is* the write-back at TP9. For bc==1, store the
+    // (overflow/extend/PC) "saved PC" word into AC and clear PC, ready to
+    // be replaced by the break-entry address at TP9.
     inhibit(pdp);
 
     if(pdp->bc == 1)
@@ -2345,7 +2365,7 @@ int r;
     // address (MA, computed at TP0). Honor SINGLE CYCLE / RUN ENABLE OFF
     // by stopping after this sub-cycle.
     mop2379(pdp);
-    writemem(pdp);      // approximate
+    writemem(pdp);      // stores unless the saved value equals the word already there
 
     if(pdp->bc == 1)
     {
@@ -2459,13 +2479,133 @@ cycle(PDP1 *pdp)
     dynamicIotProcessorDoPoll(pdp);
 }
 
-// Spin until the 5usec cycle time reached
+// ---- Throttle pacing (22-Sep-2026) ----
+//
+// The pacing policy (the wait/spin/cap loop below) lives here, where main.c's other timing code
+// expects it. Only the mechanics of an ad1/fastload request cutting a wait short are in
+// ad1server.c, behind ad1ThrottleWait(), since that needs wakeFd and serverActive, both private
+// to that file.
+static uint64_t throttleQuantumNs = 1000000;    // 1000us: today's cadence by default
+static uint64_t throttleSpinNs;                 // 0 = off by default
+static uint64_t throttleMaxLagNs = 20000000;    // 20ms: see throttle()'s header comment below
+static uint64_t throttleBurstNs = 100000;       // 100us: see throttleConfigure()
+long throttleCapFirings;
+
+#define THROTTLE_BURST_DEFAULT_US 100
+#define THROTTLE_BURST_MAX_US 250       // the 340's PACE_MAX_LAG (type340emu.c)
+
+// Set the pacing tunables and reduce this thread's timer slack so a short wait lands close
+// to where it was asked for (precedent: newpanel.c's absolute-deadline clock_nanosleep loop,
+// panel_pidp1/newpanel.c). Called from configure() (main.c), which parses the throttlequantum/
+// throttlespin/throttlemaxlag config extras and runs on the emulator thread -- prctl(
+// PR_SET_TIMERSLACK) is per-thread, so it must land there -- both at startup and on every SIGHUP
+// reconfigure. quantumNs of 0 is treated as 1000ns rather than literally zero, which would turn
+// every iteration below into a syscall instead of a wait.
+//
+// throttleburst is read here, as audio.c reads audiodepth, rather than passed in: that keeps this
+// function's declaration in pdp1.h, and so every plugin build, as it is. It is how far, in
+// microseconds, simtime must lead the wall clock before throttle() waits at all; 0 waits at any
+// lead. Its ceiling is the 340's PACE_MAX_LAG: that thread is paced by the wall clock and reads
+// the CPU's flags and core at wall time, and it absorbs a program-time lead only while the lead
+// and an oversleep together stay under that.
+void
+throttleConfigure(uint64_t quantumNs, uint64_t spinNs, uint64_t maxLagNs)
+{
+ConfigurationSettingP settingP;
+
+    throttleQuantumNs = (quantumNs) ? quantumNs : 1000;
+    throttleSpinNs = spinNs;
+    throttleMaxLagNs = maxLagNs;
+
+    throttleBurstNs = (THROTTLE_BURST_DEFAULT_US * 1000);
+    if( (settingP = findConfigurationSetting(getConfiguration(), "throttleburst")) )
+    {
+        if( settingP->strvalueP || (settingP->ivalue < 0) )
+        {
+            fprintf(stderr, "pidp1: throttleburst must be a non-negative number; using %d\n",
+                THROTTLE_BURST_DEFAULT_US);
+        }
+        else if( settingP->ivalue > THROTTLE_BURST_MAX_US )
+        {
+            fprintf(stderr, "pidp1: throttleburst is at most %d; using %d\n",
+                THROTTLE_BURST_MAX_US, THROTTLE_BURST_MAX_US);
+            throttleBurstNs = (THROTTLE_BURST_MAX_US * 1000);
+        }
+        else
+        {
+            throttleBurstNs = ((uint64_t)settingP->ivalue * 1000);
+        }
+    }
+
+    prctl(PR_SET_TIMERSLACK, 1);
+}
+
+// The throttle wait: sleep or spin until real time catches up with simulated time (the lag cap
+// may move simtime first), in chunks of at most throttlequantum so a waiting ad1/fastload
+// request is served within one quantum rather than within a whole millisecond (the request
+// itself is served through ad1ThrottleWait() -> ad1Service(), ad1server.c). Simulated time is
+// not advanced here, only clamped forward by the lag cap when badly behind.
+//
+// Each chunk's length is the deadline minus a freshly measured "now", not a fixed guess, so a
+// chunk never overshoots the deadline by more than the current spin budget: this is the
+// equivalent of a clock_nanosleep(TIMER_ABSTIME) deadline sleep, adapted because the underlying
+// wait needs to be cut short by a request, and ppoll's timeout -- which is what makes that
+// possible -- is always relative; Linux has no absolute-deadline variant of an fd-interruptible
+// wait.
+//
+// The lag cap: if real time has pulled more than throttlemaxlag ahead of simtime -- a host
+// stall, a SIGSTOP, anything that leaves the machine far behind -- the rest of the deficit is
+// forgiven by moving simtime forward instead of running an unpaced burst to close the whole
+// gap. Every firing counts in throttleCapFirings, read by main.c's timing report: silently
+// forgiving simulated time would otherwise look like nothing more than a small shortfall in
+// the average-rate measurement.
 void
 throttle(PDP1 *pdp)
 {
-    while(pdp->realtime < pdp->simtime)
+uint64_t remaining;
+uint64_t sleepNs;
+int64_t lag;
+
+    lag = ((int64_t)pdp->realtime - (int64_t)pdp->simtime);
+    if( lag > (int64_t)throttleMaxLagNs )
     {
-        usleep(1000);
+        pdp->simtime = (pdp->realtime - throttleMaxLagNs);
+        ++throttleCapFirings;
+    }
+
+    // Run on until simtime leads by throttleburst, so one wait covers a burst of cycles rather
+    // than the one to five a wait at any lead allowed, each a syscall. realtime is the last
+    // wake-up's, never later than the wall clock, so the true lead here never exceeds
+    // throttleburst.
+    if( (pdp->simtime > pdp->realtime) && ((pdp->simtime - pdp->realtime) < throttleBurstNs) )
+    {
+        return;
+    }
+
+    while( pdp->realtime < pdp->simtime )
+    {
+        remaining = (pdp->simtime - pdp->realtime);
+        if( remaining <= throttleSpinNs )
+        {
+            // Final stretch: spin rather than pay a syscall's imprecision. Still let a waiting
+            // request in cheaply -- ad1WorkPending() is one relaxed atomic load -- rather than
+            // making it wait out the spin.
+            if( ad1WorkPending() )
+            {
+                ad1Service(pdp);
+            }
+
+            pdp->realtime = gettime();
+            continue;
+        }
+
+        sleepNs = (remaining - throttleSpinNs);
+        if( sleepNs > throttleQuantumNs )
+        {
+            sleepNs = throttleQuantumNs;
+        }
+
+        ad1ThrottleWait(pdp, sleepNs);
         pdp->realtime = gettime();
     }
 }
@@ -2546,12 +2686,22 @@ int ch;
             }
             break;
 
-        case 052:   // isb -- Initiate Sequence Break on channel "ch" (16-channel SBS), software-triggered request
+        case 052:   // isb -- Initiate Sequence Break, software-triggered request
+            // Not gated by the channel's "on" bit (b1): F25 says the Type 20's isb is unconditional.
+            // The single-channel system has isb too (the CHM sequence break tech note, from drawing
+            // D9-1). It has no channels, so any channel field is ignored there.
             if(!pulse)
             {
-                if(pdp->sbs16 && ch < 16)
+                if(pdp->sbs16)
                 {
-                    pdp->b2 |= (1 << ch);
+                    if(ch < 16)
+                    {
+                        B2_OR(pdp, (1 << ch));
+                    }
+                }
+                else
+                {
+                    B2_OR(pdp, 1);
                 }
             }
             break;
@@ -2626,16 +2776,17 @@ int dev;
 // the channel's bit in b2 (the raw-request register) only if that
 // channel is currently enabled (b1); for SBS256, there's only one
 // request line, so just set b2.
+// Runs on the emulator thread and on the Type 340's thread (see B2_OR), so b1 is read atomically too.
 static void
 req(PDP1 *pdp, int chan)
 {
     if(pdp->sbs16)
     {
-        pdp->b2 |= pdp->b1 & (1 << chan);
+        B2_OR(pdp, __atomic_load_n(&pdp->b1, __ATOMIC_RELAXED) & (1 << chan));
     }
     else
     {
-        pdp->b2 = 1;
+        B2_OR(pdp, 1);
     }
 }
 
@@ -2644,407 +2795,4 @@ void
 dynamicReq(PDP1 *pdp, int chan)
 {
     req(pdp, chan);             // wje - because req() is private
-}
-
-// Used only to drive data to the punch.
-void
-handleio(PDP1 *pdp)
-{
-    if(pdp->tape_feed && pdp->feed_time < pdp->simtime)
-    {
-        pdp->feed_time = pdp->simtime + PDLY;
-
-        if(pdp->p_fd >= 0)
-        {
-            char c = 0;
-            ssize_t wr = write(pdp->p_fd, &c, 1);      // best-effort blank-tape feed byte
-            (void)wr;
-        }
-    }
-}
-
-// Read one 18-bit word from a RIM-format tape: each word is encoded as
-// three 6-bit characters, each with its high bit (0200) set as a frame
-// marker; skip any unframed bytes (leader/blank tape) before each
-// character. Returns -1 on EOF/error.
-int
-getwrd(int fd)
-{
-u8 c;
-int w, n;
-
-    w = 0;
-    n = 3;
-
-    while(n--)
-    {
-        do
-        {
-            if(read(fd, &c, 1) <= 0)
-            {
-                return -1;
-            }
-        }
-        while((c & 0200) == 0);
-
-        w = (w << 6) | (c & 077);
-    }
-
-    return( w );
-}
-
-// Load a RIM-format ("read-in mode") tape image directly into core,
-// bypassing the simulated reader/readin1/readin2 cycle -- used by the
-// "l" console command for quickly loading programs. Clears core first,
-// then repeatedly reads a "dio" word (0320000 | address) followed by its
-// data word and stores it, until a "jmp" word (0600000 | start address)
-// marks the end of the tape.
-void
-readrim(PDP1 *pdp, int fd)
-{
-int inst, wd;
-
-    if(fd < 0)
-    {
-        logger(LOG_RIM, "no tape\n");
-        return;
-    }
-
-    // clear memory just to be safe
-    for(wd = 0; wd < MAXMEM; wd++)
-    {
-        pdp->core[wd] = 0;
-    }
-
-    for(;;)
-    {
-        inst = getwrd(fd);
-
-        if((inst & 0760000) == 0320000)
-        {
-            wd = getwrd(fd);
-            pdp->core[inst & 07777] = wd;
-        }
-        else if((inst & 0760000) == 0600000)
-        {
-            logger(LOG_RIM, "start: %04o\n", inst & 07777);
-            return;
-        }
-        else
-        {
-            logger(LOG_RIM, "rim botch: %06o\n", inst);
-            return;
-        }
-    }
-}
-
-// Command-line interface poll: called periodically from the main loop.
-// Every 10000 calls, check (non-blockingly) whether a line is waiting on
-// stdin, and if so read and execute it via handlecmd().
-void
-cli(PDP1 *pdp)
-{
-int n;
-static int timer = 0;
-
-    if(timer++ != 10000)
-    {
-        return;
-    }
-
-    timer = 0;
-
-    if(!hasinput(0))
-    {
-        return;
-    }
-
-    char line[1024];
-
-    n = read(0, line, sizeof(line));
-
-    if(n > 0 && n < (int)sizeof(line))
-    {
-        line[n] = '\0';
-
-        char *resp = handlecmd(pdp, line);
-        printf("%s\n", resp);
-    }
-}
-
-// Parse and execute one console command line. Supported commands:
-//   r [file]       mount/unmount the paper-tape reader
-//   p [file]       mount/unmount the paper-tape punch
-//   l [file]       load a RIM-format tape into core via readrim()
-//   d [host] [port] connect to an external display program
-//   muldiv [on/off] toggle the type-10 multiply/divide option
-//   audio ...      configure/query the audio output subsystem
-//   ?/help          list commands
-// Returns a pointer to a static response buffer.
-char*
-handlecmd(PDP1 *pdp, char *line)
-{
-int n;
-int fd;
-float alpha;
-char *p;
-int overflows[8];
-
-static const char *host = "localhost";
-static int port = 3400;
-static char *rimfile = nil;
-static char resp[1024];
-
-    if( (p = strchr(line, '\r')), p)
-    {
-        *p = '\0';
-    }
-
-    if(p = strchr(line, '\n'), p)
-    {
-        *p = '\0';
-    }
-
-    char **args = split(line, &n);
-
-    strcpy(resp, "ok");
-
-    if(n > 0)
-    {
-        // reader
-        if(strcmp(args[0], "r") == 0)
-        {
-            close(pdp->r_fd);
-            pdp->r_fd = -1;
-
-            if(args[1])
-            {
-                pdp->r_fd = open(args[1], O_RDONLY);
-
-                if(pdp->r_fd < 0)
-                {
-                    sprintf(resp, "couldn't open %s", args[1]);
-                }
-            }
-        }
-        // punch
-        else if(strcmp(args[0], "p") == 0)
-        {
-            close(pdp->p_fd);
-            pdp->p_fd = -1;
-
-            if(args[1])
-            {
-                pdp->p_fd = open(args[1], O_CREAT | O_WRONLY | O_TRUNC, 0644);
-
-                if(pdp->p_fd < 0)
-                {
-                    sprintf(resp, "couldn't open %s", args[1]);
-                }
-            }
-        }
-        // load
-        else if(strcmp(args[0], "l") == 0)
-        {
-            if(args[1])
-            {
-                free(rimfile);
-                rimfile = strdup(args[1]);
-            }
-
-            if(rimfile)
-            {
-                fd = open(rimfile, O_RDONLY);
-
-                if(fd < 0)
-                {
-                    sprintf(resp, "couldn't open %s", rimfile);
-                }
-                else
-                {
-                    readrim(pdp, fd);
-                    close(fd);
-                }
-            }
-            else
-            {
-                sprintf(resp, "no filename");
-            }
-        }
-        // display
-        else if(strcmp(args[0], "d") == 0)
-        {
-            if(args[1])
-            {
-                host = args[1];
-            }
-
-            if(args[2])
-            {
-                port = atoi(args[2]);
-            }
-
-            setDisplayFD(0, dial(host, port));
-            fd = getDisplayFD(0);
-            if( fd < 0 )
-            {
-                strcpy(resp, "can't open display");
-            }
-            else
-            {
-                nodelay(fd);
-            }
-        }
-        else if(strcmp(args[0], "?") == 0 || strcmp(args[0], "help") == 0)
-        {
-            p = resp;
-            p += sprintf(p, "r                     unmount tape from reader\n");
-            p += sprintf(p, "r filename            mount tape in reader\n");
-            p += sprintf(p, "p                     unmount tape from punch\n");
-            p += sprintf(p, "p filename            mount tape in punch\n");
-            p += sprintf(p, "l filename            load memory from RIM-file\n");
-            p += sprintf(p, "d [host] [port]       connect to display program\n");
-            p += sprintf(p, "muldiv [on/off]       set/toggle type 10 mul-div option\n");
-            p += sprintf(p, "audio [on/off]        set/toggle audio output");
-        }
-        else if(strcmp(args[0], "muldiv") == 0)
-        {
-            if(args[1])
-            {
-                if(strcmp(args[1], "on") == 0 || strcmp(args[1], "1") == 0)
-                {
-                    pdp->muldiv_sw = 1;
-                }
-                else
-                    if(strcmp(args[1], "off") == 0 ||
-                            strcmp(args[1], "0") == 0)
-                    {
-                        pdp->muldiv_sw = 0;
-                    }
-
-                resp[0] = '\0';
-            }
-            else
-            {
-                pdp->muldiv_sw = !pdp->muldiv_sw;
-            }
-
-            sprintf(resp, "mul-div now %s", pdp->muldiv_sw ? "on" : "off");
-        }
-        else if(strcmp(args[0], "audio") == 0)
-        {
-            resp[0] = '\0';
-
-            if(args[1])
-            {
-                if(strcmp(args[1], "on") == 0 || strcmp(args[1], "1") == 0)
-                {
-                    audioEnabled = 1;
-                }
-                else if(strcmp(args[1], "off") == 0 || strcmp(args[1], "0") == 0)
-                {
-                    audioEnabled = 0;
-                }
-                else if(strcmp(args[1], "query") == 0)
-                {
-                    sprintf(resp,
-            "Audio %s, alpha1 %f, alpha2 %f, alpha3 %f, alpha4 %f, gain %f, tuning %f sample rate %d",
-                        audioEnabled?"on":"off",
-                        getFilter1Alpha(),
-                        getFilter2Alpha(),
-                        getFilter3Alpha(),
-                        getFilter4Alpha(),
-                        getMixerGain(),
-                        getAudioTuning(),
-                        getSampleRate());
-                }
-                else if(strcmp(args[1], "overflow") == 0)
-                {
-                    n = getOverflowData(overflows);
-                    sprintf(resp, "Overflows %d, high %d, low %d, samples %d",
-                        n, overflows[0], overflows[1], overflows[2]);
-                }
-                else if(strcmp(args[1], "alpha") == 0)
-                {
-                    alpha = atof(args[2]);
-                    setFilterAlpha(alpha);
-                    sprintf(resp, "Alpha for all channels now %f", alpha);
-                }
-                else if(strcmp(args[1], "alpha1") == 0)
-                {
-                    alpha = atof(args[2]);
-                    setFilter1Alpha(alpha);
-                    sprintf(resp, "Alpha channel 1 now %f", alpha);
-                }
-                else if(strcmp(args[1], "alpha2") == 0)
-                {
-                    alpha = atof(args[2]);
-                    setFilter2Alpha(alpha);
-                    sprintf(resp, "Alpha channel 2 now %f", alpha);
-                }
-                else if(strcmp(args[1], "alpha3") == 0)
-                {
-                    alpha = atof(args[2]);
-                    setFilter3Alpha(alpha);
-                    sprintf(resp, "Alpha channel 3 now %f", alpha);
-                }
-                else if(strcmp(args[1], "alpha4") == 0)
-                {
-                    alpha = atof(args[2]);
-                    setFilter4Alpha(alpha);
-                    sprintf(resp, "Alpha channel 4 now %f", alpha);
-                }
-                else if(strcmp(args[1], "gain") == 0)
-                {
-                    alpha = atof(args[2]);
-                    setMixerGain(alpha);
-                    sprintf(resp, "Mixer gain now %f", alpha);
-                }
-                else if(strcmp(args[1], "tuning") == 0)
-                {
-                    alpha = atof(args[2]);
-                    setAudioTuning(alpha);
-                    sprintf(resp, "Tuning now %f", alpha);
-                }
-                else if(strcmp(args[1], "rate") == 0)
-                {
-                    n = atoi(args[2]);
-                    setSampleRate(n);
-                    sprintf(resp, "Sample rate now %d", n);
-                }
-            }
-            else
-            {
-                audioEnabled = !audioEnabled;
-            }
-
-            // wje, the new audio support adds digital filtering
-            if(audioEnabled)
-            {
-                if(isAudioInitialized())
-                {
-                    continueaudio();
-                }
-                else
-                {
-                    initaudio();
-                    startaudio();
-                }
-            }
-            else
-            {
-                stopaudio();
-            }
-
-            if(!resp[0])
-            {
-                sprintf(resp, "Audio is %s, use query to see more details.", audioEnabled?"on":"off");
-            }
-        }
-    }
-
-    free(args[0]);
-    free(args);
-
-    return resp;
 }

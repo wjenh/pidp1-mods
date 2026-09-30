@@ -76,6 +76,7 @@ emitStatements(FILE *outfP, PNodeP nodeP)
 {
 int i, j;
 PNodeP node2P;
+PNodeP prevP = NILP;    // the node before this one, for EMPTYLINE
 bool noNl = false;
 bool sawTerm = true;    // because we just output the header, which terminated its line
 char *cP;
@@ -195,6 +196,13 @@ char str[128];
             noNl = true;
             break;
 
+        case OPTIMIZE:
+        case ENDOPTIMIZE:
+            // An optimizer directive prints nothing, and noNl drops its line's
+            // terminator, so the output is that of the source without it.
+            noNl = true;
+            break;
+
         case CONSTANTS:
             fprintf(outfP,"/ constants\n");
             emitConstants(outfP, nodeP->value.symP);
@@ -268,6 +276,16 @@ char str[128];
             break;
 
         case EMPTYLINE:
+            // A constant reference left unclosed ("lac [5") is closed by the
+            // newline, which the lexer hands back as an empty line, so no
+            // TERMINATOR ended the statement's line: end it here.
+            if( prevP && ((prevP->type == EXPR) ||
+                          (((prevP->type == LOCATION) || (prevP->type == LCLLOCATION) ||
+                            (prevP->type == ORIGIN)) && prevP->rightP)) )
+            {
+                fprintf(outfP, "\n");
+            }
+
             noNl = false;
             break;
 
@@ -292,6 +310,7 @@ char str[128];
             sawTerm = false;
         }
 
+        prevP = nodeP;
         nodeP = nodeP->leftP;
     }
 }
@@ -304,7 +323,6 @@ int lval;
 int rval;
 char ch;
 SymNodeP symP;
-PNodeP node2P;
 
     if( !nodeP )
     {
@@ -343,10 +361,9 @@ PNodeP node2P;
         }
         else if( nodeP->value.ival == MOD )
         {
-            // there is no mod in macro1, have to reduce everything
-            lval = onesComplAdj(evalExpr(nodeP->leftP));
-            rval = onesComplAdj(evalExpr(nodeP->rightP));
-            fprintf(outfP,"%o", (lval ^ rval) & WRDMASK);
+            // there is no mod in macro1, have to reduce everything.
+            // The value is the one the tape gets.
+            fprintf(outfP,"%o", evalExpr(nodeP));
         }
         else if( nodeP->value.ival == LSHIFT )
         {
@@ -388,6 +405,8 @@ PNodeP node2P;
                 break;
             default:
                 verror("unknown binary op %d in emitOperand", nodeP->value.ival);
+                // never returns, just to shut up overly-picky c compilers
+                return;
             }
 
             fprintf(outfP,"%c", ch);

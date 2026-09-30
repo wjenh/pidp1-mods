@@ -1,7 +1,7 @@
 AM1 = am1
 
 # All test programs
-AM1_SRCS = drumtest.am1
+AM1_SRCS = drumtest.am1 dbaprobe.am1 endbrkprobe.am1 rdprobe.am1 wrapprobe.am1
 
 AM1_RIMS = $(AM1_SRCS:.am1=.rim)
 

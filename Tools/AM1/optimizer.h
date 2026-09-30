@@ -1,50 +1,31 @@
-/* optimizer.h - the am1 optimizer's intermediate representation and entry points
+/* optimizer.h - the am1 optimizer's shared header
  *
- * Purpose:
- *   Declares the word table that every optimizer analysis is built on, and the
- *   two calls am1.c makes into the optimizer: one to accept a modifier given
- *   after -O on the command line, one to run the optimizer after a successful
- *   parse.
+ * Declares the word table every optimizer analysis is built on, the records
+ * the analyses and rewrites keep beside it, and every entry point one opt*.c
+ * file publishes to another; anything one file uses alone stays static there.
+ * am1.c calls optimizeSetOption(), optimizeSetLevel() and optimize().
  *
- * Architectural scope:
- *   The optimizer is an analysis-only advisor (see Optimizer/FeasibilityStudy.md,
- *   sections 5 and 7).  It runs after yyparse() has returned and before any of
- *   the code generators, reads the parse tree and the resolved symbol tables,
- *   and NEVER mutates either of them.  Everything it learns is kept in its own
- *   side tables, declared here, keyed by the parse node (PNodeP) or the symbol
- *   node (SymNodeP) that produced each word.
+ * The optimizer runs after yyparse() and before the code generators.  It reads
+ * the parse tree and the symbol tables and keeps what it learns in side tables
+ * keyed by the PNodeP or SymNodeP that produced each word.  Only the rewrite
+ * (opttransform.c, under -O1 or -O2) and relayout (optrelayout.c) write parse
+ * nodes, after every analysis has finished; no symbol is ever written.
  *
- * Dependencies:
- *   am1.h for PNode, SymNode, BankContext, MAXBANK, BANKSIZE and WRDMASK.
- *   The caller must have included am1.h before this file.
- *
- * Execution model:
- *   Single threaded, one call to optimize() per am1 run.  The table is built
- *   once, consulted by the analyses (later tasks), and freed when optimize()
- *   returns.
- *
- * Revision history:
- *
- * 08-Sep-2026 claude - initial version, task A1: the word table
- * 08-Sep-2026 claude - task A2: instruction decode, source spelling, the
- *                      operate-group phase table
- * 08-Sep-2026 claude - task A3: reference edges, the reverse index, the
- *                      written/patched/taken/code/data flags and conflicts
- * 08-Sep-2026 claude - task A4: basic blocks, control-flow edges, the UNKNOWN
- *                      sink, reachability and the label/after-skip flags
- * 08-Sep-2026 claude - task A5: the preconditions, the rule engine, the
- *                      findings and the report they are written into
- * 08-Sep-2026 claude - task A6a: instruction code 12 is unused; the jfd
- *                      memory reference, its jump role, its block terminator
- *                      and its control-flow sink are gone
+ * Requires am1.h (PNode, SymNode, BankContext, MAXBANK, BANKSIZE, WRDMASK) to be
+ * included first.  Single threaded; one optimize() call per am1 run.
 */
 #ifndef OPTIMIZER_H
 #define OPTIMIZER_H
 
+// A parse-node flag on a BREF that was written 'sym:*' and resolved to a bank
+// reference: the constant pools key the two spellings differently.  Set by
+// relayout and by srccodegen.c from the parser's list of wildcards, and carried
+// by relayout's copies.  Above every PN_ flag in am1.h.
+#define RL_WILD             0x20000000
+
 // What produced a word.  EXPR is every single-word statement whose content is
-// an expression tree: instructions, data words and law immediates all look the
-// same until the decoder (task A2) classifies them.  The other kinds are known
-// from the statement type that emitted them.
+// an expression tree (instruction, data word, law); the decoder tells them
+// apart.  The other kinds are known from the emitting statement.
 typedef enum
 {
     OPTK_EXPR,          // an expression statement, with or without a label
@@ -56,22 +37,16 @@ typedef enum
     OPTK_CONST          // one constant-pool word
 } OptKind;
 
-// Per-word flags.  The low bits are set by the table builder; the analyses of
-// later tasks add their own above OPTF_BUILDER_MASK.
-#define OPTF_RESERVED       0x0001  // a 'table' word with no initializer: it occupies
-                                    // memory but no value is emitted for it
-#define OPTF_DUPADDR        0x0002  // another entry was emitted at the same bank and
-                                    // address (an overlay, only reachable under -M)
-#define OPTF_PCMISMATCH     0x0004  // the node's own pc differs from the running pc the
-                                    // binary generator would use; a parser defect
+// Per-word flags.  The table builder owns the low byte; each analysis owns a
+// field of its own above it.
+#define OPTF_RESERVED       0x0001  // a 'table' word with no initializer: no value is emitted
+#define OPTF_DUPADDR        0x0002  // another entry shares this bank and address (-M overlay)
+#define OPTF_PCMISMATCH     0x0004  // node pc differs from the binary generator's: a parser defect
 #define OPTF_BUILDER_MASK   0x00FF  // every flag the builder owns
 
-// Task A3: the flags the reference analysis derives from the edges.  The
-// "maybe" flags are the conservative marks of study section 5.3: an indirect
-// reference whose pointer cannot be resolved may reach any word whose
-// address is taken, so every taken word in that bank is marked as possibly
-// reached in the reference's role.  They are advisory; the definite flags
-// come from edges alone.
+// Reference flags, derived from the edges.  The MAYBE flags are conservative:
+// an indirect reference whose pointer cannot be resolved may reach any taken
+// word in its bank, so each such word is marked in the reference's role.
 #define OPTF_WRITTEN        0x00000100  // a write edge comes in (dap and dip included)
 #define OPTF_PATCHED        0x00000200  // a dap or dip edge comes in: the address field varies
 #define OPTF_TAKEN          0x00000400  // a taken edge comes in: the address is used as a value
@@ -79,73 +54,67 @@ typedef enum
 #define OPTF_READ           0x00001000  // a read edge comes in
 #define OPTF_JUMPTARGET     0x00002000  // a jump edge comes in
 #define OPTF_START          0x00004000  // the word at the program's start address
-#define OPTF_CODE           0x00008000  // classified code (study 5.3)
-#define OPTF_DATA           0x00010000  // classified data (study 5.3)
+#define OPTF_CODE           0x00008000  // classified code
+#define OPTF_DATA           0x00010000  // classified data
 #define OPTF_MAYBE_READ     0x00020000  // possibly read through an unresolved pointer
 #define OPTF_MAYBE_WRITTEN  0x00040000  // possibly written through an unresolved pointer
 #define OPTF_MAYBE_ENTERED  0x00080000  // possibly jumped to or executed through an unresolved pointer
 #define OPTF_ANALYSIS_MASK  0x000FFF00  // every flag the reference analysis owns
 
-// Task A4: the flags the control-flow overlay derives.  HASLABEL and
-// AFTERSKIP are set on every entry, in or out of the graph, because the
-// preconditions that consult them (P1 and P4, study section 6) ask about a
-// word's neighborhood and not about its role.  The other four are set only
-// on words the graph holds.
-#define OPTF_HASLABEL       0x00100000  // at least one label is defined at this word's
-                                        // address; distinct from being a block start,
-                                        // so P1 can see a label on an interior word
-#define OPTF_AFTERSKIP      0x00200000  // the word one address lower in the same bank
-                                        // decodes as a skip-class instruction, so this
-                                        // word may be skipped over (precondition P4)
+// Control-flow flags.  HASLABEL and AFTERSKIP are set on every entry, in the
+// graph or not, because P1 and P4 ask about a word's neighborhood, not its
+// role; the other four only on words the graph holds.
+#define OPTF_HASLABEL       0x00100000  // a label is defined here; distinct from a block
+                                        // start, so P1 sees a label on an interior word
+#define OPTF_AFTERSKIP      0x00200000  // the word below decodes as a skip, so this one
+                                        // may be skipped over (P4)
 #define OPTF_BLOCKSTART     0x00400000  // the first word of a basic block
 #define OPTF_ENTRY          0x00800000  // an entry point of the reachability walk
 #define OPTF_UNREACHED      0x01000000  // in a block no entry reaches, and not xct'd
-#define OPTF_XCTONLY        0x02000000  // in a block no entry reaches, but an xct edge
-                                        // comes in: the word runs without being entered
+#define OPTF_XCTONLY        0x02000000  // unreached, but executed in place by an xct
+#define OPTF_RESUMED        0x04000000  // no entry reaches it, but a jmp or jsp names its
+                                        // block: live code the walk lost.  Reporting only;
+                                        // OPTF_UNREACHED is set too, and is what the rules
+                                        // and heuristics ask about
 #define OPTF_FLOW_MASK      0x0FF00000  // every flag the control-flow overlay owns
 
-// The conflict set of study section 5.3.  A conflict is recorded, never
-// resolved: these are the words a transform must leave alone and the ones
-// the programmer may want to look at.  Patched is a kind of written, so
-// OPTCF_CODE_PATCHED implies OPTCF_CODE_WRITTEN.
+// Region flags, set by the table builder as each word is created, from a
+// counter the directive nodes raise and lower, so a region that spans a bank
+// change, an overlay or a macro needs no range arithmetic.  OPTF_INREGION is a
+// permission to rewrite, not a refusal of anything outside it.
+#define OPTF_INREGION       0x10000000  // emitted between an optimize and its endoptimize
+#define OPTF_HANDSOFF       0x20000000  // between nooptimize and endnooptimize: never rewritten
+#define OPTF_INSPEED        0x40000000  // between speed and endspeed: a length-changing
+                                        // rewrite may spend words here.  Independent of
+                                        // OPTF_INREGION
+#define OPTF_REGION_MASK    0xF0000000  // every flag the region overlay owns
+
+// Conflicts are recorded, never resolved: a transform must leave these words
+// alone.  Patched implies written, so OPTCF_CODE_PATCHED implies
+// OPTCF_CODE_WRITTEN.
 #define OPTCF_CODE_DATA     0x01    // classified both code and data
 #define OPTCF_CODE_PATCHED  0x02    // code whose address field is written by dap or dip
 #define OPTCF_CODE_WRITTEN  0x04    // code that is written at all
 
-// A label attached to a word.  The symbol is the parser's own SymNode: a
-// LOCATION or LCLLOCATION label, a variable name, or a constant-pool entry.
-// The list is singly linked and owned by the entry it hangs from.
+// A label attached to a word: a LOCATION or LCLLOCATION label, a variable name
+// or a constant-pool entry.  The list is owned by the word it hangs from.
 typedef struct optlabel
 {
     struct optlabel *nextP;
     SymNodeP symP;
 } OptLabel, *OptLabelP;
 
-// ---------------------------------------------------------------------------
-// Task A2: the instruction decode and the source-spelling classification.
+// Instruction decode and source spelling.
 //
-// Every word that has a value gets a decoded view of its bits, whatever the
-// word was meant to be.  The decoder does NOT decide code versus data (that
-// is task A3); it says what the bits would do if the machine fetched them as
-// an instruction, and separately how the source spelled the word.
-//
-// Bit positions follow the F-15D handbook, page 9 ("Instruction Format"):
-// bits 0-4 are the instruction code, bit 5 is the indirect-address bit in the
-// memory reference group and a group-specific modifier everywhere else, and
-// bits 6-17 hold the address or the augmented instruction's variations.  Bit
-// 0 is the most significant bit of the 18-bit word, so bit 5 is 010000 and
-// bits 6-17 are 07777.  The mnemonic values are those of permsyms.def, which
-// agree with the handbook's numerical list (page 67) wherever both have the
-// instruction.
-// ---------------------------------------------------------------------------
+// Every word with a value gets a decoded view of its bits: what they would do
+// if fetched as an instruction, whatever the word was meant to be.  Bits are
+// numbered as in the F-15D handbook, page 9: bit 0 is the most significant,
+// bits 0-4 the instruction code, bit 5 (010000) the indirect bit or a group
+// modifier, bits 6-17 (07777) the address.  Mnemonic values are permsyms.def's.
 
-// The instruction group the top bits select.  Codes 00, 12, 14 and 36 are
-// spare on every PDP-1 (handbook page 66, note).  Code 74 is spare on a plain
-// PDP-1 and the special operate group on a PDP-1D; per the owner's decision
-// (study section 9) the PDP-1D decode is always on, so 74 is always OPTG_1D.
-// Code 12 decoded as a memory reference named jfd until 8-Sep-2026, when
-// permsyms.def dropped jfd and the owner ruled the code unused; it is spare
-// like the other three now.
+// The group the instruction code selects.  Codes 00, 12, 14 and 36 are spare
+// (handbook page 66).  Code 74 is the PDP-1D special operate group; the 1D
+// decode is always on, so 74 is always OPTG_1D.
 typedef enum
 {
     OPTG_UNKNOWN,   // a spare instruction code
@@ -159,10 +128,9 @@ typedef enum
     OPTG_1D         // the PDP-1D special operate group, code 74
 } OptGroup;
 
-// How the source spelled the word, from the shape of its expression tree.
-// This is evidence for task A3's code/data classification, not a verdict:
-// a dispatch table full of "jmp foo" words is spelled MNEMONIC_OPERAND and is
-// still data.
+// How the source spelled the word, from its expression tree.  Evidence for the
+// code/data classification, not a verdict: a dispatch table of "jmp foo" words
+// is spelled MNEMONIC_OPERAND and is still data.
 typedef enum
 {
     OPTS_NONE,              // no expression tree: text, ascii, type340 words,
@@ -183,15 +151,10 @@ typedef enum
                             // a skip or shift with an address symbol (sza x)
 } OptSpelling;
 
-// Skip group condition bits, bits 6-17 of a code 64 word (handbook pages 20
-// and 21).  Each condition means "skip the next word if ...", and combining
-// conditions skips if ANY of them holds (page 20, "the inclusive OR of the
-// separate skips").  Bit 5 reverses the whole sense: the word then does NOT
-// skip when the combined condition holds (page 20: sza with bit 5 set "becomes
-// Do Not Skip on Zero Accumulator").  The sense switch and program flag
-// fields select switch or flag 1 to 6, or 7 for all of them.  OPTC_SNI is the
-// PDP-1D "skip if IO is not zero"; szi, 654000, is sni with bit 5 set, so it
-// skips when IO is zero (owner-confirmed value, 08-Sep-2026).
+// Skip group condition bits, bits 6-17 of a code 64 word (handbook pages
+// 20-21).  Combined conditions skip if ANY holds; bit 5 inverts the whole
+// sense.  The switch and flag fields select 1-6, or 7 for all.  szi (654000)
+// is sni with bit 5 set, so it skips when IO is zero.
 #define OPTC_SNI        0004000     // PDP-1D: skip if IO is not zero
 #define OPTC_SPI        0002000     // skip if IO is positive (sign bit zero)
 #define OPTC_SZO        0001000     // skip if the overflow flip-flop is zero
@@ -202,23 +165,19 @@ typedef enum
 #define OPTC_SZSMASK    0000070     // sense switch number, 1 to 6, 7 = all
 #define OPTC_SZFMASK    0000007     // program flag number, 1 to 6, 7 = all
 
-// Shift group fields, code 66 (handbook page 9 for the layout, pages 18 and
-// 19 for the instructions).  Bit 5 is the direction, bit 6 shift (arithmetic)
-// against rotate, bits 7 and 8 the registers, bits 9 to 17 the step count as
-// a number of one bits ("rar 1 = 671001", "rar 9 = 671777").
+// Shift group fields, code 66 (handbook pages 9, 18-19).  Bit 5 is the
+// direction; the step count is the number of one bits in bits 9-17
+// ("rar 9 = 671777").
 #define OPTSH_ARITH     0004000     // bit 6: one = shift, zero = rotate
 #define OPTSH_REGS      0003000     // bits 7 and 8: 01 = AC, 10 = IO, 11 = both
 #define OPTSH_AC        0001000
 #define OPTSH_IO        0002000
 #define OPTSH_COUNT     0000777     // bits 9 to 17, one bit per step
 
-// Operate group micro-op bits, bits 5-17 of a code 76 word (handbook pages 21
-// and 22; the three PDP-1D bits from permsyms.def).  These ARE the hardware
-// bits, so a word's micro-op set is simply (value & OPTM_ALLBITS).  Note that
-// permsyms.def spells lat as 762200 and lap as 760300: both carry the cla bit
-// as well, exactly as the handbook says they are "usually combined".  The
-// flag field (bits 14-17) is one four-bit slot: 0001 to 0007 clear flag n,
-// 0011 to 0017 set flag n; a word cannot clear one flag and set another.
+// Operate group micro-op bits, bits 5-17 of a code 76 word (handbook pages
+// 21-22; the PDP-1D bits from permsyms.def).  These are the hardware bits.
+// lat (762200) and lap (760300) carry cla as well.  The flag field is one slot:
+// 0001-0007 clear flag n, 0011-0017 set it, never both in one word.
 #define OPTM_CMI        0010000     // PDP-1D: complement IO
 #define OPTM_CLI        0004000     // clear IO
 #define OPTM_LAT        0002000     // OR the test word switches into AC
@@ -242,12 +201,9 @@ typedef enum
 #define OPTX_SCF        0000040     // clear program flags 1 to 6
 #define OPTX_ALLBITS    0006540
 
-// In-out transfer fields (handbook page 22).  Bit 5 waits for the device's
-// completion pulse; bit 6 says whether a completion pulse will come at all
-// (it will when bit 6 differs from bit 5); bits 7-11 further qualify the
-// device selected by bits 12-17.  Beyond that the decoder treats an iot as
-// opaque: it names the word when its value is exactly one of the iot
-// mnemonics in permsyms.def, and calls it "iot" otherwise.
+// In-out transfer fields (handbook page 22).  Bit 5 waits for completion; a
+// completion pulse comes when bit 6 differs from bit 5.  Otherwise an iot is
+// opaque: named only when its value is exactly a permsyms.def mnemonic.
 #define OPTIO_COMPLETE  0004000     // bit 6
 #define OPTIO_SUBMASK   0003700     // bits 7 to 11
 #define OPTIO_DEVMASK   0000077     // bits 12 to 17
@@ -260,20 +216,12 @@ typedef enum
     OPTFLAG_STF             // set flag flagNum (7 = all)
 } OptFlagOp;
 
-// The hardware phase an operate micro-op is applied in.  From the handbook,
-// page 21: "The instruction opr 3200 will clear the AC, put TW to AC, and
-// complement AC" -- the clear happens first, the transfer into AC second, the
-// complement last, which is why cla cma in one word (761200, the classic clc)
-// leaves all ones while cma then cla as two words leaves zero.  The full
-// timing, including where the PDP-1D micro-ops fall, is the emulator's
-// (src/blincolnlights/pdp1/pdp1.c, read on the owner's direction 08-Sep-2026,
-// and recorded in Claude/skill-updates/pdp1-operate-timing.md): the clears
-// happen at time pulse 7, the complement of IO, the ORs into AC and the flag
-// operation at TP8, the complement of AC and the halt at TP9, and the lai/lia
-// transfer is armed at TP8 and completes during the NEXT instruction's fetch
-// (TP0 to TP2), as a single exchange when both bits are set.  So the PDP-1D
-// transfers come after everything else in the word, and their source
-// registers are read after cla, cli, cmi and cma have acted.
+// The hardware phase an operate micro-op acts in (handbook page 21, and the
+// emulator's timing).  Clears act at TP7; complement IO, the ORs into AC and
+// the flag operation at TP8; complement AC and halt at TP9.  lai and lia are armed at TP8 and
+// complete during the NEXT fetch, as one exchange when both are set, so they
+// read their source after cla, cli, cmi and cma.  Hence cla cma in one word
+// (clc) leaves all ones, while cma then cla as two words leaves zero.
 typedef enum
 {
     OPTPH_CLEAR = 1,        // TP7: cla, cli
@@ -299,7 +247,7 @@ typedef enum
     OPTMO_COUNT
 } OptMicroId;
 
-// What a micro-op reads and writes, for the merge rules of task A5.
+// What a micro-op reads and writes, for the merge rules.
 #define OPTE_READS_AC       0x01
 #define OPTE_WRITES_AC      0x02
 #define OPTE_READS_IO       0x04
@@ -378,28 +326,15 @@ typedef struct optdecode
     SymNodeP opSymP;        // the first of them in source order, NILP if none
 } OptDecode, *OptDecodeP;
 
-// ---------------------------------------------------------------------------
-// Task A3: reference edges.
+// Reference edges.
 //
-// Every symbol a word's expression names becomes an edge from that word to
-// the word (or words, at an overlaid address) at the symbol's bank and
-// address, with a role that says what the reference does to its target.
-// The role comes from the decoded opcode (task A2) and from where the symbol
-// sits in the expression: in the address field of a memory reference
-// mnemonic it does what the mnemonic does; anywhere else (a bare data word,
-// a law operand, inside a [..] constant, in arithmetic such as foo+1, in a
-// table or var initializer) the address is merely being used as a value and
-// the edge is "taken".  A memory reference whose address field is not a
-// single symbol (lac foo+1, lac 100) still gets its edge, to the decoded
-// address, with no symbol and the OPTEF_IMPLICIT mark.  Edges are also made
-// for references the source does not spell: the word jda deposits AC into
-// and the word after it that jda enters, and locations 100 and 101 for cal.
-//
-// Every word keeps the list of edges leaving it (outP) and the list of edges
-// entering it (inP, the reverse index of study 5.3), plus a count of the
-// entering edges per role, so "who writes this word" is a constant-time
-// question and "is this word written" a constant-time answer.
-// ---------------------------------------------------------------------------
+// Every symbol a word names becomes an edge to the word(s) at its address,
+// with a role.  In a memory reference's address field the role is the
+// mnemonic's; anywhere else (a data word, a law operand, a [..], arithmetic,
+// an initializer) the address is used as a value and the edge is TAKEN.  A
+// memory reference whose field is not one symbol gets an OPTEF_IMPLICIT edge
+// to the decoded address, as do jda's deposit and entry words and cal's 100
+// and 101.  Each word keeps its out and in lists and per-role in counts.
 
 typedef enum
 {
@@ -451,33 +386,22 @@ typedef struct optedge
     SymNodeP symP;              // the symbol the source wrote, NILP for an implicit edge
 } OptEdge, *OptEdgeP;
 
-// ---------------------------------------------------------------------------
-// Task A4: basic blocks and reachability (study section 5.4).
+// Basic blocks and reachability.
 //
-// The graph is overlaid on the words task A3 classified as code, leaving out
-// the ones nothing can be said about: a reserved table word has no value, and
-// an overlaid address (OPTF_DUPADDR) holds more than one word, so which of
-// them the machine would fetch is not a question this analysis can answer
-// (study 5.1 calls overlaid addresses opaque).  A4 does NOT revise A3's
-// classification; "unreached" is a flag laid on top of "code", exactly as the
-// task's deliverable 3 says, so that A3's dump and its expectations still
-// hold.
-//
-// Every edge that leaves the graph -- through a pointer that could not be
-// followed, a patched address field, an address nothing was emitted at, a
-// word that is not code, an overlaid address, or DEBREAK's return to an
-// interrupted program -- goes to one shared UNKNOWN sink, represented by a
-// NILP target block and an OptSink reason.
-// A sink edge carries no reachability: it says the analysis lost the thread,
-// not that the thread ended.
-// ---------------------------------------------------------------------------
+// The graph covers the words classified as code, less reserved table words
+// and overlaid addresses, where which word the machine would fetch is
+// unknowable.  OPTF_UNREACHED is laid over the code classification and never
+// revises it.  Every edge that leaves the graph goes to one UNKNOWN sink (a
+// NILP target block and an OptSink reason).  A sink edge carries no
+// reachability: the analysis lost the thread, the thread did not end.
 
 // Why an edge goes to the UNKNOWN sink instead of to a block.
 typedef enum
 {
     OPTSK_NONE,         // not a sink edge
-    OPTSK_INDIRECT,     // the instruction indirects and A3 could not follow the pointer
-    OPTSK_PATCHED,      // a dap or dip writes the address field: the target varies
+    OPTSK_INDIRECT,     // the instruction indirects and the pointer could not be followed
+    OPTSK_PATCHED,      // a dap or dip writes the address field, or a dac or dio the
+                        //   whole word, and the code does not say what: the target varies
     OPTSK_NOWORD,       // nothing was emitted at the target address
     OPTSK_NOTCODE,      // a word is there, but it is not classified code
     OPTSK_OVERLAID,     // the target address holds more than one emitted word
@@ -498,12 +422,24 @@ typedef enum
     OPTFK_COUNT
 } OptFlowKind;
 
+// An edge the instruction alone does not state, recovered from context and
+// named so the report and -O=flow can say what was recovered.  Only an edge that reaches a block is marked; one that lands
+// outside the graph is an ordinary sink with its own reason.
+typedef enum
+{
+    OPTRV_NONE,         // the instruction states the edge itself
+    OPTRV_IOT,          // the skip of an in-out transfer to a device that skips
+    OPTRV_STORED,       // a target the code in front of a dac or dio of a whole
+                        // jmp or jsp states
+    OPTRV_COUNT
+} OptRecovery;
+
 // How a block ends.  The first four are the terminator instruction that ended
 // it; the last three mean the block ran into something rather than ending of
 // its own accord.
 typedef enum
 {
-    OPTBE_SKIP,         // a skip-class word: skip group, isp, sad, sas
+    OPTBE_SKIP,         // a skip-class word: skip group, isp, sad, sas, div
     OPTBE_JUMP,         // jmp
     OPTBE_CALL,         // jsp, jda, cal
     OPTBE_HALT,         // an operate word carrying the hlt bit
@@ -519,31 +455,78 @@ typedef enum
 typedef enum
 {
     OPTEN_START,        // the program's start address
-    OPTEN_TAKEN,        // its address is used as a value somewhere, so an indirect
-                        // jump or an xct could reach it (study 5.4)
+    OPTEN_TAKEN,        // its address is used as a value, so an indirect jump or
+                        // an xct could reach it
     OPTEN_EXPORT,       // it carries an exported label: another program may enter it
     OPTEN_SBS,          // it is a sequence-break handler entry: bank 0, address 4n+3
     OPTEN_COUNT
 } OptEntryCause;
 
-// The sequence-break frame.  Each channel owns four words of low core starting
-// at address 0, so a sixteen-channel system uses 0 through 077 and that is why
-// programs conventionally begin at 0100 (project owner, 08-Sep-2026).  Within
-// a channel's frame the hardware stores the pre-break AC, the packed PC word
-// and IO in the first three words and begins EXECUTING at the fourth, so the
-// handler entry of channel n is 4n+3, and channel 0's is address 3 (the
-// pdp1-emulator skill, references/sbs.md, "The break sequence").  The
-// single-channel SBS256 mode -- the only mode any shipped configuration
-// enables -- uses channel 0's frame whatever the requesting device, so in
-// practice only address 3 matters; the other fifteen are covered because they
-// cost nothing and a program that never sets up a frame emits nothing there.
-#define OPTSBS_CHANNELS     16      // channels in the full Type 20 system
+// Sequence-break frames.  Each channel owns four words of low core from address
+// 0; the hardware stores AC, the packed PC and IO in the first three and
+// executes the fourth, so channel n's handler entry is 4n+3.  The
+// single-channel mode, the only one any shipped configuration enables, uses
+// channel 0's frame: address 3.  optSbsChannels() reads the number of frames
+// from the start address, and a program has none unless it holds an enable
+// command (esm, asc or isb).
+#define OPTSBS_ESM_DEVICE   055     // esm, 72xx55: the system on
+#define OPTSBS_ASC_DEVICE   051     // asc, 72nn51: channel nn enabled
+#define OPTSBS_ISB_DEVICE   052     // isb, 72nn52: a break simulated on channel nn
+#define OPTSBS_CHANNELS    16      // channels in the full Type 20 system
 #define OPTSBS_FRAMESIZE    4       // words of low core per channel
 #define OPTSBS_ENTRYSLOT    3       // the word of a frame the hardware executes
 
 // The address field of the DEBREAK instruction, "jmp i 1".  Recognized only
-// in bank 0, which is where the hardware recognizes it (sbs.md, "DEBREAK").
+// in bank 0, which is where the hardware recognizes it.
 #define OPTDEBREAK_ADDR     1
+
+// Where a call actually returns to.
+//
+// A call's return edge normally goes to the word after it, but under the
+// inline-argument convention the callee steps its saved return past argument
+// words that follow the call:
+//
+//     jsp i [subr:0]
+//     ARG:0                   // argument, read by the callee through its rtn
+//     ...                     // the callee returns HERE
+//
+// optreturn.c classifies each call site.  An undecidable one keeps its edge at
+// call + 1, marked assumed, never a hole: a hole would make the caller's tail
+// look unreached and its callees uncalled, the unsound direction for T10.
+
+// How sure the analysis is about where a call returns to.
+typedef enum
+{
+    OPTRC_AFTER,        // proved: the callee returns to the word after the call
+    OPTRC_STEPPED,      // proved: the callee steps its return word past N inline
+                        // argument words, so it returns to call + 1 + N
+    OPTRC_UNKNOWN,      // not decidable: the edge stays at call + 1, marked assumed
+    OPTRC_COUNT
+} OptReturnCase;
+
+// Why a call site came out OPTRC_UNKNOWN; OPTRR_NONE for the proved cases.
+// Each is a place the analysis stopped rather than guessed.
+typedef enum
+{
+    OPTRR_NONE,         // the case is proved; no reason to give
+    OPTRR_CALLEE,       // the call's own target is not one known word of the graph:
+                        // a patched address field, or an indirection that could not
+                        // follow, or two followed pointers that disagree
+    OPTRR_NOSAVE,       // the callee's entry word does not save the return address
+                        // with a direct, unpatched dac or dap, so there is no
+                        // return word to follow
+    OPTRR_CLOBBER,      // the return word is written by something this analysis
+                        // did not account for, including any write through a
+                        // pointer it could not follow
+    OPTRR_DISAGREE,     // two paths arrive at the same word, or at the return,
+                        // having stepped the return word different amounts
+    OPTRR_NORETURN,     // no path was found that returns through the return word
+    OPTRR_NESTED,       // a call inside the callee has no resolved return target,
+                        // so where the path resumes after it is not known
+    OPTRR_LOST,         // a path left the graph or ended somewhere unfollowable
+    OPTRR_BUDGET,       // the walk hit its step limit before finishing
+    OPTRR_COUNT
+} OptReturnReason;
 
 // One control-flow edge, owned by the successor list of the block it leaves.
 // Predecessors are not listed; blocks only need to know how many arrive, and
@@ -557,6 +540,9 @@ typedef struct optflowedge
     OptFlowKind kind;
     OptSink sink;               // why it went to the sink, OPTSK_NONE when toP is set
     int crossbank;              // the edge leaves the bank of the word that made it
+    int assumed;                // an OPTFK_RETURN edge left at call + 1 because the
+                                // callee could not be read, not because it was proved
+    OptRecovery recovered;      // OPTRV_NONE unless the edge was recovered
 } OptFlowEdge, *OptFlowEdgeP;
 
 // One basic block: a run of consecutive in-graph words at consecutive
@@ -578,6 +564,11 @@ typedef struct optblock
     int predCount;              // non-sink edges arriving from any block, this one included
     int isEntry;                // the first word is in the entry set
     int reached;                // the reachability walk arrived here
+    int resumed;                // not reached, but a resumption seed reached it: a jmp or
+                                // jsp somewhere names its first word.  Kept apart from
+                                // reached because isEntry means more than "the walk starts
+                                // here" to P1 and S4, and reached is what refuses a finding
+    int resumeSeed;             // the block is one of those seeds
 } OptBlock, *OptBlockP;
 
 // One emitted word.  Entries are created in emission order, the order the
@@ -595,20 +586,16 @@ typedef struct optword
     SymNodeP symP;          // the originating symbol for OPTK_VAR and OPTK_CONST, else NILP
     OptKind kind;           // what produced the word
     OptLabelP labelsP;      // every label defined at this bank and address
-    const char *fileP;      // the source file the word came from: the command line
-                            // source until a FILENAME statement (one of cpp's line
-                            // markers) names another, and that file's name after
-                            // it (task A5)
+    const char *fileP;      // source file: the command line's until a FILENAME
+                            // statement (a cpp line marker) names another
     int lineNo;             // source line the word came from, -1 if not known
     int index;              // position in emission order, 0 based
     unsigned int flags;     // OPTF_ bits
     struct optword *sameAddrP;  // next entry emitted at the same bank and address, NILP if none
-    OptDecode decode;       // task A2: the decoded view and the spelling
+    OptDecode decode;       // the decoded view and the spelling
 
-    // Task A3: the edges and what they imply.  Out edges are in the order
-    // the analysis found them (the expression's in-order walk, implicit
-    // edges after the field's own, via-pointer edges last); in edges are in
-    // their sources' emission order.
+    // References.  Out edges in discovery order (the expression's walk, then
+    // implicit edges, via-pointer edges last); in edges in emission order.
     OptEdgeP outP;          // edges leaving this word
     OptEdgeP outTailP;      // the last of them, for appending
     OptEdgeP inP;           // edges entering this word: the reverse index
@@ -619,38 +606,192 @@ typedef struct optword
                                 // on, and a placeholder edge does not count at all
     unsigned int conflicts; // OPTCF_ bits
 
-    // Task A4: the block this word belongs to, NILP when the word is not in
-    // the control-flow graph.  Membership is asked this way rather than with
-    // a flag of its own, so the two can never disagree.
+    // The word's block, NILP when it is not in the graph; asked this way so no
+    // separate flag can disagree with it.
     OptBlockP blockP;
+
+    // Return classification, meaningful only when isCallSite is set, which
+    // optResolveReturns() does for every word that ends its block with a call.
+    int isCallSite;                 // this word is a jsp, jda or cal
+    int returnAddr;                 // where the return edge goes, in THIS word's bank
+    int returnSteps;                // inline argument words the callee steps past,
+                                    // 0 for the common case and for OPTRC_UNKNOWN
+    int calleeBank;                 // the callee's entry word, -1 for either coordinate
+    int calleeAddr;                 // when the call's target is not one known word
+    OptReturnCase returnCase;
+    OptReturnReason returnReason;
 } OptWord, *OptWordP;
 
-// ---------------------------------------------------------------------------
-// Task A5: the preconditions, the rules and the findings (study sections 6
-// and 7).
+// Routines and the call graph.
 //
-// A rule scans the words of one bank in address order and, wherever its
-// pattern matches, produces a finding: what it found, what it suggests
-// instead, and what that would save.  Before a finding is called live it has
-// to pass the preconditions of study section 6 -- P1 no label or other side
-// entry on an interior word, P2 no word of the pattern written or taken, P3
-// no word an xct target, P4 no skip immediately before the pattern -- and
-// whatever the rule itself demands (the operate phase order for T1, the
-// summed shift count for T1b, and so on).  A pattern that matches and then
-// fails one of those is NOT thrown away: it becomes a suppressed finding,
-// carrying the reason, and the report prints it in its own section.  Study
-// section 7 calls that half the more informative one.
+// am1 has no procedures, so a routine is structural:
 //
-// P5, that no location in the pattern is shared with a device or a sequence
-// break handler, cannot be established from the source at all.  It is stated
-// once in the report's header and is the reader's to check.
+//   ENTRY   a block whose first word is the target of a call edge: jsp, jsp i,
+//           jda or cal.
+//   BODY    the blocks reachable from the entry without passing another entry.
+//           Call edges are not followed; return edges are, since they continue
+//           in the caller.
+//   RETURN  the words that leave through jmp i rtn (jsp) or jmp i subr (jda).
 //
-// The optimizer still never rewrites anything: a finding is a sentence in a
-// file, and the words it names are left exactly as the program assembled them.
-// ---------------------------------------------------------------------------
+// Three awkward shapes are counted, never silently decided:
+//
+//   1. Fall-in: a plain flow edge enters an entry.  The routine above is
+//      truncated there and both ends are flagged (FALLSOUT, FALLIN).  Control
+//      that arrives that way runs the second body with the first's return word
+//      still live.
+//   2. Two entries sharing a tail: the shared blocks belong to both routines
+//      (OPTRT_SHARED), which are not merged, so every call the tail makes is
+//      an arc from both.
+//   3. A call the graph could not follow makes its routine a universal vertex
+//      (OPTRT_CALLSUNKNOWN): it might call anything.  A body only unresolved
+//      calls reach cannot be found; the opaque-entry count counts the
+//      address-taken blocks outside every routine, where one would be.
+//
+// Recursion is a finding: the dap rtn idiom cannot survive a second call.
+// Cycles are found on RESOLVED arcs only, so a reported cycle is real; those
+// that exist only through a universal vertex are counted apart as artifacts.
 
-// The rules of the transform catalogue this phase implements.  The ids are
-// the study's, and the order here is the order the report groups them in.
+// Which call idiom a routine's resolved callers use.  A jda routine's return
+// address lives in its own entry word, fixed by where the routine sits, so jda
+// routines are never T10 candidates.
+typedef enum
+{
+    OPTRF_JSP,          // every resolved caller uses jsp or jsp i
+    OPTRF_JDA,          // every resolved caller uses jda or cal
+    OPTRF_MIXED,        // both
+    OPTRF_COUNT
+} OptRoutineForm;
+
+// How the routine's return word was identified; independent of the return
+// classification, which asks how far the return is stepped.
+typedef enum
+{
+    OPTRW_NONE,         // no return word could be named
+    OPTRW_SAVED,        // the entry word saves the return with a direct, unpatched
+                        // dac or dap (the jsp idiom; Am1Includes' jda callees too)
+    OPTRW_JDA,          // no save at the entry, but the callers are jda or cal, so
+                        // the hardware has put the return address in the word one
+                        // below the entry and the return is jmp i that word
+    OPTRW_COUNT
+} OptReturnWord;
+
+// Per-routine flags.  Every one of them is a counted category, not a
+// disqualification: a routine is still a routine with any combination set.
+#define OPTRT_FALLIN        0x0001  // a plain flow edge from outside enters the entry
+#define OPTRT_FALLSOUT      0x0002  // the body flows into another routine's entry and
+                                    // stops there
+#define OPTRT_SHARED        0x0004  // at least one body block also belongs to
+                                    // another routine: two entries, one tail
+#define OPTRT_CALLSUNKNOWN  0x0008  // a call in the body went to the sink: a universal vertex
+#define OPTRT_JUMPSUNKNOWN  0x0010  // an indirect jump in the body was not followed.  Usually
+                                    // its own jmp i rtn, so not a universal vertex; but a
+                                    // pointer-table dispatch looks the same and leaves the
+                                    // body incomplete
+#define OPTRT_NORETURN      0x0020  // no return word was identified
+#define OPTRT_OPENBODY      0x0200  // a body block is reachable without entering the
+                                    // routine (an arm that jumps out, a shared tail, an
+                                    // address-taken block), so it may run outside a call
+#define OPTRT_ONCYCLE       0x0040  // on a cycle of RESOLVED call arcs: real
+                                    // recursion or an escape, per the flag below
+#define OPTRT_ESCCYCLE      0x0400  // the cycle is an escape, not recursion: an arc on it is
+                                    // made from a block reachable without entering its
+                                    // caller.  Decided once, for the dump and the report
+#define OPTRT_ARTCYCLE      0x0080  // on a cycle only because a universal vertex was
+                                    // introduced: an artifact, and labeled one
+#define OPTRT_SBSPOOL       0x0100  // reachable from a sequence-break handler: it runs on
+                                    // the second stack and interferes with the first
+
+// One arc of the call graph: caller routine to callee routine.  Owned by the
+// caller's out list.  Several call sites collapse into one arc and the count
+// is kept, since "how many places call this" is a different question from
+// "can these two be live at once".
+typedef struct optcallarc
+{
+    struct optcallarc *nextP;   // next arc out of the same routine
+    struct optroutine *toP;     // the callee
+    int sites;                  // call sites in the caller that make this arc
+    int openSites;              // of those, sites in a block reachable without entering
+                                // the caller: what tells an escape from recursion
+} OptCallArc, *OptCallArcP;
+
+// One routine.  Built after the control-flow graph is complete and never
+// mutates it: a routine points at blocks and words, and owns only its own arc
+// list.
+typedef struct optroutine
+{
+    struct optroutine *nextP;   // next routine, in bank then entry-address order
+    int id;                     // 1 based, assigned in that same order
+    int bank;                   // the entry word's bank
+    int entryAddr;              // the entry word's address
+    OptBlockP entryBlockP;      // the block that word begins
+    OptRoutineForm form;
+    int jspSites;               // resolved call sites reaching it with jsp
+    int jdaSites;               // ... with jda or cal
+    int mainLineSites;          // of all of them, the ones made from no routine
+    int blockCount;             // blocks in the body
+    int wordCount;              // words in them
+    int *bodyIdsP;              // their ids, ascending, blockCount of them
+    int returnBank;             // the word the return address is kept in, -1 for
+    int returnAddr;             // either coordinate when there is none
+    OptReturnWord returnWord;   // how that word was identified
+    int returnCount;            // body words that leave through it
+    int firstReturnAddr;        // the lowest such word, -1 if there are none
+    unsigned int flags;         // OPTRT_ bits
+    int scc;                    // 1-based strongly connected component, 0 before
+                                // the graph is built
+    OptCallArcP callsP;         // arcs out of this routine
+    OptCallArcP callsTailP;     // the last of them, for appending
+    int callArcs;               // how many
+    int callerArcs;             // arcs INTO this routine, counted not listed
+    int callDepth;              // the longest chain of routines this one heads, itself
+                                // included (1 for a leaf); shared by a cyclic component,
+                                // whose members may all be live at once
+} OptRoutine, *OptRoutineP;
+
+// The return-word sharing proposal (T10).
+//
+// ADVISORY ONLY, permanently: a wrongly shared return word fails as a wild jump
+// in the one call ordering that overlaps, with nothing to catch it.  None of
+// this is an OptFinding, none is counted in findingCounts[], and no
+// optimization level reads it.
+
+// One proposed sharing group: a set of return words that could be one word,
+// and the routines that would share it.  Groups are built in bank, then pool,
+// then color order and are never re-sorted, so two runs of the same source
+// give the same report.
+typedef struct optsharegroup
+{
+    struct optsharegroup *nextP;    // next group, in that order
+    int bank;                   // the bank the return WORDS are in, not the entries
+    int pool;                   // 0 main line, 1 sequence-break pool; colored apart, since
+                                // a handler runs between any two words it interrupts
+    int color;                  // the chain depth every member of this group carries
+    int keepAddr;              // the surviving address: the group's lowest, for stability
+    int wordCount;              // distinct return words in the group
+    int freedWords;             // wordCount - 1, and 0 for a split-out word
+    int unknownWords;           // of those words, ones held by a routine the graph does
+                                // not fully know (open, jumpsunknown, callsunknown)
+    int leafWords;              // of those words, ones every namer of which is a leaf
+    int cyclicWords;            // of those words, ones a namer of which is on a cycle
+    int splitOut;               // ONE word sharing nothing: two entries into one body
+                                // name it at different call depths
+    int checkFailed;            // the pairwise self-check found two members that can be
+                                // on the call stack together; the report withholds it
+    int memberCount;            // routines that would share the surviving word
+    OptRoutineP *membersPP;     // them, in routine-id order
+} OptShareGroup, *OptShareGroupP;
+
+// Preconditions, rules and findings.
+//
+// A rule scans one bank in address order and, where its pattern matches,
+// produces a finding: what it found, the suggested replacement and the saving.
+// A match must pass P1 (no label or side entry on an interior word), P2 (no
+// word written or taken), P3 (no xct target), P4 (no skip just before) and the
+// rule's own conditions; one that fails becomes a suppressed finding carrying
+// the reason.  P5 (no word shared with a device or a handler) cannot be
+// established from the source and is stated in the report's header.
+
+// The rules of the transform catalog, in the order the report groups them.
 typedef enum
 {
     OPTRULE_T1,         // two consecutive operate words merge into one
@@ -668,9 +809,8 @@ typedef enum
     OPTRULE_COUNT
 } OptRuleId;
 
-// Why a pattern that matched was refused.  The first five are the shared
-// preconditions of study section 6; the rest belong to one rule each and say
-// what about the words themselves made the rewrite unsafe.
+// Why a matched pattern was refused: the shared preconditions, then reasons
+// belonging to one rule each.
 typedef enum
 {
     OPTWHY_NONE,        // nothing refused it: this is a live finding
@@ -693,19 +833,66 @@ typedef enum
     OPTWHY_NOINVERSE,   // T2: the skip-class word has no inverted form (isp, div)
     OPTWHY_PATCHED,     // T3, T8: the word the rule reads through is patched
     OPTWHY_TEMPUSED,    // T14: the temporary is reached from outside the pattern
+    OPTWHY_THROUGH,     // T3, T8: the word the rule reads through has its address
+                        // taken, so a write through a pointer can change it
+    OPTWHY_UNREACHED,   // a word of the pattern is in a block no entry reaches,
+                        // in a run no label names, so nothing shows it is an
+                        // instruction
+    OPTWHY_TABLE,       // the pattern is in a block entered only through its
+                        // taken address that runs into a word that is not code:
+                        // a table an xct or a pointer uses
     OPTWHY_COUNT
 } OptWhy;
 
 // The longest pattern any rule matches: T14's four-word exchange.
 #define OPTFIND_MAXWORDS    4
 
-// One finding, live or suppressed.  The words are the pattern in address
-// order; the strings are this finding's own and are freed with it.
+// Where a finding's pattern sits relative to the declared regions.  Never a
+// refusal: the report advises everywhere, and a region is permission to
+// REWRITE, not a condition on being told.
+typedef enum
+{
+    OPTREG_NOREGIONS,   // the source declares no region: nothing is marked
+    OPTREG_INSIDE,      // every word of the pattern is inside one region
+    OPTREG_OUTSIDE,     // no word of it is inside any region
+    OPTREG_PARTIAL,     // the pattern straddles a region boundary, so no transform
+                        // can fire on it
+    OPTREG_COUNT
+} OptRegionPlace;
+
+// The heuristics -O2 uses in place of P5 (optguess.c).
+typedef enum
+{
+    OPTGH_H1,           // handler territory
+    OPTGH_H2,           // delay loop
+    OPTGH_H3,           // device loop
+    OPTGH_H4,           // device buffer
+    OPTGH_H5,           // absolute address
+    OPTGH_H6,           // computed address
+    OPTGH_COUNT
+} OptGuessId;
+
+// The heuristics -O2 applies, as bits (1 << OptGuessId).  Inside an optimize
+// region only OPTGH_INREGION's apply: there H2 to H5 are skipped.
+#define OPTGH_AUTHORIZED    ((1u << OPTGH_H1) | (1u << OPTGH_H2) | (1u << OPTGH_H3) | \
+                             (1u << OPTGH_H4) | (1u << OPTGH_H5))
+#define OPTGH_INREGION      (1u << OPTGH_H1)
+
+// The heuristics that refuse a rewrite changing the program's length at every
+// level, in a region or not, and never one that keeps it (T3, T8a-d).  H6's
+// run is indexed by an address the program computes at run time, which no
+// declaration can vouch for: a word taken out of it or put into it moves every
+// entry after it.
+#define OPTGH_LENGTH        (1u << OPTGH_H6)
+
+// One finding, live or suppressed: the pattern's words in address order, and
+// strings the finding owns.
 typedef struct optfinding
 {
     struct optfinding *nextP;
     OptRuleId rule;
     OptWhy why;             // OPTWHY_NONE when the finding is live
+    OptRegionPlace place;   // where the pattern sits in the regions
     int bank;               // where the pattern starts
     int addr;
     int wordCount;          // words in the pattern
@@ -716,7 +903,407 @@ typedef struct optfinding
     int perHop;             // the saving is per executed hop, not once (T3)
     char *replaceP;         // the suggested source, in am1 syntax
     char *detailP;          // the rule's note, or the evidence for the refusal
+    // Live findings only: the heuristics that would refuse it, as bits, and for
+    // each the footprint word it marked.  Set by optBuildGuess().
+    unsigned int guessBits;
+    struct optword *guessWordP[OPTGH_COUNT];
 } OptFinding, *OptFindingP;
+
+// One optimize/endoptimize region: a span of EMISSION ORDER, not addresses, so
+// a bank change, an overlay or a macro inside one needs no arithmetic.  Regions
+// do not nest and the builder never reorders, so every entry from firstIndex to
+// lastIndex (in tableP->entriesPP) is in this region alone.  An empty region is
+// kept: it tells an author who deleted the code inside one.
+typedef struct optregion
+{
+    struct optregion *nextP;    // next region, in source order
+    int id;                     // 1 based, in that order
+    int openLine;               // the line 'optimize' is on
+    int endLine;                // the line 'endoptimize' is on
+    const char *fileP;          // the file both are in; a region may not cross one
+    int openBank;               // the bank and pc the region opened at, which are
+    int openAddr;               // where the NEXT word would have gone
+    int firstIndex;             // first and last entry in emission order, -1 both
+    int lastIndex;              // when the region holds no emitted word
+    int wordCount;              // entries between them, which is lastIndex-firstIndex+1
+    int contradictions;         // of those, words marked written, taken or patched:
+                                // the declaration and the evidence disagree
+} OptRegion, *OptRegionP;
+
+// One 'inline NAME' marking.  A POINT, not a span: it names a routine to inline
+// at every call site, overriding the size cap and the bank budget.
+// optCheckRegions() resolves the name once every bank is settled; a name that
+// matches no routine is reported, not an error, since a renamed routine leaves
+// its marking behind.
+typedef struct optinlinemark
+{
+    struct optinlinemark *nextP;    // next marking, in source order
+    int id;                         // 1 based, in that order
+    const char *nameP;              // the routine's name, as the author spelled it
+    const char *fileP;              // where the directive was written
+    int line;                       // and the line it was on
+    int declBank;                   // the bank and pc the directive stood at, which
+    int declAddr;                   // are where the NEXT word would have gone
+    OptRoutineP routineP;           // the routine it names, NILP when none matched
+    int dupOf;                      // the id of an earlier marking naming the same
+                                    // routine, 0 when this is the first
+} OptInlineMark, *OptInlineMarkP;
+
+// A '%%ceiling EXPR' directive: the first word of its bank a length-changing
+// rewrite may not grow into.  It protects storage filled only at run time,
+// which no assembled word reveals.  It only lowers the default (07750 in bank 0, 07777 elsewhere) and the lowest in
+// a bank wins.  The parser refuses 0 and values above the default;
+// optCheckRegions() refuses one the bank's assembled words already reach.
+typedef struct optceiling
+{
+    struct optceiling *nextP;       // next directive, in source order
+    int id;                         // 1 based, in that order
+    int bank;                       // the bank it names: the one it was written in
+    int value;                      // the first word no rewrite may reach, 1 to 07777
+    const char *fileP;              // where the directive was written
+    int line;                       // and the line it was on
+} OptCeiling, *OptCeilingP;
+
+// What -O1 or -O2 did with each live finding.  Every live finding gets exactly
+// one fate, so the fates add up to findingCount.  A suppressed finding gets no
+// record, and the finding list is the same with or without a level.
+typedef enum
+{
+    OPTXF_FIRED,            // rewritten (or, in a dry run, would be)
+    OPTXF_NOREGIONS,        // the source declares no region, so nothing may fire
+    OPTXF_OUTSIDE,          // no word of the pattern is inside a region
+    OPTXF_PARTIAL,          // the pattern straddles a region boundary
+    OPTXF_NOTCARRIED,       // a rule the level does not carry: it changes the length
+                            // of the program
+    OPTXF_CYCLE,            // T3 only: the chain of jmps comes back to a word
+                            // already on it, or to the rewritten word itself
+    OPTXF_LONG,             // T3 only: the chain did not end within
+                            // OPT_MAXCHAIN hops.  Refused, not cut short
+    OPTXF_UNREPRESENTABLE,  // the word is not the whole expression of one
+                            // statement, so there is no expression to replace
+    // The fates below are kept last so a dump that cannot produce them keeps
+    // its order; the dump prints them only when they can be non-zero.
+    OPTXF_HANDSOFF,         // a word the rewrite involves is in a nooptimize span
+    OPTXF_GUESSED,          // a heuristic that applies here marks a word the rewrite
+                            // involves: -O2's, or H6 on a deletion at any level
+    OPTXF_OFF,              // it would have fired, and -O=upto, -O=range or -O=off
+                            // switched it off
+    OPTXF_TIMED,            // H2 or H3 marks a word it involves: a delay or device
+                            // loop, whose timing a deletion would change, at any level
+    OPTXF_OVERLAP,          // a word it involves is a word another fired rewrite
+                            // makes, copies, moves or deletes
+    OPTXF_COUNT
+} OptXformFate;
+
+// One live finding's rewrite record.
+typedef struct optxform
+{
+    struct optxform *nextP;
+    OptFindingP findingP;   // the live finding, which owns its words
+    OptXformFate fate;
+    OptWordP throughP;      // the word the rule reads through -- T8's pool word, T3's
+                            // intermediate jmp -- when the fate is FIRED, else NILP
+    OptRegionP regionP;     // the region the rewritten word is in, when FIRED
+    int before;             // the word's value as assembled from the source
+    int after;              // and as rewritten; equal to before unless FIRED
+    char *beforeP;          // both as source, owned here; NILP unless FIRED
+    char *afterP;
+    // -O2 only: for FIRED, the heuristics whose guess it rests on (every one
+    // that applied and found nothing); for GUESSED, the ones that refused it.
+    unsigned int assumed;
+    // T3, FIRED: the jmps jumped past, in run order, owned here.  chainPP[0] is
+    // throughP and chainPP[hops-1] holds the far target.  stopP is the word the
+    // walk declined (a nooptimize span, or an -O2 heuristic), NILP when the
+    // chain simply ended.
+    OptWordP *chainPP;
+    int hops;
+    OptWordP stopP;
+    // Set only under bisection: the record's place, from 1, among those that
+    // would fire (0 for any other), and the OPTBIS_ bits that switched it off.
+    int ordinal;
+    unsigned int offBy;
+    // T3, FIRED: numberP is the INTEGER operand of "jmp N" when the far target
+    // had to be written as a number (NILP for a symbol), and targetP the word
+    // there; relayout re-points numberP at targetP's new address.  T8d sets
+    // numberP to its law operand, targetP NILP, and relayout recomputes it from
+    // the replaced constant, which may hold an address that moved.  Both belong
+    // to the tree and the table, not to the record.
+    PNodeP numberP;
+    OptWordP targetP;
+    // Deleting rules (T1, T1b, T2, T6, T7, T13), FIRED: delP is the word
+    // relayout deletes; keepP the word rewritten in its place (NILP for T6, T7,
+    // T13) and treeP its new expression, installed and withdrawn together with
+    // the delete so a program never holds one without the other.  outcomeP is
+    // relayout's verdict, NILP until it runs.
+    OptWordP delP;
+    OptWordP keepP;
+    PNodeP treeP;
+    const char *outcomeP;
+    // T8 only, set on the first fired T8 reading a pool word nothing else
+    // names.  freesPool: the word is freed.  licensedPool: every fired T8
+    // reading it is in a declared region; without that relayout keeps the word,
+    // since reclaiming it would change the length with no declaration.
+    int freesPool;
+    int licensedPool;
+    int poolCollected;      // and relayout took it: 0 until relayout has run
+} OptXform, *OptXformP;
+
+// The bisection modifiers, as bits, and how many there are.
+#define OPTBIS_UPTO     1u          // -O=upto=N
+#define OPTBIS_RANGE    2u          // -O=range=B:LO-HI
+#define OPTBIS_OFF      4u          // -O=off=FILE
+#define OPTBIS_COUNT    3
+
+// S1, inline expansion.
+//
+// One call site as optInlineJudge() (optspeed.c) sees it, shared by -O=speed
+// and the rewrite so the two cannot disagree.  The copy is the callee's body
+// less its entry (the save word) and its last word, which must be a return,
+// so the copy falls through to the caller's next word.  Other returns, and
+// direct jmps to that last word, become "jmp .+k" to the word after the copy.
+// A jsp is replaced by the copy; a jda stays as "dac Y" and the copy follows.
+typedef struct optinlineshape
+{
+    int why;                    // the first reason that refuses it, optInlineWhyName() spells it
+    int eligible;               // no reason before the guess refuses it
+    unsigned int guessBits;     // every heuristic marking the site or a body word; recorded,
+                                // not applied: -O=speed refuses on any, -O2 on those that
+                                // apply where the site is, -O1 on none
+    char detail[80];            // notcopyable: the word that broke the copy, " at 0740 names 0750"
+    OptRoutineP routineP;       // the callee, once one was found
+    OptWordP entryP;            // its entry, the save word, which is not copied
+    OptWordP rtnP;              // its return word: the patched "rtn, jmp ." or the data word
+    OptWordP lastP;             // the body's last word by address, the dropped return
+    int isJda;                  // the site is a jda, which stays as "dac Y"
+    int dapForm;                // the return word is the patched "jmp ." in the body
+    int dropsRtn;               // the last word is a return and is not copied
+    int body;                   // the callee's words
+    int copy;                   // the words the copy holds: body less the save and the return
+    int spent;                  // what the program grows by at the site: copy less the call
+                                // word for a jsp, the copy itself for a jda
+    int best;                   // microseconds saved per execution, by the best return
+    int worst;                  // and by the worst
+    int single;                 // the callee has this one site and no other way in
+    int freedConsts;            // pool words only this site names, freed with the callee
+    int net;                    // single: what the program grows by with the callee deleted
+} OptInlineShape, *OptInlineShapeP;
+
+// What the rewrite did with one call site inside a declaration.  Only a site a
+// declaration reaches is recorded at all -- its word in a speed region, or its
+// callee marked 'inline' -- so a source that declares neither has no record.
+// The order is the order the questions are asked in.
+typedef enum
+{
+    OPTIN_FIRED,            // copied (the copy is relayout's edit; its outcome is recorded
+                            // apart, below, since relayout runs after the fates)
+    OPTIN_REFUSED,          // the judge refused it: shape.why says for what
+    OPTIN_HANDSOFF,         // the site or a body word is in a nooptimize span
+    OPTIN_GUESSED,          // a heuristic that applies here marks the site or the body: -O2's,
+                            // or H6 at any level
+    OPTIN_UNREPRESENTABLE,  // the site, or a word the copy retargets, is not one statement's
+                            // whole expression, or a jda's operand is not one name
+    OPTIN_NESTED,           // the site lies in a body another fired inline copies, or its
+                            // body holds a fired site: one copy may not contain another
+    OPTIN_CAP,              // a body over the cap, neither single-site nor marked
+    OPTIN_BUDGET,           // the bank's budget was spent on cheaper sites
+    OPTIN_FULL,             // a marked or single-site copy would pass the bank's ceiling
+    OPTIN_OFF,              // it would have fired, and a bisection modifier switched it off
+    OPTIN_COUNT
+} OptInlineFate;
+
+typedef struct optinline
+{
+    struct optinline *nextP;
+    OptWordP siteP;             // the call word
+    OptInlineShape shape;       // the judge's verdict on it
+    OptInlineFate fate;
+    int marked;                 // its callee carries an 'inline' marking
+    int inSpeed;                // its word is in a speed region
+    int deletes;                // FIRED single-site: the callee is deleted once the copy stands
+    unsigned int assumed;       // -O2: the heuristics it rests on (FIRED) or that refused it
+                                // (GUESSED), as OptXform's; 0 under -O1
+    int ordinal;                // its place among the rewrites that would fire, from
+    unsigned int offBy;         // 1, after every T3 and T8; and the modifiers that switched it off
+    // The edit, built by opttransform.c for a FIRED site and made by relayout.
+    PNodeP prefixP;             // jda: the "dac Y" tree; NILP for a jsp
+    int retargetCount;          // words of the body that become "jmp .+k" in the copy
+    OptWordP *retargetsPP;      // those words, owned here
+    PNodeP *retargetTreesPP;    // and their trees, owned by the tree once installed
+    PNodeP *offsetsPP;          // each tree's k, which relayout sets from the layout it sees
+    // What relayout made of it.  outcome is -1 until relayout runs.
+    int outcome;                // relayout's reason for the copy: 0 is accepted
+    const char *outcomeP;       // its name
+    int deleted;                // words of the callee relayout deleted
+    int deleteRefused;          // and the deletes it refused or skipped
+} OptInline, *OptInlineP;
+
+// S4, fall-through placement.  A site is a direct jmp J, last in its reached
+// block, whose target T starts a block with J's block as its only predecessor.
+// The run is T's block and those following it by address until one ends in a
+// jmp.  Moving the run after J and deleting J saves a word and a jump on every
+// execution.  optPlaceJudge() (optspeed.c) decides it for -O=speed and the
+// rewrite alike.
+typedef struct optplaceshape
+{
+    int why;                    // the first reason that refuses it, optPlaceWhyName() spells it
+    int eligible;               // no reason before the guess refuses it
+    unsigned int guessBits;     // every heuristic marking J or a run word; recorded, not applied
+    OptWordP jmpP;              // J, the word deleted
+    OptWordP targetP;           // T, the run's first word
+    OptWordP endP;              // the run's last word, a jmp; NILP until the run is found
+    int run;                    // the run's words
+    int save;                   // microseconds saved per execution: J's time
+} OptPlaceShape, *OptPlaceShapeP;
+
+// What the rewrite did with one placement site.  Only a site whose J is in an
+// optimize or speed region is recorded -- or, under -O2 with -O=undeclared,
+// every site -- so a source that declares nothing, built without the switch,
+// has no record.
+typedef enum
+{
+    OPTPL_FIRED,            // moved and J deleted (relayout's edits; their outcome is recorded
+                            // apart, below)
+    OPTPL_REFUSED,          // the judge refused it: shape.why says for what
+    OPTPL_PARTIAL,          // J is declared and a run word is not, and the switch is not given
+    OPTPL_HANDSOFF,         // J or a run word is in a nooptimize span
+    OPTPL_GUESSED,          // a heuristic that applies marks J or a run word: -O2's, or H6
+                            // at any level
+    OPTPL_OVERLAP,          // J or the run touches a site taken before it, a fired inline's
+                            // call or callee, or a word a fired T3 or T8 rewrites
+    OPTPL_OFF,              // it would have fired, and a bisection modifier switched it off
+    OPTPL_COUNT
+} OptPlaceFate;
+
+typedef struct optplace
+{
+    struct optplace *nextP;
+    OptPlaceShape shape;        // the judge's verdict on it
+    OptPlaceFate fate;
+    int declared;               // J is in an optimize or speed region; 0: the switch reached it
+    unsigned int assumed;       // -O2: the heuristics it rests on (FIRED) or that refused it
+                                // (GUESSED); 0 under -O1
+    int ordinal;                // its place among the rewrites that would fire, after
+    unsigned int offBy;         // every T3, T8 and inline; and the modifiers that switched it off
+    // What relayout made of it.  outcome is -1 until relayout runs.
+    int outcome;                // relayout's reason for the move: 0 is accepted
+    const char *outcomeP;       // its name
+    int deleteOutcome;          // and for J's delete, -1 when it was not tried
+    const char *deleteOutcomeP;
+} OptPlace, *OptPlaceP;
+
+// S2, loop unrolling.  A site is a counted loop:
+//
+//     S   law i n          (or lac K, K a constant word holding -n)
+//     D   dac c
+//     H   body, B words    H labeled on its own line or on the word's
+//     I   isp c
+//     J   jmp H
+//
+// It runs n trips (isp on -1 leaves +0 and skips).
+// The rewrite writes the body n times and deletes S, D, I and J; the dead
+// counter stays, since it may be a variable relayout cannot delete.  Only a
+// straight-line body is copied (no label but H's, no word naming a loop word),
+// so no copy needs re-pointing.  optUnrollJudge() (optspeed.c) decides it for
+// -O=speed and the rewrite alike.
+typedef struct optunrollshape
+{
+    int why;                    // the first reason that refuses it, optUnrollWhyName() spells it
+    int eligible;               // no reason before the guess refuses it
+    unsigned int guessBits;     // every heuristic marking a word from S to J
+    char detail[80];            // internal and used: the word that refused it, " at 0403 label x"
+    OptWordP setP;              // S, law i n or lac K; NILP when there is none
+    OptWordP depP;              // D, dac c
+    OptWordP headP;             // H, the body's first word
+    OptWordP ispP;              // I
+    OptWordP jmpP;              // J
+    OptWordP ctrP;              // the counter c, NILP when it is not a word of the program
+    int trips;                  // n, 0 when the count is not a constant
+    int body;                   // B, the body's words
+    int unrolled;               // n * B, the words the body becomes
+    int spent;                  // what the program grows by: (n - 1) * B less S, D, I and J
+    int save;                   // microseconds per pass through the loop
+} OptUnrollShape, *OptUnrollShapeP;
+
+// What the rewrite did with one loop.  Only a loop whose isp is in an optimize
+// or a speed region is recorded, so a source that declares neither has no
+// record.  The order is the order the questions are asked in.
+typedef enum
+{
+    OPTUN_FIRED,            // unrolled (relayout's edits; their outcome is recorded apart)
+    OPTUN_REFUSED,          // the judge refused it: shape.why says for what
+    OPTUN_PARTIAL,          // the isp is declared and a word from S to J is not
+    OPTUN_HANDSOFF,         // a word from S to J is in a nooptimize span
+    OPTUN_GUESSED,          // a heuristic marks a word from S to J, at every level
+    OPTUN_OVERLAP,          // a word from S to J is touched by a fired inline, placement or
+                            // earlier unroll, or rewritten by a fired T3 or T8
+    OPTUN_CAP,              // n * B over the cap
+    OPTUN_BUDGET,           // the bank's free words, less the inlines' and the reserve, are too few
+    OPTUN_OFF,              // it would have fired, and a bisection modifier switched it off
+    OPTUN_COUNT
+} OptUnrollFate;
+
+typedef struct optunroll
+{
+    struct optunroll *nextP;
+    OptUnrollShape shape;       // the judge's verdict on it
+    OptUnrollFate fate;
+    unsigned int assumed;       // the heuristics that refused it (GUESSED); 0 otherwise
+    int ordinal;                // its place among the rewrites that would fire, after
+    unsigned int offBy;         // every T3, T8, inline and placement; and the modifiers that
+                                // switched it off
+    // What relayout made of it.  outcome is -1 until relayout runs.
+    int outcome;                // relayout's reason for the unroll: 0 is accepted
+    const char *outcomeP;       // its name
+    int deleted;                // setup words (S and D) relayout deleted
+    int deleteRefused;          // and the ones it refused or skipped
+} OptUnroll, *OptUnrollP;
+
+// Deleting an eem or lem the extend-window analysis (optwindow.c) shows does
+// nothing.  Only a word in an optimize or speed region is recorded.
+// Any subset of the redundant words and dead lems may go together; a freed eem
+// is redundant only once the redundant and dead lems it depends on are gone, so
+// it goes only with every one of them.
+typedef enum
+{
+    OPTWD_REDUNDANT_EEM,    // the window is already open
+    OPTWD_REDUNDANT_LEM,    // the window is already closed
+    OPTWD_DEAD_LEM,         // nothing depends on the window before it is set again
+    OPTWD_FREED_EEM,        // redundant once the lems in depsPP are deleted
+    OPTWD_KIND_COUNT
+} OptWinDelKind;
+
+// The order is the order the questions are asked in.
+typedef enum
+{
+    OPTWD_FIRED,            // deleted (relayout's edit; its outcome is recorded apart)
+    OPTWD_HANDSOFF,         // the word is in a nooptimize span
+    OPTWD_GUESSED,          // a heuristic that applies here marks the word: -O2's, or H6 at
+                            // any level
+    OPTWD_USED,             // the word is read as data, so deleting it changes a value
+    OPTWD_UNREPRESENTABLE,  // not one statement's whole, single word
+    OPTWD_OVERLAP,          // another fired rewrite makes, copies, moves or deletes the
+                            // word, or deletes the word before it
+    OPTWD_DEPENDS,          // a freed eem one of whose lems is not deleted
+    OPTWD_OFF,              // it would have fired, and a bisection modifier switched it
+                            // (or, for a freed eem, one of its lems) off
+    OPTWD_COUNT
+} OptWinDelFate;
+
+typedef struct optwindel
+{
+    struct optwindel *nextP;
+    OptWordP wordP;
+    OptWinDelKind kind;
+    OptWinDelFate fate;
+    unsigned int assumed;       // -O2: the heuristics that refused it (GUESSED); 0 otherwise
+    OptWordP *depsPP;           // a freed eem: the lems it depends on, owned here
+    int depCount;
+    int ordinal;                // its place among the rewrites that would fire, after
+    unsigned int offBy;         // every deletion; and the modifiers that switched it off
+    // What relayout made of it.  outcome is -1 until relayout runs.
+    int outcome;                // relayout's reason: 0 is accepted
+    const char *outcomeP;       // its name
+} OptWinDel, *OptWinDelP;
 
 // The per-bank index: one pointer per address, to the FIRST entry emitted
 // there.  Later entries at the same address (overlays) chain through
@@ -755,7 +1342,13 @@ typedef struct opttable
     int hasStart;           // non-zero if the program ended with 'start', zero for 'stop'
     int startAddr;          // the start address when hasStart is set
 
-    // Task A3: reference statistics, filled by optBuildReferences().
+    // The sequence-break enable commands, counted on first use by
+    // optSbsEnableCount().
+    int sbsEnablesCounted;  // non-zero once the two below are filled
+    int sbsEnableCount;     // words that are esm, asc or isb, in any form
+    struct optword *sbsFirstEnableP;    // the first of them in emission order, NILP if none
+
+    // Reference statistics, filled by optBuildReferences().
     int edgeCount;              // every edge made, OPTEF_NOWORD ones included
     int roleCounts[OPTR_COUNT]; // of those, per role
     int indirectCount;          // edges with OPTEF_INDIRECT
@@ -767,14 +1360,13 @@ typedef struct opttable
     int conservativeBanks[MAXBANK + 1];    // per bank, the OPTF_MAYBE_ marks applied
                                             // there as a bit set, 0 if none
 
-    // Task A4: the control-flow overlay, filled by optBuildFlow().  The
-    // per-bank figures the report prints are recomputed there by walking the
-    // block list, so nothing here has to be kept per bank.
+    // The control-flow overlay, filled by optBuildFlow().  Per-bank figures are
+    // recomputed from the block list when printed.
     OptBlockP blocksP;              // every block, in bank then address order
     OptBlockP blocksTailP;          // the last of them, for appending
     int blockCount;
     int graphWords;                 // words the graph holds, the sum of wordCount
-    int notCodeWords;               // words left out because A3 did not call them code
+    int notCodeWords;               // words left out as not classified code
     int overlaidWords;              // words left out because their address is overlaid
     int largestBlock;               // words in the largest block, 0 if there are none
     int flowEdgeCount;              // every edge made, sink edges included
@@ -786,11 +1378,157 @@ typedef struct opttable
     int reachedBlocks;
     int unreachedBlocks;
     int unreachedWords;             // words flagged OPTF_UNREACHED
+    int resumeSeeds;                // blocks a jmp or jsp names that the walk never reached
+    int resumedBlocks;              // of unreachedBlocks, those a resumption reaches
+    int resumedWords;               // of unreachedWords, those in a resumed block
     int xctOnlyWords;               // words flagged OPTF_XCTONLY
 
-    // Task A5: the findings, filled by optRunRules().  Both lists are built
-    // in bank then address order and are never re-sorted, so the report is
-    // byte-identical across runs of the same source.
+    // Return classification, filled by optResolveReturns() before the blocks
+    // are formed, since a stepped return's target must begin a block.
+    int returnSiteCount;                    // words that end their block with a call
+    int returnCaseCounts[OPTRC_COUNT];      // of those, per case
+    int returnReasonCounts[OPTRR_COUNT];    // of the unknown ones, per reason
+    int returnJdaSites;                     // of the sites, how many are jda or cal
+    int returnMovedSites;                   // sites whose return edge moved off call+1
+    int returnCalleeCount;                  // distinct callee entries analyzed
+
+    // The routines (optBuildRoutines()) and the call graph over them
+    // (optBuildCallGraph()), in bank then address order, never re-sorted.
+    OptRoutineP routinesP;              // every routine, in that order
+    OptRoutineP routinesTailP;          // the last of them, for appending
+    int routineCount;
+    int routineFormCounts[OPTRF_COUNT]; // of those, per call idiom
+    int routineWordKinds[OPTRW_COUNT];  // of those, per return-word derivation
+    int routineBlocks;                  // blocks belonging to at least one routine
+    int routineWords;                   // words in them
+    int outsideBlocks;                  // blocks belonging to none: the main line,
+    int outsideWords;                   // plus anything nothing reaches
+    int callSiteCount;                  // blocks ending in a call with a resolved target
+    int callSiteSinks;                  // blocks ending in a call that went to the sink
+    int mainLineSites;                  // resolved call sites made from no routine
+    int fallInRoutines;                 // category 1: entries a plain edge also enters
+    int fallInEdges;                    // the edges that do it
+    int sharedBlocks;                   // category 2: blocks owned by more than one
+    int sharedRoutines;                 // routines owning at least one of them
+    int opaqueEntries;                  // category 3: address-taken blocks in no routine
+    int unknownCallRoutines;            // routines flagged OPTRT_CALLSUNKNOWN
+    int unknownJumpRoutines;            // routines flagged OPTRT_JUMPSUNKNOWN
+    int noReturnRoutines;               // routines with no return word identified
+    int openRoutines;                   // routines flagged OPTRT_OPENBODY
+    unsigned char *blockOwnersP;        // routines owning each block, by 1-based block
+    int blockOwnerSlots;                // id; saturates at 255, since only 0, 1 or more matters
+
+    int callArcCount;                   // distinct routine-to-routine arcs
+    int callArcSites;                   // call sites those arcs stand for
+    int sccCount;                       // strongly connected components of the arcs
+    int cycleCount;                     // of those, components that are a cycle
+    int cycleRoutines;                  // routines on one, of either class below
+    int defectCycles;                   // cycles no escaping routine is on: real
+    int defectCycleRoutines;            // defects, the only class the report names
+    int escapeCycles;                   // cycles that hold at least one OPTRT_OPENBODY
+    int escapeCycleRoutines;            // routine, so the arc back is a transfer out
+                                        // of a routine and not a second call
+    int artifactCycleRoutines;          // routines on a cycle only through the
+                                        // universal vertex: an artifact, labeled one
+    int closurePairs;                   // ordered pairs in the transitive closure
+    unsigned int *callReachPP;          // the closure: routineCount bit vectors, each
+    int callReachWords;                 // callReachWords unsigned ints long
+    int sbsHandlers;                    // sequence-break handler entry words in the graph
+    int sbsPoolRoutines;                // routines reachable from one
+
+    // The call-depth measurement.  The return words saved are the candidates
+    // minus the longest call chain (Mirsky's theorem).  Only the per-bank
+    // figures are real: a return word shares only within its own bank, so
+    // callDepthSaving is an upper bound no layout can collect.
+    int returnWordCount;                // distinct return words, the candidate set
+    int sharedReturnWords;              // return words more than one routine claims,
+                                        // counted so the two totals reconcile
+    int callMaxDepth;                   // the longest chain of routines holding a
+                                        // return word, over the whole program
+    int callDepthSaving;                // returnWordCount - callMaxDepth, ignoring
+                                        // banks.  An upper bound, not a proposal
+    int bankReturnWords[MAXBANK + 1];   // per bank, by the bank the WORD is in and
+    int bankMaxDepth[MAXBANK + 1];      // not the bank its routine's entry is in.
+                                        // The depth is over the MAIN LINE alone
+    int bankSaving[MAXBANK + 1];        // the two pools' savings, added
+    int bankLeafWords[MAXBANK + 1];     // of those words, the ones held by a leaf
+    int bankPoolWords[MAXBANK + 1];     // of those words, the ones held by a routine a
+    int bankPoolDepth[MAXBANK + 1];     // handler can reach, and the longest chain among
+                                        // them: the second pool, colored apart, since such
+                                        // a routine can run between any two main-line words
+    int bankPoolLeafWords[MAXBANK + 1]; // leaf words inside that second pool
+    int bankSavingTotal;                // the per-bank savings summed: the figure a
+                                        // layout could really collect
+    int leafRoutines;                   // routines that make no call and leave no jump
+                                        // unresolved: the sound cut, needing no call graph
+    int leafSaving;                     // what that cut alone recovers, per bank,
+                                        // summed.  One word survives in each bank
+
+    // The sharing proposal, filled by optBuildSharing().  ADVISORY ONLY.
+    OptShareGroupP shareGroupsP;        // every proposed group, in bank then pool
+    OptShareGroupP shareGroupsTailP;    // then color order, never re-sorted
+    int shareGroupCount;
+    int shareFreedWords;                // words the whole assignment would free; normally
+                                        // bankSavingTotal, the report explains a difference
+    int shareBankFreed[MAXBANK + 1];    // per bank, against bankSaving[] above
+    int shareBankJda[MAXBANK + 1];      // per bank, the words the jda exclusion took
+    int shareLeafFreed;                 // what the leaf cut alone would free, over the
+                                        // candidate set.  Against leafSaving above
+    int shareUnknownWords;              // words proposed on a routine the graph does not
+                                        // fully know: where a reviewer should look hardest
+    int shareSplitWords;                // words two entries name at different call
+                                        // depths.  Excluded from sharing entirely
+    int shareJdaWords;                  // words excluded because the jda form fixes the
+                                        // word's address at the routine's own
+    int shareCheckFailures;             // groups the pairwise self-check refused.  Any
+                                        // at all is a defect in this analysis
+    int shareDisagreeBanks;             // banks where the assignment and the measurement differ
+
+    // The optimize/endoptimize regions: recorded by the table builder, checked
+    // by optCheckRegions() once the reference evidence exists.  None of this is
+    // a finding; regionFindings[] classifies the live list.
+    OptRegionP regionsP;                // every region declared, in source order
+    OptRegionP regionsTailP;            // the last of them, for appending
+    int regionCount;                    // how many; zero is the ordinary case
+    int regionWords;                    // emitted words inside any region
+    int regionBankWords[MAXBANK + 1];   // of those, per bank: a region may span a
+                                        // bank change, so this is not per region
+    int regionContradictions;           // words inside a region marked written, taken or
+                                        // patched: where a transform would corrupt a working
+                                        // program on the author's own say-so
+    int regionFindings[OPTREG_COUNT];   // live findings, by where their pattern sits
+
+    // The nooptimize spans, kept as the regions are, in their own list.  A word
+    // may be in a span and a region at once.
+    OptRegionP handsOffP;               // every span declared, in source order
+    OptRegionP handsOffTailP;
+    int handsOffCount;                  // how many
+    int handsOffWords;                  // emitted words inside any span
+
+    // The speed regions and 'inline' markings: the author's declaration that a
+    // LENGTH-CHANGING rewrite may happen, which nothing else, -O2's guess
+    // included, gives.
+    OptRegionP speedP;                  // every speed region declared, in source order
+    OptRegionP speedTailP;
+    int speedCount;                     // how many
+    int speedWords;                     // emitted words inside any of them
+    int speedBankWords[MAXBANK + 1];    // of those, per bank, as the regions do it
+    OptInlineMarkP inlineMarksP;        // every 'inline NAME' marking, in source order
+    OptInlineMarkP inlineMarksTailP;
+    int inlineMarkCount;                // how many
+    int inlineMarkResolved;             // of those, the ones that named a real routine
+    int inlineMarkDuplicates;           // and the ones naming a routine already marked
+
+    // Every '%%ceiling', in source order, and per bank the winning (lowest)
+    // value, the first word no rewrite may reach, and its id; 0 when none.
+    OptCeilingP ceilingsP;
+    OptCeilingP ceilingsTailP;
+    int ceilingCount;
+    int bankCeiling[MAXBANK + 1];
+    int bankCeilingId[MAXBANK + 1];
+
+    // The findings, filled by optRunRules(), in bank then address order and never
+    // re-sorted, so the report is byte-identical across runs.
     OptFindingP findingsP;              // live findings
     OptFindingP findingsTailP;          // the last of them, for appending
     int findingCount;
@@ -804,142 +1542,760 @@ typedef struct opttable
     int savedTemps;                     // storage words they would additionally free
     int savedTime;                      // microseconds removed from one pass through
                                         // every finding, per-hop savings excluded
+
+    // The fate of every live finding, filled by optTransform().  The table keeps
+    // the assembled values; this record is the only place a rewritten value
+    // appears.
+    OptXformP xformsP;                  // one per live finding, in finding order
+    OptXformP xformsTailP;              // the last of them, for appending
+    int xformRan;                       // non-zero once the fates have been decided
+    int xformApplied;                   // non-zero when the edits were made (-O1),
+                                        // zero for -O=xform's dry run without it
+    int xformFates[OPTXF_COUNT];        // live findings, by fate
+    int xformFreed;                     // pool words no instruction names once the
+                                        // fired T8 words stop naming them: freed, and
+                                        // NOT reclaimed -- they are still emitted
+    int xformTime;                      // microseconds from one pass through every
+                                        // fired word, per-hop savings excluded
+    int xformHops;                      // fired T3 words, each worth one cycle per
+                                        // hop actually taken
+    int xformHopTime;                   // their per-hop savings, summed
+    int xformThroughTaken;              // fired words whose read-through word has its address
+    int xformThroughMaybe;              // taken, or may be written through a pointer:
+                                        // measured, not refused
+    int xformContradicted;              // fired words inside a region whose
+                                        // declaration the evidence contradicts
+    int xformRefusedInside;             // suppressed findings wholly inside a region
+    // Bisection, set only when a modifier was given and the edits were made.
+    int xformBisect;                    // non-zero when the selection ran
+    int xformCandidates;                // records that would have fired: FIRED + OFF
+    int xformOffBy[OPTBIS_COUNT];       // OFF records each modifier switched off; one
+                                        // record may be counted under several
+
+    // The inline sites a declaration reaches, filled by optTransform() when the
+    // edits are made; empty, and printed nowhere, without a declaration.
+    OptInlineP inlinesP;                // one per declared site, in bank then address order
+    OptInlineP inlinesTailP;
+    int inlineCount;
+    int inlineFates[OPTIN_COUNT];       // of those, by fate
+    int inlineSpent[MAXBANK + 1];       // words the fired copies were budgeted, per bank
+    int inlineTime;                     // microseconds, the fired sites' best returns summed
+    int inlineCandidates;               // records that would have fired, FIRED + OFF; apart
+                                        // from xformCandidates, which counts T3 and T8 alone
+    int inlineOffBy[OPTBIS_COUNT];      // OFF sites each modifier switched off, as xformOffBy
+    int inlineRelaid;                   // relayout has run over the fired ones
+
+    // The placement sites a declaration or -O2's switch reaches, filled by
+    // optTransform() when the edits are made.
+    OptPlaceP placesP;                  // one per recorded site, in bank then address order
+    OptPlaceP placesTailP;
+    int placeCount;
+    int placeFates[OPTPL_COUNT];        // of those, by fate
+    int placeTime;                      // microseconds, the fired sites' jumps summed
+    int placeCandidates;                // records that would have fired, FIRED + OFF
+    int placeOffBy[OPTBIS_COUNT];       // OFF sites each modifier switched off
+
+    // The loops a declaration reaches, filled by optTransform() when the edits
+    // are made.
+    OptUnrollP unrollsP;                // one per recorded loop, in bank then address order
+    OptUnrollP unrollsTailP;
+    int unrollCount;
+    int unrollFates[OPTUN_COUNT];       // of those, by fate
+    int unrollSpent[MAXBANK + 1];       // words the fired unrolls were budgeted, per bank
+    int unrollTime;                     // microseconds, the fired loops' savings summed
+    int unrollCandidates;               // records that would have fired, FIRED + OFF
+    int unrollOffBy[OPTBIS_COUNT];      // OFF loops each modifier switched off
+
+    // The deleting rules' records, decided by planSpace() after the unrolls when
+    // the edits are made.
+    int spaceGated;                     // records planSpace() decided
+    int spaceWords;                     // words the fired deletions would remove
+    int spaceTime;                      // microseconds, their savings summed
+    int spaceCandidates;                // records that would have fired, FIRED + OFF; apart
+                                        // from xformCandidates, but switched off under
+                                        // xformOffBy with T3 and T8
+    int spaceMade;                      // deletions relayout made
+    int spaceRelaid;                    // relayout has run over them
+
+    // Pool words a declared T8 stops naming: poolFreeable of xformFreed may be
+    // collected; poolReclaimed is what relayout dropped, lower when a slot is
+    // still named under its key or its pool refused the edit.
+    int poolFreeable;
+    int poolReclaimed;
+    int poolAdvice;                     // and the ones no declaration licensed, which stay
+    int poolGrown;                      // words relayout's pool rebuild added: its splits less
+                                        // its merges, negative when merges win
+
+    // The -O2 guess, private to optguess.c; NILP until optBuildGuess() runs.
+    struct optguess *guessP;
+
+    // The extend-window analysis, private to optwindow.c; NILP until
+    // optBuildWindow() runs.
+    struct optwindow *windowP;
+
+    // The eems and lems a declaration lets -O1 and -O2 delete, filled by
+    // optPlanWindow() after the space deletions when the edits are made:
+    // redundant and dead words first, then freed eems, each in address order.
+    OptWinDelP windelsP;
+    OptWinDelP windelsTailP;
+    int windelCount;
+    int windelFates[OPTWD_COUNT];       // of those, by fate
+    int windelCandidates;               // records that would have fired, FIRED + OFF
+    int windelOffBy[OPTBIS_COUNT];      // OFF records each modifier switched off
+    int windelMade;                     // deletions relayout made
+    int windelRelaid;                   // relayout has run over them
 } OptTable, *OptTableP;
 
-// Accept one modifier given as -O=modifier on the command line.
-// Returns 1 if the modifier is known and has been applied, 0 if it is not
-// known, in which case the caller should treat the command line as invalid.
+// optimizer.c.  Throughout, a function that names something returns a static
+// string, never NILP.
+
+// Accept one -O=modifier.  Returns 1 if known and applied, 0 if not known (the
+// caller treats the command line as invalid).
 int optimizeSetOption(char *nameP);
 
-// Run the optimizer over a successfully parsed program.
-// rootP is the HEADER node; basenameP the source file's base name, used in
-// the report heading.  The report is written to the FILE that am1.c has
-// opened on its global outfP (the <basename>.opt file).
-// Returns 1 on success, 0 on failure; on failure am1.c removes the report.
+// Run the optimizer over a parsed program; rootP is the HEADER node.  The
+// report goes to am1.c's outfP (<basename>.opt).  Returns 1 on success, 0 on
+// failure, when am1.c removes the report.
 int optimize(PNodeP rootP, char *basenameP);
 
-// Build the word table from the parse tree.  Exposed so later tasks and their
-// tests can build a table without running the whole optimizer.
-// Returns the table, or NILP if the tree contained something the builder
-// could not place (an address outside the bank, an unknown statement).
+// Build the word table.  Returns NILP if the tree holds something the builder
+// cannot place (an address outside the bank, an unknown statement).
 OptTableP optBuildTable(PNodeP rootP);
 
-// Print one line per emitted entry, "%06o %06o" of the combined bank/address
-// and the value, exactly the format of the -T test dump.  Reserved table
-// words are not printed, the -T dump does not print them either.
+// One "%06o %06o" line per entry, the -T dump's format; reserved words omitted.
 void optDumpTable(FILE *fP, OptTableP tableP);
 
 // Release everything a table owns.  Safe to call with NILP.
 void optFreeTable(OptTableP tableP);
 
-// ---- task A2 entry points -------------------------------------------------
+const char *kindName(OptKind kind);
 
-// Decode the bits of one 18-bit value into decodeP, clearing the structure
-// first.  The spelling fields are left at their cleared values (OPTS_NONE).
+// optdecode.c
+
+// Decode one value into decodeP; the spelling fields are left OPTS_NONE.
 void optDecodeValue(int value, OptDecodeP decodeP);
 
-// Classify how an expression tree spells its word, filling the spelling
-// fields of decodeP.  exprP may be NILP, which classifies as OPTS_NONE.
+// Fill decodeP's spelling fields from exprP, which may be NILP (OPTS_NONE).
 void optClassifySpelling(PNodeP exprP, OptDecodeP decodeP);
 
-// Decode one table entry: its value, then its spelling from its expression.
-// A reserved table word (no value) gets group OPTG_UNKNOWN and OPTS_NONE.
+// Decode one entry; a reserved word gets OPTG_UNKNOWN and OPTS_NONE.
 void optDecodeWord(OptWordP entryP);
 
-// Decode every entry of a table.
 void optDecodeTable(OptTableP tableP);
 
-// Names for the report and the dump.  Both return a static string, never NILP.
 const char *optGroupName(OptGroup group);
 const char *optSpellingName(OptSpelling spelling);
 
-// Print the decoded dump (-O=decode): one line per entry, reserved words
-// included, in the format described at optDumpDecoded() in optimizer.c.
+// The -O=decode dump.
 void optDumpDecoded(FILE *fP, OptTableP tableP);
 
-// Is a micro-op present in a set of operate-group bits?  Handles the flag
-// field, where clf and stf share bits.
-// Returns 1 if present, 0 if not.
+// Returns 1 if the micro-op is in microBits (clf and stf share the flag
+// field), 0 if not.
 int optMicroOpPresent(unsigned int microBits, OptMicroId id);
 
-// List the micro-ops present in microBits in the order the hardware applies
-// them (by phase, then by order within the phase), at most max of them.
-// Returns how many were stored.
+// Store up to max of microBits' micro-ops in hardware order; returns how many.
 int optOperateOrder(unsigned int microBits, const OptMicroOp **opsPP, int max);
 
-// Apply an operate word's register micro-ops to AC and IO in phase order.
-// tw is the test word switches and pc the value lap would OR in.  The results
-// go to *acP and *ioP, masked to 18 bits; the flag operations and hlt change
-// neither register and are ignored.
+// Apply an operate word's register micro-ops to ac and io in phase order (tw is
+// the test word, pc what lap ORs in); flag operations and hlt are ignored.
 void optSimulateOperate(unsigned int microBits, int ac, int io, int tw, int pc, int *acP, int *ioP);
 
-// The decoder's built-in checks (-O=check): the phase-table sanity anchors
-// and a set of hand-computed decodes.  Prints one line per check to fP.
-// Returns 1 if every check passed, 0 if any failed.
+// The -O=check self-test.  Returns 1 if every check passed, 0 if any failed.
 int optDecoderSelfCheck(FILE *fP);
 
-// ---- task A3 entry points -------------------------------------------------
+// optrefs.c
 
-// Build the reference edges of a decoded table, follow constant pointers,
-// apply the conservative marks for the pointers that could not be followed,
-// then derive every word's flags, its code/data classification and its
-// conflicts.  The table must have been decoded (optDecodeTable) first.
-// Unresolved symbol references are reported on stderr and skipped; nothing
-// here fails.
+// Where cal lands; optrefs.c and optflow.c both need it.
+#define CAL_WRITE_ADDR  0100    // cal deposits AC here (handbook page 18: cal is jda 100)
+#define CAL_JUMP_ADDR   0101    // and continues here
+
+// Build the reference edges, flags, code/data classification and conflicts of a
+// decoded table.  Unresolved symbols are reported on stderr and skipped.
 void optBuildReferences(OptTableP tableP);
 
-// Name a role for the report and the dump.
-// Returns a static string, never NILP.
 const char *optRoleName(OptRole role);
 
-// Print the reference dump (-O=refs): one line per entry, reserved words
-// included, with the word's flags, its out edges and its in edges, in the
-// format described at optDumpReferences() in optimizer.c.
+// The -O=refs dump.
 void optDumpReferences(FILE *fP, OptTableP tableP);
 
-// ---- task A4 entry points -------------------------------------------------
+// Free one word's out list; the in lists share its edges.
+void freeEdgeList(OptEdgeP edgeP);
 
-// Overlay the control-flow graph on a table whose references have been built
-// (optBuildReferences) : set the per-word label and after-skip flags, cut the
-// in-graph words into basic blocks, make the edges between them, walk
-// reachability from the entry set, and flag the words nothing reaches.
-// Nothing here fails; a program with no code words gets an empty graph.
+// The word's first label, or "-" when it has none.
+const char *firstLabelName(OptWordP entryP);
+
+void writeReferenceReport(FILE *fP, OptTableP tableP, int bank);
+
+
+// The report's list of words in conflict.
+void writeConflictList(FILE *fP, OptTableP tableP);
+
+// optflow.c
+
+// Overlay the control-flow graph on a table whose references are built.
 void optBuildFlow(OptTableP tableP);
 
-// Name a flow-edge kind, a block ending, a sink reason or an entry cause for
-// the report and the dump.  All four return a static string, never NILP.
 const char *optFlowKindName(OptFlowKind kind);
 const char *optBlockEndName(OptBlockEnd end);
 const char *optSinkName(OptSink sink);
+const char *optRecoveryName(OptRecovery recovered);
 const char *optEntryCauseName(OptEntryCause cause);
 
-// Print the control-flow dump (-O=flow): the per-word flags, the block list
-// with its successors, the entry set and the unreached list, in the format
-// described at optDumpFlow() in optimizer.c.
+// Returns 1 when a sink edge leaves through a routine's return word, which
+// loses nothing because every call site holds its own edge back, 0 otherwise.
+// Reads the routines, so it answers only after optBuildCallGraph().
+int optSinkIsReturn(OptTableP tableP, OptBlockP blockP, OptFlowEdgeP edgeP);
+
+// The -O=flow dump.
 void optDumpFlow(FILE *fP, OptTableP tableP);
 
-// ---- task A5 entry points -------------------------------------------------
+// Returns 1 when a word is in the control-flow graph (not reserved, not
+// overlaid, classified code), 0 otherwise or for NILP.  The rules ask the same
+// question, so they and the graph agree on what is an instruction.
+int inGraph(OptWordP entryP);
 
-// Run every rule over a table whose control flow has been overlaid
-// (optBuildFlow), building the live and suppressed finding lists in bank then
-// address order.  Nothing here fails; a program with no code words gets no
-// findings.
+// The first word emitted at bank and addr, or NILP.
+OptWordP wordAt(OptTableP tableP, int bank, int addr);
+
+// Sequence-break frames the program leaves in bank 0, 0 to OPTSBS_CHANNELS:
+// none without an enable command, else those wholly below the start address,
+// or all of them for 'stop', a start in another bank, or a start at 0100 or up.
+int optSbsChannels(OptTableP tableP);
+
+// The mnemonic when a word is esm, asc or isb in any form, else NILP.
+const char *optSbsEnableName(OptWordP entryP);
+
+// Emitted words that are enable commands, counted once per table.
+int optSbsEnableCount(OptTableP tableP);
+
+// The first enable command in emission order, or NILP.
+OptWordP optSbsFirstEnable(OptTableP tableP);
+
+// The "sbs enables:" evidence line of -O=flow and -O=calls.
+void optDumpSbsEnables(FILE *fP, OptTableP tableP);
+
+// Returns 1 when bank and addr is a frame's handler entry (4n+3), else 0.
+int optIsSbsEntry(OptTableP tableP, int bank, int addr);
+
+// Returns 1 for a skip-class word, one that may leave the next unexecuted; 0
+// otherwise or for NILP.
+int optSkipWord(OptWordP entryP);
+
+// How a word ends a block, or OPTBE_COUNT when it is not a terminator.
+// optreturn.c cuts its walk with it the way the graph will.
+OptBlockEnd optTerminator(OptWordP entryP);
+
+// Safe on a table whose flow was never built.
+void freeBlockList(OptTableP tableP);
+
+void writeFlowReport(FILE *fP, OptTableP tableP, int bank);
+
+// The report's apparently-unreached section.
+void writeUnreachedList(FILE *fP, OptTableP tableP);
+
+// optreturn.c
+
+// Classify every call site's return edge, before the blocks are cut.  A callee
+// that cannot be read leaves OPTRC_UNKNOWN with a reason.
+void optResolveReturns(OptTableP tableP);
+
+const char *optReturnCaseName(OptReturnCase kase);
+const char *optReturnReasonName(OptReturnReason reason);
+
+// optroutine.c and optcallgraph.c
+
+// Group the blocks into routines; called only from optBuildCallGraph().
+void optBuildRoutines(OptTableP tableP);
+
+// Build the routines, the call arcs, components, closure and cycles, and the
+// sequence-break pool; after optBuildFlow(), before optRunRules().
+void optBuildCallGraph(OptTableP tableP);
+
+// Returns 1 when fromP reaches toP through resolved call arcs (a routine reaches
+// itself only on a cycle); 0 otherwise, for NILP, or with no closure built.
+int optRoutineReaches(OptTableP tableP, OptRoutineP fromP, OptRoutineP toP);
+
+// The first owner of a block in routine-id order, or NILP when none owns it.
+OptRoutineP optRoutineOfBlock(OptTableP tableP, OptBlockP blockP);
+
+// Returns 1 when the routine's body holds the block, 0 otherwise or for NILP.
+int optRoutineOwnsBlock(OptRoutineP routineP, OptBlockP blockP);
+
+// Routines whose body holds the block, saturating at 255.
+int optBlockOwnerCount(OptTableP tableP, OptBlockP blockP);
+
+const char *optRoutineFormName(OptRoutineForm form);
+const char *optReturnWordName(OptReturnWord word);
+
+// The -O=calls dump.
+void optDumpCalls(FILE *fP, OptTableP tableP);
+
+// The report's recursion section: cycles of resolved call arcs only, nothing
+// when there are none.
+void writeCycleList(FILE *fP, OptTableP tableP);
+
+// The return-word sharing measurement; fills callDepth and the tallies.  Called
+// from optBuildCallGraph() once the components are classified.
+void optMeasureSharing(OptTableP tableP);
+
+// Safe on a table whose graph was never built.
+void freeRoutineList(OptTableP tableP);
+
+// optshare.c: advisory only; no finding, and no level reads it
+
+// Build the sharing proposal, each group verified pairwise with
+// optRoutineReaches(); called after optBuildCallGraph().
+void optBuildSharing(OptTableP tableP);
+
+// The report's return-word sharing section.
+void writeSharingReport(FILE *fP, OptTableP tableP);
+
+// The -O=share dump.
+void optDumpShare(FILE *fP, OptTableP tableP);
+
+// Safe on a table whose sharing was never built.
+void freeShareGroups(OptTableP tableP);
+
+// optregion.c: the author's declarations, checked against the evidence
+
+// Clear the region state before the table builder's walk.
+void optRegionReset(void);
+
+// Take one region directive node as the builder's walk reaches it; bank and pc
+// are where the next word would go.  The parser has already refused every
+// malformed arrangement.
+void optRegionStatement(OptTableP tableP, PNodeP nodeP, int bank, int pc);
+
+// The region-overlay flags a word created now should carry.
+unsigned int optRegionWordFlags(void);
+
+// Record a newly added word against its region, if any; called for every entry.
+void optRegionNoteWord(OptTableP tableP, OptWordP entryP);
+
+// Check each region against the evidence and classify the live findings by
+// region; after optRunRules().
+void optCheckRegions(OptTableP tableP);
+
+// The report's region section.
+void writeRegionReport(FILE *fP, OptTableP tableP);
+
+// The -O=regions dump.
+void optDumpRegions(FILE *fP, OptTableP tableP);
+
+// Where a finding sits: a word for the dump, a phrase for the report.
+const char *optRegionPlaceName(OptRegionPlace place);
+const char *optRegionPlaceText(OptRegionPlace place);
+
+// Safe on a table whose source declared no region.
+void freeRegionList(OptTableP tableP);
+
+// The region a word is in, or NILP.
+OptRegionP optRegionOfWord(OptTableP tableP, OptWordP entryP);
+
+// The nooptimize span a word is in, or NILP.
+OptRegionP optHandsOffOfWord(OptTableP tableP, OptWordP entryP);
+
+// The hands-off report section and dump lines; nothing without a span.
+void writeHandsOffReport(FILE *fP, OptTableP tableP);
+void optDumpHandsOff(FILE *fP, OptTableP tableP);
+
+// The speed region a word is in, or NILP.
+OptRegionP optSpeedOfWord(OptTableP tableP, OptWordP entryP);
+
+// The 'inline' marking naming a routine, or NILP.
+OptInlineMarkP optInlineMarkOfRoutine(OptTableP tableP, OptRoutineP routineP);
+
+// The speed-declaration report section and dump lines; nothing without one.
+void writeSpeedDeclReport(FILE *fP, OptTableP tableP);
+void optDumpSpeedDecls(FILE *fP, OptTableP tableP);
+
+// The ceiling report section and dump lines; nothing without a '%%ceiling'.
+void writeCeilingReport(FILE *fP, OptTableP tableP);
+void optDumpCeilings(FILE *fP, OptTableP tableP);
+
+// opttransform.c: the rewrite under -O1 and -O2
+
+// Accept -O1 or -O2; am1.c refuses any other digit.
+void optimizeSetLevel(int level);
+
+// The optimization level: 1 for -O1, 2 for -O2, 0 otherwise.
+int optTransformLevel(void);
+
+// Bisection, in optimizer.c.  -O=upto=N, -O=range=B:LO-HI and -O=off=FILE
+// switch off rewrites that would fire, to find the one that breaks a build; a
+// rewrite stays on only if every modifier keeps it.  Every fate is decided
+// before any word is rewritten, so any subset is a valid program.  Addresses
+// are the source's before relayout: the bank in decimal, the address in octal.
+
+// Non-zero when a bisection modifier was given (am1.c requires -O1 or -O2).
+int optBisectGiven(void);
+
+// The OPTBIS_ bits switching off the ordinal-th (from 1) rewrite that would
+// fire, at bank and addr; 0 keeps it.  Marks the -O=off lines naming it.
+unsigned int optBisectSelect(int ordinal, int bank, int addr);
+
+// Warn about -O=off lines that matched no rewrite; after every selection.
+void optBisectWarnUnmatched(void);
+
+// The modifiers as given, e.g. "-O=upto=5 -O=off=bad.txt".
+const char *optBisectSpec(void);
+
+// "upto", "range" or "off" for one OPTBIS_ bit.
+const char *optBisectName(unsigned int bit);
+
+// Relayout, in optrelayout.c: edits that change a program's length.
+// -O=edits=FILE supplies test edits ("delete BANK ADDR", "move BANK FROM TO
+// after ADDR"; the bank decimal, addresses octal); -O=relayout is the dump.
+
+// Read one -O=edits file.  Returns 1 if accepted, 0 for an empty name; an
+// unreadable file or a malformed line is fatal.
+int optRelayoutReadEdits(const char *pathP);
+
+// Non-zero when an -O=edits file was given, even an empty one.
+int optRelayoutGiven(void);
+
+// Apply the edits (the file's, then the fired rewrites') to the parse tree, lay
+// the program out again and check it, dumping on dumpP unless NILP.  An edit it
+// cannot prove safe is refused and undone; its own inconsistency is fatal.
+// Runs after the report, on the table as assembled.
+void optRelayout(OptTableP tableP, PNodeP rootP, FILE *dumpP);
+
+// Decide every live finding's fate and, when apply is non-zero, rewrite the
+// statements that fire (zero is -O=xform's dry run); after optCheckRegions().
+// A rewrite that does not reproduce the value it must is fatal.
+void optTransform(OptTableP tableP, int apply);
+
+// The -O=xform dump headed by labelP; only fired lines when firedOnly is set.
+void optDumpTransforms(FILE *fP, OptTableP tableP, const char *labelP, int firedOnly);
+
+// A fate: a word for the dump, a phrase for the report.
+const char *optXformFateName(OptXformFate fate);
+const char *optXformFateText(OptXformFate fate);
+
+// T3 chains followed to their end, shared by the rewrite and -O=speed's S3
+// count.  A chain longer than OPT_MAXCHAIN is refused, never cut short: a cut
+// chain is not the end, and a second run would follow it further.
+#define OPT_MAXCHAIN    4096
+
+typedef enum
+{
+    OPTCHAIN_END,           // the chain ended: the last word is not one T3 follows
+    OPTCHAIN_STOPPED,       // the walk declined a word T3 could follow (a span, a guess)
+    OPTCHAIN_CYCLE,         // the next word is already on the chain, or is the jmp itself
+    OPTCHAIN_LONG           // OPT_MAXCHAIN hops and not ended
+} OptChainEnd;
+
+// Returns 1 when T3 would follow the word as an intermediate: a direct jmp in
+// the graph, not spinning on itself, never patched, written, taken or possibly
+// written through a pointer; 0 otherwise or for NILP.
+int optChainFollowable(OptWordP wordP);
+
+// Follow a T3 chain from jmpP; chainPP (OPT_MAXCHAIN words) must already hold
+// the checked intermediate.  Stops at a word in a nooptimize span or marked by
+// guessMask.  Sets *hopsP (at least 1) and *stopPP (NILP unless STOPPED).
+OptChainEnd optChainWalk(OptTableP tableP, OptWordP jmpP, unsigned int guessMask,
+    OptWordP *chainPP, int *hopsP, OptWordP *stopPP);
+
+// Release the transform record, safe if the pass never ran.  Installed trees
+// belong to the parse tree and are not freed.
+void freeXformList(OptTableP tableP);
+
+// The report's Transforms section, under -O1 and -O2 only.
+void writeTransformReport(FILE *fP, OptTableP tableP);
+
+// optvalue.c: a measurement only; its whole output is the -O=values dump.
+
+// The -O=values dump; after optRunRules(), whose findings it reads.
+void optDumpValues(FILE *fP, OptTableP tableP);
+
+// optscratch.c: can the storage locals share words?  Advisory: no finding, and
+// no level reads it.
+
+// The -O=scratch dump.
+void optDumpScratch(FILE *fP, OptTableP tableP);
+
+// The report's scratch-word sharing section; its figures are -O=scratch's.
+void writeScratchSharingReport(FILE *fP, OptTableP tableP);
+
+// optguess.c: the heuristics -O2 uses in place of P5
+
+// Build the guess and set every live finding's guess fields; after
+// optCheckRegions(), before optTransform().
+void optBuildGuess(OptTableP tableP);
+
+// The -O=guess dump.
+void optDumpGuess(FILE *fP, OptTableP tableP);
+
+// The report's "What -O2 would assume" section.
+void writeGuessReport(FILE *fP, OptTableP tableP);
+
+// "H1" to "H6".
+const char *optGuessName(OptGuessId h);
+
+// What a rewrite assumes when the heuristic finds nothing, as a clause.
+const char *optGuessAssumption(OptGuessId h);
+
+// The heuristics that apply to a finding under -O2: OPTGH_INREGION when its
+// whole pattern is in an optimize region, else OPTGH_AUTHORIZED; and
+// OPTGH_LENGTH as well for a deleting rule.
+unsigned int optGuessApplies(OptFindingP findingP);
+
+// Safe on a table the guess never ran on.
+void freeGuess(OptTableP tableP);
+
+// The heuristics marking one word, as bits; 0 for none, NILP or no guess.
+unsigned int optGuessWordBits(OptTableP tableP, OptWordP wordP);
+
+// optwindow.c: the extend window.  Advisory everywhere but a declaration:
+// no finding, and -O1 and -O2 act on it only inside an optimize or speed
+// region.
+
+// Follow the window state and what depends on it, classify every eem and lem,
+// and warn on stderr about each proved hazard; after optBuildGuess().
+void optBuildWindow(OptTableP tableP);
+
+// Record and decide every declared redundant, dead or freed word, after the
+// space deletions are planned; only when the edits are made under a level.
+void optPlanWindow(OptTableP tableP);
+
+// After bisection: switch off a freed eem one of whose lems was switched off.
+void optWindowSettleOff(OptTableP tableP);
+
+// The report's section for the deletions, after relayout; nothing without one.
+void writeWindowDeleteReport(FILE *fP, OptTableP tableP);
+
+const char *optWinDelFateName(OptWinDelFate fate);
+const char *optWinDelKindName(OptWinDelKind kind);
+
+// opttransform.c, for optPlanWindow(): whether another fired rewrite makes,
+// copies, moves or deletes the word, or deletes the one or two before it (a
+// deleted word after a skip would change what the skip passes over).
+// Returns 1 if one does, 0 if none does.
+int optWordTouched(OptTableP tableP, OptWordP wordP);
+
+// And whether the word is one statement's whole expression, rewritable in place.
+int optWordRepresentable(OptWordP entryP);
+
+// The -O=window dump.
+void optDumpWindow(FILE *fP, OptTableP tableP);
+
+// The report's extend-window section; nothing when no eem or lem is reached and
+// nothing is unexamined.
+void writeWindowReport(FILE *fP, OptTableP tableP);
+
+// Safe on a table the analysis never ran on.
+void freeWindow(OptTableP tableP);
+
+// optspeed.c: the speed-mode candidates and their judges
+
+// The -O=speed dump.
+void optDumpSpeed(FILE *fP, OptTableP tableP);
+
+// S1, inline expansion: the judge in optspeed.c, the settings in optimizer.c,
+// the report in opttransform.c.
+
+// Every block by id (index 0 unused); the caller frees it.
+OptBlockP *optBlockIndex(OptTableP tableP);
+
+// Judge one call site into *shapeP; the guess is recorded, not applied.
+void optInlineJudge(OptTableP tableP, OptBlockP *blocksPP, OptWordP siteP, OptInlineShapeP shapeP);
+
+// Returns 1 when the copy points this body word at the word after the copy (a
+// return other than the dropped last word, or a jmp to it) and it can be
+// rewritten, else 0.
+int optInlineRetargets(OptInlineShapeP shapeP, OptWordP wordP);
+
+const char *optInlineWhyName(int why);
+
+// The notcopyable reason, whose shapeP->detail names a word.
+int optInlineNotCopyable(void);
+
+// The last word a rewrite may use in a bank: below its declared '%%ceiling',
+// else 07750 in bank 0 (the read-in loader sits above) and 07777 elsewhere.
+int optBankCeiling(OptTableP tableP, int bank);
+
+// The declared ceiling as written, the first word no rewrite may reach; 0 if none.
+int optBankCeilingDeclared(OptTableP tableP, int bank);
+
+// -O=inline=cap:N (8 words by default) and -O=inline=reserve:N (64 per bank).
+int optInlineCap(void);
+int optInlineReserve(void);
+
+// The report's inline section, after relayout; nothing without a site.
+void writeInlineReport(FILE *fP, OptTableP tableP);
+
+const char *optInlineFateName(OptInlineFate fate);
+
+// S4, fall-through placement: the judge in optspeed.c, the switch in
+// optimizer.c, the dump lines and report in opttransform.c.
+
+// Returns 2 for a placement site (a direct, unpatched, unwritten jmp last in
+// its reached block, whose target starts another block of the bank with this
+// one as sole predecessor and is not .+1), 1 for a direct jmp whose target has
+// other predecessors (context for -O=speed), 0 otherwise.
+int optPlaceSiteKind(OptTableP tableP, OptWordP wordP);
+
+// Judge a site (kind 2) into *shapeP; the guess is recorded, not applied.
+void optPlaceJudge(OptTableP tableP, OptWordP jmpP, OptPlaceShapeP shapeP);
+
+const char *optPlaceWhyName(int why);
+
+// The afterskip reason: the guessed class, not a refusal.
+int optPlaceAfterSkip(void);
+
+// -O=undeclared (or its alias, -O=place=undeclared): given, as the
+// author spelled it, and whether it licenses anything, which needs -O2.  Under
+// the switch the deletions, the pool reclaim, the extend-window deletions and
+// placement fire where no region declares them, on the guess.
+int optUndeclaredGiven(void);
+const char *optUndeclaredSpelling(void);
+int optUndeclared(void);
+// Non-zero for -O=reclaim=off (testing build): pool words are not reclaimed.
+int optReclaimOff(void);
+
+// Non-zero for -O=source: am1.c writes the program as am1 source after optimize().
+int optSourceWanted(void);
+
+// How -O=source writes the program, from optSourceMode().
+#define SRC_MODE_TEXT       0   // an unchanged line copied from the source
+#define SRC_MODE_RENDER     1   // testing: every line rendered, through the line map
+#define SRC_MODE_TREE       2   // testing: every line rendered, with no line map
+int optSourceMode(void);
+
+// srccodegen.c: the program written back out as am1 source.
+
+// Record one -D from the command line, for the output's header comment.
+void srcNoteDefine(const char *defineP);
+
+// Record one -I from the command line, for the output's header comment.
+void srcNoteInclude(const char *pathP);
+
+// Tie each statement to the source line it came from, before any rewrite;
+// called by optimize() only for -O=source.
+void srcMapLines(PNodeP rootP);
+
+// Write the program in the tree as am1 source on outfP, naming sourceP in the
+// header.  Returns 1 when every node was written, 0 when one was not (each is
+// named on stderr and the output must not be used).
+int srcCodegen(FILE *outfP, PNodeP rootP, const char *sourceP);
+
+// Collect what the rewrites did to each statement, for the annotations; called
+// by optimize() after relayout and before the table is freed.
+void srcCollect(OptTableP tableP);
+
+// Record a copy relayout made, from firstP to lastP, and what it is.
+void srcNoteCopy(PNodeP firstP, PNodeP lastP, const char *whatP);
+
+// Take each pool slot's first reference as parsed; called by optimize() before
+// the transforms rewrite anything.
+void srcSnapshotPools(void);
+
+// The report's placement section, after relayout; nothing without a site.
+void writePlaceReport(FILE *fP, OptTableP tableP);
+
+const char *optPlaceFateName(OptPlaceFate fate);
+
+// S2, loop unrolling: the judge in optspeed.c, the cap in optimizer.c, the
+// dump lines and report in opttransform.c.
+
+// Returns 1 when ispP is a loop latch: a reached, direct, unpatched isp before
+// a direct, unpatched, unwritten jmp back no higher than it; else 0.
+int optUnrollSite(OptTableP tableP, OptWordP ispP);
+
+// Judge the loop a latch closes into *shapeP; the guess is recorded in
+// guessBits and why.
+void optUnrollJudge(OptTableP tableP, OptWordP ispP, OptUnrollShapeP shapeP);
+
+const char *optUnrollWhyName(int why);
+
+// The guessed reason, which the rewrite reports as its own fate.
+int optUnrollGuessed(void);
+
+// -O=unroll=cap:N: the most words a body may become, 64 by default.
+int optUnrollCap(void);
+
+// The report's unroll section, after relayout; nothing without a loop.
+void writeUnrollReport(FILE *fP, OptTableP tableP);
+
+const char *optUnrollFateName(OptUnrollFate fate);
+
+// Space mode
+
+// Returns 1 for a rule space mode carries (T1, T1b, T2, T6, T7, T13), else 0.
+// T14 also deletes words but is not carried: its lia, lai and swp are PDP-1D
+// instructions a machine may have switched off.
+int optRuleDeletes(OptRuleId rule);
+
+// The report's space and pool-reclaim sections, after relayout.
+void writeSpaceReport(FILE *fP, OptTableP tableP);
+void writeReclaimReport(FILE *fP, OptTableP tableP);
+
+// optrules.c and optreport.c
+
+// The largest spelling or evidence buffer.  A longer spelling is truncated; it
+// is never parsed again, so that costs only readability.
+#define OPTMSG_SIZE         1024
+
+// Run every rule over a table whose flow is built, filling the finding lists.
 void optRunRules(OptTableP tableP);
 
-// The static execution time of one word in microseconds, from the F-15D
-// handbook's instruction list (see optWordTime() in optimizer.c for the
-// numbers and their limits).
-// Returns the time, or 0 for a word whose bits are not an instruction.
+// One word's static time in microseconds (F-15D handbook), 0 for a word that
+// is not an instruction.
 int optWordTime(OptWordP entryP);
 
-// Name a rule, a refusal reason, or the one-line description of a rule, for
-// the report and the dump.  All three return a static string, never NILP.
 const char *optRuleName(OptRuleId rule);
 const char *optRuleSummary(OptRuleId rule);
 const char *optWhyName(OptWhy why);
 
-// Print the rule dump (-O=rules): one line per finding, live then suppressed,
-// in the format described at optDumpRules() in optimizer.c.
+// The -O=rules dump.
 void optDumpRules(FILE *fP, OptTableP tableP);
+
+// Release a finding list and the strings each finding owns.
+void freeFindingList(OptFindingP findingP);
+
+// optstrings.c.  The spell* calls write at most size bytes into bufP, the
+// terminator included, truncating rather than overflowing.
+
+// A freshly allocated formatted string, truncated at OPTMSG_SIZE and owned by
+// the caller; out of memory is fatal.
+char *allocPrintf(const char *fmtP, ...);
+
+// A word as its source spelled it; without an expression, its symbol's name or
+// a dash.
+void spellWord(OptWordP entryP, char *bufP, int size);
+
+// Just the operand, for a suggestion that changes only the mnemonic.
+void spellOperand(OptWordP entryP, char *bufP, int size);
+
+// The expression in the word's first [..] when it names an address symbol and
+// no mnemonic.  Returns 1 with it in bufP, 0 with bufP empty.
+int spellConstSymbol(OptWordP entryP, char *bufP, int size);
+
+// The inner expression of exprP's first [..], or NILP: a T8 rewrite's source.
+PNodeP optFirstConstInner(PNodeP exprP);
+
+// Returns 1 when a leaf of the constant names anything but a literal, so its
+// value may change when words move; else 0.
+int optConstMayMove(PNodeP exprP);
+
+// Operate micro-ops as am1 source in hardware order; none at all is nop.
+void spellOperate(unsigned int microBits, char *bufP, int size);
+
+// A skip word as source from its bits, for T2's inverted skip.
+void spellSkipValue(int value, char *bufP, int size);
+
+// The report's own sections, called from writeReport() in this order.
+
+// The header notes; the table decides which P5 sentence is true.
+void writeHeaderNotes(FILE *fP, OptTableP tableP);
+
+// The findings by rule; a report with none still says so.
+void writeFindingList(FILE *fP, OptTableP tableP);
+
+// Refused patterns by rule, after a tally by reason.
+void writeSuppressedList(FILE *fP, OptTableP tableP);
+
+// Per-bank statistics, including each bank's reference and flow lines.
+void writeStatistics(FILE *fP, OptTableP tableP);
 
 #endif

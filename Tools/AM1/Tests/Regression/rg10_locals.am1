@@ -1,6 +1,6 @@
 Test rg10: local scoping
-// predefined locals, addlocal, ad-hoc locals (%x), loc/endloc abbreviations,
-// privates
+// predefined locals, addlocal (tgt joins the scope local c opened),
+// loc/endloc abbreviations, privates
 100/
     local a, b
     jmp a
@@ -8,8 +8,8 @@ Test rg10: local scoping
     b, hlt
     endlocal
 
-    local c, tgt
-    addlocal d
+    local c
+    addlocal d, tgt
     jmp tgt
     c, hlt
     d, hlt

@@ -1,0 +1,11 @@
+Test rg38 (XFAIL): an initialized table lands on used words -- must fail
+// A table WITHOUT an initializer reserves its words through setBits(),
+// which checks them; a table WITH one emits a word per element, and each
+// must be marked too. rg35_xfail_table_over is not this case: it
+// is a table running past the end of a bank.
+100/
+    cli
+    cma
+100/
+table 2, 7
+stop

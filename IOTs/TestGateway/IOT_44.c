@@ -27,11 +27,13 @@
  * inline, on the MAIN emulator thread, as part of a single cycle()/iot() call (see
  * src/blincolnlights/pdp1/CLAUDE.md's "Machine Cycle Structure" section). HSCreset() and
  * every HSC_MODE_IMMEDIATE/HSC_MODE_THREADED path is safe to call directly from here because
- * they either return immediately or perform a single bounded busy-wait (HSCwait() for a
- * THREADED request). Calling HSCwait() on a channel that is still busy from a NORMAL-mode
- * (neither IMMEDIATE nor THREADED) request would be unsafe here: HSCwait() would sem_wait()
- * for HSCdone() to be posted by processChannel(), which is only ever driven by
- * processHSCchannels() from main.c's OWN main-loop iteration -- the same thread this
+ * they need nothing more from this thread: HSCreset() and IMMEDIATE return at once, and
+ * HSCwait() on a THREADED request only times the requester's own 5us a word (a spin when short,
+ * a usleep() when longer), holding the emulator thread that long. Calling HSCwait() on a
+ * channel that is still busy from a NORMAL-mode or TRUESTEAL request would be unsafe here:
+ * HSCwait() would sem_wait()
+ * for the completion post, which only processHSCchannels() makes, from main.c's OWN
+ * main-loop iteration -- the same thread this
  * iotHandler() call is blocking. That would deadlock the entire emulator permanently. For
  * this reason, NORMAL-mode completion in the test programs is always observed by polling
  * hgs (HSCgetStatus(), which never blocks) in a loop, exactly like every other device IOT
@@ -229,7 +231,8 @@ int count, bank, addr, i;
 }
 
 // Main entry point, called twice per IOT instruction executed (once per pulse edge) --
-// see IOTs/iotHandler.h and the project-wide IOT completion convention in Claude/CLAUDE.md.
+// see IOTs/iotHandler.h and the IOT completion convention in Docs/UsingDynamicIots.md
+// ("Waits, completions, and pulses").
 // Every command implemented here completes synchronously within a single call (no device
 // ever needs the async completion/ioh pattern), so pulse edge and completion are otherwise
 // ignored beyond the standard "only act on one edge" guard.

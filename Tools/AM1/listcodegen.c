@@ -15,11 +15,10 @@
 static bool doOutput;
 
 static void startLine(bool noValue, FILE *outP, PNodeP nodeP);
-static void listStatements(FILE *, PNodeP);
+static void listStatements(FILE *, PNodeP, PNodeP);
 static void listOperand(FILE *, PNodeP);
 static void listAscii(FILE *outfP, PNodeP nodeP, char *strP);
 static void listText(FILE *outfP, PNodeP nodeP, FlexText text);
-static void listType340(FILE *outfP, PNodeP nodeP, char *strP);
 static bool listVar(FILE *outfP, PNodeP nodeP);
 static void listVars(FILE *outfP, PNodeP nodeP);
 static void listConstants(FILE *outfP, PNodeP nodeP, SymNodeP symP);
@@ -44,7 +43,7 @@ listCodegen(FILE *outfP, PNodeP rootP)
     // The root is a HEADER.
     // The root lhs is the program body, the rhs the START or STOP at the end of the program.
     output(outfP, doOutput,"%s\n", rootP->value.strP);
-    listStatements(outfP, rootP->leftP);
+    listStatements(outfP, rootP->leftP, NILP);
 
     // Do any trailing constants and vars
     for(BankContextP bankP = banksP; bankP; bankP = bankP->nextP)
@@ -82,18 +81,57 @@ listCodegen(FILE *outfP, PNodeP rootP)
     return(1);
 }
 
+// List the statements from nodeP along the statement list, stopping before stopP,
+// or at the end when stopP is NILP; stopP lets a run relayout moved be listed
+// where the source wrote it.
 static void
-listStatements(FILE *outfP, PNodeP nodeP)
+listStatements(FILE *outfP, PNodeP nodeP, PNodeP stopP)
 {
 int i, j;
 PNodeP node2P;
 char *cP;
-char str[128];
+bool skipTerm = false;      // set by an optimizer directive: drop its line's terminator
+PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
 
-    while( nodeP )
+    while( nodeP && (nodeP != stopP) )
     {
         switch( nodeP->type )
         {
+        case RELAYOUT:
+            // Nodes relayout leaves.  The listing stays in source order: a moved
+            // run is listed at the marker where it stood, with the addresses it
+            // now has, and skipped where it sits.  A deleted word has empty
+            // address and value columns; on a label's line the label printed them.
+            switch( nodeP->value.ival )
+            {
+            case RL_DELETED:
+                if( !nodeP->value2.ival )
+                {
+                    output(outfP, doOutput, "%4d:               ", nodeP->lineNo);
+                }
+                else
+                {
+                    output(outfP, doOutput, " ");
+                }
+
+                listOperand(outfP, nodeP->exprP);
+                break;
+
+            case RL_MOVEDFROM:
+                node2P = (PNodeP)(nodeP->value2.ptr);
+                listStatements(outfP, node2P->leftP, (PNodeP)(node2P->value2.ptr));
+                break;
+
+            case RL_BEGIN:
+                // Listed at its RL_MOVEDFROM; resume after the run's end.
+                nodeP = (PNodeP)(nodeP->value2.ptr);
+                break;
+
+            default:
+                break;
+            }
+            break;
+
         case COMMENT:
             if( nodeP->flags & PN_SOL )
             {
@@ -176,6 +214,14 @@ char str[128];
             output(outfP, doOutput,"bank %d", nodeP->value.ival );
             break;
 
+        case OPTIMIZE:
+        case ENDOPTIMIZE:
+            // An optimizer directive prints no listing line, and skipTerm drops
+            // its line's terminator, so the listing, line numbers included, is
+            // that of the source without it.
+            skipTerm = true;
+            break;
+
         case CONSTANTS:
             startLine(true, outfP, nodeP);
             output(outfP, doOutput,"constants\n");
@@ -227,8 +273,31 @@ char str[128];
             output(outfP, doOutput, ";\n");
             break;
 
+        case EMPTYLINE:
+            // A constant reference left unclosed ("lac [5") is closed by the
+            // newline, which the lexer hands back as an empty line, so this node
+            // ends its statement's line, a relayout-deleted word's included.
+            // maccodegen.c does the same.
+            if( prevP && ((prevP->type == EXPR) ||
+                          ((prevP->type == RELAYOUT) && (prevP->value.ival == RL_DELETED)) ||
+                          (((prevP->type == LOCATION) || (prevP->type == LCLLOCATION) ||
+                            (prevP->type == ORIGIN)) && prevP->rightP)) )
+            {
+                output(outfP, doOutput, "\n");
+            }
+            break;
+
         case TERMINATOR:
-            output(outfP, doOutput, "\n");       // a bare terminator doesn't get a line number if output
+            // skipTerm is set only by an optimizer directive, whose line must
+            // disappear whole.
+            if( skipTerm )
+            {
+                skipTerm = false;
+            }
+            else
+            {
+                output(outfP, doOutput, "\n");   // a bare terminator doesn't get a line number if output
+            }
             break;
 
         case VAR:
@@ -264,6 +333,14 @@ char str[128];
             break;
         }
 
+        // skipTerm lives only through the node after the directive; if that is a
+        // SEMI or COMMENT rather than a TERMINATOR, it prints as it always does.
+        if( (nodeP->type != OPTIMIZE) && (nodeP->type != ENDOPTIMIZE) )
+        {
+            skipTerm = false;
+        }
+
+        prevP = nodeP;
         nodeP = nodeP->leftP;
     }
 }
@@ -272,8 +349,6 @@ char str[128];
 static void
 listOperand(FILE *outfP, PNodeP nodeP)
 {
-int lval;
-int rval;
 char *cP;
 SymNodeP symP;
 PNodeP node2P;
@@ -325,6 +400,8 @@ PNodeP node2P;
         default:
             verror("unknown binary op %d in listOperand",
                 nodeP->value.ival);
+            // never returns, just to shut up overly-picky c compilers
+            return;
         }
 
         output(outfP, doOutput,"%s", cP);
@@ -361,12 +438,11 @@ PNodeP node2P;
         if( nodeP->rightP )
         {
             // can only be a comment
-            output(outfP, doOutput,"  // %s\n", nodeP->rightP->value.strP);
+            output(outfP, doOutput,"  // %s", nodeP->rightP->value.strP);
         }
-        else
-        {
-            output(outfP, doOutput,"\n");
-        }
+
+        // No line end here: the statement's own TERMINATOR, SEMI or COMMENT ends
+        // the line, and an unclosed reference is ended by the EMPTYLINE after it.
         break;
 
     case DOT:
@@ -423,7 +499,7 @@ PNodeP node2P;
         break;
 
     case FORCELOC:
-        output(outfP, doOutput, "%%forcelocal");
+        output(outfP, doOutput, "%%%%forcelocal");     // prints "%%forcelocal"
         break;
 
     case LOCAL:
@@ -557,58 +633,13 @@ char buf[256];
     }
 }
 
-// Emit packed Type 340 code
-static void
-listType340(FILE *outfP, PNodeP nodeP, char *strP)
-{
-int i;
-int val;
-
-    // Node will only have the pc of the first word, adjust as we go
-    for( val = i = 0;; )
-    {
-        val <<= 6;
-        val |= *strP;
-
-        if( i == 2 )
-        {
-            startLine(false, outfP, nodeP);
-            nodeP->pc++;
-            output(outfP, doOutput, " %06o\n", val);
-            val = 0;
-        }
-
-        if( ++i > 2 )
-        {
-            i = 0;
-        }
-
-        if( *strP++ == TYPE340END )
-        {
-            break;
-        }
-    }
-
-    if( i != 0 )         // had leftovers, finish the word
-    {
-        while( i++ != 3 )
-        {
-            val <<= 6;
-        }
-
-        startLine(false, outfP, nodeP);
-        output(outfP, doOutput, " %06o\n", val);
-    }
-}
-
 // Variable, walk the list of names and list them.
 // Each node's rightP is the next one, leftP is the optional initializer.
 // However, the list is in reverse order, so handle that.
-// Returns true if one was printed and a comman is needed.
+// Returns true if one was printed and a comma is needed.
 static bool
 listVar(FILE *fP, PNodeP nodeP)
 {
-int val;
 bool needComma = false;
 SymNodeP symP;
 
@@ -639,7 +670,6 @@ SymNodeP symP;
 static void
 listVars(FILE *fP, PNodeP nodeP)
 {
-int val;
 int lineNo;
 PNodeListP listP;
 SymNodeP symP;

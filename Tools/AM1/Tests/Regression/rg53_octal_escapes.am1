@@ -1,0 +1,14 @@
+Test rg53: octal escapes in ascii strings and character constants stop at 7
+// 8 and 9 are not octal digits, so they end the escape and are ordinary
+// characters. They used to be taken as digits: "\18" came out as 020.
+// An ascii string packs 2 bytes per word and ends in a null.
+//   "A\18B"   A, code 01, 8 (070), B
+//   "A\79B"   A, code 07, 9 (071), B
+//   "\101"    three digits, the most an ascii escape takes: A
+//   '\17'     a character constant, unchanged: 017
+100/
+    ascii "A\18B"
+    ascii "A\79B"
+    ascii "\101"
+    '\17'
+stop

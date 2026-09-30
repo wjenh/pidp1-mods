@@ -2,88 +2,157 @@ Bouncing ball on the Type 340 display, gravity + inelastic floor bounce, random 
 
 // Each bounce chain starts from a random point on either the top edge or the left edge of the
 // screen, launches sideways at a constant speed, and falls under a constant downward
-// acceleration.
-// Every floor bounce reflects the vertical velocity and removes 1/4 of
-// its magnitude using an inexpensive shift.
-// The cycle repeast either when the ball has bounced down to a near-standstill or when it has drifted off the
+// acceleration (gravity). Every floor bounce reflects the vertical velocity and removes 1/4 of
+// its magnitude (a simple, cheap restitution model -- see "Why shift-based restitution, not
+// mul" below). A chain ends -- and a fresh random start point (and gravity reading) is chosen
+// -- either when the ball has bounced down to a near-standstill or when it has drifted off the
 // right edge of the screen.
-//
-// THE BALL SHAPE
-// ---------------
-// The Type 340 can't draw a circle natively, so the ball is a sprite rendered using increment mode.
-// The points have been precomputed externally, no reason to redo each time.
-//
-// The shape is an invisible straight walk from the center point out to the circle's rightmost
-// point, then a boundary trace, all visible, back to that same point.
-// Again this runs autonomously in the 340's own processor, the main code doesn't have to do anything.
 //
 // DISPLAY LIST TECHNIQUE
 // -----------------------
-// Ball position is computed live, every frame, on the pdp-1 side, changing only the x/y ball position in
-// the Type 340 program, the same methodolgy used in circle2.
-// Since there is no intrinsic circle generator, increment mode is used to draw a circle sprite.
+// This follows cube2.am1's approach, not cube.am1's: position is computed live, every frame, on
+// the host CPU (there is no fixed repeating cycle to precompute offline, since the start point
+// and therefore the whole bounce sequence are randomized), and only the ball's y()/x() point
+// words are patched into the resident display list before each dla -- exactly the same
+// technique cube2.am1 uses for its lightpen drag target (tgty/tgtx).
 //
-// SHIFT-BASED MOTION, NOT mul
+// THE BALL SHAPE
+// ---------------
+// Neither the Type 30 nor the Type 340 can draw a circle natively, so, like every existing demo
+// in this repo, the ball is a polygon traced in increment mode -- generated offline by
+// FunStuff/Demos/gen_circle.py, not hand-picked. The very first version reused the tiny 8-step
+// box from type340demo.am1's lightpen target verbatim (a placeholder). The second version used a
+// single-octant midpoint/Bresenham-circle algorithm mirrored through 8-fold symmetry -- more
+// accurate per-vertex, but for a radius this size it produces long runs (5-8 in a row) of the
+// same repeated diagonal step near each 45-degree point, and each such run is a dead-straight
+// chord that reads as a visible flat facet -- "cube like", as observed. This version instead
+// samples the true circle at high angular density and keeps only the points where the rounded
+// grid position actually changes, so the walk is always free to zigzag onto whichever of the 8
+// directions is locally best rather than getting stuck repeating one diagonal for a whole
+// stretch. Worst-case deviation from the true circle (gen_circle.py prints this) is about 0.2
+// raster units at radius 8 -- under half a screen pixel at scale(1) (2 px/raster-unit), i.e.
+// within the display's own pixel resolution for a shape this size, which is as close to "a true
+// circle" as this size can get on this hardware. It costs more words than the octant version
+// (16 vs 10 for the boundary) but is still well under half of type340demo.am1's 48-word sine
+// wave, and there's no shortage of cycles for a single small sprite redrawn once a frame.
+//
+// The shape is: an invisible straight walk from the center point out to the circle's rightmost
+// point (BALLRADIUS incright steps), then the boundary trace, all visible, back to that same
+// point, then `end`.
+//
+// Since the ball now has a real radius, the floor logic needed a small adjustment to match: the
+// ball's *center* used to rest at FLOORY (the same height the floor line is drawn at), which
+// meant the ball would visually sink into the floor by its own radius once it was big enough to
+// notice. RESTY (= FLOORY + BALLRADIUS) is the height the center now rests/bounces at, so the
+// ball's bottom edge just touches the floor line instead of overlapping it. The floor line
+// itself is still drawn at plain FLOORY.
+//
+// WHY NOT BARE x/y AS VARIABLE NAMES
+// ------------------------------------
+// TYPE340/type340defs.ah #defines x(a) and y(a) as the point-command coordinate-field macros.
+// Naming the ball's own state variables "x"/"y" would be legal am1 (bare identifiers not
+// followed by "(" aren't macro-expanded) but is exactly the kind of trap that's easy to trip
+// over later if either variable is ever referenced from inside a parenthesized context. Every
+// existing Type 340 demo in this repo (cube.am1, cube2.am1) avoids bare x/y for this same
+// reason (progx/progy, tgtx/tgty, curhitx/curhity, sxtab/sytab) and this file follows suit:
+// ball state is bx/by/bvx/bvy, and the two patched display-list words are ballx/bally.
+//
+// WHY SHIFT-BASED RESTITUTION, NOT mul
 // --------------------------------------
-// 
-// No fancy prescaling/descaling discipline is needed for a single scalar velocity, so no mul is needed.
-// A bounce that/ keeps 3/4 of the incoming speed is just "bvy -= bvy>>2".
-// This is the same leaky-integrator-style shift-and-subtract technique the original PDP-1 circle itself used,
-// just applied once per bounce instead of once per point.
+// cube2.am1 uses mul against Q1.17 fixed-point fractions for its rotation-matrix damping, and
+// that convention would work here too (bvy = mul(bvy, restitution-fraction)), but it requires
+// prescaling/descaling discipline that isn't needed for a single scalar velocity. A bounce that
+// keeps 3/4 of the incoming speed is just "bvy -= bvy>>2" (arithmetic shift, no multiply, no
+// fixed-point convention to keep straight) -- the same leaky-integrator-style shift-and-subtract
+// technique circle.mac itself uses for its curve, just applied once per bounce instead of once
+// per point.
+//
+// WHY NO SUBROUTINES (no jsp/jda anywhere in this file)
+// ---------------------------------------------------------
+// jsp and jda were misused in earlier work in this repo (see cube.am1/cube2.am1 history) and
+// they are easy to get backwards: jsp jumps straight to a body with NO reserved deposit word;
+// jda deposits AC at a reserved "label, 0" word and jumps one word past it. Getting the entry
+// shape wrong either walks straight into a HLT word (0 is opcode 0 = hlt) or clobbers the first
+// real instruction of the body. This program's control flow -- gravity, position integration,
+// a floor-bounce check, an off-screen check, a two-way random start-edge choice -- is entirely
+// expressible as straight-line code plus the standard skip+jmp idiom (see "Skip instruction
+// direction rule" in the am1 skill's examples.md: think about when the jmp fires, i.e. the
+// no-skip/"don't branch" case), so no subroutine calls are used at all. That sidesteps the
+// jsp/jda entry-shape question entirely rather than risking getting it wrong again.
 //
 // RANDOM START POINT
 // --------------------
-// A small fixed-seed xorshift-style generator is used.
-// This is also very traditional, simple shift, xor, repeat a few times.
-// It's seeded once from a fixed constant at cold load (SEED) and then advances by one
+// First version of this file seeded from the BBN timesharing clock (rck, IOT 32). That turned
+// out to be broken: IOT_32.c's millisecond counter only advances once IOT 2032 (cls) has been
+// issued to set its enable bit -- without that, `counter` stays frozen at 0 forever and plain
+// `rck` doesn't even touch the IO register, so every chain read back the same stale value and
+// always started from the same point. Rather than add the missing `cls` setup call, this
+// version drops the clock dependency entirely and uses a small fixed-seed xorshift-style
+// generator instead (rndval, below) -- a traditional, simple PRNG: shift, xor, repeat a few
+// times. It's seeded once from a fixed constant at cold load (SEED) and then advances by one
 // mix step every time a new chain starts, so successive chains land in different places even
-// though the whole sequence is deterministic and reproducible run-to-run.
+// though the whole sequence is deterministic and reproducible run-to-run. Bit 0 of the mixed
+// value picks the starting edge (top or left); a few more bits, masked and offset, pick where
+// along that edge.
 //
 // GRAVITY FROM THE FRONT-PANEL TEST SWITCHES
 // ---------------------------------------------
-// The test switche are read every time a chain restarts, so the change takes effect the very next chain.
-// 0 means "keep the built-in default", set by GRAVITY, below.
-// The value is treated as a fixed-point octal 7.7 max value to allow fractional gravity and is loaded
-// from the low 6 bits of the switches.
-// The max value is appropriately silly rather than useful.
+// `lat` (0762200) is a single instruction that both clears AC and ORs in the live test-switch
+// register (pdp1.c: bit B10 clears AC, bit B7 ORs in pdp->tw, both bits are baked into lat's
+// own opcode) -- confirmed against pdp1.c rather than assumed, since guessing at instruction
+// semantics is exactly what's bitten this file before. pdp->tw is set straight from the panel's
+// live switches (panel1.c: pdp->tw = sw1), so lat is a live snapshot at the instant it runs, not
+// something that needs separate arming.
 //
-// wje/Claude 9-Jul-2026 - initial version by Claude, edited by wje
+// Reread every time a chain restarts (not just once at cold load), so flipping switches mid-run
+// changes the very next chain -- no reload needed. 0 means "keep the built-in default"
+// (GRAVITY, below); nonzero is used directly as the gravity magnitude in raster units/frame^2,
+// masked to the low 8 bits (0-255) only to stay clear of the sign bit, not to limit how extreme
+// a setting someone can dial in -- past roughly 100-150 the fall is already down to a couple of
+// frames given the screen's height, so the extra headroom above that mostly just lets the high
+// end of the dial feel appropriately silly rather than adding a meaningfully different speed.
+//
+// wje/Claude 9-Jul-2026 - initial version
+// wje/Claude 9-Jul-2026 - replaced the (broken) clock-seeded RNG with a fixed-seed xorshift
+// wje/Claude 9-Jul-2026 - gravity now reread from the test switches every chain restart
+// wje/Claude 9-Jul-2026 - ball is now a proper digitized circle (radius 8) instead of a tiny box;
+//                          added RESTY so the bigger ball rests on the floor line, not through it
+// wje/Claude 9-Jul-2026 - switched gen_circle.py from the single-octant midpoint/Bresenham
+//                          method to dense-sample-and-round: the octant method's long repeated-
+//                          diagonal runs read as flat facets ("cube like") at this radius; dense
+//                          sampling keeps worst-case deviation under half a screen pixel
 
 #include <TYPE340/type340defs.ah>
 
 #define BALLSCALE 1
 #define BALLINTENSITY 6
-#define FLOORINTENSITY 6
+#define FLOORINTENSITY 2
 
 #define SEED 0d26317      // arbitrary nonzero fixed seed for the xorshift generator
 
-#define BALLRADIUS (0d8 << BALLSCALE)    // ball radius, raster units, don't forget the scale factor
-#define FLOORY 0d20       // y coordinate of the floor line
-#define RESTY (FLOORY + BALLRADIUS + (1 << BALLSCALE)) // y coordinate of the ball's bottom ede, scaled properly
-#define GRAVITY 0d20      // default gravity raster units/frame^2 scaled by 8 to allow fractional gravity
+#define GRAVITY 0d2       // default downward accel -- raster units/frame^2 -- switches all down
 #define LAUNCHVX 0d5      // constant horizontal drift -- raster units/frame
-#define FLOORY 0d20       // y coordinate the ball rests/bounces on
+#define BALLRADIUS 0d8    // ball radius, raster units -- rerun gen_circle.py if this changes
+#define FLOORY 0d20       // y coordinate the floor LINE is drawn at
+#define RESTY (FLOORY+BALLRADIUS) // y coordinate the ball's CENTER rests/bounces at
+#define TOPSTARTY 0d980   // y used for a "drop from the top edge" start
+#define LEFTSTARTX 0d20   // x used for a "launch from the left edge" start
+#define RIGHTLIMIT 0d1000 // chain ends once the ball drifts past this x
+#define MINBOUNCE 0d4     // post-bounce |bvy| below this -> chain has settled
 
-// We need safety margins so nothing writes past an edge, don't want an edge violation fault
-#define TOPSTARTY (0d1024 - BALLRADIUS - 10)    // don't overrund the top
-#define LEFTSTARTX (BALLRADIUS + 0d10)          // same for the left edge
-#define RIGHTLIMIT (0d1024 - BALLRADIUS - 10)   // and the right edge
-
-#define MINBOUNCE 0d32    // post-bounce |bvy| below this -> chain has settled, scaled
-
-var bx, by, bvx, bvy, tmpval
-// Note that successive runs will use the last rndval, to keep up appearances of randomness.
-var rndval=SEED, tmpva, dlycnt, gravval
+var bx=0, by=0, bvx=0, bvy=0
+var rndval=SEED, tmpval=0, dlycnt=0, gravval=GRAVITY
 
 100/
+// ---- pick this chain's gravity and start point ----
 newchain,
-    // Read the front-panel test switches fresh every chain. 0 -> keep the default,
-    // nonzero -> use the octal o.o value, the decimal point is between the 3 switch groups.
+    // gravity: read the front-panel test switches fresh every chain. 0 -> keep the default;
+    // nonzero -> use directly (masked to 8 bits, see header comment for why that's not tighter).
     lat
-    and [077]              // only 6 bits, octal 7.7 max
-    sza                    // skip (use the switch value) when AC != 0
+    and [0377]
+    sza                      // skip (use the switch value) when AC != 0
     jmp useswitches
-    lac [GRAVITY]          // 0, use the default
+    lac [GRAVITY]            // falls through here when AC == 0 -- switches are all down
     dac gravval
     jmp gravdone
 useswitches,
@@ -91,8 +160,23 @@ useswitches,
 gravdone,
 
     // advance the fixed-seed xorshift-style generator by one mix step (shift, xor, x3)
-    jsp rand18
+    lac rndval
+    dac tmpval
+    sal 5s
+    xor tmpval
     dac rndval
+    lac rndval
+    dac tmpval
+    sar 7s
+    xor tmpval
+    dac rndval
+    lac rndval
+    dac tmpval
+    sal 3s
+    xor tmpval
+    dac rndval
+
+    lac rndval
     and [1]                 // bit 0 chooses the starting edge
     sza
     jmp fromleft
@@ -123,7 +207,7 @@ launch,
 
 // ---- physics + redraw, once per frame ----
 frame,
-    // gravity, a constant downward accel from the switches or default, it is a scaled value of 7.7 octal max
+    // gravity: constant downward accel (this chain's setting, from the switches or default)
     lac bvy
     sub gravval
     dac bvy
@@ -132,20 +216,19 @@ frame,
     lac bx
     add bvx
     dac bx
-    lac bvy
-    sar 3s                  // we scale the acceleration by 8 so we can have fractional gravity
-    add by
+    lac by
+    add bvy
     dac by
 
-    // floor collision -- bounce if the ball has reached or passed the floor this frame
+    // floor collision -- bounce if the ball's center has reached or passed its rest height
     lac by
     sub [RESTY]
-    spa                      // skip (no bounce) when by >= FLOORY
+    spa                      // skip (no bounce) when by >= RESTY
     jmp bounce
     jmp aftercollision
 bounce,
     lac [RESTY]
-    dac by                   // clamp to the floor
+    dac by                   // clamp to the rest height (ball's bottom edge on the floor line)
     lac bvy
     cma
     dac bvy                  // reflect: bvy = -bvy (now positive, moving up)
@@ -158,14 +241,14 @@ bounce,
 
     lac bvy
     sub [MINBOUNCE]
-    spa                      // skip, still bouncing when bvy >= MINBOUNCE
+    spa                      // skip (still bouncing) when bvy >= MINBOUNCE
     jmp newchain             // too slow to matter now -- settle, start a new chain
 aftercollision,
 
     // drifted off the right edge -- this chain is done too
     lac bx
     sub [RIGHTLIMIT]
-    sma                      // skip, still on screen when bx < RIGHTLIMIT
+    sma                      // skip (still on screen) when bx < RIGHTLIMIT
     jmp newchain
 
     // patch the ball's new position into the live display list
@@ -175,7 +258,7 @@ aftercollision,
     dac bally
     lac bx
     and [01777]
-    ior [x(0) next(increment)]
+    ior [show x(0) next(increment)]
     dac ballx
 
     lio [prog]
@@ -184,7 +267,7 @@ waitstop,
     dss
     jmp waitstop
 
-    // pacing delay, tune to taste, more negative = slower animation
+    // pacing delay -- tune to taste, more negative = slower animation
     lac [0-0d800]
     dac dlycnt
 delayloop,
@@ -192,8 +275,6 @@ delayloop,
     jmp delayloop
 
     jmp frame
-
-#include <RANDOM/rand18.ac>
 
 variables
 constants
@@ -203,7 +284,7 @@ constants
 prog,
     scale(BALLSCALE) intensity(BALLINTENSITY) next(point)
 bally, y(0d500) next(point)
-ballx, x(0d500) next(increment) // this point is invisible
+ballx, show x(0d500) next(increment)
     // invisible walk from the center out to the circle's rightmost point (BALLRADIUS steps)
     set1(incright) set2(incright) set3(incright) set4(incright)
     set1(incright) set2(incright) set3(incright) set4(incright)
@@ -231,6 +312,8 @@ ballx, x(0d500) next(increment) // this point is invisible
     y(FLOORY) next(point)
     x(0d0) show next(vcontinue)
     visible right deltax(0d1)
+
+    halt
     halt
 
 start newchain

@@ -6,7 +6,7 @@ INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib -I
 MTHDRS= $(MT)/microtape.h $(MT)/control550.h $(MT)/transport555.h
 MTOBJS= microtape.o control550.o transport555.o
 
-%.o:%.c ../iotHandler.h
+%.o:%.c ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h
 	gcc $(INC) -O3 -fPIC -c $< -o $@
 
 %.so:%.o
@@ -14,10 +14,10 @@ MTOBJS= microtape.o control550.o transport555.o
 
 all: IOT_1.so IOT_2.so
 
-IOT_2.o: IOT_2.c ../iotHandler.h $(MTHDRS)
+IOT_2.o: IOT_2.c ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h $(MTHDRS)
 	gcc $(INC) -O3 -fPIC -c IOT_2.c -o $@
 
-microtape.o: $(MT)/microtape.c $(MTHDRS)
+microtape.o: $(MT)/microtape.c $(MTHDRS) ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h ../../src/blincolnlights/pdp1/configuration.h ../Lib/iotLogger.h ../Lib/writeBehind.h
 	gcc $(INC) -O3 -fPIC -c $(MT)/microtape.c -o $@
 
 control550.o: $(MT)/control550.c $(MT)/control550.h $(MT)/transport555.h
@@ -26,11 +26,18 @@ control550.o: $(MT)/control550.c $(MT)/control550.h $(MT)/transport555.h
 transport555.o: $(MT)/transport555.c $(MT)/transport555.h
 	gcc $(INC) -O3 -fPIC -c $(MT)/transport555.c -o $@
 
-IOT_2.so: IOT_2.o $(MTOBJS)
-	gcc -shared IOT_2.o $(MTOBJS) -o $@
+# The microtape writes its image files through the write-behind queue (27-Sep-2026).
+IOT_2.so: IOT_2.o $(MTOBJS) ../Lib/writeBehind.o
+	gcc -shared IOT_2.o $(MTOBJS) ../Lib/writeBehind.o -lpthread -o $@
 
 install: all
 	cp *.so ..
 
 clean:
 	@rm *.o *.so 2>/dev/null || true
+
+# Lib's objects are built by its own Makefile, which knows their headers.
+../Lib/%.o: FORCE
+	$(MAKE) -C ../Lib $*.o
+
+FORCE:

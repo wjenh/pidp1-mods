@@ -1,4 +1,4 @@
-// Adapted from a verson by Pascal Stang
+// Adapted from a version by Pascal Stang
 // Defines ascii characters 0x20-0x7F (32-127)
 static unsigned char Font5x7[] =
 {

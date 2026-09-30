@@ -16,3 +16,9 @@ type340AlignmentTest - draws a border at the extreme edges, 0,0 to 0,1023 to 102
     then draws a plus in the center at 512,512 and 2 corner-to-corner diagonals, all should intersect;
     PF1 and PF2 shoudl be on to indicate edge violations from the diagonals
 type340Stress - draw 19 full-width horizontal vectors using vcontinue at scale 0, 19,456 total points
+type340FullTest - unified, self-checking regression test: exercises every display host IOT (dla,
+    drs, dcf, dra, dss, dsv, dsh, dsp, drc) and all 8 display-program modes with no panel
+    interaction; reports PASS/FAIL/SKIP on the typewriter
+type340HandshakeRace - regression test for the dla/dss command-handshake race (a dla that returns
+    before the display worker clears the previous program's stop flag); reports PASS/FAIL on the
+    typewriter

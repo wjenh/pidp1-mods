@@ -1,0 +1,92 @@
+Drum write wrap probe
+// Does a drum write that wraps past address 7777 put the words after the wrap at drum address 0 on?
+// Core 1000-1017 gets the pattern 606000+k at word k, and 2000-2017 its complement, so a word no
+// read reaches shows as wrong. The 16 words are written to drum field 0 from address 7770: words
+// 0-7 go to 7770-7777, and words 10-17 wrap to 0-7. Each side is then read back on its own, with
+// no wrap: 7770-7777 into 2000-2007 and 0-7 into 2010-2017. Then 2000-2017 is compared with
+// 1000-1017.
+// It halts with AC = the number of words that differ and IO = the offset (0-17) of the last one.
+// A correct drum gives AC 0, IO 0. Before the 24-Sep-2026 fix a wrapped write stored its second
+// part from the start of the block again, giving AC 000010, IO 000017. Either sbs16 setting;
+// under a second. It overwrites drum field 0, addresses 7770-7777 and 0-7.
+#include <DRUM/type23drumdefs.ah>
+
+100/
+    dzm k
+fl, lac k
+    add [1000
+    dap f1
+    add [1000
+    dap f2
+    lac k
+    add [606000
+f1, dac .
+    cma
+f2, dac .
+    idx k
+    sas [20
+    jmp fl
+
+// write 16 words from 1000 to field 0 from address 7770, wrapping to 0
+    lio [7770
+    dia
+    lio [400020
+    dwc
+    lio [1000
+    dcl
+    jsp tst
+
+// read drum 7770-7777 into 2000, then drum 0-7 into 2010
+    lio [407770
+    dia
+    lio [10
+    dwc
+    lio [2000
+    dcl
+    jsp tst
+    lio [400000
+    dia
+    lio [10
+    dwc
+    lio [2010
+    dcl
+    jsp tst
+
+// compare 2000+k with 1000+k
+    dzm k
+cl, lac k
+    add [1000
+    dap c1
+    add [1000
+    dap c2
+c1, lac .
+c2, sas .
+    jmp bd
+nx, idx k
+    sas [20
+    jmp cl
+
+    lac nbd
+    lio lbd
+    hlt
+
+bd, idx nbd
+    lac k
+    dac lbd
+    jmp nx
+
+tst, dac tmp
+lp1, cla
+    cks
+    rcr 1
+    sza
+    jmp lp1
+    jmp i tmp
+
+tmp, 0
+k, 0
+nbd, 0
+lbd, 0
+
+constants
+start 100

@@ -1,0 +1,11 @@
+Test rg40 (XFAIL): ascii's NUL-padded last word lands on a used word -- must fail
+// ascii packs two bytes per word, and the last word of a string whose bytes
+// plus the NUL are odd is padded with a zero byte; that word must be marked
+// too. "ab" is a, b, NUL:
+// two words, of which the second, at 101, is the padded one. The control is
+// rg15_ascii, and "abc" would fill its last word and always fail.
+101/
+    hlt
+100/
+    ascii "ab"
+stop

@@ -1,0 +1,39 @@
+SYM SHAPES
+// Tests/Symbols.  EVERY SHAPE A GLOBAL LABEL COMES IN, because the
+// line am1 records for one could depend on what follows it.  What is
+// written here is the SHAPES; the lines they sit on are in
+// sym_shapes_test.expected, read off this file's own numbering.
+//
+// Do not insert or delete a line above a label without re-reading the
+// expectations: every one of them is an absolute line number, which is the
+// whole point.
+100/
+onfirst,        0
+// a plain comment line, so the next label follows one
+aftercomment,   0
+        lac forward
+        lac fwdtext
+        lac fwdascii
+        lac fwd340
+        jmp fwdjmp
+alone,
+        0
+withexpr,       7
+withcomment,    0       // a trailing // comment
+semis,          1; hlt
+/* a C-style comment
+   block spanning
+   three lines */
+afterblock,     0
+forward,        5
+fwdtext,        text "Hi"
+fwdascii,       ascii "AB"
+fwd340,         type340 "XY"
+fwdjmp,         hlt
+
+afterblank,     0
+        export exported
+exported,       0
+        hlt
+last,           0
+        start onfirst

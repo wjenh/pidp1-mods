@@ -1,0 +1,18 @@
+# sym_var_test.am1 and sym_var_part.ah: the line each var is declared on, and
+# each label defined on, in the file it is WRITTEN in.  Read off the numbering
+# of those two sources and written before the first run; check 2 derives the
+# same with awk.
+#
+# name          line    the shape it is there for
+afterblock      18      # a var after a C-style comment block
+afterinc        21      # a var after the include returns
+alone           12      # a var alone on its line
+atend           23      # declared after "variables", so placed at the end of the program
+begin           9       # a label, for company
+fwdvar          19      # referenced before it is declared
+incvar          7       # declared in sym_var_part.ah
+initd           15      # an initialized var
+last            24      # a label after the vars
+pairone         14      # the first of two on one line
+pairtwo         14      # the second of two on one line
+withcomment     13      # a trailing "//" comment after it

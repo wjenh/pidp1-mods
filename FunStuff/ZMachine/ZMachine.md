@@ -83,6 +83,11 @@ That is almost all of Infocom's text games:
 - version 4: Trinity, A Mind Forever Voyaging, Bureaucracy, Nord and Bert;
 - version 5: Sherlock, Border Zone, Beyond Zork.
 
+Beyond Zork is the biggest, and it just fits.
+Its file is 276,480 bytes, bigger than the drum, but the last 15,092 bytes are padding that isn't part of
+the story, and *zloader* leaves it off.
+What's left fills all 32 tracks of the drum, with 378 words to spare.
+
 When Beyond Zork asks whether your terminal is a VT220, answer YES.
 Answered yes, it draws its box and map in a graphics font of its own, and the interpreter draws that font
 on your terminal; see the terminal settings above.

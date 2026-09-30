@@ -3,7 +3,7 @@ files := $(wildcard *.c)
 
 %.so:%.o
 	gcc -shared $< -o $@
-%.o:%.c iotHandler.h
+%.o:%.c iotHandler.h ../src/blincolnlights/pdp1/dynamicIots.h ../src/blincolnlights/pdp1/pdp1.h ../src/blincolnlights/pdp1/ad1intf.h
 	gcc $(INC) -fPIC -c $< -o $@
 
 all: dist $(files:.c=.so)

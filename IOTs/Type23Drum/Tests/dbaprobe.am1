@@ -1,0 +1,166 @@
+Type 23 drum DBA break probe
+// Does a DBA break arrive when the drum reaches the DBA address, both alone and in the DBA, DWC,
+// DCL sequence the H-23 manual gives for a program that uses sequence breaks (p64 / 5-3)?
+// Run with sbs16=off: the break is the single-channel one (AC to 0, PC to 1, IO to 2, then 3).
+// The drum also requests a break at the end of every transfer (H-23 2-21), so a leg with a
+// transfer takes that one too. Three legs, each followed by a wait of about 150 ms (over four
+// drum revolutions):
+//   1. DBA alone, target 400 words ahead of the drum: one break expected, the dba's.
+//   2. DIA, DWC, DCL, a 100-word read: one break expected, the end-of-transfer one.
+//   3. DBA, DWC, DCL, the same read, target 400 words ahead: two breaks expected, the dba's
+//      as the transfer starts, then the end-of-transfer one.
+// Results are in the table at 2000; every word holds 777777 until the program writes it.
+// The break routine reads the drum position with dra a few words after the break arrives,
+// and keeps only the last break's.
+// It halts after about half a second. The 12 words at 2000, in order, and what a correct
+// drum gives (octal):
+//   r1b r1t r1d r1p r2b r2w r3b r3t r3d r3p r3w done
+//   r1b = 1: leg 1 took one break.
+//   r1t - r1d = 367 to 370: the target is 400 words past the first position read, and r1d
+//     is read a few instructions later, after the drum has moved on. r3t - r3d the same.
+//   r1p - r1t, mod 10000, is small: where the break found the drum (+3 to +4 words on WSL).
+//     A break that arrives late shows here; before the 24-Sep-2026 fix it was about +253.
+//   r2b = 1, r2w = 0: the plain transfer took its end break and finished.
+//   r3b = 2: the DBA, DWC, DCL sequence took its dba break and its end break (0 before the
+//     24-Sep-2026 fix, when dcl canceled the dba break). r3p is the end break's position:
+//     r3p - r3t is the 100 words of the transfer plus a few (+106 on WSL). r3w = 0.
+//   done = 1.
+// Before the end-of-transfer break was added (27-Sep-2026), r2b = 0, r3b = 1, and r3p - r3t
+// was small (+5 to +7 on WSL), the dba break's position.
+#include <DRUM/type23drumdefs.ah>
+
+3/
+    jmp brk
+
+100/
+    esm
+
+// Leg 1: DBA alone.
+    dzm nbrk
+    lac [777777
+    dac pos
+    jsp tgt
+    dac r1t
+    jsp drl
+    dac r1d
+    lio r1t
+    dba
+    jsp wt
+    lac nbrk
+    dac r1b
+    lac pos
+    dac r1p
+
+// Leg 2: DIA, DWC, DCL, read field 0 from address 0 into 3000.
+    dzm nbrk
+    lio [drmrd
+    dia
+    lio [100
+    dwc
+    lio [3000
+    dcl
+    jsp wt
+    lac nbrk
+    dac r2b
+    jsp bsy
+    dac r2w
+
+// Leg 3: DBA, DWC, DCL, the same read, starting at the break address.
+    dzm nbrk
+    lac [777777
+    dac pos
+    jsp tgt
+    dac r3t
+    jsp drl
+    dac r3d
+    lac r3t
+    ior [drmrd
+    lia
+    dba
+    lio [100
+    dwc
+    lio [3000
+    dcl
+    jsp wt
+    lac nbrk
+    dac r3b
+    lac pos
+    dac r3p
+    jsp bsy
+    dac r3w
+
+    lsm
+    law 1
+    dac done
+    hlt
+
+// The drum address 400 words ahead of the drum's current position.
+// Exit: AC = the address, 0-7777. IO is clobbered. Called via jsp.
+tgt, dap tgx
+    dra
+    lai
+    and [7777
+    add [400
+    and [7777
+tgx, jmp .
+
+// The drum's current position.
+// Exit: AC = the position, 0-7777. IO is clobbered. Called via jsp.
+drl, dap lcx
+    dra
+    lai
+    and [7777
+lcx, jmp .
+
+// The drum's busy bit.
+// Exit: AC = 1 while a transfer is in progress, else 0. IO is clobbered. Called via jsp.
+bsy, dap bsx
+    cli
+    cks
+    lai
+    and [cksdrm
+bsx, jmp .
+
+// Wait about 150 ms: 10000 decimal passes of isp and jmp, 15 us each.
+// AC is clobbered, IO is preserved. Called via jsp.
+wt, dap wtx
+    lac [754357         // -10000 decimal
+    dac wct
+wl, isp wct
+    jmp wl
+wtx, jmp .
+
+// Sequence break, single channel: counts the break and records the drum position.
+// AC and IO are restored from 0 and 2 before the return through 1.
+brk, dra
+    lai
+    and [7777
+    dac pos
+    idx nbrk
+    lac 0
+    lio 2
+    jmp i 1
+
+wct, 0
+nbrk, 0
+pos, 0
+
+// Results: breaks counted in each leg, the target drum address, the drum position just before
+// the DBA, the drum position read in the break routine, and the busy bit after each transfer
+// leg's wait (0 = transfer finished).
+2000/
+r1b, 777777
+r1t, 777777
+r1d, 777777
+r1p, 777777
+r2b, 777777
+r2w, 777777
+r3b, 777777
+r3t, 777777
+r3d, 777777
+r3p, 777777
+r3w, 777777
+done, 777777
+
+constants
+start 100

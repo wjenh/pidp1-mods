@@ -1,0 +1,6 @@
+Test rg53 xfail: '\18' is a character constant with more than one character
+// The escape is \1 and the 8 is a second character. It used to be read as the
+// one code 020, with no message.
+100/
+    '\18'
+stop

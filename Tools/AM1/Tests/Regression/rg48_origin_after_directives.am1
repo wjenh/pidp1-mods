@@ -1,0 +1,32 @@
+Test rg48: an origin's statement after each kind of statement
+// Whatever precedes an origin line, that line is a new statement: its slash
+// must not be taken for a divide continuing the last directive's operands.
+// Each origin line puts a word at a new address, so a divide instead of an
+// origin shows as a word at the wrong place.
+100/ cla
+    text "ab"
+110/ 1
+    ascii "AB"
+120/ 2
+    flexo 12
+130/ 3
+    type340 "AB"
+140/ 4
+    char 1r
+150/ 5
+    table 2, 7
+160/ 6
+    lac [17
+170/ 7
+    var q=3
+    lac q
+/* a C comment
+   over two lines */
+200/ 010
+    lac 17          // an operand is not an origin
+210/ 011
+    hlt
+220/ 012
+    variables
+    constants
+stop

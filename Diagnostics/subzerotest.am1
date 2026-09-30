@@ -1,0 +1,100 @@
+SUB AND ADD MINUS-ZERO PROBE -- what does sub leave in AC when its operands are equal
+/*
+ * subzerotest.am1 -- does `sub` of two equal values leave ones'-complement
+ * -0 (0777777) in AC, which `sza` does not call zero and `sma` calls
+ * NEGATIVE? Code that assumes it does tests equality with sad/sas before
+ * subtracting; code that tests with a bare `lac x; sub y; sza` assumes it
+ * does not. Both cannot be right, so this measures it (1-Sep-2026).
+ *
+ * WHAT IS BEING MEASURED, and what is NOT: this asks what `sub` and `add`
+ * leave in AC, which is opcode BEHAVIOUR. It is not asking whether the
+ * emulator is faithful to the hardware, and it does not read the
+ * emulator's C to find out.
+ *
+ * Read the results with ad1 after the hlt:
+ *   subEqual   lac 10, sub 10        -- the case in dispute
+ *   subOne     lac 1,  sub 1
+ *   subZero    lac 0,  sub 0
+ *   subSpace   lac 32, sub 32        -- a character compared with a space
+ *   addNeg     lac 5,  add -5        -- `add`, for contrast
+ *   subBigger  lac 5,  sub 10        -- a genuinely negative result, as a
+ *                                       control: proves the probe can tell
+ *                                       a real negative from a -0
+ * 0 means the machine normalised to plus zero; 0777777 means it left
+ * minus zero.
+ *
+ * Assemble: am1 subzerotest.am1
+ * Run:      ad1, `load`, `start begin`, then `show subEqual` and friends.
+ */
+
+octal
+
+100/
+
+begin,
+    lac [0d10]
+    sub [0d10]
+    dac subEqual
+
+    lac [1]
+    sub [1]
+    dac subOne
+
+    cla
+    sub [0]
+    dac subZero
+
+    lac [0d32]
+    sub [0d32]
+    dac subSpace
+
+    lac [0d5]
+    add [-0d5]
+    dac addNeg
+
+    lac [0d5]
+    sub [0d10]
+    dac subBigger
+
+    // Where -0 DOES survive, if anywhere. `cla cma` is the standard way
+    // to get 0777777 into AC without asking the assembler for it.
+    cla
+    cma
+    dac minusZeroAC             // the control: -0 exists and can be held
+
+    cla
+    cma
+    add [0]
+    dac addMinusZeroPlusZero    // -0 + 0
+
+    cla
+    cma
+    sub [0]
+    dac subMinusZeroMinusZero   // -0 - 0
+
+    cla
+    cma
+    dac scratch
+    cla
+    cma
+    add scratch                 // -0 + -0, the one case the PDP-1's own
+    dac addTwoMinusZeros        //   documentation says is not corrected
+
+    hlt
+    jmp begin           // CONTINUE re-runs the probe
+
+subEqual,  0
+subOne,    0
+subZero,   0
+subSpace,  0
+addNeg,    0
+subBigger, 0
+minusZeroAC, 0
+addMinusZeroPlusZero, 0
+subMinusZeroMinusZero, 0
+addTwoMinusZeros, 0
+scratch,   0
+
+constants
+
+start begin

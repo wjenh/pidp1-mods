@@ -323,7 +323,7 @@ getPin(int p)
 
 // Drive the 18 COLUMN pins from the low 18 bits of l, one bit per column,
 // bit 0 -> COLUMNS[0], bit 1 -> COLUMNS[1], etc. Batched into a single
-// gpio_set_multi_drive() call (audit O4, Phase 5) instead of 18 individual setPin() calls.
+// gpio_set_multi_drive() call instead of 18 individual setPin() calls.
 void
 setRow(int l)
 {
@@ -340,7 +340,7 @@ int i;
 
 // Drive the 4 ADDR select pins from the low 4 bits of a, selecting which
 // row of lights/switches is connected to the COLUMNS bus. Batched into a single
-// gpio_set_multi_drive() call (audit O4, Phase 5) instead of 4 individual setPin() calls.
+// gpio_set_multi_drive() call instead of 4 individual setPin() calls.
 void
 setAddr(int a)
 {
@@ -526,8 +526,7 @@ GPIO_DRIVE_T drvs[nelem(COLUMNS)];
     usleep(20); // the gpio state chages need time to take effect
 
     // Establish phase-0 state once: on iff l[i] > 0. Batched into a single
-    // gpio_set_multi_drive() call (audit O4, Phase 5) instead of 18 individual setPin()
-    // calls.
+    // gpio_set_multi_drive() call instead of 18 individual setPin() calls.
     for(int i = 0; i < nelem(COLUMNS); i++)
     {
         drvs[i] = (0 < l[i]) ? DRIVE_LOW : DRIVE_HIGH;
@@ -711,8 +710,8 @@ struct sched_param sp;
             continue;
         }
 
-        // pdp1's main loop runs in bursts, pacing itself to 5us/cycle
-        // using usleep(1000), so cyclecount advances in chunks of ~200 every ~1ms rather than smoothly.
+        // pdp1's throttle alternates runs of cycles with sleeps, and a host stall can hold it
+        // longer, so cyclecount advances in steps rather than smoothly and may not move in a pass.
         // If we proceeded with expectedCycles==0 clamped to 1 and count==0, every light would
         // compute in=0 for this iteration, a brief blackout.
         // The beat between our period and pdp1's burst/sleep cycle then shows up as
@@ -1148,13 +1147,13 @@ ConfigurationSettingP settingP;
 
     if( (settingP = findConfigurationSetting(confP, "panelonalpha")) )
     {
-        onAlpha = (isnan(settingP->fvalue))?(float)settingP->ivalue:settingP->fvalue;     // audit M11
+        onAlpha = (isnan(settingP->fvalue))?(float)settingP->ivalue:settingP->fvalue;
         onAlpha = FLIMIT(onAlpha);
     }
 
     if( (settingP = findConfigurationSetting(confP, "paneloffalpha")) )
     {
-        offAlpha = (isnan(settingP->fvalue))?(float)settingP->ivalue:settingP->fvalue;    // audit M11
+        offAlpha = (isnan(settingP->fvalue))?(float)settingP->ivalue:settingP->fvalue;
         offAlpha = FLIMIT(offAlpha);
     }
 

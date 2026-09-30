@@ -1,0 +1,355 @@
+T15: DCS2 CLEAN START PER CONNECTION TEST
+/*
+ * T15.am1 -- DCS2 telnet mode: a server channel's next caller starts clean,
+ *            nothing the previous caller left behind reaches it, whether the
+ *            channel re-accepts on its own or is rebound (SCBREBIND).
+ *
+ * Harness required:
+ *   ./dcstestharness telnet-reconnect-client 127.0.0.1 2115
+ *   Start the harness AFTER this program is running and waiting for a
+ *   connection (typewriter will print "T15 listening" when ready).
+ *
+ *   The harness plays three callers in turn (see modeTelnetReconnectClient):
+ *     Caller 1 sends DONT ECHO and 'a', then leaves in the middle of a
+ *       telnet subnegotiation (IAC SB with no IAC SE) and closes.
+ *     Caller 2 connects after a pause, to the channel DCS2 re-accepted by
+ *       itself.  It sends DO ECHO and 'b', which must arrive (the half-read
+ *       subnegotiation is gone) with no WILL ECHO before it (the option
+ *       state is the new greeting's, not caller 1's refusal).  Then CR and
+ *       'y' in one write: reading the CR makes DCS2 look ahead and stash the
+ *       'y', and this program then rebinds, so the 'y' is never read.
+ *     Caller 3 connects after the rebind and sends 'c', which must be the
+ *       first character read, not caller 2's stashed 'y'.  Then its
+ *       verdict, P if everything it saw matched, F if not.
+ *   Every caller checks that it got the full greeting.
+ *
+ * What the program does:
+ *   1. Opens channel 0 as a TCP server (dcftel dcfecho, no dcfflex) on
+ *      port 2115, and prints "T15 listening" on the typewriter.
+ *   2. Caller 1: waits for the connection, reads 'a', waits for the close.
+ *   3. Caller 2: waits for the connection DCS2 re-accepted, reads 'b' and
+ *      the CR, and rebinds the channel.
+ *   4. Caller 3: waits for the connection, reads 'c' and the verdict.
+ *   5. SCBCLEAR closes channel 0.
+ *   Any read that finds the connection lost ends the test there.
+ *
+ * Tests:
+ *   T15-1  Caller 1 connected
+ *   T15-2  Caller 1's 'a' read
+ *   T15-3  Caller 1's close seen
+ *   T15-4  Caller 2 connected (passive re-accept)
+ *   T15-5  Caller 2's 'b' read: the subnegotiation did not carry over
+ *   T15-6  Caller 2's CR read
+ *   T15-7  SCBREBIND
+ *   T15-8  Caller 3 connected
+ *   T15-9  Caller 3's 'c' is the first character read: the stash did not
+ *          carry over
+ *   T15-10 The harness's verdict is P
+ *   T15-11 Channel closes cleanly after SCBCLEAR
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T15.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define ch_a    0141        // caller 1's character
+#define ch_b    0142        // caller 2's character
+#define ch_cr   015         // caller 2's CR, whose lookahead stashes the 'y'
+#define ch_c    0143        // caller 3's character
+#define ch_P    0120        // the harness's verdict: everything matched
+// rdchar's answer when the connection is lost.  Not 777777: that is -0, and a NUL
+// character minus -0 is +0, so a sub/sza test would take a NUL for a lost
+// connection.  A character c (0-0377) minus 400000 is c+377777, never +0 or -0.
+#define lostval 400000
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb
+
+// ---- open server channel 0 ------------------------------------------------
+
+    lio [scbset ctl15]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr             // server open failed (port in use?)
+
+    lac [rdymsg]
+    jda typetext
+
+// ---- caller 1 ----------------------------------------------------------------
+
+    jsp waitcon             // T15-1
+    lac [lbl1]
+    jda passit
+
+    jsp rdchar              // T15-2
+    sub [ch_a]
+    sza
+    jmp fail2
+    lac [lbl2]
+    jda passit
+
+waitcls,                    // T15-3: caller 1 goes away
+    lio [0]
+    rcs
+    lai
+    and [dsfser]
+    sza
+    jmp fail3
+    lio [0]
+    rcs
+    lai
+    and [dsfcls]
+    sza i
+    jmp waitcls
+    lac [lbl3]
+    jda passit
+
+// ---- caller 2, on the channel DCS2 re-accepted by itself -------------------
+
+    jsp waitcon             // T15-4
+    lac [lbl4]
+    jda passit
+
+    jsp rdchar              // T15-5
+    sub [ch_b]
+    sza
+    jmp fail5
+    lac [lbl5]
+    jda passit
+
+    jsp rdchar              // T15-6
+    sub [ch_cr]
+    sza
+    jmp fail6
+    lac [lbl6]
+    jda passit
+
+    lio [scbbnd]            // T15-7: rebind channel 0, the stashed 'y' unread
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp fail7
+    lac [lbl7]
+    jda passit
+
+// ---- caller 3, after the rebind --------------------------------------------
+
+    jsp waitcon             // T15-8
+    lac [lbl8]
+    jda passit
+
+    jsp rdchar              // T15-9
+    sub [ch_c]
+    sza
+    jmp fail9
+    lac [lbl9]
+    jda passit
+
+    jsp rdchar              // T15-10
+    sub [ch_P]
+    sza
+    jmp fail10
+    lac [lbl10]
+    jda passit
+
+// ---- T15-11: SCBCLEAR and verify closed -------------------------------------
+
+    lio [0]                 // SCBCLEAR takes the channel from IO
+    scb
+
+waitclosed,
+    lio [0]
+    rcs
+    lai
+    and [dsfopn]
+    sza
+    jmp waitclosed
+    lac [lbl11]
+    jda passit
+
+// ---- cleanup and halt ------------------------------------------------------
+
+finish,
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- failures: report the test, then end the run, nothing after it can work ---
+
+fail2,
+    lac [lbl2]
+    jmp failit
+fail3,
+    lac [lbl3]
+    jmp failit
+fail5,
+    lac [lbl5]
+    jmp failit
+fail6,
+    lac [lbl6]
+    jmp failit
+fail7,
+    lac [lbl7]
+    jmp failit
+fail9,
+    lac [lbl9]
+    jmp failit
+fail10,
+    lac [lbl10]
+    jmp failit
+
+failit,
+    lio [REPORT_FAIL]
+    jda reportResult
+    jmp finish
+
+// ---- passit: report a PASS for the label whose address is in AC -----------
+//
+// Called by lac [label], jda passit: jda stores AC, the label address, in
+// passit's first word and leaves the return address in AC, as for
+// reportResult itself.
+
+passit,
+    0                       // the label address, stored by jda
+    dap passx
+    lio [REPORT_PASS]
+    lac passit
+    jda reportResult
+passx,
+    jmp .
+
+// ---- waitcon: wait for a caller, then make channel 0 current --------------
+//
+// Called by jsp waitcon.  A socket error ends the run.
+
+waitcon,
+    dap wcx
+wcpoll,
+    lio [0]
+    rcs
+    lai
+    and [dsfser]
+    sza
+    jmp halterr
+    lio [0]
+    rcs
+    lai
+    and [dsfcon]
+    sza i
+    jmp wcpoll
+    lio [0]
+    roc
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+wcx,
+    jmp .
+
+// ---- rdchar: wait for and read one character from channel 0 ---------------
+//
+// Called by jsp rdchar.  Returns the character in AC, or lostval if the
+// connection is lost, errors, or the read reports an error.
+
+rdchar,
+    dap rdx                 // jsp left the return address in AC
+rdpoll,
+    lio [0]
+    rcs
+    lai
+    and [dsfcls dsfser]
+    sza
+    jmp rdlost
+    lio [0]
+    rcs
+    lai
+    and [dsfrdy]
+    sza i
+    jmp rdpoll
+
+    rch rchclr
+    lai
+    and [dserr]
+    sza
+    jmp rdlost
+    lai
+rdx,
+    jmp .
+rdlost,
+    lac [lostval]
+    jmp rdx
+
+// ---- labels and strings ----------------------------------------------------
+
+rdymsg,
+    text "T15 listening on 2115\n"
+    013
+
+lbl1,
+    text "T15-1 caller 1 conn"
+    013
+lbl2,
+    text "T15-2 caller 1 a"
+    013
+lbl3,
+    text "T15-3 caller 1 close"
+    013
+lbl4,
+    text "T15-4 caller 2 conn"
+    013
+lbl5,
+    text "T15-5 caller 2 b"
+    013
+lbl6,
+    text "T15-6 caller 2 cr"
+    013
+lbl7,
+    text "T15-7 scbrebind"
+    013
+lbl8,
+    text "T15-8 caller 3 conn"
+    013
+lbl9,
+    text "T15-9 caller 3 c"
+    013
+lbl10,
+    text "T15-10 verdict"
+    013
+lbl11,
+    text "T15-11 chan closed"
+    013
+
+// ---- channel control block (server mode, telnet, channel 0, port 2115) ---
+//
+// word 0: dcftel + dcfecho + dcfsrv, channel 0
+// word 1: port = 2115
+
+ctl15,
+    dcftel+dcfecho+dcfsrv
+decimal
+    2115
+octal
+
+#include <TYO/typetext.ac>
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

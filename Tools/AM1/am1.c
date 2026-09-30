@@ -1,12 +1,11 @@
 /* am1.c - another macro1 assembler
  *
- * Usage: am1 [-abdlmMnNrsSTvz[ykp]] [-O[=modifier]] [-i path] [-Dsymbol[=value]]... [-W[=warning]] ...
- *  [-I path]... sourcefile
+ * Usage: am1 [-abdlmMnNrsSTvz[xykp]] [-O[1|2]] [-O=modifier]... [-i path] [-Dsymbol[=value]]... [-W[=warning]] ... [-I path]... sourcefile
  *
  * Valid switches are:
  *
  * -a	treat space in expressions as add, not or
- * -b	generate binary source
+ * -b	generate binary code
  * -d	same as giving both -s and -l, generates all the files needed for ad1
  * -l	generate a listing
  * -m	generate macro1 source
@@ -22,10 +21,77 @@
  *      as -O, and also print the optimizer's reference edges and word flags on stdout
  * -O=flow
  *      as -O, and also print the optimizer's basic blocks and reachability on stdout
+ * -O=calls
+ *      as -O, and also print the optimizer's routines and the call graph on stdout
+ * -O=share
+ *      as -O, and also print the optimizer's return-word sharing assignment on stdout
+ * -O=regions
+ *      as -O, and also print the optimizer's %%optimize/%%endoptimize regions on stdout
  * -O=rules
  *      as -O, and also print the optimizer's findings on stdout, one per line
+ * -O=xform
+ *      as -O, and also print on stdout what -O1 or -O2 does with each live finding;
+ *      without either it is a dry run of the one-word-for-one-word rewrites alone,
+ *      and rewrites nothing
+ * -O=source
+ *      as -O, and also write the program, as -O1 or -O2 left it, as am1 source to
+ *      sourcefile.opt.am1 in the source's directory.  A line the optimizer did not
+ *      change is copied from the source, so the file is assembled with the same -D
+ *      and -I as the source was
+ * -O=values
+ *      as -O, and also print on stdout what each basic block already knows about AC
+ *      and IO: a measurement, with no finding and nothing added to the report
+ * -O=scratch
+ *      as -O, and also print on stdout whether the storage locals could share words:
+ *      a measurement, with no finding and nothing added to the report
+ * -O=guess
+ *      as -O, and also print on stdout the heuristics -O2 would use in place of P5
+ *      and the findings each would refuse: a measurement, which refuses nothing
+ * -O=speed
+ *      as -O, and also print on stdout the speed-mode candidates (inlining, unrolling,
+ *      T3 chains, fall-through placement), their sites and what each would save and
+ *      spend: a measurement, which rewrites nothing and adds nothing to the report
+ * -O=relayout
+ *      as -O, and lay the program out again after the -O=edits edits, or with none,
+ *      and print on stdout what happened: the segments, each edit, the address map,
+ *      the pool slots the rebuilt pools gained
+ * -O=window
+ *      as -O, and also print on stdout the extend-window analysis: every eem and lem
+ *      as redundant, dead, freed, needed or refused, and every hazard, an indirect
+ *      reference made with the window possibly open through a pointer not proved
+ *      to hold a 16-bit address.  Advisory; proved hazards are warned on stderr
+ *      at every -O run
  * -O=check
  *      as -O, and run the optimizer's decoder self-check first, on stdout
+ * -O1  as -O, and also rewrite, only where the source declares it may.  Inside an
+ *      %%optimize/%%endoptimize region: the one-word-for-one-word transforms (T3,
+ *      T8a-d), space mode's deletions, the eem/lem deletions, fall-through placement
+ *      and loop unrolling, with the pool words they free reclaimed.  Inside a
+ *      %%speed/%%endspeed region, or for a routine named by %%inline: inline
+ *      expansion.  A source with none of these assembles exactly what -O does
+ * -O2  as -O1, and also make the one-word-for-one-word transforms with no region
+ *      needed: in place of P5 it guesses, by heuristics H1 to H5, where code is
+ *      shared with a device, a handler or a timing requirement, and leaves those
+ *      findings alone.  It warns on stderr that the guess can be wrong.  A rewrite
+ *      that changes the program's length still needs a declaration, or
+ *      -O=undeclared, which licenses the deletions, the pool reclaim, the
+ *      extend-window deletions and fall-through placement on the guess.
+ *      Words inside a %%nooptimize/%%endnooptimize span are never rewritten at any level.
+ *      There is no other level: -O2s, -O2t and -O3 and above are refused, since
+ *      -O1 and -O2 make the space and speed rewrites themselves, inside declarations
+ * -O=upto=N
+ * -O=range=B:LO-HI
+ * -O=off=FILE
+ *      with -O1 or -O2 only, for bisection: keep only the first N rewrites in -O=xform's
+ *      order; only those in bank B (decimal), addresses LO to HI (octal), repeatable;
+ *      every rewrite but those FILE lists, one "bank addr" per line, repeatable.  A
+ *      rewrite stays on only if every one given keeps it
+ * -O=edits=FILE
+ *      a testing instrument: make the edits FILE lists, one per line,
+ *      "delete BANK ADDR", "move BANK FROM TO after ADDR" or "copy BANK FROM TO over
+ *      ADDR", the bank decimal and the
+ *      addresses octal as assembled, and lay the program out again.  An edit relayout
+ *      cannot show safe is refused, and -O=relayout names the reason.  Repeatable
  * -r	don't write a loader at the beginning of a tape
  * -s	generate a symbol table file
  * -S	print a summary of per-bank highest address used
@@ -34,9 +100,9 @@
  * -z   don't convert 1's complement -0 to +0 in math operations
  *
  * -W	print all warnings
- * -W=warning
- *      but do print the given warning, see the documentation
- *      can be repeated as needed
+ * -W=[-]warning
+ *      enable just the given warning, or with a leading -, disable it (useful with -W),
+ *      see the documentation; can be repeated as needed
  * -i path
  *	set the root for all includes not specified by -I
  *	also accepts -ipath syntax
@@ -46,7 +112,7 @@
  *	add a directory to the cpp #include search list
  *	also accepts -Ipath syntax
  *
- * The following are for debugging, not of genaral use.
+ * The following are for debugging, not of general use.
  *
  * -x   enable (f)lex debugging output on stderr
  * -y   enable yacc (bison) debugging output on stderr
@@ -94,7 +160,7 @@
  * 15-Feb-2026 wje - addlocal directive added, allow nested local to have same name as outer local
  * 16-Feb-2026 wje - just some warnings about locals hiding other locals or globals
  * 18-Feb-2026 wje - fix command line parsing, add -W=xxx error control, add line number and version to symbol file
- * 26-Feb-2026 wje - use extended adresses, bank and pc, in listings
+ * 26-Feb-2026 wje - use extended addresses, bank and pc, in listings
  * 05-Mar-2026 wje - change import to use V2 symtabs, set correct max bank, 16 not 32
  * 08-Mar-2026 wje - fix obscure issue with a symbol being used with and without a bank ref in constants
  * 09-Mar-2026 wje - change constant hash to be sure the last fix returns a 64 bit hash, not a 32 bit hash
@@ -121,22 +187,36 @@
  * 19-Aug-2026 wje - fix use of wrong pc when emitting an automatically-emitted constant in multibank use
  * 28-Aug-2026 fab - make output deterministic using a serial number instead of a memory address for hashing
  * 30-Aug-2026 wje - add -S, memory usage summary
- * 31-Aug-2026 wje - replace accidentially deleted lex pattern for DOTEXT
+ * 31-Aug-2026 wje - replace accidentally deleted lex pattern for DOTEXT
  * 3-Sep-2026 wje - just some formatting cleanup, no code change, no version change
  * 3-Sep-2026 wje - add out-of-bounds warning for law -n or law (i) > 07777
  * 5-Sep-2026 wje - more law cases handled, all should be covered now
  * 5-Sep-2026 wje - various fixes for dangling constants and vars not being emitted correctly
- * 6-Sep-2026 wje - minor fix in listcodegen to fix some costants being listed incorrectly
+ * 6-Sep-2026 wje - minor fix in listcodegen to fix some constants being listed incorrectly
  * 6-Sep-2026 wje - trivial change, show mem usage in sorted low bank to high bank order
  * 8-Sep-2026 wje - change symtab version number, fix testcodegen to handle text, ascii, type340
- * 8-Sep-2026 claude - add -O, the optimizer advisor, see Docs-OPTIMIZER.md.
+ * 8-Sep-2026 claude - add -O, the optimizer advisor, see Docs/UsingTheAm1Optimizer.md.
  * 9-Sep-2026 wje - fixes (finally) for line numbers sometimes being off by one in error messages, fix some of the
  *    directives, e.g. table, not allowing use of location 07777
+ * 9-Sep-2026 claude - -O=calls and -O=share, the call-graph and return-word dumps.
+ * 14-Sep-2026 claude - -O1 and its -O=xform dump, -O=values, and typo fixes.
  * 14-Sep-2026 wje - clean up usage and explicitly initialize doMacro and doBinary
+ * 15-Sep-2026 claude - -O=scratch, and fixes to hashExpr and resolveWildcard.
+ * 16-Sep-2026 claude - -O=guess, and -O2, the heuristic level; -O2s and -O2t refused.
+ * 17-Sep-2026 claude - -O=speed, the bisection modifiers, -O=relayout and -O=edits.
+ * 18-Sep-2026 claude - -O=place=undeclared, needing -O2, and the -O=inline usage lines.
  * 19-Sep-2026 wje - rework lexer, % is now mod like it should be, %% is a directive, the old use of % in locals is gone
+ * 19-Sep-2026 claude - -O=unroll=cap usage, -Wall -Wextra warnings cleared, and the %%ceiling directive.
+ * 20-Sep-2026 claude - usage text for -O=reclaim=off.
  * 21-Sep-2026 wje - and finally fix xxx/ stmt for an origin statement
  * 21-Sep-2026 wje - some edge-case fixes in eval.c and in type340chars
- *
+ * 21-Sep-2026 claude - -O=window usage
+ * 21-Sep-2026 claude - usage text for -O1, -O2, -O=xform and -O=edits says what they do now
+ * 21-Sep-2026 claude - -O=source, the program written back out as am1 source
+ * 22-Sep-2026 claude - -O=source copies unchanged lines; usage for -O=source=render and -O=source=tree
+ * 25-Sep-2026 claude - %% followed by a name that is no directive is diagnosed by name again
+ * 25-Sep-2026 claude - v3.0, AM1VERSION and AM1SHORTVERSION move from v1.50 to v3.0
+ * 29-Sep-2026 claude - -O=undeclared, needing -O2, with -O=place=undeclared its alias
 */
 #include <unistd.h>
 #include <stdlib.h>
@@ -171,7 +251,7 @@ Warning warnings[] = {
     {"memory", WARN_MEMORY, false, true, false},
     {"law", WARN_LAW, true, true, false},
     {"type340", WARN_T340, true, true, false},
-    {0, 0, false}  // end marker
+    {"", 0, false, false, false}  // end marker
 };
 
 Inc_itemP incsP;                // the list of cpp stuff
@@ -180,7 +260,7 @@ FILE *outfP;                    // where we put our code
 char *origFilenameP;            // command line input am1 file
 char *filenameP;                // current input am1 file
 char pfilename[128];            // cpp tmp file name
-char ofilename[128];            // output file
+char ofilename[1024];           // output file; -O=source's carries the source's directory
 char basename[64];              // base name
 char incroot[256];              // root of includes
 char str1[256];                 // scratch strings
@@ -215,7 +295,6 @@ SymListP constsListP;           // the list of all constant groups
 extern BankContextP banksP;
 extern BankContextP curBankP;
 extern void initParser(void);
-extern char *am1_version;
 extern FILE *yyin;              // lex input file
 extern int yyparse();
 
@@ -244,8 +323,7 @@ main(int argc, char **argv)
 {
 int i;
 bool testMode;
-char *cP, *cP2;
-SymNodeP symP;
+char *cP;
 BankContextP bankP, lastBankP;
 
     yydebug = 0;
@@ -330,9 +408,32 @@ BankContextP bankP, lastBankP;
                 dropIncludeText = true;
                 break;
 
-            case 'O':                                       /* -O or -O=modifier */
+            case 'O':                                       /* -O, -O1, -O2 or -O=modifier */
                 doOptimize = true;
-                if( *cP == '=' )
+                if( *cP == '1' )
+                {
+                    optimizeSetLevel(1);                    // -O1 implies -O: a run that rewrites
+                    ++cP;                                   // the program writes the report saying so
+                }
+                else if( *cP == '2' )
+                {
+                    // -O2s and -O2t, space and speed spellings, are not built;
+                    // without this -O2s would parse as -O2 and -s, silently.
+                    if( (cP[1] == 's') || (cP[1] == 't') )
+                    {
+                        fprintf(stderr, "am1: -O2%c, a %s mode, does not exist; -O2 is the level that exists\n",
+                            cP[1], (cP[1] == 's')?"space":"speed");
+                        usage();
+                    }
+
+                    optimizeSetLevel(2);
+                    ++cP;
+                }
+                else if( isdigit((unsigned char)*cP) )
+                {
+                    usage();                                // there is no other level
+                }
+                else if( *cP == '=' )
                 {
                     if( !optimizeSetOption(++cP) )
                     {
@@ -388,6 +489,7 @@ BankContextP bankP, lastBankP;
                 }
 
                 add_cpp('I', cP);
+                srcNoteInclude(cP);                         // for -O=source's header
                 cP = "";
                 break;
 
@@ -400,6 +502,7 @@ BankContextP bankP, lastBankP;
                 }
 
                 add_cpp( 'D', cP );
+                srcNoteDefine(cP);                          // for -O=source's header
                 cP = "";
                 break;
 
@@ -428,6 +531,24 @@ BankContextP bankP, lastBankP;
 
     if(argc != 1)
     {
+        usage();
+    }
+
+    // The bisection modifiers switch rewrites off, so without a level they are
+    // refused rather than ignored: a developer who left the level out would
+    // otherwise believe the build was bisected.
+    if( optBisectGiven() && (optTransformLevel() == 0) )
+    {
+        fprintf(stderr, "am1: -O=upto, -O=range and -O=off switch rewrites off, and need -O1 or -O2\n");
+        usage();
+    }
+
+    // -O=undeclared lets -O2's guess license a length change no region declares;
+    // under -O1 nothing is licensed by a guess.
+    if( optUndeclaredGiven() && (optTransformLevel() < 2) )
+    {
+        fprintf(stderr, "am1: %s lets -O2's guess license the length-changing rewrites, and needs -O2\n",
+            optUndeclaredSpelling());
         usage();
     }
 
@@ -509,8 +630,10 @@ BankContextP bankP, lastBankP;
         vwarn(WARN_BANKS, "'bank' was used, macro1 does not support it.\n");
     }
 
-    // The optimizer runs on the finished tree before any back end and
-    // changes nothing; its report is the only output it produces.
+    // The optimizer runs on the finished tree before any back end.  With -O
+    // alone it changes nothing but writes its report; with -O1 or -O2 it also
+    // rewrites the tree, so every back end below writes the rewritten program.
+    // See opttransform.c.
     if( doOptimize )
     {
         strcpy(ofilename, basename);                         /* output file */
@@ -529,6 +652,48 @@ BankContextP bankP, lastBankP;
         if(!i)                    // optimizer failed
         {
             unlink(ofilename);      // get rid of output
+        }
+
+        // -O=source: the program as it now stands, beside the source rather
+        // than in the working directory, where every other output goes.
+        if( i && optSourceWanted() )
+        {
+            outfP = NILP;           // closed above; leave() closes whatever it holds
+
+            if( (cP = strrchr(origFilenameP, '/')) )
+            {
+                i = snprintf(ofilename, sizeof(ofilename), "%.*s/%s.opt.am1",
+                    (int)(cP - origFilenameP), origFilenameP, basename);
+            }
+            else
+            {
+                i = snprintf(ofilename, sizeof(ofilename), "%s.opt.am1", basename);
+            }
+
+            if( (i < 0) || (i >= (int)sizeof(ofilename)) )
+            {
+                ofilename[0] = '\0';
+                fprintf(stderr, "am1: -O=source: the source's path is too long\n");
+                leave(0);
+            }
+
+            if(!(outfP = fopen(ofilename, "w")))
+            {
+                fprintf(stderr, "am1: can't open output file '%s'\n", ofilename);
+                leave(0);
+            }
+
+            i = srcCodegen(outfP, rootP, origFilenameP);
+
+            fclose(outfP);
+            outfP = NILP;
+
+            // A node it could not write makes the file wrong, not just short.
+            if(!i)
+            {
+                fprintf(stderr, "am1: -O=source could not write %s\n", ofilename);
+                leave(0);
+            }
         }
     }
 
@@ -735,6 +900,12 @@ typeToName(int type)
     case BANK:
         return("bank");
         break;
+    case OPTIMIZE:
+        return("optimize");
+        break;
+    case ENDOPTIMIZE:
+        return("endoptimize");
+        break;
     case VALUESPEC:
         return("valuespec");
         break;
@@ -853,6 +1024,15 @@ SymNodeP symP;
         sprintf(rsltP, "%s %0o", nameP, nodeP->value.ival);
         break;
 
+    case OPTIMIZE:
+    case ENDOPTIMIZE:
+        // A hands-off span's nodes are region nodes with a flag.
+        if( nodeP->flags & PN_HANDSOFF )
+        {
+            return( (type == OPTIMIZE)?"nooptimize":"endnooptimize" );
+        }
+        return(nameP);
+
     case VALUESPEC:
         sprintf(rsltP, "%s (%0o)", nodeP->value.symP->name, nodeP->value.symP->value);
         break;
@@ -896,7 +1076,6 @@ SymNodeP symP;
         break;
 
     case NAME:
-    case LCLNAME:
     case COMMENT:
     case HEADER:
         sprintf(rsltP, "%s %s", nameP, nodeP->value.strP);
@@ -972,7 +1151,6 @@ char str[128];
 void
 dumpExpr(PNodeP nodeP)
 {
-PNodeP nodeP2;
 char str[32];
 
     if(!nodeP)
@@ -1012,7 +1190,6 @@ dumpBody(PNodeP nodeP)
 int i;
 char ch;
 char *nameP;
-PNodeP nodeP2;
 char str[128];
 
     while(nodeP)
@@ -1030,6 +1207,13 @@ char str[128];
         case BANK:
             printf("%s (%0o) pc %0o", nameP, nodeP->value.ival, findBank(nodeP->value.ival)->cur_pc);
             printf("\n");
+            break;
+
+        case OPTIMIZE:
+        case ENDOPTIMIZE:
+            // An optimizer directive emits nothing: print its file and the pc the
+            // next word will go to.
+            printf("%s (%s) pc %0o\n", nameP, nodeP->value.strP, nodeP->pc);
             break;
 
         case EXPR:
@@ -1179,10 +1363,20 @@ leave(int signo)
 int
 usage()
 {
-    fprintf(stderr, "Usage: am1 [-abdmMlnNrsSTvz[xykp]] [-O[=dump|decode|refs|flow|rules|check]]\n");
+    // The -O= modifiers for testing the optimizer are described only in a build
+    // with AM1_TEST_SWITCHES defined (make am1test); optimizeSetOption() refuses
+    // them otherwise.
+#ifdef AM1_TEST_SWITCHES
+    fprintf(stderr, "Usage: am1 [-abdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=dump|decode|refs|flow|calls|share|regions|rules|xform|source|values|scratch|guess|speed|relayout|window|check]...\n");
+    fprintf(stderr, "  [-O=upto=N] [-O=range=B:LO-HI]... [-O=off=FILE]... [-O=edits=FILE]...\n");
+#else
+    fprintf(stderr, "Usage: am1 [-abdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=xform|source]\n");
+    fprintf(stderr, "  [-O=upto=N] [-O=range=B:LO-HI]... [-O=off=FILE]...\n");
+#endif
+    fprintf(stderr, "  [-O=inline=cap:N] [-O=inline=reserve:N] [-O=undeclared] [-O=unroll=cap:N]\n");
     fprintf(stderr, "  [-Dsymbol]... [-Ipath]... [-irootpath] [-W[=warning]]... sourcefile\n\n");
     fprintf(stderr, "  -a treat space in expressions as add, not or\n");
-    fprintf(stderr, "  -b generate binary code, the default if neither -b or -m is given\n");
+    fprintf(stderr, "  -b generate binary code, the default if neither -b nor -m is given\n");
     fprintf(stderr, "  -d generate both a listing and symbol file, combines -s and -l\n");
     fprintf(stderr, "  -l generate listing\n");
     fprintf(stderr, "  -m generate macro1 code\n");
@@ -1190,12 +1384,56 @@ usage()
     fprintf(stderr, "  -n don't run cpp\n");
     fprintf(stderr, "  -N drop any include file text from listing\n");
     fprintf(stderr, "  -O run the optimizer advisor, report goes to sourcefile.opt\n");
+    fprintf(stderr, "  -O=xform as -O, and print what -O1 or -O2 does with each finding on stdout; without\n");
+    fprintf(stderr, "      either, a dry run of the one-word-for-one-word rewrites alone\n");
+    fprintf(stderr, "  -O=source as -O, and write the program, as -O1 or -O2 left it, as am1 source to\n");
+    fprintf(stderr, "      sourcefile.opt.am1 beside the source; unchanged lines are copied from the source,\n");
+    fprintf(stderr, "      so assemble it with the source's -D and -I\n");
+    fprintf(stderr, "  -O1 as -O, and rewrite only where the source declares it may: inside %%%%optimize\n");
+    fprintf(stderr, "      regions, faster words, deleted words, moved code and unrolled loops; inside\n");
+    fprintf(stderr, "      %%%%speed regions or for a routine named by %%%%inline, a call replaced by a copy\n");
+    fprintf(stderr, "      of the routine; with none of these it assembles what -O does\n");
+    fprintf(stderr, "  -O2 as -O1, and also make the one-word-for-one-word rewrites with no region needed:\n");
+    fprintf(stderr, "      it guesses where code must not be touched, and warns that the guess can be wrong;\n");
+    fprintf(stderr, "      a rewrite that changes the program's length still needs a declaration, or -O=undeclared;\n");
+    fprintf(stderr, "      %%%%nooptimize/%%%%endnooptimize fences code off at every level;\n");
+    fprintf(stderr, "      see UsingTheAm1OptimizerQuickReference.md for which level to use\n");
+    fprintf(stderr, "  -O=upto=N with -O1 or -O2, keep only the first N rewrites, in -O=xform's order\n");
+    fprintf(stderr, "  -O=range=B:LO-HI with -O1 or -O2, keep only rewrites in bank B (decimal), LO to HI (octal)\n");
+    fprintf(stderr, "  -O=off=FILE with -O1 or -O2, keep every rewrite but those FILE lists as \"bank addr\"\n");
+    fprintf(stderr, "      a rewrite stays on only if every one of these keeps it; see am1bisect.sh\n");
+    fprintf(stderr, "  -O=inline=cap:N with -O1 or -O2, copy a declared call's body only up to N words (8)\n");
+    fprintf(stderr, "  -O=inline=reserve:N with -O1 or -O2, leave N words free in each bank's inline budget (64)\n");
+    fprintf(stderr, "  -O=undeclared with -O2, delete words, reclaim pool words and move code for fall-through\n");
+    fprintf(stderr, "      placement outside the optimize and speed regions too, on the guess; -O=place=undeclared\n");
+    fprintf(stderr, "      is an alias; see UsingTheAm1Optimizer.md\n");
+    fprintf(stderr, "  -O=unroll=cap:N with -O1 or -O2, unroll a declared loop only if it becomes N words or fewer (64)\n");
+#ifdef AM1_TEST_SWITCHES
+    fprintf(stderr, "  Testing build only (AM1_TEST_SWITCHES), for testing the optimizer:\n");
     fprintf(stderr, "  -O=dump as -O, and print the optimizer's word table on stdout in -T format\n");
     fprintf(stderr, "  -O=decode as -O, and print the optimizer's decoded word table on stdout\n");
     fprintf(stderr, "  -O=refs as -O, and print the optimizer's reference edges and word flags on stdout\n");
     fprintf(stderr, "  -O=flow as -O, and print the optimizer's basic blocks and reachability on stdout\n");
+    fprintf(stderr, "  -O=calls as -O, and print the optimizer's routines and the call graph on stdout\n");
+    fprintf(stderr, "  -O=share as -O, and print the optimizer's return-word sharing assignment on stdout\n");
+    fprintf(stderr, "  -O=regions as -O, and print the optimizer's %%%%optimize/%%%%endoptimize regions on stdout\n");
     fprintf(stderr, "  -O=rules as -O, and print the optimizer's findings on stdout\n");
+    fprintf(stderr, "  -O=values as -O, and print what each basic block already knows about AC and IO on stdout\n");
+    fprintf(stderr, "  -O=scratch as -O, and print whether the storage locals could share words on stdout\n");
+    fprintf(stderr, "  -O=guess as -O, and print what -O2's heuristics would refuse on stdout\n");
+    fprintf(stderr, "  -O=speed as -O, and print the speed-mode candidates, what each saves and spends, on stdout\n");
+    fprintf(stderr, "  -O=relayout as -O, and lay the program out again, after any -O=edits, and print what happened on stdout\n");
+    fprintf(stderr, "  -O=window as -O, and print the extend-window analysis, every eem, lem and hazard, on stdout\n");
     fprintf(stderr, "  -O=check as -O, and run the optimizer's decoder self-check first\n");
+    fprintf(stderr, "  -O=edits=FILE for testing relayout: make the edits FILE lists, \"delete BANK ADDR\" or\n");
+    fprintf(stderr, "      \"move BANK FROM TO after ADDR\" or \"copy BANK FROM TO over ADDR\", and lay the\n");
+    fprintf(stderr, "      program out again\n");
+    fprintf(stderr, "  -O=xform with -O1 or -O2 also analyzes the rewritten program again, which must fire nothing\n");
+    fprintf(stderr, "  -O=reclaim=off hold the pool reclaim off, so a one-word-for-one-word oracle can still judge\n");
+    fprintf(stderr, "      the same-length rewrites; it switches off no rewrite\n");
+    fprintf(stderr, "  -O=source=render as -O=source, but every line written from the tree, none copied\n");
+    fprintf(stderr, "  -O=source=tree as -O=source=render, with no line map: cpp's output, assembled with -n\n");
+#endif
     fprintf(stderr, "  -r don't write a loader at the beginning of the binary file\n");
     fprintf(stderr, "  -s generate a symbol table file\n");
     fprintf(stderr, "  -S summarize memory usage per bank\n");
@@ -1205,7 +1443,7 @@ usage()
     fprintf(stderr, "  -I add an include path to cpp\n");
     fprintf(stderr, "  -i define the include root directory\n");
     fprintf(stderr, "  -W print all warnings\n");
-    fprintf(stderr, "  -W=[-]warning (- don't) print this warnng\n");
+    fprintf(stderr, "  -W=[-]warning (- don't) print this warning\n");
     fprintf(stderr, "  These are primarily for testing, not generally useful:\n");
     fprintf(stderr, "  -x enable flex debug output on stderr\n");
     fprintf(stderr, "  -y enable yacc debug output on stderr\n");
@@ -1337,7 +1575,7 @@ int i;
 }
 
 // See if a particular warning should be issued.
-// If noWarn is false, a warning will always be issued subject to repears and issued.
+// If noWarn is false, a warning will always be issued subject to repeats and issued.
 // If so, return true, else false.
 bool
 doWarn(int id)

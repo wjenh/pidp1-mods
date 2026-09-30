@@ -32,7 +32,7 @@ They are packed:
 (x << 10) | y
 ```
 
-When a *dpy* instruction completes 35 microseconds after it is issued, any queued commands are read and only
+When a *dpy* instruction completes 45 microseconds after it is issued, any queued commands are read and only
 the last one processed. This aligns the lightpen coordinates with the instruction.
 
 If the coordinates of the point displayed match the last lightpen coordinates within the aperture setting and

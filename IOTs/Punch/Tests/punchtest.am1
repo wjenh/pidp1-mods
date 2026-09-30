@@ -44,7 +44,7 @@ begin,
     // an explicit sync before punching 'D' ---
     lio ['C']
     ppa-i C             // non-blocking: CPU continues immediately, punch
-                         // completes later in the background via iotPoll()
+                         // completes later in the background via iotDeadline()
     cla                 // unrelated work done while the punch is in flight
     cla
     ioh                 // wait here for the 'C' punch above to finish

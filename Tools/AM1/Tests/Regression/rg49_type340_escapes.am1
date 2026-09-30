@@ -1,0 +1,32 @@
+Test rg49: type340 escapes that are characters, backspace/super/subscript, and \0
+// Each string is a line; the words are at 100 upward, in order.
+//   "A\\B"    A, lower shift, \ (052), upper shift, B
+//   "A\"B"    A, " (042), B: the quote is in the upper set, so no shift
+//   "a\bb"    lower shift, a, backspace 072, b
+//   "a\sb"    lower shift, a, superscript 077, b
+//   "a\ub"    lower shift, a, subscript 073, b
+//   "A\bB"    the lower-set codes get the automatic lower shift ahead of them
+//   "A\0B"    the blob, code 0, is a character and is not dropped
+//   "A\00B"   the same with two digits
+//   "A\52B"   an octal code is stored as it is, with no automatic shift
+//   "\U\bA"   after a forced shift the automatic shifts stay off
+//   "\\"      the first character, the string starts in upper
+//   a backslash at the end of a line is a continuation
+// An unknown escape warns, so it is not here: this source has to assemble
+// without a word on stderr, as every source the optimizer's sweeps read must.
+// The runner tests it separately, with a source of its own.
+100/
+    type340 "A\\B"
+    type340 "A\"B"
+    type340 "a\bb"
+    type340 "a\sb"
+    type340 "a\ub"
+    type340 "A\bB"
+    type340 "A\0B"
+    type340 "A\00B"
+    type340 "A\52B"
+    type340 "\U\bA"
+    type340 "\\"
+    type340 "A\
+B"
+stop

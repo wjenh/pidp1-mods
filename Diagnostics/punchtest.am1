@@ -1,0 +1,126 @@
+PUNCH TEST -- exercises the ppa/ppb dynamic IOT plugin (IOTs/Punch/IOT_5.c, IOT_6.c)
+/*
+ * punchtest.am1 -- punches known data via ppa (alphanumeric, device 5) and ppb
+ * (binary, device 6) so the resulting tape can be byte-verified against this
+ * program's expected output, below.
+ *
+ * Background:
+ *   The punch (ppa/ppb) used to be serviced directly in pdp1.c's iot_pulse()/
+ *   handleio(). It was extracted into a dynamic IOT plugin on 19-Jun-2026,
+ *   mirroring the earlier rpa/rpb (Reader) extraction. Unlike the Reader, the
+ *   Punch plugin uses the cycle-count poll mechanism (enablePolling()/iotPoll(),
+ *   see IOTs/Clock/IOT_32.c for precedent) rather than an unconditional poll, so
+ *   this program also exercises that timing path -- each ppa/ppb pulse has to
+ *   survive a real ~3174-cycle (~15.87ms simulated) delay before its byte
+ *   actually lands on the tape.
+ *
+ * Flag bits on ppa/ppb/ioh -- READ THIS BEFORE CHANGING THIS PROGRAM:
+ *   The reserved mnemonics for the "73-family" IOT devices (rpa, rpb, tyo, ppa,
+ *   ppb, dpy, ioh) already have the wait bit (B5/i) baked into their base
+ *   opcode value (see Tools/AM1/permsyms.def). That means:
+ *     - bare "ppa" and "ppa i" assemble identically -- both block the CPU
+ *       until the device signals completion. Written explicitly as "i" below
+ *       for clarity, matching the project convention in Diagnostics/dcstest.am1.
+ *     - "ppa C" is a trap: OR-ing C onto a base that already has bit5 set
+ *       leaves BOTH B5 and B6 set, which matches neither the IOWANTWAIT nor
+ *       IOWANTCOMPLETE pattern in pdp1.c, so nac comes out 0 -- no completion
+ *       at all, silently.
+ *     - the correct, documented idiom for genuine non-blocking "C" mode on
+ *       these devices is "<dev>-i C" (subtract the baked-in i, then OR in C)
+ *       -- this is exactly how dpyc (=724007) is defined as shorthand for
+ *       "dpy-i C" in the assembler's own syntax reference, and how pong.am1/
+ *       lightpen.am1 use "dpy-i C ...col"/"gpl C" followed later by a bare
+ *       "ioh" to synchronize.
+ *     - bare "ioh" (device 0, no device-specific pulse) already has bit5 set
+ *       too, so it blocks until the *next* pending completion (ios) is
+ *       signalled by whichever device is mid-transfer, exactly the "wait for
+ *       completion later" half of the C idiom.
+ *
+ * Structure:
+ *   1. Punch 'A','B' via ppa, synchronous (blocking) mode.
+ *   2. Punch 'C' via ppa in non-blocking ("C") mode, do a little unrelated
+ *      work, then explicitly sync with ioh before punching 'D' (blocking) --
+ *      exercises the deferred-completion path through the plugin's pcp/ios
+ *      handling, not just the synchronous path covered by step 1.
+ *   3. Punch one 18-bit binary word via ppb, framed as 3 sequential 6-bit
+ *      bytes (MSB chunk first), each blocking.
+ *   4. Halt.
+ *
+ * Expected tape bytes (in the order they're punched), with the leading 0200
+ * frame bit pdp1.c's IOT_6.c always ORs in:
+ *
+ *   ppa, alphanumeric (full byte = IO & 0377, no 0200 framing added by the
+ *   device -- ppa just punches the raw low byte):
+ *     'A'  = 0101 octal (65 decimal)
+ *     'B'  = 0102 octal (66 decimal)
+ *     'C'  = 0103 octal (67 decimal)
+ *     'D'  = 0104 octal (68 decimal)
+ *   So the tape's first 4 bytes, read as ASCII, literally spell "ABCD".
+ *
+ *   ppb, binary, word = 123456 octal, split MSB-chunk-first into three 6-bit
+ *   pieces (12, 34, 56 octal) each OR'd with the 0200 channel-8 frame bit:
+ *     byte 5 = 0200|012 = 0212 octal
+ *     byte 6 = 0200|034 = 0234 octal
+ *     byte 7 = 0200|056 = 0256 octal
+ *   Reassembling on the read side: (012<<12)|(034<<6)|056 = 123456 octal,
+ *   confirming the framing math is its own inverse.
+ *
+ *   Total: 7 bytes on the tape, in order: 101 102 103 104 212 234 256 (octal).
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 punchtest.am1   // binary (rim-loadable) output is the default;
+                                  // -b is redundant here and -r would strip the rim
+                                  // loader, which we want for an executable program
+ * The punch output lands wherever pdp1's p_fd points -- by default punch.out
+ * in the emulator's working directory, or wherever the "p <file>" network
+ * command last redirected it.
+ */
+
+octal
+
+100/
+
+begin,
+    // --- Section 1: synchronous punches, 'A' then 'B' ---
+    lio ['A']
+    ppa i               // blocks until the byte lands on tape
+    lio ['B']
+    ppa i
+
+    // --- Section 2: non-blocking punch of 'C', some unrelated work, then
+    // an explicit sync before punching 'D' ---
+    lio ['C']
+    ppa-i C             // non-blocking: CPU continues immediately, punch
+                         // completes later in the background via iotPoll()
+    cla                 // unrelated work done while the punch is in flight
+    cla
+    ioh                 // wait here for the 'C' punch above to finish
+    lio ['D']
+    ppa i               // finish the alphanumeric section synchronously
+
+    // --- Section 3: one 18-bit binary word (123456 octal) via ppb, MSB chunk
+    // first. These are assembly-time constant expressions on the literal
+    // value, NOT a memory reference -- a location symbol's value is its
+    // *address*, not its contents, so the word is folded in directly here
+    // rather than stored in a labeled location and loaded back.
+    lio [(123456 & 0770000)]          // top 6 bits (12 octal) already in position
+    ppb i
+    lio [(123456 & 0007700) << 0d6]   // middle 6 bits (34 octal), shifted to top
+    ppb i
+    lio [(123456 & 0000077) << 0d12]  // low 6 bits (56 octal), shifted to top.
+                                       // NOTE: shift counts are themselves parsed in the
+                                       // current radix (octal here), so a bare "12" would
+                                       // mean shift-by-octal-12 = shift-by-10 decimal --
+                                       // wrong by 2 bits. 0d12 forces decimal regardless
+                                       // of the surrounding `octal` directive. Bug found
+                                       // 19-Jun-2026 via real hardware verification of the
+                                       // resulting tape; bare "<< 6" above is unaffected
+                                       // since 6 is the same value in either radix.
+    ppb i
+
+    hlt                 // tape is complete; IO/AC are free to examine
+    jmp begin           // CONTINUE re-runs the whole test
+
+constants
+
+start begin

@@ -1,0 +1,16 @@
+SYM LIB
+// Tests/Symbols.  The library half of the import leg: it exports
+// one label, and the padding puts that label on a line no importer has, so
+// an importer that invented a line of its own could not match by accident.
+// pad
+// pad
+// pad
+// pad
+// pad
+// pad
+// pad
+// pad
+        export libsym
+libsym,         42
+        hlt
+        start libsym

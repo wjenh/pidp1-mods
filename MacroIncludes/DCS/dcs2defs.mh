@@ -31,7 +31,8 @@ rxl=5422
 / dcmxxx are multibit masks
 / Channel Request Block first word
 / dcftel - enable telnet mode: symmetric cr/lf framing on send and receive plus
-/          limited IAC handling (option negotiation refused, IAC escaping honored).
+/          limited IAC handling (a server offers ECHO and SGA, other options
+/          refused, IAC escaping honored).
 /          See Docs/UsingDCS2.md.
 / dcfflex - flexo mode, do automatic conversion
 / dcfecho - echo received characters

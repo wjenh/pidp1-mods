@@ -15,8 +15,9 @@
 #define TYPE340AUTO     101 // special case, doesn't really exist, just a marker
 #define TYPE340NOEND    102 // special case, doesn't really exist, just a marker
 
-// More markers, returned by the escape routine.
-// They sit above the 6-bit character range so they can never be mistaken for a code.
+// More markers, returned by the escape routine.  They sit above the 6-bit
+// character range so they can never be mistaken for a code; a real code 0
+// (the blob) does not double as "nothing to store".
 #define TYPE340CONT     103 // backslash-newline, a line continuation, store nothing
 #define TYPE340PLAIN    104 // the escaped character is an ordinary ASCII character
 #define TYPE340BKSP     105 // backspace, lower-set code 072

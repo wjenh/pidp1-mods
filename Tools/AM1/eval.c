@@ -1,7 +1,5 @@
 /*
  * Support for evaluating various parse tree constructs.
- *
- * 29-Apr-2026 wje - add type340 support
 */
 #include <stdio.h>
 #include <string.h>
@@ -40,7 +38,7 @@ evalExpr(PNodeP nodeP)
     return( _evalExpr(nodeP) & WRDMASK );
 }
 
-// Evaluate an expression represnted by the parse tree nodes passed.
+// Evaluate an expression represented by the parse tree nodes passed.
 // Although the math operations are done in 2's complement, the returned
 // result will always be 1's complement.
 int
@@ -50,9 +48,7 @@ int op;
 int lval;
 int rval;
 int rslt;
-char ch;
 SymNodeP symP;
-PNodeP node2P;
 
     if( !nodeP )
     {
@@ -76,7 +72,7 @@ PNodeP node2P;
 
         case SEPARATOR:
             // See if someone did something silly like law -1
-            // This is tricy, because 4096 is law i 0, so any value in 017777 is technically valid.
+            // This is tricky, because 4096 is law i 0, so any value in 017777 is technically valid.
             // However, it would be very poor coding, reject it.
             // We have to explicitly check for an 'i' first.
             if( nodeP->leftP->type == LAW )
@@ -162,6 +158,8 @@ PNodeP node2P;
 
         default:
             verror("unknown binary op %d in _evalExpr", nodeP->value.ival);
+            // never returns, just to shut up overly-picky c compilers
+            return(0);
         }
 
         // convert back to 1's complement, change -0 to 0 if needed
@@ -258,6 +256,9 @@ PNodeP node2P;
     default:
         verror("unknown op %d, pc 0%04o in _evalExpr", nodeP->type, nodeP->pc);
     }
+
+    // never reached: verror() does not return, and every other case returns
+    return(0);
 }
 
 // Check to see if an i modifier occurs in the tree.
@@ -336,7 +337,7 @@ SymNodeP symP;
         hilval = lval & ~0777777;
         lval &= 0777777;
         hirval = rval & ~0777777;
-        lval &= 0777777;
+        rval &= 0777777;
 
         switch( nodeP->value.ival )
         {
@@ -463,8 +464,7 @@ SymNodeP symP;
         // bank ref lands in the high 4 bits.
         //
         // This isn't perfect: different unresolved symbols that finally resolve to the same
-        // address won't hash together, but that only means an extra word of memory will be used
-        // (same accepted imperfection as before).
+        // address won't hash together, but that only means an extra word of memory will be used.
         hashVal = (unsigned long)symP->serialNumber;
         hashVal = ((hashVal & 0xFFFFFFFFF) << 22) | (bank << 60);
         return( (long)hashVal );
@@ -473,7 +473,8 @@ SymNodeP symP;
         // All we have is the symbol NAME -- but for a wildcard ref that's exactly right:
         // sym:* is resolved BY NAME, so equal names mean the same eventual resolution and
         // deserve the same fingerprint. Digest the name (deterministic, unlike the string's
-        // malloc address that was used before).
+        // malloc address).  A wildcard names no bank, so its bank bits are 0.
+        bank = 0;
         hashVal = hashName(nodeP->value.strP);
         hashVal = ((hashVal & 0xFFFFFFFFF) << 22) | (bank << 60);
         return( (long)hashVal );
@@ -573,7 +574,7 @@ int rslt;
 
 // Convert an ascii string to Type 340 characters.
 // Backslash escapes are processed separately.
-// Unlike flex/concise characters, these collate nicely in semi-ascii seqence, so no lookup tables needed.
+// Unlike flex/concise characters, these collate nicely in semi-ascii sequence, so no lookup tables needed.
 char
 asciiToType340(char ch)
 {
@@ -634,7 +635,7 @@ asciiToType340(char ch)
     return( ch );
 }
 
-// Check an ascii character, determine if it needs upper or lower shift when coverted to a Type 340 character.
+// Check an ascii character, determine if it needs upper or lower shift when converted to a Type 340 character.
 // Returns 1 if needs upper, -1 if needs lower, 0 if unknown.
 int
 type340Shift(char ch)

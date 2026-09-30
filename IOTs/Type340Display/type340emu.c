@@ -43,10 +43,26 @@
  *    the pen position on a hit, so the rest of the word would otherwise hit again and replace the
  *    coordinates drc reports. drc now reports the hit from the moment the flag is set, not only once
  *    the pause has taken effect at the end of the word; before, a drc in that window read the beam.
+ * 23-Sep-2026 Claude - while pidp1timing is on, the 340 thread accounts for its own host time (spin,
+ *    sleep, fetch wait, display() calls, idle, CPU) and appends one line per window to TIMING_FILE_340.
+ * 23-Sep-2026 Claude - a cache hit charges the CPU its cycle through HSCsteal(), so t340cachesize
+ *    no longer changes program timing.
+ * 24-Sep-2026 Claude - reset340() re-enables the lp and edge interrupts. A specialinterrupt(0) lasted
+ *    until pdp1 exited, so a later program that relies on the break paused at its first hit, forever.
+ * 24-Sep-2026 Claude - the thread waits for a running deadline (paceWait()) instead of for each delay
+ *    from now, so its own work, display() and oversleep no longer add to the modeled time. It ran 1.15
+ *    to 2.1 times its model depending on the host. The uncached fetch's 5us now counts toward the
+ *    deadline, as the cached one's did.
+ * 24-Sep-2026 Claude - the flags word is set, cleared and read atomically. The 340 thread sets it and
+ *    the IOTs clear it, and a plain |= or &= on either side could undo the other's change.
+ * 26-Sep-2026 Claude - the accounting is switched by displaytiming instead of pidp1timing, so the cycle
+ *    report no longer brings a file that grows a line a second.
  */
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <unistd.h>
+#include <sys/syscall.h>
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -118,6 +134,10 @@
 
 #define HSC_CHAN 3         // lowest priority, drum uses 1
 #define SPIN_LIMIT 20000   // max ns we will spin for, otherwise use nanosleep()
+#define PACE_MAX_LAG 250000 // ns the thread may fall behind its deadline and still catch up
+
+#define TIMING_FILE_340 "/tmp/pidp1-340timing.txt"
+#define TIMING_WINDOW_NS 1000000000ULL      // one report line per this much wall time
 
 // The interrupt channel in the documentation is 0.
 #define BRKCHAN 0
@@ -265,13 +285,14 @@ static Modes curMode = PARAMETER;
 static Modes curState = STOPPED;
 static BRMState brmState;
 static int pendingDelay;
+static uint64_t dueNs;      // getNow() at which the modeled time so far is used up
 static volatile int curAddress;      // the address set by the dla command, where we will fetch data from
 static int curX, curY;      // current display coordinates
 static int lpX, lpY, lpDisplay;      // last lp hit display coordinates and display number
 static int curScale;
 static int curIntensity;
 static int shiftState;     // will be 0 for upper shift or 64 for lower shift, first set or second set
-static volatile int flags;  // one of the FLAG x values; volatile for host/worker concurrent access
+static volatile int flags;  // FLAG x values; set by the 340 thread, cleared by the IOTs, changed only atomically
 
 static int saveRegister;    // used with the SAVE subroutine subcommand
 static bool saveActive;
@@ -300,6 +321,32 @@ static int maxX, maxY;
 static int totalPoints;
 #endif
 
+// Host-time accounting for the 340 thread, gathered only while displaytiming is on. The thread is the
+// only writer and the only reader, so nothing here is locked. It separates the time the thread spends
+// waiting for modeled time (the spin in nanodelay() and in HSCwait()) from time spent working and from
+// time asleep, so its CPU cost can be read as work or as spin.
+typedef struct {
+    uint64_t delayCalls;    // nanodelay() calls
+    uint64_t delayReqNs;    // ns asked of nanodelay()
+    uint64_t delayActNs;    // ns nanodelay() actually held the CPU
+    uint64_t pauseCalls;    // nanopause() calls
+    uint64_t pauseReqNs;    // ns asked of nanopause()
+    uint64_t pauseActNs;    // wall ns nanopause() took, oversleep included
+    uint64_t hscCalls;      // uncached HSCexecute() + HSCwait() fetches
+    uint64_t hscNs;         // wall ns in those fetches
+    uint64_t displayCalls;  // display() calls, one per point per screen
+    uint64_t displayNs;     // wall ns in display()
+    uint64_t idleNs;        // wall ns blocked on waitSemaphore
+    uint64_t words;         // display words fetched, cached or not
+    uint64_t modelNs;       // modeled time added to the deadline
+    uint64_t forgivenNs;    // lag dropped past PACE_MAX_LAG
+    } TimeAcc, *TimeAccP;
+
+static volatile bool timingOn;      // displaytiming, set by configure() from any thread
+static TimeAcc timeAcc;             // this window's totals
+static uint64_t timeWinWall;        // getNow() when the window opened, 0 while none is open
+static uint64_t timeWinCpu;         // thread CPU ns when the window opened
+
 #if LOG_HSCTIMING
 static uint64_t hscFetchCount;        // number of uncached fetches timed this run
 static uint64_t hscFetchTotalNs;      // sum of elapsed ns, for computing the average
@@ -325,10 +372,13 @@ static Status doIncrement(int dotSpacing, int bits);
 Status doCharacter(int dotSpacing, unsigned char ch);
 static void emuOrFlags(int newFlags);   // only used internally
 static void emuClearFlag(int flagbit);  // only used internally
+static int paceWait(int ns);
 static int nanowait(int ns);
 static int nanodelay(int ns);
 static int nanopause(int ns);
 static uint64_t getNow(void);
+static uint64_t timingStamp(void);
+static void timingCheck(void);
 static void configure(void);
 
 // Interface to the low-level display subsystem
@@ -400,12 +450,18 @@ emuGetAddress()
     return( curAddress );
 }
 
+// flags is set by the 340 thread and cleared by the IOTs on the emulator thread, so every change is
+// one atomic operation and neither side's update is lost in the other's read-modify-write.
+
 // Return the current flag settings;
 int
 emuGetFlags()
 {
-    iotCondLog(LOG_FLAGS,"Returning flags %o\n", flags);
-    return( flags );
+int current;
+
+    current = __atomic_load_n(&flags, __ATOMIC_ACQUIRE);
+    iotCondLog(LOG_FLAGS,"Returning flags %o\n", current);
+    return( current );
 }
 
 // Clear the current flags.
@@ -413,7 +469,7 @@ void
 emuClearFlags()
 {
     iotCondLog(LOG_FLAGS,"Clear flags\n");
-    flags = 0;
+    __atomic_store_n(&flags, 0, __ATOMIC_RELAXED);
 }
 
 // Clear a flag.
@@ -421,15 +477,17 @@ void
 emuClearFlag(int flagbit)
 {
     iotCondLog(LOG_FLAGS,"Clear flag %0\n", flagbit);
-    flags &= ~flagbit;
+    __atomic_fetch_and(&flags, ~flagbit, __ATOMIC_RELAXED);
 }
 
 // Ors the passed flag bits into the current flags
 void
 emuOrFlags(int newFlags)
 {
-    flags |= newFlags;
-    iotCondLog(LOG_FLAGS,"Set flags to %o\n", flags);
+int current;
+
+    current = __atomic_or_fetch(&flags, newFlags, __ATOMIC_RELEASE);
+    iotCondLog(LOG_FLAGS,"Set flags to %o\n", current);
 }
 
 // Return the current x and y coordinates.
@@ -498,16 +556,26 @@ int lastdX, lastdY;
 bool sawExit;
 bool sawEscape;
 Status status;
+uint64_t idleT0;
 
     sawEscape = sawExit = false;
 
     // If the cmmand isn't NONE, ctlP will be locked.
     while( !sawExit )
     {
+        // Close a due window before sleeping, so an idle stretch lands in the window after it.
+        timingCheck();
+
         if( isPaused || (curState != RUNNING) )
         {
             iotCondLog(LOG_WAIT, "Waiting\n");
+            idleT0 = timingStamp();
             sem_wait(&waitSemaphore);
+            if( idleT0 )
+            {
+                timeAcc.idleNs += (getNow() - idleT0);
+            }
+
             iotCondLog(LOG_WAIT, "Woke up\n");
         }
 
@@ -517,6 +585,7 @@ Status status;
         }
 
         pendingDelay = 0;
+        dueNs = getNow();   // idle time is not caught up: the deadline restarts when the 340 does
 
         switch( command )
         {
@@ -614,6 +683,7 @@ Status status;
                     curAddress = ctlP->address;
                     curState = INITIALIZE;              // override STOPPED so the inner loop continues
                     pendingDelay = START_TIME;
+                    dueNs = getNow();
                     twoCharsets = origCharsets;
                     iotCondLog(LOG_RUN, "Received start while running, new addr %o\n", curAddress);
                     continue;
@@ -767,9 +837,9 @@ Status status;
 
             case VECTOR:
             case VCONTINUE:
-                // Vcontinue goes until an edge violation
-                // Linux scheduling really interferes with long vectors, specifically vcontinue.
-                // Defer the delay until the entire vector completes.
+                // Vcontinue goes until an edge violation.
+                // Each step is one pass of the display loop, so its 1.5us is paid step by step
+                // against the running deadline (paceWait()), not once when the vector ends.
                 if( curState == INITIALIZE )
                 {
                     word = getWord(ctlP->pdp1P);
@@ -824,9 +894,9 @@ Status status;
                 {
                     if( (status = brmNext(&brmState, &curX, &curY)) != BRMRUNNING )
                     {
-                        // Do our delay at the end of each vector.
-                        // The worst-case vector, corner-to-corner in vcontinue mode takes 2 milliseconds.
-                        // The delay will happen when it completes, even though it uses repeated short vectors.
+                        // The vector has ended, or hit an edge. Nothing is owed here: each step
+                        // paid its own 1.5us as it was drawn, so a long vcontinue is not one
+                        // delay at its end.
                         if( status == COMPLETED )
                         {
                             if( curMode == VCONTINUE )
@@ -1008,8 +1078,9 @@ Status status;
                 break;
             }
 
-            // Delay for the accumulated time from the last operation
-            pendingDelay = nanowait(pendingDelay);
+            // Wait out the accumulated time from the last operation
+            pendingDelay = paceWait(pendingDelay);
+            timingCheck();
 
             // The instruction completes, then escape is processed
             if( (curState != RUNNING) && sawEscape )
@@ -1094,9 +1165,12 @@ reset340()
     curMode = PARAMETER;
     isPaused = false;
     lpHitLatched = false;
-    flags = 0;
+    __atomic_store_n(&flags, 0, __ATOMIC_RELAXED);
     slavesEnabled = false;
     lpEnabled = false;
+    // The interrupt disable is our extension, not the hardware's, so each start gets the original
+    // behavior back; otherwise a program that disabled it takes the lp and edge breaks from the next one.
+    interruptEnabled = true;
     memset(slaves, 0, sizeof(slaves));
 }
 
@@ -1649,6 +1723,7 @@ drawAndCheck(bool tryLightpen, int x, int y, int intensity)
 {
 int i;
 bool gotLpHit;
+uint64_t t0;
 
     if( (x < 0) || (x > 1023) || (y < 0) || (y > 1023) )
     {
@@ -1662,7 +1737,13 @@ bool gotLpHit;
         if( (i == 0) || slaves[i-1].displayEnabled )
         {
             iotCondLog(LOG_DRAW, "draw display %d x,y %d,%d intensity %d\n", i, x, y, intensity);
+            t0 = timingStamp();
             display(i, x, y, type340Intensity(intensity));
+            if( t0 )
+            {
+                timeAcc.displayNs += (getNow() - t0);
+                ++timeAcc.displayCalls;
+            }
 
 #if LOG_TIMING
             ++totalPoints;
@@ -1717,11 +1798,17 @@ Word addr;
 Word val;
 HSCRequest request;
 Word buffer[2];     // we only use 1, but leave space just to be sure
+uint64_t fetchT0;
 #if LOG_HSCTIMING
 uint64_t hscStartNs;     // getNow() timestamp taken just before HSCexecute()+HSCwait()
 uint64_t hscElapsedNs;   // measured wall time for the uncached fetch round trip
 int hscBucket;           // which hscBucketCounts[] histogram bucket this sample falls in
 #endif
+
+    if( timingOn )
+    {
+        ++timeAcc.words;
+    }
 
     addr = curAddress;
     if( (curAddress & 07777) == 07777 )
@@ -1754,13 +1841,10 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
             iotCondLog(LOG_CACHE,"cache load of %d words at address %d\n", cacheSize, addr);
         }
 
-        // Using the cache does make the hs cycle light not really reflect reality,
-        // but we'll try to fake it.
-        // The emulator loop will turn it off.
-        //pdp1P->hsc = 1;
-
-        // Since we aren't having the high speed channel cycle-steal, best we can do
-        // is add the 5us delay to our running delay.
+        // The hardware fetched every word through the channel, so a hit still costs the CPU its
+        // cycle and lights the lamp, the same as an uncached fetch; the 340's own 5us goes into
+        // its running delay.
+        HSCsteal(chanP, 1);
         pendingDelay += 5000;
         val = wordCache[addr - cacheBase];
     }
@@ -1777,20 +1861,30 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
         request.fromBufferP = buffer;
 
 #if LOG_HSCTIMING
-        // Bracket the fetch-plus-simulated-delay round trip. HSCwait() enforces the 5us
-        // word-fetch time via usleep(), a real kernel sleep/reschedule point -- unlike
-        // nanodelay()'s spin-wait used for every other sub-SPIN_LIMIT delay in this file --
-        // so actual elapsed time here is at the mercy of the Linux scheduler, not just the
-        // requested delay. See IOTs/Type340Display/CLAUDE.md for the full analysis.
+        // Bracket the fetch-plus-simulated-delay round trip. HSCwait() times the 5us word
+        // fetch itself: one word is under its spin limit, so it busy-spins, as nanodelay()
+        // does for this file's short delays. The elapsed time can still run past 5us when
+        // the scheduler preempts the thread or the emulator is stopped, which is what these
+        // figures show.
         hscStartNs = getNow();
 #endif
 
+        fetchT0 = timingStamp();
         if( !HSCexecute(chanP, &request) )
         {
             return(0);          // we need to return something, 0 is generally safe.
         }
 
         HSCwait(chanP);     // Here's where the simulation of the hardware hsc delay happens.
+
+        // HSCwait() spent the fetch's 5us in real time; counting it keeps the deadline from giving it
+        // away again as time for the next operation.
+        pendingDelay += 5000;
+        if( fetchT0 )
+        {
+            timeAcc.hscNs += (getNow() - fetchT0);
+            ++timeAcc.hscCalls;
+        }
 
 #if LOG_HSCTIMING
         hscElapsedNs = (getNow() - hscStartNs);
@@ -1905,6 +1999,10 @@ ConfigurationSettingP settingP;
         iotCondLog(LOG_CONFIG, "340 emulator dual charsets %s\n", (twoCharsets)?"enabled":"disabled");
     }
 
+    // One store, so a reload from another thread never shows the 340 thread a transient off.
+    settingP = findConfigurationSetting(getConfiguration(), "displaytiming");
+    timingOn = (settingP && settingP->onOff);
+
     if( (settingP = findConfigurationSetting(getConfiguration(), "t340cachesize")) )
     {
         lastSize = cacheSize;
@@ -1938,6 +2036,44 @@ struct timespec tm;
     now = tm.tv_nsec;
     now += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
     return(now);
+}
+
+// Add ns of modeled time to the deadline and wait until the deadline, by nanowait()'s spin or sleep.
+// Waiting for a deadline rather than for ns from now lets the thread's own work, its display() calls
+// and any oversleep come out of later waits instead of adding to the modeled time. A deadline more
+// than PACE_MAX_LAG behind is moved up to that distance, so a host stall costs a short burst of
+// unspaced points, not a long catch-up. Always returns 0.
+int
+paceWait(int ns)
+{
+uint64_t now;
+
+    now = getNow();
+    if( (now > dueNs) && ((now - dueNs) > PACE_MAX_LAG) )
+    {
+        if( timingOn )
+        {
+            timeAcc.forgivenNs += ((now - dueNs) - PACE_MAX_LAG);
+        }
+
+        dueNs = (now - PACE_MAX_LAG);
+    }
+
+    if( ns > 0 )
+    {
+        dueNs += ns;
+        if( timingOn )
+        {
+            timeAcc.modelNs += ns;
+        }
+    }
+
+    if( dueNs > now )
+    {
+        nanowait((int)(dueNs - now));
+    }
+
+    return(0);
 }
 
 // Eo a nanodelay() if <= SPIN_LIMIT, else a nanopause().
@@ -1981,6 +2117,14 @@ uint64_t now;
         now += (uint64_t)tm.tv_sec * 1000 * 1000 * 1000;
     }
 
+    // The loop already holds the last clock read, so accounting for the spin costs no extra call.
+    if( timingOn )
+    {
+        ++timeAcc.delayCalls;
+        timeAcc.delayReqNs += ns;
+        timeAcc.delayActNs += (now - startTime);
+    }
+
     return(0);
 }
 
@@ -1991,12 +2135,103 @@ int
 nanopause(int ns)
 {
 struct timespec tm;
+uint64_t t0;
 
+    t0 = timingStamp();
     tm.tv_sec = 0;
     tm.tv_nsec = ns;
     nanosleep(&tm, 0);
 
+    if( t0 )
+    {
+        ++timeAcc.pauseCalls;
+        timeAcc.pauseReqNs += ns;
+        timeAcc.pauseActNs += (getNow() - t0);
+    }
+
     return(0);
+}
+
+// The current time, or 0 when displaytiming is off, so a caller pays for a clock read only while measuring.
+// A nonzero return is the start stamp for an accumulator; 0 means skip it.
+uint64_t
+timingStamp()
+{
+    if( timingOn )
+    {
+        return( getNow() );
+    }
+
+    return(0);
+}
+
+// The calling thread's CPU time in ns, from the kernel's per-thread accounting.
+static uint64_t
+threadCpuNs(void)
+{
+struct timespec tm;
+
+    clock_gettime( CLOCK_THREAD_CPUTIME_ID, &tm );
+    return( ((uint64_t)tm.tv_sec * 1000 * 1000 * 1000) + (uint64_t)tm.tv_nsec );
+}
+
+// Open the first accounting window, or close the current one once it is TIMING_WINDOW_NS old by
+// appending its totals to TIMING_FILE_340 as one line of key=value pairs and starting the next.
+// Wall time is the window's whole span, idle included; CPU time is the thread's own.
+// Turning displaytiming off discards the open window so a later on does not report a stale span.
+void
+timingCheck()
+{
+uint64_t now;
+uint64_t cpu;
+FILE *fP;
+
+    if( !timingOn )
+    {
+        if( timeWinWall )
+        {
+            timeWinWall = 0;
+            memset(&timeAcc, 0, sizeof(timeAcc));
+        }
+
+        return;
+    }
+
+    now = getNow();
+    if( !timeWinWall )
+    {
+        timeWinWall = now;
+        timeWinCpu = threadCpuNs();
+        memset(&timeAcc, 0, sizeof(timeAcc));
+        return;
+    }
+
+    if( (now - timeWinWall) < TIMING_WINDOW_NS )
+    {
+        return;
+    }
+
+    cpu = threadCpuNs();
+    if( (fP = fopen(TIMING_FILE_340, "a")) )
+    {
+        fprintf(fP, "t340 tid=%ld wall=%llu cpu=%llu idle=%llu words=%llu "
+            "delay_n=%llu delay_req=%llu delay_act=%llu pause_n=%llu pause_req=%llu pause_act=%llu "
+            "hsc_n=%llu hsc_ns=%llu disp_n=%llu disp_ns=%llu model=%llu forgiven=%llu\n",
+            (long)syscall(SYS_gettid),
+            (unsigned long long)(now - timeWinWall), (unsigned long long)(cpu - timeWinCpu),
+            (unsigned long long)timeAcc.idleNs, (unsigned long long)timeAcc.words,
+            (unsigned long long)timeAcc.delayCalls, (unsigned long long)timeAcc.delayReqNs,
+            (unsigned long long)timeAcc.delayActNs, (unsigned long long)timeAcc.pauseCalls,
+            (unsigned long long)timeAcc.pauseReqNs, (unsigned long long)timeAcc.pauseActNs,
+            (unsigned long long)timeAcc.hscCalls, (unsigned long long)timeAcc.hscNs,
+            (unsigned long long)timeAcc.displayCalls, (unsigned long long)timeAcc.displayNs,
+            (unsigned long long)timeAcc.modelNs, (unsigned long long)timeAcc.forgivenNs);
+        fclose(fP);
+    }
+
+    memset(&timeAcc, 0, sizeof(timeAcc));
+    timeWinWall = getNow();
+    timeWinCpu = threadCpuNs();
 }
 
 /*
@@ -2004,14 +2239,14 @@ struct timespec tm;
  * Called from the 340 emulator thread, either in the running poll loop or
  * after waking from the idle semaphore.
  *
- * commandSent is volatile bool)
- * The per-iteration test is a bare volatile load with zero barrier cost on every iteration of the draw loop.
- * The acquire fence executes only when the flag is true, pairing with the release fence in emuCommandSet().
+ * commandSent is an _Atomic bool, so the per-iteration test is a sequentially consistent load
+ * (a plain load on x86, a load-acquire on ARM64).
+ * The acquire fence executes only when the flag is true, pairing with the release store in emuCommandSet().
  * This guarantees that ctlP->command is fully visible beforewe read it, essential on ARM (Pi 4)
  * where the weakly-ordered memory model would otherwise allow the load of command to be satisfied
  * from a stale cache line even after commandSent reads true.
  *
- * The flag clears are plain stores; the acquire fence already executed above,
+ * The flag clears are atomic stores; the acquire fence already executed above,
  * so no additional barrier is required for the clears.
  *
  * Returns: command code, or EMU_CMD_NONE if nothing is pending.
@@ -2040,11 +2275,10 @@ int command;
  * get340Response -- poll for a pending response from the emulator side.
  * Called from the IOT thread.
  *
- * responseSent is volatile bool (not _Atomic).  Same fence+volatile scheme as
- * get340Command: the per-iteration test is a bare volatile load; the acquire
- * fence executes only on the taken branch, pairing with the release fence in
- * emuResponseSet() (see type340emu.h), guaranteeing ctlP->response is visible
- * before we read it.
+ * responseSent is an _Atomic bool.  Same scheme as get340Command: the per-iteration
+ * test is an atomic load; the acquire fence executes only on the taken branch,
+ * pairing with the release store in emuResponseSet() (see type340emu.h),
+ * guaranteeing ctlP->response is visible before we read it.
  *
  * Returns: response code, or EMU_RESPONSE_NONE if nothing is pending.
  */

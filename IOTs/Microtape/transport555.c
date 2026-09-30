@@ -3,6 +3,8 @@
  *
  * 11-Sep-2026 wje/Claude - initial version
  * 21-Sep-2026 Claude - detect any tape file change when mounting, flush cache if seen
+ * 27-Sep-2026 Claude - image writes can be handed to the plugin's writer thread (mt555DeferP),
+ *    so a slow card or disk does not hold the emulator thread
  */
 
 #include <stdio.h>
@@ -21,6 +23,8 @@ static void startDecel(Mt555UnitP uP, uint64_t t, int64_t ramp);
 static void startAccel(Mt555UnitP uP, uint64_t t, int dir, int64_t ramp);
 static void blankFrom(uint32_t *wordsP, int firstBlock);
 static void noteStamp(Mt555UnitP uP, const struct stat *stP);
+
+const Mt555Deferred *mt555DeferP;
 
 // Puts a unit into its power-on state: no tape mounted, stopped at the load position,
 // no file. Must be called once before any other function on the unit. No return value.
@@ -269,6 +273,12 @@ mt555Unmount(Mt555UnitP uP)
         mt555Flush(uP);
     }
 
+    // Queued writes use the fd and note the file's state into the unit: let them finish first.
+    if( mt555DeferP && (uP->fd >= 0) )
+    {
+        mt555DeferP->drainP();
+    }
+
     if( uP->fd >= 0 )
     {
         close(uP->fd);
@@ -297,6 +307,8 @@ mt555Unmount(Mt555UnitP uP)
 // are blank in memory because every block written before was flushed into the file.
 // Called when the writers turn off at the end of a block, when write mode is left, and
 // before any other block is written. An in-memory image has nothing to write.
+// With mt555DeferP set, the write is queued and this returns true; an I/O error sets ioError
+// when the writer meets it.
 // Returns true if there was nothing to do or the write succeeded; false on an I/O error,
 // in which case ioError is set for the plugin to report.
 bool
@@ -323,6 +335,20 @@ struct stat st;
 
     first = ((block < uP->fileBlocks) ? block : uP->fileBlocks);
     size = (ssize_t)((block + 1 - first) * MT_BLOCK_BYTES);
+
+    if( mt555DeferP )
+    {
+        // The queue copies the words, and orders the write before any later one, so the file
+        // grows as it would here and the next flush's range is right.
+        mt555DeferP->writeP(uP, &uP->wordsP[first * MT_STORED_WORDS], (size_t)size,
+            ((off_t)first * (off_t)MT_BLOCK_BYTES));
+        if( block >= uP->fileBlocks )
+        {
+            uP->fileBlocks = (block + 1);
+        }
+        return(true);
+    }
+
     put = pwrite(uP->fd, &uP->wordsP[first * MT_STORED_WORDS], (size_t)size,
         ((off_t)first * (off_t)MT_BLOCK_BYTES));
     if( put != size )
@@ -367,7 +393,12 @@ struct stat st;
     uP->dirtyBlock = -1;
     blankFrom(uP->wordsP, 0);
 
-    if( uP->fd >= 0 )
+    if( (uP->fd >= 0) && mt555DeferP )
+    {
+        mt555DeferP->truncateP(uP);     // after the writes queued before it
+        uP->fileBlocks = 0;
+    }
+    else if( uP->fd >= 0 )
     {
         if( ftruncate(uP->fd, 0) != 0 )
         {
@@ -417,6 +448,13 @@ struct stat st;
         return(false);
     }
 
+    // Our own queued writes change the file and note its state when done: let them finish, or
+    // they would look like someone else's change.
+    if( mt555DeferP )
+    {
+        mt555DeferP->drainP();
+    }
+
     if( stat(uP->path, &st) != 0 )
     {
         return( (errno == ENOENT) || (errno == ENOTDIR) );
@@ -425,6 +463,27 @@ struct stat st;
     return( (st.st_dev != uP->fileDev) || (st.st_ino != uP->fileIno) || (st.st_size != uP->fileSize)
         || (st.st_mtim.tv_sec != uP->fileMtime.tv_sec) || (st.st_mtim.tv_nsec != uP->fileMtime.tv_nsec)
         || (st.st_ctim.tv_sec != uP->fileCtime.tv_sec) || (st.st_ctim.tv_nsec != uP->fileCtime.tv_nsec) );
+}
+
+// A queued write or truncate of the unit's image on fd is done, on the plugin's writer thread.
+// A success notes the file's state, as a write in place does, so mt555FileChanged() knows the
+// change is ours; that reads it only after draining the queue. A failure sets ioError for the
+// plugin to report. No return value.
+void
+mt555NoteWrite(Mt555UnitP uP, int fd, bool ok)
+{
+struct stat st;
+
+    if( !ok )
+    {
+        __atomic_store_n(&uP->ioError, true, __ATOMIC_RELAXED);
+        return;
+    }
+
+    if( fstat(fd, &st) == 0 )
+    {
+        noteStamp(uP, &st);
+    }
 }
 
 // Returns stored word k (0 = leading checksum slot 3, 1-256 = data, 257 = trailing checksum

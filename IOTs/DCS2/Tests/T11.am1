@@ -117,7 +117,7 @@ begin,
 // preventing a spurious break from firing on the first ESM cycle.
 // They must come AFTER the ready message: a tyo completion requests a break
 // even while SBS is off, and esm would then take it before the DCS2 one
-// (probed 13-Sep-2026, Claude/skill-updates/dcs2-typewriter-break-2026-09-13.md).
+// (probed 13-Sep-2026; the am1 skill's devices.md, Typewriter).
 // The peer is not started until the message is seen, so nothing it sends
 // can be cleared by this cbs.
 

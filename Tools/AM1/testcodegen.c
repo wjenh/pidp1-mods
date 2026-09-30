@@ -2,7 +2,6 @@
  * Process a parse tree to generate a test dump file.
  * The output is each memory location and value that was generated printed as two space-separated
  * 6 digit octal numbers.
- *
 */
 #include <stdio.h>
 #include <string.h>
@@ -11,7 +10,6 @@
 
 #include "am1.h"
 #include "y.tab.h"
-#include "font5x7.h"
 #include "type340chars.h"
 
 extern BankContextP banksP;
@@ -124,6 +122,11 @@ BankContextP bankP;
 
         case BANK:
             // Nothing to do
+            break;
+
+        case OPTIMIZE:
+        case ENDOPTIMIZE:
+            // An optimizer directive emits no word and moves no pc.
             break;
 
         case TABLE:
@@ -315,19 +318,17 @@ FlexText flexText;
 }
 
 // Walk a list of variables, emit the storage.
-// If lineNo is -1, this is being called to automatically emit vars that were't emitted explicitly.
+// If lineNo is -1, this is being called to automatically emit vars that weren't emitted explicitly.
 static void
 dumpVars(FILE *fP, PNodeP nodeP)
 {
 int i;
 PNodeListP listP;
-SymNodeP symP;
 
     listP = (PNodeListP)(nodeP->value.ptr);
     while( listP )
     {
         nodeP = listP->nodeP;
-        symP = nodeP->value.symP;
 
         i = (nodeP->leftP)?reduceOperand(nodeP->leftP):0;
         printOne(fP, nodeP, i);
@@ -348,7 +349,7 @@ dumpConstants(FILE *fP, PNodeP nodeP, SymNodeP symP)
     {
         symP->flags |= SYMF_EMITTED;
         printOne(fP, nodeP, symP->value2);
-        nodeP->pc++;    // because we only get the intial node
+        nodeP->pc++;    // because we only get the initial node
     }
 
     dumpConstants(fP, nodeP, symP->leftP);

@@ -5,7 +5,11 @@
     "HSCwait";
     "HSCgetStatus";
     "HSCreset";
+    "HSCsteal";
     "dynamicIotProcessBreak";
+    "dynamicIotTime";
+    "dynamicIotSetDeadline";
+    "dynamicIotCancelDeadline";
     "display";
     "checkLightpen";
     "setLightpenRadius2";

@@ -1,5 +1,5 @@
 #ifndef TYPE340IOTS_AH
-#define TYPE340DIOTS_AH
+#define TYPE340IOTS_AH
 /* Just the IOT defines for the Type 340 display.
  * These don't match the originals, but they were too cryptic.
  * See the documentation for details on use.

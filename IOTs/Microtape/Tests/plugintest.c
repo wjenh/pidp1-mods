@@ -1,8 +1,8 @@
 /*
  * plugintest.c -- host tests for the Microtape as the reader plugin carries it.
  *
- * Purpose: Magtape/TASK-REWORK.md moved the tape out of its own plugin (and the IOT loader)
- * into the paper tape reader plugin. This drives the real reader plugin source
+ * Purpose: the tape moved out of its own plugin (and the IOT loader) into the paper tape
+ * reader plugin. This drives the real reader plugin source
  * (IOTs/Reader/IOT_2.c) and the real shim (../microtape.c), linked with the core, through the
  * plugin's own entry points -- iotHandler(), iotIOPoll(), iotStart(), iotUpdate() -- exactly as
  * dynamicIots.c would, and checks:
@@ -18,15 +18,17 @@
  *   - SIGHUP (iotUpdate): an unchanged line leaves a program's mount alone, a changed line
  *     wins, a removed line unmounts, a failed line is retried, an off-reel tape is rethreaded;
  *     the break channel follows microtapesbs;
- *   - All Halt (TASK-TAPE-HALT-WRITE): the I/O poll stops every moving drive when RUN falls,
+ *   - All Halt: the I/O poll stops every moving drive when RUN falls,
  *     and does nothing while RUN stays 0 or when it rises;
  *   - mse rereads microtapes.txt: an edited, renamed-over, removed or restored list takes
  *     effect at the next mse; an unchanged file undoes no program mount and rewinds no tape;
  *     two tapes can trade drives in one edit; a bad line is reported once.
  *
  * Architectural scope: a standalone host program. It stands in for the emulator: the PDP1
- * struct, the configuration (getConfiguration()/findConfigurationSetting()) and the break
- * hook dynamicIotProcessBreak(). Built with MT_BASE_DIR = "plugintest.d", so microtapes.txt
+ * struct, the configuration (getConfiguration()/findConfigurationSetting()), the break
+ * hook dynamicIotProcessBreak(), and the deadline calls iotHandler.h makes
+ * (dynamicIotTime(), dynamicIotSetDeadline(), dynamicIotCancelDeadline()), which the reader
+ * does not use: any call to them fails the run. Built with MT_BASE_DIR = "plugintest.d", so microtapes.txt
  * and the relative images live in that directory, which it creates and removes.
  *
  * Dependencies: ../../Reader/IOT_2.c, ../microtape.[ch], ../control550.[ch],
@@ -38,8 +40,9 @@
  * and a summary; exit status 0 if everything passed. The plugin's own stderr messages (for
  * the deliberately bad lines and names) are expected.
  *
- * 11-Sep-2026 Claude -- initial version, for Magtape/TASK-REWORK.md.
- * 13-Sep-2026 Claude -- All Halt (MiscTasks/Completed/TASK-TAPE-HALT-WRITE.md); mse rereads the list.
+ * 11-Sep-2026 Claude -- initial version.
+ * 13-Sep-2026 Claude -- All Halt; mse rereads the list.
+ * 28-Sep-2026 Claude -- the deadline calls.
  */
 
 #define NOT_IN_PDP1
@@ -53,6 +56,7 @@
 #include <sys/stat.h>
 
 #include "pdp1.h"
+#include "dynamicIots.h"
 #include "configuration.h"
 #include "microtape.h"
 
@@ -87,6 +91,37 @@ dynamicIotProcessBreak(int chan)
     {
         ++breakCounts[chan];
     }
+}
+
+// The deadline calls. The reader sets no deadline, and this program does not drive the time
+// bases, so a call means the plugin changed and this test must learn to: it fails the run.
+static void
+unexpectedDeadlineCall(const char *nameP)
+{
+    ++failCount;
+    printf("FAIL: the reader called %s(), which this test does not support\n", nameP);
+}
+
+// Returns 0: no time base moves here.
+uint64_t
+dynamicIotTime(int base)
+{
+    unexpectedDeadlineCall("dynamicIotTime");
+    return(0);
+}
+
+// No return value.
+void
+dynamicIotSetDeadline(IotEntryP entryP, int base, uint64_t deadline)
+{
+    unexpectedDeadlineCall("dynamicIotSetDeadline");
+}
+
+// No return value.
+void
+dynamicIotCancelDeadline(IotEntryP entryP)
+{
+    unexpectedDeadlineCall("dynamicIotCancelDeadline");
 }
 
 // Returns the configuration: only the microtapesbs extra setting.

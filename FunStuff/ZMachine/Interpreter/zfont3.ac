@@ -1,4 +1,3 @@
-// ========================================================================
 // zfont3.ac -- font 3: the translator from a font 3 code to the bytes the
 // connection's terminal draws it with, and the VT220 soft font.
 //
@@ -7,8 +6,8 @@
 // farrtn), from bank 15 (ztext.ac's zpcSend and zTermQuery) and bank 13
 // (zscreen.ac's zsPutUpper).
 //
-// ---- The tiers ----------------------------------------------------------
-// ztext.ac's zTermQuery decides one for each connection, in zsTier:
+// The tiers. ztext.ac's zTermQuery decides one for each connection, in
+// zsTier:
 //   3  A  soft font   the DA reply lists 7 (DRCS). The font is loaded
 //                     once, at connect (zfLoad, below), into G1, and each
 //                     character goes as SO, its own code, SI
@@ -21,13 +20,12 @@
 //                     or a corner goes as SO, its DEC byte, SI; anything
 //                     else as its stand-in
 //   0  C  plain       a silent client: the stand-in, and no escapes
-// SO and SI go round EVERY character on tiers A and D, never a held shift:
+// SO and SI go round every character on tiers A and D, never a held shift:
 // DCS2 echoes typing in whatever set is locked in.
 //
 // Every glyph is one column, whatever its bytes: zsPutUpper counts one.
 //
-// ---- The tables ---------------------------------------------------------
-// Built from the font 3 glyphs of the Z-Machine Standard (S16):
+// The tables, built from the font 3 glyphs of the Z-Machine Standard (S16):
 //   zfInfo    95 words, 32-126: the stand-in, the DEC byte, the safe index
 //   zfExact   95 words, 32-126: tier U's code point
 //   zfSafe    30 words: the safe code points
@@ -35,7 +33,6 @@
 // zfGlyph and zfLoad are left out of a census image (Z_CENSUS): the census
 // keeps its tables at the top of this bank, from 04440, and a census
 // image never offers tier A.
-// ========================================================================
 
 #ifndef ZFONT3_AC_H
 #define ZFONT3_AC_H
@@ -46,13 +43,12 @@
 #define ZF_SO 016                        // shift out: G1
 #define ZF_SI 017                        // shift in: G0
 
-// ========================================================================
-// zfSend -- sends a font 3 code's bytes for the connection's tier with `tcc`.
-// Called via farjsp(zfSend:*); returns with the window open (farrtn).
-//   IO in   a font 3 code, 32-126 (range-checked by the caller; 13 is
-//           the caller's). With 0400000 added: send nothing, only look up.
-//   AC out  the code's ASCII stand-in, for the transcript.
-// ========================================================================
+// Sends a font 3 code's bytes for the connection's tier with `tcc`.
+// Entry: IO = a font 3 code, 32-126 (range-checked by the caller; 13 is
+//        the caller's). With 0400000 added: send nothing, only look up.
+// Exit:  AC = the code's ASCII stand-in, for the transcript.
+// AC is the result, IO is clobbered. Called via farjsp(zfSend:*); returns
+// with the window open (farrtn).
 zfSend,
     local rtn, code, look, info, cp, ptr
     farenter(rtn)                        // the window is closed: `lac i ptr`
@@ -68,15 +64,15 @@ zfSend,
     lac i ptr
     dac info
     lac look
-    SKIP_NEXT_IF_AC_ZERO                 // sza: skip (fallthrough) to send
-    jmp zfsRet                              // no-skip: the stand-in only
+    SKIP_NEXT_IF_AC_ZERO
+    jmp zfsRet                              // look up only: the stand-in
     farlac(zsTier:*)                     // AC = the tier; the window closed again
-    SKIP_NEXT_IF_DIFFERENT [3]           // sad: skip (fallthrough) unless A
-    jmp zfsSoft
-    SKIP_NEXT_IF_DIFFERENT [2]           // sad: skip (fallthrough) unless U
-    jmp zfsUni
-    SKIP_NEXT_IF_DIFFERENT [1]           // sad: skip (fallthrough) unless D
-    jmp zfsDec
+    SKIP_NEXT_IF_DIFFERENT [3]
+    jmp zfsSoft                          // A
+    SKIP_NEXT_IF_DIFFERENT [2]
+    jmp zfsUni                           // U
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp zfsDec                           // D
 
 // Tier C, and tier D's codes with no DEC byte: the stand-in.
 zfsStand,
@@ -93,8 +89,8 @@ zfsRet,
 // holds 33-126) and goes as a space, which is its stand-in.
 zfsSoft,
     lac code
-    SKIP_NEXT_IF_DIFFERENT [0d32]        // sad: skip (fallthrough) unless a space
-    jmp zfsStand
+    SKIP_NEXT_IF_DIFFERENT [0d32]
+    jmp zfsStand                         // a space
     dac cp
 zfsShift,                                // SO, cp, SI
     lio [ZF_SO]
@@ -110,8 +106,8 @@ zfsDec,
     lac info
     sar 7s
     and [037]
-    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) if a DEC byte
-    jmp zfsStand
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zfsStand                         // no DEC byte
     add [0140]
     dac cp
     jmp zfsShift
@@ -123,13 +119,13 @@ zfsUni,
     sar 9s
     sar 3s
     and [077]                            // the safe index, 1-30, or 0
-    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) if it has one
-    jmp zfsExact
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zfsExact                         // no safe entry
     add [zfSafe-1]
     dac ptr
     farlac(zsSafe:*)
-    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) if S was chosen
-    jmp zfsExact
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zfsExact                         // the player did not choose S
     jmp zfsCp
 zfsExact,
     lac code
@@ -143,12 +139,12 @@ zfsCp,
 // three, 1110xxxx 10xxxxxx 10xxxxxx. Every code point is below U+10000
 // and positive, so `sar` brings in zeros.
     sub [0200]
-    SKIP_NEXT_IF_AC_NOT_NEGATIVE         // sma i: skip (fallthrough) if 0200 or above
-    jmp zfsOne
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp zfsOne                           // below 0200
     lac cp
     sub [04000]
-    SKIP_NEXT_IF_AC_NEGATIVE             // sma: skip (fallthrough) if below 04000
-    jmp zfsThree
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp zfsThree                         // 04000 or above
     lac cp
     sar 6s
     ior [0300]
@@ -189,11 +185,7 @@ ptr, 0
     endlocal
 
 #if !Z_CENSUS
-// ========================================================================
-// zfLoad -- sends the soft font, then designates it into G1. Called via
-// farjsp(zfLoad:*) from zTermQuery on tier A, once for each connection.
-// No arguments; AC and IO clobbered; returns with the window open.
-//
+// Sends the soft font, then designates it into G1:
 //   ESC P 1 ; 1 ; 0 ; 4 ; 1 ; 1 { SP @   DECDLD: font buffer 1, from
 //                                          character 1 (033, '!'), erase
 //                                          the set, a 7x10 matrix (Pcms
@@ -201,9 +193,11 @@ ptr, 0
 //   94 glyphs, each  upper/lower,  separated by ';'
 //   ESC \                                  the string terminator
 //   ESC ) SP @                             G1 = the soft set
-// (DEC's VT220 Programmer Reference, section 4.16.)
-// About 1,530 bytes, on `tcc`, as zTermQuery sends its query.
-// ========================================================================
+// (DEC's VT220 Programmer Reference, section 4.16.) About 1,530 bytes, on
+// `tcc`, as zTermQuery sends its query.
+// No arguments. AC and IO are clobbered. Called via farjsp(zfLoad:*) from
+// zTermQuery on tier A, once for each connection; returns with the window
+// open.
 zfLoad,
     local rtn, ptr, w, k, n3, ng
     farenter(rtn)                        // the window is closed: `lac i ptr`
@@ -230,13 +224,13 @@ zflSix,
     lia
     tcc
     idx k                                // AC = sixels sent
-    SKIP_NEXT_IF_DIFFERENT [7]           // sad: skip (fallthrough) unless the band ends
-    jmp zflSlash
-    SKIP_NEXT_IF_DIFFERENT [0d14]        // sad: skip (fallthrough) unless the glyph ends
-    jmp zflEnd
+    SKIP_NEXT_IF_DIFFERENT [7]
+    jmp zflSlash                         // the upper band ends
+    SKIP_NEXT_IF_DIFFERENT [0d14]
+    jmp zflEnd                           // the glyph ends
 zflNext,
     isp n3
-    jmp zflSix                              // no-skip: this word has more
+    jmp zflSix                              // this word has more
     jmp zflWord
 zflSlash,
     lio [0d47]                           // '/': the lower band
@@ -244,7 +238,7 @@ zflSlash,
     jmp zflNext
 zflEnd,
     isp ng
-    jmp zflSemi                             // no-skip: glyphs remain
+    jmp zflSemi                             // glyphs remain
     lio [zfDldTail]
     jsp zfPuts
     farrtn(rtn)
@@ -253,16 +247,16 @@ zflSemi,
     tcc
     jmp zflGlyph
 
-// zfPuts -- sends a 0-terminated table of one byte a word with `tcc`.
-// Called via jsp, from zfLoad only. IO = a bare in-bank pointer to the
-// table. The window is closed.
+// Sends a 0-terminated table of one byte a word with `tcc`.
+// Entry: IO = a bare in-bank pointer to the table; the window is closed.
+// AC and IO are clobbered. Called via jsp, from zfLoad only.
 zfPuts,
     dap zfpX
     dio zfpP
 zfpLoop,
     lac i zfpP
-    SKIP_NEXT_IF_AC_NOT_ZERO             // sza i: skip (fallthrough) on a byte
-    jmp zfpX
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zfpX                             // the terminator
     lia
     tcc
     idx zfpP
@@ -306,7 +300,7 @@ zfDldTail,                               // ESC \, then ESC ) SP @
     0
 #endif // !Z_CENSUS
 
-// ---- zfInfo: one word per code, 32-126 --------------------------
+// zfInfo: one word per code, 32-126.
 //   bits 12-17  the safe entry, 1-30 (zfSafe's index + 1); 0: none
 //   bits 7-11   the DEC Special Graphics byte less 0140; 0: none
 //   bits 0-6    the ASCII stand-in
@@ -407,7 +401,7 @@ zfInfo,
     000174                        // 125  safe -      DEC -   stand-in '|'     up-down arrow, inverse
     000077                        // 126  safe -      DEC -   stand-in '?'     question mark, inverse
 
-// ---- zfExact: tier U's code point per code, 32-126 ---------------
+// zfExact: tier U's code point per code, 32-126.
 zfExact,
     000040                        //  32  space
     020620                        //  33  U+2190
@@ -505,7 +499,7 @@ zfExact,
     023146                        // 125  U+2666
     000077                        // 126  '?'
 
-// ---- zfSafe: the 30 safe code points, by index - 1 ---------------
+// zfSafe: the 30 safe code points, by index - 1.
 zfSafe,
     000057                        //  1, for  35  '/'
     000134                        //  2, for  36  '\'
@@ -539,7 +533,7 @@ zfSafe,
     000043                        // 30, for  95  '#'
 
 #if !Z_CENSUS
-// ---- zfGlyph: the soft font, codes 33-126 -----------------------
+// zfGlyph: the soft font, codes 33-126.
 // Five words a glyph: its 14 sixels, three to a word from the top six
 // bits down -- the 7 of the upper band (rows 1-6, top row the low bit),
 // then the 7 of the lower band (rows 7-10) -- and a last slot of 0.

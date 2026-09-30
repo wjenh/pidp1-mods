@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v2.2 21-Sep-2026"
-#define AM1SHORTVERSION "am1 v2.2"
+#define AM1VERSION "am1 v3.0 25-Sep-2026"
+#define AM1SHORTVERSION "am1 v3.0"
 #define SYMFILEVERSION "V3"             // used for import to check proper version, must match listSymtab.c
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -43,8 +43,28 @@
 #define PN_NOINC    1   // don't increment pc
 #define PN_SOL      2   // used to signal a comment at the beginning of a line
 #define PN_NOTEXT   4   // used to signal no included text in listing file
+#define PN_HANDSOFF 8   // an OPTIMIZE or ENDOPTIMIZE node written as nooptimize or
+                        // endnooptimize: a span no optimization level rewrites.
+                        // Same node type, so every back end steps over it
+#define PN_SPEED    16  // an OPTIMIZE or ENDOPTIMIZE node written as speed or
+                        // endspeed: a span where words may be spent, a separate
+                        // claim from a region's "P5 holds here"
+#define PN_INLINE   32  // an OPTIMIZE node written as 'inline NAME': a point marking
+                        // a routine that may be inlined wherever it is called;
+                        // value2.strP holds the name
+#define PN_CEILING  64  // an OPTIMIZE node written as '%%ceiling EXPR', a point;
+                        // value2.ival holds the ceiling reduced to the bank, and
+                        // bank the bank
 
-// Symbol table flags amd such
+// What a RELAYOUT node is, in its value.ival.  Only optrelayout.c makes them;
+// every back end but the listing steps over them through its default case.
+#define RL_DELETED  1   // a word deleted: exprP holds its expression, value2.ival is
+                        // non-zero when the word shared a line with a label
+#define RL_MOVEDFROM 2  // where a moved run stood: value2.ptr is its RL_BEGIN
+#define RL_BEGIN    3   // the moved run follows: value2.ptr is its RL_END
+#define RL_END      4   // the moved run ended
+
+// Symbol table flags and such
 #define SYM_VALUE 1
 #define SYM_OPCODE 2
 #define SYM_OPADDR 3
@@ -67,7 +87,7 @@
 #define SYMF_PRIVATE 0x200000   // is a private local
 #define SYMF_INDIRECT 0x400000  // is an i modifier
 
-#define CTX_FORCELOCAL 1        // focelocal is active for this context
+#define CTX_FORCELOCAL 1        // forcelocal is active for this context
 
 #define NILP 0
 
@@ -110,6 +130,9 @@ typedef struct parsenode
     int lineNo;             // and the source line
     PNodeValue value;
     PNodeValue value2;
+    struct parsenode *exprP;    // an expression relayout must evaluate again (an
+                                // origin's, 'start''s, a table's count), or on a
+                                // RELAYOUT node the deleted word's; NILP elsewhere
 } PNode, *PNodeP;
 
 // a list of PNodePs, used for wildcard cross-bank refs

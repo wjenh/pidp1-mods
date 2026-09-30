@@ -65,12 +65,12 @@
  *            cr/lf pair, a bare lf, and a bare cr) in one write.
  *         3. Read exactly 3 bytes and verify DCS2 refused the probe
  *            (IAC WONT 46, the RFC 854 refusal of a DO).
- *         4. Read exactly 21 bytes and verify the round-tripped data: DCS2
+ *         4. Read exactly 23 bytes and verify the round-tripped data: DCS2
  *            echoes each character's received bytes as it is read (dcfecho)
  *            and the PDP-1 side (T12.am1) then sends back whatever it
  *            decoded, so this also confirms cr/lf collapsing on input and
  *            cr/lf expansion plus IAC escaping on output all agree with each
- *            other.
+ *            other.  The bare cr goes out as CR NUL both times (RFC 854).
  *       Exit code: 0 if every step matched, 1 on any mismatch or socket error.
  *       Used by: T12 (telnet mode).
  *
@@ -87,6 +87,38 @@
  *       Exit code: 0 if every step matched exactly, 1 otherwise, or on a
  *       timeout waiting for a marker or a socket error.
  *       Used by: T13 (scb modify).
+ *
+ *   telnet-negotiate-client <host> <port>
+ *       Connect to <host>:<port>, where T14.am1's dcftel server channel is
+ *       listening, check the greeting, and run the negotiation steps in
+ *       modeTelnetNegotiateClient: PuTTY's opening, then every state change
+ *       of the three options the greeting offers, other options, a split
+ *       sequence and an IAC IAC.  Each step sends its negotiation and one
+ *       marker byte, and must read back exactly DCS2's replies followed by
+ *       the marker twice (DCS2's echo, then T14's copy).  DCS2 handles the
+ *       bytes in wire order, so a reply that must not come would come before
+ *       the marker.  Then it sends its verdict, P or F, for T14 to report.
+ *       Exit code: 0 if every step matched, 1 otherwise.
+ *       Used by: T14 (telnet negotiation).
+ *
+ *   telnet-reconnect-client <host> <port>
+ *       Play three callers in turn against T15.am1's dcftel server channel,
+ *       checking that nothing one caller leaves behind reaches the next
+ *       (see modeTelnetReconnectClient): a half-read subnegotiation across
+ *       DCS2's own re-accept, the option state, and a byte stashed by the
+ *       cr/lf lookahead across a rebind.  The last caller sends the verdict.
+ *       Exit code: 0 if every caller saw what it expected, 1 otherwise.
+ *       Used by: T15 (clean start per connection).
+ *
+ *   telnet-newline-client <host> <port>
+ *       Connect to <host>:<port>, where T16.am1's dcftel server channel is
+ *       listening, check the greeting, and run the newline steps in
+ *       modeTelnetNewlineClient the same way telnet-negotiate-client runs
+ *       T14's: CR LF, CR NUL (which must give exactly what CR LF gives,
+ *       RFC 1123), a CR alone and the CR NUL DCS2 sends for it (RFC 854),
+ *       a NUL that is data, and a CR NUL split across two writes.
+ *       Exit code: 0 if every step matched, 1 otherwise.
+ *       Used by: T16 (telnet newlines).
  *
  * Architecture:
  *   Single-file, blocking I/O throughout except where noted.  select(2) is
@@ -140,6 +172,19 @@
  * for an echo with no marker behind it is how a missing echo is seen. */
 #define ECHO_TOGGLE_MARKER_S    20
 #define ECHO_TOGGLE_ECHO_S      2
+
+/* Timeouts (ms) used by telnet-negotiate-client, telnet-reconnect-client and
+ * telnet-newline-client:
+ * each expected byte must arrive within TELNET_BYTE_MS (it covers the typing
+ * T15 does between reads), a close within TELNET_CLOSE_MS.  TELNET_SPLIT_MS
+ * is the pause inside a split telnet sequence, long enough for DCS2's poll
+ * to read the first half on its own.  TELNET_REDIAL_MS is how long caller 2
+ * waits after caller 1 closes, so T15 sees the close before DCS2 re-accepts
+ * (the same reason reconnect-client waits HOLD_MS). */
+#define TELNET_BYTE_MS      5000
+#define TELNET_CLOSE_MS     5000
+#define TELNET_SPLIT_MS     200
+#define TELNET_REDIAL_MS    500
 
 /* -------------------------------------------------------------------------
  * Global state
@@ -1033,26 +1078,27 @@ modeTelnetEchoClient(const char *hostP, int port)
      * (0xFF, 'A', LF, 'B', LF, 'C', CR, 'D').  The channel has dcfecho, so
      * as each character is read DCS2 first echoes the bytes it received for
      * it; T12.am1 then sends the character back out through the same
-     * telnet-mode channel, which re-escapes the 0xFF and re-expands each
-     * bare LF to CR LF.  Per character, echo then send:
+     * telnet-mode channel, which re-escapes the 0xFF, re-expands each
+     * bare LF to CR LF, and sends a CR as CR NUL (RFC 854, a CR with no LF
+     * after it).  Per character, echo then send:
      *   0xFF  FF FF (echo, 0377 goes out as IAC IAC)  FF FF
      *   'A'   A                                        A
      *   LF    CR LF (the pair it was collapsed from)   CR LF
      *   'B'   B                                        B
      *   LF    LF                                       CR LF
      *   'C'   C                                        C
-     *   CR    CR                                       CR
+     *   CR    CR NUL (no LF after it)                  CR NUL
      *   'D'   D (looked ahead after the CR, echoed     D
      *          only when read)
-     * 21 bytes. */
-    static const unsigned char expectEcho[21] = {
+     * 23 bytes. */
+    static const unsigned char expectEcho[23] = {
         TN_IAC, TN_IAC, TN_IAC, TN_IAC,
         'A', 'A',
         '\r', '\n', '\r', '\n',
         'B', 'B',
         '\n', '\r', '\n',
         'C', 'C',
-        '\r', '\r',
+        '\r', '\0', '\r', '\0',
         'D', 'D'
     };
 
@@ -1317,6 +1363,507 @@ modeEchoToggleClient(const char *hostP, int port)
 }
 
 /* =========================================================================
+ * Shared by telnet-negotiate-client and telnet-reconnect-client
+ * ========================================================================= */
+
+/* More telnet bytes and options, beside the ones telnet-echo-client uses.
+ * The four options are the ones PuTTY offers when it connects. */
+#define TN_SE           240
+#define TN_SB           250
+#define TELOPT_TTYPE    24
+#define TELOPT_NAWS     31
+#define TELOPT_TSPEED   32
+#define TELOPT_NEWENV   39
+
+/* The character-mode greeting DCS2 sends on every accepted connection. */
+static const unsigned char telnetGreeting[15] = {
+    TN_IAC, TN_WILL, TELOPT_ECHO,
+    TN_IAC, TN_WILL, TELOPT_SGA,
+    TN_IAC, TN_DO,   TELOPT_SGA,
+    TN_IAC, TN_WONT, TELOPT_LINEMODE,
+    TN_IAC, TN_DONT, TELOPT_LINEMODE
+};
+
+// Wait at most timeoutMs for one byte from fd.
+// Returns 1 with the byte in *byteP, 0 on a timeout, -1 if the connection
+// closed, -2 on a socket error (printed).
+static int
+readByteWithin(const char *modeP, int fd, unsigned char *byteP, int timeoutMs)
+{
+    fd_set          readSet;
+    struct timeval  tv;
+    int             n;
+
+    FD_ZERO(&readSet);
+    FD_SET(fd, &readSet);
+    tv.tv_sec  = (timeoutMs / 1000);
+    tv.tv_usec = ((timeoutMs % 1000) * 1000);
+
+    n = select((fd + 1), &readSet, NULL, NULL, &tv);
+
+    if( n == 0 )
+    {
+        return(0);
+    }
+
+    if( n < 0 )
+    {
+        fprintf(stderr, "%s: %s: select() failed: %s\n", progName, modeP, strerror(errno));
+        return(-2);
+    }
+
+    n = (int)recv(fd, byteP, 1, 0);
+
+    if( n == 1 )
+    {
+        return(1);
+    }
+
+    if( n == 0 )
+    {
+        return(-1);
+    }
+
+    fprintf(stderr, "%s: %s: recv() failed: %s\n", progName, modeP, strerror(errno));
+    return(-2);
+}
+
+// Read exactly n bytes from fd, each within TELNET_BYTE_MS, and compare them
+// with wantP.  A missing byte, a close, or the first byte that differs ends the
+// read, since the stream is out of step after it; what was received is printed.
+// Returns 0 if all n bytes matched, 1 otherwise.
+static int
+expectExact(const char *modeP, const char *labelP, int fd,
+            const unsigned char *wantP, int n)
+{
+    unsigned char   got[64];
+    int             k;
+    int             r;
+    int             i;
+
+    if( (n <= 0) || (n > (int)sizeof(got)) )
+    {
+        fprintf(stderr, "%s: %s: %s: bad expected length %d\n", progName, modeP, labelP, n);
+        return(1);
+    }
+
+    for( k = 0; k < n; k++ )
+    {
+        r = readByteWithin(modeP, fd, &(got[k]), TELNET_BYTE_MS);
+
+        if( r != 1 )
+        {
+            fprintf(stderr, "%s: %s: %s: %s after %d of %d bytes\n", progName, modeP,
+                    labelP, ((r == 0) ? "timed out" : "connection closed"), k, n);
+            break;
+        }
+
+        if( got[k] != wantP[k] )
+        {
+            fprintf(stderr, "%s: %s: %s: byte %d is 0x%02X, want 0x%02X\n", progName,
+                    modeP, labelP, k, (unsigned int)got[k], (unsigned int)wantP[k]);
+            k++;                        // include the wrong byte in the dump below
+            break;
+        }
+    }
+
+    if( (k == n) && (got[n - 1] == wantP[n - 1]) )
+    {
+        fprintf(stdout, "%s: %s: %s OK\n", progName, modeP, labelP);
+        fflush(stdout);
+        return(0);
+    }
+
+    fprintf(stderr, "%s: %s: %s received:", progName, modeP, labelP);
+
+    for( i = 0; i < k; i++ )
+    {
+        fprintf(stderr, " %02X", (unsigned int)got[i]);
+    }
+
+    fprintf(stderr, "\n");
+    return(1);
+}
+
+// Wait at most TELNET_CLOSE_MS for the server to close fd.  A byte arriving
+// first is a failure: nothing more was expected.
+// Returns 0 on the close, 1 otherwise.
+static int
+expectClose(const char *modeP, const char *labelP, int fd)
+{
+    unsigned char   b;
+    int             r;
+
+    r = readByteWithin(modeP, fd, &b, TELNET_CLOSE_MS);
+
+    if( r == -1 )
+    {
+        fprintf(stdout, "%s: %s: %s OK\n", progName, modeP, labelP);
+        fflush(stdout);
+        return(0);
+    }
+
+    if( r == 1 )
+    {
+        fprintf(stderr, "%s: %s: %s: got 0x%02X instead of the close\n",
+                progName, modeP, labelP, (unsigned int)b);
+    }
+    else
+    {
+        fprintf(stderr, "%s: %s: %s: no close\n", progName, modeP, labelP);
+    }
+
+    return(1);
+}
+
+// Send n bytes to fd in one write.
+// Returns 0 if they were all sent, 1 otherwise (printed).
+static int
+sendBytes(const char *modeP, int fd, const unsigned char *bufP, int n)
+{
+    if( send(fd, bufP, (size_t)n, MSG_NOSIGNAL) != (ssize_t)n )
+    {
+        fprintf(stderr, "%s: %s: send() failed: %s\n", progName, modeP, strerror(errno));
+        return(1);
+    }
+
+    return(0);
+}
+
+/* =========================================================================
+ * Mode: telnet-negotiate-client <host> <port>
+ * ========================================================================= */
+
+/* One step: the negotiation and its marker, and exactly what must come back.
+ * splitAt > 0 sends that many bytes, pauses TELNET_SPLIT_MS, then the rest. */
+typedef struct
+{
+    const char          *labelP;
+    const unsigned char *sendP;
+    int                  sendLen;
+    int                  splitAt;
+    const unsigned char *wantP;
+    int                  wantLen;
+} TelnetStep;
+
+/* The steps.  Every marker comes back twice: DCS2's echo as T14 reads it,
+ * then T14's tcc copy.  DCS2 echoes even after DONT ECHO, since echo stays
+ * the program's choice (the task's ruling 2). */
+
+/* PuTTY's opening: four options DCS2 does not offer, each refused, and its
+ * agreement to the greeting's three, taken quietly. */
+static const unsigned char tnS1[] = {
+    TN_IAC, TN_WILL, TELOPT_NAWS,   TN_IAC, TN_WILL, TELOPT_TSPEED,
+    TN_IAC, TN_WILL, TELOPT_TTYPE,  TN_IAC, TN_WILL, TELOPT_NEWENV,
+    TN_IAC, TN_DO,   TELOPT_ECHO,   TN_IAC, TN_WILL, TELOPT_SGA,
+    TN_IAC, TN_DO,   TELOPT_SGA,    'a'
+};
+static const unsigned char tnW1[] = {
+    TN_IAC, TN_DONT, TELOPT_NAWS,   TN_IAC, TN_DONT, TELOPT_TSPEED,
+    TN_IAC, TN_DONT, TELOPT_TTYPE,  TN_IAC, TN_DONT, TELOPT_NEWENV,
+    'a', 'a'
+};
+/* The same agreement again: already agreed, no reply, so no loop. */
+static const unsigned char tnS2[] = {
+    TN_IAC, TN_DO, TELOPT_ECHO,  TN_IAC, TN_DO, TELOPT_SGA,  TN_IAC, TN_WILL, TELOPT_SGA,  'b'
+};
+static const unsigned char tnW2[] = { 'b', 'b' };
+/* WONT and DONT of options never offered: no reply. */
+static const unsigned char tnS3[] = {
+    TN_IAC, TN_WONT, TELOPT_NAWS,  TN_IAC, TN_DONT, TELNET_PROBE_OPTION,  'c'
+};
+static const unsigned char tnW3[] = { 'c', 'c' };
+/* Other options offered or asked for, LINEMODE among them: refused. */
+static const unsigned char tnS4[] = {
+    TN_IAC, TN_DO, TELNET_PROBE_OPTION,  TN_IAC, TN_WILL, TELOPT_LINEMODE,
+    TN_IAC, TN_DO, TELOPT_LINEMODE,  'd'
+};
+static const unsigned char tnW4[] = {
+    TN_IAC, TN_WONT, TELNET_PROBE_OPTION,  TN_IAC, TN_DONT, TELOPT_LINEMODE,
+    TN_IAC, TN_WONT, TELOPT_LINEMODE,  'd', 'd'
+};
+/* The client turns agreed echo off: acknowledged once (ruling 2). */
+static const unsigned char tnS5[] = { TN_IAC, TN_DONT, TELOPT_ECHO, 'e' };
+static const unsigned char tnW5[] = { TN_IAC, TN_WONT, TELOPT_ECHO, 'e', 'e' };
+/* And again: already off, no reply. */
+static const unsigned char tnS6[] = { TN_IAC, TN_DONT, TELOPT_ECHO, 'f' };
+static const unsigned char tnW6[] = { 'f', 'f' };
+/* The client asks for echo again: agreed (ruling 5). */
+static const unsigned char tnS7[] = { TN_IAC, TN_DO, TELOPT_ECHO, 'g' };
+static const unsigned char tnW7[] = { TN_IAC, TN_WILL, TELOPT_ECHO, 'g', 'g' };
+/* The client's SGA off, acknowledged, then on again, agreed. */
+static const unsigned char tnS8[] = { TN_IAC, TN_WONT, TELOPT_SGA, 'h' };
+static const unsigned char tnW8[] = { TN_IAC, TN_DONT, TELOPT_SGA, 'h', 'h' };
+static const unsigned char tnS9[] = { TN_IAC, TN_WILL, TELOPT_SGA, 'i' };
+static const unsigned char tnW9[] = { TN_IAC, TN_DO, TELOPT_SGA, 'i', 'i' };
+/* DCS2's own SGA off, acknowledged, then on again, agreed. */
+static const unsigned char tnS10[] = { TN_IAC, TN_DONT, TELOPT_SGA, 'j' };
+static const unsigned char tnW10[] = { TN_IAC, TN_WONT, TELOPT_SGA, 'j', 'j' };
+static const unsigned char tnS11[] = { TN_IAC, TN_DO, TELOPT_SGA, 'k' };
+static const unsigned char tnW11[] = { TN_IAC, TN_WILL, TELOPT_SGA, 'k', 'k' };
+/* A command split across two writes, IAC then DO ECHO: the parser resumes,
+ * and echo is agreed already, so no reply. */
+static const unsigned char tnS12[] = { TN_IAC, TN_DO, TELOPT_ECHO, 'l' };
+static const unsigned char tnW12[] = { 'l', 'l' };
+/* IAC IAC is one 0377: echoed as IAC IAC, and T14 sends it back the same. */
+static const unsigned char tnS13[] = { TN_IAC, TN_IAC, 'm' };
+static const unsigned char tnW13[] = { TN_IAC, TN_IAC, TN_IAC, TN_IAC, 'm', 'm' };
+
+static const TelnetStep telnetSteps[] =
+{
+    { "putty opening",          tnS1,  (int)sizeof(tnS1),  0, tnW1,  (int)sizeof(tnW1)  },
+    { "agreed again",           tnS2,  (int)sizeof(tnS2),  0, tnW2,  (int)sizeof(tnW2)  },
+    { "never offered off",      tnS3,  (int)sizeof(tnS3),  0, tnW3,  (int)sizeof(tnW3)  },
+    { "other options refused",  tnS4,  (int)sizeof(tnS4),  0, tnW4,  (int)sizeof(tnW4)  },
+    { "echo off",               tnS5,  (int)sizeof(tnS5),  0, tnW5,  (int)sizeof(tnW5)  },
+    { "echo off again",         tnS6,  (int)sizeof(tnS6),  0, tnW6,  (int)sizeof(tnW6)  },
+    { "echo asked again",       tnS7,  (int)sizeof(tnS7),  0, tnW7,  (int)sizeof(tnW7)  },
+    { "client sga off",         tnS8,  (int)sizeof(tnS8),  0, tnW8,  (int)sizeof(tnW8)  },
+    { "client sga on",          tnS9,  (int)sizeof(tnS9),  0, tnW9,  (int)sizeof(tnW9)  },
+    { "our sga off",            tnS10, (int)sizeof(tnS10), 0, tnW10, (int)sizeof(tnW10) },
+    { "our sga on",             tnS11, (int)sizeof(tnS11), 0, tnW11, (int)sizeof(tnW11) },
+    { "split sequence",         tnS12, (int)sizeof(tnS12), 1, tnW12, (int)sizeof(tnW12) },
+    { "iac iac",                tnS13, (int)sizeof(tnS13), 0, tnW13, (int)sizeof(tnW13) }
+};
+
+// Run a table of steps against a dcftel server channel whose program sends back every
+// character it reads until the verdict, T14 and T16: check the greeting, run each
+// step, then send the verdict, P or F.
+// The first step that does not match ends the steps, since the stream is out of
+// step after it, and the verdict F follows.  After P, the program closes the channel.
+// Returns 0 if the greeting and every step matched and the channel closed, 1 otherwise.
+static int
+runTelnetSteps(const char *modeP, const char *hostP, int port,
+               const TelnetStep *stepsP, int nSteps)
+{
+    int             connFd;
+    int             failed;
+    int             s;
+    int             first;
+    unsigned char   verdict;
+
+    failed = 0;
+
+    if( (connFd = connectTo(hostP, port)) < 0 )
+    {
+        return(1);
+    }
+
+    failed = expectExact(modeP, "greeting", connFd, telnetGreeting, (int)sizeof(telnetGreeting));
+
+    for( s = 0; (!failed && (s < nSteps)); s++ )
+    {
+        first = ((stepsP[s].splitAt > 0) ? stepsP[s].splitAt : stepsP[s].sendLen);
+
+        if( sendBytes(modeP, connFd, stepsP[s].sendP, first) != 0 )
+        {
+            close(connFd);
+            return(1);
+        }
+
+        if( first < stepsP[s].sendLen )
+        {
+            sleepMs(TELNET_SPLIT_MS);
+
+            if( sendBytes(modeP, connFd, (stepsP[s].sendP + first),
+                          (stepsP[s].sendLen - first)) != 0 )
+            {
+                close(connFd);
+                return(1);
+            }
+        }
+
+        failed = expectExact(modeP, stepsP[s].labelP, connFd,
+                             stepsP[s].wantP, stepsP[s].wantLen);
+    }
+
+    verdict = (unsigned char)(failed ? 'F' : 'P');
+
+    if( sendBytes(modeP, connFd, &verdict, 1) != 0 )
+    {
+        close(connFd);
+        return(1);
+    }
+
+    if( !failed )
+    {
+        // The program echoes the verdict as it reads it, then clears the channel.
+        failed = expectExact(modeP, "verdict echo", connFd, &verdict, 1);
+
+        if( !failed )
+        {
+            failed = expectClose(modeP, "close", connFd);
+        }
+    }
+
+    close(connFd);
+    fprintf(stdout, "%s: %s done, %s\n", progName, modeP,
+            (failed ? "FAILED" : "all steps matched"));
+    return(failed);
+}
+
+// Run T14's negotiation steps, see the mode's usage comment at the top of the file.
+// Returns 0 if the greeting and every step matched and the channel closed, 1 otherwise.
+static int
+modeTelnetNegotiateClient(const char *hostP, int port)
+{
+    return(runTelnetSteps("telnet-negotiate-client", hostP, port, telnetSteps,
+                          (int)(sizeof(telnetSteps) / sizeof(telnetSteps[0]))));
+}
+
+/* =========================================================================
+ * Mode: telnet-newline-client <host> <port>
+ * ========================================================================= */
+
+/* T16's steps.  T16, as T14 does, sends back every character it reads, and
+ * DCS2's telnet mode sends its LF as CR LF and its CR as CR NUL (RFC 854).
+ * So per character, the bytes are DCS2's echo as T16 reads it, then T16's
+ * copy.  The marker ends each step, as in T14. */
+
+/* CR LF: one LF for the program, echoed as the pair. */
+static const unsigned char nlS1[] = { '\r', '\n', 'a' };
+static const unsigned char nlW1[] = { '\r', '\n', '\r', '\n', 'a', 'a' };
+/* CR NUL: exactly what CR LF gives (RFC 1123), the NUL never reaches the
+ * program, and the echo is the CR LF the pair stands for. */
+static const unsigned char nlS2[] = { '\r', '\0', 'b' };
+static const unsigned char nlW2[] = { '\r', '\n', '\r', '\n', 'b', 'b' };
+/* A CR with other data after it, not conforming input: a CR for the program,
+ * echoed as CR NUL, and T16's CR goes out as CR NUL. */
+static const unsigned char nlS3[] = { '\r', 'c' };
+static const unsigned char nlW3[] = { '\r', '\0', '\r', '\0', 'c', 'c' };
+/* CR NUL NUL: a line end, then a NUL that is data, read and sent back. */
+static const unsigned char nlS4[] = { '\r', '\0', '\0', 'd' };
+static const unsigned char nlW4[] = { '\r', '\n', '\r', '\n', '\0', '\0', 'd', 'd' };
+/* A NUL with no CR before it is data. */
+static const unsigned char nlS5[] = { '\0', 'e' };
+static const unsigned char nlW5[] = { '\0', '\0', 'e', 'e' };
+/* CR NUL split across two writes: T16 reads the CR before the NUL comes, so
+ * it is a CR, echoed and sent back as CR NUL.  The NUL is still the pair's
+ * and reaches T16 as an LF, not a NUL: echoed as LF, sent back as CR LF.
+ * Two line ends, as a split CR LF gives. */
+static const unsigned char nlS6[] = { '\r', '\0', 'f' };
+static const unsigned char nlW6[] = { '\r', '\0', '\r', '\0', '\n', '\r', '\n', 'f', 'f' };
+
+static const TelnetStep newlineSteps[] =
+{
+    { "cr lf",          nlS1, (int)sizeof(nlS1), 0, nlW1, (int)sizeof(nlW1) },
+    { "cr nul",         nlS2, (int)sizeof(nlS2), 0, nlW2, (int)sizeof(nlW2) },
+    { "cr alone",       nlS3, (int)sizeof(nlS3), 0, nlW3, (int)sizeof(nlW3) },
+    { "cr nul nul",     nlS4, (int)sizeof(nlS4), 0, nlW4, (int)sizeof(nlW4) },
+    { "nul alone",      nlS5, (int)sizeof(nlS5), 0, nlW5, (int)sizeof(nlW5) },
+    { "split cr nul",   nlS6, (int)sizeof(nlS6), 1, nlW6, (int)sizeof(nlW6) }
+};
+
+// Run T16's newline steps, see the mode's usage comment at the top of the file.
+// Returns 0 if the greeting and every step matched and the channel closed, 1 otherwise.
+static int
+modeTelnetNewlineClient(const char *hostP, int port)
+{
+    return(runTelnetSteps("telnet-newline-client", hostP, port, newlineSteps,
+                          (int)(sizeof(newlineSteps) / sizeof(newlineSteps[0]))));
+}
+
+/* =========================================================================
+ * Mode: telnet-reconnect-client <host> <port>
+ * ========================================================================= */
+
+// Play T15's three callers, see T15.am1 and the mode's usage comment.
+//   Caller 1: greeting; DONT ECHO and 'a', which must be echoed alone; DO 46 and
+//     IAC SB in one write, and wait for the WONT 46, so DCS2 has read the SB too
+//     (the same read) before the close; close.
+//   Caller 2, TELNET_REDIAL_MS later, on the channel DCS2 re-accepted by itself:
+//     greeting; DO ECHO and 'b', which must come back as the echo of 'b' alone,
+//     so the subnegotiation was dropped and the option state is the new
+//     greeting's (with caller 1's DONT ECHO kept, DO ECHO would get WILL ECHO);
+//     CR and 'y' in one write, the CR echoed as CR NUL (RFC 854, no LF after it;
+//     the 'y' is stashed by the cr/lf lookahead, unread); then T15 rebinds, which
+//     closes this caller.
+//   Caller 3: greeting; 'c', whose echo must be the first byte, not caller 2's 'y';
+//     the verdict, echoed; T15 clears the channel.
+// Any failure closes the current caller at once, T15 then sees the connection
+// lost and ends its run.
+// Returns 0 if every caller saw what it expected, 1 otherwise.
+static int
+modeTelnetReconnectClient(const char *hostP, int port)
+{
+    static const unsigned char c1Data[]  = { TN_IAC, TN_DONT, TELOPT_ECHO, 'a' };
+    static const unsigned char c1Echo[]  = { 'a' };
+    static const unsigned char c1Sub[]   = { TN_IAC, TN_DO, TELNET_PROBE_OPTION, TN_IAC, TN_SB };
+    static const unsigned char c1Reply[] = { TN_IAC, TN_WONT, TELNET_PROBE_OPTION };
+    static const unsigned char c2Data[]  = { TN_IAC, TN_DO, TELOPT_ECHO, 'b' };
+    static const unsigned char c2Echo[]  = { 'b' };
+    static const unsigned char c2Cr[]    = { '\r', 'y' };
+    static const unsigned char c2CrEcho[] = { '\r', '\0' };
+    static const unsigned char c3Data[]  = { 'c' };
+    const char     *modeP;
+    int             fd;
+    unsigned char   verdict;
+
+    modeP = "telnet-reconnect-client";
+
+    // ---- caller 1 ----
+    if( (fd = connectTo(hostP, port)) < 0 )
+    {
+        return(1);
+    }
+
+    if( expectExact(modeP, "caller 1 greeting", fd, telnetGreeting, (int)sizeof(telnetGreeting)) ||
+        sendBytes(modeP, fd, c1Data, (int)sizeof(c1Data)) ||
+        expectExact(modeP, "caller 1 a", fd, c1Echo, (int)sizeof(c1Echo)) ||
+        sendBytes(modeP, fd, c1Sub, (int)sizeof(c1Sub)) ||
+        expectExact(modeP, "caller 1 wont 46", fd, c1Reply, (int)sizeof(c1Reply)) )
+    {
+        close(fd);
+        return(1);
+    }
+
+    close(fd);                          // in the middle of the subnegotiation
+    sleepMs(TELNET_REDIAL_MS);
+
+    // ---- caller 2, DCS2's own re-accept ----
+    if( (fd = connectTo(hostP, port)) < 0 )
+    {
+        return(1);
+    }
+
+    if( expectExact(modeP, "caller 2 greeting", fd, telnetGreeting, (int)sizeof(telnetGreeting)) ||
+        sendBytes(modeP, fd, c2Data, (int)sizeof(c2Data)) ||
+        expectExact(modeP, "caller 2 b", fd, c2Echo, (int)sizeof(c2Echo)) ||
+        sendBytes(modeP, fd, c2Cr, (int)sizeof(c2Cr)) ||
+        expectExact(modeP, "caller 2 cr", fd, c2CrEcho, (int)sizeof(c2CrEcho)) ||
+        expectClose(modeP, "caller 2 rebind close", fd) )
+    {
+        close(fd);
+        return(1);
+    }
+
+    close(fd);
+
+    // ---- caller 3, after the rebind ----
+    if( (fd = connectTo(hostP, port)) < 0 )
+    {
+        return(1);
+    }
+
+    verdict = 'P';
+
+    if( expectExact(modeP, "caller 3 greeting", fd, telnetGreeting, (int)sizeof(telnetGreeting)) ||
+        sendBytes(modeP, fd, c3Data, (int)sizeof(c3Data)) ||
+        expectExact(modeP, "caller 3 c", fd, c3Data, (int)sizeof(c3Data)) ||
+        sendBytes(modeP, fd, &verdict, 1) ||
+        expectExact(modeP, "verdict echo", fd, &verdict, 1) ||
+        expectClose(modeP, "close", fd) )
+    {
+        close(fd);
+        return(1);
+    }
+
+    close(fd);
+    fprintf(stdout, "%s: %s done, all callers matched\n", progName, modeP);
+    return(0);
+}
+
+/* =========================================================================
  * Usage
  * ========================================================================= */
 
@@ -1337,7 +1884,10 @@ printUsage(void)
         "  reconnect-client <host> <port>\n"
         "  interrupt-client <host> <port>\n"
         "  telnet-echo-client <host> <port>\n"
-        "  echo-toggle-client <host> <port>\n",
+        "  echo-toggle-client <host> <port>\n"
+        "  telnet-negotiate-client <host> <port>\n"
+        "  telnet-reconnect-client <host> <port>\n"
+        "  telnet-newline-client <host> <port>\n",
         progName);
 }
 
@@ -1477,6 +2027,45 @@ main(int argc, char *argv[])
 
         port = atoi(argv[3]);
         return(modeEchoToggleClient(argv[2], port));
+    }
+
+    /* ---- telnet-negotiate-client <host> <port> ---- */
+    if( strcmp(modeP, "telnet-negotiate-client") == 0 )
+    {
+        if( argc != 4 )
+        {
+            fprintf(stderr, "%s: telnet-negotiate-client requires <host> <port>\n", progName);
+            return(1);
+        }
+
+        port = atoi(argv[3]);
+        return(modeTelnetNegotiateClient(argv[2], port));
+    }
+
+    /* ---- telnet-reconnect-client <host> <port> ---- */
+    if( strcmp(modeP, "telnet-reconnect-client") == 0 )
+    {
+        if( argc != 4 )
+        {
+            fprintf(stderr, "%s: telnet-reconnect-client requires <host> <port>\n", progName);
+            return(1);
+        }
+
+        port = atoi(argv[3]);
+        return(modeTelnetReconnectClient(argv[2], port));
+    }
+
+    /* ---- telnet-newline-client <host> <port> ---- */
+    if( strcmp(modeP, "telnet-newline-client") == 0 )
+    {
+        if( argc != 4 )
+        {
+            fprintf(stderr, "%s: telnet-newline-client requires <host> <port>\n", progName);
+            return(1);
+        }
+
+        port = atoi(argv[3]);
+        return(modeTelnetNewlineClient(argv[2], port));
     }
 
     fprintf(stderr, "%s: unknown mode '%s'\n", progName, modeP);

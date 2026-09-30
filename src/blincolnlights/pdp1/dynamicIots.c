@@ -18,19 +18,30 @@
  * void iotUpdate(void); - called when the emulator gets SIGHUP to reload its configuration
  *
  * Pseudo-asynchronous behavior can be done by implementing:
- * void iotPoll(PDP1P pdp1P); -called every n instruction cycles if enabled/
+ * void iotPoll(PDP1P pdp1P); - called every n executed cycles while enabled
  * and then calling:
- * void enablePolling(int n) - 1..n to enable polling, 0 to disable, but only if an isPoll() is implemented
+ * void enablePolling(int n) - n > 0 to poll every n cycles, 0 to stop; useful only if iotPoll() is implemented
+ *
+ * Or, timed on simtime rather than executed cycles, by implementing:
+ * void iotDeadline(PDP1P pdp1P); - called once the deadline set by iotPollAt() has come
+ * and then calling iotPollAt(base, deadline) and iotPollCancel(), with iotTime(base) for now.
+ * The two time bases are kept here, advanced by main.c once per powered pass (see
+ * dynamicIotProcessorAdvance()), and the deadline check runs on every such pass, halted and
+ * stolen ones included, since a device keeps running while the machine is halted.
  *
  * 11-Apr-2026 wje fix filename formatting for single-digit IOTs
  * 19-Jun-2026 wje added a second, independent poll mechanism for the rpa/rpb (reader)
- * extraction and anything similar (punch, typewriter), iotIOPoll().
- * If implemented it is called unconditionally on everydynamicIotProcessorDoIOPoll() call.
- * This is called from the same main-loop call site ashandleio(), regardless of run state,
+ * extraction and anything similar, iotIOPoll(); the reader, tyi and the drum use it.
+ * If implemented it is called on every dynamicIotProcessorDoIOPoll() call, which main.c makes
+ * once per main-loop pass beside handleio(), while the power is on, running or halted,
  * because real tape/typewriter timing doesn't stop just because the CPU is halted.
  * Also added dynamicIotOwnsDevice(int dev), so core code can tell whether a given device number is now
  * owned by a loaded dynamic IOT and skip its own builtin servicing of that device accordingly.
  * 11-Sep-2026 wje a failed alias now closes its .so and marks its entry invalid.
+ * 11-Sep-2026 wje/claude per-device handler and poll timing. Off unless dynamicIotTimingEnable()
+ * turns it on, which main.c no longer does (removed on purpose); when on, every handler and
+ * poll call is bracketed by two gettime() calls and its duration accumulated by device number,
+ * so the report can say which device's code the emulator thread's cycle time is going to.
  */
 
 #include <unistd.h>
@@ -46,11 +57,39 @@ static IotEntry handles[64];
 static PollEntryP pollList;
 static IoPollEntryP ioPollList;   // 19-Jun-2026 wje, see iotIOPoll above
 
+// The deadline time bases, indexed by IOT_TIME_DEVICE and IOT_TIME_RUN, and the earliest armed
+// deadline on each (UINT64_MAX for none). An earliest value may be early, never late: arming
+// only lowers it, and a cancel leaves it, costing one walk that finds nothing due.
+// Only the emulator thread touches these, so no locking is needed.
+static uint64_t timeNs[2];
+static uint64_t earliestNs[2] = { UINT64_MAX, UINT64_MAX };
+
+// The plugins that implement iotDeadline(), at most one per device number.
+typedef struct
+{
+    IotEntryP entryP;
+    int iotNum;
+} DeadlineEntry;
+static DeadlineEntry deadlineList[64];
+static int deadlineCount;
+
+// Per-device timing, indexed by IOT device number (0-077), see the file header.
+// Only the emulator thread touches these, so no locking is needed.
+static int devTiming;                   // non-zero while per-device timing is on
+static long handlerCalls[64];           // iotHandler() calls, both pulses counted
+static u64 handlerNs[64];               // total ns spent in iotHandler()
+static u64 handlerMaxNs[64];            // longest single iotHandler() call
+static long pollCalls[64];              // iotPoll() calls
+static u64 pollNs[64];                  // total ns spent in iotPoll()
+static u64 pollMaxNs[64];               // longest single iotPoll() call
+
 extern PDP1 *pdp1P;              // from main.c
 extern void dynamicReq(PDP1 *pdp, int chan);
 
 void dynamicIotProcessBreak(int chan);
 static IotEntryP initializeEntry(int dev);
+static void noteDevTime(long *callsP, u64 *totalP, u64 *maxP, int dev, u64 ns);
+static void runDeadlines(PDP1 *pdp1P);
 
 // Common lookup/lazy-load logic shared by dynamicIotProcessor() and dynamicIotOwnsDevice().
 // Resolves dev to its real IotEntry following aliases.
@@ -98,6 +137,7 @@ dynamicIotProcessor(PDP1 *pdpP, int dev, int pulse, int completion)
 {
 IotEntryP entryP;
 int status;
+u64 startNs;
 
     if( !(entryP = resolveEntry(dev)) )
     {
@@ -105,7 +145,18 @@ int status;
     }
 
     stopped = 0;
-    status = entryP->handlerP(pdpP, dev, pulse, completion);
+    if( devTiming )
+    {
+        // Charged to the device number the program used; resolveEntry() guarantees dev <= 077.
+        startNs = gettime();
+        status = entryP->handlerP(pdpP, dev, pulse, completion);
+        noteDevTime(handlerCalls, handlerNs, handlerMaxNs, dev, (gettime() - startNs));
+    }
+    else
+    {
+        status = entryP->handlerP(pdpP, dev, pulse, completion);
+    }
+
     return( status );
 }
 
@@ -189,12 +240,14 @@ IotUpdateP updateP;
     }
 }
 
-// Called every instruction cycle to hande any IOTs with polling.
+// Called at the end of every executed cycle (pdp1.c's cycle()) to handle any IOTs with polling;
+// not on a stolen cycle or while halted, and a mul or div is two calls.
 void
 dynamicIotProcessorDoPoll(PDP1 *pdp1P)
 {
 IotEntryP entryP;
 PollEntryP pollItemP;
+u64 startNs;
 
     if( stopped )
     {
@@ -207,16 +260,25 @@ PollEntryP pollItemP;
         entryP = pollItemP-> iotEntryP;
         if( entryP->pollEnabled )
         {
-            if( ++(pollItemP->curCount) >= entryP->pollEnabled )
+            if( ++(entryP->pollCount) >= entryP->pollEnabled )
             {
-                pollItemP->curCount = 0;
-                entryP->pollP(pdp1P);
+                entryP->pollCount = 0;
+                if( devTiming )
+                {
+                    startNs = gettime();
+                    entryP->pollP(pdp1P);
+                    noteDevTime(pollCalls, pollNs, pollMaxNs, pollItemP->iotNum, (gettime() - startNs));
+                }
+                else
+                {
+                    entryP->pollP(pdp1P);
+                }
             }
         }
     }
 }
 
-// Called unconditionally once per main-loop iteration regardless of run/stop state.
+// Called once per main-loop pass while the power is on, whether the CPU is running or halted.
 void
 dynamicIotProcessorDoIOPoll(PDP1 *pdp1P)
 {
@@ -226,6 +288,168 @@ IoPollEntryP itemP;
     {
         itemP->iotEntryP->ioPollP(pdp1P);
     }
+}
+
+// Called by main.c at the end of every main-loop pass while the power is on, running, stolen or
+// halted. passNs is the pass's simtime less any throttle lag-cap span, so neither time base
+// counts time in which no instruction ran; the run base also skips halted passes. Two compares
+// a pass: the deadline list is walked only once one of them says something may be due.
+void
+dynamicIotProcessorAdvance(PDP1 *pdp1P, uint64_t passNs, bool ran)
+{
+    timeNs[IOT_TIME_DEVICE] += passNs;
+    if( ran )
+    {
+        timeNs[IOT_TIME_RUN] += passNs;
+    }
+
+    if( (timeNs[IOT_TIME_DEVICE] >= earliestNs[IOT_TIME_DEVICE]) ||
+        (timeNs[IOT_TIME_RUN] >= earliestNs[IOT_TIME_RUN]) )
+    {
+        runDeadlines(pdp1P);
+    }
+}
+
+// Returns the time on base, in ns. In a handler it is the time at the start of the pass; in an
+// iotDeadline() call, the end of the pass that made the call.
+uint64_t
+dynamicIotTime(int base)
+{
+    return( timeNs[(base == IOT_TIME_RUN) ? IOT_TIME_RUN : IOT_TIME_DEVICE] );
+}
+
+// Arms entryP's one deadline, replacing any it had, for iotPollAt(). A deadline already passed
+// is called at the end of this pass. Ignored for a plugin with no iotDeadline(), which would
+// otherwise hold an earliest value no walk could ever clear.
+void
+dynamicIotSetDeadline(IotEntryP entryP, int base, uint64_t deadline)
+{
+    if( !entryP || !entryP->deadlineP )
+    {
+        return;
+    }
+
+    base = (base == IOT_TIME_RUN) ? IOT_TIME_RUN : IOT_TIME_DEVICE;
+    entryP->deadlineBase = base;
+    entryP->deadline = deadline;
+    entryP->deadlineArmed = true;
+    if( deadline < earliestNs[base] )
+    {
+        earliestNs[base] = deadline;
+    }
+}
+
+// Drops entryP's deadline, for iotPollCancel(). The earliest value is left as it is.
+void
+dynamicIotCancelDeadline(IotEntryP entryP)
+{
+    if( entryP )
+    {
+        entryP->deadlineArmed = false;
+    }
+}
+
+// Calls iotDeadline() for every plugin whose deadline has come, then recomputes the earliest
+// values, since any call may arm or cancel. Each deadline is disarmed before its call, so a
+// plugin that re-arms at or before now is called on the next pass, not again in this walk.
+static void
+runDeadlines(PDP1 *pdp1P)
+{
+int i;
+IotEntryP entryP;
+uint64_t lowest[2] = { UINT64_MAX, UINT64_MAX };
+u64 startNs;
+
+    for( i = 0; i < deadlineCount; ++i )
+    {
+        entryP = deadlineList[i].entryP;
+        if( entryP->deadlineArmed && (timeNs[entryP->deadlineBase] >= entryP->deadline) )
+        {
+            entryP->deadlineArmed = false;
+            if( devTiming )
+            {
+                startNs = gettime();
+                entryP->deadlineP(pdp1P);
+                noteDevTime(pollCalls, pollNs, pollMaxNs, deadlineList[i].iotNum, (gettime() - startNs));
+            }
+            else
+            {
+                entryP->deadlineP(pdp1P);
+            }
+        }
+    }
+
+    for( i = 0; i < deadlineCount; ++i )
+    {
+        entryP = deadlineList[i].entryP;
+        if( entryP->deadlineArmed && (entryP->deadline < lowest[entryP->deadlineBase]) )
+        {
+            lowest[entryP->deadlineBase] = entryP->deadline;
+        }
+    }
+
+    earliestNs[IOT_TIME_DEVICE] = lowest[IOT_TIME_DEVICE];
+    earliestNs[IOT_TIME_RUN] = lowest[IOT_TIME_RUN];
+}
+
+// Accumulate one timed call of device dev into the given call-count, total and maximum arrays.
+// dev outside 0-077 is ignored rather than trusted as an index.
+static void
+noteDevTime(long *callsP, u64 *totalP, u64 *maxP, int dev, u64 ns)
+{
+    if( (dev < 0) || (dev > 077) )
+    {
+        return;
+    }
+
+    ++(callsP[dev]);
+    totalP[dev] += ns;
+    if( ns > maxP[dev] )
+    {
+        maxP[dev] = ns;
+    }
+}
+
+// Turn per-device timing on (non-zero) or off. It only sets the flag, so accumulated data is kept
+// until the next report. Nothing calls it at present (see the file header).
+void
+dynamicIotTimingEnable(int on)
+{
+    devTiming = on;
+}
+
+// Write one line per device that had any timed handler or poll calls since the last report,
+// giving call count, average and maximum ns for each, then clear everything for the next run.
+// fP is an open, writable stream, or NULL to clear without writing; nothing is written for
+// devices with no calls.
+void
+dynamicIotTimingReport(FILE *fP)
+{
+int dev;
+
+    for( dev = 0; (fP && (dev < 64)); ++dev )
+    {
+        if( (handlerCalls[dev] == 0) && (pollCalls[dev] == 0) )
+        {
+            continue;       // device not used this run
+        }
+
+        fprintf(fP, "  IOT %02o: handler %ld calls avg %lluns max %lluns; poll %ld calls avg %lluns max %lluns\n",
+            dev,
+            handlerCalls[dev],
+            (unsigned long long)((handlerCalls[dev]) ? (handlerNs[dev] / (u64)handlerCalls[dev]) : 0),
+            (unsigned long long)handlerMaxNs[dev],
+            pollCalls[dev],
+            (unsigned long long)((pollCalls[dev]) ? (pollNs[dev] / (u64)pollCalls[dev]) : 0),
+            (unsigned long long)pollMaxNs[dev]);
+    }
+
+    memset(handlerCalls, 0, sizeof(handlerCalls));
+    memset(handlerNs, 0, sizeof(handlerNs));
+    memset(handlerMaxNs, 0, sizeof(handlerMaxNs));
+    memset(pollCalls, 0, sizeof(pollCalls));
+    memset(pollNs, 0, sizeof(pollNs));
+    memset(pollMaxNs, 0, sizeof(pollMaxNs));
 }
 
 // Try to resolve a dynamic IOT's .so, if successful, initialize it.
@@ -321,6 +545,15 @@ char fname[256];
         ioPollEntryP->iotEntryP = entryP;
         ioPollEntryP->nextP = ioPollList;
         ioPollList = ioPollEntryP;
+    }
+
+    // An entry is initialized once per device number, so the list cannot overflow.
+    entryP->deadlineP = (IotDeadlineP)dlsym(entryP->dlHandleP, "iotDeadline");
+    if( entryP->deadlineP )
+    {
+        deadlineList[deadlineCount].entryP = entryP;
+        deadlineList[deadlineCount].iotNum = dev;
+        ++deadlineCount;
     }
 
     // Be sure start gets called, we're already running so it won't have been yet.

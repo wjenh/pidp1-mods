@@ -65,7 +65,7 @@ Normally, this is a variation of the dpy IOT, IOT 07.
 However, this conflicts with one of the bits used to change the display origin.
 Fortunately, it can be simulated by using *dpy-i 400*, which uses an invisible brightness setting so
 no unwanted dot will be visible.
-The only difference between this workaround and the original one is that this takes 35 microseconds to
+The only difference between this workaround and the original one is that this takes 45 microseconds to
 complete, the original takes only 30 microseconds.
 
 If the pidp1 emulator was compiled with Type 33 support, then the authentic instruction is available,
@@ -181,7 +181,12 @@ considerable extra time, nor does it include the setup time for setting the draw
 More precisely, for the dot positions that make up a character, an off bit takes 2 microseconds,
 an on bit takes 5 microseconds.
 This does not include the setup time for *sdb* to set the initial position. This takes 30 microseconds.
-If instead of *sdb* a *dpy* is used, this takes 35 microseconds.
+If instead of *sdb* a *dpy* is used, this takes 45 microseconds, the Type 30's display cycle.
+
+These are the devices' own times. An instruction with the wait bit also takes its own 5 microsecond
+cycle, and each device time is rounded up to a whole 5 microsecond cycle, so a *dpy i* takes 50
+microseconds and each *gpl i* or *gpr i* 5 more than its rounded dot time
+(see UsingDynamicIots.md, "Waits, completions, and pulses").
 
 Again, you must be sure a gpl has completed before issuing a gpr or the character will not be properly drawn.
 

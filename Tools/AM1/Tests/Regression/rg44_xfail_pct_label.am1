@@ -1,0 +1,8 @@
+Test rg44: a label written as a percent ad-hoc local does not assemble
+// A label written as %c does not assemble: % is only modulo, and a %
+// with no left operand is a syntax error.
+100/
+    local
+    %c, hlt
+    endloc
+stop

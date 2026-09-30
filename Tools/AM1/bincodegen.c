@@ -65,6 +65,7 @@ static int reduceOperand(PNodeP);
 static void adjustPC(int);
 
 static void writeStatements(FILE *, PNodeP);
+static void markWord(int lineNo, const char *whatP);
 static void writeVars(FILE *outfP, PNodeListP listP, int lineNo);
 static void writeConstants(FILE *outfP, SymNodeP nodeP, int lineNo);
 static bool writeText(FILE *outfP, FlexText flexText);
@@ -75,8 +76,8 @@ static bool setBits(uint64_t map[], int addr, int count);
 void verror(char *msgP, ...);
 
 // This is a bitmap for tracking used memory locations.
-// Each bit represents one word in memory.
-uint64_t memMap[((MAXBANK + 1) * BANKSIZE) / sizeof(uint64_t)];
+// Each bit represents one word in memory, and each entry holds 64 of them.
+uint64_t memMap[((MAXBANK + 1) * BANKSIZE) / 64];
 
 // Walk a tree and emit a binary tape image
 int
@@ -103,7 +104,7 @@ binCodegen(FILE *outfP, PNodeP rootP)
     writeBlankTape(outfP, 2);
     // Emit the code
     writeStatements(outfP, rootP->leftP);
-    // Finsh up
+    // Finish up
     flushBuffer(outfP, outBufP);
     if( rootP->rightP->type == START )
     {
@@ -123,8 +124,6 @@ static void
 writeStatements(FILE *outfP, PNodeP nodeP)
 {
 int i, j;
-PNodeP node2P;
-BankContextP bankP;
 
     cur_pc = 4;                 // the macro1 default
     initBuffer(outBufP, cur_pc);
@@ -138,16 +137,11 @@ BankContextP bankP;
             break;
 
         case ORIGIN:
+            // An origin emits no word of its own; "101/ cla" arrives as an
+            // ORIGIN followed by its own EXPR.
             cur_pc =  nodeP->value.ival & ADDRMASK;
             flushBuffer(outfP, outBufP);
             initBuffer(outBufP, cur_pc);
-            if( canReduce(nodeP->rightP) )
-            {
-                i = reduceOperand(nodeP->rightP);
-                nodeP->value2.ival = i;     // save for listing
-                putBuffer(outfP, outBufP, i);
-                adjustPC(1);
-            }
             break;
 
         case EXPR:
@@ -155,18 +149,7 @@ BankContextP bankP;
             {
                 i = reduceOperand(nodeP->rightP);
                 nodeP->value2.ival = i;     // save for listing
-                if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
-                {
-                    lineno = nodeP->lineNo;
-                    if( noMemFatal )
-                    {
-                        vwarn(WARN_MEMORY, "Already used memory address 0%04o would be overwritten.", cur_pc);
-                    }
-                    else
-                    {
-                        verror("Already used memory address 0%04o would be overwritten.", cur_pc);
-                    }
-                }
+                markWord(nodeP->lineNo, "");
                 putBuffer(outfP, outBufP, i);
                 adjustPC(1);
             }
@@ -178,8 +161,10 @@ BankContextP bankP;
             {
                 // Normal case: a single-word instruction or expression follows
                 // the label on the same line (e.g. "foo, jmp bar").
+                // Checked for an overwrite like an unlabeled word.
                 i = reduceOperand(nodeP->rightP);
                 nodeP->value2.ival = i;     // save for listing
+                markWord(nodeP->lineNo, "");
                 putBuffer(outfP, outBufP, i);
                 adjustPC(1);
             }
@@ -257,13 +242,21 @@ BankContextP bankP;
             initBuffer(outBufP, (cur_bank << 12) | cur_pc);
             break;
 
+        case OPTIMIZE:
+        case ENDOPTIMIZE:
+            // An optimizer directive emits no word and moves no pc.
+            break;
+
         case TABLE:
             if( nodeP->rightP )     // has initializer
             {
                 j = evalExpr(nodeP->rightP);
 
+                // Each element of an initialized table is marked and checked; a
+                // table with no initializer reserves its words through setBits().
                 for( i = 0; i < nodeP->value.ival; ++i )
                 {
+                    markWord(nodeP->lineNo, " by table");
                     putBuffer(outfP, outBufP, j);
                     adjustPC(1);
                 }
@@ -318,6 +311,26 @@ BankContextP bankP;
     }
 }
 
+// Mark the word about to be emitted at the current pc as used and report an
+// overwrite, fatal by default or a warning with -M; the storage directives check
+// their own.  whatP names the kind of word (" by table"), or is empty.
+static void
+markWord(int lineNo, const char *whatP)
+{
+    if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
+    {
+        lineno = lineNo;
+        if( noMemFatal )
+        {
+            vwarn(WARN_MEMORY, "Already used memory address 0%04o would be overwritten%s.", cur_pc, whatP);
+        }
+        else
+        {
+            verror("Already used memory address 0%04o would be overwritten%s.", cur_pc, whatP);
+        }
+    }
+}
+
 // some exprs don't emit anything
 static int
 canReduce(PNodeP nodeP)
@@ -361,12 +374,6 @@ canReduce(PNodeP nodeP)
 static int
 reduceOperand(PNodeP nodeP)
 {
-int lval;
-int rval;
-char ch;
-SymNodeP symP;
-PNodeP node2P;
-
     if( !nodeP )
     {
         return(0);
@@ -413,6 +420,12 @@ int word;
 
     if( i )         // if not zero, we didn't finish writing a full word, do so with low byte 0
     {
+        // The NUL-padded last word is checked like the rest of the string.
+        if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
+        {
+            return(false);
+        }
+
         putBuffer(outfP, outBufP, word << 9);
         adjustPC(1);
     }
@@ -477,13 +490,12 @@ char *bufP;
 }
 
 // Walk a list of variables, emit the storage.
-// If lineNo is -1, this is being called to automatically emit vars that were't emitted explicitly.
+// If lineNo is -1, this is being called to automatically emit vars that weren't emitted explicitly.
 static void
 writeVars(FILE *fP, PNodeListP listP, int lineNo)
 {
 int i;
 PNodeP nodeP;
-SymNodeP symP;
 
     while( listP )
     {
@@ -494,13 +506,13 @@ SymNodeP symP;
             if( lineNo == -1 )
             {
                 verror(
-            "Already used memory would be overwritten by automatically emitted variables at memory address 0%4o.\n",
+            "Already used memory would be overwritten by automatically emitted variables at memory address 0%04o.\n",
                     cur_pc);
             }
             else
             {
                 lineno = lineNo;
-                verror("Already used memory would be overwritten by variables at memory address 0%4o.\n",
+                verror("Already used memory would be overwritten by variables at memory address 0%04o.\n",
                     cur_pc);
             }
         }
@@ -514,7 +526,7 @@ SymNodeP symP;
 }
 
 // Walk a symbol table of constants, emit the values.
-// If lineNo is -1, this is being called to automatically emit vars that were't emitted explicitly.
+// If lineNo is -1, this is being called to automatically emit vars that weren't emitted explicitly.
 static void
 writeConstants(FILE *fP, SymNodeP symP, int lineNo)
 {
@@ -530,13 +542,13 @@ writeConstants(FILE *fP, SymNodeP symP, int lineNo)
             if( lineNo == -1 )
             {
                 verror(
-            "Already used memory would be overwritten by automatically emitted constants at memory address 0%4o.\n",
+            "Already used memory would be overwritten by automatically emitted constants at memory address 0%04o.\n",
                     cur_pc);
             }
             else
             {
                 lineno = lineNo;
-                verror("Already used memory would be overwritten by constants at memory address 0%4o.\n",
+                verror("Already used memory would be overwritten by constants at memory address 0%04o.\n",
                     cur_pc);
             }
         }
@@ -595,7 +607,7 @@ flushBuffer(
     BufferP bufP
     )
 {
-int i, j;
+int i;
 
     if( (i = bufferCount(bufP)) )
     {
@@ -689,7 +701,7 @@ int i;
         i = 0;
     }
 
-    while( i < sizeof(xloader) / sizeof(uint32_t) )
+    while( i < (int)(sizeof(xloader) / sizeof(uint32_t)) )
     {
         writeRIM(fP, addr++, xloader[i++]);     // nop
     }

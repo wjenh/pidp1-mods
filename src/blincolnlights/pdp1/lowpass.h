@@ -3,6 +3,7 @@
 */
 
 #include <stdbool.h>
+#include <stdint.h>
 
 // The bits in the program flags
 #define PF_1    0x20
@@ -12,28 +13,25 @@
 #define PF_5    0x02
 #define PF_6    0x01
 
-#define boundValue(v) (((v) < 0.0)?0.0:(((v) > 1.0)?1.0:(v)))
-
 // Yes, all those parens are important; remember that defines are just text substitutions.
 #define getProgFlag(mask, word) (((mask) & (word))?1:0)
 
 // sum 2 samples, multiply by the scale factor
 #define mixSamples(s1, s2, scale) (((s1) + (s2)) * (scale))
 
-// How we control the filters
+// One RC low-pass, run in continuous time: the capacitor is brought exactly to each moment asked
+// for, so an input change lands at its own time, not at the next sample.
 typedef struct {
-    float alpha;        // the alpha used to tune filter response, 0.0 <= alpha <= 1.0, lower is lower cutoff freq
-    float lastResult;   // the previous result, needed for all filtering
-    float gain;         // scale factor to apply to the computed filtered sample
-    float initialValue; // value to initialize filter's lastResult to on the first filter call
-    float highValue;    // threshold for dead elimination
-    int highLimit;      // consecutive cycle count that is the threshold for dead elimnation
-    int highCount;      // number of consecutive samples that meet or exceet maxHigh in value
-    bool sawOne;        // so we know we had one prior sample
-    bool doGain;        // whether or not we apply the gain factor, gain of 9.0 means no
-    bool deadElimination;   // do stuck high value elimination
-    } FilterSpec, *FilterSpecP;
+    double invTauNs;        // 1 / (R*C), per nanosecond
+    double y;               // the output, in units of the input's swing
+    double x;               // the level the input drives now
+    uint64_t t;             // the simtime y was last brought to
+    uint64_t cacheDt[2];    // the last two steps and their decay factors: the steps between
+    double cacheK[2];       // samples take only two lengths, so exp() is mostly skipped
+    int cacheNext;
+    } RCFilter, *RCFilterP;
 
-FilterSpecP initializeFilter(FilterSpecP, float, float);   // specP alpha, scale, initial value
-void setFilterDeadDetection(FilterSpecP, float, int);
-float lowPassFilter(FilterSpecP, float);
+void rcInit(RCFilterP, double level, uint64_t t);
+void rcSetCutoff(RCFilterP, double hz);
+void rcAdvance(RCFilterP, uint64_t t);
+void rcSetInput(RCFilterP, uint64_t t, double level);

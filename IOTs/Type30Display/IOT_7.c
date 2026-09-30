@@ -2,10 +2,15 @@
  * This is an implementation of the PDP-1 Type 30 display.
  * It has been moved from inside the emulator, where it really doesn't belong, here.
  *
- * According to the DEC documentation, it takes approximately 35 microseconds to draw a character,
- * 30 usecs to position the dot, then 5 usecs of intensification.
+ * According to DEC's Type 30E manual, a point takes 45 microseconds from the load pulse at TP10 of
+ * the dpy's cycle: 35 usecs of deflection setup, then 10 usecs of intensification, then the
+ * display-done pulse, which is also when a light pen hit is reported.
+ * Nothing happens at 35 usecs that a program can see, so the two are one 45 usec deadline on the
+ * device time base (iotPollAt(), iotHandler.h): stolen cycles and mul/div count, and a
+ * throttle lag-cap span does not.
  *
  * 17-Jun-2026 wje finally adding a revision hisotry. Fix for the original incorrect code for twe screen mode.
+ * 29-Sep-2026 Claude - the unused IDLEDELAY define is gone with the display aging it was for.
  */
 
 #include <unistd.h>
@@ -27,9 +32,8 @@
 #define LOG_POLL 0
 #define LOG_LIGHTPEN 0
 
-#define MOVEDELAY 30                // beam move delay, usecs
-#define DRAWDELAY 5                 // intinsification delay,usecs
-#define IDLEDELAY 100               // if not drawing, repeat time for display aging, usecs
+#define MOVEDELAY 35                // deflection setup delay, usecs
+#define DRAWDELAY 10                // intensification delay, usecs
 #define APERTURE 6                  // the default, 0.050"
 
 static int flagToBits(int f);       // convert flag number to flag bitmask
@@ -63,8 +67,6 @@ static bool dpyShiftEnabled;
 static bool sdbEnabled;
 static bool needCompletion;
 static bool twoscreensEnabled;
-
-static enum {IDLE, DEFLECTION, DRAW} pollState;
 
 static void configure(void);
 
@@ -108,7 +110,6 @@ bool noWait;
         lockDisplayData(0);
         setDisplayData(0, curX, curY, intensity);
         unlockDisplayData(0);
-        pollState = DRAW;
 
         // Be sure it's set to the current value
         setLightpenRadius2(0, penRadius2);
@@ -136,7 +137,6 @@ bool noWait;
         setLightpenRadius2(0, penRadius2);
 
         noWait = true;
-        pollState = IDLE;
 
         iotCondLog(LOG_APERTURE,"Aperture was %d, now %d, new radius squared %d\n", i,
             penAperture, getLightpenRadius2(0));
@@ -179,13 +179,11 @@ bool noWait;
             // Just complete immediately.
             // Yes, not historically accurate, but neither is using a mouse for a lightpen.
             noWait = true;
-            pollState = IDLE;
             iotCondLog(LOG_SDB,"Sdb MB(pdp1P) %06o, completion %d\n", MB(pdp1P), completion);
         }
         else
         {
-            delayTime = MOVEDELAY;
-            pollState = DEFLECTION;
+            delayTime = MOVEDELAY + DRAWDELAY;
         }
     }
 
@@ -197,11 +195,11 @@ bool noWait;
 
     if( delayTime )
     {
-        enablePolling( USTOCYCLES(delayTime) );
+        iotPollAt(IOT_TIME_DEVICE, (iotTime(IOT_TIME_DEVICE) + USTONS(delayTime)));
     }
     else
     {
-        enablePolling(0);
+        iotPollCancel();
     }
 
     return(1);
@@ -220,9 +218,9 @@ iotStop()
     iotCloseLog();
 }
 
-// Actually put out our dots
+// Actually put out our dots, 45 usecs after the dpy
 void
-iotPoll(PDP1 *pdp1P)
+iotDeadline(PDP1 *pdp1P)
 {
 int curX, curY, intensity;
 int realX, realY;
@@ -231,13 +229,6 @@ int realX, realY;
 
     iotCondLog(LOG_POLL, "IOT 7 poll x %d y %d intensity %d\n",
         curX, curY, intensity);
-
-    if( pollState == DEFLECTION )
-    {
-        pollState = DRAW;
-        enablePolling(USTOCYCLES(DRAWDELAY));           // a bit silly, but this is the actual timing
-        return;
-    }
 
     // Display subsystem uses 0-1023 coords
     realX = cvtDpyTo1024(curX);
@@ -268,9 +259,6 @@ int realX, realY;
         needCompletion = false;
         IOCOMPLETE(pdp1P);
     }
-
-    pollState = IDLE;
-    enablePolling(0); 
 }
 
 // Convert a flag number to the bits needes for program flags

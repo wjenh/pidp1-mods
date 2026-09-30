@@ -1,19 +1,25 @@
 #!/bin/bash
 # run_tests.sh - run the multibank test suite.
-# Usage: ./run_rtests.sh
-# Uses am1 binary in this hierarchy, not the system-installed one.
+# Usage: ./run_tests.sh [am1]
+#   am1   the am1 to test, absolute or relative to where you run this.
+#         Default: the am1 in this hierarchy, ../../am1 relative to this
+#         script (the tree's own am1), not the system-installed one.
 # Tests are run in a temp directory so no artifacts land in the Multibank folder.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-AM1=../../am1
+AM1="${1:-"$SCRIPT_DIR/../../am1"}"
 
 if [ ! -x "$AM1" ]; then
     echo "am1 binary not found or not executable: $AM1"
     exit 1
 fi
 
+# Absolute, because of the cd into the temp directory below.
+AM1="$(cd "$(dirname "$AM1")" && pwd)/$(basename "$AM1")"
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+cd "$WORK"
 
 pass=0; fail=0
 declare -a FAILURES
@@ -41,7 +47,6 @@ run_test rg3_multibank_consts     "$SCRIPT_DIR/rg3_multibank_consts.am1"
 run_test rg4_swap_preserves_pc    "$SCRIPT_DIR/rg4_swap_preserves_pc.am1"
 run_test rg5_globalSym_multibank  "$SCRIPT_DIR/rg5_globalSym_multibank.am1"
 
-rm *.rim
 echo ""
 echo "Results: $pass pass, $fail fail"
 [ ${#FAILURES[@]} -gt 0 ] && echo "Failures: ${FAILURES[*]}"

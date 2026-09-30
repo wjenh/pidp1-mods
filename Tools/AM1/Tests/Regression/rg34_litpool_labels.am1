@@ -4,14 +4,14 @@ Pooled literal labels in the listing
 // the same 18 bits either way, and which bank an indirect through it reaches
 // is decided by the extend-mode state at execution, not by the pool.
 //
-// Until 06-Sep-26 the listing rendered every reference sharing a slot from the
-// pooled symbol's own expression tree -- whichever reference interned the slot
-// first -- so the second reference here was annotated with the first one's
-// symbol, bank qualifier included. In Adventure that printed a bank-0
-// subroutine call under an unrelated bank-2 string label.
+// A listing that rendered every reference sharing a slot from the pooled
+// symbol's own expression tree -- whichever reference interned the slot
+// first -- would annotate the second reference here with the first one's
+// symbol, bank qualifier included, and could print a bank-0 subroutine call
+// under an unrelated bank-2 string label.
 //
 // The two references below are written differently but resolve to the same
-// 12-bit value, so they must share one pool word AND still be labelled with
+// 12-bit value, so they must share one pool word AND still be labeled with
 // what the source wrote. run_regression.sh checks both halves; a run where
 // they stopped sharing the word would make the label check vacuous.
 //

@@ -1,0 +1,243 @@
+T16: DCS2 TELNET NEWLINE TEST
+/*
+ * T16.am1 -- DCS2 telnet mode: line ends and NUL.  A received CR NUL gives
+ *            the program exactly what CR LF gives (RFC 1123), so the NUL
+ *            never reaches it, and a CR with no LF after it goes out as
+ *            CR NUL (RFC 854), whether the program sends it or DCS2 echoes
+ *            it.  A NUL that does not follow a CR is data.
+ *
+ * Harness required:
+ *   ./dcstestharness telnet-newline-client 127.0.0.1 2116
+ *   Start the harness AFTER this program is running and waiting for a
+ *   connection (typewriter will print "T16 listening" when ready).
+ *
+ *   The harness does all the checking, as for T14.  Each of its steps
+ *   sends some line-end bytes and then one data byte, a marker, and reads
+ *   back the exact bytes it expects: for each character this program
+ *   reads, DCS2's dcfecho echo of it, then this program's tcc copy, which
+ *   DCS2's telnet mode sends an LF as CR LF and a CR as CR NUL.  See
+ *   modeTelnetNewlineClient for the steps.  At the end it sends its
+ *   verdict as one more character, P if every step matched, F if not.
+ *
+ * What the program does:
+ *   1. Opens channel 0 as a TCP server (dcftel dcfecho, no dcfflex) on
+ *      port 2116.
+ *   2. Signals readiness by printing "T16 listening" on the typewriter.
+ *   3. Polls rcs until the harness connects (dsfcon set).
+ *   4. ROC to force cur_chan to channel 0 (no data has arrived yet).
+ *   5. Reads characters one at a time (rch rchclr) and sends each one
+ *      straight back (tcc), NUL included, until the verdict, P or F,
+ *      arrives.
+ *   6. SCBCLEAR closes channel 0.
+ *
+ * Tests:
+ *   T16-1  Channel reaches CONNECTED state after harness connects
+ *   T16-2  The harness's verdict is P: every newline step matched
+ *   T16-3  Channel closes cleanly after SCBCLEAR
+ *
+ * Assembler: am1 v1.28+
+ * Assemble:  am1 -b T16.am1
+ */
+
+#include <DCS/dcs2defs.ah>
+#include <TESTUTIL/reportResult.ah>
+
+octal
+
+#define ch_P    0120        // the harness's verdict: every step matched
+#define ch_F    0106        // the harness's verdict: a step did not match
+// rdchar's answer when the connection is lost.  Not 777777: that is -0, and a NUL
+// character minus -0 is +0, so the sub/sza test below would take a NUL for a lost
+// connection.  A character c (0-0377) minus 400000 is c+377777, never +0 or -0.
+#define lostval 400000
+
+100/
+
+begin,
+    jsp resetResults        // clear pass/fail/skip counters before each run
+    lio [scbrst]
+    scb
+
+// ---- open server channel 0 ------------------------------------------------
+//
+// Control block at ctl16: dcftel dcfecho (server mode), channel 0, port 2116.
+
+    lio [scbset ctl16]
+    scb
+    lai
+    and [dserr]
+    sza
+    jmp halterr             // server open failed (port in use?)
+
+    lac [rdymsg]
+    jda typetext
+
+// ---- T16-1: wait for harness connection -----------------------------------
+
+waitcon,
+    lio [0]
+    rcs
+    lai
+    and [dsfser]
+    sza
+    jmp t1_fail
+    lio [0]
+    rcs
+    lai
+    and [dsfcon]
+    sza i
+    jmp waitcon
+
+    lio [REPORT_PASS]
+    lac [lbl1]
+    jda reportResult
+    jmp t1_done
+t1_fail,
+    lio [REPORT_FAIL]
+    lac [lbl1]
+    jda reportResult
+    jmp finish
+t1_done,
+
+    lio [0]
+    roc
+    lai
+    and [dserr]
+    sza
+    jmp halterr
+
+// ---- echo loop until the verdict -------------------------------------------
+
+echoloop,
+    jsp rdchar
+    dac chr
+    sub [lostval]
+    sza i
+    jmp t2_lost             // the harness went away before its verdict
+    lac chr
+    sub [ch_P]
+    sza i
+    jmp t2_pass
+    lac chr
+    sub [ch_F]
+    sza i
+    jmp t2_fail
+    lio chr                 // any other character goes straight back
+    tcc
+    jmp echoloop
+
+t2_pass,
+    lio [REPORT_PASS]
+    lac [lbl2]
+    jda reportResult
+    jmp closeit
+t2_fail,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+    jmp closeit
+t2_lost,
+    lio [REPORT_FAIL]
+    lac [lbl2]
+    jda reportResult
+    jmp finish
+
+// ---- T16-3: SCBCLEAR and verify closed ------------------------------------
+
+closeit,
+    lio [0]                 // SCBCLEAR takes the channel from IO
+    scb
+
+waitclosed,
+    lio [0]
+    rcs
+    lai
+    and [dsfopn]
+    sza
+    jmp waitclosed
+    lio [REPORT_PASS]
+    lac [lbl3]
+    jda reportResult
+
+// ---- cleanup and halt ------------------------------------------------------
+
+finish,
+    lio [scbrst]
+    scb
+
+    jsp printSummary
+    hlt
+    jmp begin
+
+halterr,
+    hlt
+    jmp begin
+
+// ---- rdchar: wait for and read one character from channel 0 ---------------
+//
+// Called by jsp rdchar.  Returns the character in AC, or lostval if the
+// connection is lost, errors, or the read reports an error.
+
+rdchar,
+    dap rdx                 // jsp left the return address in AC
+rdpoll,
+    lio [0]
+    rcs
+    lai
+    and [dsfcls dsfser]
+    sza
+    jmp rdlost
+    lio [0]
+    rcs
+    lai
+    and [dsfrdy]
+    sza i
+    jmp rdpoll
+
+    rch rchclr
+    lai
+    and [dserr]
+    sza
+    jmp rdlost
+    lai
+rdx,
+    jmp .
+rdlost,
+    lac [lostval]
+    jmp rdx
+
+chr,
+    0
+
+// ---- labels and strings ----------------------------------------------------
+
+rdymsg,
+    text "T16 listening on 2116\n"
+    013
+
+lbl1,
+    text "T16-1 connected"
+    013
+lbl2,
+    text "T16-2 newlines"
+    013
+lbl3,
+    text "T16-3 chan closed"
+    013
+
+// ---- channel control block (server mode, telnet, channel 0, port 2116) ---
+//
+// word 0: dcftel + dcfecho + dcfsrv, channel 0
+// word 1: port = 2116
+
+ctl16,
+    dcftel+dcfecho+dcfsrv
+decimal
+    2116
+octal
+
+#include <TYO/typetext.ac>
+#include <TESTUTIL/reportResult.ac>
+constants
+
+start begin

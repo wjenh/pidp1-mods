@@ -18,6 +18,8 @@
  * 14-Sep-2026 Claude - drs clears the flags here as well as in the 340 thread, as dla already did.
  *    The thread clears them only when it gets to the resume, so a dsp just after a drs could see the
  *    hit it had just answered, and a program polling dsp counted one hit two or three times.
+ * 28-Sep-2026 Claude - dcf only clears the flags, per the H-340 manual, instead of also starting the
+ *    display at the address in IO as a dla does.
  */
 
 #include <unistd.h>
@@ -98,6 +100,16 @@ EmuControlP ctlP;
             ctlP->command = EMU_CMD_RESUME;
             iotCondLog(LOG_IOT, "drs%s\n", (cmd & 02)?" and clear flags":"");
         }
+        else if( cmd & 02 )
+        {
+            // dcf, display clear flags, done above; it takes nothing from IO and sends the 340 nothing.
+            // The H-340 manual (3-4, 3-15) has it clear the light pen, edge violation and request for
+            // data flags. Request for data is only the handshake for the next word, clear while a word
+            // runs, so a running display carries on, a stopped one stays stopped, and one held by a
+            // light pen hit still waits for its drs.
+            iotCondLog(LOG_IOT, "dcf\n");
+            break;
+        }
         else
         {
             // dla, display load address
@@ -105,7 +117,7 @@ EmuControlP ctlP;
             emuClearFlags();
             ctlP->address = IO(pdp1P);            // This is a full 16 bit address
             ctlP->command = EMU_CMD_RUN;
-            iotCondLog(LOG_IOT, "dla %o%s\n", ctlP->address, (cmd & 02)?" and clear flags":"");
+            iotCondLog(LOG_IOT, "dla %o\n", ctlP->address);
         }
 
         emuCommandSet(ctlP);
@@ -211,8 +223,8 @@ EmuControlP ctlP;
     iotCloseLog();
 }
 
-// Called when the pdp-1 core gets a SIGHUP.
-// NOTE: this is an asynchnonous call outside of the normal flow.
+// Called after the pdp-1 core gets a SIGHUP: on the emulator thread, from the main loop between
+// cycles, not in the signal handler. The 340 runs on its own thread, so it gets the update as a command.
 void
 iotUpdate()
 {

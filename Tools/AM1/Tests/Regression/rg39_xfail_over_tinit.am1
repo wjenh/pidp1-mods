@@ -1,0 +1,8 @@
+Test rg39 (XFAIL): a word lands on an initialized table's words -- must fail
+// The other direction of rg38: the table's words are marked, so a later
+// word cannot land on them in silence.
+100/
+table 2, 7
+101/
+    hlt
+stop

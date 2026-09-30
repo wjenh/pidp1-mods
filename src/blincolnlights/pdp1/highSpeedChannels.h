@@ -16,10 +16,10 @@
 // These are bitflags in the mode field
 #define HSC_MODE_FROMMEM       001  // from core memory to user space
 #define HSC_MODE_TOMEM         002  // from user space to core memory
-#define HSC_MODE_IMMEDIATE     004  // bypass all the wait states, immediate execution, no reschedule
-#define HSC_MODE_THREADED      010  // immediate execution but check busy and imitate timing
-#define HSC_MODE_TRUESTEAL     040  // true cycle-stealing mode, only for transfers > 5us/word (e.g. the drum)
-#define HSC_MODE_UPDATEPANEL   020  // only for immediate, hsc controls the hsc cycle light
+#define HSC_MODE_IMMEDIATE     004  // data moved at once, no cycles stolen, no wait
+#define HSC_MODE_THREADED      010  // data moved at once, one cycle per word owed to the CPU, HSCwait() times 5us/word
+#define HSC_MODE_TRUESTEAL     040  // one word per stolen cycle, spread over the device's time; wordTime >= 50 (e.g. the drum)
+#define HSC_MODE_UPDATEPANEL   020  // IMMEDIATE, THREADED or TRUESTEAL: light the hsc cycle lamp for the transfer
 
 typedef struct {
     int mode;               // current operation mode, from, to, or both
@@ -49,6 +49,10 @@ int HSCexecute(HSCChannelP channelP, HSCRequestP requestP);
 
 int HSCwait(HSCChannelP channelP);       // wait for completion of a request
 int HSCgetStatus(HSCChannelP channelP);   // returns one of the HSC statuses
+
+// Owe count memory cycles to the CPU without moving data, for words fetched earlier with
+// IMMEDIATE and used now (the 340's cache). HSC_OK, or HSC_ERR for a bad channel or count.
+int HSCsteal(HSCChannelP channelP, int count);
 
 // Emulator-wide abort: stops any in-flight transfer on every assigned channel and mark with HSC_ABORT.
 // Normally called from main.c on a stop/start/continue/examine/read-in switch edge.

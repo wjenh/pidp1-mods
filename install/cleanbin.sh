@@ -38,3 +38,4 @@ sudo rm -f /usr/local/bin/mkmicrotape 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/mtp 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/p7sim 2>&1 >/dev/null
 sudo rm -f /usr/local/bin/monas 2>&1 >/dev/null
+sudo rm -f /usr/local/bin/pdp1central 2>&1 >/dev/null

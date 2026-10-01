@@ -3,24 +3,92 @@
 # start script for pidp1.  
 # 7-Apr-26 wje add reload to have the config file reloaded
 # 29-Apr-26 wje change reload to use sighup
+# 30-Sep-26 wje (Claude) keep the interface, panel and usbtape choices in pdp1control.config
+#    instead of rewriting this script; PIDP1_ROOT; stop, reload and reloadpanel act on exact
+#    process names; a missing screen or pdp1 stops the script; apps starts t30dpy only, and
+#    stop lets t30dpy end on its own when pdp1 goes
 
-# Interface setting - can be 'gui', 'web', or 'apps'
+# The install directory; PIDP1_ROOT points it elsewhere, for testing.
+root="${PIDP1_ROOT:-/opt/pidp1-mods}"
+
+# The start-time choices are kept in $root/pdp1control.config, as name=value lines:
+#   interface=web       gui, web or apps
+#   frontpanel=virtual  pidp or virtual
+#   usbtape=n           y to use the USB ports for the paper tape reader and punch
+# A missing file or line keeps the default below. The set, panel and usbtape commands write it.
+settings="$root/pdp1control.config"
 interface="web"
-
-# Front panel setting - can be 'pidp' or 'virtual'
 frontpanel="virtual"
-
-# Use USB ports for paper tape reader/punch
 usb_paper_tape="n"
 
 argc=$#
-pidp1="/opt/pidp1-mods/bin/pdp1"
-cd /opt/pidp1-mods
+pidp1="$root/bin/pdp1"
+cd "$root"
 
 # Requires screen utility for detached pidp1 console functionality.
 #
-test -x /usr/bin/screen || ( echo "screen not found" && exit 0 )
-test -x $pidp1 || ( echo "$pidp1 not found" && exit 0 )
+if ! test -x /usr/bin/screen; then
+	echo "screen not found"
+	exit 1
+fi
+if ! test -x "$pidp1"; then
+	echo "$pidp1 not found"
+	exit 1
+fi
+
+# Read the start-time choices. The file is read line by line, never sourced, so it cannot run
+# code. '#' starts a comment; an unknown name or an invalid value keeps the default.
+read_settings() {
+	test -r "$settings" || return 0
+	while IFS= read -r line || [ -n "$line" ]; do
+		line="${line%$'\r'}"
+		case "$line" in
+		''|'#'*) continue ;;
+		esac
+		name="${line%%=*}"
+		value="${line#*=}"
+		if [ "$name" = "$line" ]; then
+			echo "pdp1control.config: '$line' is not name=value, ignored" >&2
+			continue
+		fi
+		name="${name%"${name##*[![:space:]]}"}"
+		value="${value#"${value%%[![:space:]]*}"}"
+		value="${value%%[[:space:]]*}"
+		case "$name=$value" in
+		interface=gui|interface=web|interface=apps)
+			interface="$value" ;;
+		frontpanel=pidp|frontpanel=virtual)
+			frontpanel="$value" ;;
+		usbtape=y|usbtape=n)
+			usb_paper_tape="$value" ;;
+		interface=*|frontpanel=*|usbtape=*)
+			echo "pdp1control.config: invalid value '$value' for $name, ignored" >&2 ;;
+		*)
+			echo "pdp1control.config: unknown setting '$name', ignored" >&2 ;;
+		esac
+	done < "$settings"
+}
+
+# Set one start-time choice in the settings file: every line for the name gets the value,
+# or a line is added. The file is written to a temporary name and renamed.
+write_setting() {
+	temp_file="$settings.tmp"
+	if test -f "$settings" && grep -q "^$1[[:space:]]*=" "$settings"; then
+		sed "s/^\($1[[:space:]]*=[[:space:]]*\)[^[:space:]]*/\1$2/" "$settings" > "$temp_file" || return 1
+	else
+		{
+			if test -s "$settings"; then
+				cat "$settings"
+				# the file may not end with a newline
+				test -z "$(tail -c 1 "$settings")" || echo
+			fi
+			echo "$1=$2"
+		} > "$temp_file" || return 1
+	fi
+	mv "$temp_file" "$settings"
+}
+
+read_settings
 
 # Check if pidp1 is already runnning under screen.
 #
@@ -86,17 +154,15 @@ do_start() {
 		nohup bin/pdp1_periphES > /dev/null 2>&1 &
 	elif [ "$interface" = "web" ]; then
 		echo start web server
-		cd /opt/pidp1-mods/web_pdp1
-		nohup go run /opt/pidp1-mods/web_pdp1/pdpsrv.go > /dev/null 2>&1 &
-		cd /opt/pidp1-mods
+		cd "$root/web_pdp1"
+		nohup go run "$root/web_pdp1/pdpsrv.go" > /dev/null 2>&1 &
+		cd "$root"
 	elif [ "$interface" = "apps" ]; then
 		echo start apps
 		sleep 1
 		echo start /usr/local/bin/t30dpy
 		nohup /usr/local/bin/t30dpy >/dev/null 2>&1 &
-		sleep 1
-		echo start tapevis
-		nohup bin/tapevis > /dev/null 2>&1 &
+		# tapevis, the tape reader and punch window, is rarely wanted; run bin/tapevis for it
 	fi
 
 	sleep 1 # 0.3
@@ -111,8 +177,10 @@ do_start() {
 	return $status
 }
 
+# Signals go by exact process name: a pattern such as 'pdp1$' also matches vpanel_pdp1,
+# which has no SIGHUP handler and would end.
 do_reload() {
-        pkill -HUP 'pdp1$'
+        pkill -x -HUP pdp1
 }
 
 do_t30reload() {
@@ -121,17 +189,18 @@ do_t30reload() {
 }
 
 do_panelreload() {
-        pkill -HUP 'panel_pidp1'
+        pkill -x -HUP panel_pidp1
 }
 
 do_stop() {
 	#kill any support programs that may be running
-	pkill tapevis
-    	pkill t30dpy
-	pkill pdp1_periphES
-        pkill pdpsrv
-    	pkill panel_pidp1
-    	pkill vpanel_pidp1
+	pkill -x tapevis
+	pkill -x pdp1_periphES
+	pkill -x pdpsrv
+	pkill -x panel_pidp1
+	pkill -x vpanel_pdp1
+	# its name is over the kernel's 15 characters, so match the command line
+	pkill -f bin/pdp1_usb_monitor
 
 	sleep 0.5
 	is_running
@@ -141,13 +210,29 @@ do_stop() {
 	else
 	    echo "Stopping PiDP-1"
 	    #screen -S pidp1 -X quit
-	    pkill 'pdp1$'
+	    pkill -x pdp1
 	    status=$?
 	fi
 
 	sleep 0.5
         # pdp1 may be running outside of screen
-	pkill pdp1
+	pkill -x pdp1
+
+	# t30dpy ends by itself when pdp1's display connection closes. Its SIGTERM handler can hang
+	# it for good, so it is signaled only if it is still there after 3 seconds, and killed if
+	# that does not end it.
+	for i in $(seq 30); do
+		pgrep -x 't30dpy|t30dpy3' > /dev/null || break
+		sleep 0.1
+	done
+	if pgrep -x 't30dpy|t30dpy3' > /dev/null; then
+		pkill -x 't30dpy|t30dpy3'
+		for i in $(seq 20); do
+			pgrep -x 't30dpy|t30dpy3' > /dev/null || break
+			sleep 0.1
+		done
+		pkill -KILL -x 't30dpy|t30dpy3'
+	fi
 
 	return $status
 }
@@ -160,20 +245,11 @@ do_set() {
 	
 	case "$2" in
 		gui|web|apps)
-			# Use specific temporary file path
-			temp_file="/opt/pidp1-mods/bin/pdp1control.tmp"
-			
-			# Use sed to replace the interface variable assignment
-			sed "s/^interface=\"[^\"]*\"/interface=\"$2\"/" "$0" > "$temp_file"
-			
-			# Replace the original script with the modified version
-			if cp "$temp_file" "$0" && rm -f "$temp_file"; then
-				chmod +x "$0"
-				echo "Interface set to '$2'"
+			if write_setting interface "$2"; then
+				echo "Interface set to '$2', used at the next start"
 				exit 0
 			else
-				echo "Error: Failed to update script" >&2
-				rm -f "$temp_file"
+				echo "Error: Failed to update $settings" >&2
 				return 1
 			fi
 			;;
@@ -192,20 +268,11 @@ do_panel() {
 	
 	case "$2" in
 		pidp|virtual)
-			# Use specific temporary file path
-			temp_file="/opt/pidp1-mods/bin/pdp1control.tmp"
-			
-			# Use sed to replace the frontpanel variable assignment
-			sed "s/^frontpanel=\"[^\"]*\"/frontpanel=\"$2\"/" "$0" > "$temp_file"
-			
-			# Replace the original script with the modified version
-			if cp "$temp_file" "$0" && rm -f "$temp_file"; then
-				chmod +x "$0"
-				echo "Panel set to '$2'"
+			if write_setting frontpanel "$2"; then
+				echo "Panel set to '$2', used at the next start"
 				exit 0
 			else
-				echo "Error: Failed to update script" >&2
-				rm -f "$temp_file"
+				echo "Error: Failed to update $settings" >&2
 				return 1
 			fi
 			;;
@@ -224,20 +291,11 @@ do_usbtape() {
 	
 	case "$2" in
 		y|n)
-			# Use specific temporary file path
-			temp_file="/opt/pidp1-mods/bin/pdp1control.tmp"
-			
-			# Use sed to replace the frontpanel variable assignment
-			sed "s/^usb_paper_tape=\"[^\"]*\"/usb_paper_tape=\"$2\"/" "$0" > "$temp_file"
-			
-			# Replace the original script with the modified version
-			if cp "$temp_file" "$0" && rm -f "$temp_file"; then
-				chmod +x "$0"
-				echo "usb_paper_tape set to '$2'"
+			if write_setting usbtape "$2"; then
+				echo "usb_paper_tape set to '$2', used at the next start"
 				exit 0
 			else
-				echo "Error: Failed to update script" >&2
-				rm -f "$temp_file"
+				echo "Error: Failed to update $settings" >&2
 				return 1
 			fi
 			;;
@@ -273,7 +331,7 @@ case "$1" in
 	;;
 
   reloadpanel)
-	do_t30reload
+	do_panelreload
 	;;
 
   set)
@@ -294,8 +352,8 @@ case "$1" in
 	do_stat
 	;;
   ?)
-	echo "Usage: pdp1control {start|stop|reload|restart|set|panel|status|stat}" || true
-	echo "       pdp1control {reloadt30dpy|reloadpanel}" || true
+	echo "Usage: pdp1control {start|stop|reload|restart|set|panel|usbtape|status|stat}" || true
+	echo "       pdp1control {reloadt30|reloadpanel}" || true
 	exit 1
 	;;
   *)

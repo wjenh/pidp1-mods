@@ -34,6 +34,7 @@ sudo rm -f /usr/local/bin/am1
 sudo rm -f /usr/local/bin/ad1
 sudo rm -f /usr/local/bin/drumupdater
 sudo rm -f /usr/local/bin/drumlist
+sudo rm -f /usr/local/bin/pdp1central
 
 rm ~/.config/autostart/pdp1startup.desktop
 
@@ -55,6 +56,7 @@ rm -f $HOME/Desktop/ptr.desktop >/dev/null 2>&1
 rm -f $HOME/Desktop/ptp.desktop  >/dev/null 2>&1
 rm -f $HOME/Desktop/audioOn.desktop >/dev/null 2>&1
 rm -f $HOME/Desktop/audioOff.desktop >/dev/null 2>&1
+rm -f $HOME/Desktop/pdp1central.desktop >/dev/null 2>&1
 
 # wallpaper
 echo Attempting to reset your wallpaper.

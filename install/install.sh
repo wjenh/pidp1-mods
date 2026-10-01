@@ -90,6 +90,9 @@ while true; do
 	    sudo apt -y install flex
 	    sudo apt -y install bison
 
+            # Python and Tk: tkaskopenfile, the file dialog pdp1central and the gui use
+	    sudo apt install -y python3 python3-tk
+
 	    break
 	    ;;
         [Nn]* ) 
@@ -171,6 +174,7 @@ while true; do
 		make -C $INSTALLDIR/src/blincolnlights/tapevis	# visualize a rim tape
 		make -C $INSTALLDIR/src/pidp1_test 		# hardware test program
 		make -C $INSTALLDIR/src/pdp1_periph		# unified peripherals
+		make -C $INSTALLDIR/src/pdp1central		# pdp1central, the desktop control app
 		make -C $INSTALLDIR/IOTs clean			# dynamic IOTs, be sure no leftovers
 		make -C $INSTALLDIR/IOTs all			# dynamic IOTs, all of them
 		
@@ -226,6 +230,7 @@ while true; do
                 ln -sf $INSTALLDIR/src/blincolnlights/vpanel_pdp1/panel_pdp1 $INSTALLDIR/bin/vpanel_pdp1
                 ln -sf $INSTALLDIR/src/blincolnlights/pdp1/pdp1 $INSTALLDIR/bin/pdp1
                 ln -sf $INSTALLDIR/src/pdp1_periph/pdp1_periphES $INSTALLDIR/bin/pdp1_periphES
+                ln -sf $INSTALLDIR/src/pdp1central/pdp1central $INSTALLDIR/bin/pdp1central
                 ln -sf $INSTALLDIR/src/usb_paper_tape/pdp1_usb_monitor $INSTALLDIR/bin/pdp1_usb_monitor
                 ln -sf $INSTALLDIR/src/pidp1_test/pidp1_test $INSTALLDIR/bin/pidp1_test
                 ln -sf $INSTALLDIR/src/scanpf/scanpf $INSTALLDIR/bin/scanpf
@@ -255,6 +260,8 @@ while true; do
             sudo ln -f -s $INSTALLDIR/bin/pdp1.sh /usr/local/bin/pdp1
             # put pdp1control script into /usr/local
             sudo ln -f -s $INSTALLDIR/bin/pdp1control.sh /usr/local/bin/pdp1control
+            # put the pdp1central desktop control app into /usr/local
+            sudo ln -f -s $INSTALLDIR/bin/pdp1central /usr/local/bin/pdp1central
 	    #
 	    #
 	    sudo ln -sf $INSTALLDIR/bin/encode_fiodec /usr/local/bin/encode_fiodec
@@ -439,6 +446,7 @@ while true; do
         [Yy]* ) 
             cp $INSTALLDIR/install/tty.desktop /home/$usr/Desktop/
             cp $INSTALLDIR/install/pdp1control.desktop /home/$usr/Desktop/
+            cp $INSTALLDIR/install/pdp1central.desktop /home/$usr/Desktop/
             cp $INSTALLDIR/install/type30.desktop /home/$usr/Desktop/
             cp $INSTALLDIR/install/t30dpy.desktop /home/$usr/Desktop/
             cp $INSTALLDIR/install/ptr.desktop /home/$usr/Desktop/
@@ -450,6 +458,7 @@ while true; do
 
             chmod u+x /home/$usr/Desktop/tty.desktop
             chmod u+x /home/$usr/Desktop/pdp1control.desktop
+            chmod u+x /home/$usr/Desktop/pdp1central.desktop
             chmod u+x /home/$usr/Desktop/t30dpy.desktop
             chmod u+x /home/$usr/Desktop/ptr.desktop
             chmod u+x /home/$usr/Desktop/ptp.desktop

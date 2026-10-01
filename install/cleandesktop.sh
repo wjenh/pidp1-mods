@@ -13,4 +13,5 @@ rm /home/$usr/Desktop/ptr.desktop
 rm /home/$usr/Desktop/ptp.desktop
 rm /home/$usr/Desktop/audioOn.desktop
 rm /home/$usr/Desktop/audioOff.desktop 
+rm /home/$usr/Desktop/pdp1central.desktop
 

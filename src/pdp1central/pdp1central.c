@@ -1,7 +1,8 @@
 // pdp1central: one desktop window to control the PiDP-1 emulator.
 // It shows what is running, starts, stops, restarts and reloads the emulator through
 // bin/pdp1control.sh, keeps the script's start-time choices in pdp1control.config, mounts and
-// saves paper tapes, and edits pidp1.config from a schema file that describes every setting.
+// saves paper tapes, turns the sound on and off, and edits pidp1.config from a schema file that
+// describes every setting.
 // Everything that is not drawing is in the core (core.h); this file is the Nuklear front end on
 // SDL2. One thread and one event loop: SDL_WaitEventTimeout at 250 ms, the running child polled
 // on every pass and process status refreshed once a second. Nothing in the loop blocks longer
@@ -11,6 +12,9 @@
 // 30-Sep-2026 wje (Claude) - written.
 // 01-Oct-2026 wje (Claude) - color schemes (style.c), chosen on the Control tab and kept with
 //     any overrides in pdp1central.config.
+// 01-Oct-2026 wje (Claude) - usage fixes: when a setting applies, checked against its reader; a
+//     checkbox says what a click does; schema labels; the live audio control, which sends a
+//     command only when clicked; the right button drags the window.
 
 #include <errno.h>
 #include <limits.h>
@@ -40,6 +44,7 @@
 #define WINDOW_W 960
 #define WINDOW_H 680
 #define ROW_H 26
+#define AUDIO_RESTORE_MS 1000   // after a reload ends, time for the emulator to take its SIGHUP
 
 // What the child slot is doing.
 typedef enum
@@ -63,6 +68,7 @@ typedef struct
     int total;
     int reload;
     int panel;
+    int run;
     int restart;
     int program;
     int ignored;
@@ -122,6 +128,10 @@ static char mountedPath[PATH_MAX];  // what pdp1central mounted in the reader, "
 static bool mountKnown;
 static char lastMountPath[PATH_MAX];
 static char punchPath[PATH_MAX];
+
+static int audioState = -1;     // the live audio the last click's reply gave: 1 on, 0 off, -1 not known
+static int audioRestore = -1;   // the state to put back after a pdp1control reload, -1 for none
+static Uint32 audioRestoreMs;   // when that reload ended, 0 while it runs
 
 static Tab tab = TAB_CONTROL;
 static int group;
@@ -353,6 +363,10 @@ int i;
         {
             changes.panel++;
         }
+        else if( entryP->applies == APPLIES_RUN )
+        {
+            changes.run++;
+        }
         else if( entryP->applies == APPLIES_RESTART )
         {
             changes.restart++;
@@ -414,6 +428,18 @@ int i;
         jobStartMs = SDL_GetTicks();
         snprintf(jobLabel, sizeof(jobLabel), "pdp1control %s", commandP);
         appLog("running %s", jobLabel);
+
+        // A reload sets the emulator's live audio back to pidp1.config's audio value, so the
+        // state from before it is put back once it is done (pollAudio).
+        if( !strcmp(commandP, "reload") && (audioState >= 0) )
+        {
+            audioRestore = audioState;
+            audioRestoreMs = 0;
+        }
+        else if( !strcmp(commandP, "start") || !strcmp(commandP, "stop") || !strcmp(commandP, "restart") )
+        {
+            audioState = -1;    // a start, stop or restart makes a new emulator, with the file's audio
+        }
     }
 
     free(commandP);
@@ -509,6 +535,88 @@ char path[PATH_MAX];
     }
 }
 
+// The audio state a reply to an audio command gives: "Audio on, cutoff1 ..." to a query, and
+// "Audio is on, use query ..." to on and off.
+// Returns 1 on, 0 off, -1 a reply that gives neither.
+static int
+audioFromReply(const char *replyP)
+{
+    if( strncmp(replyP, "Audio ", 6) )
+    {
+        return(-1);
+    }
+
+    replyP += 6;
+    if( !strncmp(replyP, "is ", 3) )
+    {
+        replyP += 3;
+    }
+
+    if( !strncmp(replyP, "off", 3) )
+    {
+        return(0);
+    }
+
+    return( !strncmp(replyP, "on", 2) ? 1 : -1 );
+}
+
+// Send audio on or off to the emulator, and keep the state its reply gives.
+// Only a click, or the put-back after a reload of a state a click set, sends one: the emulator
+// applies its audio flag after every audio command, so even a query starts the sound when the
+// flag is on, and the owner wants the sound started only by a click (01-Oct-2026).
+// Returns false if no reply gave the state.
+static bool
+audioCommand(const char *wordP)
+{
+char line[32];
+char reply[512];
+int result;
+
+    snprintf(line, sizeof(line), "audio %s", wordP);
+    result = portCommand(EMU_PORT, line, reply, sizeof(reply));
+    audioState = ((result == 0) ? audioFromReply(reply) : -1);
+    if( result != 0 )
+    {
+        appError("\"%s\" not sent: %s", line, ((result == -1) ? "the emulator is not running" :
+            ((result == -2) ? "no answer" : "port error")));
+    }
+    else if( audioState < 0 )
+    {
+        appError("\"%s\": the reply gives no audio state: %s", line, reply);
+    }
+    else
+    {
+        appLog("sent \"%s\" to the emulator on %d: %s", line, EMU_PORT, reply);
+    }
+
+    return(audioState >= 0);
+}
+
+// Put the audio back after a reload, and forget it when the emulator goes. It is never read,
+// since a read can start the sound (audioCommand).
+// Called on every pass of the event loop.
+static void
+pollAudio(void)
+{
+    if( audioRestore >= 0 )
+    {
+        // No reads until the reload has ended and the emulator has had time to take its SIGHUP;
+        // a read before then would keep the state the reload is about to replace.
+        if( (audioRestoreMs != 0) && ((SDL_GetTicks() - audioRestoreMs) >= AUDIO_RESTORE_MS) )
+        {
+            appLog("putting the audio back %s after the reload", (audioRestore ? "on" : "off"));
+            audioCommand(audioRestore ? "on" : "off");
+            audioRestore = -1;
+        }
+        return;
+    }
+
+    if( (pdp1Count == 0) || !portUp )
+    {
+        audioState = -1;
+    }
+}
+
 // Take the child's output: log whole lines, and keep a dialog's last line as its answer.
 static void
 takeChildOutput(const char *textP)
@@ -583,6 +691,10 @@ Job ended;
     if( ended == JOB_SCRIPT )
     {
         appLog("%s finished, status %d", jobLabel, childStatus());
+        if( (audioRestore >= 0) && (audioRestoreMs == 0) )
+        {
+            audioRestoreMs = (SDL_GetTicks() | 1);     // never 0, which means still running
+        }
     }
     else if( !dialogPath[0] && (childStatus() != 0) )
     {
@@ -818,10 +930,11 @@ ConfFile *newP;
     appLog("%s: %s=%s, used at the next start", controlPath, nameP, valueP);
 }
 
-// The Control tab: start-time choices and paper tape.
+// The Control tab: start-time choices, paper tape, audio and the window's colors.
 static void
 drawControl(struct nk_context *ctxP)
 {
+static const float audioRatios[] = { 0.25f, 0.25f, 0.25f };
 static const char *interfaces[] = { "gui", "web", "apps" };
 static const char *panels[] = { "pidp", "virtual" };
 static const char *panelLabels[] = { "PiDP-1 hardware", "virtual" };
@@ -922,6 +1035,32 @@ int i, count;
     {
         nk_label_colored(ctxP, "Note: the web interface's front end does not save the punch to a file.",
             NK_TEXT_LEFT, styleColors[STYLE_WARNING]);
+    }
+
+    // The live sound, as pdp1audio on and off turn it; the audio enabled setting only allows it.
+    nk_layout_row_dynamic(ctxP, 12, 1);
+    nk_spacing(ctxP, 1);
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 3, audioRatios);    // in line with the options above
+    nk_label(ctxP, "Audio", NK_TEXT_LEFT);
+    // What the last click's reply said; a change made elsewhere is not seen, since asking could
+    // start the sound.
+    if( pdp1Count == 0 )
+    {
+        lamp(ctxP, "pidp1 not running", false);
+    }
+    else if( !portUp )
+    {
+        lamp(ctxP, "pidp1 not answering", false);
+    }
+    else
+    {
+        lamp(ctxP, ((audioState == 1) ? "is on" : ((audioState == 0) ? "is off" : "not set here yet")),
+            (audioState == 1));
+    }
+    if( button(ctxP, ((audioState == 1) ? "Turn audio off" : "Turn audio on"),
+        (portUp && (pdp1Count > 0) && (audioRestore < 0))) )
+    {
+        audioCommand((audioState == 1) ? "off" : "on");
     }
 
     nk_layout_row_dynamic(ctxP, 12, 1);
@@ -1093,19 +1232,28 @@ double floatValue, newFloat;
     readOnly = (entryP && (entryP->applies == APPLIES_NONE));
     nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 4, ratios);
 
-    // The name, with the summary as its tooltip.
+    // The name, or its label, with the summary as its tooltip; a label's tooltip also gives the
+    // name, since that is what the file holds.
     bounds = nk_widget_bounds(ctxP);
     if( valuesDiffer(getValue(diskCfP, nameP, newValue), valueP) )
     {
-        nk_labelf_colored(ctxP, NK_TEXT_LEFT, styleColors[STYLE_CHANGED], "%s *", nameP);
+        nk_labelf_colored(ctxP, NK_TEXT_LEFT, styleColors[STYLE_CHANGED], "%s *",
+            (entryP ? schemaDisplayName(entryP) : nameP));
     }
     else
     {
-        nk_label(ctxP, nameP, NK_TEXT_LEFT);
+        nk_label(ctxP, (entryP ? schemaDisplayName(entryP) : nameP), NK_TEXT_LEFT);
     }
     if( entryP && nk_input_is_mouse_hovering_rect(&ctxP->input, bounds) )
     {
-        nk_tooltip(ctxP, entryP->summary);
+        if( entryP->label[0] )
+        {
+            nk_tooltipf(ctxP, "%s in the file: %s", entryP->name, entryP->summary);
+        }
+        else
+        {
+            nk_tooltip(ctxP, entryP->summary);
+        }
     }
 
     // The control, for a value the file sets.
@@ -1125,8 +1273,10 @@ double floatValue, newFloat;
     }
     else if( entryP->type == SCHEMA_BOOL )
     {
+        // The tick shows the state, so the words say what a click does; "on" beside an unticked
+        // box read as the state.
         on = schemaIsOn(valueP);
-        if( nk_checkbox_label(ctxP, (on ? "on" : "off"), &on) )
+        if( nk_checkbox_label(ctxP, (on ? "click to turn off" : "click to turn on"), &on) )
         {
             editSet(entryP, nameP, (on ? "on" : "off"));
         }
@@ -1185,14 +1335,19 @@ double floatValue, newFloat;
         editSet(entryP, nameP, newValue);
     }
 
+    // A sticky setting going back to its default needs a restart too, but that is said after Save,
+    // when it happens, not on every row.
     if( !entryP )
     {
         nk_label(ctxP, "not in the schema", NK_TEXT_LEFT);
     }
+    else if( entryP->applies == APPLIES_PROGRAM )
+    {
+        nk_labelf(ctxP, NK_TEXT_LEFT, "when %s restarts", entryP->reader);
+    }
     else
     {
-        nk_labelf(ctxP, NK_TEXT_LEFT, "%s%s", schemaAppliesText(entryP->applies),
-            (entryP->sticky ? "; default: restart" : ""));
+        nk_label(ctxP, schemaAppliesText(entryP->applies), NK_TEXT_LEFT);
     }
 }
 
@@ -1227,8 +1382,10 @@ int i;
             ((entryP->applies == APPLIES_RESTART) || (entryP->applies == APPLIES_PROGRAM) ||
             (entryP->sticky && !confGet(editCfP, entryP->name))) && (len < (sizeof(names) - 80)) )
         {
-            len += snprintf(names + len, (sizeof(names) - len), "%s%s%s", (len ? ", " : ""), entryP->name,
-                ((entryP->applies == APPLIES_PROGRAM) ? " (restart its program)" : ""));
+            len += snprintf(names + len, (sizeof(names) - len), "%s%s%s%s%s", (len ? ", " : ""),
+                schemaDisplayName(entryP), ((entryP->applies == APPLIES_PROGRAM) ? " (restart " : ""),
+                ((entryP->applies == APPLIES_PROGRAM) ? entryP->reader : ""),
+                ((entryP->applies == APPLIES_PROGRAM) ? ")" : ""));
         }
     }
 
@@ -1247,7 +1404,8 @@ int i;
     diskCfP = confCopy(editCfP);
     diskConflict = false;
 
-    if( (changes.reload > 0) && (pdp1Count > 0) )
+    // A run setting is reread by its plugin as the machine next runs, from the file pdp1 reloads.
+    if( ((changes.reload + changes.run) > 0) && (pdp1Count > 0) )
     {
         queueScript("reload");
     }
@@ -1367,17 +1525,17 @@ int i;
         editCfP = confCopy(diskCfP);
         refreshOtherNames();
     }
-    // "3 changes: 2 on reload, 1 needs a restart", naming only the kinds there are.
+    // "3 changes: 2 on save, 1 needs a restart", naming only the kinds there are.
     len = (size_t)snprintf(count, sizeof(count), "%d change%s", changes.total, ((changes.total == 1) ? "" : "s"));
     sep = ": ";
-    if( changes.reload > 0 )
+    if( (changes.reload + changes.panel) > 0 )
     {
-        len += snprintf(count + len, (sizeof(count) - len), "%s%d on reload", sep, changes.reload);
+        len += snprintf(count + len, (sizeof(count) - len), "%s%d on save", sep, (changes.reload + changes.panel));
         sep = ", ";
     }
-    if( changes.panel > 0 )
+    if( changes.run > 0 )
     {
-        len += snprintf(count + len, (sizeof(count) - len), "%s%d on panel reload", sep, changes.panel);
+        len += snprintf(count + len, (sizeof(count) - len), "%s%d at the next run", sep, changes.run);
         sep = ", ";
     }
     if( (changes.restart + changes.program) > 0 )
@@ -1467,6 +1625,36 @@ float used;
         }
     }
     nk_end(ctxP);
+}
+
+// Move the window while the right button is held, as t30dpy does: a window that opens with its
+// title bar off a small screen, or under the desktop's menu bar, can still be moved. Screen
+// coordinates throughout, so the window moving under the cursor does not feed back into the
+// distance. Wayland does not let a program place its own window; under XWayland, where SDL2
+// runs by default, it works. pdp1central's widgets do not use the right button.
+static void
+dragWindow(SDL_Window *windowP, const SDL_Event *eventP)
+{
+static bool dragging;
+static int startX, startY;      // the cursor on the screen when the button went down
+static int windowX, windowY;    // the window on the screen then
+int x, y;
+
+    if( (eventP->type == SDL_MOUSEBUTTONDOWN) && (eventP->button.button == SDL_BUTTON_RIGHT) )
+    {
+        dragging = true;
+        SDL_GetGlobalMouseState(&startX, &startY);
+        SDL_GetWindowPosition(windowP, &windowX, &windowY);
+    }
+    else if( (eventP->type == SDL_MOUSEBUTTONUP) && (eventP->button.button == SDL_BUTTON_RIGHT) )
+    {
+        dragging = false;
+    }
+    else if( (eventP->type == SDL_MOUSEMOTION) && dragging )
+    {
+        SDL_GetGlobalMouseState(&x, &y);
+        SDL_SetWindowPosition(windowP, (windowX + (x - startX)), (windowY + (y - startY)));
+    }
 }
 
 // Set every path from the root, and the schema's default location.
@@ -1604,6 +1792,7 @@ int opt, width, height;
                 {
                     requestExit();
                 }
+                dragWindow(windowP, &event);
                 nk_sdl_handle_event(&event);
             } while( SDL_PollEvent(&event) );
         }
@@ -1620,6 +1809,7 @@ int opt, width, height;
             refreshStatus(ctxP);
             statusMs = SDL_GetTicks();
         }
+        pollAudio();
 
         if( pendingScheme[0] )
         {

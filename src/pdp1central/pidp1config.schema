@@ -1,66 +1,68 @@
 # The pidp1.config settings, for pdp1central's settings editor.
-# One setting per line: name|group|type|range|default|reader|applies|summary
+# One setting per line: name|group|type|range|default|reader|applies|label|summary
 # type: bool, int, float, text, or port (an int, or off).
 # range: low..high, or empty for none.
 # default: what the reader uses when the file has no line for the setting; - when there is no
 #   single value.
-# applies: when a change takes effect. reload is a SIGHUP to pdp1, panel a SIGHUP to the panel
-#   driver, restart a pdp1 restart, program a restart of the reader, none never.
+# applies: when a change takes effect, checked against each reader's code (01-Oct-2026).
+#   reload is a SIGHUP to pdp1, panel a SIGHUP to the panel driver, run a SIGHUP to pdp1 after
+#   which the plugin reads it the next time the machine goes to run (START or CONTINUE), restart
+#   a pdp1 restart, program a restart of the reader, none never.
 #   -sticky: the reader assigns the setting only when a line is there, so a new value applies as
 #   stated but going back to the default needs a restart.
+# label: shown in the editor instead of the name; usually empty.
 # Docs/UsingTheConfigFile.md describes each setting; pidp1.config.example explains it.
-ad1port|Debugger|port|0..65535|1044|pdp1|restart|The loopback port ad1 and fastload connect to; 0 or off disables it
-ad1remoteport|Debugger|port|0..65535|off|pdp1|restart|A port on all interfaces as well; it has no authentication, so enable it only on a network you trust
-throttleburst|Throttle|int|0..250|100|pdp1|reload|How far, in microseconds, simulated time must lead the wall clock before the throttle waits
-throttlequantum|Throttle|int|0..1000000|1000|pdp1|reload|The longest single wait, in microseconds
-throttlespin|Throttle|int|0..1000000|0|pdp1|reload|The end of each wait, in microseconds, spent spinning instead of sleeping
-throttlemaxlag|Throttle|int|0..1000000|20|pdp1|reload|How far, in milliseconds, the emulator may fall behind before the rest is forgiven
-lailia|CPU|bool||off|pdp1|reload|The PDP-1D lai and lia instructions, and lsw/swp; always on while core1D or all1D is on
-core1D|CPU|bool||on|pdp1|reload|The core PDP-1D extensions; always on while all1D is on
-all1D|CPU|bool||off|pdp1|reload|All the PDP-1D extensions
-muldiv|CPU|bool||on|pdp1|reload|Hardware multiply and divide
-sbs16|CPU|bool||off|pdp1|reload|The 16-channel sequence break system
-newmemfile|CPU|bool||off|pdp1|reload|Save memory images in the newer, readable format
-sdb|Displays|bool||off|IOT_7|restart|The Type 33 symbol generator's extended dpy
-dpyshift|Displays|bool||off|IOT_7|restart|The origin-shifting extended dpy; can conflict with sdb
-twoscreens|Displays|bool||off|IOT_7|restart|Dual Type 30 screens, untested
-lightpen|Displays|bool||off|IOT_7, IOT_27|restart|Lightpen support on the Type 30 and the Type 33
-motionPrediction|Displays|bool||off|pdp1|reload-sticky|Predict the lightpen's motion
-aperture|Displays|int|1..63|6|pdp1, IOT_7|restart|The lightpen's aperture, for the Type 340 and the Type 30; 22 is 0.200 inches
-two340charsets|Displays|bool||off|Type 340 plugin|reload-sticky|Lower-shift characters from a second character set
-t340cachesize|Displays|int|0..1024|0|Type 340 plugin|restart|A Type 340 instruction cache, up to 1024 instructions; 0 for none
-guilightpen|Displays|bool||off|pdp1_periph|program|The lightpen in the unified control gui
-audio|Audio|bool||off|pdp1|reload|Allow audio; pdp1audio still turns it on
-cutoff|Audio|float|1.0..100000.0|-|pdp1|reload|The low-pass cutoff of all four program flag channels, in Hz; without it each has the CHM filter's own
-cutoff1|Audio|float|1.0..100000.0|-|pdp1|reload|Program flag 1's cutoff in Hz, overriding cutoff; the CHM filter's is about 1020
-cutoff2|Audio|float|1.0..100000.0|-|pdp1|reload|Program flag 2's cutoff in Hz, overriding cutoff; the CHM filter's is about 925
-cutoff3|Audio|float|1.0..100000.0|-|pdp1|reload|Program flag 3's cutoff in Hz, overriding cutoff; the CHM filter's is about 423
-cutoff4|Audio|float|1.0..100000.0|-|pdp1|reload|Program flag 4's cutoff in Hz, overriding cutoff; the CHM filter's is about 220
-gain|Audio|float|0.0..100.0|0.95|pdp1|reload|The mixer gain; too high and the sound clips
-tuning|Audio|float|0.001..100.0|1.0|pdp1|reload|Shifts the frequency; SDL3 only
-samplerate|Audio|int|8000..192000|48000|pdp1|reload|Samples a second sent to SDL
-audiodepth|Audio|int|10..500|40|pdp1|reload|Milliseconds of sound kept queued ahead of the device
-fasttyo|Devices|bool||off|IOT_3|restart|Typewriter output at 200 characters a second instead of 10
-lptType64|Devices|bool||off|IOT_45|restart|A Type 64 line printer instead of a Type 62
-lptLineSpacing|Devices|text||-|IOT_45|restart|Lines advanced for each spacing setting 0-7, comma separated with no spaces, such as 1,2,3,4,11,22,33,-1
-lptLines|Devices|int|1..1000|66|IOT_45|restart|Lines per page
-lptNoFF|Devices|bool||off|IOT_45|restart|Newlines instead of a form feed character
-microtapesbs|Devices|int|0..15|2|Microtape plugin|reload|The Type 550 microtape's sequence break channel
-panelbrightness|Panel|int|0..100|100|newpanel|panel-sticky|The brightness cap of the hardware panel's lamps
-panelonalpha|Panel|float|0.0..1.0|0.45|newpanel|panel-sticky|The lamps' turn-on rate
-paneloffalpha|Panel|float|0.0..1.0|0.04|newpanel|panel-sticky|The lamps' turn-off rate
-panelrealtime|Panel|bool||off|newpanel|restart|Realtime priority for the panel driver
-panellevels|Panel|int|8..64|8|newpanel|panel-sticky|Brightness levels
-panelcycletime|Panel|int|100..1000000|1000|newpanel|panel-sticky|How often the lamp brightnesses are recomputed, in microseconds
-panelscantime|Panel|int|100..1000000|1000|newpanel|panel-sticky|The time to scan one row of lamps, in microseconds
-pidp1timing|Timing|bool||off|pdp1|reload-sticky|Append the emulator's timing to /tmp/pidp1-timing.txt at each stop
-displaytiming|Timing|bool||off|pdp1, Type 340 plugin|restart|Append the display threads' timing to /tmp/pidp1-340timing.txt and /tmp/pidp1-dpytiming.txt
-type30lightpen|Retired|bool||off|p7sim|none|The lightpen in the standalone Type 30 display, p7sim, which is no longer in this tree
-type30size|Retired|int|512..1024|1024|p7sim|none|The size of the standalone Type 30 display, p7sim, which is no longer in this tree
-type30border|Retired|bool||on|p7sim|none|The border of the standalone Type 30 display, p7sim, which is no longer in this tree
-shared|Retired|bool||off|pdp1|none|Ignored, with a message; ad1 and fastload reach the emulator over TCP
-alpha|Retired|float||-|pdp1|none|Ignored, with a message; the audio filters are set by cutoff, in Hz
-alpha1|Retired|float||-|pdp1|none|Ignored, with a message; the audio filters are set by cutoff, in Hz
-alpha2|Retired|float||-|pdp1|none|Ignored, with a message; the audio filters are set by cutoff, in Hz
-alpha3|Retired|float||-|pdp1|none|Ignored, with a message; the audio filters are set by cutoff, in Hz
-alpha4|Retired|float||-|pdp1|none|Ignored, with a message; the audio filters are set by cutoff, in Hz
+ad1port|Debugger|port|0..65535|1044|pdp1|restart||The loopback port ad1 and fastload connect to; 0 or off disables it
+ad1remoteport|Debugger|port|0..65535|off|pdp1|restart||A port on all interfaces as well; it has no authentication, so enable it only on a network you trust
+throttleburst|Throttle|int|0..250|100|pdp1|reload||How far, in microseconds, simulated time must lead the wall clock before the throttle waits
+throttlequantum|Throttle|int|0..1000000|1000|pdp1|reload||The longest single wait, in microseconds
+throttlespin|Throttle|int|0..1000000|0|pdp1|reload||The end of each wait, in microseconds, spent spinning instead of sleeping
+throttlemaxlag|Throttle|int|0..1000000|20|pdp1|reload||How far, in milliseconds, the emulator may fall behind before the rest is forgiven
+lailia|CPU|bool||off|pdp1|reload||The PDP-1D lai and lia instructions, and lsw/swp; always on while core1D or all1D is on
+core1D|CPU|bool||on|pdp1|reload||The core PDP-1D extensions; always on while all1D is on
+all1D|CPU|bool||off|pdp1|reload||All the PDP-1D extensions
+muldiv|CPU|bool||on|pdp1|reload||Hardware multiply and divide
+sbs16|CPU|bool||off|pdp1|reload||The 16-channel sequence break system
+newmemfile|CPU|bool||off|pdp1|reload||Save memory images in the newer, readable format
+sdb|Displays|bool||off|IOT_7|run||The Type 33 symbol generator's extended dpy
+dpyshift|Displays|bool||off|IOT_7|run||The origin-shifting extended dpy; can conflict with sdb
+twoscreens|Displays|bool||off|IOT_7|run||Dual Type 30 screens, untested
+lightpen|Displays|bool||off|IOT_7, IOT_27|run||Lightpen support on the Type 30 and the Type 33
+motionPrediction|Displays|bool||off|pdp1|reload-sticky||Predict the lightpen's motion
+aperture|Displays|int|1..63|6|pdp1, IOT_7|run-sticky||The lightpen's aperture, for the Type 340 and the Type 30; 22 is 0.200 inches
+two340charsets|Displays|bool||off|Type 340 plugin|reload-sticky||Lower-shift characters from a second character set
+guilightpen|Displays|bool||off|pdp1_periph|program||The lightpen in the unified control gui
+audio|Audio|bool||off|pdp1|reload|audio enabled|Allows audio; Turn audio on (Control tab) or pdp1audio on starts it
+cutoff|Audio|float|1.0..100000.0|-|pdp1|reload||The low-pass cutoff of all four program flag channels, in Hz; without it each has the CHM filter's own
+cutoff1|Audio|float|1.0..100000.0|-|pdp1|reload||Program flag 1's cutoff in Hz, overriding cutoff; the CHM filter's is about 1020
+cutoff2|Audio|float|1.0..100000.0|-|pdp1|reload||Program flag 2's cutoff in Hz, overriding cutoff; the CHM filter's is about 925
+cutoff3|Audio|float|1.0..100000.0|-|pdp1|reload||Program flag 3's cutoff in Hz, overriding cutoff; the CHM filter's is about 423
+cutoff4|Audio|float|1.0..100000.0|-|pdp1|reload||Program flag 4's cutoff in Hz, overriding cutoff; the CHM filter's is about 220
+gain|Audio|float|0.0..100.0|0.95|pdp1|reload||The mixer gain; too high and the sound clips
+tuning|Audio|float|0.001..100.0|1.0|pdp1|reload||Shifts the frequency; SDL3 only
+samplerate|Audio|int|8000..192000|48000|pdp1|reload||Samples a second sent to SDL
+audiodepth|Audio|int|10..500|40|pdp1|reload||Milliseconds of sound kept queued ahead of the device
+fasttyo|Devices|bool||off|IOT_3|restart||Typewriter output at 200 characters a second instead of 10
+lptType64|Devices|bool||off|IOT_45|restart||A Type 64 line printer instead of a Type 62
+lptLineSpacing|Devices|text||-|IOT_45|restart||Lines advanced for each spacing setting 0-7, comma separated with no spaces, such as 1,2,3,4,11,22,33,-1
+lptLines|Devices|int|1..1000|66|IOT_45|restart||Lines per page
+lptNoFF|Devices|bool||off|IOT_45|restart||Newlines instead of a form feed character
+microtapesbs|Devices|int|0..15|2|Microtape plugin|reload||The Type 550 microtape's sequence break channel
+panelbrightness|Panel|int|0..100|100|newpanel|panel-sticky||The brightness cap of the hardware panel's lamps
+panelonalpha|Panel|float|0.0..1.0|0.45|newpanel|panel-sticky||The lamps' turn-on rate
+paneloffalpha|Panel|float|0.0..1.0|0.04|newpanel|panel-sticky||The lamps' turn-off rate
+panelrealtime|Panel|bool||off|newpanel|restart||Realtime priority for the panel driver
+panellevels|Panel|int|8..64|8|newpanel|panel-sticky||Brightness levels
+panelcycletime|Panel|int|100..1000000|1000|newpanel|panel-sticky||How often the lamp brightnesses are recomputed, in microseconds
+panelscantime|Panel|int|100..1000000|1000|newpanel|panel-sticky||The time to scan one row of lamps, in microseconds
+pidp1timing|Timing|bool||off|pdp1|reload-sticky||Append the emulator's timing to /tmp/pidp1-timing.txt at each stop
+displaytiming|Timing|bool||off|pdp1, Type 340 plugin|restart||Append the display threads' timing to /tmp/pidp1-340timing.txt and /tmp/pidp1-dpytiming.txt; the Type 340 part follows a reload, the Type 30 part only a restart
+type30lightpen|Retired|bool||off|p7sim|none||The lightpen in the standalone Type 30 display, p7sim, which is no longer in this tree
+type30size|Retired|int|512..1024|1024|p7sim|none||The size of the standalone Type 30 display, p7sim, which is no longer in this tree
+type30border|Retired|bool||on|p7sim|none||The border of the standalone Type 30 display, p7sim, which is no longer in this tree
+shared|Retired|bool||off|pdp1|none||Ignored, with a message; ad1 and fastload reach the emulator over TCP
+alpha|Retired|float||-|pdp1|none||Ignored, with a message; the audio filters are set by cutoff, in Hz
+alpha1|Retired|float||-|pdp1|none||Ignored, with a message; the audio filters are set by cutoff, in Hz
+alpha2|Retired|float||-|pdp1|none||Ignored, with a message; the audio filters are set by cutoff, in Hz
+alpha3|Retired|float||-|pdp1|none||Ignored, with a message; the audio filters are set by cutoff, in Hz
+alpha4|Retired|float||-|pdp1|none||Ignored, with a message; the audio filters are set by cutoff, in Hz

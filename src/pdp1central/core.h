@@ -46,6 +46,7 @@ typedef enum
 {
     APPLIES_RELOAD,             // SIGHUP to pdp1
     APPLIES_PANEL,              // SIGHUP to the panel driver
+    APPLIES_RUN,                // SIGHUP to pdp1, then its plugin reads it as the machine next runs
     APPLIES_RESTART,            // pdp1 restart
     APPLIES_PROGRAM,            // restart of the program that reads it
     APPLIES_NONE                // retired, ignored
@@ -63,6 +64,7 @@ typedef struct
     char reader[64];
     SchemaApplies applies;
     bool sticky;                // back to the default needs a restart; a new value applies as above
+    char label[CONF_MAX_VALUE + 1];         // shown instead of the name; "" for none
     char summary[256];
 } SchemaEntry;
 
@@ -105,5 +107,6 @@ const SchemaEntry *schemaFind(const Schema *schemaP, const char *nameP);
 bool schemaCheck(const SchemaEntry *entryP, const char *valueP, char *errorP, size_t errorLen);
 bool schemaIsOn(const char *valueP);
 const char *schemaAppliesText(SchemaApplies applies);
+const char *schemaDisplayName(const SchemaEntry *entryP);
 
 #endif

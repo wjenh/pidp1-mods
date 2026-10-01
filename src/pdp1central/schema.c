@@ -1,10 +1,11 @@
 // Reads pidp1config.schema, the description of every pidp1.config setting the editor shows, and
 // checks a value against it before it is written.
-// The file has one setting per line, eight fields separated by '|':
-//     name|group|type|range|default|reader|applies|summary
+// The file has one setting per line, nine fields separated by '|':
+//     name|group|type|range|default|reader|applies|label|summary
 // '#' in column 1 starts a comment, and blank lines are skipped. A range is "low..high" or
-// empty; a default of "-" means no reader has a single one. Applies is reload, panel, restart,
-// program or none, and reload or panel may carry "-sticky".
+// empty; a default of "-" means no reader has a single one. Applies is reload, panel, run,
+// restart, program or none, and reload, panel or run may carry "-sticky". The label, usually
+// empty, is shown instead of the name.
 
 #include <ctype.h>
 #include <math.h>
@@ -14,7 +15,7 @@
 
 #include "core.h"
 
-#define SCHEMA_FIELDS 8
+#define SCHEMA_FIELDS 9
 
 // Copy a field into a fixed buffer, failing if it does not fit.
 static bool
@@ -73,7 +74,7 @@ int n;
 
     if( n != SCHEMA_FIELDS )
     {
-        return("expected 8 fields separated by '|'");
+        return("expected 9 fields separated by '|'");
     }
 
     memset(entryP, 0, sizeof(*entryP));
@@ -81,7 +82,8 @@ int n;
         !copyField(entryP->group, sizeof(entryP->group), fieldsP[1]) || !fieldsP[1][0] ||
         !copyField(entryP->defaultText, sizeof(entryP->defaultText), fieldsP[4]) || !fieldsP[4][0] ||
         !copyField(entryP->reader, sizeof(entryP->reader), fieldsP[5]) ||
-        !copyField(entryP->summary, sizeof(entryP->summary), fieldsP[7]) )
+        !copyField(entryP->label, sizeof(entryP->label), fieldsP[7]) ||
+        !copyField(entryP->summary, sizeof(entryP->summary), fieldsP[8]) )
     {
         return("a field is empty or too long");
     }
@@ -129,7 +131,7 @@ int n;
     }
 
     // A "-sticky" setting's reader assigns it only when a line is there, so a new value applies
-    // on reload, but going back to the default needs the reader restarted.
+    // as stated, but going back to the default needs the reader restarted.
     if( (p = strstr(fieldsP[6], "-sticky")) && !p[7] )
     {
         *p = '\0';
@@ -144,9 +146,13 @@ int n;
     {
         entryP->applies = APPLIES_PANEL;
     }
+    else if( !strcmp(fieldsP[6], "run") )
+    {
+        entryP->applies = APPLIES_RUN;
+    }
     else if( entryP->sticky )
     {
-        return("only reload and panel can be -sticky");
+        return("only reload, panel and run can be -sticky");
     }
     else if( !strcmp(fieldsP[6], "restart") )
     {
@@ -162,7 +168,7 @@ int n;
     }
     else
     {
-        return("applies is not reload, panel, restart, program or none");
+        return("applies is not reload, panel, run, restart, program or none");
     }
 
     return(NULL);
@@ -348,18 +354,20 @@ double value;
     return(true);
 }
 
-// The words the editor shows for when a change takes effect.
+// The words the editor shows for when a change takes effect. Save reloads whatever is running
+// that rereads the file, so a reload and a panel reload both apply on save.
 const char *
 schemaAppliesText(SchemaApplies applies)
 {
     switch( applies )
     {
     case APPLIES_RELOAD:
-        return("on reload");
     case APPLIES_PANEL:
-        return("on panel reload");
+        return("on save");
+    case APPLIES_RUN:
+        return("at the next run after save");
     case APPLIES_RESTART:
-        return("needs a pdp1 restart");
+        return("needs a restart");
     case APPLIES_PROGRAM:
         return("when its program restarts");
     case APPLIES_NONE:
@@ -367,4 +375,11 @@ schemaAppliesText(SchemaApplies applies)
     }
 
     return("ignored");
+}
+
+// The name the editor shows: the label, or the name when there is none.
+const char *
+schemaDisplayName(const SchemaEntry *entryP)
+{
+    return( entryP->label[0] ? entryP->label : entryP->name );
 }

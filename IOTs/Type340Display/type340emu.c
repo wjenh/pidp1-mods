@@ -49,7 +49,7 @@
  *    no longer changes program timing.
  * 24-Sep-2026 Claude - reset340() re-enables the lp and edge interrupts. A specialinterrupt(0) lasted
  *    until pdp1 exited, so a later program that relies on the break paused at its first hit, forever.
- * 24-Sep-2026 Claude - the thread waits for a running deadline (paceWait()) instead of for each delay
+ * 24-Sep-2026 Claude - the thread waits for a running deadline instead of for each delay
  *    from now, so its own work, display() and oversleep no longer add to the modeled time. It ran 1.15
  *    to 2.1 times its model depending on the host. The uncached fetch's 5us now counts toward the
  *    deadline, as the cached one's did.
@@ -57,6 +57,7 @@
  *    the IOTs clear it, and a plain |= or &= on either side could undo the other's change.
  * 26-Sep-2026 Claude - the accounting is switched by displaytiming instead of pidp1timing, so the cycle
  *    report no longer brings a file that grows a line a second.
+ * 1-Oct-2026 wje caching removed, no longer useful and it was always a hack.
  */
 
 #include <stdlib.h>
@@ -110,15 +111,13 @@
 #define LOG_BOUNDS 0
 #define LOG_TIMING 0
 #define LOG_CACHE 0
-#define LOG_HSCTIMING 0    // measure uncached getWord() HSC fetch latency, see getWord()
+#define LOG_HSCTIMING 0    // measure getWord() HSC fetch latency
 
 // This defines the time each command takes to initialize, 0.5 usecs. This might not be accurate.
 #define SETUP_TIME 500
 // This defines the time it takes to initialize after a start via dla.
 // The documentation is vague, 2.8 us for a PDP-4, 'faster' for others. Pick 1.5 us.
 #define START_TIME 1500
-
-#define MAXCACHE 1024      // limit the cache to this size
 
 // Special characters for character mode
 #define CH_LF     0001   // Line feed
@@ -300,8 +299,6 @@ static bool interruptEnabled = true;    // true to allow lp and edge interrupts,
 static bool lpEnabled = false;
 static bool slavesEnabled;  // set if we saw a SLAVE command
 
-static int cacheSize = 0;           // if nonzero, size of instruction cache to use, set from config file
-static int cacheBase = -1;          // address cached at the first entry in the cache
 static bool threadRunning = false;  // emulator thread is set up
 static bool isPaused = false;       // got a PAUSE command
 static volatile bool lpHitLatched = false;  // a hit was seen and the 340 has not been resumed since;
@@ -310,9 +307,6 @@ static bool needBreak = false;      // edge violation occurred and an interrupt 
 static bool origCharsets = false;   // initial twoCharsets from config or default
 static bool twoCharsets = false;
 static Slave slaves[NUMSLAVES];     // could be up to 16 slaves, but the core display support is 8
-
-static bool reloadCache;            // used to force a relaod if we get an update command
-static Word wordCache[MAXCACHE];    // instruction cache, if used
 
 #if LOG_TIMING
 static uint64_t startTime;
@@ -332,12 +326,12 @@ typedef struct {
     uint64_t pauseCalls;    // nanopause() calls
     uint64_t pauseReqNs;    // ns asked of nanopause()
     uint64_t pauseActNs;    // wall ns nanopause() took, oversleep included
-    uint64_t hscCalls;      // uncached HSCexecute() + HSCwait() fetches
+    uint64_t hscCalls;      // HSCexecute() + HSCwait() fetches
     uint64_t hscNs;         // wall ns in those fetches
     uint64_t displayCalls;  // display() calls, one per point per screen
     uint64_t displayNs;     // wall ns in display()
     uint64_t idleNs;        // wall ns blocked on waitSemaphore
-    uint64_t words;         // display words fetched, cached or not
+    uint64_t words;         // display words fetched
     uint64_t modelNs;       // modeled time added to the deadline
     uint64_t forgivenNs;    // lag dropped past PACE_MAX_LAG
     } TimeAcc, *TimeAccP;
@@ -348,7 +342,7 @@ static uint64_t timeWinWall;        // getNow() when the window opened, 0 while 
 static uint64_t timeWinCpu;         // thread CPU ns when the window opened
 
 #if LOG_HSCTIMING
-static uint64_t hscFetchCount;        // number of uncached fetches timed this run
+static uint64_t hscFetchCount;        // number of fetches timed this run
 static uint64_t hscFetchTotalNs;      // sum of elapsed ns, for computing the average
 static uint64_t hscFetchMinNs;        // smallest elapsed time seen this run
 static uint64_t hscFetchMaxNs;        // largest elapsed time seen this run
@@ -612,12 +606,6 @@ uint64_t idleT0;
             curState = INITIALIZE;      // reset340() sets it to STOPPED;
             pendingDelay = START_TIME;  // when a start occurs, DPY_GO pulse, this setup time occurs.
             twoCharsets = origCharsets; // we revert on each DPY-GO
-
-            if( cacheSize > 0 )         // flush the cache on start
-            {
-                cacheBase = -1;
-            }
-
             iotCondLog(LOG_RUN, "Received start at addr %o\n", curAddress);
             break;
 
@@ -695,11 +683,6 @@ uint64_t idleT0;
             if( curState == INITIALIZE )
             {
                 pendingDelay += SETUP_TIME;
-            }
-
-            if( cacheSize > 0 )
-            {
-                //ctlP->pdp1P->hsc = 0;     // best we can do when using cache
             }
 
             switch( curMode )
@@ -1113,8 +1096,7 @@ uint64_t idleT0;
 #endif
 
 #if LOG_HSCTIMING
-        // Report uncached HSC fetch latency stats for the run that just finished, if any
-        // uncached fetches happened (a fully cached run leaves hscFetchCount at 0).
+        // Report HSC fetch latency stats for the run that just finished, if any fetches happened.
         if( hscFetchCount )
         {
             iotCondLog(LOG_HSCTIMING,
@@ -1801,7 +1783,7 @@ Word buffer[2];     // we only use 1, but leave space just to be sure
 uint64_t fetchT0;
 #if LOG_HSCTIMING
 uint64_t hscStartNs;     // getNow() timestamp taken just before HSCexecute()+HSCwait()
-uint64_t hscElapsedNs;   // measured wall time for the uncached fetch round trip
+uint64_t hscElapsedNs;   // measured wall time for the fetch round trip
 int hscBucket;           // which hscBucketCounts[] histogram bucket this sample falls in
 #endif
 
@@ -1821,119 +1803,89 @@ int hscBucket;           // which hscBucketCounts[] histogram bucket this sample
         ++curAddress;
     }
 
-    // See if we're using instruction caching.
-    // If so fetch from the cache, reloading if needed.
-    if( cacheSize > 0 )
+    // Fetch the word with hsc threaded mode.
+    // This also provides the 5usec word-fetch delay the real hardware had.
+    // Note that this might cause rescheduling, but this has not been a significant issue
+    // in deployment, even on a pi4.
+    request.mode = (HSC_MODE_FROMMEM | HSC_MODE_THREADED | HSC_MODE_UPDATEPANEL);
+    request.count = 1;
+    request.memBank = ((addr >> 12) & 017);
+    request.memAddr = (addr & 07777);
+    request.fromBufferP = buffer;
+
+#if LOG_HSCTIMING
+    // Bracket the fetch-plus-simulated-delay round trip. HSCwait() times the 5us word
+    // fetch itself: one word is under its spin limit, so it busy-spins, as nanodelay()
+    // does for this file's short delays. The elapsed time can still run past 5us when
+    // the scheduler preempts the thread or the emulator is stopped, which is what these
+    // figures show.
+    hscStartNs = getNow();
+#endif
+
+    fetchT0 = timingStamp();
+    if( !HSCexecute(chanP, &request) )
     {
-        if( reloadCache || (addr < cacheBase) || (addr >= (cacheBase + cacheSize)) )
-        {
-            reloadCache = false;
+        return(0);          // we need to return something, 0 is generally safe.
+    }
 
-            // Fill the cache in immediate mode.
-            // The whole point of the cache is to not hit the pdp1 emulator thread.
-            request.mode = (HSC_MODE_FROMMEM | HSC_MODE_IMMEDIATE | HSC_MODE_UPDATEPANEL);
-            request.count = cacheSize;
-            request.memBank = ((addr >> 12) & 017);
-            request.memAddr = (addr & 07777);
-            request.fromBufferP = wordCache;
-            HSCexecute(chanP, &request);        // really nothing to check, it always works
-            cacheBase = addr;
-            iotCondLog(LOG_CACHE,"cache load of %d words at address %d\n", cacheSize, addr);
-        }
+    HSCwait(chanP);     // Here's where the simulation of the hardware hsc delay happens.
 
-        // The hardware fetched every word through the channel, so a hit still costs the CPU its
-        // cycle and lights the lamp, the same as an uncached fetch; the 340's own 5us goes into
-        // its running delay.
-        HSCsteal(chanP, 1);
-        pendingDelay += 5000;
-        val = wordCache[addr - cacheBase];
+    // HSCwait() spent the fetch's 5us in real time; counting it keeps the deadline from giving it
+    // away again as time for the next operation.
+    pendingDelay += 5000;
+    if( fetchT0 )
+    {
+        timeAcc.hscNs += (getNow() - fetchT0);
+        ++timeAcc.hscCalls;
+    }
+
+#if LOG_HSCTIMING
+    hscElapsedNs = (getNow() - hscStartNs);
+    ++hscFetchCount;
+    hscFetchTotalNs += hscElapsedNs;
+
+    if( (hscFetchCount == 1) || (hscElapsedNs < hscFetchMinNs) )
+    {
+        hscFetchMinNs = hscElapsedNs;
+    }
+
+    if( hscElapsedNs > hscFetchMaxNs )
+    {
+        hscFetchMaxNs = hscElapsedNs;
+    }
+
+    // Classify into a histogram bucket so the shape of the tail is visible, not just
+    // the min/max/average -- the average alone can hide an occasional large scheduling
+    // stall behind a majority of on-time fetches.
+    if( hscElapsedNs <= 5000 )
+    {
+        hscBucket = 0;
+    }
+    else if( hscElapsedNs <= 10000 )
+    {
+        hscBucket = 1;
+    }
+    else if( hscElapsedNs <= 20000 )
+    {
+        hscBucket = 2;
+    }
+    else if( hscElapsedNs <= 50000 )
+    {
+        hscBucket = 3;
+    }
+    else if( hscElapsedNs <= 100000 )
+    {
+        hscBucket = 4;
     }
     else
     {
-        // Fetch the word with hsc threaded mode.
-        // This also provides the 5usec word-fetch delay the real hardware had.
-        // Note that this might cause rescheduling, but this has not been a significant issue
-        // in deployment, even on a pi4.
-        request.mode = (HSC_MODE_FROMMEM | HSC_MODE_THREADED | HSC_MODE_UPDATEPANEL);
-        request.count = 1;
-        request.memBank = ((addr >> 12) & 017);
-        request.memAddr = (addr & 07777);
-        request.fromBufferP = buffer;
-
-#if LOG_HSCTIMING
-        // Bracket the fetch-plus-simulated-delay round trip. HSCwait() times the 5us word
-        // fetch itself: one word is under its spin limit, so it busy-spins, as nanodelay()
-        // does for this file's short delays. The elapsed time can still run past 5us when
-        // the scheduler preempts the thread or the emulator is stopped, which is what these
-        // figures show.
-        hscStartNs = getNow();
-#endif
-
-        fetchT0 = timingStamp();
-        if( !HSCexecute(chanP, &request) )
-        {
-            return(0);          // we need to return something, 0 is generally safe.
-        }
-
-        HSCwait(chanP);     // Here's where the simulation of the hardware hsc delay happens.
-
-        // HSCwait() spent the fetch's 5us in real time; counting it keeps the deadline from giving it
-        // away again as time for the next operation.
-        pendingDelay += 5000;
-        if( fetchT0 )
-        {
-            timeAcc.hscNs += (getNow() - fetchT0);
-            ++timeAcc.hscCalls;
-        }
-
-#if LOG_HSCTIMING
-        hscElapsedNs = (getNow() - hscStartNs);
-        ++hscFetchCount;
-        hscFetchTotalNs += hscElapsedNs;
-
-        if( (hscFetchCount == 1) || (hscElapsedNs < hscFetchMinNs) )
-        {
-            hscFetchMinNs = hscElapsedNs;
-        }
-
-        if( hscElapsedNs > hscFetchMaxNs )
-        {
-            hscFetchMaxNs = hscElapsedNs;
-        }
-
-        // Classify into a histogram bucket so the shape of the tail is visible, not just
-        // the min/max/average -- the average alone can hide an occasional large scheduling
-        // stall behind a majority of on-time fetches.
-        if( hscElapsedNs <= 5000 )
-        {
-            hscBucket = 0;
-        }
-        else if( hscElapsedNs <= 10000 )
-        {
-            hscBucket = 1;
-        }
-        else if( hscElapsedNs <= 20000 )
-        {
-            hscBucket = 2;
-        }
-        else if( hscElapsedNs <= 50000 )
-        {
-            hscBucket = 3;
-        }
-        else if( hscElapsedNs <= 100000 )
-        {
-            hscBucket = 4;
-        }
-        else
-        {
-            hscBucket = 5;
-        }
-
-        ++(hscBucketCounts[hscBucket]);
-#endif
-
-        val = buffer[0];
+        hscBucket = 5;
     }
+
+    ++(hscBucketCounts[hscBucket]);
+#endif
+
+    val = buffer[0];
 
     return(val);
 }
@@ -2002,28 +1954,6 @@ ConfigurationSettingP settingP;
     // One store, so a reload from another thread never shows the 340 thread a transient off.
     settingP = findConfigurationSetting(getConfiguration(), "displaytiming");
     timingOn = (settingP && settingP->onOff);
-
-    if( (settingP = findConfigurationSetting(getConfiguration(), "t340cachesize")) )
-    {
-        lastSize = cacheSize;
-        cacheSize = settingP->ivalue;
-        if( cacheSize < 0 )
-        {
-            cacheSize = 0;
-        }
-
-        if( cacheSize > MAXCACHE )
-        {
-            cacheSize = MAXCACHE;
-        }
-
-        if( cacheSize != lastSize )
-        {
-            reloadCache = true;     // tell getWord() to flush and reload, size changed.
-        }
-
-        iotCondLog(LOG_CONFIG, "340 emulator cache size %d\n", cacheSize);
-    }
 }
 
 uint64_t

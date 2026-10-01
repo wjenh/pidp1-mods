@@ -252,23 +252,6 @@ panelrealtime=false
 # Heresy? Well,then don't use it.
 fasttyo=false
 
-# Setting a cache size for the Type 340 is totally historically inaccurate.
-# However, the original didn't have to live with the Linux scheduler.
-# If you get display upate jitter running a high-demand Type 340 program,
-# turning on the cache prevents an instruction fetch every 5us via the high speed channel,
-# which keeps the Linux scheduler from intermittently suspending the 340 emulator itself
-# when it doesn't expect it.
-# You can set the cache up to 1024 Type 340 instructions in size.
-# The pidp-1 still loses one 5us cycle for every instruction the 340 uses, cached or not, and the
-# h.s. cycle light is lit for it, so the cache does not change how many cycles a pidp-1 program gets.
-# One downside is that this increases cpu demand since the 340 emulator gets more runtime.
-# If the cache size is changed here, you have to restart the pidp1 emulator for it to be applied.
-# Use of this should be very rare.
-# The overall timing is maintained in terms of displayed points per second.
-# Finally, one could argue that a cache could have been added to the original hardware, like many
-# other PDP-1 hacks, so you can pretend this is semi-legitimate.
-t340cachesize=0
-
 # Type 550 Microtape break channel.
 # Set the sequence break channel for the data, block end, and error flags.
 # The default is 2.

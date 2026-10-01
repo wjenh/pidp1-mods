@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.10
+This is version 1.11
 
-Edit date 15-Sep-2026\
-Add details about using drs/dla
+Edit date 1-Oct-2026\
+Caching removed
 
 ## What is it?
 
@@ -100,9 +100,9 @@ The rest are for determining the status of the display.
 The assigned IOTs are 15, 16, and 17. It apparently was not unusual for different installations to use
 different IOT assignments.
 
-- dla - display load address, start a display program at the address in the IO register - see note
+- dla - display load address, start a display progran at the address in the IO register - see note
 - drs - display resume sequence, used to resume after a lightpen event
-- dcf - display clear flags, clears the flags that the skip IOTs below test
+- dcf - display clear flags, clears the flags following
 - dra - display read address counter, the last address executed
 - drc - display read coordinates, the x and y position of the lightpen hit
 - drp - display read predicted coordinates, the x and y position of where the lightpen currently is
@@ -114,15 +114,15 @@ different IOT assignments.
 
 In more detail:
 
-Only one IOT, dla, takes a value passed in the IO register.\
+Only one IOT, dra, takes a value passed in the IO register.\
 Only two standard IOTs return a value, dra and drc, both in the IO register.\
 An additional non-standard IOT, drp, also returns a value in the IO register.
 
 | IOT | pdp-1 opcode | input | output | notes |
 |-----|--------------|-------|--------|-------|
-| dla | 720015 | IO has program address | none | full 16 bit address, see note 1 |
+| dla | 720015 | IO has prgram adress | none | full 16 bit address, see note 1 |
 | drs | 720115 | none | none | use after lightpen hit or edge violation to resume execution |
-| dcf | 720215 | none | none | clears the lightpen, stop and edge violation flags; it neither starts nor stops the display: a running display keeps running, a halted one stays halted |
+| dcf | 720215 | none | none | clears the 340 dkip flags |
 | dra | 720016 | none | IO has current execution address | if the 340 is halted, will be the next location to execute |
 | drc | 720116 | none | IO has the last lightpen hit coordinates | see note 2 |
 | drp | 720216 | none | IO has the predicted lightpen position coordinates | see note 3 |
@@ -227,7 +227,6 @@ If disabled, a light pen hit will only set the status flag and pause execution, 
 will set the status flags and hanlt.
 
 The default setting is enabled to match the original behavior.
-It reverts to enabled on each *dla*, so a program that wants it off sets it in its own display list.
 
 ## Slave
 
@@ -486,41 +485,6 @@ So, if moving in both axes, set y without visible first, then x.
 If moving only in the y axis, then visible will be set and the 35 usec delay will occur.
 
 Setting both x and y with visible set on both will cause a 70 usec delay!
-
-## Instruction caching
-
-This is a completely non-standard historically incorrect addition, but the original hardware didn't
-have to deal with the Linux scheduler.
-
-A Type 340 program that is running in a 340 program loop can be requesting instructions every 5us.
-The high speed channel request gives the Linux scheduler an opportunity to reschedule the 340 emulator
-when it's not expecting it, resulting in display flicker, sometimes severe on a pi4 or even a pi5.
-
-An instruction cache can be enabled in the pidp1.config file:
-```
-t340cachesize=nnn
-```
-The simulation time to execute a 340 instruction is still accurately enforced, cache or not.
-Every word the 340 uses takes one 5 usec cycle from the pidp-1, cache or not, as the fetch through the
-high speed channel did on the original, so a pidp-1 program runs slower while the 340 is busy by the
-same amount either way.
-(Since 23-Sep-2026. Before that, only about half of the uncached fetches took a cycle, how many depending
-on the host, and cached ones took none.)
-What the cache changes is host time: with it off, every fetch costs host time, so a program that
-restarts a display list every tick falls behind real time in proportion to its fetch rate, and its
-program-flag audio, which plays in real time, comes out flat by the same amount.
-Measured 22-Sep-2026, that was about 0.6% of real time per fetch per 300 usec tick; points cost little.
-With the cache on, the same program keeps real time.
-
-The cache sees the pidp-1's writes to a display word only while the 340 is halted.
-A list that ends in a halt, and reaches it before the next `dla`, sees every change;
-a list still running at the next `dla` never does.
-
-The H.S. Cycle light is lit for each word used from the cache, the same as for an uncached fetch.
-
-Enabling caching also increases cpu load since the 340 emulator gets more runtime.
-
-The cache size can be set up to 1024 instructions.
 
 ## The character sets
 

@@ -12,7 +12,7 @@ echo
 echo The script will remove any installed commands and any desktop and autostart
 echo files that were created by the install, then remove the entire /opt/pidp1-mods directory.
 echo
-echo This will execute various commands via sudo, you might be promped for your password.
+echo This will execute various commands via sudo, you might be prompted for your password.
 echo
 
 cd /opt
@@ -35,23 +35,30 @@ sudo rm -f /usr/local/bin/ad1
 sudo rm -f /usr/local/bin/drumupdater
 sudo rm -f /usr/local/bin/drumlist
 sudo rm -f /usr/local/bin/pdp1central
+sudo rm -f /usr/local/bin/disassemble
+sudo rm -f /usr/local/bin/fastload
+sudo rm -f /usr/local/bin/mtp
+sudo rm -f /usr/local/bin/mkmicrotape
+sudo rm -f /usr/local/bin/t30dpy
 
-rm ~/.config/autostart/pdp1startup.desktop
+rm -f ~/.config/autostart/pdp1startup.desktop
 
+# The line must match what install.sh appends, and only that line is removed.
 echo Removing autostart from .profile if it exists
-if grep -xq "pdp1 # autostart" $HOME/.profile
+if grep -xq "pdp1control start # autostart" $HOME/.profile
 then
     echo A copy of your .profile is saved to profile.sav
-    cp -p /home/$usr/.profile $HOME/profile.sav
-    sed -i '/pdp1control start/d' $HOME/.profile
+    cp -p $HOME/.profile $HOME/profile.sav
+    sed -i '/^pdp1control start # autostart$/d' $HOME/.profile
 else
     echo It doesn\'t exist, not changing your profile.
-    fi
+fi
 
-# Remove the desktop entroes, if any
+# Remove the desktop entries, if any
 rm -f $HOME/Desktop/tty.desktop >/dev/null 2>&1
 rm -f $HOME/Desktop/pdp1control.desktop >/dev/null 2>&1
 rm -f $HOME/Desktop/type30.desktop >/dev/null 2>&1
+rm -f $HOME/Desktop/t30dpy.desktop >/dev/null 2>&1
 rm -f $HOME/Desktop/ptr.desktop >/dev/null 2>&1
 rm -f $HOME/Desktop/ptp.desktop  >/dev/null 2>&1
 rm -f $HOME/Desktop/audioOn.desktop >/dev/null 2>&1
@@ -62,7 +69,7 @@ rm -f $HOME/Desktop/pdp1central.desktop >/dev/null 2>&1
 echo Attempting to reset your wallpaper.
 echo If your desktop background goes away, you will have to reset it via
 echo your desktop preference setting.
-if [ -d /usr/share/lxde/wallpapers
+if [ -d /usr/share/lxde/wallpapers ]
 then
     pcmanfm --set-wallpaper /usr/share/lxde/wallpapers/lxde-blue.jpg --wallpaper-mode=fit
 else
@@ -75,10 +82,10 @@ while true; do
     case $yn in
         [Yy]* )
             rm -rf /opt/pidp1-mods
-	    break
-	    ;;
-        [Nn]* ) 
-	    break
+            break
+            ;;
+        [Nn]* )
+            break
             ;;
         * ) echo "Please answer yes or no.";;
     esac

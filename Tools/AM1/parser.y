@@ -37,6 +37,7 @@ static int pendingLabelLine;
 // reason.  The varname rules record it; setVarsPC() placing the var later
 // leaves it alone.
 int nameTokenLine;
+int nameTokenSrcLine;
 
 static char scratchStr[128];            // a scratch string
 
@@ -97,6 +98,8 @@ void verror(const char *msgP, ...);
 void vwarn(int errtype, const char *msgP, ...);
 void vwarnl(int errType, int lineno, const char *msgP, ...);
 void verrorl(int lineno, const char *msgP, ...);
+void verrorlf(int lineno, const char *fileNameP, const char *msgP, ...);
+void setRefSource(PNodeP nodeP);
 
 int yylex(void);
 
@@ -925,6 +928,7 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                     $$ = newnode(lineno, curBankP->cur_pc, BREF, NILP, NILP);
                     $$->value.symP = symP;
                     $$->value2.ival = $2;
+                    setRefSource($$);
                 }
                 | ADDR bref
                 {
@@ -943,6 +947,7 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                     $$ = newnode(lineno, curBankP->cur_pc, BREF, NILP, NILP);
                     $$->value.symP = symP;
                     $$->value2.ival = $2;
+                    setRefSource($$);
                 }
                 | NAME wildref
                 {
@@ -967,6 +972,7 @@ simple_expr     : simple_expr SEPARATOR simple_expr { $$ = binop(lineno, curBank
                         $$ = newnode(lineno, curBankP->cur_pc, BREF, NILP, NILP);
                         $$->value.symP = $1;
                         $$->value2.ival = curBank;
+                        setRefSource($$);
                     }
                     else
                     {
@@ -1706,6 +1712,16 @@ BankContextP ctxP;
     return( ctxP );
 }
 
+// Record where a BREF made from a name was written, for evalExpr's error if its
+// symbol never resolves. The node's lineNo will not do: the reference is
+// reduced mid-line, before the terminator that newnode() allows for.
+void
+setRefSource(PNodeP nodeP)
+{
+    nodeP->srcLine = nameTokenSrcLine;
+    nodeP->srcFileP = strdup(filenameP);
+}
+
 // Look up a symbol in a bank, create it if not found
 SymNodeP
 findSymbolInBank(int bank, char *nameP)
@@ -2182,6 +2198,23 @@ char format[1024];
     va_start(argP, msgP);
     sprintf(format,"am1: %s\nat line %d, file %s\n",
         msgP,lineno,filenameP);
+    vfprintf(stderr,format,argP);
+    va_end(argP);
+    leave(0);
+}
+
+// Same as verrorl, with the file passed too, for a diagnostic given after the
+// parse, when filenameP is the last file read rather than the node's. A line
+// of 0 and a NILP file fall back to lineno and filenameP.
+void
+verrorlf(int lineNo, const char *fileNameP, const char *msgP, ...)
+{
+va_list argP;
+char format[1024];
+
+    va_start(argP, msgP);
+    sprintf(format,"am1: %s\nat line %d, file %s\n",
+        msgP,(lineNo > 0)?lineNo:lineno,(fileNameP)?fileNameP:filenameP);
     vfprintf(stderr,format,argP);
     va_end(argP);
     leave(0);

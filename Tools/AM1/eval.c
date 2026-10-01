@@ -30,6 +30,7 @@ static int _evalExpr(PNodeP);
 static bool hasIndirect(PNodeP nodeP);
 
 void verror(char *msgP, ...);
+void verrorlf(int lineNo, const char *fileNameP, const char *msgP, ...);
 
 // Evaluate an expression, mask to proper word size.
 int
@@ -233,7 +234,10 @@ SymNodeP symP;
         symP = nodeP->value.symP;
         if( !(symP->flags & SYMF_RESOLVED) )
         {
-            verror("symbol %s in bank %d has no defined value", symP->name, symP->bank);
+            // Name the reference's own line: by now the global lineno is the end
+            // of the file.
+            verrorlf(nodeP->srcLine, nodeP->srcFileP, "symbol %s in bank %d has no defined value",
+                symP->name, symP->bank);
         }
         return( (nodeP->value2.ival << 12) | symP->value );
         break;

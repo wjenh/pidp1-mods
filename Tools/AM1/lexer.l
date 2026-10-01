@@ -32,6 +32,8 @@ extern int optRegionTokenLine;      // the line and file of the optimizer direct
 extern char *optRegionTokenFileP;   // just scanned, for the parser's messages
 extern int labelTokenLine;          // the line the comma just scanned is on
 extern int nameTokenLine;           // the line the NAME or ADDR just scanned is on
+extern int nameTokenSrcLine;        // and the line it is written on: after a ';' lineno
+                                    // is already one ahead
 extern SymNodeP permSymP;
 extern BankContextP curBankP;
 
@@ -527,6 +529,7 @@ octal		    	{ decimalMode = false; }
                             {
                                 yylval.symP = symP;
                                 nameTokenLine = lineno;
+                                nameTokenSrcLine = (sawSemi)?(lineno - 1):lineno;
                                 return(ADDR);
                             }
                             else
@@ -534,6 +537,7 @@ octal		    	{ decimalMode = false; }
                                 yylval.strP = malloc(yyleng+1);
                                 strcpy(yylval.strP,yytext);
                                 nameTokenLine = lineno;
+                                nameTokenSrcLine = (sawSemi)?(lineno - 1):lineno;
                                 return(NAME);
                             }
                         }

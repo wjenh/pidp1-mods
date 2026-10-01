@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v3.1 30-Sep-2026"
-#define AM1SHORTVERSION "am1 v3.1"
+#define AM1VERSION "am1 v3.3 1-Oct-2026"
+#define AM1SHORTVERSION "am1 v3.2"
 #define SYMFILEVERSION "V3"             // used for import to check proper version, must match listSymtab.c
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -133,6 +133,10 @@ typedef struct parsenode
     struct parsenode *exprP;    // an expression relayout must evaluate again (an
                                 // origin's, 'start''s, a table's count), or on a
                                 // RELAYOUT node the deleted word's; NILP elsewhere
+    int srcLine;                // on a BREF made from a name, the line and file it
+    char *srcFileP;             // was written on, for the error given after the
+                                // parse if its symbol never resolves; 0 and NILP
+                                // elsewhere
 } PNode, *PNodeP;
 
 // a list of PNodePs, used for wildcard cross-bank refs

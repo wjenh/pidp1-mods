@@ -92,8 +92,8 @@ do_start() {
 	elif [ "$interface" = "apps" ]; then
 		echo start apps
 		sleep 1
-		echo start p7simES
-		nohup bin/p7simES localhost > /dev/null 2>&1 &
+		echo start /usr/local/bin/t30dpy
+		nohup /usr/local/bin/t30dpy >/dev/null 2>&1 &
 		sleep 1
 		echo start tapevis
 		nohup bin/tapevis > /dev/null 2>&1 &
@@ -127,7 +127,7 @@ do_panelreload() {
 do_stop() {
 	#kill any support programs that may be running
 	pkill tapevis
-    	pkill p7simES
+    	pkill t30dpy
 	pkill pdp1_periphES
         pkill pdpsrv
     	pkill panel_pidp1

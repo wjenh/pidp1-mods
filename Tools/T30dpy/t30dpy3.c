@@ -102,6 +102,7 @@
  * 30-Sep-2026 Claude - exit on Escape even when the display is idle (shut the socket down to wake the reader),
  *    and the SIGINT/SIGTERM handler only sets quit, so a kill can no longer deadlock inside SDL.
  * 30-Sep-2026 Claude - the SIGHUP reload runs from the main loop, not inside the signal handler.
+ * 02-Oct-2026 wje - pixel fading moved to the GPU, now the CPU handles only each frame's new points.
 */
 
 #include <stdio.h>
@@ -160,6 +161,26 @@
 // NOINDEX marks end of list or not active in the indexed pool.
 #define MAXACTIVEPOINTS 400000
 #define NOINDEX 0xFFFFFFFFu
+
+// The GPU fade, the default, replaces the active-point walk; gpufade=false in the config file turns it
+// off, and -f turns it on whatever the config file says.
+// Each decay term is an 8-bit render target. Once a frame the renderer multiplies a whole target by
+// n/255 and subtracts s/255, then draws that frame's new points into it, and the targets are added
+// onto the screen at their weights. An 8-bit value multiplied alone stops falling once
+// v * n / 255 rounds back to v; the subtraction keeps every term falling to black, so the fade
+// ends in a short ramp instead of a step or a lasting glow.
+// The renderer does exactly v = round(v * n / 255) - s, at least 0, when n and s are sent as
+// n/255 and s/255 (measured on SDL 3.2.10 opengl, Pi 4, and SDL 3.4.2 opengl/opengles2/vulkan);
+// initializeGpuFade() checks it on the renderer in use.
+#define FADETERMS 3             // fast (it also carries the blue), mid and slow
+#define FASTTERM 0
+#define MAXNEWPOINTS 100000     // new points one frame takes in the GPU fade; more are dropped and counted
+#define MAXSPREAD 9             // pixels one point covers at the highest intensities, see drawPoint()
+#define DEFAULTTAIL 1.3f        // seconds until a full-intensity point has faded to black
+#define MINWEIGHT 0.005f        // a term weighted less than this is not drawn at all
+#define PACKPOINT(x, y, i) ((uint32_t)(x) | ((uint32_t)(y) << 10) | ((uint32_t)(i) << 20))
+#define FADETABLEROWS ((int)(sizeof(fadeTable) / sizeof(fadeTable[0])))
+#define FADETABLEFIRST 8        // fadeTable's first row is for a tail of 0.8 s, then every 0.1 s
 
 // The following can be overridden by the config file and some also via the command line.
 // For those that have a command line override, it takes precedence.
@@ -221,6 +242,16 @@ typedef struct ActivePoint {
     uint32_t nextIdx;           // index of the next entry in whichever list (active or free) this entry is on
 } ActivePoint, *ActivePointP;
 
+// One choice of the GPU fade's three terms. Each frame a term's value v (0-255) becomes
+// round(v * n / 255) - s, at least 0; a point is drawn into every term at full scale for its
+// intensity, and a term is added to the screen at its weight.
+typedef struct FadeTerms {
+    int life;                   // frames from 255 until the slow term, the last to go, reads 0
+    int n[FADETERMS];           // per-frame factor, n/255
+    int s[FADETERMS];           // per-frame subtraction, s/255
+    float w[FADETERMS];         // weight on the screen
+} FadeTerms;
+
 // We keep the active points in a pool that effectively implements 2 linked lists.
 // One is a list of free pool entries, the other a list of active points.
 // As points come in, an entry is moved from the free list to the active list.
@@ -247,6 +278,51 @@ uint8_t brightValues[8][256];
 // Tracks the brightest value written to each screen pixel so far in the current frame.
 uint8_t brightBuffer[LOGICALSIZE][LOGICALSIZE];
 
+// The GPU fade's terms, one row per tail length from 0.8 s to 2.7 s in steps of 0.1 s.
+// Each row's weights are a least-squares fit to the P7 yellow-green persistence curve of RCA
+// TPM-1508A page 13, (1 + t / 16.9 ms)^-0.73 averaged over each 33 ms frame, as encoded values
+// (gamma 0.4545), over 0-400 ms, the range the curve is published for. Past 400 ms a row is not
+// fitted: it fades to black by its tail. Short tails fit 0-400 ms worse, as noted per row.
+static const FadeTerms fadeTable[] = {
+    { 25, {  30, 150, 250 }, { 0, 2, 8 }, { 0.244f, 0.001f, 0.759f } },  // 0.8 s, within 35.2% to 400 ms
+    { 27, {  30, 234, 252 }, { 0, 4, 8 }, { 0.283f, 0.001f, 0.722f } },  // 0.9 s, within 22.5%
+    { 30, {  80, 240, 254 }, { 0, 4, 8 }, { 0.333f, 0.011f, 0.665f } },  // 1.0 s, within 14.9%
+    { 32, {  90, 240, 253 }, { 0, 3, 7 }, { 0.339f, 0.001f, 0.667f } },  // 1.1 s, within 10.8%
+    { 37, { 100, 150, 253 }, { 0, 4, 6 }, { 0.211f, 0.153f, 0.634f } },  // 1.2 s, within 6.0%
+    { 40, {  90, 150, 254 }, { 0, 4, 6 }, { 0.130f, 0.257f, 0.611f } },  // 1.3 s, within 3.6%
+    { 43, {  60, 150, 253 }, { 0, 3, 5 }, { 0.096f, 0.295f, 0.609f } },  // 1.4 s, within 2.0%
+    { 43, {  60, 150, 253 }, { 0, 3, 5 }, { 0.096f, 0.295f, 0.609f } },  // 1.5 s, within 2.0%
+    { 47, {  50, 168, 254 }, { 0, 3, 5 }, { 0.126f, 0.295f, 0.578f } },  // 1.6 s, within 0.9%
+    { 52, {  50, 168, 253 }, { 0, 2, 4 }, { 0.127f, 0.296f, 0.577f } },  // 1.7 s, within 0.5%
+    { 52, {  50, 168, 253 }, { 0, 2, 4 }, { 0.127f, 0.296f, 0.577f } },  // 1.8 s, within 0.5%
+    { 58, {  60, 180, 254 }, { 0, 2, 4 }, { 0.155f, 0.299f, 0.546f } },  // 1.9 s, within 0.3%
+    { 58, {  60, 180, 254 }, { 0, 2, 4 }, { 0.155f, 0.299f, 0.546f } },  // 2.0 s, within 0.3%
+    { 64, {  60, 168, 250 }, { 0, 3, 2 }, { 0.138f, 0.271f, 0.591f } },  // 2.1 s, within 1.0%
+    { 66, {  60, 180, 253 }, { 0, 2, 3 }, { 0.155f, 0.299f, 0.546f } },  // 2.2 s, within 0.3%
+    { 66, {  60, 180, 253 }, { 0, 2, 3 }, { 0.155f, 0.299f, 0.546f } },  // 2.3 s, within 0.3%
+    { 71, {  60, 180, 251 }, { 0, 2, 2 }, { 0.163f, 0.274f, 0.563f } },  // 2.4 s, within 0.5%
+    { 75, {  70, 192, 254 }, { 0, 1, 3 }, { 0.184f, 0.308f, 0.507f } },  // 2.5 s, within 0.4%
+    { 75, {  70, 192, 254 }, { 0, 1, 3 }, { 0.184f, 0.308f, 0.507f } },  // 2.6 s, within 0.4%
+    { 79, {  70, 186, 252 }, { 0, 1, 2 }, { 0.178f, 0.286f, 0.536f } }   // 2.7 s, within 0.7%
+};
+
+const FadeTerms *fadeTermsP;           // the row in use, see selectFadeTerms()
+SDL_Texture *termTextures[FADETERMS];   // one 8-bit render target per term
+SDL_BlendMode subtractMode;             // dst - src, for the per-frame subtraction
+SDL_BlendMode maxMode;                  // max(dst, src), for drawing points into a term
+
+// New points for the GPU fade, double buffered: the reader thread fills newPoints[newFill]
+// under busyLockP, and the main loop takes it and switches newFill under the same lock.
+uint32_t newPoints[2][MAXNEWPOINTS];
+uint32_t newCount;
+int newFill;
+
+// One frame's new points spread to their pixels, grouped by intensity, see renderGpuFrame().
+SDL_FPoint spreadPoints[MAXNEWPOINTS * MAXSPREAD];
+
+float levelValues[8];           // each intensity's value drawn into a term, gamma applied
+float fastColor[3];             // the fast term's color at full scale, see selectFadeTerms()
+
 int pdp1FD;
 int portNum;
 char *hostNameP;
@@ -264,8 +340,11 @@ volatile bool reloadRequested = false;  // set by SIGHUP, acted on by the main l
 bool border;
 bool doLinear = LINEAR;
 bool mikecMode = false;
+bool gpuFade = true;            // the GPU fade instead of the active-point walk, see FADETERMS
+int gpuIdleFrames;              // frames since the GPU fade last had a new point
 
 float gammaCorrection = GAMMA;
+float fadeTail = DEFAULTTAIL;   // the GPU fade's tail, seconds
 
 uint32_t blackPixel;                 // The value is numeric 0, but use the SDL generated version for consistency.
 
@@ -310,6 +389,14 @@ void removeActivePoint(uint32_t pointIdx, uint32_t prevIdx);
 
 void initializeRgbas(void);
 void drawPoint(uint8_t *pixels, int pitch, uint32_t rgba, int x, int y, int intensity, int bright);
+
+void selectFadeTerms(void);
+bool initializeGpuFade(void);
+int fadeModel(int v, int n, int s);
+bool fadeTerm(int term);
+bool readTermPixel(int *valueP);
+int spreadPoint(SDL_FPoint *outP, int x, int y, int intensity);
+void renderGpuFrame(void);
 void updatePen(int sockFD, bool penDown, int winX, int winY);
 void loadConfig(bool full);
 void sighandler(int sig);
@@ -406,10 +493,14 @@ EventState evState;         // see typedef above main(): bundles the old penDown
 
     loadConfig(true);             // config overrides defines, command line overrides all
 
-    while( (opt = getopt(argc, argv, "g:lmnp:s:tvw:")) != -1 )
+    while( (opt = getopt(argc, argv, "fg:lmnp:s:tvw:")) != -1 )
     {
         switch( opt )
         {
+        case 'f':
+            gpuFade = true;
+            break;
+
         case 'g':
             gammaCorrection = atof(optarg);
             break;
@@ -604,6 +695,25 @@ EventState evState;         // see typedef above main(): bundles the old penDown
     // Set up the points array and the active list head.
     initializePoints();
 
+    // Done before the reader thread starts, since gpuFade decides where it puts new points.
+    // The CPU fade relies on the screen as target and the black draw color set above.
+    if( gpuFade && !initializeGpuFade() )
+    {
+        fprintf(stderr, "The GPU fade is not available with the %s renderer, using the CPU fade.\n",
+            (rendererNameP)?rendererNameP:"?");
+        gpuFade = false;
+        SDL_SetRenderTarget(renderer, NULL);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+        for( i = 0; i < FADETERMS; ++i )
+        {
+            if( termTextures[i] )
+            {
+                SDL_DestroyTexture(termTextures[i]);
+                termTextures[i] = NULL;
+            }
+        }
+    }
+
     // An async thread is used to read incoming data.
     // Lightpen updates are done in the main thread during the display update cycle.
     if( !(busyLockP = SDL_CreateMutex()) )
@@ -689,7 +799,11 @@ EventState evState;         // see typedef above main(): bundles the old penDown
         ++pacedFrames;              // counts every paced loop pass (including idle ones): the true cadence
 
         // With nothing active there is nothing to draw, so the expensive per-point work below is skipped.
-        if( activeListHead != NOINDEX )
+        if( gpuFade )
+        {
+            renderGpuFrame();
+        }
+        else if( activeListHead != NOINDEX )
         {
             renderStart = now();
             textureP = textures[textureSelector];
@@ -910,6 +1024,20 @@ static bool skipOne = false;
             x = cmd & 01777;
             y = 1023 - ((cmd >> 10) & 01777);   // SDL y 0 is top of screen, not bottom, flop.
             intensity = (cmd >> 20) & 7;        // The standard display intensity, 0-7.
+
+            // The GPU fade keeps no active points, only this frame's new ones.
+            if( gpuFade )
+            {
+                if( newCount < MAXNEWPOINTS )
+                {
+                    newPoints[newFill][newCount++] = PACKPOINT(x, y, intensity);
+                }
+                else
+                {
+                    ++droppedPoints;
+                }
+                continue;
+            }
 
             // It is possible that this point is already active.
             // If so, resetting the lifetime and intensity in its existing pool slot is all
@@ -1263,6 +1391,401 @@ int stride;              // pixels per row, derived from pitch (which is in byte
     }
 }
 
+// Choose fadeTable's row for fadeTail, to the nearest 0.1 s within the table, and set up the
+// terms' colors and the intensity levels from it. The targets restart from black.
+void
+selectFadeTerms(void)
+{
+const int yellowRgb[3] = { YELLOWRGB };
+const int blueRgb[3] = { BLUER, BLUEG, BLUEB };
+int row;
+int term;
+int i;
+int delta;
+float w;
+
+    row = (int)((fadeTail * 10.0f) + 0.5f) - FADETABLEFIRST;
+    if( row < 0 )
+    {
+        row = 0;
+    }
+    else if( row >= FADETABLEROWS )
+    {
+        row = (FADETABLEROWS - 1);
+    }
+    fadeTermsP = &fadeTable[row];
+
+    // The same intensity steps initializeRgbas() uses, with the gamma applied to each.
+    delta = ((255 - MININTENSITY) / 7);
+    for( i = 0; i < 8; ++i )
+    {
+        levelValues[i] = powf(((float)(MININTENSITY + (i * delta)) / 255.0f), gammaCorrection);
+    }
+
+    // The fast term is drawn in its own color, its share of the yellow-green plus the blue, which
+    // fades with it; it goes to the screen as it is. The other terms are drawn gray and get the
+    // yellow-green, at their weights, as they are added to the screen. In a new point's first
+    // frame the sum is a near-white, as the two phosphors' light adds.
+    w = fadeTermsP->w[FASTTERM];
+    for( i = 0; i < 3; ++i )
+    {
+        fastColor[i] = (((w * (float)yellowRgb[i]) + (float)blueRgb[i]) / 255.0f);
+        if( fastColor[i] > 1.0f )
+        {
+            fastColor[i] = 1.0f;
+        }
+    }
+
+    for( term = 0; term < FADETERMS; ++term )
+    {
+        w = fadeTermsP->w[term];
+        if( term == FASTTERM )
+        {
+            SDL_SetTextureColorModFloat(termTextures[term], 1.0f, 1.0f, 1.0f);
+        }
+        else
+        {
+            SDL_SetTextureColorModFloat(termTextures[term], ((w * (float)yellowRgb[0]) / 255.0f),
+                ((w * (float)yellowRgb[1]) / 255.0f), ((w * (float)yellowRgb[2]) / 255.0f));
+        }
+        SDL_SetTextureScaleMode(termTextures[term], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
+
+        SDL_SetRenderTarget(renderer, termTextures[term]);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+    }
+
+    SDL_SetRenderTarget(renderer, NULL);
+    gpuIdleFrames = (fadeTermsP->life + 1);     // nothing to fade until a point arrives
+}
+
+// Set up the GPU fade: its blend modes, one target per term, and a check that the renderer
+// fades and draws exactly as fadeModel() says, since the fit assumes it.
+// Returns false, with the reason on stderr, if the renderer cannot do it.
+bool
+initializeGpuFade(void)
+{
+int term;
+int j;
+int v;
+int got;
+
+    subtractMode = SDL_ComposeCustomBlendMode(SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE,
+        SDL_BLENDOPERATION_REV_SUBTRACT, SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_ONE,
+        SDL_BLENDOPERATION_REV_SUBTRACT);
+    maxMode = SDL_ComposeCustomBlendMode(SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE,
+        SDL_BLENDOPERATION_MAXIMUM, SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE,
+        SDL_BLENDOPERATION_MAXIMUM);
+
+    for( term = 0; term < FADETERMS; ++term )
+    {
+        if( !(termTextures[term] = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+            SDL_TEXTUREACCESS_TARGET, LOGICALSIZE, LOGICALSIZE)) )
+        {
+            fprintf(stderr, "GPU fade: can't create a render target, %s\n", SDL_GetError());
+            return(false);
+        }
+        SDL_SetTextureBlendMode(termTextures[term], SDL_BLENDMODE_ADD);
+    }
+
+    selectFadeTerms();
+
+    // Each term in use, from 255 until it reads 0, must match the model frame by frame.
+    for( term = 0; term < FADETERMS; ++term )
+    {
+        if( fadeTermsP->w[term] < MINWEIGHT )
+        {
+            continue;
+        }
+
+        SDL_SetRenderTarget(renderer, termTextures[term]);
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        SDL_RenderClear(renderer);
+        for( j = 0, v = 255; j <= fadeTermsP->life; ++j )
+        {
+            if( !readTermPixel(&got) )
+            {
+                fprintf(stderr, "GPU fade: can't read a render target back, %s\n", SDL_GetError());
+                return(false);
+            }
+
+            if( got != v )
+            {
+                fprintf(stderr, "GPU fade: term %d reads %d after %d frames, the model says %d.\n",
+                    term, got, j, v);
+                return(false);
+            }
+
+            if( v == 0 )
+            {
+                break;
+            }
+
+            if( !fadeTerm(term) )
+            {
+                fprintf(stderr, "GPU fade: blend mode refused, %s\n", SDL_GetError());
+                return(false);
+            }
+            v = fadeModel(v, fadeTermsP->n[term], fadeTermsP->s[term]);
+        }
+
+        // idle detection in renderGpuFrame() relies on every term being black by then
+        if( v != 0 )
+        {
+            fprintf(stderr, "GPU fade: term %d is still %d after %d frames.\n", term, v, fadeTermsP->life);
+            return(false);
+        }
+    }
+
+    // A point drawn with maxMode lands on its own pixel and keeps the brighter value there:
+    // 128 over 64 reads 128, and 32 over that still reads 128.
+    SDL_SetRenderTarget(renderer, termTextures[FASTTERM]);
+    SDL_SetRenderDrawColor(renderer, 64, 64, 64, 255);
+    SDL_RenderClear(renderer);
+    if( !SDL_SetRenderDrawBlendMode(renderer, maxMode) )
+    {
+        fprintf(stderr, "GPU fade: blend mode refused, %s\n", SDL_GetError());
+        return(false);
+    }
+    SDL_SetRenderDrawColor(renderer, 128, 128, 128, 255);
+    SDL_RenderPoint(renderer, 0.0f, 0.0f);
+    SDL_SetRenderDrawColor(renderer, 32, 32, 32, 255);
+    SDL_RenderPoint(renderer, 0.0f, 0.0f);
+    if( !readTermPixel(&got) || (got != 128) )
+    {
+        fprintf(stderr, "GPU fade: a point drawn at 128 then 32 over 64 reads %d, not 128.\n", got);
+        return(false);
+    }
+
+    selectFadeTerms();          // back to black
+    return(true);
+}
+
+// One frame of a term's fade, on the current target: v becomes round(v * n / 255) - s, at least 0.
+// Returns false if the renderer refuses a blend mode.
+bool
+fadeTerm(int term)
+{
+float k;
+float s;
+
+    k = ((float)fadeTermsP->n[term] / 255.0f);
+    if( !SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_MOD) )
+    {
+        return(false);
+    }
+    SDL_SetRenderDrawColorFloat(renderer, k, k, k, 1.0f);
+    SDL_RenderFillRect(renderer, NULL);
+
+    if( fadeTermsP->s[term] > 0 )
+    {
+        s = ((float)fadeTermsP->s[term] / 255.0f);
+        if( !SDL_SetRenderDrawBlendMode(renderer, subtractMode) )
+        {
+            return(false);
+        }
+        SDL_SetRenderDrawColorFloat(renderer, s, s, s, 1.0f);
+        SDL_RenderFillRect(renderer, NULL);
+    }
+
+    return(true);
+}
+
+// What fadeTerm() does to one 8-bit value, v (0-255), with factor n/255 and subtraction s/255.
+int
+fadeModel(int v, int n, int s)
+{
+    v = ((((2 * v * n) + 255) / 510) - s);     // round(v * n / 255), with no ties to break
+    return( (v < 0) ? 0 : v );
+}
+
+// Read the red value (0-255) of pixel (0, 0) of the current render target into *valueP.
+// Returns false if the renderer can't read it back.
+bool
+readTermPixel(int *valueP)
+{
+SDL_Rect rect;
+SDL_Surface *surfaceP;
+Uint8 r, g, b, a;
+bool ok;
+
+    rect.x = 0;
+    rect.y = 0;
+    rect.w = 1;
+    rect.h = 1;
+    if( !(surfaceP = SDL_RenderReadPixels(renderer, &rect)) )
+    {
+        *valueP = -1;
+        return(false);
+    }
+
+    ok = SDL_ReadSurfacePixel(surfaceP, 0, 0, &r, &g, &b, &a);
+    SDL_DestroySurface(surfaceP);
+    *valueP = (ok) ? (int)r : -1;
+    return(ok);
+}
+
+// Write to outP the pixels a point at (x, y) covers at intensity, the pattern drawPoint() uses.
+// Returns how many were written, at most MAXSPREAD.
+int
+spreadPoint(SDL_FPoint *outP, int x, int y, int intensity)
+{
+static const int dx[MAXSPREAD] = { 0, 0, 0, -1, 1, -1, -1, 1, 1 };
+static const int dy[MAXSPREAD] = { 0, -1, 1, 0, 0, -1, 1, -1, 1 };
+int total;
+int count;
+int i;
+int px, py;
+
+    // Center and the vertical arms, then the horizontal arms, then the corners.
+    total = (mikecMode) ? 1 : ((intensity >= 6) ? 9 : ((intensity >= 4) ? 5 : 3));
+    count = 0;
+    for( i = 0; i < total; ++i )
+    {
+        px = (x + dx[i]);
+        py = (y + dy[i]);
+        if( (px >= 0) && (px < LOGICALSIZE) && (py >= 0) && (py < LOGICALSIZE) )
+        {
+            outP[count].x = (float)px;
+            outP[count].y = (float)py;
+            ++count;
+        }
+    }
+
+    return(count);
+}
+
+// One frame of the GPU fade: take the reader's new points, fade every term and draw the new
+// points into it, then add the terms onto the screen. Nothing is drawn once all has faded out.
+void
+renderGpuFrame(void)
+{
+uint32_t *pointsP;
+uint32_t count;
+uint32_t i;
+uint32_t packed;
+int term;
+int level;
+int perLevel[8];
+int start[8];
+int used[8];
+float lv;
+uint64_t renderStart;
+uint64_t tAfterBuffer;
+uint64_t renderDelta;
+
+    // Swap buffers with the reader, so it fills the other while this frame's are drawn.
+    SDL_LockMutex(busyLockP);
+    pointsP = newPoints[newFill];
+    count = newCount;
+    newFill ^= 1;
+    newCount = 0;
+    SDL_UnlockMutex(busyLockP);
+
+    // A point fades to black in fadeTermsP->life frames; after that the screen is black.
+    if( count > 0 )
+    {
+        gpuIdleFrames = 0;
+    }
+    else if( gpuIdleFrames > fadeTermsP->life )
+    {
+        return;
+    }
+    else
+    {
+        ++gpuIdleFrames;
+    }
+
+    renderStart = now();
+
+    // Spread each point to its pixels, grouped by intensity so each level is one draw per term.
+    for( level = 0; level < 8; ++level )
+    {
+        perLevel[level] = 0;
+        used[level] = 0;
+    }
+    for( i = 0; i < count; ++i )
+    {
+        ++perLevel[(pointsP[i] >> 20) & 7];
+    }
+    start[0] = 0;
+    for( level = 1; level < 8; ++level )
+    {
+        start[level] = (start[level - 1] + (perLevel[level - 1] * MAXSPREAD));
+    }
+    for( i = 0; i < count; ++i )
+    {
+        packed = pointsP[i];
+        level = ((packed >> 20) & 7);
+        used[level] += spreadPoint(&spreadPoints[start[level] + used[level]],
+            (int)(packed & 01777), (int)((packed >> 10) & 01777), level);
+    }
+    totalPoints += count;
+
+    for( term = 0; term < FADETERMS; ++term )
+    {
+        if( fadeTermsP->w[term] < MINWEIGHT )
+        {
+            continue;
+        }
+
+        SDL_SetRenderTarget(renderer, termTextures[term]);
+        fadeTerm(term);
+        if( count > 0 )
+        {
+            SDL_SetRenderDrawBlendMode(renderer, maxMode);
+            for( level = 0; level < 8; ++level )
+            {
+                if( used[level] == 0 )
+                {
+                    continue;
+                }
+
+                lv = levelValues[level];
+                if( term == FASTTERM )
+                {
+                    SDL_SetRenderDrawColorFloat(renderer, (lv * fastColor[0]), (lv * fastColor[1]),
+                        (lv * fastColor[2]), 1.0f);
+                }
+                else
+                {
+                    SDL_SetRenderDrawColorFloat(renderer, lv, lv, lv, 1.0f);
+                }
+                SDL_RenderPoints(renderer, &spreadPoints[start[level]], used[level]);
+            }
+        }
+    }
+
+    SDL_SetRenderTarget(renderer, NULL);
+    tAfterBuffer = now();
+
+    // The terms add, so the screen is cleared first every frame, letterboxed or not.
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+    SDL_RenderClear(renderer);
+    for( term = 0; term < FADETERMS; ++term )
+    {
+        if( fadeTermsP->w[term] >= MINWEIGHT )
+        {
+            SDL_RenderTexture(renderer, termTextures[term], NULL, NULL);
+        }
+    }
+    SDL_RenderPresent(renderer);
+    ++totalFrames;
+
+    if( doTiming )
+    {
+        renderDelta = (now() - renderStart);
+        renderTimeTotal += renderDelta;
+        ++renderCount;
+        if( renderDelta > renderTimeMax )
+        {
+            renderTimeMax = renderDelta;
+        }
+        phaseBufferTotal += (tAfterBuffer - renderStart);
+        phasePresentTotal += (renderDelta - (tAfterBuffer - renderStart));
+    }
+}
+
 // Handles one SDL event during the main loop.
 // It is called both from the once-per-frame loop and short slices of the frame-wait.
 // This allows lightpen motion to be queued much faster, needed for the new predicive lightpen code.
@@ -1488,6 +2011,10 @@ char line[256];
                         allowLabwcFix = false;
                     }
                 }
+                else if( !strcmp(line, "gpufade") )
+                {
+                    gpuFade = isTrue(cP);
+                }
             }
 
             if( !strcmp(line, "nice") )
@@ -1517,6 +2044,10 @@ char line[256];
             else if( !strcmp(line, "cutoff") )
             {
                 lowCutoff = atoi(cP);
+            }
+            else if( !strcmp(line, "tail") )
+            {
+                fadeTail = atof(cP);
             }
         }
     }
@@ -1623,6 +2154,10 @@ reconfigure(void)
     SDL_SetTextureScaleMode(textures[0], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
     SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
     SDL_SetWindowBordered(window, (border)?true:false);
+    if( gpuFade )
+    {
+        selectFadeTerms();      // tail, gamma and scaling
+    }
 
     // We also report timing if being accumulated so a snapshot can be seen without exiting.
     if( doTiming )
@@ -1676,16 +2211,27 @@ uint64_t delta;
     }
     printf("%lu received points\n", receivedPoints);
     printf("%lu received points/sec\n", receivedPoints/delta);
-    printf("%lu maximum active points\n", maxActivePoints);
-    printf("%lu points dropped because active-point pool exhausted.\n", droppedPoints);
+    if( gpuFade )
+    {
+        printf("GPU fade, %.2f s to black (%d frames).\n", (fadeTermsP->life / 30.0), fadeTermsP->life);
+        printf("%lu points dropped because one frame had more than %d new.\n", droppedPoints, MAXNEWPOINTS);
+    }
+    else
+    {
+        printf("%lu maximum active points\n", maxActivePoints);
+        printf("%lu points dropped because active-point pool exhausted.\n", droppedPoints);
+    }
 }
 
 void
 usage()
 {
-    fprintf(stderr, "usage: t30dpy [-l] [-m] [-n] [-t]\n");
+    fprintf(stderr, "usage: t30dpy [-f] [-l] [-m] [-n] [-t]\n");
     fprintf(stderr, "              [-g gamma] [-w bias] [-p port] [-s size] [host]\n");
     fprintf(stderr, "where:\n");
+    fprintf(stderr, "-f, fade on the GPU even if the config says gpufade=false; the GPU fade is the default,\n");
+    fprintf(stderr, "    the config's tail=seconds sets how long a point takes to fade out, 0.8 to 2.7,\n");
+    fprintf(stderr, "    default %.1f, and -w and the config's cutoff apply to the CPU fade only\n", DEFAULTTAIL);
     fprintf(stderr, "-l, use SDL linear scaling, else nearest neighbor, default neearest\n");
     fprintf(stderr, "-m, Mike C mode, see the documentation, default false\n");
     fprintf(stderr, "-n, start with no border, default bordered\n");

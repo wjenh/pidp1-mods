@@ -2,9 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.1.
-
-Edit date 01-Oct-2026
+This is version 1.3\
+Edit date 01-Oct-2026\
+Add window dragging description
 
 ## What is pdp1central?
 
@@ -13,6 +13,7 @@ pdp1central is one window that does what the scripts in /opt/pidp1-mods/bin do f
 - it starts, stops, restarts and reloads the emulator;
 - it keeps the start-time choices: the interface, the front panel and the USB paper tape;
 - it mounts paper tapes in the reader and saves what the punch punches;
+- it turns the emulator's sound on and off;
 - it edits /opt/pidp1-mods/pidp1.config, the configuration file, setting by setting;
 - its colors come from a choice of schemes, with single colors changeable in a file of its own.
 
@@ -38,6 +39,12 @@ Options:
 - -s *schema*: the settings description, *root*/src/pdp1central/pidp1config.schema by default.
 
 ## The window
+
+### Moving and resizing
+
+The window can be moved by its title bar and resized using the standard edge and corner grabs.
+An additional drag mode is available to work around deficiences in the Pi Trixie window manager.
+Holding the right mouse button down in the window allows moving it, the same functionality that t30dpy provides.
 
 ### The top strip
 
@@ -83,6 +90,18 @@ watch the tapes, run /opt/pidp1-mods/bin/tapevis yourself; tape commands then go
 The web interface's front end does not save the punch to a file.
 A path with a space in it cannot be sent, since the command ports split at spaces.
 
+**Audio.** The button turns the emulator's sound on or off, as pdp1audio on and off do. The
+audio enabled setting only allows audio; this is what starts it.
+
+The indicator shows what the last click set: "is on" or "is off", or "not set here yet" before the
+first click and after pdp1central starts, stops or restarts the emulator. A change made
+elsewhere, with pdp1audio or the desktop audio icons, is not shown. When the emulator is not
+running the lamp reads "pidp1 not running".
+
+A reload sets the sound back to what the audio enabled setting says. When pdp1central reloads
+the emulator (Save, or Reload config) after a click, it puts the sound back as the click set it
+ after the reload; a reload made elsewhere, by pdp1control reload, is not undone.
+
 **Window.** Colors picks the color scheme (see Colors below). A click changes the window at once
 and saves the choice. When pdp1central.config also changes single colors, a line under the choice
 says how many.
@@ -94,8 +113,10 @@ A tab for each group of settings, as in UsingTheConfigFile.md, then:
 - Retired: settings that nothing reads any more, shown but not editable.
 
 Each row has:
-- the setting's name; hold the mouse over it for what it does;
-- its value: a checkbox for on and off, a number, or a text field
+- the setting's name; hold the mouse over it for what it does. A few show a more understandable name, such
+  as audio enabled for audio; the tooltip gives the name in the file;
+- its value: a checkbox for on and off, ticked when on, with what a click does beside it
+  ("click to turn off" or "click to turn on"); a number; or a text field
   (press Enter or leave the field to set it);
 - a default box: checked means pidp1.config does not set it, so the program that reads it uses
   its own default, which is shown;
@@ -104,19 +125,21 @@ Each row has:
 A changed setting is marked with a \*. The foot of the tab counts the changes by when they take
 effect.
 
-**Save** writes pidp1.config. Then, if the emulator is running and a change applies on reload,
-pdp1central runs pdp1control reload; if the hardware panel driver is running and a panel setting
-changed, it runs pdp1control reloadpanel. Changes that need a restart are named, with a Restart now
-button when the emulator is running.
+**Save** writes pidp1.config. Then, if the emulator is running and a change applies on save or
+at the next run, pdp1central runs pdp1control reload; if the hardware panel driver is running and
+a panel setting changed, it runs pdp1control reloadpanel. Changes that need a restart are named,
+with a Restart now button when the emulator is running.
 **Revert** drops the changes.
 
-When a change takes effect:
-- on reload: when the emulator rereads the file, at Save;
-- on panel reload: when the hardware panel driver rereads it, at Save;
-- needs a pdp1 restart: the next time the emulator starts;
-- when its program restarts: the next time the program that reads it starts;
-- "default: restart" after it: a new value applies as stated, but going back to the default needs
-  a restart, because the program keeps the old value when the line goes.
+When a change takes effect (UsingTheConfigFile.md has the details):
+- on save: the emulator, or the hardware panel driver, rereads the file at Save;
+- at the next run after save: the device's plugin rereads it the next time the machine goes to
+  run (START or CONTINUE);
+- needs a restart: the next time the emulator starts;
+- when pdp1_periph restarts: the next time the program that reads it starts.
+
+A few settings keep their old value when their line goes, so going back to the default with the
+default box needs a restart; the note after Save names them when it happens.
 
 How pdp1central writes the file:
 - Only the edited value changes. Comments, the order of the lines and settings it does not know

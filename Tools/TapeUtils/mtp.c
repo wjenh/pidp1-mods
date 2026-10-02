@@ -28,6 +28,7 @@
  * 16-Sep-2026 wje -l lists the mounted drives
  * 17-Sep-2026 wje minor cleanup, no functionality change
  * 26-Sep-2026 wje change the default tape dir to /opt/pidp1-mod/Microtapes
+ * 3-Oct-2026 wje clean up usage, use Microtape for the tape library directory, not microtape
  *
  */
 #include <stdlib.h>
@@ -41,7 +42,7 @@
 
 #define BASE_DIR        "/opt/pidp1-mods"   // where the emulator resolves a relative image name
 #define DEFAULT_LIST    BASE_DIR "/microtapes.txt"
-#define TAPE_DIR    BASE_DIR "/microtapes"
+#define TAPE_DIR    BASE_DIR "/Microtapes"
 #define UNITS           8                   // drives 1-8
 #define PATH_MAX_LEN    256                 // the emulator's limit on an image path (MT_PATH_MAX)
 #define LIST_MAX_BYTES  16384               // the emulator reads no more of the list than this
@@ -529,8 +530,8 @@ usage(void)
         "       mtp [-f mapfile] -l\n"
         "  Mounts filename on microtape drive drive-number (1-8),\n"
         "  updating %s unless -f names another.\n"
-        "  A relative filename is relative to /opt/pidp1-mods;\n"
-        "  \",locked\" on the end mounts it write-locked.\n"
+        "  A relative filename is relative to /opt/pidp1-mods/Microtapes;\n"
+        "      \",locked\" on the end mounts it write-locked.\n"
         "  -u unmounts the drive instead, removing its line.\n"
         "  -l lists all mounted drives.\n"
         "  The change takes effect on the next IOT mse.\n", DEFAULT_LIST);

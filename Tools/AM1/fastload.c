@@ -18,6 +18,7 @@
  * 20-Sep-2026 claude replace the shared-memory link with the network link; a bad tape changes nothing
  * 22-Sep-2026 wje add ppporch's len and lineP initialization
  * 25-Sep-2026 claude initialize lineP and len before the second getline too
+ * 3-Oct-2026 wje add -y option to autostart
 */
 
 #include <unistd.h>
@@ -81,11 +82,13 @@ char *hostP;
 FILE *memFilefP;
 Ad1Link link;
 bool wasRunning;
+bool autoStart;
 int status;
 
     memFileNameP = DEFAULT_MEMFILE;
     hostP = NULL;
     useMemFile = false;
+    autoStart = false;
 
     // do the command line processing
     ++argv;
@@ -99,6 +102,10 @@ int status;
             {
             case 'm':
                 useMemFile = true;
+                break;
+
+            case 'y':
+                autoStart = true;
                 break;
 
             case 'f':               // memfile to use if not the default
@@ -208,13 +215,17 @@ int status;
             exit(0);
         }
 
-        printf("Tape loaded, start address 0%0o. Start it (y or n/newline)?\n", address);
+        if( !autoStart )
+        {
+            printf("Tape loaded, start address 0%0o. Start it (y or n/newline)?\n", address);
+        }
+
         // The memory-file path above has its own pair; this path never ran it.
         lineP = 0;
         len = 0;
-        if( (getline(&lineP, &len, stdin)) != -1 )
+        if( autoStart || ((getline(&lineP, &len, stdin)) != -1) )
         {
-            if( *lineP == 'y' )
+            if( autoStart || (*lineP == 'y') )
             {
                 if( (status = ad1Start(&link, (uint32_t)address, NULL, NULL)) != AD1P_ST_OK )
                 {
@@ -625,13 +636,16 @@ int status;
 void
 usage(void)
 {
-    fprintf(stderr, "Usage: fastload [-h host[:port]] [-m] [-f memfilename] rimfile\n");
+    fprintf(stderr, "Usage: fastload [-h host[:port]] [-y] [-m] [-f memfilename] rimfile\n");
     fprintf(stderr, "    By default, this will load directly into active memory, stopping the pdp-1\n");
-    fprintf(stderr, "    if it is running. The pidp-1 must be running with its debugger port enabled\n");
-    fprintf(stderr, "    (ad1port in pidp1.config, on by default). -h names a pidp-1 on another machine,\n");
-    fprintf(stderr, "    default localhost:1044; a host other than localhost with no port gets 1045.\n");
-    fprintf(stderr, "    Otherwise, -m will update the coremem file, the program must be manually started.\n");
-    fprintf(stderr, "    If -f is not used, the default is /opt/pidp1-mods/coremem\n");
+    fprintf(stderr, "    if it is running. The pidp-1 must be running with its debugger port enabled,\n");
+    fprintf(stderr, "    ad1port in pidp1.config, on by default.\n");
+    fprintf(stderr, "    -h names a pidp-1 on another machine, default localhost:1044.\n");
+    fprintf(stderr, "        A host other than localhost with no port gets 1045.\n");
+    fprintf(stderr, "    -y is auto-start.\n");
+    fprintf(stderr, "        If active memory has been loaded, the program is automatically started.\n");
+    fprintf(stderr, "    -m updates the coremem file, the pidp1 and  program must be manually started.\n");
+    fprintf(stderr, "    -f specifies the coremem file, the default is /opt/pidp1-mods/coremem.\n");
     fprintf(stderr, "    Don't use -m if the pidp-1 is running, the memory file will be overwritten by it.\n");
     exit(1);
 }

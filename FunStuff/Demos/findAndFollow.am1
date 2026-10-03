@@ -9,8 +9,6 @@ Find and follow the lightpen
 #define MSGX -0d500
 #define MSGY -0d450
 
-var xPosition, yPosition    // these are used by the find and track included routines
-
 100/
 strt,
     law APERTURE200

@@ -218,6 +218,8 @@
  * 25-Sep-2026 claude - v3.0, AM1VERSION and AM1SHORTVERSION move from v1.50 to v3.0
  * 29-Sep-2026 claude - -O=undeclared, needing -O2, with -O=place=undeclared its alias
  * 29-Sep-2026 wje - minor fix, line number one off in error message for cross-bank ref to nonexistent symbol 
+ * 3-Oct-2026 claude - a var declared twice, or declared and then used as a label, is an error
+ * 3-Oct-2026 claude - export then var keeps the export; duplicate label and import clash messages corrected
 */
 #include <unistd.h>
 #include <stdlib.h>

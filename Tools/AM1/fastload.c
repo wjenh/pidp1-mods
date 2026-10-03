@@ -18,7 +18,8 @@
  * 20-Sep-2026 claude replace the shared-memory link with the network link; a bad tape changes nothing
  * 22-Sep-2026 wje add ppporch's len and lineP initialization
  * 25-Sep-2026 claude initialize lineP and len before the second getline too
- * 3-Oct-2026 wje add -y option to autostart
+ * 2-Oct-2026 wje add -y option to autostart
+ * 3-Oct-2026 wje clarify messages re the emulator being halted and a program being started
 */
 
 #include <unistd.h>
@@ -205,7 +206,7 @@ int status;
 
         if( wasRunning )
         {
-            printf("The pdp-1 was running and has been stopped.\n");
+            printf("The pdp-1 was running and has been halted.\n");
         }
 
         if( address == LOADSTOP )
@@ -233,6 +234,8 @@ int status;
                     ad1LinkClose(&link);
                     exit(1);
                 }
+
+                printf("The pdp-1 program has been started.\n");
             }
         }
 

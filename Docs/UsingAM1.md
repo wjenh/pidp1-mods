@@ -734,6 +734,10 @@ b, 34+c
 are exactly equivalent.
 Also see the *variables* directive below.
    
+Because a variable is itself a label, a name declared by *var* can't be declared again by *var* or be used as a
+label in the same bank.
+Either is an error.
+   
 ## Constants
 
 Constants are another shorthand, but with special behavior.

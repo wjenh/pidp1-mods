@@ -49,8 +49,6 @@ bank bnkno
      0
      jmp isr
 
-var pgm=020100, pgm2=111007
-
 // We start at 100.
 // Starting at 101 resumes with the last set values.
 100/
@@ -120,8 +118,8 @@ resume,
 #include <TYPE340/type340halt.ac>
 
 // put this out now so we don't step on high mem
-pgm, 0
-pgm2, 0
+pgm, 020100
+pgm2, 111007
 
 constants
 

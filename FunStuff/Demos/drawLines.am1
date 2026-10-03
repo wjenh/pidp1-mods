@@ -16,7 +16,6 @@ Reproduce the PDP-1 line drawing program
 
 #define MAXPOINTS 0d1024
 
-var xPosition, yPosition
 var lastX, lastY
 var pointCount
 

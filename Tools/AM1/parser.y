@@ -543,9 +543,15 @@ one_stmt        : expr
                 }
                 labelTrailer
                 {
-                    if( $1->flags & SYMF_RESOLVED )
+                    // A var has no address until the vars are placed, so it is not
+                    // yet resolved; without this test the label would take its name.
+                    if( $1->flags & SYMF_VAR )
                     {
-                        verror("Duplicate label %s", $1->name);
+                        verrorl(pendingLabelLine, "label %s is already declared as a variable", $1->name);
+                    }
+                    else if( $1->flags & SYMF_RESOLVED )
+                    {
+                        verrorl(pendingLabelLine, "Duplicate label %s", $1->name);
                     }
                     else
                     {
@@ -1350,15 +1356,16 @@ varname         : NAME
                 }
                 | ADDR
                 {
-                    if( $1->flags & SYMF_RESOLVED )
+                    // An earlier var of this name is not resolved until it is placed.
+                    if( $1->flags & (SYMF_RESOLVED | SYMF_VAR) )
                     {
-                        verror("variable %s is already declared", $1->name);
+                        verrorl(nameTokenLine, "variable %s is already declared", $1->name);
                     }
 
                     $$ = newnode(lineno, curBankP->cur_pc, ADDR, NILP, NILP);
                     $$->value.symP = $1;
                     $1->lineno = nameTokenLine;
-                    $1->flags = SYM_GLOB | SYMF_VAR;
+                    $1->flags = SYM_GLOB | SYMF_VAR | ($1->flags & SYMF_EXPORTED);   // 'export' may come first
                 }
 %%
 
@@ -1562,7 +1569,7 @@ char symbol[256];
         if( sym_find(&(curBankP->globalSymP), symbol) )
         {
             fclose(infP);
-            verror("imported symbol '%s' has already been defined", cP);
+            verror("imported symbol '%s' has already been defined", symbol);
         }
 
         symP = sym_make(symbol, 0);

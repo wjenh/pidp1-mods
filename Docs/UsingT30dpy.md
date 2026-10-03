@@ -2,10 +2,10 @@
 
 This document describes the t30dpy and t30dpy3 simulated Type 30 display.
 
-This is version 1.9
+This is version 1.10
 
-Edit date 17-June-2026\
-window resizing updated, performance note added
+Edit date 3-Oct--2026\
+GPU fading, SDL3 fallback added
 
 ## T30dpy, t30dpy3, and Wayland/labwrc
 
@@ -62,6 +62,28 @@ m - use Mike C mode, see below
 n - start borderless
 s size - set the screen size, >= 256, default is 1024
 p port - the port to connect to, default is 3400
+t - accumulate statistics, printed on exit
+v - ask SDL to use vsync for frame synchronization, not in t30dpy3
+hostname - the host to connect to, defaults to localhost
+```
+The defaults can be overridden in the configuration file.
+## Usage
+
+**t30dpy** [*-f*] [*-g gamma*] [*-w bias*] [*-l*] [*-m*] [*-n*] [*-s size*] [*-p port*] [*-t*] [*-v*] [hostame]
+
+**t30dpy3** [*-f*] [*-g gamma*] [*-w bias*] [*-l*] [*-m*] [*-n*] [*-s size*] [*-p port*]
+[*-r renderer*] [*-t*] [hostame]
+
+```
+f - do aging on the GPU even if the configuration file says not to, see The GPU fade below
+g gamma - set the gamma value, a floating point value usually in the range 0.4 to 1.0
+w bias - set the white bias, added to the r and g channels of the blue phospor to increase whiteness
+l - ask SDL to use linear scaling instead of nearest-neighbor
+m - use Mike C mode, see below
+n - start borderless
+s size - set the screen size, >= 256, default is 1024
+p port - the port to connect to, default is 3400
+r renderer - t30dpy3 only, the SDL renderer to use, see Renderers and VNC below
 t - accumulate statistics, printed on exit
 v - ask SDL to use vsync for frame synchronization, not in t30dpy3
 hostname - the host to connect to, defaults to localhost
@@ -142,7 +164,7 @@ Take a look at any real CRT with similar resolution, such as an oscilloscope, fo
 
 DEC stated a beam spot size of 0.030 inches, which works out to about 2 pixels on the original CRT.
 T30dpy uses a simple rectangular pattern of pixels with more pixels added as intensity increases.
-Given the scale, the use of a parse rectangle is virtually imperceptible.
+Given the scale, the use of a sparse rectangle is virtually imperceptible.
 
 ## Dot size, beam spread, how much is enough?
 
@@ -270,6 +292,86 @@ A minimum value is used to end the lifetime to avoid this.
 The termination value is configrable in the code, as are many other values.
 
 See the source code for much more information, it is well commented and structured.
+
+## The GPU fade
+
+Both t30dpy and t30dpy3 by default will offload the phosphor's fade to the GPU.
+*gpufade=false* in the configuration file turns it off and brings back the CPU fade described above.
+*-f* forces it on whatever the configuration file says.
+
+Instead of the CPU redrawing every fading point every frame, the renderer does the fading.
+Three render targets hold the decay, a fast, a middle and a slow part of it.
+Once a frame, the renderer dims each one.
+New points are drawn into all three and the three are added together on the screen.
+The CPU only handles the points that arrived during the frame.
+
+On a Raspberry Pi 4 running Rain340, this took t30dpy3 from 95% of a core to about 23%,
+its render time from 35 to 3 milliseconds a frame, and its late frames from over a thousand a minute
+to a handful.
+
+**The tail.** *tail=seconds* in the configuration file sets how long a point takes to fade to black,
+from 0.8 to 2.7 seconds in steps of 0.1, default 1.3.
+It can be changed with a SIGHUP reload.
+The fade always ends in a short smooth ramp, with no sudden cutoff and no lingering glow.
+
+Each tail length's settings are fitted to the published P7 yellow-green persistence curve from
+RCA TPM-1508A, page 13 over its first 400 milliseconds, which is all the curve covers.
+After that the fade is shaped to end at the chosen length.
+From 1.2 seconds up the first 400 milliseconds are within 6% of the curve, within 3.6% at the default.
+Shorter tails fit it less well, from 11% at 1.1 seconds to 35% at 0.8.
+
+**What looks different.**
+- A new point's first frame is a near-white, because the blue and yellow-green light now add
+  instead of being alpha-blended. The white bias (*-w*, *whitebias*) is not needed and has no effect.
+- *cutoff* has no effect; *tail* replaces it.
+- For overlapping points, the brighter one wins as in the CPU fade, so a point redrawn every frame stays steady.
+- *gamma* still sets the steps between the 8 intensity levels. The fade's shape is fitted
+  for the standard 0.4545.
+- Dot patterns, Mike C mode and scaling are as before, and the lightpen's mouse handling is unchanged.
+
+**When it falls back.** At startup a check is done to see if  the renderer dims and draws exactly as the
+fade needs, frame by frame.
+If the renderer can't, the reaon why is printed, followed by
+*The GPU fade is not available with the ... renderer, using the CPU fade.*, and instead runs the CPU fade.
+SDL's software renderer is one that can't.
+Over VNC or anywhere else without a real GPU, SDL may instead run its OpenGL renderer in software
+where the check passes but the fading runs on the CPU and can cost more than the GPU fade, compare with *-t*.
+
+With *-t* the statistics include the tail in use, and any points dropped because more than
+100,000 arrived in one frame.
+
+**In t30dpy (SDL2)**, the fade is the same and so is the check.
+SDL2's color weights have 8 bits
+where SDL3's are floating point, so the light each part of the fade adds to the screen can differ
+from t30dpy3's by about 1%; the fade timing itself does not.
+
+An older SDL2, Debian bookworm has 2.26, may not have the blend modes the fade needs.
+The check then falls back to the CPU fade.
+On Windows, SDL2 usually picks Direct3D.
+
+## Renderers, and VNC
+
+T30dpy3 opens the first of SDL's *opengl*, *opengles2* and *software* renderers that works.
+Where OpenGL works, as on a Pi or a desktop with a graphics driver, that is *opengl*.
+Where it doesn't, over VNC for one, it is *software*, and the GPU fade reverts to the CPU fade.
+
+SDL's own order tries its *vulkan* and *gpu* renderers before *software*.
+Over VNC those can only run on lavapipe, a Vulkan that draws on the CPU, and it is far too inefficient to keep up.
+SDL's software renderer with the CPU fade keeps up easily on a desktop machine.
+
+*renderer=name* in the configuration file, or *-r name* chooses a renderer by its SDL name,
+*opengl*, *opengles2*, *software*, *vulkan* or *gpu*.
+*auto*, the default, is the order above.
+
+If the named renderer can't open, t30dpy3 says so and exits.
+With no setting, if the SDL_RENDER_DRIVER environment variable is set, SDL's choice is used, as before.
+The renderer in use is on the first line of the *-t* statistics.
+
+If a frame takes longer than a frame's allocated time to draw, t30dpy3 drops the frames that have fallen behind
+instead of drawing them all back to back so a slow renderer gives a lower frame rate, not a frozen display.
+With *-t* the statistics say how many were dropped.
+
+The SDL2 t30dpy has no Vulkan renderer, it can't have the same failure, and it has no renderer setting.
 
 ## Window size, dragging, and pixel scaling
 

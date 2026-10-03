@@ -616,8 +616,10 @@ real, 0
 
 // Prompts "Position 1-N?" and reads one key, echoing it itself: a digit
 // 1..N (or keypad digit) is the answer, anything else prints "Canceled.".
-// Then drains any following RETURN. A dropped connection ends the session
-// (halts under a test entry). zsvMount must have run (N).
+// Then drains any following RETURN. An answer prints "The tape drive is
+// running...", since the tape moves next, for seconds. A dropped
+// connection ends the session (halts under a test entry). zsvMount must
+// have run (N).
 // Exit:  AC = a 0-based position index, or ZSV_CANCEL.
 // AC is the result, IO is clobbered. Called via jsp; returns with the
 // window closed.
@@ -690,6 +692,8 @@ zsvaEnd,
     sub slots
     SKIP_NEXT_IF_AC_NEGATIVE
     jmp zsvaCancel                 // index > N
+    lio [zsvMsgRunning]         // the line ends in \r: zPrintChar's wrap
+    jsp zsvPrint                //   sends all of it before the tape starts
     lac ch
     jmp rtn
 
@@ -1646,11 +1650,14 @@ zsvHdrG, 0                      // the generation word
 zsvHdrT,
     table ZSV_HDR_WORDS
 
-// The messages (\r line breaks; nothing is printed on success).
+// The messages (\r line breaks; on success only zsvMsgRunning, before the
+// tape moves).
 zsvMsgSlot,
     ascii "\rPosition 1-"
 zsvMsgQuery,
     ascii "? "
+zsvMsgRunning,
+    ascii "The tape drive is running...\r"
 zsvMsgNoTape,
     ascii "\rNo tape on drive 2.\r"
 zsvMsgOtherTape,

@@ -2,7 +2,8 @@
 #define CORE_H
 // The pdp1central core: everything the control app does that is not drawing.
 // Process status, the localhost command ports, running one child program without blocking,
-// the name=value settings files, and the schema that describes pidp1.config.
+// the name=value settings files, the schema that describes pidp1.config, and the microtape
+// mount list.
 // Nothing here calls SDL or Nuklear, so the front end can be replaced without touching it.
 // Single-threaded: every call returns within a port timeout, and the front end calls them
 // from its one event loop.
@@ -74,6 +75,24 @@ typedef struct
     int count;
 } Schema;
 
+#define MT_DRIVES 8             // Type 550 drives 1-8
+#define MT_SPEC_MAX 272         // the plugin's entry limit: a 255-character path, then ",locked"
+
+// microtapes.txt as the Microtape plugin reads it. Arrays are indexed by drive, 1-8.
+typedef struct
+{
+    char spec[MT_DRIVES + 1][MT_SPEC_MAX];  // the drive's entry as written, "" for no line
+    char path[MT_DRIVES + 1][MT_SPEC_MAX];  // its path without ",locked", "" if it has none
+    bool locked[MT_DRIVES + 1];
+    int skipped;                // lines that are not blank or comments and do not parse
+    int error;                  // errno for a file that exists and could not be read, else 0
+    bool exists;
+    ino_t ino;
+    off_t size;
+    struct timespec mtime;
+    struct timespec ctime;
+} MtList;
+
 // procs.c
 int procCount(const char *nameP);
 bool portAnswers(int port);
@@ -99,6 +118,10 @@ bool confUnset(ConfFile *cfP, const char *nameP);
 bool confSave(ConfFile *cfP);
 bool confChangedOnDisk(ConfFile *cfP);
 int confNames(ConfFile *cfP, char namesP[][CONF_MAX_VALUE + 1], int maxNames);
+
+// mtlist.c
+bool mtListLoad(const char *pathP, MtList *listP);
+bool mtListChanged(const char *pathP, const MtList *listP);
 
 // schema.c
 Schema *schemaLoad(const char *pathP, char *errorP, size_t errorLen);

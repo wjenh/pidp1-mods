@@ -7,6 +7,7 @@
 #    instead of rewriting this script; PIDP1_ROOT; stop, reload and reloadpanel act on exact
 #    process names; a missing screen or pdp1 stops the script; apps starts t30dpy only, and
 #    stop lets t30dpy end on its own when pdp1 goes
+# 02-Oct-26 wje (Claude) the t30dpy choice: start t30dpy beside the gui or web front end
 
 # The install directory; PIDP1_ROOT points it elsewhere, for testing.
 root="${PIDP1_ROOT:-/opt/pidp1-mods}"
@@ -15,11 +16,14 @@ root="${PIDP1_ROOT:-/opt/pidp1-mods}"
 #   interface=web       gui, web or apps
 #   frontpanel=virtual  pidp or virtual
 #   usbtape=n           y to use the USB ports for the paper tape reader and punch
-# A missing file or line keeps the default below. The set, panel and usbtape commands write it.
+#   t30dpy=n            y to start t30dpy beside the gui or web front end (apps starts it anyway)
+# A missing file or line keeps the default below. The set, panel, usbtape and t30dpy commands
+# write it.
 settings="$root/pdp1control.config"
 interface="web"
 frontpanel="virtual"
 usb_paper_tape="n"
+t30dpy="n"
 
 argc=$#
 pidp1="$root/bin/pdp1"
@@ -61,7 +65,9 @@ read_settings() {
 			frontpanel="$value" ;;
 		usbtape=y|usbtape=n)
 			usb_paper_tape="$value" ;;
-		interface=*|frontpanel=*|usbtape=*)
+		t30dpy=y|t30dpy=n)
+			t30dpy="$value" ;;
+		interface=*|frontpanel=*|usbtape=*|t30dpy=*)
 			echo "pdp1control.config: invalid value '$value' for $name, ignored" >&2 ;;
 		*)
 			echo "pdp1control.config: unknown setting '$name', ignored" >&2 ;;
@@ -110,6 +116,35 @@ do_stat() {
 }
 
  
+
+# Wait, at most 5 seconds, for pdp1 to listen on the screen-0 display port, 3400: t30dpy gives
+# up at once if it cannot connect, and pdp1 starts in screen in the background. Without ss, a
+# fixed 5 seconds.
+wait_display_port() {
+	if ! command -v ss > /dev/null; then
+		sleep 5
+		return
+	fi
+	for i in $(seq 50); do
+		ss -Htln '( sport = :3400 )' | grep -q . && return
+		sleep 0.1
+	done
+	echo "pdp1 not listening on the display port in 5 seconds; starting t30dpy anyway"
+}
+
+# Wait, at most 5 seconds, for a client connected to the screen-0 display port, 3400. Without
+# ss, a fixed 3 seconds.
+wait_display_client() {
+	if ! command -v ss > /dev/null; then
+		sleep 3
+		return
+	fi
+	for i in $(seq 50); do
+		ss -Htn state established '( dport = :3400 )' | grep -q . && return
+		sleep 0.1
+	done
+	echo "no display client connected in 5 seconds; starting t30dpy anyway"
+}
 
 do_start() {
 	is_running
@@ -163,6 +198,19 @@ do_start() {
 		echo start /usr/local/bin/t30dpy
 		nohup /usr/local/bin/t30dpy >/dev/null 2>&1 &
 		# tapevis, the tape reader and punch window, is rarely wanted; run bin/tapevis for it
+	fi
+
+	# t30dpy is to have the Type 30 display. pdp1 serves one client per display port, the
+	# last to connect, so t30dpy starts after the front end has connected: pdp1_periphES does
+	# at its start; pdpsrv only when the browser's display panel opens, and then t30dpy's
+	# connection is closed and t30dpy ends.
+	if [ "$t30dpy" = "y" ] && [ "$interface" != "apps" ]; then
+		wait_display_port
+		if [ "$interface" = "gui" ]; then
+			wait_display_client
+		fi
+		echo start /usr/local/bin/t30dpy
+		nohup /usr/local/bin/t30dpy >/dev/null 2>&1 &
 	fi
 
 	sleep 1 # 0.3
@@ -306,6 +354,29 @@ do_usbtape() {
 	esac
 }
 
+do_t30dpy() {
+	if [ -z "$2" ]; then
+		echo "Error: No t30dpy option specified. Use 'y' or 'n'." >&2
+		return 1
+	fi
+
+	case "$2" in
+		y|n)
+			if write_setting t30dpy "$2"; then
+				echo "t30dpy set to '$2', used at the next start"
+				exit 0
+			else
+				echo "Error: Failed to update $settings" >&2
+				return 1
+			fi
+			;;
+		*)
+			echo "Error: Invalid t30dpy option '$2'. Use 'y' or 'n'." >&2
+			return 1
+			;;
+	esac
+}
+
 
 case "$1" in
   start)
@@ -343,6 +414,9 @@ case "$1" in
   usbtape)
 	do_usbtape $1 $2
 	;;
+  t30dpy)
+	do_t30dpy $1 $2
+	;;
 
   status)
 	screen -ls pidp1 | egrep '[0-9]+\.pidp1'
@@ -352,7 +426,7 @@ case "$1" in
 	do_stat
 	;;
   ?)
-	echo "Usage: pdp1control {start|stop|reload|restart|set|panel|usbtape|status|stat}" || true
+	echo "Usage: pdp1control {start|stop|reload|restart|set|panel|usbtape|t30dpy|status|stat}" || true
 	echo "       pdp1control {reloadt30|reloadpanel}" || true
 	exit 1
 	;;

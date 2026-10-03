@@ -10,7 +10,7 @@ NKFLAGS=-DNK_INCLUDE_FIXED_TYPES -DNK_INCLUDE_STANDARD_IO -DNK_INCLUDE_STANDARD_
 CFLAGS=-O2 -g -Wall -Wextra -D_GNU_SOURCE `sdl2-config --cflags`
 LIBS=`sdl2-config --libs` -lm
 
-CORE=procs.o cmdport.o child.o conffile.o schema.o
+CORE=procs.o cmdport.o child.o conffile.o schema.o mtlist.o
 
 all: pdp1central
 
@@ -41,6 +41,9 @@ conffile.o: conffile.c core.h
 
 schema.o: schema.c core.h
 	$(CC) $(CFLAGS) -c -o $@ schema.c
+
+mtlist.o: mtlist.c core.h
+	$(CC) $(CFLAGS) -c -o $@ mtlist.c
 
 clean:
 	rm -f pdp1central *.o

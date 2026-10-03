@@ -1,8 +1,8 @@
 // pdp1central: one desktop window to control the PiDP-1 emulator.
 // It shows what is running, starts, stops, restarts and reloads the emulator through
 // bin/pdp1control.sh, keeps the script's start-time choices in pdp1control.config, mounts and
-// saves paper tapes, turns the sound on and off, and edits pidp1.config from a schema file that
-// describes every setting.
+// saves paper tapes, fast loads a tape through fastload, mounts microtapes through mtp, turns the
+// sound on and off, and edits pidp1.config from a schema file that describes every setting.
 // Everything that is not drawing is in the core (core.h); this file is the Nuklear front end on
 // SDL2. One thread and one event loop: SDL_WaitEventTimeout at 250 ms, the running child polled
 // on every pass and process status refreshed once a second. Nothing in the loop blocks longer
@@ -15,6 +15,7 @@
 // 01-Oct-2026 wje (Claude) - usage fixes: when a setting applies, checked against its reader; a
 //     checkbox says what a click does; schema labels; the live audio control, which sends a
 //     command only when clicked; the right button drags the window.
+// 02-Oct-2026 wje (Claude) - the "also start t30dpy" choice; fast load; the Microtape tab.
 
 #include <errno.h>
 #include <limits.h>
@@ -45,6 +46,8 @@
 #define WINDOW_H 680
 #define ROW_H 26
 #define AUDIO_RESTORE_MS 1000   // after a reload ends, time for the emulator to take its SIGHUP
+#define AD1_DEFAULT_PORT 1044   // the debugger link's port when pidp1.config does not set ad1port
+#define MT_NAME_MAX 255         // the longest tape path mtp and the plugin take
 
 // What the child slot is doing.
 typedef enum
@@ -52,12 +55,24 @@ typedef enum
     JOB_NONE,
     JOB_SCRIPT,
     JOB_ASK_MOUNT,
-    JOB_ASK_PUNCH
+    JOB_ASK_PUNCH,
+    JOB_ASK_LOAD,
+    JOB_ASK_MICROTAPE,
+    JOB_COMMAND
 } Job;
+
+// Which program a JOB_COMMAND runs, for what to do when it ends.
+typedef enum
+{
+    CMD_FASTLOAD,
+    CMD_MOUNT,
+    CMD_UNMOUNT
+} Command;
 
 typedef enum
 {
     TAB_CONTROL,
+    TAB_MICROTAPE,
     TAB_SETTINGS,
     TAB_LOG
 } Tab;
@@ -89,6 +104,11 @@ static char controlPath[PATH_MAX];
 static char scriptPath[PATH_MAX];
 static char askOpenPath[PATH_MAX];
 static char askSavePath[PATH_MAX];
+static char askMicrotapePath[PATH_MAX];
+static char fastloadPath[PATH_MAX];
+static char mtpPath[PATH_MAX];
+static char mtListPath[PATH_MAX];
+static char microtapeDir[PATH_MAX];
 static char fontPath[PATH_MAX];
 static char stylePath[PATH_MAX];
 
@@ -120,6 +140,7 @@ static int queueCount;
 static int pdp1Count;
 static int panelCount;
 static int frontCount;
+static int t30Count;
 static int usbCount;
 static bool portUp;
 static Uint32 statusMs;
@@ -128,6 +149,19 @@ static char mountedPath[PATH_MAX];  // what pdp1central mounted in the reader, "
 static bool mountKnown;
 static char lastMountPath[PATH_MAX];
 static char punchPath[PATH_MAX];
+
+static Command command;         // the program running, while job is JOB_COMMAND
+static int commandDrive;        // the drive mtp is changing
+static char commandLast[256];   // the program's last line of output, for an error
+static bool commandSawStop;     // fastload said the tape has a stop directive
+
+static char loadPath[PATH_MAX]; // the last tape fast loaded
+static int loadResult;          // 0 none yet, 1 started, 2 loaded and not started, 3 failed
+
+static MtList mtList;           // microtapes.txt as last read
+static bool mtListRead;
+static nk_bool mtLockNext[MT_DRIVES + 1];   // an empty drive's write lock, for its next mount
+static int mtAskDrive;          // the drive the microtape dialog is choosing for
 
 static int audioState = -1;     // the live audio the last click's reply gave: 1 on, 0 off, -1 not known
 static int audioRestore = -1;   // the state to put back after a pdp1control reload, -1 for none
@@ -445,16 +479,42 @@ int i;
     free(commandP);
 }
 
+// Whether a job is a file dialog.
+static bool
+isDialog(Job which)
+{
+    return( (which == JOB_ASK_MOUNT) || (which == JOB_ASK_PUNCH) || (which == JOB_ASK_LOAD) ||
+        (which == JOB_ASK_MICROTAPE) );
+}
+
 // Run a file dialog helper as the child, so the window keeps drawing while it is open.
 static void
 startDialog(Job which)
 {
-char *argv[4];
+char *argv[5];
+const char *labelP;
 
     argv[0] = "/usr/bin/env";
     argv[1] = "python3";
-    argv[2] = ((which == JOB_ASK_MOUNT) ? askOpenPath : askSavePath);
     argv[3] = NULL;
+    argv[4] = NULL;
+    if( which == JOB_ASK_PUNCH )
+    {
+        argv[2] = askSavePath;
+        labelP = "choosing a punch file";
+    }
+    else if( which == JOB_ASK_MICROTAPE )
+    {
+        argv[2] = askMicrotapePath;
+        argv[3] = microtapeDir;         // where it starts
+        labelP = "choosing a microtape";
+    }
+    else
+    {
+        argv[2] = askOpenPath;
+        labelP = ((which == JOB_ASK_LOAD) ? "choosing a tape to fast load" : "choosing a tape");
+    }
+
     dialogPath[0] = '\0';
     if( !childStart(argv) )
     {
@@ -464,7 +524,41 @@ char *argv[4];
 
     job = which;
     jobStartMs = SDL_GetTicks();
-    snprintf(jobLabel, sizeof(jobLabel), "%s", ((which == JOB_ASK_MOUNT) ? "choosing a tape" : "choosing a punch file"));
+    snprintf(jobLabel, sizeof(jobLabel), "%s", labelP);
+}
+
+// Run a program (fastload, mtp) as the child, with its own arguments; commandEnded() acts on
+// its end. The command line is logged.
+// Returns false if it could not be started.
+static bool
+startCommand(char *argvP[], Command which, int drive, const char *labelP)
+{
+char line[1024];
+size_t len;
+int i;
+
+    len = 0;
+    line[0] = '\0';
+    for( i = 0; argvP[i] && (len < sizeof(line)); i++ )
+    {
+        len += snprintf(line + len, (sizeof(line) - len), "%s%s", (i ? " " : ""), argvP[i]);
+    }
+
+    if( !childStart(argvP) )
+    {
+        appError("cannot run %s", argvP[0]);
+        return(false);
+    }
+
+    job = JOB_COMMAND;
+    command = which;
+    commandDrive = drive;
+    commandLast[0] = '\0';
+    commandSawStop = false;
+    jobStartMs = SDL_GetTicks();
+    snprintf(jobLabel, sizeof(jobLabel), "%s", labelP);
+    appLog("running %s", line);
+    return(true);
 }
 
 // Send a tape command, to the front end or else straight to the emulator, and log the result.
@@ -532,6 +626,264 @@ char path[PATH_MAX];
         snprintf(mountedPath, sizeof(mountedPath), "%s", path);
         snprintf(lastMountPath, sizeof(lastMountPath), "%s", path);
         mountKnown = true;
+    }
+}
+
+// The port the emulator's debugger link listens on, from pidp1.config as saved, read the way
+// the emulator reads it (configPort in src/blincolnlights/pdp1/ad1server.c): no line gives
+// 1044; off, no, n, false or 0 close the link; on, yes, y, true and anything that is not a
+// port give 1044.
+// Returns the port, or 0 when the link is off.
+static int
+ad1Port(void)
+{
+char buf[CONF_MAX_VALUE + 1];
+const char *valueP;
+int port;
+
+    if( !diskCfP || !(valueP = getValue(diskCfP, "ad1port", buf)) )
+    {
+        return(AD1_DEFAULT_PORT);
+    }
+
+    if( !strcmp(valueP, "off") || !strcmp(valueP, "no") || !strcmp(valueP, "n") || !strcmp(valueP, "false") )
+    {
+        return(0);
+    }
+
+    if( strspn(valueP, "-0123456789.") != strlen(valueP) )
+    {
+        return(AD1_DEFAULT_PORT);
+    }
+
+    port = atoi(valueP);
+    return( ((port < 0) || (port > 65535)) ? AD1_DEFAULT_PORT : port );
+}
+
+// Why fast load cannot be used now, or NULL if it can. The debugger port is never probed: the
+// emulator takes one debugger client, and a probe holding that slot for a moment would turn
+// away an ad1 or fastload arriving then, so an ad1 already attached is fastload's own error.
+static const char *
+fastLoadBlocked(void)
+{
+    if( pdp1Count == 0 )
+    {
+        return("pidp1 not running");
+    }
+
+    if( ad1Port() == 0 )
+    {
+        return("ad1port is off in pidp1.config");
+    }
+
+    return(NULL);
+}
+
+// Load a tape into the running pdp-1 with fastload, and start it.
+static void
+fastLoad(const char *fileP)
+{
+char hostPort[32];
+char *argv[6];
+const char *whyP;
+
+    if( fileP[0] != '/' )
+    {
+        appError("not loaded: \"%s\" is not an absolute path", fileP);
+        return;
+    }
+
+    if( (whyP = fastLoadBlocked()) )
+    {
+        appError("not loaded: %s", whyP);   // it changed while the dialog was open
+        return;
+    }
+
+    // fastload's own default is 1044 whatever ad1port says, so the port is always given.
+    snprintf(hostPort, sizeof(hostPort), "127.0.0.1:%d", ad1Port());
+    snprintf(loadPath, sizeof(loadPath), "%s", fileP);
+    argv[0] = fastloadPath;
+    argv[1] = "-y";
+    argv[2] = "-h";
+    argv[3] = hostPort;
+    argv[4] = loadPath;
+    argv[5] = NULL;
+    startCommand(argv, CMD_FASTLOAD, 0, "fast load");
+}
+
+// A tape path as the Microtape plugin resolves it, into outP (PATH_MAX bytes): a relative one is
+// relative to the root.
+// Returns false if it does not fit.
+static bool
+tapeFullPath(const char *pathP, char *outP)
+{
+    if( pathP[0] == '/' )
+    {
+        return( snprintf(outP, PATH_MAX, "%s", pathP) < PATH_MAX );
+    }
+
+    return( snprintf(outP, PATH_MAX, "%s/%s", rootPath, pathP) < PATH_MAX );
+}
+
+// The drive, other than drive, whose microtapes.txt entry names the same file as pathP: the
+// plugin refuses a file already on another drive, since each would write back its own copy.
+// Returns that drive, or 0 for none.
+static int
+tapeElsewhere(int drive, const char *pathP)
+{
+char want[PATH_MAX], have[PATH_MAX];
+char wantReal[PATH_MAX], haveReal[PATH_MAX];
+bool real;
+int d;
+
+    if( !tapeFullPath(pathP, want) )
+    {
+        return(0);              // longer than any path the plugin takes
+    }
+
+    real = (realpath(want, wantReal) != NULL);
+    for( d = 1; d <= MT_DRIVES; d++ )
+    {
+        if( (d == drive) || !mtList.path[d][0] || !tapeFullPath(mtList.path[d], have) )
+        {
+            continue;
+        }
+
+        if( !strcmp(want, have) || (real && realpath(have, haveReal) && !strcmp(wantReal, haveReal)) )
+        {
+            return(d);
+        }
+    }
+
+    return(0);
+}
+
+// The write lock a drive's next mount uses: the one its line has, or for an empty drive the
+// one its checkbox was set to.
+static bool
+microtapeLock(int drive)
+{
+    return( mtList.spec[drive][0] ? mtList.locked[drive] : mtLockNext[drive] );
+}
+
+// Mount fileP on a microtape drive with mtp, which rewrites the drive's line in
+// microtapes.txt; the emulator mounts it at its next mse. chosen is true for a file from the
+// dialog, which is logged as an existing tape or a new one.
+static void
+mountMicrotape(int drive, const char *fileP, bool locked, bool chosen)
+{
+char spec[MT_SPEC_MAX];
+char driveText[8];
+char label[64];
+char full[PATH_MAX];
+char *argv[6];
+size_t len;
+int other;
+
+    // What mtp refuses (Tools/TapeUtils/mtp.c, checkName), refused here with a reason.
+    len = strlen(fileP);
+    if( (len == 0) || (len > MT_NAME_MAX) || strpbrk(fileP, "\r\n") || (fileP[0] == ' ') ||
+        (fileP[0] == '\t') || (fileP[len - 1] == ' ') || (fileP[len - 1] == '\t') )
+    {
+        appError("drive %d: not mounted: mtp does not take \"%s\"", drive, fileP);
+        return;
+    }
+
+    if( (other = tapeElsewhere(drive, fileP)) )
+    {
+        appError("drive %d: not mounted: %s is on drive %d", drive, fileP, other);
+        return;
+    }
+
+    if( chosen && tapeFullPath(fileP, full) )
+    {
+        appLog("drive %d: %s, %s", drive, fileP, (access(full, F_OK) ? "a new blank tape, made when it is first used" :
+            "an existing tape"));
+    }
+
+    snprintf(spec, sizeof(spec), "%s%s", fileP, (locked ? ",locked" : ""));
+    snprintf(driveText, sizeof(driveText), "%d", drive);
+    snprintf(label, sizeof(label), "mounting a tape on drive %d", drive);
+    argv[0] = mtpPath;
+    argv[1] = "-f";
+    argv[2] = mtListPath;
+    argv[3] = driveText;
+    argv[4] = spec;
+    argv[5] = NULL;
+    startCommand(argv, CMD_MOUNT, drive, label);
+}
+
+// Unmount a microtape drive with mtp, which removes the drive's line from microtapes.txt.
+static void
+unmountMicrotape(int drive)
+{
+char driveText[8];
+char label[64];
+char *argv[6];
+
+    snprintf(driveText, sizeof(driveText), "%d", drive);
+    snprintf(label, sizeof(label), "unmounting drive %d", drive);
+    argv[0] = mtpPath;
+    argv[1] = "-f";
+    argv[2] = mtListPath;
+    argv[3] = "-u";
+    argv[4] = driveText;
+    argv[5] = NULL;
+    startCommand(argv, CMD_UNMOUNT, drive, label);
+}
+
+// Act on the end of a program startCommand() ran. Only the exit status says whether it
+// worked; its output is in the log.
+static void
+commandEnded(int status)
+{
+    appLog("%s finished, status %d", jobLabel, status);
+    if( command == CMD_FASTLOAD )
+    {
+        if( status == 0 )
+        {
+            loadResult = (commandSawStop ? 2 : 1);
+        }
+        else
+        {
+            loadResult = 3;
+            if( commandLast[0] )
+            {
+                appError("fast load failed: %s", commandLast);
+            }
+            else
+            {
+                appError("fast load failed, status %d", status);
+            }
+        }
+    }
+    else if( status == 0 )
+    {
+        appLog("drive %d: microtapes.txt changed; the emulator %s at its next mse", commandDrive,
+            ((command == CMD_MOUNT) ? "mounts the tape" : "unmounts the drive"));
+    }
+    else
+    {
+        appError("drive %d: tape could not be %s", commandDrive, ((command == CMD_MOUNT) ? "mounted" : "unmounted"));
+    }
+}
+
+// Read microtapes.txt again if it changed, or for the first time.
+static void
+refreshMicrotapes(void)
+{
+int before;
+
+    if( mtListRead && !mtListChanged(mtListPath, &mtList) )
+    {
+        return;
+    }
+
+    before = (mtListRead ? mtList.error : 0);
+    mtListRead = true;
+    if( !mtListLoad(mtListPath, &mtList) && (mtList.error != before) )
+    {
+        appError("%s could not be listed: %s", mtListPath, strerror(mtList.error));
     }
 }
 
@@ -637,7 +989,7 @@ size_t i;
         }
 
         childPartial[childPartialLen] = '\0';
-        if( (job == JOB_ASK_MOUNT) || (job == JOB_ASK_PUNCH) )
+        if( isDialog(job) )
         {
             // Tk can warn on the same pipe; the chosen file is the line that is a path.
             if( childPartial[0] == '/' )
@@ -652,6 +1004,16 @@ size_t i;
         else if( childPartialLen > 0 )
         {
             appLog("  %s", childPartial);
+            if( job == JOB_COMMAND )
+            {
+                // The last line says why a program failed; fastload says when it will not
+                // start a tape.
+                snprintf(commandLast, sizeof(commandLast), "%.*s", (int)(sizeof(commandLast) - 1), childPartial);
+                if( strstr(childPartial, "stop directive") )
+                {
+                    commandSawStop = true;
+                }
+            }
         }
 
         childPartialLen = 0;
@@ -696,6 +1058,10 @@ Job ended;
             audioRestoreMs = (SDL_GetTicks() | 1);     // never 0, which means still running
         }
     }
+    else if( ended == JOB_COMMAND )
+    {
+        commandEnded(childStatus());
+    }
     else if( !dialogPath[0] && (childStatus() != 0) )
     {
         // Cancel exits 0; a missing Tk (python3-tk, not in every desktop install) exits 1.
@@ -708,6 +1074,21 @@ Job ended;
     else if( ended == JOB_ASK_MOUNT )
     {
         mountTape(dialogPath);
+    }
+    else if( ended == JOB_ASK_LOAD )
+    {
+        fastLoad(dialogPath);
+    }
+    else if( ended == JOB_ASK_MICROTAPE )
+    {
+        if( dialogPath[0] != '/' )
+        {
+            appError("drive %d: not mounted: \"%s\" is not an absolute path", mtAskDrive, dialogPath);
+        }
+        else
+        {
+            mountMicrotape(mtAskDrive, dialogPath, microtapeLock(mtAskDrive), true);
+        }
     }
     else if( tapePathOk(dialogPath) )
     {
@@ -747,8 +1128,10 @@ char interfaceBuf[CONF_MAX_VALUE + 1];
     {
         frontCount = procCount("pdpsrv");
     }
+    t30Count = procCount("t30dpy");
     usbCount = procCount("pdp1_usb_monitor");
     portUp = portAnswers(EMU_PORT);
+    refreshMicrotapes();
 
     if( controlCfP && confChangedOnDisk(controlCfP) && (newP = confLoad(controlPath)) )
     {
@@ -808,6 +1191,17 @@ struct nk_rect dot;
     nk_fill_circle(canvasP, dot, (on ? styleColors[STYLE_LAMP_ON] : styleColors[STYLE_LAMP_OFF]));
 }
 
+// A lamp in a row begun with nk_layout_row_begin(NK_STATIC), as wide as its label and a gap.
+static void
+lampSized(struct nk_context *ctxP, const char *labelP, bool on)
+{
+const struct nk_user_font *fontP;
+
+    fontP = ctxP->style.font;
+    nk_layout_row_push(ctxP, (fontP->width(fontP->userdata, fontP->height, labelP, (int)strlen(labelP)) + 64));
+    lamp(ctxP, labelP, on);
+}
+
 // A button that is drawn disabled when it cannot be used. Returns true when clicked.
 static bool
 button(struct nk_context *ctxP, const char *labelP, bool enabled)
@@ -838,24 +1232,33 @@ const char *panelP, *interfaceP;
 char panelBuf[CONF_MAX_VALUE + 1];
 char interfaceBuf[CONF_MAX_VALUE + 1];
 char usbBuf[CONF_MAX_VALUE + 1];
+char t30Buf[CONF_MAX_VALUE + 1];
 char frontLabel[64];
-bool usb, idle, running;
+bool usb, t30, idle, running;
 
     panelP = controlChoice("frontpanel", "virtual", panelBuf);
     interfaceP = controlChoice("interface", "web", interfaceBuf);
     usb = !strcmp(controlChoice("usbtape", "n", usbBuf), "y");
+    // apps's front end is t30dpy, so t30dpy gets a lamp of its own only beside gui or web.
+    t30 = (strcmp(interfaceP, "apps") && !strcmp(controlChoice("t30dpy", "n", t30Buf), "y"));
     snprintf(frontLabel, sizeof(frontLabel), "%s",
         (!strcmp(interfaceP, "gui") ? "pdp1_periphES" : (!strcmp(interfaceP, "apps") ? "t30dpy" : "pdpsrv")));
 
-    nk_layout_row_dynamic(ctxP, ROW_H, (usb ? 5 : 4));
-    lamp(ctxP, "pdp1", (pdp1Count > 0));
-    lamp(ctxP, (!strcmp(panelP, "pidp") ? "panel_pidp1" : "vpanel_pdp1"), (panelCount > 0));
-    lamp(ctxP, frontLabel, (frontCount > 0));
+    // Each lamp as wide as its label, so that six fit across the window.
+    nk_layout_row_begin(ctxP, NK_STATIC, ROW_H, (4 + usb + t30));
+    lampSized(ctxP, "pdp1", (pdp1Count > 0));
+    lampSized(ctxP, (!strcmp(panelP, "pidp") ? "panel_pidp1" : "vpanel_pdp1"), (panelCount > 0));
+    lampSized(ctxP, frontLabel, (frontCount > 0));
+    if( t30 )
+    {
+        lampSized(ctxP, "t30dpy", (t30Count > 0));
+    }
     if( usb )
     {
-        lamp(ctxP, "USB tape monitor", (usbCount > 0));
+        lampSized(ctxP, "USB tape monitor", (usbCount > 0));
     }
-    lamp(ctxP, "port 1040", portUp);
+    lampSized(ctxP, "port 1040", portUp);
+    nk_layout_row_end(ctxP);
 
     idle = ((job == JOB_NONE) && (queueCount == 0));
     running = (pdp1Count > 0);
@@ -940,9 +1343,12 @@ static const char *panels[] = { "pidp", "virtual" };
 static const char *panelLabels[] = { "PiDP-1 hardware", "virtual" };
 static const char *usbs[] = { "y", "n" };
 static const char *usbLabels[] = { "yes", "no" };
+static const float choiceRatios[] = { 0.25f, 0.25f, 0.50f };    // a label, a control, a note
 float ratios[MAX_SCHEMES + 1];
 char valueBuf[CONF_MAX_VALUE + 1];
-bool idle;
+const char *whyP, *nameP;
+nk_bool t30;
+bool idle, apps, web;
 int i, count;
 
     idle = ((job == JOB_NONE) && (queueCount == 0));
@@ -961,6 +1367,29 @@ int i, count;
             setControlChoice("interface", interfaces[i]);
         }
     }
+
+    // t30dpy beside the gui or web front end; apps starts it anyway. The emulator serves one
+    // client per display port, the last to connect, so the note says who has the display.
+    apps = !strcmp(controlChoice("interface", "web", valueBuf), "apps");
+    web = !strcmp(valueBuf, "web");
+    t30 = (apps || !strcmp(controlChoice("t30dpy", "n", valueBuf), "y"));
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 3, choiceRatios);
+    nk_label(ctxP, "Type 30 display", NK_TEXT_LEFT);
+    if( apps )
+    {
+        styleDisableBegin(ctxP);
+    }
+    if( nk_checkbox_label(ctxP, "also start t30dpy", &t30) && !apps )
+    {
+        setControlChoice("t30dpy", (t30 ? "y" : "n"));
+    }
+    if( apps )
+    {
+        styleDisableEnd(ctxP);
+    }
+    nk_label(ctxP, (apps ? "apps starts t30dpy" : (!t30 ? "" : (web ?
+        "t30dpy has it; the browser's display takes it while open" : "t30dpy has it, not the gui's window"))),
+        NK_TEXT_LEFT);
 
     controlChoice("frontpanel", "virtual", valueBuf);
     nk_layout_row_dynamic(ctxP, ROW_H, 4);
@@ -986,8 +1415,35 @@ int i, count;
     }
     nk_label(ctxP, "", NK_TEXT_LEFT);
 
+    // Fast load: fastload puts a tape straight into the running pdp-1's memory and starts it.
     nk_layout_row_dynamic(ctxP, 12, 1);
     nk_spacing(ctxP, 1);
+    whyP = fastLoadBlocked();
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 3, choiceRatios);
+    nk_label(ctxP, "Fast load", NK_TEXT_LEFT);
+    if( button(ctxP, "Load...", (idle && !whyP)) )
+    {
+        startDialog(JOB_ASK_LOAD);
+    }
+    nameP = (loadPath[0] ? (strrchr(loadPath, '/') ? (strrchr(loadPath, '/') + 1) : loadPath) : "");
+    if( (job == JOB_COMMAND) && (command == CMD_FASTLOAD) )
+    {
+        nk_labelf(ctxP, NK_TEXT_LEFT, "loading %s", nameP);
+    }
+    else if( whyP )
+    {
+        nk_label(ctxP, whyP, NK_TEXT_LEFT);
+    }
+    else if( loadResult == 0 )
+    {
+        nk_label(ctxP, "none loaded yet", NK_TEXT_LEFT);
+    }
+    else
+    {
+        nk_labelf(ctxP, NK_TEXT_LEFT, "last: %s, %s", nameP, ((loadResult == 1) ? "started" :
+            ((loadResult == 2) ? "loaded, not started" : "failed")));
+    }
+
     nk_layout_row_dynamic(ctxP, ROW_H, 1);
     nk_label(ctxP, "Paper tape reader", NK_TEXT_LEFT);
     nk_layout_row_dynamic(ctxP, ROW_H, 3);
@@ -1020,14 +1476,13 @@ int i, count;
 
     nk_layout_row_dynamic(ctxP, 12, 1);
     nk_spacing(ctxP, 1);
-    nk_layout_row_dynamic(ctxP, ROW_H, 1);
+    // The button on the heading's row, which keeps the tab within the window's height.
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 3, choiceRatios);
     nk_label(ctxP, "Paper tape punch", NK_TEXT_LEFT);
-    nk_layout_row_dynamic(ctxP, ROW_H, 3);
     if( button(ctxP, "Save punch to...", idle) )
     {
         startDialog(JOB_ASK_PUNCH);
     }
-    nk_label(ctxP, "", NK_TEXT_LEFT);
     nk_label(ctxP, "", NK_TEXT_LEFT);
     nk_layout_row_dynamic(ctxP, ROW_H, 1);
     nk_labelf(ctxP, NK_TEXT_LEFT, "Punch file: %s", (punchPath[0] ? punchPath : "not set by pdp1central"));
@@ -1065,10 +1520,9 @@ int i, count;
 
     nk_layout_row_dynamic(ctxP, 12, 1);
     nk_spacing(ctxP, 1);
-    nk_layout_row_dynamic(ctxP, ROW_H, 1);
-    nk_label(ctxP, "Window", NK_TEXT_LEFT);
     // Option buttons, not a drop-down: at the foot of the tab a drop-down's list would run off
-    // the bottom of the window.
+    // the bottom of the window. No heading row of its own, so that the tab still fits with the
+    // web note and an error line under the strip.
     for( count = 0; (count < MAX_SCHEMES) && styleSchemeName(count); count++ )
     {
     }
@@ -1078,7 +1532,7 @@ int i, count;
         ratios[i] = (0.75f / count);
     }
     nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, (count + 1), ratios);
-    nk_label(ctxP, "Colors", NK_TEXT_LEFT);
+    nk_label(ctxP, "Window colors", NK_TEXT_LEFT);
     for( i = 0; i < count; i++ )
     {
         if( nk_option_label(ctxP, styleSchemeName(i), (i == styleCurrent())) && (i != styleCurrent()) )
@@ -1584,6 +2038,130 @@ int i;
     }
 }
 
+// Fit textP into width pixels for a label, keeping its end, the file name, and putting "..."
+// where the front was cut. outP holds outLen bytes.
+static void
+fitTail(struct nk_context *ctxP, const char *textP, float width, char *outP, size_t outLen)
+{
+const struct nk_user_font *fontP;
+size_t len, skip;
+
+    fontP = ctxP->style.font;
+    len = strlen(textP);
+    width -= 8;                 // the label's own padding
+    for( skip = 0; skip < len; skip++ )
+    {
+        if( snprintf(outP, outLen, "%s%s", (skip ? "..." : ""), (textP + skip)) >= (int)outLen )
+        {
+            continue;           // not even the buffer holds it
+        }
+
+        if( fontP->width(fontP->userdata, fontP->height, outP, (int)strlen(outP)) <= width )
+        {
+            return;
+        }
+    }
+}
+
+// The Microtape tab: drives 1-8 as microtapes.txt lists them, each with its write lock, Mount...
+// and Unmount. mtp makes every change, and the table is read back from the file, so a change
+// made in a terminal shows here too.
+static void
+drawMicrotape(struct nk_context *ctxP)
+{
+static const float rowRatios[] = { 0.10f, 0.48f, 0.16f, 0.13f, 0.13f };
+char text[MT_SPEC_MAX + 32];
+char shown[MT_SPEC_MAX + 32];
+struct nk_rect bounds;
+nk_bool lock;
+bool idle, known, has;
+int d;
+
+    idle = ((job == JOB_NONE) && (queueCount == 0));
+    known = (mtList.error == 0);
+
+    nk_layout_row_dynamic(ctxP, ROW_H, 1);
+    nk_labelf(ctxP, NK_TEXT_LEFT, "Microtape drives, as %s lists them", mtListPath);
+    for( d = 1; d <= MT_DRIVES; d++ )
+    {
+        has = (mtList.spec[d][0] != '\0');
+        nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 5, rowRatios);
+        nk_labelf(ctxP, NK_TEXT_LEFT, "Drive %d", d);
+
+        if( !known )
+        {
+            snprintf(text, sizeof(text), "not known");
+        }
+        else if( !has )
+        {
+            snprintf(text, sizeof(text), "empty");
+        }
+        else if( !mtList.path[d][0] )
+        {
+            snprintf(text, sizeof(text), "bad entry, not mounted: %s", mtList.spec[d]);
+        }
+        else
+        {
+            snprintf(text, sizeof(text), "%s", mtList.path[d]);
+        }
+        bounds = nk_widget_bounds(ctxP);
+        fitTail(ctxP, text, bounds.w, shown, sizeof(shown));
+        nk_label(ctxP, shown, NK_TEXT_LEFT);
+        if( strcmp(shown, text) && nk_input_is_mouse_hovering_rect(&ctxP->input, bounds) )
+        {
+            nk_tooltip(ctxP, text);
+        }
+
+        // The drive's WRITE LOCK switch. On a mounted drive a click mounts the same file again
+        // with the lock flipped; on an empty one it is what the next mount uses.
+        lock = microtapeLock(d);
+        if( !(idle && known && (!has || mtList.path[d][0])) )
+        {
+            styleDisableBegin(ctxP);
+            nk_checkbox_label(ctxP, "write lock", &lock);
+            styleDisableEnd(ctxP);
+        }
+        else if( nk_checkbox_label(ctxP, "write lock", &lock) )
+        {
+            if( has )
+            {
+                mountMicrotape(d, mtList.path[d], lock, false);
+            }
+            else
+            {
+                mtLockNext[d] = lock;
+            }
+        }
+
+        if( button(ctxP, "Mount...", (idle && known)) )
+        {
+            mtAskDrive = d;
+            startDialog(JOB_ASK_MICROTAPE);
+        }
+        if( button(ctxP, "Unmount", (idle && known && has)) )
+        {
+            unmountMicrotape(d);
+        }
+    }
+
+    nk_layout_row_dynamic(ctxP, 12, 1);
+    nk_spacing(ctxP, 1);
+    nk_layout_row_dynamic(ctxP, ROW_H, 1);
+    if( !known )
+    {
+        nk_labelf_colored(ctxP, NK_TEXT_LEFT, styleColors[STYLE_WARNING], "microtapes.txt could not be listed: %s",
+            strerror(mtList.error));
+    }
+    if( mtList.skipped > 0 )
+    {
+        nk_labelf_colored(ctxP, NK_TEXT_LEFT, styleColors[STYLE_WARNING],
+            "%d line%s skipped: not \"<drive 1-8> <path>[,locked]\"", mtList.skipped, ((mtList.skipped == 1) ? "" : "s"));
+    }
+    nk_label(ctxP, "The emulator mounts a change at its next mse; a write lock change also rewinds the tape.",
+        NK_TEXT_LEFT);
+    nk_label(ctxP, "A tape a program mounts itself (mmt) is not shown.", NK_TEXT_LEFT);
+}
+
 // Draw the whole window for one frame.
 static void
 drawFrame(struct nk_context *ctxP, int width, int height)
@@ -1595,10 +2173,14 @@ float used;
     {
         drawStatus(ctxP);
 
-        nk_layout_row_dynamic(ctxP, ROW_H, 3);
+        nk_layout_row_dynamic(ctxP, ROW_H, 4);
         if( nk_select_label(ctxP, "Control", NK_TEXT_CENTERED, (tab == TAB_CONTROL)) )
         {
             tab = TAB_CONTROL;
+        }
+        if( nk_select_label(ctxP, "Microtape", NK_TEXT_CENTERED, (tab == TAB_MICROTAPE)) )
+        {
+            tab = TAB_MICROTAPE;
         }
         if( nk_select_label(ctxP, "Settings", NK_TEXT_CENTERED, (tab == TAB_SETTINGS)) )
         {
@@ -1614,6 +2196,10 @@ float used;
         if( tab == TAB_CONTROL )
         {
             drawControl(ctxP);
+        }
+        else if( tab == TAB_MICROTAPE )
+        {
+            drawMicrotape(ctxP);
         }
         else if( tab == TAB_SETTINGS )
         {
@@ -1673,6 +2259,9 @@ bool ok;
     ok = (rootJoin(configPath, "pidp1.config") && rootJoin(examplePath, "pidp1.config.example") &&
         rootJoin(controlPath, "pdp1control.config") && rootJoin(scriptPath, "bin/pdp1control.sh") &&
         rootJoin(askOpenPath, "bin/tkaskopenfile") && rootJoin(askSavePath, "bin/tkaskopenfilewrite") &&
+        rootJoin(askMicrotapePath, "bin/tkaskmicrotape") && rootJoin(fastloadPath, "bin/fastload") &&
+        rootJoin(mtpPath, "bin/mtp") && rootJoin(mtListPath, "microtapes.txt") &&
+        rootJoin(microtapeDir, "Microtapes") &&
         rootJoin(fontPath, "src/pdp1_periph/DejaVuSansMono.ttf") && rootJoin(stylePath, "pdp1central.config"));
     if( schemaArgP )
     {

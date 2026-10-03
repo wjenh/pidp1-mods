@@ -58,18 +58,16 @@ However, the code it generates will load and run on any -1 that has the proper '
 
 ## Yes, but how do I run it?
 
-Easy. Type 'make' in its directory. That will build the program and load the drum with the necessary data.\
+Easy. Type 'make' in its directory. That will build the program.\
+If you want to play now, then do 'make drum', it will load the drum with the game data.
+**NOTE** that this overwrites the drum!
+
 Load the tape. Be patient, it's big, remember?\
 If you get tired of waiting, you can use the *fastload* utility:
 ```
 fastload adventure.rim
 ```
-but be aware that either the pidp-1 needs to be running in shared memory mode, set in the *pidp1.config* file,
-or with pidp-1 shut down,  use the 'write to the memory file' version:
-```
-fastload -m adventure.rim
-```
-then start the emulator and manually start the program at address 4.
+but be aware that the pidp-1 needs to be running.
 
 This is highly recommended, the program is huge and will take close to forever to load via the tape reader.\
 When it's loaded, telnet to port 2030 and relive history.

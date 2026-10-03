@@ -13,6 +13,8 @@ adventure.rim: adventure.am1 adv_defines.ah
 adv_defines.ah: $(GENDIR)/adventure.adv loaders
 	@mkdir Includes 2>/dev/null || true
 	$(GENDIR)/advdataloader -o Includes $(GENDIR)/adventure.adv
+
+drum: all
 	./advdrumloader advtracks.drm
 
 loaders:

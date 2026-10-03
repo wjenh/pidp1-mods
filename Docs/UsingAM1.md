@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 2.01 and covers up through am1 version 3.0; it will be updated as needed.\
-Edit date 21-Sep-2026
-Fix origin statements, they can now have following code
+This is version 2.02 and covers up through am1 version 3.4; it will be updated as needed.\
+Edit date 3-Oct-2026
+Update var section to clarify rules
 
 ## What is **am1**?
 

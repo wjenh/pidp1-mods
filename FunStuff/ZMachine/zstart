@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Run on the Pi. Exit the current game before using this launcher.
+# Note from wje - this courtesy of Dr. Philip Porch, many thanks.
+set -euo pipefail
+root=${PIDP1_ROOT:-/opt/pidp1-mods}
+zm="$root/FunStuff/ZMachine"
+games_dir="$zm/Games"
+tapes="$root/Microtapes"
+backup_dir="$HOME/pidp1-game-backups"
+
+for file in "$zm/zloader" "$root/bin/mtp" "$root/bin/fastload"; do
+    [[ -x "$file" ]] || { printf 'Missing executable: %s\n' "$file" >&2; exit 1; }
+done
+[[ -f "$zm/zmachine.rim" ]] || { echo 'Build the Z-machine first: zmachine.rim is missing.' >&2; exit 1; }
+[[ -d "$games_dir" ]] || { printf 'Missing Games directory: %s\n' "$games_dir" >&2; exit 1; }
+pgrep -x pdp1 >/dev/null || { echo 'Start the PDP-1 emulator first.' >&2; exit 1; }
+
+games=()
+while IFS= read -r -d '' entry; do games+=("$entry"); done < <(find "$games_dir" -maxdepth 1 -type f \
+    \( -iname '*.z3' -o -iname '*.z4' -o -iname '*.z5' \) -print0 | sort -z)
+((${#games[@]})) || { echo 'No .z3, .z4 or .z5 games found.' >&2; exit 1; }
+printf '\nAvailable games\n'
+# Read down the left column, then down the right; numbers still index games.
+rows=$(( (${#games[@]} + 1) / 2 ))
+column_width=0
+for i in "${!games[@]}"; do
+    printf -v label '%3d) %s' "$((i+1))" "${games[i]##*/}"
+    if ((${#label} > column_width)); then column_width=${#label}; fi
+done
+column_width=$((column_width + 4))
+for ((i=0; i<rows; i++)); do
+    printf -v left '%3d) %s' "$((i+1))" "${games[i]##*/}"
+    right_index=$((i + rows))
+    if ((right_index < ${#games[@]})); then
+        printf '%-*s%3d) %s\n' "$column_width" "$left" \
+            "$((right_index+1))" "${games[right_index]##*/}"
+    else
+        printf '%s\n' "$left"
+    fi
+done
+printf '  q) Cancel\n'
+while true; do
+    read -r -p 'Choose a game number: ' choice || exit 0
+    [[ "$choice" == q || "$choice" == Q ]] && exit 0
+    if [[ "$choice" =~ ^[0-9]{1,6}$ ]]; then
+        index=$((10#$choice))
+        if ((index >= 1 && index <= ${#games[@]})); then break; fi
+    fi
+    echo 'Enter one of the listed numbers, or q.'
+done
+game=${games[index-1]}
+name=${game##*/}
+stem=${name%.*}
+save="$tapes/$stem-saves.img"
+printf '\nGame: %s\nSave tape: %s\n' "$name" "$save"
+# Revisions with the same base name must not silently share saves.
+for other in "${games[@]}"; do
+    other_name=${other##*/}
+    if [[ "$other" != "$game" && "${other_name%.*}" == "$stem" ]]; then
+        echo 'Two games have the same base filename. Rename one to give it a unique save tape.' >&2
+        exit 1
+    fi
+done
+if [[ -e "$save" ]]; then
+    echo 'Existing save tape will be reused.'
+else
+    echo 'A new tape will be created by the emulator on first use.'
+fi
+echo 'Quit any current game and wait for its connection to close first.'
+echo 'This will replace the story on the drum; a backup will be kept.'
+read -r -p 'Ready to load? [y/N] ' answer || exit 0
+[[ "$answer" == y || "$answer" == Y ]] || exit 0
+
+mkdir -p "$tapes" "$backup_dir"
+if [[ -f "$root/pdp23drum" ]]; then
+    backup=$(mktemp "$backup_dir/drum-$(date +%Y%m%d-%H%M%S).XXXXXX")
+    cp -p -- "$root/pdp23drum" "$backup"
+    printf 'Drum backup: %s\n' "$backup"
+fi
+if [[ -f "$root/microtapes.txt" ]]; then
+    map_backup=$(mktemp "$backup_dir/microtapes-$(date +%Y%m%d-%H%M%S).XXXXXX")
+    cp -p -- "$root/microtapes.txt" "$map_backup"
+fi
+"$root/bin/mtp" 2 "$save"
+cd "$zm"
+./zloader -i "$root/pdp23drum" "$game"
+echo 'At the fastload start prompt, answer y.'
+"$root/bin/fastload" zmachine.rim
+echo 'If you started the interpreter, connect to the Pi on port 2031 to play.'
+echo 'Use SAVE or RESTORE in the game to select a numbered position.'

@@ -19,6 +19,9 @@
  * NOTE that this and the hardware panel cannot be run simultaneously, they would step on the pwm data.
  *
  * 5-Jul-2026 wje rework to fix the incorrectly labeled H.S CYCLE light name, add the new pwm logic,refomat
+ * 1-Oct-2026 Claude: draw a frame only when an element changed or the window needs repainting.
+ * 1-Oct-2026 Claude: Makefile rebuilds on a change to any included file.
+ * 4-Oct-2026 wje panel lights were not turning off when the power switch was turned off
  */
 #include <stdio.h>
 #include "common.h"
@@ -78,6 +81,7 @@ struct Element
 	float x, y;
 	int state, active;
 	SDL_Rect r;
+    int drawnState;     // state as last drawn; after r, so elements.inc's initializers leave it 0
 };
 
 // Shared-memory Panel struct definition and the sw0/sw1/sw2 bit-field enum
@@ -122,6 +126,10 @@ SDL_Texture *keytex[3];
 // Both are derived from the same `scl` mm-to-pixel factor in init().
 Grid grid1, grid2;
 
+// Set when the window needs a frame whatever the elements show: the first
+// frame, and after SDL reports the window's contents may be gone.
+int redrawNeeded = 1;
+
 // Pulls in the static Element tables (lights[], switches[], keys[]) that
 // enumerate every lamp/switch/key on the panel along with its design-time
 // grid position. Kept in a separate file because it is a long, mostly
@@ -159,9 +167,8 @@ loadtex(unsigned char *data, int sz)
 
 // Debug helper: overlays a grid of red lines spaced g->xscl/g->yscl apart
 // over `tex`, used during panel-art development to visually check element
-// alignment against the background image. Not called anywhere in the
-// current build (see the commented-out call in draw() below) -- dead code
-// left in from that development process.
+// alignment against the background image. Not called anywhere; to use it,
+// call it in draw() after the background is copied.
 void
 drawgrid(SDL_Texture *tex, Grid *g)
 {
@@ -203,20 +210,49 @@ putongrid(Element *e)
 }
 
 // Blits element `e`'s current-state sprite (e->tex[e->state]) into its
-// precomputed screen rectangle (e->r, set by putongrid()). No return value;
-// draw() calls this once per lamp/switch/key every frame.
+// precomputed screen rectangle (e->r, set by putongrid()), and notes the
+// state drawn for changed().
 void
 drawelement(Element *e)
 {
 	SDL_RenderCopy(renderer, e->tex[e->state], nil, &e->r);
+    e->drawnState = e->state;
+}
+
+// Returns 1 if any element of the n in elems has a state other than the one last drawn, else 0.
+int
+groupChanged(Element *elems, unsigned n)
+{
+    unsigned i;
+
+    for(i = 0; i < n; i++)
+    {
+        if(elems[i].state != elems[i].drawnState)
+        {
+            return(1);
+        }
+    }
+
+    return(0);
+}
+
+// Returns 1 if any lamp, switch or key differs from the last frame drawn, else 0.
+// Comparing every element, rather than flagging each write to a state, cannot
+// miss a writer: mouse(), initpanel() and updatepanel() all set states directly.
+int
+changed(void)
+{
+    return( groupChanged(lights, nelem(lights)) || groupChanged(switches, nelem(switches))
+            || groupChanged(keys, nelem(keys)) );
 }
 
 // Renders one complete frame: panel background, then every lamp, switch,
 // and key sprite on top in that order (so switches/keys visually sit above
 // the background art, and lamps are drawn first so a switch/key sprite at
 // the same grid position -- e.g. the sense-switch lamp+toggle pair -- can
-// overlay it), then presents the frame. Called once per main-loop
-// iteration after updatepanel() has refreshed every element's `state`.
+// overlay it), then presents the frame. Called from the main loop only when
+// changed() or redrawNeeded says the window is out of date. Every frame is
+// drawn whole, since the back buffer's contents after a present are undefined.
 void
 draw(void)
 {
@@ -564,6 +600,21 @@ updatepanel(void)
 
 	panel->sw3 = 0;	// no spacewar controllers for now
 
+    // With the power off, pdp1 stops advancing cyclecount, the lights need to be forced off.
+    if( !(panel->sw0 & SW_POWER) )
+    {
+        unsigned i;
+
+        for(i = 0; i < nelem(lights); i++)
+        {
+            lights[i].state = 0;
+        }
+
+        memset(panel->pwmcount, 0, sizeof(panel->pwmcount));
+        lastcyclecount = panel->cyclecount;
+        return;
+    }
+
 	// Lights7-lights9, the I/O panel, are never read
 	// here -- vpanel_pdp1 doesn't display it.
 	currentcyclecount = panel->cyclecount;
@@ -642,13 +693,31 @@ main()
 				buttonstate &= ~(1<<(ev.button.button-1));
 				mouse(ev.button.x, ev.button.y);
 				break;
+            case SDL_WINDOWEVENT:
+                // Events after which a backend may have lost or resized the window's contents.
+                if( (ev.window.event == SDL_WINDOWEVENT_EXPOSED) || (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
+                    || (ev.window.event == SDL_WINDOWEVENT_SHOWN) || (ev.window.event == SDL_WINDOWEVENT_RESTORED) )
+                {
+                    redrawNeeded = 1;
+                }
+                break;
 			case SDL_QUIT:
 				exit(0);
 			}
         }
 
+        // updatepanel() runs every pass even when nothing is drawn: it drains
+        // pwmcount[][], and a skipped drain would put the skipped time into the
+        // next window's duty.
 		updatepanel();
-		draw();
+
+        // An unchanged frame is not drawn: when exposed, every presented frame
+        // costs the compositor too, and most frames repeat the last one.
+        if( redrawNeeded || changed() )
+        {
+            draw();
+            redrawNeeded = 0;
+        }
 
 		SDL_Delay(30);	// ~33fps fixed refresh; not synced to the emulator's cycle rate
 	}

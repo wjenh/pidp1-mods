@@ -10,10 +10,10 @@ Where DEC's later documents fill its gaps or correct it, the emulation follows t
 *Microtape: Its Features and Applications* (1963), the F-03 brochure (1964), and DEC's
 field-service memos.
 
-This is version 1.6\
+This is version 1.7\
 Edit date 4-Oct-2026\
 
-Fix some incorrect tape directory text
+Fix a few more Microtape directory paths
 
 ## What is the Type 550 Microtape?
 
@@ -43,10 +43,11 @@ A program can also mount tapes itself via the *mmt* IOT, below.
 
 ## Setting up
 
-List the drive-to-file mapping in */opt/pidp1-mods/microtapes.txt*, one line per drive.
+List the drive-to-file mapping in */opt/pidp1-mods/microtapes.txt*, one line per drive./
+A line with no leading slash is in the default /opt/pidp1-mods/Microtapes directory.
 ```
 # drive  image
-1 microtapes/tape1.img
+1 tape1.img
 2 /home/pi/tapes/system.img,locked
 ```
 - A line is the drive number, 1-8 in *decimal*, drive 8 is 010 in the `mse` field, then
@@ -161,7 +162,7 @@ bits 2-17, the address of the image's file name; 0 unmounts the drive
 The name is packed ascii as the am1 `ascii` directive generates, two characters to a word,
 the first in the high 9 bits, ending with a character whose value is octal 0, a null byte as in C.
 It must end in the same memory bank it starts in; the zero may be in the bank's last word.
-A name that does not start with `/` is relative to */opt/pidp1-mods*, the same as in *microtapes.txt*.
+A name that does not start with `/` is relative to */opt/pidp1-mods/Microtapes*, the same as in *microtapes.txt*.
 
 The tape replaces whatever the drive held, unlocked, stopped at the load point.
 A missing image is created as a blank tape.
@@ -185,7 +186,7 @@ another drive, or for a file that cannot be created.
     mmt                     // IO = mtmok, mtmlck or mtmerr
     ...
 name,
-    ascii "microtapes/scratch.img"
+    ascii "scratch.img"
 ```
 
 -IOT 301, mse, 720301, select

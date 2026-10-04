@@ -10,6 +10,11 @@
  *
  * wje 07-Jan-26 break from original repo, now independent. Initial reformatting. lightpen support.
  * wje 18-Jan-26 now working with the light pen
+ * Claude 04-Oct-26 the mouse works as the light pen: a click counts,
+ *     and only inside the display's image.
+ * Claude 04-Oct-26 readLayout() no longer reads or writes outside layouts[]
+ *     for a file that leaves out a region or a layout line.
+ *     wje note - the old code could SEGV, this is in the original pidp1 version also.
  *
 */
 #include <stdlib.h>
@@ -76,7 +81,8 @@ int dpyfd, typfd;
 int dbgflag;
 
 int doLightpen;
-bool penDown;
+bool penDown;       // mouse button 1 is held
+bool penSent;       // the emulator has a pen-down and no pen-up since
 
 int clifd[2];
 
@@ -815,12 +821,26 @@ readLayout(void)
 
     while(fgets(line, sizeof(line) - 1, f) != nil)
     {
-        Layout *l = &layouts[nlayouts - 1];
+        // Lines before the first layout line apply to the built-in layout.
+        Layout *l = &layouts[(nlayouts > 0) ? (nlayouts - 1) : 0];
         sscanf(line, "%s", cmd);
 
         if(strcmp(cmd, "layout") == 0)
         {
-            layouts[nlayouts] = layouts[nlayouts - 1];
+            if(nlayouts >= (int)nelem(layouts))
+            {
+                fprintf(stderr, "more than %d layouts in '%s', the rest are ignored\n",
+                    (int)nelem(layouts), confname);
+                break;
+            }
+
+            // The first layout starts from the built-in one, each later one
+            // from the one before it.
+            if(nlayouts > 0)
+            {
+                layouts[nlayouts] = layouts[nlayouts - 1];
+            }
+
             nlayouts++;
             l = &layouts[nlayouts - 1];
             l->fullscreen = strstr(line, "fullscreen") != nil;
@@ -874,6 +894,13 @@ readLayout(void)
     }
 
     fclose(f);
+
+    // A file with no layout line still leaves the built-in one: cycling
+    // layouts divides by nlayouts.
+    if(nlayouts == 0)
+    {
+        nlayouts = 1;
+    }
 }
 
 void
@@ -1276,17 +1303,99 @@ textinput(char *text)
 int mdown;
 int dragging = -1;
 
+// Map a window position to the display's pen coordinates, 0-1023 with y down,
+// as updatePen() takes them.
+// Returns true if the position is inside the display's image, else false.
+bool
+penPosition(int mx, int my, int *xP, int *yP)
+{
+Region *r;
+int w, h;
+int side;
+int x0, y0;
+int px, py;
+
+    r = &layouts[lay].regions[ID_DISP];
+    if( r->hidden )
+    {
+        return(false);
+    }
+
+    // The image is the centered square setSquareRegion() lays out, not the
+    // whole region. Same arithmetic, so the pen lands on the pixels drawn.
+    w = r->w;
+    h = r->h;
+    if( w > h )
+    {
+        side = h;
+        x0 = (int)(r->x + ((w - h) / 2));
+        y0 = (int)r->y;
+    }
+    else
+    {
+        side = w;
+        x0 = (int)r->x;
+        y0 = (int)(r->y + ((h - w) / 2));
+    }
+
+    px = (mx - x0);
+    py = (my - y0);
+    if( (side <= 0) || (px < 0) || (py < 0) || (px >= side) || (py >= side) )
+    {
+        return(false);
+    }
+
+    // Pixel centers, so the square maps onto all of 0-1023.
+    // 0 becomes 1: updatePen() would make it 512 from center, which a 10 bit
+    // 1's complement coordinate cannot hold, and it wraps to the other edge.
+    *xP = (int)((((float)px + 0.5f) * 1024.0f) / (float)side);
+    *yP = (int)((((float)py + 0.5f) * 1024.0f) / (float)side);
+    if( *xP < 1 )
+    {
+        *xP = 1;
+    }
+
+    if( *yP < 1 )
+    {
+        *yP = 1;
+    }
+
+    return(true);
+}
+
+// Bring the emulator's pen in line with the mouse: down at its position while
+// button 1 is held over the display image outside layout mode, up otherwise.
+// A pen-up is sent only after a pen-down.
+void
+trackPen(int mx, int my)
+{
+int x, y;
+
+    if( !doLightpen )
+    {
+        return;
+    }
+
+    if( penDown && !layoutmode && penPosition(mx, my, &x, &y) )
+    {
+        logger(LOG_LIGHTPEN_MOVE, "lightpen at x %d y %d\n", x, y);
+        updatePen(true, x, y);
+        penSent = true;
+    }
+    else if( penSent )
+    {
+        logger(LOG_LIGHTPEN, "lightpen up\n");
+        updatePen(false, 0, 0);
+        penSent = false;
+    }
+}
+
 void
 mousemotion(SDL_MouseMotionEvent m)
 {
 int dx, dy;
 
-uint32 penx, peny;
-Region *penRegion;
-float scale;
-
     hover = -1;
-    penRegion = nil;
 
     for(int i = 0; i < NUM_REGIONS; i++)
     {
@@ -1298,10 +1407,9 @@ float scale;
             dx = m.x - c.x;
             dy = m.y - c.y;
 
-            if( ((dx * dy) + (dy * dy)) < c.r * c.r)
+            if( ((dx * dx) + (dy * dy)) < c.r * c.r)
             {
                 hover = i;
-                penRegion = r;
             }
         }
         else
@@ -1310,25 +1418,11 @@ float scale;
                 (r->y <= m.y) && (m.y <= r->y + r->h) )
             {
                 hover = i;
-                penRegion = r;
             }
         }
     }
 
-    if( doLightpen && penDown && penRegion )
-    {
-        // arg! Have to figure out the coords in the window, then scale them back
-        // to the range 0-1023.
-        // No ida why Region keeps all this in floats.
-        penx = m.x - (uint32)penRegion->x;
-        peny = m.y - (uint32)penRegion->y;
-        scale = 1024.0 / penRegion->w;
-        penx = (uint32)((float)penx * scale);
-        scale = 1024.0 / penRegion->h;
-        peny = (uint32)((float)peny * scale);
-        logger(LOG_LIGHTPEN_MOVE, "mouse motion x %d y %d\n", penx, peny);
-        updatePen(penDown, penx, peny);
-    }
+    trackPen(m.x, m.y);
 
     if(dragging >= 0)
     {
@@ -1595,13 +1689,10 @@ main(int argc, char *argv[])
                     mousedown(event.button);
                 }
 
-                if( doLightpen )
+                if( event.button.button == 1 )
                 {
-                    if(event.button.button == 1)
-                    {
-                        penDown = true;
-                        logger(LOG_LIGHTPEN,"lightpen down\n");
-                    }
+                    penDown = true;
+                    trackPen(event.button.x, event.button.y);
                 }
                 break;
 
@@ -1611,14 +1702,10 @@ main(int argc, char *argv[])
                     mouseup(event.button);
                 }
 
-                if( doLightpen )
+                if( event.button.button == 1 )
                 {
-                    if(event.button.button == 1)
-                    {
-                        penDown = false;
-                        logger(LOG_LIGHTPEN,"lightpen up\n");
-                        updatePen(false, 0, 0);
-                    }
+                    penDown = false;
+                    trackPen(event.button.x, event.button.y);
                 }
                 break;
 

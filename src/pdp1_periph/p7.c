@@ -16,9 +16,6 @@
  *
 */
 
-// NOTE that this for some reason isn't working correctly.
-// Lightpen events are being sent, but never recieved by pipd1. Can't fiture out whey.
-
 // NOTE that this file is included in main.c, not compiled separately
 // Logging control is there.
 
@@ -462,7 +459,7 @@ int x, y, intensity, dt;
 
             // The old pdp1 sent a delay in each point
             // or an escape pair of 511, then a delay word
-            // word for a longer gap.
+            // for a longer gap.
             // This was removed for efficiency, these shouldn't be
             // received anymore, just here for safety.
             if( esc )
@@ -480,7 +477,7 @@ int x, y, intensity, dt;
                 intensity = ((cmd >> 20) & 7);
 
                 // Newpoints is emptied every frame,
-                // it fills only if frames stopi.
+                // it fills only if frames stop.
                 // Drop rather than overrun it.
                 if( (x || y) && (nnewpoints < (int)nelem(newpoints)) )
                 {

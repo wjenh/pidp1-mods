@@ -2,10 +2,10 @@
 
 This document describes using the Type 19 High Speed Channel emulation.
 
-This is version 2.4
+This is version 2.5
 
-Edit date 23-Sep-2026\
-per-cycle priority, one word per stolen cycle, owed cycles for threaded mode, HSCsteal
+Edit date 03-Oct-2026\
+a steal before an instruction's last cycle restarts the instruction, as on the original
 
 ## What is it?
 
@@ -23,10 +23,23 @@ All of the channels had priority higher than any other operation in the system, 
 
 It had no interface from the user side but rather was used by the hardware interfaces themselves.
 It worked by 'cycle stealing', taking one 5us cycle to do a memory transfer for each word until it was done.
-The processor lost that one cycle and otherwise carried on, so this was transparent to the user,
-apart from the program running a little slower.
+This was transparent to the user, apart from the program running slower, but by more than the cycles
+taken.
+A channel could break in at the end of any cycle of an instruction, not just between instructions.
+If the instruction had not finished, the processor backed its PC up and, after the break, started the
+instruction again from its first cycle, so the cycles it had already spent on it were spent again.
+In a memory reference instruction the break could come after the instruction's first cycle or a defer cycle;
+the last cycle finished the instruction.
 The breaks were held off while the processor was in the middle of a multiply or divide, and were taken
 as soon as it finished.
+They were also held off from the start of a sequence break until the jump into its routine was done,
+and between the two cycles of a *jmp* or *jsp* deferred once.
+
+So a device that wanted a word on more than every other cycle, such as the Type 23 drum (a word every
+8.5us), never left two free cycles in a row, and no two-cycle instruction could finish until its
+transfer ended: a program that computed during a drum transfer stopped until the transfer was done.
+Instructions that take one cycle, operates, skips, shifts, IOTs and direct jumps, ran on the free cycles,
+so a status loop built from them kept running.
 
 However, there was an additional piece of hardware, the High Speed Data Control, Type 131, that provided some
 IOTs for allowing a user program to interact with some devices, at least one of the mag tape drives used it.
@@ -74,7 +87,9 @@ There are four modes of operation, normal, *HSC_MODE_IMMEDIATE*, *HSC_MODE_THREA
 emulations.
 
 Every cycle a channel steals is one 5us cycle the processor does not run, in the emulator's own time,
-so a program runs as much slower as it would have on the original.
+and a steal before an instruction's last cycle starts the instruction again, with the same hold-offs
+as the original (see above), so a program runs as much slower as it would have on the original.
+This holds in every mode that steals cycles, including the cycles owed in threaded mode.
 
 The default, normal, mode implements pseudo-cycle-stealing. While a purist might argue that the real hardware caused
 break states and set and cleared various internal bits of hardware, this isn't real hardware.
@@ -87,8 +102,8 @@ does not take.
 Immediate mode completely bypasses the emulator, doesn't steal cycles, and completes immediately.
 Of course, this is not at all like the original but it allows an IOT to implement its own timing or to not bother
 with timing.
-A device that uses immediate mode to fetch ahead, and then uses the words later, charges the cycles
-with *HSCsteal* as it uses them; the Type 340's cache does this.
+A device that uses immediate mode to fetch ahead, and then uses the words later, can charge the cycles
+with *HSCsteal* as it uses them.
 
 Threaded mode can actually be used inside or outside threads.
 It runs in the current thread with no blocking waiting for the emulator.

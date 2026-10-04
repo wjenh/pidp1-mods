@@ -1,7 +1,7 @@
 /*
  * Shared-memory layout for the pidp-1 front panel (switches and lamp state),
  * used by the emulator (pdp1), the hardware panel driver (panel_pidp1 and newpanel), and
- * the browser-based panel emulator (vpanel_pdp1).
+ * the SDL virtual panel (vpanel_pdp1).
  *
  * wje 14-Jun-26 - add pwmcount[][] for emulator-side lamp duty-cycle tallies
  * wje 14-Jun-26 - widen pwmcount[][] to u16 to give the panel driver more
@@ -12,6 +12,7 @@
  *                 actual number of cycles elapsed between its samples
  *                 instead of inferring it from wall-clock time
  * wje 4-Jul-25 - just formatting cleanup, no functional change
+ * 1-Oct-2026 Claude: comments name the pwmcount[][] readers (newpanel, vpanel_pdp1); no code change
  */
 enum {
     // sw0
@@ -89,9 +90,9 @@ struct Panel
     // these counters and scale the result into a PWM "on" duration
     // instead of polling lights0-lights9 at a high sample rate as panel_pidp1 does.
     //
-    // Existing lights0-lights9 fields are unchanged and continue to be
-    // updated as before for the browser-based panel (vpanel_pdp1), which
-    // does its own sampling and does not use pwmcount[][].
+    // newpanel and vpanel_pdp1 both read and reset these counters, so only
+    // one of them may run at a time. lights0-lights9 are still updated as
+    // before, for readers that sample them (the legacy panel_pidp1).
     //
     // Not synchronized against concurrent updates from pdp1; a reader may
     // occasionally race an increment by +/-1, which is negligible given

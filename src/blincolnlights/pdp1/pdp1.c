@@ -564,6 +564,38 @@ inst_cancel(PDP1 *pdp)
     pdp->df2 = 0;
 }
 
+// Whether a high-speed channel may take the next memory cycle, set at every cycle's TP10
+// (F17 6-18, 6-19, 3-49, 3-50). main.c's scan runs between cycles, so it asks here.
+#define HSCGRANT_NONE       0   // inside a sequence break's entry, or after cycle 0 of a once-deferred jmp/jsp
+#define HSCGRANT_BOUNDARY   1   // the instruction is done, or a sequence break has just been taken
+#define HSCGRANT_RESTART    2   // mid-instruction: the break restarts the instruction from cycle 0
+static int hscGrant = HSCGRANT_BOUNDARY;
+
+// True if a channel may take the next memory cycle.
+bool
+hscBreakAllowed(void)
+{
+    return(hscGrant != HSCGRANT_NONE);
+}
+
+// A channel has taken the next memory cycle. Mid-instruction, the hardware backs PC up and
+// begins the instruction again after the break (F17 6-18). The cycles it had run were real
+// machine cycles, so the panel tally keeps them.
+void
+hscBreak(PDP1 *pdp)
+{
+    if(hscGrant == HSCGRANT_RESTART)
+    {
+        inst_cancel(pdp);
+        pdp->cyc = 0;
+        updatelights_pwm(pdp->panel, pdp->inst_cyc);
+        pdp->inst_cyc = 0;
+    }
+
+    // After a channel cycle any further break request is granted (F17 3-49).
+    hscGrant = HSCGRANT_BOUNDARY;
+}
+
 // TP9A
 // TP10
 
@@ -633,6 +665,7 @@ sc(PDP1 *pdp)
     pdp->df1 = 0;
     pdp->df2 = 0;
     pdp->bc = 0;
+    hscGrant = HSCGRANT_BOUNDARY;   // the cycle state is cleared, so no instruction is in progress
     pdp->ov1 = 0;
     pdp->ov2 = 0;
     pdp->ihs = 0;
@@ -1583,6 +1616,8 @@ int hack;
         // F17 6-19: a break is taken at the end of any cycle except cycle 0 of a jmp or jsp
         // deferred once. That instruction is neither done nor cancellable here, so its defer
         // cycle runs first and finishes the jump; defer() then takes the break.
+        // A channel may take the next cycle at an instruction's end, or mid-instruction with a
+        // restart, but not after cycle 0 of a once-deferred jump (hscBreak()).
         if(SBS_BREAK && (CY0_INST_DONE || MIDBRK_PERMIT))
         {
             if(MIDBRK_PERMIT)
@@ -1591,14 +1626,20 @@ int hack;
             }
             pdp->bc |= SBS_BREAK;
             pdp->cyc = 1;
-            pdp->inst_cyc = 0;      // break sequence starting; discard mid-instruction count
+            // The cycles run so far were real, cancelled or not; the panel tally keeps them.
+            updatelights_pwm(pdp->panel, pdp->inst_cyc);
+            pdp->inst_cyc = 0;
+            hscGrant = HSCGRANT_BOUNDARY;
         }
         else if(!CY0_INST_DONE)
         {
+            hscGrant = (CY0_MIDBRK_PERMIT) ? HSCGRANT_RESTART : HSCGRANT_NONE;
             pdp->cyc = 1;           // multi-cycle instruction continues; keep accumulating inst_cyc
         }
         else
         {
+            hscGrant = HSCGRANT_BOUNDARY;
+
             // Instruction complete: tally settled register state n times (once per
             // cycle the instruction held this state) into pwmcount, then reset.
             if(IR_SHRO)
@@ -1816,13 +1857,22 @@ int sbs_restore = 0;
         }
 
         pdp->bc |= SBS_BREAK;
-        pdp->inst_cyc = 0;          // break sequence starting; discard mid-instruction count
+        // The cycles run so far were real, cancelled or not; the panel tally keeps them.
+        updatelights_pwm(pdp->panel, pdp->inst_cyc);
+        pdp->inst_cyc = 0;
+        hscGrant = HSCGRANT_BOUNDARY;
     }
     else if(INST_DONE)
     {
         pdp->cyc = 0;
         updatelights_pwm(pdp->panel, pdp->inst_cyc);
         pdp->inst_cyc = 0;
+        hscGrant = HSCGRANT_BOUNDARY;
+    }
+    else
+    {
+        // A break is always granted at the end of a defer cycle (F17 3-49), here mid-instruction.
+        hscGrant = HSCGRANT_RESTART;
     }
 
     if(!pdp->df2)
@@ -2159,14 +2209,18 @@ int hack;
         if(SBS_BREAK)
         {
             pdp->bc |= SBS_BREAK;
-            pdp->inst_cyc = 0;      // break sequence starting; discard mid-instruction count
         }
         else
         {
             pdp->cyc = 0;
-            updatelights_pwm(pdp->panel, pdp->inst_cyc);
-            pdp->inst_cyc = 0;
         }
+
+        // The instruction is done either way, so its cycles are tallied. A multiply or divide
+        // finishes inside this cycle, so a channel request made during it is granted after it
+        // (F17 6-19).
+        updatelights_pwm(pdp->panel, pdp->inst_cyc);
+        pdp->inst_cyc = 0;
+        hscGrant = HSCGRANT_BOUNDARY;
 
         if(IR_MUL)
         {
@@ -2408,7 +2462,7 @@ int r;
     {
         pdp->exd = 0;
         pdp->sho_deferred = 0;      // discard any pending deferred SHRO tally
-        pdp->inst_cyc = 0;          // start of break sequence; count break cycles from here
+        // inst_cyc already counts from break cycle 1: the break was taken with it at 0.
     }
 
     // SBS256: 1->EXD, HOLD BREAK, JSP->IR, 1->df1, JE->MA (delayed)
@@ -2418,6 +2472,10 @@ int r;
         updatelights_pwm(pdp->panel, pdp->inst_cyc);    // tally break sequence cycles
         pdp->inst_cyc = 0;
     }
+
+    // No break of any kind from break cycle 1 until the jump into the routine is done (F17 6-19,
+    // 3-50); that jump's cycle 0 sets the grant at its own TP10.
+    hscGrant = HSCGRANT_NONE;
 
     pdp->bc = (pdp->bc + 1) & 3;
     TP(10)

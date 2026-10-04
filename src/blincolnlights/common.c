@@ -1,6 +1,7 @@
 /* Support routines used by many programs. */
 // 8-Apr-2026 wje initial cleanup */
 // 14-Jul-2026 wje more cleaning, no warning now
+// 4-Oct-2026 Claude split() no longer reads past the end of its string
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -337,6 +338,8 @@ isdelim( char c )
     return( (c == '\0') || (strchr(" \t\n;'\"", c) != nil) );
 }
 
+// Breaks line into words at blanks and ';', honoring quotes and backslash escapes. Returns a
+// malloc'd argv ending in nil; *pargc, if given, gets the word count.
 char **
 split( char *line, int *pargc )
 {
@@ -368,11 +371,17 @@ char **argv, *lp, delim;
         {
             delim = *line++;
 
-            while( *line && *line != delim )
+            while( *line && (*line != delim) )
             {
+                // A trailing backslash has nothing to escape and is dropped.
                 if( *line == '\\' )
                 {
                     line++;
+
+                    if( *line == '\0' )
+                    {
+                        break;
+                    }
                 }
 
                 *lp++ = *line++;
@@ -385,6 +394,11 @@ char **argv, *lp, delim;
                 if( *line == '\\' )
                 {
                     line++;
+
+                    if( *line == '\0' )
+                    {
+                        break;
+                    }
                 }
 
                 *lp++ = *line++;
@@ -392,6 +406,13 @@ char **argv, *lp, delim;
         }
 
         *lp++ = '\0';
+
+        // A word that ran to the end of the string ends the scan; the loop's line++ would step
+        // over the NUL into whatever follows it.
+        if( *line == '\0' )
+        {
+            break;
+        }
     }
 
     if( pargc )

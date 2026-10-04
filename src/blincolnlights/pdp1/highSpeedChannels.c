@@ -3,16 +3,20 @@
  * It is for use in IOTs or other emulator code to package up direct memory access
  * and simulate the behavior of the PDP-1 dma, hiding details of memory back wraparound, etc.
  *
- * Execution model. processHSCchannels() runs on the emulator thread once per main-loop pass
- * (one 5us memory cycle) while the machine runs. Each pass, the highest-priority channel that
- * wants a memory cycle on that pass takes it, and the CPU loses that cycle; a busy channel that
- * wants no cycle on this pass lets a lower one through, as the Type 19 arbitrated each memory
- * cycle (F25; F17 3-31). Every word reaches core at its own stolen cycle, except in IMMEDIATE
- * and THREADED modes, whose requester moves the data itself and leaves only the cycles owed.
- * Requests can come from any thread (the 340 has its own); the emulator thread never takes a
- * lock or waits on another thread here, so every field the two share is an atomic, and a
- * request is published by storing scanKind last. Only the emulator thread writes the panel's
- * hsc lamp, and only processHSCchannels() does; the tally belongs to main.c and cycle().
+ * ProcessHSCchannels() runs on the emulator thread once per main-loop pass, 5 usecs,
+ * while the emulator runs.
+ * Each pass, the highest-priority channel that wants a memory cycle on that pass takes it
+ * and the CPU loses that cycle.
+ * A busy channel that wants no cycle on this pass lets a lower one execute,
+ * the same way as the Type 19 arbitrated each memorycycle (F25; F17 3-31).
+ * The CPU decides whether a pass may be taken at all, and restarts an instruction that a steal interrupts.
+ * Every word reaches core in its own stolen cycle, except in IMMEDIATE and THREADED modes
+ * whose requester moves the data itself and leaves only the cycles owed.
+ * Requests can come from any thread.
+ * The emulator thread never takes a lock or waits on another thread here, every field the
+ * two share is an atomic and a request is published by storing scanKind last.
+ * Only the emulator thread writes the panel's hsc lamp, and only in processHSCchannels().
+ * The tally for the panel's pwm calculations belong to main.c and cycle().
  *
  * 23-Apr-2026 wje - rework to make it more realistic
  * 29-Apr-2026 wje - fix overrun of channel list
@@ -38,8 +42,8 @@
  * 23-Sep-2026 claude - per-cycle arbitration, owed cycles for THREADED and HSCsteal(), TRUESTEAL
  *    timed from simtime with one word per steal, lock-free publication and wake-up, lamp on the
  *    emulator thread only.
- *    The same day: TRUESTEAL's spreading is computed rather than accumulated. The accumulator
- *    made one word too many on about a quarter of transfer sizes, found by the DEC drum diagnostic.
+ *    TRUESTEAL's spreading is computed rather than accumulated.
+ * 3-Oct-2026 wje properly handle pdp-1 timing in the middle of a 2 cycle instruction.
 */
 
 #include <unistd.h>
@@ -121,9 +125,12 @@ static void hscSpinWait(int us);
 extern PDP1P pdp1P;     // from main.c
 
 // Service routine called from the run loop on the emulator thread, once per 5us pass.
+// mayTake is false when the CPU cannot be interrupted at this point, specifically inside
+// a sequence break's entry, or after cycle 0 of a once-deferred jump.
+// Transfers and owed cycles then stay due for a later pass.
 // Returns true if a channel took this pass's memory cycle (the CPU must not cycle), else false.
 bool
-processHSCchannels()
+processHSCchannels(bool mayTake)
 {
 int i;
 int lamp;
@@ -148,7 +155,7 @@ HSCControlP ctlP;
             }
         }
 
-        if( serviceChannel(ctlP, !steal) )
+        if( serviceChannel(ctlP, mayTake && !steal) )
         {
             steal = true;
         }
@@ -648,15 +655,14 @@ uint32_t data;
     ++(rqstP->memAddr);
 }
 
-// Run a TRUESTEAL transfer's spreading up to the ticks simtime says are due, making words due.
+// Run a TRUESTEAL transfer's spreading up to the ticks simtime says are due.
 // Ticks come from simtime, not from passes, so a mul or div that spans several memory cycles
 // in one pass makes the words it covered due at once, to be stolen right after it, as the
 // hardware held its breaks until the instruction finished (F25; F17 3-31).
-// The spreading is computed, not accumulated: after t of the transfer's ticks, t*count/ticks
-// words (rounded down) are due. That is at most one new word a tick, since count <= ticks, and
-// exactly count at the last tick. The running accumulator this replaced made one word too
-// many on about a quarter of transfers (7 words over 12 ticks, for one), which moved a word
-// past the end of the block.
+// The spreading is computed, not accumulated.
+// After t of the transfer's ticks, t*count/ticks words, rounded down, are due.
+// That is at most one new word a tick, since count <= ticks, and
+// exactly count at the last tick.
 static void
 advanceTrueSteal(HSCControlP ctlP)
 {
@@ -702,8 +708,9 @@ int made;
     }
 }
 
-// Service one channel for this pass. mayTake is false once a higher-priority channel has
-// taken the cycle; the channel then only keeps its bookkeeping and may still complete.
+// Service one channel for this pass.
+// MayTake is false once a higher-priority channel has taken the cycle.
+// The channel then only keeps its bookkeeping and may still complete.
 // Returns true if this channel took the pass's memory cycle, else false.
 static bool
 serviceChannel(HSCControlP ctlP, bool mayTake)

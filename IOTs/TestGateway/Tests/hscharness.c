@@ -35,6 +35,7 @@
  *    the one gap that suite documents but can't fill itself.
  * 23-Sep-2026 claude -- THREADED status is now finished by HSCwait(), and checks HSC-25 on for
  *    the channel rework.
+ * 03-Oct-2026 Claude -- the scan takes whether the CPU may give up the pass; checks HSC-52 to 54.
  */
 
 #include <stdio.h>
@@ -49,7 +50,7 @@
 // Not declared in highSpeedChannels.h -- it's called only from main.c in the real emulator,
 // which presumably gets its own prototype some other way (or relies on old-style implicit
 // declaration). Declared explicitly here since this harness builds with -Wall -Wextra.
-bool processHSCchannels(void);
+bool processHSCchannels(bool mayTake);
 
 // highSpeedChannels.c's own extern -- normally defined and set up by main.c.
 PDP1P pdp1P;
@@ -93,7 +94,7 @@ pass(void)
 {
 bool steal;
 
-    steal = processHSCchannels();
+    steal = processHSCchannels(true);
     thePdp1.simtime += 5000;
     return(steal);
 }
@@ -251,7 +252,7 @@ int steal;
     // per simulated 5us tick, for as many ticks as channel 1 alone needs.
     for( i = 0; i < chan1Count; ++i )
     {
-        steal = processHSCchannels();
+        steal = processHSCchannels(true);
         check("HSC-5 steal returned true while chan1 draining", steal == 1);
     }
 
@@ -276,14 +277,14 @@ int steal;
     // the same way, one word per call.
     for( i = 0; i < chan5Count; ++i )
     {
-        steal = processHSCchannels();
+        steal = processHSCchannels(true);
         check("HSC-9 steal returned true while chan5 draining", steal == 1);
     }
 
     check("HSC-10 chan5 status DONE after its own word count", HSCgetStatus(chan5P) == HSC_DONE);
 
     // One more tick with nothing busy should report no steal at all.
-    steal = processHSCchannels();
+    steal = processHSCchannels(true);
     check("HSC-11 no steal once both channels are done", steal == 0);
 
     // And the actual data: verify every word landed correctly, for both channels.
@@ -356,7 +357,7 @@ int i, steal, threadedCount;
     // very first call, not just the last), so this loop is the actual regression check.
     for( i = 0; i < threadedCount; ++i )
     {
-        steal = processHSCchannels();
+        steal = processHSCchannels(true);
         check("HSC-18 steal returned true while THREADED chan2 draining", steal == 1);
     }
 
@@ -381,7 +382,7 @@ int i, steal, threadedCount;
     req.toBufferP = (uint32_t[]){ 0444444 };
     check("HSC-22 post-drain HSCexecute on same channel does not hang", HSCexecute(chanP, &req) == HSC_BUSY);
 
-    steal = processHSCchannels();
+    steal = processHSCchannels(true);
     check("HSC-23 post-drain steal completes normally", steal == 1);
     check("HSC-24 free chan2 (second time)", HSCfreeChannel(chanP));
 
@@ -727,6 +728,84 @@ int n, i, passes, steals, overran, badBlock, badSteals;
     HSCfreeChannel(chanP);
 }
 
+// A pass the CPU cannot give up (mayTake false: inside a sequence break's entry, or after cycle 0
+// of a once-deferred jump) takes no cycle. A TRUESTEAL channel's clock keeps running, and its
+// words and a THREADED channel's owed cycles wait for the next passes that may be taken.
+static void
+testMayTakeFalse(void)
+{
+HSCChannelP trueP, threadP;
+HSCRequest req;
+Word buf[2];
+int i, steals;
+bool tookHeld;
+
+    fillCore(3600, 2, 0);
+    trueP = HSCallocateChannel(1);
+    memset(&req, 0, sizeof(req));
+    req.mode = HSC_MODE_TOMEM | HSC_MODE_TRUESTEAL;
+    req.count = 2;
+    req.memAddr = 3600;
+    req.wordTime = 100;                 // 10us a word: both words due within 4 ticks
+    req.toBufferP = (uint32_t[]){ 0111111, 0222222 };
+    HSCexecute(trueP, &req);
+
+    tookHeld = false;
+    for( i = 0; i < 6; ++i )
+    {
+        if( processHSCchannels(false) )
+        {
+            tookHeld = true;
+        }
+        thePdp1.simtime += 5000;
+    }
+    check("HSC-52 TRUESTEAL takes no cycle on a pass that may not be taken",
+        !tookHeld && (countChanged(3600, 2, 0) == 0) && (HSCgetStatus(trueP) == HSC_BUSY));
+
+    steals = 0;
+    for( i = 0; i < 3; ++i )
+    {
+        if( pass() )
+        {
+            ++steals;
+        }
+    }
+    check("HSC-53 TRUESTEAL's held words go at the next passes that may be taken",
+        (steals == 2) && (countChanged(3600, 2, 0) == 2) && (HSCgetStatus(trueP) == HSC_DONE));
+    drainAndWait(trueP);
+    HSCfreeChannel(trueP);
+
+    threadP = HSCallocateChannel(3);
+    memset(&req, 0, sizeof(req));
+    req.mode = HSC_MODE_FROMMEM | HSC_MODE_THREADED;
+    req.count = 2;
+    req.memAddr = 3600;
+    req.fromBufferP = buf;
+    HSCexecute(threadP, &req);
+    HSCwait(threadP);
+
+    tookHeld = false;
+    for( i = 0; i < 4; ++i )
+    {
+        if( processHSCchannels(false) )
+        {
+            tookHeld = true;
+        }
+        thePdp1.simtime += 5000;
+    }
+    steals = 0;
+    for( i = 0; i < 4; ++i )
+    {
+        if( pass() )
+        {
+            ++steals;
+        }
+    }
+    check("HSC-54 owed cycles wait for passes that may be taken, then are all paid",
+        !tookHeld && (steals == 2));
+    HSCfreeChannel(threadP);
+}
+
 // A thread blocked in HSCwait() on a normal transfer is woken by completion, and by HSCreset().
 // Runs last: HSCreset() aborts every assigned channel.
 static void
@@ -784,6 +863,7 @@ main(void)
     testOwedCycles();
     testLampOnEmulatorThreadOnly();
     testTrueStealExactCount();
+    testMayTakeFalse();
     testWaiterWakeups();
 
     printf("\n%d check%s failed\n", failCount, (failCount == 1) ? "" : "s");

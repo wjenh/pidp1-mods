@@ -34,6 +34,9 @@
  * Claude 30-Sep-2026 display.c closes a display client that has left, and lifts its pen, without waiting for a write to fail.
  * Claude 30-Sep-2026 display.c lifts the pen of a display client dropped after a failed write too, and no longer
  *    reads the lightpen from that client's fd once it is closed.
+ * Claude 03-Oct-2026 a channel steal before an instruction's final cycle restarts the instruction, and none is
+ *    taken in a sequence break's entry or after cycle 0 of a once-deferred jump (pdp1.c, F17 6-18, 6-19).
+ *    The panel tally keeps the cycles of an instruction a break cancels, and all three break cycles.
 */
 
 #include <fcntl.h>
@@ -105,7 +108,9 @@ ConfigurationP getConfiguration(void);     // so other stuff can use our configu
 
 extern ConfigurationP loadConfigFile(char *filenameP);
 extern void HSCreset(void);
-extern bool processHSCchannels(void);
+extern bool processHSCchannels(bool mayTake);
+extern bool hscBreakAllowed(void);
+extern void hscBreak(PDP1 *pdp);
 extern bool setDisplayFD(int screen, int fd);
 
 static bool checkBreakpoints(PDP1 *pdp1P);
@@ -388,8 +393,9 @@ bool ran;               // the pass ran the machine, a stolen cycle included
 
                 // A dma transfer can be in STEAL mode, in which case it effectively halts the processor
                 // and transfers all of its requested words at 5us/word. We fake this by just not cycling.
-                if( processHSCchannels() )          // need to steal a cycle
+                if( processHSCchannels(hscBreakAllowed()) )   // need to steal a cycle
                 {
+                    hscBreak(pdp);                  // mid-instruction, restarts the instruction
                     updatelights(pdp, panel);
                     updatelights_pwm(panel, 1);     // tally one stolen cycle for new panel driver
                     if( timingEnabled )

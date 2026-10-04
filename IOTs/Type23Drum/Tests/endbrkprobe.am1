@@ -15,7 +15,9 @@ Type 23 drum end-of-transfer break probe
 //   r2n = 0: no break with breaks off. r2e = 1: the waiting break taken at esm. r2p is
 //     wherever the drum was then.
 //   r3n = 2: both breaks. r3a, the first, is 1000 to 1010 (the dba address); r3b, the
-//     second, is 1100 to 1110 (the end).
+//     second, is 1100 to 1140: the end break is taken when the first break's routine
+//     returns, and that routine's memory references wait for the transfer to end, as a
+//     channel's steals restart them (F17 6-18).
 //   done = 1.
 // Before the end break was added, r1n = 0, r2e = 0 and r3n = 1.
 #include <DRUM/type23drumdefs.ah>

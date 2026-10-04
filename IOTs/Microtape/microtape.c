@@ -7,7 +7,7 @@
  * 21-Sep-2026 Claude - mse now remounts if its image file changed
  * 27-Sep-2026 Claude - image writes go through a write-behind queue, so a slow card or disk does
  *    not hold the emulator thread
- * 4-Oct-2035 wje - power clear hook
+ * 4-Oct-2026 wje - power clear hook
  */
 
 #define NOT_IN_PDP1

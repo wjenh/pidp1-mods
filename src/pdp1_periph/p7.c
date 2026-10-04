@@ -8,9 +8,11 @@
  * The formatting is based on research done at Stanford many years ago that determined the major causes
  * of coding errors, the formatting reduced that. It works.
  *
- * wje 07-Feb-26 break from original repo, now independent. Initial reformatting. lightpen support.
+ * wje 07-Feb-26 break from original repo, now independent.
+ *     Initial reformatting. lightpen support.
  * wje 11-Feb-26 update with new lightlen code.
  * wje 18-Feb-26 now working with the lightpen
+ * wje 4-Oct-26 add a fix so this works with the new emulator optimizations
  *
 */
 
@@ -21,6 +23,12 @@
 // Logging control is there.
 
 #ifdef UNITY_BUILD
+
+#include <errno.h>
+#include <time.h>
+
+// Frame interval in us, ~30 frames a second. The excite pass's decay per frame assumes this rate.
+#define FRAMETIME 33333
 
 GLuint pvbo;
 GLint point_program, excite_program, combine_program;
@@ -338,100 +346,166 @@ process(int frmtime)
     nnewpoints = 0;
 }
 
+// The host's monotonic time in us.
+uint64
+usNow(void)
+{
+struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return( ((uint64)ts.tv_sec * 1000000) + ((uint64)ts.tv_nsec / 1000) );
+}
+
+// The display thread, reads point words from the emulator and hands
+// the draw loop a frame every FRAMETIME us.
+// The display keeps its own clock since the emulator sends no timing.
+// A point is stamped with the time it is read,
+// and frames come whether points arrive or not,
+// so the image fades when the emulator stops drawing.
 void*
 dispthread(void *args)
 {
 uint32 cmd;
 uint32 cmds[128];
+uint8 *bufP;
+int carry;
 int ncmds;
 int nbytes;
 int i;
-uint64 time;
-uint64 frmtime = 33333;
+int timeout;
+int esc;
+uint64 now;
+uint64 frameStart;
+uint64 elapsed;
+uint64 realtime_start;
+struct pollfd pfd;
+Point *np;
 int x, y, intensity, dt;
 
-    uint64 realtime_start = SDL_GetPerformanceCounter();
+    realtime_start = SDL_GetPerformanceCounter();
     simtime = 0;
     realtime = realtime_start;
 
-    time = 0;
-    int esc = 0;
+    bufP = (uint8 *)cmds;
+    carry = 0;
+    esc = 0;
+    frameStart = usNow();
 
     for(;;)
     {
-        nbytes = read(dpyfd, cmds, sizeof(cmds));
+        // A frame ages the points by the time that actually passed,
+        // a late one (the draw loop was slow) is not followed by
+        // a burst of catch-up frames.
+        now = usNow();
+        if( (now - frameStart) >= FRAMETIME )
+        {
+// THREAD: wait here until ready
+            wait_canprocess();
+            now = usNow();
+            elapsed = (now - frameStart);
+            frameStart = now;
+            simtime += elapsed;
+            realtime = (SDL_GetPerformanceCounter() - realtime_start);
+            process((int)elapsed);
+// THREAD: signal ready to draw
+            signal_draw();
+        }
+
+        // Wait for points no later than the next frame is due.
+        timeout = (int)(((frameStart + FRAMETIME) - now + 999) / 1000);
+        pfd.fd = dpyfd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        i = poll(&pfd, 1, timeout);
+        if( i == 0 )
+        {
+            continue;
+        }
+
+        if( i < 0 )
+        {
+            if( errno == EINTR )
+            {
+                continue;
+            }
+
+            fprintf(stderr, "dpy poll failed, errno %d\n", errno);
+            break;
+        }
+
+        // A word can be split across reads.
+        // Its first bytes are kept at the front of cmds.
+        nbytes = read(dpyfd, (bufP + carry), (sizeof(cmds) - carry));
 
         if(nbytes <= 0)
         {
+            if( (nbytes < 0) && (errno == EINTR) )
+            {
+                continue;
+            }
+
             // This seems to happen when the pdp1 isn't noticing the closed
             // connection quickly enough. shouldn't be a huge issue in practice
             fprintf(stderr, "dpy disconnected\n");
             break;
         }
 
-        if((nbytes % 4) != 0)
-        {
-            printf("yikes %d\n", nbytes), exit(1);
-        }
-
-        ncmds = nbytes / 4;
+        now = usNow();
+        nbytes += carry;
+        ncmds = (nbytes / 4);
+        carry = (nbytes % 4);
 
         for(i = 0; i < ncmds; i++)
         {
             cmd = cmds[i];
-            dt = cmd >> 23;
+            dt = (cmd >> 23);
 
-            // escape for longer delays of nothing
-            if(esc)
+            // The old pdp1 sent a delay in each point
+            // or an escape pair of 511, then a delay word
+            // word for a longer gap.
+            // This was removed for efficiency, these shouldn't be
+            // received anymore, just here for safety.
+            if( esc )
             {
                 esc = 0;
-                time += cmd;
             }
-
-            if(dt == 511)
+            else if( dt == 511 )
             {
                 esc = 1;
             }
             else
             {
-                x = cmd & 01777;
-                y = cmd >> 10 & 01777;
-                intensity = cmd >> 20 & 7;
-                time += dt;
+                x = (cmd & 01777);
+                y = ((cmd >> 10) & 01777);
+                intensity = ((cmd >> 20) & 7);
 
-                if(x || y)
+                // Newpoints is emptied every frame,
+                // it fills only if frames stopi.
+                // Drop rather than overrun it.
+                if( (x || y) && (nnewpoints < (int)nelem(newpoints)) )
                 {
-                    Point *np = &newpoints[nnewpoints++];
+                    np = &newpoints[nnewpoints++];
                     np->x = x;
                     np->y = y;
                     np->i = intensity;
-                    np->time = time;
+                    np->time = (int)(now - frameStart);
                 }
             }
+        }
 
-            // we hope draw is finished before we decide to flip again
-            // 30fps should be doable
-            while(time > frmtime)
-            {
-                time -= frmtime;
-                simtime += frmtime;
-                realtime = SDL_GetPerformanceCounter() - realtime_start;
-
-// THREAD: wait here until ready
-                wait_canprocess();
-                process(frmtime);
-// THREAD: signal ready to draw
-                signal_draw();
-            }
+        if( carry )
+        {
+            memmove(bufP, (bufP + (ncmds * 4)), carry);
         }
     }
 
     SDL_Event event = { SDL_QUIT };
     SDL_PushEvent(&event);
+    return(nil);
 }
 
-// For the real hardware, the Type 30 hardware would figure out if there was a hit
-// at the last drawn pixel when issuing the completion pulse,
+// For the real hardware, the Type 30 hardware would figure out if there
+// was a hit at the last drawn pixel when issuing the completion pulse,
 // but that's not possible here, let it be determined back in the pdp1 code.
 void
 updatePen(bool penDown, int pdpx, int pdpy)
@@ -444,12 +518,15 @@ uint32 cmd;
         // Safety check in case we didn't limit the coords properly
         if( (pdpx > 1023) || (pdpy > 1023) )
         {
-            logger(LOG_LIGHTPEN, " UpdatePen coords out of bounds, x %d y %d\n", pdpx, pdpy);
+            logger(LOG_LIGHTPEN,
+                " UpdatePen coords out of bounds, x %d y %d\n", pdpx, pdpy);
             return;
         }
 
-        // The original code did not properly adjust the coords from SDL to PDP1.
-        // SDL has the upper left corner x,y as 0,0, PDP1 is -512,512, plus the PDP1 coords are 1's complement.
+        // The original code did not properly adjust the coords from SDL
+        // to PDP1.
+        // SDL has the upper left corner x,y as 0,0, PDP1 is -512,512.
+        // Additionally, the PDP1 coords are 1's complement.
         pdpx -= 512;
         if( pdpx < 0 )
         {
@@ -478,7 +555,8 @@ uint32 cmd;
     }
     else
     {
-        logger(LOG_LIGHTPEN_WRITE,"lightpen cmd 0x%08x sent %d bytes\n", cmd, i);
+        logger(LOG_LIGHTPEN_WRITE,
+            "lightpen cmd 0x%08x sent %d bytes\n", cmd, i);
     }
 }
 

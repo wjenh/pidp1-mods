@@ -38,6 +38,7 @@
  *    taken in a sequence break's entry or after cycle 0 of a once-deferred jump (pdp1.c, F17 6-18, 6-19).
  *    The panel tally keeps the cycles of an instruction a break cancels, and all three break cycles.
  * Claude 04-Oct-2026 the power switch's off edge gives the IOT plugins a power clear (dynamicIots.c).
+ * Claude 04-Oct-2026 a power cycle puts sbs16 back as the configuration has it.
 */
 
 #include <fcntl.h>
@@ -491,10 +492,13 @@ bool ran;               // the pass ran the machine, a stolen cycle included
 
             // This branch runs on every pass until the power comes back; the plugins' power
             // clear is once, at the off edge, and before their stop, while a device that has
-            // not been stopped can still finish with its files.
+            // not been stopped can still finish with its files. The 16-channel break system is
+            // an installed option: a program's IOT may have switched it, the power cycle puts it
+            // back as configured.
             if( prev_power_sw )
             {
                 dynamicIotProcessorPowerClear();
+                pdp->sbs16 = configurationP->sbs16Enabled;
             }
 
             dynamicIotProcessorStop();

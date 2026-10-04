@@ -22,6 +22,7 @@ void mtIOPoll(PDP1 *pdp1P);
 void mtStart(void);
 void mtStop(void);
 void mtUpdate(void);
+void mtPowerClear(void);
 
 // For the host tests only: the control and its drives.
 Mt550P mtControl(void);

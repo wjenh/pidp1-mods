@@ -15,6 +15,7 @@
  *
  * 21-Jun-2026 wje cleanup, no functional change
  * 4-Jul-2026 wje more cleanup, minor fixes, no significant functional change
+ * 4-Oct-2026 Claude power clear abandons a character and clears the light pen status.
  */
 
 #include <unistd.h>
@@ -66,6 +67,8 @@ static int xpos, ystart;
 static int shiftregister;
 static int bitCtr;
 static uint64_t dueNs;          // device time at which the next dot position, or the end, is due
+static PDP1P lastPdp1P;         // from the last call that had it, for the power clear; NULL if
+                                // none, and then no light pen status can have been set
 
 static void configure(void);
 static int flagToBits(int);
@@ -85,6 +88,7 @@ bool noWait;
 
     iotCondLog(LOG_IOT, "In iot 27 as %o\n", dev);
 
+    lastPdp1P = pdp1P;
     noWait = false;
     needCompletion = completion;
 
@@ -180,6 +184,27 @@ iotStop()
     iotCloseLog();
 }
 
+// Called once when the power switch goes off, before iotStop(). The core has disarmed the
+// deadline, so a character being drawn is abandoned, and its completion with it. The light pen
+// status, CKS 0400000, is cleared. The format set by glf (size, auto-space) is kept: the Type 33
+// manual (1964) has no clear input for the format buffer, whose flip-flops change only by a
+// jam transfer from glf (pp. 3-16, 3-18), and none of its interface signals is a power clear
+// (Table 2-1). Its intensity and subscript are cleared by the next gpl, as now.
+// No return value.
+void
+iotPowerClear(void)
+{
+    draw = false;
+    charDone = false;
+    needCompletion = false;
+    bitCtr = 0;
+
+    if( lastPdp1P )
+    {
+        CKS(lastPdp1P) &= ~0400000;
+    }
+}
+
 // Actually put out our dots, each when its position comes due, then complete when the
 // half, and for gpr the increment cycles, are over.
 void
@@ -189,6 +214,7 @@ int bit;
 int x, y;
 uint64_t now;
 
+    lastPdp1P = pdp1P;
     now = iotTime(IOT_TIME_DEVICE);
 
     if( draw )

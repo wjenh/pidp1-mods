@@ -7,7 +7,7 @@
  *
  * 11-Sep-2026 wje/claude - initial version
  * 13-Sep-2026 claude - write enable, All Halt, the block mark at space 0 and the D256 latch
- *                      (MiscTasks/Completed/TASK-TAPE-HALT-WRITE.md)
+ * 3-Oct-2026 wje - power clear hook
  */
 
 #include <string.h>
@@ -288,10 +288,35 @@ int unit;
     runTo(cP, now);
 }
 
-// ---- Internals -------------------------------------------------------------------------------
+// Power clear (H-550 pp. 2-18 and 2-19): the computer's power clear pulses clear the
+// selection, motion, function and WRITE ENABLE flip-flops, and the error status, which clears
+// the data and block end flags.
+/// The plugin calls this at the power switch's off edge.
+// Every drive stops as All Halt would, its latched direction is cleared with its go, and the
+// control is left with nothing selected, no selection delay, mode 0 and no flags.
+// The tapes stay mounted, a real reel stays on its drive, and the buffer keeps its word.
+// No return value.
+void
+mt550PowerClear(Mt550P cP, uint64_t now)
+{
+int unit;
 
-// Returns the mode as the control acts on it: 0-3 as given, 4-7 treated as move (mode 7's
-// erase is done once, by mt550LoadControl(), before the tape moves).
+    mt550AllHalt(cP, now);
+
+    for( unit = 1; unit <= MT_UNITS; ++unit )
+    {
+        cP->units[unit].goCmd = false;
+        cP->units[unit].revCmd = false;
+    }
+
+    cP->selUnit = 0;
+    cP->selDip = false;
+    cP->mode = MT_MODE_MOVE;
+    clearErrors(cP);
+    runTo(cP, now);
+}
+
+// Returns the mode.
 static int
 effectiveMode(int mode)
 {
@@ -311,10 +336,10 @@ requestBreak(Mt550P cP)
 }
 
 // Raises the data flag (blockEnd false) or the block end flag (blockEnd true), optionally
-// loading the buffer with word first. If either flag is still up from the previous request
-// the program has missed it: MISS and the error flag are set (p. 3-9, "Should the computer
-// fail to recognize the data flag before the next raise data flag pulse is issued"; H-550
-// p. 2-31), and the new flag is raised anyway. Every raise requests a break.
+// loading the buffer with word first.
+// If either flag is still up from the previous request the program has missed it and
+// MISS and the error flag are set per the DEC H-550 manual.
+// Every raise requests a break.
 // No return value.
 static void
 raiseFlag(Mt550P cP, bool blockEnd, bool load, uint32_t word)
@@ -341,11 +366,11 @@ raiseFlag(Mt550P cP, bool blockEnd, bool load, uint32_t word)
     requestBreak(cP);
 }
 
-// Sets one error condition (*conditionP: MISS, END or UNABLE) and the error flag. The error
-// conditions are ORed to hold the WRITE ENABLE flip-flop at 0 (H-550 p. 2-32), so once an
+// Sets one error condition, MISS, END or UNABLE, and the error flag.
+// The error conditions are ORed to hold the WRITE ENABLE flip-flop at 0 (H-550 p. 2-32), so once an
 // error is found nothing more is written until it is cleared and write mode is commanded
-// again ("Program too slow stops writing operation", DEC's Control Type 550 summary). The
-// caller requests the break.
+// again, "Program too slow stops writing operation", DEC's Control Type 550 summary.
+// The // caller requests the break.
 // No return value.
 static void
 setError(Mt550P cP, bool *conditionP)
@@ -369,7 +394,8 @@ clearErrors(Mt550P cP)
     cP->unable = false;
 }
 
-// Forgets any write in progress: no word requested, no boundary to skip, no data flag
+// Forgets any write in progress.
+// Sets no word requested, no boundary to skip, no data flag
 // waiting for the tape to reach speed, no mlc held for a checksum.
 // No return value.
 static void
@@ -388,9 +414,8 @@ selectedUnit(Mt550P cP)
     return( cP->selUnit ? &cP->units[cP->selUnit] : NULL );
 }
 
-// Returns true if the control can raise flags for drive uP right now: it is the selected
-// drive, it has a tape, it is at speed (starts and turnarounds are "delay in progress", and a
-// stopping tape has its go flip-flop clear, p. 3-3), and no selection delay is running.
+// Returns true if the control can raise flags for drive uP right now, it is the selected
+// drive, it has a tape, it is at speed, and no selection delay is running.
 static bool
 flagsEnabled(Mt550P cP, Mt555UnitP uP)
 {
@@ -405,10 +430,9 @@ dirSlot(int dir, int slot)
     return( (dir > 0) ? slot : ((MT_SLOTS_PER_BLOCK - 1) - slot) );
 }
 
-// Returns the direction-relative slot (0-263) the head of the selected unit uP is passing now
-// -- the one its next boundary ends -- or -1 in an end zone. Only meaningful while the control
-// is taking that unit's boundaries (a mode other than move, flags enabled), which keeps the
-// boundary pointer current.
+// Returns the direction-relative slot (0-263) the head of the selected unit uP is passing now,
+// the one the next boundary ends or -1 in an end zone.
+// Only meaningful while the control is tracking that unit's boundaries.
 static int
 headSlot(Mt555UnitP uP)
 {
@@ -423,9 +447,9 @@ int64_t slot;
     return( dirSlot(uP->dir, (int)(slot % MT_SLOTS_PER_BLOCK)) );
 }
 
-// Returns true if the control is inside the D256 window: writing, with the last data word
-// asked for (its data flag comes at the end of slot 257) and the trailing checksum not yet on
-// the tape (it is taken at the end of slot 259). The head is then in slot 258 or 259.
+// Returns true if the control is inside the D256 window, writing, with the last data word
+// asked for.
+// The head is then in slot 258 or 259.
 static bool
 atLastWord(Mt550P cP)
 {
@@ -442,10 +466,11 @@ int r;
     return( (r == MT_SLOT_PREFINAL) || (r == MT_SLOT_FINAL) );
 }
 
-// Carries out a LOAD CONTROL word io at time now, as mt550LoadControl() describes, for a
-// command given then or held until then. The caller has cleared the flags and brought the
-// control up to now, and recomputes the next event afterwards (this is also called from
-// inside an event, so it must not call runTo()).
+// Carries out a LOAD CONTROL word io at time 'now', as mt550LoadControl() describes, for a
+// command given then or held until then.
+// The caller has cleared the flags and brought the control up to this time
+// and recomputes the next event afterwards.
+// This is also called from/ inside an event so it must not call runTo().
 // No return value.
 static void
 applyControl(Mt550P cP, uint64_t now, uint32_t io)

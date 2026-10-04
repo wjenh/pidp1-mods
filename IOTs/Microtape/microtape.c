@@ -7,6 +7,7 @@
  * 21-Sep-2026 Claude - mse now remounts if its image file changed
  * 27-Sep-2026 Claude - image writes go through a write-behind queue, so a slow card or disk does
  *    not hold the emulator thread
+ * 4-Oct-2035 wje - power clear hook
  */
 
 #define NOT_IN_PDP1
@@ -248,6 +249,20 @@ mtUpdate(void)
     }
 
     configure(ctl.lastTime);
+}
+
+// Called once when the power switch goes off, before mtStop(). Power clear stops every drive
+// and resets the control's selection, mode and flags (see mt550PowerClear()); the tapes stay
+// mounted. The I/O poll serviced the control on the last powered pass, so its time is now.
+// No return value.
+void
+mtPowerClear(void)
+{
+    if( ctlReady )
+    {
+        mt550PowerClear(&ctl, ctl.lastTime);
+        reportIoErrors();
+    }
 }
 
 // Returns the control, for the host tests (IOTs/Microtape/Tests/plugintest.c).

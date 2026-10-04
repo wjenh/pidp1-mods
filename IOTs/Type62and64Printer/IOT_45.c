@@ -16,6 +16,7 @@
  * 27-Sep-2026 Claude the output file is a non-blocking fd; a FIFO no longer hangs the emulator.
  * 27-Sep-2026 Claude the file is opened and written on a writer thread.
  * 28-Sep-2026 Claude the print and spacing delays are simtime deadlines, not counts of executed cycles.
+ * 04-Oct-2026 Claude power clear empties the print buffer and resets the shift, the mode and the wait.
 */
 
 #include <errno.h>
@@ -859,6 +860,23 @@ iotDeadline(PDP1 *pdp1P)
         wantCompletion = false;
         IOCOMPLETE(pdp1P);
     }
+}
+
+// Called once when the power switch goes off. Power clear resets the printer's control: the
+// characters loaded and not printed are dropped, the shift goes back to lower case, the mode to
+// flexo, and a print or spacing under way is forgotten (the core has disarmed its deadline), its
+// completion with it. The paper does not move, so the line count stays. The output file and its
+// name are the host's, and are kept.
+// No return value.
+void
+iotPowerClear(void)
+{
+    bufLoc = 0;
+    memset(buffer, 0, sizeof(buffer));
+    curShift = LCS;
+    asciiMode = false;
+    inWait = false;
+    wantCompletion = false;
 }
 
 void

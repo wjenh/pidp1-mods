@@ -110,5 +110,6 @@ Mt555UnitP mt550Unit(Mt550P cP, int unit);
 void mt550UnitRemounted(Mt550P cP, int unit, uint64_t now);
 void mt550FlushAll(Mt550P cP);
 void mt550AllHalt(Mt550P cP, uint64_t now);
+void mt550PowerClear(Mt550P cP, uint64_t now);
 
 #endif

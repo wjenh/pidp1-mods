@@ -33,6 +33,8 @@
 // lag-cap span does not. Each has its own phase: the clock's from when it was enabled, the
 // countdown's from its IOT, so a count of N takes N ms. One deadline serves both, at the earlier
 // of the two next times.
+//
+// 04-Oct-2026 Claude power clear stops the clock and the countdown and clears CKS 020.
 
 #define TICKNS MSTONS(1)
 
@@ -51,6 +53,8 @@ static int counterCompleteNeeded;
 
 static uint64_t nextTick;           // run time of the clock's next 1 ms tick, while enabled
 static uint64_t nextCount;          // run time of the countdown's next 1 ms count, while counting
+static PDP1 *lastPdp1P;             // from the last call that had it, for the power clear; NULL
+                                    // if none, and then CKS 020 cannot have been set
 
 static void armDeadline(void);
 
@@ -65,6 +69,7 @@ int i;
         return(1);
     }
 
+    lastPdp1P = pdp1P;
     iotLog("In clk iot mb %o dev %o\n", MB(pdp1P), dev);
 
     if( (MB(pdp1P) & 03700) == 02000 )     // IOT 2032, pay attention to rest
@@ -160,6 +165,7 @@ iotDeadline(PDP1 *pdp1P)
 {
 uint64_t now;
 
+    lastPdp1P = pdp1P;
     now = iotTime(IOT_TIME_RUN);
 
     if( enabled && (nextTick <= now) )
@@ -216,6 +222,30 @@ uint64_t now;
     }
 
     armDeadline();
+}
+
+// Called once when the power switch goes off. Power clear clears the in-out control flip-flops
+// (F17 3-45 and 6-3), so the clock is left as at load: disabled, its count at 0, both interrupts off,
+// no countdown and no completion owed, and the countdown's CKS 020 clear. The core has disarmed
+// the deadline. sbs16 is not the clock's: the core restores it from the configuration.
+// No return value.
+void
+iotPowerClear(void)
+{
+    enabled = 0;
+    counter = 0;
+    enable32ms = channel32ms = 0;
+    enable1min = channel1min = 0;
+    completeNeeded = 0;
+
+    countdown = 0;
+    counterInterrupt = counterChannel = 0;
+    counterCompleteNeeded = 0;
+
+    if( lastPdp1P )
+    {
+        CKS(lastPdp1P) &= ~COUNTER_CKS_FLAG;
+    }
 }
 
 // Arms the one deadline at the earlier of the next tick and the next count, or cancels it when

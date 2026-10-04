@@ -18,6 +18,7 @@
  * 11-Sep-2026 wje/Claude add magtape dispatching
  * 24-Sep-2026 Claude a network tape no longer blocks the emulator: no data yet means try again next pass.
  * 27-Sep-2026 Claude the echo's write() result is discarded explicitly (the -Wunused-result warning).
+ * 04-Oct-2026 Claude power clear resets the Microtape's control (microtape.c, control550.c).
  */
 #include "iotHandler.h"
 #include "microtape.h"
@@ -96,6 +97,15 @@ void
 iotStop(void)
 {
     mtStop();
+}
+
+// Called once when the power switch goes off, before iotStop().
+// The Microtape's control is power cleared; the reader's state is in PDP1, where pwrclr() resets it.
+// No return value.
+void
+iotPowerClear(void)
+{
+    mtPowerClear();
 }
 
 // Called on SIGHUP, after pidp1.config has been reloaded.

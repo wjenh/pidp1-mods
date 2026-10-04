@@ -11,6 +11,7 @@
  *
  * 17-Jun-2026 wje finally adding a revision hisotry. Fix for the original incorrect code for twe screen mode.
  * 29-Sep-2026 Claude - the unused IDLEDELAY define is gone with the display aging it was for.
+ * 04-Oct-2026 Claude - power clear clears the light pen status and drops an owed completion.
  */
 
 #include <unistd.h>
@@ -67,6 +68,8 @@ static bool dpyShiftEnabled;
 static bool sdbEnabled;
 static bool needCompletion;
 static bool twoscreensEnabled;
+static PDP1 *lastPdp1P;             // from the last call that had it, for the power clear; NULL
+                                    // if none, and then no light pen status can have been set
 
 static void configure(void);
 
@@ -89,6 +92,7 @@ int curX, curY, intensity;
 int delayTime;
 bool noWait;
 
+    lastPdp1P = pdp1P;
     noWait = false;
     delayTime = 0;
 
@@ -218,6 +222,25 @@ iotStop()
     iotCloseLog();
 }
 
+// Called once when the power switch goes off, before iotStop(). The core has disarmed the
+// deadline, so a point not yet shown is dropped, and the completion its dpy owed with it; left
+// owed, the next sdb or aperture IOT would give it. The light pen status, CKS 0400000, is
+// cleared. The Type 30E manual (1963, pp. 2-1, 2-2) gives the display no power clear input, only
+// the next dpy's clear pulse, but its flip-flops come up at power-on in no known state, and
+// clear is the one a program can rely on, as for the Type 33. The aperture is the pen's mask,
+// and is kept.
+// No return value.
+void
+iotPowerClear(void)
+{
+    needCompletion = false;
+
+    if( lastPdp1P )
+    {
+        CKS(lastPdp1P) &= ~0400000;
+    }
+}
+
 // Actually put out our dots, 45 usecs after the dpy
 void
 iotDeadline(PDP1 *pdp1P)
@@ -225,6 +248,7 @@ iotDeadline(PDP1 *pdp1P)
 int curX, curY, intensity;
 int realX, realY;
 
+    lastPdp1P = pdp1P;
     getDisplayData(0, &curX, &curY, &intensity);
 
     iotCondLog(LOG_POLL, "IOT 7 poll x %d y %d intensity %d\n",

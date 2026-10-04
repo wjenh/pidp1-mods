@@ -15,6 +15,7 @@
  * It can optionally implement:
  * void iotStart(void); - called when the emulator transitions to run state
  * void iotStop(void); - called when the emulator transitions to halt state
+ * void iotPowerClear(void); - called once when the power switch goes off, before iotStop()
  * void iotUpdate(void); - called when the emulator gets SIGHUP to reload its configuration
  *
  * Pseudo-asynchronous behavior can be done by implementing:
@@ -42,6 +43,8 @@
  * turns it on, which main.c no longer does (removed on purpose); when on, every handler and
  * poll call is bracketed by two gettime() calls and its duration accumulated by device number,
  * so the report can say which device's code the emulator thread's cycle time is going to.
+ * 4-Oct-2026 claude the power switch's off edge disarms every deadline and calls the optional
+ * iotPowerClear(), so a device can tell a power cycle from a STOP.
  */
 
 #include <unistd.h>
@@ -222,6 +225,33 @@ IotStopP stopP;
     }
 
     stopped = 1;
+}
+
+// Called once when the power switch goes off, before dynamicIotProcessorStop(). The power clear
+// ends whatever a device was timing, so every deadline is disarmed first; then each plugin's
+// iotPowerClear() drops what else it holds that the hardware's power clear would reset.
+// A deadline would otherwise fire after power-on, as device time runs again in the halt.
+void
+dynamicIotProcessorPowerClear(void)
+{
+int i;
+IotPowerClearP powerClearP;
+
+    for( i = 0; i < deadlineCount; ++i )
+    {
+        deadlineList[i].entryP->deadlineArmed = false;
+    }
+
+    earliestNs[IOT_TIME_DEVICE] = UINT64_MAX;
+    earliestNs[IOT_TIME_RUN] = UINT64_MAX;
+
+    for( i = 0; i < 64; ++i )                  // handles[] has 64 entries (device numbers 0-63)
+    {
+        if( (powerClearP = handles[i].powerClearP) && !handles[i].isAlias )
+        {
+            powerClearP();
+        }
+    }
 }
 
 // Called when the emulator gets SIGHUP so an IOT can reload its configuration.
@@ -526,6 +556,7 @@ char fname[256];
     // not required to be implemented
     entryP->startP = (IotStartP)dlsym(entryP->dlHandleP, "iotStart");
     entryP->stopP = (IotStopP)dlsym(entryP->dlHandleP, "iotStop");
+    entryP->powerClearP = (IotPowerClearP)dlsym(entryP->dlHandleP, "iotPowerClear");
     entryP->updateP = (IotStopP)dlsym(entryP->dlHandleP, "iotUpdate");
 
     entryP->pollP = (IotPollP)dlsym(entryP->dlHandleP, "iotPoll");

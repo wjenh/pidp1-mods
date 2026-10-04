@@ -37,6 +37,7 @@
  * Claude 03-Oct-2026 a channel steal before an instruction's final cycle restarts the instruction, and none is
  *    taken in a sequence break's entry or after cycle 0 of a once-deferred jump (pdp1.c, F17 6-18, 6-19).
  *    The panel tally keeps the cycles of an instruction a break cancels, and all three break cycles.
+ * Claude 04-Oct-2026 the power switch's off edge gives the IOT plugins a power clear (dynamicIots.c).
 */
 
 #include <fcntl.h>
@@ -225,6 +226,7 @@ bool prev_continue_sw;
 bool prev_examine_sw;
 bool prev_deposit_sw;
 bool prev_readin_sw;
+bool prev_power_sw;
 
 FILE *tmpfP;    // used for timing
 u64 realtimeBefore;     // pdp->realtime before throttle(); it changes only if throttle() slept
@@ -254,6 +256,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
         prev_examine_sw = pdp->examine_sw;
         prev_deposit_sw = pdp->deposit_sw;
         prev_readin_sw = pdp->readin_sw;
+        prev_power_sw = pdp->power_sw;
         updateswitches(pdp, panel);
 
         // Serve the network debugger's requests here, between cycles and just before the flag
@@ -485,6 +488,15 @@ bool ran;               // the pass ran the machine, a stolen cycle included
         else
         {
             stopaudio();
+
+            // This branch runs on every pass until the power comes back; the plugins' power
+            // clear is once, at the off edge, and before their stop, while a device that has
+            // not been stopped can still finish with its files.
+            if( prev_power_sw )
+            {
+                dynamicIotProcessorPowerClear();
+            }
+
             dynamicIotProcessorStop();
             pwrclr(pdp);
 

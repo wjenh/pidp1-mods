@@ -5,6 +5,7 @@
 int dynamicIotProcessor(PDP1 *pdpP, int device, int pulse, int completion);
 void dynamicIotProcessorStart(void);
 void dynamicIotProcessorStop(void);
+void dynamicIotProcessorPowerClear(void);
 void dynamicIotProcessorUpdate(void);
 void dynamicIotProcessorSetPDP1(PDP1 *pdpP);
 void dynamicIotProcessorDoPoll(PDP1 *pdpP);
@@ -44,6 +45,10 @@ typedef void (*IotStartP)(void);
 // If implemented, will be called when the emulator goes into halt
 // The IOT handler implements a function 'void iotStop()'.
 typedef void (*IotStopP)(void);
+
+// If implemented, will be called once when the power switch goes off, before iotStop()
+// The IOT handler implements a function 'void iotPowerClear()'.
+typedef void (*IotPowerClearP)(void);
 
 // If implemented, will duplicate this IOT into the IOT number returned.
 typedef int (*IotAliasP)();
@@ -96,6 +101,7 @@ typedef struct _IotEntry
     int deadlineBase;       // IOT_TIME_DEVICE or IOT_TIME_RUN
     bool deadlineArmed;
     uint64_t deadline;      // ns on deadlineBase
+    IotPowerClearP powerClearP;
 } IotEntry, *IotEntryP;
 
 // The deadline calls iotHandler.h makes for a plugin. Emulator thread only.

@@ -5,11 +5,8 @@ The DEC document *H-23_parallelDrum_jul64.pdf* is a useful companion, although i
 have some significant errors in the IOT section.
 This documentation is correct.
 
-This is version 1.7
-Edit date 29-Sep-2026
-Every transfer now ends with a sequence break, and a halt no longer drops or corrupts a transfer.
-Writes to the drum file no longer hold up the PDP-1, and a change another program makes to the
-file is seen with the PDP-1 running, see The drum file.
+Updated 4-Oct-2026\
+Add iotPowerClear()
 
 ## What is the Type 23 Parallel Drum?
 
@@ -70,10 +67,11 @@ The define *drmrd* is 0400000, bit 0.
 The difference between the two is that the latter will initiate a sequence break on channel 5
 when the drum address specified is reached. A dwc and dcl should then be executed.
 
-The DEC manual gives DBA, DWC, DCL as the sequence for a program that uses sequence breaks.
-The dwc and dcl keep the break armed, and since the transfer starts at the same drum address,
-the break arrives as the transfer starts.
+The DEC manual gives *dba, dwc, dcl* as the sequence for a program that uses sequence breaks.
+The dwc and dcl keep the break armed and since the transfer starts at the same drum address
+the break arrives at the same time.
 The transfer then takes a second break when it ends, see Interrupts.
+
 A *dba* on its own works too, with no transfer following it.
 A *dia* issued before the break arrives cancels it, and another *dba* replaces it.
 
@@ -124,10 +122,8 @@ bit 1, 1 for a parity error
 bit 2, 1 for transfer incomplete
 bits 6-17, the current drum address, 0-7777 octal
 ```
-A parity error never occurs, this is a software drum, not a hardware drum.
-Bits 0 and 2 are set to indicate a transfer error if the machine was halted in the middle of a
-transfer (see Halts).
-A failed write to the drum file does not set them, see The drum file.
+An error should never occur, this is a software drum, not a hardware drum.
+However, if a write to disk fails, bits 0 and 2 will be set to indicate a transfer error.
 
 ## One nonstandard IOT
 
@@ -153,7 +149,6 @@ The define *drmsch* is 020, bit 13.
 
 If you aren't using the interrupt mode, the only indication is that
 bit 17 in IO will be set if a cks, check status, instruction is executed.
-With sequence breaks on, the transfer's end break tells you, see Interrupts.
 
 The define *CKSDRM* is 01, bit 17.
 
@@ -168,52 +163,57 @@ In this case, the interrupt will be to the single channel, channel 0.
 
 SBS16 can be enabled either here or via the pidp1.config file.
 
-As on the original drum, every transfer ends with a sequence break on the drum's channel, whether it
-finished or ended in error, and the busy bit is clear by then.
-A *dba* adds its own break, so the DBA, DWC, DCL sequence takes two: the *dba*'s as the transfer
+As on the original drum, every transfer ends with a sequence break on the drum's channel whether it
+finished or ended in error and the busy bit is cleared.
+A *dba* adds its own break, so the *dba, dwc, dcl* sequence causes two, the *dba* as the transfer
 starts, then the end break.
 
-With sequence breaks off, the end break waits and is taken as soon as they are turned on.
+With sequence breaks off, the end break waits and is fired as soon as they are turned on.
 A program that runs its transfers with breaks off and then turns them on should issue a *cbs*
-first, or it takes a break it wasn't expecting.
+first or it will get a break it wasn't expecting.
 
 ## Halts
 
-The drum keeps turning while the PDP-1 is halted, but no word moves.
-A halt is any of them: a *hlt*, the STOP switch, an ad1 stop or a single step.
-Continue, Start and read-in all resume a transfer the same way.
-- **Halted before the first word moved:** the transfer waits after the resume for the drum to come
-  around to its starting address again, up to one revolution, about 35 ms.
+The drum keeps spinning while the PDP-1 is halted, but no word moves.
+A halt is any of a *hlt*, the STOP switch, an ad1 stop or a single step.
+Continue, Start and read-in all resume a transfer in the same way.
+- **Halted before the first word tranferred:** the transfer waits after the resume for the drum to come
+  around to its starting address again, up to one revolution of about 35 ms.
   A full 4096-word transfer starts at once, as it always does.
   A *dba* break not yet taken also waits for its address.
-- **Halted after that:** at the resume the transfer ends with its transfer error set (*dra* bits 0 and 2),
+- **Halted after that:** at the resume the transfer ends with its transfer error set, *dra* bits 0 and 2,
   busy clears and the end break is requested.
-  Core, for a read, or the drum, for a write, holds only the words that moved before the halt.
+  Core, for a read, or the drum, for a write, holds only the words that transferred before the halt.
 
-So after read-in, a transfer still pending finishes into the newly loaded program's memory.
-A power cycle does not reset the drum yet: a transfer pending at power-off still runs after power-on
-and Start.
+This means that after read-in, a transfer still pending finishes into the newly loaded program's memory.
+
+A power cycle is not a halt, power clear resets the drum control.
+
+A transfer waiting for the drum, or under way, and a *dba* break not yet taken are dropped, and busy and the
+transfer error are cleared, so nothing completes after power-on and Start.
+
+A write during a power off leaves on the drum the words that were already transferred.
 
 ## The drum file
 
 The drum's contents live in the file */opt/pidp1-mods/pdp23drum*.
-The drum reads the whole file into memory the first time it is used, and transfers use that copy.
-A separate thread writes the words a transfer writes to the file, so a slow disk, an SD card
-say, never holds up the PDP-1.
+The drum reads the whole file into memory the first time it is used and transfers use that copy.
+A separate thread copies the words a transfer writes to the file, so a slow disk such as an SD card
+never holds up the PDP-1.
 Anything still waiting to be written when the emulator exits is written first.
 
-You can change *pdp23drum* from outside the emulator while the PDP-1 runs: another program can
-write it (ZMachine's *zloader* does), or you can copy a saved drum over it, or rename another file
-onto its name.
+You can change *pdp23drum* from outside the emulator while the PDP-1 runs.
+As examples, another program can write it like ZMachine's *zloader* does
+or you can copy a saved drum over it, or rename another file onto its name.
+
 The drum reads the file in again at the first transfer after the other program closes it.
 A transfer made while the other program is still writing gets the drum as it was before, whole.
 A change the drum reads in is reported on the emulator's standard error.
 
-Make the change while no program is using the drum.
+You should make any change while no program is using the drum.
 A transfer that writes while the change is being made may overwrite part of it, and the words the
-drum wrote just before can still be on their way to the file for a moment after, up to a few
-seconds on a busy SD card.
-Changing the file while the PDP-1 is halted also works; the drum reads it in at the first
+drum wrote just before can still be on their way to the file, up to a few seconds on a busy SD card.
+Changing the file while the PDP-1 is halted also works, the drum reads it in at the first
 transfer after the halt.
 
 A write to the file that fails is reported on the emulator's standard error, once until a write

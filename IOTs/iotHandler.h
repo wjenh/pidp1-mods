@@ -50,6 +50,10 @@
 int iotHandler(PDP1 *, int device,  int pulse, int completion);
 void iotStart(void);
 void iotStop(void);
+// Optional: called once when the power switch goes off, before iotStop(), so a device the
+// hardware's power clear would reset can drop what it holds. A STOP does not call it. Every
+// iotPollAt() deadline has already been disarmed by then.
+void iotPowerClear(void);
 void iotPoll(PDP1 *);
 // 19-Jun-2026 wje added for the rpa/rpb (reader) extraction. If implemented, called
 // once per main-loop pass while the power is on -- no enablePolling() needed/used, and unlike

@@ -39,6 +39,9 @@
  * 29-Sep-2026 claude - with a dba armed, dcl polls in time for the break as well as for the
  *    transfer. Now that each enablePolling() starts a fresh count, polling for the transfer
  *    alone made the break up to 7 us late in the DBA, DWC, DCL sequence.
+ * 4-Oct-2026 claude - a power cycle resets the drum control, as a STOP does not: a transfer and an
+ *    armed dba are dropped, and busy and the transfer error cleared. A write the power cut short
+ *    keeps on the drum the words that moved before it.
  */
 
 #include <errno.h>
@@ -125,6 +128,7 @@ static bool teError;
 static bool started;                // iotStart() has run once
 static bool haltedWhileArmed;       // the machine halted while a transfer or a dba break waited
 static uint64_t haltEndTime;        // simtime of the last halted pass that saw it
+static bool powerCleared;           // a power clear came; the next iotIOPoll() clears busy in cks
 
 static HSCChannelP chanP;   // how we get data
 static HSCRequest request;
@@ -184,8 +188,8 @@ int breakCycles;
 
         if( MB(pdp1P) & 02000 )
         {
-            // dba, using the interrupt system. reqiest break
-            // The break happens when the drum location == the drumAddr
+            // dba, using the interrupt system, reqiest break.
+            // The break happens when the drum location == the drumAddr.
             iotCondLog(LOG_IOT, "dba, break on %o\n", drumAddr);
             if( drumAddr < drumLoc(pdp1P) )  // have to wait for it to come around again on the guitar
             {
@@ -413,8 +417,8 @@ iotStart()
     }
 
     // A STOP followed by Start or Continue is a halt like any other: a transfer or a dba break
-    // in progress carries on through it, and iotPoll() makes it wait or end in error. So the
-    // transfer state is set up only on the first start.
+    // in progress carries on through it, and iotPoll() makes it wait or end in error.
+    // The transfer state is set up only on the first start.
     if( !started )
     {
         ioBusy = requestPending = dbaPending = 0;
@@ -431,8 +435,8 @@ iotStart()
     // starts from the wall clock at power-on, so there is no separate anchor to set up here.
 }
 
-// The close waits in the queue behind the drum's pending writes. The next start opens the
-// file afresh, and the next transfer looks at it again.
+// The close waits in the queue behind the drum's pending writes.
+// The next start opens the file again, and the next transfer looks at it again.
 void
 iotStop()
 {
@@ -472,15 +476,75 @@ iotStop()
     iotCloseLog();
 }
 
-// Called every main-loop pass from the drum's first use, running or halted. It notes any halt,
-// so the next transfer looks at the file again (checkImage()). It also notes a halt
-// while a transfer waits for the drum or a dba break is armed, for iotPoll() to act on when
-// the machine runs again: the drum keeps turning through a halt.
+// The power switch went off, the power clear resets the drum control.
+// A transfer waiting for the/ drum or under way, and an armed dba, are dropped and the transfer error is cleared.
+// A write cut short has already put the words that moved on the drum, so they are written, as at a halt's resume.
+// Busy is in cks, which needs the PDP1, so the next iotIOPoll() clears it, the first pass with the power back on,
+// before any Start.
+// This comes before iotStop(), but a STOP before the power went off has already closed the drum file,
+// so it is opened again for the write.
+void
+iotPowerClear(void)
+{
+int count;
+bool reopened;
+
+    count = 0;
+    if( ioBusy && (request.mode & HSC_MODE_FROMMEM) )
+    {
+        count = movedWords();
+    }
+
+    if( count > 0 )
+    {
+        reopened = false;
+        if( drumFd < 0 )
+        {
+            drumFd = open(DRUMFILE, O_RDWR + O_CREAT, 0666);
+            reopened = true;
+        }
+
+        writeBufferToDrum(writeBuffer, drumWriteField, drumAddr, count);
+
+        if( reopened && (drumFd >= 0) )
+        {
+            if( wbP )
+            {
+                wbClose(wbP, drumFd);
+            }
+            else
+            {
+                close(drumFd);
+            }
+
+            drumFd = -1;
+        }
+    }
+
+    requestPending = ioBusy = dbaPending = false;
+    haltedWhileArmed = false;
+    teError = false;
+    powerCleared = true;
+    enablePolling(0);
+    iotCondLog(LOG_START, "IOT 61 power clear, %d words of a write kept\n", count);
+}
+
+// Called every main-loop pass from the drum's first use, running or halted.
+// It notes any halt so the next transfer looks at the file again.
+// It also notes a halt while a transfer waits for the drum or a dba break is armed for iotPoll() to act on when
+// the machine runs again, the drum keeps turning through a halt.
 // The poll interval was set in executed cycles before the halt, so the next poll could come
-// after the drum's arrival and start the transfer late; poll on the first cycle instead.
+// after the drum's arrival and start the transfer late so poll on the first cycle instead.
+// After a power clear it also clears busy which iotPowerClear() could not reach.
 void
 iotIOPoll(PDP1 *pdp1P)
 {
+    if( powerCleared )
+    {
+        powerCleared = false;
+        CKS(pdp1P) &= ~CKS_DRP;
+    }
+
     if( !pdp1P->run )
     {
         lookAtFile = true;
@@ -566,8 +630,9 @@ int count;
 
         // This will just complete the hsc request, it won't wait.
         // Continue, Start and each single step reset the channels, so a transfer a halt came
-        // in the middle of reports HSC_ABORT. On the hardware the drum's next word went
-        // unanswered, so it set its transfer error and dropped the request (H-23 2-21).
+        // in the middle of reports HSC_ABORT.
+        // On the hardware hsc the drum's next word went unanswered,
+        // so it set its transfer error and dropped the request (H-23 2-21).
         count = transferCount;
         if( HSCwait(chanP) == HSC_ABORT )
         {
@@ -609,9 +674,10 @@ int count;
 
 // Return the current rotational position of the drum, 0-4095.
 // This is determined directly from simtime, so it tracks the CPU's own time base
-// exactly, including through throttle pauses -- unaffected by how the emulator paces
-// wall-clock time to keep up. simtime itself starts from the wall clock at power-on
-// (main.c), so the drum's starting position is still arbitrary, matching real hardware.
+// exactly, including through throttle pauses, unaffected by how the emulator paces
+// wall-clock time to keep up.
+// Simtime itself starts from the wall clock at power-on, so the drum's starting position
+// is still arbitrary, matching the real hardware.
 int
 drumLoc(PDP1 *pdp1P)
 {
@@ -627,11 +693,12 @@ drumLocAt(uint64_t time)
     return( (int)((time / 8500ULL) % 4096) );
 }
 
-// After a halt that came while a transfer waited for the drum or a dba break was armed.
+// Called after a halt that came while a transfer waited for the drum or a dba break was armed.
 // If the drum passed drumAddr during the halt, nothing answered it (H-23 2-19), so the wait
-// runs to the drum's next arrival there after the halt. A halt that ended before the arrival
-// changes nothing. The targets are computed from haltEndTime as dcl and dba compute them from
-// the time they run. A full-track transfer starts anywhere, so it is left alone.
+// runs to the drum's next arrival there after the halt.
+// A halt that ended before the arrival changes nothing.
+// The targets are computed from haltEndTime as dcl and dba compute them from the time they run.
+// A full-track transfer starts anywhere, so it is left alone.
 static void
 resumeAfterHalt(void)
 {
@@ -652,8 +719,9 @@ int wordCount;
     }
 }
 
-// The number of words a write took from core before it ended: the words at the front of
-// writeBuffer the channel filled in. The channel fills it in order from the start.
+// The number of words a write took from core before it ended, the words at the front of
+// writeBuffer the channel filled in.
+// The channel fills it in order from the start.
 static int
 movedWords(void)
 {
@@ -737,14 +805,15 @@ int drumRemainderCount = 0;
     }
 }
 
-// Called by dcl before a transfer uses the drum's copy. The first transfer reads the file in.
-// After another program closes the file it wrote or renames one over it, the file is read in
-// again: file times are coarse, so a second change soon after a reload can leave them as they
-// were, and are not trusted here. After a halt, the file is compared with what the load or our
-// own last write left; a difference may only be our writes still in the queue, so the queue is
-// drained and the file compared again, and a file still different was changed by someone else
-// and is read in again. A halt changes nothing far more often, and single steps come fast, so
-// the compare saves a read of the whole file each time. No return value.
+// Called by dcl before a transfer uses the drum's copy.
+// The first transfer reads the file in.
+// If another program closes the file it wrote or renames one over it, the file is read in/ again.
+// After a halt, the file is compared with what the load or our own last write left.
+// A difference may only be our writes still in the queue, so the queue is drained and the file compared again,
+// and a file still different was changed by someone else and is read in again.
+// A halt changes nothing far more often and single steps come fast, the compare saves a read
+// of the whole file each time.
+// No return value.
 static void
 checkImage(void)
 {
@@ -789,10 +858,11 @@ checkImage(void)
     reloadImage();
 }
 
-// Opens the drum file afresh, since a file replaced under the same name is another file, and
-// reads it in. Our writes still in the queue go to the old copy first. Our own close raises an
-// event, which is dropped: the read that follows it sees everything closed before it. The
-// reload is reported only if the drum's contents changed. No return value.
+// Opens the drum file again,since a file replaced under the same name is another file and reads it in.
+// Our writes still in the queue go to the old copy first.
+// Our own close raises an event which is dropped, the read that follows it sees everything closed before it.
+// The reload is reported only if the drum's contents changed.
+// No return value.
 static void
 reloadImage(void)
 {
@@ -819,12 +889,13 @@ static Word oldImage[DRUMWORDS];
     }
 }
 
-// Sets up the inotify watch readWatch() reads. The drum's own writes go through a descriptor it
-// keeps open, so they never raise IN_CLOSE_WRITE; another program writing the file raises it
-// when it closes, and one renaming a file over the name raises IN_MOVED_TO. The watch is on the
-// directory, since a rename replaces the file, and on the resolved path's directory, since the
-// name may be a symlink (the test harness makes it one). Without a watch a change is still seen
-// after a halt. No return value.
+// Sets up the inotify watch readWatch() reads.
+// The drum's writes go through a descriptor it keeps open, so they never raise IN_CLOSE_WRITE.
+// Another program writing the file raises it when it closes, and one renaming a file over the name raises IN_MOVED_TO.
+// The watch is on the directory since a rename replaces the file, and on the resolved path's directory, since the
+// name may be a symlink.
+// Without a watch a change is still seen after a halt.
+// No return value.
 static void
 watchFile(void)
 {
@@ -863,9 +934,9 @@ char *slashP;
     }
 }
 
-// Reads every event waiting on the watch, without blocking. An event for the drum file, or a
-// lost event (the kernel's queue overflowed), has checkImage() read the file in again. The
-// drum's own close at STOP raises one too, and costs one read of the file after the next start.
+// Reads every event waiting on the watch, without blocking.
+// An event for the drum file or a lost event has checkImage() read the file in again.
+// The drum's own close at STOP raises one too, and costs one read of the file after the next start.
 // No return value.
 static void
 readWatch(void)
@@ -904,9 +975,10 @@ ssize_t at;
     }
 }
 
-// Reads the drum file into the drum's copy in memory. A short or unreadable file is a drum
-// whose unwritten words are 0, as a read of them always gave. Notes the file's state for
-// fileChanged(). No return value.
+// Reads the drum file into the drum's copy in memory.
+// A short or unreadable file is a drum whose unwritten words are 0, as a read of them gives.
+// Notes the file's state for fileChanged().
+// No return value.
 static void
 loadImage(void)
 {
@@ -966,8 +1038,9 @@ bool changed;
     return(changed);
 }
 
-// Queues count words of the drum's copy, from drumAddr in drumField, for the file. With no
-// queue the write is done here. No return value.
+// Queues count words of the drum's copy, from drumAddr in drumField, for the file.
+// With no queue the write is done here.
+// No return value.
 static void
 queueWrite(int drumField, int drumAddr, int count)
 {
@@ -1008,9 +1081,10 @@ ssize_t n;
     writeDone(NULL, drumFd, (done == len));
 }
 
-// A queued write is done, normally on the writer thread. A failure is reported on stderr, once
-// until a write succeeds again. A success notes the file's state for fileChanged(), unless the
-// write was to a file the drum has since let go of.
+// A queued write is done, normally on the writer thread.
+// A failure is reported on stderr once until a write succeeds again.
+// A success notes the file's state for fileChanged(), unless the write was to a file the drum has
+// since closed.
 static void
 writeDone(void *argP, int fd, bool ok)
 {

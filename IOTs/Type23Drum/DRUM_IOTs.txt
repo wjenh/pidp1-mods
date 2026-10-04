@@ -64,4 +64,6 @@ A halt is a hlt, the STOP switch, an ad1 stop or a single step; Continue, Start 
    Halted after the first word: at resume the transfer ends with the transfer error set, dra IO bits 0
       and 2, busy clears and the end break is requested. Core, for a read, or the drum, for a write,
       holds only the words that moved before the halt.
-A power cycle does not reset the drum: a transfer pending at power-off still runs after power-on and Start.
+A power cycle is not a halt: power clear resets the drum control. A transfer waiting or under way and a
+dba break not yet taken are dropped, and busy and the transfer error cleared. A write the power cut short
+leaves on the drum the words that moved before it.

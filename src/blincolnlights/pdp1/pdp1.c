@@ -45,6 +45,7 @@
  *   isb now requests the break on the single-channel system too; before, it did nothing there.
  * 27-Sep-2026 Claude the console commands and the RIM loader moved to console.c, and the reader
  *   and punch fd hand-off to papertape.c.
+ * 4-Oct-2026 Claude pwrclr() clears run, so a power cycle leaves the machine halted.
 */
 #include "common.h"
 #include "pdp1.h"
@@ -343,6 +344,13 @@ pwrclr(PDP1 *pdp)
     pdp->ioh = rand() & 1;
     pdp->pf = rand() & 077;
     memclr(pdp);
+
+    // A memory cycle follows another only when one cycle's TP10 triggers the next one's TP0,
+    // and only a console operation (SP4), the multiply/divide restart or read-in starts the
+    // chain again (F17 6-2c and 6-2d, pages 6-5 and 6-6). A power cycle breaks it, so the
+    // machine comes up halted whatever its run flip-flop holds; here, run is what keeps the
+    // chain going.
+    pdp->run = 0;
 
     if(pdp->sbs16)
     {

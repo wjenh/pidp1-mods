@@ -2,8 +2,8 @@
 
 This document describes the funcionality and how to create your own IOTs.
 
-Updated 16-Sep-2026
-Clean up some typos.
+Updated 4-Oct-2026
+Add iotPowerClear()
 
 ## What is a dynamic IOT?
 
@@ -151,7 +151,18 @@ If your IOT implements *iotStop()*, then whenever the pidp-1 enters stop state v
 switch, this will be called.
 This can be used to clean up any state or connections you need to deal with.
 
-Both are optional methods.
+A STOP and a power cycle both stop your IOT, but they are not the same to the hardware.
+A STOP leaves a device as it was while power clear resets its control state.
+If your IOT implements *iotPowerClear()*, it is called once when the power switch goes off, before *iotStop()*.
+You can then implement the power off behavior you need.
+
+ It has no *PDP1* argument, so a flag kept in the *PDP1* struct, such as a *cks* bit, must be cleared at
+the next call that has one, *iotIOPoll()* for example.
+
+Before this is called, every deadline set with *iotPollAt()* will have been canceled, an operation the
+device was timing does not complete after the power comes back.
+
+All three are optional methods.
 
 ## Update notifications from a SIGHUP
 
@@ -181,12 +192,6 @@ If the c bit was set, the *ioh* inctruction, *iot i 0* will block until a comple
 Always use IOCOMPLETE() or IOTCOMPLETEIFNEEDED() if your IOT is called with completion set
 and process during pulse 1, TP10, unless you have some special requirements.
 
-A device's time runs from pulse 1, TP10, the end of the IOT's own cycle.
-With the i bit, the machine leaves the wait in the cycle the completion arrives in, so a waiting IOT
-costs 5 microseconds for its own cycle plus the device's time rounded up to whole 5 microsecond cycles,
-as on the original machine (DEC's maintenance manual, F17, paragraph 6-2h).
-A *dpy i*, whose device takes 45 microseconds, takes 50, the time DEC's handbook gives.
-
 ## Other common functions
 
 If you have any special initialization to do before your IOT is called, implement `iotStart()`.
@@ -201,7 +206,7 @@ It will be called whenever the pidp1 is halted either by the `hlt` instruction o
 The -1 implements a simple interrupt system that your IOTs can use.
 First, read the -1 documentation on the Sequence Break System.
 A handler can request a sequence break by calling the builtin `initiateBreak(int channel)`.
-This is typically called when pulse is 1, but can be called asynchronously from an *iotPoll()* or *iotDeadline()*.
+This is typically called when pulse is 1, but can be called asynchronously from an *iotPoll()*.
 
 If the 16 channel break system is installed, the channel numbers are 0-15.
 The channel in question must have been enabled via the enable sequence channel IOT `asc`, which has the format
@@ -230,35 +235,7 @@ The code for the Type 23 Parallel Drum gives examples of this.
 
 ## Periodic activation
 
-There are two ways: a deadline on the emulator's simulated time, and polling by cycle count.
-For a device whose operation takes a set time, use a deadline.
-
-### Deadlines
-
-Implement `iotDeadline(pdp1P)` and arm it with `iotPollAt(base, deadline)`.
-The deadline is in nanoseconds on one of two time bases, whose current value `iotTime(base)` returns:
-
-- IOT_TIME_DEVICE runs whenever the power is on, halted or not. A device that finishes its work in a halt,
-  as the typewriter finishes a character, uses it.
-- IOT_TIME_RUN runs only while the machine runs. The timesharing clock uses it.
-
-Both count stolen cycles and the full length of a *mul* or *div*, so a delay is the device's own time even
-while a High Speed Channel steals cycles.
-Neither counts time with the power off, nor a span the emulator skips to catch up after the host has
-fallen more than `throttlemaxlag` behind.
-
-`iotDeadline()` is called once the base reaches the deadline, at the end of that main-loop pass.
-A deadline is one-shot. A periodic device re-arms from its last deadline, not from `iotTime()`,
-so it never drifts. Each IOT has one deadline: arming again replaces it, and `iotPollCancel()` disarms it.
-`USTONS(us)` and `MSTONS(ms)` convert microseconds and milliseconds to nanoseconds.
-Call these only from the emulator's own calls into your IOT (`iotHandler()`, `iotStart()`, `iotStop()`,
-`iotDeadline()`, `iotPoll()`, `iotIOPoll()`), never from a thread of your own.
-
-The clock, punch, typewriter, printer, Type 30, Type 33 and DCS2 IOTs are examples.
-
-### Polling by cycle count
-
-If your code needs to be periodically activated, implement the `iotPoll(pdp1P)` function.
+If your code needs to be periodially activated, implement the `iotPoll(pdp1P)` function.
 If polling is enabled in your IOT via `enablePolling(when)`, then the emulator will call
 iotPoll() once every specified number of instruction cycles between the end of subclock TP10 and the start of TP0.
 A `when` of 0 disables polling for your IOT.
@@ -290,17 +267,14 @@ the HSC request that is in-flight.
 
 This matters if your IOT is using the polling call to track real time, it won't.
 
-Deadlines are not affected: their time bases count the stolen cycles.
-
 Rule of thumb: if your IOT needs to track a delay whose length matters,
-arm a deadline, not an `enablePolling()` cycle count.
+track it against a real timestamp, not an `enablePolling()` cycle count.
 Cycle counts are fine for delays that don't need strict real-time adherence.
 
 You can also use iotIOPoll(), above, which will always be called every 5 usecs regardless of run/stop/stealing state.
 However, you can't disable it; if it's implemented, it will be called.
 
-The Type 23 Drum in particular will cause this: a full-track transfer takes about 35 milliseconds,
-and steals one cycle for each of its 4096 words, spread over that time.
+The Type 23 Drum in particular will cause this, it will cycle-steal for up to 35 milliseconds at a time.
 
 ## Library code
 
@@ -356,17 +330,10 @@ See the code in the Type62and64 directory for examples.
 - void enablePolling(int cycles)
 - void iotPoll(PDP1 \*hardwareP)
 - void iotIOPoll(PDP1 \*hardwareP)
-- void iotDeadline(PDP1 \*hardwareP)
-- uint64_t iotTime(int base)
-- void iotPollAt(int base, uint64_t deadline)
-- void iotPollCancel(void)
 - void initiateBreak(int chan)
 - int iotIsAlias(void)
 
 Defines
-
-- IOT_TIME_DEVICE, IOT_TIME_RUN  the deadline time bases
-- USTONS(us), MSTONS(ms)  microseconds and milliseconds to nanoseconds
 
 - IONOWAIT(PDP1 \*hardwareP)  tell emulator to ignore the wait bits in the IOT instruction
 - IOCOMPLETE(PDP1 \*hardwareP) tell the emulator the wait state is ended

@@ -14,6 +14,9 @@ adv_defines.ah: $(GENDIR)/adventure.adv loaders
 	@mkdir Includes 2>/dev/null || true
 	$(GENDIR)/advdataloader -o Includes $(GENDIR)/adventure.adv
 
+install: all
+	sudo ln -s `pwd`/astart /usr/local/bin/astart
+
 drum: all
 	./advdrumloader advtracks.drm
 

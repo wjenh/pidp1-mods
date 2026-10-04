@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Start Adventure; quit the current game first, leaving the emulator running.
+# Courtesy of Dr. Philip, thanks!
+set -euo pipefail
+root=${PIDP1_ROOT:-/opt/pidp1-mods}
+adventure="$root/FunStuff/Adventure"
+backup_dir="$HOME/pidp1-game-backups"
+
+for file in "$adventure/advdrumloader" "$root/bin/fastload"; do
+    [[ -x "$file" ]] || { printf 'Missing executable: %s\nBuild Adventure and the tools first.\n' "$file" >&2; exit 1; }
+done
+for file in "$adventure/advtracks.drm" "$adventure/adventure.rim"; do
+    [[ -s "$file" && -r "$file" ]] || { printf 'Missing or empty file: %s\nBuild Adventure first.\n' "$file" >&2; exit 1; }
+done
+pgrep -x pdp1 >/dev/null || { echo 'Start the PDP-1 emulator first.' >&2; exit 1; }
+echo 'Quit any current game and wait for its connection to close first.'
+echo 'Adventure data will be written to the drum. The current drum will be backed up.'
+read -r -p 'Ready to load Adventure? [y/N] ' answer || exit 0
+[[ "$answer" == y || "$answer" == Y ]] || exit 0
+
+mkdir -p "$backup_dir"
+if [[ -f "$root/pdp23drum" ]]; then
+    backup=$(mktemp "$backup_dir/drum-before-adventure-$(date +%Y%m%d-%H%M%S).XXXXXX")
+    cp -p -- "$root/pdp23drum" "$backup"
+    printf 'Drum backup: %s\n' "$backup"
+fi
+cd "$adventure"
+./advdrumloader -i "$root/pdp23drum" advtracks.drm
+echo 'At the fastload start prompt, answer y.'
+"$root/bin/fastload" adventure.rim
+echo 'If you started Adventure, connect to the Pi on port 2030 to play.'

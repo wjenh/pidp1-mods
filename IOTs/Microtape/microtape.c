@@ -39,6 +39,9 @@
 #ifndef MT_BASE_DIR
 #define MT_BASE_DIR     "/opt/pidp1-mods"
 #endif
+#ifndef MT_TAPE_DIR
+#define MT_TAPE_DIR     MT_BASE_DIR "/Microtapes"
+#endif
 #ifndef MT_LIST_FILE
 #define MT_LIST_FILE    MT_BASE_DIR "/microtapes.txt"
 #endif
@@ -624,7 +627,7 @@ size_t len;
     return(true);
 }
 
-// Puts the image at pathP (relative to MT_BASE_DIR unless it starts with /) on drive unit,
+// Puts the image at pathP (relative to MT_TAPE_DIR unless it starts with /) on drive unit,
 // replacing whatever was there; see mountResolved(). A path too long to resolve is reported
 // on stderr under whoP and leaves the drive with no tape.
 // Returns MT_MOUNT_OK, MT_MOUNT_LOCKED or MT_MOUNT_FAILED, as mountResolved().
@@ -640,7 +643,7 @@ int len;
     }
     else
     {
-        len = snprintf(full, sizeof(full), "%s/%s", MT_BASE_DIR, pathP);
+        len = snprintf(full, sizeof(full), "%s/%s", MT_TAPE_DIR, pathP);
     }
 
     if( (len < 0) || (len >= (int)sizeof(full)) )
@@ -653,7 +656,7 @@ int len;
     return( mountResolved(unit, full, locked, now, whoP) );
 }
 
-// Puts the image at fullP, a path already resolved against MT_BASE_DIR (a unit's own path is
+// Puts the image at fullP, a path already resolved against MT_TAPE_DIR (a unit's own path is
 // one), on drive unit, replacing whatever was there. An unlocked image that does not exist is
 // created as a blank tape, and that is reported on stderr. A file already mounted on another
 // drive is refused, since each drive would write back its own copy. Any failure is reported

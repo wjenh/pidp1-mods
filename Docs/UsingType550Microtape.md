@@ -10,10 +10,10 @@ Where DEC's later documents fill its gaps or correct it, the emulation follows t
 *Microtape: Its Features and Applications* (1963), the F-03 brochure (1964), and DEC's
 field-service memos.
 
-This is version 1.5\
-Edit date 26-Sep-2026\
+This is version 1.6\
+Edit date 4-Oct-2026\
 
-mtp now defaults to /opt/pidp1-mods/Microtapes
+Fix some incorrect tape directory text
 
 ## What is the Type 550 Microtape?
 
@@ -43,7 +43,7 @@ A program can also mount tapes itself via the *mmt* IOT, below.
 
 ## Setting up
 
-List the drive to file mapping in */opt/pidp1-mods/microtapes.txt*, one line per drive.
+List the drive-to-file mapping in */opt/pidp1-mods/microtapes.txt*, one line per drive.
 ```
 # drive  image
 1 microtapes/tape1.img
@@ -66,7 +66,7 @@ microtapesbs=2
 ```
 To change tapes while the emulator runs, edit *microtapes.txt*, or let *mtp* do it:
 ```
-bin/mtp 1 microtapes/tape2.img
+bin/mtp 1 tape2.img
 bin/mtp 2 /home/pi/tapes/system.img,locked
 bin/mtp -f /some/other/list.txt 3 scratch.img
 ```

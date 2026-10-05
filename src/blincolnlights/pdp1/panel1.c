@@ -12,9 +12,14 @@
  *    directly instead of from wall-clock time
  * wje 16-Jun-26 many changes so the CHM simple test program displays like the real PDP-1
  */
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include "common.h"
 #include "panel_pidp1.h"
 #include "pdp1.h"
+
+#define PANELSEGMENT "/tmp/pdp1_panel"
 
 // Add 1 to cnt[i] for each bit i (0-17) of bits that is set, saturating at
 // 65535 instead of wrapping. Used by updatelights() to tally per-cycle "on"
@@ -186,8 +191,35 @@ lightson(Panel *panel)
     panel->lights9 = 0777777;
 }
 
+// Maps the operator panel's shared segment. Returns it, or nil if it can't be opened or made.
 Panel*
 getpanel(void)
 {
-    return attachseg("/tmp/pdp1_panel", sizeof(Panel));
+int fd;
+mode_t mask;
+Panel *panelP;
+
+    // The panel programs make the segment. With none run since boot, pdp1 makes it, so it runs
+    // without one and a panel started later maps the same file. O_EXCL says who made it.
+    mask = umask(0);
+    fd = open(PANELSEGMENT, (O_RDWR | O_CREAT | O_EXCL), 0666);
+    umask(mask);
+
+    if( fd < 0 )
+    {
+        return attachseg(PANELSEGMENT, sizeof(Panel));
+    }
+
+    close(fd);
+    panelP = createseg(PANELSEGMENT, sizeof(Panel));
+
+    // A new segment is zeroed, power switch off, and the emulator does nothing with the power
+    // off. With no panel to turn it on, it starts on; a panel started later reads its switches
+    // from here first.
+    if( panelP != nil )
+    {
+        panelP->sw0 = SW_POWER;
+    }
+
+    return panelP;
 }

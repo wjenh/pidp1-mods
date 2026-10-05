@@ -39,10 +39,18 @@
  *    The panel tally keeps the cycles of an instruction a break cancels, and all three break cycles.
  * Claude 04-Oct-2026 the power switch's off edge gives the IOT plugins a power clear (dynamicIots.c).
  * Claude 04-Oct-2026 a power cycle puts sbs16 back as the configuration has it.
+ * Claude 05-Oct-2026 the command port now serves each connection on its own thread, ports that cannot listen
+ *    are retried, the typewriter's relay marks its input ready with no pollthread,
+ *    and pdp1 creates the panel segment if no panel has done so.
+ * Claude 05-Oct-2026 only one pdp1 runs at a time.
+ *    A second start exits before it touches the panel, ports or coremem.
 */
 
+#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/file.h>
+#include <sys/stat.h>
 #include <stdbool.h>
 #include <pthread.h>
 #include <signal.h>
@@ -1047,21 +1055,23 @@ handleptp(int fd, void *arg)
 
 // Thread entry point that listens on all the network command/display/reader/punch ports
 // (the 'ports' table below) and dispatches accepted connections to the matching handler.
-// Runs for the life of the process; serveN() only returns if all the listeners fail/close.
+// Runs for the life of the process; serveN() only returns if its poll() fails.
 // Returns nil (the thread's exit value is unused by pthread_create()'s caller).
 void*
 netthread(void *arg)
 {
+    // The command port's handler keeps its connection, so it runs threaded; the others only
+    // hand the fd over.
     struct PortHandler ports[] =
     {
-        { 1040, handlenetcmd },
+        { 1040, handlenetcmd, 1 },
         // 1041 is typewriter
-        { 1042, handleptr },
-        { 1043, handleptp },
-        { 3400, handledpy },
-        { 3401, handledpy2 },
-        { 3402, handledpy3 },
-        { 3403, handledpy4 },
+        { 1042, handleptr, 0 },
+        { 1043, handleptp, 0 },
+        { 3400, handledpy, 0 },
+        { 3401, handledpy2, 0 },
+        { 3402, handledpy3, 0 },
+        { 3403, handledpy4, 0 },
     };
     serveN(ports, nelem(ports), arg);
     return( nil );
@@ -1179,12 +1189,66 @@ sighandler(int sig)
     exit(0);
 }
 
-// Program entry point: parses -h/-p command-line args, finds the operator panel, installs
-// signal handlers and the exitcleanup() atexit hook, loads configuration, loads the saved core
-// memory image, starts the polling/network/display threads and the debugger server
-// (ad1server.c), opens the default reader/punch/typewriter fds, then calls emu() (which runs forever).
-// Returns 1 if no operator panel could be found (the only normal early-exit path); otherwise
-// returns 0, but only in the unreachable case where emu() were to return, which it doesn't.
+#define LOCKFILE "/tmp/pdp1.lock"
+
+// Only one pdp1 may run: a second one would drive the same panel lamps, take the first one's
+// ports when it exits, and overwrite coremem at its own exit. The lock is an flock() on a file in
+// /tmp, the namespace the panel segment already shares. The fd stays open for the life of the
+// process; the kernel drops the lock at any exit, SIGKILL included, so nothing stale is left.
+// Returns false only when another pdp1 holds the lock; a lock that can't be had for any other
+// reason is reported and pdp1 runs, as it did before there was a lock.
+static bool
+lockInstance(void)
+{
+int fd;
+mode_t mask;
+
+    // In a sticky /tmp, fs.protected_regular refuses an O_CREAT open of a file another user made,
+    // even read-only, so an existing file is opened without O_CREAT and only a new one is made.
+    // Read-only is enough for flock(), whoever owns the file.
+    for( ;; )
+    {
+        fd = open(LOCKFILE, (O_RDONLY | O_CLOEXEC));
+        if( (fd >= 0) || (errno != ENOENT) )
+        {
+            break;
+        }
+
+        mask = umask(0);
+        fd = open(LOCKFILE, (O_RDONLY | O_CREAT | O_EXCL | O_CLOEXEC), 0666);
+        umask(mask);
+        if( (fd >= 0) || (errno != EEXIST) )
+        {
+            break;
+        }
+    }
+
+    if( fd < 0 )
+    {
+        fprintf(stderr, "can't open %s (%s), not checking for another pdp1\n", LOCKFILE, strerror(errno));
+        return( true );
+    }
+
+    if( flock(fd, (LOCK_EX | LOCK_NB)) < 0 )
+    {
+        if( errno == EWOULDBLOCK )
+        {
+            return( false );
+        }
+        fprintf(stderr, "can't lock %s (%s), not checking for another pdp1\n", LOCKFILE, strerror(errno));
+        close(fd);
+    }
+
+    return( true );
+}
+
+// Program entry point: takes the one-pdp1 lock, finds the operator panel, installs signal
+// handlers and the exitcleanup() atexit hook, loads configuration, loads the saved core memory
+// image, starts the polling/network/display threads and the debugger server (ad1server.c),
+// opens the default reader/punch/typewriter fds, then calls emu() (which runs forever).
+// Returns 1 if another pdp1 is running or no operator panel could be found (the only normal
+// early-exit paths); otherwise returns 0, but only in the unreachable case where emu() were to
+// return, which it doesn't.
 int
 main(int argc, char *argv[])
 {
@@ -1193,6 +1257,13 @@ PDP1 *pdp = &pdp1;
 pthread_t th;
 const char *tape = "tapes/dpys5.rim";
 int fd[2];
+
+    // First of all, before the panel, the exit hook that writes coremem, or any port.
+    if( !lockInstance() )
+    {
+        fprintf(stderr, "another pdp1 is already running\n");
+        return 1;
+    }
 
     pdp1P = pdp;
     panel = getpanel();
@@ -1219,8 +1290,6 @@ int fd[2];
     pdp->muldiv_sw = configurationP->muldivEnabled;
     pdp->sbs16 = configurationP->sbs16Enabled;
 
-    startpolling();
-
     pthread_create(&th, NULL, netthread, pdp);
     ad1ServerStart(pdp, configurationP);
     consoleStart(pdp);
@@ -1236,6 +1305,7 @@ int fd[2];
     socketpair(AF_UNIX, SOCK_STREAM, 0, fd);
     pdp->typ_fd.fd = fd[0];
     waitfd(&pdp->typ_fd);
+    typtelnetInput(&pdp->typ_fd);
     typtelnet(1041, fd[1]);
 
     // Pre-load the tyi IOT (device 4) so its iotIOPoll is registered before the first

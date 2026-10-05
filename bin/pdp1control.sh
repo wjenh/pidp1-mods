@@ -8,6 +8,8 @@
 #    process names; a missing screen or pdp1 stops the script; apps starts t30dpy only, and
 #    stop lets t30dpy end on its own when pdp1 goes
 # 02-Oct-26 wje (Claude) the t30dpy choice: start t30dpy beside the gui or web front end
+# 05-Oct-26 wje (Claude) only one pdp1 runs at a time, stop waits for pdp1 to exit,
+#    start refuses while one is alreay running, restart no longer sleeps
 
 # The install directory; PIDP1_ROOT points it elsewhere, for testing.
 root="${PIDP1_ROOT:-/opt/pidp1-mods}"
@@ -103,6 +105,12 @@ is_running() {
 	return $procs
 }
 
+# True while any pdp1 process runs, in screen or not. One that has exited but is not yet
+# reaped (state Z) holds nothing, so it does not count.
+pdp1_running() {
+	ps -C pdp1 -o stat= | grep -qv '^Z'
+}
+
 do_stat() {
 	is_running
 	status=$?
@@ -152,7 +160,13 @@ do_start() {
 	    echo "PiDP-1 is already running, not starting again." >&2
 	    exit 0
 	fi
-	
+	# Only one pdp1 may run, and one started outside screen is not seen above; a second one
+	# would end at once, inside screen where nobody sees why.
+	if pdp1_running; then
+	    echo "A pdp1 is already running, not starting; pdp1control stop ends it." >&2
+	    exit 1
+	fi
+
 	echo start panel driver, either virtual or real, depends on the symlink
 	if [ "$frontpanel" = "pidp" ]; then
 		echo starting PiDP-1 hardware front panel driver
@@ -265,6 +279,21 @@ do_stop() {
 	sleep 0.5
         # pdp1 may be running outside of screen
 	pkill -x pdp1
+
+	# pdp1 writes coremem as it exits, and refuses to start while another one runs, so wait
+	# for it to be gone, at most 10 seconds. Its screen session ends just after it, and start
+	# takes a session still there for a running PiDP-1, so wait for that too. is_running
+	# returns the session count, so it succeeds when none is left.
+	for i in $(seq 100); do
+		if ! pdp1_running && is_running; then
+			break
+		fi
+		sleep 0.1
+	done
+	if pdp1_running; then
+		echo "pdp1 has not exited after 10 seconds." >&2
+		status=1
+	fi
 
 	# t30dpy ends by itself when pdp1's display connection closes. Its SIGTERM handler can hang
 	# it for good, so it is signaled only if it is still there after 3 seconds, and killed if
@@ -389,7 +418,6 @@ case "$1" in
 
   restart)
 	do_stop
-	sleep 4
 	do_start $1 $2
 	;;
 

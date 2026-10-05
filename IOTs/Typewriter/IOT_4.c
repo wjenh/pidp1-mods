@@ -8,6 +8,7 @@
  * it does NOT honor i or C as designed. Don't use them.
  *
  * 19-Jun-2026 wje initial version.
+ * 05-Oct-2026 Claude ready is read with acquire; the typewriter's relay thread sets it.
  */
 #include "iotHandler.h"
 #include <unistd.h>
@@ -51,7 +52,8 @@ char c;
         pdp1P->tyi_wait = pdp1P->simtime + US(25000);
     }
 
-    if(!(pdp1P->tyi_wait < pdp1P->simtime && pdp1P->typ_fd.ready))
+    // ready is set by the relay thread after its write lands, and the read below blocks.
+    if(!((pdp1P->tyi_wait < pdp1P->simtime) && __atomic_load_n(&pdp1P->typ_fd.ready, __ATOMIC_ACQUIRE)))
     {
         return;
     }

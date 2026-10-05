@@ -1,0 +1,10 @@
+*.sh text eol=lf chmod=+x
+* text=auto eol=lf
+
+decode_fiodec text eol=lf chmod=+x
+encode_fiodec text eol=lf chmod=+x
+pdp1ctl text eol=lf chmod=+x
+tapevis-ctl text eol=lf chmod=+x
+tkaskmicrotape text eol=lf chmod=+x
+tkaskopenfile text eol=lf chmod=+x
+tkaskopenfilewrite text eol=lf chmod=+x

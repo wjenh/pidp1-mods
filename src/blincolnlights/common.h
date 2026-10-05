@@ -2,6 +2,7 @@
 #define COMMON_H
 
 // 8-Apr-2026 wje initial cleanup
+// 05-Oct-2026 Claude PortHandler.threaded; pollfd.c's markFdReady() and typtelnetInput() replace startpolling()
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,10 +23,13 @@ typedef int8_t i8;
 
 #define nelem(array) (sizeof(array)/sizeof(array[0]))
 
+// serveN() runs a threaded handler on a thread of its own per connection, for one that keeps
+// the connection; the others run inline and must only hand the fd over.
 struct PortHandler
 {
     int port;
     void (*handle)(int fd, void *arg);
+    int threaded;
 };
 
 // pollfd.c
@@ -54,8 +58,11 @@ void nsleep(u64 ns);
 
 char **split(char *line, int *pargc);
 
-void startpolling(void);
-void waitfd(FD *fd);
-void closefd(FD *fd);
+void markFdReady(FD *fdP);
+void waitfd(FD *fdP);
+void closefd(FD *fdP);
+
+// pdp1/typtelnet.c: the FD whose ready flag the typewriter's relay sets.
+void typtelnetInput(FD *fdP);
 
 #endif

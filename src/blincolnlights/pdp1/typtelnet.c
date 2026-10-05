@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <poll.h>
 #include <pthread.h>
+#include <errno.h>
 
 enum {
 	SE = 240,
@@ -102,6 +103,7 @@ static int ascii2fio[] = {
 
 static int color;
 static int ucase;
+static FD *inputFdP;
 
 /* 20-Jun-2026 wje: dropped the `col` parameter and the wire-bit6-driven color
  * switch.
@@ -155,8 +157,14 @@ getfio(int c, int fd, int localfd)
 	}
 
 	s[n++] = c & 077;
-	wr = write(fd, s, n);
-	(void)wr;	// best-effort; dead peer is caught by the next read()
+    wr = write(fd, s, n);
+
+    // Best-effort; a dead peer is caught by the next read(). The tyi IOT reads only once ready
+    // is set, and its read blocks, so ready is set only after a write that landed.
+    if( (wr > 0) && (inputFdP != nil) )
+    {
+        markFdReady(inputFdP);
+    }
 
 	/* 20-Jun-2026 wje: was `putfio(color<<6 | s[i], localfd)`.
      * The color<<6 packing was a leftover of the old wire-bit6 color scheme.
@@ -228,7 +236,9 @@ ssize_t rd;
 	return -1;
 }
 
-static void
+// Relays between the telnet client on telfd and the emulator's socketpair end typfd until one
+// of them ends. Returns 1 when the client has gone, 0 when typfd has (nothing more to serve).
+static int
 readwrite(int telfd, int typfd)
 {
 	int n;
@@ -245,15 +255,27 @@ readwrite(int telfd, int typfd)
 		n = poll(pfd, 2, -1);
 		if(n < 0){
 			perror("error poll");
-			return;
+            return(1);
 		}
 		if(n == 0)
-			return;
+            return(1);
+
+        // A hangup or error with no data would wake every poll() from now on.
+        if( (pfd[0].revents & (POLLHUP | POLLERR | POLLNVAL)) && !(pfd[0].revents & POLLIN) )
+        {
+            return(0);
+        }
+
+        if( (pfd[1].revents & (POLLHUP | POLLERR | POLLNVAL)) && !(pfd[1].revents & POLLIN) )
+        {
+            return(1);
+        }
+
 		/* take from pdp, send to telnet */
 		if(pfd[0].revents & POLLIN)
         {
 			if(n = read(typfd, &c, 1), n <= 0)
-				return;
+                return(0);
 			else
             {
 				c &= 0177;
@@ -264,7 +286,7 @@ readwrite(int telfd, int typfd)
 		if(pfd[1].revents & POLLIN)
         {
 			if(n = read(telfd, &c, 1), n <= 0)
-				return;
+                return(1);
 			else
             {
 				if((c&0377) == IAC)
@@ -299,6 +321,8 @@ readwrite(int telfd, int typfd)
 			}
 		}
 	}
+
+    return(0);
 }
 
 static void
@@ -320,15 +344,41 @@ cmd(int fd, int a, int b)
 static int typport;
 static int typfd;
 
+// Serves the typewriter's telnet port, one client at a time, until the emulator's end of the
+// socketpair is gone. A port that cannot listen is tried again every second; it reports once
+// when it fails and once when a client is served again.
 void*
 telthread(void *arg)
 {
 ssize_t wr;
+int telfd;
+int reported;
 (void)arg;
+
+    reported = 0;
 
 	for(;;)
     {
-		int telfd = serve1(typport);
+        telfd = serve1(typport);
+
+        if( telfd < 0 )
+        {
+            if( !reported )
+            {
+                fprintf(stderr, "port %d: can't listen (%s), retrying\n", typport, strerror(errno));
+                reported = 1;
+            }
+
+            sleep(1);
+            continue;
+        }
+
+        if( reported )
+        {
+            fprintf(stderr, "port %d: serving again\n", typport);
+            reported = 0;
+        }
+
 		cmd(telfd, WILL, XMITBIN);
 		cmd(telfd, DO, XMITBIN);
 		cmd(telfd, WILL, ECHO_);
@@ -348,9 +398,24 @@ ssize_t wr;
 			color = 0;
 			wr = write(telfd, "\033[39;49m", 8); (void)wr;
 		}
-		readwrite(telfd, typfd);
+        if( !readwrite(telfd, typfd) )
+        {
+            close(telfd);
+            break;
+        }
+
 		close(telfd);
 	}
+
+    return(nil);
+}
+
+// Names the FD whose ready flag the relay sets after each write into the socketpair. Called
+// before typtelnet().
+void
+typtelnetInput(FD *fdP)
+{
+    inputFdP = fdP;
 }
 
 void

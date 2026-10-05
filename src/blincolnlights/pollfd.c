@@ -1,222 +1,57 @@
-// Handle fd async polling for ports.
+// Readiness of the emulator's typewriter input fd, for the tyi IOT plugin.
 // 14-Jul-2026 wje cleanup, no warning now, still needs printf logging removed, real logging added.
+// 05-Oct-2026 Claude no poll thread: the feeding thread sets ready, waitfd() re-arms it itself.
+//
+// An FD's ready flag says a read() will not block.
+// The thread that writes into the fd's peer (typtelnet.c's relay) sets it after each write.
+// The emulator thread, the only reader, clears it in waitfd() after each read and
+// sets it again if data is left.
+// Either order of the two leaves ready set while data waits.
+// Ready is never set with nothing to read, the reader's read() blocks on the emulator thread.
 
 #include <unistd.h>
-#include <fcntl.h>
-#include <pthread.h>
 #include <poll.h>
 #include "common.h"
 
-struct FDmsg
-{
-    int msg;
-    FD *fd;
-};
-
-static FD *fds[100];
-static struct pollfd pfds[100];
-static int nfds;
-static int pollpipe[2] = { -1, -1 };
-
-static void
-removeslot( int i )
-{
-    pfds[i].revents = 0;
-    pfds[i].events = 0;
-    pfds[i].fd = -1;
-    fds[i]->fd = -1;
-    fds[i]->id = -1;
-    fds[i]->ready = 0;
-    fds[i] = nil;
-}
-
-static void
-pollfds( void )
-{
-struct FDmsg msg;
-FD *fd;
-int i, n;
-
-    if( pipe( pollpipe ) < 0 )
-    {
-        // Without this pipe, startpolling()'s "wait for thread to start" loop spins
-        // forever (pollpipe[0] never becomes >= 0), so at least leave a diagnostic
-        // breadcrumb for what would otherwise be a silent, unexplained hang.
-        perror( "pollfds: pipe" );
-        return;
-    }
-
-    pfds[0].fd = pollpipe[0];
-    pfds[0].events = POLLIN;
-    nfds = 1;
-    for( ;; )
-    {
-        n = poll( pfds, nfds, -1 );
-        if( n < 0 )
-        {
-            perror( "error poll" );
-            return;
-        }
-
-        /* someone wants us to watch their fd or has closed it */
-        if( pfds[0].revents & POLLIN )
-        {
-            if( read( pfds[0].fd, &msg, sizeof(msg) ) != sizeof(msg) )
-            {
-                continue;       // short/failed read; msg isn't valid, wait for the next event
-            }
-
-            fd = msg.fd;
-            switch( msg.msg )
-            {
-            /* wait */
-            case 1:
-                if( fd->id >= 0 )
-                {
-                    /* already in list */
-                    assert( fds[fd->id] == fd );
-
-                    /*
-                     * printf("polling fd %d in slot %d\n", fd->fd, fd->id);
-                     */
-                }
-                else
-                {
-                    /* add to list */
-                    for( i = 1; i < nfds; i++ )
-                    {
-                        if( fds[i] == nil )
-                        {
-                            break;
-                        }
-                    }
-
-                    assert( i < (int)nelem(pfds) );
-                    if( i == nfds )
-                    {
-                        nfds++;
-                    }
-
-                    fd->id = i;
-                    fds[fd->id] = fd;
-
-                    /*
-                     * printf("adding fd %d in slot %d\n", fd->fd, fd->id);
-                     */
-                }
-
-                pfds[fd->id].fd = fd->fd;
-                pfds[fd->id].events = POLLIN;
-                pfds[fd->id].revents = 0;
-                fd->ready = 0;
-                break;
-
-            /* close */
-            case 2:
-                /* fd was closed */
-                /*
-                 * printf("received close for fd %d slot %d\n", pfds[fd->id].fd, fd->id);
-                 */
-                assert( fd->id >= 0 );
-                close( pfds[fd->id].fd );
-                removeslot( fd->id );
-                break;
-            }
-        }
-
-        for( i = 1; i < nfds; i++ )
-        {
-            /* fd was closed on other side */
-            if( pfds[i].revents & POLLHUP )
-            {
-                /*
-                 * printf("fd %d hung up\n", pfds[i].fd);
-                 */
-                close( fds[i]->fd );
-                removeslot( i );
-            }
-
-            if( pfds[i].revents & POLLIN )
-            {
-                /*
-                 * printf("fd %d became ready\n", pfds[i].fd);
-                 */
-                /* ignore this fd for now */
-                pfds[i].fd = -1;
-                pfds[i].events = 0;
-                pfds[i].revents = 0;
-                fds[i]->ready = 1;
-            }
-
-            if( pfds[i].revents )
-            {
-                printf( "more events on fd %d: %d\n", pfds[i].fd, pfds[i].revents );
-            }
-        }
-    }
-}
-
-static void *
-pollthread( void *arg )
-{
-    (void)arg;
-    pollfds();
-    return( nil );
-}
-
+// Marks fdP readable. Called by the thread that feeds the fd, after its write.
 void
-startpolling( void )
+markFdReady( FD *fdP )
 {
-pthread_t th;
-
-    pthread_create( &th, nil, pollthread, nil );
-
-    /* wait for thread to start so waitfd can do its thing */
-    while( ((volatile int *)pollpipe)[0] < 0 )
-    {
-        usleep( 1000 );
-    }
+    __atomic_store_n( &fdP->ready, 1, __ATOMIC_RELEASE );
 }
 
+// Re-arms fdP after a read: ready is cleared, then set again if a byte is still waiting.
 void
-waitfd( FD *fd )
+waitfd( FD *fdP )
 {
-struct FDmsg msg;
+struct pollfd pfd;
 
-    if( fd->fd < 0 )
+    // Clear before looking, so a write landing after the poll below is caught by its writer's
+    // markFdReady(), and one landing before it is seen by the poll.
+    __atomic_store_n( &fdP->ready, 0, __ATOMIC_SEQ_CST );
+
+    if( fdP->fd < 0 )
     {
         return;
     }
 
-    fd->ready = 0;
-    msg.msg = 1;
-    msg.fd = fd;
-    if( write( pollpipe[1], &msg, sizeof(msg) ) != sizeof(msg) )
+    pfd.fd = fdP->fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    if( (poll(&pfd, 1, 0) > 0) && (pfd.revents & POLLIN) )
     {
-        perror( "waitfd: write" );
+        __atomic_store_n( &fdP->ready, 1, __ATOMIC_RELEASE );
     }
 }
 
+// Closes fdP, after a failed read. The caller also sets fdP->fd to -1.
 void
-closefd( FD *fd )
+closefd( FD *fdP )
 {
-int i;
-struct FDmsg msg;
+    __atomic_store_n( &fdP->ready, 0, __ATOMIC_RELEASE );
 
-    i = fd->id;
-    msg.msg = 2;
-    msg.fd = fd;
-    if( write( pollpipe[1], &msg, sizeof(msg) ) != sizeof(msg) )
+    if( fdP->fd >= 0 )
     {
-        // The poll thread will never see this removal request, so the "wait for
-        // thread to notice" loop below would spin forever; bail out instead.
-        perror( "closefd: write" );
-        return;
-    }
-
-    /* wait for thread to notice */
-    while( ((volatile FD **)fds)[i] != nil )
-    {
-        usleep( 1 );
+        close( fdP->fd );
     }
 }

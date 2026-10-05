@@ -107,6 +107,21 @@ pdp1control reload
 ```
 that will do the same.
 
+## Desktop control: pdp1central
+
+Pdp1central is a unified application for running the emulator.
+It can start, stop, restart and reloads it,
+mounts paper tapes, save the punch output, and edit pidp1.config setting by setting.
+The install script builds it and adds a desktop icon, or you can type `pdp1central` to start it.
+The pdp1control command and the other scripts work as before, and are what to use without a desktop.
+
+See *Docs/UsingPdp1central.md*.
+
+**After upgrading:** the interface, front panel and USB paper tape choices are now kept in
+/opt/pidp1-mods/pdp1control.config, not inside pdp1control.sh.
+If you had changed any of them, set them again once, by answering the install script's questions or with
+`pdp1control set`, `pdp1control panel` and `pdp1control usbtape`.
+
 ## What is configured by default?
 
 The default for the emulator is basically *everything*:

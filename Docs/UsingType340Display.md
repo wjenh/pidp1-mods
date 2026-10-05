@@ -100,9 +100,9 @@ The rest are for determining the status of the display.
 The assigned IOTs are 15, 16, and 17. It apparently was not unusual for different installations to use
 different IOT assignments.
 
-- dla - display load address, start a display progran at the address in the IO register - see note
+- dla - display load address, start a display program at the address in the IO register - see note
 - drs - display resume sequence, used to resume after a lightpen event
-- dcf - display clear flags, clears the flags following
+- dcf - display clear flags, clears the flags that the skip IOTs below test
 - dra - display read address counter, the last address executed
 - drc - display read coordinates, the x and y position of the lightpen hit
 - drp - display read predicted coordinates, the x and y position of where the lightpen currently is
@@ -114,15 +114,15 @@ different IOT assignments.
 
 In more detail:
 
-Only one IOT, dra, takes a value passed in the IO register.\
+Only one IOT, dla, takes a value passed in the IO register.\
 Only two standard IOTs return a value, dra and drc, both in the IO register.\
 An additional non-standard IOT, drp, also returns a value in the IO register.
 
 | IOT | pdp-1 opcode | input | output | notes |
 |-----|--------------|-------|--------|-------|
-| dla | 720015 | IO has prgram adress | none | full 16 bit address, see note 1 |
+| dla | 720015 | IO has program address | none | full 16 bit address, see note 1 |
 | drs | 720115 | none | none | use after lightpen hit or edge violation to resume execution |
-| dcf | 720215 | none | none | clears the 340 dkip flags |
+| dcf | 720215 | none | none | clears the lightpen, stop and edge violation flags; it neither starts nor stops the display: a running display keeps running, a halted one stays halted |
 | dra | 720016 | none | IO has current execution address | if the 340 is halted, will be the next location to execute |
 | drc | 720116 | none | IO has the last lightpen hit coordinates | see note 2 |
 | drp | 720216 | none | IO has the predicted lightpen position coordinates | see note 3 |
@@ -227,6 +227,7 @@ If disabled, a light pen hit will only set the status flag and pause execution, 
 will set the status flags and hanlt.
 
 The default setting is enabled to match the original behavior.
+It reverts to enabled on each *dla*, so a program that wants it off sets it in its own display list.
 
 ## Slave
 

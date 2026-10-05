@@ -55,11 +55,9 @@ Space bar hides and unhides windows.
 The background can currently only be set by editing the configuration,
 `pdp1_layout.txt` in the current directory.
 
-# TODO
+## Light pen
 
-* Mouse controls for tape handling
-* Light pen
-* Second display
-* Key binding cheat sheet
-* Visual indication of audio/muldiv modes
-* ???
+With `guilightpen=yes` in `/opt/pidp1-mods/pidp1.config` and `lightpen=on` for the emulator,
+the left mouse button is the light pen on the display.
+Click or drag over any active image a program is displaying.
+It is off in layout mode and outside the image.

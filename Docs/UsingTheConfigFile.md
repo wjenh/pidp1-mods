@@ -2,9 +2,9 @@
 
 This document describes /opt/pidp1-mods/pidp1.config and how to use it.
 
-This is version 1.2; it will be updated as needed.
+This is version 1.3; it will be updated as needed.
 
-Edit date 27-Sep-2026
+Edit date 01-Oct-2026
 
 ## What is the configuration file?
 
@@ -49,10 +49,23 @@ Read it before changing a setting.
 - p7sim: the standalone Type 30 display
 - pdp1_periph: the unified control gui
 
-Most settings are read when the emulator starts.
-Sending the emulator a SIGHUP reloads the file: the emulator re-reads its settings, including the
-throttle and audio ones, and each loaded plugin that has an update function re-reads its own.
-A setting read by another program is applied when that program starts.
+### When a change takes effect
+
+Every setting is read when the emulator starts, and most are read again when the file is
+reloaded: pdp1control reload sends the emulator a SIGHUP, and pdp1central's Save does the same.
+The emulator then re-reads its settings, including the throttle and audio ones, and each loaded
+plugin that has an update function re-reads its own. The exceptions:
+- sdb, dpyshift, twoscreens and lightpen, and aperture for the Type 30, are read by their plugins
+  each time the machine goes to run (START or CONTINUE), so a change applies at the first run
+  after the reload.
+- ad1port, ad1remoteport, fasttyo, lptType64, lptLineSpacing, lptLines and lptNoFF are read
+  once, so a change needs the emulator restarted. So does displaytiming, for the Type 30's
+  timing; the Type 340's follows a reload.
+- The panel settings are read by the hardware panel driver, which pdp1control reloadpanel
+  reloads; panelrealtime applies only when the driver starts.
+- guilightpen applies when pdp1_periph starts.
+- motionPrediction, aperture, two340charsets, pidp1timing and the panel settings keep their old
+  value when their line is removed, so going back to the default needs a restart.
 
 ### The debugger server
 
@@ -92,7 +105,6 @@ A setting read by another program is applied when that program starts.
 | motionPrediction | pdp1 | Predict the lightpen's motion |
 | aperture | pdp1, IOT_7 | The lightpen's aperture, for the Type 340 and the Type 30 |
 | two340charsets | Type 340 plugin | Lower-shift characters from a second character set |
-| t340cachesize | Type 340 plugin | A Type 340 instruction cache, up to 1024; read only at startup |
 | guilightpen | pdp1_periph | The lightpen in the unified control gui |
 | type30lightpen | p7sim | The lightpen in the standalone Type 30 display |
 | type30size | p7sim | The standalone Type 30 display's size |
@@ -104,7 +116,7 @@ Read Docs/UsingAudio.md before changing these.
 
 | Setting | Reader | What it does |
 |---|---|---|
-| audio | pdp1 | Allow audio; pdp1audio still turns it on |
+| audio | pdp1 | Allows audio; the sound starts when pdp1audio on, the audio-on desktop icon or pdp1central's Audio button turns it on. pdp1central shows it as "audio enabled" |
 | cutoff | pdp1 | The low-pass cutoff of all four program flag channels, in Hz |
 | cutoff1, cutoff2, cutoff3, cutoff4 | pdp1 | The cutoff of one channel, overriding cutoff |
 | gain | pdp1 | The mixer gain |

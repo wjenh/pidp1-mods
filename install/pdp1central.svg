@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- pdp1central's launcher icon: a control panel, lamps over toggle switches, on the blue of
+     pdp1icon2.svg. Plain shapes only, so it stays legible at desktop icon sizes. -->
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <radialGradient id="lit" cx="0.4" cy="0.35" r="0.65">
+      <stop offset="0" stop-color="#fff3c4"/>
+      <stop offset="0.45" stop-color="#ffbe2e"/>
+      <stop offset="1" stop-color="#d9800a"/>
+    </radialGradient>
+  </defs>
+  <!-- the tile -->
+  <rect x="1.5" y="1.5" width="61" height="61" rx="10" fill="#056389" stroke="#033d55" stroke-width="3"/>
+  <!-- the lamp panel -->
+  <rect x="7" y="8" width="50" height="25" rx="3" fill="#13232c"/>
+  <g fill="url(#lit)">
+    <circle cx="14" cy="15" r="3.6"/>
+    <circle cx="32" cy="15" r="3.6"/>
+    <circle cx="41" cy="15" r="3.6"/>
+    <circle cx="23" cy="26" r="3.6"/>
+    <circle cx="50" cy="26" r="3.6"/>
+  </g>
+  <g fill="#4a3a26">
+    <circle cx="23" cy="15" r="3.6"/>
+    <circle cx="50" cy="15" r="3.6"/>
+    <circle cx="14" cy="26" r="3.6"/>
+    <circle cx="32" cy="26" r="3.6"/>
+    <circle cx="41" cy="26" r="3.6"/>
+  </g>
+  <!-- the switch row -->
+  <rect x="7" y="37" width="50" height="20" rx="3" fill="#13232c"/>
+  <g fill="#6f8794">
+    <rect x="10" y="46" width="8" height="1.6"/>
+    <rect x="19" y="46" width="8" height="1.6"/>
+    <rect x="28" y="46" width="8" height="1.6"/>
+    <rect x="37" y="46" width="8" height="1.6"/>
+    <rect x="46" y="46" width="8" height="1.6"/>
+  </g>
+  <g fill="#eef2f4">
+    <rect x="11" y="39" width="6" height="8.5" rx="1"/>
+    <rect x="20" y="46" width="6" height="8.5" rx="1"/>
+    <rect x="29" y="39" width="6" height="8.5" rx="1"/>
+    <rect x="38" y="39" width="6" height="8.5" rx="1"/>
+    <rect x="47" y="46" width="6" height="8.5" rx="1"/>
+  </g>
+</svg>

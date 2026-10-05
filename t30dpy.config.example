@@ -21,7 +21,7 @@ size=1024
 # Whether to start bordered or borderless.
 border=true
 
-# Ask SDL to use vsync, it might or might not.
+# Ask SDL to use vsync, it might or might not. t30dpy3 ignores it.
 # If supported, it can reduce tearing of large rectangles that are rendered at hight speed, such as those
 # produced by the Type 340 vector display.
 vsync=no
@@ -64,3 +64,22 @@ cutoff=5
 
 # Read the documentation for this one.
 mikecmode=false
+
+# Fade on the GPU instead of the CPU, see the documentation.
+# It uses much less CPU, about a quarter for t30dpy3 on a Raspberry Pi 4.
+# If the renderer can't do it, the client says so at startup and uses the CPU fade.
+# Set it to false for the CPU fade; whitebias and cutoff apply to the CPU fade only.
+# This can't be changed by a reload.
+gpufade=true
+
+# With gpufade: seconds for a point to fade to black, 0.8 to 2.7 in steps of 0.1.
+# The fade ends in a smooth ramp. From 1.2 up the first 400 milliseconds follow the published
+# P7 curve closely; shorter tails fade faster throughout.
+tail=1.3
+
+# t30dpy3 only: the SDL renderer to use, see the documentation.
+# auto takes the first of opengl, opengles2 and software that opens. Over VNC, where OpenGL can't open,
+# that is software, which keeps up where SDL's own choice, a Vulkan drawing on the CPU, froze the display.
+# Any SDL renderer name can be given instead: opengl, opengles2, software, vulkan or gpu.
+# The -r option overrides it. This can't be changed by a reload.
+renderer=auto

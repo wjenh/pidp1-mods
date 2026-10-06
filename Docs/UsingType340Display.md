@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.11
+This is version 1.12
 
-Edit date 1-Oct-2026\
-Caching removed
+Edit date 6-Oct-2026\
+Update the subroutine save to cover all its cases
 
 ## What is it?
 
@@ -404,9 +404,12 @@ Examples:
 ```
 For *jump*, control transfers to the commands at location foo, exactly the same as a normal PDP-1 *jmp*.
 
-The *save* subcommand only works if the final command in the code it calls is a *vector*, *character*, or *increment*
-command that specifies *end*. When this happens, control transfers back to the location one after the original *save*
-and *parameter* mode is set.
+The *save* subcommand only works if the code it calls ends by leaving *vector*, *vector continue*,
+*character*, or *increment* mode;
+a *vector* or *increment* command that specifies *end*, the end character of a *character* string,
+or a *vector continue* reaching an edge.
+When this happens, control transfers back to the location one after the original *save* and *parameter* mode is set.
+An edge violation that stops the display does not return, and a *dla* starts its program with no *save* pending.
 
 The *deposit* subcommand places a constucted command in the location it addresses which will be
 a *jump (asr) + 1*, one location past the last *save* command.

@@ -58,6 +58,10 @@
  * 26-Sep-2026 Claude - the accounting is switched by displaytiming instead of pidp1timing, so the cycle
  *    report no longer brings a file that grows a line a second.
  * 1-Oct-2026 wje caching removed, no longer useful and it was always a hack.
+ * 6-Oct-2026 wje a character instruction termination now triggers a subroutine return,
+ *    a vector continue edge violation does the same,
+ *    an edge stop is no longer undone by an escape in the same word,
+ *    an escape is not left over for the next start, a start clears the save.
  */
 
 #include <stdlib.h>
@@ -602,6 +606,7 @@ uint64_t idleT0;
             memset(hscBucketCounts, 0, sizeof(hscBucketCounts));
 #endif
             reset340();                 // sets curmode to PARAMETER
+            sawEscape = false;          // be sure there's no dangling escape
             curAddress = ctlP->address;
             curState = INITIALIZE;      // reset340() sets it to STOPPED;
             pendingDelay = START_TIME;  // when a start occurs, DPY_GO pulse, this setup time occurs.
@@ -898,10 +903,13 @@ uint64_t idleT0;
                             // The only error that can be returned is an edge violation.
                             // VCONTINUE does NOT cause a break, it just enters param mode.
                             // VECTOR stops and breaks if enabled.
+                            // Both manuals list vector continue among the escapes that return a save,
+                            // and its edge is its usual end.
                             if( curMode == VCONTINUE )
                             {
                                 curMode = PARAMETER;
                                 curState = INITIALIZE;
+                                sawEscape = true;
                             }
                             else
                             {
@@ -909,6 +917,7 @@ uint64_t idleT0;
                                 iotCondLog(LOG_STOP, "vector stop, edge violation x, y %d %d\n", curX, curY);
                                 curState = STOPPED;
                                 needBreak = true;
+                                sawEscape = false;      // the stop wins; the continue skips the escape block
                                 continue;
                             }
                         }
@@ -999,8 +1008,12 @@ uint64_t idleT0;
                     {
                         if( status == ESCAPE )
                         {
-                            curMode = PARAMETER;
+                            // DEC manuals don't agree, but the best interpretation
+                            // is that CHARACTER works like VECTOR, an escape
+                            // triggers a subroutine return.
+                            sawEscape = true;
                             curState = INITIALIZE;
+                            iotCondLog(LOG_CHARACTER, "character escape\n");
                             break;
                         }
                         else if( status == PAUSE )
@@ -1066,21 +1079,25 @@ uint64_t idleT0;
             timingCheck();
 
             // The instruction completes, then escape is processed
+            // An edge stop in the same word wins, the display stops, with its flag and break.
             if( (curState != RUNNING) && sawEscape )
             {
                 sawEscape = false;
-                curMode = PARAMETER;        // This leaves the current mode, may return to a saved address
-                curState = INITIALIZE;
+                if( curState != STOPPED )
+                {
+                    curMode = PARAMETER;        // This leaves the current mode, may return to a saved address
+                    curState = INITIALIZE;
 
-                if( saveActive )
-                {
-                    iotCondLog(LOG_ESCAPE,"escape to %d\n", curAddress);
-                    curAddress = saveRegister;
-                    saveActive = false;
-                }
-                else
-                {
-                    iotCondLog(LOG_ESCAPE,"escape\n");
+                    if( saveActive )
+                    {
+                        iotCondLog(LOG_ESCAPE,"escape to %d\n", curAddress);
+                        curAddress = saveRegister;
+                        saveActive = false;
+                    }
+                    else
+                    {
+                        iotCondLog(LOG_ESCAPE,"escape\n");
+                    }
                 }
             }
         }
@@ -1147,6 +1164,8 @@ reset340()
     curMode = PARAMETER;
     isPaused = false;
     lpHitLatched = false;
+    // A program restarted inside a called subroutine must not return to the old program's address.
+    saveActive = false;
     __atomic_store_n(&flags, 0, __ATOMIC_RELAXED);
     slavesEnabled = false;
     lpEnabled = false;

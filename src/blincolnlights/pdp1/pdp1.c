@@ -46,6 +46,9 @@
  * 27-Sep-2026 Claude the console commands and the RIM loader moved to console.c, and the reader
  *   and punch fd hand-off to papertape.c.
  * 4-Oct-2026 Claude pwrclr() clears run, so a power cycle leaves the machine halted.
+ * 6-Oct-2026 wje the original panel is now gone.
+ *   Panel lamps are sampled once a cycle at TP9a, not at a random timing pulse.
+ *   TP(n) is now a no-op, kept only to comment which cycle the code belongs to.
 */
 #include "common.h"
 #include "pdp1.h"
@@ -81,17 +84,19 @@ bool core1DEnabled = false;
 bool all1DEnabled = false;
 
 // Flat core address and contents of the word the current memory cycle's
-// readmem() read. writemem() compares against them to skip a write-back
-// that would store the same word to the same place (see readmem()).
+// readmem() read.
+// Writemem() compares against them to skip a write-back
+// that would store the same word to the same place.
 // File-scope statics rather than PDP1 fields, so pdp1.h and the IOT
-// plugin ABI are untouched. Only the CPU thread (cycle()) touches them.
+// plugin ABI are untouched.
+// Only the CPU thread (cycle()) touches them.
 static unsigned int lastReadAddr;
 static Word lastReadWord;
 
 // PDP-1 words are 18 bits wide, numbered left to right as bit 0 (sign,
-// most significant) through bit 17 (least significant). These masks
-// pick out a single bit of an 18-bit word (AC, IO, MB, ...) using the
-// machine's own bit numbering, e.g. B5 is "bit 5", not "bit 5 from the LSB".
+// most significant) through bit 17 (least significant).
+// These masks pick out a single bit of an 18-bit word (AC, IO, MB, ...) using the
+// the PDP-1 bit numbering, e.g. B5 is "bit 5", not "bit 5 from the LSB".
 #define B0 0400000
 #define B1 0200000
 #define B2 0100000
@@ -111,11 +116,12 @@ static Word lastReadWord;
 #define B16 0000002
 #define B17 0000001
 
-// b2, the raw break requests, is also set from the Type 340's own thread: its initiateBreak()
-// ends in req(). So every change to b2 is one atomic operation, and neither thread's update can
-// be lost in the middle of the other's read-modify-write. A request is released and sbs_sync()'s
-// load acquires it, so a device's state written before the request is visible to the program's
-// break routine. b2 is still a plain field, so pdp1.h and the plugin ABI are unchanged.
+// B2, the raw break requests, is also set from the Type 340's own thread.
+// Its initiateBreak()/ ends in req().
+// Every change to b2 is one atomic operation, and neither thread's update can
+// be lost in the middle of the other's read-modify-write.
+// A request is released and sbs_sync()'s load acquires it.
+// A device's state written/ before the request is visible to the program's break routine.
 #define B2_LOAD(pdp) __atomic_load_n(&(pdp)->b2, __ATOMIC_ACQUIRE)
 #define B2_STORE(pdp, v) __atomic_store_n(&(pdp)->b2, (v), __ATOMIC_RELAXED)
 #define B2_OR(pdp, v) __atomic_fetch_or(&(pdp)->b2, (v), __ATOMIC_RELEASE)
@@ -157,17 +163,17 @@ enum
     TP8_end = 2850,
     TP9_end = 4050,
     TP9a_end = 4800,
-    TP10_end = 5000,
-    TP_unreachable = TP10_end
+    TP10_end = 5000
 };
 
-// TP(n): at TP-n, if the random "panel sample point" for this cycle
-// (pdp->timernd) falls before TPn_end, latch the indicator lights from
-// the current machine state and remember that we've done it (by setting
-// timernd to an unreachable value so later TP(n) calls in the same
-// cycle are no-ops). This is how the emulator gets a realistic, jittery
-// snapshot of the front-panel lights once per cycle.
-#define TP(n) if(pdp->timernd < TP##n##_end) { updatelights(pdp, pdp->panel); pdp->timernd = TP_unreachable; }
+// TP(n) marks timing pulse n in the source and does nothing.
+// The state for the panel lights is sampled  once a cycle, at TP9a.
+// This is after the cycle's register transfers, before TP10's housekeeping clears MA and the
+// memory flip-flops.
+// An instruction's tally counts the sample of its last cycle.
+// A sample at a random pulse, which the legacy panel driver needed, counted a brief mid-cycle state
+// as if it lasted the whole instruction, causing a completely nonauthentic display.
+#define TP(n)
 
 // --- "Is the current instruction finished?" / "can a sequence break
 // interrupt right now?" tests, broken down by which kind of cycle we're
@@ -1572,6 +1578,7 @@ int hack;
         }
 
         TP(9a)
+        updatelights(pdp, pdp->panel);     // this cycle's panel sample: see TP(n)
 
         // TP10: end-of-cycle housekeeping common to all cycle types --
         // resync sequence-break requests, clear the core read/write
@@ -1835,6 +1842,7 @@ int sbs_restore = 0;
     }
 
     TP(9a)
+    updatelights(pdp, pdp->panel);     // this cycle's panel sample: see TP(n)
 
     // TP10: standard end-of-cycle housekeeping (see cycle0() TP10). If a
     // sequence break is pending, take it; otherwise, if the instruction
@@ -2190,6 +2198,7 @@ int hack;
         }
 
         TP(9a)
+        updatelights(pdp, pdp->panel);     // this cycle's panel sample: see TP(n)
 
         // TP10: standard end-of-cycle housekeeping (see cycle0() TP10).
         // cycle1 always returns to cycle0 next (cyc cleared) unless a
@@ -2446,6 +2455,7 @@ int r;
     // first instruction of the interrupt routine).
     pc_inc(pdp);
     TP(9a)
+    updatelights(pdp, pdp->panel);     // this cycle's panel sample: see TP(n)
 
     // TP10: standard end-of-cycle housekeeping (see cycle0() TP10). After
     // bc==1, the entered routine starts in extend mode off. After bc==3,
@@ -2489,40 +2499,14 @@ int r;
     TP(10)
 }
 
-// Fast, non-cryptographic 32-bit PRNG (Marsaglia xorshift), used only to
-// pick cycle()'s per-cycle panel sample point (see TP() above and
-// cycle() below). Statistical quality is irrelevant for that purpose;
-// the point is to avoid rand()/random()'s process-wide glibc lock and a
-// modulo divide on this 200kHz hot path (audit O1, Phase 5). Statically
-// seeded with a fixed nonzero constant -- true randomness is not needed
-// here, and a zero seed would leave xorshift stuck at zero forever.
-// Returns the next 32-bit value in the sequence.
-static uint32_t
-xorshift32(void)
-{
-    static uint32_t state = 2463534242u;    // fixed nonzero seed
-
-    state ^= state << 13;
-    state ^= state >> 17;
-    state ^= state << 5;
-
-    return(state);
-}
-
-// Top-level dispatcher: run exactly one 5us machine cycle. Picks a
-// random "panel sample point" (timernd) for this cycle so the TP(n)
-// macros latch the front-panel lights at a different timing pulse each
-// time, then runs whichever of brkcycle/cycle0/defer/cycle1 applies to
+// Top-level dispatcher: run exactly one 5us machine cycle. Runs
+// whichever of brkcycle/cycle0/defer/cycle1 applies to
 // the machine's current state (sequence-break cycle, fetch, indirect
 // defer, or execute, respectively).
 void
 cycle(PDP1 *pdp)
 {
     pdp->inst_cyc++;
-    // audit O1: xorshift32() plus a multiply-shift range reduction
-    // (Lemire-style) replaces rand() % TP_unreachable here; see
-    // xorshift32()'s header comment above for the rationale.
-    pdp->timernd = (int)(((uint64_t)xorshift32() * TP_unreachable) >> 32);
 
     if(pdp->bc)
     {

@@ -1,6 +1,6 @@
 /*
  * Shared-memory layout for the pidp-1 front panel (switches and lamp state),
- * used by the emulator (pdp1), the hardware panel driver (panel_pidp1 and newpanel), and
+ * used by the emulator (pdp1), the hardware panel driver (newpanel, run as panel_pidp1), and
  * the SDL virtual panel (vpanel_pdp1).
  *
  * wje 14-Jun-26 - add pwmcount[][] for emulator-side lamp duty-cycle tallies
@@ -13,6 +13,7 @@
  *                 instead of inferring it from wall-clock time
  * wje 4-Jul-25 - just formatting cleanup, no functional change
  * 1-Oct-2026 Claude: comments name the pwmcount[][] readers (newpanel, vpanel_pdp1); no code change
+ * 6-Oct-2026 wje comment changes only
  */
 enum {
     // sw0
@@ -78,31 +79,32 @@ struct Panel
     // just for convenience
     int psw2;
 
-    // Per-lamp "on" tallies, added to support a lower-overhead lamp PWM
-    // scheme. updatelights() in pdp1/panel1.c increments pwmcount[row][col]
-    // once per emulated cycle for each lamp bit that is set in that
-    // cycle's lights snapshot.
-    // Indexed the same as panel_pidp1's PanelLamps.lamps[10][18],
-    // rows 0-6 correspond to lights0-lights6 (main panel), rows 7-9 to
-    // lights7-lights9 (I/O panel).
+    // Per-lamp "on" tallies, added to support a lower-overhead lamp PWM scheme.
+    // Updatelights_pwm() in pdp1/panel1.c increments pwmcount[row][col]
+    // once per emulated cycle for each lamp bit that is set in the
+    // lights snapshot, taken at TP9a of the instruction's last cycle.
+    // Indexed [row][bit]: rows 0-6 correspond to lights0-lights6 (main
+    // panel), rows 7-9 to lights7-lights9 (I/O panel), and column i counts
+    // the row's bit of value 1 << i.
     //
     // The panel driver is expected to periodically read and then reset
     // these counters and scale the result into a PWM "on" duration
-    // instead of polling lights0-lights9 at a high sample rate as panel_pidp1 does.
+    // instead of polling lights0-lights9 at a high sample rate as the legacy
+    // panel_pidp1 did.
     //
-    // newpanel and vpanel_pdp1 both read and reset these counters, so only
-    // one of them may run at a time. lights0-lights9 are still updated as
-    // before, for readers that sample them (the legacy panel_pidp1).
+    // Newpanel and vpanel_pdp1 both read and reset these counters, so only
+    // one of them may run at a time.
+    // Lights0-lights9 hold the snapshot the tally counts.
     //
-    // Not synchronized against concurrent updates from pdp1; a reader may
+    // Not synchronized against concurrent updates from pdp1, a reader may
     // occasionally race an increment by +/-1, which is negligible given
     // the intended read interval.
     u16 pwmcount[10][18];
 
-    // Monotonically-incrementing count of emulated cycles, incremented by
-    // 1 in updatelights() (panel1.c) every time it's called once per
-    // emulated cycle, whether the cpu is running or halted. The panel
-    // driver reads this once per sampling iteration and computes the
+    // Monotonically-incrementing count of emulated cycles, advanced by
+    // updatelights_pwm() in panel1.c by the cycles it tallies, one per
+    // emulated cycle, whether the cpu is running or halted.
+    // The panel driver reads this once per sampling iteration and computes the
     // delta since its last reading to get the true number of cycles that
     // occurred during that interval, rather than assuming a fixed
     // 5us/cycle rate based on wall-clock time.

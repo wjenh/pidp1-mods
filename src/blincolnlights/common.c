@@ -4,6 +4,7 @@
 // 4-Oct-2026 Claude split() no longer reads past the end of its string
 // 05-Oct-2026 Claude serveN() retries ports that cannot listen, gives a threaded port's
 //    connections their own threads, dial() times out, the segment fds are closed after mmap()
+// 06-Oct-2026 Claude dialQuietly(), dial() without its report, for a caller that retries
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -197,11 +198,12 @@ struct pollfd pfd;
     return( 0 );
 }
 
-// Connects to host:port, trying each address the name gives for at most DIALTIMEOUTMS.
-// Returns the connected socket, or -1 after printing why. The name lookup itself has no
+// Connects to host:port, trying each address the name gives for at most DIALTIMEOUTMS,
+// printing nothing, so a caller that retries can report once. The name lookup itself has no
 // timeout of its own.
+// Returns the connected socket, or -1 with errno set and why it failed in whyP (whyLen bytes).
 int
-dial( const char *host, int port )
+dialQuietly( const char *host, int port, char *whyP, size_t whyLen )
 {
 int sockfd;
 int ret;
@@ -219,7 +221,8 @@ char portstr[32];
 
     if( ret != 0 )
     {
-        fprintf( stderr, "error: can't find %s: %s\n", host, gai_strerror(ret) );
+        snprintf( whyP, whyLen, "can't find %s: %s", host, gai_strerror(ret) );
+        errno = EHOSTUNREACH;
         return( -1 );
     }
 
@@ -245,13 +248,32 @@ char portstr[32];
     }
 
     freeaddrinfo( result );
-    fprintf( stderr, "error: can't connect to %s port %d: %s\n", host, port, strerror(err) );
+    snprintf( whyP, whyLen, "can't connect to %s port %d: %s", host, port, strerror(err) );
     errno = err;
     return( -1 );
 
 win:
     freeaddrinfo( result );
     return( sockfd );
+}
+
+// dialQuietly(), printing why it failed.
+// Returns the connected socket, or -1 with errno set.
+int
+dial( const char *host, int port )
+{
+int fd;
+int err;
+char why[256];
+
+    if( (fd = dialQuietly(host, port, why, sizeof(why))) < 0 )
+    {
+        err = errno;
+        fprintf( stderr, "error: %s\n", why );
+        errno = err;
+    }
+
+    return( fd );
 }
 
 // Listens on port and accepts one connection, then stops listening. Returns the connection,

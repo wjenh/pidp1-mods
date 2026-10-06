@@ -13,6 +13,8 @@ int ptrpos;
 
 int tapeUpdated;
 
+#define PTP_REDIAL_MS 1000      // how often an unconnected punch is dialed again
+
 const char *hole_vs_src =
 glslheader
 "VSIN vec2 in_pos;\n"
@@ -293,12 +295,20 @@ disconnectptp(struct pollfd *pfd)
 void
 connectptp(struct pollfd *pfd)
 {
-	pfd->fd = dial(host, 1043);
+        static int reported;    // a failure was reported, and no dial has worked since
+        char why[256];
+
+        // A failed dial keeps the tape: tapethread() dials again while the punch is unconnected,
+        // so only the first failure of a run is reported.
+        pfd->fd = dialQuietly(host, 1043, why, sizeof(why));
 	if(pfd->fd < 0) {
 		pfd->events = 0;
-		initptp();
+                if(!reported)
+                        fprintf(stderr, "error: %s; dialing again each second\n", why);
+                reported = 1;
 	} else {
 		pfd->events = POLLIN;
+                reported = 0;
 	}
 }
 
@@ -356,9 +366,13 @@ tapethread(void *arg)
 	int n;
 	char line[1024];
 	for(;;) {
-		int ret = poll(pfds, nelem(pfds), -1);
+                // While the punch is unconnected, wake to dial it again: the emulator may not be
+                // listening yet, or may be restarting.
+                int ret = poll(pfds, nelem(pfds), ((pfds[2].fd < 0) ? PTP_REDIAL_MS : -1));
 		if(ret < 0)
 			exit(0);
+                if(pfds[2].fd < 0)
+                        connectptp(&pfds[2]);
 		if(ret == 0)
 			continue;
 
@@ -414,9 +428,9 @@ tapethread(void *arg)
 
 		// handle punch
 		else if(pfds[2].revents & POLLIN) {
+                        // The tape stays when the emulator lets the punch go: only a p command empties it.
 			if(read(pfds[2].fd, &c, 1) <= 0) {
 				disconnectptp(&pfds[2]);
-				initptp();
 				connectptp(&pfds[2]);
 				continue;
 			}

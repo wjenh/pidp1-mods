@@ -45,6 +45,7 @@ void panic(const char *fmt, ...);
 int hasinput(int fd);
 int socketlisten(int port);
 int dial(const char *host, int port);
+int dialQuietly(const char *host, int port, char *whyP, size_t whyLen);
 int serve1(int port);
 void serveN(struct PortHandler *ports, int nports, void *arg);
 void nodelay(int fd);

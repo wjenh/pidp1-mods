@@ -16,6 +16,9 @@
 //     checkbox says what a click does; schema labels; the live audio control, which sends a
 //     command only when clicked; the right button drags the window.
 // 02-Oct-2026 wje (Claude) - the "also start t30dpy" choice; fast load; the Microtape tab.
+// 06-Oct-2026 wje (Claude) - Save punch to... runs bin/save_ptp.sh, which saves the tape under
+//     every interface.
+//    "Last saved to:" replaces "Punch file:" and the web note.
 
 #include <errno.h>
 #include <limits.h>
@@ -66,7 +69,8 @@ typedef enum
 {
     CMD_FASTLOAD,
     CMD_MOUNT,
-    CMD_UNMOUNT
+    CMD_UNMOUNT,
+    CMD_SAVEPUNCH
 } Command;
 
 typedef enum
@@ -106,6 +110,7 @@ static char askOpenPath[PATH_MAX];
 static char askSavePath[PATH_MAX];
 static char askMicrotapePath[PATH_MAX];
 static char fastloadPath[PATH_MAX];
+static char savePunchPath[PATH_MAX];
 static char mtpPath[PATH_MAX];
 static char mtListPath[PATH_MAX];
 static char microtapeDir[PATH_MAX];
@@ -148,7 +153,8 @@ static Uint32 statusMs;
 static char mountedPath[PATH_MAX];  // what pdp1central mounted in the reader, "" if not known
 static bool mountKnown;
 static char lastMountPath[PATH_MAX];
-static char punchPath[PATH_MAX];
+static char punchPath[PATH_MAX];    // where the punch was last saved, "" if not yet
+static char savingPath[PATH_MAX];   // where save_ptp.sh is saving it, while it runs
 
 static Command command;         // the program running, while job is JOB_COMMAND
 static int commandDrive;        // the drive mtp is changing
@@ -501,7 +507,7 @@ const char *labelP;
     if( which == JOB_ASK_PUNCH )
     {
         argv[2] = askSavePath;
-        labelP = "choosing a punch file";
+        labelP = "choosing where to save the punch";
     }
     else if( which == JOB_ASK_MICROTAPE )
     {
@@ -527,7 +533,7 @@ const char *labelP;
     snprintf(jobLabel, sizeof(jobLabel), "%s", labelP);
 }
 
-// Run a program (fastload, mtp) as the child, with its own arguments; commandEnded() acts on
+// Run a program (fastload, mtp, save_ptp.sh) as the child, with its own arguments; commandEnded() acts on
 // its end. The command line is logged.
 // Returns false if it could not be started.
 static bool
@@ -711,6 +717,29 @@ const char *whyP;
     startCommand(argv, CMD_FASTLOAD, 0, "fast load");
 }
 
+// Save what was punched since the last save to fileP with save_ptp.sh, which finds whoever
+// holds the punch (the emulator, pdp1_periphES or tapevis, the browser) and says on its last
+// line why it could not. Sending "p FILE" ourselves meant something different under each
+// interface, and nothing at all under web.
+static void
+savePunch(const char *fileP)
+{
+char *argv[4];
+
+    if( fileP[0] != '/' )
+    {
+        appError("punch not saved: \"%s\" is not an absolute path", fileP);
+        return;
+    }
+
+    snprintf(savingPath, sizeof(savingPath), "%s", fileP);
+    argv[0] = "/bin/bash";
+    argv[1] = savePunchPath;
+    argv[2] = savingPath;
+    argv[3] = NULL;
+    startCommand(argv, CMD_SAVEPUNCH, 0, "saving the punch");
+}
+
 // A tape path as the Microtape plugin resolves it, into outP (PATH_MAX bytes): a relative one is
 // relative to the root.
 // Returns false if it does not fit.
@@ -855,6 +884,22 @@ commandEnded(int status)
             {
                 appError("fast load failed, status %d", status);
             }
+        }
+    }
+    else if( command == CMD_SAVEPUNCH )
+    {
+        // The script's own line, already in the log, says how much was saved and by whom.
+        if( status == 0 )
+        {
+            snprintf(punchPath, sizeof(punchPath), "%s", savingPath);
+        }
+        else if( commandLast[0] )
+        {
+            appError("punch not saved: %s", commandLast);
+        }
+        else
+        {
+            appError("punch not saved: save_ptp.sh failed, status %d", status);
         }
     }
     else if( status == 0 )
@@ -1025,7 +1070,6 @@ static void
 pollChild(void)
 {
 char out[4096];
-char line[PATH_MAX + 4];
 int result;
 Job ended;
 
@@ -1090,13 +1134,9 @@ Job ended;
             mountMicrotape(mtAskDrive, dialogPath, microtapeLock(mtAskDrive), true);
         }
     }
-    else if( tapePathOk(dialogPath) )
+    else if( ended == JOB_ASK_PUNCH )
     {
-        snprintf(line, sizeof(line), "p %s", dialogPath);
-        if( sendTape(line) )
-        {
-            snprintf(punchPath, sizeof(punchPath), "%s", dialogPath);
-        }
+        savePunch(dialogPath);
     }
 
     startQueued();
@@ -1483,14 +1523,9 @@ int i, count;
     {
         startDialog(JOB_ASK_PUNCH);
     }
-    nk_label(ctxP, "", NK_TEXT_LEFT);
+    nk_label(ctxP, (((job == JOB_COMMAND) && (command == CMD_SAVEPUNCH)) ? "saving" : ""), NK_TEXT_LEFT);
     nk_layout_row_dynamic(ctxP, ROW_H, 1);
-    nk_labelf(ctxP, NK_TEXT_LEFT, "Punch file: %s", (punchPath[0] ? punchPath : "not set by pdp1central"));
-    if( !strcmp(controlChoice("interface", "web", valueBuf), "web") )
-    {
-        nk_label_colored(ctxP, "Note: the web interface's front end does not save the punch to a file.",
-            NK_TEXT_LEFT, styleColors[STYLE_WARNING]);
-    }
+    nk_labelf(ctxP, NK_TEXT_LEFT, "Last saved to: %s", (punchPath[0] ? punchPath : "not saved by pdp1central yet"));
 
     // The live sound, as pdp1audio on and off turn it; the audio enabled setting only allows it.
     nk_layout_row_dynamic(ctxP, 12, 1);
@@ -1521,8 +1556,8 @@ int i, count;
     nk_layout_row_dynamic(ctxP, 12, 1);
     nk_spacing(ctxP, 1);
     // Option buttons, not a drop-down: at the foot of the tab a drop-down's list would run off
-    // the bottom of the window. No heading row of its own, so that the tab still fits with the
-    // web note and an error line under the strip.
+    // the bottom of the window. No heading row of its own, so that the tab still fits with an
+    // error line under the strip.
     for( count = 0; (count < MAX_SCHEMES) && styleSchemeName(count); count++ )
     {
     }
@@ -2260,7 +2295,7 @@ bool ok;
         rootJoin(controlPath, "pdp1control.config") && rootJoin(scriptPath, "bin/pdp1control.sh") &&
         rootJoin(askOpenPath, "bin/tkaskopenfile") && rootJoin(askSavePath, "bin/tkaskopenfilewrite") &&
         rootJoin(askMicrotapePath, "bin/tkaskmicrotape") && rootJoin(fastloadPath, "bin/fastload") &&
-        rootJoin(mtpPath, "bin/mtp") && rootJoin(mtListPath, "microtapes.txt") &&
+        rootJoin(savePunchPath, "bin/save_ptp.sh") && rootJoin(mtpPath, "bin/mtp") && rootJoin(mtListPath, "microtapes.txt") &&
         rootJoin(microtapeDir, "Microtapes") &&
         rootJoin(fontPath, "src/pdp1_periph/DejaVuSansMono.ttf") && rootJoin(stylePath, "pdp1central.config"));
     if( schemaArgP )

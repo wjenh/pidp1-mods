@@ -46,13 +46,10 @@
  *    A second start exits before it touches the panel, ports or coremem.
  * wje/Claude 07-Oct-2026 a new display or typewriter client starts with current output, any leftover data
  *    before the connection opened is first discarded.
-<<<<<<< HEAD
  * Claude 07-Oct-2026 the default reader and punch tapes are posted before any port listens, so a front end's
  *    tape socket is no longer replaced by them.
  * Claude 07-Oct-2026 only the emulator thread drives the audio device; the console's audio requests are posted
  *    to it (audio.c, console.c).
-=======
->>>>>>> 907f92fbad6b59e4fdea6b4b138adeb3dfec18e9
 */
 
 #include <errno.h>
@@ -1250,13 +1247,8 @@ mode_t mask;
 
 // Startup, takes the one-pdp1 lock, finds the operator panel, installs signal
 // handlers and the exitcleanup() atexit hook, loads configuration, loads the saved core memory
-<<<<<<< HEAD
 // image, posts the default reader and punch tapes, starts the polling/network/display threads
 // and the debugger server, opens the typewriter fds, then calls emu() which runs forever.
-=======
-// image, starts the polling/network/display threads and the debugger server,
-// opens the default reader/punch/typewriter fds, then calls emu() which runs forever.
->>>>>>> 907f92fbad6b59e4fdea6b4b138adeb3dfec18e9
 // Returns 1 if another pdp1 is running or no operator panel could be found,
 // otherwise returns 0, but only in the unreachable case where emu() ever
 // returns, which it doesn't.

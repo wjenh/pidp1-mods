@@ -58,6 +58,7 @@ extern void setAudioTuning(float);
 extern float getAudioTuning(void);
 extern int getSampleRate(void);
 extern int getOverflowData(int *);
+extern void postaudio(bool);
 
 typedef struct
 {
@@ -590,7 +591,8 @@ static __thread char resp[CMDLINEMAX];
             }
             else
             {
-                stopaudio();
+                // stopaudio() is the emulator thread's; this thread asks.
+                postaudio(false);
             }
 
             if( !resp[0] )

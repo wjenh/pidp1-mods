@@ -46,6 +46,13 @@
  *    A second start exits before it touches the panel, ports or coremem.
  * wje/Claude 07-Oct-2026 a new display or typewriter client starts with current output, any leftover data
  *    before the connection opened is first discarded.
+<<<<<<< HEAD
+ * Claude 07-Oct-2026 the default reader and punch tapes are posted before any port listens, so a front end's
+ *    tape socket is no longer replaced by them.
+ * Claude 07-Oct-2026 only the emulator thread drives the audio device; the console's audio requests are posted
+ *    to it (audio.c, console.c).
+=======
+>>>>>>> 907f92fbad6b59e4fdea6b4b138adeb3dfec18e9
 */
 
 #include <errno.h>
@@ -1243,8 +1250,13 @@ mode_t mask;
 
 // Startup, takes the one-pdp1 lock, finds the operator panel, installs signal
 // handlers and the exitcleanup() atexit hook, loads configuration, loads the saved core memory
+<<<<<<< HEAD
+// image, posts the default reader and punch tapes, starts the polling/network/display threads
+// and the debugger server, opens the typewriter fds, then calls emu() which runs forever.
+=======
 // image, starts the polling/network/display threads and the debugger server,
 // opens the default reader/punch/typewriter fds, then calls emu() which runs forever.
+>>>>>>> 907f92fbad6b59e4fdea6b4b138adeb3dfec18e9
 // Returns 1 if another pdp1 is running or no operator panel could be found,
 // otherwise returns 0, but only in the unreachable case where emu() ever
 // returns, which it doesn't.
@@ -1289,16 +1301,18 @@ int fd[2];
     pdp->muldiv_sw = configurationP->muldivEnabled;
     pdp->sbs16 = configurationP->sbs16Enabled;
 
-    pthread_create(&th, NULL, netthread, pdp);
-    ad1ServerStart(pdp, configurationP);
-    consoleStart(pdp);
-
     // Posted like any other mount and adopted at the first pass; opened non-blocking, so a FIFO
     // here can't hang the start.
+    // Posted before any port listens or the console runs, a front end's or operator's mount
+    // can only come later and replaces these, as at any other time.
     pdp->r_fd = -1;
     pdp->p_fd = -1;
     mountReaderPath(tape);
     mountPunchPath("punch.out");
+
+    pthread_create(&th, NULL, netthread, pdp);
+    ad1ServerStart(pdp, configurationP);
+    consoleStart(pdp);
 
     pdp->typ_fd.id = -1;
     socketpair(AF_UNIX, SOCK_STREAM, 0, fd);

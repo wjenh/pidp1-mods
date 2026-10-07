@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <limits.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdatomic.h>
 
 #include "common.h"
@@ -97,16 +98,34 @@ static const double chmC[4] = { 0.039e-6, 0.043e-6, 0.094e-6, 0.181e-6 };
 // Warning - SDL will clip if you set the gain too high. You'll have to experiment.
 #define MIXGAIN 0.5
 
+// The device and everything that steers its queue belong to the emulator thread. The console and
+// the command port run on their own threads, so what they ask for is posted: the value is stored,
+// then its generation and requestGen are bumped, and svc_audio() applies it at its next pass.
+// Until isInitialized is seen, the emulator thread touches nothing here.
 static AudioHandle dev;
-
-static int nsamples;
-static int overflows;
-static int negOverflow;
-static int posOverflow;
 static bool isStopped = true;
-static bool isInitialized = false;
-static bool rateChanged = false;
-static int sampleRate = 48000;
+static int sampleRate = 48000;               // the open device's rate
+static float tuning = 1.0;                   // the open device's tuning
+static atomic_bool isInitialized;
+static pthread_mutex_t initLock = PTHREAD_MUTEX_INITIALIZER;
+
+static atomic_uint requestGen;
+static unsigned appliedRequestGen;
+static atomic_uint rateGen;
+static unsigned appliedRateGen;
+static atomic_int requestedRate = 48000;
+static atomic_uint tuningGen;
+static unsigned appliedTuningGen;
+static _Atomic float requestedTuning = 1.0f;
+static atomic_uint runGen;
+static unsigned appliedRunGen;
+static atomic_bool wantRun;
+
+// Counted on the emulator thread; the overflow query reads and clears them from another.
+static atomic_int nsamples;
+static atomic_int overflows;
+static atomic_int negOverflow;
+static atomic_int posOverflow;
 
 // The sample clock: simtime of the next sample, with the fraction of a nanosecond carried apart
 // so no rate drifts. needAnchor asks the next pass to restart it and preload the queue.
@@ -151,8 +170,7 @@ static int tMinFrames = INT_MAX;
 static int tMaxFrames;
 
 // Set default values
-static float mixerGain = MIXGAIN;
-static float tuning = 1.0;
+static _Atomic float mixerGain = MIXGAIN;
 
 // The four filters, PF1-PF4. cutoffHz is what was asked for, from any thread (the command port
 // runs on its own); a setter then bumps cutoffGen, and the emulator thread applies the cutoffs at
@@ -166,6 +184,10 @@ static unsigned appliedGen;
 static int lastFlags = -1;
 
 static void openAudio(void);
+static void postRequest(atomic_uint *genP);
+static void applyRequests(void);
+static void startPlaying(void);
+static void stopPlaying(void);
 
 // The seven functions below are the only places SDL2 and SDL3 differ. Everything else in this
 // file calls these and is otherwise identical between the two builds.
@@ -267,11 +289,16 @@ audioApplyTuning(AudioHandle h, float ratio)
 #endif
 }
 
+// Initializes SDL's audio and the filters, and opens the device. Any thread; SDL_Init() and the
+// open can take tens of milliseconds, so they are not done on the emulator thread. That thread
+// reads nothing set here until it sees isInitialized, and owns the device from then on.
 void
 initaudio(void)
 {
-    if( isInitialized )
+    pthread_mutex_lock(&initLock);
+    if( atomic_load_explicit(&isInitialized, memory_order_acquire) )
     {
+        pthread_mutex_unlock(&initLock);
         return;
     }
 
@@ -286,27 +313,34 @@ initaudio(void)
     }
     appliedGen = 0;
     lastFlags = -1;
+    isStopped = true;
 
+    // The rate and tuning asked for so far are this open's. One asked for after these loads
+    // moves its generation again, and the emulator thread applies it.
+    appliedRateGen = atomic_load_explicit(&rateGen, memory_order_acquire);
+    appliedTuningGen = atomic_load_explicit(&tuningGen, memory_order_acquire);
+    tuning = atomic_load_explicit(&requestedTuning, memory_order_relaxed);
     openAudio();
 
-    isInitialized = true;
-    isStopped = true;
+    atomic_store_explicit(&isInitialized, true, memory_order_release);
+    pthread_mutex_unlock(&initLock);
 }
 
-// Opens the device at the current rate and reads audiodepth and pidp1timing. configure() calls
+// Opens the device at the rate asked for and reads audiodepth and pidp1timing. configure() calls
 // setSampleRate() on every load and reload of the config file, and that reopens the device here,
-// so both settings follow a reload.
+// so both settings follow a reload. initaudio()'s first open, then the emulator thread's.
 static void
 openAudio()
 {
 ConfigurationSettingP settingP;
 int ceilingMs;
 
+    sampleRate = atomic_load_explicit(&requestedRate, memory_order_relaxed);
     dev = audioOpenDevice(sampleRate);
     audioApplyTuning(dev, tuning);   // re-apply in case it was set before this open, or on reopen
-    overflows = 0;
-    negOverflow = 0;
-    posOverflow = 0;
+    atomic_store_explicit(&overflows, 0, memory_order_relaxed);
+    atomic_store_explicit(&negOverflow, 0, memory_order_relaxed);
+    atomic_store_explicit(&posOverflow, 0, memory_order_relaxed);
 
     depthMs = DEPTH_DEFAULT_MS;
     if( (settingP = findConfigurationSetting(getConfiguration(), "audiodepth")) && (settingP->ivalue > 0) )
@@ -357,50 +391,150 @@ resetQueueControl(void)
 int
 isAudioInitialized()
 {
-    return( isInitialized );
+    return( atomic_load_explicit(&isInitialized, memory_order_acquire) );
 }
 
+// Initializes the audio if it is not, and asks for the sound to start. Any thread.
 void
 startaudio(void)
 {
-    if( !isAudioInitialized() )
-    {
-        initaudio();
-    }
-
+    initaudio();
     continueaudio();
 }
 
+// Asks for the sound to start (on true) or stop, at the emulator thread's next svc_audio(). Any
+// thread. The machine only makes sound while it runs, and main() only calls svc_audio() while
+// audio is enabled, so with audio turned off the queue plays out and the device runs dry.
+void
+postaudio(bool on)
+{
+    atomic_store_explicit(&wantRun, on, memory_order_relaxed);
+    postRequest(&runGen);
+}
+
+// Asks for the sound to start. Any thread.
+void
+continueaudio(void)
+{
+    postaudio(true);
+}
+
+// Stops the sound now. Emulator thread only: main() calls it every pass while the power is off.
+// A start or stop asked for and not yet applied is dropped, so the power cycle ends the sound
+// whatever was asked for while it was off.
 void
 stopaudio(void)
 {
-    if( (dev == AUDIO_HANDLE_INVALID) || !isInitialized )
+    if( !atomic_load_explicit(&isInitialized, memory_order_acquire) )
     {
         return;
     }
 
-    audioPauseDevice(dev, true);
-    audioClearQueue(dev);
-    nsamples = 0;
-    resetQueueControl();
-    isStopped = true;
+    appliedRunGen = atomic_load_explicit(&runGen, memory_order_acquire);
+    if( !isStopped )
+    {
+        stopPlaying();
+    }
 }
 
-void
-continueaudio(void)
+// Stores nothing itself: the caller stores the value, then this bumps its generation and
+// requestGen, in that order, so a pass that sees requestGen move sees the value too.
+static void
+postRequest(atomic_uint *genP)
 {
-    if( (dev == AUDIO_HANDLE_INVALID) || !isStopped || !isInitialized )
+    atomic_fetch_add_explicit(genP, 1, memory_order_release);
+    atomic_fetch_add_explicit(&requestGen, 1, memory_order_release);
+}
+
+// Applies what was asked for since the last pass: the rate, which reopens the device, then the
+// tuning, then a start or stop. A pass with nothing asked for costs one load. Emulator thread.
+static void
+applyRequests(void)
+{
+unsigned gen;
+
+    gen = atomic_load_explicit(&requestGen, memory_order_acquire);
+    if( gen == appliedRequestGen )
+    {
+        return;
+    }
+    appliedRequestGen = gen;
+
+    gen = atomic_load_explicit(&rateGen, memory_order_acquire);
+    if( gen != appliedRateGen )
+    {
+        appliedRateGen = gen;
+        if( dev != AUDIO_HANDLE_INVALID )
+        {
+            audioPauseDevice(dev, true);
+            audioCloseDevice(dev);
+            dev = AUDIO_HANDLE_INVALID;
+        }
+
+        openAudio();
+        resetQueueControl();
+        if( dev != AUDIO_HANDLE_INVALID )
+        {
+            audioPauseDevice(dev, isStopped);
+        }
+    }
+
+    gen = atomic_load_explicit(&tuningGen, memory_order_acquire);
+    if( gen != appliedTuningGen )
+    {
+        appliedTuningGen = gen;
+        tuning = atomic_load_explicit(&requestedTuning, memory_order_relaxed);
+        tuned = (fabsf(tuning - 1.0f) > 0.0001f);
+        audioApplyTuning(dev, tuning);
+    }
+
+    gen = atomic_load_explicit(&runGen, memory_order_acquire);
+    if( gen != appliedRunGen )
+    {
+        appliedRunGen = gen;
+        if( atomic_load_explicit(&wantRun, memory_order_relaxed) )
+        {
+            startPlaying();
+        }
+        else
+        {
+            stopPlaying();
+        }
+    }
+}
+
+// Starts a stopped device from an empty queue. Emulator thread.
+static void
+startPlaying(void)
+{
+    if( (dev == AUDIO_HANDLE_INVALID) || !isStopped )
     {
         return;
     }
 
     // The next svc_audio() preloads the queue before the program's sound.
     audioClearQueue(dev);
-    nsamples = 0;
+    atomic_store_explicit(&nsamples, 0, memory_order_relaxed);
     resetQueueControl();
     isStopped = false;
     // Start playing.
     audioPauseDevice(dev, false);
+}
+
+// Pauses the device and empties its queue. Emulator thread.
+static void
+stopPlaying(void)
+{
+    if( dev == AUDIO_HANDLE_INVALID )
+    {
+        return;
+    }
+
+    audioPauseDevice(dev, true);
+    audioClearQueue(dev);
+    atomic_store_explicit(&nsamples, 0, memory_order_relaxed);
+    resetQueueControl();
+    isStopped = true;
 }
 
 // Reads the filters at simtime t into one stereo frame at frameP. A t at or before the filters'
@@ -413,8 +547,10 @@ float chan1, chan2, chan3, chan4;
 float mix1, mix2;
 float gainedMix1, gainedMix2;  // gain applied, still float, not yet clamped or narrowed
 int peak1, peak2;              // the actual peak seen this sample, for overflow reporting
+int peakHi, peakLo;
+float gain;
 
-    ++nsamples;
+    atomic_fetch_add_explicit(&nsamples, 1, memory_order_relaxed);
 
     for( int i = 0; i < 4; ++i )
     {
@@ -431,37 +567,32 @@ int peak1, peak2;              // the actual peak seen this sample, for overflow
     mix2 = mixSamples(chan3, chan4, 0.50) * 32767.0;
 
     // Apply the adjustable gain here, in float, before any clamping or narrowing happens.
-    gainedMix1 = mix1 * mixerGain;
-    gainedMix2 = mix2 * mixerGain;
+    gain = atomic_load_explicit(&mixerGain, memory_order_relaxed);
+    gainedMix1 = mix1 * gain;
+    gainedMix2 = mix2 * gain;
     peak1 = (int)gainedMix1;
     peak2 = (int)gainedMix2;
 
     // Accumulate some statistics for param setting.
+    // Only this thread raises the peaks, so a plain compare and store does; a query clearing one
+    // between the two can at worst leave this sample's peak in place.
     if( (gainedMix1 > 32767.0) || (gainedMix2 > 32767.0) )
     {
-        ++overflows;
-        if( peak1 > posOverflow )
+        atomic_fetch_add_explicit(&overflows, 1, memory_order_relaxed);
+        peakHi = ((peak1 > peak2) ? peak1 : peak2);
+        if( peakHi > atomic_load_explicit(&posOverflow, memory_order_relaxed) )
         {
-            posOverflow = peak1;
-        }
-
-        if( peak2 > posOverflow )
-        {
-            posOverflow = peak2;
+            atomic_store_explicit(&posOverflow, peakHi, memory_order_relaxed);
         }
     }
 
     if( (gainedMix1 < -32768.0) || (gainedMix2 < -32768.0) )
     {
-        ++overflows;
-        if( peak1 < negOverflow )
+        atomic_fetch_add_explicit(&overflows, 1, memory_order_relaxed);
+        peakLo = ((peak1 < peak2) ? peak1 : peak2);
+        if( peakLo < atomic_load_explicit(&negOverflow, memory_order_relaxed) )
         {
-            negOverflow = peak1;
-        }
-
-        if( peak2 < negOverflow )
-        {
-            negOverflow = peak2;
+            atomic_store_explicit(&negOverflow, peakLo, memory_order_relaxed);
         }
     }
 
@@ -784,24 +915,15 @@ svc_audio(PDP1 *pdp)
 uint64_t now;
 uint64_t whole;
 
-    if( (dev == AUDIO_HANDLE_INVALID) || !isInitialized || isStopped )
+    if( !atomic_load_explicit(&isInitialized, memory_order_acquire) )
     {
         return;
     }
 
-    if( rateChanged )
+    applyRequests();
+    if( (dev == AUDIO_HANDLE_INVALID) || isStopped )
     {
-        audioPauseDevice(dev, true);
-        audioCloseDevice(dev);
-        dev = AUDIO_HANDLE_INVALID;
-        openAudio();
-        audioPauseDevice(dev, isStopped);
-        rateChanged = false;
-        resetQueueControl();
-        if( dev == AUDIO_HANDLE_INVALID )
-        {
-            return;
-        }
+        return;
     }
 
     now = pdp->simtime;
@@ -862,20 +984,20 @@ uint64_t whole;
 
 // Set the sampling rate for SDB.
 // Oversampling is ok.
-// Requires a teardown and reopen.
+// Requires a teardown and reopen, which the emulator thread does at its next pass. Any thread.
 void
 setSampleRate(int perSec)
 {
-    sampleRate = perSec;
-    rateChanged = true;
+    atomic_store_explicit(&requestedRate, perSec, memory_order_relaxed);
+    postRequest(&rateGen);
 }
 
-// Get the sampling rate for SDB.
+// Get the sampling rate for SDB, as last asked for.
 // Oversampling is ok.
 int
 getSampleRate()
 {
-    return(sampleRate);
+    return( atomic_load_explicit(&requestedRate, memory_order_relaxed) );
 }
 
 // Sets a voice's cutoff, in Hz: voice 1-4, or 0 for all four. 0 Hz or less puts back the CHM
@@ -935,7 +1057,7 @@ alphaToCutoff(float alpha)
         alpha = 0.9999f;
     }
 
-    return( (float)((-log(1.0 - (double)alpha) * (double)sampleRate) / (2.0 * M_PI)) );
+    return( (float)((-log(1.0 - (double)alpha) * (double)getSampleRate()) / (2.0 * M_PI)) );
 }
 
 void
@@ -946,51 +1068,55 @@ setMixerGain(float newGain)
         newGain = 0.0;          // negative is useless
     }
 
-    mixerGain = newGain;
+    atomic_store_explicit(&mixerGain, newGain, memory_order_relaxed);
 }
 
 float
 getMixerGain()
 {
-    return( mixerGain );
+    return( atomic_load_explicit(&mixerGain, memory_order_relaxed) );
 }
 
 // 1.0 is no tuning. Greater than 1.0 raises pitch. Less than 1.0 lowers pitch.
-// This takes effect immediately when built with SDL3.
+// This takes effect at the emulator thread's next pass when built with SDL3. Any thread.
 // SDL2 has no/ pitch-ratio concept on a plain queued device, so under SDL2 this is saved but ignored.
 void
 setAudioTuning(float newTuning)
 {
     if( newTuning > 0.0 )
     {
-        tuning = newTuning;
-        tuned = (fabsf(tuning - 1.0f) > 0.0001f);
-        audioApplyTuning(dev, tuning);
+        atomic_store_explicit(&requestedTuning, newTuning, memory_order_relaxed);
+        postRequest(&tuningGen);
     }
 }
 
+// The tuning as last asked for.
 float
 getAudioTuning()
 {
-    return( tuning );
+    return( atomic_load_explicit(&requestedTuning, memory_order_relaxed) );
 }
 
-// Expects an int[2], returns current overflow count, if rsltP is not null,
-// puts max max value seen, min value seen in the array and resets the values.
+// Expects an int[3], returns current overflow count, if rsltP is not null,
+// puts max max value seen, min value seen and the samples made in the array and resets the values.
+// Any thread.
 int
 getOverflowData(int *rsltP)
 {
 int i;
+int pos, neg, samples;
 
-    i = overflows;
+    i = atomic_exchange_explicit(&overflows, 0, memory_order_relaxed);
+    pos = atomic_exchange_explicit(&posOverflow, 0, memory_order_relaxed);
+    neg = atomic_exchange_explicit(&negOverflow, 0, memory_order_relaxed);
+    samples = atomic_exchange_explicit(&nsamples, 0, memory_order_relaxed);
 
     if( rsltP )
     {
-        *rsltP++ = posOverflow;
-        *rsltP++ = negOverflow;
-        *rsltP = nsamples;
+        *rsltP++ = pos;
+        *rsltP++ = neg;
+        *rsltP = samples;
     }
 
-    nsamples = overflows = posOverflow = negOverflow = 0;
     return( i );
 }

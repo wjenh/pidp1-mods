@@ -74,9 +74,9 @@
 // 28-Sep-2026 Claude - first-time setup of the subsystem and of each screen is serialized by setupLock, and
 //    displayInitialized is published only once the worker exists, so concurrent first callers start one worker
 //    and build one control entry per screen.
-// 29-Sep-2026 Claude - a partial write that ends inside a word no longer misaligns the client's stream:
-//    flushDisplay() keeps how much of the word went and starts the next write after it, instead of sending those
-//    bytes again and the last ones of the next write stale.
+// 7-Oct-2026 wje/Claude - a partial write that ends inside a word no longer misaligns the client stream.
+//    flushDisplay() keeps how much was actually sent and starts the next write after that
+//    instead of sending those bytes again.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -343,7 +343,7 @@ DisplayControlP ctlP;
     }
     ctlP->connGen++;
 
-    // The worker's per-connection state (dpyStalled) is NOT reset here (a second, prior stress
+    // The worker's per-connection state (dpyBuf, dpyStalled) is NOT reset here (a second, prior stress
     // test found this race too): the worker reads and writes it without a lock, same as ctlP->fd
     // used to be. The worker resets it itself, once it notices the fd it just snapshotted is a
     // new one -- see worker().
@@ -915,9 +915,11 @@ static uint32_t drained[CMDBUFSIZE];    // one screen's commands, copied out of 
                 // a later accept). Reset its state here, on the thread that reads and writes it
                 // unlocked below, instead of setDisplayFD() writing it under controlLock against
                 // that unlocked use.
-                // A word the old client got only part of goes to the new one whole, so the new
-                // client's stream starts on a word.
+                // The new client starts with an empty buffer, as dropClient() leaves one: what the
+                // old client had not taken was drawn for it, and would reach the new one before
+                // current output. Its stream starts on a word, whatever part of one the old got.
                 ctlP->dpyStalled = false;
+                ctlP->numDpyCommands = 0;
                 ctlP->dpySentBytes = 0;
             }
             lastSeenGen[i] = gen;

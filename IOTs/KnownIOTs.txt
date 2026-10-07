@@ -1,14 +1,14 @@
 These are the IOTs DEC lists as used in the DEC PDP-1 Input Output Systems Manual F25.
 Note that only a few of these are implemented by the pidp1 emulator, and some are for fairly esoteric devices.
-Those marked with an asterisk are implemented in the pidp1 emulator and are reserved.
+Those marked with an * are core features, don't replace them.
 
-01 * rpa
+01 * rpa, also serves the Type 550 Microtape controller, implemented
 02 * rpb
 03 * tyo
 04 * tyi
 05 * ppa
 06 * ppb
-07   dpy, now independent of emulator
+07 * dpy, now independent of emulator
 
 11 * spacewar controllers
 
@@ -37,7 +37,7 @@ Those marked with an asterisk are implemented in the pidp1 emulator and are rese
 41
 42
 43
-44
+44 A specical test gateway, used only for development, can be removed
 45 Type 62 and 64 line printers, implemented
 
 47
@@ -56,8 +56,8 @@ Those marked with an asterisk are implemented in the pidp1 emulator and are rese
 
 66
 67
-70
-71
+70 Stanford-ish 4 channel D/A, implemented
+71 Stanford-ish 4 channel D/A
 72
 73
 74 * lem/eem

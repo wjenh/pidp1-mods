@@ -44,6 +44,8 @@
  *    and pdp1 creates the panel segment if no panel has done so.
  * Claude 05-Oct-2026 only one pdp1 runs at a time.
  *    A second start exits before it touches the panel, ports or coremem.
+ * wje/Claude 07-Oct-2026 a new display or typewriter client starts with current output, any leftover data
+ *    before the connection opened is first discarded.
 */
 
 #include <errno.h>
@@ -87,12 +89,15 @@
 #define CONFIG_FILE "/opt/pidp1-mods/pidp1.config"
 #define TIMING_FILE "/tmp/pidp1-timing.txt"
 
-// Extended timing histograms (11-Sep-2026). Each is an array of bucket edges in ns: bucket 0
-// counts values below the first edge, bucket i counts [edge[i-1], edge[i]), and the final bucket
-// counts everything at or above the last edge, so a histogram has (number of edges + 1) buckets.
+// Extended timing histograms.
+// Each is an array of bucket edges in ns:
+// Bucket 0 counts values below the first edge.
+// Bbucket i counts [edge[i-1], edge[i]).
+// The final bucket counts everything at or above the last edge.
+// A histogram has (number of edges + 1) buckets.
 // Cycle and gap times use 1-2-5 steps, which puts 5us, one machine cycle, exactly on an edge.
 #define TIMING_CYCLE_EDGES 17
-// Throttle sleeps are nominally usleep(1000): fine steps just above 1ms show timer slack and
+// Throttle sleeps are nominally usleep(1000), fine steps just above 1ms show timer slack and
 // wakeup latency, coarse ones above that show the preempted tail.
 #define TIMING_SLEEP_EDGES 10
 // Lag is how far simtime trails the wall clock at the start of a cycle.
@@ -148,7 +153,6 @@ extern bool all1DEnabled;
 extern bool useMotionPrediction;
 
 static bool timingEnabled;
-static bool newMemFile;
 
 static volatile sig_atomic_t reconfigRequested;     // SIGHUP synchronization, thread-safe
 
@@ -199,7 +203,7 @@ static bool sleptSinceCycle;    // a throttle sleep came after the previous time
 static u64 gapTotal;            // sum of the gapHist samples, ns
 static long gapCount;           // number of gapHist samples
 static long stealCycles;        // timed cycles that were high-speed-channel steals, not cycle()
-static long burstCount;         // completed bursts: runs of cycles between two throttle sleeps
+static long burstCount;         // completed bursts, runs of cycles between two throttle sleeps
 static long burstCycles;        // cycles so far in the current burst
 static long burstCyclesMin;
 static long burstCyclesMax;
@@ -211,21 +215,21 @@ static long sleepCount;         // throttle sleeps seen while running
 static u64 sleepTotal;          // wall ns of all of them
 static u64 sleepMin;
 static u64 sleepMax;
-static long long lagMax;        // largest lag seen, ns (signed: simtime can be ahead of the wall clock)
+static long long lagMax;        // largest lag seen, ns (signed, simtime can be ahead of the wall clock)
 static u64 runStartWall;        // gettime() at the first timed cycle of this run
 static u64 runStartCpu;         // emulator thread CPU time then, ns
 static long runStartVoluntary;  // this thread's voluntary context switches then, -1 if unknown
 static long runStartInvoluntary;// and involuntary ones (preemptions), -1 if unknown
 
 // The main emulator loop.
-// Runs forever or until exit() or the SIGTERM handler ends the process:
-// Each iteration applies any pending AD1 (remote debugger) overrides of the front-panel
-// switches, services start/stop/continue/examine/deposit/readin switch edges via
+// Runs forever or until exit() or the SIGTERM handler ends the process.
+// Each iteration applies any pending remote debugger overrides of the front-panel
+// switches and services start/stop/continue/examine/deposit/readin switch edges via
 // spec()/cycle()/start_readin()/readin1()/readin2(), runs one machine cycle  or steals one for an active
 // high-speed-channel DMA transfer when pdp->run is set, services the panel lights in all states,
 // then services file-descriptor-backed I/O via handleio() and dynamicIotProcessorDoIOPoll(), and
 // the console's cli(), which applies a staged load and passes stdin lines to the console thread.
-// No return value -- this function never returns normally.
+// This function never returns normally.
 void
 emu(PDP1 *pdp, Panel *panel)
 {
@@ -240,7 +244,7 @@ bool prev_power_sw;
 FILE *tmpfP;    // used for timing
 u64 realtimeBefore;     // pdp->realtime before throttle(); it changes only if throttle() slept
 u64 passStartSim;       // simtime at the top of a powered pass
-u64 passNs;             // the pass's simtime up to throttle(): its mul/div time, not the lag cap
+u64 passNs;             // the pass's simtime up to throttle(), its mul/div time, not the lag cap
 bool ran;               // the pass ran the machine, a stolen cycle included
 
     pdp->panel = panel;
@@ -393,7 +397,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
 
                 if( timingEnabled )
                 {
-                    // First timed cycle of a run: snapshot thread CPU time and context switches.
+                    // First timed cycle of a run, snapshot thread CPU time and context switches.
                     // Done before precycleTime is taken so its /proc read is not charged to the cycle.
                     if( totalCycles == 0 )
                     {
@@ -473,7 +477,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
             }
 
             // throttle() moves simtime only through its lag cap, so measuring up to here leaves
-            // out the span the cap forgives: the plugins' deadline time bases do not count it.
+            // out the span the cap forgives, the plugins' deadline time bases do not count it.
             passNs = pdp->simtime - passStartSim;
 
             realtimeBefore = pdp->realtime;
@@ -498,11 +502,11 @@ bool ran;               // the pass ran the machine, a stolen cycle included
         {
             stopaudio();
 
-            // This branch runs on every pass until the power comes back; the plugins' power
-            // clear is once, at the off edge, and before their stop, while a device that has
-            // not been stopped can still finish with its files. The 16-channel break system is
-            // an installed option: a program's IOT may have switched it, the power cycle puts it
-            // back as configured.
+            // This branch runs on every pass until the power switch is onr.
+            // IOTs get powerclear once at the off edge and before the stop notification/
+            // A device that has not been stopped can still finish with its files.
+            // Any 16-channel special SBS enable a program has done via an IOT will be
+            // reset to the config file setting.
             if( prev_power_sw )
             {
                 dynamicIotProcessorPowerClear();
@@ -528,15 +532,15 @@ bool ran;               // the pass ran the machine, a stolen cycle included
     }
 }
 
-// ---- Extended pidp1timing support (11-Sep-2026) ----
-// The throttle (throttle(), pdp1.c) runs the CPU in bursts: flat out until simtime leads the
-// wall clock by throttleburst (100us by default), then a wait chunked to at most throttlequantum
-// (1000us by default). These functions record
-// what the one-line summary cannot show: how cycle times are distributed (a few very slow cycles
-// or uniformly slow ones), whether slow cycles are the first after a sleep, how much untimed
+// Extended pidp1timing support.
+// The throttle() code in pdp1.c runs the CPU in bursts, flat out until simtime leads the
+// wall clock by throttleburst, 100us by default, then a wait chunked to at most throttlequantum,
+// 1000us by default.
+// These functions record what the one-line summary cannot show, how cycle times are distributed,
+// whether slow cycles are the first after a sleep, how much untimed
 // loop work sits between cycles, how long the sleeps really are, how far simtime trails the wall
-// clock, and how much CPU and how many preemptions the emulator thread took. All run on the
-// emulator thread only.
+// clock, and how much CPU and how many preemptions the emulator thread took.
+// All run on the emulator thread only.
 
 // Snapshot the start of a timed run: wall time, the emulator thread's CPU time and its context
 // switch counts, so timingReport() can give this run's deltas.
@@ -549,8 +553,8 @@ timingRunStart(void)
 }
 
 // Record one timed cycle that started at wall time startNs and took deltaNs of C time.
-// Also records the untimed gap since the previous cycle (only when no throttle sleep came
-// between, since that gap would just be the sleep), and the simtime lag at the cycle's start.
+// Also records the untimed gap since the previous cycle but only when no throttle sleep came
+// between since that gap would just be the sleep, and the simtime lag at the cycle's start.
 static void
 timingNoteCycle(PDP1 *pdp, u64 startNs, u64 deltaNs)
 {
@@ -560,14 +564,14 @@ long long lag;
 
     if( sleptSinceCycle )
     {
-        // First cycle of a burst: kept separately to test whether slow cycles follow sleeps
-        // (a cold cache or a clocked-down core on wakeup) rather than landing anywhere.
+        // First cycle of a burst, kept separately to test whether slow cycles follow sleeps
+        // rather than landing anywhere.
         ++(firstCycleHist[timingBucket(deltaNs, cycleEdges, TIMING_CYCLE_EDGES)]);
     }
     else if( lastCycleEnd )
     {
-        // Everything the main loop does between cycles -- switch and ad1 handling, breakpoint
-        // checks, handleio(), IO polls, cli() -- plus any preemption that lands there.
+        // Everything the main loop does between cycles, switch and ad1 handling, breakpoint
+        // checks, handleio(), IO polls, cli(), plus any preemption that lands here.
         ++(gapHist[timingBucket((startNs - lastCycleEnd), cycleEdges, TIMING_CYCLE_EDGES)]);
         gapTotal += (startNs - lastCycleEnd);
         ++gapCount;
@@ -577,22 +581,23 @@ long long lag;
     lastCycleEnd = (startNs + deltaNs);
     ++burstCycles;
 
-    // Positive lag: simtime is behind the wall clock, the throttle's normal state right after a
-    // sleep, which it then runs flat out to close. Negative lag: simtime is ahead.
+    // Positive lag, simtime is behind the wall clock, the throttle's normal state right after a
+    // sleep, which it then runs flat out to close.
+    // Negative lag, simtime is ahead.
     lag = ((long long)startNs - (long long)pdp->simtime);
     if( lag > lagMax )
     {
         lagMax = lag;
     }
 
-    ++(lagHist[(lag < 0) ? 0 : timingBucket((u64)lag, lagEdges, TIMING_LAG_EDGES)]);
+    ++(lagHist[(lag < 0)?0:timingBucket((u64)lag, lagEdges, TIMING_LAG_EDGES)]);
 }
 
 // Record a throttle sleep that ended (woke) at wall time wakeNs.
-// The sleep began when the previous timed cycle ended: the loop does nothing measurable between
-// the end of a cycle and throttle(). A sleep also ends a burst, measured from the previous
-// wakeup to the end of the burst's last cycle. Cycles before a run's first sleep are not a
-// complete burst and are not counted as one.
+// The sleep began when the previous timed cycle ended, the loop does nothing measurable between
+// the end of a cycle and throttle().
+// A sleep also ends a burst, measured from the previous/ wakeup to the end of the burst's last cycle.
+// Cycles before a run's first sleep are not a complete burst and are not counted as one.
 static void
 timingNoteSleep(u64 wakeNs)
 {
@@ -647,7 +652,7 @@ u64 burstWallNs;
 }
 
 // Append the extended timing data for the run that just ended to fP, an open writable stream.
-// Called on the emulator thread (the thread CPU time and context switches are this thread's).
+// Called on the emulator thread.
 static void
 timingReport(FILE *fP)
 {
@@ -666,8 +671,8 @@ char stamp[64];
     cpuNs = (timingThreadCpuNs() - runStartCpu);
     timingCtxSwitches(&voluntary, &involuntary);
 
-    // The emulator thread's scheduling class: matters because the panel driver's threads run
-    // SCHED_FIFO and the Type 30 display worker runs SCHED_RR when it has the privilege.
+    // The emulator thread's scheduling class, matters because the panel driver's threads run
+    // SCHED_FIFO and the Type 30 display worker runs SCHED_RR when they have the privilege.
     policy = sched_getscheduler(0);
     if( policy == SCHED_FIFO )
     {
@@ -700,11 +705,12 @@ char stamp[64];
         stamp, ((double)wallNs / 1e9), sysconf(_SC_NPROCESSORS_ONLN), policyP, param.sched_priority);
 
     // CPU time covers ALL of the thread's loop work, timed or not, so CPU per cycle is the
-    // real host cost of one simulated 5us cycle; wall percent is the thread's share of a core.
+    // real host cost of one simulated 5us cycle.
+    // Wall percent is the thread's share of a core.
     fprintf(fP, "  emulator thread CPU %.3fs (%.1f%% of wall), %lluns per cycle\n",
         ((double)cpuNs / 1e9),
-        ((wallNs) ? (((double)cpuNs * 100.0) / (double)wallNs) : 0.0),
-        (unsigned long long)((totalCycles) ? (cpuNs / (u64)totalCycles) : 0));
+        ((wallNs) ? (((double)cpuNs * 100.0) / (double)wallNs):0.0),
+        (unsigned long long)((totalCycles) ? (cpuNs / (u64)totalCycles):0));
 
     if( (voluntary >= 0) && (involuntary >= 0) && (runStartVoluntary >= 0) && (runStartInvoluntary >= 0) )
     {
@@ -755,15 +761,15 @@ char stamp[64];
         ((lagMax == LLONG_MIN) ? 0LL : (lagMax / 1000)));
     timingPrintHist(fP, "lag", lagHist, lagEdges, TIMING_LAG_EDGES);
 
-    // Option D: how often the throttle's
-    // lag cap forgave simulated time instead of running an unpaced burst to catch up. Zero on
-    // every ordinary run; a nonzero count here is the only sign that this happened, since a
+    // How often the throttle's/ lag cap forgave simulated time instead of running an
+    // unpaced burst to catch up.
+    // A nonzero count here is the only sign that this happened, since a
     // firing does not show up as a burst or a slow cycle.
     fprintf(fP, "  throttle lag-cap firings %ld\n", throttleCapFirings);
 }
 
 // Clear all extended timing data and give minimums and maximums their starting values.
-// Also clears the per-device data in dynamicIots.c, in case its report was never written.
+// Also clears the per-device data in dynamicIots.c in case its report was never written.
 static void
 timingReset(void)
 {
@@ -797,8 +803,8 @@ timingReset(void)
     throttleCapFirings = 0;
 }
 
-// Find the histogram bucket for value given numEdges ascending bucket edges (see the
-// TIMING_*_EDGES defines). Returns 0 for a value below the first edge, i for a value in
+// Find the histogram bucket for value given numEdges ascending bucket edges.
+// Returns 0 for a value below the first edge, i for a value in
 // [edge[i-1], edge[i]), and numEdges for a value at or above the last edge.
 static int
 timingBucket(u64 value, const u64 *edgesP, int numEdges)
@@ -911,8 +917,9 @@ struct timespec tm;
 }
 
 // Read the calling thread's voluntary and involuntary context switch counts from
-// /proc/thread-self/status into *voluntaryP and *involuntaryP. Either is set to -1 if the
-// file or its line can't be read. Involuntary switches are preemptions: another thread took
+// /proc/thread-self/status into *voluntaryP and *involuntaryP.
+// Either is set to -1 if the file or its line can't be read.
+// Involuntary switches are preemptions, another thread took
 // the core while this one could still run.
 static void
 timingCtxSwitches(long *voluntaryP, long *involuntaryP)
@@ -943,10 +950,10 @@ long value;
     fclose(statusP);
 }
 
-// Network command-port connection handler: reads lines from fd (a connected socket), passes
-// each to handlecmd() for processing, and writes the response back followed by a newline.
-// Loops until the peer closes the connection (read() returns <= 0), then closes fd. No return
-// value (void).
+// Network command-port connection handler.
+// Reads lines from fd, a connected socket, passes each to handlecmd() for processing,
+// and writes the response back followed by a newline.
+// Loops until the peer closes the connection then closes fd.
 void
 handlenetcmd(int fd, void *arg)
 {
@@ -961,10 +968,9 @@ int n;
         r = handlecmd(pdp, line);
         n = strlen(r);
 
-        // handlecmd() returns a pointer to this thread's own 1024-byte response
-        // buffer (see console.c). Only append our own newline terminator when
-        // doing so cannot walk past the end of that buffer; otherwise send
-        // the response as-is rather than risk an out-of-bounds write.
+        // handlecmd() returns a pointer to this thread's 1024-byte response buffer.
+        // Only append our newline terminator when doing so cannot walk past the end
+        // of that buffer, otherwise send/ the response as-is/
         if( (n + 2) <= 1024 )
         {
             r[n] = '\n';
@@ -987,7 +993,7 @@ int n;
 }
 
 // Attaches a newly-connected display client's socket fd to display screen screenNo (0-3) and
-// puts it in nonblocking mode. No return value (void).
+// puts it in nonblocking mode.
 void
 connectdpy(int screenNo, int fd)
 {
@@ -995,8 +1001,8 @@ connectdpy(int screenNo, int fd)
     setDisplayFD(screenNo, fd);
 }
 
-// Called when a connection request comes in on the screen-0 display port; hooks fd up as
-// screen 0's display client via connectdpy(). No return value (void).
+// Called when a connection request comes in on the screen-0 display port
+// Hooks fd up as screen 0's display client via connectdpy().
 void
 handledpy(int fd, void *arg)
 {
@@ -1004,7 +1010,7 @@ handledpy(int fd, void *arg)
     connectdpy(0, fd);
 }
 
-// Same as handledpy() above, but for display screen 1. No return value (void).
+// Same as handledpy() above, but for display screen 1.
 void
 handledpy2(int fd, void *arg)
 {
@@ -1012,7 +1018,7 @@ handledpy2(int fd, void *arg)
     connectdpy(1, fd);
 }
 
-// Same as handledpy() above, but for display screen 2. No return value (void).
+// Same as handledpy() above, but for display screen 2.
 void
 handledpy3(int fd, void *arg)
 {
@@ -1020,7 +1026,7 @@ handledpy3(int fd, void *arg)
     connectdpy(2, fd);
 }
 
-// Same as handledpy() above, but for display screen 3. No return value (void).
+// Same as handledpy() above, but for display screen 3.
 void
 handledpy4(int fd, void *arg)
 {
@@ -1028,11 +1034,11 @@ handledpy4(int fd, void *arg)
     connectdpy(3, fd);
 }
 
-// Called when a connection request comes in on the paper-tape-reader network port: mounts
-// the newly-connected fd in the reader in place of whatever it had. The fd is made
-// non-blocking, so a client that pauses or stops reading the echoes cannot hold the emulator
-// thread, and it is handed over with mountReader() (pdp1.c), which the emulator thread adopts
-// at its next pass. No return value (void).
+// Called when a connection request comes in on the paper-tape-reader network port.
+// Connects the newly-connected fd in the reader in place of whatever it had.
+// The fd is made/ non-blockin, so a client that pauses or stops reading the echoes
+// cannot hold the emulator thread, and it is handed over with mountReader() in pdp1.c.
+// at its next pass.
 void
 handleptr(int fd, void *arg)
 {
@@ -1042,8 +1048,7 @@ handleptr(int fd, void *arg)
     mountReader(fd);
 }
 
-// Same as handleptr() above, but for the paper-tape punch (p_fd) instead of the reader. No
-// return value (void).
+// Same as handleptr() above, but for the paper-tape punch (p_fd) instead of the reader.
 void
 handleptp(int fd, void *arg)
 {
@@ -1054,14 +1059,14 @@ handleptp(int fd, void *arg)
 }
 
 // Thread entry point that listens on all the network command/display/reader/punch ports
-// (the 'ports' table below) and dispatches accepted connections to the matching handler.
-// Runs for the life of the process; serveN() only returns if its poll() fails.
-// Returns nil (the thread's exit value is unused by pthread_create()'s caller).
+//  and dispatches accepted connections to the matching handler.
+// Runs for the life of the process, serveN() only returns if its poll() fails.
+// Returns nil, the thread's exit value is unused.
 void*
 netthread(void *arg)
 {
-    // The command port's handler keeps its connection, so it runs threaded; the others only
-    // hand the fd over.
+    // The command port's handler keeps its connection, so it runs threaded.
+    // The others just hand the fd over.
     struct PortHandler ports[] =
     {
         { 1040, handlenetcmd, 1 },
@@ -1149,17 +1154,9 @@ Word i;
     {
         if( mem[i] != 0 )
         {
-            if( newMemFile )
-            {
-                // Just put it on one line, jeez
-                fprintf(fP, "%06o: %06o\n", i, mem[i]);
-            }
-            else
-            {
-                // Why 2 lines? Silly.
-                fprintf(fP, "%06o:\n", i);
-                fprintf(fP, "%06o\n", mem[i]);
-            }
+            // Just put it on one line, jeez
+            // Support for the old format removed by wje 7-Oct-2026.
+            fprintf(fP, "%06o: %06o\n", i, mem[i]);
         }
     }
 
@@ -1171,8 +1168,8 @@ static Panel *panel;
 static Word *memp;
 static int memsz;
 
-// Registered via atexit(): saves working memory to the coremem image file and turns the panel
-// lights off. No return value (void).
+// Registered via atexit(), saves working memory to the coremem image file and turns the panel
+// lights off.
 void
 exitcleanup(void)
 {
@@ -1180,8 +1177,8 @@ exitcleanup(void)
     lightsoff(panel);
 }
 
-// Signal handler registered for SIGTERM: exits cleanly (status 0), which triggers the
-// atexit()-registered exitcleanup() above. No return value (void).
+// Signal handler registered for SIGTERM, exits cleanly (status 0), which triggers the
+// atexit()-registered exitcleanup() above.
 void
 sighandler(int sig)
 {
@@ -1191,12 +1188,14 @@ sighandler(int sig)
 
 #define LOCKFILE "/tmp/pdp1.lock"
 
-// Only one pdp1 may run: a second one would drive the same panel lamps, take the first one's
-// ports when it exits, and overwrite coremem at its own exit. The lock is an flock() on a file in
-// /tmp, the namespace the panel segment already shares. The fd stays open for the life of the
-// process; the kernel drops the lock at any exit, SIGKILL included, so nothing stale is left.
-// Returns false only when another pdp1 holds the lock; a lock that can't be had for any other
-// reason is reported and pdp1 runs, as it did before there was a lock.
+// Only one pdp1 may run, a second one would drive the same panel lamps, take the first one's
+// ports when it exits, and overwrite coremem at its exit.
+// The lock is an flock() on a file in /tmp, the namespace the panel segment already shares.
+// The fd stays open for the life of the process.
+// The kernel drops the lock at any exit, SIGKILL included, so nothing stale is left.
+// Returns false when another pdp1 holds the lock.
+// A lock that can't be had for any other reason is reported and pdp1 runs
+// as it did before there was a lock.
 static bool
 lockInstance(void)
 {
@@ -1242,13 +1241,13 @@ mode_t mask;
     return( true );
 }
 
-// Program entry point: takes the one-pdp1 lock, finds the operator panel, installs signal
+// Startup, takes the one-pdp1 lock, finds the operator panel, installs signal
 // handlers and the exitcleanup() atexit hook, loads configuration, loads the saved core memory
-// image, starts the polling/network/display threads and the debugger server (ad1server.c),
-// opens the default reader/punch/typewriter fds, then calls emu() (which runs forever).
-// Returns 1 if another pdp1 is running or no operator panel could be found (the only normal
-// early-exit paths); otherwise returns 0, but only in the unreachable case where emu() were to
-// return, which it doesn't.
+// image, starts the polling/network/display threads and the debugger server,
+// opens the default reader/punch/typewriter fds, then calls emu() which runs forever.
+// Returns 1 if another pdp1 is running or no operator panel could be found,
+// otherwise returns 0, but only in the unreachable case where emu() ever
+// returns, which it doesn't.
 int
 main(int argc, char *argv[])
 {
@@ -1308,11 +1307,8 @@ int fd[2];
     typtelnetInput(&pdp->typ_fd);
     typtelnet(1041, fd[1]);
 
-    // Pre-load the tyi IOT (device 4) so its iotIOPoll is registered before the first
-    // character arrives. Without this, iotIOPoll never gets called (PF1 is never set),
-    // so tyi can never execute, so IOT_4 would never lazy-load -- a startup deadlock.
-    // tyo (device 3) does not need this because programs call tyo unconditionally; the
-    // first tyo instruction loads IOT_3 on its own.
+    // Pre-load the tyi IOT 4 so its iotIOPoll is registered before the first
+    // character arrives.
     dynamicIotOwnsDevice(4);
 
     emu(pdp, panel);
@@ -1415,7 +1411,7 @@ WatchP watchP;
 
 // Accessor so other modules (including dynamic IOT plugins) can get at the loaded
 // configuration without needing their own extern of configurationP.
-// Returns the current ConfigurationP (set up by configure(); never NULL after startup).
+// Returns the current ConfigurationP as set up by configure(), never NULL after startup.
 ConfigurationP
 getConfiguration()
 {
@@ -1423,8 +1419,7 @@ getConfiguration()
 }
 
 // Read a throttle* extra as a duration, in unitNs per
-// config unit, or defaultNs if the key is absent, negative or not a plain number (reported and
-// defaulted, matching ad1server.c's configPort() convention for its own extras).
+// config unit, or defaultNs if the key is absent, negative or not a plain number.
 static u64
 configThrottleDuration(char *nameP, u64 unitNs, u64 defaultNs)
 {
@@ -1446,8 +1441,8 @@ ConfigurationSettingP settingP;
     return( (u64)settingP->ivalue * unitNs );
 }
 
-// Read an audio cutoff extra, in Hz, or fallback if the key is absent or not a positive number
-// (reported). A fallback of 0 leaves the voice at the CHM interface's cutoff.
+// Read an audio cutoff extra, in Hz, or fallback if the key is absent or not a positive number.
+// A fallback of 0 leaves the voice at the CHM interface's cutoff.
 static float
 configCutoff(char *nameP, float fallback)
 {
@@ -1482,7 +1477,6 @@ ConfigurationSettingP configSettingP;
     lailiaEnabled = configurationP->lailiaEnabled;
     core1DEnabled = configurationP->core1DEnabled;
     all1DEnabled = configurationP->all1DEnabled;
-    newMemFile = configurationP->newMemFile;
 
     // This will only be used if called from sigint.
     // pdp1P won't be set yet in the prmary call from main()
@@ -1496,10 +1490,8 @@ ConfigurationSettingP configSettingP;
     setAudioTuning(configurationP->tuning);
     setSampleRate(configurationP->sampleRate);
 
-    // The filters are set in Hz: cutoff for all four voices, cutoff1-cutoff4 for one. A voice with
-    // neither gets the CHM interface's cutoff, so a reload that drops a line puts that back. The old
-    // alpha keys were per sample, right only at the rate they were worked out for; they are named
-    // so a config that still has them is not taken to mean them.
+    // The filters are set in Hz, cutoff for all four voices, cutoff1-cutoff4 for one.
+    // A voice with neither gets the CHM interface's cutoff.
     for( i = 1; i <= 4; ++i )
     {
         char nameBuf[16];
@@ -1538,7 +1530,7 @@ ConfigurationSettingP configSettingP;
         logger(LOG_APERTURE, "aperture %d\n",i);
     }
 
-    // throttlequantum/throttlespin/throttlemaxlag:
+    // throttlequantum/throttlespin/throttlemaxlag 
     // parsed here, alongside the other config extras, then pushed into pdp1.c's throttle(),
     // which owns the pacing state and the timer-slack reduction that goes with it.
     // throttleConfigure() reads throttleburst itself, so its declaration in pdp1.h is unchanged.

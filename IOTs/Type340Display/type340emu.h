@@ -1,24 +1,17 @@
 // Defines shared data between the IOT layer and the emulator
+// 8-Oct-2026 Claude - commands go to the 340 thread through an in-order queue instead of one slot.
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdatomic.h>
 
-/*
- * emuCommandSet -- IOT side sets the command word BEFORE calling this macro.
- * The atomic release store on commandSent acts as a write barrier: it guarantees
- * that the prior write to ctlP->command is globally visible before any thread
- * observes commandSent == true.  This matters on weakly-ordered ARM (Pi 4).
- * emuWakeup() follows so that a sleeping emulator thread is unblocked.
- * Fire-and-forget: dla clears flags host-side before calling this macro, so
- * no cross-thread ack is needed for correct dss reads after dla.
- */
-#define emuCommandSet(ctlP) \
-    (atomic_store_explicit(&(ctlP)->commandSent, true, memory_order_release), \
-     emuWakeup(ctlP))
+// Commands wait here for the 340 thread, in the order the IOTs issued them. A power of 2, so the
+// free-running head and tail counters wrap correctly and index by masking.
+#define EMU_QUEUE_SIZE 16
+#define EMU_QUEUE_MASK (EMU_QUEUE_SIZE - 1)
 
 /*
  * emuResponseSet -- emulator side sets the response word BEFORE calling this
- * macro.  Same release-barrier logic as emuCommandSet, ensuring ctlP->response
+ * macro.  The release store ensures ctlP->response
  * is visible before responseSent is seen as true by the IOT side.
  */
 #define emuResponseSet(ctlP) \
@@ -44,12 +37,21 @@
 #define FLAG_STOP 04
 #define FLAG_LP 010
 
+// One queued command. The address is the dla's start address for EMU_CMD_RUN, unused otherwise.
+typedef struct {
+    int command;
+    int address;
+} EmuCommand, *EmuCommandP;
+
+// The queue has one producer, the emulator's main thread (the IOTs, iotStop() and iotUpdate()), and
+// one consumer, the 340 thread, so it needs no lock: each side stores only its own counter.
+// head - tail is the number of entries waiting.
 typedef struct {
     PDP1P pdp1P;            /* pdp-1 access                                  */
-    int address;            /* core mem address of program instructions       */
-    int command;            /* command word -- written before commandSent set */
+    EmuCommand queue[EMU_QUEUE_SIZE];
+    _Atomic unsigned int head;  /* entries ever queued; stored only by the IOT side  */
+    _Atomic unsigned int tail;  /* entries ever taken; stored only by the 340 thread */
     int response;           /* response word -- written before responseSent set */
-    _Atomic bool commandSent;   /* IOT→emulator: new command is ready        */
     _Atomic bool responseSent;  /* emulator→IOT: new response is ready       */
     /*
      * NOTE: The semaphore used for idle-wait lives as a file-static in
@@ -70,5 +72,6 @@ int emuGetFlags(void);
 void emuClearFlags(void);
 void emuGetXY(int *dispNoP, int *xP, int *yP);
 
-int get340Command(EmuControlP ctlP);
+void emuCommandSet(EmuControlP ctlP, int command, int address);
+int get340Command(EmuControlP ctlP, int *addressP);
 int get340Response(EmuControlP ctlP);

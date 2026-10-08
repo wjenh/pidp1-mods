@@ -62,6 +62,9 @@
  *    a vector continue edge violation does the same,
  *    an edge stop is no longer undone by an escape in the same word,
  *    an escape is not left over for the next start, a start clears the save.
+ * 8-Oct-2026 Claude - the IOTs' commands reach this thread through an in-order queue instead of one
+ *    slot, which a second IOT overwrote before the thread took the first (a drs right after a dla lost
+ *    the dla). Each RUN carries its own address. The thread sleeps only when the queue is empty.
  */
 
 #include <stdlib.h>
@@ -357,6 +360,11 @@ static uint64_t hscBucketCounts[6];
 static EmuControl emuControl;
 static EmuControlP ctlP = &emuControl;
 
+// Commands that found the queue full, counted by the IOT side since the plugin loaded and reported
+// in each timing line. The thread takes a command on every pass of its loop, so both should stay 0.
+static atomic_ulong queueFullWaits;     // the IOT side waited for an entry to free
+static atomic_ulong queueDrops;         // the CPU was halted, so it could not wait; the command was lost
+
 static void *emulator(void *argP);
 static void reset340(void);
 static Word getWord(PDP1P pdp1P);
@@ -378,6 +386,7 @@ static uint64_t getNow(void);
 static uint64_t timingStamp(void);
 static void timingCheck(void);
 static void configure(void);
+static bool commandQueueEmpty(EmuControlP ctlP);
 
 // Interface to the low-level display subsystem
 extern bool display(int screenNo, int x, int y, int intensity);
@@ -404,7 +413,8 @@ pthread_t thread;
     twoCharsets = origCharsets;         // oringCharsets comes from configure() and is the initial mode
 
     chanP = HSCallocateChannel(HSC_CHAN);
-    ctlP->commandSent = false;
+    atomic_store_explicit(&ctlP->head, 0, memory_order_relaxed);   // the thread starts after these
+    atomic_store_explicit(&ctlP->tail, 0, memory_order_relaxed);
     ctlP->responseSent = false;
     ctlP->response = EMU_RESPONSE_DONE;
 
@@ -437,6 +447,60 @@ int val;
     {
         sem_post(&waitSemaphore);
     }
+}
+
+// Queue a command for the 340 thread and wake it; address is used only by EMU_CMD_RUN.
+// Called only on the emulator's main thread, the queue's one producer. Fire and forget: the CPU does
+// not wait for the thread to act, only, in the rare case of a full queue, for an entry to free.
+void
+emuCommandSet(EmuControlP ctlP, int command, int address)
+{
+unsigned int head;
+EmuCommandP entryP;
+
+    if( !threadRunning )
+    {
+        return;         // no thread to take it, and a queue nobody drains would fill and hang the CPU
+    }
+
+    // Only this side stores head. The acquire load of tail pairs with the release store in
+    // get340Command(): the thread has finished reading an entry before its slot is seen as free here.
+    head = atomic_load_explicit(&ctlP->head, memory_order_relaxed);
+    if( (head - atomic_load_explicit(&ctlP->tail, memory_order_acquire)) >= EMU_QUEUE_SIZE )
+    {
+        atomic_fetch_add_explicit(&queueFullWaits, 1, memory_order_relaxed);
+        while( (head - atomic_load_explicit(&ctlP->tail, memory_order_acquire)) >= EMU_QUEUE_SIZE )
+        {
+            // While the CPU is halted the thread can be held in its word fetch until the CPU runs
+            // again (HSCwait()), and the halted CPU is this thread, so waiting would never end.
+            if( !ctlP->pdp1P->run )
+            {
+                atomic_fetch_add_explicit(&queueDrops, 1, memory_order_relaxed);
+                iotCondLog(LOG_ERR, "command queue full while halted, command %d dropped\n", command);
+                return;
+            }
+
+            sched_yield();
+        }
+    }
+
+    entryP = &ctlP->queue[head & EMU_QUEUE_MASK];
+    entryP->command = command;
+    entryP->address = address;
+
+    // The release store publishes the entry: the thread's acquire load of head in get340Command()
+    // sees both fields written before it sees the new count. Without it a weakly ordered CPU (the
+    // Pi's ARM) could let the thread read the slot's previous contents.
+    atomic_store_explicit(&ctlP->head, (head + 1), memory_order_release);
+    emuWakeup(ctlP);
+}
+
+// True when no command is waiting. Called only by the 340 thread, the queue's one consumer.
+static bool
+commandQueueEmpty(EmuControlP ctlP)
+{
+    return( atomic_load_explicit(&ctlP->head, memory_order_acquire)
+        == atomic_load_explicit(&ctlP->tail, memory_order_relaxed) );
 }
 
 // Return the current execution address.
@@ -547,6 +611,7 @@ emulator(void *dummy)
 {
 int newMode;
 int command;
+int cmdAddress;     // a RUN command's start address
 int word;
 int i, tmp;
 int x, y;
@@ -564,7 +629,9 @@ uint64_t idleT0;
         // Close a due window before sleeping, so an idle stretch lands in the window after it.
         timingCheck();
 
-        if( isPaused || (curState != RUNNING) )
+        // Sleep only with the queue empty: one post can stand for several commands, since emuWakeup()
+        // posts only when the count is 0, so the rest are taken on the passes that follow without one.
+        if( (isPaused || (curState != RUNNING)) && commandQueueEmpty(ctlP) )
         {
             iotCondLog(LOG_WAIT, "Waiting\n");
             idleT0 = timingStamp();
@@ -577,7 +644,7 @@ uint64_t idleT0;
             iotCondLog(LOG_WAIT, "Woke up\n");
         }
 
-        if( (command = get340Command(ctlP)) == EMU_CMD_EXIT )
+        if( (command = get340Command(ctlP, &cmdAddress)) == EMU_CMD_EXIT )
         {
             break;      // shut down, kill thread
         }
@@ -607,7 +674,7 @@ uint64_t idleT0;
 #endif
             reset340();                 // sets curmode to PARAMETER
             sawEscape = false;          // be sure there's no dangling escape
-            curAddress = ctlP->address;
+            curAddress = cmdAddress;
             curState = INITIALIZE;      // reset340() sets it to STOPPED;
             pendingDelay = START_TIME;  // when a start occurs, DPY_GO pulse, this setup time occurs.
             twoCharsets = origCharsets; // we revert on each DPY-GO
@@ -647,7 +714,7 @@ uint64_t idleT0;
         while( !isPaused && (curState != STOPPED) )
         {
             // We could be running in a continuous loop via JUMP, so check for any commands
-            if( (command = get340Command(ctlP)) != EMU_CMD_NONE )
+            if( (command = get340Command(ctlP, &cmdAddress)) != EMU_CMD_NONE )
             {
                 iotCondLog(LOG_CMD,"Got command %d while running\n", command);
 
@@ -673,7 +740,7 @@ uint64_t idleT0;
                     // Abort the current program and start the new one without leaving the inner loop.
                     sawEscape = false;
                     reset340();                 // sets curmode to PARAMETER, state to INITIALIZE
-                    curAddress = ctlP->address;
+                    curAddress = cmdAddress;
                     curState = INITIALIZE;              // override STOPPED so the inner loop continues
                     pendingDelay = START_TIME;
                     dueNs = getNow();
@@ -2165,7 +2232,8 @@ FILE *fP;
     {
         fprintf(fP, "t340 tid=%ld wall=%llu cpu=%llu idle=%llu words=%llu "
             "delay_n=%llu delay_req=%llu delay_act=%llu pause_n=%llu pause_req=%llu pause_act=%llu "
-            "hsc_n=%llu hsc_ns=%llu disp_n=%llu disp_ns=%llu model=%llu forgiven=%llu\n",
+            "hsc_n=%llu hsc_ns=%llu disp_n=%llu disp_ns=%llu model=%llu forgiven=%llu "
+            "qfull=%lu qdrop=%lu\n",
             (long)syscall(SYS_gettid),
             (unsigned long long)(now - timeWinWall), (unsigned long long)(cpu - timeWinCpu),
             (unsigned long long)timeAcc.idleNs, (unsigned long long)timeAcc.words,
@@ -2174,7 +2242,9 @@ FILE *fP;
             (unsigned long long)timeAcc.pauseReqNs, (unsigned long long)timeAcc.pauseActNs,
             (unsigned long long)timeAcc.hscCalls, (unsigned long long)timeAcc.hscNs,
             (unsigned long long)timeAcc.displayCalls, (unsigned long long)timeAcc.displayNs,
-            (unsigned long long)timeAcc.modelNs, (unsigned long long)timeAcc.forgivenNs);
+            (unsigned long long)timeAcc.modelNs, (unsigned long long)timeAcc.forgivenNs,
+            atomic_load_explicit(&queueFullWaits, memory_order_relaxed),
+            atomic_load_explicit(&queueDrops, memory_order_relaxed));
         fclose(fP);
     }
 
@@ -2183,41 +2253,33 @@ FILE *fP;
     timeWinCpu = threadCpuNs();
 }
 
-/*
- * get340Command -- poll for a pending command from the IOT side.
- * Called from the 340 emulator thread, either in the running poll loop or
- * after waking from the idle semaphore.
- *
- * commandSent is an _Atomic bool, so the per-iteration test is a sequentially consistent load
- * (a plain load on x86, a load-acquire on ARM64).
- * The acquire fence executes only when the flag is true, pairing with the release store in emuCommandSet().
- * This guarantees that ctlP->command is fully visible beforewe read it, essential on ARM (Pi 4)
- * where the weakly-ordered memory model would otherwise allow the load of command to be satisfied
- * from a stale cache line even after commandSent reads true.
- *
- * The flag clears are atomic stores; the acquire fence already executed above,
- * so no additional barrier is required for the clears.
- *
- * Returns: command code, or EMU_CMD_NONE if nothing is pending.
- */
+// Take the oldest queued command, on the 340 thread, in its running loop or after a wakeup.
+// Returns the command, with a RUN's start address in *addressP, or EMU_CMD_NONE if none is queued.
 int
-get340Command(EmuControlP ctlP)
+get340Command(EmuControlP ctlP, int *addressP)
 {
+unsigned int tail;
+EmuCommandP entryP;
 int command;
 
-    if( !ctlP->commandSent )
+    // Only this thread stores tail. The acquire load of head pairs with the release store in
+    // emuCommandSet(): an entry counted in head has both its fields visible here.
+    tail = atomic_load_explicit(&ctlP->tail, memory_order_relaxed);
+    if( atomic_load_explicit(&ctlP->head, memory_order_acquire) == tail )
     {
-        command = EMU_CMD_NONE;
-    }
-    else
-    {
-        atomic_thread_fence(memory_order_acquire);   // pairs with emuCommandSet's release fence
-        command = ctlP->command;
-        ctlP->commandSent  = false;
-        ctlP->responseSent = false;
+        return( EMU_CMD_NONE );
     }
 
-    return(command);
+    entryP = &ctlP->queue[tail & EMU_QUEUE_MASK];
+    command = entryP->command;
+    *addressP = entryP->address;
+    ctlP->responseSent = false;
+
+    // The release store frees the slot only after its fields are read, so the IOT side cannot
+    // overwrite an entry still being read.
+    atomic_store_explicit(&ctlP->tail, (tail + 1), memory_order_release);
+
+    return( command );
 }
 
 /*

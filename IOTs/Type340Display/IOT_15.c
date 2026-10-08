@@ -20,6 +20,8 @@
  *    hit it had just answered, and a program polling dsp counted one hit two or three times.
  * 28-Sep-2026 Claude - dcf only clears the flags, per the H-340 manual, instead of also starting the
  *    display at the address in IO as a dla does.
+ * 8-Oct-2026 Claude - each command, with a dla's address, is queued for the 340 thread in order, so a
+ *    drs right after a dla no longer replaces the dla before the thread has taken it.
  */
 
 #include <unistd.h>
@@ -97,7 +99,7 @@ EmuControlP ctlP;
             {
                 emuClearFlags();
             }
-            ctlP->command = EMU_CMD_RESUME;
+            emuCommandSet(ctlP, EMU_CMD_RESUME, 0);
             iotCondLog(LOG_IOT, "drs%s\n", (cmd & 02)?" and clear flags":"");
         }
         else if( cmd & 02 )
@@ -115,12 +117,9 @@ EmuControlP ctlP;
             // dla, display load address
             // Clear flags host-side so dss reads after dla see cleared flags immediately.
             emuClearFlags();
-            ctlP->address = IO(pdp1P);            // This is a full 16 bit address
-            ctlP->command = EMU_CMD_RUN;
-            iotCondLog(LOG_IOT, "dla %o\n", ctlP->address);
+            emuCommandSet(ctlP, EMU_CMD_RUN, IO(pdp1P));     // This is a full 16 bit address
+            iotCondLog(LOG_IOT, "dla %o\n", IO(pdp1P));
         }
-
-        emuCommandSet(ctlP);
         break;
 
     case IOT16:
@@ -215,8 +214,7 @@ EmuControlP ctlP;
     if( emuIsInitialized() )
     {
         ctlP = getEmuControlP();
-        ctlP->command = EMU_CMD_STOP;
-        emuCommandSet(ctlP);
+        emuCommandSet(ctlP, EMU_CMD_STOP, 0);
         iotCondLog(LOG_STOP, "Issuing stop\n", IOT15);
     }
 
@@ -236,8 +234,7 @@ EmuControlP ctlP;
     if( emuIsInitialized() )
     {
         ctlP = getEmuControlP();
-        ctlP->command = EMU_CMD_UPDATE;
-        emuCommandSet(ctlP);
+        emuCommandSet(ctlP, EMU_CMD_UPDATE, 0);
     }
 }
 

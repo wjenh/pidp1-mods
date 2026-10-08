@@ -50,6 +50,7 @@
  *    tape socket is no longer replaced by them.
  * Claude 07-Oct-2026 only the emulator thread drives the audio device; the console's audio requests are posted
  *    to it (audio.c, console.c).
+ * Claude 08-Oct-2026 the sound comes back with the power if audio is on.
 */
 
 #include <errno.h>
@@ -328,6 +329,13 @@ bool ran;               // the pass ran the machine, a stolen cycle included
             passStartSim = pdp->simtime;
             ran = false;
 
+            // The power-off branch stopped the sound; it comes back if audio is on.
+            // A device never opened stays closed, as at start-up.
+            if( Edge(power_sw) && audioEnabled && isAudioInitialized() )
+            {
+                continueaudio();
+            }
+
             if(Edge(start_sw) || Edge(continue_sw) || Edge(examine_sw) || Edge(deposit_sw))
             {
                 // We don't check for a bp hit until spec() runs, it sets the pc
@@ -412,7 +420,8 @@ bool ran;               // the pass ran the machine, a stolen cycle included
                 }
 
                 // A dma transfer can be in STEAL mode, in which case it effectively halts the processor
-                // and transfers all of its requested words at 5us/word. We fake this by just not cycling.
+                // and transfers all of its requested words at 5us/word.
+                // We fake this by just not cycling.
                 if( processHSCchannels(hscBreakAllowed()) )   // need to steal a cycle
                 {
                     hscBreak(pdp);                  // mid-instruction, restarts the instruction
@@ -497,7 +506,8 @@ bool ran;               // the pass ran the machine, a stolen cycle included
             handleio(pdp);
             // 19-Jun-2026 wje: independent real-time poll hook for reader/punch/typewriter-style
             // dynamic IOTs (iotIOPoll), called at the same site as handleio() so plugin-owned
-            // devices keep their cadence regardless of run state. See dynamicIots.h/.c.
+            // devices keep their cadence regardless of run state.
+            // See dynamicIots.h/.c.
             dynamicIotProcessorDoIOPoll(pdp);
             pdp->simtime += 5000;
             dynamicIotProcessorAdvance(pdp, (passNs + 5000), ran);
@@ -861,7 +871,8 @@ timingLabel(u64 ns, char *bufP, size_t bufSize)
 
 // Write one histogram to fP on a single line: its title and sample total, then every non-empty
 // bucket as "<edge:count(percent)" for the lowest bucket or "edge+:count(percent)" for the rest,
-// where edge is the bucket's lower bound. histP has numEdges + 1 buckets.
+// where edge is the bucket's lower bound.
+// HistP has numEdges + 1 buckets.
 static void
 timingPrintHist(FILE *fP, const char *titleP, const long *histP, const u64 *edgesP, int numEdges)
 {

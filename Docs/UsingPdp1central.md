@@ -2,9 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.4\
-Edit date 02-Oct-2026\
-Add start t30dpy, fast load and the Microtape tab
+This is version 1.5\
+Edit date 09-Oct-2026\
+Updated for the new Zenity file picker
 
 ## What is pdp1central?
 
@@ -81,7 +81,7 @@ Also start t30dpy starts the t30dpy display beside the gui or web front end.
 Apps starts t30dpy anyway, so with apps the box is shown checked and cannot be changed.
 The emulator sends the display to one window at a time, the last one to connect:
 - with gui, t30dpy starts once pdp1_periphES has connected, so t30dpy has the display and the
-  gui's own display window stays blank;
+  gui's display window stays blank;
 - with web, t30dpy has the display until the browser's display panel is opened; the browser
   then has it, and t30dpy closes.
 
@@ -100,12 +100,11 @@ Only one client can be connected, so with ad1 attached the load fails, and the r
 
 **Paper tape reader.**
 - Mount... opens a file dialog, and mounts the chosen tape.
-- Remount last mounts the last tape again, to read it from the start.
-It works after an Unmount too.
-Pdp1central remembers the tape only while it runs.
-- Unmount takes the tape out.
+- Remount last mounts the last tape again, causing a read from the start.
+- Unmount takes the tape out of the mount file.
 
 The emulator cannot be asked what is mounted, so pdp1central shows only what it mounted itself.
+Pdp1central remembers the tape only while it runs.
 
 **Paper tape punch.** Save punch to... opens a file dialog, punch punches to the chosen file.
 
@@ -293,7 +292,7 @@ The color names:
 pdp1central is C, using the Nuklear toolkit on SDL2 (2.0.18 or later).
 Nuklear is included in src/pdp1central, unmodified.
 
-Its file dialogs, for Mount..., Load... and Save punch to..., are bin/tkaskopenfile,
+Its file dialogs for Mount..., Load... and Save punch to..., are bin/tkaskopenfile,
 bin/tkaskmicrotape and bin/tkaskopenfilewrite, which need Python 3 and its Tk.
 Fastload and the Microtape tab run bin/fastload and bin/mtp, which the install builds.
 The install script will install both, but if one or both are missing, use:

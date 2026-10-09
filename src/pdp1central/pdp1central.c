@@ -16,9 +16,9 @@
 //     checkbox says what a click does; schema labels; the live audio control, which sends a
 //     command only when clicked; the right button drags the window.
 // 02-Oct-2026 wje (Claude) - the "also start t30dpy" choice; fast load; the Microtape tab.
-// 06-Oct-2026 wje (Claude) - Save punch to... runs bin/save_ptp.sh, which saves the tape under
-//     every interface.
+// 06-Oct-2026 wje (Claude) - Save punch to... runs bin/save_ptp.sh
 //    "Last saved to:" replaces "Punch file:" and the web note.
+// 09-Oct-2026 wje - use the new askfile script to use the much better looking file dialogs
 
 #include <errno.h>
 #include <limits.h>
@@ -106,14 +106,13 @@ static char configPath[PATH_MAX];
 static char examplePath[PATH_MAX];
 static char controlPath[PATH_MAX];
 static char scriptPath[PATH_MAX];
-static char askOpenPath[PATH_MAX];
-static char askSavePath[PATH_MAX];
-static char askMicrotapePath[PATH_MAX];
+static char askPath[PATH_MAX];      // bin/askfile, every file dialog
 static char fastloadPath[PATH_MAX];
 static char savePunchPath[PATH_MAX];
 static char mtpPath[PATH_MAX];
 static char mtListPath[PATH_MAX];
 static char microtapeDir[PATH_MAX];
+static char tapesDir[PATH_MAX];     // where the paper tape dialogs start
 static char fontPath[PATH_MAX];
 static char stylePath[PATH_MAX];
 
@@ -493,32 +492,39 @@ isDialog(Job which)
         (which == JOB_ASK_MICROTAPE) );
 }
 
-// Run a file dialog helper as the child, so the window keeps drawing while it is open.
+// Run the file dialog helper as the child, so the window keeps drawing while it is open. Its
+// mode picks the dialog: an existing tape, a file to save to, or a microtape old or new.
 static void
 startDialog(Job which)
 {
-char *argv[5];
+char *argv[6];
 const char *labelP;
 
     argv[0] = "/usr/bin/env";
     argv[1] = "python3";
-    argv[3] = NULL;
-    argv[4] = NULL;
+    argv[2] = askPath;
+    argv[4] = tapesDir;                 // where it starts
+    argv[5] = NULL;
     if( which == JOB_ASK_PUNCH )
     {
-        argv[2] = askSavePath;
+        argv[3] = "punch";
         labelP = "choosing where to save the punch";
     }
     else if( which == JOB_ASK_MICROTAPE )
     {
-        argv[2] = askMicrotapePath;
-        argv[3] = microtapeDir;         // where it starts
+        argv[3] = "microtape";
+        argv[4] = microtapeDir;
         labelP = "choosing a microtape";
+    }
+    else if( which == JOB_ASK_LOAD )
+    {
+        argv[3] = "load";
+        labelP = "choosing a tape to fast load";
     }
     else
     {
-        argv[2] = askOpenPath;
-        labelP = ((which == JOB_ASK_LOAD) ? "choosing a tape to fast load" : "choosing a tape");
+        argv[3] = "mount";
+        labelP = "choosing a tape";
     }
 
     dialogPath[0] = '\0';
@@ -1036,7 +1042,8 @@ size_t i;
         childPartial[childPartialLen] = '\0';
         if( isDialog(job) )
         {
-            // Tk can warn on the same pipe; the chosen file is the line that is a path.
+            // Tk can warn, and the helper says why it failed, on the same pipe; the chosen file
+            // is the line that is a path.
             if( childPartial[0] == '/' )
             {
                 snprintf(dialogPath, sizeof(dialogPath), "%s", childPartial);
@@ -1108,8 +1115,8 @@ Job ended;
     }
     else if( !dialogPath[0] && (childStatus() != 0) )
     {
-        // Cancel exits 0; a missing Tk (python3-tk, not in every desktop install) exits 1.
-        appError("the file dialog failed, status %d, see the Log tab; it needs python3-tk", childStatus());
+        // Cancel exits 0; no zenity and no Tk (python3-tk), or no display, exits 1.
+        appError("the file dialog failed, status %d, see the Log tab; it needs zenity or python3-tk", childStatus());
     }
     else if( !dialogPath[0] )
     {
@@ -2293,10 +2300,9 @@ bool ok;
     strcpy(rootPath, rootP);
     ok = (rootJoin(configPath, "pidp1.config") && rootJoin(examplePath, "pidp1.config.example") &&
         rootJoin(controlPath, "pdp1control.config") && rootJoin(scriptPath, "bin/pdp1control.sh") &&
-        rootJoin(askOpenPath, "bin/tkaskopenfile") && rootJoin(askSavePath, "bin/tkaskopenfilewrite") &&
-        rootJoin(askMicrotapePath, "bin/tkaskmicrotape") && rootJoin(fastloadPath, "bin/fastload") &&
+        rootJoin(askPath, "bin/askfile") && rootJoin(fastloadPath, "bin/fastload") &&
         rootJoin(savePunchPath, "bin/save_ptp.sh") && rootJoin(mtpPath, "bin/mtp") && rootJoin(mtListPath, "microtapes.txt") &&
-        rootJoin(microtapeDir, "Microtapes") &&
+        rootJoin(microtapeDir, "Microtapes") && rootJoin(tapesDir, "tapes") &&
         rootJoin(fontPath, "src/pdp1_periph/DejaVuSansMono.ttf") && rootJoin(stylePath, "pdp1central.config"));
     if( schemaArgP )
     {

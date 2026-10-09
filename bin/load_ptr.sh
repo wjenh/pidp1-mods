@@ -5,7 +5,9 @@ BASE_DIR="/opt/pidp1-mods"
 # Launch zenity from the base dir
 ABS_FILE=$(zenity --file-selection --title="Choose a file" --filename="${BASE_DIR}/tapes/")
 
-if [ $? -ne 0 ]; then
+# zenity 3 exits 1 on a cancel; zenity 4 exits 0 and prints nothing, and a bare "r" would
+# unmount the reader.
+if [ $? -ne 0 ] || [ -z "$ABS_FILE" ]; then
     echo "Cancelled."
     exit 1
 fi

@@ -1,5 +1,5 @@
 // Runs one child program at a time without blocking the event loop: pdp1control.sh for start,
-// stop, restart and the reloads, and the Tk file dialogs.
+// stop, restart and the reloads, and the file dialogs.
 // The child gets its own session (setsid), so the emulator the script starts is not in
 // pdp1central's session and outlives it. Its stdin is /dev/null, and its stdout and stderr go to
 // a non-blocking pipe that childPoll() drains.

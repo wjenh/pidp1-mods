@@ -90,8 +90,9 @@ while true; do
 	    sudo apt -y install flex
 	    sudo apt -y install bison
 
-            # Python and Tk: tkaskopenfile, the file dialog pdp1central and the gui use
-	    sudo apt install -y python3 python3-tk
+            # Python, Tk and zenity: askfile, pdp1central's file dialog, uses zenity's file
+            # chooser, and Tk for a microtape; the gui uses tkaskopenfile
+	    sudo apt install -y python3 python3-tk zenity
 
 	    break
 	    ;;

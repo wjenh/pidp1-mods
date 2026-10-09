@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+
+# The file dialog pdp1central runs: the desktop's own GTK file chooser through zenity when
+# zenity is installed, else Tk's. A chosen path is printed alone, and a cancel prints nothing,
+# both exiting 0; a failure exits 1 and prints its reason.
+# Usage: askfile MODE DIR       DIR is the directory the dialog starts in
+#   mount       an existing paper tape, for the reader
+#   load        an existing rim tape, to fast load
+#   punch       a file to save the punched tape to; replacing one is asked first
+#   microtape   an existing microtape or a new name: mounting never overwrites, so nothing
+#               is asked about replacing
+#
+# zenity's stderr is kept from pdp1central's log: every dialog warns there that it has no
+# parent window. zenity 4 exits 0 on a cancel, and also when it cannot open the display, which
+# only its stderr says. Its save dialog (GTK4) always asks before replacing a file, so a
+# microtape is chosen with Tk under zenity 4.
+#
+# 09-Oct-2026 wje (Claude) - written, replacing tkaskmicrotape for pdp1central.
+
+import os
+import shutil
+import subprocess
+import sys
+
+TITLES = {
+    'mount': 'Mount a paper tape',
+    'load': 'Fast load a tape',
+    'punch': 'Save the punched tape',
+    'microtape': 'Mount a microtape',
+}
+
+
+def fail(why):
+    print('askfile: ' + why)
+    sys.exit(1)
+
+
+# Whether zenity is older than 4, whose save dialog can be kept from asking about replacing.
+# A version that cannot be read is taken as new.
+def zenityBefore4(zenity):
+    try:
+        r = subprocess.run([zenity, '--version'], stdin=subprocess.DEVNULL, capture_output=True,
+                           text=True, timeout=10)
+        return int(r.stdout.strip().split('.')[0]) < 4
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
+def haveTk():
+    try:
+        import tkinter.filedialog
+    except ImportError:
+        return False
+    return True
+
+
+def askZenity(zenity, mode, start):
+    args = [zenity, '--file-selection', '--title=' + TITLES[mode],
+            '--filename=' + os.path.join(start, '')]
+    if mode == 'load':
+        args += ['--file-filter=rim tapes | *.rim', '--file-filter=All files | *']
+    elif mode == 'punch':
+        args += ['--save', '--confirm-overwrite']   # zenity 3 needs it; 4 always asks
+    elif mode == 'microtape':
+        args += ['--save']
+
+    try:
+        r = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    except OSError as e:
+        fail('cannot run zenity: %s' % e)
+
+    lines = r.stdout.splitlines()
+    if lines and lines[0]:
+        print(lines[0])
+    elif (r.returncode not in (0, 1)) or ('open display' in r.stderr):
+        why = r.stderr.strip().splitlines()
+        fail('zenity failed, status %d: %s' % (r.returncode, (why[-1] if why else 'no reason given')))
+
+
+def askTk(mode, start):
+    import tkinter
+    import tkinter.filedialog
+
+    try:
+        root = tkinter.Tk()
+    except tkinter.TclError as e:
+        fail('Tk cannot open a window: %s' % e)
+    root.withdraw()
+
+    if mode == 'punch':
+        path = tkinter.filedialog.asksaveasfilename(initialdir=start, title=TITLES[mode])
+    elif mode == 'microtape':
+        path = tkinter.filedialog.asksaveasfilename(initialdir=start, confirmoverwrite=False,
+                                                    title=TITLES[mode])
+    else:
+        path = tkinter.filedialog.askopenfilename(initialdir=start, title=TITLES[mode])
+
+    if path:                    # a cancel gives '' or ()
+        print(path)
+
+
+if (len(sys.argv) != 3) or (sys.argv[1] not in TITLES):
+    fail('usage: askfile mount|load|punch|microtape DIR')
+
+mode = sys.argv[1]
+start = sys.argv[2]
+zenity = shutil.which('zenity')
+tk = haveTk()
+
+if zenity and ((mode != 'microtape') or (not tk) or zenityBefore4(zenity)):
+    askZenity(zenity, mode, start)
+elif tk:
+    askTk(mode, start)
+else:
+    fail('needs zenity or python3-tk')

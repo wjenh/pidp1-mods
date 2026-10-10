@@ -35,36 +35,34 @@
  * 11-Jul-2026 wje unbreak the last change
  * 12-Jul-2026 wje EMU_CMD_NONE shoud not set stop, breaks resume. Just ignore it.
  * 14-Sep-2026 Claude - vectors end exactly on their endpoint: the brm moves each axis with an
- *    integer accumulator instead of a truncated rate, which overshot by up to 6 units. The step
- *    count is unchanged, so the points per vector, and the time, stay within about 1% in total.
+ *    integer accumulator instead of a truncated rate.
+ *    The step count is unchanged, so the points per vector, and the time, stay within about 1% in total.
  *    An invisible vector now takes its 1.5 us per step like a visible one (H-340 pp. 3-6, 3-7).
- * 14-Sep-2026 Claude - the first lightpen hit is latched until the 340 is resumed or restarted
- *    (lpHitLatched). The 340 finishes the current word after a hit, and display.c no longer uses up
- *    the pen position on a hit, so the rest of the word would otherwise hit again and replace the
- *    coordinates drc reports. drc now reports the hit from the moment the flag is set, not only once
- *    the pause has taken effect at the end of the word; before, a drc in that window read the beam.
+ * 14-Sep-2026 Claude - the first lightpen hit is latched until the 340 is resumed or restarted.
+ *    The 340 finishes the current word after a hit.
  * 23-Sep-2026 Claude - while pidp1timing is on, the 340 thread accounts for its own host time (spin,
  *    sleep, fetch wait, display() calls, idle, CPU) and appends one line per window to TIMING_FILE_340.
  * 23-Sep-2026 Claude - a cache hit charges the CPU its cycle through HSCsteal(), so t340cachesize
  *    no longer changes program timing.
- * 24-Sep-2026 Claude - reset340() re-enables the lp and edge interrupts. A specialinterrupt(0) lasted
- *    until pdp1 exited, so a later program that relies on the break paused at its first hit, forever.
+ * 24-Sep-2026 Claude - reset340() re-enables the lp and edge interrupts.
+ *    A specialinterrupt(0) lasted until pdp1 exited, so a later program that relied on the
+ *    break paused at its first hit, forever.
  * 24-Sep-2026 Claude - the thread waits for a running deadline instead of for each delay
- *    from now, so its own work, display() and oversleep no longer add to the modeled time. It ran 1.15
- *    to 2.1 times its model depending on the host. The uncached fetch's 5us now counts toward the
- *    deadline, as the cached one's did.
- * 24-Sep-2026 Claude - the flags word is set, cleared and read atomically. The 340 thread sets it and
- *    the IOTs clear it, and a plain |= or &= on either side could undo the other's change.
+ *    from now, so its own work, display() and oversleep no longer add to the modeled time.
+ * 24-Sep-2026 Claude - the flags word is set, cleared and read atomically.
+ *    The 340 thread sets it and the IOTs clear it, a plain |= or &= on either side could undo the other's change.
  * 26-Sep-2026 Claude - the accounting is switched by displaytiming instead of pidp1timing, so the cycle
  *    report no longer brings a file that grows a line a second.
  * 1-Oct-2026 wje caching removed, no longer useful and it was always a hack.
  * 6-Oct-2026 wje a character instruction termination now triggers a subroutine return,
- *    a vector continue edge violation does the same,
- *    an edge stop is no longer undone by an escape in the same word,
+ *    a vector continue edge violation does the same, an edge stop is no longer undone by an escape in the same word,
  *    an escape is not left over for the next start, a start clears the save.
- * 8-Oct-2026 Claude - the IOTs' commands reach this thread through an in-order queue instead of one
- *    slot, which a second IOT overwrote before the thread took the first (a drs right after a dla lost
- *    the dla). Each RUN carries its own address. The thread sleeps only when the queue is empty.
+ * 8-Oct-2026 Claude - the IOT's commands reach this thread through an in-order queue instead of one
+ *    slot, which a second IOT overwrote before the thread took the first.
+ *    Each RUN carries its own address.
+ *    The thread sleeps only when the queue is empty.
+ * 10-Oct-2026 Claude - a deposit (DDS) clears the save, so an escape between it and the block's next
+ *    save no longer returns at once.
  */
 
 #include <stdlib.h>
@@ -1131,6 +1129,7 @@ uint64_t idleT0;
 
                     tmp = SUBROUTINE_ADDR(word);            // put a jump to saveReg and param mode in the address
                     ctlP->pdp1P->core[tmp] = PUT_SUBROUTINE_OP(JUMP) | PUTMODE(PARAMETER) | saveRegister;
+                    saveActive = false;
                     iotCondLog(LOG_DEPOSIT,"DEPOSIT %o into %d\n", ctlP->pdp1P->core[tmp], tmp);
                     break;
 

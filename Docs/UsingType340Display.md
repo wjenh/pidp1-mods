@@ -413,6 +413,8 @@ An edge violation that stops the display does not return, and a *dla* starts its
 
 The *deposit* subcommand places a constucted command in the location it addresses which will be
 a *jump (asr) + 1*, one location past the last *save* command.
+It also clears the pending *save*, so the block that holds it can draw before its next *save*
+without returning early; it returns through the deposited jump.
 See the *Type 340 Programming Manual*, noted above, to see just how this makes sense.
 
 ## Edge violations and lightpen hits

@@ -42,6 +42,9 @@
  * 4-Oct-2026 claude - a power cycle resets the drum control, as a STOP does not: a transfer and an
  *    armed dba are dropped, and busy and the transfer error cleared. A write the power cut short
  *    keeps on the drum the words that moved before it.
+ * 10-Oct-2026 - dcl's 250 us settle delay as noted in H-23 2-19 added.
+ *    A full track waits for its address like any other transfer.
+ *    A dba break clears busy.
  */
 
 #include <errno.h>
@@ -78,6 +81,11 @@
 
 #define HSC_CHAN 1      // drum uses 1
 
+// Dcl starts a 250 us delay so the field selects can settle.
+// Only when it ends does the drum look for the transfer address.
+// This was actually a parameter set via pot according to the manual.
+#define SETTLE_NS 250000ULL
+
 #define DRUMFILE "/opt/pidp1-mods/pdp23drum"
 #define DRUMADDRTOSEEK(field, offset) ((((field) * 4096) + (offset)) * (int)sizeof(Word))
 #define DRUMFIELDS 32                       // dia and dwc carry a 5-bit field
@@ -90,12 +98,12 @@
 static int drumFd = -1;
 static Word drumImage[DRUMWORDS];   // the drum, as the transfers see it
 static bool imageLoaded;
-static bool lookAtFile;             // the machine halted since the last transfer looked at the file
+static bool lookAtFile;             // the emulator halted since the last transfer looked at the file
 static bool fileEvent;              // another program closed the file it wrote, or renamed one over it
 static int watchFd = -1;            // inotify on the drum file's directory, -1 if there is none
 static bool watchTried;             // watchFile() has run, so a failure is reported once
 static char drumName[NAME_MAX + 1]; // the drum file's name in the watched directory
-static WbQueueP wbP;                // NULL if it could not be made: writes are done in place
+static WbQueueP wbP;                // NULL if it could not be made, writes are done in place
 static pthread_mutex_t stampLock = PTHREAD_MUTEX_INITIALIZER;
 static struct stat drumStamp;       // the file as the load or our own last write left it
 static bool writeFailReported;      // written only on the writer thread
@@ -155,6 +163,7 @@ int stat;
 int chanFlags;
 int wordCount;
 int breakCycles;
+uint64_t settleEnd;
 
     if( pulse )
     {
@@ -188,7 +197,7 @@ int breakCycles;
 
         if( MB(pdp1P) & 02000 )
         {
-            // dba, using the interrupt system, reqiest break.
+            // dba, if using the interrupt system reqiest break.
             // The break happens when the drum location == the drumAddr.
             iotCondLog(LOG_IOT, "dba, break on %o\n", drumAddr);
             if( drumAddr < drumLoc(pdp1P) )  // have to wait for it to come around again on the guitar
@@ -209,8 +218,7 @@ int breakCycles;
             }
 
             // The break has its own target, apart from rotationDelayTime, so that the dwc and dcl
-            // of the manual's DBA, DWC, DCL sequence (H-23 p64 / 5-3) can start a transfer
-            // without disarming it.
+            // of the manual's DBA, DWC, DCL sequence can start a transfer without disarming it.
             breakTime = pdp1P->simtime + ((uint64_t)wordCount * 8500ULL);
             dbaPending = true;
             wordCount = (int)(((float)wordCount * 8500.0) / 5000.0) - 1;    // approximate polling delay
@@ -280,7 +288,7 @@ int breakCycles;
             break;
         }
 
-        // An armed dba break is kept: a program using sequence breaks starts a transfer with
+        // An armed dba break is kept, a program using sequence breaks starts a transfer with
         // DBA, DWC, DCL (H-23 p64 / 5-3).
         requestPending = ioBusy = false;
 
@@ -326,24 +334,14 @@ int breakCycles;
             iotCondLog(LOG_IOT, "dcl 63 requesting write\n");
         }
 
-        wordCount = 1;    // figure out how many drum word times for the drum to be in position, we need a least 1
+        // The drum looks for the address only once the settle delay ends.
+        // The wait is the distance from where the drum is then and an address reached sooner costs a revolution.
+        // The first word moves one word time after the drum reaches the address.
+        // A full track waits for its address also.
+        settleEnd = pdp1P->simtime + SETTLE_NS;
+        wordCount = 1 + ((drumAddr - drumLocAt(settleEnd) + 4096) % 4096);
 
-        // Transferring a full mem bank is special, it can start anywhere, no rotational delay
-        if( transferCount != 4096 )
-        {
-            if( drumAddr < drumLoc(pdp1P) )  // have to wait for it to come around again on the guitar
-            {
-                wordCount += 4096 - drumLoc(pdp1P) + drumAddr;
-            }
-            else
-            {
-                // Target is at or ahead of the current head position, no wraparound needed,
-                // the wait is simply the forward distance from here to there.
-                wordCount += drumAddr - drumLoc(pdp1P);
-            }
-        }
-
-        // we assume we can proceed, manual says program should check status before calling IOT_61.
+        // We assume we can proceed, manual says program should check status before calling IOT_61.
         request.mode = chanFlags;
         request.count = transferCount;
         request.memBank = memBank;
@@ -354,15 +352,16 @@ int breakCycles;
         requestPending = true;
 
         CKS(pdp1P) |= CKS_DRP;                 // busy until iotPoll signals real completion
-        // Each drum word takes 8.5us; wordCount here is the rotational latency.
-        // This uses simtime for the completion target, so it stays exact through throttle
+        // Each drum word takes 8.5us.
+        // wordCount here is the rotational latency after the delay.
+        // This uses simtime for the completion target so it will stay exact through throttle
         // pauses and host stalls instead of drifting with wall-clock time.
-        rotationDelayTime = pdp1P->simtime + ((uint64_t)wordCount * 8500ULL);
+        rotationDelayTime = settleEnd + ((uint64_t)wordCount * 8500ULL);
         iotCondLog(LOG_TIME,"Completion target in %lu nsecs\n", rotationDelayTime - pdp1P->simtime);
-        wordCount = (wordCount * 8500) / 5000;  // get the approximate polling delay
+        wordCount = (int)((rotationDelayTime - pdp1P->simtime) / 5000ULL);  // get the approximate polling delay
 
-        // A dba armed before this dcl comes due a word before the transfer, and each arm starts
-        // a fresh count, so poll for whichever is first, a cycle early as dia does.
+        // A dba armed before this dcl comes due before the transfer and each arm starts
+        // a fresh count, so poll for whichever is first a cycle early as dia does.
         if( dbaPending )
         {
             breakCycles = 1;
@@ -416,8 +415,8 @@ iotStart()
         iotCondLog(LOG_START, "IOT 61 channel allocation %s\n", (chanP)?"ok":"failed");
     }
 
-    // A STOP followed by Start or Continue is a halt like any other: a transfer or a dba break
-    // in progress carries on through it, and iotPoll() makes it wait or end in error.
+    // A STOP followed by Start or Continue is a halt like any other.
+    // A transfer or a dba break in progress carries on through it and iotPoll() makes it wait or end in error.
     // The transfer state is set up only on the first start.
     if( !started )
     {
@@ -430,9 +429,6 @@ iotStart()
         totalRequests = 0;
 #endif
     }
-
-    // The drum's position is computed directly from simtime (drumLoc()), which already
-    // starts from the wall clock at power-on, so there is no separate anchor to set up here.
 }
 
 // The close waits in the queue behind the drum's pending writes.
@@ -477,10 +473,8 @@ iotStop()
 }
 
 // The power switch went off, the power clear resets the drum control.
-// A transfer waiting for the/ drum or under way, and an armed dba, are dropped and the transfer error is cleared.
-// A write cut short has already put the words that moved on the drum, so they are written, as at a halt's resume.
-// Busy is in cks, which needs the PDP1, so the next iotIOPoll() clears it, the first pass with the power back on,
-// before any Start.
+// A transfer waiting for the drum or that is under way or an armed dba are dropped and the transfer error is cleared.
+// A write cut short has already put the words that moved on the drum, so they are written as at a halt's resume.
 // This comes before iotStop(), but a STOP before the power went off has already closed the drum file,
 // so it is opened again for the write.
 void
@@ -576,11 +570,15 @@ int count;
         resumeAfterHalt();
     }
 
-    // In the DBA, DWC, DCL sequence the break is armed alongside a transfer, and the drum reaches
-    // the dba address as that transfer starts, so the break cannot wait for the transfer states.
+    // In the DBA, DWC, DCL sequence the break is armed alongside a transfer, so it is checked apart
+    // from the transfer states.
+    // It fires at the drum's first arrival at the dba address without
+    // waiting for the settle delay, and clears busy (H-23 2-5).
+    // A transfer whose dcl came within/ the delay of that arrival still waits its revolution with busy clear.
     if( dbaPending && (pdp1P->simtime >= breakTime) )
     {
         dbaPending = false;
+        CKS(pdp1P) &= ~CKS_DRP;
         initiateBreak(sbsChan);             // the DEC drum diagnostic seems to use channel 5
         iotCondLog(LOG_BREAK, "IOT 61 break initiated at drum count %o.\n", drumLoc(pdp1P));
     }
@@ -589,8 +587,8 @@ int count;
     {
         if( pdp1P->simtime < rotationDelayTime )
         {
-            // The drum has not yet turned to the transfer's first address.
-            // Nothing has moved yet; the transfer is started below once it has.
+            // The drum has not yet reached transfer's first address.
+            // Nothing has moved yet, the transfer is started below once it has.
             // Keep polling until then.
             enablePolling(1);
             return;
@@ -611,7 +609,8 @@ int count;
         iotCondLog(LOG_HSC, "HSCrequest submitted, channel now busy.\n");
         requestPending = false;
         ioBusy = true;
-        // Poll every cycle: the steals are spread over the transfer, so an estimate in unstolen
+        // Poll every cycle.
+        // The steals are spread over the transfer so an estimate in unstolen
         // cycles would see completion late.
         enablePolling(1);
     }
@@ -629,10 +628,10 @@ int count;
         }
 
         // This will just complete the hsc request, it won't wait.
-        // Continue, Start and each single step reset the channels, so a transfer a halt came
+        // Continue, Start and each single step reset the channels so a transfer a halt came
         // in the middle of reports HSC_ABORT.
-        // On the hardware hsc the drum's next word went unanswered,
-        // so it set its transfer error and dropped the request (H-23 2-21).
+        // On the hardware hsc the drum's next word went unprocessed,
+        // so it set a transfer error and dropped the request (H-23 2-21).
         count = transferCount;
         if( HSCwait(chanP) == HSC_ABORT )
         {
@@ -673,7 +672,7 @@ int count;
 }
 
 // Return the current rotational position of the drum, 0-4095.
-// This is determined directly from simtime, so it tracks the CPU's own time base
+// This is determined directly from simtime so it tracks the emulator time base
 // exactly, including through throttle pauses, unaffected by how the emulator paces
 // wall-clock time to keep up.
 // Simtime itself starts from the wall clock at power-on, so the drum's starting position
@@ -698,7 +697,9 @@ drumLocAt(uint64_t time)
 // runs to the drum's next arrival there after the halt.
 // A halt that ended before the arrival changes nothing.
 // The targets are computed from haltEndTime as dcl and dba compute them from the time they run.
-// A full-track transfer starts anywhere, so it is left alone.
+// The transfer's target is after the settle delay's end, so a halt that ran past the target ran past
+// the delay too, and the delay needs nothing here.
+// A full track is handled like any other transfer.
 static void
 resumeAfterHalt(void)
 {
@@ -706,7 +707,7 @@ int wordCount;
 
     wordCount = (drumAddr - drumLocAt(haltEndTime) + 4096) % 4096;
 
-    if( requestPending && (transferCount != 4096) && (haltEndTime >= rotationDelayTime) )
+    if( requestPending && (haltEndTime >= rotationDelayTime) )
     {
         rotationDelayTime = haltEndTime + ((uint64_t)(wordCount + 1) * 8500ULL);
         iotCondLog(LOG_TIME, "halt passed the drum address, transfer waits %d words\n", wordCount + 1);
@@ -735,7 +736,8 @@ int count;
     return( count );
 }
 
-// Do a drum read handling drum wraparound: the words come from the drum's copy in memory.
+// Do a drum read handling drum wraparound.
+// The words come from the drum's copy in memory.
 static void
 readDrumToBuffer(
     Word *buffer,       // must be at least 4096, anything over is unused
@@ -767,8 +769,8 @@ int drumRemainderCount = 0;
     }
 }
 
-// Do a drum write handling drum wraparound: the words go into the drum's copy in memory, and
-// each part is queued for the file.
+// Do a drum write handling drum wraparound.
+// The words go into the drum's copy in memory and queued for the file.
 static void
 writeBufferToDrum(
     Word *buffer,       // must be at least 4096, anything over is unused
@@ -807,9 +809,9 @@ int drumRemainderCount = 0;
 
 // Called by dcl before a transfer uses the drum's copy.
 // The first transfer reads the file in.
-// If another program closes the file it wrote or renames one over it, the file is read in/ again.
-// After a halt, the file is compared with what the load or our own last write left.
-// A difference may only be our writes still in the queue, so the queue is drained and the file compared again,
+// If another program closes the file it wrote or renames one over it, the file is read in again.
+// After a halt, the file is compared with what the load or our last write left.
+// A difference may only be our writes still in the queue, so the queue is drained and the file compared again
 // and a file still different was changed by someone else and is read in again.
 // A halt changes nothing far more often and single steps come fast, the compare saves a read
 // of the whole file each time.
@@ -858,9 +860,9 @@ checkImage(void)
     reloadImage();
 }
 
-// Opens the drum file again,since a file replaced under the same name is another file and reads it in.
+// Opens the drum file again since a file replaced under the same name is another file and reads it in.
 // Our writes still in the queue go to the old copy first.
-// Our own close raises an event which is dropped, the read that follows it sees everything closed before it.
+// Our close raises an event which is dropped, the read that follows it sees everything closed before it.
 // The reload is reported only if the drum's contents changed.
 // No return value.
 static void
@@ -1016,8 +1018,7 @@ ssize_t n;
     pthread_mutex_unlock(&stampLock);
 }
 
-// Returns true if the drum file is not as the load or our own last write left it: another file
-// under the name, a different size, modification time or change time, or no file.
+// Returns true if the drum file is not as the load or our own last write left it.
 static bool
 fileChanged(void)
 {

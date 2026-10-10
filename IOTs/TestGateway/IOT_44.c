@@ -341,8 +341,9 @@ HSCRequest request;
     case CMD_WAIT:
         // hgw -- HSCwait() on channel 'chanNo'. See the file header comment above: only
         // call this once hgs has already reported HSC_DONE for a NORMAL-mode request, or
-        // for HSC_MODE_IMMEDIATE (always already done) / HSC_MODE_THREADED (bounded
-        // count*5us busy-wait) requests -- calling it on a still-busy NORMAL-mode channel
+        // for HSC_MODE_IMMEDIATE (always already done) / HSC_MODE_THREADED (times the
+        // requester's own 5us a word: a spin when short, a usleep() when longer) requests
+        // -- calling it on a still-busy NORMAL-mode channel
         // would deadlock the emulator's main thread against itself. IO out: the raw status
         // code HSCwait() returns, or HSC_ERR if chanNo is not allocated by this plugin.
         setIO(pdp1P, isAllocatedChanNo(chanNo) ? HSCwait(handles[chanNo]) : HSC_ERR);

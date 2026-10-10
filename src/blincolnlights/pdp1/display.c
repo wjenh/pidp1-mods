@@ -39,25 +39,7 @@
 //    from them. initializeDisplay() publishes a new screen's control entry with a release store
 //    (getDisplayControlP() loads it with acquire), since the worker thread is already running.
 // 22-Sep-2026 wje (Claude) fix the ctlP->fd race between the worker thread and setDisplayFD()
-//    (found by ThreadSanitizer). ctlP->fd is now
-//    only ever installed by setDisplayFD() (atomic exchange, so it still updates synchronously) and
-//    only ever closed by the worker thread: its own fd, in dropClient(), on a fatal write error or when
-//    a read finds the client gone (atomic compare-exchange against the fd it was using, so a reconnect that already
-//    replaced it is never double-closed); or an fd a reconnect displaced, handed off via ctlP->closeFd and closed once at
-//    the top of the worker's next pass, never mid read/write. The worker snapshots ctlP->fd once per
-//    screen per pass and passes it explicitly to putDpyCommand()/addDpyCommand()/
-//    flushDisplay()/lightpenReader(), instead of each of them re-reading ctlP->fd, so a reconnect or
-//    a write failure mid-pass can no longer make flushDisplay() write a batch meant for one client to
-//    another client's socket. isOpen() and getDisplayFD() read ctlP->fd with an atomic load.
-//    A ThreadSanitizer stress run with two threads reconnecting the same screen concurrently (the
-//    original bug report used one) found the same unlocked-vs-locked pattern on the worker's
-//    per-connection state: setDisplayFD() used to reset it under controlLock while the worker read
-//    and wrote it without one. setDisplayFD() no longer touches it at all; the worker resets it
-//    itself when ctlP->connGen (bumped by setDisplayFD() on every install) shows a new connection,
-//    since fd numbers themselves get reused by the OS and can't be used to detect that. Two other,
-//    unrelated pre-existing races the same stress
-//    runs turned up -- displayInitialized, and initializeDisplay()'s non-atomic final read of
-//    displays[screenNo] -- are not fixed by this change; they are not about fd ownership.
+//    found by ThreadSanitizer.
 // 23-Sep-2026 Claude - while pidp1timing is on, the worker accounts for its own host time (waits, lock,
 //    writes, lightpen reads, CPU) and for display()'s lock waits, one line a second to TIMING_FILE_DPY.
 // 24-Sep-2026 Claude - the worker holds controlLock only to copy the pending commands out, not while it
@@ -99,6 +81,7 @@
 
 #include "common.h"
 #include "pdp1.h"
+#include "display.h"
 #include "configuration.h"
 #include "lpPredictor.h"
 

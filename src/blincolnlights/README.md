@@ -7,6 +7,7 @@ a file that represents the physical panel.
 That way a physical panel is easily swappable for a virtual one
 or another user interface.
 
-For the PiDP-1 panel, start `panel_pidp1/panel_pidp1` before
-starting any emulator.
-The virtual version of this is `vpanel_pdp1/panel_pdp1`.
+For the PiDP-1 panel, start `panel_pidp1/newpanel`
+(installed as `bin/panel_pidp1`) before starting any emulator.
+The virtual version of this is `vpanel_pdp1/panel_pdp1`
+(installed as `bin/vpanel_pdp1`).

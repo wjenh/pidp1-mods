@@ -25,7 +25,6 @@
  *    to the audiodepth setting, with a once-a-second depth line when pidp1timing is on.
  * 26-Sep-2026 wje (Claude) - the filters run on simtime and are set by cutoff in Hz, defaulting to
  *    the CHM music interface's; the per-sample alphas are gone. The default rate is 48,000.
- * 8-Oct.2026 wje audio state now preserved over start/stop/power cycles
 */
 
 #include <stdbool.h>
@@ -37,6 +36,7 @@
 
 #include "common.h"
 #include "pdp1.h"
+#include "audio.h"
 #include "lowpass.h"
 #include "configuration.h"
 
@@ -59,27 +59,24 @@ typedef SDL_AudioDeviceID AudioHandle;
 #define FRAME_BYTES (2 * sizeof(int16_t))   // one stereo S16 sample
 #define BATCH_FRAMES 64                      // per SDL call: 1.3 ms at 48,000 Hz, well under the depth
 
-// Queue depth control.
-// A stall of the emulator thread shorter than the depth is not heard
-// because the audio plays from the queue.
-// The depth is also how far the sound trails the panel lights.
-// 40 ms covers the throttle's 20 ms lag cap twice.
+// Queue depth control. A stall of the emulator thread shorter than the depth is not heard,
+// because the device plays from the queue; the depth is also how far the sound trails the lamps
+// (on top of SDL's device buffer and the OS). 40 ms covers the throttle's 20 ms lag cap twice.
 #define DEPTH_DEFAULT_MS 40
 #define DEPTH_MIN_MS 10
 #define DEPTH_MAX_MS 500
 #define STEER_BAND_MS 10                     // no steering while the smoothed depth is this close
 #define STEER_RATIO 0.005                    // 0.5% of the period, about 9 cents: not heard as pitch
-#define STEER_SMOOTHING 32.0                 // flushes averaged, ~90 ms: rides out the audio's pulls
+#define STEER_SMOOTHING 32.0                 // flushes averaged, ~90 ms: rides out the device's pulls
 #define CEILING_MS 250                       // at least; a queue above this is cut back to the depth
 
-// The audio's rate is measured over windows this long.
-// Depth noise of a millisecond over/ 10 s is 0.01%, well under any real error.
-// The limit only guards against nonsense.
+// The device's own rate is measured over windows this long. Depth noise of a millisecond over
+// 10 s is 0.01%, well under any real device's error; the limit only guards against nonsense.
 #define RATE_WINDOW_NS 10000000000ull
 #define RATE_LIMIT 0.02
 
-// Simtime passing between two calls with no lag-cap firing means the emulator was not running.
-// Well above any one instruction, mul and div included.
+// Simtime passing between two calls with no lag-cap firing means the machine was not running
+// (halted or stepped). Well above any one instruction, mul and div included.
 #define REANCHOR_GAP_NS 1000000ull
 
 #define AUDIO_TIMING_FILE "/tmp/pidp1-audiotiming.txt"
@@ -88,29 +85,28 @@ typedef SDL_AudioDeviceID AudioHandle;
 #define HIVAL   1.0
 #define LOWVAL  -HIVAL
 
-// From thehe CHM music interface document, each flag drives 5K into a capacitor with a
-// 20K pot across it so the capacitor sees 4K.
-// Measured capacitors, in farads.
+// The CHM music interface (its 2023 rebuild drawing): each flag drives 5K into a capacitor, with a
+// 20K pot across the capacitor, so the capacitor sees 4K. Measured capacitors, in farads.
 #define CHM_R 4000.0
 static const double chmC[4] = { 0.039e-6, 0.043e-6, 0.094e-6, 0.181e-6 };
 #define CUTOFF_MIN_HZ 1.0
 #define CUTOFF_MAX_HZ 100000.0
 
-// Output scaling.
+// And output scaling.
 // This is only the pre-config fallback used in the brief window before loadConfigFile() runs, or
-// if a deployment somehow has no gain= line and no config file at all.
-// The real operating default is set in configuration.c (Configuration.gain) and in pidp1.config.example, both 0.95.
-// Warning - SDL will clip if you set the gain too high, you'll have to experiment.
+// if a deployment somehow has no gain= line and no config file at all. The real operating default
+// is set in configuration.c (Configuration.gain) and in pidp1.config.example, both 0.95.
+// Warning - SDL will clip if you set the gain too high. You'll have to experiment.
 #define MIXGAIN 0.5
 
-// The audio and everything that steers its queue belong to the emulator thread.
-// The console and the command port run on their own threads, so what they ask for is posted.
-// The value is stored,then its generation and requestGen are bumped, and svc_audio() applies it at its next pass.
+// The device and everything that steers its queue belong to the emulator thread. The console and
+// the command port run on their own threads, so what they ask for is posted: the value is stored,
+// then its generation and requestGen are bumped, and svc_audio() applies it at its next pass.
 // Until isInitialized is seen, the emulator thread touches nothing here.
 static AudioHandle dev;
 static bool isStopped = true;
-static int sampleRate = 48000;               // the open audio pseudo-device's rate
-static float tuning = 1.0;                   // the open audio pseudo-device's tuning
+static int sampleRate = 48000;               // the open device's rate
+static float tuning = 1.0;                   // the open device's tuning
 static atomic_bool isInitialized;
 static pthread_mutex_t initLock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -132,9 +128,8 @@ static atomic_int overflows;
 static atomic_int negOverflow;
 static atomic_int posOverflow;
 
-// The sample clock, simtime of the next sample, with the fraction of a nanosecond carried apart
-// so no rate drifts.
-// NeedAnchor asks the next pass to restart it and preload the queue.
+// The sample clock: simtime of the next sample, with the fraction of a nanosecond carried apart
+// so no rate drifts. needAnchor asks the next pass to restart it and preload the queue.
 static uint64_t dueNs;
 static double dueFrac;
 static double periodNs;
@@ -153,7 +148,7 @@ static double smoothFrames;
 static double steerAdj;                      // 0, or +/-STEER_RATIO while correcting
 static bool tuned;                           // tuning is not 1.0: the rate is left alone
 
-// The audio measured rate as a ratio to sampleRate, and the window it is measured over.
+// The device's measured rate as a ratio to sampleRate, and the window it is measured over.
 static double deviceRatio = 1.0;
 static bool deviceMeasured;
 static uint64_t winStartNs;
@@ -161,7 +156,7 @@ static long winFrames;
 static double winStartDepth;
 static bool winClean;
 
-// pidp1timing, one line a second of simtime, counts since the last line.
+// pidp1timing: one line a second of simtime, counts since the last line.
 static bool timingOn;
 static FILE *timingFP;
 static uint64_t timingNextNs;
@@ -178,9 +173,9 @@ static int tMaxFrames;
 // Set default values
 static _Atomic float mixerGain = MIXGAIN;
 
-// The four filters, PF1-PF4. cutoffHz as se, from any thread.
-// A setter bumps cutoffGen and the emulator thread applies the cutoffs at its next pass.
-// Each pass costs one load and, for the flags, one compare unless something changed.
+// The four filters, PF1-PF4. cutoffHz is what was asked for, from any thread (the command port
+// runs on its own); a setter then bumps cutoffGen, and the emulator thread applies the cutoffs at
+// its next pass. Each pass costs one load and, for the flags, one compare unless something changed.
 static RCFilter voice[4];
 static const int voiceBit[4] = { PF_1, PF_2, PF_3, PF_4 };
 #define VOICE_BITS (PF_1 | PF_2 | PF_3 | PF_4)
@@ -195,8 +190,8 @@ static void applyRequests(void);
 static void startPlaying(void);
 static void stopPlaying(void);
 
-// The seven functions below are the only places SDL2 and SDL3 differ.
-// Everything else calls these and is otherwise identical between the two builds.
+// The seven functions below are the only places SDL2 and SDL3 differ. Everything else in this
+// file calls these and is otherwise identical between the two builds.
 
 // Opens the default playback device at the given sample rate, stereo, signed 16-bit.
 // Returns AUDIO_HANDLE_INVALID on failure.
@@ -260,8 +255,7 @@ audioClearQueue(AudioHandle h)
 #endif
 }
 
-// Queues raw PCM samples for playback.
-// Bytes is the size of data in bytes.
+// Queues raw PCM samples for playback. bytes is the size of data in bytes.
 static void
 audioQueueSamples(AudioHandle h, const void *data, uint32_t bytes)
 {
@@ -283,7 +277,7 @@ audioQueuedBytes(AudioHandle h)
 #endif
 }
 
-// Sets the playback pitch ratio, 1.0 is normal pitch.
+// Sets the playback pitch ratio. 1.0 is normal pitch.
 // Has no effect under SDL2, which has no equivalent concept on a plain queued device.
 static void
 audioApplyTuning(AudioHandle h, float ratio)
@@ -296,10 +290,9 @@ audioApplyTuning(AudioHandle h, float ratio)
 #endif
 }
 
-// Initializes SDL's audio and the filters, and opens the device.
-// Any thread can call, SDL_Init() and the open can take tens of milliseconds,
-// so they are not done on the emulator thread.
-// That thread reads nothing set here until it sees isInitialized.
+// Initializes SDL's audio and the filters, and opens the device. Any thread; SDL_Init() and the
+// open can take tens of milliseconds, so they are not done on the emulator thread. That thread
+// reads nothing set here until it sees isInitialized, and owns the device from then on.
 void
 initaudio(void)
 {
@@ -323,8 +316,8 @@ initaudio(void)
     lastFlags = -1;
     isStopped = true;
 
-    // The rate and tuning asked for so far are this open's.
-    // One asked for after these loads moves its generation again and the emulator thread applies it.
+    // The rate and tuning asked for so far are this open's. One asked for after these loads
+    // moves its generation again, and the emulator thread applies it.
     appliedRateGen = atomic_load_explicit(&rateGen, memory_order_acquire);
     appliedTuningGen = atomic_load_explicit(&tuningGen, memory_order_acquire);
     tuning = atomic_load_explicit(&requestedTuning, memory_order_relaxed);
@@ -334,9 +327,9 @@ initaudio(void)
     pthread_mutex_unlock(&initLock);
 }
 
-// Opens the audio system at the rate asked for and reads audiodepth and pidp1timing.
-// Configure() calls setSampleRate() on every load and reload of the config file,
-// and that reopens audio here, both settings follow a reload.
+// Opens the device at the rate asked for and reads audiodepth and pidp1timing. configure() calls
+// setSampleRate() on every load and reload of the config file, and that reopens the device here,
+// so both settings follow a reload. initaudio()'s first open, then the emulator thread's.
 static void
 openAudio()
 {
@@ -385,8 +378,7 @@ int ceilingMs;
     needAnchor = true;
 }
 
-// Resets the queue control for a start from an empty queue.
-// The audio's measured rate is kept.
+// Resets the queue control for a start from an empty queue. The device's measured rate is kept.
 static void
 resetQueueControl(void)
 {
@@ -403,8 +395,7 @@ isAudioInitialized()
     return( atomic_load_explicit(&isInitialized, memory_order_acquire) );
 }
 
-// Initializes the audio if it is not, and asks for the sound to start.
-// Callable by any thread.
+// Initializes the audio if it is not, and asks for the sound to start. Any thread.
 void
 startaudio(void)
 {
@@ -412,10 +403,9 @@ startaudio(void)
     continueaudio();
 }
 
-// Asks for the sound to start (on true) or stop, at the emulator thread's next svc_audio().
-// Callable by any thread.
-// The audio only plays while it runs, and main() only calls svc_audio() while
-// audio is enabled, so with audio turned off the queue plays out and the audio drains.
+// Asks for the sound to start (on true) or stop, at the emulator thread's next svc_audio(). Any
+// thread. The machine only makes sound while it runs, and main() only calls svc_audio() while
+// audio is enabled, so with audio turned off the queue plays out and the device runs dry.
 void
 postaudio(bool on)
 {
@@ -423,17 +413,16 @@ postaudio(bool on)
     postRequest(&runGen);
 }
 
-// Asks for the sound to start.
-// Callable by any thread.
+// Asks for the sound to start. Any thread.
 void
 continueaudio(void)
 {
     postaudio(true);
 }
 
-// Stops the audiow.
-// The emulator thread is the only caller, main() calls it every pass while the power is off.
-// A start or stop asked for and not yet applied is dropped, main() will ask for it again.
+// Stops the sound now. Emulator thread only: main() calls it every pass while the power is off.
+// A start or stop asked for and not yet applied is dropped; main() asks for the sound again from
+// audioEnabled when the power comes back.
 void
 stopaudio(void)
 {
@@ -458,10 +447,8 @@ postRequest(atomic_uint *genP)
     atomic_fetch_add_explicit(&requestGen, 1, memory_order_release);
 }
 
-// Applies what was asked for since the last pass: the rate, which reopens the audio, then the
-// tuning, then a start or stop.
-// A pass with nothing asked for costs one load.
-// Emulator thread only.
+// Applies what was asked for since the last pass: the rate, which reopens the device, then the
+// tuning, then a start or stop. A pass with nothing asked for costs one load. Emulator thread.
 static void
 applyRequests(void)
 {
@@ -517,8 +504,7 @@ unsigned gen;
     }
 }
 
-// Starts stopped audio from an empty queue.
-// Emulator thread only.
+// Starts a stopped device from an empty queue. Emulator thread.
 static void
 startPlaying(void)
 {
@@ -536,8 +522,7 @@ startPlaying(void)
     audioPauseDevice(dev, false);
 }
 
-// Pauses the audio and empties its queue.
-// Emulator thread only.
+// Pauses the device and empties its queue. Emulator thread.
 static void
 stopPlaying(void)
 {
@@ -553,8 +538,8 @@ stopPlaying(void)
     isStopped = true;
 }
 
-// Reads the filters at simtime t into one stereo frame at frameP.
-/// A t at or before the filters' time reads them as they are.
+// Reads the filters at simtime t into one stereo frame at frameP. A t at or before the filters'
+// own time reads them as they are.
 static void
 computeFrame(uint64_t t, int16_t *frameP)
 {
@@ -649,8 +634,7 @@ queueBatch(void)
     }
 }
 
-// Adds the frame for simtime t to the batch.
-// Returns true when filled and it went to SDL.
+// Adds the frame for simtime t to the batch. Returns true when that filled it and it went to SDL.
 static bool
 appendFrame(uint64_t t)
 {
@@ -685,8 +669,7 @@ int bytes;
 
 // Fills the queue to the target depth with the filters' output held as it stands at simtime t.
 // Used where the sound has stopped anyway, a start or a halt, so the level it adds is not heard as
-// a gap
-// No simtime passes in it.
+// a gap. No simtime passes in it.
 static void
 preload(uint64_t t)
 {
@@ -709,9 +692,10 @@ int want;
     winClean = false;
 }
 
-// Once a window of simtime has passed, measures how fast the audio really plays, what was
-// produced less what the queue gained.
-// A window with a clear, preload, lag-cap firing or empty queue in it measures nothing.
+// Once a window of simtime has passed, measures how fast the device really plays: what was
+// produced, less what the queue gained. Producing at that rate keeps the pitch right, since the
+// device plays the samples at its own rate, and leaves steering only the depth to correct. A
+// window with a clear, preload, lag-cap firing or empty queue in it measures nothing.
 static void
 measureDevice(uint64_t now)
 {
@@ -744,7 +728,7 @@ double ratio;
         {
             ratio = (1.0 - RATE_LIMIT);
         }
-        // The first measurement since the audio was opened is taken whole, later ones are averaged.
+        // The first measurement since the device opened is taken whole; later ones are averaged.
         if( !deviceMeasured )
         {
             deviceRatio = ratio;
@@ -762,11 +746,11 @@ double ratio;
     winClean = true;
 }
 
-// Called after each batch goes to SDL.
-// Averages the depth over the audio pulls, then stretches the sample period while it is too deep
-// and shrinks it while too shallow, until it crosses the target.
-// Far too deep is cut back at once.
-// With a tuning, nothing else is steered, so its pitch is kept.
+// Called after each batch goes to SDL. Averages the depth over the device's pulls, then stretches
+// the sample period while it is too deep and shrinks it while too shallow, until it crosses the
+// target. Far too deep is cut back at once: only an off-nominal tuning, which plays at a rate the
+// program's time cannot follow, gets there. With a tuning, nothing else is steered, so its pitch
+// is kept.
 static void
 steer(uint64_t now)
 {
@@ -877,8 +861,7 @@ chmCutoff(int i)
     return( (float)(1.0 / (2.0 * M_PI * CHM_R * chmC[i])) );
 }
 
-// Applies any cutoff asked for since the last pass.
-// Until one is set, a voice has the CHM cutoff.
+// Applies any cutoff asked for since the last pass. Until one is set, a voice has the CHM cutoff.
 static void
 applyCutoffs(void)
 {
@@ -899,9 +882,8 @@ float hz;
     }
 }
 
-// Applies the flags as they are at simtime t to the filters' inputs.
-// A flag that changed since the last pass changed in the instruction that ended at t
-// so its edge is placed there.
+// Applies the flags as they are at simtime t to the filters' inputs. A flag that changed since the
+// last pass changed in the instruction that ended at t, so its edge is placed there.
 static void
 applyFlags(PDP1 *pdp, uint64_t t)
 {
@@ -926,8 +908,8 @@ int flags;
 }
 
 // Runs once per main-loop pass while the machine runs: makes every sample that simtime has
-// reached, one per period of the sample rate, then applies this pass's flag changes.
-// The samples come first because a flag seen changed now changed at now, after any sample due before it.
+// reached, one per period of the sample rate, then applies this pass's flag changes. The samples
+// come first because a flag seen changed now changed at now, after any sample due before it.
 void
 svc_audio(PDP1 *pdp)
 {
@@ -948,8 +930,8 @@ uint64_t whole;
     now = pdp->simtime;
     applyCutoffs();
 
-    // A lag-cap firing moves simtime over time the program never ran, so no samples are owed for it.
-    // The queue is left shallower and steering refills it: filling the gap with the held
+    // A lag-cap firing moves simtime over time the program never ran, so no samples are owed
+    // for it. The queue is left shallower and steering refills it: filling the gap with the held
     // level would put a flat stretch into sound the queue was still playing without a break.
     // Only a rise counts: the timing report sets the counter back to 0 at a halt.
     if( throttleCapFirings > capSeen )
@@ -1003,8 +985,7 @@ uint64_t whole;
 
 // Set the sampling rate for SDB.
 // Oversampling is ok.
-// Requires a teardown and reopen, which the emulator thread does at its next pass.
-// Callable by any thread.
+// Requires a teardown and reopen, which the emulator thread does at its next pass. Any thread.
 void
 setSampleRate(int perSec)
 {
@@ -1020,9 +1001,8 @@ getSampleRate()
     return( atomic_load_explicit(&requestedRate, memory_order_relaxed) );
 }
 
-// Sets a voice's cutoff, in Hz: voice 1-4, or 0 for all four.
-// 0 Hz or less puts back the CHM interface's cutoff for that voice.
-// Takes effect at the next pass; any thread may call it.
+// Sets a voice's cutoff, in Hz: voice 1-4, or 0 for all four. 0 Hz or less puts back the CHM
+// interface's own cutoff for that voice. Takes effect at the next pass; any thread may call it.
 void
 setFilterCutoff(int voiceNum, float hz)
 {
@@ -1065,8 +1045,7 @@ float hz;
 }
 
 // Converts an old per-sample alpha, a = 1 - exp(-1/(tau fs)), to the cutoff it gave at the current
-// sample rate, so the command port's alpha words still work.
-// The alpha is held inside (0, 1).
+// sample rate, so the command port's alpha words still work. The alpha is held inside (0, 1).
 float
 alphaToCutoff(float alpha)
 {
@@ -1099,12 +1078,9 @@ getMixerGain()
     return( atomic_load_explicit(&mixerGain, memory_order_relaxed) );
 }
 
-// 1.0 is no tuning.
-// Greater than 1.0 raises pitch.
-// Less than 1.0 lowers pitch.
-// This takes effect at the emulator thread's next pass when built with SDL3.
-// Callable by any thread.
-// SDL2 has no/ pitch-ratio concept so under SDL2 this is saved but ignored.
+// 1.0 is no tuning. Greater than 1.0 raises pitch. Less than 1.0 lowers pitch.
+// This takes effect at the emulator thread's next pass when built with SDL3. Any thread.
+// SDL2 has no/ pitch-ratio concept on a plain queued device, so under SDL2 this is saved but ignored.
 void
 setAudioTuning(float newTuning)
 {
@@ -1124,7 +1100,7 @@ getAudioTuning()
 
 // Expects an int[3], returns current overflow count, if rsltP is not null,
 // puts max max value seen, min value seen and the samples made in the array and resets the values.
-// Callable by any thread.
+// Any thread.
 int
 getOverflowData(int *rsltP)
 {

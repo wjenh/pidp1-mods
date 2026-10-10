@@ -19,6 +19,7 @@
 #include "common.h"
 #include "panel_pidp1.h"
 #include "pdp1.h"
+#include "panel1.h"
 
 #define PANELSEGMENT "/tmp/pdp1_panel"
 

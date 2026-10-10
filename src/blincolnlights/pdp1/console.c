@@ -17,6 +17,9 @@
  *
  * 27-Sep-2026 Claude moved out of pdp1.c; commands run off the emulator thread, and l stops the
  * machine before it changes core.
+ * 10-Oct-2026 Claude handlecmd() parses the caller's line, it no longer gives split() a padded
+ * copy since split() stops at the end of its string.
+ * Its audio and display calls come from audio.h and display.h, not externs of its own.
 */
 
 #include <fcntl.h>
@@ -26,6 +29,8 @@
 
 #include "common.h"
 #include "pdp1.h"
+#include "audio.h"
+#include "display.h"
 #include "papertape.h"
 
 #include "logger.h"
@@ -43,22 +48,6 @@
 #define LOAD_POSTED 1
 #define LOAD_DONE 2
 #define LOAD_NOSTOP 3
-
-extern bool setDisplayFD(int screen, int fd);
-extern int getDisplayFD(int screen);
-
-extern bool audioEnabled;
-extern void setSampleRate(int);
-extern void setFilterCutoff(int, float);
-extern float getFilterCutoff(int);
-extern float alphaToCutoff(float);
-extern void setMixerGain(float);
-extern float getMixerGain(void);
-extern void setAudioTuning(float);
-extern float getAudioTuning(void);
-extern int getSampleRate(void);
-extern int getOverflowData(int *);
-extern void postaudio(bool);
 
 typedef struct
 {
@@ -328,7 +317,8 @@ pthread_t th;
 //   muldiv [on/off]  toggle the type-10 multiply/divide option
 //   audio ...        configure/query the audio output subsystem
 //   ?/help           list commands
-// Any thread but the emulator's. Returns the calling thread's own response buffer.
+// Any thread but the emulator's. Writes into line: its first CR and its first LF end it.
+// Returns the calling thread's own response buffer.
 char *
 handlecmd(PDP1 *pdp, char *line)
 {
@@ -341,7 +331,6 @@ float alpha;
 char *p;
 char **args;
 int overflows[8];
-char padded[CMDLINEMAX + 4];
 
 static char *hostP;
 static int port = 3400;
@@ -350,22 +339,17 @@ static __thread char resp[CMDLINEMAX];
 
     pthread_mutex_lock(&cmdLock);
 
-    // split() can read a few bytes past the end of its string, so it gets a copy with zeros
-    // after the line, which end every scan it makes there.
-    memset(padded, 0, sizeof(padded));
-    strncpy(padded, line, (CMDLINEMAX - 1));
-
-    if( (p = strchr(padded, '\r')) )
+    if( (p = strchr(line, '\r')) )
     {
         *p = '\0';
     }
 
-    if( (p = strchr(padded, '\n')) )
+    if( (p = strchr(line, '\n')) )
     {
         *p = '\0';
     }
 
-    args = split(padded, &n);
+    args = split(line, &n);
 
     strcpy(resp, "ok");
 

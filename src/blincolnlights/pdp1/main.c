@@ -51,6 +51,8 @@
  * Claude 07-Oct-2026 only the emulator thread drives the audio device; the console's audio requests are posted
  *    to it (audio.c, console.c).
  * Claude 08-Oct-2026 the sound comes back with the power if audio is on.
+ * Claude 10-Oct-2026 the audio, display and panel calls come from audio.h, display.h and panel1.h, not
+ *    externs of its own.
 */
 
 #include <errno.h>
@@ -81,6 +83,9 @@
 #include "ad1server.h"
 #include "papertape.h"
 #include "console.h"
+#include "audio.h"
+#include "display.h"
+#include "panel1.h"
 
 //#define DOLOGGING
 #include "logger.h"
@@ -117,21 +122,11 @@ void configure(void);
 void reconfigure(void);
 void sigReconfigure(int);
 
-extern void updateswitches(PDP1 *pdp, Panel *panel);
-extern void updatelights(PDP1 *pdp, Panel *panel);
-extern void lightsoff(Panel *panel);
-extern void lightson(Panel *panel);
-extern Panel *getpanel(void);
-extern void setLightpenRadius2(int screenNo, int radius2);
-
 ConfigurationP getConfiguration(void);     // so other stuff can use our configuration, like IOTs
 
-extern ConfigurationP loadConfigFile(char *filenameP);
-extern void HSCreset(void);
 extern bool processHSCchannels(bool mayTake);
 extern bool hscBreakAllowed(void);
 extern void hscBreak(PDP1 *pdp);
-extern bool setDisplayFD(int screen, int fd);
 
 static bool checkBreakpoints(PDP1 *pdp1P);
 static bool checkWatches(PDP1 *pdp1P);
@@ -151,7 +146,6 @@ static void timingCtxSwitches(long *voluntaryP, long *involuntaryP);
 
 PDP1P pdp1P;      // Here because dynamic IOT code needs it
 
-extern bool audioEnabled;
 extern bool lailiaEnabled;
 extern bool core1DEnabled;
 extern bool all1DEnabled;
@@ -160,16 +154,6 @@ extern bool useMotionPrediction;
 static bool timingEnabled;
 
 static volatile sig_atomic_t reconfigRequested;     // SIGHUP synchronization, thread-safe
-
-// All for audio
-extern void setFilterCutoff(int, float);
-extern void setMixerGain(float);
-extern float getMixerGain(void);
-extern void setAudioTuning(float);
-extern float getAudioTuning(void);
-extern void setSampleRate(int);
-extern int getSampleRate(void);
-extern int getOverflowData(int *);
 
 ConfigurationP configurationP;  // from the config file
 
@@ -329,8 +313,8 @@ bool ran;               // the pass ran the machine, a stolen cycle included
             passStartSim = pdp->simtime;
             ran = false;
 
-            // The power-off branch stopped the sound; it comes back if audio is on.
-            // A device never opened stays closed, as at start-up.
+            // The power-off branch stopped the sound; it comes back if audio is on. A device never
+            // opened stays closed, as at start-up, where the config's audio only allows the sound.
             if( Edge(power_sw) && audioEnabled && isAudioInitialized() )
             {
                 continueaudio();
@@ -420,8 +404,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
                 }
 
                 // A dma transfer can be in STEAL mode, in which case it effectively halts the processor
-                // and transfers all of its requested words at 5us/word.
-                // We fake this by just not cycling.
+                // and transfers all of its requested words at 5us/word. We fake this by just not cycling.
                 if( processHSCchannels(hscBreakAllowed()) )   // need to steal a cycle
                 {
                     hscBreak(pdp);                  // mid-instruction, restarts the instruction
@@ -506,8 +489,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
             handleio(pdp);
             // 19-Jun-2026 wje: independent real-time poll hook for reader/punch/typewriter-style
             // dynamic IOTs (iotIOPoll), called at the same site as handleio() so plugin-owned
-            // devices keep their cadence regardless of run state.
-            // See dynamicIots.h/.c.
+            // devices keep their cadence regardless of run state. See dynamicIots.h/.c.
             dynamicIotProcessorDoIOPoll(pdp);
             pdp->simtime += 5000;
             dynamicIotProcessorAdvance(pdp, (passNs + 5000), ran);
@@ -871,8 +853,7 @@ timingLabel(u64 ns, char *bufP, size_t bufSize)
 
 // Write one histogram to fP on a single line: its title and sample total, then every non-empty
 // bucket as "<edge:count(percent)" for the lowest bucket or "edge+:count(percent)" for the rest,
-// where edge is the bucket's lower bound.
-// HistP has numEdges + 1 buckets.
+// where edge is the bucket's lower bound. histP has numEdges + 1 buckets.
 static void
 timingPrintHist(FILE *fP, const char *titleP, const long *histP, const u64 *edgesP, int numEdges)
 {

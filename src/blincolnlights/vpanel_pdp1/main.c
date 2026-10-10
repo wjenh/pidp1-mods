@@ -558,11 +558,12 @@ u16 count;
 // Called once per main-loop iteration after mouse() has updated every
 // switch/key Element's `state` from the current input and before draw().
 // Two jobs: (1) collapse the on-screen switch/key state into panel->sw0-2
-// so mouse clicks here actually affect the running machine, and (2) fan panel->lights0-6
-// back out into the individual lamp Elements' `state` so draw() shows the machine's
-// current register/indicator contents.
+// so mouse clicks here actually affect the running machine, and (2) turn rows 0-6 of
+// panel->pwmcount[][], the per-lamp on-cycle tally, into lamp words with
+// computeLightWord() and fan those out into the individual lamp Elements' `state`, so
+// draw() shows how long each lamp was lit since the last pass.
 //
-// The sw0/sw1/sw2 bit layout and the lights0/lights6 packing below must
+// The sw0/sw1/sw2 bit layout and the lamp-row packing below must
 // stay in lock-step with pdp1/panel1.c's updateswitches()/updatelights()
 // and with the SW_*/KEY_*/L5_* bit constants in panel_pidp1.h!
 //

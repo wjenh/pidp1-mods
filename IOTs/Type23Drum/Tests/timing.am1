@@ -19,7 +19,7 @@ wait, dra       // show the current drum address
     lai
     cks
     rir 1s
-    spi         // cks bit 17 will be 1 if done, shifted into sign bit
+    spi i       // cks bit 17 is 1 while the transfer runs, shifted into sign bit
     jmp top
     jmp wait
 

@@ -126,8 +126,9 @@ shareCandidate(OptRoutineP routineP)
     return(1);
 }
 
-// Test for a leaf: no call arc and no unfollowed indirect jump.  Must match
-// isLeafRoutine() in optcallgraph.c so the leaf cut agrees with leafSaving.
+// Test for a leaf: no call arc, no unfollowed indirect jump and no unreached
+// word in its span outside its body.  Must match isLeafRoutine() in
+// optcallgraph.c so the leaf cut agrees with leafSaving.
 // Returns 1 for a leaf, 0 otherwise.
 static int
 shareLeaf(OptRoutineP routineP)
@@ -142,7 +143,7 @@ shareLeaf(OptRoutineP routineP)
         return(0);
     }
 
-    if( routineP->flags & (OPTRT_JUMPSUNKNOWN | OPTRT_CALLSUNKNOWN) )
+    if( routineP->flags & (OPTRT_JUMPSUNKNOWN | OPTRT_CALLSUNKNOWN | OPTRT_SPANHOLE) )
     {
         return(0);
     }
@@ -151,8 +152,11 @@ shareLeaf(OptRoutineP routineP)
 }
 
 // Test whether the call graph does not fully know a routine: an open body, an
-// unfollowed indirect jump, or a call to the unknown sink.  Interference for
-// these may be understated, so the report marks them.  Returns 1 if so, else 0.
+// unfollowed indirect jump, a call to the unknown sink, or an unreached word
+// in its span outside its body, where a call only an unlisted skip reaches
+// may sit.
+// Interference for these may be understated, so the report marks them.
+// Returns 1 if so, else 0.
 static int
 shareUnknown(OptRoutineP routineP)
 {
@@ -161,7 +165,7 @@ shareUnknown(OptRoutineP routineP)
         return(0);
     }
 
-    if( routineP->flags & (OPTRT_OPENBODY | OPTRT_JUMPSUNKNOWN | OPTRT_CALLSUNKNOWN) )
+    if( routineP->flags & (OPTRT_OPENBODY | OPTRT_JUMPSUNKNOWN | OPTRT_CALLSUNKNOWN | OPTRT_SPANHOLE) )
     {
         return(1);
     }
@@ -888,8 +892,11 @@ int i;
         tableP->shareLeafFreed, (tableP->shareLeafFreed == 1)?"":"s");
     fprintf(fP, "    A routine whose body contains no call and no indirect jump the analysis\n");
     fprintf(fP, "    could not follow cannot be running while another such routine is running.\n");
-    fprintf(fP, "    So every leaf in a bank can share one return word.  That is the whole\n");
-    fprintf(fP, "    proof, and every routine below can be checked against the source by eye.\n");
+    fprintf(fP, "    So every leaf in a bank can share one return word.  A routine is left out\n");
+    fprintf(fP, "    when a word between its first and its last, not its own, was not reached:\n");
+    fprintf(fP, "    that word may be a call only the skip of an unlisted IOT reaches.\n");
+    fprintf(fP, "    That is the whole proof, and every routine below can be checked against\n");
+    fprintf(fP, "    the source by eye.\n");
 
     any = 0;
 

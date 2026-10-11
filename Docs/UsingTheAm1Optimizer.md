@@ -5,8 +5,9 @@ and `-O2` flags, which act on the code.
 For **am1** itself, see *UsingAM1.md*. For which flags to use and what can go
 wrong, in a few pages, see *UsingTheAm1OptimizerQuickReference.md*.
 
-This is version 1.34 and covers up through am1 version 3.0; it will be updated as needed.\
-Edit date 30-Sep-2026\
+This is version 1.35 and covers up through am1 version 3.5; it will be updated as needed.\
+Edit date 11-Oct-2026\
+Added information about IOTs that skip.
 
 ## What the advisor is
 
@@ -1851,6 +1852,10 @@ The section has three parts.
   it can be checked against the source by eye. It is worth 43 words on
   `adventure.am1`, about a third of the total, for an argument you do not have
   to take on trust.
+  One more condition keeps the proof true when the skip list is incomplete.
+  A routine is left out when a word between its first and its last, not its own, was not reached, because that word may be a call that only the skip of an unlisted IOT reaches.
+  The full assignment marks such a routine NOT FULLY KNOWN, and the scratch-word sharing below holds its words back.
+  On `adventure.am1` no routine is affected.
 - **The full assignment**, per bank, one group per proposed word: the address
   proposed to keep, how many words the group holds, how many would be freed,
   and every routine that would share it, named. A group marked NOT FULLY KNOWN
@@ -2174,6 +2179,15 @@ address).
 which of the pattern's words run, so a rewrite that assumes both run is wrong.
 Reported as `P4-skip`.
 
+An in-out transfer is skip-class only if it is on the optimizer's list of the IOTs that skip.
+Today the list holds the Type 340's four flag tests (`dsp`, `dss`, `dsv`, `dsh`) and the DAC's skip on its flag,
+device 71, command 5.
+**An IOT not on the list is taken to never skip**, so the word after it is believed always to run.
+P4 passes a pattern there, and `-O1` or `-O2` may rewrite it as if it did.
+A device that skips is one whose plugin adds 1 to the pc.
+Whoever writes such a plugin adds its IOT to the list, `skipIots[]` in am1's `optflow.c`,
+adding the device and the instruction bits that select the skip.
+
 Two more refusals apply to every rule. They ask whether the pattern's words are
 instructions at all, and they are tested only on a finding nothing else
 refused:
@@ -2249,8 +2263,8 @@ routine returns:` counts the ones that are a routine leaving through its own
 return word: `rtn, jmp .` whose address field the entry's `dap` wrote, or
 `jmp i rtn`. Those lose nothing, since every call site keeps its own edge back,
 so the threads really lost are the rest. Two kinds of edge are followed that
-once were not, and `recovered:` counts them: `iot`, the skip of a Type 340 flag
-test (`dsp`, `dss`, `dsv`, `dsh`), and `stored`, a target of a `jmp` or `jsp`
+once were not, and `recovered:` counts them: `iot`, the skip of an IOT on the
+list of those that skip (P4, above), and `stored`, a target of a `jmp` or `jsp`
 that a `dac` or `dio` stores whole, where the code in front of every store says
 what it stores. Where one store does not say, the sink stays beside the stored
 targets. `-O=flow` marks each recovered edge with `iot` or `stored` and each

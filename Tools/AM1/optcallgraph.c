@@ -73,6 +73,7 @@ static void closeComponent(OptTableP tableP, CgStateP stateP, OptRoutineP rootP)
 static void buildClosure(OptTableP tableP);
 static void markArtifactCycles(OptTableP tableP);
 static void markSbsPool(OptTableP tableP);
+static void markSpanHoles(OptTableP tableP);
 static unsigned int *reachOf(OptTableP tableP, OptRoutineP routineP);
 static void reachSet(OptTableP tableP, OptRoutineP routineP, int id);
 static int reachTest(OptTableP tableP, OptRoutineP routineP, int id);
@@ -116,6 +117,9 @@ CgState state;
     {
         return;
     }
+
+    // Before the sharing measurement, whose leaf cut reads the flag.
+    markSpanHoles(tableP);
 
     if( !allocState(tableP, &state) )
     {
@@ -656,6 +660,70 @@ int top;
 
     free(seenP);
     free(stackPP);
+}
+
+// Flag each routine whose address span holds an unreached word outside its
+// body (OPTRT_SPANHOLE).  The span runs from the body's lowest word to its
+// highest, in the entry's bank.  Such a word is most often one only the skip
+// of an in-out transfer optSkipWord() does not list reaches, and a call there
+// is an arc the graph does not have.  The leaf cut presents itself as a proof
+// that needs no call graph, and the scratch measure trusts the arcs, so both
+// hold such a routine back.  The body's own words are not holes: a routine
+// only unreached code calls has every one of them unreached, and its arcs are
+// still all known.  A hole the routine truly never reaches costs only advice.
+static void
+markSpanHoles(OptTableP tableP)
+{
+OptBlockP *blocksPP;
+OptBlockP blockP;
+OptRoutineP routineP;
+OptWordP wordP;
+int i;
+int lo;
+int hi;
+int addr;
+
+    blocksPP = optBlockIndex(tableP);
+
+    for( routineP = tableP->routinesP; routineP; routineP = routineP->nextP )
+    {
+        lo = BANKSIZE;
+        hi = -1;
+
+        for( i = 0; i < routineP->blockCount; ++i )
+        {
+            blockP = blocksPP[routineP->bodyIdsP[i]];
+
+            if( !blockP || (blockP->bank != routineP->bank) )
+            {
+                continue;
+            }
+
+            if( blockP->startAddr < lo )
+            {
+                lo = blockP->startAddr;
+            }
+
+            if( blockP->endAddr > hi )
+            {
+                hi = blockP->endAddr;
+            }
+        }
+
+        for( addr = lo; addr <= hi; ++addr )
+        {
+            wordP = wordAt(tableP, routineP->bank, addr);
+
+            if( wordP && (wordP->flags & OPTF_UNREACHED) &&
+                !optRoutineOwnsBlock(routineP, wordP->blockP) )
+            {
+                routineP->flags |= OPTRT_SPANHOLE;
+                break;
+            }
+        }
+    }
+
+    free(blocksPP);
 }
 
 // Where one routine's reachability bit vector starts.
@@ -1222,9 +1290,11 @@ OptRoutineP otherP;
     return(1);
 }
 
-// Is this routine a leaf: no call arc and no unresolved jump or call?  Every
-// leaf in a bank can then share one return word, with no call graph needed;
-// an unfollowed jump may have gone into another leaf, which breaks that.
+// Is this routine a leaf: no call arc, no unresolved jump or call, and no
+// unreached word in its span outside its body (OPTRT_SPANHOLE)?  Every leaf
+// in a bank can then share one return word, with no call graph needed; an
+// unfollowed jump may have gone into another leaf, and a call only an
+// unlisted skip reaches is an arc the graph lacks, and either breaks that.
 // Returns 1 for a leaf holding a return word, 0 otherwise.
 static int
 isLeafRoutine(OptRoutineP routineP)
@@ -1239,7 +1309,7 @@ isLeafRoutine(OptRoutineP routineP)
         return(0);
     }
 
-    if( routineP->flags & (OPTRT_JUMPSUNKNOWN | OPTRT_CALLSUNKNOWN) )
+    if( routineP->flags & (OPTRT_JUMPSUNKNOWN | OPTRT_CALLSUNKNOWN | OPTRT_SPANHOLE) )
     {
         return(0);
     }

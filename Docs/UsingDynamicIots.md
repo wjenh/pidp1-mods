@@ -2,8 +2,8 @@
 
 This document describes the funcionality and how to create your own IOTs.
 
-Updated 4-Oct-2026
-Add iotPowerClear()
+Updated 11-Oct-2026
+Add note on IOTs that skip.
 
 ## What is a dynamic IOT?
 
@@ -101,8 +101,6 @@ These are less commonly used:
 These can be modified by your code, even the pc.
 Adding 1 to the pc will cause the next instruction following your IOT call to be skipped, good for implementing
 skip on some condition functionality.
-There are a number of other members, but be very careful. You need a good knwolege of the internals of the enulator
-to not cause random behavior or total failure.
 
 Note that the panel numbering of the sense switches and the program flags is reversed from the actual bit positions.
 That is, flag or switch 6 is the lsb, 01, 1 is 040.
@@ -111,6 +109,15 @@ Finally, any IOT in the range of 030 - 037 *automatically* has the IO register c
 This behavior can't be bypassed.
 This is again a strange real PDP-1 behavior. So, don't get caught by it if you're passing control information
 in the IO register and use an IOT in that range!
+
+## Important note for IOTs that skip by changing the PC
+
+If your IOT can skip, add it to the am1 optimizer's list of IOTs that skip, in am1's `optflow.c`
+by device and the sub-field bits that select the skip.
+The optimizer takes any IOT not on that list never to skip.
+With `-O1` or `-O2` it may rewrite the following word if that word always runs.
+There are a number of other members, but be very careful.
+You need a good knwolege of the internals of the enulator to not cause random behavior or total failure.
 
 ## Be Careful!
 

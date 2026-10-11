@@ -44,7 +44,7 @@ install: all
 zmachine.rim: $(SRCS)
 	@mkdir -p $(BUILD)
 	@rm -f $(BUILD)/zmemcore.rim $(BUILD)/am1.out
-	cd $(BUILD) && $(AM1) -S -i $(AM1INCDIR) -I $(AM1INCDIR)/UTIL \
+	cd $(BUILD) && $(AM1) -S -i $(AM1INCDIR) \
 	    -DZ_TEST_HARNESS=0 -DZLPT_TYPE64=$(LPT64) \
 	    ../zmemcore.am1 > am1.out 2>&1; cat am1.out
 	@high=`sed -n 's/^Bank 0, [0-7]* (\([0-9]*\) decimal).*$$/\1/p' $(BUILD)/am1.out`; \

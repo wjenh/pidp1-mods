@@ -220,6 +220,7 @@
  * 29-Sep-2026 wje - minor fix, line number one off in error message for cross-bank ref to nonexistent symbol 
  * 3-Oct-2026 claude - a var declared twice, or declared and then used as a label, is an error
  * 3-Oct-2026 claude - export then var keeps the export; duplicate label and import clash messages corrected
+ * 11-Oct-2026 wje - handing IOTs that skip, new skip list added
 */
 #include <unistd.h>
 #include <stdlib.h>

@@ -73,7 +73,7 @@
 #define ZOBJECTS_AC_H
 
 #include <AIDS/skipmacros.ah>
-#include "bitsets.ac"
+#include <UTIL/bitsets.ac>
 
 // The stop reason for a missing or wrong-sized property (zdispatch.ac's
 // ZSTOP_* list). Nothing produces it: the property routines degrade

@@ -700,6 +700,11 @@ typedef enum
                                     // introduced: an artifact, and labeled one
 #define OPTRT_SBSPOOL       0x0100  // reachable from a sequence-break handler: it runs on
                                     // the second stack and interferes with the first
+#define OPTRT_SPANHOLE      0x0800  // a word between the body's lowest and highest, in its
+                                    // bank, is unreached and not in the body: most often
+                                    // one only the skip of an in-out transfer
+                                    // optSkipWord() does not list reaches, so a call
+                                    // there is an arc the graph lacks
 
 // One arc of the call graph: caller routine to callee routine.  Owned by the
 // caller's out list.  Several call sites collapse into one arc and the count

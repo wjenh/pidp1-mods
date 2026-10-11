@@ -30,8 +30,9 @@
  *             undecided (the callee may read it as an argument)
  *   unused    no reference at all
  *   multi(4)  referenced from more than one unit (by routine: multiByRoutine())
- *   open(5)   the unit holds a routine flagged open, jumpsunknown or
- *             callsunknown, or calls or jumps indirectly into the sink
+ *   open(5)   the unit holds a routine flagged open, jumpsunknown,
+ *             callsunknown or spanhole, or calls or jumps indirectly into
+ *             the sink
  *   both      the unit runs in both pools
  *   dead      never read
  *   sink      the class below depends on where a residual sink edge goes
@@ -177,7 +178,7 @@ typedef struct
     int posCount;               // positions, the words of all its blocks
     int reach;                  // SREACH_ bits
     int outside;                // bit 0 main line, bit 1 handler line, bit 2 both
-    int flagged;                // a routine is open, jumpsunknown or callsunknown
+    int flagged;                // a routine is open, jumpsunknown, callsunknown or spanhole
     int derived;                // a block calls or jumps indirectly into the sink
     int residual;               // other sink edges, which the two passes differ on
     int words;                  // population words placed in it
@@ -693,7 +694,9 @@ int pos;
             sizeof(OptRoutineP));
         unitP->routinesPP[unitP->routineCount++] = routineP;
 
-        if( routineP->flags & (OPTRT_OPENBODY | OPTRT_JUMPSUNKNOWN | OPTRT_CALLSUNKNOWN) )
+        // A span hole may hide a call only an unlisted skip reaches, and a word
+        // live across it would otherwise look private to the unit.
+        if( routineP->flags & (OPTRT_OPENBODY | OPTRT_JUMPSUNKNOWN | OPTRT_CALLSUNKNOWN | OPTRT_SPANHOLE) )
         {
             unitP->flagged = 1;
         }

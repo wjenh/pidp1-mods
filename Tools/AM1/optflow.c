@@ -187,21 +187,52 @@ OptBankP bankP;
     return( bankP->wordsP[addr] );
 }
 
-// Is a word skip-class, one that may leave the next word unexecuted?  The
-// skip group (codes 64 and 65) plus isp, sad, sas and div.  div skips UNLESS it
-// overflows, the reverse of the others, so T2 refuses to invert it; it still
-// ends a block the same way.  Code 56 is also dis (divide step, no skip) on a
-// machine without multiply/divide hardware; counting it a skip only makes P4
-// refuse a rewrite, the safe direction.
+// The in-out transfers that skip.  AN IN-OUT TRANSFER NOT LISTED HERE IS
+// TAKEN NEVER TO SKIP, so the word after it is believed always to run: P4
+// passes a pattern there, and the routines, the return-word sharing and the
+// scratch measure all miss whatever only the skip reaches.  Whoever
+// implements an in-out transfer that skips (a plugin adding 1 to the pc; see
+// Docs/UsingDynamicIots.md) adds it here.
 //
-// An in-out transfer skips only where its device says so, and the Type 340's
-// four flag tests are the only ones documented to (dsp, dss, dsv and dsh,
-// device 17, sub-bits 1, 2, 4 and 10 in any combination; see
-// Docs/UsingType340Display.md).
+// An entry names a device (instruction bits 12 to 17) and the instruction
+// bits 6 to 11 that select a skip: the transfer skips when those bits, under
+// the mask, equal the value.  Bit 6 is the high bit of the field, so a mask
+// of 074 is a plugin's "field >> 2" command.  Several entries may name one
+// device.
+typedef struct
+{
+    int device;
+    int fieldMask;
+    int fieldValue;
+} SkipIot;
+
+static const SkipIot skipIots[] =
+{
+    // The Type 340's flag tests, device 17, one bit each in any combination
+    // (Docs/UsingType340Display.md): dsp, dss, dsv and dsh.
+    { 017, 001, 001 },
+    { 017, 002, 002 },
+    { 017, 004, 004 },
+    { 017, 010, 010 },
+    // The DAC, the audio converter plugin on device 71: command 5 in bits 6
+    // to 9 skips if the flag of the converter in bits 10 and 11 is set.
+    { 071, 074, 024 }
+};
+
+// Is a word skip-class, one that may leave the next word unexecuted?  The
+// skip group (codes 64 and 65) plus isp, sad, sas and div, and the in-out
+// transfers skipIots[] lists.  div skips UNLESS it overflows, the reverse of
+// the others, so T2 refuses to invert it; it still ends a block the same way.
+// Code 56 is also dis (divide step, no skip) on a machine without
+// multiply/divide hardware; counting it a skip only makes P4 refuse a
+// rewrite, the safe direction.
 // Returns 1 for a skip-class word, 0 otherwise or for NILP.
 int
 optSkipWord(OptWordP entryP)
 {
+int i;
+int field;
+
     if( !entryP || (entryP->flags & OPTF_RESERVED) )
     {
         return(0);
@@ -212,10 +243,20 @@ optSkipWord(OptWordP entryP)
         return(1);
     }
 
-    if( (entryP->decode.group == OPTG_IOT) && (entryP->decode.iotDevice == 017) &&
-        (entryP->decode.iotSub & 017) )
+    if( entryP->decode.group == OPTG_IOT )
     {
-        return(1);
+        field = ((entryP->decode.address >> 6) & 077);
+
+        for( i = 0; i < (int)(sizeof(skipIots) / sizeof(skipIots[0])); ++i )
+        {
+            if( (entryP->decode.iotDevice == skipIots[i].device) &&
+                ((field & skipIots[i].fieldMask) == skipIots[i].fieldValue) )
+            {
+                return(1);
+            }
+        }
+
+        return(0);
     }
 
     if( entryP->decode.group == OPTG_MEMREF )

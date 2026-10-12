@@ -91,8 +91,9 @@ else
                   --title="Save As" \
                   --filename="${root}/tapes/${default_name}")
 
-    # Handle cancel
-    if [ $? -ne 0 ]; then
+    # Handle cancel: zenity 3 exits 1; zenity 4 exits 0 and prints nothing, which would save
+    # to the current directory.
+    if [ $? -ne 0 ] || [ -z "$file" ]; then
         echo "User cancelled."
         exit 1
     fi

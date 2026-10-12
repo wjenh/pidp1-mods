@@ -5,8 +5,8 @@ The DEC document *H-23_parallelDrum_jul64.pdf* is a useful companion, although i
 have some significant errors in the IOT section.
 This documentation is correct.
 
-Updated 4-Oct-2026\
-Add iotPowerClear()
+Updated 10-Oct-2026\
+Changes for some timing specifications
 
 ## What is the Type 23 Parallel Drum?
 
@@ -68,8 +68,11 @@ The difference between the two is that the latter will initiate a sequence break
 when the drum address specified is reached. A dwc and dcl should then be executed.
 
 The DEC manual gives *dba, dwc, dcl* as the sequence for a program that uses sequence breaks.
-The dwc and dcl keep the break armed and since the transfer starts at the same drum address
-the break arrives at the same time.
+Dwc and dcl keep SBS break armed if it already is.
+The break comes when the drum reaches the address and it clears busy.
+The transfer starts at that same address, so normally the break arrives as it starts.
+However, if the dcl came less than 250us before the drum reached the address, the break still occurs
+then while the transfer would wait a full revolution with busy already clear.
 The transfer then takes a second break when it ends, see Interrupts.
 
 A *dba* on its own works too, with no transfer following it.
@@ -103,12 +106,22 @@ bits 6-17, the address within the core memory back to begin from, 0-7777 octal
 ```
 When this is executed the transfer begins asynchronously.
 
-The timing is generally preserved, which means there will be an approximate 8.5us delay for each
-drum word that must be passed until the requested drum address is reached, then an additional 8.5us for
-each word transferred.
+As on the original drum, the dcl first starts a 250us delay so the drum's read and write field selects
+can settle and only when it ends does the drum look for the requested address (H-23 manual, p. 2-19).
 
-The transfer uses the High Speed Data Channel implementation, which must have been included in the emulator.
-This is included by default in the modified distribution.
+The timing is generally preserved, which means there will be an approximate 8.5us delay for each
+drum location that must be passed from where the drum is when the delay ends until the requested drum
+address is reached, then an additional 8.5us for each word transferred.
+
+An address the drum reaches within 250us of the dcl, about 30 words, is missed and the transfer waits a
+full revolution, about 35ms.
+
+A full 4096-word transfer waits for its address the same way.
+Since it can start anywhere, the DEC manual has the program read the drum's position with dra and add
+77 octal to it for the address.
+This puts the address safely past the delay, avoiding an extra drum revolution.
+
+The transfer uses the High Speed Data Channel implementation.
 
 Also note that extended memory mode does **not** have to be enabled, the HSC bypasses that and always writes to
 full 16-bit addresses.
@@ -165,8 +178,8 @@ SBS16 can be enabled either here or via the pidp1.config file.
 
 As on the original drum, every transfer ends with a sequence break on the drum's channel whether it
 finished or ended in error and the busy bit is cleared.
-A *dba* adds its own break, so the *dba, dwc, dcl* sequence causes two, the *dba* as the transfer
-starts, then the end break.
+A *dba* adds its own break, so the *dba, dwc, dcl* sequence causes two, the *dba* when the drum reaches
+its address, which also clears busy, then the end break.
 
 With sequence breaks off, the end break waits and is fired as soon as they are turned on.
 A program that runs its transfers with breaks off and then turns them on should issue a *cbs*
@@ -174,22 +187,23 @@ first or it will get a break it wasn't expecting.
 
 ## Halts
 
-The drum keeps spinning while the PDP-1 is halted, but no word moves.
-A halt is any of a *hlt*, the STOP switch, an ad1 stop or a single step.
+The drum keeps spinning while the PDP-1 is halted, but no data is transferred.
+A halt is any of a *hlt*, the STOP switch, an ad1 stop, or a single step.
 Continue, Start and read-in all resume a transfer in the same way.
 - **Halted before the first word tranferred:** the transfer waits after the resume for the drum to come
   around to its starting address again, up to one revolution of about 35 ms.
-  A full 4096-word transfer starts at once, as it always does.
+  A full 4096-word transfer waits for its address in the same way.
   A *dba* break not yet taken also waits for its address.
 - **Halted after that:** at the resume the transfer ends with its transfer error set, *dra* bits 0 and 2,
   busy clears and the end break is requested.
   Core, for a read, or the drum, for a write, holds only the words that transferred before the halt.
 
 This means that after read-in, a transfer still pending finishes into the newly loaded program's memory.
+This is the documented behavior of the actual drum system.
 
 A power cycle is not a halt, power clear resets the drum control.
 
-A transfer waiting for the drum, or under way, and a *dba* break not yet taken are dropped, and busy and the
+A transfer waiting for the drum or under way and a *dba* break not yet taken are dropped, and busy and the
 transfer error are cleared, so nothing completes after power-on and Start.
 
 A write during a power off leaves on the drum the words that were already transferred.

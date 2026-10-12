@@ -2,9 +2,9 @@
 
 This docuemnt describes newpanel, a replacement for panel_pidp1, and how to use it.
 
-This is version 1.3\
-Edit date 4-Jul-2026\
-update for new brightness control
+This is version 1.4\
+Edit date 12-Oct-2026\
+Original panel dropped.
 
 ## An important note about flicker and panel light blips
 
@@ -20,6 +20,7 @@ occasionally blink.
 
 Installation is integrated into the *install.sh* script.\
 Newpanel is installed by default.
+Note that the original panel has been dropped, it will no longer work.
 
 ## Running from the command line
 
@@ -32,27 +33,6 @@ Command line switches override configuration file settings.
 - b set the maximum brightness, 0-100%
 - r run with real-time thread priority set
 - t enable timing statistics, only used for testing
-
-Note that if you run from the build directory, /opt/pidp1-mods/src/blincolnlights/panel_pidp1, the program
-name is *newpanel*, /opt/pidp-1/bin/panel_pidp1 is a link to this.
-
-You can switch between old and new manually if you want to see the difference.
-
-Start the emulator as usual via either autobooting or the pidp1-control icon.
-Build the old panel by typing *make* in the Old subdirectory in panel_pidp1.
-
-To manually switch, find and kill the current panel:
-```
-ps -ea | grep panel
-```
-Find the *pid* for panel_pidp1, then:
-```
-sudo kill the-pid
-```
-
-You can now start the old oneby running it from its directory, /opt/pidp1-mods/src/blicolnlights/Old/panel_pidp1.\
-It will not have the ability to run with real time priority unless you run the *setpriv.sh* script in its
-directory.
 
 ## History
 

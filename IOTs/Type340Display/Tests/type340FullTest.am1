@@ -26,6 +26,8 @@ Unified, self-checking regression test for the Type 340 display (IOTs/Type340Dis
  * edge violation, which also halts the display and sets the stop flag per the documentation), so
  * the dss-poll idiom already used by every other test in this directory never blocks forever on a
  * correctly functioning display engine.
+ *
+ * 8-Oct-2026 Claude - add secDrsAfterDla: a drs issued right after a dla must not lose the dla.
  */
 
 100/
@@ -52,6 +54,7 @@ main,
     jsp secBasicDra
     jsp secDcf
     jsp secDcfRun
+    jsp secDrsAfterDla
     jsp secScale
     jsp secPoint
     jsp secVector
@@ -253,6 +256,51 @@ progMark, scale(0) intensity(3) next(subroutine)
 
 loopMark, 0
 markWord, 0
+
+// secDrsAfterDla -- a drs right after a dla still starts the display. Each IOT acts at once (H-340
+// manual 3-1, 3-6), and a drs to a display that is not paused does nothing, so the dla's start
+// stands. Twenty trials, each from a halted display: dla to progMark, drs at once, then a delay; a
+// trial whose markWord stays clear lost its dla. secDcfRun's first check is the control: a dla
+// alone marks markWord.
+// Called via jsp. AC and IO are not preserved.
+secDrsAfterDla,
+    local rtn, trial, fail, count, lost
+    dap rtn
+    lac [0d20
+    cma
+    dac count
+    dzm lost
+
+trial,
+    lio [progStop
+    dla
+    jsp waitStop
+    dzm markWord
+    lio [progMark
+    dla
+    drs
+    jsp delay
+    lac markWord
+    sza i                   // skip if marked (expected)
+    idx lost
+    isp count
+    jmp trial
+
+    lac lost
+    sza                     // skip if no trial lost its dla (expected)
+    jmp fail
+    lac [lblDrsAfterDla
+    lio [REPORT_PASS
+    jda reportResult
+    jmp rtn
+fail,
+    lac [lblDrsAfterDla
+    lio [REPORT_FAIL
+    jda reportResult
+rtn, jmp .
+count, 0
+lost, 0
+    endloc
 
 // ---------------------------------------------------------------------------
 // secScale -- run the same small triangle at all 4 scale factors from a centered start point;
@@ -903,6 +951,9 @@ lblDcfCtlStop,
     13
 lblDcfNoStart,
     text "dcf does not start at the IO address"
+    13
+lblDrsAfterDla,
+    text "a drs right after a dla still starts the display"
     13
 lblScale0,
     text "parameter scale 0"

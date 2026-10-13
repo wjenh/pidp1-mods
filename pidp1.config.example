@@ -256,3 +256,21 @@ fasttyo=false
 # Set the sequence break channel for the data, block end, and error flags.
 # The default is 2.
 #microtapesbs=2
+
+# These settings are for the 4 channel D/A used by dacmusic.
+# The converter output level, a number, 1.0 is the default and normally shouldn't be changed.
+#dacgain=1.0
+
+# The room the waveform shaper uses, dacroom=voices lets the voices choose at each start,
+# Busch Hall when a note playing asks for it, use with the Flentrop organ,
+# a generic hall otherwise.
+# dacroom=busch or dacroom=hall forces the room.
+# The default without the settingtis no room.
+dacroom=voices
+
+# The onset.
+# daconset=MS starts each organ note up to MS milliseconds late,
+# as a tracker organ's pallets and pipes do.
+# Off by default or if at 0.
+# 8 ms is correct for the Flentrop, a tracker organ.
+daconset=8

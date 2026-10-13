@@ -13,6 +13,9 @@ Two examples are the Adventure game and the ZMachine that are here. Did they exi
 No. But they could have if someone had thought of them, they both would run on a real PDP-1 with the proper
 hardware with only a minor tweak for the use of the DCS device, necessary because of the modern host.
 
+There are various screenshots and such in:\
+https://drive.google.com/drive/folders/1BtgZoSKmaCbC2deI5yjbnqnxJUJDnQRe?usp=drive_link
+
 ## Checking it out
 
 Checkout must be done in the /opt directory.

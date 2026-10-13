@@ -1,6 +1,10 @@
 # Using the drumupdater
 
-This document describes the drumupdater and how to use it
+This document describes the drumupdater and how to use it.
+
+Version 1.1\
+13-Oct-2026\
+Correct marker location
 
 ## What is drumupdater?
 
@@ -40,7 +44,8 @@ Locations 07751 - 07777 are then overwritten with the following contents:
 ```
 07751-07772 the label
 07773       the program start address from the tape
-07774-07777 the bit pattern 0707070, which indicates the track has been loaded with a program
+07774       1 if a label is present, else 0
+07775-07777 the bit pattern 0707070, which indicates the track has been loaded with a program
 ```
 
 These locations are where the usual loader is placed, and so are not needed in the image.

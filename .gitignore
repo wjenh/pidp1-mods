@@ -16,3 +16,9 @@
 /bin/pidp1_test
 /bin/scanpf
 /bin/tapevis
+/bin/pdp1central
+/pidp1.config.bak
+/pdp1control.config
+/pdp1control.config.bak
+/pdp1central.config
+/pdp1central.config.bak

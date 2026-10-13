@@ -33,21 +33,13 @@ and other 'System Building Blocks', and some analog circuitry,
 for example a transistor junction for the exponential voltage generator, etc.
 All it would have taken was money. Ok, a lot of it, but it still could have been done.
 
-There are various screenshots and such in:\
-https://drive.google.com/drive/folders/1BtgZoSKmaCbC2deI5yjbnqnxJUJDnQRe?usp=drive_link
-
 ## Checking it out
 
 **DON'T** clone it!
 
 On the Code button, select *Download zip*.
 
-Unzip it in /tmp or some other directory of your choice.
-It will unzip into a new folder named *pidp1-music-main*
-
-Then, in the pidp1-music-main directory, type './install.sh' to copy everything to where it belongs.
-
-You can delete the directory after this.
+Unzip it in your /opt/pidp1-mods directory, it will copy everything into the correct place.
 
 Git doesn't handle nested repositories well at all.
 If you clone into your pidp1-mods, it won't work.
@@ -57,13 +49,12 @@ but you'll have to copy any updates there yourself.
 
 ## Installing and building
 
-The step above will already have installed everything in pidp1-mods.
+It contains a full build tree for its components.
 
 First, cd to IOTs/DAC, type 'make install'.
 Then in the Funstuff/Dacmusic, type 'make'.
 
 That's it.
-
 **READ THE DOCUMENTATION!**, or you won't have any idea how to use it!
 
 It will use the Type 23 parallel drum, the Type 340 display system, and of course the new DAC IOTs.

@@ -33,6 +33,9 @@ and other 'System Building Blocks', and some analog circuitry,
 for example a transistor junction for the exponential voltage generator, etc.
 All it would have taken was money. Ok, a lot of it, but it still could have been done.
 
+There are various screenshots and such in:\
+https://drive.google.com/drive/folders/1BtgZoSKmaCbC2deI5yjbnqnxJUJDnQRe?usp=drive_link
+
 ## Checking it out
 
 **DON'T** clone it!

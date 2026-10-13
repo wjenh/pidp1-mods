@@ -1,0 +1,4044 @@
+Music on the D/A converters -- Samson's Harmony Compiler tapes
+
+// Plays a Harmony Compiler intermediate tape (Peter Samson's music
+// compiler, tapes/music/pdp1m13.mac) on the D/A converters' wavetable
+// and sample modes (IOT 71 and 72, IOT_71.c, its commands in
+// dacdefs.ah), each converter a part played by a voice from the library
+// on the drum (voices/dacdrum.c writes it). The device follows each
+// voice's level with its timbre, so the player switches no tables.
+// Implementation.md, "The player", describes how it works; UsingDAC.md
+// is the user's guide.
+//
+// Operating, from the Type 340 (menu.ac): the program starts at 0100,
+// the menu.
+//   - READ TAPE reads every part on the reader, and the orchestra block
+//     of a tape this program punched; the screen counts the parts. It
+//     never halts: a bad count, too many parts or a tape too large ends
+//     it with TAPE ERROR, the parts before it kept; a checksum that
+//     fails, or an orchestra block refused, is said at its end.
+//   - Each field is drawn with the pen on, and the pen on it opens its
+//     list (menus.ac): each converter's place in the stereo field (its
+//     row's label, LEFT to RIGHT in nine places), part, instrument and
+//     octave, and the parts a movement. The pen moved onto a row lights
+//     it, and onto the OK box beside it chooses it; DONE, or the pen put
+//     on the list's header again, closes it, and CANCEL closes it with
+//     nothing changed.
+//     An instrument's list is the library's families, each opening its
+//     voices beside it; the pen put on the lit voice again plays middle
+//     C in it, on the field's converter, at its octave and volume.
+//   - Each converter's slider, at the right of its row, sets its volume:
+//     0 dB at the right, 3 dB less a point to the left, 45 dB at the
+//     left. The pen held on it, or dragged along it, sets the level,
+//     shown by the marker above the track, also while the piece plays.
+//   - PLAY loads the orchestra's voices from the drum (LOADING VOICES),
+//     plays the piece and comes back to the menu at its end. While it
+//     plays, the 340 shows the orchestra, the sliders and a STOP target,
+//     which ends the piece at once; READ TAPE, PLAY and PUNCH act on the
+//     pen put on them. PUNCH punches the parts as they were read and the
+//     orchestra block, version 2 (Implementation.md, "Reading a tape").
+//   - The instrument fields show the drum's voices by the names its
+//     directory holds. With no library on the drum the status line says
+//     NO VOICES ON THE DRUM and PLAY says it again; running voices/dacdrum
+//     on the host and PLAY again loads it, with no restart. A block whose
+//     sum fails stops PLAY with VOICE n DAMAGED.
+// Operating from the console:
+//   - mount the tape and start at load: the program reads a part and
+//     halts at lhp with AC the parts read; Continue reads the next. A
+//     checksum that fails halts at lhc; Continue takes the block as read.
+//     A count that is not positive halts at lhn; Continue reads another.
+//     An orchestra block halts at lho, AC 0 when it is taken, else the
+//     converter (5: per) whose number this program does not have, or
+//     whose volume is not one of the slider's levels, and nothing is
+//     changed. A block without the volumes sets them to 0 dB.
+//   - start at play. The voices are loaded from the drum first; if they
+//     cannot be, it halts at lhd, AC 1 for no library on the drum, 2 for
+//     a voice it lacks, 3 for a block whose sum fails (vdk the voice), 4
+//     for voices too large for banks 5-15, 5 for stops that do not
+//     match; Continue loads again. Every per parts (3, orch.ah) are a
+//     movement; the movements play in order, two seconds apart. Sense
+//     switch 1 on at the end plays the piece again. A test word of
+//     040-01377 scales every tempo as pdp1m13's does (170 is as written).
+//
+// The timing is pdp1m13's (Implementation.md, "Timing"; kof has K).
+// Times are kept from the start of the piece in 1/16 cycle, so nothing
+// drifts.
+//
+// The decoder works a bar at a time, when every converter's ring has
+// room for one (at most 128 entries a bar), and calls svc often: svc
+// gives each converter whose new event has begun the next entry of its
+// ring (length, table, step, dyx value; 0 latches nothing) and commits
+// it to the converter's queue (dyq), two entries ahead of the one
+// playing. So a new event must be served within the two events after
+// it, at least twice MINEV: every loop that can run long calls svc each
+// turn, and so does every path that runs longer than a few dozen
+// instructions (in evt, emt, at, cpi and cpo).
+//
+// Needs: IOT 71 and 72, the Type 23 drum, banks 0-15: the program in
+// bank 0; the drum's directory, a slot for each converter's voice, the
+// voices' loader and the menu's lists (menus.ac) in bank 1; the tape in
+// banks 2-3; the rings in bank 4; the voices' blocks in banks 5-15. It
+// runs with the extend-mode window open throughout, so every indirect is
+// a full 16-bit address; the returns are dap-form, but for the loader's
+// two called from bank 0. The menu also needs the Type 340 with its
+// light pen, the reader and the punch.
+//
+// Test builds, not for playing: -DCONTROL makes the time unit 1/64
+// short; -DNOSCREEN leaves the 340 stopped while the piece plays;
+// -DNOVOL gives the converters no volume at PLAY; -DFIRSTHIT makes each
+// hit on a slider set its point at once (menu.ac's vhit); -DNOAUD makes
+// the pen on the lit voice play nothing (menus.ac's lfe); -DSKIPSTOP
+// leaves each converter's last stop out of its premix (vld); -DNOZERO
+// keeps recordLatches from giving version 5's six latches.
+//
+// 05-Oct-2026 Claude: written.
+
+#include <AIDS/skipmacros.ah>
+#include <memory.ah>
+#include "dacdefs.ah"
+#include "orch.ah"
+#include <TYPE340/type340defs.ah>
+#include <LIGHTPEN/lightpen.ah>
+
+#define NCONV 4                 // the converters, and so the most parts a movement can have
+#define BAR 600000              // a bar line in a part's notes, as pdp1m13 has it
+#define TAPE 020000             // the parts are read into banks 2-3, from here
+#define TEND 040000             // to the word before this
+#define MAXP 0d30               // the parts pbl and ppt hold
+#define MAXSEG 0d16             // the tempo segments a bar can have (sg)
+#define MINGAP 0d400            // cycles: a key off leaving a shorter gap is dropped
+#define MINEV 0d800             // cycles: the shortest event
+#define MAXEV 377777            // cycles: the longest event
+#define SPLIT 200000            // cycles: a longer event is latched in pieces of this length
+#define FREE 0d129              // a bar is decoded when every ring has room for its 128 entries
+#define RINGN 0d256             // a ring's entries: length, table, step, dyx value
+#define TLEN 0d256              // a period's table, in words
+#define RB1 040000              // each converter's ring in bank 4, RINGN entries of 4 words
+#define RB2 042000
+#define RB3 044000
+#define RB4 046000
+#define PAUSEH 060              // the pause between movements, 2 s in 1/16 cycle:
+#define PAUSEL 0324000          //   its high word and its low 17 bits
+#define DEFTEMPO 0d170          // the tempo a piece starts at, and the test word's scale (as written)
+#define PITCH0 0d48             // the pitch whose table is latched before the first entry
+#define ORCHN 0d17              // the orchestra block's words: per, NCONV lines of three, NCONV volumes
+#define ORCHCT (0700000 | ORCHN) // its count on tape: a mark no part's count can have
+#define ORCHN0 0d13             // the block without the volumes: per and the lines
+#define ORCHCT0 (0700000 | ORCHN0)
+#define ORCHN2 0d38             // version 2: the version, per, NCONV lines of LINE2 words
+#define ORCHCT2 (0700000 | ORCHN2)
+#define LINE2 0d9               // part + 1, octave, volume, detune, place, four stops
+#define PLRIGHT 0400            // a place in the stereo field: 0 left, this right
+#define NPL 0d9                 // the places, 040 apart (menus.ac's plv)
+
+// The drum (Docs/UsingType23Drum.md), not by DRUM/type23drumdefs.ah,
+// whose dss would replace the 340's.
+#define dia iot 61
+#define dwc iot 62
+#define dcl iot 63
+#define DRMRD 400000            // dia: read
+// The library on the drum (voices/README.md, "dacdrum"): field 0's
+// directory, read into dir; a slot in bank 1 for each converter's voice
+// (its header: the record, B, its blocks' places, lengths and sums, its
+// zone map and steps, and a stop's speech map; on version 5, the six
+// latches and the steps' place before the blocks, each block's end, loop
+// and stride after its sum, zone 6's word after the zone map, and the
+// steps read after that once the blocks are in); its blocks from VPLACE
+// to the end of bank 15. An entry's family word has the sign bit set for
+// an organ stop (FAMMASK takes it off).
+#define DMAGIC 0414243
+#define DVERSION 3
+#define DVERSION4 4             // the drum's version when a voice has a voicing
+#define DVERSION5 5             // version 5: a header has the six latches, own ends, the steps apart
+#define AT_SIX5 0d13            // version 5's header: dyv, dyw, dym, dyk, dyj, the sine's block,
+#define AT_B5 0d19              //   B (its sign bit: own ends),
+#define AT_STEPS5 0d20          //   the steps' place and sum,
+#define AT_BLOCKS5 0d22         //   6-word block entries, the zone map, zone 6's word, a stop's speech map
+#define HDN 010                 // the words hd34 and hd5 have
+#define DIRH 6                  // magic, version, serial, V, sum, F
+#define MAXF 0d16               // the families, each a name of FAMW words of
+#define FAMW 4                  //   340 text, the unused ones 0
+#define EBASE (DIRH + MAXF * FAMW) // the first voice's entry
+#define NAMEW 6                 // an entry: the name, NAMEW words of 340 text,
+#define ENTRY 0d8               //   its header's place, its family's number
+#define MAXV 0d56               // the voices a directory may have here (dacdrum writes up to 64)
+#define DIRN (EBASE + ENTRY * MAXV)
+#define RECORD 0d13
+#define MAXB 0d16
+#define SLOTN (RECORD + 1 + 3 * MAXB + 0d128)
+#define VPLACE 050000
+#define VEND 0200000
+#define FAMMASK 0377777
+#define STOPS 4                 // the stops a converter can have
+#define NZONES 6                // a stop's zones, an octave each from pitch 2; zone 6 the seventh
+#define PITCHES 0d64            // a zone map's pitches, a 6-bit pitch
+#define ZONETOP 0d73            // B6: without zone 6, the top zone's top, the highest an octave up sounds
+
+// A converter's state is cur while it is worked on, and st1-st4 between
+// bars; these are the size of a block and the offsets in it of the words
+// reached there.
+#define NS (st1 - cur)
+#define OLH (c_lsh - cur)
+#define OLL (c_lsl - cur)
+#define OLG (c_lg - cur)
+
+// ltN -- give converter N the next entry of its ring, and commit it to
+// the converter's queue (dyqN): the player is two entries ahead, so it
+// has two events to give each. An empty ring latches the longest event
+// again: after the piece's last entry, that is the silence the piece
+// ends with; before it, an underrun (undN). Two entries ahead, the
+// second empty one past the last comes as the last entry begins, and
+// sets ovN (oeN counts the first). An entry's table is latched by tlat.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+#define LATCH(n) \
+    local la, lu, lq, lx; \
+lt##n, dap lx; \
+    lac nwr##n; \
+    SKIP_NEXT_IF_SAME nlat##n; \
+    jmp la; \
+    lio [MAXEV]; \
+    dyc##n; \
+    lac dn; \
+    SKIP_NEXT_IF_AC_NOT_ZERO; \
+    jmp lu; \
+    lac oe##n; \
+    dac ov##n; \
+    law 1; \
+    dac oe##n; \
+    jmp lq; \
+lu, idx und##n; \
+    jmp lq; \
+la, lac rp##n; \
+    dac sq; \
+    lio i sq; \
+    dyc##n; \
+    idx sq; \
+    lio i sq; \
+    lac i sq; \
+    SKIP_NEXT_IF_AC_ZERO; \
+    jsp tlat; \
+    idx sq; \
+    lio i sq; \
+    lac i sq; \
+    SKIP_NEXT_IF_AC_ZERO; \
+    dyf##n; \
+    idx sq; \
+    lio i sq; \
+    lac i sq; \
+    SKIP_NEXT_IF_AC_ZERO; \
+    dyx##n; \
+    lac rp##n; \
+    add [4]; \
+    and [4*RINGN-1]; \
+    ior [RB##n]; \
+    dac rp##n; \
+    idx nlat##n; \
+lq, dyq##n; \
+lx, jmp .; \
+    endlocal
+
+100/
+
+// The start, at 0100 as is usual: the menu.
+beg, jmp menu
+
+// Reading the tape.
+
+// load -- read the tape from the console, halting after each part
+// (lhp), the drum's directory read first (drd), as rdt reads it, so orb
+// takes only the library's voices. lds is the same from READ TAPE
+// (menu.ac's rdt), atm set, with no halt.
+// A part in banks 2-3: four words (the notes' count and checksum as
+// read, the bar pointers' count and checksum as read), the notes, a bar
+// line, the bar list, 0, and the bar pointers as read; PUNCH punches the
+// part again from them. ppt holds where each part starts.
+// Has no arguments and no return values.
+// Does not preserve AC or IO: it does not return, but ends at a halt, or
+// at rte or rtx (menu.ac).
+// Entered via jmp: load from the console, lds from rdt.
+load,
+    local ld1, ld2, ld3, ldr, lda, lmp, lmr, lor, lo1, nb, nct, nsm, ph, bb
+    eem
+    dzm atm                 // from the console: a READ TAPE cut short leaves it set
+    dzm rps                 // core outlives a restart of the emulator, its reader's read does not
+    dzm xs
+    crossBankjsp(drd:1, NOEEM) // the drum's library, for orb's voice numbers, as READ TAPE reads it
+lds,
+    lac [TAPE]
+    dac fp
+    dzm npart
+ld0,
+    lac fp
+    dac ph
+    jsp adv
+    jsp adv
+    jsp adv
+    jsp adv
+    jsp rw                  // the notes' count, or an orchestra block's
+    dio ct
+    lac ct
+    SKIP_NEXT_IF_DIFFERENT [ORCHCT]
+    jmp lor
+    SKIP_NEXT_IF_DIFFERENT [ORCHCT0]
+    jmp lor
+    SKIP_NEXT_IF_DIFFERENT [ORCHCT2]
+    jmp lor
+    jsp rdv
+    dac nct
+    lac fp
+    dac nb
+    jsp rdb
+    lac w
+    dac nsm
+    lac [BAR]               // a bar line after the last bar
+    dac i fp
+    jsp adv
+    jsp rdc                 // the bar pointers
+    lac fp
+    dac bb
+    jsp rdb
+    dzm i fp                // 0 ends the list
+    jsp adv
+    // The part's four words, and its bar pointers as read.
+    lac ph
+    dac q
+    lac nct
+    dac i q
+    idx q
+    lac nsm
+    dac i q
+    idx q
+    lac ct
+    dac i q
+    idx q
+    lac w
+    dac i q
+    lac bb
+    dac q
+    lac ct
+    cma
+    dac ctn
+ldr,
+    lac i q
+    dac i fp
+    jsp adv
+    idx q
+    isp ctn
+    jmp ldr
+    // Each pointer becomes its bar's address, or 0 where the voice is
+    // over: at 600000, past the notes, or at a bar line.
+    lac bb
+    dac q
+    lac ct
+    cma
+    dac ctn
+ld1,
+    lac i q
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp ld2
+    sub nct
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ld2
+    lac i q
+    add nb
+    dac w
+    lac i w
+    SKIP_NEXT_IF_SAME [BAR]
+    jmp ld3
+ld2,
+    dzm w
+ld3,
+    lac w
+    dac i q
+    idx q
+    isp ctn
+    jmp ld1
+    lac npart
+    SKIP_NEXT_IF_DIFFERENT [MAXP]
+    jmp lmp
+    law pbl
+    add npart
+    dac w
+    lac bb
+    dac i w
+    law ppt
+    add npart
+    dac w
+    lac ph
+    dac i w
+    idx npart
+    lac atm
+    SKIP_NEXT_IF_AC_ZERO
+    jmp lda
+    lac npart
+lhp, hlt                    // a part read, AC the parts: Continue reads the next
+    jmp ld0
+lmp,
+    lac atm
+    SKIP_NEXT_IF_AC_ZERO
+    jmp lmr
+lhf, hlt                    // more parts than pbl holds
+    jmp lhf
+lmr,
+    law stm
+    jmp rtx
+lda,
+    jsp fill                // from the menu: the screen counts the part, then the next
+    jmp ld0
+
+// An orchestra block, of any of its three lengths: read to the next
+// part's place, its words not kept, and taken by orb if every number is
+// good. READ TAPE goes on without a halt, and says at its end that a
+// block was refused.
+lor,
+    lac ph
+    dac fp
+    lac ct
+    and [0777]
+    dac ct
+    jsp rdb
+    lac ph
+    dac fp
+    jsp orb
+    dac w
+    lac atm
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lo1
+    lac w
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lda
+    law sor
+    dac rwn
+    jmp lda
+lo1,
+    lac w
+lho, hlt                    // AC 0: taken; else refused, AC the converter (NCONV+1: per)
+    jmp ld0
+
+ph, 0                       // the part's first word
+nb, 0                       // its notes
+nct, 0                      // their count
+nsm, 0                      // their checksum as read
+bb, 0                       // its bar pointers
+    endlocal
+
+// rdc -- read a block's count into ct; rdv does the same for a count
+// already in ct. A count not positive halts from the console (lhn), and
+// ends READ TAPE with its error.
+// Has no arguments. Returns the count in AC.
+// Does not preserve IO.
+// Called via jsp.
+rdc,
+    local rc0, rc1, rc2, rcx
+    dap rcx
+rc0,
+    jsp rw
+    dio ct
+rc1,
+    lac ct
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp rcx
+    lac atm
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rc2
+lhn, hlt                    // a count not positive: Continue reads another
+    jmp rc0
+rc2,
+    law sbc
+    jmp rtx
+rcx, jmp .
+rdv, dap rcx
+    jmp rc1
+    endlocal
+
+// rdb -- read ct words to fp on, then the checksum (the add of them all,
+// as pdp1m13's rdp makes it), leaving the checksum as read in w. A
+// checksum that fails halts from the console (lhc); READ TAPE takes the
+// block as read and says so at its end.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+rdb,
+    local rb1, rb2, rbx, cs
+    dap rbx
+    lac ct
+    cma
+    dac ctn
+    dzm cs
+rb1,
+    jsp rw
+    dio i fp
+    lac cs
+    add i fp
+    dac cs
+    jsp adv
+    isp ctn
+    jmp rb1
+    jsp rw
+    dio w
+    lac cs
+    SKIP_NEXT_IF_DIFFERENT w
+    jmp rbx
+    lac atm
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rb2
+lhc, hlt                    // a checksum fails: Continue takes the block as read
+    jmp rbx
+rb2,
+    law sck
+    dac rwn
+rbx, jmp .
+
+cs, 0                       // the checksum so far
+    endlocal
+
+// adv -- move fp to the next word of banks 2-3. A tape larger than they
+// are halts from the console (lhm), and ends READ TAPE with its error.
+// Has no arguments and no return values.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+adv,
+    local av1, avx
+    dap avx
+    idx fp
+    SKIP_NEXT_IF_SAME [TEND]
+    jmp avx
+    lac atm
+    SKIP_NEXT_IF_AC_ZERO
+    jmp av1
+lhm, hlt                    // the tape is larger than banks 2-3
+    jmp lhm
+av1,
+    law stl
+    jmp rtx
+avx, jmp .
+    endlocal
+
+// Playing.
+
+// play -- play the piece from the console, its voices loaded first (lhd
+// if they cannot be). pla is the same from the menu, mnu set, its voices
+// loaded by mpl, so its end, or a hit on STOP, goes back to the menu.
+// Both run on into run, the main loop.
+// Has no arguments and no return values.
+// Does not preserve AC or IO: it does not return (run ends at the menu
+// or never).
+// Entered via jmp: play from the console, pla from menu.ac's mpl.
+play,
+    local pl0, pz1, pi1, pl1, pl2, rid, rn8, rn9, ci, op, rbt, ctw
+    eem
+    dzm mnu
+    dzm xs
+    crossBankjsp(vld:1, NOEEM)
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pla
+lhd, hlt                    // the voices: AC 1 no library, 2 a voice it lacks, 3 damaged (vdk), 4 too large, 5 stops that do not match; Continue loads again
+    jmp play
+pla,
+    eem
+    law DEFTEMPO
+    dac tpg
+    lat
+    dac w
+    sub [40]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp pl0
+    lac w
+    sub [1400]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pl0
+    lac w
+    dac tpg
+pl0,
+    // A halt leaves a converter's flag as it was, and the last piece's
+    // release wait or STOP can leave it set; svc runs from here on (cpo,
+    // and step before the converters start) and must not serve a stale
+    // flag from the last piece's rings. Each dxsN clears it.
+    dxs1
+    nop
+    dxs2
+    nop
+    dxs3
+    nop
+    dxs4
+    nop
+#ifndef NOVOL
+    // Each converter's volume: its slew, at most 45 dB in about 15 ms, is
+    // over long before the first sound.
+    lio ovol
+    dzg1
+    lio ovol+1
+    dzg2
+    lio ovol+2
+    dzg3
+    lio ovol+3
+    dzg4
+#endif
+    // Each converter's place: its two attenuations from plp, which slew
+    // like the volume, as fast at most.
+    law opl
+    dac op
+    lac [dzp1]
+    dac q
+    law i NCONV
+    dac ctk
+pz1,
+    lac i op
+    sar 5s                  // a place is 040 apart from the next
+    add [plp:1]
+    dac w
+    lio i w
+    xct q
+    idx op
+    lac q
+    add [0100]              // the next converter's dzp
+    dac q
+    isp ctk
+    jmp pz1
+    dzm ov1
+    dzm ov2
+    dzm ov3
+    dzm ov4
+    dzm oe1
+    dzm oe2
+    dzm oe3
+    dzm oe4
+    // Each converter's state, from its line of orch, built in cur.
+    law orch
+    dac op
+    law st1
+    dac cb
+    dzm ci
+    law i NCONV
+    dac ctk
+pi1,
+    lac i op
+    dac c_part
+    idx op                  // the voice, whose record vld put in vsl
+    law vsl
+    add ci
+    dac q
+    lac i q
+    dac w                   // the voice's record, in its slot
+    idx op
+    lac i op
+    dac c_osh
+    jda ofn                 // octbl's number: 0, 2 and 4 are 8, 4 and 2 feet
+    dac c_up
+    and [1]
+    SKIP_NEXT_IF_AC_ZERO
+    dzm c_up                // odd: an octave down, or a shift not in octbl
+    lac c_up
+    sar 1s
+    dac c_up
+    idx op
+    lac w
+    add [AT_B5]
+    dac q
+    lac i q
+    and i [hdF:1]           // version 5's B, or 0
+    SKIP_NEXT_IF_AC_NEGATIVE
+    cla
+    dac c_own               // own ends: B's sign bit
+    law owt
+    add ci
+    dac q
+    lac c_own
+    dac i q
+    lac w
+    add [1]
+    dac q
+    lac i q
+    dac c_zmp
+    idx q
+    lac i q
+    dac c_stp
+    lac w
+    add [7]
+    dac q
+    lac i q
+    dac c_sus
+    dzm c_lsh
+    dzm c_lsl
+    dzm c_pd1
+    dzm c_pd2
+    dzm c_pd3
+    dzm c_snd
+    dzm c_pit
+    dzm c_pq
+    dzm c_zq
+    lac c_osh
+    dac c_psh
+    dzm c_lg
+    law nwr1
+    add ci
+    dac c_nw
+    dac q
+    dzm i q
+    law nlat1
+    add ci
+    dac c_nl
+    dac q
+    dzm i q
+    law und1
+    add ci
+    dac q
+    dzm i q
+    law rbt
+    add ci
+    dac q
+    lac i q
+    dac c_rb
+    dac c_wp
+    law rp1
+    add ci
+    dac q
+    lac c_rb
+    dac i q
+    jsp cpo
+    lac cb
+    add [NS]
+    dac cb
+    idx ci
+    isp ctk
+    jmp pi1
+    dzm dn
+    dzm fin
+    law DEFTEMPO
+    dac tc
+    dac kt
+    jsp kof
+    dac kc
+    dzm bsh
+    dzm bsl
+    dzm mpb
+    dzm mst
+    // Decode until every converter has three entries: the first, and the
+    // two in the queue while it plays.
+pl1,
+    jsp step
+    lac fin
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pl2
+    lac nwr1
+    sub [3]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp pl1
+    lac nwr2
+    sub [3]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp pl1
+    lac nwr3
+    sub [3]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp pl1
+    lac nwr4
+    sub [3]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp pl1
+pl2,
+    // Each converter's latches from its voice's record (recordLatches). Entry 0
+    // goes to the queue and entry 1's commit waits; the go loads entry 0
+    // and queues entry 1, and entry 2 follows it.
+    dzm rcc
+    law PITCH0
+    jda recordLatches
+    jsp lt1
+    jsp lt1
+    idx rcc
+    law PITCH0
+    jda recordLatches
+    jsp lt2
+    jsp lt2
+    idx rcc
+    law PITCH0
+    jda recordLatches
+    jsp lt3
+    jsp lt3
+    idx rcc
+    law PITCH0
+    jda recordLatches
+    jsp lt4
+    jsp lt4
+    dxg1
+    dxg2
+    dxg3
+    dxg4
+    jsp lt1
+    jsp lt2
+    jsp lt3
+    jsp lt4
+
+// The main loop: serve the converters; decode the next bar once every
+// ring has room for one.
+run,
+    jsp svc
+    lac fin
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rn9
+    lac nwr1
+    sub nlat1
+    sub [FREE]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp rid
+    lac nwr2
+    sub nlat2
+    sub [FREE]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp rid
+    lac nwr3
+    sub nlat3
+    sub [FREE]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp rid
+    lac nwr4
+    sub nlat4
+    sub [FREE]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp rid
+    jsp step
+    jmp run
+    // A turn with nothing to decode. Started from the menu, the 340 runs
+    // the play screen: a hit on STOP or a slider (menu.ac's phit). From
+    // the console there is no screen to ask.
+rid,
+    lac mnu
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp run
+    jsp phit
+    jmp run
+    // The piece is decoded. Started from the menu, once every converter's
+    // last entry has begun, a second for the releases to end, the
+    // converters halted, and the menu again.
+rn9,
+    lac mnu
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp run
+    lac ov1
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rid
+    lac ov2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rid
+    lac ov3
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rid
+    lac ov4
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rid
+    lac [0d13333]           // about 75 us a turn: served, so no flag is left set
+    cma
+    dac ctw
+rn8,
+    jsp svc
+    isp ctw
+    jmp rn8
+    dxh1
+    dxh2
+    dxh3
+    dxh4
+    lac hpl
+    SKIP_NEXT_IF_AC_ZERO
+lpe, hlt                    // hpl set: the piece is over; Continue goes to the menu
+    jmp mnr
+
+ci, 0                       // the converter being set up, 0 to NCONV-1
+op, 0                       // its line of orch
+rbt,                        // each converter's ring
+    RB1
+    RB2
+    RB3
+    RB4
+ctw, 0                      // the wait for the releases
+    endlocal
+
+// svc -- latch the next entry for every converter whose new event has
+// begun.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+svc,
+    local sv2, sv3, sv4, svx
+    dap svx
+    dxs1
+    jmp sv2
+    jsp lt1
+sv2,
+    dxs2
+    jmp sv3
+    jsp lt2
+sv3,
+    dxs3
+    jmp sv4
+    jsp lt3
+sv4,
+    dxs4
+    jmp svx
+    jsp lt4
+svx, jmp .
+    endlocal
+
+LATCH(1)
+LATCH(2)
+LATCH(3)
+LATCH(4)
+
+// tlat -- latch (dxa) an entry's table for the converter whose ring sq
+// is in (RB1-RB4, 02000 apart); with own ends (owt), its block's end,
+// loop and stride after it, the three words before the table.
+// Takes the table in IO. Has no return value.
+// Does not preserve AC or IO.
+// Called via jsp.
+tlat,
+    local tl1, tl2, tl3, tlx, tlq, tlt, tln
+    dap tlx
+    dio tlt
+    lac sq
+    and [06000]
+    sar 9s
+    sar 1s                  // the converter, 0 to NCONV-1
+    add [owt]
+    dac tlq
+    sub [owt]
+    ral 6s                  // 0100 a converter
+    add [dxa1]
+    dac tl1
+tl1, 0                      // its dxa
+    lac i tlq
+    SKIP_NEXT_IF_AC_NOT_ZERO
+tlx, jmp .
+    lac tl1
+    add [04000]             // its dze, then dzl and dzs, 0400 apart
+    dac tl2
+    lac tlt
+    sub [3]
+    dac tlq
+    law i 3
+    dac tln
+tl3,
+    lio i tlq
+tl2, 0
+    idx tlq
+    lac tl2
+    add [0400]
+    dac tl2
+    isp tln
+    jmp tl3
+    jmp tlx
+
+tlq, 0                      // the converter's owt word; then a word before the table
+tlt, 0                      // the table
+tln, 0                      // the words left
+    endlocal
+
+// recordLatches -- give converter rcc its latches from its voice's
+// record (vsl), before its go: the record's 13 words, each to its latch
+// (rci; words 1 and 2, addresses, are replaced after); the table at the
+// pitch in AC, its length and the step 0; version 5's six (0 on versions
+// 3 and 4: the converter keeps a latch from piece to piece); with own
+// ends, the table's block's end, loop and stride. PLAY gives them for
+// each converter at PITCH0, the audition at its note's pitch (menus.ac's
+// aud).
+// Takes the pitch in AC and the converter, 0 to NCONV-1, in rcc. Has no
+// return value.
+// Does not preserve AC or IO.
+// Called via jda, or crossBankjda from bank 1.
+recordLatches, 0            // AC, as jda stores it
+    local rcx, rcw, rw1, rwi, rwx, rcq, rcp, rcm, rcn, rco, rcb, rct
+    dac rcx
+    lac rcc
+    ral 6s                  // 0100 a converter
+    dac rco
+    law vsl
+    add rcc
+    dac rcq
+    lac i rcq
+    dac rcb                 // the record
+    dac rcq
+    law rci
+    dac rcp
+    law i 0
+    dac rcm
+    law i 0d13
+    dac rcn
+    jsp rcw
+    lac rcb
+    add [1]
+    dac rcq
+    lac i rcq
+    add recordLatches
+    dac rcq
+    lac i rcq
+    dac rct                 // the zone map's entry: the table
+    law rct
+    dac rcq
+    law i 3
+    dac rcn
+    jsp rcw
+#ifndef NOZERO
+    lac rcb
+    add [AT_SIX5]
+    dac rcq
+    lac i [hdF:1]
+    dac rcm
+    law i 6
+    dac rcn
+    jsp rcw
+#endif
+    lac rcb
+    add [AT_B5]
+    dac rcq
+    lac i rcq
+    and i [hdF:1]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp i rcx               // no own ends
+    lac rct
+    sub [3]
+    dac rcq
+    law rci + 0d8           // dze, dzl, dzs
+    dac rcp
+    law i 3
+    dac rcn
+    jsp rcw
+    jmp i rcx
+
+// rcw -- latch the -rcn words from rcq on, each ANDed with rcm, by the
+// IOTs from rcp on (converter 1's), moved to rcc's by rco.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+rcw,
+    dap rwx
+rw1,
+    lac i rcp
+    add rco
+    dac rwi
+    lac i rcq
+    and rcm
+    lia
+rwi, 0                      // the IOT
+    idx rcq
+    idx rcp
+    isp rcn
+    jmp rw1
+rwx, jmp .
+
+rcx, 0                      // the return, a full address
+rcq, 0                      // the next word
+rcp, 0                      // its IOT
+rcm, 0                      // the mask
+rcn, 0                      // the words left
+rco, 0                      // the IOTs' offset from converter 1's
+rcb, 0                      // the record
+rct, 0; TLEN; 0             // the table, its length, the step
+rci,                        // the record's latches, words 0-12
+    dxp1; dxa1; dyf1; dya1; dyd1; dyr1; dyl1; dyx1; dze1; dzl1; dzs1; dzu1; dzv1
+    dxa1; dxl1; dyf1        // the table's, its length's, the step's
+    dyv1; dyw1; dym1; dyk1; dyj1; dyp1 // version 5's six, words 13-18
+    endlocal
+
+// The score.
+
+// step -- decode the next step of the piece: a bar, a movement's end and
+// its pause, or the piece's end.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+step,
+    local stx, sb, sb1, sb2, sm1, sm2, sm3, mve, mv1, mv2, spe, sp1, rpt, bp, any
+    dap stx
+    lac mst
+    SKIP_NEXT_IF_AC_ZERO
+    jmp sb
+    // A movement starts, or the piece ends.
+    lac mpb
+    sub npart
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp spe
+    lac npart
+    sub mpb
+    dac nv
+    sub per
+    sma sza i               // skip if above 0
+    jmp sm2
+sm1,
+    lac per
+    dac nv
+sm2,
+    law pbl
+    add mpb
+    dac q
+    law bp
+    dac q2
+    lac nv
+    cma
+    dac ctv
+sm3,
+    lac i q
+    dac i q2
+    idx q
+    idx q2
+    isp ctv
+    jmp sm3
+    dzm st1+OLG
+    dzm st2+OLG
+    dzm st3+OLG
+    dzm st4+OLG
+    law 1
+    dac mst
+sb,
+    // Each voice's next bar, 0 if the voice is over.
+    law bp
+    dac q
+    law bv
+    dac q2
+    lac nv
+    cma
+    dac ctv
+    dzm any
+sb1,
+    jsp svc
+    lac i q
+    dac w
+    lac i w
+    dac i q2
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp sb2
+    dac any
+    idx i q
+sb2,
+    idx q
+    idx q2
+    isp ctv
+    jmp sb1
+    lac any
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mve
+    jsp bar
+    jmp stx
+
+// The movement's end: every voice off at its last bar's end, then the
+// pause.
+mve,
+    lac bsh
+    dac ah
+    lac bsl
+    dac al
+    jsp sh4
+    lac ah
+    dac gh
+    lac al
+    dac gl
+    lac bsh
+    dac ah
+    lac bsl
+    dac al
+    law PAUSEH
+    dac bh
+    lac [PAUSEL]
+    dac bl
+    jsp dad
+    lac ah
+    dac nbh
+    lac al
+    dac nbl
+    jsp sh4
+    lac ah
+    dac beh
+    lac al
+    dac bel
+    law st1
+    dac cb
+    law i NCONV
+    dac ctk
+mv1,
+    jsp svc
+    jsp cpi
+    lac c_part
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp mv2
+    sub nv
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp mv2
+    lac gh
+    dac eh
+    lac gl
+    dac el
+    law 2
+    dac ek
+    jsp evt
+mv2,
+    lac beh
+    dac eh
+    lac bel
+    dac el
+    law 3
+    dac ek
+    jsp evt
+    jsp cpo
+    lac cb
+    add [NS]
+    dac cb
+    isp ctk
+    jmp mv1
+    lac nbh
+    dac bsh
+    lac nbl
+    dac bsl
+    lac mpb
+    add per
+    dac mpb
+    dzm mst
+    jmp stx
+
+// The piece's end: again from the start if sense switch 1 is on, else
+// each converter's last entry, silence.
+spe,
+    SKIP_NEXT_IF_SWITCH_CLEAR 10
+    jmp rpt
+    law st1
+    dac cb
+    law i NCONV
+    dac ctk
+sp1,
+    jsp cpi
+    lac [MAXEV]
+    dac ln
+    jsp emt
+    jsp cpo
+    lac cb
+    add [NS]
+    dac cb
+    isp ctk
+    jmp sp1
+    law 1
+    dac dn
+    dac fin
+    jmp stx
+    // Again: the times from 0 less the fraction of a cycle the piece
+    // ended on, so every converter's last boundary is 0.
+rpt,
+    dzm bsh
+    lac bsl
+    and [17]
+    dac bsl
+    dzm st1+OLH
+    dzm st1+OLL
+    dzm st2+OLH
+    dzm st2+OLL
+    dzm st3+OLH
+    dzm st3+OLL
+    dzm st4+OLH
+    dzm st4+OLL
+    dzm mpb
+    dzm mst
+    law DEFTEMPO
+    dac tc
+    dac kt
+    jsp kof
+    dac kc
+stx, jmp .
+
+bp,                         // each voice's next bar pointer
+    table NCONV
+any, 0                      // a voice has a bar
+    endlocal
+
+// bar -- decode one bar of the movement's voices (bv): pass 1 times the
+// bar and orders its tempo words, pass 2 runs each converter's
+// sequencer over its part's events.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+bar,
+    local brx, p11, p12, p13, p15, p16, p17, p21, p22, p23, p24, p25, p26, p28, p2f, \
+        en, len, qv, qe, wa, ve, sl
+    dap brx
+    // Pass 1: each voice's length (en), the bar's (len), and its tempo
+    // words in score order (sg: offset, K, tempo a segment).
+    law 1
+    dac nsg
+    dzm sg
+    lac kc
+    dac sg+1
+    lac tc
+    dac sg+2
+    dzm len
+    law bv
+    dac qv
+    law en
+    dac qe
+    lac nv
+    cma
+    dac ctv
+p11,
+    dzm o
+    lac i qv
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp p15
+    dac wa
+p12,
+    jsp svc
+    lac i wa
+    dac w
+    idx wa
+    lac w
+    SKIP_NEXT_IF_DIFFERENT [BAR]
+    jmp p15
+    and [700000]
+    SKIP_NEXT_IF_DIFFERENT [700000]
+    jmp p13
+    jsp unt
+    add o
+    dac o
+    jmp p12
+p13,
+    jsp ins
+    jmp p12
+p15,
+    lac o
+    dac i qe
+    sub len
+    sma sza i               // skip if above 0
+    jmp p17
+p16,
+    lac o
+    dac len
+p17,
+    idx qv
+    idx qe
+    isp ctv
+    jmp p11
+    // The tempo the bar ends with goes on.
+    law sg
+    add nsg
+    add nsg
+    add nsg
+    sub [1]                 // the last segment's tempo
+    dac q
+    lac i q
+    dac tc
+    lac q
+    sub [1]
+    dac q
+    lac i q
+    dac kc
+    // The bar's end: the next bar's start, and its time in cycles.
+    lac len
+    dac ao
+    jsp at
+    lac ah
+    dac nbh
+    lac al
+    dac nbl
+    jsp sh4
+    lac ah
+    dac beh
+    lac al
+    dac bel
+    // Pass 2: each converter.
+    law st1
+    dac cb
+    law i NCONV
+    dac ctk
+p21,
+    jsp svc
+    jsp cpi
+    lac c_part
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp p28
+    sub nv
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp p28
+    law bv
+    add c_part
+    dac q
+    lac i q
+    dac wa
+    law en
+    add c_part
+    dac q
+    lac i q
+    dac ve
+    dzm o
+    lac wa
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp p26
+p22,
+    jsp svc
+    lac i wa
+    dac w
+    idx wa
+    lac w
+    SKIP_NEXT_IF_DIFFERENT [BAR]
+    jmp p26
+    and [700000]
+    SKIP_NEXT_IF_DIFFERENT [700000]
+    jmp p22
+    jsp unt
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp p22
+    dac u
+    lac o                   // the note's start
+    dac ao
+    jsp at
+    jsp sh4
+    lac ah
+    dac eh
+    lac al
+    dac el
+    lac w
+    sar 7s
+    and [77]
+    dac ep
+    sub [2]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp p23
+    law 2                   // a rest
+    dac ek
+    jsp evt
+    dzm c_lg
+    jmp p25
+p23,
+    jsp sln
+    dac sl
+    lac c_lg
+    SKIP_NEXT_IF_AC_ZERO
+    law 1
+    dac ek                  // a slur after a legato note, else a strike
+    jsp evt
+    dzm c_lg
+    lac sl
+    SKIP_NEXT_IF_AC_ZERO
+    jmp p24
+    law 1                   // legato: no key off
+    dac c_lg
+    jmp p25
+p24,
+    // The key off, unless the gap it leaves is under MINGAP.
+    lac o
+    add u
+    dac ao
+    jsp at
+    jsp sh4
+    lac ah
+    dac gh
+    lac al
+    dac gl
+    lac o
+    add u
+    sub sl
+    dac ao
+    jsp at
+    jsp sh4
+    lac ah
+    dac eh
+    dac bh
+    lac al
+    dac el
+    dac bl
+    lac gh
+    dac ah
+    lac gl
+    dac al
+    jsp dsb
+    lac ah
+    SKIP_NEXT_IF_AC_ZERO
+    jmp p2f
+    lac al
+    sub [MINGAP]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp p25
+p2f,
+    law 2
+    dac ek
+    jsp evt
+p25,
+    lac o
+    add u
+    dac o
+    jmp p22
+p26,
+    // A voice short of the bar: off at its end.
+    lac ve
+    sub len
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp p28
+    lac ve
+    dac ao
+    jsp at
+    jsp sh4
+    lac ah
+    dac eh
+    lac al
+    dac el
+    law 2
+    dac ek
+    jsp evt
+    dzm c_lg
+p28,
+    lac beh                 // the bar's end
+    dac eh
+    lac bel
+    dac el
+    law 3
+    dac ek
+    jsp evt
+    jsp cpo
+    lac cb
+    add [NS]
+    dac cb
+    isp ctk
+    jmp p21
+    lac nbh
+    dac bsh
+    lac nbl
+    dac bsl
+brx, jmp .
+
+en,                         // each voice's length in this bar, units
+    table NCONV
+len, 0                      // the bar's length, units
+qv, 0                       // pass 1's voice in bv
+qe, 0                       // and in en
+wa, 0                       // the voice's next note
+ve, 0                       // its length in this bar
+sl, 0                       // the note's silent units
+    endlocal
+
+// unt -- the units (1/1536 of a whole note) of the note in w.
+// Takes the note in w. Returns the units in AC, 0 if it has no duration.
+// Preserves IO.
+// Called via jsp.
+unt,
+    local un1, unx
+    dap unx
+    lac w
+    and [177]
+    dac du
+    lac w
+    and [100000]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp un1
+    lac du                  // 24 units a 64th
+    ral 3s
+    dac t
+    ral 1s
+    add t
+    jmp unx
+un1,
+    lac du                  // a triplet's: 16
+    ral 4s
+unx, jmp .
+    endlocal
+
+// sln -- the silent units of a note for its articulation (pdp1m13's
+// cxt). An articulation pdp1m13 halts on halts at lha.
+// Takes the note in w and its length in units in u. Returns the silent
+// units in AC.
+// Preserves IO.
+// Called via jsp.
+sln,
+    local sle, slq, slh, sls, sll, slx
+    dap slx
+    lac w
+    and [660000]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp sle
+    SKIP_NEXT_IF_DIFFERENT [20000]
+    jmp slq
+    SKIP_NEXT_IF_DIFFERENT [40000]
+    jmp slh
+    SKIP_NEXT_IF_DIFFERENT [200000]
+    jmp sls
+    SKIP_NEXT_IF_DIFFERENT [400000]
+    jmp sll
+lha, hlt                    // an articulation pdp1m13 halts on: Continue plays it as normal
+sle,
+    lac u
+    sar 3s
+    jmp slx
+slq,
+    lac u
+    sar 2s
+    jmp slx
+slh,
+    lac u
+    sar 1s
+    jmp slx
+sls,
+    lac u
+    sar 2s
+    add u
+    sar 1s
+    jmp slx
+sll,
+    cla
+slx, jmp .
+    endlocal
+
+// ins -- put a tempo word into the bar's segments (sg), after every one
+// at its offset or before it. More than MAXSEG halts at lhs.
+// Takes the tempo word in w and its offset in o. Has no return value.
+// Does not preserve AC or IO.
+// Called via jsp.
+ins,
+    local is1, is2, is3, isx
+    dap isx
+    lac nsg
+    SKIP_NEXT_IF_DIFFERENT [MAXSEG]
+    jmp lhs
+    lac w
+    and [77777]
+    dac kt
+    jsp kof
+    dac kk
+    law sg
+    add nsg
+    add nsg
+    add nsg
+    dac q
+is1,
+    jsp svc
+    lac q
+    sub [3]
+    dac q2
+    lac i q2
+    sub o
+    sma sza i               // skip if above 0
+    jmp is3
+is2,
+    lac i q2
+    dac i q
+    idx q
+    idx q2
+    lac i q2
+    dac i q
+    idx q
+    idx q2
+    lac i q2
+    dac i q
+    lac q
+    sub [5]
+    dac q
+    jmp is1
+is3,
+    lac o
+    dac i q
+    idx q
+    lac kk
+    dac i q
+    idx q
+    lac kt
+    dac i q
+    idx nsg
+isx, jmp .
+lhs, hlt                    // more tempo words in a bar than sg holds
+    jmp lhs
+    endlocal
+
+// kof -- K, a unit's length in 1/16 cycle at tempo T, as pdp1m13 times
+// it: K = (((T x tpg / 170) x 4808 >> 8) x 35) >> 4.
+// Takes T in kt. Returns K in AC.
+// Does not preserve IO.
+// Called via jsp.
+kof,
+    local kfx
+    dap kfx
+    lac kt
+    mul tpg
+    div [0d170]
+lht, hlt                    // a tempo too large to divide
+    mul [0d4808]
+    scr 9s
+    dio t
+    lac t
+    mul [0d35]
+    scr 5s
+    dio t
+    lac t
+#ifdef CONTROL
+    sar 6s
+    cma
+    add t
+#endif
+kfx, jmp .
+    endlocal
+
+// at -- the time of an offset in this bar, in 1/16 cycle from the start
+// of the piece, through the bar's segments; svc once a segment.
+// Takes the offset in units in ao. Returns the time in A (ah, al).
+// Does not preserve AC or IO.
+// Called via jsp.
+at,
+    local at1, at2, at3, atx, nx, rem, q4
+    dap atx
+    lac bsh
+    dac ah
+    lac bsl
+    dac al
+    law sg
+    dac q3
+    lac nsg
+    sub [1]
+    dac rem
+at1,
+    jsp svc
+    lac rem
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp at3
+    lac q3
+    add [3]
+    dac q4
+    lac i q4
+    dac nx
+    lac ao
+    sub nx
+    sma sza i               // skip if above 0
+    jmp at3
+at2,
+    lac nx                  // the whole segment
+    sub i q3
+    dac du
+    jsp mka
+    lac q4
+    dac q3
+    lac rem
+    sub [1]
+    dac rem
+    jmp at1
+at3,
+    lac ao
+    sub i q3
+    dac du
+    jsp mka
+atx, jmp .
+
+nx, 0                       // the next segment's offset
+rem, 0                      // the segments left after this one
+q4, 0                       // the next segment
+    endlocal
+
+// mka -- A += du x the K of the segment at q3.
+// Takes the units in du and the segment in q3. Returns the sum in A.
+// Does not preserve AC or IO.
+// Called via jsp.
+mka,
+    local mkx, q5
+    dap mkx
+    lac q3
+    add [1]
+    dac q5
+    lac i q5
+    dac kk
+    lac du
+    mul kk
+    dac bh
+    rir 1s
+    dio bl
+    lac bl
+    and [377777]
+    dac bl
+    jsp dad
+mkx, jmp .
+
+q5, 0                       // the segment's K
+    endlocal
+
+// Double words: (high, low 17 bits), never negative.
+
+// dad -- A += B.
+// Takes A (ah, al) and B (bh, bl). Returns the sum in A.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+dad,
+    local da1, da2, dax
+    dap dax
+    lac al
+    add bl
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp da1
+    and [377777]
+    dac al
+    idx ah
+    jmp da2
+da1,
+    dac al
+da2,
+    lac ah
+    add bh
+    dac ah
+dax, jmp .
+    endlocal
+
+// dsb -- A -= B, A not less than B.
+// Takes A (ah, al) and B (bh, bl). Returns the difference in A.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+dsb,
+    local ds1, ds2, dsx
+    dap dsx
+    lac al
+    sub bl
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ds1
+    lac [377777]            // borrow: al + 2^17 - bl, every step positive
+    sub bl
+    add al
+    add [1]
+    dac al
+    lac ah
+    sub [1]
+    jmp ds2
+ds1,
+    dac al
+    lac ah
+ds2,
+    sub bh
+    dac ah
+dsx, jmp .
+    endlocal
+
+// dcm -- compare A and B.
+// Takes A (ah, al) and B (bh, bl). Returns in AC: negative if A < B, 0
+// if equal, else positive.
+// Preserves IO.
+// Called via jsp.
+dcm,
+    local dcx
+    dap dcx
+    lac ah
+    sub bh
+    SKIP_NEXT_IF_AC_ZERO
+    jmp dcx
+    lac al
+    sub bl
+dcx, jmp .
+    endlocal
+
+// sh4 -- A >>= 4 (1/16 cycle to cycles).
+// Takes A (ah, al). Returns the result in A.
+// Does not preserve AC or IO.
+// Called via jsp.
+sh4,
+    local s4x
+    dap s4x
+    lio al
+    ril 1s
+    lac ah
+    scr 4s
+    dac ah
+    rir 1s
+    dio al
+    lac al
+    and [377777]
+    dac al
+s4x, jmp .
+    endlocal
+
+// A converter's sequencer.
+
+// evt -- sequence an event for the converter in cur. A slur is struck
+// again while silent, with no sustain level, and to another zone with
+// own ends (c_own).
+// Takes the event's kind in ek (0 strike, 1 slur, 2 key off, 3 the bar's
+// end), its pitch in ep and its time in cycles in (eh, el). Has no
+// return value.
+// Does not preserve AC or IO.
+// Called via jsp.
+evt,
+    local ev1, ev2, ev3, evs, ea1, ea2, ea3, evx, jn, zn
+    dap evx
+    jsp svc
+    dzm jn
+    lac ek
+    SKIP_NEXT_IF_SAME [2]
+    jmp ev1
+    lac c_snd
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp evx                 // a key off while silent
+    jmp evs
+ev1,
+    SKIP_NEXT_IF_SAME [1]
+    jmp evs
+    lac c_snd
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ev2
+    dzm ek                  // a slur while silent is a strike
+    jmp evs
+ev2,
+    lac ep
+    SKIP_NEXT_IF_DIFFERENT c_pit
+    jmp evx                 // a tie
+    lac c_sus
+    and [777000]
+    SKIP_NEXT_IF_DIFFERENT [777000]
+    dzm ek                  // no sustain level: a slur is struck again
+evs,
+    jsp svc
+    lac eh
+    dac bth
+    lac el
+    dac btl
+    lac ek
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ea1
+ev3,
+    lac ep                  // a strike
+    dac c_pit
+    jda pqs
+    law 1
+    dac c_snd
+    jsp bnd
+    jsp tbl
+    dac c_pd1
+    jsp stp
+    dac c_pd2
+    lac c_sus
+    ior [12]                // key on, the phase to 0
+    dac c_pd3
+    jmp evx
+ea1,
+    SKIP_NEXT_IF_SAME [1]
+    jmp ea2
+    jsp tbl                 // a slur: the table too if the zone changes
+    dac zn
+    lac ep
+    dac c_pit
+    jda pqs
+    jsp tbl
+    SKIP_NEXT_IF_SAME zn
+    dac jn
+    lac jn                  // to another zone with own ends: struck again,
+    SKIP_NEXT_IF_AC_ZERO    //   the phase it carries could be past the
+    lac c_own               //   block's end
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ev3
+    jsp bnd
+    lac jn
+    SKIP_NEXT_IF_AC_ZERO
+    dac c_pd1
+    jsp stp
+    dac c_pd2
+    jmp evx
+ea2,
+    SKIP_NEXT_IF_SAME [2]
+    jmp ea3
+    dzm c_snd               // a key off
+    jsp bnd
+    lac c_sus
+    ior [4]                 // key off
+    dac c_pd3
+    jmp evx
+ea3,
+    jsp bnd                 // the bar's end
+evx, jmp .
+
+jn, 0                       // a slur changes the zone
+zn, 0                       // a slur's zone
+    endlocal
+
+// pqs -- the pitch AC as the note takes it: raised an octave at a time,
+// for each of the converter's octaves up, while it stays in the zone
+// map, into c_pq, and the shift left for its step into c_psh. A zone's
+// harmonics are cut for its own top pitch, so a step shifted up past
+// them would alias; the zone of the pitch that sounds keeps them in. An
+// octave down shifts the step alone. An octave left that would sound
+// above the voice's top, for which no zone is cut, or carry the step
+// past 17 bits, which the converter cannot take, is given up: the note
+// breaks back, as a mixture's ranks do. The top is C#7 in a voice with
+// zone 6 (the word after the map not 0), so an octave is left from 52-63
+// and the note sounds 64-75 on zone 6: c_zq, the pitch its table is taken
+// at, is 64, that word. Without zone 6 the top is B6 (ZONETOP), an octave
+// is left only from 52-61, and the note sounds 64-73 on the top zone,
+// cut for B6: c_zq is the map's last. Else c_zq is c_pq.
+// dacrender.c's seqPitch() and seqZone() follow the same rule.
+// Takes the pitch in AC. Returns c_pq, c_zq and c_psh.
+// Does not preserve AC; preserves IO.
+// Called via jda.
+pqs, 0                      // AC, as jda stores it
+    local pq1, pq2, pq3, pq4, pq5, pq6, pq7, pqx, pqu, pqw, pqv, plim
+    dap pqx
+    lac pqs
+    dac c_pq
+    dac c_zq
+    lac c_osh
+    dac c_psh
+    lac c_up
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pqx                 // no octave up
+    dac pqu
+pq1,
+    lac c_pq
+    add [0d12]
+    sub [PITCHES]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pq6                 // an octave more would leave the map
+    add [PITCHES]
+    dac c_pq
+    lac pqu
+    sub [1]
+    dac pqu
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pq1
+    jmp pq2
+pq6,                        // at 52-63, octaves left: one at most
+    law 1
+    dac pqu
+    law PITCHES - 1
+    dac c_zq                // the map's last, the top zone
+    lac c_zmp
+    add [PITCHES]
+    dac pqw
+    lac i pqw               // zone 6's table, or 0: none
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pq7
+    lac c_pq                // without it, above B6 no zone holds the
+    sub [ZONETOP - 0d11]    // note: none from above 61
+    SKIP_NEXT_IF_AC_NEGATIVE
+    dzm pqu
+    jmp pq2
+pq7,
+    idx c_zq                // zone 6, to C#7: the word after the map's last
+pq2,
+    lac c_stp
+    add c_pq
+    dac pqw
+pq3,
+    lac pqu
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pq4
+    law plim
+    add pqu
+    dac pqv
+    lac i pqw
+    sub i pqv
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp pq4
+pq5,                        // past 17 bits: an octave fewer
+    lac pqu
+    sub [1]
+    dac pqu
+    jmp pq3
+pq4,
+    lac pqu                 // still shifted up: the top zone's table
+    SKIP_NEXT_IF_AC_ZERO
+    lac c_zq                // (pq6's, 63 or 64)
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    lac c_pq
+    dac c_zq
+    lac pqu                 // the octaves left: octbl's 0, 2 or 4, nop, ral 1s, ral 2s
+    add pqu
+    add [octbl]
+    dac pqu
+    lac i pqu
+    dac c_psh
+pqx, jmp .
+
+pqu, 0                      // the octaves up left; then octbl's word
+pqw, 0                      // the step's word
+pqv, 0                      // its limit's
+plim, 0; 0200000; 0100000   // the steps under 17 bits shifted 0, 1 and 2 octaves up
+    endlocal
+
+// tbl -- the table (or sample) of the note's zone, at pqs's c_zq.
+// Has no arguments. Returns its address in AC.
+// Preserves IO.
+// Called via jsp.
+tbl,
+    local tbx
+    dap tbx
+    lac c_zmp
+    add c_zq
+    dac q7
+    lac i q7
+tbx, jmp .
+    endlocal
+
+// stp -- the step for the note, at pqs's pitch, shifted by the octaves
+// left.
+// Has no arguments. Returns the step in AC.
+// Preserves IO.
+// Called via jsp.
+stp,
+    local spx
+    dap spx
+    lac c_stp
+    add c_pq
+    dac q7
+    lac i q7
+    xct c_psh
+spx, jmp .
+    endlocal
+
+// bnd -- a boundary: unless it is at the last one's time, the pending
+// entry gets its length, split SPLIT cycles at a time while it is over
+// MAXEV, and a new one begins.
+// Takes the boundary's time in cycles in (bth, btl). Has no return value.
+// Does not preserve AC or IO.
+// Called via jsp.
+bnd,
+    local bn1, bn2, bn3, bnx
+    dap bnx
+    lac bth
+    dac ah
+    lac btl
+    dac al
+    lac c_lsh
+    dac bh
+    lac c_lsl
+    dac bl
+    jsp dsb
+    lac ah
+    ior al
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp bnx
+bn1,
+    lac ah
+    SKIP_NEXT_IF_AC_ZERO
+    jmp bn2
+    lac al
+    dac ln
+    jsp emt
+    lac bth
+    dac c_lsh
+    lac btl
+    dac c_lsl
+    jmp bnx
+bn2,
+    lac [SPLIT]
+    dac ln
+    jsp emt
+    lac al
+    sub [SPLIT]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp bn3
+    dac al
+    jmp bn1
+bn3,
+    lac al
+    add [SPLIT]
+    dac al
+    lac ah
+    sub [1]
+    dac ah
+    jmp bn1
+bnx, jmp .
+    endlocal
+
+// emt -- put the entry (ln, the pending latches) into the converter's
+// ring, and clear the pending latches; serves the converters first, and
+// waits on svc while the ring is full.
+// Takes the entry's length in ln. Has no return value.
+// Does not preserve AC or IO.
+// Called via jsp.
+emt,
+    local em1, em2, emx, q8
+    dap emx
+em1,
+    jsp svc
+    lac i c_nw
+    sub i c_nl
+    SKIP_NEXT_IF_DIFFERENT [RINGN]
+    jmp em1
+em2,
+    lac c_wp
+    dac q8
+    lac ln
+    dac i q8
+    idx q8
+    lac c_pd1
+    dac i q8
+    idx q8
+    lac c_pd2
+    dac i q8
+    idx q8
+    lac c_pd3
+    dac i q8
+    dzm c_pd1
+    dzm c_pd2
+    dzm c_pd3
+    lac c_wp
+    add [4]
+    and [4*RINGN-1]
+    ior c_rb
+    dac c_wp
+    idx i c_nw
+emx, jmp .
+
+q8, 0                       // the entry's next word
+    endlocal
+
+// cpi -- copy the state block at cb into cur; cpo copies it back. Both
+// call svc once a word, as a block is the longest stretch the player
+// has between them.
+// Takes the block's address in cb. Has no return value.
+// Does not preserve AC or IO.
+// Called via jsp.
+cpi,
+    local ci1, cix, co1, cox, q9, q10, ctc
+    dap cix
+    lac cb
+    dac q9
+    law cur
+    dac q10
+    law i NS
+    dac ctc
+ci1,
+    jsp svc
+    lac i q9
+    dac i q10
+    idx q9
+    idx q10
+    isp ctc
+    jmp ci1
+cix, jmp .
+
+cpo, dap cox
+    law cur
+    dac q9
+    lac cb
+    dac q10
+    law i NS
+    dac ctc
+co1,
+    jsp svc
+    lac i q9
+    dac i q10
+    idx q9
+    idx q10
+    isp ctc
+    jmp co1
+cox, jmp .
+
+q9, 0                       // the word copied from
+q10, 0                      // and to
+ctc, 0                      // the words left
+    endlocal
+
+#include "menu.ac"
+
+// The player's state and the words its routines share.
+
+// orch.ah's orchestra: each converter's part (negative: none), its
+// voice's number in the drum's library, and the shift that moves its
+// step by octaves. It can be changed from the console before a start at
+// play.
+orch,
+    C1P
+    C1I
+    C1O
+    C2P
+    C2I
+    C2O
+    C3P
+    C3I
+    C3O
+    C4P
+    C4I
+    C4O
+
+// Each converter's further organ stops, after orch's voice, the first:
+// STOPS - 1 words, each a voice's number plus 1, packed from the first, 0
+// for none. vld premixes a converter's stops (voices/README.md, "Stops").
+// They can be changed from the console before a start at play.
+ostp,
+    0; 0; 0
+    0; 0; 0
+    0; 0; 0
+    0; 0; 0
+
+// Each converter's volume: the attenuation dzg adds, in 1/8 dB, one of
+// menu.ac's levels (vlv). A start at 0100 keeps it, and it can be changed
+// from the console before a start at play.
+ovol, 0; 0; 0; 0
+
+// Each converter's place in the stereo field, as the orchestra block has
+// it: one of menus.ac's nine (plv), 0 left to PLRIGHT right, 040 apart. A
+// start at 0100 keeps it, and it can be changed from the console before a
+// start at play.
+opl, 0; 0; PLRIGHT; PLRIGHT
+
+// The converter being worked on. st1-st4 have its layout, and NS, OLH,
+// OLL and OLG are taken from it.
+cur,
+c_part, 0                   // its part in each movement, negative: none
+c_zmp, 0                    // the instrument's zone map
+c_stp, 0                    // its steps
+c_osh, 0                    // the octave's shift, executed on a step
+c_sus, 0                    // sustain << 9, and the actions every dyx holds
+c_lsh, 0                    // the last boundary, cycles
+c_lsl, 0
+c_pd1, 0                    // the pending entry: table, step, dyx value
+c_pd2, 0
+c_pd3, 0
+c_snd, 0                    // sounding
+c_pit, 0                    // the pitch
+c_lg, 0                     // the part's last note was legato
+c_wp, 0                     // the ring's next free entry
+c_nw, 0                     // the address of its nwr word
+c_nl, 0                     // the address of its nlat word
+c_rb, 0                     // the ring's first word
+c_up, 0                     // the octave's shift up: 0, 1 or 2
+c_pq, 0                     // the pitch the note's step is taken at (pqs)
+c_zq, 0                     // the pitch its table is taken at: c_pq, the top zone's, or 64, zone 6 (pqs)
+c_psh, 0                    // the shift left for its step, executed on it
+c_own, 0                    // negative: each table latched with its block's end, loop and stride (owt)
+
+st1,                        // the blocks of cur's layout, one a converter
+    table NS
+st2,
+    table NS
+st3,
+    table NS
+st4,
+    table NS
+
+// The rings: entries written and latched, underruns, the last entry
+// begun (and the empty commit before it), and the next to latch.
+nwr1, 0
+nwr2, 0
+nwr3, 0
+nwr4, 0
+nlat1, 0
+nlat2, 0
+nlat3, 0
+nlat4, 0
+und1, 0
+und2, 0
+und3, 0
+und4, 0
+ov1, 0
+ov2, 0
+ov3, 0
+ov4, 0
+oe1, 0
+oe2, 0
+oe3, 0
+oe4, 0
+rp1, 0
+rp2, 0
+rp3, 0
+rp4, 0
+sq, 0                       // ltN's: the entry's next word
+owt, 0; 0; 0; 0             // each converter's c_own, for tlat
+rcc, 0                      // recordLatches's converter, 0 to NCONV-1
+
+// The parts.
+pbl,                        // each part's bar address list
+    table MAXP
+ppt,                        // each part's first word: its counts and checksums
+    table MAXP
+per, PER                    // parts a movement, 1 to NCONV; set from the console
+npart, 0                    // parts read
+fp, 0                       // the next free word of banks 2-3
+ct, 0                       // a block's count
+ctn, 0                      // the words of it left to read
+
+// The score.
+tpg, 0                      // the test word's tempo scale, 170 as written
+tc, 0                       // the tempo now
+kc, 0                       // its K
+kt, 0                       // a tempo, for kof
+kk, 0                       // a K
+mpb, 0                      // the movement's first part
+mst, 0                      // a movement is under way
+nv, 0                       // its voices
+ctv, 0                      // the voices left
+bv,                         // each voice's bar now, 0: over
+    table NCONV
+sg,                         // the bar's segments: offset, K, tempo
+    table 3*MAXSEG
+nsg, 0                      // its segments
+o, 0                        // offset, units
+u, 0                        // the note's units
+du, 0                       // units, for at's and mka's K
+ao, 0                       // the offset at takes
+q3, 0                       // at's segment, for mka
+w, 0                        // a note or a word read; scratch
+t, 0                        // scratch
+q, 0                        // a pointer, scratch
+q2, 0                       // another
+bsh, 0                      // the bar's start, 1/16 cycle
+bsl, 0
+nbh, 0                      // the next bar's
+nbl, 0
+beh, 0                      // the bar's end, cycles
+bel, 0
+ah, 0                       // A and B, double words
+al, 0
+bh, 0
+bl, 0
+gh, 0                       // a key off's time, cycles
+gl, 0
+
+// The sequencers.
+cb, 0                       // the state block in cur
+ctk, 0                      // the converters left
+eh, 0                       // the event's time, cycles
+el, 0
+ek, 0                       // its kind
+ep, 0                       // its pitch
+bth, 0                      // a boundary's time
+btl, 0
+ln, 0                       // an entry's length
+q7, 0                       // tbl's and stp's table word
+dn, 0                       // the last entries are written
+fin, 0                      // nothing left to decode
+
+// The voices on the drum.
+ninst, 0                    // the directory's voices, V; 0 if it has none
+xs, 0                       // keep the screen drawn while the drum reads
+vsl, 0; 0; 0; 0             // each converter's record, in its slot or an earlier one's
+vdk, 0                      // the voice whose header or block is damaged
+lvs,                        // each converter's stops, as vld loaded them last (its zsp; lok, lsr)
+    0; 0; 0; 0
+    0; 0; 0; 0
+    0; 0; 0; 0
+    0; 0; 0; 0
+
+constants
+
+// Bank 1: the directory as read, each converter's slot, and the voices'
+// loader. A 340 save reaches banks 0-1, so the menu shows the names
+// where they are. drd and vld are called from bank 0 with a jsp i
+// through their full address (crossBankjsp) and return through the full
+// address the jsp left, the window open; dxf and vsm, called only here,
+// return dap-form. A word of bank 0's is reached through its full
+// address (ninst:0), and an address here taken as a value is tagged
+// (dir:1): bare, it is only its 12 bits, which the window reads as bank
+// 0.
+bank 1
+0000/
+dir,
+    table DIRN
+slt1,
+    table SLOTN
+slt2,
+    table SLOTN
+slt3,
+    table SLOTN
+slt4,
+    table SLOTN
+
+// drd -- read the drum's directory into dir and check it: the magic
+// word, the version (3, 4 when a voice has a voicing, or 5), V from 1 to
+// MAXV, F from 1 to MAXF, and its sum (voices/dacdrum.c). ninst becomes
+// V, or 0 if any of them fails.
+// Has no arguments. Returns 0 in AC if the directory is good, else not 0.
+// Does not preserve IO.
+// Called via crossBankjsp from bank 0, or jsp in bank 1; returns through
+// the full address the jsp left.
+drd,
+    local ddb, ddv, ddx, dv, dsm
+    dac ddx
+    dzm i [ninst:0]
+    dzm xd                  // field 0, from its first word
+    law DIRN
+    dac xc
+    lac [dir:1]
+    dac xa
+    jsp dxf
+    lac dir
+    SKIP_NEXT_IF_SAME [DMAGIC]
+    jmp ddb
+    lac dir + 1
+    SKIP_NEXT_IF_DIFFERENT [DVERSION]
+    jmp ddv
+    SKIP_NEXT_IF_DIFFERENT [DVERSION4]
+    jmp ddv
+    SKIP_NEXT_IF_SAME [DVERSION5]
+    jmp ddb
+ddv,
+    lac dir + 3
+    dac dv                  // V
+    law MAXV
+    dac vrl
+    lac dv
+    sub [1]
+    jda vrg
+    jmp ddb
+    law MAXF
+    dac vrl
+    lac dir + 5             // F
+    sub [1]
+    jda vrg
+    jmp ddb
+    // The sum: words 0-3, then word 5 to the last entry's end.
+    lac [dir:1]
+    dac xa
+    law 4
+    dac xc
+    jsp vsm
+    dac dsm
+    lac [dir:1 + 5]
+    dac xa
+    lac dv
+    ral 3s                  // V entries of ENTRY (8) words
+    add [EBASE - 5]
+    dac xc
+    jsp vsm
+    add dsm
+    SKIP_NEXT_IF_SAME dir + 4
+    jmp ddb
+    lac dv
+    dac i [ninst:0]
+    cla
+    crossBankrtn(ddx, NOEEM)
+ddb,
+    law 1
+    crossBankrtn(ddx, NOEEM)
+
+ddx, 0                      // the return, a full address
+dv, 0                       // V
+dsm, 0                      // the sum
+    endlocal
+
+// What differs in a voice's header from the drum's version, for the
+// loader and recordLatches: hd34 for versions 3 and 4, hd5 for 5
+// (voices/README.md, "A voice's header"), vld's copy in hdB to hdZ.
+hd34, RECORD; RECORD + 1; nop; 0d128; 0d4096; 0; 0; 0777771
+hd5, AT_B5; AT_BLOCKS5; ral 1s; PITCHES + 1; VEND - VPLACE; 0777777; 3; 0777770
+hdB, 0                      // B's word
+hdP, 0                      // the first block's first word
+hdM, 0                      // executed on 3 x a block number: the words before its entry
+hdS, 0                      // a stop's speech map, from its zone map (past zone 6's word)
+hdL, 0                      // the longest block
+hdF, 0                      // the six latches' mask: 0 on versions 3 and 4
+hdX, 0                      // a block's words past its sum
+hdZ, 0                      // a premix's zones, negative: 6, or 7 on version 5
+
+// vld -- load each converter's voice, as orch and ostp name it, from the
+// drum: its header into the converter's slot (vst), its blocks one after
+// another from VPLACE in converter order, each read and its sum checked;
+// then the zone map's block numbers become the blocks' addresses, and
+// the record gets the zone map's and the steps' addresses. A voice (or
+// the same stops) an earlier converter has is not loaded again: the two
+// share its slot. If the library's serial and the orchestra's stops are
+// those last loaded (lsr, lvs), nothing is read but the directory.
+// Each block's read is started before the block before it is summed and
+// added, so the drum turns while the program works and stops it only
+// while words move; a failure waits for a read under way.
+// The premix: an organ stop, or up to STOPS of them (orch's voice, then
+// ostp's), is premixed as voices/README.md ("Stops") has it. The first
+// stop's header is the slot, and for each of the NZONES zones a block of
+// the sample's end words follows from VPLACE on: each stop's table read
+// into its last loop words (the first's) or just before them and added
+// there (the others', whose header is read into the first zone's block
+// meanwhile and checked alike with the first's, its voicing, record word
+// 12's low bits, combined into the first's: the louder edge, the wider
+// céleste, and the speech and the room if either has them), then the
+// first stop's speech read into the words before the loop and the loop
+// added into it; every pitch's zone map entry is its zone's block. A
+// zone whose table is the zone before's reads nothing: the first stop's
+// loop is copied, another's table added again from the zone before's
+// staging. The adds are the PDP-1's, which give the integer sum: no
+// partial sum passes full scale. Another stop's latches, steps and sine
+// must be the first's.
+// On a drum of version 5, each block of a voice with own ends follows
+// its end, loop and stride in core; the percussion's sine becomes its
+// block's address, a stop's block read after its premix; zone 6's word,
+// after the zone map, becomes its block's address, or stays 0 for none;
+// and the slot is compacted, the zone map and that word moved to word 22
+// and the steps read after them. A premix there has a seventh block,
+// zone 6, from each stop's zone 6 table and the first stop's seventh
+// speech entry; if a stop has no zone 6, its zone 5 table goes in that
+// block, the premix has no zone 6 (its word 0), and pitches 62-63 take
+// the block instead (the drum's family is alike in zones 0-4's speech
+// only).
+// Takes xs, set to keep the screen drawn while the drum reads, and zmk,
+// 0 for an audition, which makes ostp's stops none. vsl gets each
+// converter's record; ldw counts the words this load read.
+// Returns 0 in AC if loaded; else 1 for no directory, 2 for a voice the
+// library lacks, 3 for a header or block that is not as written (vdk the
+// voice), 4 for voices too large for banks 5-15, 5 for stops that do not
+// match, or a voice that is not a stop with others.
+// Does not preserve IO.
+// Called via crossBankjsp from bank 0, or jsp in bank 1; returns through
+// the full address the jsp left.
+vld,
+    local vl2, vl4, vl5, vl6, vl7, vl8, vl9, vla, vlb, vlf, vlm, vlr, vlq, vls, vlt, vlu, vown, vb1, pmy, vlz, vlx, sumFailed, vg1, vg2, vg3, vlc, vld1, pm1, pm2, pm3, pm4, pm6, pm7, pm8, pm9, pma, pmb, pmv, pmw, pmn, pmo, pmz, pmq, vn6, zoneTable, repeatZone, nx5, vc, vk, vj, vs, vnb, vcn, vln, vp, vm, vpn, vsr, va, vb, vsq, vns, vfw, ven, vlo, vsn, vrs, vsi, vzp, vdz, vzc, vev, staging, lastBlock, speechEntry, readZone, wordCount, speechStarted, aheadZone, voiceBlockStart, vbx, readAhead, nx1, nx2, nx4, nxx, tableStart, zt1, ztx, speechStart, zsv, addWords, za1, za2, za3, zax, wordsLeft, copyWords, zc3, zcx
+    dac vlx
+    dzm ldw
+    jsp drd
+    SKIP_NEXT_IF_AC_ZERO
+    crossBankrtn(vlx, NOEEM)
+    // What its headers have by the drum's version: hd34 or hd5 to hdB.
+    lac dir + 1
+    sub [DVERSION5]
+    SKIP_NEXT_IF_AC_ZERO
+    law i HDN               // hd34, just before hd5
+    add [hd5:1]
+    dac va
+    lac [hdB:1]
+    dac vb
+    law HDN
+    dac wordCount
+    jsp copyWords
+    lac dir + 2
+    dac vsr                 // the library's serial
+    // Each converter's stops as this load takes them, STOPS words in zsp:
+    // orch's voice, then ostp's three (a voice plus 1, 0 for none), these
+    // through zmk.
+    lac [orch:0 + 1]
+    dac va
+    lac [ostp:0]
+    dac vb
+    lac [zsp:1]
+    dac vp
+    law i NCONV
+    dac vcn
+vg1,
+    lac i va
+    dac i vp
+    idx vp
+    law i 3                 // STOPS - 1
+    dac vj
+vg2,
+    lac i vb
+    and zmk
+    dac i vp
+    idx vb
+    idx vp
+    isp vj
+    jmp vg2
+    lac va
+    add [3]
+    dac va
+    isp vcn
+    jmp vg1
+    // The same stops from the same library are in core already.
+    lac lok
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp vl2
+    lac vsr
+    SKIP_NEXT_IF_SAME lsr
+    jmp vl2
+    lac [zsp:1]
+    dac zqa
+    law lvs:0
+    dac zqb
+    law i 0d16              // NCONV * STOPS
+    dac zqn
+    jsp zcm
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    crossBankrtn(vlx, NOEEM)
+vl2,
+    dzm lok
+    lac [VPLACE]
+    dac vpn
+    dzm vc
+vl4,
+    // Converter vc's stops: voices the library has, vns of them (orb
+    // packs them from the first).
+    lac vc
+    ral 2s                  // STOPS (4) words a converter
+    add [zsp:1]
+    dac vsq
+    lac i vsq
+    dac vk
+    lac i [ninst:0]
+    dac vrl
+    lac vk
+    jda vrg
+    jmp vlz
+    lac vsq
+    dac va
+    law 1
+    dac vns
+    law i 3
+    dac vj
+vg3,
+    idx va
+    lac i va
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp vl5
+    sub [1]
+    jda vrg
+    jmp vlz
+    idx vns
+    isp vj
+    jmp vg3
+    // An earlier converter with the same stops: its slot.
+vl5,
+#ifdef SKIPSTOP
+    lac vns                 // -DSKIPSTOP: a converter's last stop left out of its premix
+    sub [1]
+    SKIP_NEXT_IF_AC_ZERO
+    dac vns
+#endif
+    dzm vj
+vlc,
+    lac vj
+    SKIP_NEXT_IF_DIFFERENT vc
+    jmp vl6
+    ral 2s
+    add [zsp:1]
+    dac zqb
+    lac vsq
+    dac zqa
+    law i 4                 // STOPS
+    dac zqn
+    jsp zcm
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp vl7
+    idx vj
+    jmp vlc
+vl7,
+    law vsl:0
+    add vj
+    dac va
+    lac i va
+    dac vs
+    jmp vl8
+    // Its header, into the slot: the words from its place on, as many as
+    // the largest header has.
+vl6,
+    lac [vst:1]
+    add vc
+    dac va
+    lac i va
+    dac vs                  // the slot, the record's first word
+    lac vk
+    ral 3s                  // its entry: ENTRY (8) words a voice
+    add [dir:1 + EBASE + NAMEW]
+    dac va
+    lac i va
+    dac xd
+    idx va
+    lac i va
+    dac vfw                 // its family's word: negative for a stop
+    lac [SLOTN]
+    dac xc
+    lac vs
+    dac xa
+    jsp dxf
+    lac vs
+    jda headerBlocks
+    dac vnb                 // B, 1 to MAXB
+    law MAXB
+    dac vrl
+    lac vnb
+    sub [1]
+    jda vrg
+    jmp vlb
+    law 3
+    dac vown
+    lac hraw
+    SKIP_NEXT_IF_AC_NEGATIVE
+    dzm vown                // no own ends
+    lac vs
+    add hdP
+    sub [1]
+    dac vp                  // the word before the first block's
+    lac vfw
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO // skip if not a stop
+    jmp pm1
+    lac vns
+    SKIP_NEXT_IF_SAME [1]
+    jmp vlm                 // only stops sound together
+    lac vnb
+    cma
+    dac vcn
+    // Each block: 1 to hdL words, read to vpn (after its end, loop and
+    // stride with own ends), its sum checked, and its address put in its
+    // place's stead; the next block's read started before this one is
+    // summed, so the drum turns meanwhile.
+    jsp voiceBlockStart
+vl9,
+    jsp blockWait           // the block is in
+    isp vcn                 // skip if it is the last
+    jsp voiceBlockStart     // the next one's read started
+    jsp blockCheck
+    SKIP_NEXT_IF_AC_ZERO
+    jmp vlb
+    lac curAddress
+    dac i curPlace          // its place becomes its address
+    lac vcn
+    SKIP_NEXT_IF_AC_ZERO
+    jmp vl9
+    // The zone map: each block number becomes its block's address.
+    idx vp
+    dac vm
+    law i 0d64
+    dac vcn
+    lac vs
+    dac beh
+vla,
+    lac vnb
+    dac vrl
+    lac i vp
+    jda vrg
+    jmp vlb
+    lac i vp
+    jda blockEntry
+    dac va
+    lac i va
+    dac i vp
+    idx vp
+    isp vcn
+    jmp vla
+    // Zone 6's word, after the map: its block number plus 1, or 0 for none
+    // (on versions 3 and 4, pitch 0's step, 0), becomes its block's address.
+    lac i vp
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp vlr
+    sub [1]
+    dac i vp
+    jda vrg
+    jmp vlb
+    lac i vp
+    jda blockEntry
+    dac va
+    lac i va
+    dac i vp
+    // Version 5: the percussion's sine (word 18, a block number) becomes
+    // its block's address, a stop's block read first, after its premix's;
+    // no percussion (dyk's multiple 0) leaves it. Then the slot is
+    // compacted: the zone map moves down to word 22, over the block
+    // entries, and the steps are read after it and their sum checked.
+vlr,
+    lac hdF
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp vlq                 // versions 3 and 4: the steps are in the header
+    lac vs
+    add [AT_SIX5 + 5]
+    dac vb
+    sub [2]
+    dac va
+    lac i va
+    and [7]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp vls
+    lac vnb
+    dac vrl
+    lac i vb
+    jda vrg
+    jmp vlb
+    lac vs
+    dac beh
+    lac i vb
+    jda blockEntry
+    dac vp                  // its entry
+    lac vfw
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp vlt                 // a sample's or a table's, in core
+    lac vp
+    sub [1]
+    dac vp
+    jsp voiceBlockStart
+    jsp blockWait
+    jsp blockCheck
+    SKIP_NEXT_IF_AC_ZERO
+    jmp sumFailed
+    lac curAddress
+    jmp vlu
+vlt,
+    lac i vp                // its place, now its address
+vlu,
+    dac i vb
+vls,
+    lac vm
+    dac va
+    lac vs
+    add [AT_BLOCKS5]
+    dac vb
+    dac vm
+    law 0d65                // the map and zone 6's word
+    dac wordCount
+    jsp copyWords
+    lac vb
+    dac xa                  // the steps, after it
+    lac vs
+    add [AT_STEPS5]
+    dac va
+    lac i va
+    dac xd
+    idx va
+    law 0d64
+    dac xc
+    jsp dxf
+    jsp vsm
+    SKIP_NEXT_IF_SAME i va
+    jmp vlb
+    // The record: the zone map's address, then the steps'.
+vlq,
+    lac vs
+    add [1]
+    dac va
+    lac vm
+    dac i va
+    idx va
+    lac hdF
+    and [1]                 // version 5: after zone 6's word
+    add vm
+    add [0d64]
+    dac i va
+vl8,
+    law vsl:0
+    add vc
+    dac va
+    lac vs
+    dac i va
+    idx vc
+    SKIP_NEXT_IF_SAME [NCONV]
+    jmp vl4
+    // What is loaded, for the next load.
+    lac [zsp:1]
+    dac va
+    law lvs:0
+    dac vb
+    law i 0d16              // NCONV * STOPS
+    dac vcn
+vld1,
+    lac i va
+    dac i vb
+    idx va
+    idx vb
+    isp vcn
+    jmp vld1
+    lac vsr
+    dac lsr
+    law 1
+    dac lok
+    cla
+    crossBankrtn(vlx, NOEEM)
+    // The stops' premix. Its geometry is the first stop's: the sample's
+    // end and loop, the speech the words before the loop; NZONES blocks
+    // (7 on version 5) of end words, which must fit; another stop's header and table go
+    // into the first zone's block before its loop is reached.
+pm1,
+    lac vs
+    add [0d8]               // the record's sample end, then its loop
+    dac va
+    lac i va
+    dac ven
+    idx va
+    lac i va
+    dac vlo
+    lac ven
+    sub vlo
+    dac vsn
+    sub vlo
+    sub [SLOTN]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp vlb
+    lac hdF
+    and ven                 // version 5: zone 6's block
+    add ven
+    add ven
+    add ven
+    add ven
+    add ven
+    add ven                 // NZONES (6) blocks, or 7
+    dac vrs
+    add vpn
+    sub [VEND]
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp vlf
+    dzm vsi
+    dzm vn6
+    dzm speechStarted
+    lac vs
+    dac zhp
+pm2,
+    lac vsi
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pm3
+    // Another stop: a stop (readAhead checked it and started its header's read
+    // into the first zone's block), alike with the first in the record
+    // (but for the zone map's and the steps' addresses) and the steps.
+    jsp drumWait            // its header is in
+    lac vpn
+    dac zhp
+    jda headerBlocks
+    sub [1]
+    dac va
+    law MAXB
+    dac vrl
+    lac va
+    jda vrg
+    jmp vlb
+    lac i zhp
+    SKIP_NEXT_IF_SAME i vs
+    jmp vlm
+    lac zhp
+    add [3]
+    dac zqa
+    lac vs
+    add [3]
+    dac zqb
+    law i 0d9               // RECORD - 4: words 3-11
+    dac zqn
+    jsp zcm
+    SKIP_NEXT_IF_AC_ZERO
+    jmp vlm
+    // Word 12: threshold 3, its high bits, alike; its low bits, the voicing
+    // (dzv's), combined into the first's: the other's speech and room
+    // bits added, its edge level taken if it is the louder, and its
+    // céleste's detune (bits 9-12) if it is the wider.
+    lac i zqa               // zcm left zqa and zqb at word 12
+    xor i zqb
+    and [0777000]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp vlm
+    lac i zqa
+    and [030]
+    ior i zqb
+    dac i zqb
+    lac i zqa
+    and [7]
+    dac vev                 // the other's edge
+    lac i zqb
+    and [7]
+    sub vev
+    SKIP_NEXT_IF_AC_NEGATIVE // (equal levels, at -0, take the same level again)
+    jmp pmw
+    lac i zqb
+    and [0777770]
+    ior vev
+    dac i zqb
+pmw,
+    lac i zqa
+    and [0740]
+    dac vev                 // the other's detune
+    lac i zqb
+    and [0740]
+    sub vev
+    SKIP_NEXT_IF_AC_NEGATIVE // (equal detunes, at -0, take the same again)
+    jmp pmv
+    lac i zqb
+    and [0777037]
+    ior vev
+    dac i zqb
+pmv,
+    lac hdF
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pmy                 // versions 3 and 4: the steps, in the header
+    // Version 5: words 13-17 (dyv to dyj), the steps' place and sum, and
+    // with a percussion its sine's place on the drum.
+    lac zhp
+    add [AT_SIX5]
+    dac zqa
+    lac vs
+    add [AT_SIX5]
+    dac zqb
+    law i 5
+    dac zqn
+    jsp zcm
+    SKIP_NEXT_IF_AC_ZERO
+    jmp vlm
+    idx zqa                 // zcm left them at word 18: on to 20
+    idx zqa
+    idx zqb
+    idx zqb
+    law i 2
+    dac zqn
+    jsp zcm
+    SKIP_NEXT_IF_AC_ZERO
+    jmp vlm
+    lac vs
+    add [AT_SIX5 + 3]
+    dac va
+    lac i va
+    and [7]                 // dyk's multiple: 0, no percussion
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pm3
+    lac zhp
+    jda sinePlace
+    dac vev
+    lac vs
+    jda sinePlace
+    SKIP_NEXT_IF_SAME vev
+    jmp vlm
+    jmp pm3
+pmy,
+    lac zhp
+    jda zzm
+    add [0d64]
+    dac zqa
+    lac vs
+    jda zzm
+    add [0d64]
+    dac zqb
+    law i 0d64
+    dac zqn
+    jsp zcm
+    SKIP_NEXT_IF_AC_ZERO
+    jmp vlm
+    // Its table in each zone: pitch 2's, then every 12th pitch's, the
+    // six block numbers copied to zoneTables, and a seventh, zone 6's or
+    // else zone 5's, which only version 5 reads (the header may be read over before
+    // the last zone is done). A zone whose table is the zone before's
+    // reads nothing: the first stop's loop is copied from the zone
+    // before's, another's added from the zone before's staging. Each read
+    // is started before the zone before it is summed and added (readAhead).
+pm3,
+    lac zhp
+    jda zzm
+    add [2]
+    dac va
+    add [PITCHES - 2]
+    dac vev                 // zone 6's word: its block number plus 1, or 0
+    lac [zoneTables:1]
+    dac vb
+    law i NZONES
+    dac vzc
+zoneTable,
+    lac i va
+    dac i vb
+    lac va
+    add [0d12]
+    dac va
+    idx vb
+    isp vzc
+    jmp zoneTable
+    lac i vev               // the seventh: zone 6's; without it, zone 5's
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pmn
+    sub [1]
+    jmp pmo
+pmn,
+    idx vn6                 // a stop without zone 6: the premix has none
+    lac zoneTables + 5
+pmo,
+    dac i vb
+    lac [zoneTables:1]
+    dac vzp
+    lac vpn
+    add vsn
+    dac vdz                 // the zone's loop
+    dac readZone
+    lac hdZ
+    dac vzc
+    lac i vzp
+    dac zbn
+    jsp tableStart          // the first zone's read
+    law 777                 // a block number none is (MAXB is 16)
+    dac lastBlock
+pm4,
+    lac i vzp
+    SKIP_NEXT_IF_DIFFERENT lastBlock
+    jmp repeatZone          // the zone before's table
+    dac lastBlock
+    jsp blockWait           // its table is in
+    jsp readAhead           // the next read started
+    jsp blockCheck
+    SKIP_NEXT_IF_AC_ZERO
+    jmp sumFailed
+    lac vsi
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pm7                 // the first stop's: the loop itself
+    lac vdz
+    sub vlo
+    dac staging             // another's: just before it, then added in
+    jmp pm6
+repeatZone,
+    lac vsi
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pm6
+    lac vdz
+    sub ven
+    dac va                  // the zone before's loop
+    lac vdz
+    dac vb
+    lac vlo
+    dac wordCount
+    jsp copyWords
+    jmp pm7
+pm6,
+    lac staging
+    dac va
+    lac vdz
+    dac vb
+    lac vlo
+    dac wordCount
+    jsp addWords
+pm7,
+    idx vzp
+    lac vdz
+    add ven
+    dac vdz
+    isp vzc
+    jmp pm4
+    idx vsi
+    SKIP_NEXT_IF_SAME vns
+    jmp pm2
+    // Each zone's speech, the first stop's, before its loop, and the loop
+    // added into it, word i the loop's word i mod loop, a loop's length at
+    // a time; each zone's read started before the zone before it is
+    // summed and added (the first's by readAhead, unless speechStarted is 0).
+    lac vs
+    jda zzm
+    add hdS
+    dac vzp                 // the speech map
+    lac vpn
+    dac vdz
+    lac hdZ
+    dac vzc
+    lac speechStarted
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pm8
+    lac vzp
+    dac speechEntry
+    lac vdz
+    dac readZone
+    jsp speechStart
+pm8,
+    jsp blockWait           // the zone's speech is in
+    lac vzc
+    SKIP_NEXT_IF_DIFFERENT [0777776] // -1: the last zone
+    jmp pm9
+    lac vzp
+    add [1]
+    dac speechEntry
+    lac vdz
+    add ven
+    dac readZone
+    jsp speechStart         // the next zone's read started
+pm9,
+    jsp blockCheck
+    SKIP_NEXT_IF_AC_ZERO
+    jmp sumFailed
+    lac vdz
+    dac vb                  // the speech's word
+    lac vsn
+    dac vj                  // the words left
+pma,
+    lac vdz
+    add vsn
+    dac va                  // the loop's first
+    lac vlo
+    dac wordCount
+    lac vj
+    sub vlo
+    dac vj
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp pmb
+    add vlo                 // fewer than a loop left
+    dac wordCount
+    dzm vj
+pmb,
+    jsp addWords
+    lac vj
+    SKIP_NEXT_IF_AC_ZERO
+    jmp pma
+    idx vzp
+    lac vdz
+    add ven
+    dac vdz
+    isp vzc
+    jmp pm8
+    // The zone map: pitches 0-13 zone 0's block, then 12 a zone.
+    lac vs
+    jda zzm
+    dac vm
+    dac vp
+    lac vpn
+    dac vdz
+    law i 0d14
+    dac vj
+    law i 0d64
+    dac vcn
+pmd,
+    lac vdz
+    dac i vp
+    idx vp
+    isp vj
+    jmp pme
+    lac vdz
+    add ven
+    dac vdz
+    law i 0d12
+    dac vj
+pme,
+    isp vcn
+    jmp pmd
+    // Version 5: zone 6 is block 6 when every stop has one; else the
+    // premix has none (0), and 62-63 take block 6, cut for C#7.
+    lac hdF
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pmq
+    lac vdz
+    add ven
+    dac vdz
+    lac vn6
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp pmz
+    dzm i vp
+    law i 2
+    add vp
+    dac vp
+    lac vdz
+    dac i vp
+    idx vp
+pmz,
+    lac vdz
+    dac i vp
+pmq,
+    lac vpn
+    add vrs
+    dac vpn
+    jmp vlr
+    // A failure: a read still under way is waited for first.
+vlz,
+    jsp drumWait
+    law 2
+    crossBankrtn(vlx, NOEEM)
+sumFailed,
+    lac curVoice            // a block's sum: its voice, not the one read since
+    dac vk
+vlb,
+    jsp drumWait
+    lac vk
+    dac i [vdk:0]
+    law 3
+    crossBankrtn(vlx, NOEEM)
+vlf,
+    jsp drumWait
+    law 4
+    crossBankrtn(vlx, NOEEM)
+vlm,
+    jsp drumWait
+    law 5
+    crossBankrtn(vlx, NOEEM)
+
+// voiceBlockStart -- check the next block of the voice's header and
+// start its read (drumStart) to vpn, with own ends (vown 3) after its
+// end, loop and stride copied there.
+// Takes vp at the word before the block's place. Leaves vp at its last
+// word, vpn past the block, and nextAddress, nextLength, nextSum,
+// nextPlace and nextVoice set for blockWait. Jumps to vlb or vlf instead
+// of returning if the block may not be read.
+// Does not preserve AC or IO.
+// Called via jsp.
+voiceBlockStart,
+    dap vbx
+    idx vp
+    dac nextPlace           // its place, which becomes its address
+    lac i vp
+    dac xd
+    idx vp
+    lac i vp
+    dac vln
+    lac hdL
+    dac vrl
+    lac vln
+    sub [1]
+    jda vrg
+    jmp vlb
+    lac vown
+    add vpn
+    add vln
+    sub [VEND]
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp vlf
+    idx vp
+    lac i vp
+    dac nextSum             // its sum, as written
+    lac vp
+    add hdX
+    dac vp
+    lac vown
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp vb1
+    lac vp
+    sub [2]
+    dac va                  // its end, loop and stride
+    lac vpn
+    dac vb
+    lac vown
+    dac wordCount
+    jsp copyWords
+    lac vb
+    dac vpn
+vb1,
+    lac vln
+    dac xc
+    dac nextLength
+    lac vpn
+    dac xa
+    dac nextAddress
+    add vln
+    dac vpn
+    lac vk
+    dac nextVoice
+    jsp drumStart
+vbx, jmp .
+
+// readAhead -- start the read after the zone's whose table is in: the
+// next zone's with a table of its own; else the next stop's header (into
+// the first zone's block, vk that stop); else the first zone's speech
+// (speechStarted set), unless this zone is the first: a stop after the
+// first may add the zones after it from this zone's staging, which the
+// speech overwrites, so pm8 starts it then.
+// Takes the zone in vzp (its zoneTables word), vdz (its loop) and vzc
+// (the zones left). Has no return value; jumps to vlb or vlm instead of
+// returning if the read may not be made.
+// Does not preserve AC or IO.
+// Called via jsp.
+readAhead,
+    dap nxx
+    lac vzp
+    dac aheadZone           // a zoneTables word
+    lac vdz
+    dac readZone            // its zone's loop
+    lac vzc
+    dac vj                  // the zones left, negative, this one counted
+nx1,
+    isp vj
+    jmp nx2
+    jmp nx4                 // no zone after this one has its own table
+nx2,
+    lac i aheadZone
+    dac zbn                 // the zone before's block
+    idx aheadZone
+    lac readZone
+    add ven
+    dac readZone
+    lac i aheadZone
+    SKIP_NEXT_IF_DIFFERENT zbn
+    jmp nx1
+    dac zbn
+    jsp tableStart
+    jmp nxx
+nx4,
+    lac vsi
+    add [1]
+    SKIP_NEXT_IF_DIFFERENT vns
+    jmp nx5                 // the last stop
+    add vsq
+    dac vb
+    lac i vb
+    sub [1]
+    dac vk                  // the next stop
+    ral 3s
+    add [dir:1 + EBASE + NAMEW]
+    dac vb
+    lac i vb
+    dac xd
+    idx vb
+    lac i vb
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp vlm                 // only stops sound together
+    lac [SLOTN]
+    dac xc
+    lac vpn
+    dac xa
+    jsp drumStart
+    jmp nxx
+nx5,
+    lac vzc
+    SKIP_NEXT_IF_DIFFERENT hdZ   // the first zone
+    jmp nxx
+    lac vs
+    jda zzm
+    add hdS
+    dac speechEntry         // the speech map's first
+    lac vpn
+    dac readZone
+    jsp speechStart
+    idx speechStarted
+nxx, jmp .
+
+// tableStart -- start the read of a zone's table, block zbn of the stop
+// being added (zhp), into the zone's loop at readZone (the first
+// stop's) or just before it (another's).
+// Takes zbn, zhp and readZone. Has no return value; jumps to vlb instead
+// of returning if the header lacks the block.
+// Does not preserve AC or IO.
+// Called via jsp.
+tableStart,
+    dap ztx
+    lac zhp
+    dac blockHeader
+    lac vlo
+    dac zbl
+    lac readZone
+    dac zds
+    lac vsi
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zt1
+    lac readZone
+    sub vlo
+    dac zds
+zt1,
+    lac vk
+    dac nextVoice
+    jsp blockStart
+    SKIP_NEXT_IF_AC_ZERO
+    jmp vlb
+ztx, jmp .
+
+// speechStart -- start the read of a zone's speech, the first stop's
+// (vs), its block from the speech map's word at speechEntry, into core
+// at readZone.
+// Takes speechEntry and readZone. Leaves vk the first stop. Has no
+// return value; jumps to vlb instead of returning if the header lacks
+// the block.
+// Does not preserve AC or IO.
+// Called via jsp.
+speechStart,
+    dap zsv
+    lac i vsq
+    dac vk
+    dac nextVoice
+    lac i speechEntry
+    dac zbn
+    lac vs
+    dac blockHeader
+    lac vsn
+    dac zbl
+    lac readZone
+    dac zds
+    jsp blockStart
+    SKIP_NEXT_IF_AC_ZERO
+    jmp vlb
+zsv, jmp .
+
+// addWords -- add the wordCount words (1 or more) from va on into those
+// from vb on, the odd ones, then four at a time.
+// Takes wordCount, va and vb. Leaves va and vb past the words.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+addWords,
+    dap zax
+    lac wordCount
+    and [3]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp za2
+    cma
+    dac wordsLeft
+za1,
+    lac i va
+    add i vb
+    dac i vb
+    idx va
+    idx vb
+    isp wordsLeft
+    jmp za1
+za2,
+    lac wordCount
+    sar 2s
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp zax
+    cma
+    dac wordsLeft
+za3,
+    lac i va
+    add i vb
+    dac i vb
+    idx va
+    idx vb
+    lac i va
+    add i vb
+    dac i vb
+    idx va
+    idx vb
+    lac i va
+    add i vb
+    dac i vb
+    idx va
+    idx vb
+    lac i va
+    add i vb
+    dac i vb
+    idx va
+    idx vb
+    isp wordsLeft
+    jmp za3
+zax, jmp .
+
+// copyWords -- copy the wordCount words (1 or more) from va on to those
+// from vb on.
+// Takes wordCount, va and vb. Leaves va and vb past the words.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+copyWords,
+    dap zcx
+    lac wordCount
+    cma
+    dac wordsLeft
+zc3,
+    lac i va
+    dac i vb
+    idx va
+    idx vb
+    isp wordsLeft
+    jmp zc3
+zcx, jmp .
+
+vlx, 0                      // the return, a full address
+vc, 0                       // the converter, 0 to NCONV-1
+vk, 0                       // its voice; a stop's being read
+vj, 0                       // an earlier converter; a count
+vs, 0                       // the voice's slot: its record
+vnb, 0                      // its blocks
+vown, 0                     // 3 with own ends: each block after its end, loop and stride; else 0
+vcn, 0                      // a count
+vln, 0                      // a block's length
+vp, 0                       // a word of the header
+vm, 0                       // its zone map
+vpn, 0                      // the next block's place in core
+vsr, 0                      // the library's serial
+va, 0                       // a pointer, scratch
+vb, 0                       // another
+vsq, 0                      // the converter's stops in zsp
+vns, 0                      // how many: 1 to STOPS
+vfw, 0                      // the first's family word
+ven, 0                      // the premix's sample end
+vlo, 0                      // its loop
+vsn, 0                      // its speech: end - loop words
+vrs, 0                      // its NZONES (or 7) blocks' words
+vsi, 0                      // the stop being added, 0 to vns-1
+vzp, 0                      // a zone map's or the speech map's entry
+vdz, 0                      // the zone's loop, or its block
+vzc, 0                      // the zones left
+vev, 0                      // another stop's edge level
+staging, 0                  // the staging of another stop's last table read
+lastBlock, 0                // the block of the last table read
+speechEntry, 0              // speechStart's speech map word
+readZone, 0                 // a zone's loop, or its speech, for tableStart and speechStart
+wordCount, 0                // addWords's and copyWords's words
+speechStarted, 0            // the first zone's speech read started by readAhead
+vn6, 0                      // the stops without zone 6
+aheadZone, 0                // readAhead's zoneTables word
+wordsLeft, 0                // addWords's and copyWords's count
+    endlocal
+
+// blockStart -- start the read (drumStart) of block zbn of the header at
+// blockHeader into core at zds. nextAddress, nextLength and nextSum get
+// its address, its length and its sum as written (the header may be read
+// over before blockCheck checks it); the caller sets nextVoice, the
+// voice.
+// Takes zbn, blockHeader, zds and zbl, the length the block must have.
+// Returns 0 in AC if the header has the block and it is zbl words long,
+// else not 0, and nothing started.
+// Does not preserve IO.
+// Called via jsp.
+blockStart,
+    local zr1, zrx, zt
+    dap zrx
+    lac blockHeader
+    jda headerBlocks
+    dac vrl                 // B
+    lac zbn
+    jda vrg
+    jmp zr1
+    lac zbn
+    jda blockEntry
+    dac zt                  // its place, then its length and sum
+    lac i zt
+    dac xd
+    idx zt
+    lac i zt
+    SKIP_NEXT_IF_SAME zbl
+    jmp zr1
+    dac xc
+    dac nextLength
+    idx zt
+    lac i zt
+    dac nextSum
+    lac zds
+    dac xa
+    dac nextAddress
+    jsp drumStart
+    cla
+    jmp zrx
+zr1,
+    law 1
+zrx, jmp .
+
+zt, 0                       // the header's word
+    endlocal
+
+// blockWait -- wait for the read started last (drumWait), and make its
+// block the current one, for blockCheck: curAddress, curLength, curSum,
+// curPlace and curVoice from nextAddress ... nextVoice.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+blockWait,
+    local zwx
+    dap zwx
+    jsp drumWait
+    lac nextAddress
+    dac curAddress
+    lac nextLength
+    dac curLength
+    lac nextSum
+    dac curSum
+    lac nextPlace
+    dac curPlace
+    lac nextVoice
+    dac curVoice
+zwx, jmp .
+    endlocal
+
+// blockCheck -- check the current block's sum.
+// Has no arguments. Returns 0 in AC if the sum is as written, else not 0.
+// Does not preserve IO.
+// Called via jsp.
+blockCheck,
+    local zk1, zkx
+    dap zkx
+    lac curAddress
+    dac xa
+    lac curLength
+    dac xc
+    jsp vsm
+    SKIP_NEXT_IF_SAME curSum
+    jmp zk1
+    cla
+    jmp zkx
+zk1,
+    law 1
+zkx, jmp .
+    endlocal
+
+// zzm -- the zone map's address in a header: past its B blocks'
+// entries. Versions 3 and 4 have the steps 64 words on; a stop's speech
+// map is hdS words on.
+// Takes the header's address in AC. Returns the zone map's address in
+// AC, and the header in beh.
+// Preserves IO.
+// Called via jda.
+zzm, 0                      // AC, as jda stores it
+    local zzx
+    dap zzx
+    lac zzm
+    jda headerBlocks
+    jda blockEntry
+zzx, jmp .
+    endlocal
+
+// headerBlocks -- B of a header, its sign bit (own ends) taken off.
+// Takes the header's address in AC. Returns B in AC, the word as written
+// in hraw, and the header in beh.
+// Preserves IO.
+// Called via jda.
+headerBlocks, 0             // AC, as jda stores it
+    local hbx
+    dap hbx
+    lac headerBlocks
+    dac beh
+    add hdB
+    dac hraw
+    lac i hraw
+    dac hraw
+    and [0377777]
+hbx, jmp .
+    endlocal
+
+// blockEntry -- the address of a block's entry in the header at beh, or
+// past the last block's for block B.
+// Takes the block's number in AC and the header in beh. Returns the
+// address in AC.
+// Preserves IO.
+// Called via jda.
+blockEntry, 0               // AC, as jda stores it
+    local bex
+    dap bex
+    lac blockEntry
+    add blockEntry
+    add blockEntry
+    xct hdM                 // 3 or 6 words a block
+    add hdP
+    add beh
+bex, jmp .
+    endlocal
+
+// sinePlace -- version 5: the drum place of the percussion's sine in a
+// header, its word 18's block's place.
+// Takes the header's address in AC. Returns the place in AC, and the
+// header in beh.
+// Preserves IO.
+// Called via jda.
+sinePlace, 0                // AC, as jda stores it
+    local spx, spt
+    dap spx
+    lac sinePlace
+    dac beh
+    add [AT_SIX5 + 5]
+    dac spt
+    lac i spt
+    jda blockEntry
+    dac spt
+    lac i spt
+spx, jmp .
+
+spt, 0                      // a word of the header
+    endlocal
+
+// zcm -- compare the -zqn words from zqa on with those from zqb on.
+// Takes zqa, zqb and zqn, negative. Returns 0 in AC if they are the
+// same, else not 0; zqa, zqb and zqn are left at the first word that
+// differs, or past the last.
+// Preserves IO.
+// Called via jsp.
+zcm,
+    local zc1, zc2, zcx
+    dap zcx
+zc1,
+    lac i zqa
+    SKIP_NEXT_IF_SAME i zqb
+    jmp zc2
+    idx zqa
+    idx zqb
+    isp zqn
+    jmp zc1
+    cla
+    jmp zcx
+zc2,
+    law 1
+zcx, jmp .
+    endlocal
+
+zhp, 0                      // the header of the stop being added
+beh, 0                      // blockEntry's header
+hraw, 0                     // headerBlocks's B as written
+blockHeader, 0              // blockStart's header
+zbn, 0                      // its block
+zbl, 0                      // the block's length
+zds, 0                      // where it is read to
+nextAddress, 0              // the block whose read was started last: its address,
+nextLength, 0               //   its length,
+nextSum, 0                  //   its sum as written,
+nextPlace, 0                //   its place in the header (voiceBlockStart's),
+nextVoice, 0                //   its voice
+curAddress, 0               // the current block, blockWait's: its address,
+curLength, 0                //   its length,
+curSum, 0                   //   its sum as written,
+curPlace, 0                 //   its place,
+curVoice, 0                 //   its voice
+zqa, 0                      // zcm's words
+zqb, 0                      // and the others
+zqn, 0                      // their count, negative
+zmk, 0777777                // ostp's stops through this: none for an audition (0)
+zsp,                        // each converter's stops as vld takes them
+    table 0d16
+zoneTables,                 // the block of each zone's table, the stop vld is adding
+    table NZONES + 1
+
+// dxf -- read xc words (1 or more) from the drum at xd (field << 12 |
+// address) into core at xa, and wait for them: drumStart, then
+// drumWait.
+// Takes xd, xc and xa. Has no return value.
+// Does not preserve AC or IO.
+// Called via jsp.
+dxf,
+    local dfx
+    dap dfx
+    jsp drumStart
+    jsp drumWait
+dfx, jmp .
+    endlocal
+
+// drumStart -- start dxf's read: its own copy of xd, xa and xc is taken
+// (drumPlace, drumCore, drumLeft), so xa and xc are free for vsm
+// meanwhile, and its first part issued, the words to a bank's or a
+// field's end (drumPart); drumWait waits for it and issues the rest.
+// One read at a time: drumStart is called only with none under way.
+// Takes xd, xc and xa. Has no return value.
+// Does not preserve AC or IO.
+// Called via jsp.
+drumStart,
+    dap dpx
+    lac xd
+    dac drumPlace
+    lac xa
+    dac drumCore
+    lac xc
+    dac drumLeft
+    jmp dp0
+
+// drumPart -- issue the next part of the read at drumPlace, drumCore,
+// drumLeft: drumPartWords words, as many as fit before drumCore's bank
+// ends and drumPlace's field ends (a version 5 block runs on into the
+// fields after its own).
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+drumPart,
+    dap dpx
+dp0,
+    lac drumCore
+    and [07777]
+    cma
+    add [010000]
+    dac drumPartWords       // the words to the bank's end
+    lac drumPlace
+    and [07777]
+    cma
+    add [010000]            // the words to the field's end
+    sub drumPartWords
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp dp2
+    add drumPartWords
+    dac drumPartWords       // the field's end is the nearer
+dp2,
+    lac drumPartWords
+    sub drumLeft
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO // skip if drumLeft of them fit
+    jmp dp1
+    lac drumLeft
+    dac drumPartWords
+dp1,
+    lac drumPlace
+    ior [DRMRD]
+    lia
+    dia
+    lac drumPartWords
+    and [07777]             // 4096 is 0: the whole field
+    lia
+    dwc
+    lio drumCore
+    dcl
+dpx, jmp .
+
+// drumWait -- wait for the read under way, part by part, keeping the
+// screen drawn while xs is set (as msv does: a pen hit passed over, a
+// stopped display started again); ldw counts the words. With none under
+// way (drumPartWords 0) it returns at once.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+drumWait,
+    local dw3, dw4, dw5, dwx
+    dap dwx
+    lac drumPartWords
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp dwx
+dw3,
+    lac i [xs:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp dw5
+    dsp
+    jmp dw4
+    drs
+dw4,
+    dss
+    jmp dw5
+    lio [mlist:0]
+    dla
+dw5,
+    cks
+    lai
+    and [1]                 // bit 17: the transfer is not over
+    SKIP_NEXT_IF_AC_ZERO
+    jmp dw3
+    lac ldw
+    add drumPartWords
+    dac ldw
+    lac drumPlace
+    add drumPartWords
+    dac drumPlace
+    lac drumCore
+    add drumPartWords
+    dac drumCore
+    lac drumLeft
+    sub drumPartWords
+    dac drumLeft
+    dzm drumPartWords
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp dwx
+    jsp drumPart            // the rest, past the bank's end
+    jmp dw3
+dwx, jmp .
+    endlocal
+
+// vsm -- the add of xc words (1 or more) from xa on, as dacdrum sums
+// them: the odd ones, then four at a time, the sum kept in IO between
+// adds.
+// Takes xc and xa, which are kept. Returns the sum in AC.
+// Does not preserve IO.
+// Called via jsp.
+vsm,
+    local vs1, vs2, vs3, vs4, vsx, vq, vn
+    dap vsx
+    lac xa
+    dac vq
+    cli
+    lac xc
+    and [3]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp vs2
+    cma
+    dac vn
+vs1,
+    swp
+    add i vq
+    swp
+    idx vq
+    isp vn
+    jmp vs1
+vs2,
+    lac xc
+    sar 2s
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp vs4
+    cma
+    dac vn
+vs3,
+    swp
+    add i vq
+    swp
+    idx vq
+    swp
+    add i vq
+    swp
+    idx vq
+    swp
+    add i vq
+    swp
+    idx vq
+    swp
+    add i vq
+    swp
+    idx vq
+    isp vn
+    jmp vs3
+vs4,
+    lai
+vsx, jmp .
+
+vq, 0                       // the next word
+vn, 0                       // the adds left
+    endlocal
+
+// vrg -- skip if 0 <= AC < vrl (menu.ac's rng, for this bank).
+// Takes the number in AC and the limit in vrl. Skip-returns if the
+// number is in range, else returns normally.
+// Does not preserve AC; preserves IO.
+// Called via jda.
+vrg, 0                      // AC, as jda stores it
+    local vgx
+    dap vgx
+    lac vrg
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO // skip if not negative
+    jmp vgx
+    sub vrl
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE // skip if not below vrl
+    idx vgx
+vgx, jmp .
+    endlocal
+
+vrl, 0                      // vrg's limit
+xd, 0                       // dxf's drum place, field << 12 | address
+xc, 0                       // its words
+xa, 0                       // its core address
+drumPlace, 0                // the read under way: its drum place,
+drumCore, 0                 //   its core address,
+drumLeft, 0                 //   its words left,
+drumPartWords, 0            //   the part's words, 0 if none is under way
+ldw, 0                      // the words the last load (vld) read from the drum
+lok, 0                      // lvs and lsr hold what is loaded
+lsr, 0                      // the library's serial when it was loaded
+vst, slt1:1; slt2:1; slt3:1; slt4:1 // each converter's slot
+
+#include "menus.ac"
+
+constants
+
+start beg:0

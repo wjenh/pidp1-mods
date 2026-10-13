@@ -1,0 +1,11 @@
+# The standard library: the music program's nine voices, numbered 0-8 in
+# this order, as the tapes name them.
+flute.voice
+reed.voice
+plucked-bass.voice
+marimba.voice
+principal.voice
+gedackt.voice
+trumpet.voice
+bourdon.voice
+harpsichord.voice

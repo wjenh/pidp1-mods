@@ -1,0 +1,25 @@
+# The Flentrop of 1958, Adolphus Busch Hall: a stop
+# for dacvoice (voices/README.md, "Stops"). The division's lines (n,
+# frame, envelope, chiff) are the same in each of its stops, so they mix.
+name Speelfluit 4
+family Hoofdwerk
+n 10
+frame 8
+start 18 dB
+attack 0.012 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.05 s
+chiff 0.012 s 16 dB 2 16
+# Hoofdwerk: an open flute at 4 feet, few harmonics.
+harmonics 1 1.0  2 0.18  3 0.08  4 0.03  5 0.015
+rank 2 1.0
+level 3 dB
+# The voicing (voices/README.md, "The voicing"): the speech by the pipe's
+# size, and Busch Hall, where the organ stands.
+rise 10
+room busch
+# The celeste: a second read of the table at half the rate, 2 cents
+# sharp, a rank a little off the unison.
+celeste 2

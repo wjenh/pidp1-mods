@@ -1,0 +1,33 @@
+# The Highland bagpipe's three drones in one voice, played at A2 so they
+# take one converter: the bass drone (A2) and the two tenors (A3), an
+# octave above it, so the tenors' partials fall on A2's even harmonics.
+# Each drone is a cylindrical bore on a single cane reed: the odd
+# harmonics lead, rich far up. A drone's harmonic k at (1 if k is odd,
+# 0.4 if even) k^-0.7 / (1 + (k f0 / 2500)^2); the voice's harmonic k
+# the bass drone's (f0 110 Hz) plus, for an even k, sqrt(2) times a
+# tenor's k / 2 (f0 220 Hz; two tenors at equal power), scaled to the
+# loudest; the amplitudes at full precision. They swell as the bag
+# fills and die away when it empties. No céleste: its second read at
+# half the rate put a steady cluster of images about 10 kHz (8-12 kHz 10
+# dB louder with it), heard as a constant high pitch.
+name bagpipe drones
+family pipes
+n 10
+harmonics 1 0.6057402233013802  2 1.0  3 0.27646460540168416  4 0.29421650810672256
+harmonics 5 0.1876378202884773  6 0.4366213528737248  7 0.14197032957712413  8 0.16613662298361204
+harmonics 9 0.11269180918759712  10 0.27366068387693554  11 0.09177962267364008  12 0.1099343771462118
+harmonics 13 0.07593376092841682  14 0.18709997978403492  15 0.06350809175840243  16 0.07685170301166425
+harmonics 17 0.05355816102004141  18 0.1330216859360739  19 0.04548121730996281  20 0.0554096057947664
+harmonics 21 0.038861148631458904  22 0.09710471987610508  23 0.033394542947194295  24 0.04091395092697705
+harmonics 25 0.028852012710187072  26 0.07247956856688217  27 0.025056048951714496  28 0.03085471898290189
+harmonics 29 0.021867208756279555  30 0.05520209237611583  31 0.01917484509246995  32 0.023723425107527504
+harmonics 33 0.016890525024404  34 0.042830878841653076  35 0.014943169352462671  36 0.018567589954277194
+harmonics 37 0.013275370040341782  38 0.03380213198584997  39 0.011840554300833347  40 0.01477018827048744
+bright 0
+timbres 0
+start 30 dB
+attack 0.15 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.3 s

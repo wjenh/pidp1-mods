@@ -1,0 +1,29 @@
+# The Highland bagpipe's chanter: a conical double reed blown at a
+# constant pressure from the bag, so it has no dynamics and no vibrato,
+# and one timbre held at the peak is the instrument. Every harmonic is
+# present, the fundamental under the 2nd to 5th: a bright, nasal tone,
+# two formants near 1.3 kHz and 3 kHz across the chanter's octave (G4 to
+# A5). Harmonic h at (R(f, 1300, 1.5) + 0.8 R(f, 3000, 2)) / (1 + (f /
+# 6000)^2), f = h x 587.33 Hz (D5, the chanter's middle), R(f, c, q) =
+# 1 / sqrt(1 + q^2 (f / c - c / f)^2), scaled to the loudest; the
+# amplitudes at full precision. It speaks at once: under a slur the
+# player only changes the step. At n 7 (28.6 kHz), not 10: at 20 kHz its
+# strong 4-8 kHz harmonics put images at 12-16 kHz, 16 dB under the
+# whole, heard as a high line moving against the tune; at 28.6 kHz they
+# fall at 20-25 kHz (33 dB under in 12-16 kHz).
+name bagpipe chanter
+family pipes
+n 7
+harmonics 1 0.393504720184239  2 1.0  3 0.8920369187915449  4 0.8225540446661367
+harmonics 5 0.8412457031444863  6 0.6421393019780995  7 0.4476391865573785  8 0.3257819957472937
+harmonics 9 0.24725865984754863  10 0.19338508980990038  11 0.15460341982128445  12 0.125704497554549
+harmonics 13 0.10361282233290636  14 0.08638855183242614  15 0.07274427889659014  16 0.06179173551624209
+harmonics 17 0.052899329610807115  18 0.04560715340231982  19 0.03957377535699416  20 0.03454160229686666
+bright 0
+timbres 0
+start 30 dB
+attack 0.02 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.05 s

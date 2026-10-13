@@ -1,0 +1,29 @@
+# The Flentrop of 1958, Adolphus Busch Hall: a stop
+# for dacvoice (voices/README.md, "Stops"). The division's lines (n,
+# frame, envelope, chiff) are the same in each of its stops, so they mix.
+name Mixtuur III
+family Pedaal
+n 10
+frame 16
+start 18 dB
+attack 0.025 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.07 s
+chiff 0.020 s 18 dB 1.5 10
+# Pedaal: three principal ranks, 2, 1 1/3 and 1 foot, in the 16-foot frame; the
+# upper two break back an octave in zone 6, cut for C#7. A usual
+# composition.
+harmonics 1 1.0  2 0.4  3 0.2  4 0.1
+rank 8 1.0
+rank 12 0.9 break 6
+rank 16 0.8 break 6
+level 3 dB
+# The voicing (voices/README.md, "The voicing"): the speech by the pipe's
+# size, and Busch Hall, where the organ stands.
+rise 10
+room busch
+# The celeste: a second read of the table at half the rate, 2 cents
+# sharp, a rank a little off the unison.
+celeste 2

@@ -1,0 +1,25 @@
+# The Flentrop of 1958, Adolphus Busch Hall: a stop
+# for dacvoice (voices/README.md, "Stops"). The division's lines (n,
+# frame, envelope, chiff) are the same in each of its stops, so they mix.
+name Regaal 8
+family Borstwerk
+n 10
+frame 8
+start 18 dB
+attack 0.012 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.05 s
+chiff 0.008 s 15 dB 3 14
+# Borstwerk: a short-resonator reed, buzzy, its upper harmonics strong.
+harmonics 1 0.6  2 0.7  3 0.8  4 0.75  5 0.7  6 0.65  7 0.6  8 0.55
+harmonics 9 0.5  10 0.45  11 0.4  12 0.35  13 0.3  14 0.27  15 0.24  16 0.2  18 0.15  20 0.1
+level 2 dB
+# The voicing (voices/README.md, "The voicing"): the speech by the pipe's
+# size, and Busch Hall, where the organ stands.
+rise 10
+room busch
+# The celeste: a second read of the table at half the rate, 2 cents
+# sharp, a rank a little off the unison.
+celeste 2

@@ -1,0 +1,14 @@
+# The flute: holding at a sustain level as a wind instrument does.
+# dacvoice remakes ../lib/flute.voice from it.
+name flute
+family winds
+n 10
+harmonics 1 1.0  2 0.3  3 0.12  4 0.05  5 0.03
+bright 0.3
+timbres 0 10 20
+start 30 dB
+attack 0.045 s
+peak 0 dB
+decay 7.5 dB/s
+sustain 6 dB
+release 0.045 s

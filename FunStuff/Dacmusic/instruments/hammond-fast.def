@@ -1,0 +1,22 @@
+# The Hammond B3 as a stop for dacvoice: as hammond-slow.def, but the
+# Leslie at its fast speed (tremolo), about 6.7 Hz, the swings deeper. A
+# family's stops must be alike in their Leslie, so it is a family of its own.
+name B3 fast
+family Leslie fast
+n 10
+frame 16
+start 40 dB
+attack 0.005 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.02 s
+chiff 0.003 s 14 dB 8 64
+harmonics 1 1.0
+rank 1 1.0
+rank 3 1.0
+rank 2 1.0
+level 0 dB
+vibrato 6.7 Hz 15 cents free
+leslie 3 dB 6 dB
+# No interpolate, as hammond-slow.def says.

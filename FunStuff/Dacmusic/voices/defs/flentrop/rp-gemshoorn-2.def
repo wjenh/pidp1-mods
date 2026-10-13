@@ -1,0 +1,25 @@
+# The Flentrop of 1958, Adolphus Busch Hall: a stop
+# for dacvoice (voices/README.md, "Stops"). The division's lines (n,
+# frame, envelope, chiff) are the same in each of its stops, so they mix.
+name Gemshoorn 2
+family Rugpositief
+n 10
+frame 8
+start 18 dB
+attack 0.012 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.05 s
+chiff 0.010 s 16 dB 2 12
+# Rugpositief: a conical pipe at 2 feet, a strong second and third, then little.
+harmonics 1 1.0  2 0.35  3 0.25  4 0.08  5 0.05  6 0.02
+rank 4 1.0
+level 4 dB
+# The voicing (voices/README.md, "The voicing"): the speech by the pipe's
+# size, and Busch Hall, where the organ stands.
+rise 10
+room busch
+# The celeste: a second read of the table at half the rate, 2 cents
+# sharp, a rank a little off the unison.
+celeste 2

@@ -1,0 +1,17 @@
+# The plucked bass: harmonic h at 1 / h^1.2, dying away and darkening as
+# it goes; the amplitudes at full precision, so dacvoice remakes
+# ../lib/plucked-bass.voice exactly.
+name plucked bass
+family plucked
+n 18
+harmonics 1 1.0  2 0.4352752816480621  3 0.2675805205867436  4 0.18946457081379978
+harmonics 5 0.1449559327355391  6 0.11647118646192989  7 0.09680155905721156  8 0.0824692444233059
+harmonics 9 0.0715993349974727  10 0.06309573444801933  11 0.05627672006216778  12 0.050697028491100485
+bright 0.8
+timbres 0 10 20
+start 30 dB
+attack 0.004 s
+peak 0 dB
+decay 24 dB/s
+sustain none
+release 0.05 s

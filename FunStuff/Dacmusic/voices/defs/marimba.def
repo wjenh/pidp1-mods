@@ -1,0 +1,15 @@
+# The marimba: a bar's partials at 1, 4 and 10 times the fundamental,
+# struck and dying fast, the upper partials first. dacvoice remakes
+# ../lib/marimba.voice from it.
+name marimba
+family percussion
+n 12
+harmonics 1 1.0  4 0.35  10 0.08
+bright 1.5
+timbres 0 10 20
+start 30 dB
+attack 0.002 s
+peak 0 dB
+decay 40 dB/s
+sustain none
+release 0.03 s

@@ -1,0 +1,10 @@
+# Recorded instruments, drum 1 of 2: the strings and the brass. The
+# recorded voices do not fit one drum. The flute is voice 0: the player
+# loads voice 0 for a converter the tape gives no part, and it is the
+# smallest voice (1,536 words), so each recorded voice fits in core
+# beside it.
+../voices/lib/flute.voice
+lib/violin.voice
+lib/strings.voice
+lib/trumpet.voice
+lib/horn.voice

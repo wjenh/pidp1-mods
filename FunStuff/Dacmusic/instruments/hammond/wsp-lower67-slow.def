@@ -1,0 +1,19 @@
+# A Hammond preset: wsp lower67, drawbars 33 2000 000, the Leslie slow.
+name WSP LOWER67 SLOW
+family LESLIE SLOW
+n 10
+frame 16
+start 40 dB
+attack 0.005 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.02 s
+chiff 0.003 s 14 dB 8 64
+harmonics 1 1.0
+rank 1 0.1778
+rank 3 0.1778
+rank 2 0.1259
+level 0 dB
+vibrato 0.8 Hz 4 cents free
+leslie 2 dB 4 dB

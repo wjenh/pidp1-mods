@@ -1,0 +1,1499 @@
+// The music program's pulldown lists, opened from menu.ac's openers, and
+// the audition: a voice heard from its row before it is chosen.
+//
+// Included by dacmusic.am1 in bank 1, after the voices' loader, whose
+// directory (dir), drd, vld, vrg and vrl it uses. menu.ac's words, texts
+// and routines are in bank 0, reached through their full addresses
+// (orch:0); the window is open throughout, as in the loader. Uses
+// dacdefs.ah and TYPE340/type340defs.ah.
+//
+// An armed hit on an opener opens its list (lsto): the screen's gate
+// (mgt) jumps here instead of to the menu's body, so the 340 draws only
+// the list's screen: a header naming the field, lit, then the rows from
+// a fixed top, LPITCH apart, then a tail word that jumps to the lit row's
+// box, to the sublist, or to the end. A row is its text and a tail, each
+// a 340 save, so a voice's or a family's row shows its name where the
+// directory holds it. An instrument's rows are the library's families,
+// each ending in >; lighting one opens its voices beside it, its top
+// moved up if its last row would fall off the screen. Lighting is done by
+// moving the pen onto a row; the lit row is drawn brighter, and a 32-unit
+// box, OK, follows it, the sublist's box alone while one is open. OK
+// chooses the lit row: its value goes into orch, or per, and the list
+// closes; but OK on an organ stop toggles it among the converter's stops
+// (stg), up to STOPS of one division, and the list stays open, the stops
+// marked * in it. On the header's line, DONE closes it keeping the
+// toggles, and CANCEL closes it with the converter's voice and stops put
+// back as the list found them (lsv); a fresh press on the header itself
+// closes it as DONE does. A list stays open until one of these closes
+// it. A fresh press on the lit voice plays middle C in it (aud).
+//
+// Every row's band starts 9 units below its text, so its thresholds are
+// odd and drc's points, always even, fall in one band or the next, never
+// on a threshold. The rows lie on one grid, the sublist's too, so a hit's
+// grid row and its column tell what it is.
+//
+// The 340 is stopped whenever a list's words change: a list opens and its
+// rows are lit at a frame's end, when the menu has seen the 340 stop. Even
+// so, the gate is written last when a list opens and first when it closes.
+
+#define LAP 0d22                // the pen's aperture while a list is open, for rows 36 apart
+#define LPITCH 0d36             // the rows' pitch
+#define LTOP 0d900              // grid row 0's baseline
+#define LMAX 0d22               // the grid's rows, the most a sublist shows
+#define LBND (LTOP + 0d26)      // grid row k's band: up to LBND - 36k, from 35 below it
+#define LHY 0d960               // the header's baseline
+#define LHB 0d939               // its band, from here up
+#define XDN 0d700               // DONE, on the header's line
+#define XCN 0d840               // CANCEL
+#define XCB 0d811               // a header hit's column: CANCEL from here, DONE or the header left
+#define LX 0d60                 // the list's rows (a family and its > end by 242)
+#define LBX 0d270               // its box
+#define SX 0d330                // the sublist's rows (17 letters end by 568)
+#define SBX 0d596               // its box
+#define XLB 0d257               // a hit's column: the list's rows left of XLB, its box left
+#define XSL 0d317               //   of XSL, the sublist's rows left of XSB, its box from
+#define XSB 0d581               //   there
+#define RW 6                    // a row's words (rput)
+#define LROWS MAXF              // the list's rows at most: the families
+#define SROWS LMAX              // the sublist's
+#define RLO (intensity(5) lpon next(point)) // a row's first word
+#define RHI (intensity(7) lpon next(point)) // the lit row's
+#define BOXS 0d16               // the box's side, in vector units: 32 at scale 1
+#define BYB 0d8                 // its bottom, below the row's baseline
+#define BTY 0d1                 // OK's baseline, above the row's
+#define BXQ 0d8                 // the box's second y word, OK's
+#define NORW 5                  // the octave list's rows
+#define PITCHC 0d38             // middle C, pdp1m13's pitch (2 is C1)
+#define AUDN 0d200000           // the audition's note, in cycles: 1 s
+
+// A box at x bx: its square, then OK in it; words 1 and BXQ are its y,
+// which bxy patches.
+#define BOX(bx) intensity(5) lpon next(point); y(0) next(point); x(bx) next(vector); \
+    visible right deltax(BOXS); visible up deltay(BOXS); visible left deltax(BOXS); \
+    visible down deltay(BOXS) end; \
+    next(point); y(0) next(point); x((bx) + 2) next(character)
+
+// lsto -- open the list of the opener act names, built for the program's
+// state: an instrument's from the directory, read again, so a library
+// written meanwhile is seen. The value the field has is lit, and for an
+// instrument its voice in its family's sublist; a value no row has
+// lights none. A sublist marks the converter's organ stops with *.
+// Argument: ltg (bank 0), the opener: 0-3 a converter's part, 4-7 its
+// instrument, 8-11 its octave, 12 the parts a movement, 16-19 its place.
+// No return value.
+// Does not preserve AC or IO.
+// Called via crossBankjsp, from bank 0 (act).
+lsto,
+    local ls1, ls2, ls3, ls4, ls5, ls6, ls7, ls8, lsx, lp1, lp2, lp3, li1, li2, li3, lo1, lo3, lm1, lm2, lq1, lq2, lt1, lt2, lt3
+    dac lsx
+    lac i [ltg:0]
+    and [3]
+    dac lcv                 // the converter
+    ral 6s
+    dac lcs                 // its IOTs: converter 1's plus this
+    lac i [ltg:0]
+    sar 2s
+    dac lkd                 // 0 a part, 1 an instrument, 2 an octave, 3 the parts a movement
+    // Where OK puts its row's value: the converter's word of orch, or per.
+    lac lcv
+    add lcv
+    add lcv
+    add lkd
+    add [orch:0]
+    dac ldst
+    // The header: the converter and the field, or PARTS A MOVEMENT.
+    lac [cvt:1]
+    add lcv
+    dac lt1
+    lac i lt1
+    ior [SAVEC]
+    dac hda
+    lac [hbt:1]
+    add lkd
+    dac lt1
+    lac i lt1
+    ior [SAVEC]
+    dac hdb
+    lac lkd
+    SKIP_NEXT_IF_SAME [3]
+    jmp ls8
+    law per:0
+    dac ldst
+    lac [SAVEC | smv:1]
+    dac hda
+ls8,
+    lac lkd
+    SKIP_NEXT_IF_SAME [4]
+    jmp ls1
+    law opl:0               // a place: the converter's word of opl
+    add lcv
+    dac ldst
+    // The rows, by the list's kind.
+ls1,
+    lac [lrw:1]
+    dac rwp
+    law LTOP
+    dac rwy
+    law LX
+    dac rwx
+    lac [lvt:1]
+    dac lvp
+    dzm lnr
+    lac lkd
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp li1
+    SKIP_NEXT_IF_DIFFERENT [2]
+    jmp lo1
+    SKIP_NEXT_IF_DIFFERENT [3]
+    jmp lm1
+    SKIP_NEXT_IF_DIFFERENT [4]
+    jmp lq1
+    // A part: PART 1 to PART per, each its number less 1, then NONE, -1.
+    lac i [per:0]
+    dac lt2
+    sub [NCONV + 1]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp lp1
+    law NCONV
+    dac lt2
+lp1,
+    lac [spt:1]
+    dac rwt
+    dzm rvl
+lp2,
+    lac rvl
+    sub lt2
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lp3
+    law pnm:0
+    add rvl
+    dac lt1
+    lac i lt1
+    dac rtl
+    jsp radd
+    idx rvl
+    jmp lp2
+lp3,
+    law snn:0
+    dac rwt
+    law sbl:0
+    dac rtl
+    law i 1
+    dac rvl
+    jsp radd
+    jmp ls2
+    // An instrument: the library's families, each its number, each owning
+    // its voices; with no library, why in the header, and no rows.
+li1,
+    jsp drd
+    SKIP_NEXT_IF_AC_ZERO
+    jmp li2
+    lac [sgt:1]
+    dac rtl
+    dzm rvl
+li3,
+    lac rvl
+    sub dir + 5
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ls2
+    lac rvl
+    ral 2s                  // FAMW (4) words a family
+    add [dir:1 + DIRH]
+    dac rwt
+    jsp radd
+    idx rvl
+    jmp li3
+li2,
+    lac [SAVEC | snv:0]
+    dac hda
+    lac [SAVEC | sbl:0]
+    dac hdb
+    jmp ls2
+    // An octave: 32, 16, 8, 4 and 2 feet, each its shift from octbl.
+lo1,
+    law sbl:0
+    dac rtl
+    lac [orw:1]
+    dac lt2
+    law i NORW
+    dac lt3
+lo3,
+    law onam:0
+    add i lt2
+    dac lt1
+    lac i lt1
+    dac rwt
+    law octbl:0
+    add i lt2
+    dac lt1
+    lac i lt1
+    dac rvl
+    jsp radd
+    idx lt2
+    isp lt3
+    jmp lo3
+    jmp ls2
+    // The parts a movement: 1 to NCONV, each itself.
+lm1,
+    law sbl:0
+    dac rtl
+    law 1
+    dac rvl
+lm2,
+    law pnm:0
+    add rvl
+    sub [1]
+    dac lt1
+    lac i lt1
+    dac rwt
+    jsp radd
+    idx rvl
+    SKIP_NEXT_IF_SAME [NCONV + 1]
+    jmp lm2
+    jmp ls2
+    // A place: LEFT to RIGHT, each its value in plv.
+lq1,
+    law sbl:0
+    dac rtl
+    lac [pnt:1]
+    dac lt2
+    lac [plv:1]
+    dac lt1
+    law i NPL
+    dac lt3
+lq2,
+    lac i lt2
+    dac rwt
+    lac i lt1
+    dac rvl
+    jsp radd
+    idx lt2
+    idx lt1
+    isp lt3
+    jmp lq2
+    // The list built: its tail, then the value now lit, for an
+    // instrument its voice's family, if the library has the voice.
+ls2,
+    jsp ltal
+    dac ltw
+    dzm llt
+    dzm snr
+    dzm slt
+    dzm okq
+    lac [lvt:1]
+    dac lkt
+    lac lnr
+    dac lkn
+    lac i ldst
+    dac lt3                 // the value now
+    lac lkd
+    SKIP_NEXT_IF_SAME [1]
+    jmp ls6
+    lac i [ninst:0]
+    dac vrl
+    lac lt3
+    jda vrg
+    jmp ls4
+    lac lt3
+    ral 3s                  // ENTRY (8) words a voice, its family's number last
+    add [dir:1 + EBASE + ENTRY - 1]
+    dac lt1
+    lac i lt1
+    and [FAMMASK]           // a stop's flag off
+    jmp ls3
+ls4,
+    law i 0                 // -0: no row's value
+    jmp ls3
+ls6,
+    lac lkd
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ls7
+    lac lt3
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    law i 1                 // a part: any negative is none, as fill shows it
+    jmp ls3
+ls7,
+    lac lt3
+ls3,
+    jda lkp
+    SKIP_NEXT_IF_SAME lnr
+    jda lrl
+    lac lkd
+    SKIP_NEXT_IF_SAME [1]
+    jmp ls5
+    lac [svn:1]
+    dac lkt
+    lac snr
+    dac lkn
+    lac lt3
+    jda lkp
+    SKIP_NEXT_IF_SAME snr
+    jda srl
+    // Open: what CANCEL puts back, the list's aperture, then the gate,
+    // last.
+ls5,
+    lac i ldst
+    dac lsv
+    lac lcv
+    add lcv
+    add lcv
+    add [ostp:0]
+    dac lt1
+    lac i lt1
+    dac lsv + 1
+    idx lt1
+    lac i lt1
+    dac lsv + 2
+    idx lt1
+    lac i lt1
+    dac lsv + 3
+    dzm lup
+    law 1
+    dac i [lon:0]
+    law LAP
+    dac i [pap:0]
+    lac [jump lst:1]
+    dac i [mgt:0]
+    crossBankrtn(lsx, NOEEM)
+
+lsx, 0                      // the return, a full address
+lt1, 0                      // a pointer
+lt2, 0                      // another; per, the rows a part's list has
+lt3, 0                      // a count; the value now
+    endlocal
+
+// lfe -- a frame of the open list has ended (the 340 stopped): an
+// audition's note that is over is halted, then the frame's first hit
+// (lhw) acted on. A press is fresh when the menu's arm was set, the pen
+// away for AWAY first; any hit uses it up. Until the first fresh press
+// no hit counts: a place's opener lies under the rows, and the press
+// that opened the list, still held, would light the row it is on. A hit
+// on a row lights it; on a box, with a row lit since the list opened or
+// the press fresh, chooses its row, so a pen still on the opener when
+// the list appears cannot choose, and toggles a stop once, so a pen held
+// there toggles nothing more; on the header's line, fresh, closes it,
+// CANCEL putting the converter's voice and stops back; on the lit voice,
+// fresh, plays it.
+// Arguments: hit, arm and lhw, in bank 0.
+// No return value.
+// Does not preserve AC or IO.
+// Called via crossBankjsp, from bank 0 (menu.ac's loop).
+lfe,
+    local lf1, lf2, lf3, lf4, lf5, lf6, lf7, lf8, lf9, lfr, lfx, frs, fx, fy, fk, ft
+    dac lfx
+    jsp aul
+    lac i [hit:0]
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lfr
+    lac i [arm:0]
+    dac frs
+    dzm i [arm:0]
+    ior lup
+    dac lup
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lfr                 // the press that opened the list, still held
+    lac i [lhw:0]
+    and [0777]
+    ral 1s
+    dac fy
+    lac i [lhw:0]
+    rar 9s
+    and [0777]
+    ral 1s
+    dac fx
+    lac fy
+    sub [LHB]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lf1                 // the header
+    // Its grid row.
+    lac [LBND]
+    sub fy
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp lfr                 // between the header and the rows
+    dac ft
+    dzm fk
+lf2,
+    lac ft
+    sub [LPITCH]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp lf3
+    dac ft
+    idx fk
+    jmp lf2
+    // Its column.
+lf3,
+    lac fx
+    sub [XLB]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp lf4                 // a row of the list
+    sub [XSL - XLB]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp lf5                 // its box
+    sub [XSB - XSL]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp lf6                 // a row of the sublist
+    // The sublist's box: its lit voice chosen, or a stop toggled.
+    lac slt
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lfr
+    lac okq
+    ior frs
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lfr
+    lac slt
+    sub [1]
+    add [svn:1]
+    dac ft
+    lac i ft
+    jda stg
+    jmp lf9
+    dzm okq                 // one toggle a press: the pen held on the box toggles nothing more
+    jmp lfr
+    // The list's box: its lit row chosen, unless the row owns a sublist,
+    // whose box is the one drawn.
+lf5,
+    lac llt
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lfr
+    lac lkd
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp lfr
+    lac okq
+    ior frs
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lfr
+    lac llt
+    sub [1]
+    add [lvt:1]
+    dac ft
+    lac i ft
+lf8,
+    dac i ldst
+lf9,
+    jsp lcls
+    jmp lfr
+    // A row of the list: lit.
+lf4,
+    lac fk
+    sub lnr
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lfr
+    law 1
+    dac okq
+    lac fk
+    jda lrl
+    jmp lfr
+    // A row of the sublist: lit, or heard if it is lit and pressed afresh.
+lf6,
+    lac fk
+    sub sk0
+    dac ft
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp lfr
+    sub snr
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp lfr
+    law 1
+    dac okq
+    lac ft
+    add [1]
+    SKIP_NEXT_IF_SAME slt
+    jmp lf7
+    lac frs
+    SKIP_NEXT_IF_AC_ZERO
+#ifdef NOAUD
+    nop                     // NOAUD builds: no note
+#else
+    jsp aud
+#endif
+    jmp lfr
+lf7,
+    lac ft
+    jda srl
+    jmp lfr
+    // The header's line, pressed afresh: closed, by CANCEL with the
+    // converter's voice and stops put back, by DONE or the header itself
+    // with them kept.
+lf1,
+    lac frs
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lfr
+    lac fx
+    sub [XCB]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jsp lrst                // CANCEL
+    jsp lcls
+lfr,
+    crossBankrtn(lfx, NOEEM)
+
+lfx, 0                      // the return, a full address
+frs, 0                      // the press is fresh
+fx, 0                       // the hit's x
+fy, 0                       // and its y
+fk, 0                       // its grid row
+ft, 0                       // scratch: the band's rest; a sublist's row; a pointer
+    endlocal
+
+// lcls -- close the list: the gate back to the menu's body first, the
+// menu's aperture, and the pen must leave before its next hit counts. An
+// audition still sounding stops.
+// Has no arguments and no return values.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+lcls,
+    local lcx
+    dap lcx
+    lac [jump mbody:0]
+    dac i [mgt:0]
+    dzm i [lon:0]
+    law PENAP
+    dac i [pap:0]
+    dzm i [arm:0]
+    lac [AWAY]
+    dac i [qt:0]
+    jsp ahl
+lcx, jmp .
+    endlocal
+
+// lrst -- CANCEL: put the field's value and the converter's stops back
+// as the list found them (lsv).
+// Has no arguments and no return values.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+lrst,
+    local rsx, rsq
+    dap rsx
+    lac lsv
+    dac i ldst
+    lac lcv
+    add lcv
+    add lcv
+    add [ostp:0]
+    dac rsq
+    lac lsv + 1
+    dac i rsq
+    idx rsq
+    lac lsv + 2
+    dac i rsq
+    idx rsq
+    lac lsv + 3
+    dac i rsq
+rsx, jmp .
+rsq, 0
+    endlocal
+
+// lrl -- light list row AC, unless it is lit: the row lit before goes
+// back to intensity 5, its sublist closes, and the new row gets its
+// sublist (a family's) or the list's box.
+// Argument: AC the row.
+// No return value.
+// Does not preserve AC; preserves IO.
+// Called via jda.
+lrl, 0                      // AC, as jda stores it
+    local lr1, lr2, lrx, lq
+    dap lrx
+    lac lrl
+    add [1]
+    SKIP_NEXT_IF_DIFFERENT llt
+    jmp lrx                 // lit already
+    lac [jump lend:1]       // nothing past the rows until the new row's box or sublist
+    dac i ltw
+    dzm snr
+    dzm slt
+    lac llt
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp lr1
+    sub [1]
+    jda r6
+    add [lrw:1]
+    dac lq
+    lac [RLO]
+    dac i lq
+lr1,
+    lac lrl
+    add [1]
+    dac llt
+    lac lrl
+    jda r6
+    add [lrw:1]
+    dac lq
+    lac [RHI]
+    dac i lq
+    lac lkd
+    SKIP_NEXT_IF_SAME [1]
+    jmp lr2
+    // A family: its voices' sublist, from its row down.
+    lac lrl
+    dac sk0
+    add [lvt:1]
+    dac lq
+    lac i lq
+    jda sbld
+    lac [jump srw:1]
+    dac i ltw
+    jmp lrx
+    // Any other: the list's box, beside it.
+lr2,
+    lac [lbx:1]
+    dac bxp
+    lac lrl
+    jda gry
+    jda bxy
+    lac [jump lbx:1]
+    dac i ltw
+lrx, jmp .
+
+lq, 0                       // a row's first word
+    endlocal
+
+// sbld -- build the sublist of family AC: the library's voices whose
+// entry names it, in the library's order, at most SROWS (dacdrum refuses
+// a larger family), into svn and srw; its top is grid row sk0, the
+// owning row, moved up if its last row would be past the grid's. None is
+// lit.
+// Arguments: AC the family; sk0 the owning row.
+// No return value.
+// Does not preserve AC; preserves IO.
+// Called via jda.
+sbld, 0                     // AC, as jda stores it
+    local sb1, sb2, sb3, sb4, sb5, sb6, sb7, sb8, sbr, sv, sq, sj
+    dap sbr
+    lac [svn:1]
+    dac sq
+    dzm snr
+    dzm sv
+sb1,
+    lac sv
+    sub i [ninst:0]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp sb3
+    lac sv
+    ral 3s                  // ENTRY (8) words a voice, its family's number last
+    add [dir:1 + EBASE + ENTRY - 1]
+    dac sj
+    lac i sj
+    and [FAMMASK]           // a stop's flag off
+    SKIP_NEXT_IF_SAME sbld
+    jmp sb2
+    lac snr
+    SKIP_NEXT_IF_DIFFERENT [SROWS]
+    jmp sb3
+    lac sv
+    dac i sq
+    idx sq
+    idx snr
+sb2,
+    idx sv
+    jmp sb1
+sb3,
+    lac sk0
+    add snr
+    sub [LMAX]
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp sb4
+    jmp sb5
+sb4,
+    law LMAX
+    sub snr
+    dac sk0
+sb5,
+    lac [srw:1]
+    dac rwp
+    lac sk0
+    jda gry
+    dac rwy
+    law SX
+    dac rwx
+    law sbl:0
+    dac rtl
+    lac [svn:1]
+    dac sq
+    dzm sj
+sb6,
+    lac sj
+    SKIP_NEXT_IF_DIFFERENT snr
+    jmp sb7
+    law sbl:0
+    dac rtl
+    lac i sq
+    jda sin
+    jmp sb8
+    lac [ssr:1]
+    dac rtl                 // one of the converter's stops: marked
+sb8,
+    lac i sq
+    ral 3s                  // the voice's name, its entry's first words
+    add [dir:1 + EBASE]
+    dac rwt
+    jsp rput
+    idx sq
+    idx sj
+    jmp sb6
+sb7,
+    jsp ltal
+    dac stw
+    dzm slt
+sbr, jmp .
+
+sv, 0                       // a voice of the library
+sq, 0                       // svn's next word
+sj, 0                       // its entry's family word; the sublist's row
+    endlocal
+
+// srl -- light sublist row AC, unless it is lit: the row lit before goes
+// back to intensity 5, and the sublist's box moves beside the new one.
+// Argument: AC the row.
+// No return value.
+// Does not preserve AC; preserves IO.
+// Called via jda.
+srl, 0                      // AC, as jda stores it
+    local sr1, srx, sq
+    dap srx
+    lac srl
+    add [1]
+    SKIP_NEXT_IF_DIFFERENT slt
+    jmp srx                 // lit already
+    lac [jump lend:1]
+    dac i stw
+    lac slt
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp sr1
+    sub [1]
+    jda r6
+    add [srw:1]
+    dac sq
+    lac [RLO]
+    dac i sq
+sr1,
+    lac srl
+    add [1]
+    dac slt
+    lac srl
+    jda r6
+    add [srw:1]
+    dac sq
+    lac [RHI]
+    dac i sq
+    lac [sbx:1]
+    dac bxp
+    lac srl
+    add sk0
+    jda gry
+    jda bxy
+    lac [jump sbx:1]
+    dac i stw
+srx, jmp .
+
+sq, 0                       // a row's first word
+    endlocal
+
+// sin -- skip if voice AC is an organ stop and one of converter lcv's:
+// orch's voice, or one of ostp's.
+// Arguments: AC the voice; lcv the converter.
+// Skips if it is.
+// Does not preserve AC; preserves IO.
+// Called via jda.
+sin, 0                      // AC, as jda stores it
+    local si1, si2, six, siq, sic
+    dap six
+    lac sin
+    ral 3s                  // ENTRY (8) words a voice, its family's word last
+    add [dir:1 + EBASE + ENTRY - 1]
+    dac siq
+    lac i siq
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp six                 // not a stop
+    lac lcv
+    add lcv
+    add lcv
+    add [orch:0 + 1]
+    dac siq
+    lac i siq
+    SKIP_NEXT_IF_DIFFERENT sin
+    jmp si2
+    lac lcv
+    add lcv
+    add lcv
+    add [ostp:0]
+    dac siq
+    law i 3                 // STOPS - 1
+    dac sic
+si1,
+    lac i siq
+    sub [1]
+    SKIP_NEXT_IF_DIFFERENT sin
+    jmp si2
+    idx siq
+    isp sic
+    jmp si1
+    jmp six
+si2,
+    idx six
+six, jmp .
+
+siq, 0                      // a word of the converter's
+sic, 0                      // a count
+    endlocal
+
+// stg -- voice AC chosen on converter lcv from its family's sublist, the
+// row lit. An organ stop of the division the converter's first stop is
+// in is toggled among its stops: taken out, the others closing up,
+// unless it is the only one; or added after them, up to STOPS. Another
+// division's stop becomes the converter's only one. Either way the list
+// stays open, the row's mark following. Any other voice becomes the
+// converter's only one, and the list closes.
+// Arguments: AC the voice; lcv the converter.
+// Skips if the list stays open.
+// Does not preserve AC or IO.
+// Called via jda.
+stg, 0                      // AC, as jda stores it
+    local sg1, sg2, sg3, sg4, sg5, sg6, sg7, sg8, sgr, sgx, sgk, skx, sgo, sgq, sgf, sgp, sgn, sgw, sgs
+    dap sgx
+    lac lcv
+    add lcv
+    add lcv
+    add [ostp:0]
+    dac sgo                 // the converter's further stops
+    dzm sgs
+    lac stg
+    ral 3s
+    add [dir:1 + EBASE + ENTRY - 1]
+    dac sgq
+    lac i sgq
+    dac sgf                 // the voice's family word
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp sg7                 // not a stop
+    idx sgs
+    lac i [ninst:0]
+    dac vrl
+    lac i ldst
+    jda vrg
+    jmp sg7
+    lac i ldst
+    ral 3s
+    add [dir:1 + EBASE + ENTRY - 1]
+    dac sgq
+    lac i sgq
+    SKIP_NEXT_IF_SAME sgf
+    jmp sg7                 // the first is not a stop of this division
+    lac stg
+    jda sin
+    jmp sg3                 // not among them: added
+    // Taken out: the stops but this one, voices plus 1, packed into sgl.
+    dzm sgl
+    dzm sgl + 1
+    dzm sgl + 2
+    dzm sgl + 3
+    lac [sgl:1]
+    dac sgp
+    lac i ldst
+    add [1]
+    dac sgw
+    jsp sgk
+    lac sgo
+    dac sgq
+    law i 3                 // STOPS - 1
+    dac sgn
+sg1,
+    lac i sgq
+    dac sgw
+    jsp sgk
+    idx sgq
+    isp sgn
+    jmp sg1
+    lac sgl
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp sgr                 // the only one: kept
+    sub [1]
+    dac i ldst
+    lac [sgl:1 + 1]
+    dac sgq
+    lac sgo
+    dac sgp
+    law i 3
+    dac sgn
+sg2,
+    lac i sgq
+    dac i sgp
+    idx sgq
+    idx sgp
+    isp sgn
+    jmp sg2
+    lac [SAVEC | sbl:0]
+    jmp sg5
+    // Added in the first empty word, if one is.
+sg3,
+    lac sgo
+    dac sgq
+    law i 3
+    dac sgn
+sg4,
+    lac i sgq
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp sg8
+    idx sgq
+    isp sgn
+    jmp sg4
+    jmp sgr                 // STOPS already
+sg8,
+    lac stg
+    add [1]
+    dac i sgq
+sg6,
+    lac [SAVEC | ssr:1]
+    // The lit row's mark.
+sg5,
+    dac sgw
+    lac slt
+    sub [1]
+    jda r6
+    add [srw:1 + RW - 1]
+    dac sgq
+    lac sgw
+    dac i sgq
+sgr,
+    idx sgx
+    jmp sgx
+    // The converter's only voice: this one, a stop marked and the list
+    // kept open, any other voice the list closed.
+sg7,
+    lac stg
+    dac i ldst
+    lac sgo
+    dac sgq
+    dzm i sgq
+    idx sgq
+    dzm i sgq
+    idx sgq
+    dzm i sgq
+    lac sgs
+    SKIP_NEXT_IF_AC_ZERO
+    jmp sg6
+sgx, jmp .
+
+    // sgk -- put sgw at sgp, which moves on, unless it is 0 or stg's
+    // voice plus 1.
+    // Arguments: sgw the stop; sgp where it goes.
+    // No return value.
+    // Does not preserve AC; preserves IO.
+    // Called via jsp.
+sgk,
+    dap skx
+    lac sgw
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp skx
+    sub [1]
+    SKIP_NEXT_IF_DIFFERENT stg
+    jmp skx
+    lac sgw
+    dac i sgp
+    idx sgp
+skx, jmp .
+
+sgo, 0                      // the converter's ostp words
+sgq, 0                      // a pointer
+sgf, 0                      // the voice's family word
+sgp, 0                      // another
+sgn, 0                      // a count
+sgw, 0                      // a stop, a voice plus 1; the row's mark
+sgs, 0                      // the voice is a stop
+    endlocal
+
+sgl, 0; 0; 0; 0             // stg's stops, packed
+ssr, type340 " *"           // a converter's stop, in its division's sublist
+
+// radd -- add a row to the list (rput), its value rvl into lvt.
+// Arguments: rvl the value; rput's words.
+// No return value.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+radd,
+    local rax
+    dap rax
+    lac rvl
+    dac i lvp
+    idx lvp
+    idx lnr
+    jsp rput
+rax, jmp .
+    endlocal
+
+// rput -- put a row's RW words at rwp: the pen on at intensity 5,
+// baseline rwy, x rwx, a save to the text rwt, a save to the tail rtl.
+// rwp moves past them, rwy down a row.
+// Arguments: rwp, rwy, rwx, rwt and rtl.
+// No return value.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+rput,
+    local rpx
+    dap rpx
+    lac [RLO]
+    dac i rwp
+    idx rwp
+    lac rwy
+    ior [y(0) next(point)]
+    dac i rwp
+    idx rwp
+    lac rwx
+    ior [x(0) next(subroutine)]
+    dac i rwp
+    idx rwp
+    lac rwt
+    ior [SAVEC]
+    dac i rwp
+    idx rwp
+    lac [next(subroutine)]
+    dac i rwp
+    idx rwp
+    lac rtl
+    ior [SAVEC]
+    dac i rwp
+    idx rwp
+    lac rwy
+    sub [LPITCH]
+    dac rwy
+rpx, jmp .
+    endlocal
+
+// ltal -- put the tail after the rows at rwp: a jump to the end, which
+// lrl and srl move to a box or the sublist.
+// Argument: rwp the word past the rows.
+// Returns: AC the jump word's address.
+// IO is preserved.
+// Called via jsp.
+ltal,
+    local ltx
+    dap ltx
+    lac [next(subroutine)]
+    dac i rwp
+    idx rwp
+    lac [jump lend:1]
+    dac i rwp
+    lac rwp
+ltx, jmp .
+    endlocal
+
+// bxy -- move the box bxp beside the row whose baseline is AC.
+// Arguments: AC the baseline; bxp the box.
+// No return value.
+// Does not preserve AC; preserves IO.
+// Called via jda.
+bxy, 0                      // AC, as jda stores it
+    local bxx, bxq
+    dap bxx
+    lac bxp
+    add [1]
+    dac bxq
+    lac bxy
+    sub [BYB]
+    ior [y(0) next(point)]
+    dac i bxq
+    lac bxp
+    add [BXQ]
+    dac bxq
+    lac bxy
+    add [BTY]
+    ior [y(0) next(point)]
+    dac i bxq
+bxx, jmp .
+
+bxq, 0                      // the y word
+    endlocal
+
+// gry -- grid row AC's baseline, LTOP - LPITCH AC.
+// Argument: AC the row.
+// Returns: AC the baseline.
+// IO is preserved.
+// Called via jda.
+gry, 0                      // AC, as jda stores it
+    local gyx
+    dap gyx
+    lac gry
+    ral 3s
+    add gry
+    ral 2s                  // 36 AC
+    cma
+    add [LTOP]
+gyx, jmp .
+    endlocal
+
+// r6 -- RW AC, a row's offset.
+// Argument: AC the row.
+// Returns: AC the offset.
+// IO is preserved.
+// Called via jda.
+r6, 0                       // AC, as jda stores it
+    local r6x
+    dap r6x
+    lac r6
+    ral 1s
+    add r6
+    ral 1s
+r6x, jmp .
+    endlocal
+
+// lkp -- the index of AC in the table at lkt (a full address), lkn words
+// long.
+// Arguments: AC the value; lkt the table; lkn its length.
+// Returns: AC the index, or lkn if the value is not there.
+// IO is preserved.
+// Called via jda.
+lkp, 0                      // AC, as jda stores it
+    local lk1, lk2, lkx, lki, lkq
+    dap lkx
+    dzm lki
+    lac lkt
+    dac lkq
+lk1,
+    lac lki
+    SKIP_NEXT_IF_DIFFERENT lkn
+    jmp lkx
+    lac i lkq
+    SKIP_NEXT_IF_DIFFERENT lkp
+    jmp lk2
+    idx lkq
+    idx lki
+    jmp lk1
+lk2,
+    lac lki
+lkx, jmp .
+
+lki, 0                      // the index
+lkq, 0                      // its word
+    endlocal
+
+// aud -- the sublist's lit voice heard on the list's converter: the voice
+// loaded alone (vld, with orch's four voices all it and zmk making
+// ostp's stops none, then orch's own back), the converter's volume and
+// place set and its latches loaded from the voice's record as pla loads
+// them (recordLatches), then middle C keyed on for
+// AUDN cycles at the converter's octave, and the key off latched while it
+// plays. aul halts the converter when the release is over; lcls, the next
+// audition and PLAY (pla) do too, if it is sooner. A voice that does not
+// load puts vld's reason in the header instead. vld's cache keeps the
+// voice, so PLAY then loads the orchestra again.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+aud,
+    local au1, au2, au3, au4, au5, au6, au7, aux, ar, av, aq, ao, an, ah, aos, apt
+    dap aux
+    jsp ahl
+    // The header again, if a reason took its place.
+    lac [cvt:1]
+    add lcv
+    dac aq
+    lac i aq
+    ior [SAVEC]
+    dac hda
+    lac [SAVEC | sih:1]
+    dac hdb
+    // The voice alone.
+    lac slt
+    sub [1]
+    add [svn:1]
+    dac aq
+    lac i aq
+    dac av
+    law orch:0 + 1
+    dac aq
+    lac [aov:1]
+    dac ao
+    law i NCONV
+    dac an
+au1,
+    lac i aq
+    dac i ao
+    lac av
+    dac i aq
+    lac aq
+    add [3]
+    dac aq
+    idx ao
+    isp an
+    jmp au1
+    law 1
+    dac i [xs:0]            // the screen kept drawn while the drum reads
+    dzm zmk
+    jsp vld
+    dzm i [xs:0]
+    dac ar
+    law i 0                 // -0: ostp's stops again
+    dac zmk
+    law orch:0 + 1
+    dac aq
+    lac [aov:1]
+    dac ao
+    law i NCONV
+    dac an
+au2,
+    lac i ao
+    dac i aq
+    lac aq
+    add [3]
+    dac aq
+    idx ao
+    isp an
+    jmp au2
+    lac ar
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp au3
+    crossBankjda(rsn:0, NOEEM) // not loaded: why, in the header
+    ior [SAVEC]
+    dac hda
+    lac [SAVEC | sbl:0]
+    dac hdb
+    jmp aux
+    // The volume and the place, then the record's latches (recordLatches, the
+    // note's table at its pitch), its step at the converter's octave, and
+    // the key on.
+au3,
+    law vsl:0
+    add lcv
+    dac aq
+    lac i aq
+    dac ar                  // the record
+    law ovol:0
+    add lcv
+    dac aq
+    lio i aq
+    lac [dzg1]
+    jda cx
+    law opl:0               // and its place
+    add lcv
+    dac aq
+    lac i aq
+    sar 5s                  // a place is 040 apart from the next
+    add [plp:1]
+    dac aq
+    lio i aq
+    lac [dzp1]
+    jda cx
+    // Middle C's pitch, raised an octave for each octave up as the
+    // player's pqs raises a note's, its step then shifted no further
+    // (C + 24 is still in the zone map); an octave down shifts the step.
+    lac lcv
+    add lcv
+    add lcv
+    add [orch:0 + 2]
+    dac ao
+    lac i ao
+    dac aos                 // the octave's shift
+    law PITCHC
+    dac apt
+    lac i [octbl:0 + 2]
+    SKIP_NEXT_IF_DIFFERENT aos
+    jmp au4                 // ral 1s: 4 feet
+    lac i [octbl:0 + 4]
+    SKIP_NEXT_IF_SAME aos   // skip if ral 2s: 2 feet
+    jmp au6
+au5,
+    law PITCHC + 0d24
+    jmp au7
+au4,
+    law PITCHC + 0d12
+au7,
+    dac apt
+    lac i [octbl:0]         // nop
+    dac aos
+au6,
+    lac lcv
+    dac i [rcc:0]
+    lac apt
+    crossBankjda(recordLatches:0, NOEEM) // the record's latches, the table at apt
+    lac ar
+    add [2]
+    dac aq
+    lac i aq
+    add apt
+    dac aq
+    lac i aq                // the note's step
+    xct aos
+    lia
+    lac [dyf1]
+    jda cx
+    lac ar
+    add [7]
+    dac aq
+    lac i aq
+    dac ah                  // the sustain and the actions every dyx holds
+    ior [012]               // key on, the phase to 0
+    lia
+    lac [dyx1]
+    jda cx
+    lio [AUDN]
+    lac [dyc1]
+    jda cx
+    lac [dxg1]
+    jda cx
+    // The key off, for 262144 cycles, longer than any release.
+    cli
+    lac [dyc1]
+    jda cx
+    lac ah
+    ior [4]
+    lia
+    lac [dyx1]
+    jda cx
+    law 1
+    dac aus
+aux, jmp .
+
+ar, 0                       // vld's answer; the record's next word
+av, 0                       // the voice
+aq, 0                       // a pointer
+ao, 0                       // another
+an, 0                       // a count
+ah, 0                       // the record's dyx word
+aos, 0                      // the octave's shift, executed on the step
+apt, 0                      // the pitch the note's table and step are taken at
+    endlocal
+
+// aul -- halt the audition's converter once its note is over, the
+// envelope off after the release.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+aul,
+    local alx
+    dap alx
+    lac aus
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp alx
+    lac [dyt1]
+    jda cx
+    lai
+    and [0700000]           // the envelope's stage, 0 off
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jsp ahl
+alx, jmp .
+    endlocal
+
+// ahl -- stop an audition that is sounding: its converter halted.
+// Has no arguments and no return values.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+ahl,
+    local ahx
+    dap ahx
+    lac aus
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ahx
+    lac [dxh1]
+    jda cx
+    dzm aus
+ahx, jmp .
+    endlocal
+
+// cx -- do converter 1's IOT at AC for the list's converter (lcs).
+// Arguments: AC the IOT; IO its operand.
+// Returns: IO as the IOT leaves it.
+// Does not preserve AC.
+// Called via jda.
+cx, 0                       // AC, as jda stores it
+    local cxx, cxw
+    dap cxx
+    lac lcs
+    add cx
+    dac cxw
+    xct cxw
+cxx, jmp .
+
+cxw, 0                      // the IOT
+    endlocal
+
+// The lists' state.
+lcv, 0                      // the converter, 0 to NCONV-1
+lcs, 0                      // its IOTs' offset from converter 1's
+lkd, 0                      // the list's kind: 0 a part, 1 an instrument, 2 an octave, 3 per, 4 a place
+ldst, 0                     // where OK puts its value: a word of orch or opl, or per
+lnr, 0                      // the list's rows
+llt, 0                      // its lit row + 1, 0 none
+ltw, 0                      // its tail's jump word
+okq, 0                      // a row has been lit by the pen since it opened
+lup, 0                      // the pen has left since it opened
+lsv, 0; 0; 0; 0            // CANCEL's: the field's value, then the converter's ostp words, as it opened
+snr, 0                      // the sublist's rows, 0 none open
+slt, 0                      // its lit row + 1, 0 none
+sk0, 0                      // its top's grid row
+stw, 0                      // its tail's jump word
+rwp, 0                      // rput's next word
+rwy, 0                      // its baseline
+rwx, 0                      // its x
+rwt, 0                      // its text
+rtl, 0                      // its tail
+rvl, 0                      // radd's value
+lvp, 0                      // lvt's next word
+lkt, 0                      // lkp's table
+lkn, 0                      // and its words
+bxp, 0                      // bxy's box
+aus, 0                      // an audition is sounding
+aov, 0; 0; 0; 0             // orch's voices, kept while an audition loads
+lvt,                        // each row's value
+    table LROWS
+svn,                        // each sublist row's voice
+    table SROWS
+
+// The header's texts, by converter and by kind, and the rows' own.
+cvt, pn1:0; pn2:0; pn3:0; pn4:0
+hbt, sph:1; sih:1; soh:1; sbl:0; slh:1
+sph, type340 " PART"
+slh, type340 " PLACE"
+sih, type340 " INSTRUMENT"
+soh, type340 " OCTAVE"
+smv, type340 "PARTS A MOVEMENT"
+spt, type340 "PART "
+sgt, type340 " >"
+orw, 3; 1; 0; 2; 4          // the octave list's rows: octbl's numbers for 32, 16, 8, 4, 2 feet
+
+// The places in the stereo field, left to right: their values, as opl
+// and the orchestra block hold them; each one's dzp word, the left
+// channel's attenuation in bits 0-8 and the right's in bits 9-17, 1/8 dB,
+// 0777 off, on a constant-power law (place k of 8 at k/8 of 90 degrees,
+// -20 log10 of its cosine left and its sine right, rounded); and their
+// names, then ? for a value not among them (fill).
+plv, 0; 040; 0100; 0140; 0200; 0240; 0300; 0340; 0400
+plp, 000777; 001162; 006103; 015051; 030030; 051015; 103006; 162001; 777000
+pnt, spl:1; sl3:1; sl2:1; sl1:1; sce:1; sr1:1; sr2:1; sr3:1; spr:1; squ:0
+spl, type340 "LEFT"
+sl3, type340 "L3"
+sl2, type340 "L2"
+sl1, type340 "L1"
+sce, type340 "CENTER"
+sr1, type340 "R1"
+sr2, type340 "R2"
+sr3, type340 "R3"
+spr, type340 "RIGHT"
+
+// The open list's screen, which mgt jumps to: the header, lit, DONE and
+// CANCEL, then the rows and their tail; the boxes; the end.
+lst,
+    intensity(7) lpon next(point)
+    y(LHY) next(point)
+    x(LX) next(subroutine)
+hda, SAVEC | sbl:0          // the converter, or why an audition did not load
+    next(subroutine)
+hdb, SAVEC | sbl:0          // the field
+    intensity(5) lpon next(point)
+    y(LHY) next(point)
+    x(XDN) next(character)
+    type340 "DONE"
+    next(point)
+    y(LHY) next(point)
+    x(XCN) next(character)
+    type340 "CANCEL"
+lrw,                       // the list's rows (rput) and its tail (ltal)
+    table LROWS * RW + 2
+srw,                        // the sublist's
+    table SROWS * RW + 2
+lbx,
+    BOX(LBX)
+    type340 "OK"
+    lpoff halt
+sbx,
+    BOX(SBX)
+    type340 "OK"
+    lpoff halt
+lend,
+    lpoff halt

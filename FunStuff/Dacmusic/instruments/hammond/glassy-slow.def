@@ -1,0 +1,18 @@
+# A Hammond preset: glassy, drawbars 80 0000 008, the Leslie slow.
+name GLASSY SLOW
+family LESLIE SLOW
+n 10
+frame 16
+start 40 dB
+attack 0.005 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.02 s
+chiff 0.003 s 14 dB 8 64
+harmonics 1 1.0
+rank 1 1.0000
+rank 16 1.0000 break 6
+level 0 dB
+vibrato 0.8 Hz 4 cents free
+leslie 2 dB 4 dB

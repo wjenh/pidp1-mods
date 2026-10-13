@@ -1,0 +1,20 @@
+# A Hammond preset: wsp upper, drawbars 68 8600 000, the Leslie fast.
+name WSP UPPER FAST
+family LESLIE FAST
+n 10
+frame 16
+start 40 dB
+attack 0.005 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.02 s
+chiff 0.003 s 14 dB 8 64
+harmonics 1 1.0
+rank 1 0.5012
+rank 3 1.0000
+rank 2 1.0000
+rank 4 0.5012
+level 0 dB
+vibrato 6.7 Hz 15 cents free
+leslie 3 dB 6 dB

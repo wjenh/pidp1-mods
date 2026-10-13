@@ -1,0 +1,18 @@
+# A Hammond preset: comping, drawbars 80 8000 000, the Leslie slow.
+name COMPING SLOW
+family LESLIE SLOW
+n 10
+frame 16
+start 40 dB
+attack 0.005 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.02 s
+chiff 0.003 s 14 dB 8 64
+harmonics 1 1.0
+rank 1 1.0000
+rank 2 1.0000
+level 0 dB
+vibrato 0.8 Hz 4 cents free
+leslie 2 dB 4 dB

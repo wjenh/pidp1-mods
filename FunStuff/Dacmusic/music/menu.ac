@@ -1,0 +1,2159 @@
+// The music program's menu on the Type 340: the screen, the light pen,
+// READ TAPE, PLAY and PUNCH, each converter's volume slider, and the
+// orchestra block a punched tape carries (Implementation.md, "Reading a
+// tape").
+//
+// Included by dacmusic.am1 in bank 0, before its constants. Uses its
+// loader and player (lds, ld0, rdb, fp, ct, npart, pbl, ppt, orch, ostp,
+// ovol, opl, per, pla, mnu, NCONV, ORCHN, ORCHCT, ORCHN2, ORCHCT2), the drum's
+// library as it reads it (drd, vld, dir, ninst, vdk, xs), the lists in
+// menus.ac (lsto, lfe, aus), dacdefs.ah's dzgN, TYPE340/type340defs.ah
+// and LIGHTPEN/lightpen.ah.
+//
+// An instrument field is a voice of the drum's library, shown by its
+// name in the directory (dir, in bank 1). The directory is read again at
+// the start, when an instrument's list opens and at READ TAPE, so a
+// library written while the menu runs is seen; PLAY loads the voices
+// (vld), saying LOADING VOICES meanwhile, or says why it cannot.
+//
+// The screen is a display list in core, drawn again each time the 340
+// stops. Its first words are a gate (mgt): a jump to the menu's body, or
+// to an open list (menus.ac). The body's texts and the sliders come
+// first, then a jump (msw) to the menu's tail: the buttons and the status
+// line, ending in a stop. While the piece plays, msw jumps to the play
+// tail instead: PLAYING, a STOP target, and a jump back to the list's
+// start, so the 340 runs the play screen on its own and the player only
+// looks for a hit (phit). Each field the pen can change is drawn with the
+// pen on, and is the opener of its list: a converter's place in the
+// stereo field (its row's label), part, instrument and octave, and the
+// parts a movement. READ TAPE, PLAY and PUNCH are
+// drawn with the pen on too, and act at once. The only other points
+// drawn with the pen on are the sliders' tracks, so a hit is an opener's
+// or a button's, told by the band and column it falls in (fnd), or a
+// track's, which drc gives exactly. A hit acts once: the pen must leave
+// them for about 0.14 s before the next hit counts, since a pen held
+// still need not hit in every frame. The fields are words of the list
+// that fill patches: a character word for a number, or a save to the
+// text of a place, a part, an instrument or an octave, which returns at the
+// text's end character. Display subroutines reach banks 0-1 only, so
+// every text is in bank 0 or 1. While the piece plays, the openers are
+// drawn with the pen off (mpo), so a hit there cannot pause the play
+// screen.
+//
+// A slider is a row of VN points at the right of its converter's row, the
+// rightmost 0 dB and each to its left VSTEP more attenuation, with a
+// marker above the point of the converter's level (ovol) and the level in
+// whole dB under the track's right end (vmk sets both; the play screen
+// draws them too, being the same list). A hit does not simply set its
+// point: the hits on one track in a frame are a run, judged with the next
+// frame's (vend; Implementation.md, "The menu"). A new level goes to the
+// converter at once (dzg), which slews to it without a click.
+//
+// The menu polls (dsp, dss) and uses no sequence breaks, as the player.
+
+// Text at (px, py), or a save word next (ATS): the point words before it.
+#define AT(px, py) next(point); y(py) next(point); x(px) next(character)
+#define ATS(px, py) next(point); y(py) next(point); x(px) next(subroutine)
+// An opener's or a button's text at (px, py), in mode m (character, or
+// subroutine for a save): the pen on first, in an opener's the word mpo
+// patches. ATQ, a save word's point words, turns it off again.
+#define OPN(px, py, m) lpon next(point); y(py) next(point); x(px) next(m)
+#define ATQ(px, py) lpoff next(point); y(py) next(point); x(px) next(subroutine)
+#define OPON (lpon | next(point)) // an opener's first word, on the menu
+#define OPOFF (lpoff | next(point)) // and while the piece plays
+#define NOPN 0d17               // the openers: mow's words
+// A target at (px, py), STOP's on the play screen: an 18-unit square at
+// scale 1, then its point with the pen on, then the pen off again.
+#define TGT(px, py) next(point); y((py) - 0d9) next(point); x((px) - 0d9) next(vector); \
+    visible right deltax(0d9); visible up deltay(0d9); visible left deltax(0d9); \
+    visible down deltay(0d9) end; \
+    intensity(7) lpon next(point); y(py) next(point); x(px) show next(parameter); \
+    intensity(5) lpoff
+// A target's point as drc reports it: x and y each without its low bit.
+#define TP(px, py) ((((px) >> 1) << 0d9) | ((py) >> 1))
+#define SAVEC (save | next(character))
+// The play tail's wait: an invisible vector continued to the raster's
+// edge, across the whole screen at scale 0, for two fetches.
+#define WAIT next(vcontinue); right deltax(1)
+// The pen's aperture, half again APERTURE250's 28: a hit within 20 units,
+// short of half the 60 between rows.
+#define PENAP 0d42
+// The openers and buttons, as fnd numbers them: each converter's part
+// (0-3), instrument (4-7) and octave (8-11), the parts a movement (12),
+// READ TAPE (13), PLAY (14), PUNCH (15), each converter's place (16-19).
+// A number's low two bits are its converter, the rest its list's kind.
+#define NTGT 0d20
+#define NOCT (onam - octbl)     // the octaves: octbl's words
+#define AWAYN 0d4000            // passes of the wait without a hit, 0.14 s
+#define AWAY (0777777 - AWAYN)  // -4000, for a pool word; law i AWAYN in bank 0 needs none
+// fnd's bands and columns, in the screen's units; drc's points are even,
+// and every threshold odd. The parts a movement: its band from FPB up.
+// The rows' bands: FRP each, down from FRT to FRB (their texts at 780,
+// 720, 660 and 600); in a row, the place's opener (n CENTER, 60-172)
+// left of FXV, the part's (PART NONE, 216-342) left of FXP, the
+// instrument's (386-624) left of FXI, the octave's (656-726) left of
+// FXO, the track from VX0. The buttons' band: FBB to FBT (texts
+// at 480); READ TAPE (60-186) left of FXR, PLAY (260-316) of FXL, PUNCH
+// (400-470) of FXU.
+#define FPB 0d869
+#define FRT 0d817
+#define FRP 0d60
+#define FRB 0d577
+#define FXV 0d195
+#define FXP 0d365
+#define FXI 0d641
+#define FXO 0d745
+#define FBT 0d517
+#define FBB 0d457
+#define FXR 0d223
+#define FXL 0d363
+#define FXU 0d543
+// The sliders: VN points VDX apart from x VX0, VDX 1 << 4: VSH its shift,
+// VSHD as drc gives x, without its low bit. The levels are vlv's, VSTEP
+// (1/8 dB) apart.
+#define VN 0d16
+#define VX0 0d760
+#define VDX 0d16
+#define VSH 4s
+#define VSHD 3s
+#define VSTEP 0d24
+// The player's idle turns in about a frame of the play screen: a run of
+// hits there ends when this many pass without one.
+#define VIDLE 0d64
+// RUNLOG builds (a diagnostic): the runs vend judged, the last 16 of
+// them, 6 words each, in the ring rlg (RLOGW words).
+#define RLOGW 0d96
+// A track's point after the first: the pen again, since drs turns it off.
+#define VPT(i) lpon next(point); x(VX0 + (i) * VDX) show next(parameter)
+// A slider at height py: its track, then the move to its marker's point,
+// 10 units above, which the marker's word (x, patched) follows.
+#define TRACK(py) intensity(5) lpon next(point); y(py) next(point); \
+    x(VX0) show next(parameter); \
+    VPT(0d1); VPT(0d2); VPT(0d3); VPT(0d4); VPT(0d5); VPT(0d6); VPT(0d7); \
+    VPT(0d8); VPT(0d9); VPT(0d10); VPT(0d11); VPT(0d12); VPT(0d13); VPT(0d14); \
+    VPT(0d15); \
+    intensity(6) lpoff next(point); y((py) + 0d10) next(point)
+// The marker: a stroke 10 units up from the point its word moves to.
+#define MARK visible up deltay(5) end
+// The readout: the level in whole dB, three characters RDY under the
+// track, ending under its 0 dB point; the pen stays off. Its words: an
+// upper shift, so a text before it cannot leave it in set 2; the text,
+// vdb's word for the level, which vmk patches; and the end.
+#define RDX 0d958
+#define RDY 0d30
+#define RDW(a, b, c) (((a) << 0d12) | ((b) << 6) | (c))
+#define CSP 040                 // space
+#define CMI 055                 // minus
+#define CQU 077                 // ?
+#define CUP 035                 // upper shift
+#define CEND 037                // end
+#define CD(d) (060 + (d))       // a digit
+#define READOUT(py) intensity(5) next(point); y((py) - RDY) next(point); \
+    x(RDX) next(character); RDW(CUP, CUP, CUP)
+#define RDE RDW(CEND, CEND, CEND)
+
+// The field words fill patches, in orch's order, and after each
+// instrument field the count of its further stops (ostp).
+mfw, mpf1; mif1; mof1; mpf2; mif2; mof2; mpf3; mif3; mof3; mpf4; mif4; mof4
+mcf, mic1; mic2; mic3; mic4
+mlw, mlf1; mlf2; mlf3; mlf4     // each converter's place
+
+// The openers' first words, which mpo patches.
+mow, mo1; mo2; mo3; mo4; mo5; mo6; mo7; mo8; mo9; mo10; mo11; mo12; mo13
+    mo14; mo15; mo16; mo17
+
+// menu -- the menu, until PLAY, READ TAPE or PUNCH. The program starts
+// here, from the console; READ TAPE, PUNCH and the piece's end come back
+// to mnr, keeping their status line. Every word the menu reads is set
+// here or by the routine that uses it: memory keeps its words from a run
+// that was stopped, and a restart does not reload them. While a list is
+// open (lon), a hit is kept for the frame's end, where menus.ac's lfe
+// acts on it; a list stays open until it is closed by its OK, DONE,
+// CANCEL or header.
+// Has no arguments and does not return: it ends at PLAY, READ TAPE or
+// PUNCH.
+// Does not preserve AC or IO.
+// Entered via jmp, at menu (from beg) or at mnr.
+menu,
+    local mn0, mn1, mn2, mn3, mn4, mn5, mn6, mn8
+    eem
+    law sbl
+    jda sts
+    dzm rps                 // core outlives a restart of the emulator, its reader's read does not
+    dzm xs
+    dzm i [aus:1]           // no audition sounding
+#ifdef RUNLOG
+    law rlg
+    dac rlp
+    dzm rln
+    dzm rfc
+#endif
+    crossBankjsp(drd:1, NOEEM) // the drum's library
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mnr
+    law snv
+    jda sts
+mnr,                        // READ TAPE, PUNCH and the piece's end come back here
+    eem
+    dzm atm
+    dzm vro
+    dzm hro
+    lac mswm                // the list ends in the menu's tail
+    dac msw
+    lac [OPON]              // the openers drawn with the pen on
+    jda mpo
+    lac [jump mbody]        // no list open
+    dac mgt
+    dzm lon
+    law PENAP
+    dac pap
+    dzm arm                 // a pen already on an opener waits until it leaves
+    law i AWAYN
+    dac qt
+    jsp fill
+mn0,
+    // The aperture each frame: the configuration's overrides one set at start.
+    lio pap
+    dpy-i LIGHTPEN
+    dzm hit
+    lio [mlist]
+    dla
+mn1,
+    dsp
+    jmp mn2
+    drc
+    lac lon
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mn6
+    jsp fnd
+    SKIP_NEXT_IF_DIFFERENT [NTGT]
+    jmp mn5
+    // The frame's first hit is the one that counts.
+    add [1]
+    dac mt
+    law i AWAYN             // the pen is on an opener or a button: it has not left
+    dac qt
+    lac hit
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    lac mt
+    dac hit
+    jmp mn3
+    // Neither: a slider's point, which leaves the arming alone.
+mn5,
+    jsp vhit
+    jmp mn3
+    // A list is open: the frame's first hit is kept for lfe, and every
+    // hit holds off the arming.
+mn6,
+    lac hit
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    dio lhw
+    law 1
+    dac hit
+    law i AWAYN
+    dac qt
+mn3,
+    drs
+mn2,
+    dss
+    jmp mn4
+#ifdef RUNLOG
+    idx rfc
+#endif
+    jsp vend                // the frame's run ends; with none, the held run is dropped
+    lac lon
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mn8
+    lac hit
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mn0
+    lac arm
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp mn0
+    dzm arm
+    lac hit
+    jda act
+    jsp fill
+    jmp mn0
+mn8,
+    crossBankjsp(lfe:1, NOEEM) // the list's frame end
+    lac lon
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jsp fill                // it closed: the fields as it left them
+    jmp mn0
+// The wait for the stop counts the pen's absence: about 35 us a pass.
+// Each AWAYN passes without a hit arm the next.
+mn4,
+    isp qt                  // skip when the pen has been away long enough
+    jmp mn1
+    law 1
+    dac arm
+    law i AWAYN
+    dac qt
+    jmp mn1
+    endlocal
+
+// act -- act on an armed hit on an opener or a button: an opener's list
+// opens (menus.ac's lsto) and act returns; READ TAPE, PLAY and PUNCH do
+// not return.
+// Argument: AC the opener or button, fnd's number + 1 (1 to NTGT).
+// No return value.
+// Does not preserve AC or IO.
+// Called via jda.
+act, 0                      // AC, as jda stores it
+    local acx, ac1, ac2
+    dap acx
+    lac act
+    sub [1]
+    dac ltg
+    sub [0d13]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ac1
+ac2,
+    crossBankjsp(lsto:1, NOEEM)
+acx, jmp .
+ac1,
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rdt
+    SKIP_NEXT_IF_DIFFERENT [1]
+    jmp mpl
+    SKIP_NEXT_IF_DIFFERENT [2]
+    jmp pun
+    jmp ac2                 // a place's opener
+    endlocal
+
+// mpo -- set the openers' first words (mow) to AC: OPON on the menu,
+// OPOFF while the piece plays.
+// Argument: AC the word.
+// No return value.
+// Does not preserve AC; preserves IO.
+// Called via jda.
+mpo, 0                      // AC, as jda stores it
+    local mo0, mox, mop
+    dap mox
+    law mow
+    dac mop
+    law i NOPN
+    dac mpn
+mo0,
+    lac i mop
+    dac mt
+    lac mpo
+    dac i mt
+    idx mop
+    isp mpn
+    jmp mo0
+mox, jmp .
+
+mop, 0                      // mow's next word
+    endlocal
+
+// pun -- PUNCH: leader, the parts as they were read (each block's count,
+// its words and its checksum as read; the bar pointers from ld0's copy,
+// as ld1 changes the list), the orchestra block, trailer; then the menu.
+// The screen is kept drawn throughout (pln, fed).
+// Has no arguments and does not return: it ends at mnr.
+// Does not preserve AC or IO.
+// Entered via jmp, from act.
+pun,
+    local pu1, pu2, pu5, pu6, pu7, pu8, pu9, mk, obuf
+    law spu
+    jda sts
+    jsp fed
+    dzm mk
+pu1,
+    lac mk
+    SKIP_NEXT_IF_DIFFERENT npart
+    jmp pu5
+    law ppt
+    add mk
+    dac mt
+    lac i mt
+    dac mq                  // the part's four words: counts and checksums
+    add [4]
+    dac mp
+    lac i mq
+    dac mn
+    dac mcw
+    idx mq
+    lac i mq
+    dac ms
+    jsp pbk                 // the notes
+    idx mq
+    lac i mq
+    dac mn
+    dac mcw
+    idx mq
+    lac i mq
+    dac ms
+    lac mp                  // past the notes' bar line, the list and its 0
+    add mn
+    add [2]
+    dac mp
+    jsp pbk                 // the bar pointers
+    idx mk
+    jmp pu1
+    // The orchestra block, version 2, built in obuf: the version, per,
+    // then each converter's line: its part plus 1 (0 for none), its
+    // octave's number, its volume (ovol's word as it is), no detune, its
+    // place (opl's), and its stops: its voice plus 1, then ostp's three.
+pu5,
+    law obuf
+    dac mp
+    law 2
+    dac i mp
+    idx mp
+    lac per
+    dac i mp
+    law orch
+    dac mq
+    dzm mc
+pu6,
+    idx mp
+    lac i mq                // the part plus 1, 0 for none
+    SKIP_NEXT_IF_AC_NEGATIVE // skip if none
+    jmp pu7
+    cla
+    jmp pu8
+pu7,
+    add [1]
+pu8,
+    dac i mp
+    idx mq
+    lac i mq                // the voice, for the stop
+    dac mt
+    idx mp
+    idx mq
+    lac i mq                // the octave's number (NOCT if none: refused when read)
+    jda ofn
+    dac i mp
+    idx mp
+    law ovol
+    add mc
+    dac ms
+    lac i ms
+    dac i mp
+    idx mp
+    dzm i mp
+    idx mp
+    law opl                 // the place
+    add mc
+    dac ms
+    lac i ms
+    dac i mp
+    idx mp
+    lac mt
+    add [1]
+    dac i mp
+    law ostp
+    add mc
+    add mc
+    add mc
+    dac ms
+    law i 3                 // STOPS - 1
+    dac mn
+pu2,
+    idx mp
+    lac i ms
+    dac i mp
+    idx ms
+    isp mn
+    jmp pu2
+    idx mq
+    idx mc
+    SKIP_NEXT_IF_SAME [NCONV]
+    jmp pu6
+    // Its checksum: the add of its words, as rdb makes it.
+    law obuf
+    dac mp
+    law i ORCHN2
+    dac mn
+    dzm ms
+pu9,
+    lac ms
+    add i mp
+    dac ms
+    idx mp
+    isp mn
+    jmp pu9
+    law obuf
+    dac mp
+    law ORCHN2
+    dac mn
+    lac [ORCHCT2]
+    dac mcw
+    jsp pbk
+    jsp fed
+    law spd
+    jda sts
+    jmp mnr
+
+mk, 0                       // the part being punched
+obuf,                       // the orchestra block, built to punch
+    table ORCHN2
+    endlocal
+
+// mpl -- PLAY: load the orchestra's voices from the drum (vld), the menu
+// kept drawn with LOADING VOICES; if they cannot be, say why on the
+// status line and go back to the menu. Then start the play screen, which
+// the 340 runs on its own, and play the piece; its end, or STOP (pso),
+// comes back to the menu. The status line is blanked, so a piece that
+// ends does not show an earlier STOPPED. The 340 has stopped at the
+// menu's frame end, and is let stop there again after the load. With hpl
+// set, it halts at lpl first, the voices loaded and the 340 still
+// stopped, and at lpe (dacmusic.am1) when the piece is over, so a timing
+// taken between the two halts counts the piece alone.
+// Has no arguments and does not return: it runs on into pla, or ends at
+// mnr.
+// Does not preserve AC or IO.
+// Entered via jmp, from act.
+mpl,
+    local mp1, mp2, mp3
+    law sld
+    jda sts
+    law 1
+    dac mnu
+    dac xs
+    crossBankjsp(vld:1, NOEEM)
+    dzm xs
+    SKIP_NEXT_IF_AC_ZERO
+    jmp mp1
+mp2,
+    dsp                     // a pen hit is passed over
+    jmp mp3
+    drs
+mp3,
+    dss                     // until the 340 stops at the frame's end
+    jmp mp2
+    law sbl
+    jda sts
+    lac hpl
+    SKIP_NEXT_IF_AC_ZERO
+lpl, hlt                    // Continue plays
+#ifndef NOSCREEN
+    lac [OPOFF]             // NOSCREEN builds leave the 340 stopped
+    jda mpo
+    lac mswp
+    dac msw
+    lio [PENAP]
+    dpy-i LIGHTPEN
+    lio [mlist]
+    dla
+#endif
+    jmp pla
+    // The voices not loaded: why.
+mp1,
+    jda rsn
+    jda sts
+    jmp mnr
+    endlocal
+
+// rsn -- the text saying why vld did not load (svt, by its AC 1-5), a
+// damaged voice's number put in its text first.
+// Argument: AC vld's answer, 1-5.
+// Returns: AC the text's address.
+// IO is preserved.
+// Called via jda, from bank 0 or 1: it returns through the full address
+// jda leaves, so menus.ac calls it too (crossBankjda).
+rsn, 0                      // AC, as jda stores it
+    local rs1, rs2, rsr
+    dac rsr
+    lac vdk
+    jda num                 // its digits and the end, which becomes a space
+    dac mt
+    and [077]
+    SKIP_NEXT_IF_SAME [037]
+    jmp rs1
+    lac mt
+    add [1]
+    jmp rs2
+rs1,
+    lac mt                  // one digit: the end and the code after it spaces
+    add [0140]              // 037 0 becomes 040 040: two spaces
+rs2,
+    dac sdn
+    lac rsn
+    add [svt - 1]
+    dac mt
+    lac i mt
+    jmp i rsr
+
+rsr, 0                      // the return, a full address
+    endlocal
+
+// pso -- STOP, a hit on the play screen: the converters halted at once,
+// the 340 started again, and the menu, with STOPPED.
+// Has no arguments and does not return: it ends at mnr.
+// Does not preserve AC or IO.
+// Entered via jmp, from phit in the player's main loop.
+pso,
+    dxh1
+    dxh2
+    dxh3
+    dxh4
+    drs
+    law sst
+    jda sts
+    jmp mnr
+
+// phit -- the play screen's pen, from the player's turns with nothing to
+// decode. A hit on STOP's point stops the piece (pso); one on a track's
+// goes to vhit, and the 340 goes on. The play screen has no frame end the
+// program sees, so a run of hits on a track also ends when VIDLE turns
+// pass without a hit, and the run vend then holds is dropped when VIDLE
+// more pass.
+// Has no arguments and no return values; on STOP it does not return.
+// Does not preserve AC or IO.
+// Called via jsp.
+phit,
+    local ph1, ph2, phx
+    dap phx
+    dsp
+    jmp ph1
+    drc
+    dio mt
+    lac mt
+    SKIP_NEXT_IF_DIFFERENT [TP(0d240, 0d426)]
+    jmp pso
+    jsp vhit
+    drs
+    jmp phx
+ph1,
+    lac vro
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ph2                 // no run to end
+    isp vq
+    jmp phx
+    jsp vend
+    jmp phx
+ph2,
+    lac hro
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp phx                 // none held either
+    isp vq
+    jmp phx
+    dzm hro
+phx, jmp .
+    endlocal
+
+// vhit -- a hit on a track's point, from drc: extend the run of hits on
+// its track, or end the run (vend) and start one. The hits of a frame
+// on one track come left to right, so a hit on another track, or at or
+// left of the run's last, is a new run. A word that is no track's point
+// is passed over. Built with FIRSTHIT, each hit sets its point at once.
+// Argument: IO drc's word.
+// No return value.
+// Does not preserve AC or IO.
+// Called via jsp.
+vhit,
+    local vh1, vh2, vh3, vhx, vw, vx, vy
+    dap vhx
+    dio vw
+    // The track: y, without its low bit, one of vty's.
+    lac vw
+    and [0777]
+    dac mt2
+    law vty
+    dac mlt
+    law NCONV
+    dac mln
+    lac mt2
+    jda look
+    SKIP_NEXT_IF_DIFFERENT [NCONV]
+    jmp vhx
+    dac vy
+    // The point: x without its low bit is VX0/2 + i VDX/2.
+    lac vw
+    rar 9s
+    and [0777]
+    sub [VX0 >> 1]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp vhx
+    sar VSHD
+    dac vx
+    sub [VN]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp vhx
+    law i VIDLE
+    dac vq
+#ifdef FIRSTHIT
+    lac vy
+    add [1]
+    dac vro
+    lac vx
+    dac vlo
+    dac vhi
+    jsp vend
+#else
+    lac vro
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp vh2                 // no run: one starts
+    sub [1]
+    SKIP_NEXT_IF_SAME vy
+    jmp vh1                 // another track's
+    lac vx
+    sub vhi
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp vh3                 // right of the run's last: the run goes on
+vh1,
+    jsp vend
+vh2,
+    lac vy
+    add [1]
+    dac vro
+    lac vx
+    dac vlo
+vh3,
+    lac vx
+    dac vhi
+#endif
+vhx, jmp .
+
+vw, 0                       // drc's word
+vx, 0                       // the point, 0 to VN-1 from the left
+vy, 0                       // the track, 0 to NCONV-1
+    endlocal
+
+// vend -- the run of hits on a track ends. It is held, and judged only
+// together with the run before it, if that one was held on the same
+// track: a pen put down or lifted partway through a frame gives a run
+// cut short, which is then never judged alone. The converter's level is
+// kept if its point lies within the two runs' span, else it moves to the
+// span's nearer end, into ovol, the marker and the converter (dzg). A
+// level that is not one of vlv's (set from the console) lies right of
+// every span, so it moves. With no run (a frame with no hit on a track),
+// the held run is dropped. Built with FIRSTHIT, a run is judged alone at
+// once.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+vend,
+#ifdef FIRSTHIT
+    local ve1, ve2, ve3, ve6, vex, vl, vr, vp, vlu, vhu
+#else
+    local ve1, ve2, ve3, ve4, ve5, ve6, ve7, vex, vl, vr, vp, vlu, vhu, vht
+#endif
+    dap vex
+    lac vro
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ve6                 // no run: the held one is dropped
+    sub [1]
+    dac vr
+#ifdef RUNLOG
+    dac rlt
+#endif
+    add [ovol]
+    dac vp
+    lac i vp
+    jda vfn
+    dac vl
+#ifdef RUNLOG
+    dac rlb
+#endif
+    lac vlo
+    dac vlu
+    lac vhi
+    dac vhu
+#ifndef FIRSTHIT
+    // The span takes in the held run, then the run is held in its place.
+    lac hro
+    dac vht
+    lac hlo
+    sub vlu
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ve4
+    lac hlo
+    dac vlu
+ve4,
+    lac vhu
+    sub hhi
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp ve5
+    lac hhi
+    dac vhu
+ve5,
+    lac vro
+    dac hro
+    lac vlo
+    dac hlo
+    lac vhi
+    dac hhi
+    law i VIDLE             // phit drops it after VIDLE idle turns more
+    dac vq
+    dzm vro
+    lac vht
+    SKIP_NEXT_IF_SAME hro
+    jmp ve7                 // none held on its track before it: held, not judged
+#else
+    dzm vro
+#endif
+    lac vl
+    sub vlu
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE
+    jmp ve1                 // left of the span
+    lac vl
+    sub vhu
+    SKIP_NEXT_IF_AC_ZERO_OR_NEGATIVE
+    jmp ve2                 // right of it
+#ifdef RUNLOG
+    lac vl
+    jda rlog
+#endif
+    jmp vex                 // within it: kept
+ve1,
+    lac vlu
+    jmp ve3
+ve2,
+    lac vhu
+ve3,
+#ifdef RUNLOG
+    dac vl
+    jda rlog
+    lac vl
+#endif
+    add [vlv]
+    dac mt
+    lac i mt
+    dac i vp
+    lac vr
+    add [vdz]
+    dac mt
+    lio i vp
+    xct i mt
+    lac vr
+    jda vmk
+    jmp vex
+ve6,
+    dzm hro
+#ifndef FIRSTHIT
+#ifdef RUNLOG
+    jmp vex                 // past the log's mark (without the log, ve7 is vex)
+#endif
+ve7,
+#ifdef RUNLOG
+    law 077                 // the log's mark for a run held, not judged
+    jda rlog
+#endif
+#endif
+vex, jmp .
+
+vl, 0                       // the level's point
+vr, 0                       // the track
+vp, 0                       // its word of ovol
+vlu, 0                      // the span's first point
+vhu, 0                      // and its last
+#ifndef FIRSTHIT
+vht, 0                      // the track held before, + 1
+#endif
+    endlocal
+
+#ifdef RUNLOG
+// rlog -- log a run vend judged into the ring rlg: the menu's frame, the
+// track, the run's first and last point, the level's point before, and
+// after (AC). rln counts them; the ring is read from the console.
+// Argument: AC the point after.
+// No return value.
+// Does not preserve AC; preserves IO.
+// Called via jda.
+rlog, 0                     // AC, as jda stores it
+    local rlx
+    dap rlx
+    lac rfc
+    dac i rlp
+    idx rlp
+    lac rlt
+    dac i rlp
+    idx rlp
+    lac vlo
+    dac i rlp
+    idx rlp
+    lac vhi
+    dac i rlp
+    idx rlp
+    lac rlb
+    dac i rlp
+    idx rlp
+    lac rlog
+    dac i rlp
+    idx rlp
+    idx rln
+    lac rlp
+    SKIP_NEXT_IF_SAME [rlg + RLOGW]
+    jmp rlx
+    law rlg                 // the ring wraps
+    dac rlp
+rlx, jmp .
+    endlocal
+#endif
+
+// vmk -- set a converter's marker, at its level's point, and its readout.
+// Argument: AC the converter, 0 to NCONV-1.
+// No return value.
+// Does not preserve AC or IO.
+// Called via jda.
+vmk, 0                      // AC, as jda stores it
+    local vkx, vkw, vkn
+    dap vkx
+    lac vmk
+    add [vmw]
+    dac vkw
+    lac i vkw
+    dac vkw                 // the marker's word
+    lac vmk
+    add [ovol]
+    dac mt
+    lac i mt
+    jda vfn
+    dac vkn                 // the level's number, VN if it is none
+    ral VSH                 // the point's x: VN (not a level) falls just right of the track
+    add [VX0 | next(vector)]
+    dac i vkw
+    lac vmk
+    add [vrw]
+    dac vkw
+    lac i vkw
+    dac vkw                 // the readout's text word
+    lac vkn
+    add [vdb]
+    dac vkn
+    lac i vkn               // the level's text, ? for none
+    dac i vkw
+vkx, jmp .
+
+vkw, 0                      // the marker's word, then the readout's
+vkn, 0                      // the level's number, then its text's address
+    endlocal
+
+// vfn -- vlv's number for the level in AC, VN if it is not one.
+// Argument: AC the level.
+// Returns: AC the number.
+// IO is preserved.
+// Called via jda.
+vfn, 0                      // AC, as jda stores it
+    local vfx
+    dap vfx
+    lac vfn
+    dac mt2
+    law vlv
+    dac mlt
+    law VN
+    dac mln
+    lac mt2
+    jda look
+vfx, jmp .
+    endlocal
+
+// rdt -- READ TAPE: load's code reads every part, and an orchestra block,
+// with atm set: no halt, rw ends the read at rte when no word comes, and
+// an error in the tape ends it at rtx. Nothing in core changes until the
+// first word.
+// Has no arguments and does not return: it runs on into lds.
+// Does not preserve AC or IO.
+// Entered via jmp, from act.
+rdt,
+    crossBankjsp(drd:1, NOEEM) // the library's voices, for orb's numbers
+    law 1
+    dac atm
+    law srd
+    jda sts
+    dzm got
+    dzm rwn
+    lac npart
+    dac onp
+    jmp lds
+
+// rte -- no word came: back to the menu, with the parts already in core
+// if none came at all. The status is TAPE READ, or the note rwn holds.
+// Has no arguments and does not return: it ends at mnr.
+// Does not preserve AC or IO.
+// Entered via jmp, from rw.
+rte,
+    local re1, re2
+    dzm atm
+    lac got
+    SKIP_NEXT_IF_AC_ZERO
+    jmp re1
+    lac onp
+    dac npart
+    law sno
+    jmp re2
+re1,
+    lac rwn
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    law srr
+re2,
+    jda sts
+    jmp mnr
+    endlocal
+
+// rtx -- an error in the tape ends READ TAPE: its text on the status
+// line, the parts read whole before it kept, and the menu again. The
+// reader is not started: the error came with the last word read.
+// Argument: AC the error's text.
+// Does not return: it ends at mnr.
+// Does not preserve AC or IO.
+// Entered via jmp, from dacmusic.am1's loader.
+rtx,
+    dzm atm
+    jda sts
+    jmp mnr
+
+// rw -- the next word from the reader, into IO. From the console (atm 0),
+// an rpb, which waits as long as it takes. From READ TAPE, the reader is
+// started without a transfer (bits 5 and 6 equal), status bit 1 says the
+// word is in its buffer, and rrb takes it, as the D handbook gives it;
+// meanwhile msv keeps the screen drawn, and no word in rto's polls
+// (about 2 s, 12 s for the tape's first) ends the read at rte.
+// That end leaves the read it started unfinished, and the reader keeps
+// it: a tape mounted again completes it with the tape's first word. So
+// a word already in the buffer is taken first, on either path; and
+// while a read is started and not taken (rps), none is started again,
+// and the console's path waits for that one's word instead of an rpb.
+// Has no arguments.
+// Returns: IO the word; on READ TAPE's time limit it does not return,
+// but jumps to rte.
+// Does not preserve AC.
+// Called via jsp.
+rw,
+    local rw1, rw2, rw3, rw4, rw5, rw6, rw7, rw9, rwx, rto
+    dap rwx
+    cks
+    ril 1s
+    SKIP_NEXT_IF_IO_POSITIVE_OR_ZERO // skip unless status bit 1: no word is in yet
+    jmp rw6                 // a word is in already
+rw5,
+    lac atm
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp rw9
+    lac got
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rw1
+    lac [0d120000]
+    jmp rw2
+rw1,
+    lac [0d20000]
+rw2,
+    cma
+    dac rto
+    lac rps
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    rpb-i
+    law 1
+    dac rps
+rw3,
+    jsp msv
+    cks
+    ril 1s
+    SKIP_NEXT_IF_IO_NEGATIVE // skip if status bit 1: the word is in
+    jmp rw4
+rw6,
+    rrb
+    dzm rps
+    law 1
+    dac got
+    jmp rwx
+rw4,
+    isp rto
+    jmp rw3
+    jmp rte
+rw9,
+    lac rps
+    SKIP_NEXT_IF_AC_ZERO
+    jmp rw7
+    rpb
+    jmp rwx
+rw7,
+    cks                     // READ TAPE's read, still to come: as long as it takes
+    ril 1s
+    SKIP_NEXT_IF_IO_NEGATIVE
+    jmp rw7
+    jmp rw6
+rwx, jmp .
+
+rto, 0                      // polls left for this word
+    endlocal
+
+// msv -- keep the screen drawn while the program waits: a pen hit is
+// passed over, a stopped display started again.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+msv,
+    local ms1, msx
+    dap msx
+    dsp
+    jmp ms1
+    drs
+ms1,
+    dss
+    jmp msx
+    lio [mlist]
+    dla
+msx, jmp .
+    endlocal
+
+// orb -- check the orchestra block's ct words, read to fp, and take them
+// into per, orch, ostp, ovol and opl if every number is one the program
+// has. A block of ORCHN words ends in the volumes; one of ORCHN0, the
+// older form without them, sets every volume to 0 dB; both have one stop
+// a converter and set each converter's own place. One of ORCHN2 is
+// version 2 (Implementation.md, "Reading a tape"), whose lines have one
+// to STOPS stops, packed from the first, and a place of the nine; it is
+// taken only with no detune.
+// Whether stops sound together is vld's to say. A voice is one the
+// drum's library has (ninst), or any of MAXV when the drum has none:
+// PLAY says then that it is missing.
+// Argument: ct, ORCHN, ORCHN0 or ORCHN2.
+// Returns: AC 0 if taken; else nothing changed and AC is a converter
+// (1 to NCONV) with a number out of range, a volume that is no level or
+// a place not of the nine, or NCONV+1 for per or the version.
+// Does not preserve IO.
+// Called via jsp.
+orb,
+    local ob1, ob2, ob3, ob4, ob5, ob6, ob7, ob9, obx, oc1, oc2, oc3, oc4, oc5, oc6
+    dap obx
+    lac ct
+    SKIP_NEXT_IF_DIFFERENT [ORCHN2]
+    jmp oc1
+    // The volumes: the block's last NCONV words, or vzr's.
+    law vzr
+    dac mv
+    lac ct
+    SKIP_NEXT_IF_SAME [ORCHN]
+    jmp ob3
+    lac fp
+    add [ORCHN - NCONV]
+    dac mv
+ob3,
+    law NCONV               // per less 1: 0 to NCONV-1
+    dac mlim
+    lac fp
+    dac mq
+    lac i mq
+    sub [1]
+    jda rng
+    jmp ob5
+    lac fp
+    dac mq
+    law i NCONV
+    dac mn
+    dzm mc
+ob1,
+    idx mc
+    idx mq
+    law NCONV+1
+    dac mlim
+    lac i mq                // the part plus 1: 0 to NCONV
+    jda rng
+    jmp ob9
+    idx mq
+    jsp vlim
+    lac i mq                // the voice's number
+    jda rng
+    jmp ob9
+    idx mq
+    law NOCT
+    dac mlim
+    lac i mq                // the octave's
+    jda rng
+    jmp ob9
+    isp mn
+    jmp ob1
+    lac mv
+    dac mq
+    dzm mc
+    law i NCONV
+    dac mn
+ob6,
+    idx mc
+    lac i mq                // the volume
+    jda vfn
+    SKIP_NEXT_IF_DIFFERENT [VN]
+    jmp ob9
+    idx mq
+    isp mn
+    jmp ob6
+    // Every number good: taken.
+    lac fp
+    dac mq
+    lac i mq
+    dac per
+    law orch
+    dac mp
+    law i NCONV
+    dac mn
+ob2,
+    idx mq
+    lac i mq
+    sub [1]                 // the part; 0 becomes -1, none
+    dac i mp
+    idx mp
+    idx mq
+    lac i mq
+    dac i mp
+    idx mp
+    idx mq
+    lac i mq
+    add [octbl]
+    dac mt
+    lac i mt
+    dac i mp
+    idx mp
+    isp mn
+    jmp ob2
+    lac mv
+    dac mq
+    law ovol
+    dac mp
+    law i NCONV
+    dac mn
+ob4,
+    lac i mq
+    dac i mp
+    idx mq
+    idx mp
+    isp mn
+    jmp ob4
+    law ostp                // one stop a converter
+    dac mp
+    law i 0d12              // NCONV * (STOPS - 1)
+    dac mn
+ob7,
+    dzm i mp
+    idx mp
+    isp mn
+    jmp ob7
+    dzm opl                 // and the converters' own places
+    dzm opl + 1
+    law PLRIGHT
+    dac opl + 2
+    dac opl + 3
+    cla
+    jmp obx
+    // Version 2: the version, per, then each line: part + 1, octave,
+    // volume, detune 0, a place of the nine, a voice + 1, then three
+    // stops, each a voice + 1 after a voice, or 0.
+oc1,
+    lac fp
+    dac mq
+    lac i mq
+    SKIP_NEXT_IF_SAME [2]
+    jmp ob5
+    idx mq
+    law NCONV               // per less 1: 0 to NCONV-1
+    dac mlim
+    lac i mq
+    sub [1]
+    jda rng
+    jmp ob5
+    dzm mc
+oc2,
+    idx mc
+    idx mq
+    law NCONV+1
+    dac mlim
+    lac i mq                // the part plus 1: 0 to NCONV
+    jda rng
+    jmp ob9
+    idx mq
+    law NOCT
+    dac mlim
+    lac i mq                // the octave's number
+    jda rng
+    jmp ob9
+    idx mq
+    lac i mq                // the volume
+    jda vfn
+    SKIP_NEXT_IF_DIFFERENT [VN]
+    jmp ob9
+    idx mq
+    lac i mq                // the detune: must be 0
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ob9
+    idx mq
+    law PLRIGHT + 1
+    dac mlim
+    lac i mq                // the place: one of the nine, 0 to PLRIGHT, 040 apart
+    jda rng
+    jmp ob9
+    lac i mq
+    and [037]
+    SKIP_NEXT_IF_AC_ZERO
+    jmp ob9
+    idx mq
+    jsp vlim
+    lac i mq                // the voice plus 1, the first stop
+    sub [1]
+    jda rng
+    jmp ob9
+    law i 3                 // STOPS - 1
+    dac mn
+oc4,
+    lac i mq
+    dac mt                  // the stop before
+    idx mq
+    lac i mq
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp oc5
+    lac mt
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp ob9                 // a stop after none
+    lac i mq
+    sub [1]
+    jda rng
+    jmp ob9
+oc5,
+    isp mn
+    jmp oc4
+    lac mc
+    SKIP_NEXT_IF_SAME [NCONV]
+    jmp oc2
+    // Every number good: taken.
+    lac fp
+    dac mq
+    idx mq
+    lac i mq
+    dac per
+    law orch
+    dac mp
+    law ovol
+    dac mv
+    law ostp
+    dac ms
+    law opl
+    dac mo
+    law i NCONV
+    dac mn
+oc3,
+    idx mq
+    lac i mq
+    sub [1]                 // the part; 0 becomes -1, none
+    dac i mp
+    idx mp
+    lac mq
+    add [5]
+    dac mt
+    lac i mt
+    sub [1]                 // the voice
+    dac i mp
+    idx mp
+    idx mq
+    lac i mq
+    add [octbl]
+    dac mt
+    lac i mt
+    dac i mp                // the octave's shift
+    idx mp
+    idx mq
+    lac i mq
+    dac i mv                // the volume
+    idx mv
+    lac mq
+    add [2]
+    dac mt
+    lac i mt
+    dac i mo                // the place
+    idx mo
+    lac mq
+    add [4]                 // the second stop
+    dac mt
+    law i 3                 // STOPS - 1
+    dac mw
+oc6,
+    lac i mt
+    dac i ms
+    idx mt
+    idx ms
+    isp mw
+    jmp oc6
+    lac mq
+    add [6]                 // to the line's last word
+    dac mq
+    isp mn
+    jmp oc3
+    cla
+    jmp obx
+ob5,
+    law NCONV+1
+    jmp obx
+ob9,
+    lac mc
+obx, jmp .
+    endlocal
+
+// vlim -- set mlim to the voices orb takes: the library's (ninst), or
+// MAXV when the drum has none.
+// Has no arguments and no return values.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+vlim,
+    local vmx
+    dap vmx
+    lac ninst
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    law MAXV
+    dac mlim
+vmx, jmp .
+    endlocal
+
+// rng -- skip if 0 <= AC < mlim.
+// Arguments: AC the number; mlim the limit.
+// Skips if the number is in range.
+// Does not preserve AC; preserves IO.
+// Called via jda.
+rng, 0                      // AC, as jda stores it
+    local rgx
+    dap rgx
+    lac rng
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO // skip if not negative
+    jmp rgx
+    sub mlim
+    SKIP_NEXT_IF_AC_NOT_NEGATIVE // skip if not below mlim
+    idx rgx
+rgx, jmp .
+    endlocal
+
+// fill -- set the screen's changing words from the program's state.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+fill,
+    local fl0, fl1, fl2, fl3, fl4, fl5, fl6, fl7, fl8, fl9, fla, flb, flc, fld, flx, mr
+    dap flx
+    lac npart
+    jda num
+    dac mnp
+    lac per
+    jda num
+    dac mpr
+    // The movements: npart / per, rounded up.
+    dzm mt
+    lac per
+    sma sza i               // skip if per is above 0; else no movements
+    jmp fl3
+fl0,
+    lac npart
+    dac mr
+fl1,
+    lac mr
+    sma sza i               // skip if parts are left
+    jmp fl3
+fl2,
+    sub per
+    dac mr
+    idx mt
+    jmp fl1
+fl3,
+    lac mt
+    jda num
+    dac mmv
+    // Each converter's part, instrument and octave.
+    law orch
+    dac mq
+    law mfw
+    dac mp
+    law i NCONV
+    dac mn
+fl4,
+    law NCONV               // pnm's texts, one a part
+    dac mlim
+    lac i mq
+    jda rng
+    jmp fl5
+    lac i mq
+    add [pnm]
+    dac mt
+    lac i mt
+    jmp fl7
+fl5,
+    lac i mq
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO // skip if not negative: past the last part
+    jmp fl6
+    law squ
+    jmp fl7
+fl6,
+    law snn
+fl7,
+    jda fput
+    idx mq
+    lac ninst               // the voice's name in the directory, if it has the voice
+    dac mlim
+    lac i mq
+    jda rng
+    jmp fl8
+    lac i mq
+    ral 3s                  // ENTRY (8) words a voice
+    add [dir:1 + EBASE]
+    jmp fl9
+fl8,
+    law squ
+fl9,
+    jda fput
+    idx mq
+    lac i mq
+    jda ofn
+    add [onam]
+    dac mt
+    lac i mt
+    jda fput
+    idx mq
+    isp mn
+    jmp fl4
+    // Each instrument's further stops, counted: +1 to +3 after its name, or
+    // nothing.
+    law ostp
+    dac mq
+    law mcf
+    dac mp
+    law i NCONV
+    dac mn
+flb,
+    law stc
+    dac mt
+    law i 3                 // STOPS - 1
+    dac mw
+flc,
+    lac i mq
+    SKIP_NEXT_IF_AC_ZERO
+    idx mt
+    idx mq
+    isp mw
+    jmp flc
+    lac i mt
+    jda fput
+    isp mn
+    jmp flb
+    // Each converter's place, by its name, or ? if it is not one of plv's.
+    law opl
+    dac mq
+    law mlw
+    dac mp
+    law i NCONV
+    dac mn
+    lac [plv:1]
+    dac mlt
+    law NPL
+    dac mln
+fld,
+    lac i mq
+    jda look
+    add [pnt:1]
+    dac mt
+    lac i mt
+    jda fput
+    idx mq
+    isp mn
+    jmp fld
+    // Each converter's marker.
+    dzm mr
+fla,
+    lac mr
+    jda vmk
+    idx mr
+    SKIP_NEXT_IF_SAME [NCONV]
+    jmp fla
+flx, jmp .
+
+mr, 0                       // the parts not yet in a movement; a converter, for its marker
+    endlocal
+
+// fput -- make the field word mp names (mp walks mfw) a save to the text
+// at AC; mp moves on.
+// Argument: AC the text's address.
+// No return value.
+// Does not preserve AC; preserves IO.
+// Called via jda.
+fput, 0                     // AC, as jda stores it
+    local fpx, mt3, mt4
+    dap fpx
+    lac fput
+    ior [SAVEC]
+    dac mt3
+    lac i mp
+    dac mt4
+    lac mt3
+    dac i mt4
+    idx mp
+fpx, jmp .
+
+mt3, 0                      // the save
+mt4, 0                      // the field word
+    endlocal
+
+// sts -- show the text at AC on the status line.
+// Argument: AC the text's address.
+// No return value.
+// Does not preserve AC; preserves IO.
+// Called via jda.
+sts, 0                      // AC, as jda stores it
+    local ssx
+    dap ssx
+    lac sts
+    ior [SAVEC]
+    dac mstl
+ssx, jmp .
+    endlocal
+
+// num -- AC (0-99) as one word of 340 text: its digits, then the end.
+// Argument: AC the number.
+// Returns: AC the word.
+// IO is preserved.
+// Called via jda.
+num, 0                      // AC, as jda stores it
+    local nm1, nm2, nm3, nmx, mnm, mtn
+    dap nmx
+    lac num
+    dac mnm
+    dzm mtn
+nm1,
+    lac mnm
+    sub [0d10]
+    SKIP_NEXT_IF_AC_NEGATIVE // skip if below ten
+    jmp nm3
+    lac mtn
+    SKIP_NEXT_IF_AC_NOT_ZERO
+    jmp nm2
+    add [060]               // two digits: tens, units, the end
+    ral 6s
+    add mnm
+    add [060]
+    ral 6s
+    add [037]
+    jmp nmx
+nm2,
+    lac mnm                 // one digit, the end
+    add [060]
+    ral 6s
+    add [037]
+    ral 6s
+    jmp nmx
+nm3,
+    dac mnm
+    idx mtn
+    jmp nm1
+nmx, jmp .
+
+mnm, 0                      // the number, its tens taken off
+mtn, 0                      // its tens
+    endlocal
+
+// fnd -- the opener or button whose band and column hold drc's point.
+// Argument: IO drc's word.
+// Returns: AC the number, 0 to NTGT-1, or NTGT if none holds it (a
+// track's point, or a gap's).
+// IO is preserved.
+// Called via jsp.
+fnd,
+    local fd1, fd2, fd3, fd4, fd5, fd6, fd7, fd8, fb1, fb2, fb3, fdn, fdx, fx, fy, fr
+    dap fdx
+    dio mt2
+    lac mt2
+    and [0777]
+    ral 1s
+    dac fy
+    lac mt2
+    rar 9s
+    and [0777]
+    ral 1s
+    dac fx
+    lac fy
+    sub [FPB]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp fd1                 // the parts a movement
+    lac fy
+    sub [FRT]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp fdn                 // above the rows
+    lac fy
+    sub [FRB]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp fd3                 // below them
+    // A row, 0 to NCONV-1 from the top.
+    lac [FRT]
+    sub fy
+    dac mt
+    dzm fr
+fd2,
+    lac mt
+    sub [FRP]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp fd4
+    dac mt
+    idx fr
+    jmp fd2
+    // Its column.
+fd4,
+    lac fx
+    sub [FXV]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp fd8                 // the place's
+    sub [FXP - FXV]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp fd5                 // the part's
+    sub [FXI - FXP]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp fd6                 // the instrument's
+    sub [FXO - FXI]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp fd7                 // the octave's
+    jmp fdn
+fd5,
+    lac fr
+    jmp fdx
+fd6,
+    lac fr
+    add [NCONV]
+    jmp fdx
+fd7,
+    lac fr
+    add [2 * NCONV]
+    jmp fdx
+fd8,
+    lac fr
+    add [0d16]
+    jmp fdx
+    // The buttons.
+fd3,
+    lac fy
+    sub [FBT]
+    SKIP_NEXT_IF_AC_NEGATIVE
+    jmp fdn
+    lac fy
+    sub [FBB]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp fdn
+    lac fx
+    sub [FXR]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp fb1
+    sub [FXL - FXR]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp fb2
+    sub [FXU - FXL]
+    SKIP_NEXT_IF_AC_POSITIVE_OR_ZERO
+    jmp fb3
+fdn,
+    law NTGT
+    jmp fdx
+fd1,
+    law 0d12
+    jmp fdx
+fb1,
+    law 0d13
+    jmp fdx
+fb2,
+    law 0d14
+    jmp fdx
+fb3,
+    law 0d15
+fdx, jmp .
+
+fx, 0                       // the point's x
+fy, 0                       // and its y
+fr, 0                       // its row
+    endlocal
+
+// ofn -- octbl's number for the shift in AC, NOCT if it is not there.
+// Argument: AC the shift.
+// Returns: AC the number.
+// IO is preserved.
+// Called via jda.
+ofn, 0                      // AC, as jda stores it
+    local ofx
+    dap ofx
+    lac ofn
+    dac mt2
+    law octbl
+    dac mlt
+    law NOCT
+    dac mln
+    lac mt2
+    jda look
+ofx, jmp .
+    endlocal
+
+// look -- the index of AC in the table at mlt, mln words long.
+// Arguments: AC the value; mlt the table; mln its length.
+// Returns: AC the index, or mln if the value is not there.
+// IO is preserved.
+// Called via jda.
+look, 0                     // AC, as jda stores it
+    local lk1, lk2, lkx, mlv, mlk, mlp
+    dap lkx
+    lac look
+    dac mlv
+    dzm mlk
+lk1,
+    lac mlk
+    SKIP_NEXT_IF_DIFFERENT mln
+    jmp lkx
+    add mlt
+    dac mlp
+    lac i mlp
+    SKIP_NEXT_IF_DIFFERENT mlv
+    jmp lk2
+    idx mlk
+    jmp lk1
+lk2,
+    lac mlk
+lkx, jmp .
+
+mlv, 0                      // the value
+mlk, 0                      // the index
+mlp, 0                      // its word
+    endlocal
+
+// pbk -- punch a block: the word mcw, the mn words from mp on, then ms.
+// Arguments: mcw the count word; mp the first word; mn the words; ms the
+// checksum.
+// No return value; mp is left past the words.
+// Does not preserve AC or IO.
+// Called via jsp.
+pbk,
+    local pb1, pbx
+    dap pbx
+    lio mcw
+    jsp ppw
+    lac mn
+    cma
+    dac mpn
+pb1,
+    lio i mp
+    jsp ppw
+    idx mp
+    isp mpn
+    jmp pb1
+    lio ms
+    jsp ppw
+pbx, jmp .
+    endlocal
+
+// ppw -- punch IO as one binary word: three lines, the eighth hole in
+// each.
+// Argument: IO the word.
+// No return value.
+// Does not preserve AC or IO.
+// Called via jsp.
+ppw,
+    local pwx
+    dap pwx
+    jsp pln
+    ril 6s
+    jsp pln
+    ril 6s
+    jsp pln
+pwx, jmp .
+    endlocal
+
+// pln -- punch IO's high six bits as a binary line, the screen kept
+// drawn first (msv).
+// Argument: IO the word.
+// No return value.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+pln,
+    local plx, plw
+    dap plx
+    dio plw
+    jsp msv
+    lio plw
+    ppb
+plx, jmp .
+
+plw, 0                      // the word
+    endlocal
+
+// fed -- punch 100 blank lines, leader or trailer, the screen kept drawn.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+fed,
+    local fd1, fdx
+    dap fdx
+    law i 0d100
+    dac mpn
+fd1,
+    jsp msv
+    cli
+    ppa
+    isp mpn
+    jmp fd1
+fdx, jmp .
+    endlocal
+
+// The screen.
+
+// The display list: the gate, then the texts and the sliders both screens
+// show, then msw. Its rows, and so the openers in a column and the
+// tracks, are 60 points apart, the openers in a row at least 30 apart
+// with the longest name the directory holds (17 letters, 238 units), and
+// a track's first point 34 from the octave's opener: the pen's reach at
+// PENAP (20) never takes two openers at once, nor an opener and a track,
+// nor two tracks.
+mlist,
+    scale(1) intensity(5) lpoff next(subroutine)
+mgt, jump mbody next(parameter) // or menus.ac's open list
+mbody,
+    AT(0d60, 0d900)
+    type340 "\UDAC MUSIC"
+    AT(0d240, 0d900)
+mnp, 0                      // the parts read
+    next(character)
+    type340 " PARTS"
+    AT(0d380, 0d900)
+mmv, 0                      // the movements
+    next(character)
+    type340 " MOVEMENTS"
+mo13, OPN(0d636, 0d900, character)
+    type340 "PARTS A MOVEMENT "
+    next(character)
+mpr, 0                      // per
+
+mo14, OPN(0d60, 0d780, character)
+    type340 "1 "
+    next(subroutine)
+mlf1, SAVEC | squ                  // its place
+mo1, OPN(0d216, 0d780, character)
+    type340 "PART "
+    next(subroutine)
+mpf1, SAVEC | squ
+mo5, OPN(0d386, 0d780, subroutine)
+mif1, SAVEC | squ
+    next(subroutine)
+mic1, SAVEC | sbl                  // its further stops' count (fill)
+mo9, OPN(0d656, 0d780, subroutine)
+mof1, SAVEC | squ
+
+mo15, OPN(0d60, 0d720, character)
+    type340 "2 "
+    next(subroutine)
+mlf2, SAVEC | squ                  // its place
+mo2, OPN(0d216, 0d720, character)
+    type340 "PART "
+    next(subroutine)
+mpf2, SAVEC | squ
+mo6, OPN(0d386, 0d720, subroutine)
+mif2, SAVEC | squ
+    next(subroutine)
+mic2, SAVEC | sbl                  // its further stops' count (fill)
+mo10, OPN(0d656, 0d720, subroutine)
+mof2, SAVEC | squ
+
+mo16, OPN(0d60, 0d660, character)
+    type340 "3 "
+    next(subroutine)
+mlf3, SAVEC | squ                  // its place
+mo3, OPN(0d216, 0d660, character)
+    type340 "PART "
+    next(subroutine)
+mpf3, SAVEC | squ
+mo7, OPN(0d386, 0d660, subroutine)
+mif3, SAVEC | squ
+    next(subroutine)
+mic3, SAVEC | sbl                  // its further stops' count (fill)
+mo11, OPN(0d656, 0d660, subroutine)
+mof3, SAVEC | squ
+
+mo17, OPN(0d60, 0d600, character)
+    type340 "4 "
+    next(subroutine)
+mlf4, SAVEC | squ                  // its place
+mo4, OPN(0d216, 0d600, character)
+    type340 "PART "
+    next(subroutine)
+mpf4, SAVEC | squ
+mo8, OPN(0d386, 0d600, subroutine)
+mif4, SAVEC | squ
+    next(subroutine)
+mic4, SAVEC | sbl                  // its further stops' count (fill)
+mo12, OPN(0d656, 0d600, subroutine)
+mof4, SAVEC | squ
+
+    // The sliders, at the rows' height; vmk patches the markers' x and
+    // the readouts' texts.
+    TRACK(0d786)
+mk1, x(VX0 + 0d15 * VDX) next(vector)
+    MARK
+    READOUT(0d786)
+md1, RDW(CSP, CSP, CD(0))
+    RDE
+    TRACK(0d726)
+mk2, x(VX0 + 0d15 * VDX) next(vector)
+    MARK
+    READOUT(0d726)
+md2, RDW(CSP, CSP, CD(0))
+    RDE
+    TRACK(0d666)
+mk3, x(VX0 + 0d15 * VDX) next(vector)
+    MARK
+    READOUT(0d666)
+md3, RDW(CSP, CSP, CD(0))
+    RDE
+    TRACK(0d606)
+mk4, x(VX0 + 0d15 * VDX) next(vector)
+    MARK
+    READOUT(0d606)
+md4, RDW(CSP, CSP, CD(0))
+    RDE
+    intensity(5) next(subroutine)
+msw, jump mtl next(parameter) // mswm or mswp
+
+// The menu's tail: the buttons and the status line, then a stop.
+mtl,
+    OPN(0d60, 0d480, character)
+    type340 "READ TAPE"
+    OPN(0d260, 0d480, character)
+    type340 "PLAY"
+    OPN(0d400, 0d480, character)
+    type340 "PUNCH"
+    ATQ(0d60, 0d420)
+mstl, SAVEC | sbl            // the status line
+    lpoff halt
+
+// The play tail: PLAYING and STOP beside it, then the list again. STOP's
+// point is about 57 units from the nearest of PLAY's, beyond the pen's
+// reach, so a pen still there does not stop the piece it started, nor a
+// pen left on STOP start the next. Six vector continues, about 1.5 ms
+// each, with the sliders' 3.2 ms, pace the screen at about 60 frames a
+// second, fast enough not to flicker.
+mpt,
+    AT(0d60, 0d420)
+    type340 "PLAYING"
+    TGT(0d240, 0d426)
+    AT(0d256, 0d420)
+    type340 "STOP"
+    scale(0) next(point)
+    y(0) next(point)
+    x(0) next(vcontinue)
+    right deltax(1)
+    WAIT; WAIT; WAIT; WAIT; WAIT
+    next(subroutine)
+    jump mlist next(parameter)
+
+// msw's two words.
+mswm, jump mtl next(parameter)
+mswp, jump mpt next(parameter)
+
+// The texts the fields and the status line show.
+pnm, pn1; pn2; pn3; pn4     // the parts' numbers, and the converters' in a list's header
+pn1, type340 "1"
+pn2, type340 "2"
+pn3, type340 "3"
+pn4, type340 "4"
+snn, type340 "NONE"
+squ, type340 "?"
+// The octaves: their shifts, executed on a step (orch's third word),
+// then their texts; an octave's place in octbl is its number in the
+// orchestra block. The sixth text is for a shift not in octbl.
+octbl, nop; sar 1s; ral 1s; sar 2s; ral 2s
+onam, on8; on16; on4; on32; on2; squ
+on8, type340 "8 FT"
+on16, type340 "16 FT"
+on4, type340 "4 FT"
+on32, type340 "32 FT"
+on2, type340 "2 FT"
+sbl, type340 " "
+srd, type340 "READING TAPE"
+srr, type340 "TAPE READ"
+sno, type340 "NO TAPE"
+spu, type340 "PUNCHING TAPE"
+spd, type340 "TAPE PUNCHED"
+sst, type340 "STOPPED"
+sbc, type340 "TAPE ERROR BAD COUNT"
+stm, type340 "TAPE ERROR TOO MANY PARTS"
+stl, type340 "TAPE ERROR TAPE TOO LARGE"
+sck, type340 "TAPE READ CHECKSUM ERROR"
+sor, type340 "TAPE READ ORCHESTRA REFUSED"
+sld, type340 "LOADING VOICES"
+snv, type340 "NO VOICES ON THE DRUM"
+snl, type340 "VOICE NOT IN THE LIBRARY"
+sbg, type340 "VOICES TOO LARGE"
+// VOICE n DAMAGED, RELOAD THE DRUM: "VOI" and "CE " as 340 text, the
+// number's word (mpl puts it in sdn), then the rest.
+sdm, 261711; 030540
+sdn, 0
+    type340 "DAMAGED, RELOAD THE DRUM"
+ssm, type340 "STOPS DO NOT MATCH"
+stc, sbl; stc1; stc2; stc3   // an instrument's further stops, by their count
+stc1, type340 "+1"
+stc2, type340 "+2"
+stc3, type340 "+3"
+svt, snv; snl; sdm; sbg; ssm // vld's AC 1-5
+
+// The sliders' tables. The levels, left to right, in 1/8 dB of
+// attenuation: a finer step changes VSTEP, VN, this table and the tracks'
+// points, nothing else.
+vlv,
+    0d15 * VSTEP; 0d14 * VSTEP; 0d13 * VSTEP; 0d12 * VSTEP
+    0d11 * VSTEP; 0d10 * VSTEP; 0d9 * VSTEP; 0d8 * VSTEP
+    0d7 * VSTEP; 0d6 * VSTEP; 0d5 * VSTEP; 0d4 * VSTEP
+    0d3 * VSTEP; 0d2 * VSTEP; 0d1 * VSTEP; 0
+vty, 0d786 >> 1; 0d726 >> 1; 0d666 >> 1; 0d606 >> 1 // each track's y, as drc gives it
+vdz, dzg1; dzg2; dzg3; dzg4 // each converter's volume, executed with IO the level
+vmw, mk1; mk2; mk3; mk4     // each marker's word
+vrw, md1; md2; md3; md4     // each readout's text word
+vzr, 0; 0; 0; 0             // the volumes of a block from before them: 0 dB
+// The readouts' texts, by vlv's number: -45 dB to 0, then a level that
+// is none of them. BADREADOUT builds show -33 at -30, a deliberate
+// fault.
+vdb,
+    RDW(CMI, CD(4), CD(5)); RDW(CMI, CD(4), CD(2)); RDW(CMI, CD(3), CD(0d9))
+    RDW(CMI, CD(3), CD(6)); RDW(CMI, CD(3), CD(3))
+#ifdef BADREADOUT
+    RDW(CMI, CD(3), CD(3))
+#else
+    RDW(CMI, CD(3), CD(0))
+#endif
+    RDW(CMI, CD(2), CD(7)); RDW(CMI, CD(2), CD(4)); RDW(CMI, CD(2), CD(1))
+    RDW(CMI, CD(1), CD(0d8)); RDW(CMI, CD(1), CD(5)); RDW(CMI, CD(1), CD(2))
+    RDW(CSP, CMI, CD(0d9)); RDW(CSP, CMI, CD(6)); RDW(CSP, CMI, CD(3))
+    RDW(CSP, CSP, CD(0))
+    RDW(CSP, CSP, CQU)
+
+// The menu's words.
+
+atm, 0                      // reading from the menu: no halts, errors on the status line
+got, 0                      // READ TAPE: a word has come
+onp, 0                      // the parts in core before it
+rwn, 0                      // its note for the end, 0: none (sck or sor)
+rps, 0                      // a read started and its word not taken; 0 at each start (menu, load)
+mnu, 0                      // the piece was started from the menu
+hpl, 0                      // set from the console: halt at lpl before the piece, lpe after it
+hit, 0                      // this frame's first hit: fnd's number + 1, or 1 with a list open
+arm, 0                      // a hit will count
+qt, 0                       // passes left until the pen counts as away
+pap, 0                      // the pen's aperture: PENAP, or a list's
+lon, 0                      // a list is open (menus.ac)
+lhw, 0                      // its frame's first hit, drc's word
+ltg, 0                      // the opener act opens, fnd's number
+mc, 0                       // a converter: 0 to NCONV-1, or orb's 1 to NCONV
+mq, 0                       // the word read next: orch's, or a block's
+mp, 0                       // the next word: of orch or obuf, of mfw, or to punch
+mo, 0                       // orb's next word of opl
+mt, 0                       // scratch
+mw, 0                       // a count
+mt2, 0                      // fnd's and ofn's value for look; mpl's AC
+mn, 0                       // a count
+ms, 0                       // a block's checksum, for pbk
+mcw, 0                      // its count word
+mpn, 0                      // pbk's and fed's count
+mlim, 0                     // rng's limit
+mlt, 0                      // look's table
+mln, 0                      // and its words
+mv, 0                       // orb's volumes: the block's, or vzr
+vro, 0                      // a run of hits on a track: the track + 1, 0 if none
+vlo, 0                      // its first point, 0 to VN-1
+vhi, 0                      // its last
+vq, 0                       // phit's turns left until the run ends, or the held run is dropped
+hro, 0                      // the run vend holds: the track + 1, 0 if none
+hlo, 0                      // its first point
+hhi, 0                      // its last
+#ifdef RUNLOG
+rlp, 0                      // the ring's next word
+rln, 0                      // the runs logged since the start
+rfc, 0                      // the menu's frames since the start
+rlt, 0                      // vend's track, for rlog
+rlb, 0                      // vend's point before, for rlog
+rlg,                        // the ring
+    table RLOGW
+#endif

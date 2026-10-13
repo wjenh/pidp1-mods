@@ -1,0 +1,25 @@
+# The Flentrop of 1958, Adolphus Busch Hall: a stop
+# for dacvoice (voices/README.md, "Stops"). The division's lines (n,
+# frame, envelope, chiff) are the same in each of its stops, so they mix.
+name Fagot 16
+family Pedaal
+n 10
+frame 16
+start 18 dB
+attack 0.025 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.07 s
+chiff 0.020 s 18 dB 1.5 10
+# Pedaal: a bassoon reed at 16 feet, its second harmonic the strongest.
+harmonics 1 0.7  2 1.0  3 0.7  4 0.6  5 0.45  6 0.4  7 0.3  8 0.25
+harmonics 9 0.2  10 0.15  12 0.1  14 0.06
+level 0 dB
+# The voicing (voices/README.md, "The voicing"): the speech by the pipe's
+# size, and Busch Hall, where the organ stands.
+rise 10
+room busch
+# The celeste: a second read of the table at half the rate, 2 cents
+# sharp, a rank a little off the unison.
+celeste 2

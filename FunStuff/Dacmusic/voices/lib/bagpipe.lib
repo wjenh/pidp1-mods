@@ -1,0 +1,5 @@
+# The bagpipe library: 0 the chanter, 1 the drones, as
+# tapes/scotland-brave.bin names them. A converter with no part loads
+# voice 0, the chanter.
+bagpipe-chanter.voice
+bagpipe-drones.voice

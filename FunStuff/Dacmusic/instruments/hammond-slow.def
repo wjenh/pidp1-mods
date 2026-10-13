@@ -1,0 +1,34 @@
+# The Hammond B3 as a stop for dacvoice (../voices/README.md, "Stops" and
+# "Recorded instruments"; ../DESIGN.md section 27): the tonewheels are sines,
+# the drawbars the ranks of a 16-foot frame (16' rank 1, 5 1/3' 3, 8' 2,
+# 4' 4, 2 2/3' 6, 2' 8, 1 3/5' 10, 1 1/3' 12, 1' 16), each drawbar step 3
+# dB.
+# Pulled out 88 8000 000, the full bottom three is a plausible starting
+# point for A Whiter Shade of Pale, not a documented registration.
+# The Leslie at its slow speed (chorale), about 0.8 Hz.
+# Note that is a copyrighted song, not included here.
+# You can find midi files online and create a version for your own use.
+# Don't distribute it, that is a violation of copyright law.
+name B3 slow
+family Leslie slow
+n 10
+frame 16
+start 40 dB
+attack 0.005 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.02 s
+# The key click: a few ms of noise across the upper harmonics.
+chiff 0.003 s 14 dB 8 64
+harmonics 1 1.0
+rank 1 1.0
+rank 3 1.0
+rank 2 1.0
+level 0 dB
+# The Leslie: the slow counter free running at the rotor's speed, a little
+# pitch swing (the horn's Doppler), the level and the place swinging.
+vibrato 0.8 Hz 4 cents free
+leslie 2 dB 4 dB
+# No interpolate: interpolated, its four-note chords take 80% of the
+# channel and the last converter's samples come late (owner, 11-Oct-2026).

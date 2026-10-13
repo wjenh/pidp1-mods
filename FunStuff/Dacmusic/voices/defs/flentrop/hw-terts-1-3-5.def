@@ -1,0 +1,29 @@
+# The Flentrop of 1958, Adolphus Busch Hall: a stop
+# for dacvoice (voices/README.md, "Stops"). The division's lines (n,
+# frame, envelope, chiff) are the same in each of its stops, so they mix.
+name Terts 1 3/5
+family Hoofdwerk
+n 10
+frame 8
+start 18 dB
+attack 0.012 s
+peak 0 dB
+decay 0 dB/s
+sustain 0 dB
+release 0.05 s
+chiff 0.012 s 16 dB 2 16
+# Hoofdwerk: a flute mutation, the note's fifth harmonic.
+# An odd harmonic cannot break back: the rank keeps its own pitch to half the
+# sample rate (nyquist), alone in zone 5, cut for B6. At C#7 it would sound
+# 11,087 Hz, past half the rate, so it has no zone 6.
+harmonics 1 1.0  2 0.15  3 0.06  4 0.02
+rank 5 1.0 nyquist
+zones 6
+level 6 dB
+# The voicing (voices/README.md, "The voicing"): the speech by the pipe's
+# size, and Busch Hall, where the organ stands.
+rise 10
+room busch
+# The celeste: a second read of the table at half the rate, 2 cents
+# sharp, a rank a little off the unison.
+celeste 2

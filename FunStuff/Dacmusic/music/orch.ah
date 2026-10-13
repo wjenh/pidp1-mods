@@ -1,0 +1,16 @@
+// The orchestra dacmusic.am1 starts with: PER, the parts a movement, and for converter N
+// its part (CNP, -1: none), its voice's number in the drum's library (CNI) and the shift
+// that moves its step by octaves (CNO).
+#define PER 3
+#define C1P 0
+#define C1I 0d4
+#define C1O nop
+#define C2P 2
+#define C2I 0d7
+#define C2O nop
+#define C3P 1
+#define C3I 0d5
+#define C3O nop
+#define C4P 2
+#define C4I 0d7
+#define C4O sar 1s

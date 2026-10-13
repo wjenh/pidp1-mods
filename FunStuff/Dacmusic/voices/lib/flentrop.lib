@@ -1,0 +1,48 @@
+# The Flentrop library: the standard nine first, numbered 0-8 as the
+# tapes name them, then the 27 stops of the 1958 Flentrop in Adolphus
+# Busch Hall, 9-35, a family a division, made by dacvoice from
+# ../defs/flentrop/ (voices/README.md, "Stops").
+flute.voice
+reed.voice
+plucked-bass.voice
+marimba.voice
+principal.voice
+gedackt.voice
+trumpet.voice
+bourdon.voice
+harpsichord.voice
+
+# Rugpositief (I), 9-15
+flentrop/rp-holpijp-8.voice
+flentrop/rp-prestant-4.voice
+flentrop/rp-roerfluit-4.voice
+flentrop/rp-gemshoorn-2.voice
+flentrop/rp-quint-1-1-3.voice
+flentrop/rp-mixtuur-ii.voice
+flentrop/rp-kromhoorn-8.voice
+
+# Hoofdwerk (II), 16-23
+flentrop/hw-prestant-8.voice
+flentrop/hw-roerfluit-8.voice
+flentrop/hw-octaaf-4.voice
+flentrop/hw-speelfluit-4.voice
+flentrop/hw-nasard-2-2-3.voice
+flentrop/hw-valkfluit-2.voice
+flentrop/hw-terts-1-3-5.voice
+flentrop/hw-mixtuur-iv.voice
+
+# Borstwerk (III), 24-28
+flentrop/bw-zingend-gedekt-8.voice
+flentrop/bw-koppelfluit-4.voice
+flentrop/bw-prestant-2.voice
+flentrop/bw-sifflet-1.voice
+flentrop/bw-regaal-8.voice
+
+# Pedaal, 29-35: a 16-foot frame, so a part at 8 FT sounds at 16 feet
+flentrop/ped-bourdon-16.voice
+flentrop/ped-prestant-8.voice
+flentrop/ped-gedekt-8.voice
+flentrop/ped-fluit-4.voice
+flentrop/ped-mixtuur-iii.voice
+flentrop/ped-fagot-16.voice
+flentrop/ped-trompet-8.voice

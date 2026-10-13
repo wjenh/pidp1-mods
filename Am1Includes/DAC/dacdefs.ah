@@ -1,0 +1,251 @@
+// The D/A converters' mnemonics, for IOT 71 and its alias IOT 72 (IOTs/DAC/IOT_71.c and
+// IOT_72.c). FunStuff/Dacmusic/Implementation.md, "The instructions" and the sections after
+// it, describes each command and mode in full.
+//
+// IOT 71, the four D/A converters: one mnemonic per command and converter. Instruction
+// bits 6-9 are the command, bits 10-11 the converter (1-4 here, 0-3 in the instruction).
+// No DAC instruction may carry i: with bit 6 set the CPU would wait for a completion the
+// converters never give (commands 8-15, below), and none needs to wait. The latched
+// commands take IO; each takes effect at the next go or when the buffer playing now is
+// done: the next buffer starts, from the latches, at the sample time its first word is
+// due, and that sets the flag. So after a flag the program has the whole new buffer's time
+// to latch the one after it.
+//
+//   dxaN  latch the next buffer's address (IO bits 2-17, a full 16-bit address)
+//   dxlN  latch its length in words (IO bits 6-17, 0 = 4096)
+//   dxpN  latch its sample period in 5 us cycles (IO bits 6-17, 0 = 4096)
+//   dxgN  load the latches and start; the first word is fetched at once
+//   dxhN  halt; the output falls to 0
+//   dxsN  skip if a new buffer has begun since the last dxsN (clears the flag)
+//   dxbN  IO bit 0 set: request a sequence break at every new buffer, on channel IO bits 14-17
+//   dxtN  IO = bit 0 running, bit 1 the flag, bits 5-17 words left in this buffer
+//
+// A sample is bits 0-11 of a word, a ones' complement number; the low 6 bits are ignored.
+// Every sample steals one machine cycle.
+
+#define dxa1 iot 0071
+#define dxa2 iot 0171
+#define dxa3 iot 0271
+#define dxa4 iot 0371
+#define dxl1 iot 0471
+#define dxl2 iot 0571
+#define dxl3 iot 0671
+#define dxl4 iot 0771
+#define dxp1 iot 1071
+#define dxp2 iot 1171
+#define dxp3 iot 1271
+#define dxp4 iot 1371
+#define dxg1 iot 1471
+#define dxg2 iot 1571
+#define dxg3 iot 1671
+#define dxg4 iot 1771
+#define dxh1 iot 2071
+#define dxh2 iot 2171
+#define dxh3 iot 2271
+#define dxh4 iot 2371
+#define dxs1 iot 2471
+#define dxs2 iot 2571
+#define dxs3 iot 2671
+#define dxs4 iot 2771
+#define dxb1 iot 3071
+#define dxb2 iot 3171
+#define dxb3 iot 3271
+#define dxb4 iot 3371
+#define dxt1 iot 3471
+#define dxt2 iot 3571
+#define dxt3 iot 3671
+#define dxt4 iot 3771
+
+// IOT 72, wavetable mode: an alias of IOT 71, the same converter numbering.
+// A converter plays one period of a waveform from a table whose length (dxlN) is a power of
+// two, at any pitch, through a gain an envelope moves; an event timer counted in machine
+// cycles replaces the buffer end. Every latch, IOT 71's included, loads at the end of the
+// event playing now (or at dxgN), and that sets the flag, as a new buffer does.
+//
+//   dyfN  latch the step: IO 6 integer and 12 fraction bits, in table words a sample
+//   dycN  latch the event length in machine cycles (IO, 0 = 262144)
+//   dyaN  latch the attack rate (IO; a unit is 1/262144 dB a cycle, 0.763 dB/s)
+//   dydN  latch the decay rate
+//   dyrN  latch the release rate
+//   dylN  latch the start level (IO bits 0-8) and the peak level (bits 9-17), 1/8 dB
+//   dyxN  latch the sustain level (IO bits 0-8; 0777 = none, the decay runs to the floor)
+//         and the actions (bits 11-17): 01 wavetable mode, 02 key on, 04 key off, 010 the
+//         phase to 0, 020 sample mode (with 01, below), 040 the interpolation (below), 0100
+//         the packing (with 020, below); all but 01, 020, 040 and 0100 apply once
+//   dytN  IO = the envelope stage (bits 0-2: off, attack, decay, sustain, release) and the
+//         attenuation (bits 6-17, 1/64 dB)
+//   dyqN  commit (instruction bit 6 set, so no completion): every latch as it
+//         stands, the event length included, into the converter's queue, one more latch
+//         set behind the latches; the one-shot actions are consumed from the latches. An
+//         end (or dxgN) loads a full queue, else the latches as without it. With the queue
+//         full the commit waits, and the latches go into the queue at the next end, after
+//         it has loaded: latch nothing more until that end's flag. dxhN empties the queue.
+//         A program that commits each entry, two entries ahead, has two events after each
+//         flag to commit the next.
+//
+// A key on drops the held sample: until the new note's first word lands, the output is 0.
+// The output is the sample times 10^(-attenuation in dB / 20). At the floor (63.99 dB) the
+// envelope is off: the output is 0, and the converter fetches nothing.
+
+#define dyf1 iot 0072
+#define dyf2 iot 0172
+#define dyf3 iot 0272
+#define dyf4 iot 0372
+#define dyc1 iot 0472
+#define dyc2 iot 0572
+#define dyc3 iot 0672
+#define dyc4 iot 0772
+#define dya1 iot 1072
+#define dya2 iot 1172
+#define dya3 iot 1272
+#define dya4 iot 1372
+#define dyd1 iot 1472
+#define dyd2 iot 1572
+#define dyd3 iot 1672
+#define dyd4 iot 1772
+#define dyr1 iot 2072
+#define dyr2 iot 2172
+#define dyr3 iot 2272
+#define dyr4 iot 2372
+#define dyl1 iot 2472
+#define dyl2 iot 2572
+#define dyl3 iot 2672
+#define dyl4 iot 2772
+#define dyx1 iot 3072
+#define dyx2 iot 3172
+#define dyx3 iot 3272
+#define dyx4 iot 3372
+#define dyt1 iot 3472
+#define dyt2 iot 3572
+#define dyt3 iot 3672
+#define dyt4 iot 3772
+#define dyq1 iot 4072
+#define dyq2 iot 4172
+#define dyq3 iot 4272
+#define dyq4 iot 4372
+
+// IOT 72's commands 011-016, the recorded instruments' converter: instruction bit 6 set,
+// so no completion; each a latch, loaded with the others.
+// Every one starts at 0, and 0 is off.
+//
+// The interpolation (dyxN action 040, held as 01 is): each read takes the word at the phase
+// and the next (in sample mode back by the loop at the end) and sounds the line between them
+// at the phase's fraction. A word the read already holds, by address, is not fetched again,
+// so at a step under 1 the steals follow the rate the words are stored at. With it the
+// céleste reads at every sample time.
+//
+// The packing (dyxN action 0100, held, with sample mode): three 12-bit samples in each two
+// words. Sample 3g + p is in words 2g and 2g + 1 from the timbre's base: p 0 the first's
+// bits 0-11, p 1 its bits 12-17 then the second's bits 0-5, p 2 the second's bits 6-17. The end, the loop and the stride (dzeN, dzlN, dzsN) are then
+// in groups of three samples, two words each, so a timbre is twice the stride words on; a
+// packed end is at most 21,845 groups. A read takes two words at most, keeping those it
+// holds as the interpolation's do, with or without the interpolation.
+//
+//   dyvN  latch the slow counter's rate: IO, in 3,125 / 2^24 Hz (5.5 Hz is 29,528). The
+//         counter clocks every 64th cycle from dxgN; a key on sets it to 0 unless free running
+//   dywN  latch the vibrato's depth (IO bits 0-8, 0.106 cents a unit at the peak), its delay
+//         (bits 9-16, in 5.12 ms: the counter holds at 0 that long after a key on) and free
+//         running (bit 17: a key on leaves the counter alone)
+//   dymN  latch the Leslie: the tremolo's depth (IO bits 0-8) and the place's (bits 9-17),
+//         1/8 dB; the place's swings each side's attenuation a quarter turn from the tremolo
+//   dykN  latch the percussion's level (IO bits 0-8, 1/8 dB under the note) and its multiple
+//         of the step (bits 15-17; 0 none). It sounds at a key on that finds the envelope off
+//         or releasing, and dies away at its decay rate
+//   dyjN  latch the percussion's decay rate (IO, the envelope's unit)
+//   dypN  latch the address of the percussion's sine, 256 words (IO bits 2-17)
+
+#define dyv1 iot 4472
+#define dyv2 iot 4572
+#define dyv3 iot 4672
+#define dyv4 iot 4772
+#define dyw1 iot 5072
+#define dyw2 iot 5172
+#define dyw3 iot 5272
+#define dyw4 iot 5372
+#define dym1 iot 5472
+#define dym2 iot 5572
+#define dym3 iot 5672
+#define dym4 iot 5772
+#define dyk1 iot 6072
+#define dyk2 iot 6172
+#define dyk3 iot 6272
+#define dyk4 iot 6372
+#define dyj1 iot 6472
+#define dyj2 iot 6572
+#define dyj3 iot 6672
+#define dyj4 iot 6772
+#define dyp1 iot 7072
+#define dyp2 iot 7172
+#define dyp3 iot 7272
+#define dyp4 iot 7372
+
+// IOT 71's commands 8-15, sample mode, the timbre that follows the level, the volume and the
+// place: instruction bit 6 set, the same converter numbering. All but dzgN and dzpN are
+// latches, loaded with the others at the end of the event (or at dxgN). Bit 6 is the CPU's completion request too, so
+// these commands give no completion.
+//
+// Sample mode (dyxN action 020, held as 01 is): the phase's integer part is 16 bits and is
+// not masked with the length, so the converter plays a sampled note from the address: an
+// attack once, then a loop. After each step, a phase at or past the end goes back by the
+// loop's length, fraction kept. The loop must be at least 64 words, the largest step.
+// The timbre: up to four timbres a stride apart; at each sample the fetch is from the
+// address plus the stride times the number of thresholds the attenuation has reached. A
+// stride of 0 (the default) leaves it out. It works in wavetable mode too.
+//
+//   dzeN  latch the sample's end in words, packed in groups (IO bits 2-17, 0 = 65536)
+//   dzlN  latch the loop's length in words, packed in groups (IO bits 2-17)
+//   dzsN  latch the timbres' stride in words, packed in groups (IO bits 2-17; 0 = one timbre)
+//   dzuN  latch threshold 1 (IO bits 0-8) and threshold 2 (bits 9-17), 1/8 dB; 0777 = none
+//   dzvN  latch threshold 3 (IO bits 0-8) and the voicing (bits 9-17): bits
+//         15-17 the edge tone's level, 0 off or k at -36 + 2k dB under a stop at C4 (band
+//         noise at the note's fundamental under its envelope, 4 dB more each octave down);
+//         bit 14 the speech (the rise over 10 of the note's periods, never faster than the
+//         attack rate, with breath through it); bit 13 Busch Hall, for the configuration's
+//         dacroom=voices; bits 9-12 the céleste, a detune k in half cents (0 none): a
+//         second read of the same words, k half cents sharp, at every other sample time
+//         from the key on, the two summed at equal power; each such read steals one more
+//         cycle. A voice file gives them (voices/README.md)
+//   dzgN  the volume: IO bits 9-17, 1/8 dB of attenuation added to the envelope's, 0777 =
+//         mute. Not a latch: the volume moves to it at once, 1/64 dB a cycle (3 dB in about
+//         1 ms), so turning it while a note plays does not click; a converter not running
+//         takes it at once. It applies in every mode, and it starts at 0. The thresholds
+//         see the envelope alone.
+//   dzpN  the place: IO bits 0-8 the left channel's attenuation and bits 9-17 the right's,
+//         1/8 dB, 0777 = off. Not a latch: each moves to it at once, 1/64 dB a cycle, as
+//         the volume does. The mixer sums every converter into each channel through its
+//         two gains. At the start converters 1 and 2 are left (0 left, off right) and 3
+//         and 4 right.
+//   dztN  IO = the phase's integer part (bits 2-17)
+
+#define dze1 iot 4071
+#define dze2 iot 4171
+#define dze3 iot 4271
+#define dze4 iot 4371
+#define dzl1 iot 4471
+#define dzl2 iot 4571
+#define dzl3 iot 4671
+#define dzl4 iot 4771
+#define dzs1 iot 5071
+#define dzs2 iot 5171
+#define dzs3 iot 5271
+#define dzs4 iot 5371
+#define dzu1 iot 5471
+#define dzu2 iot 5571
+#define dzu3 iot 5671
+#define dzu4 iot 5771
+#define dzv1 iot 6071
+#define dzv2 iot 6171
+#define dzv3 iot 6271
+#define dzv4 iot 6371
+#define dzg1 iot 6471
+#define dzg2 iot 6571
+#define dzg3 iot 6671
+#define dzg4 iot 6771
+#define dzp1 iot 7071
+#define dzp2 iot 7171
+#define dzp3 iot 7271
+#define dzp4 iot 7371
+#define dzt1 iot 7471
+#define dzt2 iot 7571
+#define dzt3 iot 7671
+#define dzt4 iot 7771

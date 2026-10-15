@@ -108,6 +108,7 @@
  *    unless the new renderer setting or -r gives one explicitly.
  * 15-Oct-2026 Claude - light-pen cursors from penCursor.h, one for pen up and one for pen down,
  *    add "pencursor" on/off to the config file, default is on.
+ * 15-Oct-2026 Claude - loadConfig()'s comment names the config files it reads.
 */
 
 #include <stdio.h>
@@ -2137,8 +2138,8 @@ isTrue(char *strP)
 
 // See if there is a config file in the user home directory.
 // If not, try the install directory.
-// The file is named '.t30dyconfig' in the home directory,
-// 't30dpyconfig' in the install directory.
+// The file is named '.t30dpy.config' in the home directory,
+// 't30dpy.config' in the install directory.
 // Lines are of the form 'param=value', empty lines or lines beginning with '#' are ignored,
 // as are any invalid params.
 // For booleans, isTrue(), above, checks for valid true words.

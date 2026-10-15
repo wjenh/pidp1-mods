@@ -108,6 +108,8 @@
  *    scaling fixed for windows not exactly 1024 in size.
  * 15-Oct-2026 Claude - light-pen cursors from penCursor.h, one for pen up and one for pen down,
  *    add "pencursor" on/off to the config file, default is on.
+ * 15-Oct-2026 Claude - the home config file is ~/.t30dpy.config, as documented and as t30dpy3 reads it,
+ *    not ~/.t30dpyconfig.
 */
 
 #include <stdio.h>
@@ -2046,7 +2048,8 @@ isTrue(char *strP)
 
 // See if there is a config file in the user home directory.
 // If not, try the install directory.
-// The file is named '.t30dpyconfig' in the home directory, 't30dpy.config' in the install directory.
+// The file is named '.t30dpy.config' in the home directory, 't30dpy.config' in the install directory,
+// the same as t30dpy3.
 // Lines are of the form 'param=value', empty lines or lines beginning with '#' are ignored,
 // as are any invalid params.
 // For booleans, isTrue(), above, checks for valid true words.
@@ -2059,7 +2062,7 @@ char *cP, *cP2;
 FILE *fP;
 char line[256];
 
-    if( !(fP = getFile("~/.t30dpyconfig")) )
+    if( !(fP = getFile("~/.t30dpy.config")) )
     {
         if( !(fP = getFile("/opt/pidp1-mods/t30dpy.config")) )
         {

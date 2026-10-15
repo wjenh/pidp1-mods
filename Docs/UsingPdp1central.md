@@ -17,6 +17,8 @@ pdp1central is one window that does what the scripts in /opt/pidp1-mods/bin do f
 - it fast loads a tape straight into the running pdp-1's memory, with fastload;
 - it mounts and unmounts microtapes on the Type 550 drives, with mtp;
 - it turns the emulator's sound on and off;
+- it sets the running emulator's gain, audio filters, tuning and sample rate, and its multiply and
+  divide option, on the Live tab;
 - it edits /opt/pidp1-mods/pidp1.config, the configuration file, setting by setting;
 - its colors come from a choice of schemes, with single colors changeable in a file of its own.
 
@@ -132,6 +134,55 @@ A reload made elsewhere, by pdp1control reload, is not undone.
 A click changes the window at once and saves the choice.
 When pdp1central.config also changes single colors, a line under the choice says how many were changed.
 
+### The Live tab
+
+Settings the running emulator can take while running.
+They are reset to the config file values on the next emulator starr unless saved.
+
+**Audio**
+
+Enable or disable audio.
+Until a value is read or set or a reload is done,
+its values show the pidp1.config file value or the default if not set.
+The gain, the cutoff for all channels, the cutoff for each channel 1 to 4,
+tuning and sample rate can all be changed.
+The last column shows the emulator state for the setting.
+Type a value and press Enter or click Set to apply changes.
+A value outside its range is not sent, an error error message will say what the range is.
+The valid rages are gain 0 to 100, a cutoff 1 to 100000 Hz, tuning 0.001 to 100 (SDL3 only),
+sample rate 8000 to 192000.
+
+- Read current values asks the emulator for its settings  and fills the fields.
+- CHM filters puts back the Computer History Museum's real PDP-1 filters on all four channels.
+- Overflows shows how often the sound clipped, a help when setting the gain.
+
+Setting the cutoff for all channels replaces each channel's cutoff.
+A channel set afterwards overrides it for that channel.
+
+Every audio command also applies the audio enabled setting,
+read current values and overflows included.
+
+**Save to pidp1.config**
+
+Writes the values set here into pidp1.config the same way the Settings tab does
+and does not reload, the emulator already has them.
+
+A cutoff for all channels is saved with the channel lines commented out, since a channel line would override it.
+CHM filters comments out all five cutoff lines since those values are the default.
+It is refused while the Settings tab has unsaved changes.
+
+When pdp1central reloads the emulator it sends the values set here again.
+A start, stop or restart starts the emulator with the config file's values and the values set here are ignored.
+
+**Multiply and divide.**
+
+This shows whether the emulator has the type 10 multiply and divide option on.
+It is read every 2 seconds while this tab is shown so a change made elsewhere such as  at the console, with Ctrl-F2
+in pdp1_periphES, or by a reload is tracked.
+The button turns it off or on until the next reload.
+
+The CPU tab's muldiv setting under Settings is the saved value.
+
 ### The Microtape tab
 
 A row for each Type 550 drive, 1 to 8, as /opt/pidp1-mods/microtapes.txt lists them,
@@ -157,8 +208,9 @@ The tab works whether the emulator is running or not.
 ### The Settings tab
 
 A tab for each group of settings, as in UsingTheConfigFile.md, then:
-- Other: settings in pidp1.config that pdp1central does not describe, e.g. for an IOT of your own;
-- Retired: settings that nothing reads any more, shown but not editable.
+- Other: settings in pidp1.config that pdp1central does not describe, e.g. for an IOT of your own.
+
+Settings that nothing reads any more are not shown; UsingTheConfigFile.md lists them.
 
 Each row has:
 - the setting's name, hold the mouse over it for what it does. A few show a more understandable name, such

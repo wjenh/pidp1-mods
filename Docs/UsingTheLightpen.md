@@ -2,7 +2,9 @@
 
 This document describes the lightpen simulation implemented in the emulator.
 
-Updated 11-Aug-2026
+Updated 15-Oct-2026\
+Add description of the new pen cursor
+
 
 ## Implementation
 
@@ -32,7 +34,7 @@ They are packed:
 (x << 10) | y
 ```
 
-When a *dpy* instruction completes 45 microseconds after it is issued, any queued commands are read and only
+When a *dpy* instruction completes 35 microseconds after it is issued, any queued commands are read and only
 the last one processed. This aligns the lightpen coordinates with the instruction.
 
 If the coordinates of the point displayed match the last lightpen coordinates within the aperture setting and
@@ -122,7 +124,12 @@ also with the same tracking limitations.
 ## The mouse-pen
 
 The lightpen is simulated by the mouse.\
-As long as the left buttion is pressed, the lightpen is on the screen and the cursor is the lightpen.
-Any pixel being drawn that is within the aperture around the cursor will be a hit.
+As long as the left buttion is pressed the lightpen is on the screen, pen-down.
+Any pixel being drawn that is within the aperture around the pen's tip will be a hit.\
+When the mouse button is released, the lightpen is off the screen and no hits occur.
 
-When the mouse button is released, the lightpen is off the screen.
+The cursor is drawn as the image of a lightpen.
+When the pen is not on the screen, left mouse button not pressed, a dim outline is shown.
+When the pen is on the screen, pen down, a bright pen is shown.
+
+The pen aims at the point 2 pixels beyond its tip.

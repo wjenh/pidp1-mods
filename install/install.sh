@@ -197,10 +197,10 @@ while true; do
 
         # The new Type 30 display, either the SDL2 or SDL3 version
         if dpkg-query -W -f='${Status}' libsdl3-dev 2>/dev/null | grep -q "ok installed"; then
-            echo "SDL3 found, installing type30dpy3 as type30dpy."
+            echo "SDL3 found, installing t30dpy3 as t30dpy."
             make -C $INSTALLDIR/Tools/T30dpy installdpy3
         else
-            echo "No SDL3 library is present, installing SDL2 type30dpy."
+            echo "No SDL3 library is present, installing SDL2 t30dpy."
             make -C $INSTALLDIR/Tools/T30dpy install
         fi
 		make -C $INSTALLDIR/Tools/T30dpy clean

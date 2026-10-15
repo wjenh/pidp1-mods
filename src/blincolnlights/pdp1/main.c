@@ -46,7 +46,7 @@
  *    A second start exits before it touches the panel, ports or coremem.
  * wje/Claude 07-Oct-2026 a new display or typewriter client starts with current output, any leftover data
  *    before the connection opened is first discarded.
- * Claude 07-Oct-2026 the default reader and punch tapes are posted before any port listens, so a front end's
+ * Claude 07-Oct-2026 the default reader and punch tapes are posted before any port listens so a front end's
  *    tape socket is no longer replaced by them.
  * Claude 07-Oct-2026 only the emulator thread drives the audio device; the console's audio requests are posted
  *    to it (audio.c, console.c).
@@ -262,7 +262,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
         updateswitches(pdp, panel);
 
         // Serve the network debugger's requests here, between cycles and just before the flag
-        // handling below, so a start, stop or step it asks for takes effect in this same pass.
+        // handling below so a start, stop or step it asks for takes effect in this same pass.
         if( ad1WorkPending() )
         {
             ad1Service(pdp);
@@ -285,7 +285,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
 
         // A start, stop or continue that arrives in the pass right after the previous one was
         // consumed would otherwise find the previous value of its switch still set and see no
-        // edge, so each one forces its own edge, as the stop already did.
+        // edge so each one forces its own edge, as the stop already did.
         if( AD1_START(pdp1P) )
         {
             prev_start_sw = 0;
@@ -342,7 +342,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
             {
                 pdp->run_enable = 0;
                 // Technically, the high speed channels aren't reset until a start, etc. above occur, but
-                // high speed processing needs to be stopped anyway, so do it now also.
+                // high speed processing needs to be stopped anyway, do it now.
                 HSCreset();
                 dynamicIotProcessorStop();
             }
@@ -472,14 +472,14 @@ bool ran;               // the pass ran the machine, a stolen cycle included
                 updatelights_pwm(panel, 1);     // tally one halted cycle for new panel driver
             }
 
-            // throttle() moves simtime only through its lag cap, so measuring up to here leaves
+            // throttle() moves simtime only through its lag cap so measuring up to here leaves
             // out the span the cap forgives, the plugins' deadline time bases do not count it.
             passNs = pdp->simtime - passStartSim;
 
             realtimeBefore = pdp->realtime;
             throttle(pdp);
 
-            // throttle() only refreshes pdp->realtime after a sleep, so a change means it slept.
+            // throttle() only refreshes pdp->realtime after a sleep so a change means it slept.
             // Only tracked inside a timed run (totalCycles is cleared when the run's report is written).
             if( timingEnabled && totalCycles && (pdp->realtime != realtimeBefore) )
             {
@@ -539,7 +539,7 @@ bool ran;               // the pass ran the machine, a stolen cycle included
 // All run on the emulator thread only.
 
 // Snapshot the start of a timed run: wall time, the emulator thread's CPU time and its context
-// switch counts, so timingReport() can give this run's deltas.
+// switch counts so timingReport() can give this run's deltas.
 static void
 timingRunStart(void)
 {
@@ -602,7 +602,7 @@ u64 burstWallNs;
 
     if( !lastCycleEnd )
     {
-        return;     // no timed cycle yet this run, so no known start for the sleep
+        return;     // no timed cycle yet this run, no known start for the sleep
     }
 
     sleptNs = (wakeNs - lastCycleEnd);
@@ -700,7 +700,7 @@ char stamp[64];
     fprintf(fP, "  run ended %s; wall %.3fs; %ld CPUs online; emulator thread %s priority %d\n",
         stamp, ((double)wallNs / 1e9), sysconf(_SC_NPROCESSORS_ONLN), policyP, param.sched_priority);
 
-    // CPU time covers ALL of the thread's loop work, timed or not, so CPU per cycle is the
+    // CPU time covers ALL of the thread's loop work, timed or not so CPU per cycle is the
     // real host cost of one simulated 5us cycle.
     // Wall percent is the thread's share of a core.
     fprintf(fP, "  emulator thread CPU %.3fs (%.1f%% of wall), %lluns per cycle\n",
@@ -1032,7 +1032,7 @@ handledpy4(int fd, void *arg)
 
 // Called when a connection request comes in on the paper-tape-reader network port.
 // Connects the newly-connected fd in the reader in place of whatever it had.
-// The fd is made/ non-blockin, so a client that pauses or stops reading the echoes
+// The fd is made/ non-blocking so a client that pauses or stops reading the echoes
 // cannot hold the emulator thread, and it is handed over with mountReader() in pdp1.c.
 // at its next pass.
 void
@@ -1061,7 +1061,7 @@ handleptp(int fd, void *arg)
 void*
 netthread(void *arg)
 {
-    // The command port's handler keeps its connection, so it runs threaded.
+    // The command port's handler keeps its connection so it runs threaded.
     // The others just hand the fd over.
     struct PortHandler ports[] =
     {
@@ -1188,7 +1188,7 @@ sighandler(int sig)
 // ports when it exits, and overwrite coremem at its exit.
 // The lock is an flock() on a file in /tmp, the namespace the panel segment already shares.
 // The fd stays open for the life of the process.
-// The kernel drops the lock at any exit, SIGKILL included, so nothing stale is left.
+// The kernel drops the lock at any exit, SIGKILL included so nothing stale is left.
 // Returns false when another pdp1 holds the lock.
 // A lock that can't be had for any other reason is reported and pdp1 runs
 // as it did before there was a lock.
@@ -1285,7 +1285,7 @@ int fd[2];
     pdp->muldiv_sw = configurationP->muldivEnabled;
     pdp->sbs16 = configurationP->sbs16Enabled;
 
-    // Posted like any other mount and adopted at the first pass; opened non-blocking, so a FIFO
+    // Posted like any other mount and adopted at the first pass; opened non-blocking so a FIFO
     // here can't hang the start.
     // Posted before any port listens or the console runs, a front end's or operator's mount
     // can only come later and replaces these, as at any other time.
@@ -1320,8 +1320,8 @@ static bool
 checkBreakpoints(PDP1 *pdp1P)
 {
 int i;
-uint32_t addr;      // matches BreakpointP's address field (ad1intf.h); addr is always
-                     // non-negative anyway (masked to 17 bits below)
+uint32_t addr;       // matches BreakpointP's address field (ad1intf.h); addr is always
+                     // non-negative anyway, masked to 17 bits below.
 BreakpointP brkP;
 
     if( !AD1_BREAKPOINTS_ENABLED(pdp1P) )
@@ -1334,7 +1334,10 @@ BreakpointP brkP;
 
     for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i, ++brkP )
     {
-        if( (brkP->isSet) && (brkP->isEnabled) && (brkP->address == addr) )
+        // A pass with the condition false is not counted and the scan goes on so two
+        // breakpoints at one address with different conditions each fire separately.
+        if( (brkP->isSet) && (brkP->isEnabled) && (brkP->address == addr) &&
+            ad1BreakConditionHolds(pdp1P, i) )
         {
             brkP->curCount++;
             logger(LOG_BREAK, "breakpoint %d seen curcount %d\n", i+1, brkP->curCount);
@@ -1375,7 +1378,9 @@ WatchP watchP;
         if( watchP->isSet && watchP->isEnabled )
         {
             curVal = pdp1P->core[watchP->address] & 0777777;
-            if( curVal != watchP->lastVal )     // it was changed
+            // lastVal follows the word whatever the condition so a change made while the
+            // condition is false (an overlay being loaded) is never reported later.
+            if( (curVal != watchP->lastVal) && ad1WatchConditionHolds(pdp1P, i) )     // it was changed
             {
                 if( watchP->onAny )
                 {
@@ -1531,7 +1536,6 @@ ConfigurationSettingP configSettingP;
     // throttlequantum/throttlespin/throttlemaxlag 
     // parsed here, alongside the other config extras, then pushed into pdp1.c's throttle(),
     // which owns the pacing state and the timer-slack reduction that goes with it.
-    // throttleConfigure() reads throttleburst itself, so its declaration in pdp1.h is unchanged.
     throttleConfigure(
         configThrottleDuration("throttlequantum", 1000, 1000000),
         configThrottleDuration("throttlespin", 1000, 0),

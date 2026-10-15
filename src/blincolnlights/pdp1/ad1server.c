@@ -15,6 +15,7 @@
 //
 // 20-Sep-2026 Claude: written to replace the shared-memory link.
 // 28-Sep-2026 Claude: the HELLO reply's build text no longer carries the build date.
+// 13-Oct-2026 Claude: a breakpoint or watch can carry a condition on one core word.
 
 #define _GNU_SOURCE
 
@@ -99,6 +100,17 @@ typedef struct
     uint8_t data[RING_DATA];
 } RingEntry;
 
+// A breakpoint's or watch's condition: (word at address & mask) == value. ad1 binds one to a
+// drum overlay this way, the window's resident word holding the overlay's number; the emulator
+// knows nothing of what a condition means.
+typedef struct
+{
+    bool isSet;
+    uint32_t address;
+    uint32_t mask;
+    uint32_t value;
+} Condition;
+
 _Atomic int ad1Work;
 
 static bool serverActive;
@@ -131,6 +143,8 @@ static uint32_t opStepsDone;
 static bool opRecording;
 static uint32_t opRecords;
 static uint32_t opWasRunning;
+static Condition brkConds[AD1_NUM_BREAKPOINTS];    // by slot; emulator thread only
+static Condition watchConds[AD1_NUM_WATCHES];
 
 static uint32_t rd32(const uint8_t *pP);
 static uint16_t rd16(const uint8_t *pP);
@@ -1590,24 +1604,83 @@ int i;
     return( -1 );
 }
 
+// Clearing an entry drops its condition with it, so a slot set again later never inherits one.
 static void
-clearBreakpointEntry(BreakpointP brkP)
+clearBreakpointEntry(PDP1 *pdp, int slot)
 {
+BreakpointP brkP;
+
+    brkP = &pdp->ad1Breakpoints[slot];
     brkP->isSet = false;
     brkP->isEnabled = false;
     brkP->address = 0;
+    brkConds[slot].isSet = false;
 }
 
 static void
-clearWatchEntry(WatchP watchP)
+clearWatchEntry(PDP1 *pdp, int slot)
 {
+WatchP watchP;
+
+    watchP = &pdp->ad1Watches[slot];
     watchP->isSet = false;
     watchP->isEnabled = false;
     watchP->address = 0;
     watchP->value = 0;
+    watchConds[slot].isSet = false;
 }
 
-// The six breakpoint requests.
+// A condition from a request's three words: address, mask, value.
+static void
+setCondition(Condition *condP, const uint8_t *pP)
+{
+    condP->isSet = true;
+    condP->address = (rd32(pP) & 0177777);
+    condP->mask = (rd32(pP + 4) & WORDMASK);
+    condP->value = (rd32(pP + 8) & condP->mask);
+}
+
+static bool
+conditionHolds(PDP1 *pdp, const Condition *condP)
+{
+    return( !condP->isSet || ((wordAt(pdp, condP->address) & condP->mask) == condP->value) );
+}
+
+bool
+ad1BreakConditionHolds(PDP1 *pdp, int slot)
+{
+    return( conditionHolds(pdp, &brkConds[slot]) );
+}
+
+bool
+ad1WatchConditionHolds(PDP1 *pdp, int slot)
+{
+    return( conditionHolds(pdp, &watchConds[slot]) );
+}
+
+// The COND_LIST reply: both tables' conditions, by slot.
+static void
+opCondList(void)
+{
+const Condition *condP;
+int i;
+
+    mb.repLen = 0;
+    repPut(AD1_NUM_BREAKPOINTS);
+    repPut(AD1_NUM_WATCHES);
+    for( i = 0; i < (AD1_NUM_BREAKPOINTS + AD1_NUM_WATCHES); ++i )
+    {
+        condP = (i < AD1_NUM_BREAKPOINTS) ? &brkConds[i] : &watchConds[i - AD1_NUM_BREAKPOINTS];
+        repPut(condP->isSet ? 1 : 0);
+        repPut(condP->address);
+        repPut(condP->mask);
+        repPut(condP->value);
+    }
+
+    postReply(AD1P_ST_OK);
+}
+
+// The seven breakpoint requests.
 static void
 opBreakpoint(PDP1 *pdp, uint16_t type, const uint8_t *pP, uint32_t len)
 {
@@ -1619,7 +1692,8 @@ int i;
     switch( type )
     {
     case AD1P_BP_SET:
-        if( len != 8 )
+    case AD1P_BP_SET_COND:
+        if( len != ((type == AD1P_BP_SET_COND) ? 20u : 8u) )
         {
             replyStatus(AD1P_ST_BAD_REQUEST);
             return;
@@ -1638,6 +1712,12 @@ int i;
         brkP->address = (rd32(pP) & 0177777);
         brkP->count = (int)rd32(pP + 4);
         brkP->curCount = 0;
+        brkConds[slot].isSet = false;
+        if( type == AD1P_BP_SET_COND )
+        {
+            setCondition(&brkConds[slot], pP + 8);
+        }
+
         syncTableFlags(pdp);
         mb.repLen = 0;
         repPut((uint32_t)(slot + 1));
@@ -1682,7 +1762,7 @@ int i;
     {
         for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
         {
-            clearBreakpointEntry(&pdp->ad1Breakpoints[i]);
+            clearBreakpointEntry(pdp, i);
         }
 
         syncTableFlags(pdp);
@@ -1705,7 +1785,7 @@ int i;
 
     if( type == AD1P_BP_DELETE )
     {
-        clearBreakpointEntry(brkP);
+        clearBreakpointEntry(pdp, (int)number - 1);
         syncTableFlags(pdp);
     }
     else if( type == AD1P_BP_ENABLE )
@@ -1732,7 +1812,7 @@ int i;
     replyStatus(AD1P_ST_OK);
 }
 
-// The six watch requests.
+// The seven watch requests.
 static void
 opWatch(PDP1 *pdp, uint16_t type, const uint8_t *pP, uint32_t len)
 {
@@ -1744,7 +1824,8 @@ int i;
     switch( type )
     {
     case AD1P_WATCH_SET:
-        if( len != 12 )
+    case AD1P_WATCH_SET_COND:
+        if( len != ((type == AD1P_WATCH_SET_COND) ? 24u : 12u) )
         {
             replyStatus(AD1P_ST_BAD_REQUEST);
             return;
@@ -1764,6 +1845,12 @@ int i;
         watchP->onAny = (rd32(pP + 4) != 0);
         watchP->value = watchP->onAny ? 0 : (int)rd32(pP + 8);
         watchP->isEnabled = true;
+        watchConds[slot].isSet = false;
+        if( type == AD1P_WATCH_SET_COND )
+        {
+            setCondition(&watchConds[slot], pP + 12);
+        }
+
         syncTableFlags(pdp);
         mb.repLen = 0;
         repPut((uint32_t)(slot + 1));
@@ -1809,7 +1896,7 @@ int i;
     {
         for( i = 0; i < AD1_NUM_WATCHES; ++i )
         {
-            clearWatchEntry(&pdp->ad1Watches[i]);
+            clearWatchEntry(pdp, i);
         }
 
         syncTableFlags(pdp);
@@ -1832,7 +1919,7 @@ int i;
 
     if( type == AD1P_WATCH_DELETE )
     {
-        clearWatchEntry(watchP);
+        clearWatchEntry(pdp, (int)number - 1);
         syncTableFlags(pdp);
     }
     else if( type == AD1P_WATCH_ENABLE )
@@ -1872,12 +1959,12 @@ int i;
     {
         for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
         {
-            clearBreakpointEntry(&pdp->ad1Breakpoints[i]);
+            clearBreakpointEntry(pdp, i);
         }
 
         for( i = 0; i < AD1_NUM_WATCHES; ++i )
         {
-            clearWatchEntry(&pdp->ad1Watches[i]);
+            clearWatchEntry(pdp, i);
         }
 
         syncTableFlags(pdp);
@@ -2015,6 +2102,7 @@ int i;
         break;
 
     case AD1P_BP_SET:
+    case AD1P_BP_SET_COND:
     case AD1P_BP_DELETE:
     case AD1P_BP_ENABLE:
     case AD1P_BP_DISABLE:
@@ -2023,11 +2111,22 @@ int i;
         break;
 
     case AD1P_WATCH_SET:
+    case AD1P_WATCH_SET_COND:
     case AD1P_WATCH_DELETE:
     case AD1P_WATCH_ENABLE:
     case AD1P_WATCH_DISABLE:
     case AD1P_WATCH_LIST:
         opWatch(pdp, type, pP, len);
+        break;
+
+    case AD1P_COND_LIST:
+        if( len != 0 )
+        {
+            replyStatus(AD1P_ST_BAD_REQUEST);
+            break;
+        }
+
+        opCondList();
         break;
 
     case AD1P_DISABLE_ALL:

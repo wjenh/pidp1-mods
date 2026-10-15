@@ -15,6 +15,9 @@
  * Claude 04-Oct-26 readLayout() no longer reads or writes outside layouts[]
  *     for a file that leaves out a region or a layout line.
  *     wje note - the old code could SEGV, this is in the original pidp1 version also.
+ * Claude 14-Oct-26 no audio command at start, which started the sound; Ctrl-F1 and Ctrl-F2
+ *     send the bare command, which the emulator toggles, and read every reply form;
+ *     no crash when the emulator does not answer.
  *
 */
 #include <stdlib.h>
@@ -220,15 +223,89 @@ emucmd(const char *cmd)
     return(reply);
 }
 
+// The state an emulator reply gives: its first word that is exactly "on" or "off".
+// The replies are "Audio is on, ..." (audio on, off or alone), "Audio on, ..." (audio query)
+// and "mul-div now on".
+// Returns 1 on, 0 off, -1 a reply with neither.
+static int
+onOffInReply(const char *replyP)
+{
+    size_t len;
+
+    while(*replyP)
+    {
+        len = strcspn(replyP, " ,.\r\n");
+        if((len == 2) && !strncmp(replyP, "on", 2))
+        {
+            return(1);
+        }
+
+        if((len == 3) && !strncmp(replyP, "off", 3))
+        {
+            return(0);
+        }
+
+        replyP += len;
+        replyP += strspn(replyP, " ,.\r\n");
+    }
+
+    return(-1);
+}
+
+// Send "name on", "name off", or for val < 0 "name ?", and keep the state the reply gives.
+// No reply, or one without a state, leaves *opt as it was.
 void
 emuoption(const char *name, int *opt, int val)
 {
     char *r, cmd[64];
+    int state;
+
     snprintf(cmd, sizeof(cmd) - 1, "%s %s\n", name,
         val < 0 ? "?" : val ? "on" : "off");
     r = emucmd(cmd);
-    *opt = strstr(r, " on\n") != nil;
+    if(r == nil)
+    {
+        return;
+    }
+
+    if((state = onOffInReply(r)) >= 0)
+    {
+        *opt = state;
+    }
+
     printf("%s: %d\n", name, *opt);
+}
+
+// Ctrl-F1 and Ctrl-F2: the bare command, which the emulator toggles itself, so the toggle
+// follows the emulator's state even when something else changed it.
+void
+emutoggle(const char *name, int *opt)
+{
+    char *r, cmd[64];
+    int state;
+
+    snprintf(cmd, sizeof(cmd), "%s\n", name);
+    r = emucmd(cmd);
+    if(r == nil)
+    {
+        return;
+    }
+
+    if((state = onOffInReply(r)) >= 0)
+    {
+        *opt = state;
+    }
+
+    printf("%s: %d\n", name, *opt);
+}
+
+// The options read at start. Only muldiv: "muldiv ?" changes nothing, but every audio
+// command applies the emulator's audio flag, so any of them would start the sound.
+void
+readEmuOptions(void)
+{
+    audio = -1;     // not known until Ctrl-F1
+    emuoption("muldiv", &muldiv, -1);
 }
 
 uint64 time_now;
@@ -1153,7 +1230,7 @@ keydown(SDL_Keysym keysym)
     case SDL_SCANCODE_F1:
         if(ctrl)
         {
-            emuoption("audio", &audio, !audio);
+            emutoggle("audio", &audio);
         }
         else
         {
@@ -1165,7 +1242,7 @@ keydown(SDL_Keysym keysym)
     case SDL_SCANCODE_F2:
         if(ctrl)
         {
-            emuoption("muldiv", &muldiv, !muldiv);
+            emutoggle("muldiv", &muldiv);
         }
         else
         {
@@ -1571,8 +1648,7 @@ main(int argc, char *argv[])
         return(1);
     }
 
-    emuoption("audio", &audio, -1);
-    emuoption("muldiv", &muldiv, -1);
+    readEmuOptions();
 
     SDL_Init(SDL_INIT_EVERYTHING);
     TTF_Init();

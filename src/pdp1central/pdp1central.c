@@ -19,9 +19,13 @@
 // 06-Oct-2026 wje (Claude) - Save punch to... runs bin/save_ptp.sh
 //    "Last saved to:" replaces "Punch file:" and the web note.
 // 09-Oct-2026 wje - use the new askfile script to use the much better looking file dialogs
+// 14-Oct-2026 wje (Claude) - no Retired tab; the schema's retired settings are shown on no tab.
+// 14-Oct-2026 wje (Claude) - the Live tab: gain, cutoffs, tuning and sample rate sent live to the
+//     emulator, saved to pidp1.config on request, and multiply and divide read and set.
 
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +53,7 @@
 #define WINDOW_H 680
 #define ROW_H 26
 #define AUDIO_RESTORE_MS 1000   // after a reload ends, time for the emulator to take its SIGHUP
+#define MULDIV_POLL_MS 2000     // how often the Live tab reads multiply and divide
 #define AD1_DEFAULT_PORT 1044   // the debugger link's port when pidp1.config does not set ad1port
 #define MT_NAME_MAX 255         // the longest tape path mtp and the plugin take
 
@@ -76,6 +81,7 @@ typedef enum
 typedef enum
 {
     TAB_CONTROL,
+    TAB_LIVE,
     TAB_MICROTAPE,
     TAB_SETTINGS,
     TAB_LOG
@@ -95,10 +101,9 @@ typedef struct
 
 // The groups, in the order of the editor's tabs.
 static const char *groupNames[] = { "Debugger", "Throttle", "CPU", "Displays", "Audio", "Devices",
-    "Panel", "Timing", "Other", "Retired" };
+    "Panel", "Timing", "Other" };
 #define GROUP_COUNT ((int)(sizeof(groupNames) / sizeof(groupNames[0])))
 #define GROUP_OTHER 8
-#define GROUP_RETIRED 9
 
 static char rootPath[PATH_MAX];
 static char schemaPath[PATH_MAX];
@@ -171,6 +176,44 @@ static int mtAskDrive;          // the drive the microtape dialog is choosing fo
 static int audioState = -1;     // the live audio the last click's reply gave: 1 on, 0 off, -1 not known
 static int audioRestore = -1;   // the state to put back after a pdp1control reload, -1 for none
 static Uint32 audioRestoreMs;   // when that reload ended, 0 while it runs
+
+// The Live tab's audio values: the pidp1.config name, which is also the schema's, the row's
+// label, and the word of the audio command that sets it.
+typedef struct
+{
+    const char *nameP;
+    const char *labelP;
+    const char *wordP;
+} LiveValue;
+
+static const LiveValue liveValues[] = {
+    { "gain", "Gain", "gain" },
+    { "cutoff", "Cutoff, all channels", "cutoff" },
+    { "cutoff1", "Cutoff, channel 1", "cutoff1" },
+    { "cutoff2", "Cutoff, channel 2", "cutoff2" },
+    { "cutoff3", "Cutoff, channel 3", "cutoff3" },
+    { "cutoff4", "Cutoff, channel 4", "cutoff4" },
+    { "tuning", "Tuning", "tuning" },
+    { "samplerate", "Sample rate", "rate" }
+};
+#define LIVE_COUNT ((int)(sizeof(liveValues) / sizeof(liveValues[0])))
+#define LIVE_GAIN 0
+#define LIVE_CUTOFF 1           // the all-channels cutoff; channels 1 to 4 are the next four rows
+#define LIVE_TUNING 6
+#define LIVE_RATE 7
+
+static char liveText[LIVE_COUNT][CONF_MAX_VALUE + 1];   // each row's field
+static bool liveFileRow[LIVE_COUNT];    // the field shows pidp1.config's value, and follows the file
+static char liveNote[LIVE_COUNT][160];  // where the field's value came from, or the last reply
+static char liveSent[LIVE_COUNT][CONF_MAX_VALUE + 1];   // what a Set sent this emulator, "" if nothing
+static bool liveChm;            // CHM filters was sent this emulator, and no all-channels Set since
+static bool liveRead;           // the fields were filled from the emulator's reply to a query
+static int liveActive = -1;     // the field being typed in, which a refill leaves alone
+static bool liveRestore;        // send the values set here again once the running reload ends
+static char overflowNote[160];  // the last reply to audio overflow
+
+static int muldivState = -1;    // multiply and divide as the last read gave it: 1 on, 0 off, -1 not known
+static Uint32 muldivMs;         // when it was last read, 0 to read it at once
 
 static Tab tab = TAB_CONTROL;
 static int group;
@@ -423,6 +466,69 @@ int i;
     return(changes);
 }
 
+// Show pidp1.config's value for a Live tab row, as saved, or the schema's default, and let the
+// field follow the file until it is typed in, read or Set.
+static void
+liveFromFile(int i)
+{
+char buf[CONF_MAX_VALUE + 1];
+const SchemaEntry *entryP;
+
+    liveFileRow[i] = true;
+    entryP = schemaFind(schemaP, liveValues[i].nameP);
+    if( diskCfP && getValue(diskCfP, liveValues[i].nameP, buf) )
+    {
+        snprintf(liveText[i], sizeof(liveText[i]), "%s", buf);
+        snprintf(liveNote[i], sizeof(liveNote[i]), "from pidp1.config");
+    }
+    else if( entryP && strcmp(entryP->defaultText, "-") )
+    {
+        snprintf(liveText[i], sizeof(liveText[i]), "%s", entryP->defaultText);
+        snprintf(liveNote[i], sizeof(liveNote[i]), "the default; pidp1.config does not set it");
+    }
+    else
+    {
+        liveText[i][0] = '\0';
+        snprintf(liveNote[i], sizeof(liveNote[i]), "%s", ((i == LIVE_CUTOFF) ?
+            "pidp1.config does not set it; each channel has its own" :
+            "pidp1.config does not set it; the all-channels cutoff, or the CHM filter's"));
+    }
+}
+
+// Forget what was set here, when a new emulator starts with the file's values.
+static void
+liveForget(void)
+{
+int i;
+
+    for( i = 0; i < LIVE_COUNT; i++ )
+    {
+        liveSent[i][0] = '\0';
+        liveFromFile(i);
+    }
+    liveChm = false;
+    liveRead = false;
+    liveRestore = false;
+    overflowNote[0] = '\0';
+}
+
+// Whether anything was set here since the emulator started: a value, or the CHM filters.
+static bool
+liveAnySet(void)
+{
+int i;
+
+    for( i = 0; i < LIVE_COUNT; i++ )
+    {
+        if( liveSent[i][0] )
+        {
+            return(true);
+        }
+    }
+
+    return(liveChm);
+}
+
 // Queue a pdp1control.sh command; it runs when the child slot is free.
 static void
 queueScript(const char *commandP)
@@ -468,16 +574,19 @@ int i;
         snprintf(jobLabel, sizeof(jobLabel), "pdp1control %s", commandP);
         appLog("running %s", jobLabel);
 
-        // A reload sets the emulator's live audio back to pidp1.config's audio value, so the
-        // state from before it is put back once it is done (pollAudio).
-        if( !strcmp(commandP, "reload") && (audioState >= 0) )
+        // A reload sets the emulator's live audio back to pidp1.config's, so the state and the
+        // Live tab's values from before it are put back once it is done (pollAudio).
+        if( !strcmp(commandP, "reload") && ((audioState >= 0) || liveAnySet()) )
         {
             audioRestore = audioState;
+            liveRestore = liveAnySet();
             audioRestoreMs = 0;
         }
         else if( !strcmp(commandP, "start") || !strcmp(commandP, "stop") || !strcmp(commandP, "restart") )
         {
-            audioState = -1;    // a start, stop or restart makes a new emulator, with the file's audio
+            // A start, stop or restart makes a new emulator, with the file's audio.
+            audioState = -1;
+            liveForget();
         }
     }
 
@@ -995,21 +1104,390 @@ int result;
     return(audioState >= 0);
 }
 
+// Format a float so the parser keeps it as one: always with a '.', trailing zeros trimmed.
+static void
+formatFloat(double value, char *outP, size_t outLen)
+{
+char *endP;
+
+    snprintf(outP, outLen, "%.4f", value);
+    endP = (outP + strlen(outP) - 1);
+    while( (*endP == '0') && (*(endP - 1) != '.') )
+    {
+        *endP-- = '\0';
+    }
+}
+
+// Send one Live tab command to the emulator, log it, and put the reply, or why there is none,
+// into noteP (noteLen bytes).
+// Returns true if the emulator replied.
+static bool
+liveCommand(const char *lineP, char *noteP, size_t noteLen, char *replyP, size_t replyLen)
+{
+int result;
+
+    result = portCommand(EMU_PORT, lineP, replyP, replyLen);
+    if( result != 0 )
+    {
+        appError("\"%s\" not sent: %s", lineP, ((result == -1) ? "the emulator is not running" :
+            ((result == -2) ? "no answer" : "port error")));
+        snprintf(noteP, noteLen, "not sent");
+        return(false);
+    }
+
+    appLog("sent \"%s\" to the emulator on %d: %s", lineP, EMU_PORT, replyP);
+    snprintf(noteP, noteLen, "%s", (replyP[0] ? replyP : "sent, no reply"));
+    return(true);
+}
+
+// A number as the emulator printed it with %f, trailing zeros trimmed to one after the point.
+static void
+liveNumber(double value, char *outP, size_t outLen)
+{
+char *endP;
+
+    snprintf(outP, outLen, "%f", value);
+    endP = (outP + strlen(outP) - 1);
+    while( (endP > outP) && (*endP == '0') && (*(endP - 1) != '.') )
+    {
+        *endP-- = '\0';
+    }
+}
+
+// Fill the four channel rows from "... now a, b, c, d Hz", the reply to an all-channels cutoff.
+static void
+liveTakeChannels(const char *replyP, const char *noteP)
+{
+double cutoffs[4];
+const char *nowP;
+int i;
+
+    if( !(nowP = strstr(replyP, " now ")) ||
+        (sscanf(nowP, " now %lf, %lf, %lf, %lf Hz", &cutoffs[0], &cutoffs[1], &cutoffs[2], &cutoffs[3]) != 4) )
+    {
+        return;
+    }
+
+    for( i = 0; i < 4; i++ )
+    {
+        liveNumber(cutoffs[i], liveText[LIVE_CUTOFF + 1 + i], sizeof(liveText[0]));
+        snprintf(liveNote[LIVE_CUTOFF + 1 + i], sizeof(liveNote[0]), "%s", noteP);
+        liveFileRow[LIVE_CUTOFF + 1 + i] = false;
+    }
+}
+
+// Send a Live tab row's value. It is checked against the schema's range first, and an
+// out-of-range value is reported and not sent.
+static void
+liveSetValue(int i)
+{
+const SchemaEntry *entryP;
+char line[96];
+char reply[512];
+char *endP;
+double value;
+int c;
+
+    entryP = schemaFind(schemaP, liveValues[i].nameP);
+    if( entryP && (entryP->type == SCHEMA_INT) )
+    {
+        value = (double)strtol(liveText[i], &endP, 10);
+    }
+    else
+    {
+        value = strtod(liveText[i], &endP);
+    }
+
+    if( !liveText[i][0] || *endP || !isfinite(value) )
+    {
+        appError("%s: \"%s\" is not a %s; not sent", liveValues[i].nameP, liveText[i],
+            ((entryP && (entryP->type == SCHEMA_INT)) ? "whole number" : "number"));
+        snprintf(liveNote[i], sizeof(liveNote[i]), "not a number; not sent");
+        return;
+    }
+
+    if( entryP && entryP->hasRange && ((value < entryP->rangeLow) || (value > entryP->rangeHigh)) )
+    {
+        appError("%s: %s is out of range, %g to %g; not sent", liveValues[i].nameP, liveText[i],
+            entryP->rangeLow, entryP->rangeHigh);
+        snprintf(liveNote[i], sizeof(liveNote[i]), "out of range, %g to %g; not sent", entryP->rangeLow,
+            entryP->rangeHigh);
+        return;
+    }
+
+    snprintf(line, sizeof(line), "audio %s %.*s", liveValues[i].wordP, CONF_MAX_VALUE, liveText[i]);
+    liveFileRow[i] = false;
+    if( !liveCommand(line, liveNote[i], sizeof(liveNote[i]), reply, sizeof(reply)) )
+    {
+        return;
+    }
+
+    snprintf(liveSent[i], sizeof(liveSent[i]), "%.*s", CONF_MAX_VALUE, liveText[i]);
+    if( i == LIVE_CUTOFF )
+    {
+        // It replaces the four channels' cutoffs, and the CHM filters, in the emulator.
+        for( c = (LIVE_CUTOFF + 1); c <= (LIVE_CUTOFF + 4); c++ )
+        {
+            liveSent[c][0] = '\0';
+        }
+        liveChm = false;
+        liveTakeChannels(reply, "from the all-channels cutoff");
+    }
+}
+
+// Read current values: send audio query and fill the fields and the on/off state from the reply,
+// "Audio on, cutoff1 x Hz, cutoff2 x Hz, cutoff3 x Hz, cutoff4 x Hz, gain V, tuning V sample rate N".
+static void
+liveReadValues(void)
+{
+char reply[512];
+char note[160];
+char state[8];
+double cutoffs[4], gain, tuning;
+int rate, i;
+
+    if( !liveCommand("audio query", note, sizeof(note), reply, sizeof(reply)) )
+    {
+        return;
+    }
+
+    if( sscanf(reply, "Audio %7[a-z], cutoff1 %lf Hz, cutoff2 %lf Hz, cutoff3 %lf Hz, cutoff4 %lf Hz, gain %lf, "
+        "tuning %lf sample rate %d", state, &cutoffs[0], &cutoffs[1], &cutoffs[2], &cutoffs[3], &gain, &tuning,
+        &rate) != 8 )
+    {
+        appError("the reply to \"audio query\" was not understood: %s", reply);
+        return;
+    }
+
+    audioState = audioFromReply(reply);
+    liveRead = true;
+    for( i = 0; i < 4; i++ )
+    {
+        liveNumber(cutoffs[i], liveText[LIVE_CUTOFF + 1 + i], sizeof(liveText[0]));
+    }
+    liveNumber(gain, liveText[LIVE_GAIN], sizeof(liveText[0]));
+    liveNumber(tuning, liveText[LIVE_TUNING], sizeof(liveText[0]));
+    snprintf(liveText[LIVE_RATE], sizeof(liveText[0]), "%d", rate);
+    for( i = 0; i < LIVE_COUNT; i++ )
+    {
+        liveFileRow[i] = false;
+        snprintf(liveNote[i], sizeof(liveNote[i]), "%s", ((i == LIVE_CUTOFF) ?
+            "not reported; the channels are below" : "from the emulator"));
+    }
+    liveText[LIVE_CUTOFF][0] = '\0';
+}
+
+// CHM filters: audio cutoff 0 puts back the music interface's own filters on all four channels.
+static void
+liveChmFilters(void)
+{
+char reply[512];
+int c;
+
+    if( !liveCommand("audio cutoff 0", liveNote[LIVE_CUTOFF], sizeof(liveNote[0]), reply, sizeof(reply)) )
+    {
+        return;
+    }
+
+    for( c = LIVE_CUTOFF; c <= (LIVE_CUTOFF + 4); c++ )
+    {
+        liveSent[c][0] = '\0';
+    }
+    liveChm = true;
+    liveText[LIVE_CUTOFF][0] = '\0';
+    liveFileRow[LIVE_CUTOFF] = false;
+    liveTakeChannels(reply, "the CHM filter's");
+}
+
+// Send the values set here again, after a reload put the file's back: the CHM filters first,
+// then the all-channels cutoff, then the channels, which override it, as they were set.
+static void
+liveSendAgain(void)
+{
+char line[96];
+char reply[512];
+int i;
+
+    appLog("putting the values set on the Live tab back after the reload");
+    if( liveChm )
+    {
+        liveCommand("audio cutoff 0", liveNote[LIVE_CUTOFF], sizeof(liveNote[0]), reply, sizeof(reply));
+    }
+
+    for( i = 0; i < LIVE_COUNT; i++ )
+    {
+        if( liveSent[i][0] )
+        {
+            snprintf(line, sizeof(line), "audio %s %.*s", liveValues[i].wordP, CONF_MAX_VALUE, liveSent[i]);
+            liveCommand(line, liveNote[i], sizeof(liveNote[i]), reply, sizeof(reply));
+        }
+    }
+}
+
+// Save to pidp1.config: write the values set here, through the Settings tab's writer, with no
+// reload, since the emulator already has them. An all-channels cutoff comments out the
+// channel lines that were not Set after it, since a channel line overrides it; the CHM filters
+// comment out all five, no line being the filter's own.
+static void
+liveSave(void)
+{
+char value[CONF_MAX_VALUE + 1];
+char names[256];
+const SchemaEntry *entryP;
+size_t len;
+bool ok;
+int i, c;
+
+    if( countChanges().total > 0 )
+    {
+        appError("not saved: the Settings tab has unsaved changes; save or revert them first");
+        return;
+    }
+
+    if( diskConflict || confChangedOnDisk(diskCfP) )
+    {
+        loadConfig();       // no unsaved edits, so nothing is dropped
+    }
+
+    ok = true;
+    names[0] = '\0';
+    len = 0;
+    if( liveChm )
+    {
+        for( c = LIVE_CUTOFF; ok && (c <= (LIVE_CUTOFF + 4)); c++ )
+        {
+            ok = confUnset(editCfP, liveValues[c].nameP);
+        }
+        len += snprintf(names + len, (sizeof(names) - len), "the CHM filters");
+    }
+
+    for( i = 0; ok && (i < LIVE_COUNT); i++ )
+    {
+        if( !liveSent[i][0] )
+        {
+            continue;
+        }
+
+        entryP = schemaFind(schemaP, liveValues[i].nameP);
+        if( entryP && (entryP->type == SCHEMA_FLOAT) )
+        {
+            formatFloat(atof(liveSent[i]), value, sizeof(value));     // the reader takes a float with its point
+        }
+        else
+        {
+            snprintf(value, sizeof(value), "%.*s", CONF_MAX_VALUE, liveSent[i]);
+        }
+
+        ok = confSet(editCfP, liveValues[i].nameP, value);
+        for( c = (LIVE_CUTOFF + 1); ok && (i == LIVE_CUTOFF) && (c <= (LIVE_CUTOFF + 4)); c++ )
+        {
+            if( !liveSent[c][0] )
+            {
+                ok = confUnset(editCfP, liveValues[c].nameP);
+            }
+        }
+
+        if( len < (sizeof(names) - 1) )
+        {
+            len += snprintf(names + len, (sizeof(names) - len), "%s%s=%s", (len ? ", " : ""), liveValues[i].nameP, value);
+        }
+    }
+
+    if( !ok || !confSave(editCfP) )
+    {
+        appError("not saved: %s", editCfP->errorText);
+        confFree(editCfP);
+        editCfP = confCopy(diskCfP);
+        refreshOtherNames();
+        return;
+    }
+
+    appLog("saved %s: %s; no reload, the emulator has them", configPath, names);
+    confFree(diskCfP);
+    diskCfP = confCopy(editCfP);
+    diskConflict = false;
+}
+
+// The multiply and divide state a reply gives, "mul-div now on" or "off".
+// Returns 1 on, 0 off, -1 a reply that gives neither.
+static int
+muldivFromReply(const char *replyP)
+{
+    if( !strcmp(replyP, "mul-div now on") )
+    {
+        return(1);
+    }
+
+    return( !strcmp(replyP, "mul-div now off") ? 0 : -1 );
+}
+
+// Read multiply and divide every MULDIV_POLL_MS while the Live tab shows it. muldiv with a word
+// that is not on or off changes nothing and replies the state, so this is a pure read and a
+// change made elsewhere shows. Only a change is logged.
+// Called on every pass of the event loop.
+static void
+pollMuldiv(void)
+{
+char reply[128];
+int state;
+
+    if( (pdp1Count == 0) || !portUp )
+    {
+        muldivState = -1;
+        muldivMs = 0;
+        return;
+    }
+
+    if( (tab != TAB_LIVE) || ((muldivMs != 0) && ((SDL_GetTicks() - muldivMs) < MULDIV_POLL_MS)) )
+    {
+        return;
+    }
+
+    muldivMs = (SDL_GetTicks() | 1);    // never 0, which means read at once
+    state = ((portCommand(EMU_PORT, "muldiv ?", reply, sizeof(reply)) == 0) ? muldivFromReply(reply) : -1);
+    if( (state >= 0) && (state != muldivState) )
+    {
+        appLog("multiply and divide is %s", (state ? "on" : "off"));
+    }
+    muldivState = state;
+}
+
+// Turn multiply and divide on or off, until the next reload.
+static void
+muldivSet(bool on)
+{
+char reply[128];
+char note[160];
+
+    if( liveCommand((on ? "muldiv on" : "muldiv off"), note, sizeof(note), reply, sizeof(reply)) )
+    {
+        muldivState = muldivFromReply(reply);
+    }
+}
+
 // Put the audio back after a reload, and forget it when the emulator goes. It is never read,
 // since a read can start the sound (audioCommand).
 // Called on every pass of the event loop.
 static void
 pollAudio(void)
 {
-    if( audioRestore >= 0 )
+    if( (audioRestore >= 0) || liveRestore )
     {
         // No reads until the reload has ended and the emulator has had time to take its SIGHUP;
         // a read before then would keep the state the reload is about to replace.
         if( (audioRestoreMs != 0) && ((SDL_GetTicks() - audioRestoreMs) >= AUDIO_RESTORE_MS) )
         {
-            appLog("putting the audio back %s after the reload", (audioRestore ? "on" : "off"));
-            audioCommand(audioRestore ? "on" : "off");
+            if( audioRestore >= 0 )
+            {
+                appLog("putting the audio back %s after the reload", (audioRestore ? "on" : "off"));
+                audioCommand(audioRestore ? "on" : "off");
+            }
+            if( liveRestore )
+            {
+                liveSendAgain();
+            }
             audioRestore = -1;
+            liveRestore = false;
         }
         return;
     }
@@ -1017,6 +1495,12 @@ pollAudio(void)
     if( (pdp1Count == 0) || !portUp )
     {
         audioState = -1;
+    }
+
+    // An emulator that has gone takes what was set here with it; the next has the file's values.
+    if( (pdp1Count == 0) && (liveAnySet() || liveRead) )
+    {
+        liveForget();
     }
 }
 
@@ -1104,7 +1588,7 @@ Job ended;
     if( ended == JOB_SCRIPT )
     {
         appLog("%s finished, status %d", jobLabel, childStatus());
-        if( (audioRestore >= 0) && (audioRestoreMs == 0) )
+        if( ((audioRestore >= 0) || liveRestore) && (audioRestoreMs == 0) )
         {
             audioRestoreMs = (SDL_GetTicks() | 1);     // never 0, which means still running
         }
@@ -1380,6 +1864,44 @@ ConfFile *newP;
     appLog("%s: %s=%s, used at the next start", controlPath, nameP, valueP);
 }
 
+// Whether a reload's put-back is waiting, during which no audio command is sent by a click.
+static bool
+audioRestoring(void)
+{
+    return( (audioRestore >= 0) || liveRestore );
+}
+
+// The audio lamp, for the Control and Live tabs: what the last reply that gave the state said.
+// A change made elsewhere is not seen, since asking could start the sound.
+static void
+audioLamp(struct nk_context *ctxP)
+{
+    if( pdp1Count == 0 )
+    {
+        lamp(ctxP, "pidp1 not running", false);
+    }
+    else if( !portUp )
+    {
+        lamp(ctxP, "pidp1 not answering", false);
+    }
+    else
+    {
+        lamp(ctxP, ((audioState == 1) ? "is on" : ((audioState == 0) ? "is off" : "not set here yet")),
+            (audioState == 1));
+    }
+}
+
+// The button that turns the sound on or off, for the Control and Live tabs.
+static void
+audioButton(struct nk_context *ctxP)
+{
+    if( button(ctxP, ((audioState == 1) ? "Turn audio off" : "Turn audio on"),
+        (portUp && (pdp1Count > 0) && !audioRestoring())) )
+    {
+        audioCommand((audioState == 1) ? "off" : "on");
+    }
+}
+
 // The Control tab: start-time choices, paper tape, audio and the window's colors.
 static void
 drawControl(struct nk_context *ctxP)
@@ -1539,26 +2061,8 @@ int i, count;
     nk_spacing(ctxP, 1);
     nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 3, audioRatios);    // in line with the options above
     nk_label(ctxP, "Audio", NK_TEXT_LEFT);
-    // What the last click's reply said; a change made elsewhere is not seen, since asking could
-    // start the sound.
-    if( pdp1Count == 0 )
-    {
-        lamp(ctxP, "pidp1 not running", false);
-    }
-    else if( !portUp )
-    {
-        lamp(ctxP, "pidp1 not answering", false);
-    }
-    else
-    {
-        lamp(ctxP, ((audioState == 1) ? "is on" : ((audioState == 0) ? "is off" : "not set here yet")),
-            (audioState == 1));
-    }
-    if( button(ctxP, ((audioState == 1) ? "Turn audio off" : "Turn audio on"),
-        (portUp && (pdp1Count > 0) && (audioRestore < 0))) )
-    {
-        audioCommand((audioState == 1) ? "off" : "on");
-    }
+    audioLamp(ctxP);
+    audioButton(ctxP);
 
     nk_layout_row_dynamic(ctxP, 12, 1);
     nk_spacing(ctxP, 1);
@@ -1588,20 +2092,6 @@ int i, count;
         nk_layout_row_dynamic(ctxP, ROW_H, 1);
         nk_labelf(ctxP, NK_TEXT_LEFT, "Changed by %d color line%s in pdp1central.config", styleOverrides,
             ((styleOverrides == 1) ? "" : "s"));
-    }
-}
-
-// Format a float so the parser keeps it as one: always with a '.', trailing zeros trimmed.
-static void
-formatFloat(double value, char *outP, size_t outLen)
-{
-char *endP;
-
-    snprintf(outP, outLen, "%.4f", value);
-    endP = (outP + strlen(outP) - 1);
-    while( (*endP == '0') && (*(endP - 1) != '.') )
-    {
-        *endP-- = '\0';
     }
 }
 
@@ -2204,6 +2694,130 @@ int d;
     nk_label(ctxP, "A tape a program mounts itself (mmt) is not shown.", NK_TEXT_LEFT);
 }
 
+// A label that fits its cell, cut at the front with "...", and whole in a tooltip when cut.
+static void
+fittedLabel(struct nk_context *ctxP, const char *textP)
+{
+char shown[256];
+struct nk_rect bounds;
+
+    bounds = nk_widget_bounds(ctxP);
+    fitTail(ctxP, textP, bounds.w, shown, sizeof(shown));
+    nk_label(ctxP, shown, NK_TEXT_LEFT);
+    if( strcmp(shown, textP) && nk_input_is_mouse_hovering_rect(&ctxP->input, bounds) )
+    {
+        nk_tooltip(ctxP, textP);
+    }
+}
+
+// The Live tab: the emulator's sound and multiply and divide, changed at once and kept until the
+// next reload. Every audio command applies the live audio flag, so with audio enabled any of
+// these clicks starts the sound (owner, R1 of TASK-LIVE-AUDIO.md); none is sent without a click.
+static void
+drawLive(struct nk_context *ctxP)
+{
+static const float headRatios[] = { 0.25f, 0.25f, 0.25f, 0.25f };
+static const float rowRatios[] = { 0.25f, 0.15f, 0.10f, 0.50f };    // a label, a field, Set, the reply
+static const float footRatios[] = { 0.25f, 0.25f, 0.50f };
+char reply[512];
+char before[CONF_MAX_VALUE + 1];
+nk_flags flags;
+bool up;
+int i;
+
+    up = (portUp && (pdp1Count > 0) && !audioRestoring());
+
+    nk_layout_row_dynamic(ctxP, ROW_H, 1);
+    nk_label(ctxP, "Live settings: the emulator takes them at once, until the next reload puts back pidp1.config's",
+        NK_TEXT_LEFT);
+
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 4, headRatios);
+    nk_label(ctxP, "Audio", NK_TEXT_LEFT);
+    audioLamp(ctxP);
+    audioButton(ctxP);
+    if( button(ctxP, "Read current values", up) )
+    {
+        liveReadValues();
+    }
+
+    // A row per value: Enter in the field or Set sends it.
+    for( i = 0; i < LIVE_COUNT; i++ )
+    {
+        if( liveFileRow[i] && (i != liveActive) )
+        {
+            liveFromFile(i);    // follows pidp1.config until it is typed in
+        }
+
+        nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 4, rowRatios);
+        nk_label(ctxP, liveValues[i].labelP, NK_TEXT_LEFT);
+        snprintf(before, sizeof(before), "%.*s", CONF_MAX_VALUE, liveText[i]);
+        flags = nk_edit_string_zero_terminated(ctxP, (NK_EDIT_FIELD | NK_EDIT_SIG_ENTER), liveText[i],
+            sizeof(liveText[i]), ((i == LIVE_RATE) ? nk_filter_decimal : nk_filter_float));
+        if( flags & NK_EDIT_ACTIVE )
+        {
+            liveActive = i;
+        }
+        else if( liveActive == i )
+        {
+            liveActive = -1;
+        }
+        if( strcmp(before, liveText[i]) )
+        {
+            liveFileRow[i] = false;     // typed in, so no longer the file's
+        }
+        if( (button(ctxP, "Set", up) || (up && (flags & NK_EDIT_COMMITED))) )
+        {
+            liveSetValue(i);
+        }
+        fittedLabel(ctxP, liveNote[i]);
+    }
+
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 3, footRatios);
+    if( button(ctxP, "CHM filters", up) )
+    {
+        liveChmFilters();
+    }
+    if( button(ctxP, "Overflows", up) )
+    {
+        liveCommand("audio overflow", overflowNote, sizeof(overflowNote), reply, sizeof(reply));
+    }
+    fittedLabel(ctxP, overflowNote);
+
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 3, footRatios);
+    if( button(ctxP, "Save to pidp1.config", liveAnySet()) )
+    {
+        liveSave();
+    }
+    nk_label(ctxP, "", NK_TEXT_LEFT);
+    nk_label(ctxP, (liveAnySet() ? "writes the values set here, with no reload" : "nothing set here yet"), NK_TEXT_LEFT);
+
+    // Multiply and divide, read every MULDIV_POLL_MS while this tab is shown (pollMuldiv).
+    nk_layout_row_dynamic(ctxP, 12, 1);
+    nk_spacing(ctxP, 1);
+    nk_layout_row(ctxP, NK_DYNAMIC, ROW_H, 4, headRatios);
+    nk_label(ctxP, "Multiply and divide", NK_TEXT_LEFT);
+    if( pdp1Count == 0 )
+    {
+        lamp(ctxP, "pidp1 not running", false);
+    }
+    else if( !portUp )
+    {
+        lamp(ctxP, "pidp1 not answering", false);
+    }
+    else
+    {
+        lamp(ctxP, ((muldivState == 1) ? "is on" : ((muldivState == 0) ? "is off" : "not known yet")),
+            (muldivState == 1));
+    }
+    if( button(ctxP, ((muldivState == 1) ? "Turn off" : "Turn on"), (portUp && (pdp1Count > 0) && (muldivState >= 0))) )
+    {
+        muldivSet(muldivState != 1);
+    }
+    nk_label(ctxP, "", NK_TEXT_LEFT);
+    nk_layout_row_dynamic(ctxP, ROW_H, 1);
+    nk_label(ctxP, "Until the next reload; the CPU tab's muldiv setting is the saved value.", NK_TEXT_LEFT);
+}
+
 // Draw the whole window for one frame.
 static void
 drawFrame(struct nk_context *ctxP, int width, int height)
@@ -2215,10 +2829,14 @@ float used;
     {
         drawStatus(ctxP);
 
-        nk_layout_row_dynamic(ctxP, ROW_H, 4);
+        nk_layout_row_dynamic(ctxP, ROW_H, 5);
         if( nk_select_label(ctxP, "Control", NK_TEXT_CENTERED, (tab == TAB_CONTROL)) )
         {
             tab = TAB_CONTROL;
+        }
+        if( nk_select_label(ctxP, "Live", NK_TEXT_CENTERED, (tab == TAB_LIVE)) )
+        {
+            tab = TAB_LIVE;
         }
         if( nk_select_label(ctxP, "Microtape", NK_TEXT_CENTERED, (tab == TAB_MICROTAPE)) )
         {
@@ -2238,6 +2856,10 @@ float used;
         if( tab == TAB_CONTROL )
         {
             drawControl(ctxP);
+        }
+        else if( tab == TAB_LIVE )
+        {
+            drawLive(ctxP);
         }
         else if( tab == TAB_MICROTAPE )
         {
@@ -2374,6 +2996,7 @@ int opt, width, height;
         return(1);
     }
     controlCfP = confLoad(controlPath);
+    liveForget();               // the Live tab's fields start from the file
 
     if( SDL_Init(SDL_INIT_VIDEO) )
     {
@@ -2440,6 +3063,7 @@ int opt, width, height;
             statusMs = SDL_GetTicks();
         }
         pollAudio();
+        pollMuldiv();
 
         if( pendingScheme[0] )
         {

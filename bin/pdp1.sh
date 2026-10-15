@@ -23,18 +23,12 @@ else
 		ptp)
 			nohup /opt/pidp1-mods/bin/save_ptp.sh > /dev/null 2>&1 &
 			;;
-		type30)
-			nohup /opt/pidp1-mods/bin/p7simES localhost > /dev/null 2>&1 &
-			;;
-		type30b)
-			nohup /opt/pidp1-mods/bin/p7simES -p 3401 localhost > /dev/null 2>&1 &
-			;;
 		tape)
 			nohup /opt/pidp1-mods/bin/tapevis > /dev/null 2>&1 &
 			;;
 		*)
 			echo options are: 
-			echo  [soroban ptr ptp type30 tape]
+			echo  [soroban ptr ptp tape]
 			echo when run without options, 
 			echo  pdp1 brings you into the simulator - Ctrl-A d to leave
 			;;

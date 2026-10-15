@@ -8,7 +8,7 @@ INCROOT= ../../../Am1Includes
 
 all: dacmusic.rim
 
-dacmusic.rim: dacmusic.am1 menu.ac menus.ac orch.ah $(INCROOT)/DAC/dacdefs.ah
+dacmusic.rim: dacmusic.am1 menu.ac menus.ac punch.ac orch.ah $(INCROOT)/DAC/dacdefs.ah
 	am1 -i $(INCROOT) -I $(INCROOT)/DAC -I . dacmusic.am1
 
 clean:

@@ -1,0 +1,314 @@
+// The music program's PUNCH, and the tables of the places: in bank 3,
+// above the tape (dacmusic.am1's TEND), since banks 0 and 1 are full.
+//
+// Included by dacmusic.am1 in bank 3. PUNCH is entered from menu.ac's act
+// through its full address, the window open, and ends at mnr's; it runs
+// with the window open throughout. A word of bank 0's is reached through
+// its full address (npart:0), and an address here taken as a value is
+// tagged (punchBlock:3): bare, it is only its 12 bits, which the window reads
+// as bank 0. The status line is set here directly (mstl), not by menu.ac's
+// sts, whose dap-form return would come back to bank 0; and the screen is
+// kept drawn by pms, a copy of menu.ac's msv, for the same reason.
+//
+// The tables are data only, read through their full addresses: fill
+// (menu.ac), lsto (menus.ac) and pla find the values and names here. A
+// 340 save reaches banks 0-1 only, so the names they point to are in
+// bank 1.
+
+// pun -- PUNCH: leader, the parts as they were read (each block's count,
+// its words and its checksum as read; the bar pointers from ld0's copy,
+// as ld1 changes the list), the orchestra block, trailer; then the menu.
+// The screen is kept drawn throughout (pln, fed).
+// Has no arguments and does not return: it ends at mnr.
+// Does not preserve AC or IO.
+// Entered via jmp i, from act (menu.ac).
+pun,
+    local pu1, pu2, pu5, pu6, pu7, pu8, pu9, mk, mq, mc, mt
+    lac [SAVEC | spu:0]
+    dac i [mstl:0]
+    jsp fed
+    dzm mk
+pu1,
+    lac mk
+    SKIP_NEXT_IF_DIFFERENT i [npart:0]
+    jmp pu5
+    law ppt:0
+    add mk
+    dac mt
+    lac i mt
+    dac mq                  // the part's four words: counts and checksums
+    add [4]
+    dac pkp
+    lac i mq
+    dac pkn
+    dac pkw
+    idx mq
+    lac i mq
+    dac pks
+    jsp pbk                 // the notes
+    idx mq
+    lac i mq
+    dac pkn
+    dac pkw
+    idx mq
+    lac i mq
+    dac pks
+    lac pkp                 // past the notes' bar line, the list and its 0
+    add pkn
+    add [2]
+    dac pkp
+    jsp pbk                 // the bar pointers
+    idx mk
+    jmp pu1
+    // The orchestra block, version 3, built in punchBlock: the version, per,
+    // then each converter's line: its part plus 1 (0 for none), its
+    // octave's number, its volume (ovol's word as it is), no detune, its
+    // place (opl's), and its stops: its voice plus 1, then ostp's three;
+    // then the room and the onset, as the device takes them.
+pu5,
+    lac [punchBlock:3]
+    dac pkp
+    law ORCHV3
+    dac i pkp
+    idx pkp
+    lac i [per:0]
+    dac i pkp
+    law orch:0
+    dac mq
+    dzm mc
+pu6,
+    idx pkp
+    lac i mq                // the part plus 1, 0 for none
+    SKIP_NEXT_IF_AC_NEGATIVE // skip if none
+    jmp pu7
+    cla
+    jmp pu8
+pu7,
+    add [1]
+pu8,
+    dac i pkp
+    idx mq
+    lac i mq                // the voice, for the stop
+    dac mt
+    idx pkp
+    idx mq
+    lac i mq                // the octave's number (NOCT if none: refused when read)
+    jda oct3
+    dac i pkp
+    idx pkp
+    law ovol:0
+    add mc
+    dac pks
+    lac i pks
+    dac i pkp
+    idx pkp
+    dzm i pkp
+    idx pkp
+    law opl:0               // the place
+    add mc
+    dac pks
+    lac i pks
+    dac i pkp
+    idx pkp
+    lac mt
+    add [1]
+    dac i pkp
+    law ostp:0
+    add mc
+    add mc
+    add mc
+    dac pks
+    law i 3                 // STOPS - 1
+    dac pkn
+pu2,
+    idx pkp
+    lac i pks
+    dac i pkp
+    idx pks
+    isp pkn
+    jmp pu2
+    idx mq
+    idx mc
+    SKIP_NEXT_IF_SAME [NCONV]
+    jmp pu6
+    idx pkp
+    lac i [oroom:0]
+    dac i pkp
+    idx pkp
+    lac i [onst:0]
+    dac i pkp
+    // Its checksum: the add of its words, as rdb makes it.
+    lac [punchBlock:3]
+    dac pkp
+    law i ORCHN3
+    dac pkn
+    dzm pks
+pu9,
+    lac pks
+    add i pkp
+    dac pks
+    idx pkp
+    isp pkn
+    jmp pu9
+    lac [punchBlock:3]
+    dac pkp
+    law ORCHN3
+    dac pkn
+    lac [ORCHCT3]
+    dac pkw
+    jsp pbk
+    jsp fed
+    lac [SAVEC | spd:0]
+    dac i [mstl:0]
+    jmp i [mnr:0]
+
+mk, 0                       // the part being punched
+mq, 0                       // the word read next: of the part's four, or of orch
+mc, 0                       // the converter, 0 to NCONV-1
+mt, 0                       // scratch: a word of ppt; the voice
+punchBlock,                 // the orchestra block, built to punch
+    table ORCHN3
+    endlocal
+
+// oct3 -- octbl's number for the shift in AC, NOCT if it is not there
+// (menu.ac's ofn, whose look returns dap-form to bank 0).
+// Argument: AC the shift.
+// Returns: AC the number.
+// IO is preserved.
+// Called via jda.
+oct3, 0                     // AC, as jda stores it
+    local o31, o32, o3x, o3n, o3p
+    dap o3x
+    dzm o3n
+o31,
+    lac o3n
+    SKIP_NEXT_IF_DIFFERENT [onam:0 - octbl:0] // NOCT, its names bank-0 symbols
+    jmp o3x                 // not there: NOCT
+    law octbl:0
+    add o3n
+    dac o3p
+    lac i o3p
+    SKIP_NEXT_IF_DIFFERENT oct3
+    jmp o32
+    idx o3n
+    jmp o31
+o32,
+    lac o3n
+o3x, jmp .
+
+o3n, 0                      // the index
+o3p, 0                      // its word of octbl
+    endlocal
+
+// pbk -- punch a block: the word pkw, the pkn words from pkp on, then pks.
+// Arguments: pkw the count word; pkp the first word; pkn the words; pks
+// the checksum.
+// No return value; pkp is left past the words.
+// Does not preserve AC or IO.
+// Called via jsp.
+pbk,
+    local pb1, pbx
+    dap pbx
+    lio pkw
+    jsp ppw
+    lac pkn
+    cma
+    dac pkc
+pb1,
+    lio i pkp
+    jsp ppw
+    idx pkp
+    isp pkc
+    jmp pb1
+    lio pks
+    jsp ppw
+pbx, jmp .
+    endlocal
+
+// ppw -- punch IO as one binary word: three lines, the eighth hole in
+// each.
+// Argument: IO the word.
+// No return value.
+// Does not preserve AC or IO.
+// Called via jsp.
+ppw,
+    local pwx
+    dap pwx
+    jsp pln
+    ril 6s
+    jsp pln
+    ril 6s
+    jsp pln
+pwx, jmp .
+    endlocal
+
+// pln -- punch IO's high six bits as a binary line, the screen kept
+// drawn first (pms).
+// Argument: IO the word.
+// No return value.
+// Does not preserve AC; preserves IO.
+// Called via jsp.
+pln,
+    local plx, plw
+    dap plx
+    dio plw
+    jsp pms
+    lio plw
+    ppb
+plx, jmp .
+
+plw, 0                      // the word
+    endlocal
+
+// fed -- punch 100 blank lines, leader or trailer, the screen kept drawn.
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+fed,
+    local fd1, fdx
+    dap fdx
+    law i 0d100
+    dac pkc
+fd1,
+    jsp pms
+    cli
+    ppa
+    isp pkc
+    jmp fd1
+fdx, jmp .
+    endlocal
+
+// pms -- keep the screen drawn while PUNCH waits: a pen hit is passed
+// over, a stopped display started again (menu.ac's msv).
+// Has no arguments and no return values.
+// Does not preserve AC or IO.
+// Called via jsp.
+pms,
+    local pm1, pmx
+    dap pmx
+    dsp
+    jmp pm1
+    drs
+pm1,
+    dss
+    jmp pmx
+    lio [mlist:0]
+    dla
+pmx, jmp .
+    endlocal
+
+pkw, 0                      // pbk's count word
+pkp, 0                      // its next word: of a part, or of punchBlock
+pkn, 0                      // its words
+pks, 0                      // its checksum; a word of ovol, opl or ostp
+pkc, 0                      // pbk's and fed's count
+
+// The places in the stereo field, left to right: their values, as opl
+// and the orchestra block hold them; each one's dzp word, the left
+// channel's attenuation in bits 0-8 and the right's in bits 9-17, 1/8 dB,
+// 0777 off, on a constant-power law (place k of 8 at k/8 of 90 degrees,
+// -20 log10 of its cosine left and its sine right, rounded); and their
+// names, in bank 1, then ? for a value not among them (fill).
+plv, 0; 040; 0100; 0140; 0200; 0240; 0300; 0340; 0400
+plp, 000777; 001162; 006103; 015051; 030030; 051015; 103006; 162001; 777000
+pnt, spl:1; sl3:1; sl2:1; sl1:1; sce:1; sr1:1; sr2:1; sr3:1; spr:1; squ:0

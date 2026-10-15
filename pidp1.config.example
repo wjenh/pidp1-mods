@@ -274,3 +274,11 @@ dacroom=voices
 # Off by default or if at 0.
 # 8 ms is correct for the Flentrop, a tracker organ.
 daconset=8
+
+# More total cheats.
+# Fed up waiting on the punch?
+# Your answer:
+# punchspeed sets the characters/sec the punch runs.
+# 63 cps is the authentic value, you can set it to anything between 63 and 1000 inclusive.
+# The default is 63.
+punchspeed=1000

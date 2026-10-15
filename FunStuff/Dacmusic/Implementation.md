@@ -54,7 +54,7 @@ meets the rest:
 Instruction bits 6-9 are the command and bits 10-11 the converter, 0-3.
 The mnemonics number the converters 1-4: converter N's instruction is converter 1's plus (N-1) x 0100.
 
-Bit 6 is also the CPU's completion request, so the commands with it set, IOT 71's 8-15 and IOT 72's 010-016, give
+Bit 6 is also the CPU's completion request, so the commands with it set, IOT 71's 8-15 and IOT 72's 010-017, give
 no completion.
 One given would set the CPU's ios flag, and a later *ioh* meant for some other device would then pass without
 waiting.
@@ -133,6 +133,23 @@ The end, loop and stride are in words, or in groups of three samples for a packe
 
 Every latch, IOT 71's buffer latches included, loads together at the end of the event playing, or at *dxg*.
 *dzg* and *dzp* are not latches, they act at once as a knob does, see *The volume and the place*.
+
+**IOT 72's command 017, the room and the onset**
+
+These are the device's own settings, one of each for all four converters, so the converter field picks the
+command instead of a converter.
+
+| Mnemonic | Instruction | IO | What it does |
+|---|---|---|---|
+| dye | 727472 | bit 0, bits 16-17 | The room: bit 0 set, the configuration's; else 0 none, 1 the hall, 2 Busch Hall, 3 the voices' choice |
+| dyo | 727572 | bit 0, bits 9-17 | The onset's bound: bit 0 set, the configuration's; else in 1/8 ms (25 cycles), 0 off |
+| dys | 727672 | returned | Bits 0-2 the room set, as *dye*'s, bits 3-5 the room playing (0 none, 1 the hall, 2 Busch Hall), bits 9-17 the onset's bound in 1/8 ms, 0777 if longer |
+
+*dacroom* and *daconset* set both when the emulator starts.
+A setting given holds until another is given or the emulator restarts, through a halt and a new program.
+Neither is a latch: the room changes at once and starts empty, the onset applies from the next event's end, and a
+note it holds loads as it was going to.
+The fourth field, 727772, does nothing.
 
 ### Wavetable mode
 
@@ -312,7 +329,7 @@ It sees only this channel, the drum's and the 340's steals can still fall in a w
 
 ### The onset
 
-With *daconset=MS*, at an event's end the event timer reloads and the flag sets exactly as without it, but the
+With *daconset=MS*, or *dyo* giving MS, at an event's end the event timer reloads and the flag sets exactly as without it, but the
 note the end loads is taken then and applied d cycles later.
 d is drawn from 0 to MS milliseconds, never more than half the new event, from each converter's own xorshift
 sequence, seeded at *dxg*, so a tape plays the same on every run.
@@ -355,9 +372,11 @@ so a Raspberry Pi and an x64 agree to the bit.
 With a room the whole sound, dry and wet, is cut by the room's trim, 3 dB in Busch Hall and 6 dB in the hall,
 sized by the loudest tapes of the voices each room is for.
 
-With *dacroom=voices* the room is chosen at each *dxg*, Busch Hall if a running converter's note has bit 13 of
-its voicing, the hall otherwise.
+With *dacroom=voices*, or *dye* giving 3, the room is chosen at each *dxg*, Busch Hall if a running converter's
+note has bit 13 of its voicing, the hall otherwise.
 A room changed starts empty.
+*dye* changes the room for the rest of the run, and the device logs it, `IOT 71: room hall, set by the program`;
+*dyo* likewise, `IOT 71: onset 1600 cycles, set by the program`.
 
 A frame past full scale is clipped and counted.
 Frames go to SDL, version 2 or 3 as the emulator is built, in batches of 250 to mimimize jitter.
@@ -414,7 +433,8 @@ so his notation, his compiler, and his scores stay as they are.
 |---|---|
 | Bank 0 | The program, the menu's display list and their data |
 | Bank 1 | The drum's directory, a 190-word slot for each converter's voice header, the voice loader and the menu's lists |
-| Banks 2-3 | The tape, each part with its counts and checksums kept for PUNCH |
+| Banks 2-3 | The tape from 020000 to 037277, 7,872 words, each part with its counts and checksums kept for PUNCH |
+| Bank 3 from 037300 | PUNCH and the orchestra block it builds, and the places' tables |
 | Bank 4 | Each converter's ring, 256 entries of 4 words |
 | Banks 5-15 | The voices the orchestra names, from 050000 |
 
@@ -434,11 +454,19 @@ The tape is over when no word comes for about 2 seconds, 12 for the first read.
 A failed checksum takes the block as read, as *pdp1m13* does on Continue.
 
 **The orchestra block.** PUNCH punches the parts exactly as read, checksums included, then one more block.
-Its count, 0700046, is negative, so *pdp1m13* halts on it rather than taking it for a part.
-Its 38 words are the version, then *per*, the parts a movement, then for each converter nine words, its part
+Its count, 0700050, is negative, so *pdp1m13* halts on it rather than taking it for a part.
+Its 40 words are the version, 3, then *per*, the parts a movement, then for each converter nine words, its part
 plus 1 (0 for none), its octave, its volume in 1/8 dB, its detune (always 0), its place, 0 to 0400 in steps of
-040, and four stops, each a voice number plus 1 (0 for none).
+040, and four stops, each a voice number plus 1 (0 for none), then the room and the onset.
+The room is *dye*'s code and the onset *dyo*'s, 1/8 ms, with 0400000 for the configuration's.
 The checksum follows.
+
+READ TAPE also takes the version 2 block, 0700046 and 38 words, the same without the last two, and sets the room and
+the onset to the configuration's for it.
+A version 3 block whose room or onset isn't in the menu's lists is refused whole, as a voice the drum doesn't have
+is.
+The player gives the room and the onset to the device as it does the volumes, when the orchestra is set and before
+each piece plays.
 
 The block holds numbers, not addresses or slider positions, a tape remains valid if a library is rebuilt.
 
@@ -529,6 +557,8 @@ Everything the pen may hit is drawn with the pen enabled, nothing else is, so a 
 The pen's aperture is set every frame, wide on the menu and narrow in a list, whose rows are closer.
 This isn't authentic, but it's a minor violation to avoid mis-hits.
 
+ROOM and ONSET open lists as the other fields do; a row chosen goes to the device at once by *dye* or *dyo*.
+
 **The lists** are built in bank 1 when one opens and the screen's first word, the gate, jumps to the list in
 place of the menu's body.
 The gate is written last when a list opens and first when it closes.
@@ -603,6 +633,8 @@ The gain table is written as numbers and the Makefile turns off fused
 multiply-adds, so every host produces the same file.
 
 It renders to the end of the two-second pause after the last movement, plus the room's tail.
+It takes the room and the onset from a version 3 orchestra block unless *--room=* or *--onset=* is given; with
+neither, the room is none and the onset off.
 Left out, since they are not on the tape: the test word's tempo scale, sense switch 1's repeat, and a slider moved
 while the piece plays.
 

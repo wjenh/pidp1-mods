@@ -18,9 +18,9 @@
  *   (edge tone, speech, céleste; edge.h), a slow counter for vibrato and Leslie, and a
  *   percussion read.
  * After the mixer comes the room (room.h); the onset delays each wavetable note's load by a
- * pseudo-random time up to a bound. Both are set in the configuration (dacroom, daconset,
- * with dacgain for the level) and are host work: no instruction reaches them and they steal
- * nothing.
+ * pseudo-random time up to a bound. Both start as the configuration sets them (dacroom,
+ * daconset, with dacgain for the level), a program can set either (IOT 72's command 017),
+ * and both are host work: they steal nothing.
  *
  * Everything runs on the emulator thread: iotHandler() for the commands, iotIOPoll() once
  * per machine cycle for the clocks, the channel and the mix. Audio goes to SDL 2 or 3 at
@@ -31,7 +31,8 @@
  * (FunStuff/Dacmusic/render/dacrender.c), so the device and the renderer compute the same
  * integers.
  *
- * 24-Sep-2026 Claude: written.
+ * 24-Sep-2026 Claude written.
+ * 14-Oct-2026 wje allow modifiying room and onset via the IOT, not just the config file
  */
 
 #include <math.h>
@@ -112,7 +113,17 @@ typedef SDL_AudioDeviceID AudioHandle;
 #define CMD_LESLIE 013          // IO bits 0-8 the tremolo's depth, 9-17 the place's, 1/8 dB
 #define CMD_PERCLEVEL 014       // IO bits 0-8 the percussion's level, 1/8 dB, 15-17 its multiple
 #define CMD_PERCDECAY 015       // the percussion's decay rate
-#define CMD_PERCTABLE 016       // the percussion's sine, 256 words, IO bits 2-17 (017 does nothing)
+#define CMD_PERCTABLE 016       // the percussion's sine, 256 words, IO bits 2-17
+#define CMD_SETTINGS 017        // the device's own settings, the converter field choosing which
+
+// IOT 72's command 017: the converter field picks one of these, for the whole device.
+#define SET_ROOM 0              // the room: IO bits 16-17, 0 none, 1 hall, 2 Busch Hall, 3 voices
+#define SET_ONSET 1             // the onset's bound: IO bits 9-17 in ONSET_UNITs
+#define SET_READ 2              // IO = the room set, the room playing, the onset's bound
+#define SET_CONFIGURED SIGNBIT  // IO bit 0, to SET_ROOM or SET_ONSET: the configuration's
+#define ROOM_CODE_VOICES 3      // SET_ROOM's code for the voices' choice
+#define ONSET_UNIT 25           // cycles in 1/8 ms
+#define ONSET_UNITS_MAX 0777
 
 // IOT 71's commands with instruction bit 6 set: sample mode, the timbre, the volume and the place.
 #define CMD_END 010             // the sample's end in words (packed: groups), IO bits 2-17, 0 = 65536
@@ -364,9 +375,11 @@ static float sumLeft;
 static float sumRight;
 static int outCycles;
 static int clippedFrames;       // frames with a channel past full scale, since the last halt
-static int roomKind = ROOM_OFF; // the configuration's dacroom: a room, or ROOM_VOICES
+static int roomKind = ROOM_OFF; // the room set: a room, or ROOM_VOICES
 static Room room;               // its kind the room playing
-static int onsetCycles;         // the configuration's daconset, in machine cycles; 0: off
+static int onsetCycles;         // the onset's bound set, in machine cycles; 0: off
+static int configRoomKind = ROOM_OFF; // the configuration's dacroom, for SET_CONFIGURED
+static int configOnsetCycles;   // and its daconset
 
 // Opens the default playback device at OUT_RATE, stereo, signed 16-bit.
 // Returns AUDIO_HANDLE_INVALID on failure.
@@ -550,6 +563,8 @@ int i;
         }
     }
     fprintf(stderr, "IOT 71: onset %d cycles\n", onsetCycles);
+    configRoomKind = roomKind;
+    configOnsetCycles = onsetCycles;
 
     SDL_InitSubSystem(SDL_INIT_AUDIO);
     audioDev = audioOpenDevice();
@@ -1816,6 +1831,75 @@ int kind;
     }
 }
 
+// The room a program sets, at once: a fixed room changed starts empty and none clears it, as
+// a halt's restart does; the voices' choice keeps the room playing, the hall if there was
+// none, until the next go chooses. A setting the same as before changes nothing.
+static void
+setRoom(int kind)
+{
+    if( kind == roomKind )
+    {
+        return;
+    }
+
+    roomKind = kind;
+    if( kind == ROOM_VOICES )
+    {
+        if( room.kind == ROOM_OFF )
+        {
+            roomInit(&room, ROOM_HALL);
+        }
+    }
+    else if( kind != room.kind )
+    {
+        roomInit(&room, kind);
+    }
+    fprintf(stderr, "IOT 71: room %s, set by the program\n",
+            ((kind == ROOM_BUSCH) ? "busch" : ((kind == ROOM_HALL) ? "hall" :
+             ((kind == ROOM_VOICES) ? "from the voices" : "off"))));
+}
+
+// IOT 72's command 017, SET_ROOM, the onset, SET_ONSET, get the current values, SET_READ.
+// If IO bit 0 is set, the setting reverts to the configure file or defaut.
+// A changed bound applies from the next event's end.
+// SET_READ returns the current settings. packed, in IO.
+static void
+settingsCommand(PDP1 *pdp1P, int which)
+{
+static const int roomOfCode[4] = { ROOM_OFF, ROOM_HALL, ROOM_BUSCH, ROOM_VOICES };
+int value;
+int cycles;
+int units;
+
+    value = (IO(pdp1P) & WORDMASK);
+    switch( which )
+    {
+    case SET_ROOM:
+        setRoom(((value & SET_CONFIGURED)?configRoomKind:roomOfCode[value & 03]));
+        break;
+
+    case SET_ONSET:
+        cycles = ((value & SET_CONFIGURED)?configOnsetCycles:((value & ONSET_UNITS_MAX) * ONSET_UNIT));
+        if( cycles != onsetCycles )
+        {
+            onsetCycles = cycles;
+            fprintf(stderr, "IOT 71: onset %d cycles, set by the program\n", onsetCycles);
+        }
+        break;
+
+    case SET_READ:
+        units = ((onsetCycles + (ONSET_UNIT / 2)) / ONSET_UNIT);
+        if( units > ONSET_UNITS_MAX )
+        {
+            units = ONSET_UNITS_MAX;
+        }
+
+        IO(pdp1P) = ((((roomKind == ROOM_VOICES)?ROOM_CODE_VOICES:roomKind) << 15) |
+            (((roomKind == ROOM_OFF)?ROOM_OFF:room.kind) << 12) | units);
+        break;
+    }
+}
+
 // Handles every converter command at TP10, IOT 71's and IOT 72's. Returns 1 (the IOT is
 // known), or 0 if the high speed channel could not be had.
 int
@@ -1853,6 +1937,10 @@ Converter *cP;
                 {
                     queueLatches(cP);
                 }
+            }
+            else if( command == CMD_SETTINGS )
+            {
+                settingsCommand(pdp1P, (field & 03));
             }
             else
             {

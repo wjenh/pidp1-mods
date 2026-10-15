@@ -29,7 +29,8 @@
 // cycle by cycle and each 4-cycle frame is mixed and written as soon as
 // it is made.
 //
-// Usage: dacrender tape.bin [out.wav] [--secs=S] [--voices=file.lib] [--room=hall|busch|voices] [--onset=MS]
+// Usage: dacrender tape.bin [out.wav] [--secs=S] [--voices=file.lib] [--room=none|hall|busch|voices] [--onset=MS]
+// A flag left out takes the tape's room or onset, if its orchestra block (version 3) sets it.
 //
 // 07-Oct-2026 Claude: written.
 
@@ -64,13 +65,19 @@
 #define ORCH_WORDS0 13
 #define ORCH_WORDS2 38
 #define ORCH_VERSION2 2
+#define ORCH_COUNT3 0700050         // version 3: version 2's words, then the room and the onset
+#define ORCH_WORDS3 40
+#define ORCH_VERSION3 3
+#define SETTING_CONFIGURED 0400000  // a block's room or onset: the configuration's (here, the flags')
+#define ROOM_CODES 4                // a block's room: 0 none, 1 hall, 2 Busch Hall, 3 the voices'
+#define ONSET_UNIT 25               // cycles in a block's onset unit, 1/8 ms
 #define LINE2 9                     // a converter's words in version 2
 #define STOPS 4
 #define PLACE_RIGHT 0400            // a place in the stereo field: 0 left, 0400 right
 #define PLACE_STEP 040              // the player's nine places are 040 apart
 #define NPLACES 9
 #define TAPE_START 020000           // the player keeps the parts in banks 2-3
-#define TAPE_END 040000
+#define TAPE_END 037300             // to its TEND, below PUNCH
 #define PART_HEADER 4               // words the player keeps before each part
 #define MAX_PARTS 30
 #define NOCT 5                      // the octaves an orchestra block can name
@@ -395,8 +402,10 @@ static Converter convs[NCONV];
 static long long unmappedFetches;
 static long stepsBeyond;
 static long articulationsHalted;
-static Room room;                   // after the mix; its kind ROOM_OFF unless --room=
-static long onsetCycles;            // the onset's bound in cycles; 0: off, unless --onset=
+static Room room;                   // after the mix; its kind ROOM_OFF unless --room= or the tape
+static long onsetCycles;            // the onset's bound in cycles; 0: off, unless --onset= or the tape
+static int tapeRoom = SETTING_CONFIGURED;   // the orchestra block's room, as the player takes it
+static int tapeOnset = SETTING_CONFIGURED;  // and its onset, in 1/8 ms
 static const int octaveShifts[NOCT] = { 0, -1, 1, -2, 2 };
 static const char *octaveFeet[NOCT] = { "8", "16", "4", "32", "2" };
 // The player's places, left to right (menus.ac's plv is k x PLACE_STEP), each
@@ -1700,7 +1709,7 @@ static int nextWord(TapeReader *rP, int *wP)
 }
 
 // advance: the player's next word of banks 2-3 (its adv).
-// Returns 1, or 0 when that passes the end of bank 3.
+// Returns 1, or 0 when that reaches TAPE_END.
 static int advance(TapeReader *rP)
 {
     rP->fp++;
@@ -1790,17 +1799,40 @@ static int defaultPlace(int c)
     return ((c < 2) ? 0 : PLACE_RIGHT);
 }
 
-// takeOrchestra2: a version 2 block's words, as the player's orb takes
-// them: a line has one to four stops, packed from the first, no detune,
-// and a place that is one of the nine.
-// Returns as takeOrchestra; NCONV + 1 also for a version that is not 2.
-static int takeOrchestra2(const int *wP)
+// isOnset: whether a block's onset is one the player's list has: the
+// configuration's, off, or 2, 4, 6, 8, 12 or 16 ms.
+static int isOnset(int w)
+{
+    static const int onsets[] = { SETTING_CONFIGURED, 0, 020, 040, 060, 0100, 0140, 0200 };
+    size_t k;
+
+    for(k = 0; k < (sizeof(onsets) / sizeof(onsets[0])); k++)
+    {
+        if( w == onsets[k] )
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// takeOrchestra2: a version 2 or 3 block's words (n of them), as the
+// player's orb takes them: a line has one to four stops, packed from the
+// first, no detune, and a place that is one of the nine; version 3's room
+// and onset are the configuration's or ones the player's lists have.
+// Returns as takeOrchestra; NCONV + 1 also for a version that is not the
+// block's, or a room or onset the player does not have.
+static int takeOrchestra2(const int *wP, int n)
 {
     const int *lP;
     int c;
     int s;
 
-    if( (wP[0] != ORCH_VERSION2) || !inRange(((wP[1] - 1) & WORD_MASK), NCONV) )
+    if( (wP[0] != ((n == ORCH_WORDS3) ? ORCH_VERSION3 : ORCH_VERSION2)) || !inRange(((wP[1] - 1) & WORD_MASK), NCONV) )
+    {
+        return (NCONV + 1);
+    }
+    if( (n == ORCH_WORDS3) && (((wP[38] != SETTING_CONFIGURED) && !inRange(wP[38], ROOM_CODES)) || !isOnset(wP[39])) )
     {
         return (NCONV + 1);
     }
@@ -1836,12 +1868,15 @@ static int takeOrchestra2(const int *wP)
             orch[c].nStops++;
         }
     }
+    tapeRoom = ((n == ORCH_WORDS3) ? wP[38] : SETTING_CONFIGURED);
+    tapeOnset = ((n == ORCH_WORDS3) ? wP[39] : SETTING_CONFIGURED);
     return 0;
 }
 
 // takeOrchestra: the block's words, as the player's orb takes them: every
 // number one the player has, or nothing changed. A block from before
-// version 2 puts each converter at its own place.
+// version 2 puts each converter at its own place, and one from before
+// version 3 leaves the room and the onset the configuration's.
 // Returns 0 if taken, else the converter (1 to NCONV) with a number out of
 // range or a volume that is no level, or NCONV + 1 for per.
 static int takeOrchestra(const int *wP, int n)
@@ -1851,9 +1886,9 @@ static int takeOrchestra(const int *wP, int n)
     int c;
     int p;
 
-    if( n == ORCH_WORDS2 )
+    if( (n == ORCH_WORDS2) || (n == ORCH_WORDS3) )
     {
-        return takeOrchestra2(wP);
+        return takeOrchestra2(wP, n);
     }
     volP = ((n == ORCH_WORDS) ? (wP + ORCH_WORDS0) : zeros);
     p = ((wP[0] - 1) & WORD_MASK);
@@ -1887,6 +1922,8 @@ static int takeOrchestra(const int *wP, int n)
         volumes[c] = volP[c];
         places[c] = defaultPlace(c);
     }
+    tapeRoom = SETTING_CONFIGURED;
+    tapeOnset = SETTING_CONFIGURED;
     return 0;
 }
 
@@ -1899,8 +1936,8 @@ static void tapeError(const char *whyP)
 
 // loadTape: every part on the tape, and an orchestra block, as READ TAPE
 // takes them (dacmusic.am1's loader): a checksum that fails takes the
-// block as read; a bad count, too many parts or a tape larger than banks
-// 2-3 ends the read, keeping the parts before it; a block the player
+// block as read; a bad count, too many parts or a tape larger than its
+// area ends the read, keeping the parts before it; a block the player
 // would refuse leaves the orchestra as it was.
 static void loadTape(TapeReader *rP)
 {
@@ -1931,7 +1968,7 @@ static void loadTape(TapeReader *rP)
         {
             return;
         }
-        if( (ct == ORCH_COUNT) || (ct == ORCH_COUNT0) || (ct == ORCH_COUNT2) )
+        if( (ct == ORCH_COUNT) || (ct == ORCH_COUNT0) || (ct == ORCH_COUNT2) || (ct == ORCH_COUNT3) )
         {
             rP->fp = ph;
             status = readBlock(rP, (ct & 0777), &blockP, &sumOk);
@@ -1957,8 +1994,8 @@ static void loadTape(TapeReader *rP)
                 if( why == (NCONV + 1) )
                 {
                     printf("warning: TAPE READ ORCHESTRA REFUSED: its parts a movement are not 1 to %d, "
-                           "or its version is not one the player reads; the orchestra is left as it was\n",
-                           NCONV);
+                           "its version is not one the player reads, or its room or onset is not one the "
+                           "player's lists have; the orchestra is left as it was\n", NCONV);
                 }
                 else
                 {
@@ -3657,15 +3694,17 @@ static char *outName(const char *tapeP)
 // usage: the command's form, and exit 1.
 static void usage(void)
 {
-    fprintf(stderr, "usage: dacrender tape.bin [out.wav] [--secs=S] [--voices=file.lib] [--room=hall|busch|voices]"
-            " [--onset=MS]\n"
+    fprintf(stderr, "usage: dacrender tape.bin [out.wav] [--secs=S] [--voices=file.lib]"
+            " [--room=none|hall|busch|voices] [--onset=MS]\n"
             "  plays a tape punched by the D/A converters' music program, with its\n"
             "  orchestra and volumes, into a 16-bit stereo wav file at 50 kHz;\n"
             "  --secs=S renders only the first S seconds; --voices=file.lib plays\n"
             "  the voices that library lists in place of the nine compiled in;\n"
             "  --room=hall or --room=busch puts the device's room after the mix,\n"
-            "  --room=voices the one the voices choose (Busch Hall or the hall);\n"
-            "  --onset=MS loads each note up to MS ms late, as the device's daconset\n");
+            "  --room=voices the one the voices choose (Busch Hall or the hall),\n"
+            "  --room=none none; --onset=MS loads each note up to MS ms late, as\n"
+            "  the device's daconset. Without them, the room and onset the tape\n"
+            "  sets, if it sets them; else none\n");
     exit(1);
 }
 
@@ -3688,6 +3727,8 @@ int main(int argc, char **argv)
     int nMov;
     int organ[NCONV];
     int roomKind;
+    int roomGiven;
+    int onsetGiven;
     int fromVoices;
     int c;
     int k;
@@ -3698,6 +3739,8 @@ int main(int argc, char **argv)
     libP = NULL;
     secs = 0.0;
     roomKind = ROOM_OFF;
+    roomGiven = 0;
+    onsetGiven = 0;
     for(i = 1; i < argc; i++)
     {
         if( strncmp(argv[i], "--secs=", 7) == 0 )
@@ -3712,21 +3755,30 @@ int main(int argc, char **argv)
         {
             libP = (argv[i] + 9);
         }
+        else if( strcmp(argv[i], "--room=none") == 0 )
+        {
+            roomKind = ROOM_OFF;
+            roomGiven = 1;
+        }
         else if( strcmp(argv[i], "--room=hall") == 0 )
         {
             roomKind = ROOM_HALL;
+            roomGiven = 1;
         }
         else if( strcmp(argv[i], "--room=busch") == 0 )
         {
             roomKind = ROOM_BUSCH;
+            roomGiven = 1;
         }
         else if( strcmp(argv[i], "--room=voices") == 0 )
         {
             roomKind = ROOM_VOICES;
+            roomGiven = 1;
         }
         else if( strncmp(argv[i], "--onset=", 8) == 0 )
         {
             onsetCycles = lrint(strtod(argv[i] + 8, NULL) * CYCLES_PER_MS);
+            onsetGiven = 1;
             if( onsetCycles < 0 )
             {
                 usage();
@@ -3895,6 +3947,18 @@ int main(int argc, char **argv)
     cycles = (total16 >> 4);
     printf("the piece: %.1f s (%lld cycles, to the end of the last pause)\n", ((double)cycles / CPS), cycles);
     tail = 0;
+    // The tape's room and onset, where no flag gives them: the player gives the device the
+    // block's settings at PLAY. Its "the configuration's" is the flags' here, so none.
+    if( !roomGiven && (tapeRoom != SETTING_CONFIGURED) )
+    {
+        static const int roomOfCode[ROOM_CODES] = { ROOM_OFF, ROOM_HALL, ROOM_BUSCH, ROOM_VOICES };
+
+        roomKind = roomOfCode[tapeRoom];
+    }
+    if( !onsetGiven && (tapeOnset != SETTING_CONFIGURED) )
+    {
+        onsetCycles = ((long)tapeOnset * ONSET_UNIT);
+    }
     // The room from the voices: the player starts all four converters together, so the
     // device's choice at each go comes to Busch Hall if any one's voicing asks for it.
     // (The device may hold the hall for the few cycles between the goes; the mix is silent

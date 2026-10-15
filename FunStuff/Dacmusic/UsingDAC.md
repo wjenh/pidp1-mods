@@ -2,8 +2,8 @@
 
 This document describes the PDP-1 D/A converters, IOTs 71 and 72, and the music player and tools built on them.
 
-This is version 1.0\
-Edit date 13-Oct-2026
+This is version 1.1\
+Edit date 14-Oct-2026
 
 How it all works inside, the IOTs included, is *Implementation.md* in this directory.
 
@@ -91,6 +91,9 @@ restart the emulator.
 | dacroom=voices | The room the music is heard in, see *The room* below |
 | daconset=8 | An organ note starts up to 8 ms late, as on a real tracker organ, see below |
 
+These two are where the converters start. A program can change either, and the player does when a tape or
+its menu says to, see *The room and the onset* below.
+
 The converters open their own audio device.
 The emulator's *audio* setting and **pdp1audio** do not apply to them, so nothing else needs turning on.
 
@@ -157,7 +160,7 @@ The menu appears on the Type 340:
                                                                      '
   4 RIGHT       PART 3    BOURDON             16 FT   ................
                                                                      0
-  READ TAPE     PLAY      PUNCH
+  READ TAPE     PLAY      PUNCH     ROOM CONFIG       ONSET CONFIG
   TAPE READ
 ```
 Each row is one converter, its place in the stereo field, the part of the tape it plays, its instrument,
@@ -173,7 +176,7 @@ Mount the tape on the paper tape reader as you would any tape, then select READ 
 
 The header counts the parts as they come in.
 When no more come for about 2 seconds the read is over and the status line says TAPE READ.
-A tape this program punched also carries its added settings.
+A tape this program punched also carries its added settings, the room and the onset among them.
 These will not be seen by the original Samson player, so a tape created here will still play
 on the orignal player
 
@@ -202,6 +205,20 @@ The fields:
   two octaves up.
 - **PARTS A MOVEMENT**, in the header; how many of the tape's parts make up one movement.
   Samson's trio sonatas have three parts a movement, the movements play in order, two seconds apart.
+
+### The room and the onset
+
+ROOM and ONSET, on the line with READ TAPE, PLAY and PUNCH, are the room the music is heard in and how late
+an organ note may start (see *The room* and *The onset* below).
+Each opens its list as the other fields do.
+- **ROOM**: CONFIG, NONE, HALL, BUSCH HALL or VOICES.
+- **ONSET**: CONFIG, OFF, 2 MS, 4 MS, 6 MS, 8 MS, 12 MS or 16 MS.
+
+CONFIG is whatever *dacroom* and *daconset* say in *pidp1.config*.
+The converters take a choice at once, so an instrument you try in its list is heard in the room you chose.
+Both are saved on the tape when you PUNCH, and READ TAPE sets them from a tape that has them.
+A tape punched by an older player, or made elsewhere, sets both to CONFIG; a tape with no orchestra leaves them
+as they were.
 
 ### Organ stops
 
@@ -241,11 +258,13 @@ Start again at 100, the menu comes back with the orchestra as it was.
 ### Punch it
 
 PUNCH punches the tape again, the parts exactly as they were read and then the orchestra: each converter's part,
-instrument, stops, octave, volume and place.
+instrument, stops, octave, volume and place, and the room and the onset.
 Read that tape back in later and everything is set as you left it.
 
 Samson's own player, *pdp1m13*, still reads such a tape's parts; it halts at the orchestra block after
 the last of them, since it doesn't know what that block is.
+The 1.0 player reads a tape punched by this one as far as its orchestra, says TAPE ERROR BAD COUNT there, and
+keeps and plays its parts.
 
 ### The messages
 
@@ -253,9 +272,9 @@ the last of them, since it doesn't know what that block is.
 |---|---|
 | READING TAPE, TAPE READ | A READ TAPE under way, and done |
 | NO TAPE | No word came from the reader in about 12 seconds. The parts already loaded are kept |
-| TAPE ERROR BAD COUNT, TOO MANY PARTS, TAPE TOO LARGE | The read stopped. The parts read whole before it are kept. More than 30 parts, or more than two banks of tape, is too large |
+| TAPE ERROR BAD COUNT, TOO MANY PARTS, TAPE TOO LARGE | The read stopped. The parts read whole before it are kept. More than 30 parts, or a tape taking 7,868 words or more in core, is too large; Samson's trio sonatas fit |
 | TAPE READ CHECKSUM ERROR | A block's checksum failed. It is taken as read, as Samson's player takes it |
-| TAPE READ ORCHESTRA REFUSED | The tape's orchestra names a voice the drum doesn't have, or a volume or place the menu can't show. The orchestra is unchanged |
+| TAPE READ ORCHESTRA REFUSED | The tape's orchestra names a voice the drum doesn't have, or a volume, place, room or onset the menu can't show. The orchestra is unchanged |
 | PUNCHING TAPE, TAPE PUNCHED | A PUNCH under way, and done |
 | LOADING VOICES | PLAY is reading the orchestra's voices from the drum |
 | NO VOICES ON THE DRUM | The drum doesn't hold a voice library this player reads, see *The drum* |
@@ -274,7 +293,10 @@ the last of them, since it doesn't know what that block is.
 | *tapes/toccata-biggs.bin* | The Toccata of BWV 565, to the fugue's entry, at the tempo of Biggs's recording, on the Hoofdwerk plenum and the Pedaal | Flentrop |
 | *tapes/sonata1-stereo.bin* | Samson's Trio Sonata I on the default organ, spread across the stereo field | Any of the three with the nine |
 | *tapes/scotland-brave.bin* | *Scotland the Brave* on the Highland bagpipe, the chanter in the center and the drones to the left | Bagpipe |
-| *tapes/amazing-grace-piano.bin* | *Amazing Grace* on the recorded piano; best with no room | Recorded-2 |
+| *tapes/amazing-grace-piano.bin* | *Amazing Grace* on the recorded piano, with no room | Recorded-2 |
+
+Each tape carries its room and onset, so it plays as intended whatever *pidp1.config* says: the four organ tapes
+VOICES and 8 MS, the bagpipe VOICES with the onset off, and *Amazing Grace* no room and no onset.
 
 The two tempo tapes take only their timing from Biggs's recordings, by matching a rendering against the record,
 no music from the recordings is in them (copyrighted).
@@ -384,13 +406,16 @@ Two are provided, Adolphus Busch Hall where the Flentrop is located or a generic
 | dacroom=voices | Busch Hall when the voices playing ask for it, as the Flentrop's stops do, the hall otherwise |
 | dacroom=busch | Always Busch Hall |
 | dacroom=hall | Always the hall |
-| none | No room, the converters' sound as it is |
+| dacroom=none | No room, the converters' sound as it is |
 
 *voices* is the one to use.
 Tthe organ gets its own hall and everything else a hall that suits it.
 
 The room is not implemented in the IOTs, it is in the waveforms.
 It takes no machine cycles.
+
+*dacroom* is only where the converters start.
+A program changes the room with *dye* (*Implementation.md*), and the player does from a tape or its ROOM field.
 
 ## The onset
 
@@ -399,6 +424,7 @@ On a tracker organ the notes of a chord don't all speak at the same instant.
 the same every time.
 The timing of the piece doesn't move, only where each note begins to sound.
 Set it to 0, or leave it out, for every note exactly on time.
+As with the room, a program can change it, with *dyo*, and the player does from a tape or its ONSET field.
 
 ## Rendering a tape to a wav file
 
@@ -415,6 +441,8 @@ The nine basic voices are built in.
 For other voices name the library with *--voices=*, the same library the drum was made from:
 *voices/lib/flentrop.lib*, *instruments/hammond.lib*, *instruments/recorded-1.lib* or *instruments/recorded-2.lib*.
 *--secs=S* renders just the first S seconds.
+A tape that carries a room and onset is rendered in them; *--room=* (*voices*, *busch*, *hall* or *none*) and
+*--onset=MS* override the tape.
 
 A whole trio sonata takes a few seconds.
 *render/README.md* has the details, and how to make an MP3.
@@ -438,6 +466,7 @@ or at least keep a small voice first, since voice 0 is always loaded.
 The converters are an ordinary device with ordinary IOTs, and *dacdefs.ah* defines them for am1.
 At its simplest a converter plays a buffer of samples, over and over, at a period you choose.
 At its most it plays a sampled note at any pitch through an envelope, with vibrato, in stereo.
+*dye*, *dyo* and *dys* set and read the room and the onset for the whole device.
 *Implementation.md* describes every command and gives an example.
 
 ## Credits

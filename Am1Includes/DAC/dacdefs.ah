@@ -179,6 +179,23 @@
 #define dyp3 iot 7272
 #define dyp4 iot 7372
 
+// IOT 72's command 017, the device's own settings: one of each, for the whole device, with no
+// converter number. Instruction bit 6 set, so no completion. The configuration (dacroom,
+// daconset) sets both at the emulator's start; a setting given holds until another is given
+// or the emulator restarts, through a halt or a new program.
+//
+//   dye   the room after the mixer: IO bit 0 set, the configuration's; else IO bits 16-17,
+//         0 none, 1 the hall, 2 Busch Hall, 3 the voices' choice (Busch Hall when a running
+//         note's voicing asks for it, chosen at each dxgN). A room changed starts empty
+//   dyo   the onset's bound: IO bit 0 set, the configuration's; else IO bits 9-17 in 1/8 ms,
+//         0 off. It applies from the next event's end
+//   dys   IO = the room set (bits 0-2, as dye's), the room playing (bits 3-5: 0 none, 1 the
+//         hall, 2 Busch Hall) and the onset's bound (bits 9-17, 1/8 ms, 0777 if longer)
+
+#define dye iot 7472
+#define dyo iot 7572
+#define dys iot 7672
+
 // IOT 71's commands 8-15, sample mode, the timbre that follows the level, the volume and the
 // place: instruction bit 6 set, the same converter numbering. All but dzgN and dzpN are
 // latches, loaded with the others at the end of the event (or at dxgN). Bit 6 is the CPU's completion request too, so

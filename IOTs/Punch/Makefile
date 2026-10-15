@@ -1,7 +1,9 @@
-INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I..
+INC= -I../../src/blincolnlights -I../../src/blincolnlights/pdp1 -I.. -I../Lib
+CFLAGS= -O3
+#CFLAGS= -g
 
-%.o:%.c ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h
-	gcc $(INC) -O3 -fPIC -c $< -o $@
+%.o:%.c ../iotHandler.h ../../src/blincolnlights/pdp1/dynamicIots.h ../../src/blincolnlights/pdp1/pdp1.h ../../src/blincolnlights/pdp1/ad1intf.h ../../src/blincolnlights/pdp1/configuration.h
+	gcc $(INC) $(CFLAGS) -fPIC -c $< -o $@
 
 %.so:%.o
 	gcc -shared $< -o $@

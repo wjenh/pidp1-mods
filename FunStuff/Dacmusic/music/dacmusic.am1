@@ -26,6 +26,11 @@ Music on the D/A converters -- Samson's Harmony Compiler tapes
 //     An instrument's list is the library's families, each opening its
 //     voices beside it; the pen put on the lit voice again plays middle
 //     C in it, on the field's converter, at its octave and volume.
+//   - ROOM and ONSET, under the rows, are the device's room and the
+//     bound of each note's onset (dye, dyo): CONFIG leaves either as
+//     dac.config has it. Each opens its list as the other fields do; a
+//     tape this program punched brings both, and an older tape sets both
+//     to CONFIG.
 //   - Each converter's slider, at the right of its row, sets its volume:
 //     0 dB at the right, 3 dB less a point to the left, 45 dB at the
 //     left. The pen held on it, or dragged along it, sets the level,
@@ -35,7 +40,8 @@ Music on the D/A converters -- Samson's Harmony Compiler tapes
 //     plays, the 340 shows the orchestra, the sliders and a STOP target,
 //     which ends the piece at once; READ TAPE, PLAY and PUNCH act on the
 //     pen put on them. PUNCH punches the parts as they were read and the
-//     orchestra block, version 2 (Implementation.md, "Reading a tape").
+//     orchestra block, version 3 (Implementation.md, "Reading a tape"),
+//     which carries the room and the onset.
 //   - The instrument fields show the drum's voices by the names its
 //     directory holds. With no library on the drum the status line says
 //     NO VOICES ON THE DRUM and PLAY says it again; running voices/dacdrum
@@ -76,7 +82,8 @@ Music on the D/A converters -- Samson's Harmony Compiler tapes
 // Needs: IOT 71 and 72, the Type 23 drum, banks 0-15: the program in
 // bank 0; the drum's directory, a slot for each converter's voice, the
 // voices' loader and the menu's lists (menus.ac) in bank 1; the tape in
-// banks 2-3; the rings in bank 4; the voices' blocks in banks 5-15. It
+// banks 2-3 below TEND, and PUNCH with the places' tables above it
+// (punch.ac); the rings in bank 4; the voices' blocks in banks 5-15. It
 // runs with the extend-mode window open throughout, so every indirect is
 // a full 16-bit address; the returns are dap-form, but for the loader's
 // two called from bank 0. The menu also needs the Type 340 with its
@@ -102,7 +109,7 @@ Music on the D/A converters -- Samson's Harmony Compiler tapes
 #define NCONV 4                 // the converters, and so the most parts a movement can have
 #define BAR 600000              // a bar line in a part's notes, as pdp1m13 has it
 #define TAPE 020000             // the parts are read into banks 2-3, from here
-#define TEND 040000             // to the word before this
+#define TEND 037300             // to the word before this; PUNCH and its tables above (punch.ac)
 #define MAXP 0d30               // the parts pbl and ppt hold
 #define MAXSEG 0d16             // the tempo segments a bar can have (sg)
 #define MINGAP 0d400            // cycles: a key off leaving a shorter gap is dropped
@@ -126,9 +133,15 @@ Music on the D/A converters -- Samson's Harmony Compiler tapes
 #define ORCHCT0 (0700000 | ORCHN0)
 #define ORCHN2 0d38             // version 2: the version, per, NCONV lines of LINE2 words
 #define ORCHCT2 (0700000 | ORCHN2)
+#define ORCHN3 0d40             // version 3: version 2's words, then the room and the onset
+#define ORCHCT3 (0700000 | ORCHN3)
+#define ORCHV3 3                // its version word
+#define SETCFG 0400000          // a room or an onset that is the configuration's (dye, dyo)
+#define NRM 5                   // the rooms the room's field has (menu.ac's rmv)
+#define NON 0d8                 // the onsets the onset's field has (menu.ac's onv)
 #define LINE2 0d9               // part + 1, octave, volume, detune, place, four stops
 #define PLRIGHT 0400            // a place in the stereo field: 0 left, this right
-#define NPL 0d9                 // the places, 040 apart (menus.ac's plv)
+#define NPL 0d9                 // the places, 040 apart (punch.ac's plv)
 
 // The drum (Docs/UsingType23Drum.md), not by DRUM/type23drumdefs.ah,
 // whose dss would replace the 340's.
@@ -283,6 +296,8 @@ ld0,
     SKIP_NEXT_IF_DIFFERENT [ORCHCT0]
     jmp lor
     SKIP_NEXT_IF_DIFFERENT [ORCHCT2]
+    jmp lor
+    SKIP_NEXT_IF_DIFFERENT [ORCHCT3]
     jmp lor
     jsp rdv
     dac nct
@@ -493,8 +508,9 @@ rbx, jmp .
 cs, 0                       // the checksum so far
     endlocal
 
-// adv -- move fp to the next word of banks 2-3. A tape larger than they
-// are halts from the console (lhm), and ends READ TAPE with its error.
+// adv -- move fp to the next word of the tape's area, banks 2-3 to TEND. A
+// tape larger than it halts from the console (lhm), and ends READ TAPE
+// with its error.
 // Has no arguments and no return values.
 // Does not preserve AC; preserves IO.
 // Called via jsp.
@@ -507,7 +523,7 @@ adv,
     lac atm
     SKIP_NEXT_IF_AC_ZERO
     jmp av1
-lhm, hlt                    // the tape is larger than banks 2-3
+lhm, hlt                    // the tape is larger than its area
     jmp lhm
 av1,
     law stl
@@ -575,6 +591,11 @@ pl0,
     lio ovol+3
     dzg4
 #endif
+    // The device's room and onset: the orchestra's, or the configuration's.
+    lio oroom
+    dye
+    lio onst
+    dyo
     // Each converter's place: its two attenuations from plp, which slew
     // like the volume, as fast at most.
     law opl
@@ -586,7 +607,7 @@ pl0,
 pz1,
     lac i op
     sar 5s                  // a place is 040 apart from the next
-    add [plp:1]
+    add [plp:3]
     dac w
     lio i w
     xct q
@@ -2255,10 +2276,18 @@ ostp,
 ovol, 0; 0; 0; 0
 
 // Each converter's place in the stereo field, as the orchestra block has
-// it: one of menus.ac's nine (plv), 0 left to PLRIGHT right, 040 apart. A
+// it: one of punch.ac's nine (plv), 0 left to PLRIGHT right, 040 apart. A
 // start at 0100 keeps it, and it can be changed from the console before a
 // start at play.
 opl, 0; 0; PLRIGHT; PLRIGHT
+
+// The device's room and onset's bound, as dye and dyo take them and the
+// orchestra block holds them (Implementation.md, "Room and onset"):
+// SETCFG for the configuration's. PLAY gives them to the device, and so
+// does fill as the menu shows them. A start at 0100 keeps them, and they
+// can be changed from the console before a start at play.
+oroom, SETCFG
+onst, SETCFG
 
 // The converter being worked on. st1-st4 have its layout, and NS, OLH,
 // OLL and OLG are taken from it.
@@ -4038,6 +4067,13 @@ lsr, 0                      // the library's serial when it was loaded
 vst, slt1:1; slt2:1; slt3:1; slt4:1 // each converter's slot
 
 #include "menus.ac"
+
+constants
+
+// PUNCH, and the places' tables, in bank 3 above the tape (TEND).
+bank 3
+07300/
+#include "punch.ac"
 
 constants
 

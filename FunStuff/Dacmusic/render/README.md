@@ -4,7 +4,8 @@
 wav file, as the PDP-1 would play it, with no PDP-1, no emulator and no
 Python. The tape is one the music program punched (PUNCH on its menu):
 Peter Samson's Harmony Compiler parts, then the orchestra the menu set,
-each converter's part, instrument, octave, volume and place. A tape with no
+each converter's part, instrument, octave, volume and place, and the room
+and the onset. A tape with no
 orchestra (a Harmony Compiler tape as it comes) plays the program's
 default: an organ, principal, gedackt and bourdon, the bass doubled at
 16 feet.
@@ -36,7 +37,7 @@ past the pause while the room dies away: 2 s more for the hall, 4 s for
 Busch Hall. `--room=voices` lets the voices choose, as the emulator's
 `dacroom=voices` does: Busch Hall if a voice the orchestra plays asks
 for it (`room busch`, as the Flentrop's stops do), the hall otherwise;
-it prints which.
+it prints which. `--room=none` puts no room after the mix.
 
 A voice file may give the voice its voicing (below, "Voice files"): the
 edge tone, the wind at a flue pipe's mouth, and the speech, a large pipe
@@ -63,8 +64,12 @@ do not open the instant the key goes down, and the pipes of a chord do
 not speak together. The delay is drawn for each converter from its own
 fixed sequence, so a tape renders the same every time, and it is never
 more than half the next note's length. The timing of the piece does
-not move: only where each note begins sounding within it. Without the
-switch every note starts on time.
+not move: only where each note begins sounding within it.
+
+A tape whose orchestra (version 3) sets a room or an onset is rendered
+in them, as the player plays it; `--room=` and `--onset=` override the
+tape. A tape that sets neither, or says the configuration's, has no
+room and every note on time unless a switch is given.
 
 ## Build
 
@@ -91,7 +96,7 @@ Raspberry Pi included), macOS, and Windows under WSL or MinGW. Keep
 ## Run
 
 ```
-dacrender tape.bin [out.wav] [--secs=S] [--voices=file.lib] [--room=hall|busch|voices] [--onset=MS]
+dacrender tape.bin [out.wav] [--secs=S] [--voices=file.lib] [--room=none|hall|busch|voices] [--onset=MS]
 ```
 
 The file is the tape's name with `.wav` unless one is given. `--secs=S`
@@ -107,15 +112,17 @@ program would question is played as the program plays it, with a
 warning in place of the menu's message:
 - a checksum that fails: the block is taken as read;
 - an orchestra the program would refuse (an instrument it does not have,
-  a volume that is not one of the slider's levels; in a version 2 block,
-  also a stop the library lacks, a gap in the stops, a detune, or a
-  place that is not one of the nine): the default plays;
+  a volume that is not one of the slider's levels; in a version 2 or 3
+  block, also a stop the library lacks, a gap in the stops, a detune, or
+  a place that is not one of the nine; in a version 3 block, a room or
+  onset not in the menu's lists): the default plays;
 - a tape error (a bad count, more than 30 parts, a tape larger than the
-  program's two banks): the parts read whole before it play.
+  program's 7,872 words): the parts read whole before it play.
 
-The orchestra block is read in each of the three forms a player's
-PUNCH has written: version 2 (38 words, what this player punches), the
-17-word block with volumes, and the 13-word block without them.
+The orchestra block is read in each of the four forms a player's PUNCH
+has written: version 3 (40 words, what this player punches: version 2
+then the room and the onset), version 2 (38 words), the 17-word block
+with volumes, and the 13-word block without them.
 
 ## MP3
 

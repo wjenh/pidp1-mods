@@ -32,15 +32,25 @@
 //                     then record count pairs of (pc, word) taken before each step
 //   CLEAR_SINGLE req  none; rep none
 //   BP_SET       req  address, count; rep number (1 to AD1P_NUM_BREAKPOINTS)
+//   BP_SET_COND  req  address, count, condition address, mask, value; rep number. The
+//                     breakpoint sees a pass only while (word at condition address & mask) ==
+//                     value, so its count is of those passes alone
 //   BP_DELETE    req  number, 0 for all; rep none
 //   BP_ENABLE    req  number; rep none
 //   BP_DISABLE   req  number; rep none
 //   BP_LIST      req  none; rep entry count, then per entry: set, enabled, number, address,
 //                     count, current count
 //   WATCH_SET    req  address, on any change (0 or 1), value; rep number
+//   WATCH_SET_COND req  address, on any change, value, condition address, mask, condition
+//                     value; rep number. A change is reported only while the condition holds;
+//                     one made while it does not is never reported later
 //   WATCH_DELETE, WATCH_ENABLE, WATCH_DISABLE   as the breakpoint ones
 //   WATCH_LIST   req  none; rep entry count, then per entry: set, enabled, on any, number,
 //                     address, value, last value
+//   COND_LIST    req  none; rep breakpoint count, watch count, then per breakpoint and then
+//                     per watch: has a condition, condition address, mask, value.
+//                     An emulator without conditions answers the three _COND requests
+//                     BAD_REQUEST, so a client learns which it has from COND_LIST
 //   DISABLE_ALL  req  none; rep none
 //   ACK_HIT      req  mask of AD1P_HIT_ bits; rep none
 //   SET_POLICY   req  AD1P_POLICY_ value; rep none
@@ -87,14 +97,17 @@
 #define AD1P_BP_ENABLE 0x0042
 #define AD1P_BP_DISABLE 0x0043
 #define AD1P_BP_LIST 0x0044
+#define AD1P_BP_SET_COND 0x0045
 #define AD1P_WATCH_SET 0x0050
 #define AD1P_WATCH_DELETE 0x0051
 #define AD1P_WATCH_ENABLE 0x0052
 #define AD1P_WATCH_DISABLE 0x0053
 #define AD1P_WATCH_LIST 0x0054
+#define AD1P_WATCH_SET_COND 0x0055
 #define AD1P_DISABLE_ALL 0x0060
 #define AD1P_ACK_HIT 0x0061
 #define AD1P_SET_POLICY 0x0062
+#define AD1P_COND_LIST 0x0063
 
 // Event types
 #define AD1P_EVT_HIT_BREAK 0xF001

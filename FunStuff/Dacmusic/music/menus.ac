@@ -79,12 +79,13 @@
 // instrument its voice in its family's sublist; a value no row has
 // lights none. A sublist marks the converter's organ stops with *.
 // Argument: ltg (bank 0), the opener: 0-3 a converter's part, 4-7 its
-// instrument, 8-11 its octave, 12 the parts a movement, 16-19 its place.
+// instrument, 8-11 its octave, 12 the parts a movement, 16-19 its place,
+// 20 the room, 24 the onset.
 // No return value.
 // Does not preserve AC or IO.
 // Called via crossBankjsp, from bank 0 (act).
 lsto,
-    local ls1, ls2, ls3, ls4, ls5, ls6, ls7, ls8, lsx, lp1, lp2, lp3, li1, li2, li3, lo1, lo3, lm1, lm2, lq1, lq2, lt1, lt2, lt3
+    local ls1, ls2, ls3, ls4, ls5, ls6, ls7, ls8, lsx, lp1, lp2, lp3, li1, li2, li3, lo1, lo3, lm1, lm2, lq1, lq2, lrm, lt1, lt2, lt3
     dac lsx
     lac i [ltg:0]
     and [3]
@@ -93,7 +94,7 @@ lsto,
     dac lcs                 // its IOTs: converter 1's plus this
     lac i [ltg:0]
     sar 2s
-    dac lkd                 // 0 a part, 1 an instrument, 2 an octave, 3 the parts a movement
+    dac lkd                 // the list's kind (lkd's word below)
     // Where OK puts its row's value: the converter's word of orch, or per.
     lac lcv
     add lcv
@@ -148,6 +149,10 @@ ls1,
     jmp lm1
     SKIP_NEXT_IF_DIFFERENT [4]
     jmp lq1
+    SKIP_NEXT_IF_DIFFERENT [5]
+    jmp lrm
+    SKIP_NEXT_IF_DIFFERENT [6]
+    jmp lrm
     // A part: PART 1 to PART per, each its number less 1, then NONE, -1.
     lac i [per:0]
     dac lt2
@@ -251,13 +256,41 @@ lm2,
     SKIP_NEXT_IF_SAME [NCONV + 1]
     jmp lm2
     jmp ls2
-    // A place: LEFT to RIGHT, each its value in plv.
+    // The room or the onset: its five words of rlists (menu.ac), then its
+    // rows as a place's are built (lq2), each a name and its value.
+lrm,
+    sub [5]
+    dac rvl
+    ral 2s
+    add rvl                 // five words a kind
+    add [rlists:0]
+    dac rvl
+    lac i rvl
+    dac ldst
+    idx rvl
+    lac i rvl
+    dac hda
+    lac [SAVEC | sbl:0]
+    dac hdb
+    idx rvl
+    lac i rvl
+    dac lt2
+    idx rvl
+    lac i rvl
+    dac lt1
+    idx rvl
+    lac i rvl
+    dac lt3
+    law sbl:0
+    dac rtl
+    jmp lq2
+    // A place: LEFT to RIGHT, each its value in plv (punch.ac).
 lq1,
     law sbl:0
     dac rtl
-    lac [pnt:1]
+    lac [pnt:3]
     dac lt2
-    lac [plv:1]
+    lac [plv:3]
     dac lt1
     law i NPL
     dac lt3
@@ -1265,7 +1298,7 @@ au3,
     dac aq
     lac i aq
     sar 5s                  // a place is 040 apart from the next
-    add [plp:1]
+    add [plp:3]
     dac aq
     lio i aq
     lac [dzp1]
@@ -1406,8 +1439,8 @@ cxw, 0                      // the IOT
 // The lists' state.
 lcv, 0                      // the converter, 0 to NCONV-1
 lcs, 0                      // its IOTs' offset from converter 1's
-lkd, 0                      // the list's kind: 0 a part, 1 an instrument, 2 an octave, 3 per, 4 a place
-ldst, 0                     // where OK puts its value: a word of orch or opl, or per
+lkd, 0                      // the list's kind: 0 a part, 1 an instrument, 2 an octave, 3 per, 4 a place, 5 the room, 6 the onset
+ldst, 0                     // where OK puts its value: a word of orch or opl, per, oroom or onst
 lnr, 0                      // the list's rows
 llt, 0                      // its lit row + 1, 0 none
 ltw, 0                      // its tail's jump word
@@ -1447,15 +1480,7 @@ spt, type340 "PART "
 sgt, type340 " >"
 orw, 3; 1; 0; 2; 4          // the octave list's rows: octbl's numbers for 32, 16, 8, 4, 2 feet
 
-// The places in the stereo field, left to right: their values, as opl
-// and the orchestra block hold them; each one's dzp word, the left
-// channel's attenuation in bits 0-8 and the right's in bits 9-17, 1/8 dB,
-// 0777 off, on a constant-power law (place k of 8 at k/8 of 90 degrees,
-// -20 log10 of its cosine left and its sine right, rounded); and their
-// names, then ? for a value not among them (fill).
-plv, 0; 040; 0100; 0140; 0200; 0240; 0300; 0340; 0400
-plp, 000777; 001162; 006103; 015051; 030030; 051015; 103006; 162001; 777000
-pnt, spl:1; sl3:1; sl2:1; sl1:1; sce:1; sr1:1; sr2:1; sr3:1; spr:1; squ:0
+// The places' names, in the stereo field left to right (punch.ac's pnt).
 spl, type340 "LEFT"
 sl3, type340 "L3"
 sl2, type340 "L2"

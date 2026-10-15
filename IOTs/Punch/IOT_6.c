@@ -31,9 +31,11 @@
  *    punon is cleared when a character is finished.
  * 28-Sep-2026 Claude the character delay is a simtime deadline, not a count of executed cycles.
  */
-#include "iotHandler.h"
 #include <errno.h>
 #include <unistd.h>
+
+#include "iotHandler.h"
+#include "configuration.h"
 
 // pdp1.c keeps this as a private #define not exposed via pdp1.h to plugins.
 // Keep in sync with pdp1.c if this value ever changes.
@@ -55,6 +57,11 @@
 #define B5 010000
 #define B6 004000
 
+// The initial default
+static int punch_delay_ns = PUNCH_DELAY_NS;
+
+static void configure(void);
+
 // Called twice per ppa/ppb IOT instruction (once on TP7 with pulse=0, once on TP10 with
 // pulse=1) -- punch is the mirror image of the reader's pulse numbering: TP7 (pulse=0)
 // arms a fresh transfer (clears pb, marks punon, and starts the inter-character delay via
@@ -73,7 +80,7 @@ iotHandler(PDP1 *pdp1P, int device, int pulse, int completion)
     {
         pdp1P->pb = 0;
         pdp1P->punon = 1;
-        iotPollAt(IOT_TIME_DEVICE, (iotTime(IOT_TIME_DEVICE) + PUNCH_DELAY_NS));
+        iotPollAt(IOT_TIME_DEVICE, (iotTime(IOT_TIME_DEVICE) + punch_delay_ns));
     }
     else
     {
@@ -94,7 +101,7 @@ iotHandler(PDP1 *pdp1P, int device, int pulse, int completion)
     return(1);
 }
 
-// Called once PUNCH_DELAY_NS has passed since the arming iotHandler() call above. The
+// Called once punch_delay_ns has passed since the arming iotHandler() call above. The
 // deadline is one-shot, so nothing is left armed; the next IOT pulse arms it again. Writes the
 // assembled byte (pb) to the punch fd if open, signals completion (ios) if a completion pulse
 // was requested, and unconditionally requests a sequence break on PUN_CHAN, matching the
@@ -123,4 +130,37 @@ iotDeadline(PDP1 *pdp1P)
     }
 
     initiateBreak(PUN_CHAN);
+}
+
+void
+iotStart()
+{
+    configure();            // load punchspeed, if present
+}
+
+void
+iotUpdate()
+{
+    configure();            // just reread our configuration
+}
+
+// Check for punchspeed, use it if set.
+void
+configure()
+{
+int i;
+ConfigurationSettingP settingP;
+
+    // Punchspeed is characters/sec.
+    // A value less than 63 or greater than 1000 is ignored.
+    // The default is 63.
+    // This does not affect the blank-tape feed in pdp1.c which is only triggered by the feed switch.
+    if( (settingP = findConfigurationSetting(getConfiguration(), "punchspeed")) )
+    {
+        i = settingP->ivalue;
+        if( (i >= 63) && (i <= 1000) )
+        {
+            punch_delay_ns = USTONS((1000000/i));
+        }
+    }
 }

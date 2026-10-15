@@ -25,6 +25,12 @@ void ad1ServerStart(PDP1 *pdp, ConfigurationP configP);
 void ad1Service(PDP1 *pdp);
 void ad1NoteHit(PDP1 *pdp);
 
+// Whether a breakpoint's or watch's condition holds now; true when it has none. slot is
+// 0-based. The conditions live in the server, not in PDP1, so the struct the plugins share
+// keeps its layout.
+bool ad1BreakConditionHolds(PDP1 *pdp, int slot);
+bool ad1WatchConditionHolds(PDP1 *pdp, int slot);
+
 // The interruptible-wait primitive throttle() (pdp1.c) is built on: wait up to durationNs, but
 // service a waiting ad1/fastload request at once if one arrives rather than making it wait out
 // the whole duration. A plain sleep if the server isn't active. Does not touch pdp->realtime or pdp->simtime; pacing policy (the

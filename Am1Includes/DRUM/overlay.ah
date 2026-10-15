@@ -1,0 +1,67 @@
+// Defines for drum overlays: the descriptor table am1 makes at %%ovtable, the
+// header am1 puts at the start of every overlay, and the overlay manager's
+// error numbers.  am1 builds the same words in its ovlcodegen.c, named there by
+// these defines; Docs/UsingOverlays.md describes them.
+
+#ifndef OVERLAY_AH
+#define OVERLAY_AH
+
+// The table, labeled ovTable: the stamp, then one word per window, the number
+// of the overlay resident in it, 0 for none, then OV_ENT_WORDS per overlay, in
+// overlay order.  Overlays are numbered from 1, in source order.
+#define OV_TBL_STAMP    0
+#define OV_TBL_WINDOWS  1
+
+// An overlay's entry in the table, OV_ENT_WORDS words.
+#define OV_ENT_DIA      0       // the dia word of the read
+#define OV_ENT_DWC      1       // the dwc word of the read: the length
+#define OV_ENT_DCL      2       // the dcl word: the window's first word
+#define OV_ENT_RES      3       // the window's resident word, and OV_PERSIST
+#define OV_ENT_WORDS    4
+
+// The dia word: the read bit, the overlay's track, its drum address, which is
+// the window's first core address.
+#define OV_DIA_READ     0400000
+#define OV_DIA_TRACK    0370000
+#define OV_DIA_ADDR     07777
+#define OV_TRACK_SHIFT  014
+
+// The dwc word: the overlay's length, header included; 0 is a whole track.
+// A write-back sets OV_DWC_WRITE and the track, as dwc takes them.
+#define OV_DWC_WRITE    0400000
+#define OV_DWC_LENGTH   07777
+
+// The dcl word: the window's bank and first address.
+#define OV_DCL_BANK     0170000
+#define OV_DCL_ADDR     07777
+#define OV_BANK_SHIFT   014
+
+// The resident-word word: the full address of the window's word in the table,
+// with OV_PERSIST set for an overlay written back when it is evicted.  An
+// indirect under eem takes its low 16 bits only, so it is a pointer as it is.
+#define OV_PERSIST      0400000
+#define OV_RES_ADDR     0177777
+
+// The header, the first OV_HDR_WORDS words of the window: the stamp, the same
+// as the table's, and the overlay's number.
+#define OV_HDR_STAMP    0
+#define OV_HDR_NUMBER   1
+#define OV_HDR_WORDS    2
+
+// The manager's errors: AC holds the number when the machine stops, or when
+// the program's ovErrHook is reached.
+#define OV_ERR_NEST     1       // an %%ovcall while an overlay runs
+#define OV_ERR_STAMP    2       // the header read is not this build's
+#define OV_ERR_DRUM     3       // a transfer failed OV_TRIES times
+#define OV_ERR_SWAP     4       // a swap failed, OV_SINGLE_PASS only
+
+// Transfers tried before OV_ERR_DRUM, the first included.  A program may
+// define its own before the first include of this file.
+#ifndef OV_TRIES
+#define OV_TRIES        4
+#endif
+
+// dra's error bits: bit 0 for any error, bit 2 for a transfer cut short.
+#define OV_DRA_ERR      0500000
+
+#endif

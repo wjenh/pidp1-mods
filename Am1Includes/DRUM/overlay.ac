@@ -1,0 +1,367 @@
+// The drum overlay manager: loads an overlay into its window from the drum when
+// it is called and is not resident, then calls the entry.  am1's %%ovcall
+// calls it; Docs/UsingOverlays.md is the user's description.
+//
+// Include it once, in the root of a program with overlays, in any bank, before
+// the first %%ovcall: %%ovcall calls ovEnter by jsp from the manager's bank and
+// by eem and jsp i from any other, so its bank must be known there.  It needs
+// am1's %%ovtable, labeled ovTable, which it finds in whatever bank holds it,
+// and its literals go to the including bank's next constants.
+//
+// Plain PDP-1 instructions only, so it runs on any configuration.  Each
+// transfer polls cks for the drum's end with breaks left as they are; the drum
+// requests a break at the end of every transfer, so a program running with
+// breaks on needs a handler for the drum's channel, or keeps it off.
+//
+// Defines ovEnter, ovInit, the in-an-overlay flag ovActive, the retry count
+// ovRetries, the error hook ovErrHook, and the error halts ovErrNest,
+// ovErrStamp and ovErrDrum, each stopping with its OV_ERR_ number in AC.  A
+// program that must not halt sets ovErrHook to a full address, and on an error
+// the manager jumps there instead of halting; Docs/UsingOverlays.md, "When the
+// manager halts", says in what state.
+//
+// A program that defines OV_SINGLE_PASS before including this file has every
+// persistent eviction made as one transfer, a swap, which reads the incoming
+// overlay as it writes the outgoing one.  A swap is never made again: one that
+// ends in error, after a halt part-way, stops at ovErrSwap with OV_ERR_SWAP,
+// the outgoing overlay's words lost.  Without the define this file assembles
+// as it did before the swap was added.
+//
+// 12-Oct-2026 Claude: written, with am1's drum overlays.
+// 12-Oct-2026 Claude: the error hook, ovErrHook.
+// 12-Oct-2026 Claude: the single-pass swap, OV_SINGLE_PASS.
+
+#ifndef OVERLAY_AC
+#define OVERLAY_AC
+
+#include <DRUM/type23drumdefs.ah>
+#include <DRUM/overlay.ah>
+
+    local ovRtn, ovArg, ovEnt, ovEntry, ovWant, ovScan, ovPtr, \
+        ovDia, ovDwc, ovDcl, ovRes, ovTblP, ovInitR, \
+        ovScanNext, ovEvict, ovLoad, ovLoaded, ovRun, \
+        ovXfer, ovXferStart, ovXferIdle, ovXferBusy, ovXferX, ovXferBad, \
+        ovXDia, ovXDwc, ovXDcl, ovStatus, ovTries, \
+        ovFailNest, ovFailStamp, ovFailDrum, ovErrTo, ovErrToX
+#ifdef OV_SINGLE_PASS
+    addlocal ovFailSwap, ovSwapN
+#endif
+
+// The %%ovcall entry: makes the overlay resident if it is not, then calls the
+// entry point.
+// Entry: AC is the jsp return, the address of two data words: the full address
+// of the overlay's table entry, then of the entry point.  IO is the argument
+// for the entry.
+// Exit: AC and IO are what the entry returned in them; returns past the data
+// words with eem on.
+// Called via jsp, or eem and jsp i from another bank, as %%ovcall makes it.
+// The entry is called by jsp i with eem on and IO as the caller gave it, and
+// returns by jmp i through its AC, eem on (memory.ah's farrtn).
+ovEnter,
+    dac ovRtn
+    lac ovActive
+    sza
+    jmp ovFailNest
+    dio ovArg
+    eem
+
+    // The two data words; ovRtn becomes the return.
+    lac i ovRtn
+    dac ovEnt
+    idx ovRtn
+    lac i ovRtn
+    dac ovEntry
+    idx ovRtn
+
+    // The overlay's number, from its entry's place among the entries.  The
+    // entries begin at the first table word past the stamp with the sign set:
+    // a window's word holds a number, an entry's first word OV_DIA_READ.
+    lac ovTblP
+    dac ovScan
+ovScanNext,
+    idx ovScan
+    lac i ovScan
+    sma                     // skip at the first entry
+    jmp ovScanNext
+    lac ovEnt
+    sub ovScan
+    sar 2s                  // OV_ENT_WORDS words an entry
+    add [1]
+    dac ovWant
+
+    // Its entry, in order OV_ENT_DIA, OV_ENT_DWC, OV_ENT_DCL, OV_ENT_RES.
+    lac ovEnt
+    dac ovPtr
+    lac i ovPtr
+    dac ovDia
+    idx ovPtr
+    lac i ovPtr
+    dac ovDwc
+    idx ovPtr
+    lac i ovPtr
+    dac ovDcl
+    idx ovPtr
+    lac i ovPtr
+    dac ovRes
+
+    // Resident already: call it.  None resident: load it.
+    lac i ovRes
+    sad ovWant              // skip if another, or none
+    jmp ovRun
+    sza i                   // skip if another
+    jmp ovLoad
+
+    // Another is resident, its number in AC.  Persistent: write it back from
+    // its entry first, the read bit dropped and the write bit and track given
+    // to dwc with its length.
+ovEvict,
+    sub [1]
+    ral 2s                  // OV_ENT_WORDS words an entry
+    add ovScan
+    dac ovPtr
+    lac i ovPtr
+    and [OV_DIA_TRACK]
+    ior [OV_DWC_WRITE]
+    dac ovXDwc
+    lac i ovPtr
+    and [OV_DIA_ADDR]
+    dac ovXDia
+    idx ovPtr
+    lac i ovPtr
+    ior ovXDwc
+    dac ovXDwc
+    idx ovPtr
+    lac i ovPtr
+    dac ovXDcl
+    idx ovPtr
+    lac i ovPtr
+    sma                     // skip if persistent
+    jmp ovLoad
+#ifdef OV_SINGLE_PASS
+    // The swap: one transfer reads the incoming overlay into the window as it
+    // writes the outgoing one to its track.  Every overlay of a window is at
+    // the same drum address, and ovXDcl, the outgoing one's dcl word, is the
+    // window's, as ovDcl is.  The count is the longer length, a whole track,
+    // 0, the longest: each length less one, 07777 for a whole track, the
+    // larger kept, and one added back.
+    lac ovXDwc
+    and [OV_DWC_LENGTH]
+    add [OV_DWC_LENGTH]     // the length less one, carried out of the field
+    and [OV_DWC_LENGTH]
+    dac ovSwapN
+    lac ovDwc
+    add [OV_DWC_LENGTH]
+    and [OV_DWC_LENGTH]
+    sub ovSwapN
+    spa                     // skip if the incoming one's is the longer
+    cla
+    add ovSwapN
+    add [1]
+    and [OV_DWC_LENGTH]     // a whole track 0 again
+    dac ovSwapN
+    lac ovXDwc
+    and [OV_DWC_WRITE | OV_DIA_TRACK]
+    ior ovSwapN
+    dac ovXDwc
+    lac ovDia
+    dac ovXDia
+
+    // As for a read, the window holds nothing whole until the header is
+    // checked; a swap that ends in error is not made again (ovXferBad).
+    dzm i ovRes
+    jsp ovXfer
+    jmp ovLoaded
+#else
+    jsp ovXfer
+#endif
+
+    // Read it.  The window holds nothing whole until the header is checked, so
+    // a halt from here on leaves none resident.
+ovLoad,
+    dzm i ovRes
+    lac ovDia
+    dac ovXDia
+    lac ovDwc
+    dac ovXDwc
+    lac ovDcl
+    dac ovXDcl
+    jsp ovXfer
+
+    // The header: OV_HDR_STAMP, at the window's first word, must be the
+    // table's stamp, and OV_HDR_NUMBER the overlay's number.
+ovLoaded,
+    lac i ovDcl
+    sas i ovTblP            // skip if the stamps agree
+    jmp ovFailStamp
+    lac ovDcl
+    add [OV_HDR_NUMBER]
+    dac ovPtr
+    lac i ovPtr
+    sas ovWant              // skip if the numbers agree
+    jmp ovFailStamp
+    lac ovWant
+    dac i ovRes
+
+ovRun,
+    law 1
+    dac ovActive
+    lio ovArg
+    jsp i ovEntry
+    dzm ovActive
+    eem
+    jmp i ovRtn
+
+// One drum transfer of ovXDia, ovXDwc and ovXDcl, made once the drum is idle
+// and waited for; one that ends in error is made again, counting each in
+// ovRetries, OV_TRIES in all before ovErrDrum.  A swap that ends in error,
+// OV_SINGLE_PASS only, goes to ovFailSwap instead, not made again.
+// AC and IO are clobbered.  Called via jsp, from this bank only.
+ovXfer,
+    dap ovXferX
+ovXferStart,
+    law i OV_TRIES
+    dac ovTries
+ovXferIdle,
+    cks
+    rir 1s                  // the busy bit, bit 17, to the sign
+    spi                     // skip if the drum is idle
+    jmp ovXferIdle
+    lio ovXDia
+    dia
+    lio ovXDwc
+    dwc
+    lio ovXDcl
+    dcl
+ovXferBusy,
+    cks
+    rir 1s
+    spi                     // skip once the transfer is over
+    jmp ovXferBusy
+    cli
+    dra
+    dio ovStatus
+    lac ovStatus
+    and [OV_DRA_ERR]
+    sza                     // skip if it ended without error
+    jmp ovXferBad
+ovXferX,
+    jmp .
+ovXferBad,
+#ifdef OV_SINGLE_PASS
+    // A swap is the one transfer that both reads and writes.
+    lac ovXDia
+    and ovXDwc
+    spa                     // skip unless a swap
+    jmp ovFailSwap
+#endif
+    isp ovTries             // skip after the last try
+    jmp .+2
+    jmp ovFailDrum
+    idx ovRetries
+    jmp ovXferIdle
+
+// Makes the manager ready at a program's start: no overlay running, no retry
+// counted.  The windows' words are kept, since what they say the windows hold
+// is still there, and so is ovErrHook, which the program sets.
+// AC is clobbered, IO is preserved.  Returns with eem on.
+// Called via jsp, or farjsp from another bank.
+ovInit,
+    dac ovInitR
+    dzm ovActive
+    dzm ovRetries
+    eem
+    jmp i ovInitR
+
+// An error: to the program's hook if ovErrHook is set, else back past the
+// jda, into the error's halt.
+// Entry: AC is the OV_ERR_ number, stored by the jda.
+// Exit, to the hook: AC the number, IO the failing %%ovcall's return past its
+// data words, ovActive 0, eem on; the hook never returns here.  Back, with no
+// hook: AC clobbered, IO preserved.
+// Called via jda, from this bank only.
+ovErrTo, 0
+    dap ovErrToX
+    lac ovErrHook
+    sza i                   // skip if a hook is set
+ovErrToX,
+    jmp .
+    dzm ovActive
+    lio ovRtn
+    lac ovErrTo
+    eem
+    jmp i ovErrHook
+
+// Each error goes first to ovErrTo, then falls into its halt, each halt with
+// its OV_ERR_ number in AC.
+// An %%ovcall while an overlay runs; there is no going on.  It has not yet
+// stepped ovRtn past the two data words, as the others have.
+ovFailNest,
+    idx ovRtn
+    idx ovRtn
+    law OV_ERR_NEST
+    jda ovErrTo
+ovErrNest,
+    law OV_ERR_NEST
+    hlt
+    jmp ovErrNest
+// The header read is not this build's, or not this overlay's: the drum holds
+// another build's overlays.  Continue reads it again, as after ovlload.
+ovFailStamp,
+    law OV_ERR_STAMP
+    jda ovErrTo
+ovErrStamp,
+    law OV_ERR_STAMP
+    hlt
+    jmp ovLoad
+// A transfer failed OV_TRIES times.  Continue tries it OV_TRIES times again.
+ovFailDrum,
+    law OV_ERR_DRUM
+    jda ovErrTo
+ovErrDrum,
+    law OV_ERR_DRUM
+    hlt
+    jmp ovXferStart
+#ifdef OV_SINGLE_PASS
+// A swap ended in error, after a halt part-way: the outgoing overlay's words
+// are lost, its track holding new words up to where the transfer stopped and
+// those of its last eviction after.  Continue reads the incoming overlay alone,
+// a read made again as any read is.
+ovFailSwap,
+    law OV_ERR_SWAP
+    jda ovErrTo
+ovErrSwap,
+    law OV_ERR_SWAP
+    hlt
+    jmp ovLoad
+#endif
+
+// The in-an-overlay flag, and every transfer made again since ovInit.
+ovActive, 0
+ovRetries, 0
+// The error hook: 0 to halt on an error, else the full address to go to.
+ovErrHook, 0
+
+ovTblP, ovTable:*           // the table's full address
+ovRtn, 0
+ovArg, 0
+ovEnt, 0
+ovEntry, 0
+ovWant, 0
+ovScan, 0
+ovPtr, 0
+ovDia, 0
+ovDwc, 0
+ovDcl, 0
+ovRes, 0
+ovInitR, 0
+ovXDia, 0
+ovXDwc, 0
+ovXDcl, 0
+ovStatus, 0
+ovTries, 0
+#ifdef OV_SINGLE_PASS
+ovSwapN, 0
+#endif
+    endloc
+
+#endif

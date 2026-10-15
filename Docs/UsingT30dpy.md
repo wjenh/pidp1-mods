@@ -4,8 +4,8 @@ This document describes the t30dpy and t30dpy3 simulated Type 30 display.
 
 This is version 1.10
 
-Edit date 3-Oct--2026\
-GPU fading, SDL3 fallback added
+Edit date 15-Oct--2026\
+Add new lightpen cursor
 
 ## T30dpy, t30dpy3, and Wayland/labwrc
 
@@ -33,7 +33,7 @@ covering the task bar. This is a serious issue if an application window that is 
 is opened. Wayland's automatic positioning plus labwc's lack of task bar protection means an application window can
 completely hide all the controls on the taskbar, not at all useful.
 
-All windowed applications including p7sim are affected by this.
+All windowed applications including the old p7sim are affected by this.
 
 A workaround is implemented for both t30dpy versions when running under Wayland.
 The display size is queried, which fortunately can still be done.
@@ -437,51 +437,18 @@ Experiment to see what works for you and your display.
 
 Ok, great. What about performance?
 
-Here's a table of average CPU load by program and by display emulator.\
-It was run on a middling performance Intel CPU of some age running Ubuntu Linux with no special graphics hardware.
-THese are figures for the SDL2 version, the SDL3 version has better performance.
-For example, t30dpy3 displaying snowflake on a Raspberry pi 5 has a CPU load of 20%.
+Performance is excellent even on a Pi-4, it can handle running t30dpy and the virtual console with audio
+playback without any issues.
 
-**NOTE** as of mid-June 2026, major performance improvements have been made. Type30dpy performance is generally
-significantly better than below, the tests have not been rerun.
-For example, snowflake now runs at 20% cpu for type30dpy3.
-
-| Program       | Emulator  | CPU load reported by top |
-|---------------|-----------|--------------------------|
-| snowflake     | type30dpy | 80%     |
-|               | p7sim-mod | 184%    |
-|               | p7sim     | 284%    |
-| spacewar48    | type30dpy | 86%     |
-|               | p7sim-mod | 314%*   |
-|               | p7sim     | 280%    |
-| lines         | type30dpy | 80%     |
-|               | p7sim-mod | 170%    |
-|               | p7sim     | 285%    |
-| type340lines  | type30dpy | 109%    |
-|               | p7sim-mod | 168%    |
-|               | p7sim     | 304%**  |
-| cg340full     | type30dpy | 95%     |
-|               | p7sim-mod | 180%    |
-|               | p7sim     | 298%    |
-| type340stress | type30dpy | 140%*** |
-|               | p7sim-mod | 204%    |
-|               | p7sim     | 314%    |
-
-\* - this is an anomoly, but repeatable\
-\** - p7sim can't handle the 150K+ pixels/sec type304lines sends, loses many pixels\
-\*** - this is a brutal test sending over 500K pixels/sec. p7sim fails miserably, dropping many many pixels
-
-The figures for t30dpy are affected by various configuration settings, especially the lifetime of the yellow-green
+However, performance is affected by various configuration settings, especially the lifetime of the yellow-green
 phosphor.
+If you change settings and notice any performance problemns, set them back.
+
+Lightpen performance in particular is vastly improved over the old p7sim handling.
+In conjunction with the predictive motion support in the emulator, it is possible to
+track a target at up to 40 inches/second using the Type 340 display driver.
 
 T30dpy can also report some timing statistics.
-Running type340stress, it is rendering over 5 million dots per second without any lost data.
-Note that these are Type 30 dots, the number of pixels being rendered is over 4 times as many.
-
-Tests have also been run on a Raspberry Pi 5 with similar results.\
-On a Pi 4, performance differences are not as extreme.
-This seems to be because the gpu on the Pi 4 is far less capable than that on the Pi 5
-and the SDL libraries do not optimize its use as well for streaming textures.
 
 ## Settings that can be changed in code
 
@@ -522,6 +489,7 @@ If reloadable, a SIGHUP will reset the running t30dpy to use the new values.
 | whitebias   | whitebias        | 180       | yes |
 | cutoff      | cutoff threshold | 5         | yes |
 | mikecmode   | read the docs    | false     | yes |
+| pencursor   | custom cursor    | true      | yes |
 
 Vsync is ignored for the SDL3 version.
 

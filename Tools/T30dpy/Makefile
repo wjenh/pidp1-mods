@@ -43,13 +43,13 @@ endif
 t30dpy:	t30dpy.o
 	$(GCC) $^ -o t30dpy -lSDL2 -lSDL2main -lm
 
-t30dpy.o: t30dpy.c wincompat.h
+t30dpy.o: t30dpy.c wincompat.h penCursor.h
 	$(GCC) -c t30dpy.c
 
 t30dpy3:	t30dpy3.o
 	$(GCC) $^ -o t30dpy3 -lSDL3 -lm
 
-t30dpy3.o: t30dpy3.c wincompat.h
+t30dpy3.o: t30dpy3.c wincompat.h penCursor.h
 	$(GCC) -c t30dpy3.c
 
 dpytester:	dpytester.o

@@ -105,7 +105,9 @@
  * 02-Oct-2026 Claude - the renderer flags were always just SDL_RENDERER_PRESENTVSYNC (| binds tighter than ?:),
  *    so vsync was on whatever the config said and acceleration was never asked for.
  * 02-Oct-2026 wje - the lightpen position scaling was broken after a (relatively) recent SDL 2 update,
-      scaling fixed for windows not exactly 1024 in size.
+ *    scaling fixed for windows not exactly 1024 in size.
+ * 15-Oct-2026 Claude - light-pen cursors from penCursor.h, one for pen up and one for pen down,
+ *    add "pencursor" on/off to the config file, default is on.
 */
 
 #include <stdio.h>
@@ -126,6 +128,7 @@
 #include "wincompat.h"
 #endif
 #include <SDL2/SDL.h>
+#include "penCursor.h"
 
 #define MINSIZE 256             // window can't be smaller than this
 #define READBUFSIZE 512         // size of the buffer we read from the server into, bytes
@@ -336,6 +339,13 @@ bool mikecMode = false;
 bool gpuFade = true;            // the GPU fade instead of the active-point walk, see FADETERMS
 int gpuIdleFrames;              // frames since the GPU fade last had a new point
 
+// The light-pen cursors, see penCursor.h. penCursorShowsDown is kept so a reload that turns the
+// setting back on can put up the right one.
+SDL_Cursor *penCursors[2];      // [0] pen up, [1] pen down; NULL until made, or if SDL can't make them
+bool penCursorSetting = true;   // config "pencursor", false keeps the system cursor
+bool penCursorFailed = false;   // SDL could not make them; said once, not tried again
+bool penCursorShowsDown = false;
+
 float gammaCorrection = GAMMA;
 float fadeTail = DEFAULTTAIL;   // the GPU fade's tail, seconds
 
@@ -385,6 +395,9 @@ int spreadPoint(SDL_FPoint *outP, int x, int y, int intensity);
 void renderGpuFrame(void);
 void updatePen(int sockFD, SDL_Window *winwdow, bool penDown, int winX, int winY);
 void flushLetterboxBars(void);
+void makePenCursors(void);
+void showPenState(bool down);
+void applyPenCursorSetting(void);
 void loadConfig(bool full);
 void sighandler(int sig);
 void sighup(int sig);
@@ -683,7 +696,9 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
     // update and display the screen.
     startTime = lastTime = now();
 
-    SDL_ShowCursor(SDL_DISABLE);            // it is enabled when the mouse moves
+    // The pen starts up. The cursor stays hidden until the mouse moves or the pen goes down.
+    applyPenCursorSetting();
+    SDL_ShowCursor(SDL_DISABLE);
 
     while( !quit )
     {
@@ -750,6 +765,9 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                     penx = event.button.x;
                     peny = event.button.y;
                     updatePen(pdp1FD, window, true, penx, peny);
+                    showPenState(true);
+                    SDL_ShowCursor(SDL_ENABLE);
+                    cursorTime = now();
                 }
                 else if( event.button.button == SDL_BUTTON_RIGHT )
                 {
@@ -768,6 +786,8 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
                 {
                     penDown = false;
                     updatePen(pdp1FD, window, false, 0, 0);
+                    showPenState(false);
+                    cursorTime = now();     // the hide timeout starts again at release
                 }
                 else if( event.button.button == SDL_BUTTON_RIGHT )
                 {
@@ -830,7 +850,8 @@ int mouseGlobalY;           // scratch: current screen-absolute cursor y during 
 
         lastTime = now();
         ++pacedFrames;          // counts every paced loop pass (including idle ones): the true cadence
-        if( cursorTime && (((lastTime - cursorTime) / 1000000) > CURSORTIMEOUT) )
+        // A pen held still on the screen keeps its cursor, or its state would vanish with it.
+        if( cursorTime && !penDown && (((lastTime - cursorTime) / 1000000) > CURSORTIMEOUT) )
         {
             SDL_ShowCursor(SDL_DISABLE);
             cursorTime = 0;
@@ -1888,6 +1909,108 @@ uint32_t cmd;
     SOCKWRITE(sockFD, &cmd, 4);
 }
 
+// Make the pen-up and pen-down cursors from penCursor.h's art. If SDL can't, as with a video
+// driver that has no color cursors, say so once and leave both NULL, so the system cursor stays.
+void
+makePenCursors(void)
+{
+int which;
+int x, y;
+int i;
+int hotX, hotY;
+char ch;
+const char *rowP;
+uint32_t pixels[PENCURSORSIZE * PENCURSORSIZE];
+SDL_Surface *surfaceP;
+
+    if( penCursors[0] || penCursorFailed )
+    {
+        return;
+    }
+
+    for( which = 0; which < 2; ++which )
+    {
+        // A character not in the table is transparent, and so is the rest of a short row.
+        hotX = -1;
+        hotY = -1;
+        for( y = 0; y < PENCURSORSIZE; ++y )
+        {
+            rowP = penCursorArt[which][y];
+            for( x = 0; x < PENCURSORSIZE; ++x )
+            {
+                ch = (*rowP) ? *rowP++ : '.';
+                pixels[(y * PENCURSORSIZE) + x] = 0;
+                for( i = 0; i < (int)(sizeof(penCursorColors) / sizeof(penCursorColors[0])); ++i )
+                {
+                    if( penCursorColors[i].ch == ch )
+                    {
+                        pixels[(y * PENCURSORSIZE) + x] = penCursorColors[i].argb[which];
+                        break;
+                    }
+                }
+                if( ch == PENCURSORHOT )
+                {
+                    hotX = x;
+                    hotY = y;
+                }
+            }
+        }
+
+        // The cursor keeps its own copy of the pixels, so the surface goes at once.
+        surfaceP = SDL_CreateRGBSurfaceWithFormatFrom(pixels, PENCURSORSIZE, PENCURSORSIZE, 32,
+            (PENCURSORSIZE * (int)sizeof(uint32_t)), SDL_PIXELFORMAT_ARGB8888);
+        if( surfaceP && (hotX >= 0) )
+        {
+            penCursors[which] = SDL_CreateColorCursor(surfaceP, hotX, hotY);
+        }
+        if( surfaceP )
+        {
+            SDL_FreeSurface(surfaceP);
+        }
+
+        if( !penCursors[which] )
+        {
+            fprintf(stderr, "The pen cursors can't be made, %s; using the system cursor.\n",
+                (hotX < 0) ? "penCursor.h has no hot spot" : SDL_GetError());
+            if( penCursors[0] )
+            {
+                SDL_FreeCursor(penCursors[0]);
+                penCursors[0] = NULL;
+            }
+            penCursorFailed = true;
+            return;
+        }
+    }
+}
+
+// Show the pen state on the cursor. The system cursor stays when the setting is off or the pen
+// cursors could not be made.
+void
+showPenState(bool down)
+{
+    penCursorShowsDown = down;
+    if( penCursorSetting && penCursors[0] )
+    {
+        SDL_SetCursor(penCursors[(down) ? 1 : 0]);
+    }
+}
+
+// Put the pencursor setting into effect, at startup and after a reload: the pen cursors, made the
+// first time they are wanted, or the system cursor.
+void
+applyPenCursorSetting(void)
+{
+    if( penCursorSetting )
+    {
+        makePenCursors();
+        showPenState(penCursorShowsDown);
+    }
+    else
+    {
+        SDL_SetCursor(SDL_GetDefaultCursor());
+    }
+}
+
 // Get the current time in ns.
 uint64_t
 now()
@@ -2029,6 +2152,10 @@ char line[256];
             {
                 fadeTail = atof(cP);
             }
+            else if( !strcmp(line, "pencursor") )
+            {
+                penCursorSetting = isTrue(cP);
+            }
         }
     }
 
@@ -2136,6 +2263,7 @@ reconfigure(void)
     SDL_SetTextureScaleMode(textures[1], (doLinear)?SDL_ScaleModeLinear:SDL_ScaleModeNearest);
     SDL_RenderSetVSync(renderer, doVsync);
     SDL_SetWindowBordered(window, (border)?SDL_TRUE:SDL_FALSE);
+    applyPenCursorSetting();
     if( gpuFade )
     {
         selectFadeTerms();      // tail, gamma and scaling

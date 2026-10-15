@@ -73,7 +73,7 @@ The installed **am1** takes these modifiers:
 | Modifier | What it does |
 |---|---|
 | `-O=xform` | prints on stdout what `-O1` or `-O2` does with every live finding: rewritten, or which reason it was not; without either, a dry run of `-O1`'s one-word-for-one-word rewrites alone, which rewrites nothing and lists every deletion as not carried. With a speed declaration, also one `S1` line per declared call site: copied, or which reason it was not (see "Inline expansion"). With any region, also one `S4` line per declared placement site: moved, or which reason it was not (see "Fall-through placement"), and one `S2` line per declared loop: unrolled, or which reason it was not (see "Loop unrolling") |
-| `-O=upto=N`, `-O=range=B:LO-HI`, `-O=off=FILE` | with `-O1` or `-O2`, switch rewrites off, to find the one that broke a build. See "Finding the rewrite that broke a build" |
+| `-O=upto=N`, `-O=range=B:LO-HI[@name]`, `-O=off=FILE` | with `-O1` or `-O2`, switch rewrites off, to find the one that broke a build. See "Finding the rewrite that broke a build" |
 | `-O=inline=cap:N`, `-O=inline=reserve:N` | set inline expansion's body cap (8 words by default) and each bank's reserve (64 words by default), decimal, 0 to 4096. See "Inline expansion" |
 | `-O=undeclared` | under `-O2`, let the guess license space mode's deletions, the pool reclaim, the extend window's deletions and fall-through placement where no region declares them. Refused without `-O2`. `-O=place=undeclared` is its first spelling, and does the same. See "`-O=undeclared`: shortening the program on the guess" |
 | `-O=unroll=cap:N` | set loop unrolling's cap, the most words a loop may become (64 by default), decimal, 0 to 4096. See "Loop unrolling" |
@@ -213,7 +213,7 @@ two more for reading its structure:
 | `-O=scratch` | the scratch-pool measurement: every storage local, the class its rules put it in, and what sharing the pool could free, block-local and pooled, per bank. The report's scratch-word sharing section is written from it |
 | `-O=guess` | what `-O2`'s heuristics mark: the loops and their cycles, each classed plain, delay or device; the handler territory; device buffers; addresses written as numbers; the runs of code a computed address indexes; and every live finding with the heuristics that refuse it. A measurement: it refuses nothing and changes no word |
 | `-O=values` | what each basic block already knows about AC and IO: every load whose register already holds the value, or that one word could replace (`lai`, `lia`, `law`), and every load or clear whose result the block overwrites unread; with the safety flags on each, the per-bank counts and what the pass cannot see. A measurement only: it changes nothing, and no finding comes of it |
-| `-O=speed` | what speed mode could do, site by site: inline expansion, loop unrolling, jump chains followed to their end and fall-through placement, each site eligible or refused with one reason, what an eligible site saves per execution and spends in words, with tallies per bank and each bank's free words, counted to a declared `%%ceiling` where there is one and marked `(declared)`. A site whose callee could not be copied at all -- a label defined in the copy, or a copied word naming a word of the body -- is refused `notcopyable`, and the line names the word that broke it. A placement whose `jmp` the program uses as a word is refused `jmpused`, and one whose code reaches a `hlt` is refused `falls`. A loop whose body has a label but its own or names a word of the loop is refused `internal`; one with a word something may write, or whose setup, `isp` or `jmp` the program uses as data, `used`; one whose body reads AC before loading it, `acentry`; and one whose next code reads AC before loading it, `acexit`. A measurement only: it changes nothing, and adds nothing to the report |
+| `-O=speed` | what speed mode could do, site by site: inline expansion, loop unrolling, jump chains followed to their end and fall-through placement, each site eligible or refused with one reason, what an eligible site saves per execution and spends in words, with tallies per bank and each bank's free words, counted to a declared `%%ceiling` where there is one and marked `(declared)`. A site whose callee could not be copied at all -- a label defined in the copy, or a copied word naming a word of the body -- is refused `notcopyable`, and the line names the word that broke it. A placement whose `jmp` the program uses as a word is refused `jmpused`, and one whose code reaches a `hlt` is refused `falls`. A loop whose body has a label but its own or names a word of the loop is refused `internal`; one with a word something may write, or whose setup, `isp` or `jmp` the program uses as data, `used`; one whose body reads AC before loading it, `acentry`; and one whose next code reads AC before loading it, `acexit`. In a drum overlay's view, a site whose words reach outside the overlay is refused `segment`, and the free words are the window's. A measurement only: it changes nothing, and adds nothing to the report |
 | `-O=relayout` | lays the program out again, after any `-O=edits` edits, and prints what happened: each edit accepted or refused with its reason, where every moved word went, where every copy went, and the pool slots gained and lost. A testing instrument: with no edit it changes nothing. See "Testing relayout" |
 | `-O=window` | the extend-window analysis: one line per reached `eem` and `lem` with its class (`redundant`, `freed`, `dead`, `needed`, `refused` with its reason, or `unreached`) and source line, one per hazard (`proved`, `unproved` or `possible`) with its pointer, one per reverse hazard (`window reverse`, the same classes, `return` when the pointer is a return word), one per indirect reference an unreached `eem` or `lem` guards (`window unexamined`, with its pointer when known), then, under `-O1` or `-O2`, one `window delete` line per declared deletion with its kind and fate, then the totals. A program with no `eem` or `lem` at all prints `window: no reached eem or lem`; one whose every `eem` and `lem` is unreached gets the dump. The dump itself changes nothing. See "The extend window: `eem` and `lem`" |
 | `-O=check` | runs the decoder's built-in self-check first, then proceeds |
@@ -1311,7 +1311,7 @@ which one without editing the source:
 | Modifier | Keeps on |
 |---|---|
 | `-O=upto=N` | the first `N` rewrites, in the order `-O=xform` prints them; `N` is decimal, and `-O=upto=0` keeps none |
-| `-O=range=B:LO-HI` | the rewrites in bank `B` (decimal, as the dumps print a bank) at addresses `LO` to `HI` (octal). Give it more than once and the ranges add |
+| `-O=range=B:LO-HI` | the rewrites in bank `B` (decimal, as the dumps print a bank) at addresses `LO` to `HI` (octal). Give it more than once and the ranges add. In a program with drum overlays, `-O=range=B:LO-HI@name` names drum overlay `name`'s words, and a range without it the root's (see "Programs with drum overlays") |
 | `-O=off=FILE` | every rewrite except those `FILE` lists. Give it more than once and the lists add |
 
 They apply only with `-O1` or `-O2`. Given without a level, **am1** prints its
@@ -1359,6 +1359,9 @@ fifth fields of an `-O=xform` line, so a line can be copied out of the dump.
 0 1630          # T8d, adventure.am1:1931
 2 7040
 ```
+
+A word of a drum overlay is `bank addr@name`, as `-O=xform` prints it, and a
+line without `@name` names a root word only.
 
 A line in another shape stops **am1** with the file and line named, before
 anything is written. **A listed address that names no rewrite prints a
@@ -1541,6 +1544,9 @@ An edit is refused, and changes nothing, for one of these reasons:
 | `pool` | would make a constant pool appear or vanish, or changes a constant it cannot key again |
 | `copylabel` | copies a run that defines a label, which the copy would define a second time |
 | `copyinternal` | copies a run that holds a memory reference naming a word of the run, which the copy would still name in the original |
+| `window` | would push a root word into a drum overlay's window |
+| `windowfull` | belongs to a transform that left a drum overlay past its window's last address; the whole transform is backed out |
+| `root` | would move a root word in a drum overlay's view |
 | `internal` | relayout's own result is inconsistent; not expected, and **am1** stops |
 
 **am1** warns once on stderr when any edit is refused. Every refusal is named
@@ -1583,6 +1589,103 @@ The word at 0101 is gone and the copy of the two words at 0104-0105 stands in
 its place, so everything after moves down one. The map is the map of the words
 the program already had; the copy's own words are new and are not in it, and
 the `copy:` line's `at` is where they begin.
+
+## Programs with drum overlays
+
+From **am1** v4.0, a program with drum overlays (*UsingOverlays.md*) takes
+`-O`, `-O1`, `-O2` and `-O=source` as any program does; v3.6 to v3.9 refused
+them. The rules, the levels, the regions and the markings are the same. What
+changes is how much of the program the optimizer sees at once.
+
+**One view at a time.** The overlays of one window share its addresses, so no
+one picture of memory holds them all. The optimizer works on one *view* at a
+time: the root alone first, then each overlay in source order, with the root
+around it. Two overlays of one window never meet in a view. Each view is
+analyzed, rewritten and laid out again before the next one starts.
+
+**In the root's view** the overlays are not rewritten, but what they name is
+respected:
+- A root word any overlay names counts as referenced from outside the program.
+  It is an entry, so a root routine called only from an overlay is not listed
+  unreached; and its address is used, so no rule touches it (`P2-taken`). A
+  name with an offset, `rootTab+2`, holds every word from `rootTab` to the one
+  named, since deleting one between them would change the distance the overlay
+  counts on.
+- When a rewrite moves a root word, every overlay word naming it follows,
+  directly or through a literal, and so do the table, each `%%ovcall`'s words
+  and the build stamp.
+- Each `%%ovcall` is a hands-off span of its own. The call returns past its data
+  words, so the word after it is reached and the data words are data.
+- A growing rewrite, an inline or an unrolled loop, that would push a root word
+  into a window is refused by relayout, reason `window`.
+
+**In an overlay's view** only that overlay is rewritten:
+- The root is context. It was rewritten in its own view and does not move
+  again: an edit that would move a root word is refused, reason `root`.
+- A root word another overlay names is still held. This overlay's own
+  references into the root are followed as ordinary jumps and reads, so a T3
+  from the overlay may jump through a root `jmp`.
+- A pattern that starts in the overlay and runs into the root is no rewrite in
+  either view (`overlay-end`). One that starts on a root word was the root
+  view's to find.
+- `%%optimize`, `%%nooptimize`, `%%speed` and `%%inline` written inside an
+  overlay declare for that overlay alone. A region may not cross `%%overlay` or
+  `%%endoverlay`: that is an error at assembly, with or without `-O`. A root
+  `%%inline` marking does not reach an overlay's routine; when it names no
+  routine of the root, the report says which overlays define the name.
+- **The window is the overlay's ceiling,** as a `%%ceiling` is a bank's (see "A
+  bank's ceiling"). The room left in the window is the budget for growth, and
+  the budget lines name the window:
+
+  ```
+  S2   bank  0 1005@ov1  f11_full.am1:18  ha  not unrolled: window w has too few free words for 2 more
+  ```
+
+  An inline, unroll or placement whose words reach outside the overlay is
+  refused, reason `segment`. A transform that, once laid out, still leaves the
+  overlay past its window's last address is backed out whole, each of its
+  edits refused `windowfull`, and the program assembles without it.
+
+**The report** holds the root's sections first, as for any program, with a
+paragraph in the header saying the program has drum overlays. Then comes one
+section per overlay, with its own findings, rewrites and statistics, under a
+heading that gives its window and the window's addresses (`, persistent`
+follows for a persistent overlay):
+
+```
+Overlay ov1, window w, bank 0, 1000 to 1777
+```
+
+The dumps print each overlay's view under the same heading.
+
+**An overlay's word is `bank addr@name`,** since the address alone would name
+a word of every overlay of its window. `-O=xform` and the report print it so:
+
+```
+xform fired T3 0 1004@ov1 f11_twins.am1:15 601007 601010 through 0 1007@ov1 clean region 1 | jmp ov1A => jmp ov1X
+```
+
+Bisection takes the same form. An `-O=off` line `0 1004@ov2` switches off
+`ov2`'s rewrite at 01004 and no other overlay's, and `-O=range=0:1000-1777@ov1`
+keeps only `ov1`'s. A line or range without `@name` names root words only.
+`-O=upto=N` numbers the root's rewrites first, then each overlay's, in source
+order. A name that is no overlay is warned of, and the build goes on:
+
+```
+am1: warning: -O=off=t.off, line 2: there is no overlay nosuch
+```
+
+An `-O=edits` edit (**am1test**) takes `@name` after its last address, and a
+name that is no overlay stops **am1**.
+
+**`-O=source`** writes the overlay directives back where they were, and
+`%%ovcall` as the directive, never as its words. An overlay's rewritten lines
+are marked as the root's are.
+
+**The drum.** The `.ovl` file is written after the optimizer, so it holds the
+rewritten overlays, and its build stamp changes with any rewrite. Load it with
+**ovlload** after every build, as for any change to the program: a drum loaded
+from another build stops the manager at `ovErrStamp`.
 
 ## A worked example
 
@@ -1682,7 +1785,9 @@ recorded, then Loop unrolling when a loop was, then Space mode when a licensed
 deleting finding was decided, then Extend window deletions when a licensed
 `eem` or `lem` was, then Pool reclaim (4d) whenever the level made its
 rewrites. (Space mode was missing from this list since 1.22, and Pool reclaim
-since 1.32; both are added here.)
+since 1.32; both are added here.) A program with drum overlays has all of
+that for the root, then one section per overlay, in source order, under the
+overlay's heading (see "Programs with drum overlays").
 
 **1. Header.** The program name, the **am1** version and date, the source file
 name, the statement that nothing was changed (under `-O1` or `-O2`, instead,
@@ -2202,6 +2307,10 @@ refused:
   used as a value, and that runs into data. That is a table used through its
   address, such as a list of shift instructions run by an `xct` the program
   builds at run time, which P3 cannot see.
+
+In a program with drum overlays, one more, in an overlay's view: `overlay-end`,
+a pattern that starts in the overlay and runs out of it into the root. It is
+no rewrite in either view (see "Programs with drum overlays").
 
 **P5** -- no location involved is shared with a device, a sequence break
 handler, the drum, DCS2 or a high speed channel.

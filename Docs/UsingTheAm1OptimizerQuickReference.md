@@ -182,9 +182,20 @@ as long as the bank has room.
 - The script *am1bisect.sh*, in the **am1** source directory, does the halving for you,
   given a command that tests the build.
 - *-O=off=file* switches off the rewrites the file lists, one *bank address* per line,
-  copied from an *-O=xform* line.
+  copied from an *-O=xform* line; *bank address@name* for a word of drum overlay *name*.
 
 These work only with **-O1** or **-O2**.
+
+## Programs with drum overlays
+
+From **am1** v4.0 the optimizer takes a program with drum overlays. It rewrites the root
+first, alone, then each overlay in turn with the root as context, and the root does not
+move in an overlay's turn. A root word any overlay names is left alone. Regions and
+markings inside an overlay declare for it only, and may not cross *%%overlay* or
+*%%endoverlay*. The window is the overlay's ceiling: a rewrite that does not fit is
+refused or backed out. An overlay's word is *bank address@name* in *-O=xform*, the
+report, *-O=off* and *-O=range*. Load the new *.ovl* after every build: its stamp
+changes with the rewrites.
 
 ## Where to read more
 
@@ -197,3 +208,4 @@ In *UsingTheAm1Optimizer.md*:
 - bisection and *am1bisect.sh*: "Finding the rewrite that broke a build"
 - every section of the report: "The report, section by section"
 - *-O=source*, the program written back out as am1 source: "Writing the program out as source: -O=source"
+- drum overlays: "Programs with drum overlays"

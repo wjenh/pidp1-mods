@@ -2,8 +2,8 @@
 
 This document describes the **ad1** symbolic debugger and how to use it.
 
-This is version 2.0 and covers up through ad1 version 2.0; it will be updated as needed.\
-Edit date 20-Sep-2026
+This is version 2.6 and covers up through ad1 version 2.6; it will be updated as needed.\
+Edit date 14-Oct-2026
 Rework to use a socket instead of shared memory
 
 ## What is **ad1**?
@@ -157,7 +157,9 @@ The three **am1** filenames, *.am1*, *.lst*, and *.sym* will be derived from whi
 
 If a filename.sym file is found, then the symbols will be available for use.\
 If a filename.lst file is found, then the source list operations will be available for use.\
-If there is no .lst file but there is a .am1 file, then source can be listed by line number only.
+If there is no .lst file but there is a .am1 file, then source can be listed by line number only.\
+If filename.ovl and filename.osym are found, the program's drum overlays are known too; see
+*Programs with drum overlays* below.
 
 Multiple filenames can be given.
 If so, the same information will be available for them.
@@ -292,6 +294,70 @@ The action is that the expression is changed thus:
 expression = (bank-ref << 12) | (expression & 07777)
 ```
 
+## Programs with drum overlays
+
+A program assembled with drum overlays (see *UsingOverlays.md*) has two more files beside its *.sym*:
+*name.ovl* and *name.osym*. **ad1** reads both when it opens the program, and says how many overlays
+and windows it found. With neither, it behaves as for any other program. With only one of them, or
+a damaged one, it says so and treats the program as having no overlays.
+
+The overlays of a window share its addresses, so what **ad1** shows at one depends on which overlay is
+in the window now. It reads that from the overlay manager's table in the pidp-1's memory once for
+each command, whether the pidp-1 is running or stopped.
+
+- An address in a window is shown as the symbol, if any, of the overlay in the window. With none in
+  it, the address is shown as a number.
+- Listing by an address in a window lists the overlay in it. With none in it, the listing is as it
+  would be without overlays, from the first overlay's line.
+- A breakpoint or watch hit in a window names the overlay:
+  *Breakpoint 1 hit in overlay edit at line ...*. A breakpoint set by an address, or by a plain
+  symbol, is on that address, so it is hit whichever overlay is in the window. A watch always is.
+- A breakpoint set with an overlay qualifier, *break edGo@edit*, is *bound* to that overlay, and so
+  is one whose address expression uses one, *break edGo@edit+3*: it is hit only while that overlay
+  is in its window. Its count counts only that overlay's passes, and like any count it starts again
+  once reached, so *break edGo@edit 3* is hit on every third entry to *edit*. An expression naming
+  two different overlays is refused.
+- A watch is bound the same way, *watch edCount@edit* or *watch edCount@edit 3*: it reports a
+  change of the word only while that overlay is in its window. Other overlays' writes to the same
+  address, and the overlay manager's loading of the window, are not reported. An expression naming
+  two different overlays is refused.
+- From v2.4, the pidp-1 keeps the binding: **ad1** sets the breakpoint or watch with a condition,
+  that the window's word in the overlay table holds the overlay's number. Passes for another
+  overlay do not halt the pidp-1 at all, and the count is the pidp-1's, of that overlay's passes
+  only. Two breakpoints at one address, bound to different overlays, each fire for their own.
+- A pidp-1 from before conditions (before 13-Oct-2026) cannot keep a binding. There **ad1** binds a
+  breakpoint itself, as v2.3 did: the pidp-1 halts at the address whichever overlay is there, and
+  **ad1** looks at the window and continues it at once when the overlay is another one, each such
+  pass costing a brief halt and a round trip over the link. **ad1** does the same when the program
+  in core is not the one its files describe, and says which and why when it sets the breakpoint:
+  *Breakpoint 1 is bound to overlay edit by ad1, halting the machine on every pass, because ...*.
+  A bound watch needs the pidp-1 to keep it, so on an older pidp-1 it is refused.
+- A *step* passes through a bound breakpoint while another overlay is in the window, as *continue*
+  does, when the pidp-1 keeps the binding. When **ad1** keeps it, the step stops there, as a step
+  stops at any breakpoint, and says why:
+  *Step stopped at breakpoint 1 (bound to overlay edit, overlay print is in the window)*.
+- The *break* and *watch* listings show a bound one as *edGo@edit* (or as its address when it is
+  not at the symbol), with its count, and *bound to overlay edit*.
+- Closing the files (*file name*) deletes the bound breakpoints and watches, and says so. *Exit*
+  leaves the ones the pidp-1 keeps there, disabled as always, with their conditions. Another
+  **ad1** started later that opens the same files finds them and says *Breakpoint 1 is bound to
+  overlay edit.*; one without the files lists the condition as it is, e.g.
+  *when 000442 = 000002*. A breakpoint **ad1** bound itself is left as a plain address breakpoint at
+  count 1, disabled, and named as **ad1** exits.
+- An overlay's symbol can be used by name whether its overlay is in its window or not, as long as only
+  one overlay has that name; the usual bank rules apply, its bank being its window's.
+- A name that several overlays define is refused, naming the overlays. Give it with an *overlay
+  qualifier*, *name@overlay*, e.g. *wk@print*. The overlay's window gives the bank, so no bank
+  qualifier is used with it.
+- *list* with an overlay's symbol lists that overlay's line, whichever overlay is in the window.
+
+If the build stamp at the start of the table in memory is not the one in the *.ovl*, the program in
+memory is not the one the files describe. **ad1** says so, once until the stamp changes again, and
+shows no overlay symbols at window addresses until the stamp matches. While it differs, no overlay
+counts as being in its window, so a bound breakpoint or watch is never reported. If the pidp-1
+halts on one, because the other program's word happens to hold the overlay's number, **ad1** says
+why, once for each, and continues the pidp-1.
+
 ## Expressions
 
 In general, anywhere a numeric value or address is needed, an expression can be used, e.g:
@@ -419,6 +485,26 @@ When reported, the pidp-1 is halted.\
 Breakpoints are based on the address in the PC, so breakpoints placed in memory not referenced by the PC will never
 be hit, such as data or variables. Use a watch instead.
 
+In a program with drum overlays, an address given with an overlay qualifier, *break edGo@edit*, binds the
+breakpoint to that overlay: it is hit only while that overlay is in its window, and the count counts only its passes.
+From v2.4 the pidp-1 keeps the binding, so the other overlays' passes do not halt it.
+See "Programs with drum overlays".
+
+A condition can follow the address and count (v2.5 on): *break address [count] when word = value [mask m]*.
+The breakpoint is hit only on a pass made while the word holds the value, under the mask if one is given:
+(word & m) = (value & m), m being 0777777, the whole word, if not given.
+The count counts only those passes, so *break loop 3 when mode = 2* is hit on every third pass made in mode 2.
+The pidp-1 tests the word itself, so the other passes do not halt it.\
+The word is an address as *break* takes one, a number, symbol or expression with an optional *:bank*, in the
+current bank if none is given; the value and the mask are expressions. The spaces around *=* may be left out.
+*when* and *mask* are not reserved: a program's symbols of those names still work.\
+The word cannot be given as *name@overlay*: a window's word holds whichever overlay is in it.
+A breakpoint bound to an overlay cannot take a condition, since its binding is its condition.
+A condition needs a pidp-1 that keeps conditions; an older one refuses it.\
+The breakpoint lists with its condition, *when 000200 = 000002 mask 000003*, in octal.
+
+Examples: *b loop when mode = 2*, *b loop 3 when flags = 4 mask 4*, *b 104 when 0200:2 = 0*.
+
 ## Continue
 
 This is equivalent to using the continue switch on the front panel.
@@ -469,7 +555,8 @@ If the name is prefixed by a plus sign, *+*, then the file is opened and added t
 If only a name is given, the current files, if any, are first closed. Any symbols and line maps are cleared.
 
 In both cases, symbols will be loaded if a .sym file is available,
-and line-address mapping provided if a .lst file is available.
+and line-address mapping provided if a .lst file is available,
+and a program's overlays if its .ovl and .osym files are available.
 
 The source will be shown from the .lst file, or if not found, the .am1 file.
 If neither was found, no source will be available.
@@ -481,7 +568,8 @@ a line lookup by address will first look in the current file and if not found th
 the current file to the first file containing that address, if the address was found.\
 If a symbol of the name name in the same bank as as another symbol is found, the same us done.
 
-The addresses and files of all symbols can be seen using the *list sy* command.
+The addresses and files of all symbols can be seen using the *show sy* command.
+An overlay's symbol has its overlay after its name.
 
 The name is entered without any quotes. \
 The name can contain a file path.\
@@ -712,6 +800,19 @@ Watches are based on the contents of the address in memory and thus can be used 
 is modified, including instructions that are modified.
 
 The address is a full 16-bit address.
+
+In a program with drum overlays, an address given with an overlay qualifier, *watch edCount@edit*, binds the
+watch to that overlay (v2.4 on): a change is reported only while that overlay is in its window, so other overlays'
+use of the same word, and the loading of the window, are not. It needs a pidp-1 that keeps conditions.
+See "Programs with drum overlays".
+
+A condition can follow the address and value (v2.5 on): *watch address [value] when word = value [mask m]*.
+A change is reported only while the word holds the condition's value, under its mask, as for *break*, which see.
+The watch still keeps the last value it saw while the condition is false, so a change made then is not reported later.
+The same refusals apply: no *name@overlay* word, no condition on a watch bound to an overlay, and a pidp-1 that
+keeps conditions.
+
+Examples: *w count when mode = 2*, *w count 10 when flags = 0 mask 4*.
 
 ## File switching
 

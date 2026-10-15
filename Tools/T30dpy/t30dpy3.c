@@ -103,6 +103,9 @@
  *    and the SIGINT/SIGTERM handler only sets quit, so a kill can no longer deadlock inside SDL.
  * 30-Sep-2026 Claude - the SIGHUP reload runs from the main loop, not inside the signal handler.
  * 02-Oct-2026 wje - pixel fading moved to the GPU, now the CPU handles only each frame's new points.
+ * 03-Oct-2026 wje - work around SDL3 picking lavapipe when remotely connected, the renderer is
+ *    actively probed to find opengl, opengles2 or software and uses the first that opens,
+ *    unless the new renderer setting or -r gives one explicitly.
 */
 
 #include <stdio.h>
@@ -327,6 +330,7 @@ int pdp1FD;
 int portNum;
 char *hostNameP;
 const char *driverNameP;
+char *rendererSettingP;         // the renderer setting or -r, NULL or "auto" for createRenderer()'s order
 
 int winSize;
 int lowCutoff = LOWCUTOFF;
@@ -352,6 +356,7 @@ uint32_t blackPixel;                 // The value is numeric 0, but use the SDL 
 uint64_t startTime;
 uint64_t frameDelay;
 uint32_t frameMisses;
+uint64_t droppedNs;             // frame time the pacing dropped rather than catch up, see main()
 
 // These values are used only for timing metrics.
 uint64_t totalPoints;
@@ -379,6 +384,7 @@ SDL_PixelFormat pixelFormat;        // We will use whatever SDL3 tells us is pre
 const SDL_PixelFormatDetails *formatDetailsP;
 
 int openPort(char *hostNameP, int port);
+SDL_Renderer *createRenderer(void);
 uint32_t blend(int srcR, int srcG, int srcB, int srcA, int destR, int destG, int destB, int destA);
 uint64_t now(void);
 int reader(void *argP);
@@ -493,7 +499,7 @@ EventState evState;         // see typedef above main(): bundles the old penDown
 
     loadConfig(true);             // config overrides defines, command line overrides all
 
-    while( (opt = getopt(argc, argv, "fg:lmnp:s:tvw:")) != -1 )
+    while( (opt = getopt(argc, argv, "fg:lmnp:r:s:tvw:")) != -1 )
     {
         switch( opt )
         {
@@ -519,6 +525,10 @@ EventState evState;         // see typedef above main(): bundles the old penDown
 
         case 'p':
             portNum = atoi(optarg);
+            break;
+
+        case 'r':
+            rendererSettingP = optarg;
             break;
 
         case 's':
@@ -646,10 +656,9 @@ EventState evState;         // see typedef above main(): bundles the old penDown
         exit(1);
     }
 
-    if( !(renderer = SDL_CreateRenderer(window, NULL)) )
+    if( !(renderer = createRenderer()) )
     {
-        fprintf(stderr, "Can't create renderer, %s\n", SDL_GetError());
-        exit(1);
+        exit(1);                // createRenderer() said why
     }
 
     // Record the actual renderer backend (e.g. "opengl", "opengles2", "software").
@@ -796,6 +805,16 @@ EventState evState;         // see typedef above main(): bundles the old penDown
         }
 
         accumulator -= FRAMETIME;   // Any timing error accumulates so it can be corrected for.
+
+        // More than a frame behind, after a stall or under a renderer that can't keep up, drop the
+        // backlog as the SDL2 version does rather than render it back to back with no wait.
+        // A renderer that never catches up would otherwise never wait again, and over VNC lavapipe
+        // queued seconds of frames that way with no events handled.
+        if( (int64_t)accumulator > FRAMETIME )
+        {
+            droppedNs += (accumulator - FRAMETIME);
+            accumulator = FRAMETIME;
+        }
         ++pacedFrames;              // counts every paced loop pass (including idle ones): the true cadence
 
         // With nothing active there is nothing to draw, so the expensive per-point work below is skipped.
@@ -966,6 +985,52 @@ struct addrinfo *resultP;
     // char * also satisfies), so this cast is portable to both.
     setsockopt(sockFD, IPPROTO_TCP, TCP_NODELAY, (const char *)&i, sizeof(i));
     return(sockFD);
+}
+
+// Open the window's renderer, the one the renderer setting or -r names if
+// SDL_RENDER_DRIVER is set, else the first of opengl, opengles2 and software that opens.
+// SDL tries vulkan and gpu before software, and when OpenGL can't open,
+// those can land on lavapipe, far too slow for this.
+// Interestingly, SDL's software renderer with the CPU fade keeps up.
+// Returns NULL, with the reason on stderr, if none opens.
+SDL_Renderer *
+createRenderer(void)
+{
+SDL_Renderer *rendererP;
+#ifndef _WIN32
+static const char *orderP[] = { "opengl", "opengles2", "software" };
+size_t i;
+#endif
+
+    if( rendererSettingP && strcmp(rendererSettingP, "auto") )
+    {
+        if( !(rendererP = SDL_CreateRenderer(window, rendererSettingP)) )
+        {
+            fprintf(stderr, "Can't create the %s renderer, %s\n", rendererSettingP, SDL_GetError());
+        }
+        return(rendererP);
+    }
+
+#ifndef _WIN32
+    if( !SDL_GetHint(SDL_HINT_RENDER_DRIVER) )
+    {
+        for( i = 0; i < (sizeof(orderP) / sizeof(orderP[0])); ++i )
+        {
+            if( (rendererP = SDL_CreateRenderer(window, orderP[i])) )
+            {
+                return(rendererP);
+            }
+        }
+    }
+#endif
+
+    // SDL's choice: on Windows, where Direct3D comes first; when SDL_RENDER_DRIVER is set;
+    // and as the last resort when none of the above opens.
+    if( !(rendererP = SDL_CreateRenderer(window, NULL)) )
+    {
+        fprintf(stderr, "Can't create renderer, %s\n", SDL_GetError());
+    }
+    return(rendererP);
 }
 
 // Reader thread to fetch data from server.
@@ -2015,6 +2080,12 @@ char line[256];
                 {
                     gpuFade = isTrue(cP);
                 }
+                else if( !strcmp(line, "renderer") )
+                {
+                    // Read at startup only, a reload doesn't recreate the renderer.
+                    rendererSettingP = (char *)malloc(strlen(cP) + 1);
+                    strcpy(rendererSettingP, cP);
+                }
             }
 
             if( !strcmp(line, "nice") )
@@ -2202,6 +2273,7 @@ uint64_t delta;
     printf("%lu rendered frames, %lu/sec; %lu paced frames, %lu/sec.\n",
         totalFrames, totalFrames/delta, pacedFrames, pacedFrames/delta);
     printf("%u frame late events, max delay %lu msecs.\n", frameMisses, frameDelay/1000000);
+    printf("%lu frames dropped rather than caught up.\n", droppedNs / FRAMETIME);
     if( renderCount )
     {
         printf("render time: avg %lu usec, max %lu usec, over %lu frames.\n",
@@ -2227,7 +2299,7 @@ void
 usage()
 {
     fprintf(stderr, "usage: t30dpy [-f] [-l] [-m] [-n] [-t]\n");
-    fprintf(stderr, "              [-g gamma] [-w bias] [-p port] [-s size] [host]\n");
+    fprintf(stderr, "              [-g gamma] [-w bias] [-p port] [-r renderer] [-s size] [host]\n");
     fprintf(stderr, "where:\n");
     fprintf(stderr, "-f, fade on the GPU even if the config says gpufade=false; the GPU fade is the default,\n");
     fprintf(stderr, "    the config's tail=seconds sets how long a point takes to fade out, 0.8 to 2.7,\n");
@@ -2240,6 +2312,8 @@ usage()
     fprintf(stderr, "-w bias, add to the blue phosphor r and g for a dot's first frame, default %d\n",
         WHITEBIAS);
     fprintf(stderr, "-p port, set port to use, default %d\n", DEFAULTPORT);
+    fprintf(stderr, "-r renderer, an SDL renderer name such as opengl, opengles2, software or vulkan;\n");
+    fprintf(stderr, "    the default, auto, takes the first of opengl, opengles2 and software that opens\n");
     fprintf(stderr, "-s size, set display size to size pixels, >= 256, default 1024\n");
     fprintf(stderr, "host, hostname of server to connect to, default localhost\n");
     fprintf(stderr, "While running:\n");

@@ -194,6 +194,9 @@ while true; do
                 # The microtape tools
 		make -C $INSTALLDIR/Tools/TapeUtils install
 		make -C $INSTALLDIR/Tools/TapeUtils clean
+                # The overlay tools
+		make -C $INSTALLDIR/Tools/Ovlload install
+		make -C $INSTALLDIR/Tools/Ovlload clean
 
         # The new Type 30 display, either the SDL2 or SDL3 version
         if dpkg-query -W -f='${Status}' libsdl3-dev 2>/dev/null | grep -q "ok installed"; then

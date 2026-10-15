@@ -285,6 +285,8 @@ while true; do
 	    sudo ln -sf $INSTALLDIR/bin/mtp /usr/local/bin/mtp
 	    sudo ln -sf $INSTALLDIR/bin/mkmicrotape /usr/local/bin/mkmicrotape
 
+	    sudo ln -sf $INSTALLDIR/bin/ovlload /usr/local/bin/ovlload
+
 	    sudo ln -sf $INSTALLDIR/bin/t30dpy /usr/local/bin/t30dpy
         #
 	    sudo ln -sf $INSTALLDIR/bin/tkaskopenfile /usr/local/bin/tkaskopenfile

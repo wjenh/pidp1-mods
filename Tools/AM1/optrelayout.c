@@ -32,9 +32,11 @@
  * each address an expression names to see how its address field depends on
  * it.  A refused edit is undone.
  *
- * Runs single threaded, once per optimize() call, after the report is written
- * and before the table is freed, and only when there is an edit or a pool
- * reclaim to make or -O=relayout was given.  With opttransform.c it is the
+ * Runs single threaded, once per view of each optimize() call (the root's,
+ * then each drum overlay's), after the view's report is written and before
+ * its table is freed, and only when there is an edit or a pool reclaim to
+ * make or -O=relayout was given.  In an overlay's view only that overlay's
+ * words are edited, and the root must not move.  With opttransform.c it is the
  * only part of the optimizer that writes a parse node.  Uses optimizer.h's
  * word table, eval.c's evaluators, parser.y's banksP and constsListP, and
  * am1.c's noWarn and warnings[].  Out of memory and an inconsistent result
@@ -85,6 +87,11 @@
 extern BankContextP banksP;
 extern SymListP constsListP;
 extern PNodeListP wildcardsP;
+extern OverlayContextP overlaysP;   // every drum overlay, from the parser
+extern WindowP windowsP;            // and every window
+extern SymNodeP ovTableSymP;        // the overlay descriptor table's label
+extern void refreshOverlayAliases(void);
+extern void resolveOvCalls(void);
 extern bool noWarn;
 extern Warning warnings[];
 
@@ -130,6 +137,10 @@ typedef enum
     RLR_INTERNAL,       // the result is not consistent; not expected to happen
     RLR_CEILING,        // a bank would reach its declared %%ceiling; the budget
                         // should have stopped it, so like internal it is a defect guard
+    RLR_WINDOW,         // a root word would go into a drum overlay window
+    RLR_WINDOWFULL,     // a drum overlay's word would go past its window's last address;
+                        // the window is its ceiling, checked as RLR_CEILING is
+    RLR_ROOT,           // in a drum overlay's view, a root word would move
     RLR_COUNT
 } RlReason;
 
@@ -142,6 +153,7 @@ typedef struct
     int addr;           // move: the destination's last word; copy: the word it replaces
     const char *fileP;
     int lineNo;
+    char *ovNameP;      // a file's edit: the drum overlay its "@name" names, NILP for the root
     RlReason reason;
 
     // Undo state, valid while the edit is applied.
@@ -288,6 +300,9 @@ typedef struct
 static RlEdit *editsP;
 static int editCount;
 static int editsGiven;
+static RlEdit *readEditsP;          // every line of the files, as read; each view
+static int readEditCount;           // takes those naming its words
+static int fileEditTotal;           // the view's edits from the files, first in the list
 static const char *editsPathP;
 
 // The state of one optRelayout() call.
@@ -299,9 +314,19 @@ static OptXformP *recordOfP;        // the applied, fired record of a rewritten 
 static int rlPC[MAXBANK + 1];
 static int rlBank;
 static int rlBound;
+static int rlWindowFull;            // a drum overlay was laid past its window's end
 static int rlTop[MAXBANK + 1];      // each bank's highest word as laid out, -1 for none
 static int rlCeilingCheck;          // settle() refuses a bank at its declared ceiling
 static int rlPoolBank;              // the bank placePool() is placing into
+static int rlWindow;                // a root word was laid in a drum overlay window
+static OverlayContextP rlOverlayP;  // the drum overlay being laid out, NILP in the root
+static int rlRootBank;              // while in one, the root's bank, and its pc and
+static int rlRootPC;                // highest word in the window's bank, which the
+static int rlRootTop;               // overlay's own pc stands in for
+static int ovCount;                 // drum overlays, numbered 1 to ovCount
+static int *ovEndPoolP;             // per overlay number, the pool its end closed, or -1
+static int *ovEndPCP;               // and its end as assembled, for the check after the
+                                    // first layout
 static int heldOrigins;
 static int heldTables;
 
@@ -320,6 +345,8 @@ static int directiveCount;
 static int bankEndPool[MAXBANK + 1];    // the pool each bank's end closed, or -1
 static int unkeyedCount;            // references whose key no mask gives
 static int *poolOrphansP;           // each pool's orphan slots
+static int *poolOverlayP;           // the drum overlay number of the overlay that closes each
+                                    // pool, 0 for the root's; a view's table holds only its own
 static int *poolAnchoredP;          // and its anchored ones, orphans included
 static int *poolReclaimP;           // and its reclaimable ones
 static int rlReclaim;               // the reclaim is in force: 0 while the program as
@@ -366,6 +393,8 @@ static const char *reasonName(RlReason reason);
 
 static void quiet(void);
 static void loud(void);
+static void resetCall(void);
+static int rootMoved(void);
 
 static RlReason tryDelete(RlEdit *editP);
 static RlReason tryMove(RlEdit *editP);
@@ -379,7 +408,11 @@ static void addWindowEdits(OptTableP tableP);
 static int windelDepsMade(OptTableP tableP, OptWinDelP delP);
 static RlReason tryUnroll(RlEdit *editP);
 static void undoJmpDelete(RlEdit *editP);
+static void backOutWindowFull(int last);
+static void backOut(int parent, int last);
 static RlEdit *newEdit(void);
+static RlEdit *newReadEdit(void);
+static int readEditInView(const RlEdit *editP, OverlayContextP ovP);
 static void inlineOutcomes(void);
 static void noteCopies(void);
 static void deleteWord(RlEdit *editP, PNodeP stmtP);
@@ -406,6 +439,10 @@ static void layout(void);
 static void setStatement(PNodeP nodeP, int pc);
 static void setExpr(PNodeP nodeP, int pc);
 static void advance(int words);
+static void enterOverlay(PNodeP nodeP);
+static void leaveOverlay(PNodeP nodeP);
+static void layOvCall(PNodeP nodeP, int pc);
+static void checkWindows(int bank, int first, int last);
 static int placePool(int pc, SymNodeP symP);
 static void placeVars(int bank, PNodeListP listP);
 static void setPoolValues(SymNodeP symP);
@@ -476,7 +513,8 @@ static void dump(FILE *fP, int idempotent);
 // The -O=edits instrument.
 
 // Read one -O=edits file: '#' comments and blank lines skipped, one edit per
-// line.  A malformed line is fatal, naming the file and line.
+// line, "@name" after its last address naming a drum overlay's words.  A
+// malformed line is fatal, naming the file and line.
 // Returns 1 if read, 0 for an empty file name.
 int
 optRelayoutReadEdits(const char *pathP)
@@ -486,12 +524,14 @@ char line[RL_LINE];
 char *cP;
 const char *textP;
 const char *endP;
+const char *nameP;
 long numbers[4];
 int wanted;
 int i;
 int lineNo;
 RlEdit *editP;
 RlKind kind;
+char *ovNameP;
 const char *joinP;      // the word before a three-address edit's last address
 const char *formP;      // and what the line should have looked like
 
@@ -583,12 +623,33 @@ const char *formP;      // and what the line should have looked like
                 }
             }
 
-            if( !readNumber(textP, (i == 0)?10:8, (i == 0)?MAXBANK:ADDRMASK, &numbers[i], &endP) )
+            if( !readNumber(textP, (i == 0)?10:8, (i == 0)?MAXBANK:ADDRMASK, &numbers[i], &endP) ||
+                ((*endP == '@') && (i != (wanted - 1))) )
             {
                 editsError(pathP, lineNo, "expected a bank 0 to 15 in decimal and addresses in octal");
             }
 
             textP = endP;
+        }
+
+        // "@name" on the last address: every address on the line is the
+        // overlay's.  Whether it has one is checked once the parse is done.
+        ovNameP = NILP;
+
+        if( *textP == '@' )
+        {
+            for( nameP = ++textP; *textP && (*textP != ' ') && (*textP != '\t') && (*textP != '\r') &&
+                (*textP != '\n'); ++textP )
+            {
+            }
+
+            if( (textP == nameP) || !(ovNameP = (char *)malloc((size_t)(textP - nameP) + 1)) )
+            {
+                editsError(pathP, lineNo, "expected an overlay's name after '@'");
+            }
+
+            memcpy(ovNameP, nameP, (size_t)(textP - nameP));
+            ovNameP[textP - nameP] = '\0';
         }
 
         for( ; (*textP == ' ') || (*textP == '\t') || (*textP == '\r') || (*textP == '\n'); ++textP )
@@ -600,7 +661,7 @@ const char *formP;      // and what the line should have looked like
             editsError(pathP, lineNo, "expected the edit and nothing more but a comment");
         }
 
-        editP = newEdit();
+        editP = newReadEdit();
         editP->kind = kind;
         editP->bank = (int)numbers[0];
         editP->from = (int)numbers[1];
@@ -608,6 +669,7 @@ const char *formP;      // and what the line should have looked like
         editP->addr = (kind == RLE_DELETE)?-1:(int)numbers[3];
         editP->fileP = pathP;
         editP->lineNo = lineNo;
+        editP->ovNameP = ovNameP;
     }
 
     fclose(fP);
@@ -619,6 +681,67 @@ const char *formP;      // and what the line should have looked like
 
     editsGiven = 1;
     return(1);
+}
+
+// Append a zeroed edit to the files' list, as read.
+// Returns the new edit; out of memory is fatal.
+static RlEdit *
+newReadEdit(void)
+{
+RlEdit *editP;
+
+    if( !(readEditsP = (RlEdit *)realloc(readEditsP, ((size_t)(readEditCount + 1) * sizeof(RlEdit)))) )
+    {
+        fprintf(stderr, "am1: out of memory reading -O=edits\n");
+        exit(1);
+    }
+
+    editP = &readEditsP[readEditCount++];
+    memset(editP, 0, sizeof(RlEdit));
+    editP->parent = -1;
+    return(editP);
+}
+
+// Is the file's edit editP one the current view tries: a root edit in the
+// root's view, or one naming the view's drum overlay?
+// Returns 1 if it is, 0 if not.
+static int
+readEditInView(const RlEdit *editP, OverlayContextP ovP)
+{
+    if( !ovP )
+    {
+        return( (!editP->ovNameP)?1:0 );
+    }
+
+    return( (editP->ovNameP && !strcmp(editP->ovNameP, ovP->nameP))?1:0 );
+}
+
+// Stop am1, as a malformed line does, when an edit's "@name" names no drum
+// overlay; the overlays are known only after the parse.
+void
+optRelayoutCheckEdits(void)
+{
+OverlayContextP ovP;
+char msg[RL_LINE + 64];
+int j;
+
+    for( j = 0; j < readEditCount; ++j )
+    {
+        if( !readEditsP[j].ovNameP )
+        {
+            continue;
+        }
+
+        for( ovP = overlaysP; ovP && strcmp(ovP->nameP, readEditsP[j].ovNameP); ovP = ovP->nextP )
+        {
+        }
+
+        if( !ovP )
+        {
+            snprintf(msg, sizeof(msg), "there is no overlay %s", readEditsP[j].ovNameP);
+            editsError(readEditsP[j].fileP, readEditsP[j].lineNo, msg);
+        }
+    }
 }
 
 // Append a zeroed edit to the list.  The list may move, so an RlEdit pointer
@@ -641,15 +764,33 @@ RlEdit *editP;
     return(editP);
 }
 
-// Returns non-zero when an -O=edits file was given.
+// Returns non-zero when the view of ovP (NILP for the root's) has -O=edits
+// edits to try: in the root's, whenever a file was given, even an empty one,
+// as before there were overlays; in an overlay's, when a line names it.
 int
-optRelayoutGiven(void)
+optRelayoutGiven(OverlayContextP ovP)
 {
-    return(editsGiven);
+int j;
+
+    if( !ovP )
+    {
+        return(editsGiven);
+    }
+
+    for( j = 0; j < readEditCount; ++j )
+    {
+        if( readEditInView(&readEditsP[j], ovP) )
+        {
+            return(1);
+        }
+    }
+
+    return(0);
 }
 
 // Read one unsigned number in the given base, of at least one digit and no
-// more than max, followed by a space, a tab, a line end or nothing.
+// more than max, followed by a space, a tab, a line end, nothing, or the '@'
+// of an overlay's name.
 // Returns 1 with *valueP set and *endPP after the digits, or 0.
 static int
 readNumber(const char *textP, int base, long max, long *valueP, const char **endPP)
@@ -671,7 +812,8 @@ int digits;
         }
     }
 
-    if( !digits || (*textP && (*textP != ' ') && (*textP != '\t') && (*textP != '\r') && (*textP != '\n')) )
+    if( !digits || (*textP && (*textP != ' ') && (*textP != '\t') && (*textP != '\r') && (*textP != '\n') &&
+        (*textP != '@')) )
     {
         return(0);
     }
@@ -698,7 +840,7 @@ static const char *namesPP[RLR_COUNT] =
 {
     "accepted", "noword", "notstatement", "nextword", "unit", "segment", "region",
     "conflict", "overlay", "offset", "dot", "number", "label", "bound", "overlap", "pool",
-    "copylabel", "copyinternal", "skipped", "internal", "ceiling"
+    "copylabel", "copyinternal", "skipped", "internal", "ceiling", "window", "windowfull", "root"
 };
 
     if( (reason < 0) || (reason >= RLR_COUNT) )
@@ -746,6 +888,112 @@ WarningP warnP;
     }
 }
 
+// Clear what an earlier call left, so a drum overlay's view starts as the
+// root's did: the edits, which were that view's, the files' replaced by those
+// naming this view's words, untouched; the arrays made per call; the slots it
+// made, which are now in the pools and are recorded again as slots the program
+// has; the walk's symbols; and the reclaim.  After rlTableP is set.
+static void
+resetCall(void)
+{
+RlExtraP extraP;
+RlEdit *editP;
+int j;
+
+    for( j = 0; j < editCount; ++j )
+    {
+        free(editsP[j].entriesP);
+    }
+
+    editCount = 0;
+
+    for( j = 0; j < readEditCount; ++j )
+    {
+        if( readEditInView(&readEditsP[j], rlTableP->viewOvP) )
+        {
+            editP = newEdit();
+            *editP = readEditsP[j];
+        }
+    }
+
+    fileEditTotal = editCount;
+
+    while( (extraP = extrasP) )
+    {
+        extrasP = extraP->nextP;
+        free(extraP);
+    }
+
+    free(wordStateP);
+    free(offsetP);
+    free(recordOfP);
+    free(poolsPP);
+    free(poolBankP);
+    free(poolListsPP);
+    free(ovEndPoolP);
+    free(ovEndPCP);
+    free(oldRefsP);
+    free(slotsP);
+    free(slotByNameP);
+    free(poolOrphansP);
+    free(poolAnchoredP);
+    free(poolReclaimP);
+    free(poolOverlayP);
+    free(directivesPP);
+    free(directivePoolP);
+    wordStateP = NILP;
+    offsetP = NILP;
+    recordOfP = NILP;
+    poolsPP = NILP;
+    poolBankP = NILP;
+    poolListsPP = NILP;
+    ovEndPoolP = NILP;
+    ovEndPCP = NILP;
+    oldRefsP = NILP;
+    slotsP = NILP;
+    slotByNameP = NILP;
+    poolOrphansP = NILP;
+    poolAnchoredP = NILP;
+    poolReclaimP = NILP;
+    poolOverlayP = NILP;
+    directivesPP = NILP;
+    directivePoolP = NILP;
+
+    if( symMapP )
+    {
+        memset(symMapP, 0, ((size_t)symMapSize * sizeof(RlSym)));
+    }
+
+    symMapCount = 0;
+    slotCount = 0;
+    oldRefCount = 0;
+    directiveCount = 0;
+    keySymCount = 0;
+    unkeyedCount = 0;
+    reclaimedSlots = 0;
+    rlReclaim = 0;
+}
+
+// Test, in a drum overlay's view, whether a root word, pool word or variable
+// is not where the view found it.  The root is context there: every other
+// overlay was relaid against its addresses.
+// Returns 1 if one has moved or gone, 0 if none has, or in the root's view.
+static int
+rootMoved(void)
+{
+int i;
+
+    for( i = 0; rlTableP->viewOvP && (i < rlTableP->count); ++i )
+    {
+        if( !(rlTableP->entriesPP[i]->flags & OPTF_OVWORD) && (currentAddr(i) != rlTableP->entriesPP[i]->addr) )
+        {
+            return(1);
+        }
+    }
+
+    return(0);
+}
+
 // The pass.
 
 // Apply every edit in order, each laid out and checked before the next, then
@@ -775,11 +1023,16 @@ RlEdit *editP;
 RlReason reason;
 SymListP listP;
 PNodeListP wildP;
+OverlayContextP ovP;
 
     quiet();
 
     rlTableP = tableP;
     rlRootP = rootP;
+
+    // Each view makes a call of its own: the root's, then each drum overlay's.
+    // It tries the -O=edits lines naming its words, and its transforms' edits.
+    resetCall();
 
     if( !(wordStateP = (unsigned char *)calloc((size_t)tableP->count + 1, 1)) ||
         !(offsetP = (int *)calloc((size_t)tableP->count + 1, sizeof(int))) ||
@@ -826,6 +1079,30 @@ PNodeListP wildP;
         poolListsPP[i] = listP;
     }
 
+    // The drum overlays, numbered from 1: the pool each one's end closes, and
+    // where it ends as assembled.
+    for( ovCount = 0, ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        ovCount = (ovP->number > ovCount)?ovP->number:ovCount;
+    }
+
+    if( !(ovEndPoolP = (int *)calloc((size_t)ovCount + 1, sizeof(int))) ||
+        !(ovEndPCP = (int *)calloc((size_t)ovCount + 1, sizeof(int))) )
+    {
+        fprintf(stderr, "am1: out of memory in relayout\n");
+        exit(1);
+    }
+
+    for( i = 0; i <= ovCount; ++i )
+    {
+        ovEndPoolP[i] = -1;
+    }
+
+    for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        ovEndPCP[ovP->number] = ovP->ctx.cur_pc;
+    }
+
     // The parser keyed a 'sym:*' by its name, and only then made it a BREF,
     // which hashExpr() would key by its address.  Mark every one so the re-key
     // can key it as the parser did.  A copy keeps the mark.
@@ -870,6 +1147,32 @@ PNodeListP wildP;
         exit(1);
     }
 
+    // With no edit, every word must be where the parser put it, and every drum
+    // overlay must end where it did: a statement the layout does not know
+    // would otherwise move words, and the edits after this would be laid over
+    // a program that is already not the one assembled.
+    for( i = 0; i < tableP->count; ++i )
+    {
+        if( currentAddr(i) != tableP->entriesPP[i]->addr )
+        {
+            break;
+        }
+    }
+
+    for( ovP = overlaysP; ovP && (i >= tableP->count); ovP = ovP->nextP )
+    {
+        if( ovP->ctx.cur_pc != ovEndPCP[ovP->number] )
+        {
+            i = -1;
+        }
+    }
+
+    if( i != tableP->count )
+    {
+        fprintf(stderr, "am1: optimizer: relayout: the program as assembled does not lay out again (moved)\n");
+        exit(1);
+    }
+
     // The pool words the declared rewrites freed, reclaimed before the edits,
     // so each edit is laid out over the program the reclaim leaves.  The
     // ceiling check stays on through it: a reclaim only shrinks a bank.
@@ -907,6 +1210,7 @@ PNodeListP wildP;
             }
 
             ++refused;
+            backOutWindowFull(j);       // a callee's last delete may be skipped
             continue;
         }
 
@@ -952,7 +1256,16 @@ PNodeListP wildP;
         }
         else
         {
-            if( (reason = settle()) == RLR_ACCEPTED )
+            // In a drum overlay's view the root stays where it is, though an
+            // overlay's edit can still move it: a symbol's first mention
+            // deleted renumbers the root's forward references, and with them
+            // the order of a root pool.
+            if( ((reason = settle()) == RLR_ACCEPTED) && rootMoved() )
+            {
+                reason = RLR_ROOT;
+            }
+
+            if( reason == RLR_ACCEPTED )
             {
                 reason = checkHazards();
             }
@@ -1008,6 +1321,8 @@ PNodeListP wildP;
                 ++editP->unrollP->deleteRefused;
             }
         }
+
+        backOutWindowFull(j);
     }
 
     // The warning below counts the file's edits; the transforms' edits report
@@ -1038,6 +1353,17 @@ PNodeListP wildP;
         }
     }
 
+    // And the window, an overlay's ceiling: its budget counts to the window's
+    // last address.  Only the view's overlay can have grown, and a transform
+    // that left it past its window was backed out, so this is a defect guard.
+    if( rlWindowFull )
+    {
+        fprintf(stderr, "am1: optimizer: relayout: internal error: the rewrites leave overlay %s past its window %s's last address %04o\n",
+            (tableP->viewOvP)?tableP->viewOvP->nameP:"?", (tableP->viewOvP)?tableP->viewOvP->windowP->nameP:"?",
+            (tableP->viewOvP)?tableP->viewOvP->windowP->last:0);
+        exit(1);
+    }
+
     // Idempotence: laying the result out again changes nothing.
     sum1 = checksum();
     settle();
@@ -1052,6 +1378,15 @@ PNodeListP wildP;
     if( !idempotent )
     {
         fprintf(stderr, "am1: optimizer: relayout: laying the program out a second time changed it\n");
+        exit(1);
+    }
+
+    // Every edit was refused that moved the root, so a root that has moved is a
+    // defect, and a stop rather than a tape whose other overlays name the old
+    // addresses.
+    if( rootMoved() )
+    {
+        fprintf(stderr, "am1: optimizer: relayout: the root moved in overlay %s's view\n", tableP->viewOvP->nameP);
         exit(1);
     }
 
@@ -1467,6 +1802,107 @@ RlEdit jmpEdit;
     undoDelete(&jmpEdit);
     editP->jStmtP = NILP;
     editP->jMarkP = NILP;
+}
+
+// The window as an overlay's ceiling.
+
+// After edit LAST, if it ends a transform that left the view's drum overlay
+// past its window, back the transform out rather than stop.  An unroll ends
+// at its setup's last delete, whose refusal can leave it past: its budget
+// counts the setup deleted.  The inlines end together, at the last callee
+// delete of them all, since every copy lands before any callee's deletes.
+// Their budget counts each copy whole and no delete, so only a budget in
+// error leaves them past; the copies are taken back newest first, each with
+// its callee's deletes, until the overlay fits.  An overlay still past its
+// window is left to the check after the last edit.
+static void
+backOutWindowFull(int last)
+{
+RlEdit *editP;
+int parent;
+
+    editP = &editsP[last];
+
+    if( !rlWindowFull )
+    {
+        return;
+    }
+
+    if( editP->unrollP )
+    {
+        if( ((last + 1) < editCount) && (editsP[last + 1].unrollP == editP->unrollP) )
+        {
+            return;
+        }
+
+        for( parent = last; editsP[parent].kind != RLE_UNROLL; --parent )
+        {
+        }
+
+        if( editsP[parent].reason == RLR_ACCEPTED )
+        {
+            backOut(parent, last);
+        }
+
+        return;
+    }
+
+    if( !editP->inlineP || (((last + 1) < editCount) && editsP[last + 1].inlineP) )
+    {
+        return;
+    }
+
+    for( parent = last; rlWindowFull && (parent >= 0) && editsP[parent].inlineP; --parent )
+    {
+        editP = &editsP[parent];
+
+        if( (editP->kind == RLE_INLINE) && (editP->reason == RLR_ACCEPTED) )
+        {
+            backOut(parent, last);
+        }
+    }
+}
+
+// Undo, newest first, every accepted edit of the transform whose first edit is
+// PARENT, up to LAST, and refuse each windowfull; one refused already keeps its
+// reason, which says why the overlay did not fit.  An inline's copy comes out
+// past later copies and other callees' deletes, out of the order undoEdit()
+// normally takes: each copy is spliced after its own call word's line, and its
+// cloned references are found by owner, so no later edit leans on its nodes.
+// What is left is settled and checked as an edit is; that failing is a defect.
+static void
+backOut(int parent, int last)
+{
+RlEdit *editP;
+int dupCount;
+int i;
+int k;
+
+    for( k = last; k >= parent; --k )
+    {
+        editP = &editsP[k];
+
+        if( ((k != parent) && (editP->parent != parent)) || (editP->reason != RLR_ACCEPTED) )
+        {
+            continue;
+        }
+
+        for( i = 0; i < editP->entryCount; ++i )
+        {
+            wordStateP[editP->entriesP[i]] &= ~(RLW_DELETED | RLW_MOVED);
+        }
+
+        undoEdit(editP);
+        editP->reason = RLR_WINDOWFULL;
+    }
+
+    if( (settle() != RLR_ACCEPTED) || rootMoved() || (checkHazards() != RLR_ACCEPTED) ||
+        (checkTable(&dupCount) != RLR_ACCEPTED) )
+    {
+        fprintf(stderr, "am1: optimizer: relayout: backing out the %s at %s line %d did not lay out again\n",
+            (editsP[parent].kind == RLE_UNROLL)?"unroll":"inline", editsP[parent].fileP, editsP[parent].lineNo);
+        exit(1);
+    }
 }
 
 // The inlines' edits.
@@ -2845,6 +3281,8 @@ PNodeP nodeP;
     nodeP->lineNo = modelP->lineNo;
     nodeP->bank = modelP->bank;
     nodeP->pc = modelP->pc;
+    // A marker inside an overlay belongs to it, or the views take it for the root's.
+    nodeP->overlay = modelP->overlay;
     return(nodeP);
 }
 
@@ -2897,12 +3335,14 @@ nextWordFollows(PNodeP nodeP)
     return(0);
 }
 
-// Is this node a fixed point of the layout?
-// Returns 1 for an origin or a bank directive, else 0.
+// Is this node a fixed point of the layout?  A drum overlay's two ends are:
+// its words are at its window's addresses, not after the root's.
+// Returns 1 for an origin, a bank directive or an overlay's end, else 0.
 static int
 isFixedPoint(PNodeP nodeP)
 {
-    return( (nodeP->type == ORIGIN) || (nodeP->type == BANK) );
+    return( (nodeP->type == ORIGIN) || (nodeP->type == BANK) ||
+        (nodeP->type == OVERLAYDECL) || (nodeP->type == ENDOVERLAY) );
 }
 
 // The layout.
@@ -2952,9 +3392,25 @@ RlReason reason;
         return(RLR_INTERNAL);
     }
 
+    // An overlay that outgrows its window is refused for that, not for the
+    // bank: only an overlay's own edit can make it grow.  The window is the
+    // overlay's ceiling, and like a declared ceiling it is not checked for a
+    // transform's edit, which optRelayout() checks after the last.
+    if( rlWindowFull && rlCeilingCheck )
+    {
+        return(RLR_WINDOWFULL);
+    }
+
     if( rlBound )
     {
         return(RLR_BOUND);
+    }
+
+    // A window is the drum overlays' alone: the parser refuses a root word in
+    // one, so a layout that puts one there is refused too.
+    if( rlWindow )
+    {
+        return(RLR_WINDOW);
     }
 
     // No bank may reach its declared ceiling.  Checked only for the program
@@ -2983,6 +3439,7 @@ PNodeP nodeP;
 SymListP listP;
 BankContextP bankP;
 PNodeListP varP;
+OverlayContextP ovP;
 
     for( nodeP = rlRootP->leftP; nodeP; nodeP = nodeP->leftP )
     {
@@ -3014,6 +3471,13 @@ PNodeListP varP;
             }
             break;
 
+        case OVTABLE:
+            if( ovTableSymP )
+            {
+                ovTableSymP->value = RL_SENTINEL;
+            }
+            break;
+
         default:
             break;
         }
@@ -3022,6 +3486,27 @@ PNodeListP varP;
     for( listP = constsListP; listP; listP = listP->nextP )
     {
         poisonPool(listP->symP);
+    }
+
+    for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        ovP->ctx.cur_pc = RL_SENTINEL;
+
+        if( ovP->ctx.constSymP )
+        {
+            ovP->ctx.constPC = RL_SENTINEL;
+        }
+
+        if( ovP->ctx.varNodesP )
+        {
+            ovP->ctx.varPC = RL_SENTINEL;
+
+            for( varP = ovP->ctx.varNodesP; varP; varP = varP->nextP )
+            {
+                varP->nodeP->pc = RL_SENTINEL;
+                varP->nodeP->value.symP->value = RL_SENTINEL;
+            }
+        }
     }
 
     for( bankP = banksP; bankP; bankP = bankP->nextP )
@@ -3109,6 +3594,9 @@ int pc;
 int b;
 
     rlBound = 0;
+    rlWindowFull = 0;
+    rlWindow = 0;
+    rlOverlayP = NILP;
     heldOrigins = 0;
     heldTables = 0;
 
@@ -3197,6 +3685,30 @@ int b;
             heldTables += heldExpr(nodeP->exprP);
             break;
 
+        case OVERLAYDECL:
+            enterOverlay(nodeP);
+            break;
+
+        case ENDOVERLAY:
+            leaveOverlay(nodeP);
+            break;
+
+        case OVCALL:
+            layOvCall(nodeP, pc);
+            break;
+
+        case OVTABLE:
+            // The descriptor table, labeled as the parser labels it.
+            setStatement(nodeP, pc);
+
+            if( ovTableSymP && !RL_SKIP(RLSKIP_LABEL) )
+            {
+                ovTableSymP->value = pc;
+            }
+
+            advance(nodeP->value.ival);
+            break;
+
         default:
             // Everything else emits nothing: its nodes carry the pc.
             setStatement(nodeP, pc);
@@ -3231,9 +3743,13 @@ int b;
         }
     }
 
+    // -S's figure is the highest word as laid out, rlTop, the run since the
+    // last origin being already in it.
     for( bankP = banksP; bankP && !RL_SKIP(RLSKIP_BANKCTX); bankP = bankP->nextP )
     {
         bankP->cur_pc = rlPC[bankP->bank];
+        bankP->runPC = bankP->cur_pc;
+        bankP->highPC = rlTop[bankP->bank] + 1;
     }
 
     // 'start' or 'stop', and the root, at the current bank's pc.
@@ -3250,10 +3766,25 @@ int b;
         }
     }
 
+    // A drum overlay's alias for a root global holds a copy of its address,
+    // which an overlay's pool word may hold too.
+    if( overlaysP )
+    {
+        refreshOverlayAliases();
+    }
+
     // The pool values, once every address is known.
     for( listP = constsListP; listP; listP = listP->nextP )
     {
         setPoolValues(listP->symP);
+    }
+
+    // Each %%ovcall's first data word is an address in the table, which may
+    // have moved; its second is an overlay's entry, which an edit in that
+    // overlay's view may have moved.
+    if( overlaysP )
+    {
+        resolveOvCalls();
     }
 
     if( !RL_SKIP(RLSKIP_START) && (startP = rlRootP->rightP) && (startP->type == START) )
@@ -3320,7 +3851,144 @@ advance(int words)
         rlTop[rlBank] = rlPC[rlBank] + words - 1;
     }
 
+    if( (words > 0) && !rlOverlayP )
+    {
+        checkWindows(rlBank, rlPC[rlBank], (rlPC[rlBank] + words - 1));
+    }
+
     rlPC[rlBank] += words;
+}
+
+// Begin a drum overlay at its %%overlay, nodeP: its words go from its
+// window's first address past the header, in the window's bank, whatever bank
+// the root is in.  The root's pc and highest word in that bank are held until
+// the overlay ends, so the overlay counts for neither.
+static void
+enterOverlay(PNodeP nodeP)
+{
+OverlayContextP ovP;
+int bank;
+
+    ovP = (OverlayContextP)(nodeP->value.ptr);
+    bank = ovP->windowP->bank;
+
+    rlRootBank = rlBank;
+    rlRootPC = rlPC[bank];
+    rlRootTop = rlTop[bank];
+
+    rlOverlayP = ovP;
+    rlBank = bank;
+    rlPC[bank] = ovP->windowP->first;
+    rlTop[bank] = -1;
+
+    // The parser gives the node the window's first address.
+    setStatement(nodeP, rlPC[bank]);
+    rlPC[bank] += OVHEADERWORDS;
+}
+
+// End a drum overlay at its %%endoverlay, nodeP: place the constants and
+// variables it did not place itself, constants first as the parser does,
+// refuse an overlay past its window's end, and go back to the root.
+static void
+leaveOverlay(PNodeP nodeP)
+{
+OverlayContextP ovP;
+int bank;
+
+    ovP = rlOverlayP;
+    bank = rlBank;
+
+    if( !ovP )
+    {
+        // The parser pairs them, so this is a walk that lost its place.
+        rlBound = 1;
+        setStatement(nodeP, rlPC[rlBank]);
+        return;
+    }
+
+    if( ovP->ctx.constSymP )
+    {
+        if( !RL_SKIP(RLSKIP_BANKCTX) )
+        {
+            ovP->ctx.constPC = rlPC[bank];
+        }
+
+        rlPoolBank = bank;
+        rlPC[bank] = placePool(rlPC[bank], ovP->ctx.constSymP);
+    }
+
+    if( ovP->ctx.varNodesP )
+    {
+        if( !RL_SKIP(RLSKIP_BANKCTX) )
+        {
+            ovP->ctx.varPC = rlPC[bank];
+        }
+
+        placeVars(bank, ovP->ctx.varNodesP);
+    }
+
+    if( !RL_SKIP(RLSKIP_BANKCTX) )
+    {
+        ovP->ctx.cur_pc = rlPC[bank];
+    }
+
+    // Its code, pool and variables, all of which the drum loads into the
+    // window.
+    if( rlPC[bank] > (ovP->windowP->last + 1) )
+    {
+        rlWindowFull = 1;
+    }
+
+    setStatement(nodeP, rlPC[bank]);
+
+    rlPC[bank] = rlRootPC;
+    rlTop[bank] = rlRootTop;
+    rlBank = rlRootBank;
+    rlOverlayP = NILP;
+}
+
+// Lay out a %%ovcall at pc: each of its words is an EXPR node of its own,
+// chained through leftP from the OVCALL node's rightP, with its own pc, which
+// setStatement() would not give it.
+static void
+layOvCall(PNodeP nodeP, int pc)
+{
+PNodeP wordP;
+
+    if( !RL_SKIP(RLSKIP_PC) )
+    {
+        nodeP->pc = pc;
+    }
+
+    setExpr(nodeP->exprP, pc);
+
+    for( wordP = nodeP->rightP; wordP; wordP = wordP->leftP )
+    {
+        if( !RL_SKIP(RLSKIP_PC) )
+        {
+            wordP->pc = rlPC[rlBank];
+        }
+
+        setExpr(wordP->rightP, rlPC[rlBank]);
+        setExpr(wordP->exprP, rlPC[rlBank]);
+        advance(1);
+    }
+}
+
+// Note a root word, pool word or variable laid from first to last in bank
+// that falls in a drum overlay window of that bank.
+static void
+checkWindows(int bank, int first, int last)
+{
+WindowP winP;
+
+    for( winP = windowsP; winP; winP = winP->nextP )
+    {
+        if( (winP->bank == bank) && (first <= winP->last) && (last >= winP->first) )
+        {
+            rlWindow = 1;
+        }
+    }
 }
 
 // Place a pool's slots from pc, in the parser's pre-order.
@@ -3341,6 +4009,11 @@ placePool(int pc, SymNodeP symP)
     if( pc > rlTop[rlPoolBank] )
     {
         rlTop[rlPoolBank] = pc;
+    }
+
+    if( !rlOverlayP )
+    {
+        checkWindows(rlPoolBank, pc, pc);
     }
 
     if( ++pc > BANKSIZE )
@@ -3379,6 +4052,11 @@ SymNodeP symP;
         if( rlPC[bank] > rlTop[bank] )
         {
             rlTop[bank] = rlPC[bank];
+        }
+
+        if( !rlOverlayP )
+        {
+            checkWindows(bank, rlPC[bank], rlPC[bank]);
         }
 
         if( ++rlPC[bank] > BANKSIZE )
@@ -3462,6 +4140,7 @@ int order;
 PNodeP nodeP;
 RlSlot *slotP;
 BankContextP bankP;
+OverlayContextP ovP;
 
     for( i = 0; i < poolCount; ++i )
     {
@@ -3497,7 +4176,8 @@ BankContextP bankP;
     // the parser's tree had it.
     if( !(poolOrphansP = (int *)calloc((size_t)poolCount + 1, sizeof(int))) ||
         !(poolAnchoredP = (int *)calloc((size_t)poolCount + 1, sizeof(int))) ||
-        !(poolReclaimP = (int *)calloc((size_t)poolCount + 1, sizeof(int))) )
+        !(poolReclaimP = (int *)calloc((size_t)poolCount + 1, sizeof(int))) ||
+        !(poolOverlayP = (int *)calloc((size_t)poolCount + 1, sizeof(int))) )
     {
         fprintf(stderr, "am1: out of memory in relayout\n");
         exit(1);
@@ -3536,11 +4216,26 @@ BankContextP bankP;
         bankEndPool[bankP->bank] = rootPool(bankP->constSymP);
     }
 
+    for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        ovEndPoolP[ovP->number] = rootPool(ovP->ctx.constSymP);
+
+        if( ovEndPoolP[ovP->number] >= 0 )
+        {
+            poolOverlayP[ovEndPoolP[ovP->number]] = ovP->number;
+        }
+    }
+
     for( directiveCount = 0, nodeP = rlRootP->leftP; nodeP; nodeP = nodeP->leftP )
     {
         if( (nodeP->type == CONSTANTS) && nodeP->value.symP )
         {
             ++directiveCount;
+
+            if( nodeP->overlay && ((k = rootPool(nodeP->value.symP)) >= 0) )
+            {
+                poolOverlayP[k] = nodeP->overlay;
+            }
         }
     }
 
@@ -3854,10 +4549,13 @@ static RlReason
 rekeyWalk(int record)
 {
 int b;
+int ovRootBank;
+int ovRootSet;
 RlReason reason;
 PNodeP nodeP;
 PNodeListP varP;
 BankContextP bankP;
+OverlayContextP ovP;
 
     ++rlWalk;
     rlRecord = record;
@@ -3871,6 +4569,8 @@ BankContextP bankP;
     }
 
     b = 0;
+    ovRootBank = 0;
+    ovRootSet = -1;
 
     for( nodeP = rlRootP->leftP; nodeP; nodeP = nodeP->leftP )
     {
@@ -3887,6 +4587,32 @@ BankContextP bankP;
 
         case CONSTANTS:
             reason = bindSet(b, directivePool(nodeP));
+            break;
+
+        case OVERLAYDECL:
+            // A drum overlay pools its literals apart from the root, in its
+            // window's bank, as the parser's overlay context does.
+            ovP = (OverlayContextP)(nodeP->value.ptr);
+            ovRootBank = b;
+            b = ovP->ctx.bank;
+            ovRootSet = openSet[b];
+            openSet[b] = -1;
+            break;
+
+        case ENDOVERLAY:
+            ovP = (OverlayContextP)(nodeP->value.ptr);
+            reason = bindSet(b, ovEndPoolP[ovP->number]);
+            openSet[b] = ovRootSet;
+            b = ovRootBank;
+            break;
+
+        case OVTABLE:
+            // The parser makes ovTable here unless a reference made it first.
+            if( ovTableSymP )
+            {
+                mentionSym(ovTableSymP);
+                defineSym(ovTableSymP);
+            }
             break;
 
         case VARS:
@@ -4834,7 +5560,12 @@ RlSlot *slotP;
 
     rlReclaim = 1;
 
-    if( ((reason = settle()) == RLR_ACCEPTED) && ((reason = checkHazards()) == RLR_ACCEPTED) )
+    if( ((reason = settle()) == RLR_ACCEPTED) && rootMoved() )
+    {
+        reason = RLR_ROOT;      // as for an edit, in a drum overlay's view
+    }
+
+    if( (reason == RLR_ACCEPTED) && ((reason = checkHazards()) == RLR_ACCEPTED) )
     {
         reason = checkTable(&dupCount);
     }
@@ -4875,6 +5606,7 @@ setRoot(int pool, SymNodeP rootP, int *changedP)
 {
 int i;
 BankContextP bankP;
+OverlayContextP ovP;
 
     if( poolListsPP[pool]->symP == rootP )
     {
@@ -4901,18 +5633,32 @@ BankContextP bankP;
             return;
         }
     }
+
+    for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        if( ovEndPoolP[ovP->number] == pool )
+        {
+            ovP->ctx.constSymP = rootP;
+            return;
+        }
+    }
 }
 
-// Count, per bank, what the pools now hold that the program did not, and what
-// they no longer hold.  Returns the number of new slots; *droppedP gets the
-// slots gone.
+// Count, per bank, what the view's own pools now hold that the program did
+// not, and what they no longer hold: the root's in the root's view, the drum
+// overlay's in its own.  Every other pool is left out: the view's word table
+// does not hold it, and an overlay literal naming a root word that moved
+// changes its key.  Returns the number of new slots; *droppedP gets the slots
+// gone.
 static int
 poolChanges(int *grownP, int *droppedP)
 {
 int i;
 int splits;
+int segment;
 RlExtraP extraP;
 
+    segment = (rlTableP->viewOvP)?rlTableP->viewOvP->number:0;
     splits = 0;
     *droppedP = 0;
 
@@ -4923,7 +5669,7 @@ RlExtraP extraP;
 
     for( extraP = extrasP; extraP; extraP = extraP->nextP )
     {
-        if( extraP->live )
+        if( extraP->live && (poolOverlayP[extraP->pool] == segment) )
         {
             ++splits;
 
@@ -4936,7 +5682,7 @@ RlExtraP extraP;
 
     for( i = 0; i < slotCount; ++i )
     {
-        if( !slotsP[i].live )
+        if( !slotsP[i].live && (poolOverlayP[slotsP[i].pool] == segment) )
         {
             ++*droppedP;
         }
@@ -5640,6 +6386,7 @@ PNodeP nodeP;
 SymListP listP;
 BankContextP bankP;
 PNodeListP varP;
+OverlayContextP ovP;
 
     sum = 0xCBF29CE484222325UL;
 
@@ -5687,6 +6434,23 @@ PNodeListP varP;
         {
             mix(&sum, varP->nodeP->value.symP->value);
         }
+    }
+
+    for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        mix(&sum, ovP->ctx.cur_pc);
+        mix(&sum, ovP->ctx.constPC);
+        mix(&sum, ovP->ctx.varPC);
+
+        for( varP = ovP->ctx.varNodesP; varP; varP = varP->nextP )
+        {
+            mix(&sum, varP->nodeP->value.symP->value);
+        }
+    }
+
+    if( ovTableSymP )
+    {
+        mix(&sum, ovTableSymP->value);
     }
 
     mix(&sum, rlRootP->pc);
@@ -5776,6 +6540,7 @@ int deleted[MAXBANK + 1];
 int bank;
 PNodeP nodeP;
 OptWordP entryP;
+OverlayContextP ovP;
 OptXformP recP;
 RlEdit *editP;
 RlExtraP extraP;
@@ -5827,6 +6592,12 @@ RlKeyP keyP;
             fprintf(fP, "segment: bank %d from %04o %s line %d\n", bank, (nodeP->value2.ival & ADDRMASK),
                 (started[bank])?"resume":"start", nodeP->lineNo);
             started[bank] = 1;
+        }
+        else if( nodeP->type == OVERLAYDECL )
+        {
+            ovP = (OverlayContextP)(nodeP->value.ptr);
+            fprintf(fP, "segment: bank %d from %04o overlay %s line %d, to %04o\n", ovP->windowP->bank,
+                (ovP->windowP->first & ADDRMASK), ovP->nameP, nodeP->lineNo, (ovP->ctx.cur_pc & ADDRMASK));
         }
     }
 

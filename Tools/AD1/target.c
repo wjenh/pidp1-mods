@@ -1,6 +1,4 @@
 // What ad1 talks to, the emulator over the debugger link, or in test mode a local image.
-//
-// 20-Sep-2026 Claude: written to replace direct access to the emulator's shared memory.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +9,7 @@
 static bool isLocal;
 static bool isDead;                 // the link is gone and the program is on its way out
 static bool linkIsOpen;
+static bool hasConds;               // the emulator takes conditions; test mode always does
 static Ad1Link lnk;
 
 // The test-mode image. There is no processor, so run control only records what was asked for.
@@ -25,6 +24,8 @@ static struct
     uint32_t single;
     Ad1BpEntry bp[AD1P_NUM_BREAKPOINTS];
     Ad1WatchEntry watch[AD1P_NUM_WATCHES];
+    Ad1Cond bpCond[AD1P_NUM_BREAKPOINTS];
+    Ad1Cond watchCond[AD1P_NUM_WATCHES];
 } local;
 
 // A lost connection ends the program. Anything else is the caller's to handle.
@@ -47,12 +48,19 @@ check(int status)
 int
 tgtOpen(const char *hostSpec)
 {
+Ad1Cond brk[AD1P_NUM_BREAKPOINTS];
+Ad1Cond watch[AD1P_NUM_WATCHES];
+
     if( ad1LinkOpen(&lnk, hostSpec, 0, "ad1") != 0 )
     {
         return( -1 );
     }
 
     linkIsOpen = true;
+
+    // An emulator from before conditions answers BAD_REQUEST, and ad1 does without them.
+    hasConds = (check(ad1CondList(&lnk, brk, AD1P_NUM_BREAKPOINTS, watch, AD1P_NUM_WATCHES)) ==
+        AD1P_ST_OK);
     return( 0 );
 }
 
@@ -60,8 +68,15 @@ void
 tgtOpenLocal(void)
 {
     isLocal = true;
+    hasConds = true;
     memset(&local, 0, sizeof(local));
     local.pf = 0;
+}
+
+bool
+tgtHasConds(void)
+{
+    return( hasConds );
 }
 
 uint32_t *
@@ -412,6 +427,7 @@ int i;
                 local.bp[i].address = (address & 0177777);
                 local.bp[i].count = count;
                 local.bp[i].curCount = 0;
+                memset(&local.bpCond[i], 0, sizeof(local.bpCond[0]));
                 *numberP = (uint32_t)(i + 1);
                 return( AD1P_ST_OK );
             }
@@ -441,6 +457,7 @@ tgtBpDelete(uint32_t number)
         if( number == 0 )
         {
             memset(local.bp, 0, sizeof(local.bp));
+            memset(local.bpCond, 0, sizeof(local.bpCond));
             return( AD1P_ST_OK );
         }
 
@@ -450,6 +467,7 @@ tgtBpDelete(uint32_t number)
         }
 
         memset(&local.bp[number - 1], 0, sizeof(local.bp[0]));
+        memset(&local.bpCond[number - 1], 0, sizeof(local.bpCond[0]));
         return( AD1P_ST_OK );
     }
 
@@ -563,6 +581,7 @@ int i;
                 local.watch[i].onAnyChange = onAnyChange ? 1 : 0;
                 local.watch[i].value = onAnyChange ? 0 : value;
                 local.watch[i].lastValue = local.core[local.watch[i].address];
+                memset(&local.watchCond[i], 0, sizeof(local.watchCond[0]));
                 *numberP = (uint32_t)(i + 1);
                 return( AD1P_ST_OK );
             }
@@ -592,6 +611,7 @@ tgtWatchDelete(uint32_t number)
         if( number == 0 )
         {
             memset(local.watch, 0, sizeof(local.watch));
+            memset(local.watchCond, 0, sizeof(local.watchCond));
             return( AD1P_ST_OK );
         }
 
@@ -601,6 +621,7 @@ tgtWatchDelete(uint32_t number)
         }
 
         memset(&local.watch[number - 1], 0, sizeof(local.watch[0]));
+        memset(&local.watchCond[number - 1], 0, sizeof(local.watchCond[0]));
         return( AD1P_ST_OK );
     }
 
@@ -680,6 +701,83 @@ uint32_t n;
     }
 
     return( check(ad1WatchList(&lnk, entriesP, AD1P_NUM_WATCHES, &n)) );
+}
+
+// A condition as the server keeps it: the address to 16 bits, the value under the mask.
+static void
+localCond(Ad1Cond *toP, const Ad1Cond *fromP)
+{
+    toP->isSet = 1;
+    toP->address = (fromP->address & 0177777);
+    toP->mask = (fromP->mask & 0777777);
+    toP->value = (fromP->value & toP->mask);
+}
+
+int
+tgtBpSetCond(uint32_t address, uint32_t count, const Ad1Cond *condP, uint32_t *numberP)
+{
+int status;
+
+    if( isLocal )
+    {
+        if( (status = tgtBpSet(address, count, numberP)) == AD1P_ST_OK )
+        {
+            localCond(&local.bpCond[*numberP - 1], condP);
+        }
+
+        return( status );
+    }
+
+    if( IS_GONE() || !hasConds )
+    {
+        return( AD1P_ST_BAD_STATE );
+    }
+
+    return( check(ad1BpSetCond(&lnk, address, count, condP, numberP)) );
+}
+
+int
+tgtWatchSetCond(uint32_t address, bool onAnyChange, uint32_t value, const Ad1Cond *condP,
+    uint32_t *numberP)
+{
+int status;
+
+    if( isLocal )
+    {
+        if( (status = tgtWatchSet(address, onAnyChange, value, numberP)) == AD1P_ST_OK )
+        {
+            localCond(&local.watchCond[*numberP - 1], condP);
+        }
+
+        return( status );
+    }
+
+    if( IS_GONE() || !hasConds )
+    {
+        return( AD1P_ST_BAD_STATE );
+    }
+
+    return( check(ad1WatchSetCond(&lnk, address, onAnyChange, value, condP, numberP)) );
+}
+
+int
+tgtCondList(Ad1Cond *brkP, Ad1Cond *watchP)
+{
+    memset(brkP, 0, AD1P_NUM_BREAKPOINTS * sizeof(*brkP));
+    memset(watchP, 0, AD1P_NUM_WATCHES * sizeof(*watchP));
+    if( isLocal )
+    {
+        memcpy(brkP, local.bpCond, sizeof(local.bpCond));
+        memcpy(watchP, local.watchCond, sizeof(local.watchCond));
+        return( AD1P_ST_OK );
+    }
+
+    if( IS_GONE() || !hasConds )
+    {
+        return( AD1P_ST_BAD_STATE );
+    }
+
+    return( check(ad1CondList(&lnk, brkP, AD1P_NUM_BREAKPOINTS, watchP, AD1P_NUM_WATCHES)) );
 }
 
 int

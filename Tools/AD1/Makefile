@@ -1,10 +1,10 @@
-CC=gcc -O3 -Wno-unused-result -I../../src/blincolnlights/pdp1
+CC=gcc -O3 -Wall -Wextra -Wno-unused-result -I../../src/blincolnlights/pdp1
 #CC=gcc -g
 BISONFLAGS=
 #CONFLICTS=-Wcounterexamples
 
 OBJS=ad1.o helpText.o eval.o lex.yy.o y.tab.o listFile.o files.o commands.o \
-	flexToAscii.o loader.o ad1link.o target.o ../Disassembler/decode_instruction.o
+	flexToAscii.o loader.o ad1link.o target.o overlays.o ../Disassembler/decode_instruction.o
 
 .PHONY: all clean install
 .DELETE_ON_ERROR:
@@ -50,6 +50,9 @@ target.o: target.c target.h ad1link.h ad1proto.h
 
 flexToAscii.o: flexToAscii.c
 	$(CC) -c flexToAscii.c
+
+overlays.o: overlays.c ad1.h target.h ad1link.h
+	$(CC) -c overlays.c
 
 ../Disassembler/decode_instruction.o: ../Disassembler/decode_instruction.c
 	(cd ../Disassembler ; make decode_instruction.o)

@@ -1,0 +1,6 @@
+f9_bank1: every word in bank 1
+bank 1
+100/
+go,     hlt
+        jmp go
+        start go

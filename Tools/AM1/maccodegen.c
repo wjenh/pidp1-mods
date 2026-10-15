@@ -19,6 +19,7 @@ extern BankContextP banksP;
 extern bool doWarn(int warnNo);
 extern int evalExpr(PNodeP);
 extern int onesComplAdj(int);
+extern Word *ovTableWordsP;
 
 static void emitStatements(FILE *, PNodeP);
 static void emitOperand(FILE *, PNodeP);
@@ -26,6 +27,7 @@ static void emitAscii(FILE *outfP, char *strP);
 static void emitText(FILE *outfP, FlexText flexText);
 static void emitVars(FILE *outfP, PNodeListP listP);
 static int emitConstants(FILE *outfP, SymNodeP nodeP);
+static void emitOverlayDirective(FILE *outfP, PNodeP nodeP);
 
 extern void verror(char *msgP, ...);
 
@@ -269,6 +271,14 @@ char str[128];
                 cP = (node2P->type == NAME)?node2P->value.strP:node2P->value.symP->name;
                 fprintf(outfP, "%s%s", cP, (node2P->leftP)?", ":"\n");
             }
+            break;
+
+        case OVERLAYDECL:
+        case ENDOVERLAY:
+        case OVTABLE:
+        case OVCALL:
+            emitOverlayDirective(outfP, nodeP);
+            noNl = true;
             break;
 
         case SEMI:
@@ -615,6 +625,79 @@ SymNodeP symP;
         fprintf(fP,"%s, %06o\n", symP->name, (nodeP->leftP)?evalExpr(nodeP->leftP):0);
 
         listP = listP->nextP;
+    }
+}
+
+// An overlay directive, annotated as a bank is: macro1 has no overlays, so the
+// result is not runnable.  An overlay is given an origin at its first word, and
+// the root another after it; an %%ovcall's words are emitted as they are.
+static void
+emitOverlayDirective(FILE *outfP, PNodeP nodeP)
+{
+int i;
+OverlayContextP ovP;
+PNodeP node2P;
+
+    switch( nodeP->type )
+    {
+    case OVERLAYDECL:
+        ovP = (OverlayContextP)(nodeP->value.ptr);
+        fprintf(outfP, "/ OVERLAY %s - following runs in window %s, bank %d, loaded from the drum\n",
+            ovP->nameP, ovP->windowP->nameP, ovP->windowP->bank);
+        fprintf(outfP, "%o/\n", ovP->windowP->first + OVHEADERWORDS);
+        break;
+
+    case ENDOVERLAY:
+        ovP = (OverlayContextP)(nodeP->value.ptr);
+
+        if( ovP->ctx.constSymP )
+        {
+            fprintf(outfP, "/ Constants for overlay %s\n", ovP->nameP);
+            emitConstants(outfP, ovP->ctx.constSymP);
+        }
+
+        if( ovP->ctx.varNodesP )
+        {
+            fprintf(outfP, "/ Vars for overlay %s\n", ovP->nameP);
+            emitVars(outfP, ovP->ctx.varNodesP);
+        }
+
+        fprintf(outfP, "/ END OVERLAY %s\n", ovP->nameP);
+
+        // The first root node after it has the root's pc.
+        for( node2P = nodeP->leftP; node2P && node2P->overlay; node2P = node2P->leftP )
+        {
+            ;
+        }
+
+        if( node2P )
+        {
+            fprintf(outfP, "%o/\n", node2P->pc);
+        }
+        break;
+
+    case OVTABLE:
+        fprintf(outfP, "/ Overlay descriptor table, ovTable\n");
+
+        for( i = 0; i < nodeP->value.ival; ++i )
+        {
+            fprintf(outfP, "    %o\n", ovTableWordsP[i]);
+        }
+        break;
+
+    case OVCALL:
+        fprintf(outfP, "/ %%%%ovcall %s, %s\n", nodeP->value.strP, nodeP->value2.strP);
+
+        for( node2P = nodeP->rightP; node2P; node2P = node2P->leftP )
+        {
+            fprintf(outfP, "    ");
+            emitOperand(outfP, node2P->rightP);
+            fprintf(outfP, "\n");
+        }
+        break;
+
+    default:
+        break;
     }
 }
 

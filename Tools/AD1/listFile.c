@@ -17,12 +17,14 @@ extern FileInfoP files[];
 MapEntryP getMapForFileNo(MapEntryP mapP, int fileNo);
 MapEntryP getLinesFromAddress(int addr);
 int getLineFromAddress(int addr, int fileno);
+int getLineOfSymbol(SymbolP symP);
 int getLineCount(int fileno);
 int getCurrentLineNumber(void);
 void setCurrentLineNumber(int lineNo);
 void printLines(MapEntryP linesP);
 bool printLine(int fileno, int line);
 bool printNextLine(void);
+static bool lineShown(MapEntryP entryP);
 
 extern bool isMemMapped(void);
 
@@ -58,9 +60,37 @@ MapEntryP entryP;
     }
 }
 
+// The line an overlay's symbol is defined on: its overlay's line at its address, whichever
+// overlay is in the window.  Sets the current file to the symbol's.  -1 if there is none.
+int
+getLineOfSymbol(SymbolP symP)
+{
+int bank;
+MapEntryP entryP;
+
+    bank = BANKOF(symP->address);
+    if( !isMemMapped() || (bank >= MEMBANKS) || !memMap[bank] )
+    {
+        return( -1 );
+    }
+
+    for( entryP = memMap[bank][ADDRESSOF(symP->address)]; entryP; entryP = entryP->nextP )
+    {
+        if( (entryP->fileNo == symP->fileNo) && (entryP->overlay == symP->overlay) )
+        {
+            curFileNo = entryP->fileNo;
+            return( entryP->lineNo );
+        }
+    }
+
+    return( -1 );
+}
+
 // If we have a mem->line map, get the line number.
 // If not, return -1.
 // Address is a full 16 bit address.
+// In a window, the lines are those of the overlay in it, or every overlay's if it holds none:
+// the first such entry is returned, and the walks below skip the others.
 MapEntryP
 getLinesFromAddress(int address)
 {
@@ -83,12 +113,24 @@ MapEntryP entryP;
             return( NIL );
         }
 
-        return( bankP[address] );
+        for( entryP = bankP[address]; entryP && !lineShown(entryP); entryP = entryP->nextP )
+        {
+            ;
+        }
+
+        return( entryP );
     }
     else
     {
         return( NIL );
     }
+}
+
+// Is this listing line shown, given which overlay its window holds?
+static bool
+lineShown(MapEntryP entryP)
+{
+    return( ovlLineShown(entryP->fileNo, entryP->overlay) );
 }
 
 // See if there is an entry in the map list that matches the given file number.
@@ -98,7 +140,7 @@ getMapForFileNo(MapEntryP mapP, int fileNo)
 {
     while( mapP )
     {
-        if( mapP->fileNo == fileNo )
+        if( (mapP->fileNo == fileNo) && lineShown(mapP) )
         {
             return( mapP );
         }
@@ -130,7 +172,7 @@ printLines(MapEntryP linesP)
 {
     while( linesP )
     {
-        if( linesP->fileNo == curFileNo )
+        if( (linesP->fileNo == curFileNo) && lineShown(linesP) )
         {
             printLine(linesP->fileNo, linesP->lineNo);
         }
@@ -163,7 +205,7 @@ char linebuf[1024];
     if( fgets(linebuf, sizeof(linebuf), infoP->fP) )
     {
         curLine = lineno;
-        // Lines from a .lst file aready have the line number text
+        // Lines from a .lst file already have the line number text
         // but they doesn't match the actual line numbers in the file, they're from the original file.
         // So, also show the line number in the listing file.
         printf("%-4d %s", lineno, linebuf);

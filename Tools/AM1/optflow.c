@@ -529,6 +529,13 @@ entryCause(OptTableP tableP, OptWordP entryP)
         return(OPTEN_START);
     }
 
+    // A drum overlay calls the root routines it names; no other overlay's
+    // words are in the table, so no edge shows the call.
+    if( entryP->flags & OPTF_OVREF )
+    {
+        return(OPTEN_OVERLAY);
+    }
+
     // A word whose address is used as a value may be reached by an indirect
     // jump or an xct this analysis cannot follow.
     if( entryP->flags & OPTF_TAKEN )
@@ -1918,6 +1925,9 @@ optEntryCauseName(OptEntryCause cause)
     case OPTEN_START:
         return("start");
 
+    case OPTEN_OVERLAY:
+        return("overlay");
+
     case OPTEN_TAKEN:
         return("taken");
 
@@ -2369,14 +2379,18 @@ OptEntryCause cause;
 void
 writeUnreachedList(FILE *fP, OptTableP tableP)
 {
+int i;
 int blocks;
+int words;
 OptBlockP blockP;
 
     blocks = 0;
 
+    // In a drum overlay's view only the overlay's blocks are listed: the
+    // root's were the root view's.
     for( blockP = tableP->blocksP; blockP; blockP = blockP->nextP )
     {
-        if( !blockP->reached && blockHasUnreachedWord(tableP, blockP) )
+        if( !blockP->reached && optInView(tableP, blockP->firstP) && blockHasUnreachedWord(tableP, blockP) )
         {
             ++blocks;
         }
@@ -2387,9 +2401,21 @@ OptBlockP blockP;
         return;
     }
 
+    words = tableP->unreachedWords;
+
+    if( tableP->viewOvP )
+    {
+        for( words = i = 0; i < tableP->count; ++i )
+        {
+            if( (tableP->entriesPP[i]->flags & OPTF_UNREACHED) && optInView(tableP, tableP->entriesPP[i]) )
+            {
+                ++words;
+            }
+        }
+    }
+
     fprintf(fP, "\nApparently unreached code: %d block%s, %d word%s\n",
-        blocks, (blocks == 1)?"":"s",
-        tableP->unreachedWords, (tableP->unreachedWords == 1)?"":"s");
+        blocks, (blocks == 1)?"":"s", words, (words == 1)?"":"s");
     fprintf(fP, "  A hint, not a proof.  A dispatch table of jmp words is read as data and\n");
     fprintf(fP, "  is never followed as a jump, so a routine only ever entered through one\n");
     fprintf(fP, "  appears here; so does anything reached only through a pointer that could\n");
@@ -2438,7 +2464,7 @@ OptBlockP blockP;
 
     for( blockP = tableP->blocksP; blockP; blockP = blockP->nextP )
     {
-        if( blockP->reached || !blockHasUnreachedWord(tableP, blockP) )
+        if( blockP->reached || !optInView(tableP, blockP->firstP) || !blockHasUnreachedWord(tableP, blockP) )
         {
             continue;
         }

@@ -32,9 +32,9 @@ load, rpb
     jmp loop
 done, ril 1s
     spi i
-    jmp i addr	/ start prog
-    hlt		/ nostart, just halt
-    jmp loop	/ and go again
+    jmp i addr  / start prog
+    hlt         / nostart, just halt
+    jmp loop    / and go again
 addr, 0
 end, 0
 start 7751

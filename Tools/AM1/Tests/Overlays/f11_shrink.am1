@@ -1,0 +1,34 @@
+f11_shrink: a deletion in an overlay relays the overlay alone
+bank 0
+100/
+ovEnter, jmp .
+go,     cla
+        %%ovcall ov1, ov1Go
+        %%ovcall ov1, ov1B
+        hlt
+%%optimize
+helper, cla
+        lac rootV
+%%endoptimize
+        hlt
+rootV,  5
+%%window w, 1000, 1777
+%%overlay ov1, w, persistent
+        export ov1Go
+        export ov1B
+ov1Go,  dap ov1X
+%%optimize
+        cla
+        lac ov1V
+%%endoptimize
+        dac ov1V
+        var cnt
+ov1B,   idx cnt
+        add [ov1V]
+        sza
+        jmp helper
+ov1X,   jmp .
+ov1V,   0
+%%endoverlay
+%%ovtable
+        start go

@@ -1,0 +1,69 @@
+f7_defines: overlay.ah's defines beside the table and headers am1 makes
+#include <DRUM/overlay.ah>
+%%drumreserve 0, 2
+bank 1
+%%window wa, 400, 437
+%%overlay one, wa
+        export oneGo
+oneGo,  hlt
+        123
+%%endoverlay
+%%overlay two, wa, persistent
+        export twoGo
+twoGo,  cla
+%%endoverlay
+bank 3
+%%window wb, 400, 417
+%%overlay three, wb
+        export threeGo
+threeGo, 7
+        lac [55]
+%%endoverlay
+bank 0
+100/
+go,     hlt
+%%ovtable
+#define F7TBL 0200
+#define F7HDR 0240
+F7TBL+OV_TBL_STAMP/
+        673226
+F7TBL+OV_TBL_WINDOWS/
+        0
+        0
+F7TBL+OV_TBL_WINDOWS+2+(0*OV_ENT_WORDS)+OV_ENT_DIA/
+        OV_DIA_READ | (1 << OV_TRACK_SHIFT) | (400 & OV_DIA_ADDR)
+F7TBL+OV_TBL_WINDOWS+2+(0*OV_ENT_WORDS)+OV_ENT_DWC/
+        4 & OV_DWC_LENGTH
+F7TBL+OV_TBL_WINDOWS+2+(0*OV_ENT_WORDS)+OV_ENT_DCL/
+        (1 << OV_BANK_SHIFT) | (400 & OV_DCL_ADDR)
+F7TBL+OV_TBL_WINDOWS+2+(0*OV_ENT_WORDS)+OV_ENT_RES/
+        ((ovTable + OV_TBL_WINDOWS + 0) & OV_RES_ADDR)
+F7TBL+OV_TBL_WINDOWS+2+(1*OV_ENT_WORDS)+OV_ENT_DIA/
+        OV_DIA_READ | (3 << OV_TRACK_SHIFT) | (400 & OV_DIA_ADDR)
+F7TBL+OV_TBL_WINDOWS+2+(1*OV_ENT_WORDS)+OV_ENT_DWC/
+        3 & OV_DWC_LENGTH
+F7TBL+OV_TBL_WINDOWS+2+(1*OV_ENT_WORDS)+OV_ENT_DCL/
+        (1 << OV_BANK_SHIFT) | (400 & OV_DCL_ADDR)
+F7TBL+OV_TBL_WINDOWS+2+(1*OV_ENT_WORDS)+OV_ENT_RES/
+        ((ovTable + OV_TBL_WINDOWS + 0) & OV_RES_ADDR) | OV_PERSIST
+F7TBL+OV_TBL_WINDOWS+2+(2*OV_ENT_WORDS)+OV_ENT_DIA/
+        OV_DIA_READ | (4 << OV_TRACK_SHIFT) | (400 & OV_DIA_ADDR)
+F7TBL+OV_TBL_WINDOWS+2+(2*OV_ENT_WORDS)+OV_ENT_DWC/
+        5 & OV_DWC_LENGTH
+F7TBL+OV_TBL_WINDOWS+2+(2*OV_ENT_WORDS)+OV_ENT_DCL/
+        (3 << OV_BANK_SHIFT) | (400 & OV_DCL_ADDR)
+F7TBL+OV_TBL_WINDOWS+2+(2*OV_ENT_WORDS)+OV_ENT_RES/
+        ((ovTable + OV_TBL_WINDOWS + 1) & OV_RES_ADDR)
+F7HDR+(0*OV_HDR_WORDS)+OV_HDR_STAMP/
+        673226
+F7HDR+(0*OV_HDR_WORDS)+OV_HDR_NUMBER/
+        1
+F7HDR+(1*OV_HDR_WORDS)+OV_HDR_STAMP/
+        673226
+F7HDR+(1*OV_HDR_WORDS)+OV_HDR_NUMBER/
+        2
+F7HDR+(2*OV_HDR_WORDS)+OV_HDR_STAMP/
+        673226
+F7HDR+(2*OV_HDR_WORDS)+OV_HDR_NUMBER/
+        3
+        start go

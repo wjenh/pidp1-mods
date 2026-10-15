@@ -15,7 +15,7 @@
  * 11-Mar-26 wje rework single-step logic, make sure to clear single_inst on exit
  * 12-Mar-26 wje minor change to show line numbers better, updated in-app help.
  * 13-Mar-26 wje minor change to catch sigint and sigquit and clean up
- * 16-Mar-26 wje major chage to add multiple source file support
+ * 16-Mar-26 wje major change to add multiple source file support
  * 17-Mar-26 wje align -0 processing with am1 and the PDP-1, add mod operator, add tape loading
  * 18-Mar-26 wje unify lexing of file name for file and load, fix typos in help text
  * 22-Mar-26 wje update to use new decodeInstr()
@@ -31,6 +31,16 @@
  *   increase max lines per file to 10K for line mapping array.
  * 2-Sep-26 wje clean up some of the exit handlers
  * 20-Sep-26 Claude - talk to the emulator over its TCP debugger link instead of shared memory
+ * 12-Oct-26 Claude - v2.1, drum overlays added
+ * 12-Oct-26 Claude - v2.2, closing files frees the whole listing map and clears the symbols
+ * 13-Oct-26 Claude - v2.3, break name@overlay fires only while that overlay is in its window
+ * 13-Oct-26 Claude - v2.4, the binding is a condition the emulator holds, when it takes them;
+ *                    watch name@overlay
+ *   (overlays.c, commands.c, parser.y, helpText.c)
+ * 13-Oct-26 Claude - v2.5, break and watch take "when word = value [mask m]", the emulator's
+ *   condition (lexer.l, parser.y, commands.c, helpText.c); a listed mask reads "mask m"
+ * 14-Oct-26 Claude - v2.6, various minor bugfixes, type corrections
+ * 14-Oct-26 wje production cleanup
 */
 #include <stdlib.h>
 #include <stdio.h>
@@ -63,7 +73,7 @@ char *symFileNameP;
 char *sourceFileNameP;
 
 // Names that start with the same character(s) can be selected by the order they are in below.
-// The first match with the gven significance matches.
+// The first match with the given significance matches.
 // For example, s will select step, se will select set.
 // The token names come from y.tab.h, defined in parser.y.
 Dispatch dispatchTable[] = {
@@ -92,7 +102,7 @@ Dispatch dispatchTable[] = {
     {"trace", 1, TRACE, traceHelp},
     {"window", 2, WINDOW, windowHelp},
     {"watch", 1, WATCH, watchHelp},
-    {0,0,0}
+    {0,0,0,0}
     };
 
 // This is a hack to add extra help topics easily
@@ -102,7 +112,7 @@ Dispatch extraHelpTable[] = {
     {"registers", 1, 0, registerHelp},
     {"addresses", 1, 0, addressHelp},
     {"multiplefiles", 1, 0, multifileHelp},
-    {0,0,0}
+    {0,0,0,0}
     };
 
 int memListCount;
@@ -285,8 +295,8 @@ char line[256];
         }
 
         // Whatever kills us, from the kill command to a lost network, the emulator should drop our
-        // breakpoints and watches. The exit command changes this to disable-only just before it
-        // closes.
+        // breakpoints and watches.
+        // The exit command changes this to disable-only just before it closes.
         tgtSetPolicy(AD1P_POLICY_DELETE_ALL);
     }
 
@@ -360,6 +370,10 @@ char line[256];
 
         fflush(stdout);
 
+        // What the last command read of the overlays in core may have changed since.
+        ovlForget();
+        ovlRefClear();
+
         if( line[0] == '\n' )
         {
             // empty line, means same as list with no arg.
@@ -371,6 +385,12 @@ char line[256];
         if( cP )
         {
             *cP = NUL;
+        }
+
+        // A trailing space lexes as a separator, which no command may end with.
+        for( cP = line + strlen(line); (cP > line) && isspace((unsigned char)cP[-1]); )
+        {
+            *--cP = NUL;
         }
 
         exitStatus = parseAndExecute(line);
@@ -601,7 +621,6 @@ void
 formatAndPrintTwo(int fmt1, int addr, int fmt2, int value)
 {
 bool flexShift;
-char *cP;
 
     // We don't want to mess up the flex shift state for the first output
     flexShift = flexShifted;
@@ -611,14 +630,14 @@ char *cP;
     formatAndPrintOne(fmt2, value);
 }
 
-// Check for a valid breakpoint nunber.
+// Check for a valid breakpoint number.
 // If ok, return true, else false.
 bool
 validateBreakpointNumber(int num)
 {
     if( (num < 1) || (num > AD1_NUM_BREAKPOINTS) )
     {
-        printf("A breakpont number must be between 1 and %d\n", AD1_NUM_BREAKPOINTS);
+        printf("A breakpoint number must be between 1 and %d\n", AD1_NUM_BREAKPOINTS);
         return( false );
     }
     
@@ -656,25 +675,63 @@ deleteAllBreakpoints()
     tgtBpDelete(0);
 }
 
+// A condition no binding accounts for, as " when aaaaaa = vvvvvv", the mask shown when it is not
+// the whole word, in the form break and watch take; nothing if there is none.
+static void
+printCond(const Ad1Cond *condP)
+{
+    if( condP->isSet )
+    {
+        if( condP->mask == 0777777 )
+        {
+            printf(" when %06o = %06o", condP->address, condP->value);
+        }
+        else
+        {
+            printf(" when %06o = %06o mask %06o", condP->address, condP->value, condP->mask);
+        }
+    }
+}
+
+// The emulator's conditions, all empty if it has none.
+static void
+getConds(Ad1Cond *bpCondsP, Ad1Cond *watchCondsP)
+{
+    if( !tgtHasConds() || (tgtCondList(bpCondsP, watchCondsP) != AD1P_ST_OK) )
+    {
+        memset(bpCondsP, 0, AD1_NUM_BREAKPOINTS * sizeof(Ad1Cond));
+        memset(watchCondsP, 0, AD1_NUM_WATCHES * sizeof(Ad1Cond));
+    }
+}
+
 void
 listBreaks()
 {
 int i;
 int nSet;
 Ad1BpEntry bps[AD1_NUM_BREAKPOINTS];
+Ad1Cond bpConds[AD1_NUM_BREAKPOINTS];
+Ad1Cond watchConds[AD1_NUM_WATCHES];
 
     nSet = 0;
     if( tgtBpList(bps) == AD1P_ST_OK )
     {
+        getConds(bpConds, watchConds);
         for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
         {
             if( bps[i].isSet )
             {
                 ++nSet;
                 printf("%d: ", bps[i].number);
-                formatAndPrintOne(SYMBOLIC, bps[i].address);
-                printf(" ,count %d ,currently %d,", bps[i].count, bps[i].curCount);
-                printf(" %s\n", (bps[i].isEnabled)?"enabled":"disabled");
+                if( !ovlPrintBinding((int)bps[i].number, bps[i].address, bps[i].isEnabled,
+                    (int)bps[i].count, (int)bps[i].curCount) )
+                {
+                    formatAndPrintOne(SYMBOLIC, bps[i].address);
+                    printf(" ,count %d ,currently %d,", bps[i].count, bps[i].curCount);
+                    printf(" %s", (bps[i].isEnabled)?"enabled":"disabled");
+                    printCond(&bpConds[i]);
+                    printf("\n");
+                }
             }
         }
     }
@@ -709,7 +766,7 @@ int bpno;
     return( bpno-1 );
 }
 
-// Check for a valid watch nunber.
+// Check for a valid watch number.
 // If ok, return true, else false.
 bool
 validateWatchNumber(int num)
@@ -735,18 +792,26 @@ listWatches()
 {
 int i;
 int nSet;
+char *ovNameP;
 Ad1WatchEntry watches[AD1_NUM_WATCHES];
+Ad1Cond bpConds[AD1_NUM_BREAKPOINTS];
+Ad1Cond watchConds[AD1_NUM_WATCHES];
 
     nSet = 0;
     if( tgtWatchList(watches) == AD1P_ST_OK )
     {
+        getConds(bpConds, watchConds);
         for( i = 0; i < AD1_NUM_WATCHES; ++i )
         {
             if( watches[i].isSet )
             {
                 ++nSet;
                 printf("%d: address ", watches[i].number);
-                formatAndPrintOne(SYMBOLIC, watches[i].address);
+                if( !ovlPrintWatchAddress((int)watches[i].number, watches[i].address) )
+                {
+                    formatAndPrintOne(SYMBOLIC, watches[i].address);
+                }
+
                 if( watches[i].onAnyChange )
                 {
                     printf(" any value");
@@ -755,7 +820,17 @@ Ad1WatchEntry watches[AD1_NUM_WATCHES];
                 {
                     printf(" value %06o", watches[i].value);
                 }
-                printf(" %s\n", (watches[i].isEnabled)?"enabled":"disabled");
+                printf(" %s", (watches[i].isEnabled)?"enabled":"disabled");
+                if( (ovNameP = ovlWatchOverlay((int)watches[i].number)) )
+                {
+                    printf(", bound to overlay %s", ovNameP);
+                }
+                else
+                {
+                    printCond(&watchConds[i]);
+                }
+
+                printf("\n");
             }
         }
     }
@@ -908,25 +983,86 @@ uint32_t state[AD1P_STATE_WORDS];
 
 // Print a breakpoint or watch hit the emulator reported, and tell it we have seen it so the
 // latch clears.
-static void
-reportHit(const Ad1Event *evP)
+// A hit only of breakpoints bound to an overlay that do not fire is not reported,
+// the emulator is continued unless a step ended on the hit which stops and says why.
+// A bound/ watch that cannot fire or the program in core not being its files is continued the same way.
+// Returns true if anything was printed.
+static bool
+reportHit(const Ad1Event *evP, bool stepped)
 {
 int number;
 int address;
 int word;
+int i;
+int nFired;
 char *cP;
+BoundHit bound;
+bool said;
 char line[256];
 
     if( (evP->type != AD1P_EVT_HIT_BREAK) && (evP->type != AD1P_EVT_HIT_WATCH) )
     {
-        return;
+        return( false );
     }
 
     number = (int)evP->words[0];
     address = (int)evP->words[1];
     word = (int)evP->words[2];      // what is in memory at the address now
 
-    printf("\n%s %d hit", (evP->type == AD1P_EVT_HIT_BREAK)?"Breakpoint":"Watch", number);
+    ovlForget();
+    if( (evP->type == AD1P_EVT_HIT_BREAK) && ovlBreakHit(number, address, &bound) )
+    {
+        nFired = 0;
+        for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
+        {
+            nFired += (bound.fires[i])?1:0;
+        }
+
+        if( nFired == 0 )
+        {
+            if( !stepped )
+            {
+                tgtAckHit(AD1P_HIT_BREAK);
+                tgtContinue();
+                return( bound.said );
+            }
+
+            printf("\nStep stopped at breakpoint %d (%s)", bound.unfired, bound.why);
+        }
+        else
+        {
+            printf("\nBreakpoint%s", (nFired > 1)?"s":"");
+            for( i = 0; i < AD1_NUM_BREAKPOINTS; ++i )
+            {
+                if( bound.fires[i] )
+                {
+                    printf(" %d", i + 1);
+                    if( --nFired > 0 )
+                    {
+                        printf(" and");
+                    }
+                }
+            }
+
+            printf(" hit");
+        }
+    }
+    else if( (evP->type == AD1P_EVT_HIT_WATCH) && !ovlWatchHit(number, &said) && !stepped )
+    {
+        tgtAckHit(AD1P_HIT_WATCH);
+        tgtContinue();
+        return( said );
+    }
+    else
+    {
+        printf("\n%s %d hit", (evP->type == AD1P_EVT_HIT_BREAK)?"Breakpoint":"Watch", number);
+    }
+
+    if( (cP = ovlResidentNameAt(address)) )
+    {
+        printf(" in overlay %s", cP);
+    }
+
     lastAddr = address;
     if( !printHitText(address) )
     {
@@ -936,9 +1072,11 @@ char line[256];
     }
 
     tgtAckHit((evP->type == AD1P_EVT_HIT_BREAK)?AD1P_HIT_BREAK:AD1P_HIT_WATCH);
+    return( true );
 }
 
-// Report every hit queued so far. Returns true if there were any.
+// Report every hit queued so far.
+// Returns true if anything was printed.
 static bool
 serviceEvents(void)
 {
@@ -948,14 +1086,19 @@ bool any;
     any = false;
     while( tgtNextEvent(&event) )
     {
-        reportHit(&event);
-        any = true;
+        if( reportHit(&event, stepEndedOnHit) )
+        {
+            any = true;
+        }
+
+        // The step's hit is the one latched when it ended, so it is this one.
+        stepEndedOnHit = false;
     }
 
     return( any );
 }
 
-// Print the source lines at a location, used to report breapoint and watchpoint hits.
+// Print the source lines at a location, used to report breakpoint and watchpoint hits.
 // Return true if the lines were printed, else false.
 bool
 printHitText(u32 address)
@@ -985,9 +1128,17 @@ FileInfoP infoP;
 void
 leave(int status, void *ignore)
 {
-    // The emulator drops the sticky single-step state itself when we disconnect. Exit preserves
-    // all the breakpoints but disables them, anything else deletes them.
-    tgtClose( (exitReason == EXIT)?AD1P_POLICY_DISABLE_ALL:AD1P_POLICY_DELETE_ALL );
+    (void)status;       // on_exit's signature
+    (void)ignore;
+
+    // The emulator drops the sticky single-step state itself when we disconnect.
+    // Exit preserves all the breakpoints but disables them, anything else deletes them.
+    if( exitReason == EXIT )
+    {
+        ovlBreaksLeft();
+    }
+
+    tgtClose((exitReason == EXIT)?AD1P_POLICY_DISABLE_ALL:AD1P_POLICY_DELETE_ALL );
     closeFiles();
 }
 
@@ -995,6 +1146,7 @@ leave(int status, void *ignore)
 void
 sigHandler(int signo)
 {
+    (void)signo;        // signal's signature
     _exit(1);
 }
 

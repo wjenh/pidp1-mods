@@ -12,7 +12,8 @@
 // SHIFT | concise to get uppercase
 #define SHIFT 0100
 
-static const char concise2ascii[] = {
+// short, not char: LCS and UCS are negative, and the Pi's char is unsigned.
+static const short concise2ascii[] = {
         ' ', '1', '2', '3', '4', '5', '6', '7',         // 00-07
         '8', '9', LF, NONE, NONE, NONE, NONE, NONE,     // 10-17
         '0', '/', 's', 't', 'u', 'v', 'w', 'x',         // 20-27
@@ -36,7 +37,7 @@ static const char concise2ascii[] = {
 // else the ascii char.
 // shiftP is updated with the current shift state, true is UCS, false is LCS.
 int
-flexToAscii(char fc, bool *shiftP)
+flexToAscii(int fc, bool *shiftP)
 {
 int ac;
     

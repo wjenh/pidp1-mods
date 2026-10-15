@@ -7,11 +7,11 @@ BISONFLAGS=
 LINKDIR=../AD1
 
 OBJS=am1.o permsyms.def.o symtab.o lex.yy.o y.tab.o parsefns.o eval.o \
-	maccodegen.o bincodegen.o listcodegen.o testcodegen.o listSymtab.o optimizer.o \
-	optdecode.o optrefs.o optflow.o optreturn.o optroutine.o optcallgraph.o \
-	optstrings.o optrules.o optreport.o optshare.o optregion.o opttransform.o \
-	optvalue.o optscratch.o optguess.o optspeed.o optrelayout.o optwindow.o \
-	srccodegen.o
+        maccodegen.o bincodegen.o listcodegen.o testcodegen.o listSymtab.o optimizer.o \
+        optdecode.o optrefs.o optflow.o optreturn.o optroutine.o optcallgraph.o \
+        optstrings.o optrules.o optreport.o optshare.o optregion.o opttransform.o \
+        optvalue.o optscratch.o optguess.o optspeed.o optrelayout.o optwindow.o \
+        srccodegen.o ovlcodegen.o
 
 # am1test is am1 built with AM1_TEST_SWITCHES defined, which also accepts the
 # -O= modifiers that exist to test the optimizer; wordtable_check.sh and
@@ -21,16 +21,17 @@ TESTOBJS=$(filter-out am1.o optimizer.o,$(OBJS)) am1-test.o optimizer-test.o
 
 all: am1 fastload
 
-am1:	$(OBJS)
+am1:    $(OBJS)
 	$(CC) -o am1 $^
 
 am1test: $(TESTOBJS)
 	$(CC) -o am1test $^
 
 # fastload uses ad1's debugger link client, compiled straight in so that no
-# object file is left in $(LINKDIR).
-fastload: fastload.c $(LINKDIR)/ad1link.c $(LINKDIR)/ad1link.h $(LINKDIR)/ad1proto.h
-	$(CC) -I$(LINKDIR) fastload.c $(LINKDIR)/ad1link.c -o fastload
+# object file is left in $(LINKDIR).  Its tape reader, tapeimage.c, is shared
+# with ovlload, which compiles it the same way from ../Ovlload.
+fastload: fastload.c tapeimage.c tapeimage.h $(LINKDIR)/ad1link.c $(LINKDIR)/ad1link.h $(LINKDIR)/ad1proto.h
+	$(CC) -I$(LINKDIR) fastload.c tapeimage.c $(LINKDIR)/ad1link.c -o fastload
 
 clean:
 	@rm -f *.o lex.yy.c y.tab.c y.tab.h permsyms.def.c am1 am1test fastload symtabgen cvtxldr \
@@ -146,6 +147,9 @@ srccodegen.o: srccodegen.c optimizer.h am1.h y.tab.h type340chars.h
 
 testcodegen.o: testcodegen.c am1.h y.tab.h
 	$(CC) -c testcodegen.c
+
+ovlcodegen.o: ovlcodegen.c am1.h symtab.h y.tab.h
+	$(CC) -c ovlcodegen.c
 
 listSymtab.o: listSymtab.c am1.h symtab.h y.tab.h
 	$(CC) -c listSymtab.c

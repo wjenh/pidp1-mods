@@ -1,0 +1,6 @@
+%%am1 overlay symtab file%%
+V1
+f6_files.am1
+010402 X oneGo 7 one
+010402 X twoGo 12 two
+030402 X threeGo 18 three

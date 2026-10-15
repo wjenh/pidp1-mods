@@ -1,0 +1,9 @@
+f9_table: a reserved table above the code, and an empty origin at the end
+2000/
+buf,
+        table 10
+100/
+go,     lac buf
+        hlt
+3000/
+        start go

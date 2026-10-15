@@ -24,8 +24,11 @@ bool openSourceFile(FileInfoP infoP);
 FileInfoP resolveFiles(char *nameP);
 bool loadFileMap(FileInfoP infoP);
 bool findRim(FileInfoP infoP, char *rsltP);
+FileInfoP getFileInfoP(int fileNo);
+static bool isEndOverlay(char *lineP);
 
 extern bool loadSymbols(FileInfoP infoP);
+extern void clearSymbols(void);
 
 // Have we mapped a file and is it still open?
 bool
@@ -92,6 +95,13 @@ FileInfoP infoP;
         }
 
         loadSymbols(infoP);
+
+        // Only a file in the table has a number of its own for its overlays.
+        if( getFileInfoP(infoP->fileNo) == infoP )
+        {
+            ovlLoad(infoP);
+        }
+
         return( infoP );
     }
     else
@@ -106,7 +116,7 @@ FileInfoP infoP;
 // filename.am1
 // filename.sym
 // filename.lst
-// Infer the ohter names from whatever is given.
+// Infer the other names from whatever is given.
 // Create a FileInfo and set the names in it.
 // The allocated names are set in the passed arguments if not null.
 // Returns the FileInfoP for all cases other than a nil or empty nameP, return nil in that case.
@@ -208,7 +218,7 @@ char symstr[1024];
 }
 
 // Try to open a source file, either a .lst or a .am1.
-// Return true if succesful, else false.
+// Return true if successful, else false.
 bool
 openSourceFile(FileInfoP infoP)
 {
@@ -274,13 +284,16 @@ MapEntryP entryP, nextP;;
 
     numFiles = 0;
     memMapped = false;
+    ovlClear();
+    clearSymbols();     // the next file is number 0 again, so no old symbol may stay
 
     for( i = 0; i < MEMBANKS; ++i )
     {
         if( (bankP = memMap[i]) )
         {
-            for( entryP  = *bankP++, j = 0; j < MEMSIZE; ++j )
+            for( j = 0; j < MEMSIZE; ++j )
             {
+                entryP = bankP[j];
                 while( entryP )
                 {
                     nextP = entryP->nextP;
@@ -295,17 +308,40 @@ MapEntryP entryP, nextP;;
     }
 }
 
+// Is this listing line the %%endoverlay directive: "lineno: address", then the directive?
+static bool
+isEndOverlay(char *lineP)
+{
+char *cP;
+
+    if( !(cP = strchr(lineP, ':')) )
+    {
+        return( false );
+    }
+
+    for( ++cP; (*cP == ' ') || ((*cP >= '0') && (*cP <= '7')); ++cP )
+    {
+        ;
+    }
+
+    return( !strncmp(cP, "%%endoverlay", 12) );
+}
+
 // Try to load line mappings from a source file.
 // If it's a .lst file, we can construct the memory->line mapping also.
 // Otherwise, all we have is the line number mapping.
 // Return true if something loaded, else false.
+// In a listing of a program with overlays, the lines from an overlay's heading,
+// "// Overlay NAME, number N, ...", to its %%endoverlay line are tagged with N.
 bool
 loadFileMap(FileInfoP infoP)
 {
-int i;
 int bank;
 int address;
 int numLines;
+int overlay;
+int number;
+int lineOverlay;
 bool fromLst;
 long offset;
 MapEntryP memP, newP;
@@ -322,6 +358,7 @@ char tmpbuf[1024];
     fromLst = (infoP->lstNameP)?true:false;
 
     // read through the file keeping track of the offset of the start of each line.
+    overlay = 0;
     for( numLines = 0; numLines < MAXLINES; )
     {
         offset = ftell(infoP->fP);
@@ -330,6 +367,20 @@ char tmpbuf[1024];
         if( !fgets(tmpbuf, sizeof(tmpbuf), infoP->fP) )
         {
             break;
+        }
+
+        if( fromLst && !strncmp(tmpbuf, "// Overlay ", 11) &&
+            (sscanf(tmpbuf, "// Overlay %*[^,], number %d,", &number) == 1) )
+        {
+            overlay = number;
+            continue;
+        }
+
+        // The %%endoverlay line is the overlay's own, the lines after it the root's.
+        lineOverlay = overlay;
+        if( overlay && isEndOverlay(tmpbuf) )
+        {
+            overlay = 0;
         }
 
         if( fromLst )
@@ -370,11 +421,12 @@ char tmpbuf[1024];
                     newP = (MapEntryP)calloc(1, sizeof(MapEntry));
                     newP->lineNo = numLines;
                     newP->fileNo = infoP->fileNo;
+                    newP->overlay = lineOverlay;
 
                     if( !bankP[address] )
                     {
                         // First one
-                        bankP[address] = newP;    // if muliple users of addr, take only the first
+                        bankP[address] = newP;    // if multiple users of addr, take only the first
                     }
                     else
                     {

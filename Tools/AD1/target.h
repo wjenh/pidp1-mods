@@ -62,6 +62,15 @@ int tgtWatchEnable(uint32_t number);
 int tgtWatchDisable(uint32_t number);
 int tgtWatchList(Ad1WatchEntry *entriesP);      // AD1P_NUM_WATCHES entries
 
+// Conditions: (word at address & mask) == value. tgtHasConds() says whether the emulator takes
+// them; one from before them does not, and the three calls return AD1P_ST_BAD_STATE there.
+// tgtCondList() fills AD1P_NUM_BREAKPOINTS and AD1P_NUM_WATCHES entries.
+bool tgtHasConds(void);
+int tgtBpSetCond(uint32_t address, uint32_t count, const Ad1Cond *condP, uint32_t *numberP);
+int tgtWatchSetCond(uint32_t address, bool onAnyChange, uint32_t value, const Ad1Cond *condP,
+    uint32_t *numberP);
+int tgtCondList(Ad1Cond *brkP, Ad1Cond *watchP);
+
 int tgtAckHit(uint32_t mask);
 int tgtSetPolicy(uint32_t policy);
 int tgtDisableAll(void);

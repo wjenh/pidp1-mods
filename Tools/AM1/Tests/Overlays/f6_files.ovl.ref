@@ -1,0 +1,9 @@
+%%am1 overlay file%%
+V1
+f6_files.am1 stamp 673226 table 000101
+overlay one window wa bank 1 first 400 last 437 track 1 length 4 mode ro
+673226 000001 760400 000123
+overlay two window wa bank 1 first 400 last 437 track 3 length 3 mode rw
+673226 000002 760200
+overlay three window wb bank 3 first 400 last 417 track 4 length 5 mode ro
+673226 000003 000007 200404 000055

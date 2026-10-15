@@ -28,7 +28,8 @@ static char commentBuf[MAXCCOMMENT];
 
 extern int lineno;
 extern char *filenameP;
-extern int optRegionTokenLine;      // the line and file of the optimizer directive
+extern char *rawTitleP;             // the source's title as written, NIL when cpp did not run
+extern int optRegionTokenLine;     // the line and file of the optimizer directive
 extern char *optRegionTokenFileP;   // just scanned, for the parser's messages
 extern int labelTokenLine;          // the line the comma just scanned is on
 extern int nameTokenLine;           // the line the NAME or ADDR just scanned is on
@@ -36,6 +37,9 @@ extern int nameTokenSrcLine;        // and the line it is written on: after a ';
                                     // is already one ahead
 extern SymNodeP permSymP;
 extern BankContextP curBankP;
+extern int curBank;
+extern OverlayContextP curOverlayP;         // the open overlay, NILP in the root
+extern BankContextP findBank(int bank);
 
 int countNLs(char *strP);
 SymNodeP resolveLocalSymbol(char *nameP);
@@ -62,20 +66,25 @@ static int directiveToken(int token);
 %s BODY
 %x FIRST DOASCII DOTEXT CONST CCOMMENT T340STR
 
-DIREND		[^A-Za-z0-9_ \t]
-DIRENDFL	[^A-Za-z0-9_]
+DIREND      [^A-Za-z0-9_ \t]
+DIRENDFL        [^A-Za-z0-9_]
 
 %%
 
-<FIRST>^[^#].*$		{
+<FIRST>^[^#].*$         {
+                    char *titleP;
+
                         BEGIN BODY;
                         lineno = 1;    // always our first line
-                        yylval.strP = malloc(strlen(yytext) + 1);
-                        strcpy(yylval.strP, yytext);
+                        // cpp expands macro names in the title as in any line, so take
+                        // the source's own when there is one
+                        titleP = (rawTitleP)?rawTitleP:yytext;
+                        yylval.strP = malloc(strlen(titleP) + 1);
+                        strcpy(yylval.strP, titleP);
                         return(HEADER);
                     }
 
-^[ \t]*"/*"		    {
+^[ \t]*"/*"         {
                         BEGIN(CCOMMENT);
                         strcpy(commentBuf, yytext);
                         commentP = commentBuf + strlen(commentBuf);
@@ -84,7 +93,7 @@ DIRENDFL	[^A-Za-z0-9_]
                         return(CSSTART);
                     }
 
-<CCOMMENT>"*/"		{
+<CCOMMENT>"*/"          {
                         BEGIN BODY;
                         *commentP = '\0';
                         yylval.strP = malloc(commentP - commentBuf + 1);
@@ -94,7 +103,7 @@ DIRENDFL	[^A-Za-z0-9_]
                         return(CSCOMMENT);
                     }
 
-<CCOMMENT>\n	    {
+<CCOMMENT>\n        {
                         ++lineno;
 
                         if( commentP >= &commentBuf[MAXCCOMMENT] )
@@ -105,7 +114,7 @@ DIRENDFL	[^A-Za-z0-9_]
                         *commentP++ = yytext[0];
                     }
 
-<CCOMMENT>[^*\n]*	{
+<CCOMMENT>[^*\n]*       {
                     int len;
 
                         len = strlen(yytext);
@@ -118,7 +127,7 @@ DIRENDFL	[^A-Za-z0-9_]
                         commentP += len;
                     }
 
-<CCOMMENT>"*"+[^*/\n]*	{
+<CCOMMENT>"*"+[^*/\n]*  {
                     int len;
 
                         len = strlen(yytext);
@@ -131,11 +140,11 @@ DIRENDFL	[^A-Za-z0-9_]
                         commentP += len;
                     }
 
-<CCOMMENT><<EOF>>	{
+<CCOMMENT><<EOF>>       {
                         verror("unterminated C-style comment, missing */", yytext);
                     }
 
-[ \t]*"//".*\n	    {
+[ \t]*"//".*\n      {
                     char *cP;
 
                         cP = strchr(yytext, '/') + 2;
@@ -171,65 +180,77 @@ DIRENDFL	[^A-Za-z0-9_]
                        %%inline.  Blanks after a directive are taken by a second
                        pattern with the same action, since trailing context cannot
                        overlap them. */
-[ \t]*%%forcelocal/{DIRENDFL}	{ return(FORCELOC); }
+[ \t]*%%forcelocal/{DIRENDFL}   { return(FORCELOC); }
 
-loc(al)?[ \t]*		{ return(LOCAL); }
-addloc(al)?[ \t]*	{ return(ADDLOCAL); }
-priv(ate)?[ \t]*	{ return(PRIVATE); }
-endloc(al)?[ \t]*	{ return(ENDLOC); }
+loc(al)?[ \t]*          { return(LOCAL); }
+addloc(al)?[ \t]*   { return(ADDLOCAL); }
+priv(ate)?[ \t]*        { return(PRIVATE); }
+endloc(al)?[ \t]*       { return(ENDLOC); }
 
-var[ \t]*	    	{ return(VAR); }
-table[ \t]*	    	{ return(TABLE); }
-bank[ \t]*	    	{ return(BANK); }
-thisbank[ \t]*  	{ return(THISBANK); }
+var[ \t]*           { return(VAR); }
+table[ \t]*         { return(TABLE); }
+bank[ \t]*          { return(BANK); }
+thisbank[ \t]*      { return(THISBANK); }
 
                     /* The optimizer directives.  Each records its own line and
                        file through directiveToken() for the parser's errors:
                        lineno may already count the terminator at reduction time,
                        and reset_line() overwrites filenameP's buffer. */
-[ \t]*%%ceiling[ \t]+			{ return(directiveToken(CEILINGDECL)); }
-[ \t]*%%ceiling/{DIREND}		{ return(directiveToken(CEILINGDECL)); }
-[ \t]*%%endspeed[ \t]+			{ return(directiveToken(ENDSPEED)); }
-[ \t]*%%endspeed/{DIREND}		{ return(directiveToken(ENDSPEED)); }
-[ \t]*%%speed[ \t]+			{ return(directiveToken(SPEED)); }
-[ \t]*%%speed/{DIREND}			{ return(directiveToken(SPEED)); }
-[ \t]*%%inline[ \t]+			{ return(directiveToken(INLINEDECL)); }
-[ \t]*%%inline/{DIREND}			{ return(directiveToken(INLINEDECL)); }
-[ \t]*%%endnooptimize[ \t]+		{ return(directiveToken(ENDNOOPTIMIZE)); }
-[ \t]*%%endnooptimize/{DIREND}		{ return(directiveToken(ENDNOOPTIMIZE)); }
-[ \t]*%%nooptimize[ \t]+		{ return(directiveToken(NOOPTIMIZE)); }
-[ \t]*%%nooptimize/{DIREND}		{ return(directiveToken(NOOPTIMIZE)); }
-[ \t]*%%endoptimize[ \t]+		{ return(directiveToken(ENDOPTIMIZE)); }
-[ \t]*%%endoptimize/{DIREND}		{ return(directiveToken(ENDOPTIMIZE)); }
-[ \t]*%%optimize[ \t]+			{ return(directiveToken(OPTIMIZE)); }
-[ \t]*%%optimize/{DIREND}		{ return(directiveToken(OPTIMIZE)); }
+[ \t]*%%ceiling[ \t]+                   { return(directiveToken(CEILINGDECL)); }
+[ \t]*%%ceiling/{DIREND}                { return(directiveToken(CEILINGDECL)); }
+[ \t]*%%endspeed[ \t]+                  { return(directiveToken(ENDSPEED)); }
+[ \t]*%%endspeed/{DIREND}               { return(directiveToken(ENDSPEED)); }
+[ \t]*%%speed[ \t]+                     { return(directiveToken(SPEED)); }
+[ \t]*%%speed/{DIREND}                  { return(directiveToken(SPEED)); }
+[ \t]*%%inline[ \t]+                    { return(directiveToken(INLINEDECL)); }
+[ \t]*%%inline/{DIREND}                 { return(directiveToken(INLINEDECL)); }
+[ \t]*%%endnooptimize[ \t]+             { return(directiveToken(ENDNOOPTIMIZE)); }
+[ \t]*%%endnooptimize/{DIREND}          { return(directiveToken(ENDNOOPTIMIZE)); }
+[ \t]*%%nooptimize[ \t]+                { return(directiveToken(NOOPTIMIZE)); }
+[ \t]*%%nooptimize/{DIREND}             { return(directiveToken(NOOPTIMIZE)); }
+[ \t]*%%endoptimize[ \t]+               { return(directiveToken(ENDOPTIMIZE)); }
+[ \t]*%%endoptimize/{DIREND}            { return(directiveToken(ENDOPTIMIZE)); }
+[ \t]*%%optimize[ \t]+                  { return(directiveToken(OPTIMIZE)); }
+[ \t]*%%optimize/{DIREND}               { return(directiveToken(OPTIMIZE)); }
+[ \t]*%%drumreserve[ \t]+               { return(directiveToken(DRUMRESERVE)); }
+[ \t]*%%drumreserve/{DIREND}            { return(directiveToken(DRUMRESERVE)); }
+[ \t]*%%window[ \t]+                    { return(directiveToken(WINDOWDECL)); }
+[ \t]*%%window/{DIREND}                 { return(directiveToken(WINDOWDECL)); }
+[ \t]*%%endoverlay[ \t]+                { return(directiveToken(ENDOVERLAY)); }
+[ \t]*%%endoverlay/{DIREND}             { return(directiveToken(ENDOVERLAY)); }
+[ \t]*%%overlay[ \t]+                   { return(directiveToken(OVERLAYDECL)); }
+[ \t]*%%overlay/{DIREND}                { return(directiveToken(OVERLAYDECL)); }
+[ \t]*%%ovcall[ \t]+                    { return(directiveToken(OVCALL)); }
+[ \t]*%%ovcall/{DIREND}         { return(directiveToken(OVCALL)); }
+[ \t]*%%ovtable[ \t]+                   { return(directiveToken(OVTABLE)); }
+[ \t]*%%ovtable/{DIREND}                { return(directiveToken(OVTABLE)); }
 
                     /* %% and a name that is no directive is an error that names
                        it.  This rule must stay below every directive pattern:
                        at the end of a line a directive matches the same length
                        here, and flex breaks the tie by rule order. */
-[ \t]*%%[a-zA-Z_][a-zA-Z0-9_]*	{
+[ \t]*%%[a-zA-Z_][a-zA-Z0-9_]*  {
                         verror("%s is not an am1 directive", strchr(yytext, '%'));
                         return(BAD);
                     }
 
-\:		        	{ return(BREF); }
-^[ \t]*start[ \t]*	{ return(START); }
-^[ \t]*stop[ \t]*	{ return(STOP); }
-^[ \t]*constants[ \t]*	{ return(CONSTANTS); }
-^[ \t]*variables[ \t]*	{ return(VARS); }
-^[ \t]*import[ \t]*	{ return(IMPORT); }
-^[ \t]*export[ \t]*	{ return(EXPORT); }
+\:                  { return(BREF); }
+^[ \t]*start[ \t]*      { return(START); }
+^[ \t]*stop[ \t]*       { return(STOP); }
+^[ \t]*constants[ \t]*  { return(CONSTANTS); }
+^[ \t]*variables[ \t]*  { return(VARS); }
+^[ \t]*import[ \t]*     { return(IMPORT); }
+^[ \t]*export[ \t]*     { return(EXPORT); }
 
-ascii[ \t]+ 		{ return(ASCII); }
-text[ \t]+  		{ BEGIN DOTEXT; }
+ascii[ \t]+             { return(ASCII); }
+text[ \t]+              { BEGIN DOTEXT; }
 
-type340[ \t]+		{
+type340[ \t]+           {
                         BEGIN T340STR;
                         return(TYPE340);
                     }
 
-flexo[ \t][^\n;]{1,3}	{
+flexo[ \t][^\n;]{1,3}   {
                     int i, ch, shift, nshifts, nchars;
                     char *cP;
                     int rslt;
@@ -249,7 +270,7 @@ flexo[ \t][^\n;]{1,3}	{
                         nchars = strlen(cP);
                         for( nshifts = shift = i = rslt = 0; i < nchars; ++i )
                         {
-                            if( *cP == '\\' )		// special directive, red, black, newline
+                            if( *cP == '\\' )           // special directive, red, black, newline
                             {
                                 ++cP;
                                 ++i;
@@ -324,7 +345,7 @@ flexo[ \t][^\n;]{1,3}	{
                         return(FLEXO);
                     }
 
-char[ \t]+.[lmr]	{
+char[ \t]+.[lmr]        {
                     int rslt;
                     int shift;
                     char *cP;
@@ -372,16 +393,16 @@ char[ \t]+.[lmr]	{
                         return(CHAR);
                     }
 
-decimal		    	{ decimalMode = true; }
-octal		    	{ decimalMode = false; }
+decimal                 { decimalMode = true; }
+octal                   { decimalMode = false; }
 
-[ ]*\&[ ]*	    	{ return(AND); }
-[ ]*\|[ ]*	    	{ return(OR); }
-[ ]*\^[ ]*	    	{ return(XOR); }
-[ ]*\~[ ]*	    	{ return(CMPL); }
-[ ]*\+[ ]*	    	{ return(PLUS); }
-[ ]*\-[ ]*	    	{ return(MINUS); }
-\/[ \t]+	    	{
+[ ]*\&[ ]*              { return(AND); }
+[ ]*\|[ ]*              { return(OR); }
+[ ]*\^[ ]*              { return(XOR); }
+[ ]*\~[ ]*              { return(CMPL); }
+[ ]*\+[ ]*              { return(PLUS); }
+[ ]*\-[ ]*              { return(MINUS); }
+\/[ \t]+                {
                         // A slash with no blank before it and a blank after it, at the
                         // end of the first expression of a statement, is an origin and
                         // the rest of the line is the next statement.
@@ -396,28 +417,28 @@ octal		    	{ decimalMode = false; }
                         return(DIV);
                     }
 
-[ ]*\/[ ]*	    	{ return(DIV); }
-[ ]*\*[ ]*	    	{ return(MUL); }
-[ ]*%[ ]*	    	{ return(MOD); }
-[ ]*<<[ ]*	    	{ return(LSHIFT); }
-[ ]*>>[ ]*	    	{ return(RSHIFT); }
-\.		       	    { return(DOT); }
+[ ]*\/[ ]*              { return(DIV); }
+[ ]*\*[ ]*              { return(MUL); }
+[ ]*%[ ]*               { return(MOD); }
+[ ]*<<[ ]*          { return(LSHIFT); }
+[ ]*>>[ ]*          { return(RSHIFT); }
+\.                  { return(DOT); }
                     /* A label's line is recorded here: by the time the label rule
                        reduces, lineno may already count the TERMINATOR.  Only the
                        label rules read it. */
-\,[ \t]*	    	{ labelTokenLine = lineno; return(LOCATION); }
+\,[ \t]*                { labelTokenLine = lineno; return(LOCATION); }
 
 \[                  {
                         inConstant = true;
                         return(CONSTANT);
                     }
 
-\]		    	    {
+\]                  {
                         inConstant = false;
                         return(ENDCONST);
                     }
 
-0x[0-9A-Fa-f]+		{
+0x[0-9A-Fa-f]+          {
                         yylval.ival = (int)strtol(yytext,0,16);
                         if( yylval.ival > WRDMASK )
                         {
@@ -427,7 +448,7 @@ octal		    	{ decimalMode = false; }
                         return(INTEGER);
                     }
 
-0d[0-9]+	    	{
+0d[0-9]+                {
                         yylval.ival = (int)strtol(yytext+2,0,10);
                         if( yylval.ival > WRDMASK )
                         {
@@ -437,7 +458,7 @@ octal		    	{ decimalMode = false; }
                         return(INTEGER);
                     }
 
-0o[0-7]+	    	{
+0o[0-7]+                {
                         yylval.ival = (int)strtol(yytext+2,0,8);
                         if( yylval.ival > WRDMASK )
                         {
@@ -447,7 +468,7 @@ octal		    	{ decimalMode = false; }
                         return(INTEGER);
                     }
 
-0b[0-1]+		    {
+0b[0-1]+                    {
                         yylval.ival = (int)strtol(yytext+2,0,2);
                         if( yylval.ival > WRDMASK )
                         {
@@ -457,7 +478,7 @@ octal		    	{ decimalMode = false; }
                         return(INTEGER);
                     }
 
-[0-9]+			    {
+[0-9]+                      {
                         if( !decimalMode && (strchr(yytext, '8') || strchr(yytext, '9')) )
                         {
                             verror("decimal number %s, but in octal mode", yytext);
@@ -473,7 +494,7 @@ octal		    	{ decimalMode = false; }
                         return(INTEGER);
                     }
 
-[1-9]s			    {
+[1-9]s                      {
                     SymNodeP symP;
 
                         if( (symP = sym_find((SymNodeP *)&permSymP,yytext)) )
@@ -487,7 +508,7 @@ octal		    	{ decimalMode = false; }
                         }
                     }
 
-[a-zA-Z_][a-zA-Z0-9_]*	{
+[a-zA-Z_][a-zA-Z0-9_]*  {
                         SymNodeP symP;
 
                             if( (symP = sym_find((SymNodeP *)&permSymP,yytext)) )
@@ -532,6 +553,18 @@ octal		    	{ decimalMode = false; }
                                 nameTokenSrcLine = (sawSemi)?(lineno - 1):lineno;
                                 return(ADDR);
                             }
+                            /* Inside an overlay, a name the overlay does not
+                               have is its bank's root global, when the root
+                               has it already; parser.y links the others
+                               after the parse. */
+                            else if( curOverlayP &&
+                                     (symP = sym_find(&(findBank(curBank)->globalSymP),yytext)) )
+                            {
+                                yylval.symP = symP;
+                                nameTokenLine = lineno;
+                                nameTokenSrcLine = (sawSemi)?(lineno - 1):lineno;
+                                return(ADDR);
+                            }
                             else
                             {
                                 yylval.strP = malloc(yyleng+1);
@@ -546,9 +579,9 @@ octal		    	{ decimalMode = false; }
                        local/addlocal).  "jmp %c" assembles silently as jmp MOD c,
                        since an opcode is an operand. */
 
-^[\t ]+	            { }
+^[\t ]+             { }
 
-[\t ]+	            {
+[\t ]+              {
                         return(SEPARATOR);
                     }
 
@@ -573,7 +606,7 @@ octal		    	{ decimalMode = false; }
                         return(ORIGIN);
                     }
 
-^\n         		{
+^\n                     {
                         if( !noIncrement )
                         {
                             ++lineno;
@@ -582,7 +615,7 @@ octal		    	{ decimalMode = false; }
                         return( EMPTYLINE );
                     }
 
-[ \t]*(\n|\;[ \t]*)	{
+[ \t]*(\n|\;[ \t]*)     {
                         if( inConstant )
                         {
                             inConstant = false;
@@ -636,7 +669,7 @@ octal		    	{ decimalMode = false; }
                         return( FILENAME );
                     }
 
-\'			        {
+\'                              {
                     int tmpc;
                     int number;
                     int ctr;
@@ -647,7 +680,7 @@ octal		    	{ decimalMode = false; }
                         {
                             switch( (tmpc = input()) ) /* process \ */
                             {
-                            case '\n':	/* \<newline> not allowed */
+                            case '\n':  /* \<newline> not allowed */
                                 return(BAD);
                                 break;
 
@@ -659,7 +692,7 @@ octal		    	{ decimalMode = false; }
                                 tmpc = '\b';    /* a backspace */
                                 break;
 
-                            case '^':		/* ^char */
+                            case '^':           /* ^char */
                                 tmpc = input() & 037;
                                 break;
 
@@ -667,7 +700,7 @@ octal		    	{ decimalMode = false; }
                                 tmpc= '\f';    /* formfeed */
                                 break;
 
-                            case 'n':		/* a newline */
+                            case 'n':           /* a newline */
                                 tmpc= '\n';
                                 break;
 
@@ -675,14 +708,14 @@ octal		    	{ decimalMode = false; }
                                 tmpc = '\r';    /* return */
                                 break;
 
-                            case 't':		/* a tab */
+                            case 't':           /* a tab */
                                 tmpc = '\t';
                                 break;
 
-                            case '\\':		/* an esc'd \ */
+                            case '\\':          /* an esc'd \ */
                                 break;
 
-                            case '0':		/* numeric escape */
+                            case '0':           /* numeric escape */
                             case '1':
                             case '2':
                             case '3':
@@ -706,7 +739,7 @@ octal		    	{ decimalMode = false; }
                                 tmpc = number;
                                 break;
 
-                            default:		/* just char as is */
+                            default:            /* just char as is */
                                 break;
                             }
                         }
@@ -723,7 +756,7 @@ octal		    	{ decimalMode = false; }
                         }
                     }
 
-\"			        {
+\"                  {
                     int tmpc;
                     char *cP;
                     char string[STRBUF];
@@ -762,7 +795,7 @@ octal		    	{ decimalMode = false; }
                     }
 
 
-<T340STR>\"		    {
+<T340STR>\"         {
                     int i;
                     int tmpc;
                     int esc;
@@ -846,7 +879,7 @@ octal		    	{ decimalMode = false; }
                                     sawEnd = true;    // fake that we had one
                                     continue;
                                 }
-                                else if( tmpc == TYPE340NL )	// convert to a cr, the type340 does a cr/lf for cr
+                                else if( tmpc == TYPE340NL )    // convert to a cr, the type340 does a cr/lf for cr
                                 {
                                     tmpc = TYPE340CR;
                                 }
@@ -900,7 +933,7 @@ octal		    	{ decimalMode = false; }
                         return(LIBFILE);
                     }
 
-<DOTEXT>.	        {
+<DOTEXT>.               {
                     int tmpc, rslt;
                     int count;
                     int shift;
@@ -925,7 +958,7 @@ octal		    	{ decimalMode = false; }
                                 verror("unterminated %c in text", marker);
                             }
 
-                            if( tmpc == '\\' )		// special directive, red or black
+                            if( tmpc == '\\' )          // special directive, red or black
                             {
                                 if( (tmpc = input()) == marker )
                                 {
@@ -985,8 +1018,8 @@ octal		    	{ decimalMode = false; }
                         return( TEXT );
                     }
 
-.			        {
-                        if( yytext[0] != '\r')	// in case we get cr-nl or nl-cr, drop the cr
+.                               {
+                        if( yytext[0] != '\r')  // in case we get cr-nl or nl-cr, drop the cr
                         {
                             return(yytext[0]);
                         }

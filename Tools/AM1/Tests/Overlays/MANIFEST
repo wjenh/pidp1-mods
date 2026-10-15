@@ -1,0 +1,238 @@
+# name|expect|flags|text -- written by make_fixtures.py; see run_tests.sh
+f1_valid|ok||
+f1_valid|okgrep||^022004 620100 print$
+f1_valid|okgrep||^022003 200000 edit$
+f1_valid|okgrep||^022010 000001 edit$
+f1_valid|okgrep||^022007 000000 print$
+f1_valid|nowarn||read-only
+f1_valid|lstgrep|bin -l|^ +10: 022003 200000 lac count$
+f1_valid|lstgrep|bin -l|^// Overlay print, number 2, in window w1, bank 2, 2000-2777, persistent$
+f1_valid|lstgrep|bin -l|^ +15: 022010 000001 $
+f1_valid|lstgrep|bin -l|^ +24: 022007 000000 hits, 0$
+f1_valid|lstgrep|bin -l|%%endoverlay +// overlay edit: 11 words of window w1's 1000
+f1_valid|lstgrep|bin -l|^ +2: 000004 +%%drumreserve 0-20$
+f1_nested|fail||overlays do not nest
+f1_inlocal|fail||inside a local scope; an overlay may not begin
+f1_nowindow|fail||names window w9, which is not declared
+f1_windowin|fail||a window is declared in the root
+f1_strayend|fail||%%endoverlay with no overlay open
+f1_unclosed|fail||is never closed with %%endoverlay
+f1_crossfile|fail||an overlay may not cross a file boundary
+f1_bank|fail||bank cannot be used inside overlay edit
+f1_origin|fail||an origin cannot be used inside overlay edit
+f1_import|fail||an import cannot be used inside overlay edit
+f1_localopen|fail||overlay edit ends inside a local scope
+f1_toolong|fail||overlay small is 4 words, its 2 header words included, and window w2 holds 3
+f1_firstlast|fail||window w2's first address 3077 is above its last, 3000
+f1_tiny|fail||window w2 is 2 words; it must hold an overlay's 2 header words
+f1_bank0high|fail||window w5 ends at 7760 in bank 0, above 07750
+f1_banktag|fail||window w2 is declared in bank 2 but given address 33000, in bank 3
+f1_overlap|fail||window w2 overlaps window w1, 2000-2777 in bank 2
+f1_unknown|fail||names wstart, which has no value yet
+f1_dupwindow|fail||window w1 is already declared
+f1_dupoverlay|fail||overlay edit is already declared
+f1_badmode|fail||resident is not a mode; the one mode is persistent
+f1_ovtablein|fail||the table is in the root
+f1_ovtabletwice|fail||%%ovtable is given twice
+f1_ovtableearly|fail||%%ovtable comes before any overlay
+f1_ovtableovl|fail||%%overlay small follows the %%ovtable
+f1_ovtablewin|fail||%%window w6 follows the %%ovtable
+f1_trackhigh|fail||%%drumreserve names track 40; the drum's tracks are 0-37
+f1_trackback|fail||%%drumreserve range 17-0 runs backward
+f1_labelroot|fail||label count in overlay edit has the name of a global of bank 2's root
+f1_labelrootref|fail||label later in overlay edit has a name the root of bank 2 refers to
+f1_varroot|fail||var count in overlay edit has the name of a global of bank 2's root
+f1_exportroot|fail||an overlay exports only its own symbols
+f1_exportundef|fail||overlay edit exports ghost, which it never defines
+f1_rootredef|fail||editX is defined in the root of bank 2, and in overlay edit
+f1_undefined|fail||symbol nowhere has no defined value
+f1_undefined|fail|bin|symbol nowhere has no defined value
+f1_optimize|ok|-O|
+f1_optimize|ok|-O1|
+f1_optimize|ok|-O2|
+f1_optimize|optgrep|-O|^This program has drum overlays
+f1_debug|lstgrep|bin -d|^// Overlay print, number 2, in window w1, bank 2, 2000-2777, persistent$
+f8_varro|warn||a var in overlay print, which is read-only
+f2_valid|ok||
+f2_valid|ok|bin|
+f2_valid|lstgrep|bin -l|^ +36: 000102 630131     jsp i \[ovEnter:1\]$
+f2_valid|lstgrep|bin -l|^ +36: 000103 000115     115      // overlay edit's entry in ovTable$
+f2_valid|lstgrep|bin -l|^ +36: 000104 022002     22002      // editRun$
+f2_rootword|fail|bin|A root word at 02000 in bank 2 would be in window w1, 02000-02777
+f2_rootwordm|fail|bin -M|A root word at 02000 in bank 2 would be in window w1, 02000-02777
+f2_roottable|fail|bin|A root word at 03070 in bank 2 would be in window w2, 03000-03077
+f2_crossref|fail||overlay small names printX, a symbol of overlay print
+f2_rootref|fail||the root names editX, a symbol of overlay edit
+f2_rootrefbank|fail||the root names editX, a symbol of overlay edit
+f2_rootbref|fail||the root names editRun, a symbol of overlay edit
+f2_ovcallmissing|fail||%%ovcall names overlay tiny, which is not declared
+f2_ovcallprivate|fail||%%ovcall names smallPriv, which overlay small does not export
+f2_ovcallnoentry|fail||%%ovcall names nothing, which overlay small does not export
+f2_ovcallin|fail||%%ovcall small, smallRun is inside overlay edit; only the root calls an overlay
+f2_ovcallearly|fail||%%ovcall print, printAll comes before ovEnter, the overlay manager's entry, is defined
+f2_noovtable|fail||this program has overlays and no %%ovtable
+f3_ovcall|refsub||
+f4_layout|outgrep|-S|^overlay a, number 1: track 21, drum 2000-2777, window w1 in bank 2, 3 words, read-only$
+f4_layout|outgrep|-S|^overlay b, number 2: track 23, drum 2000-2777, window w1 in bank 2, 3 words, read-only$
+f4_layout|outgrep|-S|^overlay c, number 3: track 21, drum 3000-3077, window w2 in bank 2, 3 words, read-only$
+f4_layout|outgrep|-S|^overlay d, number 4: track 24, drum 2000-2777, window w3 in bank 3, 3 words, read-only$
+f4_layout|lstgrep|bin -l|^// overlay d, number 4: track 24, drum 2000-2777, window w3 in bank 3
+f4_layout|outgrep|-S|^Bank 2, none$
+f4_layout|outgrep|-S|^Bank 3, none$
+f4_layout|outgrep|-S|^Bank 0, 00124 \(84 decimal\)$
+f4_fit|outgrep|-S|^overlay o32, number 32: track 37, drum 2000-2777
+f4_full|fail||overlay o33 has no drum track
+f5_table|refsub||
+f5_word|refsub||
+f5_track|refsub||
+f6_files|same|bin -s|ovl
+f6_files|same|bin -s|osym
+f6_files|same|bin -s|sym
+f7_defines|pairs||000101 000200 17
+f7_swapped|nopairs||000101 000200 17
+f7_defines|pairs||010400/one 000240 2
+f7_swapped|nopairs||010400/one 000240 2
+f7_defines|pairs||010400/two 000242 2
+f7_swapped|nopairs||010400/two 000242 2
+f7_defines|pairs||030400/three 000244 2
+f7_swapped|nopairs||030400/three 000244 2
+f7_manager|ok||
+f7_manager|ok|bin|
+f9_backward|outgrep|-S|^Bank 0, 01002 \(514 decimal\)$
+f9_ascending|outgrep|-S|^Bank 0, 01002 \(514 decimal\)$
+f9_table|outgrep|-S|^Bank 0, 02007 \(1031 decimal\)$
+f9_auto|outgrep|-S|^Bank 0, 03001 \(1537 decimal\)$
+f9_bank1|outgrep|-S|^Bank 0, none$
+f9_bank1|outgrep|-S|^Bank 1, 00101 \(65 decimal\)$
+f10_pins|ok||
+f10_pins|ok|-O1|
+f10_pins|ok|bin -O1|
+f10_pins|okgrep||^000102 760200$
+f10_pins|okgrep||^001003 200117 ov1$
+f10_pins|okgrep||^000110 000123$
+f10_pins|okgrep||^000126 000122$
+f10_pins|ovlgrep|bin|stamp 203350 table 000121$
+f10_pins|okgrep|-O1|^000101 340115$
+f10_pins|okgrep|-O1|^000102 200114$
+f10_pins|okgrep|-O1|^000103 650100$
+f10_pins|okgrep|-O1|^000112 200114$
+f10_pins|okgrep|-O1|^000106 000120$
+f10_pins|okgrep|-O1|^000107 001002$
+f10_pins|okgrep|-O1|^001003 200114 ov1$
+f10_pins|okgrep|-O1|^001004 200115 ov1$
+f10_pins|okgrep|-O1|^001010 000114 ov1$
+f10_pins|okgrep|-O1|^001006 620111 ov1$
+f10_pins|okgrep|-O1|^001000 333652 ov1$
+f10_pins|okgrep|-O1|^000123 000117$
+f10_pins|ovlgrep|bin -O1|stamp 333652 table 000116$
+f10_pins|ovlgrep|bin -O1|^333652 000001 261007 200114 200115 201010 620111 601007$
+f10_pins|optgrep|-O1|^This program has drum overlays
+f10_pins|nooptgrep|-O1|^Apparently unreached
+f10_pins|optgrep|-O1|^  span 1 .* line 13, %%ovcall$
+f10_pinword|okgrep|-O1|^000102 760200$
+f10_pinword|optgrep|-O1|Per reason: P2-taken 1$
+f10_pinoffset|okgrep|-O1|^000102 760200$
+f10_pinoffset|okgrep|-O1|^000104 640100$
+f10_noentry|optgrep|-O1|first label helper
+f10_xbank|ok|-O1|
+f10_xbank|okgrep|-O1|^000104 724074$
+f10_xbank|okgrep|-O1|^000105 630124$
+f10_xbank|okgrep|-O1|^000106 000120$
+f10_xbank|okgrep|-O1|^000107 001002$
+f10_xbank|okgrep|-O1|^000124 010100$
+f10_xbank|nooptgrep|-O1|^Apparently unreached
+f10_window|warn|-O1|inline: relayout refused the copy at bank 0 0100 (window)
+f10_window|warn|-O1|inline: relayout refused the copy at bank 0 0101 (window)
+f10_window|okgrep|-O1|^000100 620103$
+f10_window|okgrep|-O1|^000112 000000$
+f10_windowhigh|nowarn|-O1|(window)
+f10_windowhigh|optgrep|-O1|0 copies were refused by relayout
+f10_windowhigh|okgrep|-O1|^000116 000000$
+f11_twins|ok||
+f11_twins|okgrep||^001002 261010 ov1$
+f11_twins|okgrep||^001003 640100 ov1$
+f11_twins|okgrep||^001004 601007 ov1$
+f11_twins|okgrep||^001005 241011 ov1$
+f11_twins|okgrep||^001006 761000 ov1$
+f11_twins|okgrep||^001007 601010 ov1$
+f11_twins|okgrep||^001010 601010 ov1$
+f11_twins|okgrep||^001011 000000 ov1$
+f11_twins|ovlgrep|bin |^[0-7]{6} 000001 261010 640100 601007 241011 761000 601010$
+f11_twins|okgrep||^001002 000000 ov2$
+f11_twins|okgrep||^001003 261007 ov2$
+f11_twins|okgrep||^001004 201010 ov2$
+f11_twins|okgrep||^001005 401010 ov2$
+f11_twins|okgrep||^001006 241002 ov2$
+f11_twins|okgrep||^001007 601007 ov2$
+f11_twins|okgrep||^001010 000005 ov2$
+f11_twins|ovlgrep|bin |^[0-7]{6} 000002 000000 261007 201010 401010 241002 601007$
+f11_twins|okgrep|-O1|^001002 261010 ov1$
+f11_twins|okgrep|-O1|^001003 640100 ov1$
+f11_twins|okgrep|-O1|^001004 601010 ov1$
+f11_twins|okgrep|-O1|^001005 241011 ov1$
+f11_twins|okgrep|-O1|^001006 761000 ov1$
+f11_twins|okgrep|-O1|^001007 601010 ov1$
+f11_twins|okgrep|-O1|^001010 601010 ov1$
+f11_twins|okgrep|-O1|^001011 000000 ov1$
+f11_twins|ovlgrep|bin -O1|^[0-7]{6} 000001 261010 640100 601010 241011 761000 601010$
+f11_twins|okgrep|-O1|^001002 000000 ov2$
+f11_twins|okgrep|-O1|^001003 261007 ov2$
+f11_twins|okgrep|-O1|^001004 700005 ov2$
+f11_twins|okgrep|-O1|^001005 401010 ov2$
+f11_twins|okgrep|-O1|^001006 241002 ov2$
+f11_twins|okgrep|-O1|^001007 601007 ov2$
+f11_twins|okgrep|-O1|^001010 000005 ov2$
+f11_twins|ovlgrep|bin -O1|^[0-7]{6} 000002 000000 261007 700005 401010 241002 601007$
+f11_twins|okgrep|-O2|^001002 261010 ov1$
+f11_twins|okgrep|-O2|^001003 640100 ov1$
+f11_twins|okgrep|-O2|^001004 601010 ov1$
+f11_twins|okgrep|-O2|^001005 241011 ov1$
+f11_twins|okgrep|-O2|^001006 761000 ov1$
+f11_twins|okgrep|-O2|^001007 601010 ov1$
+f11_twins|okgrep|-O2|^001010 601010 ov1$
+f11_twins|okgrep|-O2|^001011 000000 ov1$
+f11_twins|ovlgrep|bin -O2|^[0-7]{6} 000001 261010 640100 601010 241011 761000 601010$
+f11_twins|okgrep|-O2|^001002 000000 ov2$
+f11_twins|okgrep|-O2|^001003 261007 ov2$
+f11_twins|okgrep|-O2|^001004 700005 ov2$
+f11_twins|okgrep|-O2|^001005 401010 ov2$
+f11_twins|okgrep|-O2|^001006 241002 ov2$
+f11_twins|okgrep|-O2|^001007 601007 ov2$
+f11_twins|okgrep|-O2|^001010 000005 ov2$
+f11_twins|ovlgrep|bin -O2|^[0-7]{6} 000002 000000 261007 700005 401010 241002 601007$
+f11_twins|nooptgrep|-O1|^Apparently unreached
+f11_twins|optgrep|-O1|^    T3   bank  0 1004@ov1  .*f11_twins.am1:15  region [0-9]+$
+f11_twins|optgrep|-O1|^    T8d  bank  0 1004@ov2  .*f11_twins.am1:28  region [0-9]+$
+f11_crossend|fail||%%endoverlay of ov1 is inside the optimize region opened at line 14
+f11_crossend|fail|-O1|%%endoverlay of ov1 is inside the optimize region opened at line 14
+f11_crossopen|fail||%%overlay ov2 is inside the nooptimize span opened at line 23
+f11_crossopen|fail|-O1|%%overlay ov2 is inside the nooptimize span opened at line 23
+f11_crossspeed|fail||%%overlay ov1 is inside the speed region opened at line 10
+f11_crossspeed|fail|-O1|%%overlay ov1 is inside the speed region opened at line 10
+f11_pins|ok||
+f11_pins|okgrep||^001004 600111 ovk$
+f11_pins|okgrep|-O1|^001004 600111 ovk$
+f11_pins|okgrep|-O1|^000111 600112$
+f11_pins|optgrep|-O1|^    bank  0 1004  .*f11_pins.am1:23  the address of the word the rule reads through is used as a value
+f11_nopin|okgrep||^001004 600111 ovk$
+f11_nopin|okgrep|-O1|^001004 600112 ovk$
+f11_nopin|nooptgrep|-O1|the rule reads through is used as a value
+f11_shrink|ok||
+f11_shrink|hand|bin -s -O1|rim
+f11_shrink|hand|bin -s -O1|ovl
+f11_shrink|hand|bin -s -O1|osym
+f11_shrink|nohand|bin -s|rim
+f11_shrink|nohand|bin -s|ovl
+f11_shrink|nohand|bin -s|osym
+f11_shrink|okgrep|-O1|^000107 001005$
+f11_shrink|okgrep|-O1|^001003 201012 ov1$
+f11_shrink|okgrep|-O1|^001013 001012 ov1$
+f11_shrink|optgrep|-O1|^    T6   bank  0 1003@ov1  .*f11_shrink.am1:21  deleted 1003: cla => \(deleted\)$
+f11_shrink|optgrep|-O1|^    bank  0 0111  .*f11_shrink.am1:10  P2: 
+f11_full|ok||
+f11_full|optgrep|-O1 -O=inline=reserve:0|^    S2   bank  0 1005@ov1  .*f11_full.am1:18  ha  not unrolled: window w has too few free words for 2 more$
+f11_full|okgrep|-O1 -O=inline=reserve:0|^001016 000001 ov1$
+f11_roomy|optgrep|-O1 -O=inline=reserve:0|^    S2   bank  0 1005@ov1  .*f11_roomy.am1:18  ha  unrolled, 3 trips of 3 words, length \+2, saves 55 us$
+f11_roomy|okgrep|-O1 -O=inline=reserve:0|^001020 000001 ov1$
+f11_roomy|okgrep|-O1 -O=inline=reserve:0|^001003 201017 ov1$
+f11_roomy|okgrep||^001016 000001 ov1$

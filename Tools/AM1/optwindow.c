@@ -2138,7 +2138,8 @@ int callerBank = 0;
     {
         wordP = tableP->entriesPP[i];
 
-        if( winP->hazardP[i] != WH_PROVED )
+        // A root word in a drum overlay's view: the root's view warned.
+        if( (winP->hazardP[i] != WH_PROVED) || !optInView(tableP, wordP) )
         {
             continue;
         }
@@ -2153,7 +2154,7 @@ int callerBank = 0;
     {
         wordP = tableP->entriesPP[i];
 
-        if( winP->reverseP[i] != WH_PROVED )
+        if( (winP->reverseP[i] != WH_PROVED) || !optInView(tableP, wordP) )
         {
             continue;
         }
@@ -2306,7 +2307,9 @@ int c;
         {
             for( addr = blockP->startAddr; addr <= blockP->endAddr; ++addr )
             {
-                if( !(wordP = wordAt(tableP, blockP->bank, addr)) ||
+                // In a drum overlay's view only the overlay's words are its to
+                // delete; the root's were the root view's.
+                if( !(wordP = wordAt(tableP, blockP->bank, addr)) || !optInView(tableP, wordP) ||
                     (!(wordP->flags & (OPTF_INREGION | OPTF_INSPEED)) && !optUndeclared()) )
                 {
                     continue;
@@ -2616,8 +2619,8 @@ int i;
     for( delP = tableP->windelsP; delP; delP = delP->nextP )
     {
         wordP = delP->wordP;
-        fprintf(fP, "    %-13s bank %2d %04o  %s:%d  ", kindNames[delP->kind], wordP->bank, wordP->addr,
-            wordFile(wordP), wordP->lineNo);
+        fprintf(fP, "    %-13s bank %2d %04o%s  %s:%d  ", kindNames[delP->kind], wordP->bank, wordP->addr,
+            optOverlayTag(wordP), wordFile(wordP), wordP->lineNo);
 
         if( delP->fate == OPTWD_OFF )
         {
@@ -2656,7 +2659,7 @@ int i;
 
             for( i = 0; i < delP->depCount; ++i )
             {
-                fprintf(fP, " %d %04o", delP->depsPP[i]->bank, delP->depsPP[i]->addr);
+                fprintf(fP, " %d %04o%s", delP->depsPP[i]->bank, delP->depsPP[i]->addr, optOverlayTag(delP->depsPP[i]));
             }
         }
 
@@ -2799,7 +2802,7 @@ int c;
 
     for( delP = tableP->windelsP; delP; delP = delP->nextP )
     {
-        fprintf(fP, "window delete %d %04o %s %s", delP->wordP->bank, delP->wordP->addr,
+        fprintf(fP, "window delete %d %04o%s %s %s", delP->wordP->bank, delP->wordP->addr, optOverlayTag(delP->wordP),
             kindNames[delP->kind], winDelFates[delP->fate].tagP);
 
         if( tableP->xformBisect && delP->ordinal )

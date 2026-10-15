@@ -8,8 +8,8 @@
 
 #include "symtab.h"
 
-#define AM1VERSION "am1 v3.5 11-Oct-2026"
-#define AM1SHORTVERSION "am1 v3.5"
+#define AM1VERSION "am1 v4.0 13-Oct-2026"
+#define AM1SHORTVERSION "am1 v4.0"
 #define SYMFILEVERSION "V3"             // used for import to check proper version, must match listSymtab.c
 
 #define AM1INCDIR "/opt/pidp1-mods/Am1Includes"
@@ -23,6 +23,13 @@
 #define MAXBANK 15      // 16 banks
 #define BANKSIZE 4096   // of 4096 words
 
+// Overlays
+#define DRUMTRACKS 32           // tracks on the Type 23 drum, 0-37 octal
+#define OVHEADERWORDS 2         // the stamp and the overlay's number, at its window's start
+#define OVENTRYWORDS 4          // descriptor table words per overlay
+#define OVTABLENAME "ovTable"   // the label am1 gives the descriptor table
+#define OVENTERNAME "ovEnter"   // the overlay manager's entry, which %%ovcall calls
+
 // The warning ids we have
 #define WARN_1D 1
 #define WARN_BANKS 2
@@ -35,6 +42,7 @@
 #define WARN_MEMORY 9
 #define WARN_LAW 10
 #define WARN_T340 11
+#define WARN_OVERLAY 12
 
 // actually the max local scope nesting
 #define MAXLOCALS   128
@@ -86,6 +94,8 @@
 #define SYMF_LAW 0x100000       // is a law instruction, special case
 #define SYMF_PRIVATE 0x200000   // is a private local
 #define SYMF_INDIRECT 0x400000  // is an i modifier
+#define SYMF_OVALIAS 0x800000   // an overlay's name for its bank's root global of
+                                // that name: symP is the root's symbol
 
 #define CTX_FORCELOCAL 1        // forcelocal is active for this context
 
@@ -135,8 +145,10 @@ typedef struct parsenode
                                 // RELAYOUT node the deleted word's; NILP elsewhere
     int srcLine;                // on a BREF made from a name, the line and file it
     char *srcFileP;             // was written on, for the error given after the
-                                // parse if its symbol never resolves; 0 and NILP
-                                // elsewhere
+                                // parse if its symbol never resolves, and on an
+                                // OVCALL its own; 0 and NILP elsewhere
+    int overlay;                // the number of the overlay the node is in, 0 for
+                                // the root
 } PNode, *PNodeP;
 
 // a list of PNodePs, used for wildcard cross-bank refs
@@ -165,7 +177,45 @@ typedef struct bankcontext
     SymNodeP globalSymP;    // we preserve the globals,consts, and vars, no need for locals
     SymNodeP constSymP;
     PNodeListP varNodesP;
+    int runPC;              // where the current run of words began, at the last origin
+    int highPC;             // one past the highest word of the runs before it, 0 for none
 } BankContext, *BankContextP;
+
+// A core window that overlays run in: a range of one bank, declared by %%window,
+// which no root word may use.
+typedef struct window
+{
+    struct window *nextP;   // in declaration order
+    char *nameP;
+    int bank;
+    int first;              // its first and last address in the bank
+    int last;
+    int index;              // 0 up, in declaration order
+    int lineNo;             // where it was declared
+    char *fileP;
+} Window, *WindowP;
+
+// An overlay: a section of the program assembled to run in a window, its words
+// kept out of the root's tape.  While it is open curBankP points at ctx, so
+// every grammar action places words, labels, constants and variables in the
+// overlay's own context, not its bank's.
+typedef struct overlaycontext
+{
+    struct overlaycontext *nextP;   // in source order
+    char *nameP;
+    int number;             // 1 up, in source order; 0 means the root
+    WindowP windowP;
+    bool persistent;        // written back to the drum when evicted
+    BankContext ctx;        // its location counter, symbols, constants and
+                            // variables; ctx.bank is the window's bank, and
+                            // ctx.constPC and ctx.varPC where %%endoverlay put
+                            // its pools, -1 for none
+    int lineNo;             // its %%overlay line, and file
+    char *fileP;
+    int length;             // its words, the header included; ovlcodegen.c sets
+    Word *imageP;           // these three after the parse: the words, and the
+    int track;              // drum track they go on
+} OverlayContext, *OverlayContextP;
 
 // list of symtabs
 typedef struct symlist

@@ -1,0 +1,25 @@
+f4_layout: two windows at one range in two banks, a disjoint window, reserved tracks
+%%drumreserve 0-17, 20
+%%drumreserve 22
+bank 2
+%%window w1, 2000, 2777
+%%window w2, 3000, 3077
+%%overlay a, w1
+aGo,    hlt
+%%endoverlay
+%%overlay b, w1
+bGo,    hlt
+%%endoverlay
+%%overlay c, w2
+cGo,    hlt
+%%endoverlay
+bank 3
+%%window w3, 2000, 2777
+%%overlay d, w3
+dGo,    hlt
+%%endoverlay
+bank 0
+100/
+go,     hlt
+%%ovtable
+        start go

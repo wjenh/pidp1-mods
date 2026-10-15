@@ -73,6 +73,10 @@
 // call, so its return must be resolved too.
 #define RET_MAXDEPTH        16
 
+// The data words after a %%ovcall's jsp: the overlay's table address and the
+// entry's, which the drum overlay manager steps past to return.
+#define RET_OVCALLDATA      2
+
 // A (bank, address) pair packed into one int: twelve address bits, bank above.
 #define RET_KEY(b, a)       ((((b) << 12) | ((a) & ADDRMASK)))
 #define RET_KEYBANK(k)      (((k) >> 12))
@@ -203,6 +207,24 @@ RetCallee answer;
     if( entryP->decode.opcode == RETOP_CAL )
     {
         ++tableP->returnJdaSites;
+    }
+
+    // A %%ovcall's return is known, not inferred: am1 wrote the call, and the
+    // manager returns indirectly, through words the walk cannot follow.
+    if( entryP->flags & OPTF_OVCALL )
+    {
+        if( calleeEntryOf(tableP, entryP, &cBank, &cAddr) )
+        {
+            entryP->calleeBank = cBank;
+            entryP->calleeAddr = cAddr;
+        }
+
+        entryP->returnCase = OPTRC_STEPPED;
+        entryP->returnSteps = RET_OVCALLDATA;
+        entryP->returnAddr = ((entryP->addr + 1 + RET_OVCALLDATA) & ADDRMASK);
+        ++tableP->returnMovedSites;
+        ++tableP->returnCaseCounts[OPTRC_STEPPED];
+        return;
     }
 
     if( !calleeEntryOf(tableP, entryP, &cBank, &cAddr) )

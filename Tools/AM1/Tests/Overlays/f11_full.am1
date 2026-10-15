@@ -1,0 +1,28 @@
+f11_full: an unroll in an overlay that would pass its window's last address
+bank 0
+100/
+ovEnter, jmp .
+go,     cla
+        %%ovcall ov1, ov1Go
+        hlt
+%%window w, 1000, 1017
+%%overlay ov1, w
+        export ov1Go
+ov1Go,  dap ov1X
+%%speed
+        law i 3
+        dac ca
+ha,     lac na
+        add one
+        dac na
+        isp ca
+        jmp ha
+%%endspeed
+        cla
+ov1X,   jmp .
+ca,     0
+na,     0
+one,    1
+%%endoverlay
+%%ovtable
+        start go

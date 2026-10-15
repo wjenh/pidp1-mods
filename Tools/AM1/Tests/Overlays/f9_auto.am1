@@ -1,0 +1,8 @@
+f9_auto: constants and variables placed by am1 after an empty origin
+100/
+        var v1
+go,     lac [1234]
+        dac v1
+        hlt
+3000/
+        start go

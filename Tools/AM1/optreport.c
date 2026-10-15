@@ -21,6 +21,8 @@
 #include "y.tab.h"
 #include "optimizer.h"
 
+extern OverlayContextP overlaysP;   // every drum overlay, from the parser
+
 static void printFinding(FILE *fP, OptFindingP findingP, int suppressed);
 static void writeSbsNote(FILE *fP, OptTableP tableP);
 
@@ -50,8 +52,39 @@ static const struct
     { "tempused",   "the temporary is reached from outside the pattern" },
     { "through-taken", "the address of the word the rule reads through is used as a value, so a pointer can write it" },
     { "unreached",  "a word of the pattern is in unlabeled code no entry reaches, so nothing shows it is an instruction" },
-    { "table",      "the pattern is in a table: a run reached only through its address that runs into data" }
+    { "table",      "the pattern is in a table: a run reached only through its address that runs into data" },
+    { "overlay-end", "the pattern runs out of its drum overlay into the root" }
 };
+
+// A drum overlay's heading, for its view's section of the report and of each
+// dump: "Overlay NAME, window W, bank B, FIRST to LAST", the addresses octal.
+void
+writeOverlayHeading(FILE *fP, OptTableP tableP)
+{
+OverlayContextP ovP;
+
+    ovP = tableP->viewOvP;
+    fprintf(fP, "Overlay %s, window %s, bank %d, %04o to %04o%s\n", ovP->nameP, ovP->windowP->nameP,
+        ovP->windowP->bank, ovP->windowP->first, ovP->windowP->last, (ovP->persistent)?", persistent":"");
+}
+
+// A drum overlay view's statistics: its own words, the view's address check
+// (every word of the view, the root's included), and its findings.
+void
+writeOverlayStatistics(FILE *fP, OptTableP tableP)
+{
+    fprintf(fP, "\nStatistics, overlay %s\n", tableP->viewOvP->nameP);
+    fprintf(fP, "  Word table: %d words of the overlay, %d with the root's as context\n",
+        tableP->ovWordCount, tableP->count);
+
+    if( tableP->mismatchCount )
+    {
+        fprintf(fP, "WARNING: %d words whose parser-assigned address differs from the binary generator's\n",
+            tableP->mismatchCount);
+    }
+
+    fprintf(fP, "  Findings: %d, refused %d\n", tableP->findingCount, tableP->suppressedCount);
+}
 
 // The short tag for a refusal reason.
 // Returns a static string, "?" for a reason out of range.
@@ -195,6 +228,18 @@ writeHeaderNotes(FILE *fP, OptTableP tableP)
     fprintf(fP, "back, for example, code loaded at runtime from the drum.\n");
     fprintf(fP, "Timing is similar; a delay loop for the typewriter, the punch or the display is\n");
     fprintf(fP, "meant to take the time it takes.\n");
+
+    if( overlaysP )
+    {
+        fprintf(fP, "\nThis program has drum overlays.  The optimizer reads and rewrites the root\n");
+        fprintf(fP, "first, alone; then each overlay in turn, with the root as its context, which\n");
+        fprintf(fP, "it reads but leaves as the root's turn left it.  Each overlay has a section\n");
+        fprintf(fP, "of its own after the root's, and its regions declare only for itself.  A\n");
+        fprintf(fP, "root word any overlay names counts as referenced from outside the program,\n");
+        fprintf(fP, "and an overlay word naming a root word that moves follows it.  A drum load\n");
+        fprintf(fP, "writes a whole window behind the program's back, so a window's words are\n");
+        fprintf(fP, "taken as the overlay's own only in that overlay's turn.\n");
+    }
 
     writeSbsNote(fP, tableP);
 }
@@ -551,13 +596,13 @@ int off;
 
             if( level2 && !recP->regionP )
             {
-                fprintf(fP, "    %-4s bank %2d %04o  %s:%d  no region\n", optRuleName(findingP->rule),
-                    findingP->bank, findingP->addr, (entryP->fileP)?entryP->fileP:"-", entryP->lineNo);
+                fprintf(fP, "    %-4s bank %2d %04o%s  %s:%d  no region\n", optRuleName(findingP->rule),
+                    findingP->bank, findingP->addr, optOverlayTag(entryP), (entryP->fileP)?entryP->fileP:"-", entryP->lineNo);
             }
             else
             {
-                fprintf(fP, "    %-4s bank %2d %04o  %s:%d  region %d\n", optRuleName(findingP->rule),
-                    findingP->bank, findingP->addr, (entryP->fileP)?entryP->fileP:"-", entryP->lineNo,
+                fprintf(fP, "    %-4s bank %2d %04o%s  %s:%d  region %d\n", optRuleName(findingP->rule),
+                    findingP->bank, findingP->addr, optOverlayTag(entryP), (entryP->fileP)?entryP->fileP:"-", entryP->lineNo,
                     (recP->regionP)?recP->regionP->id:0);
             }
 
@@ -567,7 +612,8 @@ int off;
             // The word a deleting rule takes out.
             if( recP->delP )
             {
-                fprintf(fP, "        deletes bank %2d %04o\n", recP->delP->bank, recP->delP->addr);
+                fprintf(fP, "        deletes bank %2d %04o%s\n", recP->delP->bank, recP->delP->addr,
+                    optOverlayTag(recP->delP));
             }
 
             // The heuristics that applied and found nothing; the legend is above.
@@ -601,8 +647,8 @@ int off;
 
         findingP = recP->findingP;
         entryP = findingP->wordsP[0];
-        fprintf(fP, "    %-4s bank %2d %04o  %s:%d  %s", optRuleName(findingP->rule),
-            findingP->bank, findingP->addr, (entryP->fileP)?entryP->fileP:"-", entryP->lineNo,
+        fprintf(fP, "    %-4s bank %2d %04o%s  %s:%d  %s", optRuleName(findingP->rule),
+            findingP->bank, findingP->addr, optOverlayTag(entryP), (entryP->fileP)?entryP->fileP:"-", entryP->lineNo,
             optXformFateText(recP->fate));
 
         // The heuristics that left it alone; What -O2 would assume explains each.

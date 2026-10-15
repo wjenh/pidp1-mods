@@ -1,0 +1,28 @@
+f11_pins: overlay ovj patches the root word overlay ovk jumps through
+bank 0
+100/
+ovEnter, jmp .
+go,     cla
+        %%ovcall ovj, ovjGo
+        %%ovcall ovk, ovkGo
+        hlt
+rootX,  jmp rootY
+rootY,  hlt
+%%window w, 1000, 1777
+%%overlay ovj, w
+        export ovjGo
+ovjGo,  dap ovjX
+        dap rootX
+ovjX,   jmp .
+%%endoverlay
+%%overlay ovk, w
+        export ovkGo
+ovkGo,  dap ovkX
+        sza
+%%optimize
+        jmp rootX
+%%endoptimize
+ovkX,   jmp .
+%%endoverlay
+%%ovtable
+        start go

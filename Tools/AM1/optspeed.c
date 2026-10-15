@@ -103,6 +103,7 @@ typedef enum
     SI_OPEN,
     SI_RECURSIVE,
     SI_HANDLER,
+    SI_SEGMENT,             // printed in a tally only when non-zero
     SI_DISPATCH,
     SI_RTNUSED,
     SI_TAKEN,
@@ -116,7 +117,7 @@ typedef enum
 static const char *inlineNames[SI_COUNT] =
 {
     "callee", "args", "unknown", "bank", "noroutine", "cal", "noreturn", "jdaword",
-    "open", "recursive", "handler", "dispatch", "rtnused", "taken", "acentry", "notcopyable",
+    "open", "recursive", "handler", "segment", "dispatch", "rtnused", "taken", "acentry", "notcopyable",
     "guessed", "eligible"
 };
 
@@ -131,6 +132,7 @@ typedef enum
     SU_USED,
     SU_ACENTRY,
     SU_ACEXIT,
+    SU_SEGMENT,             // printed in a tally only when non-zero
     SU_GUESSED,
     SU_ELIGIBLE,
     SU_COUNT
@@ -138,7 +140,7 @@ typedef enum
 
 static const char *unrollNames[SU_COUNT] =
 {
-    "runtime", "entry", "counter", "call", "exit", "internal", "used", "acentry", "acexit", "guessed",
+    "runtime", "entry", "counter", "call", "exit", "internal", "used", "acentry", "acexit", "segment", "guessed",
     "eligible"
 };
 
@@ -165,6 +167,7 @@ typedef enum
     SPL_ENTRY,
     SPL_INRUN,
     SPL_FALLS,
+    SPL_SEGMENT,            // printed in a tally only when non-zero
     SPL_GUESSED,
     SPL_ELIGIBLE,
     SPL_COUNT
@@ -172,7 +175,7 @@ typedef enum
 
 static const char *placeNames[SPL_COUNT] =
 {
-    "afterskip", "jmpused", "entry", "inrun", "falls", "guessed", "eligible"
+    "afterskip", "jmpused", "entry", "inrun", "falls", "segment", "guessed", "eligible"
 };
 
 // The tallies, per bank.
@@ -254,6 +257,7 @@ static OptRoutineP routineAt(OptTableP tableP, int bank, int addr);
 static int isReturnOf(OptRoutineP routineP, OptWordP wordP);
 static int inBody(OptBlockP *blocksPP, OptRoutineP routineP, int bank, int addr);
 static int acUse(OptWordP wordP);
+static int runInView(OptTableP tableP, int bank, int first, int last);
 static void inlineSite(SpPass *passP, OptWordP siteP);
 static void measureInline(SpPass *passP);
 
@@ -618,6 +622,61 @@ optBankCeiling(OptTableP tableP, int bank)
     return( (bank == 0)?SP_CEILING0:SP_CEILING );
 }
 
+// Get the words a bank's growth may spend: those above its highest word, to
+// its ceiling.  In a drum overlay's view the window's bank has its window's
+// room instead, from the overlay's end (its pool and variables placed) to the
+// window's last address; the root's words there are context and never grow.
+// Returns the count, 0 for a bank with no word.
+int
+optBankFree(OptTableP tableP, int bank)
+{
+WindowP winP;
+int highest;
+int i;
+
+    if( tableP->viewOvP && (tableP->viewOvP->windowP->bank == bank) )
+    {
+        winP = tableP->viewOvP->windowP;
+        return( (winP->last + 1) - tableP->viewOvP->ctx.cur_pc );
+    }
+
+    for( highest = -1, i = 0; i < tableP->count; ++i )
+    {
+        if( (tableP->entriesPP[i]->bank == bank) && (tableP->entriesPP[i]->addr > highest) )
+        {
+            highest = tableP->entriesPP[i]->addr;
+        }
+    }
+
+    return( (highest < 0)?0:(optBankCeiling(tableP, bank) - highest) );
+}
+
+// Test whether every word of a bank's run, first to last, is the subject of
+// the table's view: in a drum overlay's view a rewrite may not reach the
+// root.  A missing word is not a word of the view.
+// Returns 1 if every one is, 0 if not.
+static int
+runInView(OptTableP tableP, int bank, int first, int last)
+{
+OptWordP wordP;
+int addr;
+
+    if( !tableP->viewOvP )
+    {
+        return(1);
+    }
+
+    for( addr = first; addr <= last; ++addr )
+    {
+        if( !(wordP = wordAt(tableP, bank, addr)) || !optInView(tableP, wordP) )
+        {
+            return(0);
+        }
+    }
+
+    return(1);
+}
+
 // Get the bank's declared ceiling as written, the first word no rewrite may
 // reach.  Returns it, or 0 when the bank declares none.
 int
@@ -796,6 +855,29 @@ int dropsRtn;
         {
             why = SI_BANK;
             goto judged;
+        }
+    }
+
+    // In a drum overlay's view the call and the whole callee must be the
+    // overlay's: the root is context there, and a single-site root callee's
+    // delete would edit it.
+    if( !optInView(tableP, siteP) )
+    {
+        why = SI_SEGMENT;
+        goto judged;
+    }
+
+    for( m = 0; tableP->viewOvP && (m < routineP->blockCount); ++m )
+    {
+        blockP = blocksPP[routineP->bodyIdsP[m]];
+
+        for( addr = blockP->startAddr; addr <= blockP->endAddr; ++addr )
+        {
+            if( (wordP = wordAt(tableP, blockP->bank, addr)) && !optInView(tableP, wordP) )
+            {
+                why = SI_SEGMENT;
+                goto judged;
+            }
         }
     }
 
@@ -1667,6 +1749,15 @@ int m;
         return;
     }
 
+    // segment: in a drum overlay's view the loop, S to J, must be the
+    // overlay's; the counter may be the root's, since it is not edited.
+    shapeP->why = SU_SEGMENT;
+
+    if( !runInView(tableP, bank, setP->addr, jmpP->addr) )
+    {
+        return;
+    }
+
     // n copies of the body replace S, D, the body, I and J; the counter word
     // stays.  One pass saves the setup, n isps and n - 1 jumps back.
     shapeP->eligible = 1;
@@ -2011,6 +2102,15 @@ int addr;
         return;
     }
 
+    // In a drum overlay's view the jmp and the run must be the overlay's: a
+    // run in the root is context, and %%overlay and %%endoverlay are fixed
+    // points relayout would not move it across.
+    if( !runInView(tableP, bank, jmpP->addr, jmpP->addr) || !runInView(tableP, bank, targetP->addr, runEnd) )
+    {
+        sP->why = SPL_SEGMENT;
+        return;
+    }
+
     sP->endP = wordAt(tableP, bank, runEnd);
     sP->run = ((runEnd - targetP->addr) + 1);
     sP->save = optWordTime(jmpP);
@@ -2233,6 +2333,11 @@ int pass;
 
             for( w = 0; w < SI_ELIGIBLE; ++w )
             {
+                if( (w == SI_SEGMENT) && !iP->why[w] )
+                {
+                    continue;   // only a drum overlay's view has a segment
+                }
+
                 fprintf(fP, " %s %d", inlineNames[w], iP->why[w]);
             }
 
@@ -2246,6 +2351,11 @@ int pass;
 
             for( w = 0; w < SU_ELIGIBLE; ++w )
             {
+                if( (w == SU_SEGMENT) && !uP->why[w] )
+                {
+                    continue;
+                }
+
                 fprintf(fP, " %s %d", unrollNames[w], uP->why[w]);
             }
 
@@ -2270,6 +2380,11 @@ int pass;
 
             for( w = (SPL_AFTERSKIP + 1); w < SPL_ELIGIBLE; ++w )
             {
+                if( (w == SPL_SEGMENT) && !pP->why[w] )
+                {
+                    continue;
+                }
+
                 fprintf(fP, " %s %d", placeNames[w], pP->why[w]);
             }
 
@@ -2362,6 +2477,19 @@ int freeWords;
     {
         if( highest[bank] < 0 )
         {
+            continue;
+        }
+
+        // A drum overlay's view: its window is what its growth may spend.
+        if( tableP->viewOvP && (tableP->viewOvP->windowP->bank == bank) )
+        {
+            freeWords = optBankFree(tableP, bank);
+            fprintf(passP->fP, "budget b%d: window %s, overlay end %04o last %04o free %d; inline spent %d %s; "
+                "unroll spent %d %s; place frees %d; chain 0\n", bank, tableP->viewOvP->windowP->nameP,
+                tableP->viewOvP->ctx.cur_pc, tableP->viewOvP->windowP->last, freeWords,
+                passP->inl[bank].spent, (passP->inl[bank].spent <= freeWords)?"fits":"OVER",
+                passP->unr[bank].spent, (passP->unr[bank].spent <= freeWords)?"fits":"OVER",
+                passP->plc[bank].why[SPL_ELIGIBLE]);
             continue;
         }
 

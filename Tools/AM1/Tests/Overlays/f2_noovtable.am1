@@ -1,0 +1,39 @@
+f2_noovtable: the control for every F2 variant: windows, overlays and %%ovcall
+bank 1
+100/
+ovEnter, jmp .
+        %%ovcall print, printAll
+        hlt
+bank 2
+count,  0
+1777/
+edge1,  0
+%%window w1, 2000, 2777
+%%window w2, 3000, 3077
+%%overlay edit, w1
+        export editRun
+editRun, dap editX
+        lac count
+        jsp helper
+editX,  jmp .
+%%endoverlay
+%%overlay print, w1, persistent
+        export printAll
+printAll, dap printX
+printX, jmp .
+%%endoverlay
+%%overlay small, w2
+        export smallRun
+smallRun, dap smallX
+smallX, jmp .
+smallPriv, 0
+%%endoverlay
+3100/
+helper, jmp .
+bank 0
+100/
+go,     cla
+        %%ovcall edit, editRun
+        %%ovcall small, smallRun
+        hlt
+        start go

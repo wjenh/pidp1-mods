@@ -1,0 +1,23 @@
+f10_window: an inline would push the root into a window
+bank 0
+%%inline mk
+100/
+main,   jsp mk
+        jsp mk
+        jmp .
+mk,     dap mkrt
+        lac x
+        add y
+        dac z
+mkrt,   jmp 0
+x,      3
+y,      4
+z,      0
+%%window w, 113, 1777
+%%overlay ov1, w
+        export ov1Go
+ov1Go,  jmp .
+%%endoverlay
+2000/
+%%ovtable
+        start main

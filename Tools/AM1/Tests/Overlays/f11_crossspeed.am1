@@ -1,0 +1,37 @@
+f11_crossspeed: two overlays of one window, each rewritten in its own view
+bank 0
+100/
+ovEnter, jmp .
+go,     cla
+        %%ovcall ov1, ov1Go
+        %%ovcall ov2, ov2Go
+        hlt
+%%window w, 1000, 1777
+%%speed
+%%overlay ov1, w
+        export ov1Go
+%%endspeed
+ov1Go,  dap ov1X
+        sza
+%%optimize
+        jmp ov1A
+%%endoptimize
+        dac ov1V
+        cma
+ov1A,   jmp ov1X
+ov1X,   jmp .
+ov1V,   0
+%%endoverlay
+%%overlay ov2, w
+        export ov2Go
+ov2V,   0
+ov2Go,  dap ov2X
+%%optimize
+        lac [5]
+%%endoptimize
+        add [5]
+        dac ov2V
+ov2X,   jmp .
+%%endoverlay
+%%ovtable
+        start go

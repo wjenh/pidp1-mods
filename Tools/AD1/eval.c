@@ -16,12 +16,15 @@
 
 static Symbol symbols[NUMSYMBOLS];
 static int symCount;           // number of symbols
+bool symReported;               // the last failed lookup has already said why
 
 extern int base;               // current numeric output base
 extern int curBank;
 extern int curFileNo;
 
 SymbolP findSymbolByName(int bank, int fileNo, char *nameP);
+static bool symbolMatches(SymbolP symP, int bank, int fileNo, char *nameP);
+static void reportInOverlays(int bank, int fileNo, char *nameP);
 int findAddrByName(int bank, int fileNo, char *nameP);
 char *findNameByAddr(u32 addr);
 bool loadSymbols(FileInfoP infoP);
@@ -109,7 +112,10 @@ int value;
     }
     else if( (value = findAddrByName(curBank, curFileNo, stringP)) < 0 )
     {
-        printf("There is no symbol '%s' found in file %d.\n", stringP, curFileNo);
+        if( !symReported )
+        {
+            printf("There is no symbol '%s' found in file %d.\n", stringP, curFileNo);
+        }
         return(BADNUM);
     }
 
@@ -120,27 +126,176 @@ int value;
 // The same symbol can be in different banks, so check for the correct one.
 // We distinguish by bank and fileNo.
 // However, if fileNo is NOARG, don't check the file number.
+// The root's symbols are searched first, as before ad1 knew overlays.  An overlay's symbol is
+// found, whether its overlay is in its window or not, when only one overlay has the name;
+// when several do, that is said and nil returned.
 SymbolP
 findSymbolByName(int bank, int fileNo, char *nameP)
 {
 int i;
 SymbolP symP;
+SymbolP foundP;
+
+    symReported = false;
 
     for( i = 0; i < symCount; ++i )
     {
         symP = &symbols[i];
 
-        if( !strcmp(nameP, symP->nameP) && (bank == BANKOF(symP->address)) &&
-            ((fileNo == NOARG) || (symP->fileNo == fileNo)) )
+        if( (symP->overlay == 0) && symbolMatches(symP, bank, fileNo, nameP) )
         {
             return( symP );
         }
     }
 
-    return(NIL);
+    foundP = NIL;
+    for( i = 0; i < symCount; ++i )
+    {
+        symP = &symbols[i];
+
+        if( (symP->overlay != 0) && symbolMatches(symP, bank, fileNo, nameP) )
+        {
+            if( !foundP )
+            {
+                foundP = symP;
+            }
+            else
+            {
+                reportInOverlays(bank, fileNo, nameP);
+                return( NIL );
+            }
+        }
+    }
+
+    return( foundP );
+}
+
+// Does this symbol have the name, in the bank, and in the file unless fileNo is NOARG?
+static bool
+symbolMatches(SymbolP symP, int bank, int fileNo, char *nameP)
+{
+    return( !strcmp(nameP, symP->nameP) && (bank == (int)BANKOF(symP->address)) &&
+        ((fileNo == NOARG) || (symP->fileNo == fileNo)) );
+}
+
+// Say which overlays have a name that more than one does.  An overlay has a name once, so each
+// symbol found is another overlay.
+static void
+reportInOverlays(int bank, int fileNo, char *nameP)
+{
+int i;
+SymbolP symP;
+
+    printf("Symbol '%s' is in more than one overlay:", nameP);
+    for( i = 0; i < symCount; ++i )
+    {
+        symP = &symbols[i];
+
+        if( (symP->overlay != 0) && symbolMatches(symP, bank, fileNo, nameP) )
+        {
+            printf(" %s", ovlName(symP->fileNo, symP->overlay));
+        }
+    }
+
+    printf("; give it as %s@overlay.\n", nameP);
+    symReported = true;
+}
+
+// Look up name@overlay: the overlay of that name in the current file, or else in the first
+// file that has one.  Every failure says why.
+SymbolP
+findOverlaySymbol(char *nameP, char *ovNameP)
+{
+int i;
+int f;
+int fileNo;
+int overlay;
+bool anyOverlay;
+SymbolP symP;
+
+    symReported = true;
+    anyOverlay = false;
+
+    for( f = -1; f < MAXFILES; ++f )
+    {
+        fileNo = (f < 0)?curFileNo:f;
+        if( ((f >= 0) && (f == curFileNo)) || !(overlay = ovlNumber(fileNo, ovNameP)) )
+        {
+            continue;
+        }
+
+        anyOverlay = true;
+        for( i = 0; i < symCount; ++i )
+        {
+            symP = &symbols[i];
+
+            if( (symP->fileNo == fileNo) && (symP->overlay == overlay) && !strcmp(symP->nameP, nameP) )
+            {
+                return( symP );
+            }
+        }
+    }
+
+    if( anyOverlay )
+    {
+        printf("Overlay '%s' has no symbol '%s'.\n", ovNameP, nameP);
+    }
+    else
+    {
+        printf("There is no overlay '%s'.\n", ovNameP);
+    }
+
+    return( NIL );
+}
+
+// Add one symbol, an overlay's.  Returns false if the table is full.
+bool
+addSymbol(u32 address, int fileNo, int overlay, char *nameP)
+{
+SymbolP symP;
+
+    if( symCount >= NUMSYMBOLS )
+    {
+        printf("Too many symbols have been seen, can't load more than %d\n.", NUMSYMBOLS);
+        return( false );
+    }
+
+    symP = &symbols[symCount++];
+    symP->address = address;
+    symP->fileNo = fileNo;
+    symP->overlay = overlay;
+    symP->nameP = malloc(strlen(nameP) + 1);
+    strcpy(symP->nameP, nameP);
+    return( true );
+}
+
+// Remove the overlays' symbols, of one file or, given NOARG, of every file.  The root's stay.
+void
+clearOverlaySymbols(int fileNo)
+{
+int i;
+int kept;
+SymbolP symP;
+
+    for( i = kept = 0; i < symCount; ++i )
+    {
+        symP = &symbols[i];
+
+        if( (symP->overlay != 0) && ((fileNo == NOARG) || (symP->fileNo == fileNo)) )
+        {
+            free(symP->nameP);
+        }
+        else
+        {
+            symbols[kept++] = *symP;
+        }
+    }
+
+    symCount = kept;
 }
 
 // Walk the symbol list, print out the values.
+// An overlay's symbol is followed by its overlay.
 void
 listSymbols()
 {
@@ -152,11 +307,19 @@ SymbolP symP;
     {
         symP = &symbols[i];
         printf(getFormat(OCTAL), symP->address);
+        if( symP->overlay != 0 )
+        {
+            printf("  %d    %s  overlay %s\n", symP->fileNo + 1, symP->nameP,
+                ovlName(symP->fileNo, symP->overlay));
+            continue;
+        }
+
         printf("  %d    %s\n", symP->fileNo + 1, symP->nameP);
     }
 }
 
-// See if a symbol is in the current file.
+// See if a symbol of the root is in the current file; an overlay's is left to
+// findSymbolByName(), which knows when a name is in more than one overlay.
 // Return it if so, else NIL.
 SymbolP
 findSymbolInCurrentFile(char *nameP)
@@ -168,7 +331,7 @@ SymbolP symP;
     {
         symP = &symbols[i];
 
-        if( !strcmp(nameP, symP->nameP) && (symP->fileNo == curFileNo) )
+        if( (symP->overlay == 0) && !strcmp(nameP, symP->nameP) && (symP->fileNo == curFileNo) )
         {
             return( symP );
         }
@@ -177,7 +340,8 @@ SymbolP symP;
     return(NIL);
 }
 
-// See if a symbol in the current file has the given address.
+// See if a symbol in the current file has the given address; an overlay's only when its
+// overlay is in its window.
 // Return it if so, else NIL.
 SymbolP
 findAddressInCurrentFile(int address)
@@ -189,7 +353,8 @@ SymbolP symP;
     {
         symP = &symbols[i];
 
-        if( (symP->address == address)  && (symP->fileNo == curFileNo) )
+        if( (symP->address == (u32)address)  && (symP->fileNo == curFileNo) &&
+            ovlSymbolShown(symP->fileNo, symP->overlay) )
         {
             return( symP );
         }
@@ -228,6 +393,7 @@ SymbolP symP;
 }
 
 // Look for a symbol by address, return name if found, else nil.
+// An overlay's symbol is found only when its overlay is in its window.
 char *
 findNameByAddr(u32 addr)
 {
@@ -243,7 +409,7 @@ SymbolP symP;
     {
         symP = &symbols[i];
 
-        if( symP->address == addr )
+        if( (symP->address == addr) && ovlSymbolShown(symP->fileNo, symP->overlay) )
         {
             curFileNo = symP->fileNo;
             return( symP->nameP );
@@ -259,7 +425,6 @@ loadSymbols(FileInfoP infoP)
 u32 addr;
 char *cP, *cP2;
 SymbolP symP;
-MapEntryP entryP;
 FILE *fP;
 char line[256];
 
@@ -335,15 +500,16 @@ char line[256];
         symP->nameP = malloc(strlen(cP) + 1);
         strcpy(symP->nameP, cP);
         symP->fileNo = infoP->fileNo;
+        symP->overlay = 0;
     }
 
     fclose(fP);
     return(true);
 }
 
-// Get rid of any cureent symbol defs.
+// Get rid of any current symbol defs.
 void
-clearSymbols()
+clearSymbols(void)
 {
 int i;
 SymbolP symP;
@@ -486,6 +652,7 @@ int rslt;
 
         default:
             printf("Internal error, bad operator %d\n", op);
+            rslt = 0;
             break;
         }
 

@@ -1,7 +1,8 @@
 /*
  * Process a parse tree to generate a test dump file.
  * The output is each memory location and value that was generated printed as two space-separated
- * 6 digit octal numbers.
+ * 6 digit octal numbers.  A word of an overlay is followed by a space and the overlay's name,
+ * since its address is its window's and is shared with the other overlays of the window.
 */
 #include <stdio.h>
 #include <string.h>
@@ -18,9 +19,13 @@ extern int evalExpr(PNodeP);
 extern int onesComplAdj(int);
 extern int twosComplAdj(int);
 extern void leave(int);
+extern const char *overlayName(int number);
+extern Word ovStamp;
+extern Word *ovTableWordsP;
 
 static int canReduce(PNodeP);
 static int reduceOperand(PNodeP);
+static int wordValue(PNodeP nodeP);
 
 static void dumpStatements(FILE *, PNodeP);
 static void dumpVars(FILE *outfP, PNodeP);
@@ -28,6 +33,8 @@ static void dumpConstants(FILE *fP, PNodeP nodeP, SymNodeP symP);
 static void dumpText(FILE *outfP, PNodeP nodeP);
 static void dumpAscii(FILE *outfP, PNodeP nodeP);
 static void printOne(FILE *fP, PNodeP nodeP, int value);
+static void printAt(FILE *fP, PNodeP nodeP, int addr, int value);
+static void dumpOverlayPools(FILE *outfP, PNodeP nodeP);
 
 // Walk a tree and emit the words.
 int
@@ -49,6 +56,7 @@ dumpStatements(FILE *outfP, PNodeP nodeP)
 {
 int i, j;
 BankContextP bankP;
+PNodeP wordP;
 
     while( nodeP )
     {
@@ -62,7 +70,7 @@ BankContextP bankP;
         case EXPR:
             if( canReduce(nodeP->rightP) )
             {
-                i = reduceOperand(nodeP->rightP);
+                i = wordValue(nodeP);
                 printOne(outfP, nodeP->rightP, i);
             }
             break;
@@ -73,7 +81,7 @@ BankContextP bankP;
             {
                 // Normal case: a single-word instruction or expression follows
                 // the label on the same line (e.g. "foo, jmp bar").
-                i = reduceOperand(nodeP->rightP);
+                i = wordValue(nodeP);
                 printOne(outfP, nodeP->rightP, i);
             }
             else if( nodeP->rightP )
@@ -129,6 +137,32 @@ BankContextP bankP;
             // An optimizer directive emits no word and moves no pc.
             break;
 
+        case OVCALL:
+            // Its words, each an EXPR node with its own address.
+            for( wordP = nodeP->rightP; wordP; wordP = wordP->leftP )
+            {
+                printOne(outfP, wordP, reduceOperand(wordP->rightP));
+            }
+            break;
+
+        case OVERLAYDECL:
+            // The header, the stamp and the overlay's number, at the window's
+            // first address.
+            printAt(outfP, nodeP, nodeP->pc, ovStamp);
+            printAt(outfP, nodeP, nodeP->pc + 1, ((OverlayContextP)(nodeP->value.ptr))->number);
+            break;
+
+        case ENDOVERLAY:
+            dumpOverlayPools(outfP, nodeP);
+            break;
+
+        case OVTABLE:
+            for( i = 0; i < nodeP->value.ival; ++i )
+            {
+                printAt(outfP, nodeP, (nodeP->pc + i), ovTableWordsP[i]);
+            }
+            break;
+
         case TABLE:
             if( nodeP->rightP )     // has initializer
             {
@@ -137,7 +171,7 @@ BankContextP bankP;
 
                 for( i = 0; i < nodeP->value.ival; ++i )
                 {
-                    fprintf(outfP, "%02o%04o %06o\n", nodeP->bank, (nodeP->pc + i), j);
+                    printAt(outfP, nodeP, (nodeP->pc + i), j);
                 }
             }
             break;
@@ -154,6 +188,8 @@ BankContextP bankP;
     for(bankP = banksP; bankP; bankP = bankP->nextP)
     {
     PNode node;
+
+        node.overlay = 0;       // a bank's pools are the root's
 
         if( bankP->constSymP )
         {
@@ -232,6 +268,20 @@ reduceOperand(PNodeP nodeP)
     return( evalExpr(nodeP) );
 }
 
+// The value of a statement's one word.  An overlay word's was saved on its node
+// by ovlcodegen.c, which evaluated it; evaluating it again would repeat its
+// warnings.
+static int
+wordValue(PNodeP nodeP)
+{
+    if( nodeP->overlay )
+    {
+        return( nodeP->value2.ival );
+    }
+
+    return( reduceOperand(nodeP->rightP) );
+}
+
 // Emit packed ascii, two 9-bit characters per word, high character first, the
 // terminating NUL included, a lone final character padded with a zero low byte.
 // This is writeAscii() in bincodegen.c with the output replaced by printing.
@@ -258,7 +308,7 @@ char *strP;
         else
         {
             word = (word << 9) | *strP;
-            fprintf(outfP, "%02o%04o %06o\n", nodeP->bank, addr++, (word & WRDMASK));
+            printAt(outfP, nodeP, addr++, (word & WRDMASK));
         }
 
         i ^= 1;
@@ -267,7 +317,7 @@ char *strP;
 
     if( i )         // if not zero, we didn't finish writing a full word, do so with low byte 0
     {
-        fprintf(outfP, "%02o%04o %06o\n", nodeP->bank, addr++, ((word << 9) & WRDMASK));
+        printAt(outfP, nodeP, addr++, ((word << 9) & WRDMASK));
     }
 }
 
@@ -295,7 +345,7 @@ FlexText flexText;
     {
         if( i && !(i % 3) )
         {
-            fprintf(outfP, "%02o%04o %06o\n", nodeP->bank, addr++, (val & WRDMASK));
+            printAt(outfP, nodeP, addr++, (val & WRDMASK));
         }
 
         val <<= 6;
@@ -309,11 +359,11 @@ FlexText flexText;
             val <<= 6;
         }
 
-        fprintf(outfP, "%02o%04o %06o\n", nodeP->bank, addr++, (val & WRDMASK));
+        printAt(outfP, nodeP, addr++, (val & WRDMASK));
     }
     else if( (i >= flexText.nchars) && !( i % 3) )
     {
-        fprintf(outfP, "%02o%04o %06o\n", nodeP->bank, addr++, (val & WRDMASK));
+        printAt(outfP, nodeP, addr++, (val & WRDMASK));
     }
 }
 
@@ -360,5 +410,46 @@ dumpConstants(FILE *fP, PNodeP nodeP, SymNodeP symP)
 static void
 printOne(FILE *fP, PNodeP nodeP, int value)
 {
-    fprintf(fP, "%02o%04o %06o\n", nodeP->bank, nodeP->pc, value);
+    printAt(fP, nodeP, nodeP->pc, value);
+}
+
+// Print an address/value pair at addr in the node's bank, tagged with the name of
+// the node's overlay when it is in one.
+static void
+printAt(FILE *fP, PNodeP nodeP, int addr, int value)
+{
+    if( nodeP->overlay )
+    {
+        fprintf(fP, "%02o%04o %06o %s\n", nodeP->bank, addr, value, overlayName(nodeP->overlay));
+    }
+    else
+    {
+        fprintf(fP, "%02o%04o %06o\n", nodeP->bank, addr, value);
+    }
+}
+
+// The constants and variables an overlay left to its %%endoverlay, which placed
+// them at its end, constants first; nodeP is the ENDOVERLAY node.
+static void
+dumpOverlayPools(FILE *outfP, PNodeP nodeP)
+{
+PNode node;
+OverlayContextP ovP;
+
+    ovP = (OverlayContextP)(nodeP->value.ptr);
+    node.bank = ovP->ctx.bank;
+    node.overlay = ovP->number;
+
+    if( ovP->ctx.constSymP )
+    {
+        node.pc = ovP->ctx.constPC;
+        dumpConstants(outfP, &node, ovP->ctx.constSymP);
+    }
+
+    if( ovP->ctx.varNodesP )
+    {
+        node.pc = ovP->ctx.varPC;
+        node.value.ptr = ovP->ctx.varNodesP;
+        dumpVars(outfP, &node);
+    }
 }

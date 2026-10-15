@@ -1,0 +1,36 @@
+f8_varro: two windows, three overlays, the control for every F1 and F8 variant
+%%drumreserve 0-17, 20
+bank 2
+count,  0
+%%window w1, 2000, 2777
+%%window w2, 3000, 3077
+%%overlay edit, w1
+        export editRun
+editRun, dap editX
+        lac count
+        add [1]
+        dac count
+editX,  jmp .
+wk,     0
+%%endoverlay
+%%overlay print, w1
+        export printAll
+printAll, dap printX
+        var hits
+        idx hits
+        jsp helper
+printX, jmp .
+wk,     0
+%%endoverlay
+%%overlay small, w2
+        export smallRun
+smallRun, dap smallX
+smallX, jmp .
+%%endoverlay
+100/
+helper, jmp .
+bank 0
+100/
+go,     hlt
+%%ovtable
+        start go

@@ -1,0 +1,32 @@
+f3_ovcall: the words of %%ovcall from the manager's bank and from another
+bank 1
+100/
+ovEnter, jmp .
+        %%ovcall beta, betaGo
+        hlt
+bank 2
+%%window wa, 1000, 1777
+%%window wb, 2000, 2777
+%%overlay alpha, wa
+        export alphaGo
+        0
+alphaGo, jmp .
+%%endoverlay
+%%overlay beta, wb
+        export betaGo
+betaGo, jmp .
+%%endoverlay
+%%overlay gamma, wa
+        export gammaGo
+        0
+        0
+gammaGo, jmp .
+%%endoverlay
+bank 0
+100/
+go,     cla
+        %%ovcall alpha, alphaGo
+        %%ovcall gamma, gammaGo
+        hlt
+%%ovtable
+        start go

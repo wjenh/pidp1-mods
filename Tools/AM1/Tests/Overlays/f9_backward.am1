@@ -1,0 +1,9 @@
+f9_backward: code at 01000, then at 0100 below it
+1000/
+go,     cla
+        cma
+        jmp low
+100/
+low,    hlt
+        jmp go
+        start go

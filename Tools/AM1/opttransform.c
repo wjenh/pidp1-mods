@@ -197,6 +197,8 @@ int in;
     // Plan the length-changing rewrites, fates first.  Only when edits are
     // made, since relayout makes them, and only under a level, since -O=xform
     // alone rewrites nothing.  Each plan avoids the words the earlier ones fired.
+    // In a drum overlay's view the judges refuse any rewrite that reaches past
+    // the overlay, and the budget is its window's room.
     if( apply && (optTransformLevel() >= 1) )
     {
         planInlines(tableP);
@@ -936,6 +938,8 @@ PNodeP nodeP;
     nodeP->pc = modelP->pc;
     nodeP->bank = modelP->bank;
     nodeP->lineNo = modelP->lineNo;
+    // The -T dump names a word's overlay from its expression's top node.
+    nodeP->overlay = modelP->overlay;
     return(nodeP);
 }
 
@@ -1129,7 +1133,6 @@ OptInlineP *budgetPP;
 OptWordP wordP;
 OptInlineShape shape;
 int freeWords[MAXBANK + 1];
-int highest[MAXBANK + 1];
 int bank;
 int addr;
 int i;
@@ -1187,25 +1190,11 @@ int marked;
 
     free(blocksPP);
 
-    // Each bank's budget: its free words above the highest address.
+    // Each bank's budget: its free words above the highest address, or in a
+    // drum overlay's view its window's room.
     for( bank = 0; bank <= MAXBANK; ++bank )
     {
-        highest[bank] = -1;
-    }
-
-    for( i = 0; i < tableP->count; ++i )
-    {
-        wordP = tableP->entriesPP[i];
-
-        if( wordP->addr > highest[wordP->bank] )
-        {
-            highest[wordP->bank] = wordP->addr;
-        }
-    }
-
-    for( bank = 0; bank <= MAXBANK; ++bank )
-    {
-        freeWords[bank] = (highest[bank] < 0)?0:(optBankCeiling(tableP, bank) - highest[bank]);
+        freeWords[bank] = optBankFree(tableP, bank);
     }
 
     cap = optInlineCap();
@@ -1877,8 +1866,9 @@ char spell[OPTMSG_SIZE];
 
     sP = &pP->shape;
     jmpP = sP->jmpP;
-    fprintf(fP, "%s %s S4 %d %04o %s:%d target %04o %s", labelP, optPlaceFateName(pP->fate), jmpP->bank,
-        jmpP->addr, (jmpP->fileP)?jmpP->fileP:"-", jmpP->lineNo, sP->targetP->addr, firstLabelName(sP->targetP));
+    fprintf(fP, "%s %s S4 %d %04o%s %s:%d target %04o %s", labelP, optPlaceFateName(pP->fate), jmpP->bank,
+        jmpP->addr, optOverlayTag(jmpP), (jmpP->fileP)?jmpP->fileP:"-", jmpP->lineNo, sP->targetP->addr,
+        firstLabelName(sP->targetP));
 
     if( sP->endP )
     {
@@ -2031,8 +2021,8 @@ int time;
     for( pP = tableP->placesP; pP; pP = pP->nextP )
     {
         sP = &pP->shape;
-        fprintf(fP, "    S4   bank %2d %04o  %s:%d  %s  ", sP->jmpP->bank, sP->jmpP->addr,
-            (sP->jmpP->fileP)?sP->jmpP->fileP:"-", sP->jmpP->lineNo, firstLabelName(sP->targetP));
+        fprintf(fP, "    S4   bank %2d %04o%s  %s:%d  %s  ", sP->jmpP->bank, sP->jmpP->addr,
+            optOverlayTag(sP->jmpP), (sP->jmpP->fileP)?sP->jmpP->fileP:"-", sP->jmpP->lineNo, firstLabelName(sP->targetP));
 
         switch( pP->fate )
         {
@@ -2094,11 +2084,9 @@ planUnrolls(OptTableP tableP)
 {
 OptUnrollP uP;
 OptWordP wordP;
-int highest[MAXBANK + 1];
 int room;
 int bank;
 int addr;
-int i;
 
     if( !tableP->regionCount && !tableP->speedCount )
     {
@@ -2134,30 +2122,16 @@ int i;
         }
     }
 
-    // Each bank's budget: free words above the highest address, less what the
-    // inlines and the earlier loops took.
-    for( bank = 0; bank <= MAXBANK; ++bank )
-    {
-        highest[bank] = -1;
-    }
-
-    for( i = 0; i < tableP->count; ++i )
-    {
-        wordP = tableP->entriesPP[i];
-
-        if( wordP->addr > highest[wordP->bank] )
-        {
-            highest[wordP->bank] = wordP->addr;
-        }
-    }
-
+    // Each bank's budget: free words above the highest address, or in a drum
+    // overlay's view its window's room, less what the inlines and the earlier
+    // loops took.
     for( uP = tableP->unrollsP; uP; uP = uP->nextP )
     {
         bank = uP->shape.ispP->bank;
 
         if( uP->fate == OPTUN_FIRED )
         {
-            room = optBankCeiling(tableP, bank) - highest[bank] - tableP->inlineSpent[bank] - tableP->unrollSpent[bank] -
+            room = optBankFree(tableP, bank) - tableP->inlineSpent[bank] - tableP->unrollSpent[bank] -
                 optInlineReserve();
 
             if( unrollOverlaps(tableP, uP) )
@@ -2360,8 +2334,8 @@ char spell[OPTMSG_SIZE];
 
     sP = &uP->shape;
     ispP = sP->ispP;
-    fprintf(fP, "%s %s S2 %d %04o %s:%d head %04o %s trips %d", labelP, optUnrollFateName(uP->fate), ispP->bank,
-        ispP->addr, (ispP->fileP)?ispP->fileP:"-", ispP->lineNo, sP->jmpP->decode.address,
+    fprintf(fP, "%s %s S2 %d %04o%s %s:%d head %04o %s trips %d", labelP, optUnrollFateName(uP->fate), ispP->bank,
+        ispP->addr, optOverlayTag(ispP), (ispP->fileP)?ispP->fileP:"-", ispP->lineNo, sP->jmpP->decode.address,
         (sP->headP)?firstLabelName(sP->headP):"-", sP->trips);
 
     if( sP->eligible )
@@ -2489,8 +2463,8 @@ int time;
     {
         sP = &uP->shape;
         ispP = sP->ispP;
-        fprintf(fP, "    S2   bank %2d %04o  %s:%d  %s  ", ispP->bank, sP->jmpP->decode.address,
-            (ispP->fileP)?ispP->fileP:"-", ispP->lineNo, (sP->headP)?firstLabelName(sP->headP):"-");
+        fprintf(fP, "    S2   bank %2d %04o%s  %s:%d  %s  ", ispP->bank, sP->jmpP->decode.address,
+            optOverlayTag(ispP), (ispP->fileP)?ispP->fileP:"-", ispP->lineNo, (sP->headP)?firstLabelName(sP->headP):"-");
 
         switch( uP->fate )
         {
@@ -2537,6 +2511,13 @@ int time;
             break;
 
         case OPTUN_BUDGET:
+            if( tableP->viewOvP )
+            {
+                fprintf(fP, "not unrolled: window %s has too few free words for %d more\n",
+                    tableP->viewOvP->windowP->nameP, sP->spent);
+                break;
+            }
+
             fprintf(fP, "not unrolled: bank %d has too few free words for %d more", ispP->bank, sP->spent);
 
             // Name the author's ceiling when that is what counted.
@@ -2653,8 +2634,9 @@ OptWordP entryP;
         }
 
         entryP = recP->findingP->wordsP[0];
-        fprintf(fP, "    %-4s bank %2d %04o  %s:%d  %s %04o", optRuleName(recP->findingP->rule),
-            recP->findingP->bank, recP->findingP->addr, (entryP->fileP)?entryP->fileP:"-", entryP->lineNo,
+        fprintf(fP, "    %-4s bank %2d %04o%s  %s:%d  %s %04o", optRuleName(recP->findingP->rule),
+            recP->findingP->bank, recP->findingP->addr, optOverlayTag(entryP), (entryP->fileP)?entryP->fileP:"-",
+            entryP->lineNo,
             (recP->poolCollected)?"collected":"freed but kept", recP->throughP->addr);
 
         if( !recP->licensedPool )
@@ -2744,8 +2726,8 @@ int allRegion;
                 spaceDeclared(findingP, &allRegion) )
             {
                 entryP = findingP->wordsP[0];
-                fprintf(fP, "    %-4s bank %2d %04o  %s:%d  not deleted: %s\n", optRuleName(findingP->rule),
-                    findingP->bank, findingP->addr, (entryP->fileP)?entryP->fileP:"-", entryP->lineNo,
+                fprintf(fP, "    %-4s bank %2d %04o%s  %s:%d  not deleted: %s\n", optRuleName(findingP->rule),
+                    findingP->bank, findingP->addr, optOverlayTag(entryP), (entryP->fileP)?entryP->fileP:"-", entryP->lineNo,
                     optXformFateText(recP->fate));
             }
 
@@ -2753,8 +2735,8 @@ int allRegion;
         }
 
         entryP = findingP->wordsP[0];
-        fprintf(fP, "    %-4s bank %2d %04o  %s:%d  ", optRuleName(findingP->rule), findingP->bank, findingP->addr,
-            (entryP->fileP)?entryP->fileP:"-", entryP->lineNo);
+        fprintf(fP, "    %-4s bank %2d %04o%s  %s:%d  ", optRuleName(findingP->rule), findingP->bank, findingP->addr,
+            optOverlayTag(entryP), (entryP->fileP)?entryP->fileP:"-", entryP->lineNo);
 
         if( recP->fate != OPTXF_FIRED )
         {
@@ -3471,12 +3453,13 @@ int i;
 
 // Bisection.
 
-// Number the records that would fire, in record order from 1, and switch off
-// (fate OFF, recording the modifiers) every one a bisection modifier does not
-// keep.  Record order is fixed by the analysis, so -O=upto=N names the same
-// rewrites on every build.  Any subset is sound because a fate reads only the
-// analysis, never an earlier rewrite.  A modifier names a rewrite by its
-// word, so two firing records on one word is fatal (none can today).
+// Number the records that would fire, in record order, from one past the last
+// ordinal the views before this one gave, and switch off (fate OFF, recording
+// the modifiers) every one a bisection modifier does not keep.  Record order is
+// fixed by the analysis, and the views run in source order, so -O=upto=N names
+// the same rewrites on every build.  Any subset is sound because a fate reads
+// only the analysis, never an earlier rewrite.  A modifier names a rewrite by
+// its word, so two firing records on one word is fatal (none can today).
 static void
 selectForBisection(OptTableP tableP)
 {
@@ -3490,9 +3473,11 @@ OptWordP entryP;
 unsigned int offBy;
 unsigned int bit;
 int ordinal;
+int firstOrdinal;
 int b;
 
-    ordinal = 0;
+    firstOrdinal = optBisectFirstOrdinal();
+    ordinal = (firstOrdinal - 1);
 
     for( recP = tableP->xformsP; recP; recP = recP->nextP )
     {
@@ -3515,7 +3500,8 @@ int b;
         }
 
         recP->ordinal = ++ordinal;
-        offBy = optBisectSelect(recP->ordinal, recP->findingP->bank, recP->findingP->addr);
+        offBy = optBisectSelect(recP->ordinal, recP->findingP->bank, recP->findingP->addr,
+            (recP->findingP->wordsP[0]->flags & OPTF_OVWORD));
 
         if( !offBy )
         {
@@ -3537,7 +3523,7 @@ int b;
     }
 
     tableP->xformBisect = 1;
-    tableP->xformCandidates = ordinal;
+    tableP->xformCandidates = (ordinal - firstOrdinal + 1);
 
     // Inline sites, numbered on from the last T3 or T8.  No fired copy holds
     // another, and a call word is never a T3 or T8 word, so any subset is sound.
@@ -3551,7 +3537,8 @@ int b;
         inP->ordinal = ++ordinal;
         ++tableP->inlineCandidates;
 
-        if( !(offBy = optBisectSelect(inP->ordinal, inP->siteP->bank, inP->siteP->addr)) )
+        if( !(offBy = optBisectSelect(inP->ordinal, inP->siteP->bank, inP->siteP->addr,
+            (inP->siteP->flags & OPTF_OVWORD))) )
         {
             continue;
         }
@@ -3585,7 +3572,8 @@ int b;
         pP->ordinal = ++ordinal;
         ++tableP->placeCandidates;
 
-        if( !(offBy = optBisectSelect(pP->ordinal, pP->shape.jmpP->bank, pP->shape.jmpP->addr)) )
+        if( !(offBy = optBisectSelect(pP->ordinal, pP->shape.jmpP->bank, pP->shape.jmpP->addr,
+            (pP->shape.jmpP->flags & OPTF_OVWORD))) )
         {
             continue;
         }
@@ -3617,7 +3605,8 @@ int b;
         uP->ordinal = ++ordinal;
         ++tableP->unrollCandidates;
 
-        if( !(offBy = optBisectSelect(uP->ordinal, uP->shape.ispP->bank, uP->shape.ispP->addr)) )
+        if( !(offBy = optBisectSelect(uP->ordinal, uP->shape.ispP->bank, uP->shape.ispP->addr,
+            (uP->shape.ispP->flags & OPTF_OVWORD))) )
         {
             continue;
         }
@@ -3651,7 +3640,8 @@ int b;
         recP->ordinal = ++ordinal;
         ++tableP->spaceCandidates;
 
-        if( !(offBy = optBisectSelect(recP->ordinal, recP->findingP->bank, recP->findingP->addr)) )
+        if( !(offBy = optBisectSelect(recP->ordinal, recP->findingP->bank, recP->findingP->addr,
+            (recP->findingP->wordsP[0]->flags & OPTF_OVWORD))) )
         {
             continue;
         }
@@ -3687,7 +3677,8 @@ int b;
         delP->ordinal = ++ordinal;
         ++tableP->windelCandidates;
 
-        if( !(offBy = optBisectSelect(delP->ordinal, delP->wordP->bank, delP->wordP->addr)) )
+        if( !(offBy = optBisectSelect(delP->ordinal, delP->wordP->bank, delP->wordP->addr,
+            (delP->wordP->flags & OPTF_OVWORD))) )
         {
             continue;
         }
@@ -3707,7 +3698,14 @@ int b;
     }
 
     optWindowSettleOff(tableP);
-    optBisectWarnUnmatched();
+    optBisectSetLastOrdinal(ordinal);
+
+    // A list line or a range may name a drum overlay's word, whose view comes
+    // later, so the warnings wait for the last.
+    if( optLastView() )
+    {
+        optBisectWarnUnmatched();
+    }
 }
 
 // The totals.
@@ -4044,8 +4042,8 @@ int words;
 
         findingP = recP->findingP;
         entryP = findingP->wordsP[0];
-        fprintf(fP, "%s %s %s %d %04o %s:%d", labelP, optXformFateName(recP->fate),
-            optRuleName(findingP->rule), findingP->bank, findingP->addr,
+        fprintf(fP, "%s %s %s %d %04o%s %s:%d", labelP, optXformFateName(recP->fate),
+            optRuleName(findingP->rule), findingP->bank, findingP->addr, optOverlayTag(entryP),
             (entryP->fileP)?entryP->fileP:"-", entryP->lineNo);
 
         if( recP->fate != OPTXF_FIRED )
@@ -4088,7 +4086,8 @@ int words;
         }
 
         throughP = recP->throughP;
-        fprintf(fP, " %06o %06o through %d %04o ", recP->before, recP->after, throughP->bank, throughP->addr);
+        fprintf(fP, " %06o %06o through %d %04o%s ", recP->before, recP->after, throughP->bank, throughP->addr,
+            optOverlayTag(throughP));
 
         if( !(throughP->flags & (OPTF_TAKEN | OPTF_MAYBE_WRITTEN)) )
         {
@@ -4190,13 +4189,14 @@ int first;
 
     findingP = recP->findingP;
     entryP = findingP->wordsP[0];
-    fprintf(fP, "%s %s %d %04o %s:%d deletes %d %04o", optXformFateName(recP->fate), optRuleName(findingP->rule),
-        findingP->bank, findingP->addr, (entryP->fileP)?entryP->fileP:"-", entryP->lineNo, recP->delP->bank,
-        recP->delP->addr);
+    fprintf(fP, "%s %s %d %04o%s %s:%d deletes %d %04o%s", optXformFateName(recP->fate), optRuleName(findingP->rule),
+        findingP->bank, findingP->addr, optOverlayTag(entryP), (entryP->fileP)?entryP->fileP:"-", entryP->lineNo,
+        recP->delP->bank, recP->delP->addr, optOverlayTag(recP->delP));
 
     if( recP->keepP )
     {
-        fprintf(fP, " keeps %d %04o %06o %06o", recP->keepP->bank, recP->keepP->addr, recP->before, recP->after);
+        fprintf(fP, " keeps %d %04o%s %06o %06o", recP->keepP->bank, recP->keepP->addr, optOverlayTag(recP->keepP),
+            recP->before, recP->after);
     }
 
     fprintf(fP, " region %d | %s => %s", (recP->regionP)?recP->regionP->id:0,
@@ -4246,12 +4246,13 @@ int first;
 
     siteP = inP->siteP;
     sP = &inP->shape;
-    fprintf(fP, "%s %s S1 %d %04o %s:%d", labelP, optInlineFateName(inP->fate), siteP->bank, siteP->addr,
-        (siteP->fileP)?siteP->fileP:"-", siteP->lineNo);
+    fprintf(fP, "%s %s S1 %d %04o%s %s:%d", labelP, optInlineFateName(inP->fate), siteP->bank, siteP->addr,
+        optOverlayTag(siteP), (siteP->fileP)?siteP->fileP:"-", siteP->lineNo);
 
     if( sP->entryP )
     {
-        fprintf(fP, " callee %d %04o %s", sP->entryP->bank, sP->entryP->addr, firstLabelName(sP->entryP));
+        fprintf(fP, " callee %d %04o%s %s", sP->entryP->bank, sP->entryP->addr, optOverlayTag(sP->entryP),
+            firstLabelName(sP->entryP));
     }
     else
     {
@@ -4423,7 +4424,12 @@ int deleted;
 
     for( bank = 0; bank <= MAXBANK; ++bank )
     {
-        if( tableP->inlineSpent[bank] )
+        if( tableP->inlineSpent[bank] && tableP->viewOvP )
+        {
+            fprintf(fP, "  bank %2d: %d words budgeted, window %s to %04o\n", bank, tableP->inlineSpent[bank],
+                tableP->viewOvP->windowP->nameP, tableP->viewOvP->windowP->last);
+        }
+        else if( tableP->inlineSpent[bank] )
         {
             fprintf(fP, "  bank %2d: %d words budgeted, ceiling %04o%s\n", bank, tableP->inlineSpent[bank],
                 optBankCeiling(tableP, bank), (optBankCeilingDeclared(tableP, bank))?" (declared)":"");
@@ -4433,8 +4439,8 @@ int deleted;
     for( inP = tableP->inlinesP; inP; inP = inP->nextP )
     {
         sP = &inP->shape;
-        fprintf(fP, "    S1   bank %2d %04o  %s:%d  %s  ", inP->siteP->bank, inP->siteP->addr,
-            (inP->siteP->fileP)?inP->siteP->fileP:"-", inP->siteP->lineNo,
+        fprintf(fP, "    S1   bank %2d %04o%s  %s:%d  %s  ", inP->siteP->bank, inP->siteP->addr,
+            optOverlayTag(inP->siteP), (inP->siteP->fileP)?inP->siteP->fileP:"-", inP->siteP->lineNo,
             (sP->entryP)?firstLabelName(sP->entryP):"-");
 
         switch( inP->fate )
@@ -4493,7 +4499,12 @@ int deleted;
             break;
 
         default:
-            if( optBankCeilingDeclared(tableP, inP->siteP->bank) )
+            if( tableP->viewOvP )
+            {
+                fprintf(fP, "not copied: the copy would pass the end of window %s\n",
+                    tableP->viewOvP->windowP->nameP);
+            }
+            else if( optBankCeilingDeclared(tableP, inP->siteP->bank) )
             {
                 // Name the author's ceiling.
                 fprintf(fP, "not copied: the copy would pass the bank's declared ceiling, %%%%ceiling %04o\n",

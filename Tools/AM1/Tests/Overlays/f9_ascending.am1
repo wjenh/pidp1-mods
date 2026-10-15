@@ -1,0 +1,9 @@
+f9_ascending: f9_backward's words, the origins ascending
+100/
+low,    hlt
+        jmp go
+1000/
+go,     cla
+        cma
+        jmp low
+        start go

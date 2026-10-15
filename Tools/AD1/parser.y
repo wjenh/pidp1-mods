@@ -37,6 +37,14 @@ extern void formatAndPrintTwo(char fmt, int valP, int fmt2, int val2P);
 extern int eval(int op, int lval, int rval);
 extern int yylex(void);
 extern SymbolP findSymbolByName(int bank, int fileno, char *nameP);
+extern int getLineOfSymbol(SymbolP symP);
+
+static SymbolP listedSymP;      // the symbol listSym found, for its overlay's line
+static OverlayRef watchRef;     // the overlay a watch's address named, not counting its value's
+static OverlayRef breakRef;     // the overlay a breakpoint's address named, not counting its condition's
+static Ad1Cond userCond;        // the command's "when word = value [mask m]"
+static int condRefsBefore;      // name@overlay references before the condition's word
+static bool condAllowed(OverlayRefP refP, const char *whatP);
 extern void listBreaks(void);
 extern void listWatches(void);
 extern char *getUnrestrictedFormat(int fmt);
@@ -52,11 +60,11 @@ extern void continueFn(void);
 extern void nextFn(void);
 extern void formatFn(int base);
 extern void setBankFn(int num);
-extern void setBpFn(int num, int count);
+extern void setBpFn(int num, int count, OverlayRefP refP, const Ad1Cond *userCondP);
 extern void deleteBpFn(int num);
 extern void enableBpFn(int num);
 extern void disableBpFn(int num);
-extern void setWatchFn(int addr, int value);
+extern void setWatchFn(int addr, int value, OverlayRefP refP, const Ad1Cond *userCondP);
 extern void deleteWatchFn(int num);
 extern void enableWatchFn(int num);
 extern void disableWatchFn(int num);
@@ -71,6 +79,11 @@ extern void debugFn(void);
 %}
 
 %start stmt
+
+// Reduce only on a lookahead that permits it.  A default reduction ran a command's action
+// before the rest of the line was read, so "bank 3 junk" set the bank, then reported the
+// error.  cmd is followed only by the end of the line.
+%define lr.default-reduction accepting
 
 %code requires {
 typedef struct argitem_t {
@@ -140,6 +153,8 @@ typedef struct argitem_t {
 %token LINEAT
 %token LOCAL
 %token SEPARATOR
+%token EQUALS
+%token WHEN
 
 /* non-terminals */
 %type <cmdP> cmd
@@ -152,6 +167,10 @@ typedef struct argitem_t {
 %type <ival> expr
 %type <ival> dotexpr
 %type <ival> address
+%type <ival> watchAddress
+%type <ival> breakAddress
+%type <ival> condWord
+%type <ival> optMask
 %type <ival> optAddress
 %type <ival> listSym
 
@@ -173,9 +192,9 @@ typedef struct argitem_t {
 
 %%
 
-stmt		: cmd
+stmt            : cmd
                 ;
-cmd		: QUIT
+cmd             : QUIT
                 {
                     return(QUIT);
                 }
@@ -236,9 +255,34 @@ cmd		: QUIT
                     printf(getUnrestrictedFormat(lastFormat), curBank);
                     NEWLINE;
                 }
-                | BREAK SEPARATOR address optDECINTEGER
+                | BREAK SEPARATOR breakAddress optDECINTEGER
                 {
-                    setBpFn($3, $4);
+                    // An address that names an overlay, name@overlay, binds the breakpoint to it.
+                    if( breakRef.mixed )
+                    {
+                        printf("A breakpoint can be bound to one overlay only.\n");
+                        return(0);
+                    }
+
+                    setBpFn($3, $4, (breakRef.count > 0)?&breakRef:NIL, NIL);
+                }
+                | BREAK SEPARATOR breakAddress SEPARATOR condition
+                {
+                    if( !condAllowed(&breakRef, "breakpoint") )
+                    {
+                        return(0);
+                    }
+
+                    setBpFn($3, BADNUM, NIL, &userCond);
+                }
+                | BREAK SEPARATOR breakAddress SEPARATOR DECINTEGER SEPARATOR condition
+                {
+                    if( !condAllowed(&breakRef, "breakpoint") )
+                    {
+                        return(0);
+                    }
+
+                    setBpFn($3, $5, NIL, &userCond);
                 }
                 | DELETE SEPARATOR DECINTEGER
                 {
@@ -344,7 +388,7 @@ cmd		: QUIT
                     }
                     else
                     {
-                        // $2 can be an emptry string
+                        // $2 can be an empty string
                         setFileFn($2, false);
                     }
 
@@ -388,7 +432,16 @@ cmd		: QUIT
                 {
                 int line;
 
-                    line = getLineFromAddress($3, NOARG);
+                    // An overlay's symbol lists at its overlay's line, whichever is in the window.
+                    if( listedSymP && listedSymP->overlay )
+                    {
+                        line = getLineOfSymbol(listedSymP);
+                    }
+                    else
+                    {
+                        line = getLineFromAddress($3, NOARG);
+                    }
+
                     if( line <= 0 )
                     {
                         printf("No line can be found for that address.\n");
@@ -413,13 +466,43 @@ cmd		: QUIT
                 {
                     nextFn();
                 }
-                | WATCH SEPARATOR address SEPARATOR expr
+                | WATCH SEPARATOR watchAddress SEPARATOR expr
                 {
-                    setWatchFn($3, $5);
+                    if( watchRef.mixed )
+                    {
+                        printf("A watch can be bound to one overlay only.\n");
+                        return(0);
+                    }
+
+                    setWatchFn($3, $5,(watchRef.count > 0)?&watchRef:NIL, NIL);
                 }
-                | WATCH SEPARATOR address
+                | WATCH SEPARATOR watchAddress
                 {
-                    setWatchFn($3, BADNUM);
+                    if( watchRef.mixed )
+                    {
+                        printf("A watch can be bound to one overlay only.\n");
+                        return(0);
+                    }
+
+                    setWatchFn($3, BADNUM,(watchRef.count > 0)?&watchRef:NIL, NIL);
+                }
+                | WATCH SEPARATOR watchAddress SEPARATOR expr SEPARATOR condition
+                {
+                    if( !condAllowed(&watchRef, "watch") )
+                    {
+                        return(0);
+                    }
+
+                    setWatchFn($3, $5, NIL, &userCond);
+                }
+                | WATCH SEPARATOR watchAddress SEPARATOR condition
+                {
+                    if( !condAllowed(&watchRef, "watch") )
+                    {
+                        return(0);
+                    }
+
+                    setWatchFn($3, BADNUM, NIL, &userCond);
                 }
                 | WINDOW SEPARATOR DECINTEGER
                 {
@@ -430,7 +513,7 @@ cmd		: QUIT
                     formatAndPrintTwo(SYMBOLIC, lastAddr, base, tgtRead(lastAddr));
                     NEWLINE;
                 }
-		;
+                ;
 
 integer         : INTEGER
                 {
@@ -454,7 +537,9 @@ integer         : INTEGER
                                 break;
 
                             default:
+                                // Give up on the whole command, or it runs with a wrong value.
                                 yyerror("decimal number given, but in binary mode");
+                                return(0);
                             }
                         }
 
@@ -465,6 +550,7 @@ integer         : INTEGER
                         if( strchr(str, '8') || strchr(str, '9') )
                         {
                             yyerror("decimal number given, but in octal mode");
+                            return(0);
                         }
 
                         $$ = strtol(str, NIL, 8);
@@ -489,7 +575,7 @@ optDECINTEGER   : SEPARATOR DECINTEGER
 baseSpec        : SEPARATOR SYMBOL
                 {
                     // We do this here because lex can't tell that one of these isn't a symbol
-                    // without much hadwaving.
+                    // without much handwaving.
                     if( strlen($2) != 1 )
                     {
                         printf("A base specifier must be one character b, o, d, x, a, f, s, i or c.\n");
@@ -539,11 +625,75 @@ optBase         : baseSpec
                 | { $$ = NONE; } 
                 ;
 
+// A watch's address: the overlay it names, name@overlay, binds the watch, and is taken here
+// before the value is parsed, so a value naming an overlay does not.
+watchAddress    : address
+                {
+                    watchRef = *ovlRef();
+                    $$ = $1;
+                }
+                ;
+
+// A breakpoint's address: the overlay it names binds the breakpoint, taken here before a
+// condition is parsed, whose word is refused if it names one.
+breakAddress    : address
+                {
+                    breakRef = *ovlRef();
+                    $$ = $1;
+                }
+                ;
+
+// "when word = value [mask m]", into userCond.  The word is an address as break takes one; the
+// lexer gives WHEN only before that shape, so when is no reserved word.
+condition       : WHEN SEPARATOR
+                {
+                    condRefsBefore = ovlRef()->count;
+                }
+                  condWord condSep EQUALS condSep expr optMask
+                {
+                    userCond.isSet = 1;
+                    userCond.address = (u32)$4 & 0177777;
+                    userCond.mask = (u32)$9 & 0777777;
+                    userCond.value = (u32)$8 & 0777777;
+                }
+                ;
+
+condWord        : address
+                {
+                    // A window word holds whichever overlay is there, so name@overlay would test
+                    // another overlay's data whenever that one is not resident.
+                    if( ovlRef()->count != condRefsBefore )
+                    {
+                        printf("A condition's word cannot name an overlay's symbol; give its address.\n");
+                        return(0);
+                    }
+
+                    $$ = $1;
+                }
+                ;
+
+condSep         : SEPARATOR
+                |
+                ;
+
+optMask         : SEPARATOR SYMBOL SEPARATOR expr
+                {
+                    if( strcmp($2, "mask") )
+                    {
+                        printf("Expected mask after the condition's value, not %s.\n", $2);
+                        return(0);
+                    }
+
+                    $$ = $4;
+                }
+                | { $$ = 0777777; }
+                ;
+
 address         : expr optBREF
                 {
                     if( ($1 < 0) || ($1 >= MAXMEM) )
                     {
-                        printf("A memory address must be between 0-65535 declimal, 177777 octal, FFFF hex.\n");
+                        printf("A memory address must be between 0-65535 decimal, 177777 octal, FFFF hex.\n");
                         return(0);
                     }
 
@@ -627,7 +777,10 @@ expr            : MINUS expr %prec UMINUS
 
                     if( !(symP = findSymbolByName(curBank, NOARG, $1)) )
                     {
-                        printf("Can't find symbol '%s' in bank %d.\n", $1, curBank);
+                        if( !symReported )
+                        {
+                            printf("Can't find symbol '%s' in bank %d.\n", $1, curBank);
+                        }
                         return(0);
                     }
 
@@ -640,10 +793,27 @@ expr            : MINUS expr %prec UMINUS
 
                     if( !(symP = findSymbolByName($2, NOARG, $1)) )
                     {
-                        printf("Can't find symbol '%s' in bank %d.\n", $1, $2);
+                        if( !symReported )
+                        {
+                            printf("Can't find symbol '%s' in bank %d.\n", $1, $2);
+                        }
                         return(0);
                     }
 
+                    curFileNo = symP->fileNo;
+                    $$ = symP->address;
+                }
+                | SYMBOL LINEAT SYMBOL
+                {
+                SymbolP symP;
+
+                    // name@overlay: findOverlaySymbol() says why when there is none
+                    if( !(symP = findOverlaySymbol($1, $3)) )
+                    {
+                        return(0);
+                    }
+
+                    ovlRefNote(symP);       // for break
                     curFileNo = symP->fileNo;
                     $$ = symP->address;
                 }
@@ -673,7 +843,6 @@ dotexpr         : DOT
 
 listSym         : SYMBOL optBREF optFILENO
                 {
-                int i;
                 SymbolP symP;
 
                     if( $2 == NOARG )
@@ -683,11 +852,28 @@ listSym         : SYMBOL optBREF optFILENO
 
                     if( !(symP = findSymbolByName($2, $3, $1)) )
                     {
-                        printf("Can't find symbol '%s' in bank %d.\n", $1, $2);
+                        if( !symReported )
+                        {
+                            printf("Can't find symbol '%s' in bank %d.\n", $1, $2);
+                        }
                         return(0);
                     }
 
                     curFileNo = symP->fileNo;
+                    listedSymP = symP;
+                    $$ = symP->address;
+                }
+                | SYMBOL LINEAT SYMBOL
+                {
+                SymbolP symP;
+
+                    if( !(symP = findOverlaySymbol($1, $3)) )
+                    {
+                        return(0);
+                    }
+
+                    curFileNo = symP->fileNo;
+                    listedSymP = symP;
                     $$ = symP->address;
                 }
 
@@ -723,4 +909,19 @@ yyerror(const char *errstr)
 {
     printf("\nInvalid command line, %s\n", errstr);
     return(0);
+}
+
+// A condition on a breakpoint or watch bound to an overlay is refused: the emulator keeps one
+// condition per slot, and the binding is it.  False, having said so, if refP binds it.
+static bool
+condAllowed(OverlayRefP refP, const char *whatP)
+{
+    if( refP->count > 0 )
+    {
+        printf("A %s bound to an overlay cannot take a condition too; its binding is its condition.\n",
+            whatP);
+        return( false );
+    }
+
+    return( true );
 }

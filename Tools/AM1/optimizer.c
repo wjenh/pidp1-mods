@@ -36,15 +36,23 @@ typedef struct
     int pc;                 // and the address within it
     const char *fileP;      // the words' source file: from the last FILENAME passed
     bool failed;            // set when the walk met something it could not place
+    bool inOverlay;         // between the view's %%overlay and its %%endoverlay
+    int rootBank;           // where the root resumes at that %%endoverlay
+    int rootPC;
 } Builder, *BuilderP;
 
 #define INITIAL_CAPACITY    256     // entries allocated for a new table, doubled as needed
+#define OPT_OVNAMES         8       // root symbols of one drum overlay word that set its
+                                    // pinned span; any past them are pinned alone
 
 extern BankContextP banksP;         // every bank the program used, most recent first
 extern FILE *outfP;                 // the report file, opened by am1.c
 extern char *origFilenameP;         // the source file named on the command line
 
 extern int evalExpr(PNodeP);
+extern OverlayContextP overlaysP;   // every drum overlay, from the parser
+extern SymNodeP ovTableSymP;        // the overlay descriptor table's label
+extern void refreshOverlayAliases(void);
 
 // Set by -O=dump: print the word table on stdout in -T format.
 static bool optDumpWanted;
@@ -108,12 +116,15 @@ typedef struct
     int bank;
     int lo;
     int hi;
+    char *ovNameP;          // the drum overlay its "@name" names, NILP for the root
+    const char *specP;      // as given, for a warning
 } BisectRange;
 
 typedef struct
 {
     int bank;
     int addr;
+    char *ovNameP;          // the drum overlay its "@name" names, NILP for the root
     const char *fileP;      // the -O=off file, as given
     int lineNo;
     int matched;            // non-zero once a rewrite that would fire names it
@@ -129,6 +140,10 @@ static int bisectRangeCount;
 static BisectListed *bisectListP;   // every line of every -O=off file
 static int bisectListCount;
 static char bisectSpec[BISECT_SPEC];    // the modifiers as given, for the report
+static int bisectLastOrdinal;       // the last ordinal the views so far gave
+static int bisectOffTotal;          // every view's rewrites switched off, and of those
+static int bisectCandidateTotal;    // that would fire, for -O2's one warning
+static int lastView;                // the view being analyzed is the last
 
 // -O=inline=cap:N and -O=inline=reserve:N.
 static int inlineCap = 8;           // the largest body copied at a declared site unless marked
@@ -161,6 +176,10 @@ static int sourceMode = SRC_MODE_TEXT;
 // The builder's running state for the current optimize() call.
 static Builder builder;
 
+// The view optimize() is analyzing: NILP for the root alone, else the drum
+// overlay whose words join the root's.  Relayout rebuilds tables of it too.
+static OverlayContextP viewOvP;
+
 static OptTableP newTable(void);
 static OptWordP addEntry(OptTableP tableP, int bank, int addr, int value, OptKind kind,
     PNodeP nodeP, PNodeP exprP, SymNodeP symP, int lineNo, unsigned int flags);
@@ -176,13 +195,24 @@ static void addAsciiWords(OptTableP tableP, PNodeP nodeP, PNodeP asciiNodeP);
 static void addTableWords(OptTableP tableP, PNodeP nodeP);
 static void addVarWords(OptTableP tableP, PNodeListP listP, int bank);
 static void addConstWords(OptTableP tableP, SymNodeP symP, int bank);
+static void addOvCallWords(OptTableP tableP, PNodeP nodeP);
+static void addOvTableWords(OptTableP tableP, PNodeP nodeP);
+static void pinOverlayReferences(OptTableP tableP, PNodeP nodeP);
+static void pinWordExpr(OptTableP tableP, OverlayContextP ovP, PNodeP exprP);
+static void rootNames(OptTableP tableP, OverlayContextP ovP, PNodeP exprP, SymNodeP *namesPP, int *countP);
+static void pinRange(OptTableP tableP, int bank, int first, int last);
 
 static int canReduce(PNodeP nodeP);
 static int reduceOperand(PNodeP nodeP);
 static void advancePC(int incr);
 static void checkPlacement(OptTableP tableP, OptWordP entryP);
 
+static int optimizeView(PNodeP rootP, char *basenameP);
+static OverlayContextP overlayNumbered(int number);
+static void enterOverlayView(PNodeP nodeP);
+static void leaveOverlayView(OptTableP tableP);
 static void writeReport(FILE *fP, OptTableP tableP, char *basenameP);
+static void writeOverlayReport(FILE *fP, OptTableP tableP);
 #ifdef AM1_TEST_SWITCHES
 static void secondPass(PNodeP rootP);
 #endif
@@ -191,6 +221,9 @@ static int bisectSetUpto(const char *argP);
 static int bisectAddRange(const char *argP);
 static int bisectReadList(const char *pathP);
 static int bisectNumber(const char *textP, int base, long max, long *valueP, const char **endPP);
+static char *bisectOverlayName(const char *textP, const char **endPP);
+static int bisectSameOverlay(const char *ovNameP, int ovWord);
+static int bisectIsOverlay(const char *nameP);
 static void bisectNoteSpec(const char *argP);
 static int inlineSetting(const char *argP);
 static int unrollSetting(const char *argP);
@@ -556,7 +589,8 @@ const char *endP;
 }
 
 // Accept -O=range=B:LO-HI: keep the rewrites in bank B (decimal) at LO to HI
-// (octal).  Each -O=range adds a range.
+// (octal); with "@name" after HI, those of drum overlay name, without it the
+// root's.  Each -O=range adds a range.
 // Returns 1 if accepted, 0 if not (the caller prints the usage).
 static int
 bisectAddRange(const char *argP)
@@ -583,7 +617,7 @@ const char *cP;
 
     range.lo = (int)value;
 
-    if( !bisectNumber(cP, 8, ADDRMASK, &value, &cP) || *cP || (value < range.lo) )
+    if( !bisectNumber(cP, 8, ADDRMASK, &value, &cP) || (*cP && (*cP != '@')) || (value < range.lo) )
     {
         fprintf(stderr, "am1: -O=range=%s: expected B:LO-HI, a bank 0 to %d and octal addresses, LO not above HI\n",
             argP, MAXBANK);
@@ -591,6 +625,14 @@ const char *cP;
     }
 
     range.hi = (int)value;
+    range.ovNameP = NILP;
+    range.specP = argP;
+
+    if( (*cP == '@') && (!(range.ovNameP = bisectOverlayName(cP + 1, &cP)) || *cP) )
+    {
+        fprintf(stderr, "am1: -O=range=%s: expected B:LO-HI@name, name a drum overlay's\n", argP);
+        return(0);
+    }
 
     if( !(bisectRangesP = (BisectRange *)realloc(bisectRangesP, ((size_t)(bisectRangeCount + 1) * sizeof(BisectRange)))) )
     {
@@ -604,9 +646,10 @@ const char *cP;
     return(1);
 }
 
-// Accept -O=off=FILE: switch off each rewrite listed as "bank addr", as in an
-// -O=xform line.  Returns 1 if accepted, 0 for an empty name; an unreadable file
-// or malformed line stops am1, since a wrong list is worse than no build.
+// Accept -O=off=FILE: switch off each rewrite listed as "bank addr", or
+// "bank addr@name" for a drum overlay's word, as in an -O=xform line.  Returns 1
+// if accepted, 0 for an empty name; an unreadable file or malformed line stops
+// am1, since a wrong list is worse than no build.
 static int
 bisectReadList(const char *pathP)
 {
@@ -617,6 +660,7 @@ const char *endP;
 long bank;
 long addr;
 int lineNo;
+char *ovNameP;
 BisectListed *entryP;
 
     if( !*pathP )
@@ -676,6 +720,15 @@ BisectListed *entryP;
             exit(1);
         }
 
+        ovNameP = NILP;
+
+        if( (*endP == '@') && !(ovNameP = bisectOverlayName(endP + 1, &endP)) )
+        {
+            fprintf(stderr, "am1: -O=off=%s, line %d: expected \"bank addr@name\", name a drum overlay's\n",
+                pathP, lineNo);
+            exit(1);
+        }
+
         for( ; (*endP == ' ') || (*endP == '\t') || (*endP == '\r') || (*endP == '\n'); ++endP )
         {
         }
@@ -696,6 +749,7 @@ BisectListed *entryP;
         entryP = &bisectListP[bisectListCount++];
         entryP->bank = (int)bank;
         entryP->addr = (int)addr;
+        entryP->ovNameP = ovNameP;
         entryP->fileP = pathP;
         entryP->lineNo = lineNo;
         entryP->matched = 0;
@@ -746,6 +800,69 @@ int digit;
     return(1);
 }
 
+// Read the name after a qualifier's '@': every character up to a space, a tab,
+// a line end or the string's end.  Whether a drum overlay has the name is known
+// only after the parse, so optBisectWarnUnmatched() checks it.
+// Returns the name, allocated, with *endPP after it; NILP for an empty name.
+static char *
+bisectOverlayName(const char *textP, const char **endPP)
+{
+const char *cP;
+char *nameP;
+
+    for( cP = textP; *cP && (*cP != ' ') && (*cP != '\t') && (*cP != '\r') && (*cP != '\n') && (*cP != '@'); ++cP )
+    {
+    }
+
+    if( cP == textP )
+    {
+        return(NILP);
+    }
+
+    if( !(nameP = (char *)malloc((size_t)(cP - textP) + 1)) )
+    {
+        fprintf(stderr, "am1: out of memory reading a bisection modifier\n");
+        exit(1);
+    }
+
+    memcpy(nameP, textP, (size_t)(cP - textP));
+    nameP[cP - textP] = '\0';
+    *endPP = cP;
+    return(nameP);
+}
+
+// Does a modifier qualified by ovNameP (NILP for none) name a word of the view's
+// drum overlay (ovWord non-zero) or a root word (zero)?  An unqualified one
+// names root words only, since addresses repeat across overlays.
+// Returns 1 if it does, 0 if not.
+static int
+bisectSameOverlay(const char *ovNameP, int ovWord)
+{
+    if( !ovWord )
+    {
+        return( (!ovNameP)?1:0 );
+    }
+
+    return( (ovNameP && viewOvP && !strcmp(ovNameP, viewOvP->nameP))?1:0 );
+}
+
+// Returns 1 when a drum overlay is named nameP, 0 if none is.
+static int
+bisectIsOverlay(const char *nameP)
+{
+OverlayContextP ovP;
+
+    for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        if( !strcmp(ovP->nameP, nameP) )
+        {
+            return(1);
+        }
+    }
+
+    return(0);
+}
+
 // Append "-O=" and argP to the modifiers' spelling for the report and the -O2
 // warning; a spelling too long for the buffer is cut off with "...".
 static void
@@ -775,11 +892,28 @@ optBisectGiven(void)
     return(bisectGiven);
 }
 
+// The first ordinal a view's selection gives: one past the last that the views
+// before it gave, so that -O=upto counts the root's rewrites first and then
+// each drum overlay's.
+int
+optBisectFirstOrdinal(void)
+{
+    return(bisectLastOrdinal + 1);
+}
+
+// Record the last ordinal a view's selection gave; the next view numbers on.
+void
+optBisectSetLastOrdinal(int ordinal)
+{
+    bisectLastOrdinal = ordinal;
+}
+
 // The OPTBIS_ bits of the modifiers that switch off the ordinal-th rewrite that
-// would fire, at bank and addr; 0 keeps it.  Every -O=off line naming the word
-// is marked matched, whatever the other modifiers decide.
+// would fire, at bank and addr, a word of the view's drum overlay when ovWord is
+// non-zero; 0 keeps it.  Every -O=off line naming the word is marked matched,
+// whatever the other modifiers decide.
 unsigned int
-optBisectSelect(int ordinal, int bank, int addr)
+optBisectSelect(int ordinal, int bank, int addr, int ovWord)
 {
 unsigned int offBy;
 int i;
@@ -798,7 +932,8 @@ int inRange;
 
         for( i = 0; i < bisectRangeCount; ++i )
         {
-            if( (bisectRangesP[i].bank == bank) && (addr >= bisectRangesP[i].lo) && (addr <= bisectRangesP[i].hi) )
+            if( (bisectRangesP[i].bank == bank) && (addr >= bisectRangesP[i].lo) && (addr <= bisectRangesP[i].hi) &&
+                bisectSameOverlay(bisectRangesP[i].ovNameP, ovWord) )
             {
                 inRange = 1;
                 break;
@@ -813,7 +948,8 @@ int inRange;
 
     for( i = 0; i < bisectListCount; ++i )
     {
-        if( (bisectListP[i].bank == bank) && (bisectListP[i].addr == addr) )
+        if( (bisectListP[i].bank == bank) && (bisectListP[i].addr == addr) &&
+            bisectSameOverlay(bisectListP[i].ovNameP, ovWord) )
         {
             bisectListP[i].matched = 1;
             offBy |= OPTBIS_OFF;
@@ -825,20 +961,74 @@ int inRange;
 
 // Warn on stderr, whatever -W says, about each -O=off line that named no
 // rewrite: a list goes stale when an edit moves an address, which must be
-// visible but must not stop the build.
+// visible but must not stop the build.  A qualifier naming no drum overlay is
+// warned of the same way, a range's too.  Once, after the last view.
 void
 optBisectWarnUnmatched(void)
 {
 int i;
 
-    for( i = 0; i < bisectListCount; ++i )
+    for( i = 0; i < bisectRangeCount; ++i )
     {
-        if( !bisectListP[i].matched )
+        if( bisectRangesP[i].ovNameP && !bisectIsOverlay(bisectRangesP[i].ovNameP) )
         {
-            fprintf(stderr, "am1: warning: -O=off=%s, line %d: bank %d %04o names no rewrite that would fire; is the list stale?\n",
-                bisectListP[i].fileP, bisectListP[i].lineNo, bisectListP[i].bank, bisectListP[i].addr);
+            fprintf(stderr, "am1: warning: -O=range=%s: there is no overlay %s\n", bisectRangesP[i].specP,
+                bisectRangesP[i].ovNameP);
         }
     }
+
+    for( i = 0; i < bisectListCount; ++i )
+    {
+        if( bisectListP[i].ovNameP && !bisectIsOverlay(bisectListP[i].ovNameP) )
+        {
+            fprintf(stderr, "am1: warning: -O=off=%s, line %d: there is no overlay %s\n",
+                bisectListP[i].fileP, bisectListP[i].lineNo, bisectListP[i].ovNameP);
+        }
+        else if( !bisectListP[i].matched )
+        {
+            fprintf(stderr, "am1: warning: -O=off=%s, line %d: bank %d %04o%s%s names no rewrite that would fire; is the list stale?\n",
+                bisectListP[i].fileP, bisectListP[i].lineNo, bisectListP[i].bank, bisectListP[i].addr,
+                (bisectListP[i].ovNameP)?"@":"", (bisectListP[i].ovNameP)?bisectListP[i].ovNameP:"");
+        }
+    }
+}
+
+// Returns 1 while the last view is analyzed, 0 before it.
+int
+optLastView(void)
+{
+    return(lastView);
+}
+
+// The tag a word of the view's drum overlay carries after its "bank addr" in
+// -O=xform and the report, which an -O=off line or an -O=range copies; "" for
+// a root word, so that a program without overlays prints as it always has.
+const char *
+optOverlayTag(OptWordP entryP)
+{
+static char *tagP;
+static OverlayContextP taggedP;
+
+    if( !viewOvP || !entryP || !(entryP->flags & OPTF_OVWORD) )
+    {
+        return("");
+    }
+
+    if( taggedP != viewOvP )
+    {
+        free(tagP);
+
+        if( !(tagP = (char *)malloc(strlen(viewOvP->nameP) + 2)) )
+        {
+            fprintf(stderr, "am1: out of memory naming an overlay's word\n");
+            exit(1);
+        }
+
+        sprintf(tagP, "@%s", viewOvP->nameP);
+        taggedP = viewOvP;
+    }
+
+    return(tagP);
 }
 
 // The bisection modifiers as given; empty when none was.
@@ -890,7 +1080,8 @@ optTransformLevel(void)
 int
 optimize(PNodeP rootP, char *basenameP)
 {
-OptTableP tableP;
+OverlayContextP ovP;
+int number;
 
     // Every -O2 assembly first warns that it rewrites on a guess: on stderr and
     // regardless of -W, which silences only warnings about the source.
@@ -925,6 +1116,48 @@ OptTableP tableP;
         fflush(stdout);
     }
 
+    // The root alone first, which is the whole program when it has no drum
+    // overlay; then each overlay in source order, the root its context.  Two
+    // overlays of a window never share a view, so no analysis meets two words
+    // at one address that -M did not put there.
+    // An -O=edits line's "@name" can be checked only now the parse has made the
+    // overlays.
+    optRelayoutCheckEdits();
+
+    viewOvP = NILP;
+    lastView = (overlayNumbered(1))?0:1;
+
+    if( !optimizeView(rootP, basenameP) )
+    {
+        return(0);
+    }
+
+    for( number = 1; (ovP = overlayNumbered(number)); ++number )
+    {
+        viewOvP = ovP;
+        lastView = (overlayNumbered(number + 1))?0:1;
+
+        if( !optimizeView(rootP, basenameP) )
+        {
+            viewOvP = NILP;
+            return(0);
+        }
+    }
+
+    viewOvP = NILP;
+    return(1);
+}
+
+// Analyze, rewrite and report one view, viewOvP's: the root alone, or a drum
+// overlay with the root as its context.  In an overlay's view only the
+// overlay's words are rewritten and relaid, and its report is a section of its
+// own.
+// Returns 1 on success, 0 on failure.
+static int
+optimizeView(PNodeP rootP, char *basenameP)
+{
+OptTableP tableP;
+
     if( !(tableP = optBuildTable(rootP)) )
     {
         return(0);
@@ -956,8 +1189,9 @@ OptTableP tableP;
     optBuildWindow(tableP);
 
     // -O=source ties each statement to the source line it came from while the
-    // statement list still stands as parsed, before any rewrite moves it.
-    if( sourceWanted )
+    // statement list still stands as parsed, before any rewrite moves it: in
+    // the root's view, the first.
+    if( sourceWanted && !viewOvP )
     {
         srcMapLines(rootP);
     }
@@ -968,8 +1202,9 @@ OptTableP tableP;
     if( (transformLevel >= 1) || optXformDumpWanted )
     {
         // -O=source must know which reference created each pool slot, which
-        // a rewrite can take away.
-        if( sourceWanted && (transformLevel >= 1) )
+        // a rewrite can take away: before the root view's first rewrite,
+        // the overlays' pools included.
+        if( sourceWanted && (transformLevel >= 1) && !viewOvP )
         {
             srcSnapshotPools();
         }
@@ -978,14 +1213,30 @@ OptTableP tableP;
     }
 
     // Tell the developer when bisection switched rewrites off, since this is
-    // then not the full -O2 build.
+    // then not the full -O2 build: once, in the last view, for every view.
     if( (transformLevel >= 2) && tableP->xformBisect )
     {
-        fprintf(stderr, "am1: warning: bisection: %d of the %d rewrites -O2 would make are switched off (%s).\n",
-            tableP->xformFates[OPTXF_OFF] + tableP->inlineFates[OPTIN_OFF] + tableP->placeFates[OPTPL_OFF] +
-            tableP->unrollFates[OPTUN_OFF] + tableP->windelFates[OPTWD_OFF],
-            tableP->xformCandidates + tableP->inlineCandidates + tableP->placeCandidates +
-            tableP->unrollCandidates + tableP->spaceCandidates + tableP->windelCandidates, optBisectSpec());
+        bisectOffTotal += tableP->xformFates[OPTXF_OFF] + tableP->inlineFates[OPTIN_OFF] +
+            tableP->placeFates[OPTPL_OFF] + tableP->unrollFates[OPTUN_OFF] + tableP->windelFates[OPTWD_OFF];
+        bisectCandidateTotal += tableP->xformCandidates + tableP->inlineCandidates + tableP->placeCandidates +
+            tableP->unrollCandidates + tableP->spaceCandidates + tableP->windelCandidates;
+
+        if( lastView )
+        {
+            fprintf(stderr, "am1: warning: bisection: %d of the %d rewrites -O2 would make are switched off (%s).\n",
+                bisectOffTotal, bisectCandidateTotal, optBisectSpec());
+        }
+    }
+
+    // Each overlay's view prints its dumps whole, root words included, under a
+    // heading of its own; the root's view prints as it always has.
+    if( viewOvP && (optDumpWanted || optDecodeDumpWanted || optRefsDumpWanted || optFlowDumpWanted ||
+        optCallsDumpWanted || optShareDumpWanted || optRegionsDumpWanted || optRulesDumpWanted ||
+        optValuesDumpWanted || optScratchDumpWanted || optGuessDumpWanted || optSpeedDumpWanted ||
+        optWindowDumpWanted || optXformDumpWanted || optRelayoutDumpWanted) )
+    {
+        fprintf(stdout, "\n");
+        writeOverlayHeading(stdout, tableP);
     }
 
     if( optDumpWanted )
@@ -1077,23 +1328,33 @@ OptTableP tableP;
         fflush(stdout);
     }
 
-    writeReport(outfP, tableP, basenameP);
+    if( viewOvP )
+    {
+        writeOverlayReport(outfP, tableP);
+    }
+    else
+    {
+        writeReport(outfP, tableP, basenameP);
+    }
 
     // After the report, which describes the program as assembled, and before
     // the table is freed, since relayout checks every edit against it.  It runs
     // for the edits file or dump, any fired inline, placement, unroll or
     // deletion (an eem or lem included), or a declared T8's freed pool word: a
-    // length change no edit announces.
-    if( optRelayoutGiven() || optRelayoutDumpWanted || tableP->inlineFates[OPTIN_FIRED] ||
+    // length change no edit announces.  An -O=edits line is tried in the view
+    // of the words it names: the root's, or the overlay its "@name" names; an
+    // overlay's view relays only that overlay, in its window.
+    if( (optRelayoutGiven(viewOvP) || optRelayoutDumpWanted || tableP->inlineFates[OPTIN_FIRED] ||
         tableP->placeFates[OPTPL_FIRED] || tableP->unrollFates[OPTUN_FIRED] || tableP->spaceWords ||
-        tableP->windelFates[OPTWD_FIRED] || (tableP->poolFreeable && !optReclaimOff()) )
+        tableP->windelFates[OPTWD_FIRED] || (tableP->poolFreeable && !optReclaimOff())) )
     {
         optRelayout(tableP, rootP, (optRelayoutDumpWanted)?stdout:NILP);
         fflush(stdout);
     }
 
     // The sections that say what relayout made of each rewrite, so after it;
-    // each prints nothing when nothing was declared.
+    // each prints nothing when nothing was declared.  An overlay's go in its
+    // own section of the report.
     writeInlineReport(outfP, tableP);
     writePlaceReport(outfP, tableP);
     writeUnrollReport(outfP, tableP);
@@ -1121,6 +1382,21 @@ OptTableP tableP;
 #endif
 
     return(1);
+}
+
+// The drum overlay numbered number, from 1 in source order.
+// Returns it, or NILP past the last.
+static OverlayContextP
+overlayNumbered(int number)
+{
+OverlayContextP ovP;
+
+    for( ovP = overlaysP; ovP && (ovP->number != number); ovP = ovP->nextP )
+    {
+        ;
+    }
+
+    return(ovP);
 }
 
 // Analyze the rewritten program again and decide the fates without editing; it
@@ -1162,11 +1438,13 @@ OptTableP tableP;
 BankContextP bankP;
 
     tableP = newTable();
+    tableP->viewOvP = viewOvP;
 
     // The binary generator starts where macro1 did, bank 0 address 4.
     builder.bank = 0;
     builder.pc = 4;
     builder.failed = false;
+    builder.inOverlay = false;
 
     // The command-line source until a FILENAME statement says otherwise.  cpp's
     // first line marker never becomes a statement, so without includes this is
@@ -1216,6 +1494,7 @@ BankContextP bankP;
         return(NILP);
     }
 
+    pinOverlayReferences(tableP, rootP->leftP);
     attachLabels(tableP);
     return(tableP);
 }
@@ -1382,7 +1661,14 @@ OptWordP *newPP;
     entryP->lineNo = lineNo;
     // Region flags are applied as the word is created: only here is being
     // between an optimize and its endoptimize a fact, not a reconstruction.
+    // So is being a word of the view's drum overlay.
     entryP->flags = (flags | optRegionWordFlags());
+
+    if( builder.inOverlay )
+    {
+        entryP->flags |= OPTF_OVWORD;
+        ++tableP->ovWordCount;
+    }
     entryP->index = tableP->count;
     entryP->labelsP = NILP;
     entryP->sameAddrP = NILP;
@@ -1531,6 +1817,26 @@ walkStatements(OptTableP tableP, PNodeP nodeP)
 {
     while( nodeP && !builder.failed )
     {
+        // A drum overlay's words are not the root's: they go to the drum, and
+        // its pc is its window's.  Only the view's own overlay is in its
+        // table, and a region declared inside an overlay declares only there.
+        if( nodeP->overlay && (!viewOvP || (nodeP->overlay != viewOvP->number)) )
+        {
+            nodeP = nodeP->leftP;
+            continue;
+        }
+
+        // In an overlay's view the root is context: its words are analyzed
+        // but its regions, speed declarations and ceilings were the root
+        // view's to act on.  So is a %%ceiling inside the overlay, since the
+        // window's last address bounds an overlay, not a bank's ceiling.
+        if( viewOvP && ((nodeP->type == OPTIMIZE) || (nodeP->type == ENDOPTIMIZE)) &&
+            (!nodeP->overlay || (nodeP->flags & PN_CEILING)) )
+        {
+            nodeP = nodeP->leftP;
+            continue;
+        }
+
         switch( nodeP->type )
         {
         case COMMENT:           // none of these emit anything or change state
@@ -1638,6 +1944,23 @@ walkStatements(OptTableP tableP, PNodeP nodeP)
             addTableWords(tableP, nodeP);
             break;
 
+        case OVCALL:
+            addOvCallWords(tableP, nodeP);
+            break;
+
+        case OVTABLE:
+            addOvTableWords(tableP, nodeP);
+            break;
+
+        case OVERLAYDECL:
+            // Only the view's own overlay reaches here.
+            enterOverlayView(nodeP);
+            break;
+
+        case ENDOVERLAY:
+            leaveOverlayView(tableP);
+            break;
+
         default:
             // Everything else (var declarations, export, import, comments of
             // every flavor, file markers) emits nothing.
@@ -1646,6 +1969,62 @@ walkStatements(OptTableP tableP, PNodeP nodeP)
 
         nodeP = nodeP->leftP;
     }
+}
+
+// Enter the view's drum overlay at its %%overlay, nodeP: its words are laid in
+// its window's bank from the window's first address past the header words,
+// as the parser laid them, and the root resumes at %%endoverlay.
+static void
+enterOverlayView(PNodeP nodeP)
+{
+OverlayContextP ovP;
+
+    ovP = (OverlayContextP)(nodeP->value.ptr);
+    builder.rootBank = builder.bank;
+    builder.rootPC = builder.pc;
+    builder.bank = ovP->windowP->bank;
+    builder.pc = (ovP->windowP->first + OVHEADERWORDS);
+    builder.inOverlay = true;
+}
+
+// Leave the view's drum overlay at its %%endoverlay: add the constants and
+// variables the parser placed at its end, constants first, as the overlay's
+// code generator writes them, then resume the root where it was.
+static void
+leaveOverlayView(OptTableP tableP)
+{
+OverlayContextP ovP;
+
+    ovP = viewOvP;
+
+    if( ovP->ctx.constSymP || ovP->ctx.varNodesP )
+    {
+        builder.pc = (ovP->ctx.constSymP)?ovP->ctx.constPC:ovP->ctx.varPC;
+
+        if( ovP->ctx.constSymP )
+        {
+            addConstWords(tableP, ovP->ctx.constSymP, ovP->ctx.bank);
+        }
+
+        if( ovP->ctx.varNodesP )
+        {
+            addVarWords(tableP, ovP->ctx.varNodesP, ovP->ctx.bank);
+        }
+    }
+
+    builder.inOverlay = false;
+    builder.bank = builder.rootBank;
+    builder.pc = builder.rootPC;
+}
+
+// Is this word the subject of its table's view?  Every word is in the root's
+// view; in a drum overlay's view only the overlay's are, and the root's are
+// context, already analyzed and rewritten in the root's view.
+// Returns 1 if it is, 0 if not.
+int
+optInView(OptTableP tableP, OptWordP entryP)
+{
+    return( (!tableP->viewOvP || (entryP->flags & OPTF_OVWORD))?1:0 );
 }
 
 // Add the one word of an expression statement (EXPR, or a label with an
@@ -1829,6 +2208,257 @@ int lineNo;
     addConstWords(tableP, symP->rightP, bank);
 }
 
+// Add a %%ovcall's words: jsp ovEnter, or eem and jsp i through a pool word
+// when the manager is in another bank, then the two data words.  Each is an
+// EXPR node of its own, with its own pc, chained from the OVCALL node's
+// rightP; the words are a hands-off span, since the manager reads the data
+// words through the call's return address.
+static void
+addOvCallWords(OptTableP tableP, PNodeP nodeP)
+{
+PNodeP wordP;
+
+    // In an overlay's view the call is the root's, context only, and its span
+    // was the root view's to report.
+    if( !viewOvP )
+    {
+        optRegionOvcall(tableP, nodeP, builder.bank, builder.pc, 1);
+    }
+
+    for( wordP = nodeP->rightP; wordP && !builder.failed; wordP = wordP->leftP )
+    {
+        addEntry(tableP, wordP->bank, wordP->pc, reduceOperand(wordP->rightP), OPTK_EXPR, wordP, wordP->rightP,
+            NILP, wordP->lineNo, OPTF_OVCALL);
+        advancePC(1);
+    }
+
+    if( !viewOvP )
+    {
+        optRegionOvcall(tableP, nodeP, builder.bank, builder.pc, 0);
+    }
+}
+
+// Add the drum overlay descriptor table's words, labeled ovTable.  Their
+// values are made after the optimizer, so they are reserved here; the manager
+// reads and writes them through pointers no edge records, so they are pinned.
+static void
+addOvTableWords(OptTableP tableP, PNodeP nodeP)
+{
+int i;
+
+    if( ovTableSymP )
+    {
+        addLabelDef(tableP, ovTableSymP, nodeP->bank, nodeP->pc);
+    }
+
+    for( i = 0; (i < nodeP->value.ival) && !builder.failed; ++i )
+    {
+        addEntry(tableP, nodeP->bank, (nodeP->pc + i), 0, OPTK_TABLE, nodeP, NILP, NILP, nodeP->lineNo,
+            (OPTF_RESERVED | OPTF_OVREF));
+        advancePC(1);
+    }
+}
+
+// Flag every root word a drum overlay names OPTF_OVREF, as referenced from
+// outside the root: the overlay's words are not in the table, so no edge
+// records the reference.  An overlay's view holds that overlay's words, whose
+// references are edges, and pins for every other overlay, so each sees what
+// the others do to the root.  nodeP is the statement list.
+static void
+pinOverlayReferences(OptTableP tableP, PNodeP nodeP)
+{
+int i;
+PNodeP subP;
+OverlayContextP ovP;
+
+    if( !overlaysP )
+    {
+        return;
+    }
+
+    // An alias holds a copy of its root symbol's address, which a relayout
+    // may have moved since.
+    refreshOverlayAliases();
+
+    for( ; nodeP; nodeP = nodeP->leftP )
+    {
+        if( !nodeP->overlay || (viewOvP && (nodeP->overlay == viewOvP->number)) )
+        {
+            continue;
+        }
+
+        for( ovP = overlaysP; ovP && (ovP->number != nodeP->overlay); ovP = ovP->nextP )
+        {
+            ;
+        }
+
+        if( !ovP )
+        {
+            continue;
+        }
+
+        switch( nodeP->type )
+        {
+        case EXPR:
+        case LOCATION:
+        case LCLLOCATION:
+            if( canReduce(nodeP->rightP) )
+            {
+                pinWordExpr(tableP, ovP, nodeP->rightP);
+            }
+            break;
+
+        case TABLE:
+            pinWordExpr(tableP, ovP, nodeP->rightP);
+            break;
+
+        case VAR:
+            // The vars of one statement, linked through rightP, each with its
+            // initial value in leftP.
+            for( subP = nodeP->rightP; subP; subP = subP->rightP )
+            {
+                pinWordExpr(tableP, ovP, subP->leftP);
+            }
+            break;
+
+        default:
+            break;
+        }
+    }
+
+    for( i = 0; i < tableP->count; ++i )
+    {
+        if( tableP->entriesPP[i]->flags & OPTF_OVREF )
+        {
+            ++tableP->ovRefCount;
+        }
+    }
+}
+
+// Pin the root words one word of overlay ovP names in exprP: each named word,
+// and, when the word's address field lands elsewhere in the same bank
+// (rootTab+2), every word from the named one to there, since a deletion
+// between them would change what the overlay's word holds.  A literal's own
+// expression is a word of its own, in the overlay's pool.
+static void
+pinWordExpr(OptTableP tableP, OverlayContextP ovP, PNodeP exprP)
+{
+int i;
+int count;
+int bank;
+int first;
+int last;
+int target;
+SymNodeP namesP[OPT_OVNAMES];
+
+    if( !exprP )
+    {
+        return;
+    }
+
+    count = 0;
+    rootNames(tableP, ovP, exprP, namesP, &count);
+
+    if( !count )
+    {
+        return;
+    }
+
+    target = (evalExpr(exprP) & ADDRMASK);
+    bank = namesP[0]->bank;
+    first = target;
+    last = target;
+
+    for( i = 0; i < count; ++i )
+    {
+        if( namesP[i]->bank != bank )
+        {
+            // Names in two banks: no span between them means anything.
+            pinRange(tableP, namesP[i]->bank, namesP[i]->value, namesP[i]->value);
+            continue;
+        }
+
+        first = (namesP[i]->value < first)?namesP[i]->value:first;
+        last = (namesP[i]->value > last)?namesP[i]->value:last;
+    }
+
+    pinRange(tableP, bank, first, last);
+}
+
+// Gather the root symbols an expression names outside its literals into
+// namesPP, at most OPT_OVNAMES, *countP of them; a literal's expression is
+// pinned as a word of its own as it is met.  An overlay's own symbols and its
+// locals are not the root's; an alias is its root symbol.
+static void
+rootNames(OptTableP tableP, OverlayContextP ovP, PNodeP exprP, SymNodeP *namesPP, int *countP)
+{
+SymNodeP symP;
+
+    for( ; exprP; exprP = exprP->rightP )
+    {
+        switch( exprP->type )
+        {
+        case CONSTANT:
+            pinWordExpr(tableP, ovP, (PNodeP)exprP->value2.ptr);
+            break;
+
+        case ADDR:
+        case BREF:
+            symP = exprP->value.symP;
+
+            if( symP->flags & SYMF_OVALIAS )
+            {
+                symP = symP->symP;
+            }
+            else if( (exprP->type == ADDR) && (sym_find(&(ovP->ctx.globalSymP), symP->name) == symP) )
+            {
+                symP = NILP;
+            }
+
+            if( symP && (*countP < OPT_OVNAMES) )
+            {
+                namesPP[(*countP)++] = symP;
+            }
+            else if( symP )
+            {
+                pinRange(tableP, symP->bank, symP->value, symP->value);
+            }
+            break;
+
+        default:
+            break;
+        }
+
+        rootNames(tableP, ovP, exprP->leftP, namesPP, countP);
+    }
+}
+
+// Flag the root words of bank from first to last OPTF_OVREF, each entry at an
+// address included.  In an overlay's view its own words are never pinned: an
+// overlay's local names its own window's words.
+static void
+pinRange(OptTableP tableP, int bank, int first, int last)
+{
+int addr;
+OptWordP entryP;
+
+    if( (bank < 0) || (bank > MAXBANK) || !tableP->banksP[bank] )
+    {
+        return;
+    }
+
+    for( addr = first; (addr <= last) && (addr < BANKSIZE); ++addr )
+    {
+        for( entryP = tableP->banksP[bank]->wordsP[addr]; entryP; entryP = entryP->sameAddrP )
+        {
+            if( !(entryP->flags & OPTF_OVWORD) )
+            {
+                entryP->flags |= OPTF_OVREF;
+            }
+        }
+    }
+}
+
 // Does an expression statement emit a word?  Decided as the generators decide:
 // directives that parse as expressions, and the text directives, do not.
 // Returns 1 if the expression emits a word, 0 if it does not.
@@ -1940,6 +2570,30 @@ writeReport(FILE *fP, OptTableP tableP, char *basenameP)
     writeSharingReport(fP, tableP);
     writeScratchSharingReport(fP, tableP);
     writeStatistics(fP, tableP);
+}
+
+// A drum overlay's section of the report, after the root's: the sections that
+// are the overlay's alone.  Its findings are its own words' (the rules file
+// none on the root's in this view), and so are its regions.
+static void
+writeOverlayReport(FILE *fP, OptTableP tableP)
+{
+    fprintf(fP, "\n\n");
+    writeOverlayHeading(fP, tableP);
+    writeFindingList(fP, tableP);
+    writeSuppressedList(fP, tableP);
+    writeRegionReport(fP, tableP);
+    writeHandsOffReport(fP, tableP);
+    writeSpeedDeclReport(fP, tableP);       // nothing without a declaration
+    writeGuessReport(fP, tableP);
+
+    if( transformLevel >= 1 )
+    {
+        writeTransformReport(fP, tableP);
+    }
+
+    writeUnreachedList(fP, tableP);
+    writeOverlayStatistics(fP, tableP);
 }
 
 // The report's name for a word kind.

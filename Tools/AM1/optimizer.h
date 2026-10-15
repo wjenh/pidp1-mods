@@ -42,6 +42,13 @@ typedef enum
 #define OPTF_RESERVED       0x0001  // a 'table' word with no initializer: no value is emitted
 #define OPTF_DUPADDR        0x0002  // another entry shares this bank and address (-M overlay)
 #define OPTF_PCMISMATCH     0x0004  // node pc differs from the binary generator's: a parser defect
+#define OPTF_OVCALL         0x0008  // a word of a %%ovcall: am1's, read by the drum overlay
+                                    // manager through the call's return address
+#define OPTF_OVREF          0x0010  // a drum overlay names this word, or the manager reads it
+                                    // through a pointer: referenced from outside the root
+#define OPTF_OVWORD         0x0020  // a word of the drum overlay this view analyzes; in an
+                                    // overlay's view only these are the subject, the root
+                                    // words are context
 #define OPTF_BUILDER_MASK   0x00FF  // every flag the builder owns
 
 // Reference flags, derived from the edges.  The MAYBE flags are conservative:
@@ -455,6 +462,7 @@ typedef enum
 typedef enum
 {
     OPTEN_START,        // the program's start address
+    OPTEN_OVERLAY,      // a drum overlay names it, and may call it
     OPTEN_TAKEN,        // its address is used as a value, so an indirect jump or
                         // an xct could reach it
     OPTEN_EXPORT,       // it carries an exported label: another program may enter it
@@ -846,6 +854,8 @@ typedef enum
     OPTWHY_TABLE,       // the pattern is in a block entered only through its
                         // taken address that runs into a word that is not code:
                         // a table an xct or a pointer uses
+    OPTWHY_OVEND,       // in a drum overlay's view, the pattern runs out of the
+                        // overlay into the root, which is context there
     OPTWHY_COUNT
 } OptWhy;
 
@@ -933,6 +943,8 @@ typedef struct optregion
     int wordCount;              // entries between them, which is lastIndex-firstIndex+1
     int contradictions;         // of those, words marked written, taken or patched:
                                 // the declaration and the evidence disagree
+    int ovcall;                 // a hands-off span am1 made around a %%ovcall's
+                                // words, not one the author declared
 } OptRegion, *OptRegionP;
 
 // One 'inline NAME' marking.  A POINT, not a span: it names a routine to inline
@@ -1344,6 +1356,11 @@ typedef struct opttable
     int reservedCount;      // entries flagged OPTF_RESERVED
     int dupCount;           // entries flagged OPTF_DUPADDR
     int mismatchCount;      // entries flagged OPTF_PCMISMATCH
+    int ovRefCount;         // entries flagged OPTF_OVREF
+    int ovCallCount;        // %%ovcall statements, each a hands-off span of its own
+    OverlayContextP viewOvP;    // the drum overlay this table's view analyzes, NILP for the
+                                // root's view; its words are flagged OPTF_OVWORD
+    int ovWordCount;        // entries flagged OPTF_OVWORD
     int hasStart;           // non-zero if the program ended with 'start', zero for 'stop'
     int startAddr;          // the start address when hasStart is set
 
@@ -1663,9 +1680,14 @@ int optimizeSetOption(char *nameP);
 // failure, when am1.c removes the report.
 int optimize(PNodeP rootP, char *basenameP);
 
-// Build the word table.  Returns NILP if the tree holds something the builder
-// cannot place (an address outside the bank, an unknown statement).
+// Build the word table of the current view: the root, and the drum overlay
+// optimize() is analyzing, if any.  Returns NILP if the tree holds something
+// the builder cannot place (an address outside the bank, an unknown statement).
 OptTableP optBuildTable(PNodeP rootP);
+
+// Is this word the subject of its table's view: any word in the root's view,
+// only the overlay's words in a drum overlay's view?  Returns 1 if it is.
+int optInView(OptTableP tableP, OptWordP entryP);
 
 // One "%06o %06o" line per entry, the -T dump's format; reserved words omitted.
 void optDumpTable(FILE *fP, OptTableP tableP);
@@ -1871,6 +1893,10 @@ void optRegionReset(void);
 // malformed arrangement.
 void optRegionStatement(OptTableP tableP, PNodeP nodeP, int bank, int pc);
 
+// Open (open 1) or close (open 0) the hands-off span around a %%ovcall's
+// words, nodeP its OVCALL node; bank and pc are where its first word goes.
+void optRegionOvcall(OptTableP tableP, PNodeP nodeP, int bank, int pc, int open);
+
 // The region-overlay flags a word created now should carry.
 unsigned int optRegionWordFlags(void);
 
@@ -1931,16 +1957,33 @@ int optTransformLevel(void);
 // rewrite stays on only if every modifier keeps it.  Every fate is decided
 // before any word is rewritten, so any subset is a valid program.  Addresses
 // are the source's before relayout: the bank in decimal, the address in octal.
+// A drum overlay's word is "bank addr@name"; the ordinals run on from the
+// root's view through each overlay's, in source order.
 
 // Non-zero when a bisection modifier was given (am1.c requires -O1 or -O2).
 int optBisectGiven(void);
 
 // The OPTBIS_ bits switching off the ordinal-th (from 1) rewrite that would
-// fire, at bank and addr; 0 keeps it.  Marks the -O=off lines naming it.
-unsigned int optBisectSelect(int ordinal, int bank, int addr);
+// fire, at bank and addr, a word of the view's drum overlay when ovWord is
+// non-zero; 0 keeps it.  Marks the -O=off lines naming it.
+unsigned int optBisectSelect(int ordinal, int bank, int addr, int ovWord);
 
-// Warn about -O=off lines that matched no rewrite; after every selection.
+// The first ordinal a view's selection gives, and the last one it gave, so
+// the next view numbers on from it.
+int optBisectFirstOrdinal(void);
+void optBisectSetLastOrdinal(int ordinal);
+
+// Warn about -O=off lines that matched no rewrite, and qualifiers naming no
+// drum overlay; once, after the last view's selection.
 void optBisectWarnUnmatched(void);
+
+// Non-zero while the last view, the root's when there is no drum overlay, is
+// being analyzed.
+int optLastView(void);
+
+// "" for a root word, "@name" for a word of the view's drum overlay, appended
+// to a "bank addr" pair in -O=xform and the report.
+const char *optOverlayTag(OptWordP entryP);
 
 // The modifiers as given, e.g. "-O=upto=5 -O=off=bad.txt".
 const char *optBisectSpec(void);
@@ -1950,14 +1993,20 @@ const char *optBisectName(unsigned int bit);
 
 // Relayout, in optrelayout.c: edits that change a program's length.
 // -O=edits=FILE supplies test edits ("delete BANK ADDR", "move BANK FROM TO
-// after ADDR"; the bank decimal, addresses octal); -O=relayout is the dump.
+// after ADDR"; the bank decimal, addresses octal; "@name" after the last
+// address for a drum overlay's words); -O=relayout is the dump.
 
 // Read one -O=edits file.  Returns 1 if accepted, 0 for an empty name; an
 // unreadable file or a malformed line is fatal.
 int optRelayoutReadEdits(const char *pathP);
 
-// Non-zero when an -O=edits file was given, even an empty one.
-int optRelayoutGiven(void);
+// Stop am1 when an -O=edits line names no drum overlay; once the parse has
+// made them, before the first view.
+void optRelayoutCheckEdits(void);
+
+// Non-zero when the view of ovP (NILP for the root's) has -O=edits edits to
+// try: in the root's, whenever a file was given, even an empty one.
+int optRelayoutGiven(OverlayContextP ovP);
 
 // Apply the edits (the file's, then the fired rewrites') to the parse tree, lay
 // the program out again and check it, dumping on dumpP unless NILP.  An edit it
@@ -2121,6 +2170,10 @@ int optBankCeiling(OptTableP tableP, int bank);
 
 // The declared ceiling as written, the first word no rewrite may reach; 0 if none.
 int optBankCeilingDeclared(OptTableP tableP, int bank);
+
+// The words a bank's growth may spend, above its highest word to its ceiling;
+// in a drum overlay's view, the window's room past the overlay's end.
+int optBankFree(OptTableP tableP, int bank);
 
 // -O=inline=cap:N (8 words by default) and -O=inline=reserve:N (64 per bank).
 int optInlineCap(void);
@@ -2302,5 +2355,12 @@ void writeSuppressedList(FILE *fP, OptTableP tableP);
 
 // Per-bank statistics, including each bank's reference and flow lines.
 void writeStatistics(FILE *fP, OptTableP tableP);
+
+// A drum overlay's section heading, "Overlay NAME, window W, bank B, FIRST to
+// LAST", for its view's report and dumps.
+void writeOverlayHeading(FILE *fP, OptTableP tableP);
+
+// A drum overlay view's statistics: its words, findings and savings.
+void writeOverlayStatistics(FILE *fP, OptTableP tableP);
 
 #endif

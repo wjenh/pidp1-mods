@@ -7,8 +7,8 @@
 char *helpMsg[] = {
     "All commands can be shortened to the characters in capitals.",
     "Numeric values that are input default to base 8, but that can be changed via base.",
-    "If an input number isn't valid for current base, an error will be given,.",
-    "unless an explicit override has been used",
+    "If an input number isn't valid for current base, an error will be given,",
+    "unless an explicit override has been used.",
     "0b1001 - force binary",
     "0123 - force octal",
     "0d123 - force decimal",
@@ -31,6 +31,9 @@ char *exitHelp[] = {
     "The exit and quit commands both exit ad1, but with one important difference.",
     "Quit deletes all breakpoints and watches before exiting.",
     "Exit preserves all breakpoints and watches but disables them before exiting.",
+    "A breakpoint or watch bound to an overlay stays bound, and a later ad1 with the same files",
+    "open lists it as bound again.  With an emulator from before conditions, a bound breakpoint",
+    "is preserved as a plain address breakpoint, at count 1.",
     "Any termination other than via the exit command also deletes all breakpoints and watches.",
     "Examples:",
     "q",
@@ -42,21 +45,37 @@ char *breakHelp[] = {
     "An expression can also be used to compute an address.",
     "A count can optionally be given, which is how many times it must be hit to be reported.",
     "When that location is executed and the count reached, the pidp-1 will halt and the breakpoint reported.",
-    "The program can then be continued after any other desired commnds are used.",
+    "The program can then be continued after any other desired commands are used.",
     "A breakpoint should not be set on a location that is in data, it will never be hit.",
+    "In a program with drum overlays, a breakpoint given as name@overlay, or by an expression",
+    "using one, is bound to that overlay: it is hit only while that overlay is in its window,",
+    "and its count counts only that overlay's passes.  The emulator passes over the other",
+    "overlays' passes without halting, and a step goes through them as a continue does.",
+    "With an emulator from before conditions, or before the program is loaded, ad1 continues",
+    "the pidp-1 itself on another overlay's pass, so it halts briefly on each pass, and a step",
+    "that lands there stops, saying why.",
+    "A condition can follow the address and count: when word = value [mask m].  The breakpoint",
+    "is hit only on a pass made while (word & m) equals (value & m), m being 0777777 if not given,",
+    "and its count counts only those passes.  The emulator tests the word and passes over the",
+    "other passes without halting.  The word is an address, but not name@overlay.  A breakpoint",
+    "bound to an overlay cannot take one, and the emulator must take conditions.",
     "Examples:",
     "b loop",
     "b loop 10",
     "b 104",
     "b foo+10",
+    "b edGo@edit",
+    "b edGo@edit 3",
+    "b loop when mode = 2",
+    "b loop 3 when flags = 4 mask 4",
     NIL};
 
 char *loadHelp[] = {
     "The load command loads a tape image to memory which must be in RIM format.",
     "It is the equivalent of mounting a tape and pressing read-in.",
-    "If no file name is given and there is a current file, a RIM for that name will be tried,",
+    "If no file name is given and there is a current file, a RIM for that name will be tried.",
     "Either a .rim or a .bin file extension can be used, both are searched for.",
-    "Example: load foo.rim\n",
+    "Example: load foo.rim",
     NIL};
 
 char *listHelp[] = {
@@ -67,15 +86,15 @@ char *listHelp[] = {
     "List with no arguments lists the next set of lines, or if none have been listed before, lines",
     "starting from the first line.",
     "Each line is listed with the line number in the file being shown followed by the text at that line.",
-    "Note that a .lst file also has line numbers but usually aren't the line numbers to use,",
-    "use the first number, the line in the file you're looking at, not the line in the original souurce.",
+    "Note that a .lst file also has line numbers but they usually aren't the line numbers to use,",
+    "use the first number, the line in the file you're looking at, not the line in the original source.",
     "A decimal-only value lists from that line in the file.",
     "An expression prefixed by an @ lists from the line at that address.",
     "A string value with an optional bank and/or file lists from the location of that symbol in the file",
     " and/or bank given or associated with the address if a symbol table is available.",
     "If there is no such symbol, an error is given.",
-    "A dot lists from the last memory address specifed or hit by a breakpoint or watch.",
-    "A dot followed by + or - an integer  value lists frm the last memory address offset by the value.",
+    "A dot lists from the last memory address specified or hit by a breakpoint or watch.",
+    "A dot followed by + or - an integer value lists from the last memory address offset by the value.",
     "If no bank or file qualifier has been given, the current bank and current file are assumed.",
     "Examples:",
     "li 10",
@@ -97,15 +116,15 @@ char *monitorHelp[] = {
 
 char *windowHelp[] = {
     "The window command sets the number of lines before and after the line being displayed by",
-    "the line command. The default is 6",
+    "the list command. The default is 6.",
     "The number is always a decimal number.",
     "If the window would cause lines before the first or after the last to be displayed,",
-    "only valid lines will be displayed,",
+    "only valid lines will be displayed.",
     "Example: win 3",
     NIL};
 
 char *bankHelp[] = {
-    "The bank command sets the default memory bank to the value given, 0-15,",
+    "The bank command sets the default memory bank to the value given, 0-15.",
     "This will then be used as the bank when no explicit bank reference is given.",
     "See the documentation for important details.",
     "Example: bank 10",
@@ -113,7 +132,7 @@ char *bankHelp[] = {
 
 char *baseHelp[] = {
     "The base command sets the default numeric base to the value given,",
-    "which must be 2, 8, 10, or 16",
+    "which must be 2, 8, 10, or 16.",
     "The base specifier is always a decimal number of one of those values.",
     "Example: base 10",
     NIL};
@@ -125,7 +144,7 @@ char *continueHelp[] = {
     NIL};
 
 char *deleteHelp[] = {
-    "The delete command removes an existing breakpoint by its number.",
+    "The delete command removes an existing breakpoint by its number,",
     "or if no number is given, all breakpoints.",
     "An error will be given if there is no breakpoint.",
     "The number is always a decimal number.",
@@ -138,7 +157,7 @@ char *deleteHelp[] = {
     NIL};
 
 char *disableHelp[] = {
-    "The disable command disables but does not remove  an existing breakpoint by its number.",
+    "The disable command disables but does not remove an existing breakpoint by its number.",
     "An error will be given if there is no breakpoint.",
     "The number is always a decimal number.",
     "Example: disa 10",
@@ -147,7 +166,7 @@ char *disableHelp[] = {
     NIL};
 
 char *enableHelp[] = {
-    "The enable command enables a previousl diabled existing breakpoint by its number.",
+    "The enable command enables a previously disabled existing breakpoint by its number.",
     "An error will be given if there is no breakpoint.",
     "The number is always a decimal number.",
     "Example: ena 10",
@@ -162,8 +181,11 @@ char *fileHelp[] = {
     "all open files and deletes all symbols and line mappings, then loads the new file.",
     "This will actually attempt to open name.lst, and if that is not found, name.am1.",
     "If only name.am1 can be opened, then no address-related operations can be done.",
-    "An attempt to open name.sym is alsd done and if found symbol operations are then available.",
-    "Howver, if the name is prefixed with '+', the current files are preserved and the new file opened",
+    "An attempt to open name.sym is also done and if found symbol operations are then available.",
+    "If name.ovl and name.osym are found, the program's drum overlays are known too: a window's",
+    "addresses show the symbols of the overlay in it now, read from the overlay table in core.",
+    "Closing the files deletes the breakpoints and watches bound to their overlays.",
+    "However, if the name is prefixed with '+', the current files are preserved and the new file opened",
     "and added to the list of files.",
     "Examples:",
     "file",
@@ -174,20 +196,31 @@ char *fileHelp[] = {
     NIL};
 
 char *watchHelp[] = {
-    "The watch command monitors e given address, numeric or symbolic.",
+    "The watch command monitors a given address, numeric or symbolic.",
     "An expression can also be used to compute an address.",
     "If no value is given after the address, then any change to the contents of that address",
-    "cause the pidp-1 to halt and the watch reported.",
-    "The program can then be continued after any other desired commnds are used.",
+    "causes the pidp-1 to halt and the watch reported.",
+    "The program can then be continued after any other desired commands are used.",
     "A watch can be set on any memory location, but if it never changes, nothing will happen.",
+    "In a program with drum overlays, a watch given as name@overlay, or by an expression using",
+    "one, is bound to that overlay: a change is reported only while that overlay is in its",
+    "window, so the overlays' loads into the window and the other overlays' changes are not.",
+    "The program must be loaded, and the emulator must take conditions.",
+    "A condition can follow the address and value: when word = value [mask m].  A change is",
+    "reported only while (word & m) equals (value & m), m being 0777777 if not given.  The word",
+    "is an address, but not name@overlay.  A watch bound to an overlay cannot take one, and the",
+    "emulator must take conditions.",
     "Examples:",
     "w loop",
     "wat loop 10",
     "wa foo+10",
+    "w edCount@edit",
+    "w count when mode = 2",
+    "w count 10 when flags = 0 mask 4",
     NIL};
 
 char *nextHelp[] = {
-    "The next command increments the current address by one ane repeats the last show command at that address.",
+    "The next command increments the current address by one and repeats the last show command at that address.",
     "It does not affect the pidp-1, it just changes ad1's location counter.",
     "The address is kept as a full 16 bit address, so a next at the end of a bank will advance to the next bank.",
     "Example: n",
@@ -223,7 +256,7 @@ char *showHelp[] = {
     "a - ascii, 2 chars per word",
     "f - flex, 3 chars per word, shift state remembered until another format is used",
     "i - instruction, the word is decoded as an instruction and the instruction shown",
-    "Using a format here does not change the default format set by the format command",
+    "Using a format here does not change the default format set by the format command.",
     "If instead of an address, one of the register names is given, the contents of that register will be shown.",
     "Use help reg for help on registers.",
     "If no arguments are given, the last show command is repeated.",
@@ -246,8 +279,8 @@ char *formatHelp[] = {
     "f - flex, 3 chars per word, shift state remembered until another format is used",
     "i - instruction, the word is decoded as an instruction and the instruction shown",
     "See also show, these are the same format directives.",
-    "The remains the format until anoother format command is used",
-    "If no argument is given, the curren format is shown.",
+    "This remains the format until another format command is used.",
+    "If no argument is given, the current format is shown.",
     "Examples:",
     "fo d",
     "fo",
@@ -268,7 +301,7 @@ char *stopHelp[] = {
     NIL};
 
 char *stepHelp[] = {
-    "The step command executes one or instructions and halts.",
+    "The step command executes one or more instructions and halts.",
     "It is equivalent to using the continue switch in single-instruction mode.",
     "If an optional count is given, that many instruction cycles will be stepped.",
     "This is always a decimal number.",
@@ -297,21 +330,21 @@ char *numberHelp[] = {
     "These mean the obvious, binary, octal, decimal, or hexadecimal.",
     "Using an override does not change the current default base.",
     "Example: 0x3f or 0x3F",
-    "Some command arguments ar always decimal numbers, see their help.",
+    "Some command arguments are always decimal numbers, see their help.",
     NIL};
 
 char *expressionHelp[] = {
     "In most places an address or value can be used, an expression can be used.",
     "An expression is composed of numbers and symbols connected by operators.",
-    "The operators are +, -, *, /, &, |, ^, ~, %, (, ), ., and comma itself",
+    "The operators are +, -, *, /, &, |, ^, ~, %, (, ), ., and comma itself.",
     "See the documentation for precedence, it follows C precedence.",
-    "Computatios are done in 2's complement math, but this is only within a math operation.",
-    "For examle, foo - 1 converts foo to 2's complement does the subtraction, then converts back.",
+    "Computations are done in 2's complement math, but this is only within a math operation.",
+    "For example, foo - 1 converts foo to 2's complement, does the subtraction, then converts back.",
     "Logical operators do not cause conversions.",
     "Thus, values will appear as they would in the pidp-1.",
-    "The special symbol ', dot, means 'the last address used', similar to its use in an assembler.",
+    "The special symbol '.', dot, means 'the last address used', similar to its use in an assembler.",
     "This is transparent to the user.",
-    "A colon followed by a number 0-15 is an explict bank reference.",
+    "A colon followed by a number 0-15 is an explicit bank reference.",
     "The bank portion of the expression is replaced by the explicit bank.",
     "Examples:",
     ".+10",
@@ -321,7 +354,7 @@ char *expressionHelp[] = {
     NIL};
 
 char *registerHelp[] = {
-    "The valid registers are ac, io, pf,pf1-pf6, tw, pc, as, ma, mb, ss, sy, break, and watch.",
+    "The valid registers are ac, io, pf, pf1-pf6, tw, pc, as, ma, mb, ss, sy, break, and watch.",
     "sy is a pseudo-register that will show all the symbols that are loaded and their addresses.",
     "Break and watch are pseudo-registers that will show the set breakpoints or watches.",
     "They follow the same name-shortening as the commands.",
@@ -343,18 +376,21 @@ char *addressHelp[] = {
     "This also applies to symbols, 'list foo' looks up symbol foo in the current bank.",
     "The current bank is used for the bank unless an explicit bank has been specified using",
     "the bank reference operator, colon.",
-    " Examples:",
+    "Examples:",
     "123 refers to address 123 in the current bank.",
     "123:0 forces a bank 0 reference.",
     "foo:3 looks up a symbol in bank 3.",
+    "In a program with drum overlays, a name several overlays define is given with its overlay,",
+    "the overlay qualifier, at sign; the overlay's window gives the bank.",
+    "wk@print looks up symbol wk in overlay print.",
     NIL};
 
 char *multifileHelp[] = {
     "If multiple files are open, listing behavior changes.",
     "At any time, there is a current file, initially file 1.",
-    "This can be changed vial the file command, example, file 2.",
+    "This can be changed via the file command, example, file 2.",
     "However, some commands can change the current file explicitly or implicitly.",
-    "For example, the list command if a symbol or address is used will change the current file if ",
+    "For example, the list command if a symbol or address is used will change the current file if",
     "an explicit file number is given or the address or symbol does not exist in the current file but",
     "does exist in another file.",
     "This then changes the current file to that file if the symbol was found.",

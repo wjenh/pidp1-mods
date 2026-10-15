@@ -1003,6 +1003,79 @@ uint32_t w[2];
 }
 
 int
+ad1BpSetCond(Ad1Link *lp, uint32_t address, uint32_t count, const Ad1Cond *condP,
+    uint32_t *numberP)
+{
+uint32_t w[5];
+
+    w[0] = address;
+    w[1] = count;
+    w[2] = condP->address;
+    w[3] = condP->mask;
+    w[4] = condP->value;
+    return( setReply(lp, requestWords(lp, AD1P_BP_SET_COND, w, 5), numberP) );
+}
+
+int
+ad1WatchSetCond(Ad1Link *lp, uint32_t address, int onAnyChange, uint32_t value,
+    const Ad1Cond *condP, uint32_t *numberP)
+{
+uint32_t w[6];
+
+    w[0] = address;
+    w[1] = onAnyChange ? 1 : 0;
+    w[2] = value;
+    w[3] = condP->address;
+    w[4] = condP->mask;
+    w[5] = condP->value;
+    return( setReply(lp, requestWords(lp, AD1P_WATCH_SET_COND, w, 6), numberP) );
+}
+
+int
+ad1CondList(Ad1Link *lp, Ad1Cond *brkP, uint32_t nBrk, Ad1Cond *watchP, uint32_t nWatch)
+{
+uint32_t nb;
+uint32_t nw;
+uint32_t i;
+const uint8_t *pP;
+Ad1Cond *cP;
+int status;
+
+    if( (status = request(lp, AD1P_COND_LIST, NULL, 0, lp->replyTimeoutMs)) != AD1P_ST_OK )
+    {
+        return( status );
+    }
+
+    if( (needWords(lp, 2) != 0) || ((nb = rd32(lp->replyP)) > 1024) ||
+        ((nw = rd32(lp->replyP + 4)) > 1024) || (needWords(lp, 2 + ((nb + nw) * 4)) != 0) )
+    {
+        if( lp->fd >= 0 )
+        {
+            lost(lp, "a condition list was malformed");
+        }
+
+        return( AD1L_COMM );
+    }
+
+    memset(brkP, 0, nBrk * sizeof(Ad1Cond));
+    memset(watchP, 0, nWatch * sizeof(Ad1Cond));
+    for( i = 0; i < (nb + nw); ++i )
+    {
+        cP = (i < nb) ? ((i < nBrk) ? &brkP[i] : NULL) : (((i - nb) < nWatch) ? &watchP[i - nb] : NULL);
+        if( cP != NULL )
+        {
+            pP = lp->replyP + 8 + (i * 16);
+            cP->isSet = (int)rd32(pP);
+            cP->address = rd32(pP + 4);
+            cP->mask = rd32(pP + 8);
+            cP->value = rd32(pP + 12);
+        }
+    }
+
+    return( AD1P_ST_OK );
+}
+
+int
 ad1BpDelete(Ad1Link *lp, uint32_t number)
 {
     return( requestWords(lp, AD1P_BP_DELETE, &number, 1) );

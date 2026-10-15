@@ -20,6 +20,7 @@ int lastFormat;         // last format used, 0 means use base
 int curStartAddr;       // set by the start or load commands
 int curBank;            // set by the bank cmd
 int windowSize = 6;     // default window size
+bool stepEndedOnHit;    // a step or monitor ended on a hit the main loop has not reported yet
 
 extern int numFiles;
 extern int curFileNo;
@@ -36,7 +37,7 @@ void continueFn(void);
 void nextFn(void);
 void formatFn(int base);
 void setBankFn(int num);
-void setBpFn(int num, int count);
+void setBpFn(int num, int count, OverlayRefP refP, const Ad1Cond *userCondP);
 void deleteBpFn(int num);
 void enableBpFn(int num);
 void disableBpFn(int num);
@@ -46,7 +47,7 @@ void listFn(int lineNo, int fileNo);
 void traceFn(int addr);
 void loadFn(char *filenameP);
 void monitorFn(int count, char *nameP);
-void setWatchFn(int addr,  int value);
+void setWatchFn(int addr, int value, OverlayRefP refP, const Ad1Cond *userCondP);
 void deleteWatchFn(int num);
 void enableWatchFn(int num);
 void disableWatchFn(int num);
@@ -194,7 +195,7 @@ formatFn(int base)
 {
     if( base == NONE )      // special marker, show the current base
     {
-        printf("Curremt format is %s\n", getFormatName(lastFormat));
+        printf("Current format is %s\n", getFormatName(lastFormat));
     }
     else
     {
@@ -397,6 +398,7 @@ startFn(int addr)
     else if( statusOk(tgtStart(addr)) )
     {
         curStartAddr = lastAddr = addr;
+        stepEndedOnHit = false;
     }
 }
 
@@ -455,6 +457,7 @@ MapEntryP entryP;
 
             if( res.reason == AD1P_END_HIT )
             {
+                stepEndedOnHit = true;
                 return;             // stop now, the main loop reports the hit
             }
 
@@ -466,7 +469,7 @@ MapEntryP entryP;
             }
         }
 
-        if( (entryP = getLinesFromAddress(getCurrentPC())) > 0 )
+        if( (entryP = getLinesFromAddress(getCurrentPC())) != NIL )
         {
             if( !getMapForFileNo(entryP, curFileNo) )
             {
@@ -482,7 +485,10 @@ MapEntryP entryP;
 void
 continueFn(void)
 {
-    statusOk(tgtContinue());
+    if( statusOk(tgtContinue()) )
+    {
+        stepEndedOnHit = false;
+    }
 }
 
 void
@@ -497,25 +503,72 @@ setBankFn(int bankno)
     curBank = bankno;
 }
 
+// refP, if not nil, is the overlay the address named, which the breakpoint is bound to.  An
+// emulator with conditions holds the binding and the count.  Without conditions, or when the
+// program's overlay table is not in core to give one, the emulator's breakpoint halts on every
+// pass, at count 1, and ad1 keeps the count.  userCondP, if not nil, is the user's condition
+// (refP is then nil), which only an emulator with conditions can hold.
 void
-setBpFn(int addr, int count)
+setBpFn(int addr, int count, OverlayRefP refP, const Ad1Cond *userCondP)
 {
 int status;
 uint32_t number;
+Ad1Cond cond;
+const char *whyP;
+bool inEmu;
 
     if( count == BADNUM )
     {
         count = 1;          // no count was given, default to 1
     }
 
-    status = tgtBpSet(addr, count, &number);
+    if( userCondP && !tgtHasConds() )
+    {
+        printf("A breakpoint with a condition needs an emulator that takes conditions; this one is "
+            "older.\n");
+        return;
+    }
+
+    inEmu = false;
+    whyP = NIL;
+    if( refP && tgtHasConds() )
+    {
+        whyP = ovlCondFor(refP, &cond);
+        inEmu = (whyP == NIL);
+    }
+
+    if( userCondP )
+    {
+        status = tgtBpSetCond(addr, count, userCondP, &number);
+    }
+    else if( inEmu )
+    {
+        status = tgtBpSetCond(addr, count, &cond, &number);
+    }
+    else
+    {
+        status = tgtBpSet(addr, (refP)?1:count, &number);
+    }
+
     if( status == AD1P_ST_NO_SLOT )
     {
         printf("No breakpoints are left, delete one first\n");
     }
-    else
+    else if( statusOk(status) )
     {
-        statusOk(status);
+        if( refP )
+        {
+            ovlBindBreak((int)number, refP, count, inEmu);
+            if( whyP )
+            {
+                printf("Breakpoint %d is bound to overlay %s by ad1, halting the machine on every "
+                    "pass, because %s.\n", number, ovlName(refP->fileNo, refP->overlay), whyP);
+            }
+        }
+        else
+        {
+            ovlUnbindBreak((int)number);
+        }
     }
 }
 
@@ -534,7 +587,7 @@ char line[32];
     if( bpno < 1 )
     {
         // delete them all?
-        printf("Delete all breakpints? [y to delete] ");
+        printf("Delete all breakpoints? [y to delete] ");
         fgets(line, sizeof(line), stdin);
         if( *line != 'y' )
         {
@@ -542,6 +595,7 @@ char line[32];
         }
 
         deleteAllBreakpoints();
+        ovlUnbindBreak(0);
     }
     else
     {
@@ -549,10 +603,11 @@ char line[32];
         if( status == AD1P_ST_NOT_SET )
         {
             printf("Breakpoint %d is not set.\n", bpno);
+            ovlUnbindBreak(bpno);
         }
-        else
+        else if( statusOk(status) )
         {
-            statusOk(status);
+            ovlUnbindBreak(bpno);
         }
     }
 }
@@ -595,7 +650,7 @@ int status;
     status = tgtBpDisable(bpno);
     if( status == AD1P_ST_ALREADY )
     {
-        printf("Breakpoint %d is already diabled.\n", bpno);
+        printf("Breakpoint %d is already disabled.\n", bpno);
     }
     else if( status == AD1P_ST_NOT_SET )
     {
@@ -620,7 +675,7 @@ setBaseFn(int num)
         break;
 
     default:
-        printf("Base must be beteeen 1 and 32\n");
+        printf("Base must be between 1 and 32\n");
     }
 }
 
@@ -643,7 +698,7 @@ char line[128];
         }
         else
         {
-            printf("Curreint file is %d\n", curFileNo + 1);
+            printf("Current file is %d\n", curFileNo + 1);
             for( int i = 0; i < numFiles; ++i )
             {
                 if( isFileMapped(i) )
@@ -702,6 +757,7 @@ char line[128];
             return;
         }
 
+        ovlBreaksClosed();
         closeFiles();
         newFile(nameP);
     }
@@ -860,7 +916,10 @@ char tmpstr[128];
     }
     else
     {
-        printf("The instruction at %s does not jump or reference memory.\n", findNameByAddr(tmpaddr));
+        // An address with no symbol prints in octal; findNameByAddr() alone gives null.
+        printf("The instruction at ");
+        formatAndPrintOne(ADDRESS, tmpaddr);
+        printf(" does not jump or reference memory.\n");
     }
 }
 
@@ -920,6 +979,13 @@ bool singleState;
 FILE *fP;
 Ad1StepResult res;
 
+    // The lexer gives no name when nothing follows the count.
+    if( !filenameP || !*filenameP )
+    {
+        printf("The monitor command needs a file name after the count.\n");
+        return;
+    }
+
     if( tgtIsLocal() )
     {
         printf("Monitoring is not available in test mode.\n");
@@ -963,6 +1029,11 @@ Ad1StepResult res;
             fprintf(fP, "%06o: %06o\n", res.recordsP[i * 2], res.recordsP[(i * 2) + 1]);
         }
 
+        if( res.reason == AD1P_END_HIT )
+        {
+            stepEndedOnHit = true;      // the machine stays stopped when it is reported
+        }
+
         count -= (res.done > (uint32_t)chunk) ? chunk : (int)res.done;
         if( (res.done == 0) && (++stalled >= 3) )
         {
@@ -979,13 +1050,49 @@ Ad1StepResult res;
     fclose(fP);
 }
 
+// refP, if not nil, is the overlay the address named, which the watch is bound to.  Only an
+// emulator with conditions can hold that binding; with another the watch is refused.  The same
+// goes for userCondP, if not nil, the user's condition (refP is then nil).
 void
-setWatchFn(int addr, int value)
+setWatchFn(int addr, int value, OverlayRefP refP, const Ad1Cond *userCondP)
 {
 int status;
 uint32_t number;
+Ad1Cond cond;
+const char *whyP;
 
-    if( value == BADNUM )
+    if( userCondP )
+    {
+        if( !tgtHasConds() )
+        {
+            printf("A watch with a condition needs an emulator that takes conditions; this one is "
+                "older.\n");
+            return;
+        }
+
+        status = tgtWatchSetCond(addr & 0177777, (value == BADNUM), (value == BADNUM)?0:value,
+            userCondP, &number);
+    }
+    else if( refP )
+    {
+        if( !tgtHasConds() )
+        {
+            printf("A watch bound to an overlay needs an emulator that takes conditions; this one "
+                "is older.\n");
+            return;
+        }
+
+        if( (whyP = ovlCondFor(refP, &cond)) )
+        {
+            printf("The watch cannot be bound to overlay %s, because %s.\n",
+                ovlName(refP->fileNo, refP->overlay), whyP);
+            return;
+        }
+
+        status = tgtWatchSetCond(addr & 0177777, (value == BADNUM), (value == BADNUM)?0:value,
+            &cond, &number);
+    }
+    else if( value == BADNUM )
     {
         status = tgtWatchSet(addr & 0177777, true, 0, &number);
     }
@@ -998,9 +1105,16 @@ uint32_t number;
     {
         printf("No watches are left, delete one first\n");
     }
-    else
+    else if( statusOk(status) )
     {
-        statusOk(status);
+        if( refP )
+        {
+            ovlBindWatch((int)number, refP);
+        }
+        else
+        {
+            ovlUnbindWatch((int)number);
+        }
     }
 }
 
@@ -1021,6 +1135,7 @@ char line[32];
         }
 
         deleteAllWatches();
+        ovlUnbindWatch(0);
     }
     else
     {
@@ -1033,10 +1148,11 @@ char line[32];
         if( status == AD1P_ST_NOT_SET )
         {
             printf("Watch %d is not set.\n", num);
+            ovlUnbindWatch(num);
         }
-        else
+        else if( statusOk(status) )
         {
-            statusOk(status);
+            ovlUnbindWatch(num);
         }
     }
 }
@@ -1080,7 +1196,7 @@ int status;
     status = tgtWatchDisable(num);
     if( status == AD1P_ST_ALREADY )
     {
-        printf("Watch %d is already diabled.\n", num);
+        printf("Watch %d is already disabled.\n", num);
     }
     else if( status == AD1P_ST_NOT_SET )
     {

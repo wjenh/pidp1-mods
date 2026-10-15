@@ -541,11 +541,17 @@ SymNodeP symP;
 
     symP = leafSymbol(leafP);
 
+    // Each message once: a root word in a drum overlay's view was the root
+    // view's to report.
     if( !symP || ((leafP->type == CONSTANT) && !(symP->flags & SYMF_ASSIGNED)) ||
         ((leafP->type != CONSTANT) && !(symP->flags & SYMF_RESOLVED)) )
     {
-        fprintf(stderr, "am1: optimizer: line %d: reference to %s never resolved, skipped\n",
-            entryP->lineNo, (symP)?symP->name:((leafP->type == WILDREF)?leafP->value.strP:"?"));
+        if( optInView(tableP, entryP) )
+        {
+            fprintf(stderr, "am1: optimizer: line %d: reference to %s never resolved, skipped\n",
+                entryP->lineNo, (symP)?symP->name:((leafP->type == WILDREF)?leafP->value.strP:"?"));
+        }
+
         ++tableP->unresolvedCount;
         return(0);
     }
@@ -555,8 +561,12 @@ SymNodeP symP;
 
     if( (*bankP < 0) || (*bankP > MAXBANK) )
     {
-        fprintf(stderr, "am1: optimizer: line %d: reference to %s names bank %d, skipped\n",
-            entryP->lineNo, symP->name, *bankP);
+        if( optInView(tableP, entryP) )
+        {
+            fprintf(stderr, "am1: optimizer: line %d: reference to %s names bank %d, skipped\n",
+                entryP->lineNo, symP->name, *bankP);
+        }
+
         ++tableP->unresolvedCount;
         return(0);
     }
@@ -748,6 +758,13 @@ OptEdgeP edgeP;
         if( entryP->inCounts[OPTR_JUMP] )
         {
             entryP->flags |= OPTF_JUMPTARGET;
+        }
+
+        // A word a drum overlay names is referenced from outside the root: its
+        // address escapes, and the overlay may read it, write it or enter it.
+        if( entryP->flags & OPTF_OVREF )
+        {
+            entryP->flags |= (OPTF_TAKEN | OPTF_MAYBE_READ | OPTF_MAYBE_WRITTEN | OPTF_MAYBE_ENTERED);
         }
 
         for( edgeP = entryP->inP; edgeP; edgeP = edgeP->nextInP )

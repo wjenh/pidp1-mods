@@ -20,9 +20,9 @@ uint32_t xloader[] = {
 0607752, //     jmp loop
 0662001, // done, ril 1s
 0652000, //     spi i
-0617773, //     jmp i addr	/ start prog
-0760400, //     hlt		/ nostart, just halt
-0607752, //     jmp loop	/ and go again
+0617773, //     jmp i addr      / start prog
+0760400, //     hlt             / nostart, just halt
+0607752, //     jmp loop        / and go again
 0000000, // addr, 0
 0000000, // end, 0
 };

@@ -21,6 +21,9 @@ extern void *allocMem(int bytes);
 extern void freeMem(void);
 %}
 
+/* input() and unput() are never called */
+%option noinput nounput
+
 /* this is to handle special cases for a few arguments, a hack */
 %s CMDARG
 %s REGARG
@@ -29,10 +32,7 @@ extern void freeMem(void);
 
 %%
 ^[a-z]+     {
-            char ch;
-            char *cP;
             DispatchP dispP;
-            char tmpstr[256];
 
                 if( (dispP = findCommand(dispatchTable, yytext)) )
                 {
@@ -88,6 +88,7 @@ extern void freeMem(void);
 \.          { return(DOT); }
 \@          { return(LINEAT); }
 \#          { return(NODEREF); }
+\=          { return(EQUALS); }
 
 \,[0-9]     {
                 yylval.ival = atoi(yytext+1);
@@ -137,28 +138,28 @@ pf[1-6]     {
                 {
                 case 1:
                     yylval.ival = PF1REG;
-					break;
+                    break;
                 case 2:
                     yylval.ival = PF2REG;
-					break;
+                    break;
                 case 3:
                     yylval.ival = PF3REG;
-					break;
+                    break;
                 case 4:
                     yylval.ival = PF4REG;
-					break;
+                    break;
                 case 5:
                     yylval.ival = PF5REG;
-					break;
+                    break;
                 case 6:
                     yylval.ival = PF6REG;
-					break;
+                    break;
                 }
 
                 return( REGISTER );
             }
 
-tw			{
+tw          {
                 yylval.ival = TWREG;
                 return( REGISTER );
             }
@@ -242,7 +243,6 @@ ss          {
             }
 
 <FILEARG>[ \t]+.* {
-            int ch;
             char *cP;
 
                 // Hack to pick up the essentially arbitrary file path
@@ -250,7 +250,7 @@ ss          {
 
                 for( cP = yytext; *cP && isspace(*cP); )
                 {
-					cP++;
+                    cP++;
                 }
 
                 yylval.strP = (char *)malloc(strlen(cP) + 1);
@@ -258,26 +258,32 @@ ss          {
                 return(FILESTRING);
             }
 
+when/[ ]+[^ =]+[ ]*= {
+                // A condition, "when word = value": only in that shape is when a keyword, so a
+                // program's symbol named when still works, and watch's value can be a symbol.
+                BEGIN INITIAL;
+                return(WHEN);
+            }
 [a-zA-Z_][a-zA-Z0-9_]* {
             DispatchP dispP;
 
                 if( YYSTATE == REGARG )
                 {
                     // We can have a register with the same name as a command
-					// that looks like a symbol here.
-					// We want to use the length matching for a command,
-					// so try to look it up, but only if it's longer than one char,
-					// because that might be a base specifier.
-					BEGIN INITIAL;
-					if( (strlen(yytext) > 1) &&(dispP = findCommand(dispatchTable, yytext)) )
-					{
-						switch( dispP->token )
-						{
-						case WATCH:
-						case BREAK:
-							yylval.ival = dispP->token;
-							return( REGISTER );
-						}
+                    // that looks like a symbol here.
+                    // We want to use the length matching for a command,
+                    // so try to look it up, but only if it's longer than one char,
+                    // because that might be a base specifier.
+                    BEGIN INITIAL;
+                    if( (strlen(yytext) > 1) &&(dispP = findCommand(dispatchTable, yytext)) )
+                    {
+                        switch( dispP->token )
+                        {
+                        case WATCH:
+                        case BREAK:
+                            yylval.ival = dispP->token;
+                            return( REGISTER );
+                        }
                     }
                 }
 

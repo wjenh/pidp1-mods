@@ -199,6 +199,7 @@ typedef struct
 extern PNodeListP wildcardsP;       // every sym:* reference, from the parser
 extern SymListP constsListP;        // every constant pool, from the parser
 extern BankContextP banksP;         // every bank, with its global symbols
+extern OverlayContextP overlaysP;   // every overlay, from the parser
 extern char pfilename[];            // cpp's output file, from am1.c
 extern bool doCpp;                  // cpp was run: false under -n
 extern char *origFilenameP;         // the source named on the command line
@@ -319,6 +320,7 @@ static bool sameText(FlexText text, const char *strP);
 static bool decodeType340(FlexText text, bool escapes, char *outP, int size);
 static bool sameType340(FlexText text, const char *strP);
 static void srcDirective(PNodeP nodeP);
+static void srcOverlayDirective(PNodeP nodeP);
 static void markWildcards(void);
 static void cannot(PNodeP nodeP, const char *whereP);
 static void put(const char *strP);
@@ -805,6 +807,15 @@ srcNode(PNodeP nodeP)
         // A deleted word is gone, and a moved run is already where the
         // statement list now has it; the markers write only notes.
         srcMarker(nodeP);
+        break;
+
+    case DRUMRESERVE:
+    case WINDOWDECL:
+    case OVERLAYDECL:
+    case ENDOVERLAY:
+    case OVTABLE:
+    case OVCALL:
+        srcOverlayDirective(nodeP);
         break;
 
     default:
@@ -2960,6 +2971,7 @@ static void
 planStatements(PNodeP nodeP)
 {
 SrcNoteP noteP;
+PNodeP wordP;
 
     for( ; nodeP; nodeP = nodeP->leftP )
     {
@@ -3041,6 +3053,23 @@ SrcNoteP noteP;
             if( planPass == 2 )
             {
                 planClose(nodeP->value.symP);
+            }
+            break;
+
+        case ENDOVERLAY:
+            // An overlay's end closes its pool, as 'constants' does.
+            if( planPass == 2 )
+            {
+                planClose(((OverlayContextP)(nodeP->value.ptr))->ctx.constSymP);
+            }
+            break;
+
+        case OVCALL:
+            // Assembling the directive makes its words again, and the literal
+            // a call from another bank names is filed here.
+            for( wordP = nodeP->rightP; wordP; wordP = wordP->leftP )
+            {
+                planRefs(wordP->rightP);
             }
             break;
 
@@ -3605,6 +3634,82 @@ bool open;
     else
     {
         put(open?"\t%%optimize":"\t%%endoptimize");
+    }
+}
+
+// Write an overlay directive.  Each writes again what the parser made of it:
+// an %%ovcall its directive, never its words, and an %%ovtable no words at all,
+// since assembling the file makes them.  A %%drumreserve's tracks are written
+// as runs, as the listing writes them.
+static void
+srcOverlayDirective(PNodeP nodeP)
+{
+WindowP winP;
+OverlayContextP ovP;
+uint32_t tracks;
+int track;
+int last;
+bool first;
+
+    switch( nodeP->type )
+    {
+    case DRUMRESERVE:
+        put("\t%%drumreserve ");
+        tracks = (uint32_t)(nodeP->value.ival);
+
+        for( first = true, track = 0; track < DRUMTRACKS; ++track )
+        {
+            if( !(tracks & (UINT32_C(1) << track)) )
+            {
+                continue;
+            }
+
+            for( last = track; ((last + 1) < DRUMTRACKS) && (tracks & (UINT32_C(1) << (last + 1))); ++last )
+            {
+            }
+
+            put((first)?"":", ");
+            putNum(track);
+
+            if( last > track )
+            {
+                put("-");
+                putNum(last);
+            }
+
+            first = false;
+            track = last;
+        }
+        break;
+
+    case WINDOWDECL:
+        winP = (WindowP)(nodeP->value.ptr);
+        putf("\t%%%%window %s, ", winP->nameP);
+        putNum(winP->first);
+        put(", ");
+        putNum(winP->last);
+        break;
+
+    case OVERLAYDECL:
+        ovP = (OverlayContextP)(nodeP->value.ptr);
+        putf("\t%%%%overlay %s, %s%s", ovP->nameP, ovP->windowP->nameP, (ovP->persistent)?", persistent":"");
+        break;
+
+    case ENDOVERLAY:
+        put("\t%%endoverlay");
+        break;
+
+    case OVTABLE:
+        put("\t%%ovtable");
+        break;
+
+    case OVCALL:
+        putf("\t%%%%ovcall %s, %s", nodeP->value.strP, nodeP->value2.strP);
+        break;
+
+    default:
+        cannot(nodeP, "an overlay directive");
+        break;
     }
 }
 

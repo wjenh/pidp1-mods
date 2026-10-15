@@ -90,6 +90,15 @@ typedef struct
     uint32_t lastValue;
 } Ad1WatchEntry;
 
+// A breakpoint's or watch's condition: (word at address & mask) == value.
+typedef struct
+{
+    int isSet;
+    uint32_t address;
+    uint32_t mask;
+    uint32_t value;
+} Ad1Cond;
+
 // Split "host", "host:port" or ":port" into a host and a port. A missing host is localhost. A
 // host with no port gets the loopback port if it is a loopback name or address, else the
 // remote one. Returns 0, or AD1L_COMM if the text is not one of those.
@@ -137,6 +146,14 @@ int ad1BpDelete(Ad1Link *lp, uint32_t number);        // 0 deletes them all
 int ad1BpEnable(Ad1Link *lp, uint32_t number);
 int ad1BpDisable(Ad1Link *lp, uint32_t number);
 int ad1BpList(Ad1Link *lp, Ad1BpEntry *entriesP, uint32_t max, uint32_t *nP);
+
+// The conditional forms, and both tables' conditions by slot (brkP has nBrk entries, watchP
+// nWatch). An emulator without conditions answers each AD1P_ST_BAD_REQUEST.
+int ad1BpSetCond(Ad1Link *lp, uint32_t address, uint32_t count, const Ad1Cond *condP,
+    uint32_t *numberP);
+int ad1WatchSetCond(Ad1Link *lp, uint32_t address, int onAnyChange, uint32_t value,
+    const Ad1Cond *condP, uint32_t *numberP);
+int ad1CondList(Ad1Link *lp, Ad1Cond *brkP, uint32_t nBrk, Ad1Cond *watchP, uint32_t nWatch);
 
 int ad1WatchSet(Ad1Link *lp, uint32_t address, int onAnyChange, uint32_t value, uint32_t *numberP);
 int ad1WatchDelete(Ad1Link *lp, uint32_t number);

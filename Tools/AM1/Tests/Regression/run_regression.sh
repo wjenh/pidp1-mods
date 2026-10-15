@@ -226,7 +226,7 @@ fi
 # reference interned the slot first. The object code is the same either way,
 # so nothing else in this suite would catch a wrong label.
 # TWO checks, and the second is what keeps the first honest:
-#   1. each reference is labelled with what the source wrote
+#   1. each reference is labeled with what the source wrote
 #   2. the two references are still SHARING one pool word. If a change ever
 #      stopped them sharing, each would get its own slot, the labels would be
 #      right for the wrong reason, and check 1 would go vacuous.
@@ -238,7 +238,7 @@ if [ "$rg34_far" = "1" ] && [ "$rg34_near" = "1" ]; then
     echo "PASS:  rg34_litpool_label_fidelity"
     pass=$((pass+1))
 else
-    echo "FAIL:  rg34_litpool_label_fidelity (a pooled literal is labelled with another reference's expression)"
+    echo "FAIL:  rg34_litpool_label_fidelity (a pooled literal is labeled with another reference's expression)"
     grep ' lac \[' rg34_litpool_labels.lst 2>/dev/null | sed 's/^/       /'
     fail=$((fail+1))
     FAILURES+=("rg34_litpool_label_fidelity")

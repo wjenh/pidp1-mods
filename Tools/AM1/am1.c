@@ -4,14 +4,14 @@
  *
  * Valid switches are:
  *
- * -a	treat space in expressions as add, not or
- * -b	generate binary code
- * -d	same as giving both -s and -l, generates all the files needed for ad1
- * -l	generate a listing
- * -m	generate macro1 source
- * -M	memory overwrite by code is a warning, not a fatal error
- * -n	don't run cpp on input source
- * -N	don't keep any contents from include files in the listing
+ * -a   treat space in expressions as add, not or
+ * -b   generate binary code
+ * -d   same as giving both -s and -l, generates all the files needed for ad1
+ * -l   generate a listing
+ * -m   generate macro1 source
+ * -M   memory overwrite by code is a warning, not a fatal error
+ * -n   don't run cpp on input source
+ * -N   don't keep any contents from include files in the listing
  * -O   run the optimizer advisor, write its report to sourcefile.opt
  * -O=dump
  *      as -O, and also print the optimizer's word table on stdout in -T format
@@ -80,11 +80,12 @@
  *      There is no other level: -O2s, -O2t and -O3 and above are refused, since
  *      -O1 and -O2 make the space and speed rewrites themselves, inside declarations
  * -O=upto=N
- * -O=range=B:LO-HI
+ * -O=range=B:LO-HI[@name]
  * -O=off=FILE
  *      with -O1 or -O2 only, for bisection: keep only the first N rewrites in -O=xform's
  *      order; only those in bank B (decimal), addresses LO to HI (octal), repeatable;
- *      every rewrite but those FILE lists, one "bank addr" per line, repeatable.  A
+ *      every rewrite but those FILE lists, one "bank addr" per line, repeatable;
+ *      "@name" names a word of drum overlay name, numbered after the root's.  A
  *      rewrite stays on only if every one given keeps it
  * -O=edits=FILE
  *      a testing instrument: make the edits FILE lists, one per line,
@@ -92,25 +93,25 @@
  *      ADDR", the bank decimal and the
  *      addresses octal as assembled, and lay the program out again.  An edit relayout
  *      cannot show safe is refused, and -O=relayout names the reason.  Repeatable
- * -r	don't write a loader at the beginning of a tape
- * -s	generate a symbol table file
- * -S	print a summary of per-bank highest address used
+ * -r   don't write a loader at the beginning of a tape
+ * -s   generate a symbol table file
+ * -S   print a summary of per-bank highest address used
  * -T   special mode for testing, output the generated binary as ascii octal numbers
  * -v   print the current version number and exit
  * -z   don't convert 1's complement -0 to +0 in math operations
  *
- * -W	print all warnings
+ * -W   print all warnings
  * -W=[-]warning
  *      enable just the given warning, or with a leading -, disable it (useful with -W),
  *      see the documentation; can be repeated as needed
  * -i path
- *	set the root for all includes not specified by -I
- *	also accepts -ipath syntax
+ *      set the root for all includes not specified by -I
+ *      also accepts -ipath syntax
  * -D symbol=value
- *	add a #define, also accepts -Dsym.. syntax
+ *      add a #define, also accepts -Dsym.. syntax
  * -I path
- *	add a directory to the cpp #include search list
- *	also accepts -Ipath syntax
+ *  add a directory to the cpp #include search list
+ *      also accepts -Ipath syntax
  *
  * The following are for debugging, not of general use.
  *
@@ -221,6 +222,13 @@
  * 3-Oct-2026 claude - a var declared twice, or declared and then used as a label, is an error
  * 3-Oct-2026 claude - export then var keeps the export; duplicate label and import clash messages corrected
  * 11-Oct-2026 wje - handing IOTs that skip, new skip list added
+ * 12-Oct-2026 claude - v3.6, drum overlays: %%drumreserve, %%window, %%overlay, %%ovcall, %%ovtable, .ovl and .osym
+ * 12-Oct-2026 claude - -S prints a bank with no word as none, not as -1
+ * 12-Oct-2026 claude - v3.7, -d accepted for a program with overlays, now that ad1 reads them
+ * 12-Oct-2026 claude - v3.8, the title is the source's first line as written, not cpp's expansion
+ * 12-Oct-2026 claude - v3.9, -S prints each bank's highest word, not where its counter ended
+ * 13-Oct-2026 claude - v4.0, -O, -O1, -O2 and -O=source take a program with overlays
+ * 14-Oct-2026 wje - production cleanup
 */
 #include <unistd.h>
 #include <stdlib.h>
@@ -255,6 +263,7 @@ Warning warnings[] = {
     {"memory", WARN_MEMORY, false, true, false},
     {"law", WARN_LAW, true, true, false},
     {"type340", WARN_T340, true, true, false},
+    {"overlay", WARN_OVERLAY, true, true, false},
     {"", 0, false, false, false}  // end marker
 };
 
@@ -263,6 +272,7 @@ FILE *outfP;                    // where we put our code
 
 char *origFilenameP;            // command line input am1 file
 char *filenameP;                // current input am1 file
+char *rawTitleP;                // the source's title line as written, when cpp runs
 char pfilename[128];            // cpp tmp file name
 char ofilename[1024];           // output file; -O=source's carries the source's directory
 char basename[64];              // base name
@@ -298,11 +308,13 @@ SymListP constsListP;           // the list of all constant groups
 
 extern BankContextP banksP;
 extern BankContextP curBankP;
+extern OverlayContextP overlaysP;
 extern void initParser(void);
 extern FILE *yyin;              // lex input file
 extern int yyparse();
 
 int run_cpp(char *, char *);
+char *readTitleLine(char *srcNameP);
 int usage();
 bool doWarn(int warnID);
 void add_cpp(char, char *);
@@ -319,7 +331,13 @@ extern int binCodegen(FILE *, PNodeP);
 extern int listCodegen(FILE *, PNodeP);
 extern int testCodegen(FILE *, PNodeP);
 extern BankContextP findBank(int bankNo);
+extern int bankTop(BankContextP bankP);
 extern void listSymtab(FILE *outfP, char* filenameP, BankContextP banksP);
+extern void ovlPrepare(PNodeP stmtsP);
+extern void refreshOverlayAliases(void);
+extern void ovlPrintLayout(FILE *outfP, const char *prefixP);
+extern void ovlWriteOvl(FILE *outfP, const char *sourceP);
+extern void ovlWriteOsym(FILE *outfP, const char *filenameP);
 extern void vwarn(int errtype, const char *msgP, ...);
 
 int
@@ -329,6 +347,7 @@ int i;
 bool testMode;
 char *cP;
 BankContextP bankP, lastBankP;
+int top;                    // -S: one past a bank's highest word
 
     yydebug = 0;
     yy_flex_debug = 0;
@@ -590,6 +609,7 @@ BankContextP bankP, lastBankP;
 
     if(doCpp)
     {
+        rawTitleP = readTitleLine(filenameP);
         sprintf(pfilename, "%s.cpp", basename);
         if(!run_cpp(filenameP, pfilename))
         {
@@ -701,6 +721,15 @@ BankContextP bankP, lastBankP;
         }
     }
 
+    // After the optimizer, whose relayout may move the root words an overlay
+    // names, and before every generator: the tape, the dump and the listing
+    // take the table's words and every overlay word from here.
+    if( overlaysP )
+    {
+        refreshOverlayAliases();
+        ovlPrepare(rootP->leftP);
+    }
+
     if( doMacro )
     {
         strcpy(ofilename, basename);                // output file
@@ -756,6 +785,22 @@ BankContextP bankP, lastBankP;
         {
             unlink(ofilename);      // get rid of output
         }
+
+        // The overlays' words, for the drum, go beside the tape.
+        if( overlaysP )
+        {
+            strcpy(ofilename, basename);
+            strcat(ofilename, ".ovl");
+
+            if(!(outfP = fopen(ofilename, "w")))
+            {
+                fprintf(stderr, "am1: can't open output file '%s'\n", ofilename);
+                leave(0);
+            }
+
+            ovlWriteOvl(outfP, (cP = strrchr(origFilenameP, '/'))?(cP + 1):origFilenameP);
+            fclose(outfP);
+        }
     }
 
     if( doListing )
@@ -792,6 +837,22 @@ BankContextP bankP, lastBankP;
 
         listSymtab(outfP, filenameP, banksP);
         fclose(outfP);
+
+        // The overlays' symbols, which the .sym file leaves out.
+        if( overlaysP )
+        {
+            strcpy(ofilename, basename);
+            strcat(ofilename, ".osym");
+
+            if(!(outfP = fopen(ofilename, "w")))
+            {
+                fprintf(stderr, "am1: can't open output file '%s'\n", ofilename);
+                leave(0);
+            }
+
+            ovlWriteOsym(outfP, filenameP);
+            fclose(outfP);
+        }
     }
 
     if( showMemUsage )
@@ -806,8 +867,19 @@ BankContextP bankP, lastBankP;
             {
                 if( bankP->bank == i )
                 {
-                    printf("Bank %d, 0%04o (%d decimal)\n",
-                        bankP->bank, bankP->cur_pc - 1, bankP->cur_pc - 1);
+                    // The highest word, not where the counter ended, which an origin
+                    // back to lower addresses leaves low.  A bank named but given no
+                    // word, one holding only windows say, has nothing to report.
+                    top = bankTop(bankP);
+
+                    if( top == 0 )
+                    {
+                        printf("Bank %d, none\n", bankP->bank);
+                    }
+                    else
+                    {
+                        printf("Bank %d, 0%04o (%d decimal)\n", bankP->bank, top - 1, top - 1);
+                    }
                     // Unlink this one
                     if( lastBankP )
                     {
@@ -823,6 +895,11 @@ BankContextP bankP, lastBankP;
                     lastBankP = bankP;
                 }
             }
+        }
+
+        if( overlaysP )
+        {
+            ovlPrintLayout(stdout, "");
         }
     }
 
@@ -993,6 +1070,24 @@ typeToName(int type)
         break;
     case IMOD:
         return("i");
+        break;
+    case DRUMRESERVE:
+        return("drumreserve");
+        break;
+    case WINDOWDECL:
+        return("window");
+        break;
+    case OVERLAYDECL:
+        return("overlay");
+        break;
+    case ENDOVERLAY:
+        return("endoverlay");
+        break;
+    case OVTABLE:
+        return("ovtable");
+        break;
+    case OVCALL:
+        return("ovcall");
         break;
     default:
         return(0);
@@ -1372,10 +1467,10 @@ usage()
     // them otherwise.
 #ifdef AM1_TEST_SWITCHES
     fprintf(stderr, "Usage: am1 [-abdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=dump|decode|refs|flow|calls|share|regions|rules|xform|source|values|scratch|guess|speed|relayout|window|check]...\n");
-    fprintf(stderr, "  [-O=upto=N] [-O=range=B:LO-HI]... [-O=off=FILE]... [-O=edits=FILE]...\n");
+    fprintf(stderr, "  [-O=upto=N] [-O=range=B:LO-HI[@name]]... [-O=off=FILE]... [-O=edits=FILE]...\n");
 #else
     fprintf(stderr, "Usage: am1 [-abdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=xform|source]\n");
-    fprintf(stderr, "  [-O=upto=N] [-O=range=B:LO-HI]... [-O=off=FILE]...\n");
+    fprintf(stderr, "  [-O=upto=N] [-O=range=B:LO-HI[@name]]... [-O=off=FILE]...\n");
 #endif
     fprintf(stderr, "  [-O=inline=cap:N] [-O=inline=reserve:N] [-O=undeclared] [-O=unroll=cap:N]\n");
     fprintf(stderr, "  [-Dsymbol]... [-Ipath]... [-irootpath] [-W[=warning]]... sourcefile\n\n");
@@ -1403,8 +1498,10 @@ usage()
     fprintf(stderr, "      %%%%nooptimize/%%%%endnooptimize fences code off at every level;\n");
     fprintf(stderr, "      see UsingTheAm1OptimizerQuickReference.md for which level to use\n");
     fprintf(stderr, "  -O=upto=N with -O1 or -O2, keep only the first N rewrites, in -O=xform's order\n");
-    fprintf(stderr, "  -O=range=B:LO-HI with -O1 or -O2, keep only rewrites in bank B (decimal), LO to HI (octal)\n");
-    fprintf(stderr, "  -O=off=FILE with -O1 or -O2, keep every rewrite but those FILE lists as \"bank addr\"\n");
+    fprintf(stderr, "  -O=range=B:LO-HI with -O1 or -O2, keep only rewrites in bank B (decimal), LO to HI (octal),\n");
+    fprintf(stderr, "      the root's, or drum overlay name's with @name after HI\n");
+    fprintf(stderr, "  -O=off=FILE with -O1 or -O2, keep every rewrite but those FILE lists as \"bank addr\",\n");
+    fprintf(stderr, "      or \"bank addr@name\" for a word of drum overlay name;\n");
     fprintf(stderr, "      a rewrite stays on only if every one of these keeps it; see am1bisect.sh\n");
     fprintf(stderr, "  -O=inline=cap:N with -O1 or -O2, copy a declared call's body only up to N words (8)\n");
     fprintf(stderr, "  -O=inline=reserve:N with -O1 or -O2, leave N words free in each bank's inline budget (64)\n");
@@ -1493,6 +1590,36 @@ add_cpp(char type, char *nameP)        // add a name to the cpp list
     }
 
     iP->incP = nameP;
+}
+
+// The source's first line as written, for the title: cpp expands any macro name in it,
+// -DAM1's included. NILP when the line is empty or a cpp directive, or the file can't be
+// read; the title is then cpp's first line, as before.
+char *
+readTitleLine(char *srcNameP)
+{
+FILE *fP;
+char line[1024];
+char *titleP;
+
+    if( !(fP = fopen(srcNameP, "r")) )
+    {
+        return( NILP );
+    }
+
+    titleP = NILP;
+    if( fgets(line, sizeof(line), fP) )
+    {
+        line[strcspn(line, "\r\n")] = '\0';
+        if( line[0] && (line[0] != '#') )
+        {
+            titleP = malloc(strlen(line) + 1);
+            strcpy(titleP, line);
+        }
+    }
+
+    fclose(fP);
+    return( titleP );
 }
 
 int

@@ -1,0 +1,104 @@
+f4_fit: 32 overlays of one window, no track reserved
+bank 2
+%%window w1, 2000, 2777
+%%overlay o1, w1
+o1Go,   hlt
+%%endoverlay
+%%overlay o2, w1
+o2Go,   hlt
+%%endoverlay
+%%overlay o3, w1
+o3Go,   hlt
+%%endoverlay
+%%overlay o4, w1
+o4Go,   hlt
+%%endoverlay
+%%overlay o5, w1
+o5Go,   hlt
+%%endoverlay
+%%overlay o6, w1
+o6Go,   hlt
+%%endoverlay
+%%overlay o7, w1
+o7Go,   hlt
+%%endoverlay
+%%overlay o8, w1
+o8Go,   hlt
+%%endoverlay
+%%overlay o9, w1
+o9Go,   hlt
+%%endoverlay
+%%overlay o10, w1
+o10Go,   hlt
+%%endoverlay
+%%overlay o11, w1
+o11Go,   hlt
+%%endoverlay
+%%overlay o12, w1
+o12Go,   hlt
+%%endoverlay
+%%overlay o13, w1
+o13Go,   hlt
+%%endoverlay
+%%overlay o14, w1
+o14Go,   hlt
+%%endoverlay
+%%overlay o15, w1
+o15Go,   hlt
+%%endoverlay
+%%overlay o16, w1
+o16Go,   hlt
+%%endoverlay
+%%overlay o17, w1
+o17Go,   hlt
+%%endoverlay
+%%overlay o18, w1
+o18Go,   hlt
+%%endoverlay
+%%overlay o19, w1
+o19Go,   hlt
+%%endoverlay
+%%overlay o20, w1
+o20Go,   hlt
+%%endoverlay
+%%overlay o21, w1
+o21Go,   hlt
+%%endoverlay
+%%overlay o22, w1
+o22Go,   hlt
+%%endoverlay
+%%overlay o23, w1
+o23Go,   hlt
+%%endoverlay
+%%overlay o24, w1
+o24Go,   hlt
+%%endoverlay
+%%overlay o25, w1
+o25Go,   hlt
+%%endoverlay
+%%overlay o26, w1
+o26Go,   hlt
+%%endoverlay
+%%overlay o27, w1
+o27Go,   hlt
+%%endoverlay
+%%overlay o28, w1
+o28Go,   hlt
+%%endoverlay
+%%overlay o29, w1
+o29Go,   hlt
+%%endoverlay
+%%overlay o30, w1
+o30Go,   hlt
+%%endoverlay
+%%overlay o31, w1
+o31Go,   hlt
+%%endoverlay
+%%overlay o32, w1
+o32Go,   hlt
+%%endoverlay
+bank 0
+100/
+go,     hlt
+%%ovtable
+        start go

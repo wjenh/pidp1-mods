@@ -42,6 +42,8 @@ extern bool noRim;
 extern bool noMemFatal;
 extern bool keepMinusZero;
 extern BankContextP banksP;
+extern WindowP windowsP;
+extern Word *ovTableWordsP;
 
 extern int evalExpr(PNodeP);
 extern int onesComplAdj(int);
@@ -65,6 +67,8 @@ static int reduceOperand(PNodeP);
 static void adjustPC(int);
 
 static void writeStatements(FILE *, PNodeP);
+static void markWindows(void);
+static void refuseWindowWords(int lineNo, int count);
 static void markWord(int lineNo, const char *whatP);
 static void writeVars(FILE *outfP, PNodeListP listP, int lineNo);
 static void writeConstants(FILE *outfP, SymNodeP nodeP, int lineNo);
@@ -124,12 +128,22 @@ static void
 writeStatements(FILE *outfP, PNodeP nodeP)
 {
 int i, j;
+PNodeP wordP;
 
     cur_pc = 4;                 // the macro1 default
     initBuffer(outBufP, cur_pc);
+    markWindows();
 
     while( nodeP )
     {
+        // An overlay's words are not the root's: they go to the drum, never
+        // onto this tape, and its pc is the window's, not the root's.
+        if( nodeP->overlay )
+        {
+            nodeP = nodeP->leftP;
+            continue;
+        }
+
         switch( nodeP->type )
         {
         case COMMENT:           // none of these emit code or change any state
@@ -181,6 +195,7 @@ int i, j;
                 case TYPE340:
                     if( !writeText(outfP, nodeP->rightP->value.flexText) )
                     {
+                        refuseWindowWords(nodeP->rightP->lineNo, 1);
                         lineno = nodeP->rightP->lineNo;
                         verror("Already used memory address 0%04o would be overwritten.", cur_pc);
                     }
@@ -189,6 +204,7 @@ int i, j;
                 case ASCII:
                     if( !writeAscii(outfP, nodeP->rightP->value.strP) )
                     {
+                        refuseWindowWords(nodeP->rightP->lineNo, 1);
                         lineno = nodeP->rightP->lineNo;
                         verror("Already used memory address 0%04o would be overwritten.", cur_pc);
                     }
@@ -214,6 +230,7 @@ int i, j;
         case TEXT:
             if( !writeText(outfP, nodeP->value.flexText) )
             {
+                refuseWindowWords(nodeP->lineNo, 1);
                 lineno = nodeP->lineNo;
                 verror("Already used memory address 0%04o would be overwritten by text.", cur_pc);
             }
@@ -222,6 +239,7 @@ int i, j;
         case TYPE340:
             if( !writeText(outfP, nodeP->value.flexText) )
             {
+                refuseWindowWords(nodeP->lineNo, 1);
                 lineno = nodeP->lineNo;
                 verror("Already used memory address 0%04o would be overwritten by type340.", cur_pc);
             }
@@ -230,6 +248,7 @@ int i, j;
         case ASCII:
             if( !writeAscii(outfP, nodeP->value.strP) )
             {
+                refuseWindowWords(nodeP->lineNo, 1);
                 lineno = nodeP->lineNo;
                 verror("Already used memory address 0%04o would be overwritten by ascii.", cur_pc);
             }
@@ -266,11 +285,35 @@ int i, j;
                 flushBuffer(outfP, outBufP);
                 if( !setBits(memMap, (cur_bank << 12) | cur_pc, nodeP->value.ival) )
                 {
+                    refuseWindowWords(nodeP->lineNo, nodeP->value.ival);
                     lineno = nodeP->lineNo;
                     verror("Already used memory address 0%04o would be overwritten by table.", cur_pc);
                 }
                 adjustPC(nodeP->value.ival);
                 initBuffer(outBufP, (cur_bank << 12) | cur_pc);
+            }
+            break;
+
+        case OVCALL:
+            // Its words, each an EXPR node, checked like any other word.
+            for( wordP = nodeP->rightP; wordP; wordP = wordP->leftP )
+            {
+                i = reduceOperand(wordP->rightP);
+                wordP->value2.ival = i;     // save for listing
+                markWord(nodeP->lineNo, "");
+                putBuffer(outfP, outBufP, i);
+                adjustPC(1);
+            }
+            break;
+
+        case OVTABLE:
+            // The overlay descriptor table, its words made by ovlcodegen.c,
+            // each checked as an initialized table's are.
+            for( i = 0; i < nodeP->value.ival; ++i )
+            {
+                markWord(nodeP->lineNo, " by the overlay table");
+                putBuffer(outfP, outBufP, ovTableWordsP[i]);
+                adjustPC(1);
             }
             break;
 
@@ -311,14 +354,57 @@ int i, j;
     }
 }
 
+// Mark every window's words used before any root word is emitted, so that a root
+// word placed in one is found as an overwrite; refuseWindowWords() then tells
+// the two apart.
+static void
+markWindows(void)
+{
+WindowP winP;
+
+    for( winP = windowsP; winP; winP = winP->nextP )
+    {
+        setBits(memMap, (winP->bank << 12) | winP->first, (winP->last - winP->first + 1));
+    }
+}
+
+// Refuse the count root words from the current pc when any falls in a window,
+// whose core belongs to its overlays: fatal with or without -M.  Called where
+// an overwrite has been found; lineNo is the statement's, or -1 for a pool the
+// parser placed at the end of a bank.
+static void
+refuseWindowWords(int lineNo, int count)
+{
+int addr;
+WindowP winP;
+
+    for( winP = windowsP; winP; winP = winP->nextP )
+    {
+        if( (winP->bank == cur_bank) && (cur_pc <= winP->last) && (winP->first < (cur_pc + count)) )
+        {
+            addr = (cur_pc > winP->first)?cur_pc:winP->first;
+
+            if( lineNo >= 0 )
+            {
+                lineno = lineNo;
+            }
+
+            verror("A root word at 0%04o in bank %d would be in window %s, 0%04o-0%04o, which only its overlays may use.",
+                addr, cur_bank, winP->nameP, winP->first, winP->last);
+        }
+    }
+}
+
 // Mark the word about to be emitted at the current pc as used and report an
 // overwrite, fatal by default or a warning with -M; the storage directives check
-// their own.  whatP names the kind of word (" by table"), or is empty.
+// their own.  A word in a window is fatal either way.  whatP names the kind of
+// word (" by table"), or is empty.
 static void
 markWord(int lineNo, const char *whatP)
 {
     if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
     {
+        refuseWindowWords(lineNo, 1);
         lineno = lineNo;
         if( noMemFatal )
         {
@@ -503,6 +589,8 @@ PNodeP nodeP;
 
         if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
         {
+            refuseWindowWords(lineNo, 1);
+
             if( lineNo == -1 )
             {
                 verror(
@@ -539,6 +627,8 @@ writeConstants(FILE *fP, SymNodeP symP, int lineNo)
     {
         if( !setBit(memMap, (cur_bank << 12) | cur_pc) )
         {
+            refuseWindowWords(lineNo, 1);
+
             if( lineNo == -1 )
             {
                 verror(

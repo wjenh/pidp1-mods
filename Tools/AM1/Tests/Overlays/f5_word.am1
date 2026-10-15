@@ -1,0 +1,25 @@
+f5_word: the table words, the headers and the stamp, worked out by hand
+%%drumreserve 0, 2
+bank 1
+%%window wa, 400, 437
+%%overlay one, wa
+        export oneGo
+oneGo,  hlt
+        124
+%%endoverlay
+%%overlay two, wa, persistent
+        export twoGo
+twoGo,  cla
+%%endoverlay
+bank 3
+%%window wb, 400, 417
+%%overlay three, wb
+        export threeGo
+threeGo, 7
+        lac [55]
+%%endoverlay
+bank 0
+100/
+go,     hlt
+%%ovtable
+        start go

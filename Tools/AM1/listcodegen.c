@@ -25,6 +25,11 @@ static void listConstants(FILE *outfP, PNodeP nodeP, SymNodeP symP);
 static void flxToA(FlexText flexText, char *rsltP);
 static void formatCcomment(FILE *outfP, PNodeP nodeP);
 static void output(FILE *fP, bool emit, char *fmtP,  ...);
+static void listTracks(FILE *outfP, uint32_t tracks);
+static void listOverlayHead(FILE *outfP, PNodeP nodeP);
+static void listOverlayEnd(FILE *outfP, PNodeP nodeP);
+static void listOvCall(FILE *outfP, PNodeP nodeP);
+static void listOvTable(FILE *outfP, PNodeP nodeP);
 
 extern bool sawBank;
 extern bool dropIncludeText;
@@ -32,6 +37,10 @@ extern int lineno;
 extern BankContextP banksP;
 
 extern int evalExpr(PNodeP);
+extern Word ovStamp;
+extern Word *ovTableWordsP;
+extern void ovlPrintLayout(FILE *outfP, const char *prefixP);
+extern void ovlTableWordName(int index, char *bufP, size_t size);
 extern char flexoToAscii(char fchar, int *shift);
 extern void verror(char *msgP, ...);
 
@@ -89,6 +98,7 @@ listStatements(FILE *outfP, PNodeP nodeP, PNodeP stopP)
 {
 int i, j;
 PNodeP node2P;
+WindowP winP;
 char *cP;
 bool skipTerm = false;      // set by an optimizer directive: drop its line's terminator
 PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
@@ -326,6 +336,35 @@ PNodeP prevP = NILP;        // the node before this one, for EMPTYLINE
                 cP = (node2P->type == NAME)?node2P->value.strP:node2P->value.symP->name;
                 output(outfP, doOutput, "%s%s", cP, (node2P->leftP)?", ":"");
             }
+            break;
+
+        case DRUMRESERVE:
+            startLine(true, outfP, nodeP);
+            output(outfP, doOutput, "%%%%drumreserve ");
+            listTracks(outfP, (uint32_t)nodeP->value.ival);
+            break;
+
+        case WINDOWDECL:
+            // Listed at the window's first address, not the root's pc.
+            winP = (WindowP)(nodeP->value.ptr);
+            output(outfP, doOutput, "%4d: %02o%04o        %%%%window %s, %o, %o",
+                nodeP->lineNo, winP->bank, winP->first, winP->nameP, winP->first, winP->last);
+            break;
+
+        case OVERLAYDECL:
+            listOverlayHead(outfP, nodeP);
+            break;
+
+        case ENDOVERLAY:
+            listOverlayEnd(outfP, nodeP);
+            break;
+
+        case OVTABLE:
+            listOvTable(outfP, nodeP);
+            break;
+
+        case OVCALL:
+            listOvCall(outfP, nodeP);
             break;
 
         default:
@@ -785,6 +824,159 @@ char *nextP;
     }
     
     output(outfP, doOutput,"*/\n");
+}
+
+// List a set of drum tracks, bit n for track n, in octal, a run of them as a
+// range: "0-17, 20".
+static void
+listTracks(FILE *outfP, uint32_t tracks)
+{
+int track;
+int last;
+bool first = true;
+
+    for( track = 0; track < DRUMTRACKS; ++track )
+    {
+        if( !(tracks & (UINT32_C(1) << track)) )
+        {
+            continue;
+        }
+
+        for( last = track; ((last + 1) < DRUMTRACKS) && (tracks & (UINT32_C(1) << (last + 1))); ++last )
+        {
+            ;
+        }
+
+        output(outfP, doOutput, (last > track)?"%s%o-%o":"%s%o", (first)?"":", ", track, last);
+        first = false;
+        track = last;
+    }
+}
+
+// An overlay's heading and its %%overlay line, at its window's first address,
+// which every overlay of the window repeats.
+static void
+listOverlayHead(FILE *outfP, PNodeP nodeP)
+{
+PNode node;
+OverlayContextP ovP;
+WindowP winP;
+
+    ovP = (OverlayContextP)(nodeP->value.ptr);
+    winP = ovP->windowP;
+    output(outfP, doOutput, "// Overlay %s, number %d, in window %s, bank %d, %04o-%04o, %s\n",
+        ovP->nameP, ovP->number, winP->nameP, winP->bank, winP->first, winP->last,
+        (ovP->persistent)?"persistent":"read-only");
+    startLine(true, outfP, nodeP);
+    output(outfP, doOutput, "%%%%overlay %s, %s%s", ovP->nameP, winP->nameP,
+        (ovP->persistent)?", persistent":"");
+
+    // The header words, which ovlcodegen.c made; the statement's terminator
+    // ends the last line.
+    node = *nodeP;
+    node.value2.ival = ovStamp;
+    output(outfP, doOutput, "\n");
+    startLine(false, outfP, &node);
+    output(outfP, doOutput, "    %o      // header: the build stamp", ovStamp);
+    node.pc++;
+    node.value2.ival = ovP->number;
+    output(outfP, doOutput, "\n");
+    startLine(false, outfP, &node);
+    output(outfP, doOutput, "    %o      // header: overlay %s's number", ovP->number, ovP->nameP);
+}
+
+// The constants and variables an overlay left to its %%endoverlay, which placed
+// them at its end, constants first, then the %%endoverlay line with the
+// overlay's length.
+static void
+listOverlayEnd(FILE *outfP, PNodeP nodeP)
+{
+PNode node;
+OverlayContextP ovP;
+
+    ovP = (OverlayContextP)(nodeP->value.ptr);
+    node.bank = ovP->ctx.bank;
+    node.overlay = ovP->number;
+    node.lineNo = nodeP->lineNo;
+
+    if( ovP->ctx.constSymP )
+    {
+        node.pc = ovP->ctx.constPC;
+        output(outfP, doOutput, "// Constants for overlay %s\n", ovP->nameP);
+        listConstants(outfP, &node, ovP->ctx.constSymP);
+    }
+
+    if( ovP->ctx.varNodesP )
+    {
+        node.pc = ovP->ctx.varPC;
+        node.value.ptr = ovP->ctx.varNodesP;
+        output(outfP, doOutput, "// Variables for overlay %s\n", ovP->nameP);
+        listVars(outfP, &node);
+    }
+
+    startLine(true, outfP, nodeP);
+    output(outfP, doOutput, "%%%%endoverlay   // overlay %s: %o words of window %s's %o, the header included",
+        ovP->nameP, (ovP->ctx.cur_pc - ovP->windowP->first), ovP->windowP->nameP,
+        (ovP->windowP->last - ovP->windowP->first + 1));
+}
+
+// An %%ovcall line, then each of its words on a line of its own, the last two,
+// the data words, saying what they hold.  bincodegen.c saved their values; the
+// statement's terminator ends the last line.
+static void
+listOvCall(FILE *outfP, PNodeP nodeP)
+{
+PNodeP wordP;
+
+    startLine(true, outfP, nodeP);
+    output(outfP, doOutput, "%%%%ovcall %s, %s", nodeP->value.strP, nodeP->value2.strP);
+
+    for( wordP = nodeP->rightP; wordP; wordP = wordP->leftP )
+    {
+        output(outfP, doOutput, "\n");
+        startLine(false, outfP, wordP);
+        output(outfP, doOutput, "    ");
+        listOperand(outfP, wordP->rightP);
+
+        if( wordP->leftP && !wordP->leftP->leftP )
+        {
+            output(outfP, doOutput, "      // overlay %s's entry in ovTable", nodeP->value.strP);
+        }
+        else if( !wordP->leftP )
+        {
+            output(outfP, doOutput, "      // %s", nodeP->value2.strP);
+        }
+    }
+}
+
+// The drum layout, then the %%ovtable line, then each of the table's words on a
+// line of its own, saying what it holds.  ovlcodegen.c made the words; the
+// statement's terminator ends the last line.
+static void
+listOvTable(FILE *outfP, PNodeP nodeP)
+{
+int i;
+char what[128];
+PNode node;
+
+    if( doOutput )
+    {
+        ovlPrintLayout(outfP, "// ");
+    }
+
+    startLine(true, outfP, nodeP);
+    output(outfP, doOutput, "%%%%ovtable      // ovTable, %o words", nodeP->value.ival);
+    node = *nodeP;
+
+    for( i = 0; i < nodeP->value.ival; ++i )
+    {
+        ovlTableWordName(i, what, sizeof(what));
+        node.value2.ival = ovTableWordsP[i];
+        output(outfP, doOutput, "\n");
+        startLine(false, outfP, &node);
+        output(outfP, doOutput, "    %o      // %s", ovTableWordsP[i], what);
+        node.pc++;
+    }
 }
 
 // Conditionally output a line.

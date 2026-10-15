@@ -1,0 +1,36 @@
+f10_pinoffset: the root alone is optimized, and the overlay's words follow it
+bank 0
+100/
+ovEnter, jmp .
+go,     dzm rootFwd
+%%optimize
+pinA,   cla
+        lac rootVal
+        sza
+        jmp goS
+        dzm rootVal
+goS,
+        %%ovcall ov1, ov1Go
+        jmp .
+%%endoptimize
+helper, dap helpX
+%%optimize
+        cla
+        lac rootVal
+helpX,  jmp .
+%%endoptimize
+rootVal, 0
+%%window w, 1000, 1777
+%%overlay ov1, w
+        export ov1Go
+ov1Go,  dap ov1X
+        lac rootVal
+        lac rootFwd
+        lac [rootVal]
+        jsp helper
+        lac pinA+2
+ov1X,   jmp .
+%%endoverlay
+rootFwd, 0
+%%ovtable
+        start go

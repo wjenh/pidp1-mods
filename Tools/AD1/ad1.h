@@ -5,7 +5,7 @@
 #include "ad1link.h"
 #include "target.h"
 
-#define VERSION "2.0 20-Sep-2026"
+#define VERSION "2.6 14-Oct-2026"
 
 #define MAXFILES    8    // maximum number of open files we can have
 #define MAXLINES    10000 // max number of lines in a file
@@ -85,6 +85,7 @@ typedef uint32_t Word;    // an 18-bit PDP-1 word held in 32 bits
 typedef struct {
     u32 address;        // full 16 bit address
     int fileNo;
+    int overlay;        // the overlay's number in its file, 0 for the root
     char *nameP;
     } Symbol, *SymbolP;
 
@@ -104,8 +105,9 @@ typedef struct arg_s {
 
 // For the address to line number(s) mapping
 typedef struct MapEntry_t {
-    short fileNo;               // internal number assiged to file, index in files table
+    short fileNo;               // internal number assigned to file, index in files table
     short lineNo;               // line number in file
+    short overlay;              // the listing line's overlay, 0 for the root
     struct MapEntry_t *nextP;
 } MapEntry, *MapEntryP, **MapEntryPP;
 
@@ -119,3 +121,60 @@ typedef struct {
     int numLines;               // lines in the file
     long lineMap[MAXLINES];     // map line numbers in file into file offsets in file
 } FileInfo, *FileInfoP;
+
+// Drum overlays, overlays.c: what a program's .ovl and .osym say, and which overlay each window
+// holds now, read from the overlay manager's table in core once per command.
+void ovlLoad(FileInfoP infoP);
+void ovlClear(void);
+void ovlForget(void);
+bool ovlSymbolShown(int fileNo, int overlay);
+bool ovlLineShown(int fileNo, int overlay);
+int ovlNumber(int fileNo, char *nameP);
+char *ovlName(int fileNo, int overlay);
+char *ovlResidentNameAt(u32 address);
+
+// The overlay a command's address named with name@overlay, which break binds its breakpoint to.
+typedef struct {
+    int count;                  // name@overlay references in the command, 0 for none
+    bool mixed;                 // they name more than one overlay
+    int fileNo;                 // the first one's
+    int overlay;
+    u32 address;
+    char *nameP;
+} OverlayRef, *OverlayRefP;
+
+void ovlRefClear(void);
+void ovlRefNote(SymbolP symP);
+OverlayRefP ovlRef(void);
+
+// Breakpoints and watches bound to an overlay, overlays.c.  An emulator with conditions holds the
+// binding as one; with one from before conditions, a bound breakpoint is an ordinary one at
+// count 1 and ad1 keeps the binding, and a watch cannot be bound.
+typedef struct {
+    bool fires[AD1_NUM_BREAKPOINTS];    // by number less one, the bound ones that fire
+    int unfired;                // a bound breakpoint at the address that did not fire, 0 if none
+    bool said;                  // a message was printed
+    char why[160];              // why unfired did not fire
+} BoundHit, *BoundHitP;
+
+const char *ovlCondFor(OverlayRefP refP, Ad1Cond *condP);     // nil, or why there is none
+void ovlBindBreak(int number, OverlayRefP refP, int count, bool inEmu);
+void ovlUnbindBreak(int number);          // 0 for every one
+bool ovlPrintBinding(int number, u32 address, bool enabled, int count, int curCount);
+bool ovlBreakHit(int number, u32 address, BoundHitP hitP);
+void ovlBindWatch(int number, OverlayRefP refP);
+void ovlUnbindWatch(int number);          // 0 for every one
+bool ovlPrintWatchAddress(int number, u32 address);
+char *ovlWatchOverlay(int number);
+bool ovlWatchHit(int number, bool *saidP);
+void ovlBreaksClosed(void);
+void ovlBreaksLeft(void);
+
+// Set by a step or monitor that ended on a hit, so the hit's report knows it was a step's.
+extern bool stepEndedOnHit;
+
+// Symbols, eval.c, for the overlays' symbols.
+bool addSymbol(u32 address, int fileNo, int overlay, char *nameP);
+void clearOverlaySymbols(int fileNo);     // NOARG for every file
+SymbolP findOverlaySymbol(char *nameP, char *ovNameP);
+extern bool symReported;    // a lookup that failed has already said why

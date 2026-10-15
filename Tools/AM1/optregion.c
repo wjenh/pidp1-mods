@@ -35,6 +35,10 @@ static OptRegionP openRegionP;
 // The nooptimize span the walk is inside, NILP between spans.
 static OptRegionP openHandsOffP;
 
+// The span optRegionOvcall() opened, NILP when the open one, if any, is the
+// author's: a %%ovcall inside a nooptimize span adds none of its own.
+static OptRegionP ovcallSpanP;
+
 // The speed region the walk is inside, NILP between them.  The three kinds are
 // independent: a word may be in any combination of them.
 static OptRegionP openSpeedP;
@@ -53,8 +57,11 @@ static const struct
     { "partial",   "straddling a region boundary" }
 };
 
+extern OverlayContextP overlaysP;   // every drum overlay, from the parser
+
+static void writeMarkElsewhere(FILE *fP, OptTableP tableP, OptInlineMarkP markP);
 static OptRegionP newRegion(OptTableP tableP, PNodeP nodeP, int bank, int pc);
-static OptRegionP newHandsOff(OptTableP tableP, PNodeP nodeP, int bank, int pc);
+static OptRegionP newHandsOff(OptTableP tableP, int lineNo, const char *fileP, int bank, int pc);
 static OptRegionP newSpeedRegion(OptTableP tableP, PNodeP nodeP, int bank, int pc);
 static void newInlineMark(OptTableP tableP, PNodeP nodeP, int bank, int pc);
 static void newCeiling(OptTableP tableP, PNodeP nodeP);
@@ -77,6 +84,7 @@ optRegionReset(void)
     openRegionP = NILP;
     openHandsOffP = NILP;
     openSpeedP = NILP;
+    ovcallSpanP = NILP;
 }
 
 // Take one directive node as the builder's walk reaches it; bank and pc are
@@ -125,7 +133,7 @@ optRegionStatement(OptTableP tableP, PNodeP nodeP, int bank, int pc)
         {
             if( !openHandsOffP )
             {
-                openHandsOffP = newHandsOff(tableP, nodeP, bank, pc);
+                openHandsOffP = newHandsOff(tableP, nodeP->lineNo, nodeP->value.strP, bank, pc);
             }
         }
         else if( openHandsOffP )
@@ -152,6 +160,35 @@ optRegionStatement(OptTableP tableP, PNodeP nodeP, int bank, int pc)
         openRegionP->endLine = nodeP->lineNo;
         openRegionP = NILP;
     }
+}
+
+// A %%ovcall's words are am1's: the manager reads its data words through the
+// call's return address, so none may be rewritten, deleted or moved apart.
+// They are a hands-off span of their own, unless the author's is open.
+void
+optRegionOvcall(OptTableP tableP, PNodeP nodeP, int bank, int pc, int open)
+{
+    if( open )
+    {
+        ++tableP->ovCallCount;
+
+        if( !openHandsOffP )
+        {
+            openHandsOffP = newHandsOff(tableP, nodeP->srcLine, nodeP->srcFileP, bank, pc);
+            openHandsOffP->ovcall = 1;
+            ovcallSpanP = openHandsOffP;
+        }
+
+        return;
+    }
+
+    if( ovcallSpanP && (openHandsOffP == ovcallSpanP) )
+    {
+        openHandsOffP->endLine = nodeP->srcLine;
+        openHandsOffP = NILP;
+    }
+
+    ovcallSpanP = NILP;
 }
 
 // The flags a word created now carries from the open spans: any combination of
@@ -240,7 +277,7 @@ OptRegionP regionP;
 // Make a nooptimize span: an OptRegion, on the span list.
 // Returns the new span; out of memory is fatal.
 static OptRegionP
-newHandsOff(OptTableP tableP, PNodeP nodeP, int bank, int pc)
+newHandsOff(OptTableP tableP, int lineNo, const char *fileP, int bank, int pc)
 {
 OptRegionP spanP;
 
@@ -251,9 +288,9 @@ OptRegionP spanP;
     }
 
     spanP->id = (tableP->handsOffCount + 1);
-    spanP->openLine = nodeP->lineNo;
+    spanP->openLine = lineNo;
     spanP->endLine = -1;
-    spanP->fileP = nodeP->value.strP;
+    spanP->fileP = fileP;
     spanP->openBank = bank;
     spanP->openAddr = pc;
     spanP->firstIndex = -1;
@@ -1022,10 +1059,24 @@ int count;
     fprintf(fP, "  nothing: it only ever withholds a rewrite, so it cannot be wrong in the\n");
     fprintf(fP, "  dangerous direction.\n");
 
+    if( tableP->ovCallCount )
+    {
+        fprintf(fP, "  am1 makes each %%%%ovcall's words a span of their own: the drum overlay\n");
+        fprintf(fP, "  manager reads the words after the call through its return address.\n");
+    }
+
     for( spanP = tableP->handsOffP; spanP; spanP = spanP->nextP )
     {
-        fprintf(fP, "\n  span %d  %s lines %d to %d\n", spanP->id,
-            (spanP->fileP)?spanP->fileP:"-", spanP->openLine, spanP->endLine);
+        if( spanP->ovcall )
+        {
+            fprintf(fP, "\n  span %d  %s line %d, %%%%ovcall\n", spanP->id,
+                (spanP->fileP)?spanP->fileP:"-", spanP->openLine);
+        }
+        else
+        {
+            fprintf(fP, "\n  span %d  %s lines %d to %d\n", spanP->id,
+                (spanP->fileP)?spanP->fileP:"-", spanP->openLine, spanP->endLine);
+        }
 
         if( spanP->firstIndex < 0 )
         {
@@ -1096,6 +1147,37 @@ OptRegionP spanP;
 }
 
 // The speed declarations, reported and dumped.
+
+// Under a marking that names no routine, say which other drum overlays define
+// its name.  A marking declares only in the view of the segment it is written
+// in, the root or one overlay, so a root marking cannot reach an overlay's
+// routine; without this the report would leave the author guessing why.
+static void
+writeMarkElsewhere(FILE *fP, OptTableP tableP, OptInlineMarkP markP)
+{
+OverlayContextP ovP;
+int first;
+
+    first = 1;
+
+    for( ovP = overlaysP; ovP; ovP = ovP->nextP )
+    {
+        if( (ovP == tableP->viewOvP) || !sym_find(&(ovP->ctx.globalSymP), (char *)markP->nameP) )
+        {
+            continue;
+        }
+
+        if( first )
+        {
+            fprintf(fP, "    A marking reaches only the routines of the root or of the overlay it is\n");
+            fprintf(fP, "    written in.\n");
+            first = 0;
+        }
+
+        fprintf(fP, "    %s is a name of overlay %s: to mark it, write the marking inside %s.\n",
+            markP->nameP, ovP->nameP, ovP->nameP);
+    }
+}
 
 // Write the report's speed-declaration section: each speed region and marking
 // and what it covers; nothing for a source declaring neither.  It says what was
@@ -1176,6 +1258,7 @@ int bank;
             fprintf(fP, "    NAMES NO ROUTINE.  Nothing is marked.  The name has to be the label on a\n");
             fprintf(fP, "    routine's entry word: a label that is not one, or one that has been\n");
             fprintf(fP, "    renamed since the marking was written, reaches nothing.\n");
+            writeMarkElsewhere(fP, tableP, markP);
             continue;
         }
 
@@ -1397,4 +1480,5 @@ OptCeilingP nextCeilP;
     openRegionP = NILP;
     openHandsOffP = NILP;
     openSpeedP = NILP;
+    ovcallSpanP = NILP;
 }

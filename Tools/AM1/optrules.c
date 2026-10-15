@@ -436,6 +436,26 @@ OptBlockP blockP;
 static void
 emitFinding(OptTableP tableP, OptFindingP findingP, OptWhy why)
 {
+int i;
+
+    // In a drum overlay's view the root's words are context, and a pattern
+    // that starts on one was the root view's to find and report.  One that
+    // starts in the overlay and runs into the root is no rewrite in either.
+    if( !optInView(tableP, findingP->wordsP[0]) )
+    {
+        findingP->nextP = NILP;
+        freeFindingList(findingP);
+        return;
+    }
+
+    for( i = 1; (why == OPTWHY_NONE) && (i < findingP->wordCount); ++i )
+    {
+        if( !optInView(tableP, findingP->wordsP[i]) )
+        {
+            why = OPTWHY_OVEND;
+        }
+    }
+
     if( why == OPTWHY_NONE )
     {
         why = checkLate(tableP, findingP);

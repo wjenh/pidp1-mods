@@ -1,0 +1,585 @@
+ovlwriter, puts a program's drum overlays on the drum from paper tape
+// The PDP-1 side of ovlload -p: the program on a tape ovlload punches that
+// writes a program's overlays to the drum, so a PDP-1 can load its drum from
+// the reader with no host files.  It is never started alone: the tape is in
+// the block format of am1's loader at 07751, and the loader reads this
+// program's words, then each block of parameters and of an overlay's window,
+// and gives this program control by a start word after each.  Every entry
+// returns to the loader with jmp OVW_LOADER for the next block.
+//
+// The tape: the loader, this program, the survey's parameters (ovwTracks) and
+// a start word to ovwSurvey; then for each overlay its window's whole range,
+// its parameters (ovwCore to ovwSum) and a start word to ovwWrite; then a
+// start word to ovwEndRun, followed by the program's own blocks, or to ovwEnd
+// when the tape holds the overlays alone.  ovlload -p punches it as
+// Docs/UsingOverlays.md describes.
+//
+// ovlload relocates this program to free core in bank 0 below the loader,
+// so it is assembled only by Tools/Ovlload's Makefile, `make writer`, at two
+// origins (OVW_ORIGIN), and mkwriter keeps its words in ovlwriter.h with a
+// mark on each word that holds an address.  Every word it reaches is given by
+// a 16-bit address, its own in bank 0, so it runs the same with the extend
+// window open or closed; a window above bank 0 has the loader's eem build
+// punched, which keeps the window open.  Plain PDP-1 instructions only.
+//
+// The halts, each with its number in AC: OVW_HALT_DONE when every overlay is
+// written; OVW_HALT_SUM when a window's words do not give the tape's
+// checksum, and Continue reads the tape again, backed up to that window's
+// block; OVW_HALT_VERIFY when a word read back from the drum differs, and
+// Continue writes the window again; OV_ERR_DRUM when a transfer has failed
+// OV_TRIES times, the overlay manager's own number, and Continue tries
+// OV_TRIES more.
+//
+// 13-Oct-2026 Claude: written, for ovlload -p.
+
+#include <DRUM/type23drumdefs.ah>
+#include <DRUM/overlay.ah>
+
+#ifndef OVW_ORIGIN
+#define OVW_ORIGIN 0
+#endif
+
+// am1's tape loader, which reads the next block.
+#define OVW_LOADER 07751
+
+#define OVW_HALT_DONE 0
+#define OVW_HALT_SUM 1
+#define OVW_HALT_VERIFY 2
+
+// The buffer the verify reads into and the survey reads headers into: a
+// Z-machine story's header is its first 040 words.
+#define OVW_BUFFER_WORDS 040
+
+// The survey's two words of track bits: track n is 1 << n in the first word
+// for tracks 0-17, 1 << (n - 020) in the second for tracks 20-37.
+#define OVW_TRACKS_A_WORD 020
+
+// The other tools' data the survey looks for, as Tools/Ovlload/ovlfile.h
+// gives it: drumupdater's marker in the last three words of a track, and
+// Adventure's save block, its magic in word 0 of track 20.
+#define OVW_MARK 0707070
+#define OVW_MARK_FIRST 07775
+#define OVW_SAVE_TRACK 020
+#define OVW_SAVE_MAGIC 075160
+
+// A Z-machine story's header words, as zloader installs it from word 0 of
+// track 0, two bytes a word: the version in the high byte of word 0, the
+// high memory, initial PC and static bases, the serial, six ASCII digits,
+// and the length field (Z-machine Standard 1.1, section 11).
+#define OVW_ZH_HIGHMEM 2
+#define OVW_ZH_PC 3
+#define OVW_ZH_STATIC 7
+#define OVW_ZH_SERIAL 011
+#define OVW_ZH_SERIAL_WORDS 3
+#define OVW_ZH_LENGTH 015
+
+    local wSurveyNext, wSurveyStep, wNoMark, wNoSave, wHeaderWord, wSerial, wWholeDrum, \
+        wSurveyTracks, wWithin, wWithinX, wWriteAgain, wSumWord, wVerifyPiece, \
+        wVerifyWord, wBadSum, wBadVerify, \
+        wXfer, wXferStart, wXferIdle, wXferBusy, wXferX, wXferBad, \
+        wLine, wLineX, wDigit, wDigitX, wType, wTypeWord, wTypeChar, wTypeHeld, \
+        wTypeIt, wTypeNext, wTypeSpace, wTypeX, wIsDigit, wIsDigitX, \
+        wMsgTrack, wMsgUpdater, wMsgSave, wMsgStory, \
+        wSurveyTrack, wBits, wStory, wVersion, wWords, wPtr, wBufPtr, wCount, \
+        wSum, wTrackBits, wDrumAt, wLeft, wPiece, wXDia, wXDwc, wXDcl, \
+        wStatus, wTries, wChars, wChar, wTypeN, wSpaces
+
+OVW_ORIGIN/
+
+// The survey's parameters, from the tape: the tracks the tape writes.
+ovwTracks,
+    0
+    0
+
+// One overlay's parameters, from the tape: the window's full core address, its
+// track, its drum address, its range in words (1 to 010000), and the sum by
+// add of the range's words.
+ovwCore, 0
+ovwTrack, 0
+ovwDrum, 0
+ovwCount, 0
+ovwSum, 0
+
+// The survey entry: before anything is written, types a line for each track
+// the tape writes that holds another tool's data: a program drumupdater
+// loaded, Adventure's save block, or part of a Z-machine story.  It does not
+// halt.  A track may get more than one line.
+// Entry: ovwTracks.  AC and IO are clobbered.  Reached by a start word.
+ovwSurvey,
+    // A story's tracks from its header in track 0, 0 when it holds none.
+    dzm wStory
+    lio [drmrd]                 // read, track 0, drum address 0
+    dio wXDia
+    law OVW_BUFFER_WORDS
+    dac wXDwc
+    law ovwBuffer
+    dac wXDcl
+    jsp wXfer
+
+    // Every header word 16 bits, as zloader packs a story's bytes.
+    law ovwBuffer
+    dac wPtr
+    law i OVW_BUFFER_WORDS
+    dac wCount
+wHeaderWord,
+    lac i wPtr
+    and [0600000]
+    sza                         // skip if 16 bits
+    jmp wSurveyTracks
+    idx wPtr
+    isp wCount
+    jmp wHeaderWord
+
+    // A version zloader installs, 3 to 5, kept less 3.
+    lac ovwBuffer
+    sar 8s
+    and [0377]
+    sub [3]
+    spa                         // skip if 3 or more
+    jmp wSurveyTracks
+    dac wVersion
+    sub [3]
+    sma                         // skip if 5 or less
+    jmp wSurveyTracks
+
+    // The serial: ASCII digits.
+    law ovwBuffer+OVW_ZH_SERIAL
+    dac wPtr
+    law i OVW_ZH_SERIAL_WORDS
+    dac wCount
+wSerial,
+    lac i wPtr
+    sar 8s
+    jda wIsDigit
+    jmp wSurveyTracks
+    lac i wPtr
+    jda wIsDigit
+    jmp wSurveyTracks
+    idx wPtr
+    isp wCount
+    jmp wSerial
+
+    // The story's length in words: the field counts 2-byte units for V3 and
+    // 4-byte ones for V4 and V5.  A field of 0 is taken as the whole drum.
+    lac ovwBuffer+OVW_ZH_LENGTH
+    sza i                       // skip unless 0
+    jmp wWholeDrum
+    dac wWords
+    lac wVersion
+    sza i                       // skip unless V3
+    jmp .+4
+    lac wWords
+    ral 1s                      // exact: the field is 16 bits
+    dac wWords
+
+    // Each base within the length, as the host's test has it.
+    lac ovwBuffer+OVW_ZH_HIGHMEM
+    jda wWithin
+    jmp wSurveyTracks
+    lac ovwBuffer+OVW_ZH_PC
+    jda wWithin
+    jmp wSurveyTracks
+    lac ovwBuffer+OVW_ZH_STATIC
+    jda wWithin
+    jmp wSurveyTracks
+
+    // Its tracks: the words rounded up to whole tracks.
+    lac wWords
+    sub [1]
+    sar 6s
+    sar 6s
+    add [1]
+    dac wStory
+    jmp wSurveyTracks
+wWholeDrum,
+    law TRACKS
+    dac wStory
+
+    // Each track the tape writes, from track 0.
+wSurveyTracks,
+    dzm wSurveyTrack
+    lac ovwTracks
+    dac wBits
+wSurveyNext,
+    lac wBits
+    rar 1s                      // this track's bit to the sign
+    dac wBits
+    sma                         // skip if the tape writes this track
+    jmp wSurveyStep
+
+    // drumupdater's marker.
+    lac wSurveyTrack
+    rar 6s                      // the track to bits 1-5
+    ior [drmrd | OVW_MARK_FIRST]
+    dac wXDia
+    law 3
+    dac wXDwc
+    law ovwBuffer
+    dac wXDcl
+    jsp wXfer
+    lac [OVW_MARK]
+    sas ovwBuffer               // skip if the same
+    jmp wNoMark
+    sas ovwBuffer+1
+    jmp wNoMark
+    sas ovwBuffer+2
+    jmp wNoMark
+    law wMsgUpdater
+    jda wLine
+wNoMark,
+
+    // Adventure's save block.
+    lac wSurveyTrack
+    sas [OVW_SAVE_TRACK]        // skip if its track
+    jmp wNoSave
+    lio [drmrd | (OVW_SAVE_TRACK << 014)]
+    dio wXDia
+    law 1
+    dac wXDwc
+    law ovwBuffer
+    dac wXDcl
+    jsp wXfer
+    lac ovwBuffer
+    sas [OVW_SAVE_MAGIC]        // skip if the same
+    jmp wNoSave
+    law wMsgSave
+    jda wLine
+wNoSave,
+
+    // Part of a story.
+    lac wSurveyTrack
+    sub wStory
+    sma                         // skip if one of the story's tracks
+    jmp wSurveyStep
+    law wMsgStory
+    jda wLine
+
+wSurveyStep,
+    idx wSurveyTrack
+    sad [TRACKS]                // skip unless past the last track
+    jmp OVW_LOADER
+    sas [OVW_TRACKS_A_WORD]     // skip if the second word's first track
+    jmp wSurveyNext
+    lac ovwTracks+1
+    dac wBits
+    jmp wSurveyNext
+
+// Whether a story's base lies within its length: a byte address, its word
+// rounded up no further than the story's last word.
+// Entry: AC the base; wWords the story's length in words.  Returns to the
+// word past the jda if it does not, skipping it if it does.
+// AC is clobbered, IO is preserved.  Called via jda.
+wWithin, 0
+    dap wWithinX
+    lac wWithin
+    add [1]
+    sar 1s                      // the base's word, rounded up
+    sub wWords
+    sma                         // skip if before the last word
+    sza i                       // skip if past it
+    idx wWithinX
+wWithinX,
+    jmp .
+
+// Whether a byte is an ASCII digit.
+// Entry: AC the byte in its low 8 bits.  Returns to the word past the jda if
+// it is not, skipping it if it is.  AC is clobbered, IO is preserved.
+// Called via jda.
+wIsDigit, 0
+    dap wIsDigitX
+    lac wIsDigit
+    and [0377]
+    sub ['0']
+    spa                         // skip if '0' or above
+    jmp wIsDigitX
+    sub [0d10]
+    spa                         // skip if above '9'
+    idx wIsDigitX
+wIsDigitX,
+    jmp .
+
+// The write entry: checks the window's words against the tape's checksum,
+// writes them to their track in one transfer, then reads them back a buffer
+// at a time and compares them with the window, which it leaves as it is.
+// Entry: ovwCore to ovwSum, and the window's words, from the tape.
+// AC and IO are clobbered.  Reached by a start word.
+ovwWrite,
+    // The words summed by add, as ovlload sums them.
+    lac ovwCore
+    dac wPtr
+    lac ovwCount
+    cma                         // never -0: the count is 1 or more
+    dac wCount
+    dzm wSum
+wSumWord,
+    lac wSum
+    add i wPtr
+    dac wSum
+    idx wPtr
+    isp wCount
+    jmp wSumWord
+    lac wSum
+    sas ovwSum                  // skip if the sums agree
+    jmp wBadSum
+
+    // The write: dia the drum address, dwc the write bit, the track and the
+    // count (0 for a whole track), dcl the window.
+wWriteAgain,
+    lac ovwTrack
+    rar 6s                      // the track to bits 1-5
+    dac wTrackBits
+    lac ovwCount
+    and [OV_DWC_LENGTH]
+    ior wTrackBits
+    ior [OV_DWC_WRITE]
+    dac wXDwc
+    lac ovwDrum
+    dac wXDia
+    lac ovwCore
+    dac wXDcl
+    jsp wXfer
+
+    // The verify, the range read back a buffer at a time.
+    lac ovwCore
+    dac wPtr
+    lac ovwDrum
+    dac wDrumAt
+    lac ovwCount
+    dac wLeft
+wVerifyPiece,
+    // The piece: the buffer, or what is left when that is less.  A cma of +0
+    // here is -0, which the add makes the whole buffer.
+    law OVW_BUFFER_WORDS
+    sub wLeft
+    spa                         // skip unless more than a buffer is left
+    cla
+    cma
+    add [OVW_BUFFER_WORDS]
+    dac wPiece
+
+    lac wTrackBits
+    ior wDrumAt
+    ior [drmrd]
+    dac wXDia
+    lac wPiece
+    dac wXDwc
+    law ovwBuffer
+    dac wXDcl
+    jsp wXfer
+
+    law ovwBuffer
+    dac wBufPtr
+    lac wPiece
+    cma
+    dac wCount
+wVerifyWord,
+    lac i wPtr
+    sas i wBufPtr               // skip if the same
+    jmp wBadVerify
+    idx wPtr
+    idx wBufPtr
+    isp wCount
+    jmp wVerifyWord
+
+    lac wDrumAt
+    add wPiece
+    dac wDrumAt
+    lac wLeft
+    sub wPiece
+    dac wLeft
+    sza                         // skip once the whole range is compared
+    jmp wVerifyPiece
+    jmp OVW_LOADER
+
+wBadSum,
+    law OVW_HALT_SUM
+    hlt
+    jmp OVW_LOADER              // the tape, backed up to the window's block
+wBadVerify,
+    law OVW_HALT_VERIFY
+    hlt
+    jmp wWriteAgain
+
+// The end entries, once every overlay is written: halt with AC OVW_HALT_DONE.
+// After ovwEndRun, Continue reads the program that follows on the tape; after
+// ovwEnd, the tape holds no program, and Continue halts again.
+// Reached by a start word.
+ovwEnd,
+    law OVW_HALT_DONE
+    hlt
+    jmp ovwEnd
+ovwEndRun,
+    law OVW_HALT_DONE
+    hlt
+    jmp OVW_LOADER
+
+// One drum transfer of wXDia, wXDwc and wXDcl, made once the drum is idle and
+// waited for, as the overlay manager's ovXfer makes it.  One that ends in
+// error is made again, OV_TRIES in all, then a halt with OV_ERR_DRUM in AC,
+// and Continue tries OV_TRIES more.
+// AC and IO are clobbered.  Called via jsp.
+wXfer,
+    dap wXferX
+wXferStart,
+    law i OV_TRIES
+    dac wTries
+wXferIdle,
+    cks
+    rir 1s                      // the busy bit, bit 17, to the sign
+    spi                         // skip if the drum is idle
+    jmp wXferIdle
+    lio wXDia
+    dia
+    lio wXDwc
+    dwc
+    lio wXDcl
+    dcl
+wXferBusy,
+    cks
+    rir 1s
+    spi                         // skip once the transfer is over
+    jmp wXferBusy
+    cli
+    dra
+    dio wStatus
+    lac wStatus
+    and [OV_DRA_ERR]
+    sza                         // skip if it ended without error
+    jmp wXferBad
+wXferX,
+    jmp .
+wXferBad,
+    isp wTries                  // skip after the last try
+    jmp wXferIdle
+    law OV_ERR_DRUM
+    hlt
+    jmp wXferStart
+
+// Types one warning line: a carriage return, "track", the track in two octal
+// digits, and the rest of the line.
+// Entry: AC the address of the rest, a table for wType; wSurveyTrack the
+// track.  AC and IO are clobbered.  Called via jda.
+wLine, 0
+    dap wLineX
+    law wMsgTrack
+    jda wType
+    cli                         // a space
+    tyo i
+    lac wSurveyTrack
+    sar 3s
+    jda wDigit
+    lac wSurveyTrack
+    jda wDigit
+    lac wLine
+    jda wType
+wLineX,
+    jmp .
+
+// Types an octal digit.
+// Entry: AC the digit in its low 3 bits.  AC and IO are clobbered.
+// Called via jda.
+wDigit, 0
+    dap wDigitX
+    lac wDigit
+    and [7]
+    sza i                       // skip unless 0
+    law 020                     // the concise 0; 1 to 7 are their own codes
+    dac wChar
+    lio wChar
+    tyo i
+wDigitX,
+    jmp .
+
+// Types a table the text directive made, holding back each run of spaces
+// until a character other than a space follows it, so the spaces that pad
+// the table's last word are never typed.
+// Entry: AC the table's address; the table ends at the first character 013,
+// the concise stop code.  AC and IO are clobbered.  Called via jda.
+wType, 0
+    dap wTypeX
+    dzm wSpaces
+wTypeWord,
+    lac i wType
+    dac wChars
+    idx wType
+    law i 3
+    dac wTypeN
+wTypeChar,
+    lac wChars
+    ral 6s                      // the next character to the low six bits
+    dac wChars
+    and [077]
+    sad [013]                   // skip unless the stop code
+    jmp wTypeX
+    sza i                       // skip unless a space
+    jmp wTypeSpace
+    dac wChar
+wTypeHeld,
+    lac wSpaces                 // the spaces held, a negative count
+    sza i                       // skip if any are held
+    jmp wTypeIt
+    cli
+    tyo i
+    isp wSpaces                 // skip after the last
+    jmp .-3
+wTypeIt,
+    lio wChar
+    tyo i
+wTypeNext,
+    isp wTypeN                  // skip after the word's third character
+    jmp wTypeChar
+    jmp wTypeWord
+wTypeSpace,
+    lac wSpaces
+    sub [1]
+    dac wSpaces
+    jmp wTypeNext
+wTypeX,
+    jmp .
+
+// The lines, in lower case so that no case shift is typed.
+wMsgTrack,
+    text "\ntrack"
+    013
+wMsgUpdater,
+    text " held a drumupdater program, written over"
+    013
+wMsgSave,
+    text " held the adventure save, written over"
+    013
+wMsgStory,
+    text " held part of a z-machine story, written over"
+    013
+
+    constants
+
+wSurveyTrack, 0
+wBits, 0
+wStory, 0                       // a story's tracks from track 0, 0 for none
+wVersion, 0                     // the story's version less 3
+wWords, 0                       // the story's length in words
+wPtr, 0
+wBufPtr, 0
+wCount, 0
+wSum, 0
+wTrackBits, 0                   // the overlay's track in bits 1-5
+wDrumAt, 0
+wLeft, 0
+wPiece, 0
+wXDia, 0
+wXDwc, 0
+wXDcl, 0
+wStatus, 0
+wTries, 0
+wChars, 0
+wChar, 0
+wTypeN, 0
+wSpaces, 0
+    endloc
+
+// The buffer is not punched: nothing reads it before a transfer fills it.
+ovwBuffer,
+    table OVW_BUFFER_WORDS
+ovwTop,
+
+stop

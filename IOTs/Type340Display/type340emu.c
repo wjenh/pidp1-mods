@@ -63,6 +63,7 @@
  *    The thread sleeps only when the queue is empty.
  * 10-Oct-2026 Claude - a deposit (DDS) clears the save, so an escape between it and the block's next
  *    save no longer returns at once.
+ * 16-Oct-2026 wje - left and right arrow comments reversed in charset 2.
  */
 
 #include <stdlib.h>
@@ -1562,9 +1563,9 @@ static unsigned char charSet[128][6] = {
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 44 ???
     { 0376, 0376, 0376, 0376, 0376, 0 },   // 45 ???
     { 0040, 0100, 0376, 0100, 0040, 0 },   // 46 up arrow
-    { 0020, 0020, 0124, 0070, 0020, 0 },   // 47 left arrow
+    { 0020, 0020, 0124, 0070, 0020, 0 },   // 47 right arrow
     { 0010, 0004, 0376, 0004, 0010, 0 },   // 50 down arrow
-    { 0020, 0070, 0124, 0020, 0020, 0 },   // 51 right arrow
+    { 0020, 0070, 0124, 0020, 0020, 0 },   // 51 left arrow
     { 0100, 0040, 0020, 0010, 0004, 0 },   // 52 backslash
     { 0000, 0376, 0202, 0202, 0000, 0 },   // 53 [
     { 0000, 0202, 0202, 0376, 0000, 0 },   // 54 ]

@@ -2,10 +2,10 @@
 
 This document describes the Type 340 display and how to use it.
 
-This is version 1.12
+This is version 1.13
 
-Edit date 6-Oct-2026\
-Update the subroutine save to cover all its cases
+Edit date 16-Oct-2026\
+Codes for left and right arrow were reversed for charset 2
 
 ## What is it?
 
@@ -413,8 +413,7 @@ An edge violation that stops the display does not return, and a *dla* starts its
 
 The *deposit* subcommand places a constucted command in the location it addresses which will be
 a *jump (asr) + 1*, one location past the last *save* command.
-It also clears the pending *save*, so the block that holds it can draw before its next *save*
-without returning early; it returns through the deposited jump.
+It also clears any pending *save*.
 See the *Type 340 Programming Manual*, noted above, to see just how this makes sense.
 
 ## Edge violations and lightpen hits
@@ -650,9 +649,9 @@ Character set 2
 | 44 | ??? |
 | 45 | ??? |
 | 46 | up arrow |
-| 47 | left arrow |
+| 47 | right arrow |
 | 50 | down arrow |
-| 51 | right arrow |
+| 51 | left arrow |
 | 52 | \ |
 | 53 | [ |
 | 54 | ] |

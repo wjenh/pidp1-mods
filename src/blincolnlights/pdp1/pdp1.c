@@ -49,6 +49,7 @@
  * 6-Oct-2026 wje the original panel is now gone.
  *   Panel lamps are sampled once a cycle at TP9a, not at a random timing pulse.
  *   TP(n) is now a no-op, kept only to comment which cycle the code belongs to.
+ * 17-Oct-2026 wje cmi was not masking to 18 bits, that confused the later end-around carry for add.
 */
 #include "common.h"
 #include "pdp1.h"
@@ -1411,7 +1412,7 @@ int hack;
             if( core1DEnabled && (MB & B5) )
             {
                 logger(LOG_1D, "cmi\n");
-                IO = ~IO;    // wje - pdp-1D cmi, complement IO
+                IO = (~IO) & WORDMASK;    // wje - pdp-1D cmi, complement IO, mask to 18 bits
             }
 
             if(MB & B7)

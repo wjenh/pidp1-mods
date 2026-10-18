@@ -2,9 +2,9 @@
 
 This document describes the **am1** macro assembler and how to use it.
 
-This is version 2.03 and covers up through am1 version 3.6; it will be updated as needed.\
-Edit date 12-Oct-2026
-Add drum overlays, see *UsingOverlays.md*
+This is version 2.04 and covers up through am1 version 4.0; it will be updated as needed.\
+Edit date 18-Oct-2026
+Update some of the overlay descriptions.
 
 ## What is **am1**?
 
@@ -200,22 +200,25 @@ Just type make.
 
 **am1** [-abdmMlnNrsSTvz[xykp]] [-O[1|2]] [-O=modifier]... [-Dsymbol]...  [-W|-W=name...] [-Ipath]... [-ipath] sourcefile
 
-- a space means add, default is or
+- a space means *add*, default is *or*
 - b generate binary tape image code, the default action
-- d generate all files needed for **ad1**, the same as giving the *-s* and *-l* flags; for a program with overlays, the *.osym* too
+- d generate all files needed for **ad1**, the same as giving the *-s* and *-l* flags.
+  For a program with overlays, the *.osym* file is also generated.
 - m generate **macro1** code
-- M memory overwrite by code is a warning, not a fatal error
+- M already used memory overwritten by code is a warning, not a fatal error
 - l generate a program listing
 - n don't run **cpp** on the input
 - N don't keep any text from an included file in a listing
-- O run the optimizer advisor, which writes *sourcefile.opt* and changes nothing about the assembled program, see *UsingTheAm1Optimizer.md*
-- O=modifier as -O, with a modifier: *-O=xform* prints what -O1 or -O2 does with each finding on stdout; the others switch rewrites off to find the one that broke a build, or set the limits of the rewrites that change a program's length, see *UsingTheAm1Optimizer.md*. The optimizer's debug dumps are accepted only by **am1test**, a testing build that is not installed
-- O1 as -O, and also rewrite the words five layout-neutral rules fire on, one word for one word at the same address, inside *%%optimize*/*%%endoptimize* regions only; without a region it assembles exactly what -O does, see *UsingTheAm1Optimizer.md*
-- O2 as -O1 with no region needed: it guesses where code must not be touched, and warns that the guess can be wrong, see *UsingTheAm1Optimizer.md*
-- -O, -O1 and -O2 take a program with overlays, from v4.0: the root is optimized first, then each overlay in turn, see "Programs with drum overlays" in *UsingTheAm1Optimizer.md*
+- O run the optimizer advisor, see *UsingTheAm1Optimizer.md*
+- O=modifier as -O, with additonal behavior
+- O1 as -O but also rewrites code with optimize-enabled regions
+- O2 as -O1 with no region needed
 - r don't output an initial rim loader
-- s generate a symbol table, automatic if exports are done
-- S print a list of the highest address used in each bank, and for a program with overlays, where each overlay is on the drum; the highest address is the bank's highest word, assembled or reserved by a *table*, wherever the origins put it, and *none* for a bank with no word
+- s generate a symbol table, automatic if non-overlay exports are done
+- S print a list of the highest address used in each bank and for a program with overlays,
+  where each overlay is on the drum
+  The highest address is the bank's highest word assembled into or reserved by a *table*
+  and *none* for a bank with no usage
 - T generate test mode output, see below
 - v print the version number and exit
 - z preserve -0 for math operation results, the default is to convert to 0
@@ -290,7 +293,7 @@ that has been generated, basically a loaderless *rim* tape but in ascii.
 Each line consists of two 18-bit octal numbers separated by a space.
 For every 18 bit word that would be loaded into memory its memory address and its value is written.
 
-A word of a drum overlay has the overlay's name after the two numbers, since overlays share addresses,
+A word of a drum overlay has the overlay's name after the two numbers since overlays share addresses,
 see *UsingOverlays.md*.
 
 The last line is the value of the *start* or *stop* directive at the end of the program.
@@ -316,7 +319,8 @@ The warnings are:
 - vars, a variables statement was used but there are no variables to emit, repeats
 - memory, an expression's address is the same as one that already has had code written to it, but see below
 - law, a law -n or law out of the range law i 07777 to law 07777 was used, repeats and enabled by default
-- overlay, a var in a read-only drum overlay, whose value starts again at every load, repeats and enabled by default, see *UsingOverlays.md*
+- overlay, a var in a read-only drum overlay whose value resets at every load,
+  repeats and enabled by default, see *UsingOverlays.md*
 
 Examples:
 ```
@@ -384,7 +388,7 @@ than seeing macro expansions.
 The *-N* command line flag can be used to reduce clutter by suppressing any text that comes from an included file.
 However, you will not see any information from those. The code in them will still be assembled.
 
-Each drum overlay is listed under its own heading, and the drum layout is listed above the overlay table,
+Each drum overlay is listed under its own heading and the drum layout is listed above the overlay table,
 see *UsingOverlays.md*.
 
 ## Output files
@@ -398,11 +402,11 @@ The following can be produced:
 - *file*.lst - text output that is a listing of the assembled program, only generated for binary mode
 - *file*.cpp - text output that is the intermediate output from the **cpp** preprocessor
 - *file*.sym - text output that is a listing of the global symbols in the program
-- *file*.ovl - text output that holds a program's drum overlays, for **ovlload**, written whenever a tape is
-- *file*.osym - text output that lists the drum overlays' own symbols, written with the *sym* file
+- *file*.ovl - text output that holds a program's drum overlays
+- *file*.osym - text output that lists the drum overlay symbols, written with the *sym* file
 
-The *ovl* and *osym* files are written only for a program with overlays; *UsingOverlays.md* describes both.
-A program's *sym* file holds the root's symbols only, never an overlay's.
+The *ovl* and *osym* files are written only for a program with overlays, *UsingOverlays.md* describes both.
+A program's *sym* file holds the root's symbols only, never an overlay symbol.
 
 The sym file contains 3 initial lines, a label, a version, and the filename of the original file
 followed by one line per symbol of the form:
@@ -1261,10 +1265,9 @@ usually a blank, a tab, a `;`, a comment or the end of the line.
 
 ## Drum overlays
 
-Six directives let parts of one program take turns in the same core, kept on the Type 23 drum and
-loaded when called.
-*UsingOverlays.md* is the full description: the model, the overlay manager the program includes,
-the loader **ovlload**, and the costs.
+Six directives let parts of one program share the same core locations.
+Overlays are kept on the Type 23 drum and loaded when called.
+*UsingOverlays.md* is the full description.
 
 ```
 %%drumreserve 20                // tracks the overlays may not use
@@ -1287,15 +1290,17 @@ bank 0
 - *%%drumreserve list* names drum tracks, 0 to 37, that overlays may not use.
 - *%%window name, first, last* declares a range of the current bank that no root word may use.
 - *%%overlay name, window* and *%%endoverlay* bracket an overlay, assembled at its window's first
-  address plus 2 in the window's bank; *export* inside it names the entries the root may call.
-  An overlay's own labels are private to it, and a name it does not define is its bank's root global.
-- *%%ovcall overlay, entry* is the root's call of an overlay's entry, 3 or 4 words; it is not allowed
-  inside an overlay, and stands on its own line.
-- *%%ovtable* places the table the manager uses, once, after every window and overlay.
+  address plus 2 in the window's bank.
+  *export* inside it names the entries the root can call.
+  An overlay's labels are private to it and a symbol it does not define is in its bank's globals.
+- *%%ovcall overlay, entry* is the root's call of an overlay's entry.
+  It is not allowed inside an overlay and must be on its own line.
+- *%%ovtable* emits the table the manager uses.
+  Give it once after every window and overlay.
 
 The overlays are written to *file.ovl*, not to the tape.
-*-O*, *-O1* and *-O2* take a program with overlays from v4.0, an overlay at a time (see "Programs
-with drum overlays" in *UsingTheAm1Optimizer.md*); *-d* writes the *.osym* too, for **ad1**.
+*-O*, *-O1* and *-O2* will also optimize a program with overlays.
+*-d* writes the *.osym* file also for use by **ad1**.
 
 ## Thisbank
 

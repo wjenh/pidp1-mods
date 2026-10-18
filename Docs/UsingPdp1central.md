@@ -2,9 +2,9 @@
 
 This document describes pdp1central, the desktop control window for the pidp-1 emulator.
 
-This is version 1.5\
-Edit date 09-Oct-2026\
-Updated for the new Zenity file picker
+This is version 1.6\
+Edit date 18-Oct-2026\
+Updated for loading programs with drum overlays
 
 ## What is pdp1central?
 
@@ -14,7 +14,8 @@ pdp1central is one window that does what the scripts in /opt/pidp1-mods/bin do f
 - it keeps the start-time choices: the interface, the t30dpy display, the front panel and the USB
   paper tape;
 - it mounts paper tapes in the reader and saves what the punch punches;
-- it fast loads a tape straight into the running pdp-1's memory, with fastload;
+- it fast loads a tape straight into the running pdp-1's memory, with fastload, or with ovlload
+  for a program with drum overlays;
 - it mounts and unmounts microtapes on the Type 550 drives, with mtp;
 - it turns the emulator's sound on and off;
 - it sets the running emulator's gain, audio filters, tuning and sample rate, and its multiply and
@@ -99,6 +100,18 @@ A tape whose am1 source has a stop directive is loaded and not started.
 The line beside the button says what the last load did, or why Load... cannot be used:
 the emulator is not running, or ad1port is off in pidp1.config.
 Only one client can be connected, so with ad1 attached the load fails, and the reason is shown under the strip.
+
+A program with drum overlays (UsingOverlays.md) is loaded with ovlload which then writes the overlays
+to the drum and loads the root tape.
+This happens when the tape chosen also has a .ovl with it in the same directory, or when
+prog.ovl itself is chosen which will load prog.rim or prog.bin.
+The tape and the .ovl must have been made together.
+If their modification times are more than 5 seconds apart nothing is loaded and an error given.
+Assemble again, or remove a .ovl left from an older build of a program that no longer has
+overlays.
+The line beside the button then says "with overlays" and if ovlload wrote over another tool's
+data on the drum it reports this.
+The Log tab names the tracks.
 
 **Paper tape reader.**
 - Mount... opens a file dialog, and mounts the chosen tape.
@@ -344,12 +357,12 @@ The color names:
 pdp1central is C, using the Nuklear toolkit on SDL2 (2.0.18 or later).
 Nuklear is included in src/pdp1central, unmodified.
 
-Its file dialogs for Mount..., Load... and Save punch to..., are bin/tkaskopenfile,
-bin/tkaskmicrotape and bin/tkaskopenfilewrite, which need Python 3 and its Tk.
-Fastload and the Microtape tab run bin/fastload and bin/mtp, which the install builds.
-The install script will install both, but if one or both are missing, use:
+Its file dialogs, for Mount..., Load..., Save punch to... and the Microtape tab, run bin/askfile,
+which needs Python 3, and shows zenity's file chooser, or Python's Tk one when zenity is missing.
+Fast load and the Microtape tab run bin/fastload, bin/ovlload and bin/mtp, which the install builds.
+If zenity, Python 3 or its Tk is missing, use:
 ```
-sudo apt install python3 python3-tk
+sudo apt install zenity python3 python3-tk
 ```
 
 To build pdp1central, in /pidp1-mods/src/pdp1central:

@@ -5,7 +5,7 @@
 # both exiting 0; a failure exits 1 and prints its reason.
 # Usage: askfile MODE DIR       DIR is the directory the dialog starts in
 #   mount       an existing paper tape, for the reader
-#   load        an existing rim tape, to fast load
+#   load        an existing rim tape, or a program's .ovl, to fast load
 #   punch       a file to save the punched tape to; replacing one is asked first
 #   microtape   an existing microtape or a new name: mounting never overwrites, so nothing
 #               is asked about replacing
@@ -16,6 +16,7 @@
 # microtape is chosen with Tk under zenity 4.
 #
 # 09-Oct-2026 wje (Claude) - written, replacing tkaskmicrotape for pdp1central.
+# 18-Oct-2026 wje (Claude) - load's filter also shows .ovl files, which fast load takes.
 
 import os
 import shutil
@@ -58,7 +59,7 @@ def askZenity(zenity, mode, start):
     args = [zenity, '--file-selection', '--title=' + TITLES[mode],
             '--filename=' + os.path.join(start, '')]
     if mode == 'load':
-        args += ['--file-filter=rim tapes | *.rim', '--file-filter=All files | *']
+        args += ['--file-filter=rim and overlay tapes | *.rim *.ovl', '--file-filter=All files | *']
     elif mode == 'punch':
         args += ['--save', '--confirm-overwrite']   # zenity 3 needs it; 4 always asks
     elif mode == 'microtape':

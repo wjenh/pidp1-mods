@@ -229,6 +229,7 @@
  * 12-Oct-2026 claude - v3.9, -S prints each bank's highest word, not where its counter ended
  * 13-Oct-2026 claude - v4.0, -O, -O1, -O2 and -O=source take a program with overlays
  * 14-Oct-2026 wje - production cleanup
+ * 18-Oct-2026 wje - don't generate a symtab automatically when export is used inside an overlay definition
 */
 #include <unistd.h>
 #include <stdlib.h>

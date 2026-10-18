@@ -20,6 +20,7 @@ LocalContextP localContextP;            // used while a local scope is enabled
 LocalContextP localStack[MAXLOCALS];
 bool sawForceLocal;
 bool atSol = true;                      // initially true
+bool inOverlay;
 
 // Bank contexts are kept as a linked list, not used often enough to need preallocation
 int curBank;
@@ -55,8 +56,9 @@ static char *handsOffOpenFileP;         // and the file it is in, NILP when none
 static int speedOpenLine;               // the open speed region's line, 0 when none
 static char *speedOpenFileP;            // and the file it is in, NILP when none
 
-// Overlays.  Windows and overlays are kept in declaration order.  While an
-// overlay is open, curBankP is its own context and curBank its window's bank;
+// Overlays.
+// Windows and overlays are kept in declaration order.
+// While an overlay is open, curBankP is its own context and curBank its window's bank;
 // the bank given before it is restored at its end.
 WindowP windowsP;
 OverlayContextP overlaysP;
@@ -526,7 +528,8 @@ one_stmt        : expr
                     if( curOverlayP && !curOverlayP->persistent )
                     {
                         vwarnl(WARN_OVERLAY, nameTokenLine,
-                            "a var in overlay %s, which is read-only: its value is the initial one again after every load",
+                            "a var in overlay %s is read-only."
+                            " Its value is reset to the initial value after every load",
                             curOverlayP->nameP);
                     }
                 }
@@ -754,7 +757,10 @@ one_stmt        : expr
                     addExports(nodeP);
                     $$ = newnode(lineno, curBankP->cur_pc, EXPORT, NILP, nodeP);
                     $$->flags |= PN_NOINC;
-                    doSymtab = true;        // and force output
+                    if( !inOverlay )
+                    {
+                        doSymtab = true;        // and force output, but not inside an overlay definition
+                    }
                 }
                 | IMPORT STRING
                 {
@@ -808,10 +814,10 @@ one_stmt        : expr
                 }
                 ;
 
-                /* A window's or overlay's name, or an overlay's mode.  They are
-                   names of their own, not symbols, so one spelled like a
-                   symbol already seen arrives as ADDR and is taken by its
-                   spelling. */
+                // A window's or overlay's name, or an overlay's mode.
+                // They are names of their own, not symbols.
+                // One spelled like a symbol already seen arrives as ADDR,
+                // the symbol name is used.
 ovIdent         : NAME
                 {
                     $$ = $1;
@@ -1518,7 +1524,8 @@ SymNodeP symP;
         case ADDR:
             if( rootNameInOverlay(nodesP->value.symP) )
             {
-                verror("export in overlay %s names %s, a global of bank %d's root; an overlay exports only its own symbols",
+                verror(
+                "export in overlay %s names %s, a global of bank %d's root; an overlay exports only its own symbols",
                     curOverlayP->nameP, nodesP->value.symP->name, curBank);
             }
 
@@ -2079,32 +2086,34 @@ checkRegionAtOverlay(const char *directiveP, const char *nameP, int line)
 {
     if( optRegionOpenLine )
     {
-        verrorl(line, "%s %s is inside the optimize region opened at line %d in file %s; a region may not cross an overlay's boundary",
+        verrorl(line, "%s %s is inside the optimize region opened at line %d in file %s;"
+            " a region may not cross an overlay's boundary",
             directiveP, nameP, optRegionOpenLine, optRegionOpenFileP);
     }
 
     if( handsOffOpenLine )
     {
-        verrorl(line, "%s %s is inside the nooptimize span opened at line %d in file %s; a span may not cross an overlay's boundary",
+        verrorl(line, "%s %s is inside the nooptimize span opened at line %d in file %s;"
+        " a span may not cross an overlay's boundary",
             directiveP, nameP, handsOffOpenLine, handsOffOpenFileP);
     }
 
     if( speedOpenLine )
     {
-        verrorl(line, "%s %s is inside the speed region opened at line %d in file %s; a region may not cross an overlay's boundary",
+        verrorl(line, "%s %s is inside the speed region opened at line %d in file %s;"
+        " a region may not cross an overlay's boundary",
             directiveP, nameP, speedOpenLine, speedOpenFileP);
     }
 }
 
-// The speed/endspeed region and the 'inline NAME' marking: the only places a
-// length-changing rewrite may happen; -O2's guess never licenses one.  A speed
-// region is its own span, not a modifier on an optimize region.  An 'inline'
-// marking names one routine to inline at every call, over the inline cap and
-// budget.  The nodes are OPTIMIZE and ENDOPTIMIZE carrying PN_SPEED or
-// PN_INLINE.
+// The speed/endspeed region and 'inline NAME', the only places a
+// length-changing rewrite may happen, -O2's guess never authorizes one.
+// A speed region is its own span, not a modifier on an optimize region.
+// An 'inline' names one routine to inline at every call subject to the inline cap and budget.
+// The nodes are OPTIMIZE and ENDOPTIMIZE carrying PN_SPEED or // PN_INLINE.
 
-// Open a speed region at the 'speed' just scanned; speed regions do not nest,
-// but one may open inside an optimize region or a nooptimize span, or hold one.
+// Open a speed region at the 'speed' just scanned.
+// Speed regions do not nest, but one can be inside an optimize region or a nooptimize span or hold one.
 // Returns the new node.
 PNodeP
 openSpeedRegion(void)
@@ -2113,7 +2122,8 @@ PNodeP nodeP;
 
     if( speedOpenLine )
     {
-        verror("%%%%speed at line %d is inside the speed region opened at line %d in file %s; speed regions do not nest",
+        verror("%%%%speed at line %d is inside the speed region opened at line %d in file %s;"
+            " speed regions do not nest",
             optRegionTokenLine, speedOpenLine, speedOpenFileP);
     }
 
@@ -2138,8 +2148,8 @@ PNodeP nodeP;
     return(nodeP);
 }
 
-// Close the open speed region at the 'endspeed' just scanned; one with none
-// open, or opened in another file, is refused, as for a region.
+// Close the open speed region at the 'endspeed' just scanned.
+// One with none open or opened in another file is refused, as for a region.
 // Returns the new node, with the line the region opened at in value2.
 PNodeP
 closeSpeedRegion(void)
@@ -2154,7 +2164,8 @@ PNodeP nodeP;
 
     if( strcmp(speedOpenFileP, optRegionTokenFileP) )
     {
-        verror("%%%%endspeed at line %d is in file %s and the speed region it closes was opened at line %d in file %s; a speed region may not cross a file boundary",
+        verror("%%%%endspeed at line %d is in file %s and the speed region it closes was opened "
+            " at line %d in file %s; a speed region cannot cross a file boundary",
             optRegionTokenLine, optRegionTokenFileP, speedOpenLine, speedOpenFileP);
     }
 
@@ -2174,8 +2185,9 @@ PNodeP nodeP;
     return(nodeP);
 }
 
-// Record an 'inline NAME' marking; nameP is a copy the node takes over.  It is
-// not looked up here: optregion.c resolves it and reports one naming no routine.
+// Record an 'inline NAME'.
+// nameP is a copy the node takes over.
+// It is/ not looked up here, optregion.c resolves it and reports one naming no routine.
 // Returns the new node, the file in value.strP and the name in value2.strP.
 PNodeP
 markInline(char *nameP)
@@ -2196,15 +2208,16 @@ PNodeP nodeP;
     return(nodeP);
 }
 
-// The '%%ceiling EXPR' directive: the first word of the current bank that a
-// length-changing rewrite may not grow into, for memory the program fills only
-// at run time.  EXPR is evaluated here, so it may use only what is already
-// defined: a forward reference cannot be told from a mistake, and the value
-// must not depend on the layout it limits.  Whether the assembled program
-// already reaches it is the optimizer's check, under -O only.
+// The '%%ceiling EXPR' directive.
+// The first word of the current bank that a length-changing rewrite may not grow into,
+// for memory the program fills at run time.
+// EXPR is evaluated here, so it may use only what is already defined.
+// A forward reference cannot be told from a mistake and the value
+// must not depend on the layout it limits.
+// Whether the assembled program already reaches it is the optimizer's check, under -O only.
 
-// The name of the first symbol in an expression whose value is not yet known,
-// or of a constant, whose address is not known until the pools are placed.
+// The name of the first symbol in an expression whose value is not yet known
+// or of a constant whose address is not known until the pools are placed.
 // Returns the name, "a constant", or NILP when every leaf is known.
 static const char *
 ceilingUnknown(PNodeP nodeP)
@@ -2243,9 +2256,10 @@ const char *nameP;
     return(NILP);
 }
 
-// Record a '%%ceiling EXPR' for the current bank, reduced to the bank (0166000
-// is 06000 in bank 14); undefined names, 0 and values above the default are
-// refused.  Returns the node, the ceiling in value2.ival and the bank in bank.
+// Record a '%%ceiling EXPR' for the current bank, reduced to the bank,
+// e.g. 0166000 // is 06000 in bank 14.
+// Undefined names, 0 and values above the default are errors.
+// Returns the node, the ceiling in value2.ival and the bank in bank.
 PNodeP
 markCeiling(PNodeP exprP)
 {
@@ -2255,7 +2269,8 @@ int value;
 
     if( (nameP = ceilingUnknown(exprP)) )
     {
-        verror("%%%%ceiling at line %d names %s, which has no value yet; a ceiling may use only what is already defined",
+        verror("%%%%ceiling at line %d names %s, which has no value yet."
+            " A ceiling can use only what is already defined",
             optRegionTokenLine, nameP);
     }
 
@@ -2263,13 +2278,15 @@ int value;
 
     if( value == 0 )
     {
-        verror("%%%%ceiling at line %d is 0 in bank %d; it names the first word no rewrite may reach, so 0 would forbid the whole bank",
+        verror("%%%%ceiling at line %d is 0 in bank %d names the first word no rewrite may reach."
+            " 0 would forbid the whole bank",
             optRegionTokenLine, curBank);
     }
 
     if( (curBank == 0) && (value > 07751) )
     {
-        verror("%%%%ceiling at line %d is %04o in bank 0, above the default of 07751 (the read-in loader's first word); a ceiling may only lower it",
+        verror("%%%%ceiling at line %d is %04o in bank 0, above the default of 07751."
+        " A ceiling can only lower it",
             optRegionTokenLine, value);
     }
 
@@ -2345,7 +2362,8 @@ PNodeP nodeP;
 
     if( strcmp(handsOffOpenFileP, optRegionTokenFileP) )
     {
-        verror("%%%%endnooptimize at line %d is in file %s and the span it closes was opened at line %d in file %s; a span may not cross a file boundary",
+        verror("%%%%endnooptimize at line %d is in file %s and the span it closes was opened at line %d in file %s"
+        " A span cannot cross a file boundary",
             optRegionTokenLine, optRegionTokenFileP, handsOffOpenLine, handsOffOpenFileP);
     }
 
@@ -2520,7 +2538,8 @@ PNodeP nodeP;
 
     if( (unknownP = ceilingUnknown(firstP)) || (unknownP = ceilingUnknown(lastP)) )
     {
-        verrorl(line, "%%%%window %s names %s, which has no value yet; a window's addresses may use only what is already defined",
+        verrorl(line, "%%%%window %s names %s, which has no value yet."
+            " A window's addresses can use only what has already been defined",
             nameP, unknownP);
     }
 
@@ -2626,7 +2645,7 @@ PNodeP nodeP;
 
     if( modeP && strcmp(modeP, "persistent") )
     {
-        verrorl(line, "overlay %s: %s is not a mode; the one mode is persistent", nameP, modeP);
+        verrorl(line, "overlay %s: '%s' is not a valid mode", nameP, modeP);
     }
 
     if( !(ovP = (OverlayContextP)calloc(1, sizeof(OverlayContext))) ||
@@ -2662,6 +2681,8 @@ PNodeP nodeP;
     nodeP = newnode(line + 1, winP->first, OVERLAYDECL, NILP, NILP);
     nodeP->value.ptr = ovP;
     nodeP->flags |= PN_NOINC;
+
+    inOverlay = true;       // So export won't create symbol tables for overlays automatically.
     return(nodeP);
 }
 
@@ -2681,6 +2702,7 @@ int room;
 OverlayContextP ovP;
 PNodeP nodeP;
 
+    inOverlay = false;
     line = optRegionTokenLine;
 
     if( !(ovP = curOverlayP) )
@@ -2690,7 +2712,8 @@ PNodeP nodeP;
 
     if( strcmp(ovP->fileP, optRegionTokenFileP) )
     {
-        verrorl(line, "%%%%endoverlay is in file %s and overlay %s, which it closes, was opened at line %d in file %s; an overlay may not cross a file boundary",
+        verrorl(line, "%%%%endoverlay is in file %s and overlay %s, which it closes,"
+            " was opened at line %d in file %s; an overlay may not cross a file boundary",
             optRegionTokenFileP, ovP->nameP, ovP->lineNo, ovP->fileP);
     }
 
@@ -2838,7 +2861,9 @@ SymNodeP rootSymP;
             // overlay, where the parse could not see the clash.
             if( rootSymP && (rootSymP->flags & SYMF_RESOLVED) )
             {
-                verrorl(rootSymP->lineno, "%s is defined in the root of bank %d, and in overlay %s at line %d; an overlay may not reuse a root global's name",
+                verrorl(rootSymP->lineno,
+                    "%s is defined in the root of bank %d, and in overlay %s at line %d;"
+                    "an overlay may not reuse a root global's name",
                     symP->name, rootBankP->bank, ovP->nameP, symP->lineno);
             }
         }
@@ -2859,11 +2884,11 @@ SymNodeP rootSymP;
     resolveOverlayTree(ovP, rootBankP, symP->rightP);
 }
 
-// After the parse, give each overlay's names for its bank's root globals the
-// root's addresses.  The lexer links a name the root has already; this links
-// one the root defines after the overlay.  It also refuses a name both the
-// overlay and the root define, and an export the overlay never defines.  A
-// name neither defines stays unresolved, for evalExpr() to report.
+// After the parse, give each overlay's names for its bank's root globals the root's addresses.
+// The lexer links a name the root has already.
+// This links one the root defines after the overlay.s
+// It also refuses a name both the overlay and the root define and an export the overlay never defines.
+// A name neither defines stays unresolved for evalExpr() to report.
 void
 resolveOverlaySymbols(void)
 {
@@ -2895,9 +2920,8 @@ refreshAliasTree(SymNodeP symP)
     refreshAliasTree(symP->rightP);
 }
 
-// Give each overlay's alias for a root global its root symbol's address
-// again.  An alias holds a copy, and the optimizer's relayout moves root
-// symbols after the copy was made.
+// Give each overlay's alias for a root global its root symbol's address again.
+// An alias holds a copy, and the optimizer's relayout moves root symbols after the copy was made.
 void
 refreshOverlayAliases(void)
 {
@@ -2947,9 +2971,9 @@ PNodeP nodeP;
     return(nodeP);
 }
 
-// The overlay manager's entry, OVENTERNAME, defined in the root: in this bank
-// if it is here, else in the lowest bank that has it.  Its bank goes to
-// *bankP.
+// The overlay manager's entry, OVENTERNAME, defined in the root in this bank
+// if it is here, else in the lowest bank that has it.
+// Its bank goes to *bankP.
 // Returns its symbol, NILP when no bank has it yet.
 static SymNodeP
 findOvEnter(int *bankP)
@@ -2986,16 +3010,15 @@ ovCallWord(PNodeP *tailPP, int lineNo, int pc, PNodeP exprP)
     return( &((*tailPP)->leftP) );
 }
 
-// An %%ovcall, in the root: a call of the overlay manager, then two data words,
-// the full addresses of the overlay's descriptor table entry and of the entry
-// point.  The manager is called with jsp when it is in this bank, and else as
-// memory.ah's crossBankjsp does it, eem and jsp i through a literal holding its
-// full address, so that the caller need not know where the manager is.  The
-// literal is pooled here, so the manager's bank must be known here: overlay.ac
-// comes before the first %%ovcall.  The data words are filled in by
-// resolveOvCalls() once every overlay and the table have their addresses.
-// Returns the OVCALL node: its words are EXPR nodes from rightP, linked through
-// leftP; the overlay's name is in value.strP, the entry's in value2.strP.
+// An %%ovcall, in the root.
+// A call of the overlay manager, then two data words, the full addresses of the overlay's
+// descriptor table entry and of the entry/ point.
+// The manager is called with jsp when it is in this bank else as cross-bank jsp.
+// The literal is pooled her, so the manager's bank must be known here, overlay.ac
+// must come before the first %%ovcall.
+// The data words are filled in by resolveOvCalls() once every overlay and the table have their addresses.
+// Returns the OVCALL node, its words are EXPR nodes from rightP, linked through
+// leftP and the overlay's name is in value.strP, the entry's in value2.strP.
 PNodeP
 ovCall(char *ovNameP, char *entryNameP)
 {
@@ -3019,7 +3042,8 @@ PNodeListP *itemPP;
 
     if( !(enterP = findOvEnter(&enterBank)) )
     {
-        verrorl(line, "%%%%ovcall %s, %s comes before %s, the overlay manager's entry, is defined; include overlay.ac before the first %%%%ovcall",
+        verrorl(line, "%%%%ovcall %s, %s comes before %s, the overlay manager's entry, is defined."
+            " Include overlay.ac before the first %%%%ovcall",
             ovNameP, entryNameP, OVENTERNAME);
     }
 
@@ -3083,10 +3107,10 @@ PNodeListP *itemPP;
     return(nodeP);
 }
 
-// After the parse, check each %%ovcall's overlay and entry, and fill in its two
-// data words.  An overlay without %%ovtable is refused here too, since the
-// first data word is an address in the table.  The optimizer's relayout calls
-// it again whenever it moves the table.
+// After the parse, check each %%ovcall's overlay and entry and fill in its two data words.
+// An overlay without %%ovtable is an error here too since the
+// first data word is an address in the table.
+// The optimizer's relayout calls it again whenever it moves the table.
 void
 resolveOvCalls(void)
 {
@@ -3099,7 +3123,8 @@ SymNodeP entryP;
     if( overlaysP && !ovTableSymP )
     {
         verrorlf(overlaysP->lineNo, overlaysP->fileP,
-            "this program has overlays and no %%%%ovtable; the descriptor table goes in the root, after every window and overlay");
+            "this program has overlays and no %%%%ovtable."
+            " It must be added in the root after every window and overlay");
     }
 
     for( itemP = ovCallsP; itemP; itemP = itemP->nextP )
@@ -3146,8 +3171,8 @@ OverlayContextP ovP;
     return(ovP);
 }
 
-// The name of the overlay numbered number, for the generators that tag or head
-// an overlay's words; NILP for 0, the root.
+// The name of the overlay numbered number for the generators that tag or head
+// an overlay's words, NILP for 0, the root.
 const char *
 overlayName(int number)
 {
@@ -3178,11 +3203,11 @@ SymNodeP symP;
     return(NILP);
 }
 
-// Refuse a reference in the statement stmtP to a symbol it may not see: from
-// an overlay, another overlay's; from the root, any overlay's.  The lexer never
-// links such a name, so it arrives here as a symbol of the statement's own
-// context that nothing resolved.  An unresolved name no overlay defines is left
-// for evalExpr() to report as undefined.
+// Refuse a reference in the statement stmtP to a symbol it may not see:
+// from an overlay, another overlay's; from the root, any overlay's.
+// The lexer never links such a name,so it arrives here as a symbol of the statement's own
+// context that nothing resolved.
+// An unresolved name no overlay defines is left for evalExpr() to report as undefined.
 static void
 checkReference(PNodeP stmtP, SymNodeP symP)
 {
@@ -3195,12 +3220,15 @@ OverlayContextP ovP;
 
     if( stmtP->overlay )
     {
-        verrorl(stmtP->lineNo, "overlay %s names %s, a symbol of overlay %s; an overlay may name only its own symbols and its bank's root globals",
+        verrorl(stmtP->lineNo,
+            "overlay %s names %s, a symbol of overlay %s; an overlay may name only its own symbols"
+            " and its bank's root globals",
             overlayNumbered(stmtP->overlay)->nameP, symP->name, ovP->nameP);
     }
     else
     {
-        verrorl(stmtP->lineNo, "the root names %s, a symbol of overlay %s; the root reaches an overlay only through %%%%ovcall",
+        verrorl(stmtP->lineNo,
+            "the root names %s, a symbol of overlay %s; the root reaches an overlay only through %%%%ovcall",
             symP->name, ovP->nameP);
     }
 }
@@ -3242,10 +3270,10 @@ checkExprReferences(PNodeP stmtP, PNodeP exprP)
     }
 }
 
-// After the parse, check every reference in the statement list from nodeP:
-// a statement in an overlay may name its own symbols and its bank's root
-// globals, and one in the root no overlay's symbol at all.  Run before any
-// literal is evaluated, which would report such a name as undefined first.
+// After the parse, check every reference in the statement list from nodeP.
+// A statement in an overlay may name its own symbols and its bank's root
+// globals, and one in the root no overlay's symbol at all.
+// Run before any literal is evaluated, which would report such a name as undefined first.
 void
 checkOverlayReferences(PNodeP nodeP)
 {

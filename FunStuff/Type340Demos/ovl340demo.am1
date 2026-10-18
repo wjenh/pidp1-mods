@@ -1,0 +1,223 @@
+ovl340demo: three light-pen labels, each loading a drum overlay
+// A demonstration of drum overlays on the Type 340.  Three labels along the
+// bottom of the display, OVERLAY 1, OVERLAY 2 and OVERLAY 3, are sensitive to
+// the light pen.  Pointing at one loads that overlay from the drum into its
+// window and calls it; the overlay draws OVERLAY n IS RUNNING in the center,
+// with the labels still shown, until the pen points at another label.  The
+// root then calls that one, which takes the window and is read from the drum.
+// Pointing at the label of the overlay that is running does nothing.
+//
+// The root is in bank 0: the manager, the labels' display list, drawMenu and
+// the dispatch loop.  The three overlays share the window demo in bank 1; each
+// holds its own message and the code that draws it, and calls drawMenu in the
+// root, across the banks, for the labels and the pen.
+//
+// Assemble and load, which writes the overlays to the drum and loads the root:
+//     am1 ovl340demo.am1
+//     ovlload ovl340demo.ovl
+// or punch a tape the PDP-1 writes its own drum from:
+//     ovlload -p ovl340demo.tape ovl340demo.ovl
+// Docs/UsingOverlays.md describes both.
+//
+// The pen is polled, and the program never turns breaks on, so neither the
+// 340's break on a hit nor the drum's at the end of each transfer needs a
+// handler.  The overlay manager's drum IOT names include dra and dss, so the
+// 340's are spelled with type340alt.ah's t340 prefix.
+//
+// 18-Oct-2026 Claude: written.
+
+#include <TYPE340/type340alt.ah>
+#include <TYPE340/type340cmds.ah>
+
+// The labels' row, at scale 1: 9 characters of 14 units, 126 wide, with gaps
+// of 100 between them, far more than twice the pen's reach at any aperture,
+// so one pass never hits two labels.
+#define LABELY  0d40
+#define LABEL1X 0d223
+#define LABEL2X 0d449
+#define LABEL3X 0d675
+
+// The middle of each gap: a hit left of BOUND12 is label 1, left of BOUND23
+// label 2, else label 3.  drc gives x halved, so the tests compare halves.
+#define BOUND12 0d400
+#define BOUND23 0d626
+
+// The message, at scale 2: 20 characters of 28 units, 560 wide, centered.
+#define MSGX    0d232
+#define MSGY    0d500
+
+bank 1
+%%window demo, 4000, 4177
+
+// Each overlay's entry draws its message, waits for the 340 to stop, then has
+// drawMenu draw the labels and report a hit.  It returns only for a hit on
+// another label, so the 340 is always halted when the manager reads the next
+// overlay into the window this list is in.
+// Entry: AC is the return, from %%ovcall; IO is not used.
+// Exit: AC is the label hit, 1-3, never this overlay's own; IO is clobbered.
+// Called by jsp i with eem on, and returns with eem on.
+%%overlay ovl1, demo
+        export ovl1Run
+ovl1Run, dac ovl1Rtn
+ovl1Loop,
+        lio [ovl1Msg:.]
+        t340dla
+        t340dss
+        jmp .-1
+        jsp i [drawMenu:0]
+        sza i
+        jmp ovl1Loop            // no hit
+        sad [1]
+        jmp ovl1Loop            // its own label
+        eem
+        jmp i ovl1Rtn
+ovl1Rtn, 0
+ovl1Msg,
+        scale(2) intensity(6) lpoff next(point)
+        y(MSGY) next(point)
+        x(MSGX) next(character)
+        type340 "OVERLAY 1 IS RUNNING"
+        halt
+%%endoverlay
+
+%%overlay ovl2, demo
+        export ovl2Run
+ovl2Run, dac ovl2Rtn
+ovl2Loop,
+        lio [ovl2Msg:.]
+        t340dla
+        t340dss
+        jmp .-1
+        jsp i [drawMenu:0]
+        sza i
+        jmp ovl2Loop            // no hit
+        sad [2]
+        jmp ovl2Loop            // its own label
+        eem
+        jmp i ovl2Rtn
+ovl2Rtn, 0
+ovl2Msg,
+        scale(2) intensity(6) lpoff next(point)
+        y(MSGY) next(point)
+        x(MSGX) next(character)
+        type340 "OVERLAY 2 IS RUNNING"
+        halt
+%%endoverlay
+
+%%overlay ovl3, demo
+        export ovl3Run
+ovl3Run, dac ovl3Rtn
+ovl3Loop,
+        lio [ovl3Msg:.]
+        t340dla
+        t340dss
+        jmp .-1
+        jsp i [drawMenu:0]
+        sza i
+        jmp ovl3Loop            // no hit
+        sad [3]
+        jmp ovl3Loop            // its own label
+        eem
+        jmp i ovl3Rtn
+ovl3Rtn, 0
+ovl3Msg,
+        scale(2) intensity(6) lpoff next(point)
+        y(MSGY) next(point)
+        x(MSGX) next(character)
+        type340 "OVERLAY 3 IS RUNNING"
+        halt
+%%endoverlay
+
+bank 0
+100/
+#include <DRUM/overlay.ac>
+
+// Start: breaks off, the manager ready, then the labels alone until the pen
+// picks one.  From then on each overlay returns the next pick.
+go,     lsm
+        jsp ovInit              // extended mode on from here on
+        dzm calls
+menuLoop,
+        jsp drawMenu
+        sza i
+        jmp menuLoop            // no hit
+
+// AC is the label picked, 1-3; calls counts the overlay calls made.
+dispatch,
+        dac pick
+        idx calls
+        lac pick
+        sas [1]
+        jmp not1
+        %%ovcall ovl1, ovl1Run
+        jmp dispatch
+not1,   sas [2]
+        jmp not2
+        %%ovcall ovl2, ovl2Run
+        jmp dispatch
+not2,
+        %%ovcall ovl3, ovl3Run
+        jmp dispatch
+
+pick,   0
+calls,  0
+
+// Draw the three labels once and report the label the pen touched.  Each
+// label turns the pen on, and a hit pauses the 340 and leaves the pen off
+// once drs resumes it, so a pass reports at most one hit per label.
+// Exit: AC is the label of the last hit in the pass, 1-3, or 0 for none;
+// IO is clobbered.
+// Called via jsp with eem on, from either bank; returns with eem on.
+drawMenu,
+        dac dmRtn
+        dzm dmHit
+        lio [menuList:.]
+        t340dla
+dmPoll, t340dsp
+        jmp dmNoHit
+
+// The hit's x, halved, against the gaps' middles.
+        t340drc
+        lai
+        sar 9s
+        and [0777]
+        sub [BOUND12 >> 1]
+        spa
+        jmp dmIs1               // left of the first gap
+        sub [(BOUND23 - BOUND12) >> 1]
+        spa
+        jmp dmIs2               // left of the second gap
+        law 3
+        jmp dmSet
+dmIs1,  law 1
+        jmp dmSet
+dmIs2,  law 2
+dmSet,  dac dmHit
+        t340drs
+dmNoHit,
+        t340dss
+        jmp dmPoll              // not stopped yet
+        lac dmHit
+        jmp i dmRtn
+dmRtn,  0
+dmHit,  0
+
+// The labels, each turning the pen on before it.
+menuList,
+        scale(1) intensity(5) lpon next(point)
+        y(LABELY) next(point)
+        x(LABEL1X) next(character)
+        type340 "OVERLAY 1"
+        lpon next(point)
+        y(LABELY) next(point)
+        x(LABEL2X) next(character)
+        type340 "OVERLAY 2"
+        lpon next(point)
+        y(LABELY) next(point)
+        x(LABEL3X) next(character)
+        type340 "OVERLAY 3"
+        lpoff halt
+
+        constants
+%%ovtable
+        start go

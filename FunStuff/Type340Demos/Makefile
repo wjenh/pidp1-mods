@@ -2,7 +2,7 @@
 	am1 $<
 
 SOURCES := $(wildcard *.am1)
-RIMS := $(patsubst %.am1,%.rim,$(SOURCES))
+RIMS := $(patsubst %.am1,%.rim,%.ovl,$(SOURCES))
 
 all: $(RIMS)
 

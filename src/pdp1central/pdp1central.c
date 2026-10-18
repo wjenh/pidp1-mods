@@ -1,7 +1,8 @@
 // pdp1central: one desktop window to control the PiDP-1 emulator.
 // It shows what is running, starts, stops, restarts and reloads the emulator through
 // bin/pdp1control.sh, keeps the script's start-time choices in pdp1control.config, mounts and
-// saves paper tapes, fast loads a tape through fastload, mounts microtapes through mtp, turns the
+// saves paper tapes, fast loads a tape through fastload, or through ovlload when it has drum
+// overlays, mounts microtapes through mtp, turns the
 // sound on and off, and edits pidp1.config from a schema file that describes every setting.
 // Everything that is not drawing is in the core (core.h); this file is the Nuklear front end on
 // SDL2. One thread and one event loop: SDL_WaitEventTimeout at 250 ms, the running child polled
@@ -22,6 +23,8 @@
 // 14-Oct-2026 wje (Claude) - no Retired tab; the schema's retired settings are shown on no tab.
 // 14-Oct-2026 wje (Claude) - the Live tab: gain, cutoffs, tuning and sample rate sent live to the
 //     emulator, saved to pidp1.config on request, and multiply and divide read and set.
+// 18-Oct-2026 wje (Claude) - fast load runs ovlload for a tape with a .ovl of the same name beside
+//     it, or for a .ovl chosen, once their dates agree.
 
 #include <errno.h>
 #include <limits.h>
@@ -56,6 +59,7 @@
 #define MULDIV_POLL_MS 2000     // how often the Live tab reads multiply and divide
 #define AD1_DEFAULT_PORT 1044   // the debugger link's port when pidp1.config does not set ad1port
 #define MT_NAME_MAX 255         // the longest tape path mtp and the plugin take
+#define OVL_MAX_SKEW 5          // seconds a tape's and its .ovl's modification times may differ
 
 // What the child slot is doing.
 typedef enum
@@ -73,6 +77,7 @@ typedef enum
 typedef enum
 {
     CMD_FASTLOAD,
+    CMD_OVLLOAD,
     CMD_MOUNT,
     CMD_UNMOUNT,
     CMD_SAVEPUNCH
@@ -113,6 +118,8 @@ static char controlPath[PATH_MAX];
 static char scriptPath[PATH_MAX];
 static char askPath[PATH_MAX];      // bin/askfile, every file dialog
 static char fastloadPath[PATH_MAX];
+static char ovlloadPath[PATH_MAX];
+static char drumPath[PATH_MAX];     // the drum image ovlload writes
 static char savePunchPath[PATH_MAX];
 static char mtpPath[PATH_MAX];
 static char mtListPath[PATH_MAX];
@@ -164,9 +171,12 @@ static Command command;         // the program running, while job is JOB_COMMAND
 static int commandDrive;        // the drive mtp is changing
 static char commandLast[256];   // the program's last line of output, for an error
 static bool commandSawStop;     // fastload said the tape has a stop directive
+static bool commandSawOverwrite;    // ovlload said it wrote over another tool's drum track
 
 static char loadPath[PATH_MAX]; // the last tape fast loaded
+static char loadOvlPath[PATH_MAX];  // its .ovl, "" if it was loaded without overlays
 static int loadResult;          // 0 none yet, 1 started, 2 loaded and not started, 3 failed
+static bool loadOverwrote;      // the last load wrote over another tool's drum track
 
 static MtList mtList;           // microtapes.txt as last read
 static bool mtListRead;
@@ -676,6 +686,7 @@ int i;
     commandDrive = drive;
     commandLast[0] = '\0';
     commandSawStop = false;
+    commandSawOverwrite = false;
     jobStartMs = SDL_GetTicks();
     snprintf(jobLabel, sizeof(jobLabel), "%s", labelP);
     appLog("running %s", line);
@@ -800,12 +811,118 @@ fastLoadBlocked(void)
     return(NULL);
 }
 
-// Load a tape into the running pdp-1 with fastload, and start it.
+// The last part of a path.
+static const char *
+baseName(const char *pathP)
+{
+const char *slashP;
+
+    slashP = strrchr(pathP, '/');
+    return( slashP ? (slashP + 1) : pathP );
+}
+
+// Whether pathP names a regular file, its modification time to *mtimeP.
+static bool
+fileTime(const char *pathP, time_t *mtimeP)
+{
+struct stat st;
+
+    if( (stat(pathP, &st) != 0) || !S_ISREG(st.st_mode) )
+    {
+        return(false);
+    }
+
+    *mtimeP = st.st_mtime;
+    return(true);
+}
+
+// Pair a file chosen to load with its drum overlays. A chosen prog.ovl loads prog.rim, else
+// prog.bin, beside it, as ovlload looks for them; any other file loads itself, with prog.ovl if
+// that is beside it. The two must have been made together, which is judged by their dates, so a
+// .ovl left beside a tape from an older build is not loaded with it.
+// tapeP gets the tape and ovlP the .ovl, "" for none, each PATH_MAX long.
+// Returns NULL, or why it cannot be loaded, in whyP.
+static const char *
+pairOverlays(const char *fileP, char *tapeP, char *ovlP, char *whyP, size_t whySize)
+{
+char baseP[PATH_MAX];
+const char *dotP;
+time_t tapeTime, ovlTime;
+double apart;
+size_t len;
+
+    // The name without its suffix; a dot before the last slash is a directory's.
+    dotP = strrchr(baseName(fileP), '.');
+    len = (dotP ? (size_t)(dotP - fileP) : strlen(fileP));
+    if( (len + 5) > sizeof(baseP) )
+    {
+        snprintf(whyP, whySize, "the path is too long");
+        return(whyP);
+    }
+
+    memcpy(baseP, fileP, len);
+    baseP[len] = '\0';
+    if( dotP && !strcmp(dotP, ".ovl") )
+    {
+        snprintf(ovlP, PATH_MAX, "%s", fileP);
+        strcpy(tapeP, baseP);
+        strcpy((tapeP + len), ".rim");
+        if( !fileTime(tapeP, &tapeTime) )
+        {
+            strcpy((tapeP + len), ".bin");
+            if( !fileTime(tapeP, &tapeTime) )
+            {
+                snprintf(whyP, whySize, "no %.100s.rim or %.100s.bin beside %.100s", baseName(baseP), baseName(baseP),
+                    baseName(fileP));
+                return(whyP);
+            }
+        }
+    }
+    else
+    {
+        snprintf(tapeP, PATH_MAX, "%s", fileP);
+        strcpy(ovlP, baseP);
+        strcpy((ovlP + len), ".ovl");
+        if( !fileTime(ovlP, &ovlTime) )
+        {
+            ovlP[0] = '\0';
+            return(NULL);
+        }
+
+        if( !fileTime(tapeP, &tapeTime) )
+        {
+            snprintf(whyP, whySize, "%.100s is not a file", baseName(tapeP));
+            return(whyP);
+        }
+    }
+
+    if( !fileTime(ovlP, &ovlTime) )
+    {
+        snprintf(whyP, whySize, "%.100s is not a file", baseName(ovlP));
+        return(whyP);
+    }
+
+    apart = fabs(difftime(tapeTime, ovlTime));
+    if( apart > OVL_MAX_SKEW )
+    {
+        snprintf(whyP, whySize, "%.100s and %.100s were made %.0f seconds apart; assemble again", baseName(tapeP),
+            baseName(ovlP), apart);
+        return(whyP);
+    }
+
+    return(NULL);
+}
+
+// Load a tape into the running pdp-1 and start it: with ovlload, writing its overlays to the
+// drum first, when it has a .ovl, else with fastload.
 static void
 fastLoad(const char *fileP)
 {
 char hostPort[32];
-char *argv[6];
+char why[512];
+char tape[PATH_MAX];
+char ovl[PATH_MAX];
+char *argv[10];
 const char *whyP;
 
     if( fileP[0] != '/' )
@@ -820,9 +937,39 @@ const char *whyP;
         return;
     }
 
-    // fastload's own default is 1044 whatever ad1port says, so the port is always given.
+    if( (whyP = pairOverlays(fileP, tape, ovl, why, sizeof(why))) )
+    {
+        appError("not loaded: %s", whyP);
+        return;
+    }
+
+    if( ovl[0] && (access(ovlloadPath, X_OK) != 0) )
+    {
+        appError("not loaded: bin/ovlload is not installed");
+        return;
+    }
+
+    // fastload's and ovlload's own default is 1044 whatever ad1port says, so the port is always
+    // given. ovlload is given the tape whose date was checked, and the root's drum.
     snprintf(hostPort, sizeof(hostPort), "127.0.0.1:%d", ad1Port());
-    snprintf(loadPath, sizeof(loadPath), "%s", fileP);
+    snprintf(loadPath, sizeof(loadPath), "%s", tape);
+    snprintf(loadOvlPath, sizeof(loadOvlPath), "%s", ovl);
+    if( ovl[0] )
+    {
+        argv[0] = ovlloadPath;
+        argv[1] = "-y";
+        argv[2] = "-h";
+        argv[3] = hostPort;
+        argv[4] = "-i";
+        argv[5] = drumPath;
+        argv[6] = "-t";
+        argv[7] = loadPath;
+        argv[8] = loadOvlPath;
+        argv[9] = NULL;
+        startCommand(argv, CMD_OVLLOAD, 0, "load with overlays");
+        return;
+    }
+
     argv[0] = fastloadPath;
     argv[1] = "-y";
     argv[2] = "-h";
@@ -982,8 +1129,10 @@ static void
 commandEnded(int status)
 {
     appLog("%s finished, status %d", jobLabel, status);
-    if( command == CMD_FASTLOAD )
+    if( (command == CMD_FASTLOAD) || (command == CMD_OVLLOAD) )
     {
+        // ovlload warns of a track it wrote over even when the load then fails.
+        loadOverwrote = commandSawOverwrite;
         if( status == 0 )
         {
             loadResult = (commandSawStop ? 2 : 1);
@@ -993,11 +1142,11 @@ commandEnded(int status)
             loadResult = 3;
             if( commandLast[0] )
             {
-                appError("fast load failed: %s", commandLast);
+                appError("%s failed: %s", jobLabel, commandLast);
             }
             else
             {
-                appError("fast load failed, status %d", status);
+                appError("%s failed, status %d", jobLabel, status);
             }
         }
     }
@@ -1542,12 +1691,16 @@ size_t i;
             appLog("  %s", childPartial);
             if( job == JOB_COMMAND )
             {
-                // The last line says why a program failed; fastload says when it will not
-                // start a tape.
+                // The last line says why a program failed; fastload and ovlload say when they
+                // will not start a tape, and ovlload when it wrote over another tool's track.
                 snprintf(commandLast, sizeof(commandLast), "%.*s", (int)(sizeof(commandLast) - 1), childPartial);
                 if( strstr(childPartial, "stop directive") )
                 {
                     commandSawStop = true;
+                }
+                if( (command == CMD_OVLLOAD) && strstr(childPartial, "overwritten by") )
+                {
+                    commandSawOverwrite = true;
                 }
             }
         }
@@ -1915,7 +2068,7 @@ static const char *usbLabels[] = { "yes", "no" };
 static const float choiceRatios[] = { 0.25f, 0.25f, 0.50f };    // a label, a control, a note
 float ratios[MAX_SCHEMES + 1];
 char valueBuf[CONF_MAX_VALUE + 1];
-const char *whyP, *nameP;
+const char *whyP, *nameP, *withP;
 nk_bool t30;
 bool idle, apps, web;
 int i, count;
@@ -1984,7 +2137,8 @@ int i, count;
     }
     nk_label(ctxP, "", NK_TEXT_LEFT);
 
-    // Fast load: fastload puts a tape straight into the running pdp-1's memory and starts it.
+    // Fast load: fastload puts a tape straight into the running pdp-1's memory and starts it;
+    // ovlload writes its drum overlays first.
     nk_layout_row_dynamic(ctxP, 12, 1);
     nk_spacing(ctxP, 1);
     whyP = fastLoadBlocked();
@@ -1994,10 +2148,11 @@ int i, count;
     {
         startDialog(JOB_ASK_LOAD);
     }
-    nameP = (loadPath[0] ? (strrchr(loadPath, '/') ? (strrchr(loadPath, '/') + 1) : loadPath) : "");
-    if( (job == JOB_COMMAND) && (command == CMD_FASTLOAD) )
+    nameP = (loadPath[0] ? baseName(loadPath) : "");
+    withP = (loadOvlPath[0] ? " with overlays" : "");
+    if( (job == JOB_COMMAND) && ((command == CMD_FASTLOAD) || (command == CMD_OVLLOAD)) )
     {
-        nk_labelf(ctxP, NK_TEXT_LEFT, "loading %s", nameP);
+        nk_labelf(ctxP, NK_TEXT_LEFT, "loading %s%s", nameP, withP);
     }
     else if( whyP )
     {
@@ -2009,8 +2164,16 @@ int i, count;
     }
     else
     {
-        nk_labelf(ctxP, NK_TEXT_LEFT, "last: %s, %s", nameP, ((loadResult == 1) ? "started" :
+        nk_labelf(ctxP, NK_TEXT_LEFT, "last: %s%s, %s", nameP, withP, ((loadResult == 1) ? "started" :
             ((loadResult == 2) ? "loaded, not started" : "failed")));
+    }
+
+    // A row of its own, since the note does not fit beside the button.
+    if( loadOverwrote && !((job == JOB_COMMAND) && ((command == CMD_FASTLOAD) || (command == CMD_OVLLOAD))) )
+    {
+        nk_layout_row_dynamic(ctxP, ROW_H, 1);
+        nk_label_colored(ctxP, "The last load wrote over another tool's data on the drum; the Log tab names the tracks.",
+            NK_TEXT_LEFT, styleColors[STYLE_WARNING]);
     }
 
     nk_layout_row_dynamic(ctxP, ROW_H, 1);
@@ -2923,6 +3086,7 @@ bool ok;
     ok = (rootJoin(configPath, "pidp1.config") && rootJoin(examplePath, "pidp1.config.example") &&
         rootJoin(controlPath, "pdp1control.config") && rootJoin(scriptPath, "bin/pdp1control.sh") &&
         rootJoin(askPath, "bin/askfile") && rootJoin(fastloadPath, "bin/fastload") &&
+        rootJoin(ovlloadPath, "bin/ovlload") && rootJoin(drumPath, "pdp23drum") &&
         rootJoin(savePunchPath, "bin/save_ptp.sh") && rootJoin(mtpPath, "bin/mtp") && rootJoin(mtListPath, "microtapes.txt") &&
         rootJoin(microtapeDir, "Microtapes") && rootJoin(tapesDir, "tapes") &&
         rootJoin(fontPath, "src/pdp1_periph/DejaVuSansMono.ttf") && rootJoin(stylePath, "pdp1central.config"));

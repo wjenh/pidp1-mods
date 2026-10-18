@@ -1,14 +1,14 @@
 # Using drum overlays in **am1**
 
-This document describes drum overlays: parts of one **am1** program that take turns in the same core,
+This document describes drum overlays, parts of one **am1** program that take turns in the same core,
 kept on the Type 23 drum and loaded when they are called.
 It covers the directives, the overlay manager the program includes, the loader **ovlload**, and what
 each costs.
-*UsingAM1.md* is the assembler itself, and *UsingType23Drum.md* is the drum.
+*UsingAM1.md* is the assembler itself and *UsingType23Drum.md* is the drum.
 
-Written 12-Oct-2026, for am1 v3.6; updated the same day for am1 v3.7 and ad1 v2.1, and for the
-single-pass swap, *OV_SINGLE_PASS*. Updated 13-Oct-2026 for *ovlload -p*, a paper tape the pdp-1
-writes its own drum from, and for am1 v4.0, whose optimizer takes a program with overlays.
+This is version 1.1 and covers up through am1 version 4.0; it will be updated as needed.\
+Edit date 18-Oct-2026
+Clarify use of export inside an overlay.
 
 ## What are overlays?
 
@@ -478,24 +478,21 @@ loops.
 A program without an overlay assembles exactly as it did before.
 With overlays:
 
-- **The tape**, *file.rim* or *file.bin*, holds the root only: no overlay word, and nothing in a
-  window.
-  It holds the table.
-- ***file.ovl*** is written beside the tape, whenever a tape is.
-- ***file.osym*** is written beside the *.sym*, with *-s*.
-- **The listing**, *-l*, lists each overlay under its own heading, with its two header words; its
-  addresses repeat its window's, which is correct.
-  Each *%%ovcall* is listed with its words, and the table with what each word holds.
+- **The tape**, *file.rim* or *file.bin*, holds the root only, not any overlay code.
+- ***file.ovl*** is created with the primary rim or bin file.
+- ***file.osym*** is created in additon to the *.sym* file when *-s* is given.
+- **The listing**, *-l*, lists each overlay under its own heading with its two header words.
+  Its addresses use its window's address.
+  Each *%%ovcall* is listed with the table with what it holds.
 - **Test mode**, *-T*, dumps each overlay word with the overlay's name after it:
   *bbaaaa vvvvvv name*.
-- ***-O*, *-O1*, *-O2*** and *-O=source* work from am1 v4.0 (v3.6 to v3.9 refused them). The root is
-  optimized first, then each overlay in turn with the root as context, inside its window; see
-  "Programs with drum overlays" in *UsingTheAm1Optimizer.md*. The *.ovl* holds the rewritten
-  overlays and a new stamp, so load it again after an optimized build.
-- ***-d*** writes the listing, the *.sym* and the *.osym*, as *-l* and *-s* do, for **ad1** (am1 v3.7
-  on; v3.6 refused it).
-- ***-m*** writes **macro1** source with the overlays annotated, as banks are; it is not runnable, as
-  for banks.
+- ***-O*, *-O1*, *-O2*** and *-O=source* work with overlays.
+  The root is optimized first, then each overlay in turn with the root as context, inside its window.
+  See "Programs with drum overlays" in *UsingTheAm1Optimizer.md*.
+  The *.ovl* holds the rewritten overlays and a new stamp, load it again after an optimized build.
+- ***-d*** writes the listing, the *.sym* and the *.osym*, as *-l* and *-s* do, for **ad1**.
+- ***-m*** writes **macro1** source with the overlays annotated, as banks are.
+  It is not runnable.
 
 The *overlay* warning, for a *var* in a read-only overlay, is on by default; *-W=-overlay* turns it
 off.

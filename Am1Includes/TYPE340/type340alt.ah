@@ -14,6 +14,7 @@
 #define t340dcf iot 0215
 #define t340dra iot 016
 #define t340drc iot 0116
+#define t340drp iot 0216
 #define t340dsp iot 0117
 #define t340dss iot 0217
 #define t340dsv iot 0417

@@ -9,7 +9,7 @@ AM1DIR=../AM1
 
 # The writer target only: the am1 that assembles ovlwriter.am1, and the includes it uses.
 AM1=am1
-AM1INC=$(abspath ../../Am1Includes)
+#AM1INC=$(abspath ../../Am1Includes)
 WRITERTMP=writer.tmp
 
 all: ovlload
@@ -31,13 +31,13 @@ mkwriter: mkwriter.c
 writer: mkwriter ovlwriter.am1
 	rm -rf $(WRITERTMP)
 	mkdir -p $(WRITERTMP)/first $(WRITERTMP)/second $(WRITERTMP)/sym
-	cd $(WRITERTMP)/first && $(AM1) -T -DOVW_ORIGIN=0 -i $(AM1INC) ../../ovlwriter.am1
-	cd $(WRITERTMP)/second && $(AM1) -T -DOVW_ORIGIN=01000 -i $(AM1INC) ../../ovlwriter.am1
-	cd $(WRITERTMP)/sym && $(AM1) -r -s -DOVW_ORIGIN=0 -i $(AM1INC) ../../ovlwriter.am1
+	cd $(WRITERTMP)/first && $(AM1) -T -DOVW_ORIGIN=0  ../../ovlwriter.am1
+	cd $(WRITERTMP)/second && $(AM1) -T -DOVW_ORIGIN=01000 ../../ovlwriter.am1
+	cd $(WRITERTMP)/sym && $(AM1) -r -s -DOVW_ORIGIN=0 ../../ovlwriter.am1
 	./mkwriter $(WRITERTMP)/first/ovlwriter.dmp $(WRITERTMP)/second/ovlwriter.dmp $(WRITERTMP)/sym/ovlwriter.sym ovlwriter.h
 	rm -rf $(WRITERTMP)
 
 clean:
-	@rm -rf ovlload mkwriter $(WRITERTMP) 2>/dev/null || true
+	@rm -rf ovlload mkwriter *.o $(WRITERTMP) 2>/dev/null || true
 
 .PHONY: all install writer clean

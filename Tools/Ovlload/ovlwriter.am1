@@ -1,34 +1,26 @@
 ovlwriter, puts a program's drum overlays on the drum from paper tape
-// The PDP-1 side of ovlload -p: the program on a tape ovlload punches that
-// writes a program's overlays to the drum, so a PDP-1 can load its drum from
-// the reader with no host files.  It is never started alone: the tape is in
-// the block format of am1's loader at 07751, and the loader reads this
-// program's words, then each block of parameters and of an overlay's window,
-// and gives this program control by a start word after each.  Every entry
-// returns to the loader with jmp OVW_LOADER for the next block.
+// The PDP-1 side of ovlload -p.
+// It writes a program's overlays to the drum so a PDP-1 can load its drum from
+// the reader with no host files.
+// It is never started alone.
+// The tape that contains this is loaded by the am1 Loader
+// It reads this program in, then each block of parameter and an overlay's window
+// and gives this program control by a start word after each.
+// Every entry returns to the loader with jmp OVW_LOADER for the next block.
+// When no overlay data remains, either ovwEndRun, or ovwEnd when no program is included, is started.
 //
-// The tape: the loader, this program, the survey's parameters (ovwTracks) and
-// a start word to ovwSurvey; then for each overlay its window's whole range,
-// its parameters (ovwCore to ovwSum) and a start word to ovwWrite; then a
-// start word to ovwEndRun, followed by the program's own blocks, or to ovwEnd
-// when the tape holds the overlays alone.  ovlload -p punches it as
-// Docs/UsingOverlays.md describes.
+// Ovlload relocates this program to free core in bank 0 below the loader.
+// It is assembled only by Tools/Ovlload's Makefile, `make writer`, at two
+// origins and mkwriter copies its compiled words to ovlwriter.h.
 //
-// ovlload relocates this program to free core in bank 0 below the loader,
-// so it is assembled only by Tools/Ovlload's Makefile, `make writer`, at two
-// origins (OVW_ORIGIN), and mkwriter keeps its words in ovlwriter.h with a
-// mark on each word that holds an address.  Every word it reaches is given by
-// a 16-bit address, its own in bank 0, so it runs the same with the extend
-// window open or closed; a window above bank 0 has the loader's eem build
-// punched, which keeps the window open.  Plain PDP-1 instructions only.
-//
-// The halts, each with its number in AC: OVW_HALT_DONE when every overlay is
-// written; OVW_HALT_SUM when a window's words do not give the tape's
-// checksum, and Continue reads the tape again, backed up to that window's
-// block; OVW_HALT_VERIFY when a word read back from the drum differs, and
-// Continue writes the window again; OV_ERR_DRUM when a transfer has failed
-// OV_TRIES times, the overlay manager's own number, and Continue tries
-// OV_TRIES more.
+// Errors halt, each with its number in AC:
+// OVW_HALT_DONE when every overlay has been written to the drum and there is no program to run.
+// OVW_HALT_SUM when a window's words do not match the tape's checksum,
+// and Continue then reads the tape again, backed up to that window's block.
+// OVW_HALT_VERIFY when a word read back from the drum differs from the tape,
+// Continue writes the window again.
+// OV_ERR_DRUM when a transfer has failed OV_TRIES times,
+// Continue tries OV_TRIES more times.
 //
 // 13-Oct-2026 Claude: written, for ovlload -p.
 
@@ -409,8 +401,6 @@ ovwEnd,
     hlt
     jmp ovwEnd
 ovwEndRun,
-    law OVW_HALT_DONE
-    hlt
     jmp OVW_LOADER
 
 // One drum transfer of wXDia, wXDwc and wXDcl, made once the drum is idle and

@@ -2,24 +2,22 @@
  * mkwriter -- make ovlwriter.h, the words of the PDP-1 overlay writer that ovlload -p
  * punches, from two assemblies of ovlwriter.am1 at different origins.
  *
- * ovlload puts the writer wherever bank 0 has room, so it needs to know which of the
- * writer's words hold an address of the writer's own.  A word that does is the one
- * whose two assemblies differ by exactly the difference of their origins; any other
- * difference is an error, since adding the origin would not relocate it.  The first
- * assembly must be at origin 0, so each word's value is what ovlload adds the origin to.
+ * rvlload puts the writer wherever bank 0 has room, so it needs to know which of the
+ * writer's words hold an address of the writer's code.
+ * A word that does is the one whose two assemblies differ by exactly the difference of their origins.
+ * Any other difference is an error since adding the origin would not relocate it.
+ * The first assembly must be at origin 0 so each word's value is what ovlload adds the origin to.
  *
- * The assemblies are am1's -T dumps: one line a word, its address and value in octal,
- * the last line the start or stop directive's, not a word.  The writer's labels come
- * from the symbol table of the first assembly, am1 -s: those ovlload needs, and the
- * first word past the writer's buffer, which am1 does not punch.
- *
- * Built and run only by the Makefile's writer target, so building ovlload needs no am1.
+ * The assemblies are am1's -T dumps, one line a word, its address and value in octal,
+ * the last line the start or stop directive value, not a program word.
+ * The writer's labels come from the symbol table of the first assembly.
  *
  * Usage: mkwriter first.dmp second.dmp first.sym ovlwriter.h
  * Exit status: 0 written, 1 an error.  The header is opened only once everything is
  * read and checked.
  *
  * 13-Oct-2026 Claude initial version
+ * 18-Oct-2026 wje changes to messages and startup
  */
 
 #include <stdlib.h>
@@ -50,12 +48,12 @@ static Label labels[] =
     { "ovwDrum", "OVW_DRUM", "    its drum address,", -1 },
     { "ovwCount", "OVW_COUNT", "    the words in its range, 1 to 010000,", -1 },
     { "ovwSum", "OVW_SUM", "    and their sum by add", -1 },
-    { "ovwSurvey", "OVW_SURVEY", "the survey entry, once, after the track bits", -1 },
-    { "ovwWrite", "OVW_WRITE", "the write entry, after each overlay's parameters", -1 },
+    { "ovwSurvey", "OVW_SURVEY", "the survey entr", -1 },
+    { "ovwWrite", "OVW_WRITE", "the write entry", -1 },
     { "ovwEndRun", "OVW_END_RUN", "the end entry when the program follows", -1 },
     { "ovwEnd", "OVW_END", "the end entry when the tape holds the overlays alone", -1 },
     { "ovwBuffer", "OVW_BUFFER", "the buffer, not punched", -1 },
-    { "ovwTop", "OVW_SIZE", "the first word past the writer: the core it needs", -1 },
+    { "ovwTop", "OVW_SIZE", "the first word past the writer, the core it needs", -1 },
 };
 
 #define LABELS ((int)(sizeof(labels) / sizeof(labels[0])))
@@ -68,7 +66,8 @@ static bool readSymbols(const char *pathP);
 static bool writeHeader(const char *pathP, int count, const bool *addressP);
 
 // Read both dumps and the symbols, mark each word that holds an address, check
-// everything, and only then write the header.  Exits 0, or 1 after saying why.
+// everything, and only then write the header.
+// Exits 0, or 1 after saying why.
 int
 main(int argc, char **argv)
 {
@@ -317,8 +316,9 @@ int i;
     }
 
     fprintf(fP, "/*\n");
-    fprintf(fP, " * ovlwriter.h -- the words of the PDP-1 overlay writer, ovlwriter.am1, as assembled at\n");
-    fprintf(fP, " * origin 0, for ovlload -p.  Made by mkwriter, the Makefile's writer target: do not edit.\n");
+    fprintf(fP, " * This is the words of the PDP-1 overlay writer, ovlwriter.am1, as assembled at\n");
+    fprintf(fP, " * origin 0.\n");
+    fprintf(fP, " * Made by mkwriter, do not edit!\n");
     fprintf(fP, " */\n\n");
     fprintf(fP, "#ifndef OVLWRITER_H\n");
     fprintf(fP, "#define OVLWRITER_H\n\n");
@@ -331,8 +331,8 @@ int i;
         fprintf(fP, "#define %-12s 0%04lo    // %s\n", labels[i].defineP, labels[i].offset, labels[i].commentP);
     }
 
-    fprintf(fP, "\n// Each word as assembled at origin 0, and whether it holds an address of the writer's,\n");
-    fprintf(fP, "// to which ovlload adds the origin it puts the writer at.\n");
+    fprintf(fP, "\n// Each word as assembled at origin 0 and whether it holds a writer address,\n");
+    fprintf(fP, "// to which ovlload adds the origin where puts the writer.\n");
     fprintf(fP, "typedef struct\n{\n    uint32_t word;\n    uint8_t address;\n} OvwWord;\n\n");
     fprintf(fP, "static const OvwWord ovwWords[OVW_WORDS] =\n{\n");
     for( i = 0; i < count; ++i )

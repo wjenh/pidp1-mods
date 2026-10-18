@@ -1,12 +1,8 @@
 /*
- * ovlfile.h -- an am1 overlay file, file.ovl, read and checked; its overlays compared
- * with a drum; and the drum's other tenants recognized.  Shared by ovlload and drumlist,
- * so the two read one format one way.
- *
- * A drum here is a whole Type 23 drum in memory, OVL_DRUMWORDS 32-bit words, track after
- * track, zero past the end of the file it was read from.
+ * This is shared by ovlload and drumlist so the two read one format one way.
  *
  * 13-Oct-2026 wje/Claude moved out of ovlload.c
+ * 18-Oct-2026 wje cleanup
  */
 
 #ifndef OVLFILE_H

@@ -80,9 +80,9 @@
 #include "configuration.h"
 
 bool audioEnabled = false;
-bool lailiaEnabled = false;
-bool core1DEnabled = false;
-bool all1DEnabled = false;
+bool lailiaEnabled = true;
+bool core1DEnabled = true;
+bool all1DEnabled = true;
 
 // Flat core address and contents of the word the current memory cycle's
 // readmem() read.

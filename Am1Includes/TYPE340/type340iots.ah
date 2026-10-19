@@ -10,6 +10,7 @@
  * Instead, use the alt version to get t340
  */
 
+#ifndef _NO_DRA_DSS
 #ifdef dra
 #warning "dra is already defined, you are probably using the Type 23 drum, use t340dra and t340dss instead."
 #warning "dra and will now be undefined, you might also need to use t23dra and t23drs."
@@ -20,6 +21,7 @@
 #else
 #define dra iot 016
 #define dss iot 0217
+#endif
 #endif
 
 #define dla iot 015

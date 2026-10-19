@@ -24,6 +24,7 @@
  *    duplicate list nodes across a SIGHUP-triggered reload.
  * 26-Sep-2026 wje (Claude) - the audio filters are set by cutoff (extras, read in main.c), so the
  *    alpha keys are no longer parsed here; the default sample rate is 48,000.
+ * 19-Oct-2026 wje all 1D instructions enabled by default, too many programs need them now
 */
 
 #include <stdio.h>
@@ -51,7 +52,9 @@ static const Configuration defaultConfigSettings = {
     .gain = 0.95,
     .tuning = 1.0,
     .muldivEnabled = true,
-    .core1DEnabled = true
+    .lailiaEnabled = true,
+    .core1DEnabled = true,
+    .all1DEnabled = true
 };
 
 // The live settings.  Reset from defaultConfigSettings at the top of every

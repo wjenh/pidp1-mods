@@ -51,20 +51,21 @@
 #throttlemaxlag=20
 
 # Enable/disable various PDP-1D extensions
+# By default, they are all enabled, most of the demo programs use them.
 # lai and lia are available in the main branch pidp1 if compiled in.
 # Here they are controlled by this setting.
 # This also enables lsw/swp, since those are just an or of lai and lia.
-lailia=on
+#lailia=on
 
 # Enable the PDP-1D extensions, lai, lia, sni, szi, cmi, lsw/swp, but not the extended-extended ones.
 # Enabling this DOES enable lailia even if they are disabled above.
 # Disabling this does NOT disable lailia if enabled above.
-core1D=on
+#core1D=on
 
 # Enable all PDP-1D extensions including lai, lia, sni, szi, cmi, lsw/swp, scf, sci, iif, ifi, and ida.
 # Enabling this DOES enable lailia and core1D even if disabled above
 # Disabling this does NOT disable lailia or core1D if they are enabled above.
-all1D=on
+#all1D=on
 
 # Enable/disable various features.
 muldiv=on

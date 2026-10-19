@@ -30,11 +30,14 @@
 #ifndef OVERLAY_AC
 #define OVERLAY_AC
 
-// Transparently handle the dra conflict.
+// Transparently handle the drum/type340 dra conflict.
+#define _OVL_dia iot 61
+#define _OVL_dwc iot 62
+#define _OVL_dra iot 2062
+#define _OVL_dcl iot 63
+
 #ifndef DRUMDEFS_AH
-#define _NO_DRA_
 #include <DRUM/type23alt.ah>
-#undef _NO_DRA_
 #endif
 
 #include <DRUM/overlay.ah>
@@ -229,18 +232,18 @@ ovXferIdle,
     spi                     // skip if the drum is idle
     jmp ovXferIdle
     lio ovXDia
-    dia
+    _OVL_dia
     lio ovXDwc
-    dwc
+    _OVL_dwc
     lio ovXDcl
-    dcl
+    _OVL_dcl
 ovXferBusy,
     cks
     rir 1s
     spi                     // skip once the transfer is over
     jmp ovXferBusy
     cli
-    t23dra
+    _OVL_dra
     dio ovStatus
     lac ovStatus
     and [OV_DRA_ERR]
@@ -366,9 +369,8 @@ ovSwapN, 0
 #endif
     endloc
 
-// Transparently handle the dra conflict.
-#ifndef dra
-#define dra iot 2062
-#endif
-
+#undef _OVL_dia
+#undef _OVL_dwc
+#undef _OVL_dra
+#undef _OVL_dcl
 #endif

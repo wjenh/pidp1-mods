@@ -8,14 +8,17 @@
  * BE CAREFUL to not mix them!
  */
 
-#ifndef _NO_DRA_
+#ifndef _NO_DRA_DSS
 #ifdef dra
-#warning "dra is already defined, you are probably using the Type 340 display, use type23dra instead of dra."
-#warning "dra will now be undefined, you might also need to use type340dra."
+#warning "dra is already defined, you are probably using the Type 340 display, use t23dra instead of dra."
+#warning "dra and dss will now be undefined, you might also need to use type340dra and t340dss."
 #undef dra
+#undef dss
 #define dra _Pragma("GCC error \"dra has been disabled, use type340dra and type23dra instead.\"")
+#define dss _Pragma("GCC error \"dra has been disabled, use type340dra and type23dra instead.\"")
 #else
 #define dra iot 2062
+#define dss iot 2063
 #endif
 #endif
 
@@ -26,9 +29,9 @@
 #define dia iot 61
 #define dba iot 2061
 #define dwc iot 62
-#define type23dra iot 2062
+#define t23dra iot 2062
 #define dcl iot 63
-#define dss iot 2063
+#define t23dss iot 2063
 
 // Additional flags, not compatible with native macro, only macro1.
 // These flags are in the IO register.

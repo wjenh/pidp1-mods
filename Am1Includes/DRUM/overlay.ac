@@ -33,7 +33,7 @@
 // Transparently handle the dra conflict.
 #ifndef DRUMDEFS_AH
 #define _NO_DRA_
-#include <DRUM/type23drumdefs.ah>
+#include <DRUM/type23alt.ah>
 #undef _NO_DRA_
 #endif
 
@@ -240,7 +240,7 @@ ovXferBusy,
     spi                     // skip once the transfer is over
     jmp ovXferBusy
     cli
-    type23dra
+    t23dra
     dio ovStatus
     lac ovStatus
     and [OV_DRA_ERR]

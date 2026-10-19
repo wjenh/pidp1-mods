@@ -1,37 +1,35 @@
 #ifndef TYPE340IOTS_AH
 #define TYPE340IOTS_AH
 /* Just the IOT defines for the Type 340 display.
- * These don't match the originals, but they were too cryptic.
  * See the documentation for details on use.
  * The defines for the Type 340 processor's instructions are in type340cmds.ah,
  * allowing them to be included separately.
  *
- * IMPORTANT - the Type 23 Parallel Drum uses dra also for one of its IOTs.
+ * IMPORTANT - the Type 23 Parallel Drum uses dra and dss also.
  * If you use both, you will get the error below.
- * The special define _NO_DRA_ can be used to skip defining dra at all.
- * It is useful if you want to use both, but not reject the dra defined by the other one.
- * BE CAREFUL to not mix them!
+ * Instead, use the alt version to get t340
  */
 
-#ifndef _NO_DRA_
 #ifdef dra
-#warning "dra is already defined, you are probably using the Type 23 drum, use type340dra instead of dra."
-#warning "dra will now be undefined, you might also need to use type23dra."
+#warning "dra is already defined, you are probably using the Type 23 drum, use t340dra and t340dss instead."
+#warning "dra and will now be undefined, you might also need to use t23dra and t23drs."
 #undef dra
-#define dra _Pragma("GCC error \"dra has been disabled, use type340dra and type23dra instead.\"")
+#undef dss
+#define dra _Pragma("GCC error \"dra has been disabled, use t340dra and t23dra instead.\"")
+#define dss _Pragma("GCC error \"dss has been disabled, use t340dss and t23dss instead.\"")
 #else
 #define dra iot 016
-#endif
+#define dss iot 0217
 #endif
 
 #define dla iot 015
 #define drs iot 0115
 #define dcf iot 0215
-#define type340dra iot 016
+#define t340dra iot 016
+#define t340dss iot 0217
 #define drc iot 0116
 #define drp iot 0216
 #define dsp iot 0117
-#define dss iot 0217
 #define dsv iot 0417
 #define dsh iot 01017
 

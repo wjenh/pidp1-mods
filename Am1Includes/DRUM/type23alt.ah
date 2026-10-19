@@ -1,8 +1,14 @@
-// Handle the duplicate dra also used by the Type 340 display.
+// Handle the duplicate dra and dss also used by the Type 340 display.
 #ifndef DRUMDEFS_AH
-#define _NO_DRA_
+
+#define _NO_DRA_DSS
 #include <DRUM/type23drumdefs.ah>
-#undef _NO_DRA_
-#define t23dra iot 2062
-#endif
+#undef _NO_DRA_DSS
+
+// Also define equivalents for the rest, not necessary but for consistency
+#define t23dia iot 61
+#define t23dba iot 2061
+#define t23dwc iot 62
+#define t23dcl iot 63
+
 #endif

@@ -25,9 +25,9 @@ ovl340demo: three light-pen labels, each loading a drum overlay
 // 340's are spelled with type340alt.ah's t340 prefix.
 //
 // 18-Oct-2026 Claude: written.
+// 10-Oct-2026 wje changed to properly use the alt versions
 
 #include <TYPE340/type340alt.ah>
-#include <TYPE340/type340cmds.ah>
 
 // The labels' row, at scale 1: 9 characters of 14 units, 126 wide, with gaps
 // of 100 between them, far more than twice the pen's reach at any aperture,
@@ -130,6 +130,7 @@ ovl3Msg,
 
 bank 0
 100/
+jmp go
 #include <DRUM/overlay.ac>
 
 // Start: breaks off, the manager ready, then the labels alone until the pen

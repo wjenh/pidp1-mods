@@ -1,40 +1,42 @@
-// The drum overlay manager: loads an overlay into its window from the drum when
-// it is called and is not resident, then calls the entry.  am1's %%ovcall
-// calls it; Docs/UsingOverlays.md is the user's description.
+// The drum overlay manager.
+// It loads an overlay into its window from the drum when
+// it is called and the overlay is not resident, then calls the entry.
+// This is specifically for use with am1's %%ovcall,
+// see Docs/UsingOverlays.md/
 //
-// Include it once, in the root of a program with overlays, in any bank, before
-// the first %%ovcall: %%ovcall calls ovEnter by jsp from the manager's bank and
-// by eem and jsp i from any other, so its bank must be known there.  It needs
-// am1's %%ovtable, labeled ovTable, which it finds in whatever bank holds it,
-// and its literals go to the including bank's next constants.
+// Include it once in the root of a program with overlays, in any bank, before
+// the first %%ovcall.
 //
-// Plain PDP-1 instructions only, so it runs on any configuration.  Each
-// transfer polls cks for the drum's end with breaks left as they are; the drum
-// requests a break at the end of every transfer, so a program running with
-// breaks on needs a handler for the drum's channel, or keeps it off.
+// Each transfer polls cks for the drum's end with breaks left as they are.
+// The drum automatically requests a break at the end of every transfer, so a program running with
+// breaks on needs a handler for the drum's channel or turn it off before using %%ovcall.
 //
 // Defines ovEnter, ovInit, the in-an-overlay flag ovActive, the retry count
 // ovRetries, the error hook ovErrHook, and the error halts ovErrNest,
-// ovErrStamp and ovErrDrum, each stopping with its OV_ERR_ number in AC.  A
-// program that must not halt sets ovErrHook to a full address, and on an error
-// the manager jumps there instead of halting; Docs/UsingOverlays.md, "When the
-// manager halts", says in what state.
+// ovErrStamp and ovErrDrum, each stopping with its OV_ERR_ number in AC.
+// A program that must not halt sets ovErrHook to a full address and on an error
+// the manager jumps there instead of halting.
+// See Docs/UsingOverlays.md, "When the manager halts".
 //
 // A program that defines OV_SINGLE_PASS before including this file has every
 // persistent eviction made as one transfer, a swap, which reads the incoming
-// overlay as it writes the outgoing one.  A swap is never made again: one that
-// ends in error, after a halt part-way, stops at ovErrSwap with OV_ERR_SWAP,
-// the outgoing overlay's words lost.  Without the define this file assembles
-// as it did before the swap was added.
+// overlay as it writes the outgoing one.
 //
 // 12-Oct-2026 Claude: written, with am1's drum overlays.
 // 12-Oct-2026 Claude: the error hook, ovErrHook.
 // 12-Oct-2026 Claude: the single-pass swap, OV_SINGLE_PASS.
+// 19-Oct-2026 wje rework to deal with the Type 340 dispay dra overlap.
 
 #ifndef OVERLAY_AC
 #define OVERLAY_AC
 
+// Transparently handle the dra conflict.
+#ifndef DRUMDEFS_AH
+#define _NO_DRA_
 #include <DRUM/type23drumdefs.ah>
+#undef _NO_DRA_
+#endif
+
 #include <DRUM/overlay.ah>
 
     local ovRtn, ovArg, ovEnt, ovEntry, ovWant, ovScan, ovPtr, \
@@ -238,7 +240,7 @@ ovXferBusy,
     spi                     // skip once the transfer is over
     jmp ovXferBusy
     cli
-    dra
+    type23dra
     dio ovStatus
     lac ovStatus
     and [OV_DRA_ERR]
@@ -363,5 +365,10 @@ ovTries, 0
 ovSwapN, 0
 #endif
     endloc
+
+// Transparently handle the dra conflict.
+#ifndef dra
+#define dra iot 2062
+#endif
 
 #endif

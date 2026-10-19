@@ -1,5 +1,23 @@
 #ifndef DRUMDEFS_AH
 #define DRUMDEFS_AH
+/*
+ * IMPORTANT - the Type 340 display uses dra also for one of its IOTs.
+ * If you use both, you will get the error below.
+ * The special define _NO_DRA_ can be used to skip defining dra at all.
+ * It is useful if you want to use both, but not reject the dra defined by the other one.
+ * BE CAREFUL to not mix them!
+ */
+
+#ifndef _NO_DRA_
+#ifdef dra
+#warning "dra is already defined, you are probably using the Type 340 display, use type23dra instead of dra."
+#warning "dra will now be undefined, you might also need to use type340dra."
+#undef dra
+#define dra _Pragma("GCC error \"dra has been disabled, use type340dra and type23dra instead.\"")
+#else
+#define dra iot 2062
+#endif
+#endif
 
 // The drum has 32 tracks each 4096 words
 #define TRACKS  0d32
@@ -8,7 +26,7 @@
 #define dia iot 61
 #define dba iot 2061
 #define dwc iot 62
-#define dra iot 2062
+#define type23dra iot 2062
 #define dcl iot 63
 #define dss iot 2063
 

@@ -6,15 +6,28 @@
  * The defines for the Type 340 processor's instructions are in type340cmds.ah,
  * allowing them to be included separately.
  *
- * IMPORTANT - the Type 23 Parallel Drum uses some of the name names for its IOTs.
- * If you use both, you can instead include type340alt.ah which will avoid conflicts
- * but won't match the historic three-letter style.
+ * IMPORTANT - the Type 23 Parallel Drum uses dra also for one of its IOTs.
+ * If you use both, you will get the error below.
+ * The special define _NO_DRA_ can be used to skip defining dra at all.
+ * It is useful if you want to use both, but not reject the dra defined by the other one.
+ * BE CAREFUL to not mix them!
  */
+
+#ifndef _NO_DRA_
+#ifdef dra
+#warning "dra is already defined, you are probably using the Type 23 drum, use type340dra instead of dra."
+#warning "dra will now be undefined, you might also need to use type23dra."
+#undef dra
+#define dra _Pragma("GCC error \"dra has been disabled, use type340dra and type23dra instead.\"")
+#else
+#define dra iot 016
+#endif
+#endif
 
 #define dla iot 015
 #define drs iot 0115
 #define dcf iot 0215
-#define dra iot 016
+#define type340dra iot 016
 #define drc iot 0116
 #define drp iot 0216
 #define dsp iot 0117

@@ -392,9 +392,10 @@ wBadVerify,
     hlt
     jmp wWriteAgain
 
-// The end entries, once every overlay is written: halt with AC OVW_HALT_DONE.
-// After ovwEndRun, Continue reads the program that follows on the tape; after
-// ovwEnd, the tape holds no program, and Continue halts again.
+// The end entries, once every overlay is written.
+// ovwEndRun returns to the loader with no halt, and it reads the program that
+// follows on the tape.  ovwEnd, when the tape holds no program, halts with AC
+// OVW_HALT_DONE, and Continue halts again.
 // Reached by a start word.
 ovwEnd,
     law OVW_HALT_DONE

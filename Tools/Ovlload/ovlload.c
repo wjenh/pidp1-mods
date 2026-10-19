@@ -7,21 +7,23 @@
  * full address of the program's overlay table.
  * Then for each overlay a line giving its window, bank, first and last address,
  * drum track, length and mode, followed by its code words,
- * the two header words, the overlay stamp and the overlays number included.s
- * All numberrs are octal.
+ * the two header words, the overlay stamp and the overlay's number, included.
+ * All numbers are octal.
  *
  * Each overlay goes on its track at drum addresses equal to its window's core
  * addresses and the rest of the window's range padded with zeros.
  * The overlay manager in the program loads it with one transfer.
  * Nothing else on the drum is touched.
  *
- * Unless -n is given, the program's tape is then loaded in the way as fastload does.
- * Before anything is written, the tape's* word at the overlay table's address must be the .ovl's stamp.
- * A drum and a program from different builds are never loaded together.
+ * Unless -n is given, the program's tape is then loaded in the same way as fastload does.
+ * Without -n, before anything is written, the tape's word at the overlay table's address
+ * must be the .ovl's stamp, so ovlload never loads a drum and a program from different builds.
+ * With -n no tape is read and nothing is compared: a program from another build, loaded
+ * later, is caught by the overlay manager's stamp check at its first overlay load.
  *
  * A track holding something another tool put there is overwritten and
  * named in a warning.
- * The user is resposible for saving a drum image that is to be preserved.
+ * The user is responsible for saving a drum image that is to be preserved.
  *
  * The .ovl is read and checked by ovlfile.c, which drumlist shares.
  * It is what identifies data written by other programs ovlfile recognizes.
@@ -31,7 +33,7 @@
  * loads the main program and starts it.
  *
  * Usage: ovlload [-i drumfile] [-c] [-n] [-t tape] [-h host[:port]] [-y] [-m] [-M memfile] file.ovl
- *        ovlload -p tapefile [-n] [-t tape] file.ovl
+ *        ovlload -p tapefile [-n | -t tape] file.ovl
  * Exit status: 0 done, or with -c the drum is current; 1 with -c the drum differs;
  * 2 an error, nothing having been written unless the message says so.
  *
@@ -236,7 +238,7 @@ Ad1Link link;
     if( punchNameP && (compare || drumOption || hostP || autoStart || useMemFile) )
     {
         fprintf(stderr, "ovlload: -p punches a tape and writes no drum or pdp-1; -i, -c, -h, -y,"
-            "-m and -M are not used.\n");
+            " -m and -M are not used.\n");
         exit(EXIT_ERROR);
     }
 
@@ -906,9 +908,10 @@ TapeBlock *blockP;
         return(false);
     }
 
-    // A word is three binary tape charactersframes,the label portion is not marked as binary.
-    // The RIM part is pairs of a dio and the word it stores ended by the jmp to the loader.
-    // the word at the loader's first address, an eem or nop.
+    // A word is three binary tape frames; the label's frames are not marked as binary.
+    // The RIM part is pairs of a dio and the word it stores, ended by the jmp to the loader.
+    // The word stored at the loader's first address is an eem or a nop, which says which
+    // loader it is.
     rootNeedsEem = false;
     first = true;
     inLoader = false;
@@ -1215,7 +1218,8 @@ usage(void)
     fprintf(stderr, "    [-y] [-m] [-M memfile] file.ovl\n");
     fprintf(stderr, "    Puts the overlays of file.ovl on the drum, each on its track,\n");
     fprintf(stderr, "    then loads the program's tape as fastload does.\n");
-    fprintf(stderr, "    The tape's stamp must match the .ovl, or nothing is written.\n");
+    fprintf(stderr, "    The tape's stamp must match the .ovl, or nothing is written;\n");
+    fprintf(stderr, "    with -n no tape is read, and the program checks the stamp when it loads an overlay.\n");
     fprintf(stderr, "    -i names the drum file, default %s.\n", DEFAULT_DRUM);
     fprintf(stderr, "    -c compares the drum with file.ovl and writes nothing; exit 0 current, 1 not.\n");
     fprintf(stderr, "    -n loads the drum only, not the program.\n");
@@ -1224,10 +1228,10 @@ usage(void)
     fprintf(stderr, "    -y starts the program once it is loaded.\n");
     fprintf(stderr, "    -m loads the program into the coremem file instead, the pidp-1 must not be running.\n");
     fprintf(stderr, "    -M names the coremem file, default %s, and implies -m.\n", DEFAULT_MEMFILE);
-    fprintf(stderr, "Usage: ovlload -p tapefile [-n] [-t tape] file.ovl\n");
+    fprintf(stderr, "Usage: ovlload -p tapefile [-n | -t tape] file.ovl\n");
     fprintf(stderr, "    Punches a tape that a pdp-1 reads in to write the overlays to the drum,\n");
     fprintf(stderr, "    then loads the program and starts it.\n");
-    fprintf(stderr, "    -n punches the just the overlays and halts.\n");
+    fprintf(stderr, "    -n punches just the overlays and halts.\n");
     fprintf(stderr, "    -t names the tape, the default is file.rim or file.bin.\n");
     exit(EXIT_ERROR);
 }

@@ -6,9 +6,9 @@ It covers the directives, the overlay manager the program includes, the loader *
 each costs.
 *UsingAM1.md* is the assembler itself and *UsingType23Drum.md* is the drum.
 
-This is version 1.1 and covers up through am1 version 4.0; it will be updated as needed.\
-Edit date 18-Oct-2026
-Clarify use of export inside an overlay.
+This is version 1.2 and covers up through am1 version 4.1; it will be updated as needed.\
+Edit date 19-Oct-2026
+Fix typos, update -p description
 
 ## What are overlays?
 
@@ -538,7 +538,7 @@ The *.sym* itself is unchanged and holds the root's symbols only, so *import* is
 
 ```
 ovlload [-i drumfile] [-c] [-n] [-t tape] [-h host[:port]] [-y] [-m] [-M memfile] file.ovl
-ovlload -p tapefile [-n] [-t tape] file.ovl
+ovlload -p tapefile [-n | -t tape] file.ovl
 ```
 
 **ovlload** checks the whole *.ovl* first, then writes each overlay on its track at its window's
@@ -548,7 +548,7 @@ It then loads the program's tape as **fastload** does, with **fastload**'s own c
 
 - *-i drumfile*: the drum file, by default */opt/pidp1-mods/pdp23drum*, as for the emulator.
   It is written in place; a missing file is created, and a short one extended with zeros.
-- *-n*: write the drum only, load no program.
+- *-n*: write the drum only, load no program; no tape is read, so the stamp is not checked.
 - *-t tape*: the tape to load; by default the *.ovl*'s name with *.rim*, else *.bin*.
 - *-h host[:port]*: the pidp-1 to load into over the debugger link, as for **fastload**; by default
   *localhost:1044*.
@@ -559,8 +559,11 @@ It then loads the program's tape as **fastload** does, with **fastload**'s own c
 - *-p tapefile*: punch a paper tape for the pdp-1 to write its own drum from (below).
 
 **Before anything is written,** the tape's word at the table's address must be the *.ovl*'s stamp,
-so a drum and a program from different builds are never loaded together.
+so **ovlload** never loads a drum and a program from different builds.
 There is no override: assemble again and use the pair that came out together.
+With *-n* no tape is read and nothing is compared, so the program you load afterwards is yours to
+match: if it is from another build, the manager's stamp check catches it at its first overlay load
+(*ovErrStamp*, above).
 Over the debugger link the pidp-1 is stopped before the drum is written, so a pidp-1 that cannot be
 reached changes nothing, and no running program uses the drum while it changes.
 
@@ -633,34 +636,40 @@ More than one *.ovl* may be given; one that cannot be read is reported and left 
 ### A paper tape for the pdp-1: -p
 
 ```
-ovlload -p tapefile [-n] [-t tape] file.ovl
+ovlload -p tapefile [-n | -t tape] file.ovl
 ```
 
-*-p* punches a paper tape instead of writing a drum file: the pdp-1 reads it in and writes the
-overlays to its own drum, the way a site loaded a drum from the reader, with no host files.
-The tape holds am1's loader, a small writer program, each overlay with its window's range and a
-checksum, and then the program's own tape, unless *-n* is given.
-The *.ovl* and the stamp are checked as always, and a tape of another build is refused.
-*-i*, *-c*, *-h*, *-y*, *-m* and *-M* mean nothing to a tape and are refused.
+*-p* punches a paper tape instead of writing a drum file.
+The pdp-1 reads it in and writes the overlays to the drum, then, withut -n, loads the program and starts it.
+The tape holds am1's loader, a small durm writer program, each overlay with its window's range and a
+checksum, and then, unless *-n* is given, the program tape.
+The *.ovl* is checked as always and, without *-n* the stamp is also checked.
+*-i*, *-c*, *-h*, *-y*, *-m* and *-M* mean nothing for a tape and are refused.
 
 ```
 Tape prog.tape: the writer at 6104-6777, the nop loader.
 overlay one: track 20, drum 7000-7740, 4 words, ro, checksum 261621
 overlay two: track 21, drum 7000-7740, 5 words, rw, checksum 730630
-Punched, then the program from prog.rim: read it in, and the pdp-1 halts with AC 0 when the drum is written; continue to load the program.
+Punched, read it in and it will start the program when the drum is loaded.
 ```
 
-Mount the tape in the reader and press read-in. The pdp-1 halts with AC telling why:
+With *-n* only the drum is loaded.
+
+Load it using any of the usual ways a program tape is loaded.
+Once the drum is written, the loader reads the program and starts it with no halt, as the program's
+own tape would, however a program assembled with a stop directive halts as usual.
+With *-n* there is no program, the pdp-1 halts with AC 0 when the drum has been written.
+Every halt of the writer has AC telling why:
 
 | AC | Meaning | Continue |
 |---|---|---|
-| 0 | the drum is written | loads and starts the program; with *-n*, halts again |
-| 1 | an overlay's words do not give its checksum: a bad frame | back the tape up to that overlay's window, then Continue reads it again |
+| 0 | with *-n* only, the drum has been written | halts again |
+| 1 | an overlay's words do not match its checksum: a bad frame | should never happen, the file was corrupted |
 | 2 | an overlay read back from the drum differs from core | writes it again |
 | 3 | a drum transfer failed 4 times | tries 4 more |
 
-Before it writes anything, the writer looks at the tracks the tape writes, and types a line on the
-typewriter for each track holding another tool's data, which it then writes over, as **ovlload**
+Before it writes anything, the writer looks at the tracks the tape writes and types a line on the
+typewriter for each track holding another tool's data which it then writes over, as **ovlload**
 does:
 
 ```

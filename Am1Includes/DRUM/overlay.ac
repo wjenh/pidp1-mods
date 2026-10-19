@@ -368,7 +368,7 @@ ovXDwc, 0
 ovXDcl, 0
 ovStatus, 0
 ovTries, 0
-#ifdef OV_SINGLE_PASS
+#ifndef OV_TWO_PASS
 ovSwapN, 0
 #endif
     endloc

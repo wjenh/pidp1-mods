@@ -1,9 +1,9 @@
 #ifndef DRUMDEFS_AH
 #define DRUMDEFS_AH
 /*
- * IMPORTANT - the Type 340 display uses dra also for one of its IOTs.
+ * IMPORTANT - the Type 340 display uses dra and dss also.
  * If you use both, you will get the error below.
- * The special define _NO_DRA_ can be used to skip defining dra at all.
+ * The special define _NO_DRA_DSS can be used to skip defining dra and dss at all.
  * It is useful if you want to use both, but not reject the dra defined by the other one.
  * BE CAREFUL to not mix them!
  */
@@ -11,11 +11,11 @@
 #ifndef _NO_DRA_DSS
 #ifdef dra
 #warning "dra is already defined, you are probably using the Type 340 display, use t23dra instead of dra."
-#warning "dra and dss will now be undefined, you might also need to use type340dra and t340dss."
+#warning "dra and dss will now be undefined, you might also need to use t340dra and t340dss."
 #undef dra
 #undef dss
-#define dra _Pragma("GCC error \"dra has been disabled, use type340dra and type23dra instead.\"")
-#define dss _Pragma("GCC error \"dra has been disabled, use type340dra and type23dra instead.\"")
+#define dra _Pragma("GCC error \"dra has been disabled, use t340dra and t23dra instead.\"")
+#define dss _Pragma("GCC error \"dss has been disabled, use t340dra and t23dra instead.\"")
 #else
 #define dra iot 2062
 #define dss iot 2063

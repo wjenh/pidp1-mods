@@ -5,7 +5,7 @@
 #include <TYPE340/type340defs.ah>
 #undef _NO_DRA_DSS
 
-// Define equivalents for all for consistency, only dra conflicts
+// Define equivalents for all for consistency, only dra and drs conflict
 #define t340dla iot 015
 #define t340drs iot 0115
 #define t340dcf iot 0215

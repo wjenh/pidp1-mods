@@ -7,13 +7,13 @@
  *
  * IMPORTANT - the Type 23 Parallel Drum uses dra and dss also.
  * If you use both, you will get the error below.
- * Instead, use the alt version to get t340
+ * Instead, use the alt version to get t340dra and t340dss.
  */
 
 #ifndef _NO_DRA_DSS
 #ifdef dra
 #warning "dra is already defined, you are probably using the Type 23 drum, use t340dra and t340dss instead."
-#warning "dra and will now be undefined, you might also need to use t23dra and t23drs."
+#warning "dra and will now be undefined, you might also need to use t23dra and t23dss."
 #undef dra
 #undef dss
 #define dra _Pragma("GCC error \"dra has been disabled, use t340dra and t23dra instead.\"")

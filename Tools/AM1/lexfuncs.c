@@ -14,6 +14,12 @@ extern LocalContextP localStack[];
 extern char *filenameP;                     // current input file name
 static char filename[1024];
 
+// Reads the rest of a line that starts with '#'.s
+// A cpp line marker, '# N "file"' or '#line N "file"', sets the line number and,
+// if given, the file.
+// Any other '#' line is one cpp passed through unchanged, e.g.,
+// "# some words" in source code.
+// It is counted as a line and changes nothing else.
 void
 reset_line()
 {
@@ -30,7 +36,8 @@ char tmpstr[1024];
             verror("premature end of file");
         }
 
-        if( cP >= (tmpstr+STRBUF) )
+        // leave room for the terminator
+        if( cP >= (tmpstr + sizeof(tmpstr) - 1) )
         {
             verror("internal # line too long");
         }
@@ -41,9 +48,25 @@ char tmpstr[1024];
     *cP = '\0';
     cP2 = tmpstr;
 
-    while( *cP2 && !isdigit(*cP2) )
+    while( (*cP2 == ' ') || (*cP2 == '\t') )
     {
         ++cP2;
+    }
+
+    if( !strncmp(cP2, "line", 4) && ((cP2[4] == ' ') || (cP2[4] == '\t')) )
+    {
+        cP2 += 4;
+
+        while( (*cP2 == ' ') || (*cP2 == '\t') )
+        {
+            ++cP2;
+        }
+    }
+
+    if( !isdigit((unsigned char)*cP2) )
+    {
+        ++lineno;       // not a marker: the line was read, so count it
+        return;
     }
 
     i = atoi(cP2);
@@ -52,9 +75,20 @@ char tmpstr[1024];
         lineno = i;     // adjust for yacc processing
     }
 
-    while( *cP2 && (*cP2 != '"') )
+    while( isdigit((unsigned char)*cP2) )
     {
         ++cP2;
+    }
+
+    while( (*cP2 == ' ') || (*cP2 == '\t') )
+    {
+        ++cP2;
+    }
+
+    // '# N' alone keeps the current file
+    if( *cP2 != '"' )
+    {
+        return;
     }
 
     cP = filename;
@@ -150,10 +184,10 @@ int ctr;
 
 // Handle the backslash-x conversions for type 340 characters.
 // Returns a Type 340 code (0 is the blob, a real character), or one of the
-// TYPE340xxx markers above the 6-bit range.  TYPE340CONT means store nothing,
-// and TYPE340PLAIN means the caller should treat ch itself as an ordinary
-// character, so that it gets the same automatic shift and ASCII conversion as
-// one typed without a backslash.
+// TYPE340xxx markers above the 6-bit range.
+// TYPE340CONT means store nothing, and TYPE340PLAIN means the caller should
+// treat ch itself as an ordinary/ character so that it gets the same automatic
+// shift and ASCII conversion as one typed without a backslash.
 char
 processType340Escape(char ch)
 {
